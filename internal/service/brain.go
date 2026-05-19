@@ -25,20 +25,23 @@ var _ api.BrainService = (*BrainServiceImpl)(nil)
 
 // BrainServiceImpl implements api.BrainService using filesystem + SQLite storage.
 type BrainServiceImpl struct {
-	config  *config.Config
-	storage *storage.StorageLayer
-	indexer *indexer.Indexer
-	bus     events.Bus
+	config          *config.Config
+	storage         *storage.StorageLayer
+	indexer         *indexer.Indexer
+	bus             events.Bus
+	embeddingClient EmbeddingClient
 }
 
 // NewBrainService creates a new BrainServiceImpl.
 // The bus parameter is optional; if nil, no events are published.
-func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus) *BrainServiceImpl {
+// The embeddingClient parameter is optional; if nil, semantic search features will be disabled.
+func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus, embeddingClient EmbeddingClient) *BrainServiceImpl {
 	return &BrainServiceImpl{
-		config:  cfg,
-		storage: store,
-		indexer: idx,
-		bus:     bus,
+		config:          cfg,
+		storage:         store,
+		indexer:         idx,
+		bus:             bus,
+		embeddingClient: embeddingClient,
 	}
 }
 
@@ -179,16 +182,19 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		ExecutionMode:       req.ExecutionMode,
 		CompleteOnIdle:      req.CompleteOnIdle,
 		TargetWorkdir:       frontmatter.SanitizeSimpleValue(req.TargetWorkdir),
-		Executor:            req.Executor,
-		Extensions:          req.Extensions,
 		UserOriginalRequest: req.UserOriginalRequest,
 		DirectPrompt:        req.DirectPrompt,
 		Agent:               req.Agent,
 		Model:               req.Model,
+		Executor:            frontmatter.SanitizeSimpleValue(req.Executor),
+		Extensions:          req.Extensions,
 		Generated:           req.Generated,
 		GeneratedKind:       req.GeneratedKind,
 		GeneratedKey:        req.GeneratedKey,
 		GeneratedBy:         req.GeneratedBy,
+		Trigger:             fmTriggerFromTypes(req.Trigger),
+		Action:              automationActionToFM(req.Action),
+		Retry:               automationRetryToFM(req.Retry),
 		Schedule:            req.Schedule,
 		ScheduleEnabled:     req.ScheduleEnabled,
 		NextRun:             req.NextRun,
@@ -197,9 +203,6 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		ExpiresAt:           req.ExpiresAt,
 		RunOnceAt:           req.RunOnceAt,
 		Timezone:            req.Timezone,
-		Trigger:             automationTriggerToFM(req.Trigger),
-		Action:              automationActionToFM(req.Action),
-		Retry:               automationRetryToFM(req.Retry),
 	}
 
 	if !isGlobal {
@@ -233,6 +236,9 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	// Index the file
 	if err := s.indexer.IndexFile(relPath); err != nil {
 		return nil, fmt.Errorf("index file %q: %w", relPath, err)
+	}
+	if err := s.indexEmbeddingsForEntry(ctx, relPath); err != nil {
+		return nil, fmt.Errorf("embed file %q: %w", relPath, err)
 	}
 
 	// Generate markdown link
@@ -464,6 +470,12 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["model"].(string); ok {
 			fm.Model = v
 		}
+		if v, ok := meta["executor"].(string); ok {
+			fm.Executor = v
+		}
+		if v, ok := meta["extensions"]; ok {
+			fm.Extensions = metaToStringSlice(v)
+		}
 		if v, ok := meta["target_workdir"].(string); ok {
 			fm.TargetWorkdir = v
 		}
@@ -503,8 +515,12 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 
 		// Automation fields (nested maps from metadata JSON)
 		if v, ok := meta["trigger"]; ok {
-			if t := metaToAutomationTriggerFM(v); t != nil {
-				fm.Trigger = t
+			data, err := json.Marshal(v)
+			if err == nil {
+				var t frontmatter.TriggerConfig
+				if err := json.Unmarshal(data, &t); err == nil {
+					fm.Trigger = &t
+				}
 			}
 		}
 		if v, ok := meta["action"]; ok {
@@ -657,12 +673,6 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.CompleteOnIdle != nil {
 		fm.CompleteOnIdle = req.CompleteOnIdle
 	}
-	if req.Executor != nil {
-		fm.Executor = *req.Executor
-	}
-	if len(req.Extensions) > 0 {
-		fm.Extensions = req.Extensions
-	}
 
 	// Feature fields
 	if req.FeatureID != nil {
@@ -685,6 +695,12 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.Model != nil {
 		fm.Model = *req.Model
 	}
+	if req.Executor != nil {
+		fm.Executor = *req.Executor
+	}
+	if req.Extensions != nil {
+		fm.Extensions = *req.Extensions
+	}
 
 	// Generated fields
 	if req.Generated != nil {
@@ -700,9 +716,8 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		fm.GeneratedBy = *req.GeneratedBy
 	}
 
-	// Automation fields
 	if req.Trigger != nil {
-		fm.Trigger = automationTriggerToFM(req.Trigger)
+		fm.Trigger = fmTriggerFromTypes(req.Trigger)
 	}
 	if req.Action != nil {
 		fm.Action = automationActionToFM(req.Action)
@@ -831,6 +846,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	// Re-index
 	if err := s.indexer.IndexFile(row.Path); err != nil {
 		return nil, fmt.Errorf("re-index file %q: %w", row.Path, err)
+	}
+	if err := s.indexEmbeddingsForEntry(ctx, row.Path); err != nil {
+		return nil, fmt.Errorf("re-embed file %q: %w", row.Path, err)
 	}
 
 	// Restore preserved runtime fields into the re-indexed metadata
@@ -1369,6 +1387,9 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	if err := s.indexer.IndexFile(row.Path); err != nil {
 		return fmt.Errorf("re-index file %q: %w", row.Path, err)
 	}
+	if err := s.indexEmbeddingsForEntry(ctx, row.Path); err != nil {
+		return fmt.Errorf("re-embed file %q: %w", row.Path, err)
+	}
 
 	// Restore preserved runtime fields into the re-indexed metadata
 	if preservedFields != nil {
@@ -1426,6 +1447,62 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 	})
 
 	return nil
+}
+
+func (s *BrainServiceImpl) indexEmbeddingsForEntry(ctx context.Context, path string) error {
+	if s.embeddingClient == nil {
+		return nil
+	}
+	row, err := s.storage.GetNoteByPath(ctx, path)
+	if err != nil {
+		return err
+	}
+	if row != nil {
+		if err := s.storage.DeleteNoteEmbeddings(ctx, row.ID); err != nil {
+			return err
+		}
+	}
+	_, err = s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, indexer.EmbeddingIndexOptions{Path: path})
+	return err
+}
+
+// EmbedEntries generates embeddings for matching entries.
+func (s *BrainServiceImpl) EmbedEntries(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error) {
+	opts := indexer.EmbeddingIndexOptions{
+		Project: req.Project,
+		Path:    req.Path,
+		Force:   req.Force,
+	}
+	if req.DryRun {
+		candidates, err := s.indexer.ListEmbeddingBackfillCandidates(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]types.EmbeddingBackfillEntry, 0, len(candidates))
+		for _, candidate := range candidates {
+			entries = append(entries, types.EmbeddingBackfillEntry{
+				ID:      candidate.ID,
+				Path:    candidate.Path,
+				Title:   candidate.Title,
+				Project: candidate.Project,
+				Type:    candidate.Type,
+			})
+		}
+		return &types.EmbeddingBackfillResponse{Processed: len(entries), DryRun: true, Entries: entries}, nil
+	}
+	if s.embeddingClient == nil {
+		return nil, fmt.Errorf("embedding client is not available")
+	}
+	result, err := s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &types.EmbeddingBackfillResponse{
+		Processed: result.Processed,
+		Skipped:   result.Skipped,
+		Failed:    result.Failed,
+		Duration:  result.Duration.Round(time.Millisecond).String(),
+	}, nil
 }
 
 // =============================================================================
@@ -1486,7 +1563,11 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 
 	entries := make([]types.BrainEntry, 0, len(filtered))
 	for _, row := range filtered {
-		entries = append(entries, NoteRowToBrainEntry(row))
+		entry := NoteRowToBrainEntry(row)
+		if status, err := s.storage.EmbeddingStatus(ctx, row); err == nil {
+			entry.EmbeddingStatus = status
+		}
+		entries = append(entries, entry)
 	}
 
 	total := len(entries)
@@ -1503,7 +1584,15 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 // Search
 // =============================================================================
 
-// Search performs full-text search across brain entries.
+// Search performs search across brain entries with support for FTS, semantic, and hybrid strategies.
+//
+// Strategy behavior:
+//   - "fts" / empty → existing FTS5 behavior
+//   - "semantic" → use query embedding + SearchByEmbedding when embeddings enabled, falls back to FTS
+//   - "hybrid" → run both FTS and embedding search and merge results, falls back to FTS if embeddings unavailable
+//
+// Fallback semantics: on any embedding error (client or storage), logs the error and returns FTS results
+// instead of failing the request. This ensures the API remains responsive even when embeddings are disabled.
 func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
 	if req.Query == "" {
 		return &types.SearchResponse{
@@ -1512,13 +1601,20 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 		}, nil
 	}
 
+	// Determine strategy: default to "fts" if not specified
+	strategy := req.Strategy
+	if strategy == "" {
+		strategy = "fts"
+	}
+
+	// Build filter options shared across all strategies
 	opts := &storage.SearchOptions{
 		Type:      req.Type,
 		Status:    req.Status,
 		ProjectID: req.Project,
 		FeatureID: req.FeatureID,
 		Tags:      req.Tags,
-		Strategy:  req.Strategy,
+		Strategy:  "fts", // Always use FTS for the underlying storage call
 		Priority:  req.Priority,
 	}
 	if req.Limit != nil {
@@ -1528,11 +1624,161 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 		opts.PathPrefix = "global/"
 	}
 
+	switch strategy {
+	case "semantic":
+		return s.searchSemantic(ctx, req, opts)
+	case "hybrid":
+		return s.searchHybrid(ctx, req, opts)
+	default:
+		// "fts" or unknown → use existing FTS behavior
+		return s.searchFTS(ctx, req, opts)
+	}
+}
+
+// searchFTS performs standard FTS5 full-text search.
+func (s *BrainServiceImpl) searchFTS(ctx context.Context, req types.SearchRequest, opts *storage.SearchOptions) (*types.SearchResponse, error) {
 	rows, err := s.storage.SearchNotes(ctx, req.Query, opts)
 	if err != nil {
 		return nil, fmt.Errorf("search notes: %w", err)
 	}
 
+	return s.buildSearchResponse(rows), nil
+}
+
+// searchSemantic performs embedding-based semantic search.
+// Falls back to FTS if embeddings are unavailable or if an error occurs.
+func (s *BrainServiceImpl) searchSemantic(ctx context.Context, req types.SearchRequest, opts *storage.SearchOptions) (*types.SearchResponse, error) {
+	// Check if embedding client is available
+	if s.embeddingClient == nil {
+		slog.Warn("semantic search requested but embedding client is nil, falling back to FTS", "query", req.Query)
+		return s.searchFTS(ctx, req, opts)
+	}
+
+	// Generate query embedding
+	embeddings, err := s.embeddingClient.Embed(ctx, []string{req.Query})
+	if err != nil {
+		slog.Error("failed to generate query embedding, falling back to FTS", "query", req.Query, "error", err)
+		return s.searchFTS(ctx, req, opts)
+	}
+	if len(embeddings) == 0 {
+		slog.Warn("no embeddings returned for query, falling back to FTS", "query", req.Query)
+		return s.searchFTS(ctx, req, opts)
+	}
+
+	queryVec := embeddings[0]
+
+	// Build embedding search options from filter options
+	embOpts := &storage.EmbeddingSearchOptions{
+		Limit:     opts.Limit,
+		ProjectID: opts.ProjectID,
+		Type:      opts.Type,
+		Status:    opts.Status,
+		FeatureID: opts.FeatureID,
+		Priority:  opts.Priority,
+		Tags:      opts.Tags,
+	}
+
+	// Perform embedding-based search
+	rows, err := s.storage.SearchByEmbedding(ctx, queryVec, embOpts)
+	if err != nil {
+		slog.Error("embedding search failed, falling back to FTS", "query", req.Query, "error", err)
+		return s.searchFTS(ctx, req, opts)
+	}
+
+	return s.buildSearchResponse(rows), nil
+}
+
+// searchHybrid combines FTS and semantic search results.
+// Falls back to FTS-only if embeddings are unavailable or if an error occurs.
+func (s *BrainServiceImpl) searchHybrid(ctx context.Context, req types.SearchRequest, opts *storage.SearchOptions) (*types.SearchResponse, error) {
+	// Always run FTS search first
+	ftsRows, err := s.storage.SearchNotes(ctx, req.Query, opts)
+	if err != nil {
+		return nil, fmt.Errorf("FTS search failed in hybrid mode: %w", err)
+	}
+
+	// Check if embedding client is available
+	if s.embeddingClient == nil {
+		slog.Warn("hybrid search requested but embedding client is nil, returning FTS results only", "query", req.Query)
+		return s.buildSearchResponse(ftsRows), nil
+	}
+
+	// Generate query embedding
+	embeddings, err := s.embeddingClient.Embed(ctx, []string{req.Query})
+	if err != nil {
+		slog.Error("failed to generate query embedding in hybrid mode, returning FTS results only", "query", req.Query, "error", err)
+		return s.buildSearchResponse(ftsRows), nil
+	}
+	if len(embeddings) == 0 {
+		slog.Warn("no embeddings returned for query in hybrid mode, returning FTS results only", "query", req.Query)
+		return s.buildSearchResponse(ftsRows), nil
+	}
+
+	queryVec := embeddings[0]
+
+	// Build embedding search options
+	embOpts := &storage.EmbeddingSearchOptions{
+		Limit:     opts.Limit,
+		ProjectID: opts.ProjectID,
+		Type:      opts.Type,
+		Status:    opts.Status,
+		FeatureID: opts.FeatureID,
+		Priority:  opts.Priority,
+		Tags:      opts.Tags,
+	}
+
+	// Perform embedding-based search
+	embRows, err := s.storage.SearchByEmbedding(ctx, queryVec, embOpts)
+	if err != nil {
+		slog.Error("embedding search failed in hybrid mode, returning FTS results only", "query", req.Query, "error", err)
+		return s.buildSearchResponse(ftsRows), nil
+	}
+
+	// Merge results: deduplicate by path, FTS results take precedence for ordering
+	merged := s.mergeSearchResults(ftsRows, embRows, opts.Limit)
+
+	return s.buildSearchResponse(merged), nil
+}
+
+// mergeSearchResults combines FTS and embedding search results, deduplicating by path.
+// FTS results appear first (to preserve BM25 ranking), followed by unique embedding results.
+// The final result is limited to the specified limit.
+func (s *BrainServiceImpl) mergeSearchResults(ftsRows, embRows []*storage.NoteRow, limit int) []*storage.NoteRow {
+	if limit <= 0 {
+		limit = 20 // default limit
+	}
+
+	// Track seen paths to deduplicate
+	seen := make(map[string]bool)
+	var merged []*storage.NoteRow
+
+	// Add FTS results first
+	for _, row := range ftsRows {
+		if len(merged) >= limit {
+			break
+		}
+		if !seen[row.Path] {
+			merged = append(merged, row)
+			seen[row.Path] = true
+		}
+	}
+
+	// Add unique embedding results
+	for _, row := range embRows {
+		if len(merged) >= limit {
+			break
+		}
+		if !seen[row.Path] {
+			merged = append(merged, row)
+			seen[row.Path] = true
+		}
+	}
+
+	return merged
+}
+
+// buildSearchResponse converts NoteRow slice to SearchResponse.
+func (s *BrainServiceImpl) buildSearchResponse(rows []*storage.NoteRow) *types.SearchResponse {
 	results := make([]types.SearchResult, 0, len(rows))
 	for _, row := range rows {
 		snippet := ""
@@ -1552,7 +1798,7 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 	return &types.SearchResponse{
 		Results: results,
 		Total:   len(results),
-	}, nil
+	}
 }
 
 // =============================================================================
@@ -2155,4 +2401,40 @@ func coerceStringSlice(v interface{}, sanitize func(string) (string, bool)) []st
 		}
 	}
 	return result
+}
+
+// fmTriggerFromTypes converts a types.TriggerConfig to a frontmatter.TriggerConfig.
+func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
+	if t == nil {
+		return nil
+	}
+	return &frontmatter.TriggerConfig{
+		Type:                   t.Type,
+		Event:                  t.Event,
+		Schedule:               t.Schedule,
+		Filter:                 t.Filter,
+		OncePer:                t.OncePer,
+		Webhook:                t.Webhook,
+		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
+		Cooldown:               t.Cooldown,
+		MaxConcurrent:          t.MaxConcurrent,
+	}
+}
+
+// typesTriggerFromFM converts a frontmatter.TriggerConfig to a types.TriggerConfig.
+func typesTriggerFromFM(t *frontmatter.TriggerConfig) *types.TriggerConfig {
+	if t == nil {
+		return nil
+	}
+	return &types.TriggerConfig{
+		Type:                   t.Type,
+		Event:                  t.Event,
+		Schedule:               t.Schedule,
+		Filter:                 t.Filter,
+		OncePer:                t.OncePer,
+		Webhook:                t.Webhook,
+		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
+		Cooldown:               t.Cooldown,
+		MaxConcurrent:          t.MaxConcurrent,
+	}
 }

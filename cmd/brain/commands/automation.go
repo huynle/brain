@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -118,12 +119,15 @@ func (c *AutomationCommand) executeCreate(out io.Writer) error {
 	fmt.Fprintln(out, "  1) event    - fires on a brain event")
 	fmt.Fprintln(out, "  2) cron     - fires on a schedule")
 	fmt.Fprintln(out, "  3) webhook  - fires from external webhook")
-	fmt.Fprint(out, "Choose [1-3]: ")
+	fmt.Fprintln(out, "  4) session  - fires on runner session events")
+	fmt.Fprint(out, "Choose [1-4]: ")
 	if !scanner.Scan() {
 		return fmt.Errorf("cancelled")
 	}
 	triggerChoice := strings.TrimSpace(scanner.Text())
 	trigger := &types.AutomationTrigger{}
+	cooldown := ""
+	maxConcurrent := 0
 	switch triggerChoice {
 	case "1", "event":
 		trigger.Type = "event"
@@ -154,6 +158,16 @@ func (c *AutomationCommand) executeCreate(out io.Writer) error {
 		trigger.Webhook = strings.TrimSpace(scanner.Text())
 		if trigger.Webhook == "" {
 			return fmt.Errorf("webhook path is required for webhook triggers")
+		}
+	case "4", "session":
+		trigger.Type = "session"
+		fmt.Fprint(out, "Session event (optional, default runner.session_discovered): ")
+		if !scanner.Scan() {
+			return fmt.Errorf("cancelled")
+		}
+		trigger.Event = strings.TrimSpace(scanner.Text())
+		if trigger.Event == "" {
+			trigger.Event = types.EventRunnerSessionDiscovered
 		}
 	default:
 		return fmt.Errorf("invalid trigger choice: %q", triggerChoice)
@@ -213,17 +227,47 @@ func (c *AutomationCommand) executeCreate(out io.Writer) error {
 		}
 	}
 
+	// Optional guard metadata. These prompts are intentionally after the existing
+	// required flow so older scripted input that ends after project selection still
+	// works; EOF simply leaves the guards unset.
+	fmt.Fprintln(out)
+	fmt.Fprint(out, "Cooldown (optional, e.g. 5m, press Enter to skip): ")
+	if scanner.Scan() {
+		cooldown = strings.TrimSpace(scanner.Text())
+	}
+	fmt.Fprint(out, "Max concurrent (optional positive integer, press Enter to skip): ")
+	if scanner.Scan() {
+		maxConcurrentText := strings.TrimSpace(scanner.Text())
+		if maxConcurrentText != "" {
+			parsedMaxConcurrent, err := strconv.Atoi(maxConcurrentText)
+			if err != nil || parsedMaxConcurrent <= 0 {
+				return fmt.Errorf("max concurrent must be a positive integer")
+			}
+			maxConcurrent = parsedMaxConcurrent
+		}
+	}
+
 	// Create via API
 	client := c.getAPIClient()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	req := types.CreateEntryRequest{
-		Type:    "automation",
-		Title:   name,
-		Status:  "active",
-		Tags:    []string{"automation"},
-		Trigger: trigger,
+		Type:   "automation",
+		Title:  name,
+		Status: "active",
+		Tags:   []string{"automation"},
+		Trigger: &types.TriggerConfig{
+			Type:                   trigger.Type,
+			Event:                  trigger.Event,
+			Schedule:               trigger.Schedule,
+			Filter:                 trigger.Filter,
+			OncePer:                trigger.OncePer,
+			Webhook:                trigger.Webhook,
+			IgnoreAutomationEvents: trigger.IgnoreAutomationEvents,
+			Cooldown:               cooldown,
+			MaxConcurrent:          maxConcurrent,
+		},
 		Action:  action,
 		Project: project,
 	}
@@ -279,34 +323,22 @@ func (c *AutomationCommand) executeList(out io.Writer) error {
 
 	// Table format
 	fmt.Fprintln(out, "Automations")
-	fmt.Fprintln(out, strings.Repeat("─", 100))
+	fmt.Fprintln(out, strings.Repeat("─", 120))
 	fmt.Fprintf(out, "%-10s %-25s %-10s %-10s %-15s %s\n",
 		"ID", "Name", "Trigger", "Status", "Project", "Details")
-	fmt.Fprintln(out, strings.Repeat("─", 100))
+	fmt.Fprintln(out, strings.Repeat("─", 120))
 
 	for _, entry := range resp.Entries {
 		triggerType := ""
 		triggerDetail := ""
 		if entry.Trigger != nil {
 			triggerType = entry.Trigger.Type
-			switch entry.Trigger.Type {
-			case "event":
-				triggerDetail = entry.Trigger.Event
-			case "cron":
-				triggerDetail = entry.Trigger.Schedule
-			case "webhook":
-				triggerDetail = entry.Trigger.Webhook
-			}
+			triggerDetail = formatAutomationTriggerDetail(entry.Trigger)
 		}
 
 		project := entry.ProjectID
 		if project == "" {
 			project = "(global)"
-		}
-
-		// Truncate detail if too long
-		if len(triggerDetail) > 25 {
-			triggerDetail = triggerDetail[:22] + "..."
 		}
 
 		fmt.Fprintf(out, "%-10s %-25s %-10s %-10s %-15s %s\n",
@@ -319,7 +351,7 @@ func (c *AutomationCommand) executeList(out io.Writer) error {
 		)
 	}
 
-	fmt.Fprintln(out, strings.Repeat("─", 100))
+	fmt.Fprintln(out, strings.Repeat("─", 120))
 	if !c.Flags.Quiet {
 		fmt.Fprintf(out, "Total: %d automation(s)\n", len(resp.Entries))
 	}
@@ -548,6 +580,46 @@ func (c *AutomationCommand) executeHistory(out io.Writer) error {
 // =============================================================================
 // Helpers
 // =============================================================================
+
+// formatAutomationTriggerDetail returns the human-readable details shown in the
+// automation list. It preserves the existing event/cron/webhook detail behavior
+// and appends guard metadata when present.
+func formatAutomationTriggerDetail(trigger *types.TriggerConfig) string {
+	if trigger == nil {
+		return ""
+	}
+
+	detail := ""
+	switch trigger.Type {
+	case "event":
+		detail = trigger.Event
+	case "cron":
+		detail = trigger.Schedule
+	case "webhook":
+		detail = trigger.Webhook
+	case "session":
+		event := trigger.Event
+		if event == "" {
+			event = types.EventRunnerSessionDiscovered
+		}
+		detail = "session:" + event
+	}
+
+	guards := make([]string, 0, 2)
+	if trigger.Cooldown != "" {
+		guards = append(guards, "cooldown="+trigger.Cooldown)
+	}
+	if trigger.MaxConcurrent > 0 {
+		guards = append(guards, fmt.Sprintf("max_concurrent=%d", trigger.MaxConcurrent))
+	}
+	if len(guards) == 0 {
+		return detail
+	}
+	if detail == "" {
+		return strings.Join(guards, " ")
+	}
+	return detail + " " + strings.Join(guards, " ")
+}
 
 // truncate shortens a string to max length, adding "..." if truncated.
 func truncate(s string, max int) string {

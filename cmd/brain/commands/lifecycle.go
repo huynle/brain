@@ -28,6 +28,26 @@ type LifecycleFlags struct {
 	Host    string // Server host override
 }
 
+// defaultPIDFile returns the default PID file path, respecting XDG_STATE_HOME.
+func defaultPIDFile() string {
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		homeDir, _ := os.UserHomeDir()
+		stateHome = filepath.Join(homeDir, ".local", "state")
+	}
+	return filepath.Join(stateHome, "brain-api", "brain-api.pid")
+}
+
+// defaultLogFile returns the default log file path, respecting XDG_STATE_HOME.
+func defaultLogFile() string {
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		homeDir, _ := os.UserHomeDir()
+		stateHome = filepath.Join(homeDir, ".local", "state")
+	}
+	return filepath.Join(stateHome, "brain-api", "brain-api.log")
+}
+
 // StartCommand starts the server in daemon mode.
 type StartCommand struct {
 	Config *UnifiedConfig
@@ -45,8 +65,7 @@ func (c *StartCommand) Execute() error {
 		pidFile = c.Config.Server.PIDFile
 	}
 	if pidFile == "" {
-		homeDir, _ := os.UserHomeDir()
-		pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+		pidFile = defaultPIDFile()
 	}
 
 	// Determine log file path
@@ -55,8 +74,7 @@ func (c *StartCommand) Execute() error {
 		logFile = c.Config.Server.LogFile
 	}
 	if logFile == "" {
-		homeDir, _ := os.UserHomeDir()
-		logFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+		logFile = defaultLogFile()
 	}
 
 	// Check if server is already running
@@ -125,13 +143,15 @@ func (c *StartCommand) startDaemon(pidFile, logFile string) error {
 // startForeground runs the API server in the current process.
 func (c *StartCommand) startForeground(pidFile string) error {
 	opts := apiserver.ServerOptions{
-		Port:       c.Config.Server.Port,
-		Host:       c.Config.Server.Host,
-		BrainDir:   c.Config.Server.BrainDir,
-		EnableAuth: c.Config.Server.EnableAuth,
-		LogLevel:   c.Config.Server.LogLevel,
-		CORSOrigin: c.Config.Server.CORSOrigin,
-		OAuthPIN:   c.Config.Server.OAuthPIN,
+		Port:         c.Config.Server.Port,
+		Host:         c.Config.Server.Host,
+		BrainDir:     c.Config.Server.BrainDir,
+		EnableAuth:   c.Config.Server.EnableAuth,
+		LogLevel:     c.Config.Server.LogLevel,
+		CORSOrigin:   c.Config.Server.CORSOrigin,
+		OAuthPIN:     c.Config.Server.OAuthPIN,
+		TaskDefaults: c.Config.Server.TaskDefaults,
+		Embedding:    c.Config.Server.Embedding,
 	}
 
 	// Create context with signal handling for graceful shutdown
@@ -167,8 +187,7 @@ func (c *StopCommand) Execute() error {
 		pidFile = c.Config.Server.PIDFile
 	}
 	if pidFile == "" {
-		homeDir, _ := os.UserHomeDir()
-		pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+		pidFile = defaultPIDFile()
 	}
 
 	// Read PID
@@ -252,8 +271,7 @@ func (c *RestartCommand) Execute() error {
 		pidFile = c.Config.Server.PIDFile
 	}
 	if pidFile == "" {
-		homeDir, _ := os.UserHomeDir()
-		pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+		pidFile = defaultPIDFile()
 	}
 
 	// Check if server is running
@@ -304,8 +322,7 @@ func (c *StatusCommand) Execute() error {
 	// Determine PID file path
 	pidFile := c.Config.Server.PIDFile
 	if pidFile == "" {
-		homeDir, _ := os.UserHomeDir()
-		pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+		pidFile = defaultPIDFile()
 	}
 
 	// Get port

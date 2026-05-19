@@ -133,6 +133,10 @@ type BrainEntry struct {
 	Tags     []string `json:"tags"`
 	Priority string   `json:"priority,omitempty"`
 
+	// EmbeddingStatus is optional semantic-search index state when reported by the API.
+	// Expected values include current, missing, stale, and unknown.
+	EmbeddingStatus string `json:"embedding_status,omitempty"`
+
 	ParentID  string   `json:"parent_id,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty"`
 	ProjectID string   `json:"project_id,omitempty"`
@@ -169,10 +173,11 @@ type BrainEntry struct {
 	DirectPrompt        string   `json:"direct_prompt,omitempty"`
 	Agent               string   `json:"agent,omitempty"`
 	Model               string   `json:"model,omitempty"`
-	CompleteOnIdle      *bool    `json:"complete_on_idle,omitempty"`
-	TargetWorkdir       string   `json:"target_workdir,omitempty"`
 	Executor            string   `json:"executor,omitempty"`
 	Extensions          []string `json:"extensions,omitempty"`
+	RequiresCapability  []string `json:"requires_capability,omitempty"`
+	CompleteOnIdle      *bool    `json:"complete_on_idle,omitempty"`
+	TargetWorkdir       string   `json:"target_workdir,omitempty"`
 
 	// Feature grouping
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
@@ -191,10 +196,10 @@ type BrainEntry struct {
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
-	// Automation fields (type=automation entries)
-	Trigger *AutomationTrigger `json:"trigger,omitempty"`
-	Action  *AutomationAction  `json:"action,omitempty"`
-	Retry   *AutomationRetry   `json:"retry,omitempty"`
+	// Event trigger configuration
+	Trigger *TriggerConfig    `json:"trigger,omitempty"`
+	Action  *AutomationAction `json:"action,omitempty"`
+	Retry   *AutomationRetry  `json:"retry,omitempty"`
 
 	// Session tracking
 	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
@@ -302,10 +307,9 @@ type CreateEntryRequest struct {
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
-	// Automation fields (type=automation entries)
-	Trigger *AutomationTrigger `json:"trigger,omitempty"`
-	Action  *AutomationAction  `json:"action,omitempty"`
-	Retry   *AutomationRetry   `json:"retry,omitempty"`
+	Trigger *TriggerConfig    `json:"trigger,omitempty"`
+	Action  *AutomationAction `json:"action,omitempty"`
+	Retry   *AutomationRetry  `json:"retry,omitempty"`
 
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
@@ -342,17 +346,17 @@ type UpdateEntryRequest struct {
 	RunOnceAt       *string `json:"run_once_at,omitempty"`
 	Timezone        *string `json:"timezone,omitempty"`
 
-	TargetWorkdir      *string  `json:"target_workdir,omitempty"`
-	GitBranch          *string  `json:"git_branch,omitempty"`
-	MergeTargetBranch  *string  `json:"merge_target_branch,omitempty"`
-	MergePolicy        *string  `json:"merge_policy,omitempty"`
-	MergeStrategy      *string  `json:"merge_strategy,omitempty"`
-	RemoteBranchPolicy *string  `json:"remote_branch_policy,omitempty"`
-	OpenPRBeforeMerge  *bool    `json:"open_pr_before_merge,omitempty"`
-	ExecutionMode      *string  `json:"execution_mode,omitempty"`
-	CompleteOnIdle     *bool    `json:"complete_on_idle,omitempty"`
-	Executor           *string  `json:"executor,omitempty"`
-	Extensions         []string `json:"extensions,omitempty"`
+	TargetWorkdir      *string   `json:"target_workdir,omitempty"`
+	GitBranch          *string   `json:"git_branch,omitempty"`
+	MergeTargetBranch  *string   `json:"merge_target_branch,omitempty"`
+	MergePolicy        *string   `json:"merge_policy,omitempty"`
+	MergeStrategy      *string   `json:"merge_strategy,omitempty"`
+	RemoteBranchPolicy *string   `json:"remote_branch_policy,omitempty"`
+	OpenPRBeforeMerge  *bool     `json:"open_pr_before_merge,omitempty"`
+	ExecutionMode      *string   `json:"execution_mode,omitempty"`
+	CompleteOnIdle     *bool     `json:"complete_on_idle,omitempty"`
+	Executor           *string   `json:"executor,omitempty"`
+	Extensions         *[]string `json:"extensions,omitempty"`
 
 	FeatureID        *string   `json:"feature_id,omitempty"`
 	FeaturePriority  *string   `json:"feature_priority,omitempty"`
@@ -378,10 +382,9 @@ type UpdateEntryRequest struct {
 	GeneratedKey  *string `json:"generated_key,omitempty"`
 	GeneratedBy   *string `json:"generated_by,omitempty"`
 
-	// Automation fields (type=automation entries)
-	Trigger *AutomationTrigger `json:"trigger,omitempty"`
-	Action  *AutomationAction  `json:"action,omitempty"`
-	Retry   *AutomationRetry   `json:"retry,omitempty"`
+	Trigger *TriggerConfig    `json:"trigger,omitempty"`
+	Action  *AutomationAction `json:"action,omitempty"`
+	Retry   *AutomationRetry  `json:"retry,omitempty"`
 }
 
 // =============================================================================
@@ -616,10 +619,10 @@ type ResolvedTask struct {
 	DirectPrompt        string            `json:"direct_prompt"`
 	Agent               string            `json:"agent"`
 	Model               string            `json:"model"`
-	CompleteOnIdle      *bool             `json:"complete_on_idle,omitempty"`
-	TargetWorkdir       string            `json:"target_workdir,omitempty"`
 	Executor            string            `json:"executor,omitempty"`
 	Extensions          []string          `json:"extensions,omitempty"`
+	CompleteOnIdle      *bool             `json:"complete_on_idle,omitempty"`
+	TargetWorkdir       string            `json:"target_workdir,omitempty"`
 	Env                 map[string]string `json:"env,omitempty"`
 
 	// Session tracking
@@ -637,10 +640,10 @@ type ResolvedTask struct {
 	GeneratedKey  string `json:"generated_key,omitempty"`
 	GeneratedBy   string `json:"generated_by,omitempty"`
 
-	// Automation fields (type=automation entries)
-	Trigger *AutomationTrigger `json:"trigger,omitempty"`
-	Action  *AutomationAction  `json:"action,omitempty"`
-	Retry   *AutomationRetry   `json:"retry,omitempty"`
+	// Event trigger configuration
+	Trigger *TriggerConfig    `json:"trigger,omitempty"`
+	Action  *AutomationAction `json:"action,omitempty"`
+	Retry   *AutomationRetry  `json:"retry,omitempty"`
 
 	// Dependency resolution fields
 	ResolvedDeps    []string `json:"resolved_deps"`
@@ -686,6 +689,11 @@ type ClaimRequest struct {
 	RunnerID string `json:"runnerId"`
 }
 
+// DispatchRequest is the request body for POST /tasks/:projectId/:taskId/dispatch.
+type DispatchRequest struct {
+	TargetRunnerID string `json:"targetRunnerId"`
+}
+
 // ClaimResponse is the response for POST /tasks/:projectId/:taskId/claim.
 type ClaimResponse struct {
 	Success   bool   `json:"success"`
@@ -705,6 +713,15 @@ type ClaimStatusResponse struct {
 	RunnerID  string `json:"runnerId,omitempty"`
 	ClaimedAt string `json:"claimedAt,omitempty"`
 	IsStale   bool   `json:"isStale"`
+}
+
+// RenewClaimResponse is the response for POST /tasks/:projectId/:taskId/renew.
+type RenewClaimResponse struct {
+	Success   bool   `json:"success"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // MultiTaskStatusRequest is the request body for POST /tasks/:projectId/status.
@@ -769,9 +786,63 @@ type CheckoutFeatureResult struct {
 
 // RunnerStatusResponse is the response for GET /tasks/runner/status.
 type RunnerStatusResponse struct {
-	Running        bool     `json:"running"`
-	Paused         bool     `json:"paused"`
-	PausedProjects []string `json:"pausedProjects"`
+	Running           bool     `json:"running"`
+	Paused            bool     `json:"paused"`
+	PausedProjects    []string `json:"pausedProjects"`
+	AutomationsPaused bool     `json:"automationsPaused"`
+}
+
+// =============================================================================
+// Runner Registry Types
+// =============================================================================
+
+// RunnerStatus represents the computed status of a runner based on heartbeat age.
+type RunnerStatus string
+
+const (
+	RunnerStatusOnline  RunnerStatus = "online"
+	RunnerStatusStale   RunnerStatus = "stale"
+	RunnerStatusOffline RunnerStatus = "offline"
+)
+
+// RunnerRegistration is the request body for POST /runners (register).
+type RunnerRegistration struct {
+	RunnerID     string            `json:"runner_id"`
+	Hostname     string            `json:"hostname"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Executors    []string          `json:"executors,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	MaxParallel  int               `json:"max_parallel,omitempty"`
+}
+
+// RunnerHeartbeatRequest is the request body for POST /runners/:id/heartbeat.
+type RunnerHeartbeatRequest struct {
+	RunningTasks int                    `json:"running_tasks"`
+	Stats        map[string]interface{} `json:"stats,omitempty"`
+}
+
+// RunnerInfo is the API-level runner representation with computed status.
+type RunnerInfo struct {
+	RunnerID           string                      `json:"runner_id"`
+	Hostname           string                      `json:"hostname"`
+	Labels             map[string]string           `json:"labels,omitempty"`
+	Executors          []string                    `json:"executors,omitempty"`
+	Projects           []string                    `json:"projects,omitempty"`
+	Capabilities       []string                    `json:"capabilities,omitempty"`
+	MaxParallel        int                         `json:"max_parallel"`
+	ActiveTasks        int                         `json:"active_tasks,omitempty"`
+	FeatureIDs         string                      `json:"feature_ids,omitempty"`
+	FeatureAssignments []FeatureAssignmentResponse `json:"feature_assignments,omitempty"`
+	RegisteredAt       string                      `json:"registered_at"`
+	LastHeartbeat      string                      `json:"last_heartbeat"`
+	Status             RunnerStatus                `json:"status"`
+	Version            string                      `json:"version,omitempty"`
+}
+
+// RunnerListResponse is the response for GET /runners.
+type RunnerListResponse struct {
+	Runners []RunnerInfo `json:"runners"`
+	Total   int          `json:"total"`
 }
 
 // =============================================================================
@@ -780,8 +851,44 @@ type RunnerStatusResponse struct {
 
 // HealthResponse is the response for GET /health.
 type HealthResponse struct {
-	Status    string `json:"status"`
-	Timestamp string `json:"timestamp"`
+	Status    string                `json:"status"`
+	Timestamp string                `json:"timestamp"`
+	Embedding EmbeddingHealthStatus `json:"embedding"`
+}
+
+// EmbeddingHealthStatus reports whether semantic-search embeddings are usable.
+type EmbeddingHealthStatus struct {
+	Enabled  bool   `json:"enabled"`
+	Status   string `json:"status"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+}
+
+// EmbeddingBackfillRequest requests embedding generation for matching notes.
+type EmbeddingBackfillRequest struct {
+	Project string `json:"project,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Force   bool   `json:"force,omitempty"`
+	DryRun  bool   `json:"dry_run,omitempty"`
+}
+
+// EmbeddingBackfillEntry describes a note that matches an embedding backfill request.
+type EmbeddingBackfillEntry struct {
+	ID      int64   `json:"id"`
+	Path    string  `json:"path"`
+	Title   string  `json:"title"`
+	Project *string `json:"project,omitempty"`
+	Type    *string `json:"type,omitempty"`
+}
+
+// EmbeddingBackfillResponse reports embedding generation results.
+type EmbeddingBackfillResponse struct {
+	Processed int                      `json:"processed"`
+	Skipped   int                      `json:"skipped"`
+	Failed    int                      `json:"failed"`
+	Duration  string                   `json:"duration"`
+	DryRun    bool                     `json:"dry_run,omitempty"`
+	Entries   []EmbeddingBackfillEntry `json:"entries,omitempty"`
 }
 
 // StatsResponse is the response for GET /stats.
@@ -822,12 +929,19 @@ type ValidationDetail struct {
 type SSEEventType string
 
 const (
-	SSEEventConnected     SSEEventType = "connected"
-	SSEEventTasksSnapshot SSEEventType = "tasks_snapshot"
-	SSEEventProjectDirty  SSEEventType = "project_dirty"
-	SSEEventHeartbeat     SSEEventType = "heartbeat"
-	SSEEventError         SSEEventType = "error"
-	SSEEventRunnersUpdate SSEEventType = "runners_update"
+	SSEEventConnected        SSEEventType = "connected"
+	SSEEventTasksSnapshot    SSEEventType = "tasks_snapshot"
+	SSEEventProjectDirty     SSEEventType = "project_dirty"
+	SSEEventHeartbeat        SSEEventType = "heartbeat"
+	SSEEventError            SSEEventType = "error"
+	SSEEventTasksChanged     SSEEventType = "tasks_changed"
+	SSEEventCommand          SSEEventType = "command"
+	SSEEventRunnerLog        SSEEventType = "runner_log"
+	SSEEventRunnerRegistered SSEEventType = "runner_registered"
+	SSEEventRunnerOffline    SSEEventType = "runner_offline"
+	SSEEventTaskClaimed      SSEEventType = "task_claimed"
+	SSEEventTaskReleased     SSEEventType = "task_released"
+	SSEEventRunnersUpdate    SSEEventType = "runners_update"
 )
 
 // SSEEventData is the base data structure for SSE events.
@@ -892,24 +1006,108 @@ type HeartbeatRequest struct {
 	Version     string `json:"version,omitempty"`
 }
 
-// RunnerInfo represents a registered runner's info.
-type RunnerInfo struct {
-	RunnerID      string   `json:"runner_id"`
-	Hostname      string   `json:"hostname"`
-	Projects      []string `json:"projects,omitempty"`
-	Capabilities  []string `json:"capabilities,omitempty"`
-	MaxParallel   int      `json:"max_parallel"`
-	ActiveTasks   int      `json:"active_tasks"`
-	Status        string   `json:"status"` // "online", "lost"
-	Version       string   `json:"version,omitempty"`
-	RegisteredAt  string   `json:"registered_at"`
-	LastHeartbeat string   `json:"last_heartbeat"`
+// =============================================================================
+// Runner SSE Event Types
+// =============================================================================
+
+// RunnerSSEEventData is the base data structure for runner-scoped SSE events.
+type RunnerSSEEventData struct {
+	Type      SSEEventType `json:"type"`
+	Transport string       `json:"transport"`
+	Timestamp string       `json:"timestamp"`
+	RunnerID  string       `json:"runnerId"`
 }
 
-// RunnerListResponse is the response for GET /runners.
-type RunnerListResponse struct {
-	Runners []RunnerInfo `json:"runners"`
-	Total   int          `json:"total"`
+// RunnerSSEConnectedData is the data for a runner "connected" SSE event.
+type RunnerSSEConnectedData struct {
+	RunnerSSEEventData
+}
+
+// RunnerSSECommandData is the data for a runner "command" SSE event.
+// Commands include: affinity, config, dispatch, shutdown.
+type RunnerSSECommandData struct {
+	RunnerSSEEventData
+	Command string      `json:"command"`
+	Payload interface{} `json:"payload,omitempty"`
+}
+
+// =============================================================================
+// Runner Lifecycle SSE Event Types (published to project subscribers)
+// =============================================================================
+
+// SSERunnerRegisteredData is the payload for a "runner_registered" event.
+// Emitted when a runner registers or re-registers with the API.
+type SSERunnerRegisteredData struct {
+	SSEEventData
+	RunnerID    string            `json:"runnerId"`
+	Hostname    string            `json:"hostname"`
+	Executors   []string          `json:"executors"`
+	MaxParallel int               `json:"maxParallel"`
+	Labels      map[string]string `json:"labels,omitempty"`
+}
+
+// SSERunnerOfflineData is the payload for a "runner_offline" event.
+// Emitted when a runner transitions to stale or offline status.
+type SSERunnerOfflineData struct {
+	SSEEventData
+	RunnerID string `json:"runnerId"`
+	Hostname string `json:"hostname,omitempty"`
+	Status   string `json:"status"`
+	Reason   string `json:"reason"`
+}
+
+// SSETaskClaimedData is the payload for a "task_claimed" event.
+// Emitted when a task is successfully claimed by a runner.
+type SSETaskClaimedData struct {
+	SSEEventData
+	TaskID   string `json:"taskId"`
+	RunnerID string `json:"runnerId"`
+}
+
+// SSETaskReleasedData is the payload for a "task_released" event.
+// Emitted when a task claim is released by a runner.
+type SSETaskReleasedData struct {
+	SSEEventData
+	TaskID   string `json:"taskId"`
+	RunnerID string `json:"runnerId"`
+}
+
+// =============================================================================
+// Log Ingestion Types
+// =============================================================================
+
+// LogLine represents a single log line from a runner.
+type LogLine struct {
+	Timestamp string `json:"timestamp"`
+	Level     string `json:"level"`
+	Content   string `json:"content"`
+}
+
+// LogIngestRequest is the request body for POST /tasks/{projectId}/{taskId}/logs.
+type LogIngestRequest struct {
+	RunnerID string    `json:"runnerId"`
+	Lines    []LogLine `json:"lines"`
+}
+
+// LogIngestResponse is the response for POST /tasks/{projectId}/{taskId}/logs.
+type LogIngestResponse struct {
+	Accepted int `json:"accepted"`
+}
+
+// LogQueryResponse is the response for GET /tasks/{projectId}/{taskId}/logs.
+type LogQueryResponse struct {
+	Lines  []LogLine `json:"lines"`
+	Total  int       `json:"total"`
+	Offset int       `json:"offset"`
+	Limit  int       `json:"limit"`
+}
+
+// SSERunnerLogData is the data for a "runner_log" SSE event.
+type SSERunnerLogData struct {
+	SSEEventData
+	TaskID   string    `json:"taskId"`
+	RunnerID string    `json:"runnerId"`
+	Lines    []LogLine `json:"lines"`
 }
 
 // =============================================================================

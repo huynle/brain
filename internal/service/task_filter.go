@@ -24,6 +24,30 @@ func filterByFeatureIDs(tasks []types.ResolvedTask, featureIDs []string) []types
 	return filtered
 }
 
+// filterByExecutors filters tasks to only include those matching the given executor types.
+// Tasks with an empty/unset executor field are treated as "opencode" (backward compat).
+// Returns all tasks unchanged if executors is nil or empty.
+func filterByExecutors(tasks []types.ResolvedTask, executors []string) []types.ResolvedTask {
+	if len(executors) == 0 {
+		return tasks
+	}
+	allowed := make(map[string]bool, len(executors))
+	for _, e := range executors {
+		allowed[e] = true
+	}
+	var filtered []types.ResolvedTask
+	for _, t := range tasks {
+		executor := t.Executor
+		if executor == "" {
+			executor = "opencode" // default executor for backward compat
+		}
+		if allowed[executor] {
+			filtered = append(filtered, t)
+		}
+	}
+	return filtered
+}
+
 // pickHighestPriority returns the highest-priority task from a non-empty slice.
 // Priority order: high > medium > low > empty.
 func pickHighestPriority(tasks []types.ResolvedTask) *types.ResolvedTask {

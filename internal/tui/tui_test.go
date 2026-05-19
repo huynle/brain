@@ -1,11 +1,15 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -24,6 +28,1262 @@ func TestNewModel_Init_ReturnsSSEConnectCmd(t *testing.T) {
 	cmd := m.Init()
 	if cmd == nil {
 		t.Error("Init() should return a non-nil command (SSE connect)")
+	}
+}
+
+func TestUpdate_RunnersTabSKey_ShutsDownSelectedRunner(t *testing.T) {
+	var requestedPath string
+	var requestedMethod string
+	var requestedReason string
+	requestCount := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		requestedPath = r.URL.Path
+		requestedMethod = r.Method
+
+		var body map[string]string
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("failed to decode shutdown body: %v", err)
+		}
+		requestedReason = body["reason"]
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer server.Close()
+
+	m := NewModel(Config{APIURL: server.URL, Project: "brain-api"})
+	m.activeContentTab = ContentTabRunners
+	m.activePanel = PanelRunners
+	m.runnerPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host1", Status: types.RunnerStatusOnline},
+		{RunnerID: "runner-2", Hostname: "host2", Status: types.RunnerStatusOnline},
+	})
+	m.runnerPanel.MoveDown()
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	model := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected shutdown command for selected runner")
+	}
+	if model.statusMessageType != "info" {
+		t.Fatalf("expected info status while shutdown is requested, got %q", model.statusMessageType)
+	}
+	if !strings.Contains(model.statusMessage, "runner-2") || !strings.Contains(model.statusMessage, "shutdown") {
+		t.Fatalf("expected status message to mention runner-2 shutdown, got %q", model.statusMessage)
+	}
+
+	_ = cmd()
+
+	if requestCount != 1 {
+		t.Fatalf("expected one shutdown request, got %d", requestCount)
+	}
+	if requestedMethod != http.MethodPut {
+		t.Fatalf("expected PUT shutdown request, got %s", requestedMethod)
+	}
+	if requestedPath != "/api/v1/runners/runner-2/shutdown" {
+		t.Fatalf("expected selected runner shutdown path, got %s", requestedPath)
+	}
+	if requestedReason != "requested from TUI" {
+		t.Fatalf("expected TUI shutdown reason, got %q", requestedReason)
+	}
+}
+
+func TestUpdate_RunnersTabSKey_WithoutSelectionDoesNothing(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabRunners
+	m.activePanel = PanelRunners
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatal("expected no command when no runner is selected")
+	}
+	if model.statusMessage != "" {
+		t.Fatalf("expected no status message when no runner is selected, got %q", model.statusMessage)
+	}
+}
+
+func TestMouseClickContentTabSwitchesToAutomation(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabTasks
+
+	x, ok := contentTabCenterX(ContentTabAutomation)
+	if !ok {
+		t.Fatal("expected Automation tab to have a click target")
+	}
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY - 1})
+	model := updated.(Model)
+
+	if model.activeContentTab != ContentTabAutomation {
+		t.Fatalf("expected click on Automation tab to switch active tab, got %v", model.activeContentTab)
+	}
+	if model.helpBar.ActiveContentTab != ContentTabAutomation {
+		t.Fatalf("expected help bar active tab to be Automation, got %v", model.helpBar.ActiveContentTab)
+	}
+	if cmd == nil {
+		t.Fatal("expected automation fetch command when switching to empty Automation tab")
+	}
+}
+
+func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 120
+	m.height = 40
+
+	view := m.View()
+
+	for _, want := range []string{"Runners", "Logs", "Tasks", "Brain", "Automations"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected tab bar to contain %q, got:\n%s", want, view)
+		}
+	}
+	for _, unwanted := range []string{"Project", "Global"} {
+		if strings.Contains(view, unwanted) {
+			t.Fatalf("expected tab bar not to contain group label %q, got:\n%s", unwanted, view)
+		}
+	}
+	if strings.Index(view, "Runners") > strings.Index(view, "Tasks") {
+		t.Fatalf("expected global tabs to render before project tabs, got:\n%s", view)
+	}
+	if strings.Index(view, "Tasks") > strings.Index(view, "Brain") || strings.Index(view, "Brain") > strings.Index(view, "Automations") {
+		t.Fatalf("expected Brain tab between Tasks and Automations, got:\n%s", view)
+	}
+}
+
+func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.dreamViewer.SetContent("dream content")
+	m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "brain-api"})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabBrain {
+		t.Fatalf("after first L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabAutomation {
+		t.Fatalf("after second L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabRunners {
+		t.Fatalf("after third L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabLogs {
+		t.Fatalf("after fourth L, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabTasks {
+		t.Fatalf("after fifth L, got %v", m.activeContentTab)
+	}
+}
+
+func TestUpdate_DreamConfigMsgSetsDreamConfig(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+
+	updated, _ := m.Update(DreamConfigMsg{Config: &DreamConfigInfo{
+		Project:         "brain-api",
+		TemplateLabel:   "Dream Consolidation",
+		DefaultSchedule: "0 3 * * *",
+		Monitor: &DreamMonitorInfo{
+			Enabled:  true,
+			Schedule: "15 4 * * *",
+			Scope:    "project brain-api",
+		},
+	}})
+	model := updated.(Model)
+	model.dreamViewer.SetContent("# Project Dream")
+
+	view := model.dreamViewer.View(100, 20)
+	for _, want := range []string{"Dream Config", "Enabled", "15 4 * * *", "# Project Dream"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected Dream view to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestMouseClickEveryRenderedContentTabSwitchesTab(t *testing.T) {
+	for _, tab := range visibleContentTabs() {
+		t.Run(tab.String(), func(t *testing.T) {
+			m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+			m.width = 100
+			m.height = 30
+			m.activeContentTab = ContentTabTasks
+			if tab == ContentTabTasks {
+				m.activeContentTab = ContentTabAutomation
+				m.dreamViewer.SetContent("dream content")
+			}
+
+			x, ok := contentTabCenterX(tab)
+			if !ok {
+				t.Fatalf("expected rendered tab %s to have a click target", tab)
+			}
+			mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+			updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY - 1})
+			model := updated.(Model)
+
+			if model.activeContentTab != tab {
+				t.Fatalf("expected click on %s tab to activate it, got %v", tab, model.activeContentTab)
+			}
+			if model.helpBar.ActiveContentTab != tab {
+				t.Fatalf("expected help bar active tab %s, got %v", tab, model.helpBar.ActiveContentTab)
+			}
+		})
+	}
+}
+
+func TestMouseClickContentTabAcceptsAdjacentReportedRow(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabTasks
+
+	x, ok := contentTabCenterX(ContentTabAutomation)
+	if !ok {
+		t.Fatal("expected Automation tab to have a click target")
+	}
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY})
+	model := updated.(Model)
+
+	if model.activeContentTab != ContentTabAutomation {
+		t.Fatalf("expected adjacent-row click on Automation label to activate Automation, got %v", model.activeContentTab)
+	}
+}
+
+func TestMouseClickBrainTabSelectsClickedEntryRow(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision"},
+		{ID: "b", Path: "projects/brain-api/decision/b.md", Title: "B", Type: "decision"},
+		{ID: "c", Path: "projects/brain-api/decision/c.md", Title: "C", Type: "decision"},
+	})
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+
+	// Panel border is at mainContentStartY, title is the next row, then the
+	// directory header, then the first entry row.
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 4})
+	model := updated.(Model)
+
+	selected := model.entryTree.SelectedEntry()
+	if selected == nil || selected.ID != "a" {
+		t.Fatalf("expected click on first rendered entry row to select a, got %#v", selected)
+	}
+}
+
+func TestMouseClickBrainGroupHeaderTogglesCollapse(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision"},
+	})
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 3})
+	model := updated.(Model)
+	view := model.entryTree.View(100, 10)
+	if strings.Contains(view, "A [decision]") {
+		t.Fatalf("expected mouse click on group header to collapse entry, got:\n%s", view)
+	}
+	if !strings.Contains(view, "▸ decision/") {
+		t.Fatalf("expected collapsed group marker, got:\n%s", view)
+	}
+}
+
+func TestMouseHoverBrainTabDoesNotChangeSelection(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision"},
+	})
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, X: 5, Y: mainContentStartY + 3})
+	model := updated.(Model)
+	if model.entryTree.IsOnGroupHeader() {
+		t.Fatal("expected hover over Brain tab to leave selection unchanged")
+	}
+}
+
+func TestBrainTabToggleDetailShowsSelectedEntryContent(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision"},
+	})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	model := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected T in Brain tab to fetch selected entry content")
+	}
+	if !model.detailVisible || !model.taskDetail.entryMode || !model.taskDetail.entryLoading {
+		t.Fatalf("expected Brain entry detail loading state, got visible=%v entryMode=%v loading=%v", model.detailVisible, model.taskDetail.entryMode, model.taskDetail.entryLoading)
+	}
+
+	updated, _ = model.Update(BrainEntryContentMsg{Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision", Content: "# A\nbody"})
+	model = updated.(Model)
+	view := model.taskDetail.View()
+	if !strings.Contains(view, "Entry Detail: A [decision]") || !strings.Contains(view, "# A") {
+		t.Fatalf("expected entry content in detail view, got:\n%s", view)
+	}
+}
+
+func TestAutomationTabToggleDetailShowsSelectedRowContent(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: true}})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'T'}})
+	model := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected T in Automations tab to fetch selected row content")
+	}
+	if !model.detailVisible || !model.taskDetail.entryMode || !model.taskDetail.entryLoading {
+		t.Fatalf("expected Automation entry detail loading state, got visible=%v entryMode=%v loading=%v", model.detailVisible, model.taskDetail.entryMode, model.taskDetail.entryLoading)
+	}
+
+	updated, _ = model.Update(BrainEntryContentMsg{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation", Content: "trigger: cron"})
+	model = updated.(Model)
+	view := model.taskDetail.View()
+	if !strings.Contains(view, "Automation Detail: Auto [automation]") || !strings.Contains(view, "trigger: cron") {
+		t.Fatalf("expected automation content in detail view, got:\n%s", view)
+	}
+}
+
+func TestAutomationTabSpaceTogglesSelectedAutomation(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: false}})
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeySpace})
+	if cmd == nil {
+		t.Fatal("expected Space in Automations tab to toggle selected automation")
+	}
+}
+
+func TestAutomationTabXRunsSelectedAutomation(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: false}})
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'x'}})
+	if cmd == nil {
+		t.Fatal("expected x in Automations tab to run selected automation")
+	}
+}
+
+func TestAutomationTabPTogglesAutomationPause(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.allPaused = true
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	model := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected p in Automations tab to toggle automation pause")
+	}
+	if !model.automationsPaused {
+		t.Fatal("expected automationsPaused to be true after p")
+	}
+	if !model.allPaused {
+		t.Fatal("automation pause toggle should not change normal task allPaused state")
+	}
+}
+
+func TestTasksUpdatedFiltersAutomationGeneratedTasksFromTaskTree(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	updated, _ := m.Update(TasksUpdatedMsg{Tasks: []types.ResolvedTask{
+		{ID: "regular", Title: "Regular task", Status: "pending"},
+		{ID: "auto-task", Title: "Automation: auto1", Status: "pending", GeneratedBy: "automation:auto1"},
+	}, Stats: &types.TaskStats{Ready: 2}})
+	model := updated.(Model)
+	view := model.taskTree.View(100, 20)
+	if strings.Contains(view, "Automation: auto1") {
+		t.Fatalf("automation-generated task should be hidden from Tasks tab, got:\n%s", view)
+	}
+	if !strings.Contains(view, "Regular task") {
+		t.Fatalf("regular task should remain visible, got:\n%s", view)
+	}
+	if model.statusBar.Stats.Ready != 1 {
+		t.Fatalf("ready stats should exclude automation-generated task, got %d", model.statusBar.Stats.Ready)
+	}
+}
+
+func TestRunAutomationRowCmdCreatesGeneratedTaskFromDisabledAutomation(t *testing.T) {
+	var gotCreate types.CreateEntryRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			json.NewEncoder(w).Encode(types.BrainEntry{
+				ID:        "auto1234",
+				Path:      "projects/brain-api/automation/auto1234.md",
+				Title:     "Disabled automation",
+				Type:      "automation",
+				Status:    "archived",
+				ProjectID: "brain-api",
+				Action: &types.AutomationAction{
+					Type:           "prompt",
+					DirectPrompt:   "Run now",
+					Agent:          "assistant",
+					Model:          "test-model",
+					ExecutionMode:  "current_branch",
+					CompleteOnIdle: boolPtr(true),
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			if err := json.NewDecoder(r.Body).Decode(&gotCreate); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "task1234", Path: "projects/brain-api/task/task1234.md", Title: gotCreate.Title, Type: "task", Status: "pending"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	cmd := runAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:     "auto1234",
+		Path:   "projects/brain-api/automation/auto1234.md",
+		Title:  "Disabled automation",
+		Source: "automation",
+		Status: "archived",
+	})
+	msg := cmd().(AutomationRunMsg)
+	if msg.Error != nil {
+		t.Fatalf("run automation failed: %v", msg.Error)
+	}
+	if gotCreate.Type != "task" || gotCreate.Status != "pending" {
+		t.Fatalf("created entry type/status = %s/%s, want task/pending", gotCreate.Type, gotCreate.Status)
+	}
+	if gotCreate.Project != "brain-api" {
+		t.Fatalf("created task project = %q, want brain-api", gotCreate.Project)
+	}
+	if gotCreate.DirectPrompt != "Run now" || gotCreate.Agent != "assistant" || gotCreate.Model != "test-model" {
+		t.Fatalf("created task action fields not copied: %#v", gotCreate)
+	}
+	if gotCreate.Generated == nil || !*gotCreate.Generated || gotCreate.GeneratedBy != "automation:auto1234" {
+		t.Fatalf("created task generated fields invalid: generated=%v generated_by=%q", gotCreate.Generated, gotCreate.GeneratedBy)
+	}
+}
+
+func TestAutomationDetailShowsGeneratedRuns(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.detailVisible = true
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: true}})
+	m.taskDetail.SetEntryLoading(types.BrainEntry{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation"}, "Automation Detail")
+	m.automationGeneratedTasks = []types.BrainEntry{
+		{ID: "run1", Path: "projects/brain-api/task/run1.md", Title: "Automation: auto", Type: "task", Status: "pending", GeneratedBy: "automation:auto"},
+		{ID: "run2", Path: "projects/brain-api/task/run2.md", Title: "Automation: auto", Type: "task", Status: "completed", GeneratedBy: "automation:auto"},
+	}
+
+	updated, _ := m.Update(BrainEntryContentMsg{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation", Content: "trigger: cron"})
+	model := updated.(Model)
+	view := model.taskDetail.View()
+	for _, want := range []string{"## Runs", "run1 [pending]", "run2 [completed]"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected automation detail to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestAutomationListIncludesDreamRowWhenEmpty(t *testing.T) {
+	list := NewAutomationList()
+	list.SetEntryRows(nil, nil, nil)
+
+	row := list.SelectedRow()
+	if row == nil || row.Source != "dream" || row.Title != "Dream" {
+		t.Fatalf("expected Dream row to be selected by default, got %#v", row)
+	}
+	view := list.View(100, 10)
+	if !strings.Contains(view, "Dream") || strings.Contains(view, "No automations found") {
+		t.Fatalf("expected Dream row instead of empty automation state, got:\n%s", view)
+	}
+}
+
+func TestBrainTabSlashSearchAndEscClearsResults(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+	allEntries := []types.BrainEntry{
+		{ID: "a", Path: "projects/brain-api/idea/a.md", Title: "Alpha", Type: "idea"},
+		{ID: "b", Path: "projects/brain-api/idea/b.md", Title: "Beta", Type: "idea"},
+	}
+	updated, _ := m.Update(BrainEntriesMsg{Entries: allEntries})
+	m = updated.(Model)
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'/'}})
+	m = updated.(Model)
+	if m.brainSearchState != FilterTyping {
+		t.Fatalf("expected slash to start Brain search typing, got %v", m.brainSearchState)
+	}
+
+	updated, _ = m.Update(BrainSearchMsg{Entries: []types.BrainEntry{allEntries[1]}, Query: "beta", Strategy: "semantic"})
+	m = updated.(Model)
+	if len(m.entryTree.entries) != 1 || m.entryTree.entries[0].ID != "b" {
+		t.Fatalf("expected Brain search results to replace tree entries, got %#v", m.entryTree.entries)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	m = updated.(Model)
+	if m.brainSearchState != FilterOff {
+		t.Fatalf("expected Esc to clear Brain search state, got %v", m.brainSearchState)
+	}
+	if len(m.entryTree.entries) != len(allEntries) {
+		t.Fatalf("expected Esc to restore all entries, got %#v", m.entryTree.entries)
+	}
+}
+
+func TestBrainSearchInputAcceptsSpaces(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+	m.brainSearchState = FilterTyping
+
+	for _, msg := range []tea.KeyMsg{
+		{Type: tea.KeyRunes, Runes: []rune{'s', 'e', 'm', 'a', 'n', 't', 'i', 'c'}},
+		{Type: tea.KeySpace, Runes: []rune{' '}},
+		{Type: tea.KeyRunes, Runes: []rune{'s', 'e', 'a', 'r', 'c', 'h'}},
+	} {
+		updated, _ := m.Update(msg)
+		m = updated.(Model)
+	}
+
+	if m.brainSearchQuery != "semantic search" {
+		t.Fatalf("brainSearchQuery = %q, want semantic search", m.brainSearchQuery)
+	}
+}
+
+func TestBrainTabEmbedKeysRequestExpectedScope(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'b'}})
+	if cmd == nil {
+		t.Fatal("expected b to request current project embedding backfill")
+	}
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'B'}})
+	if cmd == nil {
+		t.Fatal("expected B to request all-project embedding backfill")
+	}
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	if cmd == nil {
+		t.Fatal("expected F to request force embedding backfill")
+	}
+}
+
+func TestBrainTabEnterTogglesGroupCollapse(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{{ID: "task1", Path: "projects/brain-api/task/task1.md", Title: "Task One", Type: "task"}})
+	m.entryTree.GotoTop()
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	model := updated.(Model)
+	view := model.entryTree.View(100, 10)
+	if strings.Contains(view, "Task One") {
+		t.Fatalf("expected Enter on Brain group header to collapse entries, got:\n%s", view)
+	}
+}
+
+func TestBrainSearchCmdUsesSemanticWhenEmbeddingReady(t *testing.T) {
+	var got types.SearchRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode search request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(types.SearchResponse{Results: []types.SearchResult{{ID: "x", Path: "projects/brain-api/idea/x.md", Title: "Vector", Type: "idea", Status: "active"}}})
+	}))
+	defer srv.Close()
+
+	msg := fetchBrainSearchCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api", "vector")().(BrainSearchMsg)
+	if msg.Err != nil {
+		t.Fatalf("search failed: %v", msg.Err)
+	}
+	if got.Strategy != "semantic" {
+		t.Fatalf("strategy = %q, want semantic", got.Strategy)
+	}
+	if len(msg.Entries) != 1 || msg.Entries[0].ID != "x" {
+		t.Fatalf("unexpected entries: %#v", msg.Entries)
+	}
+}
+
+func TestBrainSearchCmdUsesSemanticEvenWhenEmbeddingHealthUnknown(t *testing.T) {
+	var got types.SearchRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_ = json.NewEncoder(w).Encode(types.SearchResponse{})
+	}))
+	defer srv.Close()
+
+	msg := fetchBrainSearchCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api", "plain")().(BrainSearchMsg)
+	if msg.Err != nil {
+		t.Fatalf("search failed: %v", msg.Err)
+	}
+	if got.Strategy != "semantic" {
+		t.Fatalf("strategy = %q, want semantic", got.Strategy)
+	}
+	if got.Limit == nil || *got.Limit != 10 {
+		t.Fatalf("limit = %v, want 10", got.Limit)
+	}
+}
+
+func TestBrainSearchResultsUseSearchTitleAndResultCount(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+	updated, _ := m.Update(BrainSearchMsg{
+		Entries:  []types.BrainEntry{{ID: "hit", Path: "projects/brain-api/idea/hit.md", Title: "Hit", Type: "idea"}},
+		Query:    "needle",
+		Strategy: "semantic",
+	})
+	model := updated.(Model)
+	view := model.entryTree.View(100, 10)
+	if !strings.Contains(view, "Brain Search Results (1)") {
+		t.Fatalf("expected search result title/count, got:\n%s", view)
+	}
+}
+
+func TestMouseClickProjectTabSwitchesActiveProject(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta"},
+	})
+	m.width = 100
+	m.height = 30
+	m.tasksByProject["alpha"] = []types.ResolvedTask{{ID: "a1", Title: "Alpha task"}}
+	m.tasksByProject["beta"] = []types.ResolvedTask{{ID: "b1", Title: "Beta task"}}
+
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 12, Y: mainContentStartY - 2})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected project tab click to be local-only, got command")
+	}
+	if model.activeProjectID != "alpha" {
+		t.Fatalf("expected active project alpha, got %q", model.activeProjectID)
+	}
+	if model.projectTabs.ActiveProject() != "alpha" {
+		t.Fatalf("expected project tab active project alpha, got %q", model.projectTabs.ActiveProject())
+	}
+	if len(model.tasks) != 1 || model.tasks[0].ID != "a1" {
+		t.Fatalf("expected alpha tasks after project tab click, got %#v", model.tasks)
+	}
+}
+
+func TestMouseClickProjectTabAcceptsAdjacentReportedRow(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta"},
+	})
+	m.width = 100
+	m.height = 30
+	m.tasksByProject["alpha"] = []types.ResolvedTask{{ID: "a1", Title: "Alpha task"}}
+	m.tasksByProject["beta"] = []types.ResolvedTask{{ID: "b1", Title: "Beta task"}}
+
+	statusBarHeight := lipgloss.Height(m.statusBar.View(m.width))
+	x := projectTabCenterXForTest(m.projectTabs, 2, m.width)
+	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: statusBarHeight + 1})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected project tab click to be local-only, got command")
+	}
+	if model.activeProjectID != "beta" {
+		t.Fatalf("expected adjacent-row click on beta tab to activate beta, got %q", model.activeProjectID)
+	}
+	if len(model.tasks) != 1 || model.tasks[0].ID != "b1" {
+		t.Fatalf("expected beta tasks after project tab click, got %#v", model.tasks)
+	}
+}
+
+func TestMouseClickAllProjectTabOpensProjectPicker(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta", "gamma"},
+	})
+	m.width = 100
+	m.height = 30
+	m.activeProjectID = "beta"
+	m.projectTabs.SetActiveProject("beta")
+
+	statusBarHeight := lipgloss.Height(m.statusBar.View(m.width))
+	x := projectTabCenterXForTest(m.projectTabs, 0, m.width)
+	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: statusBarHeight})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected opening project picker to be local-only, got command")
+	}
+	if !model.modalManager.IsOpen() {
+		t.Fatal("expected All project tab click to open project picker modal")
+	}
+	if _, ok := model.modalManager.activeModal.(*ProjectPickerModal); !ok {
+		t.Fatalf("expected ProjectPickerModal, got %T", model.modalManager.activeModal)
+	}
+	if model.activeProjectID != "beta" {
+		t.Fatalf("expected opening picker not to change active project, got %q", model.activeProjectID)
+	}
+}
+
+func TestMouseClickAllProjectTabAcceptsAdjacentReportedRow(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta", "gamma"},
+	})
+	m.width = 100
+	m.height = 30
+	m.activeProjectID = "beta"
+	m.projectTabs.SetActiveProject("beta")
+
+	statusBarHeight := lipgloss.Height(m.statusBar.View(m.width))
+	x := projectTabCenterXForTest(m.projectTabs, 0, m.width)
+	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: statusBarHeight + 1})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected opening project picker to be local-only, got command")
+	}
+	if !model.modalManager.IsOpen() {
+		t.Fatal("expected adjacent-row All project tab click to open project picker modal")
+	}
+	if _, ok := model.modalManager.activeModal.(*ProjectPickerModal); !ok {
+		t.Fatalf("expected ProjectPickerModal, got %T", model.modalManager.activeModal)
+	}
+}
+
+func TestProjectPickerModal_MouseSelectsProject(t *testing.T) {
+	modal := NewProjectPickerModal([]string{"alpha", "beta", "gamma"}, "alpha")
+
+	handled, cmd := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 3, 4)
+	if !handled {
+		t.Fatal("expected project row click to be handled")
+	}
+	if cmd == nil {
+		t.Fatal("expected project row click to return selection command")
+	}
+	msg := cmd()
+	selected, ok := msg.(projectSelectedMsg)
+	if !ok {
+		t.Fatalf("expected projectSelectedMsg, got %T", msg)
+	}
+	if selected.projectID != "beta" {
+		t.Fatalf("expected beta selected, got %q", selected.projectID)
+	}
+}
+
+func TestUpdate_ProjectSelectedMsgSwitchesProjectAndClosesModal(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta"},
+	})
+	m.width = 100
+	m.height = 30
+	m.tasksByProject["alpha"] = []types.ResolvedTask{{ID: "a1", Title: "Alpha task"}}
+	m.tasksByProject["beta"] = []types.ResolvedTask{{ID: "b1", Title: "Beta task"}}
+	m.modalManager.Open(NewProjectPickerModal(m.projectTabs.Projects, "all"))
+
+	updated, cmd := m.Update(projectSelectedMsg{projectID: "beta"})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected project selection to be local-only, got command")
+	}
+	if model.modalManager.IsOpen() {
+		t.Fatal("expected project picker to close after selection")
+	}
+	if model.activeProjectID != "beta" {
+		t.Fatalf("expected beta active after picker selection, got %q", model.activeProjectID)
+	}
+	if len(model.tasks) != 1 || model.tasks[0].ID != "b1" {
+		t.Fatalf("expected beta tasks after picker selection, got %#v", model.tasks)
+	}
+}
+
+func projectTabCenterXForTest(tabs ProjectTabs, tabIndex, width int) int {
+	labels := tabs.tabLabels(false)
+	pos := 0
+	for i, label := range labels {
+		labelWidth := lipgloss.Width(label)
+		if pos+labelWidth > width {
+			break
+		}
+		if i == tabIndex {
+			return pos + labelWidth/2
+		}
+		pos += labelWidth + 2
+	}
+	return 0
+}
+
+func TestMouseClickRunnerRowSelectsRunner(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.runnerPanelVisible = true
+	m.activePanel = PanelTasks
+	m.helpBar.ActivePanel = PanelTasks
+	m.runnerPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host1", Status: types.RunnerStatusOnline},
+		{RunnerID: "runner-2", Hostname: "host2", Status: types.RunnerStatusOnline},
+	})
+
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	// Runner rows are inside the bottom panel after: top border, title, column header.
+	runnerRowY := mainContentStartY + taskPanelOuterHeight + 3
+	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: runnerRowY})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected runner row click to be local-only, got command")
+	}
+	if model.activePanel != PanelRunners {
+		t.Fatalf("expected runner row click to focus runner panel, got %v", model.activePanel)
+	}
+	if model.helpBar.ActivePanel != PanelRunners {
+		t.Fatalf("expected help bar focus to be runners, got %v", model.helpBar.ActivePanel)
+	}
+	selected := model.runnerPanel.SelectedRunner()
+	if selected == nil || selected.RunnerID != "runner-1" {
+		t.Fatalf("expected runner-1 selected after click, got %#v", selected)
+	}
+}
+
+func TestMouseWheelDownOverTaskPaneMovesTaskSelectionWithoutClickFocus(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "test-project"})
+	m.width = 100
+	m.height = 30
+	m.detailVisible = true
+	m.activePanel = PanelDetails
+	m.helpBar.ActivePanel = PanelDetails
+
+	updated, _ := m.Update(TasksUpdatedMsg{
+		Tasks: []types.ResolvedTask{
+			{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high", FeatureID: "feat-a"},
+			{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "medium", FeatureID: "feat-a"},
+		},
+		Stats: &types.TaskStats{Ready: 2},
+	})
+	m = updated.(Model)
+	m.activePanel = PanelDetails
+	m.helpBar.ActivePanel = PanelDetails
+
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelDown, X: 5, Y: mainContentStartY + 2})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected wheel scroll to be local-only, got command")
+	}
+	if model.taskTree.SelectedID != "t2" {
+		t.Fatalf("expected wheel over task pane to move selection to t2, got %q", model.taskTree.SelectedID)
+	}
+	if model.activePanel != PanelDetails {
+		t.Fatalf("expected wheel hover-scroll not to change active panel, got %v", model.activePanel)
+	}
+}
+
+func TestMouseWheelDownOverRunnerPaneSelectsNextRunnerWithoutClickFocus(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.runnerPanelVisible = true
+	m.activePanel = PanelTasks
+	m.helpBar.ActivePanel = PanelTasks
+	m.runnerPanel.SetRunners([]types.RunnerInfo{
+		{RunnerID: "runner-1", Hostname: "host1", Status: types.RunnerStatusOnline},
+		{RunnerID: "runner-2", Hostname: "host2", Status: types.RunnerStatusOnline},
+	})
+
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelDown, X: 5, Y: mainContentStartY + taskPanelOuterHeight + 3})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected wheel scroll to be local-only, got command")
+	}
+	selected := model.runnerPanel.SelectedRunner()
+	if selected == nil || selected.RunnerID != "runner-2" {
+		t.Fatalf("expected wheel over runner pane to select runner-2, got %#v", selected)
+	}
+	if model.activePanel != PanelTasks {
+		t.Fatalf("expected wheel hover-scroll not to change active panel, got %v", model.activePanel)
+	}
+}
+
+func TestMouseWheelDownOverDetailPaneScrollsDetailWithoutClickFocus(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.detailVisible = true
+	m.activePanel = PanelTasks
+	m.helpBar.ActivePanel = PanelTasks
+	task := types.ResolvedTask{
+		ID:           "t1",
+		Title:        "Task 1",
+		Status:       "pending",
+		Priority:     "high",
+		DirectPrompt: strings.Repeat("line\n", 20),
+	}
+	m.taskDetail.SetTask(&task)
+	m.taskDetail.SetSize(80, 4)
+
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelDown, X: 5, Y: mainContentStartY + taskPanelOuterHeight + 2})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected wheel scroll to be local-only, got command")
+	}
+	if model.taskDetail.scrollOffset != 1 {
+		t.Fatalf("expected wheel over detail pane to scroll detail to offset 1, got %d", model.taskDetail.scrollOffset)
+	}
+	if model.activePanel != PanelTasks {
+		t.Fatalf("expected wheel hover-scroll not to change active panel, got %v", model.activePanel)
+	}
+}
+
+func TestMouseWheelUpOverLogsPaneScrollsLogsWithoutClickFocus(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.logsVisible = true
+	m.activePanel = PanelTasks
+	m.helpBar.ActivePanel = PanelTasks
+	m.logViewer.SetSize(80, 3)
+	for i := 0; i < 20; i++ {
+		m.logViewer.AddEntry(LogEntry{Message: fmt.Sprintf("log-%d", i)})
+	}
+
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelUp, X: 5, Y: mainContentStartY + taskPanelOuterHeight + 2})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected wheel scroll to be local-only, got command")
+	}
+	if model.logViewer.autoFollow {
+		t.Fatal("expected wheel up over logs to disable auto-follow")
+	}
+	expectedScrollTop := model.logViewer.maxScrollTop() - 1
+	if model.logViewer.scrollTop != expectedScrollTop {
+		t.Fatalf("expected wheel up over logs to set scrollTop to %d, got %d", expectedScrollTop, model.logViewer.scrollTop)
+	}
+	if model.activePanel != PanelTasks {
+		t.Fatalf("expected wheel hover-scroll not to change active panel, got %v", model.activePanel)
+	}
+}
+
+func TestMouseWheelOverGlobalLogsTabScrollsLogs(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 16
+	m.activeContentTab = ContentTabLogs
+	m.activePanel = PanelTasks
+
+	for i := 0; i < 12; i++ {
+		m.logViewer.AddEntry(LogEntry{Level: "info", Message: fmt.Sprintf("global log %02d", i)})
+	}
+
+	mainStart := m.computeMainContentStartY()
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelUp, X: 10, Y: mainStart + 3})
+	m = updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected global log wheel to be local-only, got command")
+	}
+	if m.logViewer.height <= 0 {
+		t.Fatalf("expected global log wheel to size log viewer before scrolling, got height %d", m.logViewer.height)
+	}
+	if m.logViewer.scrollTop == 0 {
+		t.Fatalf("expected global log wheel to move scrollTop away from zero")
+	}
+	if m.taskTree.Cursor != 0 {
+		t.Fatalf("expected global log wheel not to move task cursor, got %d", m.taskTree.Cursor)
+	}
+}
+
+func TestMouseWheelOverDreamTabScrollsLikeJK(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabDream
+	m.dreamViewer.SetSize(80, 5)
+	m.dreamViewer.SetContent(strings.Repeat("line\n", 30))
+
+	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelDown, X: 5, Y: mainContentStartY + 2})
+	model := updated.(Model)
+
+	if cmd != nil {
+		t.Fatalf("expected wheel scroll to be local-only, got command")
+	}
+	if model.dreamViewer.viewport.YOffset != 1 {
+		t.Fatalf("expected wheel over Dream to scroll like j to offset 1, got %d", model.dreamViewer.viewport.YOffset)
+	}
+}
+
+func TestMouseDragMainSplitterResizesTaskAndBottomPanels(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.tasks = []types.ResolvedTask{
+		{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"},
+		{ID: "t2", Title: "Task 2", Classification: "ready", Priority: "medium"},
+	}
+	m.taskTree.SetTasks(m.tasks)
+
+	mainContentStartY, initialTaskHeight, _ := m.computeTaskPanelMetrics()
+	pressY := mainContentStartY + initialTaskHeight - 1
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("expected splitter press to be local-only, got command")
+	}
+	if !m.splitDragActive {
+		t.Fatal("expected splitter drag to start")
+	}
+
+	updated, cmd = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("expected splitter drag to be local-only, got command")
+	}
+	if m.taskPanelHeight != initialTaskHeight+5 {
+		t.Fatalf("expected task panel height %d, got %d", initialTaskHeight+5, m.taskPanelHeight)
+	}
+
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	if m.splitDragActive {
+		t.Fatal("expected splitter drag to stop after release")
+	}
+}
+
+func TestMouseDragMainSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
+	t.Setenv("BRAIN_DIR", t.TempDir())
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	mainContentStartY, initialTaskHeight, _ := m.computeTaskPanelMetrics()
+	splitterY := mainContentStartY + initialTaskHeight - 1
+	pressY := splitterY - 1
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+
+	if !m.splitDragActive {
+		t.Fatal("expected splitter drag to start")
+	}
+	if m.taskPanelHeight != 0 {
+		t.Fatalf("expected press to leave task panel height unchanged, got %d", m.taskPanelHeight)
+	}
+
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	want := initialTaskHeight + 5
+	if m.taskPanelHeight != want {
+		t.Fatalf("expected drag to preserve grab offset and set height %d, got %d", want, m.taskPanelHeight)
+	}
+}
+
+func TestMouseDragMainSplitterClampsPanelHeights(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.taskPanelHeight = 999
+
+	_, taskHeight, _ := m.computeTaskPanelMetrics()
+	mainHeight := m.mainContentHeight()
+	maxTaskHeight := mainHeight - minBottomPanelHeight
+	if taskHeight != maxTaskHeight {
+		t.Fatalf("expected task height clamped to %d, got %d", maxTaskHeight, taskHeight)
+	}
+}
+
+func TestMouseDragBottomSplitterResizesDetailAndLogPanels(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.logsVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	initialDetailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	pressY := bottomStart + initialDetailHeight - 1
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("expected bottom splitter press to be local-only, got command")
+	}
+	if !m.bottomSplitDragActive {
+		t.Fatal("expected bottom splitter drag to start")
+	}
+
+	updated, cmd = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 3})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatalf("expected bottom splitter drag to be local-only, got command")
+	}
+	if m.bottomTopPanelHeight != initialDetailHeight+3 {
+		t.Fatalf("expected detail panel height %d, got %d", initialDetailHeight+3, m.bottomTopPanelHeight)
+	}
+}
+
+func TestMouseDragBottomSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
+	t.Setenv("BRAIN_DIR", t.TempDir())
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.logsVisible = true
+	m.tasks = []types.ResolvedTask{{ID: "t1", Title: "Task 1", Classification: "ready", Priority: "high"}}
+	m.taskTree.SetTasks(m.tasks)
+
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	initialDetailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	splitterY := bottomStart + initialDetailHeight - 1
+	pressY := splitterY - 1
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	m = updated.(Model)
+
+	if !m.bottomSplitDragActive {
+		t.Fatal("expected bottom splitter drag to start")
+	}
+	if m.bottomTopPanelHeight != 0 {
+		t.Fatalf("expected press to leave bottom split height unchanged, got %d", m.bottomTopPanelHeight)
+	}
+
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	m = updated.(Model)
+	want := initialDetailHeight + 5
+	if m.bottomTopPanelHeight != want {
+		t.Fatalf("expected drag to preserve grab offset and set height %d, got %d", want, m.bottomTopPanelHeight)
+	}
+}
+
+func TestNewModel_LoadsPersistedPanelHeights(t *testing.T) {
+	t.Setenv("BRAIN_DIR", t.TempDir())
+	if err := SaveSettings(Settings{
+		GroupCollapsed:       make(map[string]bool),
+		GroupVisible:         getDefaultGroupVisible(),
+		FeatureCollapsed:     make(map[string]bool),
+		ProjectLimits:        make(map[string]int),
+		GlobalMaxParallel:    4,
+		TaskPanelHeight:      31,
+		BottomTopPanelHeight: 17,
+	}); err != nil {
+		t.Fatalf("save settings: %v", err)
+	}
+
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+
+	if m.taskPanelHeight != 31 {
+		t.Fatalf("expected taskPanelHeight 31 from settings, got %d", m.taskPanelHeight)
+	}
+	if m.bottomTopPanelHeight != 17 {
+		t.Fatalf("expected bottomTopPanelHeight 17 from settings, got %d", m.bottomTopPanelHeight)
+	}
+}
+
+func TestMouseDragMainSplitterReleasePersistsPanelHeight(t *testing.T) {
+	t.Setenv("BRAIN_DIR", t.TempDir())
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.taskPanelHeight = 23
+	m.splitDragActive = true
+
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: 25})
+	model := updated.(Model)
+	if model.splitDragActive {
+		t.Fatal("expected split drag to stop on release")
+	}
+
+	settings, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if settings.TaskPanelHeight != 23 {
+		t.Fatalf("expected persisted task panel height 23, got %d", settings.TaskPanelHeight)
+	}
+}
+
+func TestMouseDragBottomSplitterReleasePersistsPanelHeight(t *testing.T) {
+	t.Setenv("BRAIN_DIR", t.TempDir())
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 40
+	m.detailVisible = true
+	m.logsVisible = true
+	m.bottomTopPanelHeight = 14
+	m.bottomSplitDragActive = true
+
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: 25})
+	model := updated.(Model)
+	if model.bottomSplitDragActive {
+		t.Fatal("expected bottom split drag to stop on release")
+	}
+
+	settings, err := LoadSettings()
+	if err != nil {
+		t.Fatalf("load settings: %v", err)
+	}
+	if settings.BottomTopPanelHeight != 14 {
+		t.Fatalf("expected persisted bottom top panel height 14, got %d", settings.BottomTopPanelHeight)
 	}
 }
 
@@ -548,6 +1808,35 @@ func TestStatusBarView_ShowsConnectionDot(t *testing.T) {
 	}
 }
 
+func TestUpdate_HealthStatusUpdatesEmbeddingReadiness(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.statusBar.Connected = true
+
+	updated, _ := m.Update(apiHealthMsg{health: runner.APIHealth{
+		Status: "healthy",
+		Embedding: runner.APIEmbeddingHealth{
+			Enabled: true,
+			Status:  "ready",
+		},
+	}})
+	m = updated.(Model)
+	if !m.statusBar.EmbeddingReady {
+		t.Fatal("expected embedding to be ready when health reports ready")
+	}
+
+	updated, _ = m.Update(apiHealthMsg{health: runner.APIHealth{
+		Status: "healthy",
+		Embedding: runner.APIEmbeddingHealth{
+			Enabled: true,
+			Status:  "unavailable",
+		},
+	}})
+	m = updated.(Model)
+	if m.statusBar.EmbeddingReady {
+		t.Fatal("expected embedding to be not ready when health reports unavailable")
+	}
+}
+
 func TestStatusBarView_ShowsProjectName(t *testing.T) {
 	sb := NewStatusBar("my-cool-project")
 	view := sb.View(80)
@@ -749,10 +2038,10 @@ func TestConfig_IsMultiProject(t *testing.T) {
 }
 
 // =============================================================================
-// Panel Toggle Tests - 'L' toggles logs, 'T' toggles detail
+// Panel Toggle Tests - 'T' toggles detail; logs are only configurable.
 // =============================================================================
 
-func TestUpdate_LKey_TogglesLogVisibility(t *testing.T) {
+func TestUpdate_LKey_DoesNotToggleLogVisibility(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",
 		Project: "test-project",
@@ -763,21 +2052,87 @@ func TestUpdate_LKey_TogglesLogVisibility(t *testing.T) {
 		t.Fatal("expected logsVisible to be false initially")
 	}
 
-	// Press 'l' to toggle logs on
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
-	if !model.logsVisible {
-		t.Error("expected logsVisible to be true after 'l' press")
+	if model.logsVisible {
+		t.Error("expected logsVisible to remain false after 'l' press")
+	}
+}
+
+func TestUpdate_ZKey_DoesNotToggleLogVisibilityByDefault(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta"},
+	})
+
+	if m.logsVisible {
+		t.Fatal("expected logsVisible to be false initially")
 	}
 
-	// Press 'l' again to toggle logs off
-	updated, _ = model.Update(msg)
-	model = updated.(Model)
-
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	model := updated.(Model)
 	if model.logsVisible {
-		t.Error("expected logsVisible to be false after second 'l' press")
+		t.Fatal("expected logsVisible to remain false after z press")
+	}
+}
+
+func TestUpdate_LKeyStillNavigatesProjectsInMultiProjectMode(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta"},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	model := updated.(Model)
+	if model.logsVisible {
+		t.Fatal("expected l not to toggle logs in multi-project mode")
+	}
+	if model.activeProjectID != "alpha" {
+		t.Fatalf("expected l to navigate to alpha project, got %q", model.activeProjectID)
+	}
+}
+
+func TestUpdate_ProjectSwitchFetchesBrainEntriesWhenBrainTabActive(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta"},
+	})
+	m.activeContentTab = ContentTabBrain
+	m.entryTree.SetEntries([]types.BrainEntry{{ID: "old", Path: "projects/old/idea/old.md", Title: "Old"}})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	model := updated.(Model)
+	if model.activeProjectID != "alpha" {
+		t.Fatalf("expected l to navigate to alpha project, got %q", model.activeProjectID)
+	}
+	if cmd == nil {
+		t.Fatal("expected project switch on Brain tab to fetch entries for active project")
+	}
+	if len(model.entryTree.entries) != 0 {
+		t.Fatalf("expected stale Brain entries to clear while fetching, got %#v", model.entryTree.entries)
+	}
+}
+
+func TestProjectSelectedFetchesBrainEntriesWhenBrainTabActive(t *testing.T) {
+	m := NewModel(Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "all",
+		Projects: []string{"alpha", "beta"},
+	})
+	m.activeContentTab = ContentTabBrain
+
+	updated, cmd := m.Update(projectSelectedMsg{projectID: "beta"})
+	model := updated.(Model)
+	if model.activeProjectID != "beta" {
+		t.Fatalf("expected selected project beta, got %q", model.activeProjectID)
+	}
+	if cmd == nil {
+		t.Fatal("expected picker project switch on Brain tab to fetch entries")
 	}
 }
 

@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // ScheduledTaskResult represents a found scheduled task entry.
@@ -48,6 +51,25 @@ type MonitorTemplateInfo struct {
 	CreationMode    string `json:"creation_mode"`
 }
 
+// DreamConfigInfo combines the Dream monitor template with the active project monitor.
+type DreamConfigInfo struct {
+	Project             string
+	TemplateLabel       string
+	TemplateDescription string
+	DefaultSchedule     string
+	Monitor             *DreamMonitorInfo
+}
+
+// DreamMonitorInfo holds active Dream monitor data for rendering in the TUI.
+type DreamMonitorInfo struct {
+	ID       string
+	Path     string
+	Title    string
+	Enabled  bool
+	Schedule string
+	Scope    string
+}
+
 // FetchTemplates fetches available monitor templates from the API.
 func (c *MonitorClient) FetchTemplates(ctx context.Context) ([]MonitorTemplateInfo, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/monitors/templates", nil)
@@ -68,6 +90,74 @@ func (c *MonitorClient) FetchTemplates(ctx context.Context) ([]MonitorTemplateIn
 	}
 
 	return data.Templates, nil
+}
+
+// FetchDreamConfig fetches the Dream template and the active project Dream monitor.
+func (c *MonitorClient) FetchDreamConfig(ctx context.Context, project string) (*DreamConfigInfo, error) {
+	templates, err := c.FetchTemplates(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	config := &DreamConfigInfo{Project: project}
+	for _, tmpl := range templates {
+		if tmpl.ID == "dream" {
+			config.TemplateLabel = tmpl.Label
+			config.TemplateDescription = tmpl.Description
+			config.DefaultSchedule = tmpl.DefaultSchedule
+			break
+		}
+	}
+
+	q := url.Values{}
+	q.Set("template_id", "dream")
+	if project != "" {
+		q.Set("project", project)
+	}
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/monitors?"+q.Encode(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("fetch dream monitors: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var data types.MonitorListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode dream monitors response: %w", err)
+	}
+
+	for _, monitor := range data.Monitors {
+		if monitor.TemplateID != "dream" {
+			continue
+		}
+		config.Monitor = &DreamMonitorInfo{
+			ID:       monitor.ID,
+			Path:     monitor.Path,
+			Title:    monitor.Title,
+			Enabled:  monitor.Enabled,
+			Schedule: monitor.Schedule,
+			Scope:    formatDreamScope(monitor.Scope),
+		}
+		break
+	}
+
+	return config, nil
+}
+
+func formatDreamScope(scope types.MonitorScope) string {
+	switch scope.Type {
+	case "all":
+		return "all projects"
+	case "project":
+		return "project " + scope.Project
+	case "feature":
+		return "feature " + scope.FeatureID
+	default:
+		return "unknown"
+	}
 }
 
 // monitorTag returns the tag string for a monitor entry.

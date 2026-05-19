@@ -15,6 +15,16 @@ type TaskDetail struct {
 	task          *types.ResolvedTask
 	width, height int
 
+	// Entry mode: reuses the same detail viewport for full brain entry content.
+	entryMode    bool
+	entryPath    string
+	entryTitle   string
+	entryType    string
+	entryContent string
+	entryLoading bool
+	entryErr     string
+	entryHeader  string
+
 	// Feature mode: when a feature header is selected instead of a task
 	featureMode bool
 	featureID   string
@@ -37,6 +47,14 @@ func (td *TaskDetail) SetTask(task *types.ResolvedTask) {
 	td.featureMode = false
 	td.featureID = ""
 	td.feature = nil
+	td.entryMode = false
+	td.entryPath = ""
+	td.entryTitle = ""
+	td.entryType = ""
+	td.entryContent = ""
+	td.entryLoading = false
+	td.entryErr = ""
+	td.entryHeader = ""
 
 	// Only reset scroll position when switching to a different task
 	oldID := ""
@@ -60,6 +78,14 @@ func (td *TaskDetail) SetTask(task *types.ResolvedTask) {
 func (td *TaskDetail) SetFeature(featureID string, feature *service.ComputedFeature) {
 	// Clear task mode
 	td.task = nil
+	td.entryMode = false
+	td.entryPath = ""
+	td.entryTitle = ""
+	td.entryType = ""
+	td.entryContent = ""
+	td.entryLoading = false
+	td.entryErr = ""
+	td.entryHeader = ""
 
 	// Only reset scroll when switching to a different feature
 	oldID := td.featureID
@@ -71,6 +97,64 @@ func (td *TaskDetail) SetFeature(featureID string, feature *service.ComputedFeat
 		td.scrollOffset = 0
 		td.totalLines = 0
 	}
+}
+
+// SetEntryLoading switches to brain entry detail mode while content is fetched.
+func (td *TaskDetail) SetEntryLoading(entry types.BrainEntry, header ...string) {
+	td.task = nil
+	td.featureMode = false
+	td.featureID = ""
+	td.feature = nil
+
+	oldPath := td.entryPath
+	td.entryMode = true
+	td.entryPath = entry.Path
+	td.entryTitle = entry.Title
+	td.entryType = entry.Type
+	td.entryContent = ""
+	td.entryLoading = true
+	td.entryErr = ""
+	td.entryHeader = entryDetailHeader(header)
+	if oldPath != entry.Path {
+		td.scrollOffset = 0
+		td.totalLines = 0
+	}
+}
+
+// SetEntryContent displays full brain entry content in the detail viewport.
+func (td *TaskDetail) SetEntryContent(path, title, entryType, content string, header ...string) {
+	oldPath := td.entryPath
+	td.task = nil
+	td.featureMode = false
+	td.featureID = ""
+	td.feature = nil
+	td.entryMode = true
+	td.entryPath = path
+	td.entryTitle = title
+	td.entryType = entryType
+	td.entryContent = content
+	td.entryLoading = false
+	td.entryErr = ""
+	td.entryHeader = entryDetailHeader(header)
+	td.totalLines = td.countEntryContentLines()
+	if oldPath != path {
+		td.scrollOffset = 0
+	}
+}
+
+// SetEntryError displays an entry fetch error in the detail viewport.
+func (td *TaskDetail) SetEntryError(path, title, entryType string, err error, header ...string) {
+	td.SetEntryContent(path, title, entryType, "", header...)
+	if err != nil {
+		td.entryErr = err.Error()
+	}
+}
+
+func entryDetailHeader(header []string) string {
+	if len(header) > 0 && header[0] != "" {
+		return header[0]
+	}
+	return "Entry Detail"
 }
 
 // ScrollDown scrolls the viewport down by one line.
@@ -114,9 +198,21 @@ func (td *TaskDetail) SetSize(width, height int) {
 	// Recompute totalLines so ScrollDown/ScrollUp have accurate bounds
 	if td.featureMode && td.feature != nil {
 		td.totalLines = td.countFeatureContentLines()
+	} else if td.entryMode {
+		td.totalLines = td.countEntryContentLines()
 	} else if td.task != nil {
 		td.totalLines = td.countContentLines()
 	}
+}
+
+func (td *TaskDetail) countEntryContentLines() int {
+	if !td.entryMode || td.entryLoading || td.entryErr != "" {
+		return 1
+	}
+	if td.entryContent == "" {
+		return 1
+	}
+	return len(strings.Split(td.entryContent, "\n"))
 }
 
 // countContentLines counts how many content lines the task produces (excluding header).
@@ -221,10 +317,81 @@ func (td *TaskDetail) View() string {
 	if td.featureMode && td.feature != nil {
 		return td.renderFeature()
 	}
+	if td.entryMode {
+		return td.renderEntry()
+	}
 	if td.task == nil {
 		return td.renderEmpty()
 	}
 	return td.renderTask()
+}
+
+func (td *TaskDetail) renderEntry() string {
+	label := td.entryTitle
+	if label == "" {
+		label = td.entryPath
+	}
+	if td.entryType != "" {
+		label = fmt.Sprintf("%s [%s]", label, td.entryType)
+	}
+
+	lines := []string{}
+	if td.entryLoading {
+		lines = append(lines, DimStyle.Render("Loading entry content..."))
+	} else if td.entryErr != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBlocked).Render("Error: "+td.entryErr))
+	} else if td.entryContent == "" {
+		lines = append(lines, DimStyle.Render("Entry is empty"))
+	} else {
+		lines = strings.Split(td.entryContent, "\n")
+	}
+	td.totalLines = len(lines)
+
+	headerTitle := td.entryHeader
+	if headerTitle == "" {
+		headerTitle = "Entry Detail"
+	}
+	header := TitleStyle.Render(headerTitle)
+	if label != "" {
+		header = TitleStyle.Render(headerTitle + ": " + label)
+	}
+
+	if td.height > 0 && td.totalLines > td.height-1 {
+		viewportHeight := td.height - 1
+		if viewportHeight < 1 {
+			viewportHeight = 1
+		}
+		maxOffset := td.totalLines - viewportHeight
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		if td.scrollOffset > maxOffset {
+			td.scrollOffset = maxOffset
+		}
+		startLine := td.scrollOffset + 1
+		endLine := td.scrollOffset + viewportHeight
+		if endLine > td.totalLines {
+			endLine = td.totalLines
+		}
+		header += DimStyle.Render(fmt.Sprintf(" (%d-%d/%d)", startLine, endLine, td.totalLines))
+
+		end := td.scrollOffset + viewportHeight
+		if end > td.totalLines {
+			end = td.totalLines
+		}
+		visibleLines := make([]string, end-td.scrollOffset)
+		copy(visibleLines, lines[td.scrollOffset:end])
+		if td.scrollOffset > 0 && len(visibleLines) > 0 {
+			visibleLines[0] = DimStyle.Render("▲ more above")
+		}
+		if end < td.totalLines && len(visibleLines) > 0 {
+			visibleLines[len(visibleLines)-1] = DimStyle.Render("▼ more below")
+		}
+		return strings.Join(append([]string{header}, visibleLines...), "\n")
+	}
+
+	td.scrollOffset = 0
+	return strings.Join(append([]string{header}, lines...), "\n")
 }
 
 // renderEmpty renders the placeholder when no task is selected.

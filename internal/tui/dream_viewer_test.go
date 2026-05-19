@@ -118,3 +118,53 @@ func TestDreamViewer_SetLoadingClearsError(t *testing.T) {
 		t.Error("SetLoading should clear error message")
 	}
 }
+
+func TestDreamViewer_ConfigEnabledRendersAboveContent(t *testing.T) {
+	dv := NewDreamViewer()
+	dv.SetDreamConfig(DreamConfigInfo{
+		TemplateLabel:       "Dream Consolidation",
+		TemplateDescription: "Periodically consolidates project knowledge",
+		DefaultSchedule:     "0 3 * * *",
+		Monitor: &DreamMonitorInfo{
+			Enabled:  true,
+			Schedule: "15 4 * * *",
+			Scope:    "project brain-api",
+		},
+	})
+	dv.SetContent("# Project Dream\n\nCurrent context")
+
+	view := dv.View(100, 20)
+	for _, want := range []string{
+		"Dream Config",
+		"Enabled",
+		"15 4 * * *",
+		"project brain-api",
+		"Periodically consolidates project knowledge",
+		"# Project Dream",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected Dream view to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestDreamViewer_ConfigMissingShowsEnableHint(t *testing.T) {
+	dv := NewDreamViewer()
+	dv.SetDreamConfig(DreamConfigInfo{
+		Project:         "brain-api",
+		TemplateLabel:   "Dream Consolidation",
+		DefaultSchedule: "0 3 * * *",
+	})
+	dv.SetContent("")
+
+	view := dv.View(100, 20)
+	for _, want := range []string{
+		"Not configured",
+		"brain dream brain-api --enable",
+		"0 3 * * *",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected Dream view to contain %q, got:\n%s", want, view)
+		}
+	}
+}

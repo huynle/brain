@@ -21,7 +21,8 @@ func openDatabase(brainDir string) (*storage.StorageLayer, error) {
 
 // CreateTokenDirect creates a token by directly accessing the database.
 // Used for bootstrap scenarios when the API server is not running.
-func CreateTokenDirect(brainDir, name string) (*storage.Token, error) {
+// If scope is empty, it defaults to "admin:*".
+func CreateTokenDirect(brainDir, name, scope string) (*storage.Token, error) {
 	store, err := openDatabase(brainDir)
 	if err != nil {
 		return nil, err
@@ -36,7 +37,7 @@ func CreateTokenDirect(brainDir, name string) (*storage.Token, error) {
 
 	// Create token in database
 	ctx := context.Background()
-	if err := store.CreateToken(ctx, name, tokenStr); err != nil {
+	if err := store.CreateToken(ctx, name, tokenStr, scope); err != nil {
 		return nil, fmt.Errorf("create token: %w", err)
 	}
 

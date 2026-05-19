@@ -99,9 +99,9 @@ func TestTokenCommand_ListTokens(t *testing.T) {
 	ctx := context.Background()
 
 	token1, _ := store.GenerateToken()
-	store.CreateToken(ctx, "token1", token1)
+	store.CreateToken(ctx, "token1", token1, "")
 	token2, _ := store.GenerateToken()
-	store.CreateToken(ctx, "token2", token2)
+	store.CreateToken(ctx, "token2", token2, "")
 	store.Close()
 
 	// Now list them via command
@@ -128,7 +128,7 @@ func TestTokenCommand_RevokeToken(t *testing.T) {
 	}
 	ctx := context.Background()
 	token, _ := store.GenerateToken()
-	store.CreateToken(ctx, "revoke-me", token)
+	store.CreateToken(ctx, "revoke-me", token, "")
 	store.Close()
 
 	// Revoke it via command
@@ -694,7 +694,7 @@ func TestTokenCommand_ListFallsBackToDirectDBOn401(t *testing.T) {
 		t.Fatalf("open database: %v", err)
 	}
 	tok, _ := store.GenerateToken()
-	store.CreateToken(context.Background(), "list-test", tok)
+	store.CreateToken(context.Background(), "list-test", tok, "")
 	store.Close()
 
 	cmd := &TokenCommand{
@@ -723,7 +723,7 @@ func TestTokenCommand_RevokeFallsBackToDirectDBOn401(t *testing.T) {
 		t.Fatalf("open database: %v", err)
 	}
 	tok, _ := store.GenerateToken()
-	store.CreateToken(context.Background(), "revoke-test", tok)
+	store.CreateToken(context.Background(), "revoke-test", tok, "")
 	store.Close()
 
 	cmd := &TokenCommand{

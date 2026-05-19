@@ -370,6 +370,253 @@ func TestBrainUpdate_Handler(t *testing.T) {
 	}
 }
 
+func TestBrainUpdate_HandlerOmitsEmptyOptionalStringDefaults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "PATCH" {
+			t.Errorf("method = %q, want PATCH", r.Method)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if body["status"] != "draft" {
+			t.Errorf("body.status = %v, want %q", body["status"], "draft")
+		}
+		if _, ok := body["title"]; ok {
+			t.Fatalf("body should not include empty title default: %#v", body)
+		}
+		if _, ok := body["feature_id"]; ok {
+			t.Fatalf("body should not include empty feature_id default: %#v", body)
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"path":   "projects/test/task/abc.md",
+			"title":  "Test Task",
+			"status": "draft",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_update"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"path":       "projects/test/task/abc.md",
+		"status":     "draft",
+		"title":      "",
+		"feature_id": "",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+}
+
+func TestBrainUpdate_HandlerOmitsOpenCodeOptionalDefaults(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+
+		if body["status"] != "pending" {
+			t.Errorf("body.status = %v, want %q", body["status"], "pending")
+		}
+		for _, key := range []string{"priority", "feature_priority", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode", "executor", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs"} {
+			if _, ok := body[key]; ok {
+				t.Fatalf("body should not include OpenCode optional default %q: %#v", key, body)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"path":   "projects/test/task/abc.md",
+			"title":  "Test Task",
+			"status": "pending",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_update"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"path":                 "projects/test/task/abc.md",
+		"status":               "pending",
+		"title":                "",
+		"append":               "",
+		"note":                 "",
+		"priority":             "medium",
+		"feature_id":           "",
+		"feature_priority":     "high",
+		"target_workdir":       "",
+		"git_branch":           "",
+		"merge_target_branch":  "",
+		"merge_policy":         "prompt_only",
+		"merge_strategy":       "squash",
+		"open_pr_before_merge": false,
+		"execution_mode":       "worktree",
+		"complete_on_idle":     false,
+		"remote_branch_policy": "keep",
+		"schedule":             "",
+		"schedule_enabled":     false,
+		"max_runs":             float64(0),
+		"run_once_at":          "",
+		"timezone":             "",
+		"starts_at":            "",
+		"expires_at":           "",
+		"feature_schedule":     "",
+		"feature_starts_at":    "",
+		"feature_expires_at":   "",
+		"feature_run_once_at":  "",
+		"feature_timezone":     "",
+		"direct_prompt":        "",
+		"agent":                "",
+		"model":                "",
+		"executor":             "opencode",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+}
+
+func TestBrainBulkUpdate_HandlerOmitsOpenCodeOptionalDefaultsInEntryUpdates(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/entries/bulk-update" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+
+		entries, ok := body["entries"].([]any)
+		if !ok || len(entries) != 1 {
+			t.Fatalf("entries = %#v, want one entry", body["entries"])
+		}
+		entry, ok := entries[0].(map[string]any)
+		if !ok {
+			t.Fatalf("entry = %#v, want object", entries[0])
+		}
+		updates, ok := entry["updates"].(map[string]any)
+		if !ok {
+			t.Fatalf("updates = %#v, want object", entry["updates"])
+		}
+		if updates["status"] != "pending" {
+			t.Errorf("updates.status = %v, want %q", updates["status"], "pending")
+		}
+		for _, key := range []string{"priority", "feature_priority", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode", "executor", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs"} {
+			if _, ok := updates[key]; ok {
+				t.Fatalf("updates should not include OpenCode optional default %q: %#v", key, updates)
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"updated": 1,
+			"failed":  0,
+			"total":   1,
+			"dry_run": false,
+			"results": []map[string]any{{"path": "projects/test/task/abc.md", "id": "abc12345", "title": "Test Task", "status": "ok"}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_bulk_update"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"entries": []any{
+			map[string]any{
+				"path": "projects/test/task/abc.md",
+				"updates": map[string]any{
+					"status":               "pending",
+					"priority":             "medium",
+					"feature_priority":     "high",
+					"merge_policy":         "prompt_only",
+					"merge_strategy":       "squash",
+					"open_pr_before_merge": false,
+					"execution_mode":       "worktree",
+					"complete_on_idle":     false,
+					"remote_branch_policy": "keep",
+					"schedule_enabled":     false,
+					"max_runs":             float64(0),
+					"executor":             "opencode",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+}
+
+func TestBrainBulkUpdate_HandlerTreatsEmptyFilterAsAbsentForExplicitEntries(t *testing.T) {
+	serverCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverCalled = true
+		if r.Method != "POST" || r.URL.Path != "/api/v1/entries/bulk-update" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+
+		if _, ok := body["filter"]; ok {
+			t.Fatalf("body should not include empty filter: %#v", body)
+		}
+		if _, ok := body["updates"]; ok {
+			t.Fatalf("body should not include top-level updates in explicit mode: %#v", body)
+		}
+		entries, ok := body["entries"].([]any)
+		if !ok || len(entries) != 1 {
+			t.Fatalf("entries = %#v, want one entry", body["entries"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"updated": 1,
+			"failed":  0,
+			"total":   1,
+			"dry_run": false,
+			"results": []map[string]any{{"path": "projects/test/task/abc.md", "id": "abc12345", "title": "Test Task", "status": "ok"}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_bulk_update"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"filter": map[string]any{},
+		"entries": []any{
+			map[string]any{
+				"path": "projects/test/task/abc.md",
+				"updates": map[string]any{
+					"status": "pending",
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !serverCalled {
+		t.Fatal("handler did not forward explicit entries request")
+	}
+}
+
 func TestBrainDelete_Handler(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "DELETE" {
@@ -694,12 +941,19 @@ func TestBrainSave_SchemaProperties(t *testing.T) {
 		"direct_prompt", "agent", "model", "schedule", "schedule_enabled",
 		"git_branch", "merge_target_branch", "merge_policy", "merge_strategy",
 		"remote_branch_policy", "open_pr_before_merge", "execution_mode",
-		"complete_on_idle", "relatedEntries",
+		"complete_on_idle", "executor", "extensions", "trigger", "action", "retry", "relatedEntries",
 	}
 
 	for _, prop := range expectedProps {
 		if _, ok := saveTool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("brain_save missing property %q", prop)
+		}
+	}
+
+	triggerDesc := saveTool.InputSchema.Properties["trigger"].Description
+	for _, want := range []string{"session", "cooldown", "max_concurrent"} {
+		if !strings.Contains(triggerDesc, want) {
+			t.Errorf("brain_save trigger description should mention %q, got %q", want, triggerDesc)
 		}
 	}
 }
@@ -718,12 +972,163 @@ func TestBrainUpdate_SchemaProperties(t *testing.T) {
 		"open_pr_before_merge", "execution_mode", "complete_on_idle",
 		"schedule", "schedule_enabled", "feature_id", "feature_priority",
 		"feature_depends_on", "direct_prompt", "agent", "model",
+		"executor", "extensions", "trigger", "action", "retry",
 	}
 
 	for _, prop := range expectedProps {
 		if _, ok := updateTool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("brain_update missing property %q", prop)
 		}
+	}
+
+	triggerDesc := updateTool.InputSchema.Properties["trigger"].Description
+	for _, want := range []string{"session", "cooldown", "max_concurrent"} {
+		if !strings.Contains(triggerDesc, want) {
+			t.Errorf("brain_update trigger description should mention %q, got %q", want, triggerDesc)
+		}
+	}
+}
+
+func TestBrainSave_ForwardsFeatureCompletionTrigger(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/entries" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		trigger, ok := body["trigger"].(map[string]any)
+		if !ok {
+			t.Fatalf("trigger was not forwarded as an object: %#v", body["trigger"])
+		}
+		if trigger["event"] != "feature.completed" {
+			t.Errorf("trigger.event = %v, want feature.completed", trigger["event"])
+		}
+		filter, ok := trigger["filter"].(map[string]any)
+		if !ok {
+			t.Fatalf("trigger.filter was not forwarded as an object: %#v", trigger["filter"])
+		}
+		if filter["feature_id"] != "chain-main" {
+			t.Errorf("trigger.filter.feature_id = %v, want chain-main", filter["feature_id"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"id":     "post1234",
+			"path":   "projects/test/task/post1234.md",
+			"title":  "Post task",
+			"type":   "task",
+			"status": "active",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	_, err := s.tools["brain_save"].handler(context.Background(), map[string]any{
+		"type":    "task",
+		"title":   "Post task",
+		"content": "Triggered after feature completion",
+		"trigger": map[string]any{
+			"event": "feature.completed",
+			"filter": map[string]any{
+				"feature_id": "chain-main",
+				"project_id": "test",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+}
+
+func TestBrainSave_ForwardsAutomationTriggerActionAndRetry(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/entries" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+
+		if body["type"] != "automation" {
+			t.Errorf("type = %v, want automation", body["type"])
+		}
+		trigger, ok := body["trigger"].(map[string]any)
+		if !ok {
+			t.Fatalf("trigger was not forwarded as an object: %#v", body["trigger"])
+		}
+		if trigger["type"] != "session" {
+			t.Errorf("trigger.type = %v, want session", trigger["type"])
+		}
+		if trigger["cooldown"] != "5m" {
+			t.Errorf("trigger.cooldown = %v, want 5m", trigger["cooldown"])
+		}
+		if trigger["max_concurrent"] != float64(1) {
+			t.Errorf("trigger.max_concurrent = %v, want 1", trigger["max_concurrent"])
+		}
+
+		action, ok := body["action"].(map[string]any)
+		if !ok {
+			t.Fatalf("action was not forwarded as an object: %#v", body["action"])
+		}
+		if action["type"] != "prompt" {
+			t.Errorf("action.type = %v, want prompt", action["type"])
+		}
+		if action["direct_prompt"] != "Summarize the new session" {
+			t.Errorf("action.direct_prompt = %v, want session prompt", action["direct_prompt"])
+		}
+
+		retry, ok := body["retry"].(map[string]any)
+		if !ok {
+			t.Fatalf("retry was not forwarded as an object: %#v", body["retry"])
+		}
+		if retry["max_attempts"] != float64(2) {
+			t.Errorf("retry.max_attempts = %v, want 2", retry["max_attempts"])
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"id":     "auto1234",
+			"path":   "projects/test/automation/auto1234.md",
+			"title":  "Session automation",
+			"type":   "automation",
+			"status": "active",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	_, err := s.tools["brain_save"].handler(context.Background(), map[string]any{
+		"type":    "automation",
+		"title":   "Session automation",
+		"content": "Runs when a session is discovered",
+		"trigger": map[string]any{
+			"type":           "session",
+			"once_per":       "session",
+			"cooldown":       "5m",
+			"max_concurrent": 1,
+		},
+		"action": map[string]any{
+			"type":          "prompt",
+			"direct_prompt": "Summarize the new session",
+		},
+		"retry": map[string]any{
+			"max_attempts": 2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
 	}
 }
 
@@ -965,8 +1370,17 @@ func TestBrainAutomationList_Handler_WithEntries(t *testing.T) {
 					"trigger":    map[string]any{"type": "cron", "schedule": "0 0 * * *"},
 					"action":     map[string]any{"type": "script", "command": "make build"},
 				},
+				{
+					"id":         "auto9999",
+					"title":      "Session Summary",
+					"type":       "automation",
+					"status":     "active",
+					"project_id": "my-project",
+					"trigger":    map[string]any{"type": "session"},
+					"action":     map[string]any{"type": "prompt", "direct_prompt": "Summarize session"},
+				},
 			},
-			"total": 2,
+			"total": 3,
 		})
 	}))
 	defer server.Close()
@@ -981,7 +1395,7 @@ func TestBrainAutomationList_Handler_WithEntries(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 
-	if !strings.Contains(result, "Automations (2)") {
+	if !strings.Contains(result, "Automations (3)") {
 		t.Errorf("result should show count, got: %s", result)
 	}
 	if !strings.Contains(result, "On Task Complete") {
@@ -989,6 +1403,12 @@ func TestBrainAutomationList_Handler_WithEntries(t *testing.T) {
 	}
 	if !strings.Contains(result, "auto1234") {
 		t.Errorf("result should contain automation ID, got: %s", result)
+	}
+	if !strings.Contains(result, "Session Summary") {
+		t.Errorf("result should contain session automation title, got: %s", result)
+	}
+	if !strings.Contains(result, "Trigger: session") {
+		t.Errorf("result should show session trigger, got: %s", result)
 	}
 }
 

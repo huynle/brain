@@ -2,165 +2,190 @@ package api
 
 import (
 	"encoding/json"
-	"io"
+	"fmt"
 	"net/http"
-	"strings"
+	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	"github.com/huynle/brain-api/internal/events"
+	"github.com/huynle/brain-api/internal/types"
 )
 
-// DefaultWebhookMaxBodySize is the default maximum request body size for webhooks (1MB).
-const DefaultWebhookMaxBodySize int64 = 1 << 20
-
-// emitEventRequest is the JSON body for POST /api/v1/events/emit.
-type emitEventRequest struct {
-	Type     string         `json:"type"`
-	Payload  map[string]any `json:"payload,omitempty"`
-	DedupKey string         `json:"dedup_key,omitempty"`
-}
-
-// HandleEmitEvent handles POST /api/v1/events/emit.
-// It allows runners and external systems to publish events into the event bus.
-func (h *Handler) HandleEmitEvent(w http.ResponseWriter, r *http.Request) {
-	if h.eventBus == nil {
-		WriteError(w, http.StatusServiceUnavailable, "Service Unavailable", "Event bus not configured")
+// HandleIngestEvents handles POST /events — ingest a batch of events from runners.
+// Accepts a JSON array of Event structs. Validates, stores in ring buffer,
+// and publishes to EventHub.
+func (h *Handler) HandleIngestEvents(w http.ResponseWriter, r *http.Request) {
+	if h.events == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "event service not configured")
 		return
 	}
 
-	var req emitEventRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
+	var events []types.Event
+	if err := json.NewDecoder(r.Body).Decode(&events); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON: "+err.Error())
 		return
 	}
 
-	// Validate: event type must be non-empty
-	eventType := strings.TrimSpace(req.Type)
-	if eventType == "" {
-		WriteError(w, http.StatusBadRequest, "Bad Request", "Event type is required")
+	if err := h.events.Ingest(r.Context(), events); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
 		return
 	}
 
-	// Build and publish the event
-	event := events.Event{
-		Type:      events.EventType(eventType),
-		Payload:   req.Payload,
-		DedupKey:  req.DedupKey,
-		Source:    "external",
-		Timestamp: time.Now(),
-	}
-
-	h.eventBus.Publish(event)
-
-	WriteJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
-}
-
-// webhookTriggerResponse is the JSON body for a successful webhook trigger.
-type webhookTriggerResponse struct {
-	Status      string              `json:"status"`
-	Matched     int                 `json:"matched"`
-	Automations []webhookMatchEntry `json:"automations"`
-}
-
-// webhookMatchEntry is a matched automation in the webhook trigger response.
-type webhookMatchEntry struct {
-	ID        string `json:"id"`
-	Path      string `json:"path"`
-	ProjectID string `json:"project_id,omitempty"`
-}
-
-// HandleWebhookTrigger handles POST /api/v1/events/webhook/{path...}.
-// External systems (GitHub, CI, etc.) POST arbitrary JSON to trigger automations
-// whose trigger.type=webhook and trigger.webhook matches the URL path.
-func (h *Handler) HandleWebhookTrigger(w http.ResponseWriter, r *http.Request) {
-	if h.eventBus == nil {
-		WriteError(w, http.StatusServiceUnavailable, "Service Unavailable", "Event bus not configured")
-		return
-	}
-
-	// Extract the webhook path from the URL.
-	// chi.URLParam with "*" captures everything after /webhook/
-	webhookPath := chi.URLParam(r, "*")
-	if webhookPath == "" {
-		WriteError(w, http.StatusBadRequest, "Bad Request", "Webhook path is required")
-		return
-	}
-
-	// Enforce payload size limit
-	limited := io.LimitReader(r.Body, DefaultWebhookMaxBodySize+1)
-	body, err := io.ReadAll(limited)
-	if err != nil {
-		WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to read request body")
-		return
-	}
-	if int64(len(body)) > DefaultWebhookMaxBodySize {
-		WriteError(w, http.StatusRequestEntityTooLarge, "Payload Too Large",
-			"Request body exceeds maximum size of 1MB")
-		return
-	}
-
-	// Parse JSON body (empty body is allowed — treated as empty payload)
-	var payload map[string]any
-	if len(body) > 0 {
-		if err := json.Unmarshal(body, &payload); err != nil {
-			WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
-			return
-		}
-	}
-	if payload == nil {
-		payload = make(map[string]any)
-	}
-
-	// Inject webhook metadata into payload
-	payload["webhook_path"] = webhookPath
-
-	// Find matching automations
-	var matched []webhookMatchEntry
-	if h.automations != nil {
-		automations, err := h.automations.ListActiveAutomations(r.Context())
-		if err == nil {
-			for _, auto := range automations {
-				if auto.Trigger.Type == "webhook" && matchWebhookPath(auto.Trigger.Webhook, webhookPath) {
-					matched = append(matched, webhookMatchEntry{
-						ID:        auto.ID,
-						Path:      auto.Path,
-						ProjectID: auto.ProjectID,
-					})
-				}
-			}
-		}
-	}
-
-	// Publish webhook.received event with full request body
-	event := events.Event{
-		Type:      events.WebhookReceived,
-		Payload:   payload,
-		Source:    "webhook",
-		Timestamp: time.Now(),
-	}
-	h.eventBus.Publish(event)
-
-	// Return 200 with matched automations, or 204 if no match
-	if len(matched) == 0 {
-		w.WriteHeader(http.StatusNoContent)
-		return
-	}
-
-	WriteJSON(w, http.StatusOK, webhookTriggerResponse{
-		Status:      "triggered",
-		Matched:     len(matched),
-		Automations: matched,
+	WriteJSON(w, http.StatusAccepted, map[string]any{
+		"accepted": len(events),
 	})
 }
 
-// matchWebhookPath checks if a trigger's webhook path matches the incoming path.
-// Both paths are normalized by trimming leading/trailing slashes for comparison.
-func matchWebhookPath(triggerPath, incomingPath string) bool {
-	return normalizePath(triggerPath) == normalizePath(incomingPath)
+// HandleEventStream handles GET /events/stream — SSE event stream with filters.
+// Supports query param filters: ?type=task.*&project_id=brain-api&feature_id=auth
+// Supports Last-Event-ID header for reconnection replay.
+func (h *Handler) HandleEventStream(w http.ResponseWriter, r *http.Request) {
+	if h.events == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "event service not configured")
+		return
+	}
+
+	// Check that the ResponseWriter supports flushing.
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", "streaming not supported")
+		return
+	}
+
+	// Parse filter query params.
+	filters := make(map[string]string)
+	for _, key := range []string{"type", "project_id", "feature_id", "source"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			filters[key] = v
+		}
+	}
+
+	// Set SSE headers.
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	// Handle Last-Event-ID reconnection replay.
+	if lastEventID := r.Header.Get("Last-Event-ID"); lastEventID != "" {
+		replayEvents, _ := h.events.Recent(r.Context(), 1000, nil)
+		replaying := false
+		for _, evt := range replayEvents {
+			if evt.ID == lastEventID {
+				replaying = true
+				continue
+			}
+			if replaying && matchesEventFilters(evt, filters) {
+				writeEventSSE(w, evt)
+			}
+		}
+		flusher.Flush()
+	}
+
+	// Subscribe to real-time events.
+	ch, unsub := h.events.Subscribe(r.Context(), filters)
+	defer unsub()
+
+	// Start heartbeat ticker.
+	heartbeat := time.NewTicker(DefaultHeartbeatInterval)
+	defer heartbeat.Stop()
+
+	// Event loop.
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			writeEventSSE(w, evt)
+			flusher.Flush()
+
+		case <-heartbeat.C:
+			// Write SSE comment as heartbeat to keep connection alive.
+			fmt.Fprintf(w, ": heartbeat %s\n\n", types.TimeNowUTC().Format(time.RFC3339))
+			flusher.Flush()
+		}
+	}
 }
 
-// normalizePath strips leading and trailing slashes for consistent comparison.
-func normalizePath(p string) string {
-	return strings.Trim(p, "/")
+// HandleRecentEvents handles GET /events/recent — returns last N events as JSON.
+// Supports query params: ?limit=100&type=task.*&project_id=brain-api&feature_id=auth
+func (h *Handler) HandleRecentEvents(w http.ResponseWriter, r *http.Request) {
+	if h.events == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "event service not configured")
+		return
+	}
+
+	// Parse limit (default 100, max 1000).
+	limit := 100
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "limit must be a positive integer")
+			return
+		}
+		if n > 1000 {
+			n = 1000
+		}
+		limit = n
+	}
+
+	// Parse filter query params.
+	filters := make(map[string]string)
+	for _, key := range []string{"type", "project_id", "feature_id", "source"} {
+		if v := r.URL.Query().Get(key); v != "" {
+			filters[key] = v
+		}
+	}
+
+	events, err := h.events.Recent(r.Context(), limit, filters)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"events": events,
+		"count":  len(events),
+	})
+}
+
+// writeEventSSE writes a single event as an SSE event with id field.
+func writeEventSSE(w http.ResponseWriter, evt types.Event) {
+	jsonData, err := json.Marshal(evt)
+	if err != nil {
+		return
+	}
+	fmt.Fprintf(w, "id: %s\nevent: %s\ndata: %s\n\n", evt.ID, evt.Type, jsonData)
+}
+
+// matchesEventFilters checks whether an event matches the given filter map.
+// Used for Last-Event-ID replay filtering.
+func matchesEventFilters(evt types.Event, filters map[string]string) bool {
+	for key, val := range filters {
+		switch key {
+		case "project_id":
+			if evt.ProjectID != val {
+				return false
+			}
+		case "type":
+			if !types.MatchEventPattern(val, evt.Type) {
+				return false
+			}
+		case "source":
+			if evt.Source != val {
+				return false
+			}
+		case "feature_id":
+			if evt.FeatureID != val {
+				return false
+			}
+		}
+	}
+	return true
 }

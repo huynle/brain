@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -36,8 +35,7 @@ func (c *LogsCommand) Execute() error {
 	// Determine log file path
 	logFile := c.Config.Server.LogFile
 	if logFile == "" {
-		homeDir, _ := os.UserHomeDir()
-		logFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+		logFile = defaultLogFile()
 	}
 
 	// Check if log file exists
@@ -89,12 +87,12 @@ func (c *LogsCommand) showLines(f *os.File, since time.Duration) error {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Text()
-		
+
 		// Apply filters
 		if !c.shouldShowLine(line, cutoff) {
 			continue
 		}
-		
+
 		allLines = append(allLines, line)
 	}
 	if err := scanner.Err(); err != nil {
@@ -131,7 +129,7 @@ func (c *LogsCommand) followLogs(f *os.File, since time.Duration) error {
 	for {
 		if scanner.Scan() {
 			line := scanner.Text()
-			
+
 			// Apply filters
 			if c.shouldShowLine(line, cutoff) {
 				fmt.Fprintln(c.Out, line)
@@ -161,7 +159,7 @@ func (c *LogsCommand) shouldShowLine(line string, cutoff time.Time) bool {
 	if c.Flags.Level != "" {
 		level := strings.ToLower(c.Flags.Level)
 		lineLower := strings.ToLower(line)
-		
+
 		// Check if line contains the level
 		switch level {
 		case "debug":

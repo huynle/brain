@@ -867,7 +867,7 @@ func TestNewModel_WithoutLogDir_SetsDefaultLogFilePath(t *testing.T) {
 		t.Fatalf("failed to get home dir: %v", err)
 	}
 
-	expectedPath := filepath.Join(homeDir, ".local", "log", "brain-runner", "test-project", "tui-logs.jsonl")
+	expectedPath := filepath.Join(homeDir, ".local", "state", "brain-runner", "test-project", "tui-logs.jsonl")
 	if m.logViewer.logFile != expectedPath {
 		t.Errorf("expected logFile '%s', got '%s'", expectedPath, m.logViewer.logFile)
 	}

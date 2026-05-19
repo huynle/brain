@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 6
+const CurrentSchemaVersion = 12
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -81,6 +81,7 @@ const createAPITokensTable = `
 CREATE TABLE IF NOT EXISTS api_tokens (
   name TEXT PRIMARY KEY,
   token TEXT UNIQUE NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'admin:*',
   created_at TEXT DEFAULT (datetime('now')),
   last_used TEXT,
   revoked_at TEXT
@@ -146,18 +147,89 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
   created_at INTEGER NOT NULL
 );`
 
+const createTaskClaimsTable = `
+CREATE TABLE IF NOT EXISTS task_claims (
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  runner_id TEXT NOT NULL,
+  claimed_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, task_id)
+);`
+
+const createFeatureAssignmentsTable = `
+CREATE TABLE IF NOT EXISTS feature_assignments (
+  project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  runner_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL,
+  assigned_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, feature_id)
+);`
+
 const createRunnersTable = `
 CREATE TABLE IF NOT EXISTS runners (
   runner_id TEXT PRIMARY KEY,
-  hostname TEXT NOT NULL DEFAULT '',
-  projects TEXT NOT NULL DEFAULT '[]',
-  capabilities TEXT NOT NULL DEFAULT '[]',
+  hostname TEXT NOT NULL,
+  labels TEXT DEFAULT '{}',
+  executors TEXT DEFAULT '[]',
+  capabilities TEXT DEFAULT '[]',
   max_parallel INTEGER NOT NULL DEFAULT 1,
-  active_tasks INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'online',
-  version TEXT NOT NULL DEFAULT '',
-  registered_at TEXT NOT NULL DEFAULT (datetime('now')),
-  last_heartbeat TEXT NOT NULL DEFAULT (datetime('now'))
+  feature_ids TEXT DEFAULT '',
+  registered_at INTEGER NOT NULL,
+  last_heartbeat INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'online'
+);`
+
+const createWebhooksTable = `
+CREATE TABLE IF NOT EXISTS webhooks (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  events TEXT NOT NULL,
+  filter TEXT DEFAULT '{}',
+  secret TEXT DEFAULT '',
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);`
+
+const createWebhookDeliveriesTable = `
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id TEXT PRIMARY KEY,
+  webhook_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  status_code INTEGER,
+  success INTEGER NOT NULL,
+  latency_ms INTEGER,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE
+);`
+
+const createNoteEmbeddingsTable = `
+CREATE TABLE IF NOT EXISTS note_embeddings (
+  note_id INTEGER NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  embedding BLOB NOT NULL,
+  PRIMARY KEY (note_id, chunk_index),
+  FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+);`
+
+const createNoteEmbeddingsMetaTable = `
+CREATE TABLE IF NOT EXISTS note_embeddings_meta (
+  note_id INTEGER NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  project_id TEXT,
+  type TEXT,
+  status TEXT,
+  feature_id TEXT,
+  priority TEXT,
+  embedding_indexed_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (note_id, chunk_index),
+  FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
 );`
 
 // ---------------------------------------------------------------------------
@@ -175,12 +247,17 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_links_target_path ON links(target_path);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_note ON tags(note_id);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);",
-	// Event log indexes
 	"CREATE INDEX IF NOT EXISTS idx_event_log_type_created ON event_log(event_type, created_at);",
 	"CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_dedup_key ON event_log(dedup_key) WHERE dedup_key IS NOT NULL;",
-	// Runner indexes
+	// Task claims indexes
+	"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at);",
+	// Feature assignment indexes
+	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_runner ON feature_assignments(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_project ON feature_assignments(project_id);",
+	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_status ON feature_assignments(status);",
+	// Runners indexes
 	"CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status);",
-	"CREATE INDEX IF NOT EXISTS idx_runners_last_heartbeat ON runners(last_heartbeat);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -188,6 +265,16 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_expires ON oauth_access_tokens(expires_at);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client ON oauth_refresh_tokens(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_expires ON oauth_refresh_tokens(expires_at);",
+	// Webhook indexes
+	"CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON webhooks(enabled);",
+	"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id);",
+	"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);",
+	// Note embeddings indexes
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_project ON note_embeddings_meta(project_id);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_type ON note_embeddings_meta(type);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_status ON note_embeddings_meta(status);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_feature ON note_embeddings_meta(feature_id);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_priority ON note_embeddings_meta(priority);",
 }
 
 // ---------------------------------------------------------------------------
@@ -305,19 +392,147 @@ func migrateSchema(db *sql.DB) error {
 	}
 
 	if ver < 5 {
-		// v5: add event_log table for at-least-once event delivery.
+		// v5: add event_log table for durable event delivery.
 		if _, err := db.Exec(createEventLogTable); err != nil {
 			if !isTableExistsError(err) {
 				return fmt.Errorf("migrate v5 (event_log table): %w", err)
 			}
 		}
+		eventIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_event_log_type_created ON event_log(event_type, created_at)",
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_dedup_key ON event_log(dedup_key) WHERE dedup_key IS NOT NULL",
+		}
+		for _, stmt := range eventIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v5 (event_log indexes): %w", err)
+			}
+		}
 	}
 
 	if ver < 6 {
-		// v6: add runners table for distributed runner registration and heartbeats.
+		// v6: add task_claims table for persistent lease-based task claims (multi-runner support).
+		if _, err := db.Exec(createTaskClaimsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v6 (task_claims table): %w", err)
+			}
+		}
+		claimIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at)",
+		}
+		for _, stmt := range claimIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v6 (task_claims indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 7 {
+		// v7: add runners table for runner registration (horizontal scaling).
 		if _, err := db.Exec(createRunnersTable); err != nil {
 			if !isTableExistsError(err) {
-				return fmt.Errorf("migrate v6 (runners table): %w", err)
+				return fmt.Errorf("migrate v7 (runners table): %w", err)
+			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status)"); err != nil {
+			return fmt.Errorf("migrate v7 (runners index): %w", err)
+		}
+	}
+
+	if ver < 8 {
+		// v8: add scope column to api_tokens for scoped authorization.
+		// Existing tokens default to 'admin:*' (full access) for backward compatibility.
+		// Only alter if api_tokens exists (it may not in partial schema scenarios).
+		var tblName string
+		tblErr := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='api_tokens'").Scan(&tblName)
+		if tblErr == nil {
+			_, err := db.Exec("ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'admin:*'")
+			if err != nil {
+				if !isDuplicateColumnError(err) {
+					return fmt.Errorf("migrate v8 (add scope to api_tokens): %w", err)
+				}
+			}
+		}
+	}
+
+	if ver < 9 {
+		// v9: add webhooks and webhook_deliveries tables for event hook system.
+		webhookTables := []string{
+			createWebhooksTable,
+			createWebhookDeliveriesTable,
+		}
+		for _, ddl := range webhookTables {
+			if _, err := db.Exec(ddl); err != nil {
+				if !isTableExistsError(err) {
+					return fmt.Errorf("migrate v9 (webhook tables): %w", err)
+				}
+			}
+		}
+		webhookIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON webhooks(enabled)",
+			"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id)",
+			"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at)",
+		}
+		for _, stmt := range webhookIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v9 (webhook indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 10 {
+		// v10: add feature_assignments table for durable server-enforced feature affinity.
+		if _, err := db.Exec(createFeatureAssignmentsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v10 (feature_assignments table): %w", err)
+			}
+		}
+		featureAssignmentIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_feature_assignments_runner ON feature_assignments(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_feature_assignments_project ON feature_assignments(project_id)",
+			"CREATE INDEX IF NOT EXISTS idx_feature_assignments_status ON feature_assignments(status)",
+		}
+		for _, stmt := range featureAssignmentIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v10 (feature_assignments indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 11 {
+		// v11: persist runner capabilities for server-side capability routing.
+		var tblName string
+		tblErr := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='runners'").Scan(&tblName)
+		if tblErr == nil {
+			_, err := db.Exec("ALTER TABLE runners ADD COLUMN capabilities TEXT DEFAULT '[]'")
+			if err != nil {
+				if !isDuplicateColumnError(err) {
+					return fmt.Errorf("migrate v11 (add runner capabilities): %w", err)
+				}
+			}
+		}
+	}
+
+	if ver < 12 {
+		// v12: add note_embeddings and note_embeddings_meta tables for embedding-based search.
+		if err := ensureNoteEmbeddingsTable(db); err != nil {
+			return fmt.Errorf("migrate v12 (note_embeddings table): %w", err)
+		}
+		if _, err := db.Exec(createNoteEmbeddingsMetaTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v12 (embedding meta table): %w", err)
+			}
+		}
+		embeddingIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_project ON note_embeddings_meta(project_id)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_type ON note_embeddings_meta(type)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_status ON note_embeddings_meta(status)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_feature ON note_embeddings_meta(feature_id)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_priority ON note_embeddings_meta(priority)",
+		}
+		for _, stmt := range embeddingIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v12 (embedding indexes): %w", err)
 			}
 		}
 	}
@@ -333,6 +548,65 @@ func isDuplicateColumnError(err error) bool {
 // isTableExistsError checks if an error is SQLite's "table already exists".
 func isTableExistsError(err error) bool {
 	return err != nil && contains(err.Error(), "already exists")
+}
+
+func ensureNoteEmbeddingsTable(db *sql.DB) error {
+	if exists, err := tableExists(db, "note_embeddings"); err != nil {
+		return fmt.Errorf("inspect note_embeddings: %w", err)
+	} else if exists {
+		hasPath, err := tableColumnExists(db, "note_embeddings", "path")
+		if err != nil {
+			return fmt.Errorf("inspect note_embeddings.path: %w", err)
+		}
+		if hasPath {
+			if _, err := db.Exec("DROP TABLE note_embeddings"); err != nil {
+				return fmt.Errorf("drop legacy note_embeddings: %w", err)
+			}
+		}
+	}
+	if _, err := db.Exec(createNoteEmbeddingsTable); err != nil {
+		if !isTableExistsError(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func tableExists(db *sql.DB, table string) (bool, error) {
+	var name string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func tableColumnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // contains is a simple substring check (avoids importing strings).
@@ -364,13 +638,18 @@ func InitSchema(db *sql.DB) error {
 		createEntryMetaTable,
 		createGeneratedTasksTable,
 		createSchemaVersionTable,
-		createEventLogTable,
 		createAPITokensTable,
+		createEventLogTable,
 		createOAuthClientsTable,
 		createOAuthAuthCodesTable,
 		createOAuthAccessTokensTable,
 		createOAuthRefreshTokensTable,
+		createTaskClaimsTable,
+		createFeatureAssignmentsTable,
 		createRunnersTable,
+		createWebhooksTable,
+		createWebhookDeliveriesTable,
+		createNoteEmbeddingsMetaTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {
@@ -398,6 +677,9 @@ func InitSchema(db *sql.DB) error {
 	// Run migrations for existing databases (may drop/recreate tables).
 	if err := migrateSchema(db); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
+	}
+	if err := ensureNoteEmbeddingsTable(db); err != nil {
+		return fmt.Errorf("ensure note embeddings table: %w", err)
 	}
 
 	// Indexes (after migrations, so they apply to final table state)

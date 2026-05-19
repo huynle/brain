@@ -1,8 +1,13 @@
 package runner
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"log"
+	"reflect"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -16,7 +21,7 @@ import (
 // =============================================================================
 
 var _ Client = (*APIClient)(nil)
-var _ TaskExecutor = (*Executor)(nil)
+var _ TaskExecutor = (*OpenCodeExecutor)(nil)
 var _ TaskProcessManager = (*ProcessManager)(nil)
 var _ TaskStateManager = (*StateManager)(nil)
 
@@ -53,6 +58,9 @@ type mockClient struct {
 	releaseErr   error
 	releaseCalls []releaseCall
 
+	renewErr   error
+	renewCalls []renewCall
+
 	updateStatusErr   error
 	updateStatusCalls []updateStatusCall
 
@@ -61,11 +69,22 @@ type mockClient struct {
 
 	getEntryResult map[string]*types.BrainEntry
 	getEntryErr    error
+
+	registerErr   error
+	registerCalls []types.RunnerRegistration
+
+	heartbeatErr   error
+	heartbeatCalls []heartbeatCall
+
+	deregisterErr   error
+	deregisterCalls []string
 }
 
 type nextTaskCall struct {
 	ProjectID  string
 	FeatureIDs []string
+	RunnerID   string
+	Opts       *TaskFetchOptions
 }
 
 type claimCall struct {
@@ -77,6 +96,13 @@ type claimCall struct {
 type releaseCall struct {
 	ProjectID string
 	TaskID    string
+	RunnerID  string
+}
+
+type renewCall struct {
+	ProjectID string
+	TaskID    string
+	RunnerID  string
 }
 
 type updateStatusCall struct {
@@ -87,6 +113,11 @@ type updateStatusCall struct {
 type appendCall struct {
 	TaskPath string
 	Content  string
+}
+
+type heartbeatCall struct {
+	RunnerID string
+	Request  types.RunnerHeartbeatRequest
 }
 
 func newMockClient() *mockClient {
@@ -110,7 +141,7 @@ func (m *mockClient) ListProjects(ctx context.Context) ([]string, error) {
 	return m.projects, m.projectsErr
 }
 
-func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
+func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.readyTasksErr != nil {
@@ -119,17 +150,25 @@ func (m *mockClient) GetReadyTasks(ctx context.Context, projectID string, featur
 	return m.readyTasks[projectID], nil
 }
 
-func (m *mockClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
+func (m *mockClient) GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	// Record the call with feature IDs for verification
-	idsCopy := make([]string, len(featureIDs))
-	copy(idsCopy, featureIDs)
-	m.nextTaskCalls = append(m.nextTaskCalls, nextTaskCall{ProjectID: projectID, FeatureIDs: idsCopy})
+	// Record the call with options for verification
+	var featureIDs []string
+	var runnerID string
+	if opts != nil {
+		featureIDs = opts.FeatureIDs
+		runnerID = opts.RunnerID
+	}
+	m.nextTaskCalls = append(m.nextTaskCalls, nextTaskCall{ProjectID: projectID, FeatureIDs: featureIDs, RunnerID: runnerID, Opts: opts})
 	if m.nextTaskErr != nil {
 		return nil, m.nextTaskErr
 	}
-	return m.nextTask[projectID], nil
+	task := m.nextTask[projectID]
+	if task != nil && opts != nil && opts.GeneratedByPrefix != "" && !strings.HasPrefix(task.GeneratedBy, opts.GeneratedByPrefix) {
+		return nil, nil
+	}
+	return task, nil
 }
 
 func (m *mockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error) {
@@ -141,10 +180,17 @@ func (m *mockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID 
 	return result, m.claimErr
 }
 
-func (m *mockClient) ReleaseTask(ctx context.Context, projectID, taskID string) error {
+func (m *mockClient) RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.releaseCalls = append(m.releaseCalls, releaseCall{projectID, taskID})
+	m.renewCalls = append(m.renewCalls, renewCall{projectID, taskID, runnerID})
+	return m.renewErr
+}
+
+func (m *mockClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.releaseCalls = append(m.releaseCalls, releaseCall{projectID, taskID, runnerID})
 	return m.releaseErr
 }
 
@@ -170,6 +216,10 @@ func (m *mockClient) GetAllTasks(ctx context.Context, projectID string) ([]types
 	return nil, nil
 }
 
+func (m *mockClient) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
+	return nil, nil
+}
+
 func (m *mockClient) UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error {
 	return nil
 }
@@ -188,15 +238,35 @@ func (m *mockClient) GetEntry(ctx context.Context, entryPath string) (*types.Bra
 	return &types.BrainEntry{Path: entryPath}, nil
 }
 
-func (m *mockClient) EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error {
-	return nil
+func (m *mockClient) RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.registerErr != nil {
+		return nil, m.registerErr
+	}
+	m.registerCalls = append(m.registerCalls, req)
+	return &types.RunnerInfo{
+		RunnerID: req.RunnerID,
+		Hostname: req.Hostname,
+		Status:   types.RunnerStatusOnline,
+	}, nil
 }
 
-func (m *mockClient) RegisterRunner(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error) {
-	return &types.RunnerInfo{RunnerID: req.RunnerID, Hostname: req.Hostname}, nil
+func (m *mockClient) SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.heartbeatCalls = append(m.heartbeatCalls, heartbeatCall{RunnerID: runnerID, Request: req})
+	return m.heartbeatErr
 }
 
-func (m *mockClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error {
+func (m *mockClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.deregisterCalls = append(m.deregisterCalls, runnerID)
+	return m.deregisterErr
+}
+
+func (m *mockClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error {
 	return nil
 }
 
@@ -579,11 +649,13 @@ func testTask(id, projectID string) *types.ResolvedTask {
 
 func newTestRunner(client *mockClient, executor *mockExecutor, processMgr *mockProcessMgr, stateMgr *mockStateMgr) *TaskRunner {
 	return NewTaskRunner(TaskRunnerOptions{
-		Projects:   []string{"proj-a", "proj-b"},
-		Config:     testRunnerConfig(),
-		Mode:       ExecutionModeHeadless,
-		Client:     client,
-		Executor:   executor,
+		Projects: []string{"proj-a", "proj-b"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Client:   client,
+		Executors: map[string]TaskExecutor{
+			"opencode": executor,
+		},
 		ProcessMgr: processMgr,
 		StateMgr:   stateMgr,
 	})
@@ -660,6 +732,56 @@ func TestNewTaskRunner_SingleProject(t *testing.T) {
 	}
 }
 
+func TestTaskRunner_Start_DeregistersWhenRemoteShutdownCancelsContext(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- tr.Start(ctx)
+	}()
+
+	deadline := time.After(2 * time.Second)
+	for {
+		client.mu.Lock()
+		registered := len(client.registerCalls) > 0
+		client.mu.Unlock()
+		if registered {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("runner did not register before deadline")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	tr.commandCh <- RunnerCommand{Type: CommandShutdown, Reason: "test shutdown"}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Start returned error: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("runner did not stop after shutdown command")
+	}
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.deregisterCalls) != 1 {
+		t.Fatalf("deregister calls = %d, want 1", len(client.deregisterCalls))
+	}
+	if client.deregisterCalls[0] != tr.runnerID {
+		t.Fatalf("deregister runner ID = %q, want %q", client.deregisterCalls[0], tr.runnerID)
+	}
+}
+
 func TestNewTaskRunner_StartPaused(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:    []string{"proj-a"},
@@ -673,6 +795,9 @@ func TestNewTaskRunner_StartPaused(t *testing.T) {
 
 	if !tr.allPaused {
 		t.Error("allPaused should be true when StartPaused is set")
+	}
+	if !tr.IsAutomationsPaused() {
+		t.Error("automations should be paused when StartPaused is set")
 	}
 }
 
@@ -894,6 +1019,124 @@ func TestTaskRunner_Poll_SkipsPausedProjects(t *testing.T) {
 	}
 }
 
+func TestTaskRunner_Poll_RunsAutomationTasksWhenProjectPausedAndAutomationsUnpaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) != 1 {
+		t.Fatalf("paused project with automations unpaused should spawn automation task, got %d spawns", len(executor.getSpawnCalls()))
+	}
+	calls := client.getNextTaskCalls()
+	if len(calls) == 0 || calls[0].Opts == nil || calls[0].Opts.GeneratedByPrefix != "automation:" {
+		t.Fatalf("paused project should fetch only automation tasks first, calls=%#v", calls)
+	}
+}
+
+func TestTaskRunner_Poll_DoesNotRunAutomationTasksWhenAutomationsPaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+	tr.PauseAutomations()
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Fatalf("automation-paused runner should not spawn automation task, got %d spawns", len(executor.getSpawnCalls()))
+	}
+	for _, call := range client.getNextTaskCalls() {
+		if call.ProjectID == "proj-a" {
+			t.Fatalf("automation-paused runner should not fetch tasks for paused project, got call: %#v", call)
+		}
+	}
+}
+
+func TestTaskRunner_Poll_DoesNotRunAutomationTasksWhenAutomationsPausedAndProjectUnpaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseAutomations()
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Fatalf("automation-paused runner should not spawn automation task, got %d spawns", len(executor.getSpawnCalls()))
+	}
+}
+
+func TestTaskRunner_Poll_RespectsAutomationMaxConcurrent(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+	client.getEntryResult = map[string]*types.BrainEntry{
+		"auto1234": {ID: "auto1234", Trigger: &types.TriggerConfig{MaxConcurrent: 1}},
+	}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	proc := newMockProcess(100)
+	processMgr.Add("existing", RunningTask{ID: "existing", GeneratedBy: "automation:auto1234"}, proc)
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Fatalf("expected max_concurrent to prevent second automation task spawn, got %d spawns", len(executor.getSpawnCalls()))
+	}
+}
+
+func TestTaskRunner_Poll_DoesNotRunNormalTasksWhenPollingAutomationWhilePaused(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProject("proj-a")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Error("should not spawn normal tasks while project is paused")
+	}
+}
+
 func TestTaskRunner_Poll_SkipsAllWhenAllPaused(t *testing.T) {
 	client := newMockClient()
 	task := testTask("task1", "proj-a")
@@ -911,6 +1154,27 @@ func TestTaskRunner_Poll_SkipsAllWhenAllPaused(t *testing.T) {
 
 	if len(executor.getSpawnCalls()) > 0 {
 		t.Error("should not spawn tasks when all paused")
+	}
+}
+
+func TestTaskRunner_Poll_RunsAutomationTasksWhenAllPausedAndAutomationsUnpaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task1", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.nextTask["proj-a"] = task
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseAll()
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	if len(executor.getSpawnCalls()) != 1 {
+		t.Fatalf("all-paused runner with automations unpaused should spawn automation task, got %d spawns", len(executor.getSpawnCalls()))
 	}
 }
 
@@ -1007,13 +1271,17 @@ func TestTaskRunner_ClaimAndSpawn_Success(t *testing.T) {
 
 func TestTaskRunner_ClaimAndSpawn_ClaimFails(t *testing.T) {
 	client := newMockClient()
-	client.claimResult = ClaimResult{Success: false, ClaimedBy: "other-runner"}
+	client.claimResult = ClaimResult{Success: false, ClaimedBy: "other-runner", Message: "assigned to another runner"}
 
 	executor := newMockExecutor()
 	processMgr := newMockProcessMgr()
 	stateMgr := newMockStateMgr()
 
 	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	var events []RunnerEvent
+	tr.OnEvent(func(event RunnerEvent) {
+		events = append(events, event)
+	})
 
 	task := testTask("task1", "proj-a")
 	ctx := context.Background()
@@ -1022,10 +1290,72 @@ func TestTaskRunner_ClaimAndSpawn_ClaimFails(t *testing.T) {
 	if err == nil {
 		t.Error("claimAndSpawn should return error when claim fails")
 	}
+	if !errors.Is(err, ErrTaskClaimConflict) {
+		t.Fatalf("claimAndSpawn error = %v, want ErrTaskClaimConflict", err)
+	}
+
+	var rejected *RunnerEvent
+	for i := range events {
+		if events[i].Type == EventTaskClaimRejected {
+			rejected = &events[i]
+			break
+		}
+	}
+	if rejected == nil {
+		t.Fatal("claimAndSpawn should emit task_claim_rejected event")
+	}
+	if rejected.ClaimedBy != "other-runner" {
+		t.Errorf("claim rejected ClaimedBy = %q, want %q", rejected.ClaimedBy, "other-runner")
+	}
 
 	// Should not spawn
 	if len(executor.getSpawnCalls()) > 0 {
 		t.Error("should not spawn when claim fails")
+	}
+	if len(client.getUpdateStatusCalls()) > 0 {
+		t.Error("should not update task status when claim conflicts")
+	}
+	if len(client.getReleaseCalls()) > 0 {
+		t.Error("should not release task when claim was not acquired")
+	}
+}
+
+func TestTaskRunner_Poll_TreatsClaimConflictAsExpectedRace(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+	client.claimResult = ClaimResult{Success: false, ClaimedBy: "other-runner", Message: "assigned to another runner"}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	var logs bytes.Buffer
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.logger = log.New(&logs, "", 0)
+
+	var claimRejected bool
+	tr.OnEvent(func(event RunnerEvent) {
+		if event.Type == EventTaskClaimRejected {
+			claimRejected = true
+		}
+	})
+
+	tr.poll(context.Background())
+
+	if !claimRejected {
+		t.Fatal("poll should preserve claim rejected event emission")
+	}
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Error("poll should not spawn after claim conflict")
+	}
+	if len(client.getUpdateStatusCalls()) > 0 {
+		t.Error("poll should not mark task in progress or failed after claim conflict")
+	}
+	if len(client.getReleaseCalls()) > 0 {
+		t.Error("poll should not release a claim that was never acquired")
+	}
+	if strings.Contains(logs.String(), "claim and spawn failed") {
+		t.Fatalf("poll logged claim conflict as generic spawn failure: %q", logs.String())
 	}
 }
 
@@ -1098,6 +1428,204 @@ func TestTaskRunner_ClaimAndSpawn_EmitsTaskStartedEvent(t *testing.T) {
 	}
 	if !found {
 		t.Error("claimAndSpawn should emit task_started event")
+	}
+}
+
+// =============================================================================
+// RenewClaims Tests
+// =============================================================================
+
+func TestTaskRunner_RenewClaims_Success(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Add a running task
+	proc := newMockProcess(100)
+	task := testRunningTask("task1")
+	processMgr.Add("task1", task, proc)
+
+	// renewErr is nil (default) — renewals should succeed
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	// Verify RenewClaim was called
+	client.mu.Lock()
+	renewCalls := make([]renewCall, len(client.renewCalls))
+	copy(renewCalls, client.renewCalls)
+	client.mu.Unlock()
+
+	if len(renewCalls) != 1 {
+		t.Fatalf("expected 1 RenewClaim call, got %d", len(renewCalls))
+	}
+	if renewCalls[0].ProjectID != task.ProjectID {
+		t.Errorf("ProjectID = %q, want %q", renewCalls[0].ProjectID, task.ProjectID)
+	}
+	if renewCalls[0].TaskID != task.ID {
+		t.Errorf("TaskID = %q, want %q", renewCalls[0].TaskID, task.ID)
+	}
+	if renewCalls[0].RunnerID != tr.runnerID {
+		t.Errorf("RunnerID = %q, want %q", renewCalls[0].RunnerID, tr.runnerID)
+	}
+
+	// Task should still be running (not killed)
+	if processMgr.Get("task1") == nil {
+		t.Error("task should still be tracked in process manager")
+	}
+}
+
+func TestTaskRunner_RenewClaims_FailureAbortsTask(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Track events
+	var eventMu sync.Mutex
+	var events []RunnerEvent
+	tr.OnEvent(func(e RunnerEvent) {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		events = append(events, e)
+	})
+
+	// Add a running task
+	proc := newMockProcess(100)
+	task := testRunningTask("task1")
+	processMgr.Add("task1", task, proc)
+
+	// Set renewal to fail (simulates expired/force-released claim)
+	client.renewErr = fmt.Errorf("claim not found")
+
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	// Verify the task was killed
+	processMgr.mu.Lock()
+	killCalls := make([]string, len(processMgr.killCalls))
+	copy(killCalls, processMgr.killCalls)
+	processMgr.mu.Unlock()
+
+	if len(killCalls) != 1 || killCalls[0] != "task1" {
+		t.Errorf("expected Kill(task1), got %v", killCalls)
+	}
+
+	// Verify task was removed from process manager
+	if processMgr.Get("task1") != nil {
+		t.Error("task should have been removed from process manager")
+	}
+
+	// Verify status was set back to pending
+	statusCalls := client.getUpdateStatusCalls()
+	if len(statusCalls) != 1 {
+		t.Fatalf("expected 1 UpdateTaskStatus call, got %d", len(statusCalls))
+	}
+	if statusCalls[0].Status != "pending" {
+		t.Errorf("status = %q, want %q", statusCalls[0].Status, "pending")
+	}
+
+	// Verify event was emitted
+	eventMu.Lock()
+	defer eventMu.Unlock()
+
+	found := false
+	for _, e := range events {
+		if e.Type == EventTaskReleased && e.TaskID == "task1" {
+			found = true
+			if e.Reason != "claim renewal failed" {
+				t.Errorf("reason = %q, want %q", e.Reason, "claim renewal failed")
+			}
+		}
+	}
+	if !found {
+		t.Error("expected EventTaskReleased event for task1")
+	}
+
+	// Verify stats were updated
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if tr.stats.Failed != 1 {
+		t.Errorf("stats.Failed = %d, want 1", tr.stats.Failed)
+	}
+}
+
+func TestTaskRunner_RenewClaims_NoRunningTasks(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// No running tasks — should be a no-op
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.renewCalls) != 0 {
+		t.Errorf("expected 0 RenewClaim calls, got %d", len(client.renewCalls))
+	}
+}
+
+func TestTaskRunner_RenewClaims_MultipleTasksPartialFailure(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Add two running tasks
+	proc1 := newMockProcess(100)
+	task1 := testRunningTask("task1")
+	processMgr.Add("task1", task1, proc1)
+
+	proc2 := newMockProcess(101)
+	task2 := RunningTask{
+		ID:        "task2",
+		Path:      "projects/proj-a/task/task2.md",
+		ProjectID: "proj-a",
+	}
+	processMgr.Add("task2", task2, proc2)
+
+	// Override RenewClaim to fail only for task1
+	// We need a custom implementation since mockClient only supports a single error value.
+	// Instead, let the first call succeed (nil error) and make the mock return error.
+	// Since mockClient applies the same renewErr to all calls, we need to set a per-call behavior.
+	// For simplicity, set renewErr to fail — both tasks will be aborted.
+	client.renewErr = fmt.Errorf("claim expired")
+
+	ctx := context.Background()
+	tr.renewClaims(ctx)
+
+	// Both tasks should be killed and removed
+	processMgr.mu.Lock()
+	killCount := len(processMgr.killCalls)
+	processMgr.mu.Unlock()
+
+	if killCount != 2 {
+		t.Errorf("expected 2 Kill calls, got %d", killCount)
+	}
+
+	// Both tasks should be removed
+	if processMgr.Get("task1") != nil {
+		t.Error("task1 should have been removed")
+	}
+	if processMgr.Get("task2") != nil {
+		t.Error("task2 should have been removed")
+	}
+
+	// Stats should reflect both failures
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if tr.stats.Failed != 2 {
+		t.Errorf("stats.Failed = %d, want 2", tr.stats.Failed)
 	}
 }
 
@@ -2235,7 +2763,7 @@ func TestTaskRunner_Poll_AllPaused_WithEnabledFeatures_PollsEnabledFeatures(t *t
 		t.Error("should spawn tasks when all-paused but features are enabled")
 	}
 
-	// Verify GetNextTask was called with the enabled feature IDs
+	// Verify GetNextTask was called with the enabled feature IDs and affinity filters.
 	nextCalls := client.getNextTaskCalls()
 	if len(nextCalls) == 0 {
 		t.Fatal("expected at least 1 GetNextTask call")
@@ -2247,13 +2775,22 @@ func TestTaskRunner_Poll_AllPaused_WithEnabledFeatures_PollsEnabledFeatures(t *t
 				found = true
 			}
 		}
+		if call.RunnerID != tr.runnerID {
+			t.Errorf("GetNextTask RunnerID = %q, want %q", call.RunnerID, tr.runnerID)
+		}
+		if call.Opts == nil {
+			t.Fatal("GetNextTask opts should not be nil")
+		}
+		if len(call.Opts.Executors) != 1 || call.Opts.Executors[0] != "opencode" {
+			t.Errorf("GetNextTask executors = %v, want [opencode]", call.Opts.Executors)
+		}
 	}
 	if !found {
 		t.Error("GetNextTask should be called with enabled feature ID 'feat-auth'")
 	}
 }
 
-func TestTaskRunner_Poll_AllPaused_NoEnabledFeatures_ReturnsEarly(t *testing.T) {
+func TestTaskRunner_Poll_AllPaused_NoEnabledFeatures_PollsOnlyAutomations(t *testing.T) {
 	client := newMockClient()
 	task := testTask("task1", "proj-a")
 	client.nextTask["proj-a"] = task
@@ -2269,13 +2806,13 @@ func TestTaskRunner_Poll_AllPaused_NoEnabledFeatures_ReturnsEarly(t *testing.T) 
 	ctx := context.Background()
 	tr.poll(ctx)
 
-	// Should NOT spawn — existing behavior preserved
 	if len(executor.getSpawnCalls()) > 0 {
 		t.Error("should not spawn when all-paused with no enabled features")
 	}
-	// Should NOT even call GetNextTask
-	if len(client.getNextTaskCalls()) > 0 {
-		t.Error("should not call GetNextTask when all-paused with no enabled features")
+	for _, call := range client.getNextTaskCalls() {
+		if call.Opts == nil || call.Opts.GeneratedByPrefix != "automation:" {
+			t.Fatalf("all-paused runner should only fetch automation tasks, got call: %#v", call)
+		}
 	}
 }
 
@@ -2306,6 +2843,7 @@ func TestTaskRunner_Poll_ProjectPaused_WithEnabledFeatures_PollsEnabledFeatures(
 	}
 
 	// Verify GetNextTask was called with enabled feature IDs (not config feature IDs)
+	// and retains runner affinity filters while the project is paused.
 	nextCalls := client.getNextTaskCalls()
 	foundEnabled := false
 	for _, call := range nextCalls {
@@ -2314,6 +2852,15 @@ func TestTaskRunner_Poll_ProjectPaused_WithEnabledFeatures_PollsEnabledFeatures(
 				if fid == "feat-deploy" {
 					foundEnabled = true
 				}
+			}
+			if call.RunnerID != tr.runnerID {
+				t.Errorf("GetNextTask RunnerID = %q, want %q", call.RunnerID, tr.runnerID)
+			}
+			if call.Opts == nil {
+				t.Fatal("GetNextTask opts should not be nil")
+			}
+			if len(call.Opts.Executors) != 1 || call.Opts.Executors[0] != "opencode" {
+				t.Errorf("GetNextTask executors = %v, want [opencode]", call.Opts.Executors)
 			}
 		}
 	}
@@ -2678,187 +3225,385 @@ func TestTaskRunner_GetEnabledFeatureIDsLocked_AfterDisable(t *testing.T) {
 }
 
 // =============================================================================
-// Capability-Based Task Routing Tests
+// Executor Registry / Dispatch Tests
 // =============================================================================
 
-func TestMatchesCapabilities_NoRequirements_AnyRunnerMatches(t *testing.T) {
-	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
-
-	task := &types.ResolvedTask{ID: "t1", RequiresCapability: nil}
-	if !tr.matchesCapabilities(task) {
-		t.Error("task with no RequiresCapability should be claimable by any runner")
-	}
-}
-
-func TestMatchesCapabilities_EmptyRequirements_AnyRunnerMatches(t *testing.T) {
-	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
-
-	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{}}
-	if !tr.matchesCapabilities(task) {
-		t.Error("task with empty RequiresCapability should be claimable by any runner")
-	}
-}
-
-func TestMatchesCapabilities_RunnerHasAllRequired(t *testing.T) {
-	cfg := testRunnerConfig()
-	cfg.Capabilities = []string{"gpu", "docker", "ssh"}
+func TestNewTaskRunner_ExecutorsMap_PopulatedFromOptions(t *testing.T) {
+	exec1 := newMockExecutor()
+	exec2 := newMockExecutor()
 
 	tr := NewTaskRunner(TaskRunnerOptions{
-		Projects:   []string{"proj-a"},
-		Config:     cfg,
-		Mode:       ExecutionModeHeadless,
-		Client:     newMockClient(),
-		Executor:   newMockExecutor(),
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": exec1,
+			"custom":   exec2,
+		},
 		ProcessMgr: newMockProcessMgr(),
 		StateMgr:   newMockStateMgr(),
+		Client:     newMockClient(),
 	})
 
-	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{"gpu", "docker"}}
-	if !tr.matchesCapabilities(task) {
-		t.Error("runner with all required capabilities should match")
+	if len(tr.executors) != 2 {
+		t.Fatalf("expected 2 executors, got %d", len(tr.executors))
+	}
+	if tr.executors["opencode"] != exec1 {
+		t.Error("opencode executor not set correctly")
+	}
+	if tr.executors["custom"] != exec2 {
+		t.Error("custom executor not set correctly")
 	}
 }
 
-func TestMatchesCapabilities_RunnerMissingRequired(t *testing.T) {
-	cfg := testRunnerConfig()
-	cfg.Capabilities = []string{"docker"}
+func TestNewTaskRunner_BackwardCompat_SingleExecutor(t *testing.T) {
+	exec1 := newMockExecutor()
 
+	// Using legacy single Executor field should register it as "opencode"
 	tr := NewTaskRunner(TaskRunnerOptions{
 		Projects:   []string{"proj-a"},
-		Config:     cfg,
+		Config:     testRunnerConfig(),
 		Mode:       ExecutionModeHeadless,
-		Client:     newMockClient(),
-		Executor:   newMockExecutor(),
+		Executor:   exec1,
 		ProcessMgr: newMockProcessMgr(),
 		StateMgr:   newMockStateMgr(),
+		Client:     newMockClient(),
 	})
 
-	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{"gpu", "docker"}}
-	if tr.matchesCapabilities(task) {
-		t.Error("runner missing 'gpu' capability should NOT match")
+	if len(tr.executors) != 1 {
+		t.Fatalf("expected 1 executor (backward compat), got %d", len(tr.executors))
+	}
+	if tr.executors["opencode"] != exec1 {
+		t.Error("single Executor should be registered as 'opencode'")
 	}
 }
 
-func TestMatchesCapabilities_RunnerNoCapabilities_TaskRequiresSome(t *testing.T) {
-	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
-	// default testRunnerConfig has no capabilities
-
-	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{"gpu"}}
-	if tr.matchesCapabilities(task) {
-		t.Error("runner with no capabilities should NOT match task requiring capabilities")
-	}
-}
-
-func TestMatchesCapabilities_ExactMatch(t *testing.T) {
-	cfg := testRunnerConfig()
-	cfg.Capabilities = []string{"gpu"}
-
+func TestTaskRunner_BuildFetchOptionsUsesRegisteredExecutorNames(t *testing.T) {
 	tr := NewTaskRunner(TaskRunnerOptions{
-		Projects:   []string{"proj-a"},
-		Config:     cfg,
-		Mode:       ExecutionModeHeadless,
-		Client:     newMockClient(),
-		Executor:   newMockExecutor(),
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": newMockExecutor(),
+			"pi":       newMockExecutor(),
+		},
 		ProcessMgr: newMockProcessMgr(),
 		StateMgr:   newMockStateMgr(),
+		Client:     newMockClient(),
 	})
 
-	task := &types.ResolvedTask{ID: "t1", RequiresCapability: []string{"gpu"}}
-	if !tr.matchesCapabilities(task) {
-		t.Error("runner with exact capability match should match")
+	opts := tr.buildFetchOptions()
+	if opts == nil {
+		t.Fatal("expected fetch options")
+	}
+	if !reflect.DeepEqual(opts.Executors, []string{"opencode", "pi"}) {
+		t.Fatalf("Executors = %#v, want [opencode pi]", opts.Executors)
+	}
+	if opts.RunnerID != tr.runnerID {
+		t.Fatalf("RunnerID = %q, want %q", opts.RunnerID, tr.runnerID)
 	}
 }
 
-func TestPoll_SkipsTaskWhenCapabilityMismatch(t *testing.T) {
+func TestClaimAndSpawn_DispatchesToCorrectExecutor(t *testing.T) {
 	client := newMockClient()
-	task := testTask("task1", "proj-a")
-	task.RequiresCapability = []string{"gpu"}
-	client.nextTask["proj-a"] = task
-
-	executor := newMockExecutor()
-	processMgr := newMockProcessMgr()
-	stateMgr := newMockStateMgr()
-
-	// Runner has no capabilities
-	tr := newTestRunner(client, executor, processMgr, stateMgr)
-
-	ctx := context.Background()
-	tr.poll(ctx)
-
-	// Should NOT spawn — runner lacks 'gpu' capability
-	if len(executor.getSpawnCalls()) > 0 {
-		t.Error("should not spawn task when runner lacks required capability")
-	}
-}
-
-func TestPoll_SpawnsTaskWhenCapabilityMatches(t *testing.T) {
-	client := newMockClient()
-	task := testTask("task1", "proj-a")
-	task.RequiresCapability = []string{"docker"}
-	client.nextTask["proj-a"] = task
 	client.claimResult = ClaimResult{Success: true}
 
-	executor := newMockExecutor()
-	proc := newMockProcess(100)
-	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+	execOpencode := newMockExecutor()
+	procOC := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: procOC, Workdir: "/test"}
+
+	execCustom := newMockExecutor()
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/test"}
 
 	processMgr := newMockProcessMgr()
 	stateMgr := newMockStateMgr()
 
-	cfg := testRunnerConfig()
-	cfg.Capabilities = []string{"docker", "ssh"}
-
 	tr := NewTaskRunner(TaskRunnerOptions{
-		Projects:   []string{"proj-a"},
-		Config:     cfg,
-		Mode:       ExecutionModeHeadless,
-		Client:     client,
-		Executor:   executor,
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
 		ProcessMgr: processMgr,
 		StateMgr:   stateMgr,
+		Client:     client,
 	})
 
-	ctx := context.Background()
-	tr.poll(ctx)
+	// Task with Executor="custom" should be dispatched to execCustom
+	task := testTask("task1", "proj-a")
+	task.Executor = "custom"
 
-	// Should spawn — runner has the required capability
-	if len(executor.getSpawnCalls()) == 0 {
-		t.Error("should spawn task when runner has required capability")
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// execCustom should have been called
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 1 {
+		t.Errorf("expected 1 spawn call to custom executor, got %d", len(customSpawns))
+	}
+
+	// execOpencode should NOT have been called
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls to opencode executor, got %d", len(ocSpawns))
 	}
 }
 
-func TestPoll_SpawnsUntaggedTaskFromRunnerWithCapabilities(t *testing.T) {
+func TestClaimAndSpawn_EmptyExecutor_DefaultsToOpencode(t *testing.T) {
 	client := newMockClient()
-	task := testTask("task1", "proj-a")
-	// No RequiresCapability — should be claimable by any runner
-	client.nextTask["proj-a"] = task
 	client.claimResult = ClaimResult{Success: true}
 
-	executor := newMockExecutor()
+	execOpencode := newMockExecutor()
 	proc := newMockProcess(100)
-	executor.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	execCustom := newMockExecutor()
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/test"}
 
 	processMgr := newMockProcessMgr()
 	stateMgr := newMockStateMgr()
 
-	cfg := testRunnerConfig()
-	cfg.Capabilities = []string{"gpu", "docker"}
-
 	tr := NewTaskRunner(TaskRunnerOptions{
-		Projects:   []string{"proj-a"},
-		Config:     cfg,
-		Mode:       ExecutionModeHeadless,
-		Client:     client,
-		Executor:   executor,
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
 		ProcessMgr: processMgr,
 		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	// Task with no Executor set (empty string) → defaults to "opencode"
+	task := testTask("task1", "proj-a")
+	task.Executor = ""
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// execOpencode should have been called
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 1 {
+		t.Errorf("expected 1 spawn call to opencode executor (default), got %d", len(ocSpawns))
+	}
+
+	// execCustom should NOT have been called
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls to custom executor, got %d", len(customSpawns))
+	}
+}
+
+func TestClaimAndSpawn_MissingExecutor_ReleasesAndSkips(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	// Task requests "pi-rpc" executor which is NOT registered
+	task := testTask("task1", "proj-a")
+	task.Executor = "pi-rpc"
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err == nil {
+		t.Fatal("expected error when executor not found")
+	}
+
+	// Should contain info about missing executor
+	if !strings.Contains(err.Error(), "pi-rpc") {
+		t.Errorf("error should mention missing executor 'pi-rpc', got: %v", err)
+	}
+
+	// Should release the claim
+	releases := client.getReleaseCalls()
+	if len(releases) == 0 {
+		t.Error("should release task when executor not found")
+	}
+
+	// Should NOT have spawned anything
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls, got %d", len(ocSpawns))
+	}
+}
+
+func TestClaimAndSpawn_ResolveWorkdir_UsesMatchedExecutor(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	execOpencode := newMockExecutor()
+	execOpencode.resolveWorkdir = "/opencode/workdir"
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/opencode/workdir"}
+
+	execCustom := newMockExecutor()
+	execCustom.resolveWorkdir = "/custom/workdir"
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/custom/workdir"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	task := testTask("task1", "proj-a")
+	task.Executor = "custom"
+
+	ctx := context.Background()
+	err := tr.claimAndSpawn(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("claimAndSpawn returned error: %v", err)
+	}
+
+	// The custom executor's ResolveWorkdir and Spawn should have been used
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 1 {
+		t.Fatalf("expected 1 spawn call to custom executor, got %d", len(customSpawns))
+	}
+	if customSpawns[0].Opts.Workdir != "/custom/workdir" {
+		t.Errorf("workdir = %q, want %q", customSpawns[0].Opts.Workdir, "/custom/workdir")
+	}
+}
+
+func TestTaskRunner_RegisterWithAPI_IncludesExecutorNames(t *testing.T) {
+	client := newMockClient()
+	execOpencode := newMockExecutor()
+	execCustom := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	config := testRunnerConfig()
+	config.Capabilities = []string{"docker", "gpu"}
+	config.MaxParallel = 7
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   config,
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"pi-rpc":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
 	})
 
 	ctx := context.Background()
-	tr.poll(ctx)
+	tr.registerWithAPI(ctx)
 
-	// Should spawn — untagged tasks are claimable by any runner (backward compatible)
-	if len(executor.getSpawnCalls()) == 0 {
-		t.Error("runner with capabilities should still claim untagged tasks")
+	client.mu.Lock()
+	defer client.mu.Unlock()
+
+	if len(client.registerCalls) != 1 {
+		t.Fatalf("expected 1 register call, got %d", len(client.registerCalls))
+	}
+
+	reg := client.registerCalls[0]
+	executorSet := make(map[string]bool)
+	for _, e := range reg.Executors {
+		executorSet[e] = true
+	}
+	if !executorSet["opencode"] {
+		t.Error("registration should include 'opencode' executor")
+	}
+	if !executorSet["pi-rpc"] {
+		t.Error("registration should include 'pi-rpc' executor")
+	}
+	if !reflect.DeepEqual(reg.Capabilities, []string{"docker", "gpu"}) {
+		t.Errorf("registration capabilities = %v, want [docker gpu]", reg.Capabilities)
+	}
+	if reg.MaxParallel != 7 {
+		t.Errorf("registration max_parallel = %d, want 7", reg.MaxParallel)
+	}
+}
+
+func TestResumeTask_UsesExecutorDispatch(t *testing.T) {
+	client := newMockClient()
+
+	execOpencode := newMockExecutor()
+	proc := newMockProcess(100)
+	execOpencode.spawnResult = &SpawnResult{PID: 100, Proc: proc, Workdir: "/test"}
+
+	execCustom := newMockExecutor()
+	procCustom := newMockProcess(200)
+	execCustom.spawnResult = &SpawnResult{PID: 200, Proc: procCustom, Workdir: "/test"}
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Executors: map[string]TaskExecutor{
+			"opencode": execOpencode,
+			"custom":   execCustom,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+		Client:     client,
+	})
+
+	task := testTask("task1", "proj-a")
+	task.Executor = "custom"
+	task.Status = "in_progress"
+
+	ctx := context.Background()
+	err := tr.resumeTask(ctx, task, "proj-a")
+	if err != nil {
+		t.Fatalf("resumeTask returned error: %v", err)
+	}
+
+	// custom executor should have been used
+	customSpawns := execCustom.getSpawnCalls()
+	if len(customSpawns) != 1 {
+		t.Errorf("expected 1 spawn call to custom executor, got %d", len(customSpawns))
+	}
+
+	// opencode executor should NOT have been used
+	ocSpawns := execOpencode.getSpawnCalls()
+	if len(ocSpawns) != 0 {
+		t.Errorf("expected 0 spawn calls to opencode executor, got %d", len(ocSpawns))
 	}
 }

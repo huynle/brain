@@ -98,6 +98,46 @@ func TestRoute_ConfigCommand_ReturnsConfigCommand(t *testing.T) {
 	}
 }
 
+func TestRoute_ConfigCommand_ParsesConfigSubcommands(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		subcommand string
+		wantPrint  bool
+		wantForce  bool
+	}{
+		{name: "defaults", args: []string{"config", "defaults"}, subcommand: "defaults"},
+		{name: "init", args: []string{"config", "init"}, subcommand: "init"},
+		{name: "init print", args: []string{"config", "init", "--print"}, subcommand: "init", wantPrint: true},
+		{name: "init force", args: []string{"config", "init", "--force"}, subcommand: "init", wantForce: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := route(tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			configCmd, ok := cmd.(*commands.ConfigCommand)
+			if !ok {
+				t.Fatalf("expected *commands.ConfigCommand, got %T", cmd)
+			}
+			if configCmd.Subcommand != tt.subcommand {
+				t.Fatalf("Subcommand = %q, want %q", configCmd.Subcommand, tt.subcommand)
+			}
+			if configCmd.Flags == nil {
+				t.Fatal("expected config flags")
+			}
+			if configCmd.Flags.Print != tt.wantPrint {
+				t.Fatalf("Print = %v, want %v", configCmd.Flags.Print, tt.wantPrint)
+			}
+			if configCmd.Flags.Force != tt.wantForce {
+				t.Fatalf("Force = %v, want %v", configCmd.Flags.Force, tt.wantForce)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test: Unknown command routes to help
 // ---------------------------------------------------------------------------
@@ -314,6 +354,72 @@ func TestRoute_DreamCommand(t *testing.T) {
 				if h.command != "dream" {
 					t.Errorf("help topic = %q, want %q", h.command, "dream")
 				}
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: "brain run start <project> --headless" arg order (BUG-2)
+// ---------------------------------------------------------------------------
+
+func TestRoute_RunStart_ArgOrder(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		wantProject  string
+		wantHeadless bool
+	}{
+		{
+			name:         "flag after project",
+			args:         []string{"run", "start", "horizontal-scaling-test", "--headless"},
+			wantProject:  "horizontal-scaling-test",
+			wantHeadless: true,
+		},
+		{
+			name:         "flag before project",
+			args:         []string{"run", "start", "--headless", "horizontal-scaling-test"},
+			wantProject:  "horizontal-scaling-test",
+			wantHeadless: true,
+		},
+		{
+			name:         "project only no flag",
+			args:         []string{"run", "start", "horizontal-scaling-test"},
+			wantProject:  "horizontal-scaling-test",
+			wantHeadless: false,
+		},
+		{
+			name:         "no project defaults to all",
+			args:         []string{"run", "start"},
+			wantProject:  "all",
+			wantHeadless: false,
+		},
+		{
+			name:         "no project with headless flag",
+			args:         []string{"run", "start", "--headless"},
+			wantProject:  "all",
+			wantHeadless: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := route(tt.args)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cmd.Type() != "run_start" {
+				t.Errorf("Type() = %q, want %q", cmd.Type(), "run_start")
+			}
+			rc, ok := cmd.(*commands.RunCommand)
+			if !ok {
+				t.Fatalf("expected *commands.RunCommand, got %T", cmd)
+			}
+			if rc.Project != tt.wantProject {
+				t.Errorf("Project = %q, want %q", rc.Project, tt.wantProject)
+			}
+			if rc.Flags.Headless != tt.wantHeadless {
+				t.Errorf("Flags.Headless = %v, want %v", rc.Flags.Headless, tt.wantHeadless)
 			}
 		})
 	}

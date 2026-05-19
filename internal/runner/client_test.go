@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -58,6 +59,12 @@ func TestAPIClient_CheckHealth(t *testing.T) {
 			Status:      "healthy",
 			ZKAvailable: true,
 			DBAvailable: true,
+			Embedding: APIEmbeddingHealth{
+				Enabled:  true,
+				Status:   "ready",
+				Provider: "openrouter",
+				Model:    "text-embedding-3-small",
+			},
 		})
 	}))
 	defer srv.Close()
@@ -75,6 +82,12 @@ func TestAPIClient_CheckHealth(t *testing.T) {
 	}
 	if !health.DBAvailable {
 		t.Error("expected DBAvailable to be true")
+	}
+	if health.Embedding.Status != "ready" {
+		t.Errorf("Embedding.Status = %q, want ready", health.Embedding.Status)
+	}
+	if health.Embedding.Provider != "openrouter" {
+		t.Errorf("Embedding.Provider = %q, want openrouter", health.Embedding.Provider)
 	}
 }
 
@@ -226,7 +239,7 @@ func TestAPIClient_GetReadyTasks(t *testing.T) {
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	tasks, err := client.GetReadyTasks(context.Background(), "brain-api")
+	tasks, err := client.GetReadyTasks(context.Background(), "brain-api", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -236,6 +249,94 @@ func TestAPIClient_GetReadyTasks(t *testing.T) {
 	if tasks[0].ID != "abc123" {
 		t.Errorf("task ID = %q, want %q", tasks[0].ID, "abc123")
 	}
+}
+
+func TestAPIClient_GetReadyTasks_IncludesRunnerFeatureAndExecutorFilters(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.TaskListResponse{Tasks: []types.ResolvedTask{}})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetReadyTasks(context.Background(), "brain-api", &TaskFetchOptions{
+		FeatureIDs: []string{"feat-1", "feat-2"},
+		Executors:  []string{"opencode", "pi"},
+		RunnerID:   "runner-abc",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parsed, err := url.ParseRequestURI(gotRequestURI)
+	if err != nil {
+		t.Fatalf("parse request URI %q: %v", gotRequestURI, err)
+	}
+	if parsed.Path != "/api/v1/tasks/brain-api/ready" {
+		t.Fatalf("path = %q, want ready path", parsed.Path)
+	}
+	values := parsed.Query()
+	if got := values.Get("runner_id"); got != "runner-abc" {
+		t.Fatalf("runner_id = %q, want %q", got, "runner-abc")
+	}
+	if got := values.Get("executors"); got != "opencode,pi" {
+		t.Fatalf("executors = %q, want %q", got, "opencode,pi")
+	}
+	if got := values["feature_id"]; len(got) != 2 || got[0] != "feat-1" || got[1] != "feat-2" {
+		t.Fatalf("feature_id = %#v, want %#v", got, []string{"feat-1", "feat-2"})
+	}
+}
+
+func TestBuildTaskQueryParams_IncludesRunnerID(t *testing.T) {
+	opts := &TaskFetchOptions{RunnerID: "runner-abc"}
+
+	query := buildTaskQueryParams(opts)
+	values := parseTaskQuery(t, query)
+
+	if got := values.Get("runner_id"); got != "runner-abc" {
+		t.Fatalf("runner_id = %q, want %q", got, "runner-abc")
+	}
+	if got := values.Get("feature_id"); got != "" {
+		t.Fatalf("feature_id = %q, want empty", got)
+	}
+	if got := values.Get("executors"); got != "" {
+		t.Fatalf("executors = %q, want empty", got)
+	}
+}
+
+func TestBuildTaskQueryParams_PreservesRunnerFeatureAndExecutors(t *testing.T) {
+	opts := &TaskFetchOptions{
+		FeatureIDs: []string{"feat-1", "feat-2"},
+		Executors:  []string{"opencode", "pi"},
+		RunnerID:   "runner-xyz",
+	}
+
+	query := buildTaskQueryParams(opts)
+	values := parseTaskQuery(t, query)
+
+	if got := values.Get("runner_id"); got != "runner-xyz" {
+		t.Fatalf("runner_id = %q, want %q", got, "runner-xyz")
+	}
+	if got := values["feature_id"]; len(got) != 2 || got[0] != "feat-1" || got[1] != "feat-2" {
+		t.Fatalf("feature_id = %#v, want %#v", got, []string{"feat-1", "feat-2"})
+	}
+	if got := values.Get("executors"); got != "opencode,pi" {
+		t.Fatalf("executors = %q, want %q", got, "opencode,pi")
+	}
+}
+
+func parseTaskQuery(t *testing.T, query string) url.Values {
+	t.Helper()
+	if query == "" || query[0] != '?' {
+		t.Fatalf("query = %q, want non-empty query prefixed with ?", query)
+	}
+	values, err := url.ParseQuery(query[1:])
+	if err != nil {
+		t.Fatalf("parse query %q: %v", query, err)
+	}
+	return values
 }
 
 // ---------------------------------------------------------------------------
@@ -254,7 +355,7 @@ func TestAPIClient_GetNextTask(t *testing.T) {
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	task, err := client.GetNextTask(context.Background(), "brain-api")
+	task, err := client.GetNextTask(context.Background(), "brain-api", nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -266,6 +367,70 @@ func TestAPIClient_GetNextTask(t *testing.T) {
 	}
 }
 
+func TestAPIClient_GetNextTask_IncludesRunnerFeatureAndExecutorFilters(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.ResolvedTask{ID: "task-1", Title: "Next task"})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetNextTask(context.Background(), "brain-api", &TaskFetchOptions{
+		FeatureIDs: []string{"feat-1"},
+		Executors:  []string{"opencode"},
+		RunnerID:   "runner-xyz",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parsed, err := url.ParseRequestURI(gotRequestURI)
+	if err != nil {
+		t.Fatalf("parse request URI %q: %v", gotRequestURI, err)
+	}
+	if parsed.Path != "/api/v1/tasks/brain-api/next" {
+		t.Fatalf("path = %q, want next path", parsed.Path)
+	}
+	values := parsed.Query()
+	if got := values.Get("runner_id"); got != "runner-xyz" {
+		t.Fatalf("runner_id = %q, want %q", got, "runner-xyz")
+	}
+	if got := values.Get("executors"); got != "opencode" {
+		t.Fatalf("executors = %q, want %q", got, "opencode")
+	}
+	if got := values["feature_id"]; len(got) != 1 || got[0] != "feat-1" {
+		t.Fatalf("feature_id = %#v, want %#v", got, []string{"feat-1"})
+	}
+}
+
+func TestAPIClient_GetNextTask_IncludesGeneratedByPrefixFilter(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.RequestURI
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.ResolvedTask{ID: "task-1", Title: "Automation task"})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.GetNextTask(context.Background(), "brain-api", &TaskFetchOptions{
+		GeneratedByPrefix: "automation:",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	parsed, err := url.ParseRequestURI(gotRequestURI)
+	if err != nil {
+		t.Fatalf("parse request URI %q: %v", gotRequestURI, err)
+	}
+	if got := parsed.Query().Get("generated_by_prefix"); got != "automation:" {
+		t.Fatalf("generated_by_prefix = %q, want automation:", got)
+	}
+}
+
 func TestAPIClient_GetNextTask_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", http.StatusNotFound)
@@ -273,7 +438,7 @@ func TestAPIClient_GetNextTask_NotFound(t *testing.T) {
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	task, err := client.GetNextTask(context.Background(), "brain-api")
+	task, err := client.GetNextTask(context.Background(), "brain-api", nil)
 	if err != nil {
 		t.Fatalf("unexpected error for 404: %v", err)
 	}
@@ -437,15 +602,17 @@ func TestAPIClient_ClaimTask_AlreadyClaimed(t *testing.T) {
 
 func TestAPIClient_ReleaseTask(t *testing.T) {
 	var gotPath, gotMethod string
+	var gotBody map[string]string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
 		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
 	client := NewAPIClient(testConfig(srv.URL))
-	err := client.ReleaseTask(context.Background(), "brain-api", "abc123")
+	err := client.ReleaseTask(context.Background(), "brain-api", "abc123", "runner-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -454,6 +621,63 @@ func TestAPIClient_ReleaseTask(t *testing.T) {
 	}
 	if gotPath != "/api/v1/tasks/brain-api/abc123/release" {
 		t.Errorf("path = %q, want release path", gotPath)
+	}
+	if gotBody["runnerId"] != "runner-1" {
+		t.Errorf("runnerId = %q, want %q", gotBody["runnerId"], "runner-1")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RenewClaim
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_RenewClaim_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success":   true,
+			"taskId":    "abc123",
+			"runnerId":  "runner-1",
+			"expiresAt": "2024-01-01T00:10:00Z",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.RenewClaim(context.Background(), "brain-api", "abc123", "runner-1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/brain-api/abc123/renew" {
+		t.Errorf("path = %q, want renew path", gotPath)
+	}
+	if gotBody["runnerId"] != "runner-1" {
+		t.Errorf("runnerId = %q, want %q", gotBody["runnerId"], "runner-1")
+	}
+}
+
+func TestAPIClient_RenewClaim_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"error": "claim not found",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.RenewClaim(context.Background(), "brain-api", "abc123", "runner-1")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
 	}
 }
 
@@ -857,6 +1081,89 @@ func TestAPIClient_GetFeatures_ServerError(t *testing.T) {
 	}
 }
 
+func TestAPIClient_AssignFeatureToRunner(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody types.FeatureAssignmentRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.FeatureAssignmentResponse{
+			ProjectID: "brain-api",
+			FeatureID: "auth",
+			RunnerID:  "runner-1",
+			Source:    "manual",
+			Status:    "active",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	resp, err := client.AssignFeatureToRunner(context.Background(), "brain-api", "auth", types.FeatureAssignmentRequest{
+		RunnerID: "runner-1",
+		Intent:   "reassign",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/brain-api/features/auth/assignment" {
+		t.Errorf("path = %q, want assignment endpoint", gotPath)
+	}
+	if gotBody.RunnerID != "runner-1" || gotBody.Intent != "reassign" {
+		t.Fatalf("request body = %+v, want runner-1 reassign", gotBody)
+	}
+	if resp.RunnerID != "runner-1" || resp.Source != "manual" || resp.Status != "active" {
+		t.Fatalf("response = %+v, want manual active assignment", resp)
+	}
+}
+
+func TestAPIClient_ClearFeatureAssignment(t *testing.T) {
+	var gotMethod, gotPath string
+	var gotBody types.ClearFeatureAssignmentRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.FeatureAssignmentResponse{
+			ProjectID:      "brain-api",
+			FeatureID:      "auth",
+			PreviousRunner: "runner-1",
+			Source:         "manual",
+			Status:         "cleared",
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	resp, err := client.ClearFeatureAssignment(context.Background(), "brain-api", "auth")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/brain-api/features/auth/assignment/clear" {
+		t.Errorf("path = %q, want clear endpoint", gotPath)
+	}
+	if gotBody.Intent != "clear" {
+		t.Fatalf("request body = %+v, want clear intent", gotBody)
+	}
+	if resp.PreviousRunner != "runner-1" || resp.Status != "cleared" {
+		t.Fatalf("response = %+v, want cleared assignment", resp)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // BulkUpdate
 // ---------------------------------------------------------------------------
@@ -1130,6 +1437,94 @@ func TestAPIClient_ResumeAll_ServerError(t *testing.T) {
 	}
 }
 
+func TestAPIClient_PauseAutomations(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	if err := client.PauseAutomations(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/runner/automations/pause" {
+		t.Errorf("path = %q, want /api/v1/tasks/runner/automations/pause", gotPath)
+	}
+}
+
+func TestAPIClient_ResumeAutomations(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	if err := client.ResumeAutomations(context.Background()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/tasks/runner/automations/resume" {
+		t.Errorf("path = %q, want /api/v1/tasks/runner/automations/resume", gotPath)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ShutdownRunner
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_ShutdownRunner(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.ShutdownRunner(context.Background(), "runner-1", "maintenance window")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if gotMethod != http.MethodPut {
+		t.Errorf("method = %q, want PUT", gotMethod)
+	}
+	if gotPath != "/api/v1/runners/runner-1/shutdown" {
+		t.Errorf("path = %q, want /api/v1/runners/runner-1/shutdown", gotPath)
+	}
+	if gotBody["reason"] != "maintenance window" {
+		t.Errorf("reason = %q, want maintenance window", gotBody["reason"])
+	}
+}
+
+func TestAPIClient_ShutdownRunner_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	if err := client.ShutdownRunner(context.Background(), "missing-runner", "maintenance"); err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // GetRunnerStatus
 // ---------------------------------------------------------------------------
@@ -1144,9 +1539,10 @@ func TestAPIClient_GetRunnerStatus(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
-			"running":        true,
-			"paused":         true,
-			"pausedProjects": []string{"brain-api", "my-project"},
+			"running":           true,
+			"paused":            true,
+			"pausedProjects":    []string{"brain-api", "my-project"},
+			"automationsPaused": true,
 		})
 	}))
 	defer srv.Close()
@@ -1170,6 +1566,9 @@ func TestAPIClient_GetRunnerStatus(t *testing.T) {
 	}
 	if status.PausedProjects[0] != "brain-api" {
 		t.Errorf("PausedProjects[0] = %q, want %q", status.PausedProjects[0], "brain-api")
+	}
+	if !status.AutomationsPaused {
+		t.Error("expected AutomationsPaused to be true")
 	}
 }
 
@@ -1337,6 +1736,34 @@ func TestAPIClient_SearchEntries_ServerError(t *testing.T) {
 	_, err := client.SearchEntries(context.Background(), types.SearchRequest{Query: "test"})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// BackfillEmbeddings
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_BackfillEmbeddings_UsesLongRunningTimeout(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/embeddings/backfill" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.EmbeddingBackfillResponse{Processed: 1, Duration: "100ms"})
+	}))
+	defer srv.Close()
+
+	cfg := testConfig(srv.URL)
+	cfg.APITimeout = 50
+	client := NewAPIClient(cfg)
+
+	result, err := client.BackfillEmbeddings(context.Background(), types.EmbeddingBackfillRequest{Project: "brain-api"})
+	if err != nil {
+		t.Fatalf("BackfillEmbeddings() error = %v", err)
+	}
+	if result.Processed != 1 {
+		t.Fatalf("Processed = %d, want 1", result.Processed)
 	}
 }
 
@@ -1541,8 +1968,8 @@ func TestAPIClient_UpdateEntryRaw(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotMethod != http.MethodPut {
-		t.Errorf("method = %q, want PUT", gotMethod)
+	if gotMethod != http.MethodPatch {
+		t.Errorf("method = %q, want PATCH", gotMethod)
 	}
 	if gotContentType != "text/markdown" {
 		t.Errorf("Content-Type = %q, want %q", gotContentType, "text/markdown")
@@ -1588,8 +2015,8 @@ func TestAPIClient_UpdateEntryFull(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if gotMethod != http.MethodPut {
-		t.Errorf("method = %q, want PUT", gotMethod)
+	if gotMethod != http.MethodPatch {
+		t.Errorf("method = %q, want PATCH", gotMethod)
 	}
 	if gotContentType != "text/x-brain-full" {
 		t.Errorf("Content-Type = %q, want %q", gotContentType, "text/x-brain-full")
@@ -1719,5 +2146,243 @@ func TestAPIClient_DoRequestWithHeaders_OverridesDefaults(t *testing.T) {
 	// Auth should still be present
 	if gotAuth != "Bearer test-token" {
 		t.Errorf("Authorization = %q, want %q", gotAuth, "Bearer test-token")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// RegisterRunner
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_RegisterRunner_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody types.RunnerRegistration
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.RunnerInfo{
+			RunnerID:    gotBody.RunnerID,
+			Hostname:    gotBody.Hostname,
+			MaxParallel: gotBody.MaxParallel,
+			Status:      types.RunnerStatusOnline,
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	info, err := client.RegisterRunner(context.Background(), types.RunnerRegistration{
+		RunnerID:     "runner_abc12345",
+		Hostname:     "test-host",
+		Executors:    []string{"opencode"},
+		Capabilities: []string{"docker", "gpu"},
+		MaxParallel:  3,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/runners/register" {
+		t.Errorf("path = %q, want /api/v1/runners/register", gotPath)
+	}
+	if gotBody.RunnerID != "runner_abc12345" {
+		t.Errorf("body runner_id = %q, want %q", gotBody.RunnerID, "runner_abc12345")
+	}
+	if gotBody.Hostname != "test-host" {
+		t.Errorf("body hostname = %q, want %q", gotBody.Hostname, "test-host")
+	}
+	if gotBody.MaxParallel != 3 {
+		t.Errorf("body max_parallel = %d, want 3", gotBody.MaxParallel)
+	}
+	if len(gotBody.Executors) != 1 || gotBody.Executors[0] != "opencode" {
+		t.Errorf("body executors = %v, want [opencode]", gotBody.Executors)
+	}
+	if len(gotBody.Capabilities) != 2 || gotBody.Capabilities[0] != "docker" || gotBody.Capabilities[1] != "gpu" {
+		t.Errorf("body capabilities = %v, want [docker gpu]", gotBody.Capabilities)
+	}
+	if info == nil {
+		t.Fatal("expected non-nil RunnerInfo")
+	}
+	if info.RunnerID != "runner_abc12345" {
+		t.Errorf("info runner_id = %q, want %q", info.RunnerID, "runner_abc12345")
+	}
+	if info.Status != types.RunnerStatusOnline {
+		t.Errorf("info status = %q, want %q", info.Status, types.RunnerStatusOnline)
+	}
+}
+
+func TestAPIClient_RegisterRunner_DecodesWrappedResponse(t *testing.T) {
+	var gotBody types.RunnerRegistration
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/runners/register" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]types.RunnerInfo{
+			"runner": {
+				RunnerID:     gotBody.RunnerID,
+				Hostname:     gotBody.Hostname,
+				Executors:    gotBody.Executors,
+				Capabilities: gotBody.Capabilities,
+				MaxParallel:  gotBody.MaxParallel,
+				Status:       types.RunnerStatusOnline,
+			},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	info, err := client.RegisterRunner(context.Background(), types.RunnerRegistration{
+		RunnerID:     "runner_wrapped",
+		Hostname:     "test-host",
+		Executors:    []string{"opencode", "pi"},
+		Capabilities: []string{"docker", "gpu"},
+		MaxParallel:  4,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if info == nil {
+		t.Fatal("expected non-nil RunnerInfo")
+	}
+	if info.RunnerID != "runner_wrapped" {
+		t.Errorf("info runner_id = %q, want %q", info.RunnerID, "runner_wrapped")
+	}
+	if info.MaxParallel != 4 {
+		t.Errorf("info max_parallel = %d, want 4", info.MaxParallel)
+	}
+	if len(info.Executors) != 2 || info.Executors[0] != "opencode" || info.Executors[1] != "pi" {
+		t.Errorf("info executors = %v, want [opencode pi]", info.Executors)
+	}
+	if len(info.Capabilities) != 2 || info.Capabilities[0] != "docker" || info.Capabilities[1] != "gpu" {
+		t.Errorf("info capabilities = %v, want [docker gpu]", info.Capabilities)
+	}
+}
+
+func TestAPIClient_RegisterRunner_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, err := client.RegisterRunner(context.Background(), types.RunnerRegistration{
+		RunnerID: "runner_abc12345",
+		Hostname: "test-host",
+	})
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// SendHeartbeat
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_SendHeartbeat_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	var gotBody types.RunnerHeartbeatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		json.NewDecoder(r.Body).Decode(&gotBody)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.SendHeartbeat(context.Background(), "runner_abc12345", types.RunnerHeartbeatRequest{
+		RunningTasks: 2,
+		Stats: map[string]interface{}{
+			"completed": 5,
+			"failed":    1,
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/runners/runner_abc12345/heartbeat" {
+		t.Errorf("path = %q, want /api/v1/runners/runner_abc12345/heartbeat", gotPath)
+	}
+	if gotBody.RunningTasks != 2 {
+		t.Errorf("body running_tasks = %d, want 2", gotBody.RunningTasks)
+	}
+}
+
+func TestAPIClient_SendHeartbeat_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.SendHeartbeat(context.Background(), "runner_abc12345", types.RunnerHeartbeatRequest{})
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// DeregisterRunner
+// ---------------------------------------------------------------------------
+
+func TestAPIClient_DeregisterRunner_Success(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotMethod = r.Method
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.DeregisterRunner(context.Background(), "runner_abc12345")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/runners/runner_abc12345/deregister" {
+		t.Errorf("path = %q, want /api/v1/runners/runner_abc12345/deregister", gotPath)
+	}
+}
+
+func TestAPIClient_DeregisterRunner_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.DeregisterRunner(context.Background(), "runner_abc12345")
+	if err == nil {
+		t.Fatal("expected error for 500 response")
+	}
+}
+
+func TestAPIClient_DeregisterRunner_NotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "runner not found", http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	err := client.DeregisterRunner(context.Background(), "nonexistent_runner")
+	if err == nil {
+		t.Fatal("expected error for 404 response")
+	}
+	apiErr, ok := err.(*APIError)
+	if !ok {
+		t.Fatalf("expected *APIError, got %T", err)
+	}
+	if apiErr.StatusCode != http.StatusNotFound {
+		t.Errorf("StatusCode = %d, want 404", apiErr.StatusCode)
 	}
 }

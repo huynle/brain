@@ -28,6 +28,24 @@ type SessionInfo struct {
 	RunID     string `yaml:"run_id,omitempty" json:"run_id,omitempty"`
 }
 
+// TriggerConfig defines when a hook should fire based on an event.
+// This mirrors internal/types.TriggerConfig for the frontmatter package boundary.
+type TriggerConfig struct {
+	Type string `yaml:"type,omitempty" json:"type,omitempty"`
+	// Event is the event pattern to match (e.g., "task.completed", "task.*").
+	Event    string `yaml:"event" json:"event"`
+	Schedule string `yaml:"schedule,omitempty" json:"schedule,omitempty"`
+	// Filter is optional key-value filters applied to event fields.
+	Filter                 map[string]string `yaml:"filter,omitempty" json:"filter,omitempty"`
+	OncePer                string            `yaml:"once_per,omitempty" json:"once_per,omitempty"`
+	Webhook                string            `yaml:"webhook,omitempty" json:"webhook,omitempty"`
+	IgnoreAutomationEvents *bool             `yaml:"ignore_automation_events,omitempty" json:"ignore_automation_events,omitempty"`
+	// Cooldown is the minimum interval between firings (e.g., "5m", "1h").
+	Cooldown string `yaml:"cooldown,omitempty" json:"cooldown,omitempty"`
+	// MaxConcurrent limits the number of concurrent executions.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
+}
+
 // CronRun represents a single cron execution run.
 type CronRun struct {
 	RunID      string `yaml:"run_id" json:"run_id"`
@@ -142,10 +160,10 @@ type Frontmatter struct {
 	GeneratedKey  string `yaml:"generated_key,omitempty" json:"generated_key,omitempty"`
 	GeneratedBy   string `yaml:"generated_by,omitempty" json:"generated_by,omitempty"`
 
-	// Automation fields (type=automation entries)
-	Trigger *AutomationTrigger `yaml:"trigger,omitempty" json:"trigger,omitempty"`
-	Action  *AutomationAction  `yaml:"action,omitempty" json:"action,omitempty"`
-	Retry   *AutomationRetry   `yaml:"retry,omitempty" json:"retry,omitempty"`
+	// Event trigger configuration
+	Trigger *TriggerConfig    `yaml:"trigger,omitempty" json:"trigger,omitempty"`
+	Action  *AutomationAction `yaml:"action,omitempty" json:"action,omitempty"`
+	Retry   *AutomationRetry  `yaml:"retry,omitempty" json:"retry,omitempty"`
 
 	// Session traceability
 	Sessions         map[string]SessionInfo     `yaml:"sessions,omitempty" json:"sessions,omitempty"`
@@ -217,8 +235,7 @@ type GenerateOptions struct {
 	GeneratedKey  string
 	GeneratedBy   string
 
-	// Automation fields
-	Trigger *AutomationTrigger
+	Trigger *TriggerConfig
 	Action  *AutomationAction
 	Retry   *AutomationRetry
 
@@ -294,7 +311,7 @@ type rawFrontmatter struct {
 	GeneratedKind       string                     `yaml:"generated_kind"`
 	GeneratedKey        string                     `yaml:"generated_key"`
 	GeneratedBy         string                     `yaml:"generated_by"`
-	Trigger             *AutomationTrigger         `yaml:"trigger"`
+	Trigger             *TriggerConfig             `yaml:"trigger"`
 	Action              *AutomationAction          `yaml:"action"`
 	Retry               *AutomationRetry           `yaml:"retry"`
 	Sessions            map[string]SessionInfo     `yaml:"sessions"`

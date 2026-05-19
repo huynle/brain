@@ -31,6 +31,26 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleEmbeddingBackfill generates embeddings for matching entries.
+func (h *Handler) HandleEmbeddingBackfill(w http.ResponseWriter, r *http.Request) {
+	embeddings, ok := h.brain.(EmbeddingService)
+	if h.brain == nil || !ok {
+		WriteError(w, http.StatusServiceUnavailable, "service unavailable", "brain service unavailable")
+		return
+	}
+	var req types.EmbeddingBackfillRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "invalid request", err.Error())
+		return
+	}
+	resp, err := embeddings.EmbedEntries(r.Context(), req)
+	if err != nil {
+		WriteError(w, http.StatusBadGateway, "embedding backfill failed", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleInject handles POST /inject.
 func (h *Handler) HandleInject(w http.ResponseWriter, r *http.Request) {
 	var req types.InjectRequest

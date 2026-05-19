@@ -53,7 +53,12 @@ func registerBrainSave(s *Server, client *APIClient) {
 - ideas: Ideas for future exploration
 - scratch: Temporary working notes
 - decision: Architectural decisions, ADRs
-- exploration: Investigation notes, research findings`,
+- exploration: Investigation notes, research findings
+
+Feature orchestration:
+- Use feature_id to group tasks into a feature.
+- Use feature_depends_on to make one feature wait for another feature to complete.
+- Use trigger.event="feature.completed" with trigger.filter.feature_id to create post-feature tasks that activate after a feature completes.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -70,10 +75,15 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"target_workdir":        {Type: "string", Description: "Explicit working directory override for task execution (absolute path). When set, the task runner will try this directory first before falling back to workdir resolution. Use for tasks that should execute in a specific directory."},
 				"feature_id":            {Type: "string", Description: "Feature group ID for this task (e.g., 'auth-system', 'payment-flow'). Tasks with the same feature_id are grouped together for ordered execution."},
 				"feature_priority":      {Type: "string", Enum: types.Priorities, Description: "Priority level for the feature group. Determines execution order relative to other features."},
-				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start."},
+				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start. Use this for before-feature orchestration (e.g., feature 'main' depends on feature 'preflight')."},
+				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
+				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type ('create_task' or 'script'), title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir."},
+				"retry":                 {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
 				"direct_prompt":         {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim when the task runs."},
 				"agent":                 {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')"},
 				"model":                 {Type: "string", Description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"},
+				"executor":              {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode' (HTTP API-based), 'pi' (RPC mode), or 'script'. Empty = use runner default."},
+				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
 				"schedule":              {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps to 1 step."},
 				"schedule_enabled":      {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
 				"max_runs":              {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling the schedule. When the run count reaches this limit, schedule_enabled is set to false. Omit or set to 0 for unlimited runs."},
@@ -94,8 +104,6 @@ func registerBrainSave(s *Server, client *APIClient) {
 				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
-				"executor":              {Type: "string", Enum: types.Executors, Description: "Executor for this task (e.g., 'opencode', 'pi'). Defaults to empty (opencode)."},
-				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Extensions to enable for the executor (e.g., browser, filesystem)"},
 				"relatedEntries":        {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entry paths to link"},
 			},
 			Required: []string{"type", "title", "content"},
@@ -103,6 +111,7 @@ func registerBrainSave(s *Server, client *APIClient) {
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		execCtx := GetCachedContext()
 		isTask := StringArg(args, "type", "") == "task"
+		isAutomation := StringArg(args, "type", "") == "automation"
 
 		body := map[string]any{
 			"type":           args["type"],
@@ -127,6 +136,9 @@ func registerBrainSave(s *Server, client *APIClient) {
 			body["feature_id"] = args["feature_id"]
 			body["feature_priority"] = args["feature_priority"]
 			body["feature_depends_on"] = args["feature_depends_on"]
+			body["trigger"] = args["trigger"]
+			body["action"] = args["action"]
+			body["retry"] = args["retry"]
 			body["direct_prompt"] = args["direct_prompt"]
 			body["agent"] = args["agent"]
 			body["model"] = args["model"]
@@ -149,8 +161,20 @@ func registerBrainSave(s *Server, client *APIClient) {
 			body["open_pr_before_merge"] = args["open_pr_before_merge"]
 			body["execution_mode"] = args["execution_mode"]
 			body["complete_on_idle"] = args["complete_on_idle"]
-			body["executor"] = args["executor"]
-			body["extensions"] = args["extensions"]
+			if v, ok := args["executor"].(string); ok && v != "" {
+				body["executor"] = v
+			}
+			if v, ok := args["extensions"]; ok {
+				body["extensions"] = v
+			}
+		}
+
+		if isTask || isAutomation {
+			body["trigger"] = args["trigger"]
+		}
+		if isAutomation {
+			body["action"] = args["action"]
+			body["retry"] = args["retry"]
 		}
 
 		var resp struct {
@@ -263,6 +287,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 				"tags":       {Type: "array", Items: &Property{Type: "string"}, Description: "Filter by tags (OR logic - matches entries with any of the specified tags)"},
 				"limit":      {Type: "number", Description: "Maximum results (default: 10)"},
 				"global":     {Type: "boolean", Description: "Search only global entries"},
+				"strategy":   {Type: "string", Enum: []string{"fts", "exact", "like", "semantic", "hybrid"}, Description: "Search strategy: 'fts' (default), 'exact', 'like', 'semantic' (embedding), or 'hybrid' (combined)"},
 			},
 			Required: []string{"query"},
 		},
@@ -422,7 +447,7 @@ func registerBrainInject(s *Server, client *APIClient) {
 func registerBrainUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name: "brain_update",
-		Description: `Update an existing brain entry's status, title, dependencies, or append content.
+		Description: `Update an existing brain entry's status, title, dependencies, trigger configuration, or append content.
 
 Use cases:
 - Mark a plan as completed: brain_update(path: "...", status: "completed")
@@ -431,6 +456,8 @@ Use cases:
 - Append progress notes: brain_update(path: "...", append: "## Progress\n- Completed auth module")
 - Update title: brain_update(path: "...", title: "New Title")
 - Update dependencies: brain_update(path: "...", depends_on: ["task-id-1", "task-id-2"])
+- Update feature dependencies: brain_update(path: "...", feature_depends_on: ["pre-feature"])
+- Add a post-feature trigger: brain_update(path: "...", trigger: {event:"feature.completed", filter:{feature_id:"main-feature"}})
 - Update tags: brain_update(path: "...", tags: ["tag1", "tag2"])
 - Update priority: brain_update(path: "...", priority: "high")
 
@@ -464,7 +491,10 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"expires_at":           {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
 				"feature_id":           {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
 				"feature_priority":     {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
-				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on"},
+				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. Use this for feature-to-feature ordering."},
+				"trigger":              {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
+				"action":               {Type: "object", Description: "Automation action config for automation entries. Common fields: type, title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir."},
+				"retry":                {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
 				"feature_schedule":     {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
 				"feature_starts_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
 				"feature_expires_at":   {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
@@ -473,52 +503,27 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
 				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
 				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
-				"executor":             {Type: "string", Enum: types.Executors, Description: "Executor for this task (e.g., 'opencode', 'pi')"},
-				"extensions":           {Type: "array", Items: &Property{Type: "string"}, Description: "Extensions to enable for the executor"},
+				"executor":             {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode', 'pi', or 'script'. Empty = use runner default."},
+				"extensions":           {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
 			},
 			Required: []string{"path"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		path := StringArg(args, "path", "")
+		cleanArgs := sanitizeUpdateArgs(args)
 
-		body := map[string]any{
-			"status":               args["status"],
-			"title":                args["title"],
-			"append":               args["append"],
-			"note":                 args["note"],
-			"depends_on":           args["depends_on"],
-			"tags":                 args["tags"],
-			"priority":             args["priority"],
-			"target_workdir":       args["target_workdir"],
-			"git_branch":           args["git_branch"],
-			"merge_target_branch":  args["merge_target_branch"],
-			"merge_policy":         args["merge_policy"],
-			"merge_strategy":       args["merge_strategy"],
-			"remote_branch_policy": args["remote_branch_policy"],
-			"open_pr_before_merge": args["open_pr_before_merge"],
-			"execution_mode":       args["execution_mode"],
-			"complete_on_idle":     args["complete_on_idle"],
-			"schedule":             args["schedule"],
-			"schedule_enabled":     args["schedule_enabled"],
-			"max_runs":             args["max_runs"],
-			"run_once_at":          args["run_once_at"],
-			"timezone":             args["timezone"],
-			"starts_at":            args["starts_at"],
-			"expires_at":           args["expires_at"],
-			"feature_id":           args["feature_id"],
-			"feature_priority":     args["feature_priority"],
-			"feature_depends_on":   args["feature_depends_on"],
-			"feature_schedule":     args["feature_schedule"],
-			"feature_starts_at":    args["feature_starts_at"],
-			"feature_expires_at":   args["feature_expires_at"],
-			"feature_run_once_at":  args["feature_run_once_at"],
-			"feature_timezone":     args["feature_timezone"],
-			"direct_prompt":        args["direct_prompt"],
-			"agent":                args["agent"],
-			"model":                args["model"],
-			"executor":             args["executor"],
-			"extensions":           args["extensions"],
-		}
+		body := map[string]any{}
+		addStringUpdateFields(body, cleanArgs,
+			"status", "title", "append", "note", "priority", "target_workdir", "git_branch",
+			"merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode",
+			"schedule", "run_once_at", "timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
+			"feature_schedule", "feature_starts_at", "feature_expires_at", "feature_run_once_at", "feature_timezone",
+			"direct_prompt", "agent", "model", "executor",
+		)
+		addPresentUpdateFields(body, cleanArgs,
+			"depends_on", "tags", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs",
+			"feature_depends_on", "trigger", "action", "retry", "extensions",
+		)
 
 		var resp struct {
 			Path   string `json:"path"`
@@ -530,111 +535,117 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		}
 
 		var changes []string
-		if v := StringArg(args, "status", ""); v != "" {
+		if v := StringArg(cleanArgs, "status", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Status: -> %s", v))
 		}
-		if v := StringArg(args, "title", ""); v != "" {
+		if v := StringArg(cleanArgs, "title", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Title: -> %q", v))
 		}
-		if v := StringArg(args, "note", ""); v != "" {
+		if v := StringArg(cleanArgs, "note", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Note: %q", v))
 		}
-		if v := StringArg(args, "append", ""); v != "" {
+		if v := StringArg(cleanArgs, "append", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Appended %d characters", len(v)))
 		}
-		if deps := StringSliceArg(args, "depends_on"); deps != nil {
+		if deps := StringSliceArg(cleanArgs, "depends_on"); deps != nil {
 			changes = append(changes, fmt.Sprintf("Dependencies: %d task(s)", len(deps)))
 		}
-		if tags := StringSliceArg(args, "tags"); tags != nil {
+		if tags := StringSliceArg(cleanArgs, "tags"); tags != nil {
 			if len(tags) > 0 {
 				changes = append(changes, fmt.Sprintf("Tags: %s", strings.Join(tags, ", ")))
 			} else {
 				changes = append(changes, "Tags: (cleared)")
 			}
 		}
-		if v := StringArg(args, "priority", ""); v != "" {
+		if v := StringArg(cleanArgs, "priority", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Priority: %s", v))
 		}
-		if v := StringArg(args, "target_workdir", ""); v != "" {
+		if v := StringArg(cleanArgs, "target_workdir", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Target Workdir: %s", v))
 		}
-		if v := StringArg(args, "git_branch", ""); v != "" {
+		if v := StringArg(cleanArgs, "git_branch", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Git Branch: %s", v))
 		}
-		if v := StringArg(args, "merge_target_branch", ""); v != "" {
+		if v := StringArg(cleanArgs, "merge_target_branch", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Merge Target Branch: %s", v))
 		}
-		if v := StringArg(args, "merge_policy", ""); v != "" {
+		if v := StringArg(cleanArgs, "merge_policy", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Merge Policy: %s", v))
 		}
-		if v := StringArg(args, "merge_strategy", ""); v != "" {
+		if v := StringArg(cleanArgs, "merge_strategy", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Merge Strategy: %s", v))
 		}
-		if v := StringArg(args, "remote_branch_policy", ""); v != "" {
+		if v := StringArg(cleanArgs, "remote_branch_policy", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Remote Branch Policy: %s", v))
 		}
-		if _, ok := args["open_pr_before_merge"]; ok {
-			changes = append(changes, fmt.Sprintf("Open PR Before Merge: %v", args["open_pr_before_merge"]))
+		if _, ok := cleanArgs["open_pr_before_merge"]; ok {
+			changes = append(changes, fmt.Sprintf("Open PR Before Merge: %v", cleanArgs["open_pr_before_merge"]))
 		}
-		if v := StringArg(args, "execution_mode", ""); v != "" {
+		if v := StringArg(cleanArgs, "execution_mode", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Execution Mode: %s", v))
 		}
-		if _, ok := args["complete_on_idle"]; ok {
-			changes = append(changes, fmt.Sprintf("Complete On Idle: %v", args["complete_on_idle"]))
+		if _, ok := cleanArgs["complete_on_idle"]; ok {
+			changes = append(changes, fmt.Sprintf("Complete On Idle: %v", cleanArgs["complete_on_idle"]))
 		}
-		if v := StringArg(args, "schedule", ""); v != "" {
+		if v := StringArg(cleanArgs, "schedule", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Schedule: %s", v))
 		}
-		if _, ok := args["schedule_enabled"]; ok {
-			changes = append(changes, fmt.Sprintf("Schedule Enabled: %v", args["schedule_enabled"]))
+		if _, ok := cleanArgs["schedule_enabled"]; ok {
+			changes = append(changes, fmt.Sprintf("Schedule Enabled: %v", cleanArgs["schedule_enabled"]))
 		}
-		if _, ok := args["max_runs"]; ok {
-			changes = append(changes, fmt.Sprintf("Max Runs: %v", args["max_runs"]))
+		if _, ok := cleanArgs["max_runs"]; ok {
+			changes = append(changes, fmt.Sprintf("Max Runs: %v", cleanArgs["max_runs"]))
 		}
-		if v := StringArg(args, "run_once_at", ""); v != "" {
+		if v := StringArg(cleanArgs, "run_once_at", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Run Once At: %s", v))
 		}
-		if v := StringArg(args, "timezone", ""); v != "" {
+		if v := StringArg(cleanArgs, "timezone", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Timezone: %s", v))
 		}
-		if v := StringArg(args, "starts_at", ""); v != "" {
+		if v := StringArg(cleanArgs, "starts_at", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Starts At: %s", v))
 		}
-		if v := StringArg(args, "expires_at", ""); v != "" {
+		if v := StringArg(cleanArgs, "expires_at", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Expires At: %s", v))
 		}
-		if v := StringArg(args, "feature_id", ""); v != "" {
+		if v := StringArg(cleanArgs, "feature_id", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature ID: %s", v))
 		}
-		if v := StringArg(args, "feature_priority", ""); v != "" {
+		if v := StringArg(cleanArgs, "feature_priority", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature Priority: %s", v))
 		}
-		if deps := StringSliceArg(args, "feature_depends_on"); deps != nil {
+		if deps := StringSliceArg(cleanArgs, "feature_depends_on"); deps != nil {
 			changes = append(changes, fmt.Sprintf("Feature Dependencies: %d feature(s)", len(deps)))
 		}
-		if v := StringArg(args, "feature_schedule", ""); v != "" {
+		if v := StringArg(cleanArgs, "feature_schedule", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature Schedule: %s", v))
 		}
-		if v := StringArg(args, "feature_starts_at", ""); v != "" {
+		if v := StringArg(cleanArgs, "feature_starts_at", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature Starts At: %s", v))
 		}
-		if v := StringArg(args, "feature_expires_at", ""); v != "" {
+		if v := StringArg(cleanArgs, "feature_expires_at", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature Expires At: %s", v))
 		}
-		if v := StringArg(args, "feature_run_once_at", ""); v != "" {
+		if v := StringArg(cleanArgs, "feature_run_once_at", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature Run Once At: %s", v))
 		}
-		if v := StringArg(args, "feature_timezone", ""); v != "" {
+		if v := StringArg(cleanArgs, "feature_timezone", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Feature Timezone: %s", v))
 		}
-		if v := StringArg(args, "direct_prompt", ""); v != "" {
+		if v := StringArg(cleanArgs, "direct_prompt", ""); v != "" {
 			changes = append(changes, "Direct Prompt: set")
 		}
-		if v := StringArg(args, "agent", ""); v != "" {
+		if v := StringArg(cleanArgs, "agent", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Agent: %s", v))
 		}
-		if v := StringArg(args, "model", ""); v != "" {
+		if v := StringArg(cleanArgs, "model", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Model: %s", v))
+		}
+		if v := StringArg(cleanArgs, "executor", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Executor: %s", v))
+		}
+		if exts := StringSliceArg(cleanArgs, "extensions"); exts != nil {
+			changes = append(changes, fmt.Sprintf("Extensions: %s", strings.Join(exts, ", ")))
 		}
 
 		changeLines := make([]string, len(changes))
@@ -645,6 +656,161 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		return fmt.Sprintf("Updated: %s\n\n**Changes:**\n%s\n\n**Current Status:** %s\n**Title:** %s\n\nUse `brain_recall` to view the full entry.",
 			resp.Path, strings.Join(changeLines, "\n"), resp.Status, resp.Title), nil
 	})
+}
+
+func addStringUpdateFields(body, args map[string]any, keys ...string) {
+	for _, key := range keys {
+		if v, ok := args[key].(string); ok && v != "" {
+			body[key] = v
+		}
+	}
+}
+
+func addPresentUpdateFields(body, args map[string]any, keys ...string) {
+	for _, key := range keys {
+		if v, ok := args[key]; ok && v != nil {
+			body[key] = v
+		}
+	}
+}
+
+var openCodeOptionalDefaults = map[string]any{
+	"priority":             "medium",
+	"feature_priority":     "high",
+	"merge_policy":         "prompt_only",
+	"merge_strategy":       "squash",
+	"remote_branch_policy": "keep",
+	"execution_mode":       "worktree",
+	"executor":             "opencode",
+	"open_pr_before_merge": false,
+	"complete_on_idle":     false,
+	"schedule_enabled":     false,
+	"max_runs":             0,
+}
+
+func sanitizeUpdateArgs(args map[string]any) map[string]any {
+	clean := make(map[string]any, len(args))
+	defaultCount := 0
+	for key, value := range args {
+		if s, ok := value.(string); ok && s == "" {
+			continue
+		}
+		if matchesOpenCodeOptionalDefault(key, value) {
+			defaultCount++
+		}
+		clean[key] = value
+	}
+
+	if defaultCount < 3 {
+		return clean
+	}
+
+	for key, value := range clean {
+		if matchesOpenCodeOptionalDefault(key, value) {
+			delete(clean, key)
+		}
+	}
+	return clean
+}
+
+func matchesOpenCodeOptionalDefault(key string, value any) bool {
+	defaultValue, ok := openCodeOptionalDefaults[key]
+	if !ok {
+		return false
+	}
+
+	switch want := defaultValue.(type) {
+	case string:
+		got, ok := value.(string)
+		return ok && got == want
+	case bool:
+		got, ok := value.(bool)
+		return ok && got == want
+	case int:
+		switch got := value.(type) {
+		case int:
+			return got == want
+		case int64:
+			return got == int64(want)
+		case float64:
+			return got == float64(want)
+		}
+	}
+	return false
+}
+
+func sanitizeObjectArg(value any) any {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+
+	clean := make(map[string]any, len(obj))
+	for key, field := range obj {
+		if field == nil {
+			continue
+		}
+		if s, ok := field.(string); ok && s == "" {
+			continue
+		}
+		if arr, ok := field.([]any); ok && len(arr) == 0 {
+			continue
+		}
+		clean[key] = field
+	}
+	return clean
+}
+
+func hasFields(value any) bool {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return value != nil
+	}
+	return len(obj) > 0
+}
+
+func sanitizeUpdateValue(value any) any {
+	obj, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+	return sanitizeUpdateArgs(obj)
+}
+
+func sanitizeBulkUpdateEntries(value any) any {
+	switch entries := value.(type) {
+	case []any:
+		clean := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			clean = append(clean, sanitizeBulkUpdateEntry(entry))
+		}
+		return clean
+	case []map[string]any:
+		clean := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			clean = append(clean, sanitizeBulkUpdateEntry(entry))
+		}
+		return clean
+	default:
+		return value
+	}
+}
+
+func sanitizeBulkUpdateEntry(value any) any {
+	entry, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+
+	clean := make(map[string]any, len(entry))
+	for key, field := range entry {
+		if key == "updates" {
+			clean[key] = sanitizeUpdateValue(field)
+			continue
+		}
+		clean[key] = field
+	}
+	return clean
 }
 
 // =============================================================================
@@ -661,6 +827,7 @@ Two modes (mutually exclusive):
 2. Explicit mode: entries — specify each entry path with its own updates
 
 Use dry_run to preview what would be changed without applying.
+Omit filter fields you do not want to match. Do not include priority in the filter unless you intentionally want to update only one priority.
 
 Examples:
 - Mark all tasks in a feature as cancelled:
@@ -680,8 +847,10 @@ Examples:
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		// Validate: must have either (filter + updates) or entries, not both, not neither
-		_, hasFilter := args["filter"]
-		_, hasUpdates := args["updates"]
+		filter := sanitizeObjectArg(args["filter"])
+		updates := sanitizeUpdateValue(args["updates"])
+		hasFilter := hasFields(filter)
+		hasUpdates := hasFields(updates)
 		_, hasEntries := args["entries"]
 
 		if hasFilter && hasEntries {
@@ -697,11 +866,11 @@ Examples:
 		// Build request body — pass through to the API which handles full validation
 		body := make(map[string]any)
 		if hasFilter {
-			body["filter"] = args["filter"]
-			body["updates"] = args["updates"]
+			body["filter"] = filter
+			body["updates"] = updates
 		}
 		if hasEntries {
-			body["entries"] = args["entries"]
+			body["entries"] = sanitizeBulkUpdateEntries(args["entries"])
 		}
 		body["dry_run"] = BoolArg(args, "dry_run", false)
 

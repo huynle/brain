@@ -43,7 +43,7 @@ func TestCreateTokenDirect(t *testing.T) {
 	defer cleanup()
 
 	// Create a token
-	token, err := CreateTokenDirect(brainDir, "test-token")
+	token, err := CreateTokenDirect(brainDir, "test-token", "")
 	require.NoError(t, err)
 	assert.NotNil(t, token)
 	assert.Equal(t, "test-token", token.Name)
@@ -68,11 +68,11 @@ func TestCreateTokenDirect_Duplicate(t *testing.T) {
 	defer cleanup()
 
 	// Create first token
-	_, err := CreateTokenDirect(brainDir, "duplicate-token")
+	_, err := CreateTokenDirect(brainDir, "duplicate-token", "")
 	require.NoError(t, err)
 
 	// Attempt to create duplicate
-	_, err = CreateTokenDirect(brainDir, "duplicate-token")
+	_, err = CreateTokenDirect(brainDir, "duplicate-token", "")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "UNIQUE constraint")
 }
@@ -87,9 +87,9 @@ func TestListTokensDirect(t *testing.T) {
 	assert.Empty(t, tokens)
 
 	// Add some tokens
-	_, err = CreateTokenDirect(brainDir, "token-1")
+	_, err = CreateTokenDirect(brainDir, "token-1", "")
 	require.NoError(t, err)
-	_, err = CreateTokenDirect(brainDir, "token-2")
+	_, err = CreateTokenDirect(brainDir, "token-2", "")
 	require.NoError(t, err)
 
 	// List tokens
@@ -108,7 +108,7 @@ func TestRevokeTokenDirect(t *testing.T) {
 	defer cleanup()
 
 	// Create a token
-	_, err := CreateTokenDirect(brainDir, "revoke-me")
+	_, err := CreateTokenDirect(brainDir, "revoke-me", "")
 	require.NoError(t, err)
 
 	// Revoke it

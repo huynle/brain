@@ -10,24 +10,34 @@ import "time"
 
 // RunnerConfig holds all configuration for the brain task runner.
 type RunnerConfig struct {
-	BrainAPIURL            string         `yaml:"brain_api_url" json:"brain_api_url"`
-	APIToken               string         `yaml:"api_token" json:"api_token"`
-	PollInterval           int            `yaml:"poll_interval" json:"poll_interval"`           // seconds
-	TaskPollInterval       int            `yaml:"task_poll_interval" json:"task_poll_interval"` // seconds
-	MaxParallel            int            `yaml:"max_parallel" json:"max_parallel"`
-	StateDir               string         `yaml:"state_dir" json:"state_dir"`
-	LogDir                 string         `yaml:"log_dir" json:"log_dir"`
-	WorkDir                string         `yaml:"work_dir" json:"work_dir"`
-	APITimeout             int            `yaml:"api_timeout" json:"api_timeout"`                           // ms
-	TaskTimeout            int            `yaml:"task_timeout" json:"task_timeout"`                         // ms
-	IdleDetectionThreshold int            `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
-	MaxTotalProcesses      int            `yaml:"max_total_processes" json:"max_total_processes"`
-	MemoryThresholdPercent int            `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
-	Opencode               OpencodeConfig `yaml:"opencode" json:"opencode"`
-	Script                 ScriptConfig   `yaml:"script" json:"script"`
-	PiBin                  string         `yaml:"pi_bin" json:"pi_bin"` // Path to Pi binary (default: "pi")
-	ExcludeProjects        []string       `yaml:"exclude_projects" json:"exclude_projects"`
-	AutoMonitors           bool           `yaml:"auto_monitors" json:"auto_monitors"`
+	BrainAPIURL               string             `yaml:"brain_api_url" json:"brain_api_url"`
+	APIToken                  string             `yaml:"api_token" json:"api_token"`
+	APITokenEnv               string             `yaml:"api_token_env" json:"api_token_env"`
+	PollInterval              int                `yaml:"poll_interval" json:"poll_interval"`           // seconds
+	TaskPollInterval          int                `yaml:"task_poll_interval" json:"task_poll_interval"` // seconds
+	MaxParallel               int                `yaml:"max_parallel" json:"max_parallel"`
+	StateDir                  string             `yaml:"state_dir" json:"state_dir"`
+	LogDir                    string             `yaml:"log_dir" json:"log_dir"`
+	WorkDir                   string             `yaml:"work_dir" json:"work_dir"`
+	RepoCacheDir              string             `yaml:"repo_cache_dir" json:"repo_cache_dir"`
+	GitToken                  string             `yaml:"git_token" json:"git_token"`
+	GitTokenEnv               string             `yaml:"git_token_env" json:"git_token_env"`
+	RequireHTTPS              bool               `yaml:"require_https" json:"require_https"`
+	AllowUnauthenticatedHTTPS bool               `yaml:"allow_unauthenticated_https" json:"allow_unauthenticated_https"`
+	APITimeout                int                `yaml:"api_timeout" json:"api_timeout"`                           // ms
+	TaskTimeout               int                `yaml:"task_timeout" json:"task_timeout"`                         // ms
+	IdleDetectionThreshold    int                `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
+	MaxTotalProcesses         int                `yaml:"max_total_processes" json:"max_total_processes"`
+	MemoryThresholdPercent    int                `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
+	Opencode                  OpencodeConfig     `yaml:"opencode" json:"opencode"`
+	Script                    ScriptConfig       `yaml:"script" json:"script"`
+	Pi                        PiConfig           `yaml:"pi" json:"pi"`
+	Executors                 []string           `yaml:"executors" json:"executors"`
+	DefaultExecutor           string             `yaml:"default_executor" json:"default_executor"`
+	TaskDefaults              TaskDefaultsConfig `yaml:"task_defaults" json:"task_defaults"`
+	ExcludeProjects           []string           `yaml:"exclude_projects" json:"exclude_projects"`
+	IncludeProjects           []string           `yaml:"include_projects" json:"include_projects"`
+	AutoMonitors              bool               `yaml:"auto_monitors" json:"auto_monitors"`
 
 	// EnvPassthrough is a list of environment variable names to forward
 	// from the runner process to spawned OpenCode agents.
@@ -39,6 +49,30 @@ type RunnerConfig struct {
 	// When empty, all features are eligible. Supports multiple feature IDs.
 	// Set via --feature-id CLI flag or RUNNER_FEATURE_IDS env var (comma-separated).
 	FeatureIDs []string `yaml:"feature_ids" json:"feature_ids"`
+
+	// Hooks holds the event hook system configuration, including hooks directory
+	// and inline hook definitions.
+	Hooks HooksConfig `yaml:"hooks" json:"hooks"`
+
+	// HooksDir is the directory containing hook scripts (pre-*/post-* executables).
+	// Default: ~/.config/brain/hooks
+	// Deprecated: Use Hooks.HooksDir instead. Kept for backward compatibility.
+	HooksDir string `yaml:"hooks_dir" json:"hooks_dir"`
+
+	// HookTimeout is the maximum duration in seconds for pre-hook execution.
+	// Post-hooks are fire-and-forget and not subject to this timeout.
+	// Default: 30
+	// Deprecated: Use per-hook timeout in Hooks.Hooks[name].Timeout instead.
+	HookTimeout int `yaml:"hook_timeout" json:"hook_timeout"`
+
+	// HeartbeatInterval is how often (in seconds) the runner sends heartbeats
+	// to the Brain API. Default: 30s. Set via RUNNER_HEARTBEAT_INTERVAL env var.
+	HeartbeatInterval int `yaml:"heartbeat_interval" json:"heartbeat_interval"`
+
+	// LogStreaming enables runner-side log streaming. When true, the runner
+	// captures executor stdout/stderr and POSTs batches to the Brain API.
+	// Default: true. Set via RUNNER_LOG_STREAMING env var.
+	LogStreaming bool `yaml:"log_streaming" json:"log_streaming"`
 
 	// Capabilities declares what this runner can do. Tasks with requires_capability
 	// tags are only claimable by runners whose capabilities include all required values.
@@ -54,28 +88,124 @@ type OpencodeConfig struct {
 	Model string `yaml:"model" json:"model"`
 }
 
+// HooksConfig holds configuration for the event hook system.
+// It supports both directory-based hook discovery and inline hook definitions.
+type HooksConfig struct {
+	// HooksDir is the directory containing hook scripts (pre-*/post-* executables).
+	// Default: ~/.config/brain/hooks
+	HooksDir string `yaml:"hooks_dir" json:"hooks_dir"`
+
+	// Inline hook definitions keyed by hook name (e.g., "post-task-blocked").
+	// YAML config inline hooks take precedence over directory scripts.
+	Hooks map[string]InlineHookConfig `yaml:"hooks" json:"hooks"`
+}
+
+// InlineHookConfig defines an inline hook from YAML configuration.
+// Either Command or Script must be set, but not both.
+type InlineHookConfig struct {
+	// Command is a shell command string to execute (run via "sh -c").
+	Command string `yaml:"command" json:"command"`
+	// Script is the path to an executable script file.
+	Script string `yaml:"script" json:"script"`
+	// Timeout is the maximum duration for hook execution.
+	// Defaults to 30s for pre-hooks, 10s for post-hooks.
+	Timeout Duration `yaml:"timeout" json:"timeout"`
+	// Blocking controls whether a pre-hook blocks the action on failure.
+	// Only meaningful for pre-hooks. Default: true for pre-hooks.
+	Blocking *bool `yaml:"blocking" json:"blocking"`
+	// Enabled controls whether this hook is active. Default: true.
+	Enabled *bool `yaml:"enabled" json:"enabled"`
+}
+
+// Duration is a time.Duration that supports YAML unmarshaling from strings like "10s", "5m".
+type Duration struct {
+	time.Duration
+}
+
+// UnmarshalYAML implements yaml.Unmarshaler for Duration.
+func (d *Duration) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	var s string
+	if err := unmarshal(&s); err != nil {
+		// Try as integer (seconds).
+		var secs int
+		if err2 := unmarshal(&secs); err2 != nil {
+			return err
+		}
+		d.Duration = time.Duration(secs) * time.Second
+		return nil
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	d.Duration = parsed
+	return nil
+}
+
+// MarshalYAML implements yaml.Marshaler for Duration.
+func (d Duration) MarshalYAML() (interface{}, error) {
+	return d.Duration.String(), nil
+}
+
+// IsEnabled returns whether the inline hook is enabled (defaults to true).
+func (h InlineHookConfig) IsEnabled() bool {
+	if h.Enabled == nil {
+		return true
+	}
+	return *h.Enabled
+}
+
+// IsBlocking returns whether the inline hook is blocking (defaults to true for pre-hooks).
+func (h InlineHookConfig) IsBlocking() bool {
+	if h.Blocking == nil {
+		return true
+	}
+	return *h.Blocking
+}
+
+// GetTimeout returns the configured timeout, or the given default if not set.
+func (h InlineHookConfig) GetTimeout(defaultTimeout time.Duration) time.Duration {
+	if h.Timeout.Duration > 0 {
+		return h.Timeout.Duration
+	}
+	return defaultTimeout
+}
+
+// PiConfig holds configuration for the Pi executor.
+type PiConfig struct {
+	Bin           string   `yaml:"bin" json:"bin"`
+	Model         string   `yaml:"model" json:"model"`
+	Thinking      string   `yaml:"thinking" json:"thinking"`
+	AgentsDir     string   `yaml:"agents_dir" json:"agents_dir"`
+	ExtensionsDir string   `yaml:"extensions_dir" json:"extensions_dir"`
+	Extensions    []string `yaml:"extensions" json:"extensions"`
+	NoSession     bool     `yaml:"no_session" json:"no_session"`
+}
+
+// TaskDefaultsConfig holds default values applied to tasks when not overridden
+// by per-task metadata.
+type TaskDefaultsConfig struct {
+	Agent              string   `yaml:"agent" json:"agent"`
+	Model              string   `yaml:"model" json:"model"`
+	Executor           string   `yaml:"executor" json:"executor"`
+	Extensions         []string `yaml:"extensions" json:"extensions"`
+	ExecutionMode      string   `yaml:"execution_mode" json:"execution_mode"`
+	CompleteOnIdle     *bool    `yaml:"complete_on_idle" json:"complete_on_idle"`
+	MergePolicy        string   `yaml:"merge_policy" json:"merge_policy"`
+	MergeStrategy      string   `yaml:"merge_strategy" json:"merge_strategy"`
+	MergeTargetBranch  string   `yaml:"merge_target_branch" json:"merge_target_branch"`
+	RemoteBranchPolicy string   `yaml:"remote_branch_policy" json:"remote_branch_policy"`
+	OpenPRBeforeMerge  *bool    `yaml:"open_pr_before_merge" json:"open_pr_before_merge"`
+	TargetWorkdir      string   `yaml:"target_workdir" json:"target_workdir"`
+}
+
 // ScriptConfig holds configuration for the script executor.
 // Scripts are disabled by default and must be explicitly enabled.
 type ScriptConfig struct {
-	// Enabled must be true to allow script execution. Default: false.
-	Enabled bool `yaml:"enabled" json:"enabled"`
-
-	// AllowedCommands is a whitelist of command prefixes that are permitted.
-	// If non-empty, only commands starting with one of these prefixes are allowed.
-	// Example: ["npm ", "go ", "make"]
+	Enabled         bool     `yaml:"enabled" json:"enabled"`
 	AllowedCommands []string `yaml:"allowed_commands" json:"allowed_commands"`
-
-	// BlockedCommands is a blacklist of command prefixes that are rejected.
-	// Checked after AllowedCommands. Example: ["rm -rf /", "sudo"]
 	BlockedCommands []string `yaml:"blocked_commands" json:"blocked_commands"`
-
-	// MaxTimeout is the maximum execution time in seconds. Default: 300 (5 min).
-	// The process is killed (SIGKILL) after this duration.
-	MaxTimeout int `yaml:"max_timeout" json:"max_timeout"`
-
-	// WorkdirRestrict limits script execution to paths under these directories.
-	// If non-empty, the resolved workdir must be under one of these prefixes.
-	// Example: ["/home/user/projects"]
+	MaxTimeout      int      `yaml:"max_timeout" json:"max_timeout"`
 	WorkdirRestrict []string `yaml:"workdir_restrict" json:"workdir_restrict"`
 }
 
@@ -105,6 +235,7 @@ type RunningTask struct {
 	StartedAt       time.Time `json:"startedAt"`
 	IsResume        bool      `json:"isResume"`
 	Workdir         string    `json:"workdir"`
+	ExecutorType    string    `json:"executorType,omitempty"` // "opencode", "pi", or "script"
 	Executor        string    `json:"executor,omitempty"`
 	OpencodePort    int       `json:"opencodePort,omitempty"`
 	SessionID       string    `json:"sessionId,omitempty"`
@@ -112,6 +243,8 @@ type RunningTask struct {
 	CompleteOnIdle  bool      `json:"completeOnIdle,omitempty"`
 	ScheduledTaskID string    `json:"scheduledTaskId,omitempty"`
 	RunID           string    `json:"runId,omitempty"`
+	FeatureID       string    `json:"featureId,omitempty"`
+	GeneratedBy     string    `json:"generatedBy,omitempty"`
 }
 
 // TaskResultStatus enumerates possible outcomes of a task execution.
@@ -196,6 +329,12 @@ const (
 	EventTaskStatusChanged RunnerEventType = "task_status_changed"
 	EventTaskReleased      RunnerEventType = "task_released"
 	EventRunnerStarted     RunnerEventType = "runner_started"
+
+	// Feature lifecycle events (emitted by FeatureTracker).
+	EventFeatureStarted   RunnerEventType = "feature_started"
+	EventFeatureCompleted RunnerEventType = "feature_completed"
+	EventFeatureBlocked   RunnerEventType = "feature_blocked"
+	EventFeatureProgress  RunnerEventType = "feature_progress"
 )
 
 // RunnerEvent is a discriminated event emitted by the runner.
@@ -255,9 +394,18 @@ type EventHandler func(event RunnerEvent)
 
 // APIHealth represents the health status of the Brain API.
 type APIHealth struct {
-	Status      string `json:"status"`
-	ZKAvailable bool   `json:"zkAvailable"`
-	DBAvailable bool   `json:"dbAvailable"`
+	Status      string             `json:"status"`
+	ZKAvailable bool               `json:"zkAvailable"`
+	DBAvailable bool               `json:"dbAvailable"`
+	Embedding   APIEmbeddingHealth `json:"embedding"`
+}
+
+// APIEmbeddingHealth represents embedding model availability from /health.
+type APIEmbeddingHealth struct {
+	Enabled  bool   `json:"enabled"`
+	Status   string `json:"status"`
+	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
 }
 
 // ClaimResult represents the outcome of a task claim attempt.
@@ -266,4 +414,51 @@ type ClaimResult struct {
 	TaskID    string `json:"taskId"`
 	ClaimedBy string `json:"claimedBy,omitempty"`
 	Message   string `json:"message,omitempty"`
+}
+
+// =============================================================================
+// Runner Command Types (SSE command channel)
+// =============================================================================
+
+// RunnerCommandType enumerates the kinds of commands the server can push to a runner.
+type RunnerCommandType string
+
+const (
+	// CommandAffinityUpdated signals the runner to update its FeatureIDs.
+	CommandAffinityUpdated RunnerCommandType = "affinity_updated"
+
+	// CommandConfigUpdated signals the runner to update maxParallel, model, agent.
+	CommandConfigUpdated RunnerCommandType = "config_updated"
+
+	// CommandDispatch signals the runner to immediately wake for targeted task pickup.
+	CommandDispatch RunnerCommandType = "dispatch"
+
+	// CommandPause signals the runner to pause all task claims.
+	CommandPause RunnerCommandType = "pause"
+
+	// CommandResume signals the runner to resume task claims.
+	CommandResume RunnerCommandType = "resume"
+
+	// CommandShutdown signals the runner to initiate graceful shutdown.
+	CommandShutdown RunnerCommandType = "shutdown"
+)
+
+// RunnerCommand represents a server-pushed command received via the runner SSE stream.
+type RunnerCommand struct {
+	Type RunnerCommandType `json:"type"`
+
+	// Populated for affinity_updated commands.
+	FeatureIDs []string `json:"featureIds,omitempty"`
+
+	// Populated for config_updated commands.
+	MaxParallel *int   `json:"maxParallel,omitempty"`
+	Model       string `json:"model,omitempty"`
+	Agent       string `json:"agent,omitempty"`
+
+	// Populated for dispatch commands.
+	TaskID    string `json:"taskId,omitempty"`
+	ProjectID string `json:"projectId,omitempty"`
+
+	// Populated for shutdown commands.
+	Reason string `json:"reason,omitempty"`
 }

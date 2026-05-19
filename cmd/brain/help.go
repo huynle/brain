@@ -24,6 +24,7 @@ CORE COMMANDS:
 
 RUNNER COMMANDS:
   start [project|all]            Open runner TUI (default project: all)
+  start [project|all] --monitor  Monitor-only TUI (no local runner)
   run <subcommand> [project]     Runner management subcommands
   runner <subcommand> [project]  Alias for run
 
@@ -50,6 +51,7 @@ ENTRIES:
   edit <id-or-path>              Open entry in $EDITOR for editing
   search <query>                 Search brain entries
   list                           List brain entries with filters
+  embeddings backfill            Generate missing/stale embeddings
 
 AUTOMATIONS:
   automation                     List automations
@@ -74,6 +76,7 @@ GLOBAL HELP:
 EXAMPLES:
   brain start
   brain start my-project --max-parallel 5
+  brain start all --monitor
   brain api --port 3000
   brain api start --dry-run
   brain api logs -f -n 200
@@ -82,6 +85,30 @@ EXAMPLES:
   brain edit abc12def
   brain edit -i --type task
   brain help run
+`
+
+const embeddingsHelp = `brain embeddings - Generate semantic-search embeddings
+
+USAGE:
+  brain embeddings backfill [flags]
+
+SUBCOMMANDS:
+  backfill                       Embed matching notes that are missing or stale
+
+FLAGS:
+  --project <id>                 Only embed entries in a project
+  --all                          Embed entries across all brains/projects (default)
+  --path <prefix>                Only embed entries with this path prefix
+  --force                        Re-embed matching entries even if already current
+  --dry-run                      Show entries that would be embedded
+  -v, --verbose                  Show configuration and detailed entries
+  -h, --help                     Show this help
+
+EXAMPLES:
+  brain embeddings backfill --project brain-api
+  brain embeddings backfill --all
+  brain embeddings backfill --project brain-api --force
+  brain embeddings backfill --dry-run --verbose
 `
 
 const apiHelp = `brain api - API server operations
@@ -236,9 +263,11 @@ USAGE:
   brain start
   brain start <project>
   brain start all [filters]
+  brain start <project> --monitor
 
 FLAGS:
   --tui                          TUI mode (default behavior)
+  --monitor                      Monitor-only TUI (no local runner)
   -f, --foreground               Foreground mode without TUI
   -b, --headless                 Headless mode (no TUI, no tmux)
   --dashboard                    Dashboard mode
@@ -253,9 +282,17 @@ FLAGS:
   --follow                       Follow logs mode
   -h, --help                     Show this help
 
+MONITOR MODE:
+  The --monitor flag launches the TUI as a pure remote control panel.
+  No local task runner is started. The TUI connects to the Brain API
+  via SSE for real-time task updates and uses HTTP API for actions
+  like pause/resume and task execution (priority bump).
+
 EXAMPLES:
   brain start
   brain start my-project
+  brain start my-project --monitor
+  brain start all --monitor
   brain start all -i 'prod-*' -e 'legacy-*'
   brain start all --max-parallel 5 --poll-interval 3
 `
@@ -351,17 +388,30 @@ EXAMPLES:
   brain doctor --fix --dry-run
 `
 
-const configHelp = `brain config - Show resolved runtime configuration
+const configHelp = `brain config - Show or initialize configuration
 
 USAGE:
   brain config
+  brain config defaults
+  brain config init [--print] [--force]
+
+SUBCOMMANDS:
+  defaults                       Print full default config YAML to stdout
+  init                           Write default config.yaml if it does not exist
+
+FLAGS:
+  --print                        Print default config YAML instead of writing
+  -f, --force                    Overwrite existing config.yaml with init
 
 DESCRIPTION:
-  Prints resolved server, runner, and MCP settings from defaults,
-  config files, environment, and CLI overrides.
+  Without a subcommand, prints resolved server, runner, and MCP settings.
+  Use defaults/init to inspect or create ~/.config/brain/config.yaml safely.
 
 EXAMPLES:
   brain config
+  brain config defaults
+  brain config init --print
+  brain config init
 `
 
 const installHelp = `brain install - Install brain plugin integration
@@ -428,15 +478,24 @@ EXAMPLES:
 const tokenCreateHelp = `brain token create - Create API token
 
 USAGE:
-  brain token create --name <name>
+  brain token create --name <name> [--scope <scope>]
   brain token create <name>
 
 FLAGS:
   --name <name>                  Token name
+  --scope <scope>                Token scope (default: admin:*)
+                                 Values: admin:*, runner:*, read:*
   -h, --help                     Show this help
+
+SCOPES:
+  admin:*                        Full access to all endpoints
+  runner:*                       Runner operations (claim/release/heartbeat) + read
+  read:*                         Read-only access to entries and tasks
 
 EXAMPLES:
   brain token create --name dev
+  brain token create --name runner-1 --scope runner:*
+  brain token create --name monitoring --scope read:*
   brain token create ci-bot
 `
 
@@ -806,6 +865,16 @@ FLAGS:
   -q, --quiet                    Suppress summary counts
   -h, --help                     Show this help
 
+TRIGGERS:
+  event                           Fires on a brain event
+  cron                            Fires on a schedule
+  webhook                         Fires from an external webhook
+  session                         Fires on runner session events
+
+GUARDS:
+  cooldown                        Minimum duration between generated tasks (e.g. 5m)
+  max_concurrent                  Maximum active generated tasks allowed at once
+
 EXAMPLES:
   brain automation
   brain automation list
@@ -830,9 +899,20 @@ FLAGS:
 DESCRIPTION:
   Opens an interactive wizard that walks you through:
   1. Automation name
-  2. Trigger type (event, cron, webhook) and configuration
+  2. Trigger type (event, cron, webhook, session) and configuration
   3. Action type (prompt, script) and configuration
   4. Project scope
+  5. Optional guards: cooldown and max_concurrent
+
+TRIGGER TYPES:
+  event                           Brain event name (e.g. task.completed)
+  cron                            Cron schedule (e.g. 0 9 * * *)
+  webhook                         Webhook path (e.g. /hooks/deploy)
+  session                         Runner session event; defaults to runner.session_discovered
+
+GUARDS:
+  cooldown                        Optional Go duration such as 5m or 1h
+  max_concurrent                  Optional positive integer concurrency cap
 
 EXAMPLES:
   brain automation create
@@ -950,6 +1030,8 @@ func ShowHelp(command string) {
 		fmt.Print(searchHelp)
 	case "list":
 		fmt.Print(listHelp)
+	case "embeddings", "embeddings backfill":
+		fmt.Print(embeddingsHelp)
 	case "stop":
 		fmt.Print(stopHelp)
 	default:

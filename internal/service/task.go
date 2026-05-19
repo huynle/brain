@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -25,36 +24,57 @@ import (
 // Compile-time check that TaskServiceImpl implements api.TaskService.
 var _ api.TaskService = (*TaskServiceImpl)(nil)
 
-// TaskServiceImpl implements api.TaskService using a StorageLayer and in-memory claims.
+// TaskServiceImpl implements api.TaskService using a StorageLayer and persistent claims.
 type TaskServiceImpl struct {
 	config  *config.Config
 	storage *storage.StorageLayer
-
-	mu     sync.Mutex
-	claims map[string]*types.TaskClaim // key: "projectId:taskId"
 }
+
+// DefaultLeaseDuration is the default lease duration for task claims (10 minutes).
+// This matches the previous stale claim threshold.
+const DefaultLeaseDuration = 10 * time.Minute
 
 // NewTaskService creates a new TaskServiceImpl.
 func NewTaskService(cfg *config.Config, store *storage.StorageLayer) *TaskServiceImpl {
 	return &TaskServiceImpl{
 		config:  cfg,
 		storage: store,
-		claims:  make(map[string]*types.TaskClaim),
 	}
 }
 
-// claimKey returns the composite key for a task claim.
-func claimKey(projectId, taskId string) string {
-	return projectId + ":" + taskId
+// DefaultClaimCleanupInterval is the default interval for the background claim cleanup goroutine.
+const DefaultClaimCleanupInterval = 60 * time.Second
+
+// StartClaimCleanup launches a background goroutine that periodically expires stale claims.
+// The goroutine calls storage.ExpireStaleClaims on each tick and logs the count of removed claims.
+// It respects context cancellation for clean shutdown.
+func (s *TaskServiceImpl) StartClaimCleanup(ctx context.Context, interval time.Duration) {
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				slog.Info("claim cleanup goroutine stopped")
+				return
+			case <-ticker.C:
+				count, err := s.storage.ExpireStaleClaims(ctx)
+				if err != nil {
+					slog.Error("claim cleanup failed", "error", err)
+					continue
+				}
+				if count > 0 {
+					slog.Info("expired stale claims", "count", count)
+				}
+			}
+		}
+	}()
 }
 
-// staleClaimThreshold is the duration after which a claim is considered stale.
-const staleClaimThreshold = 10 * time.Minute
-
-// isStale returns true if the claim is older than staleClaimThreshold.
-func isStale(claim *types.TaskClaim) bool {
-	claimedAt := time.UnixMilli(claim.ClaimedAt)
-	return time.Since(claimedAt) > staleClaimThreshold
+// isExpired returns true if the claim's lease has expired (expires_at < now).
+func isExpired(claim *storage.TaskClaimRow) bool {
+	return time.Now().UnixMilli() > claim.ExpiresAt
 }
 
 // ListProjects scans <brainDir>/projects/ for subdirectories containing a task/ subfolder.
@@ -89,12 +109,102 @@ func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
 }
 
 // GetTasks returns all tasks for a project with dependency resolution.
+// Server-side task defaults are applied after resolution: empty task fields
+// are filled from config.TaskDefaults so runners receive ready-to-use tasks.
 func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*types.TaskListResponse, error) {
 	entries, err := s.getAllTasks(ctx, projectId)
 	if err != nil {
 		return nil, err
 	}
-	return ResolveDependencies(entries), nil
+	result := ResolveDependencies(entries)
+	s.applyTaskDefaults(result.Tasks)
+	return result, nil
+}
+
+// GetTask returns a single resolved task by ID for a project.
+// Server-side defaults are applied (same as GetTasks).
+func (s *TaskServiceImpl) GetTask(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+	resp, err := s.GetTasks(ctx, projectId)
+	if err != nil {
+		return nil, err
+	}
+	for _, t := range resp.Tasks {
+		if t.ID == taskId {
+			task := t
+			return &task, nil
+		}
+	}
+	return nil, fmt.Errorf("task %q not found in project %q", taskId, projectId)
+}
+
+// applyTaskDefaults fills empty fields on resolved tasks from server-side
+// config.TaskDefaults. Non-empty task fields are never overwritten (task
+// frontmatter wins). Nil *bool fields get the config default; non-nil keep
+// their value. If TaskDefaults is zero-value, this is a no-op.
+func (s *TaskServiceImpl) applyTaskDefaults(tasks []types.ResolvedTask) {
+	d := s.config.TaskDefaults
+
+	// Quick check: if all defaults are zero, nothing to do.
+	if d.Agent == "" && d.Model == "" && d.Executor == "" &&
+		len(d.Extensions) == 0 && d.ExecutionMode == "" &&
+		d.CompleteOnIdle == nil && d.MergePolicy == "" && d.MergeStrategy == "" &&
+		d.MergeTargetBranch == "" && d.RemoteBranchPolicy == "" &&
+		d.OpenPRBeforeMerge == nil && d.TargetWorkdir == "" {
+		return
+	}
+
+	for i := range tasks {
+		t := &tasks[i]
+
+		// String fields: fill only if task field is empty
+		if t.Agent == "" && d.Agent != "" {
+			t.Agent = d.Agent
+		}
+		if t.Model == "" && d.Model != "" {
+			t.Model = d.Model
+		}
+		if t.Executor == "" && d.Executor != "" {
+			t.Executor = d.Executor
+		}
+		if len(t.Extensions) == 0 && len(d.Extensions) > 0 {
+			t.Extensions = append([]string(nil), d.Extensions...)
+		}
+		if t.ExecutionMode == "" && d.ExecutionMode != "" {
+			t.ExecutionMode = d.ExecutionMode
+		}
+		if t.MergePolicy == "" && d.MergePolicy != "" {
+			t.MergePolicy = d.MergePolicy
+		}
+		if t.MergeStrategy == "" && d.MergeStrategy != "" {
+			t.MergeStrategy = d.MergeStrategy
+		}
+		if t.MergeTargetBranch == "" && d.MergeTargetBranch != "" {
+			t.MergeTargetBranch = d.MergeTargetBranch
+		}
+		if t.RemoteBranchPolicy == "" && d.RemoteBranchPolicy != "" {
+			t.RemoteBranchPolicy = d.RemoteBranchPolicy
+		}
+		if t.TargetWorkdir == "" && d.TargetWorkdir != "" {
+			t.TargetWorkdir = d.TargetWorkdir
+		}
+
+		// Auto-derive git_branch from feature_id in worktree mode (defense-in-depth:
+		// the runner layer also does this, but deriving here ensures the API response
+		// already has the correct git_branch field set).
+		if t.GitBranch == "" && t.ExecutionMode == "worktree" && t.FeatureID != "" {
+			t.GitBranch = t.FeatureID
+		}
+
+		// *bool fields: fill only if task field is nil
+		if t.CompleteOnIdle == nil && d.CompleteOnIdle != nil {
+			v := *d.CompleteOnIdle
+			t.CompleteOnIdle = &v
+		}
+		if t.OpenPRBeforeMerge == nil && d.OpenPRBeforeMerge != nil {
+			v := *d.OpenPRBeforeMerge
+			t.OpenPRBeforeMerge = &v
+		}
+	}
 }
 
 // getAllTasks fetches all task BrainEntries for a project from storage.
@@ -118,16 +228,14 @@ func (s *TaskServiceImpl) getAllTasks(ctx context.Context, projectId string) ([]
 
 // GetReady returns tasks that are ready to execute.
 // If opts is non-nil and contains FeatureIDs, only tasks matching those features are returned.
+// If opts contains Executors, only tasks matching those executor types are returned.
 func (s *TaskServiceImpl) GetReady(ctx context.Context, projectId string, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error) {
 	result, err := s.GetTasks(ctx, projectId)
 	if err != nil {
 		return nil, err
 	}
 	ready := GetReadyTasks(result)
-	if opts != nil && len(opts.FeatureIDs) > 0 {
-		ready = filterByFeatureIDs(ready, opts.FeatureIDs)
-	}
-	return ready, nil
+	return s.applyTaskFilterOptions(ctx, projectId, ready, opts)
 }
 
 // GetWaiting returns tasks waiting on dependencies.
@@ -150,61 +258,171 @@ func (s *TaskServiceImpl) GetBlocked(ctx context.Context, projectId string) ([]t
 
 // GetNext returns the next task to execute (highest priority ready task).
 // If opts is non-nil and contains FeatureIDs, only tasks matching those features are considered.
+// If opts contains Executors, only tasks matching those executor types are considered.
 func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string, opts *api.TaskFilterOptions) (*types.ResolvedTask, error) {
 	result, err := s.GetTasks(ctx, projectId)
 	if err != nil {
 		return nil, err
 	}
-	next := GetNextTask(result)
-	if next == nil {
-		return nil, nil
-	}
-	if opts != nil && len(opts.FeatureIDs) > 0 {
-		// Filter ready tasks by feature, then pick the next from the filtered set
-		ready := GetReadyTasks(result)
-		ready = filterByFeatureIDs(ready, opts.FeatureIDs)
-		if len(ready) == 0 {
-			return nil, nil
+	ready := GetReadyTasks(result)
+	if opts != nil {
+		ready, err = s.applyTaskFilterOptions(ctx, projectId, ready, opts)
+		if err != nil {
+			return nil, err
 		}
-		return pickHighestPriority(ready), nil
 	}
-	return next, nil
+	return pickHighestPriority(ready), nil
+}
+
+func (s *TaskServiceImpl) applyTaskFilterOptions(ctx context.Context, projectID string, tasks []types.ResolvedTask, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error) {
+	if opts == nil {
+		return tasks, nil
+	}
+	if len(opts.FeatureIDs) > 0 {
+		tasks = filterByFeatureIDs(tasks, opts.FeatureIDs)
+	}
+	if len(opts.Executors) > 0 {
+		tasks = filterByExecutors(tasks, opts.Executors)
+	}
+	if opts.GeneratedByPrefix != "" {
+		tasks = filterByGeneratedByPrefix(tasks, opts.GeneratedByPrefix)
+	}
+	if opts.RunnerID == "" {
+		return tasks, nil
+	}
+
+	runner, err := s.storage.GetRunner(ctx, opts.RunnerID)
+	if err != nil {
+		return nil, fmt.Errorf("get runner %q: %w", opts.RunnerID, err)
+	}
+	if runner == nil {
+		return tasks, nil
+	}
+
+	return s.filterByRunnerEligibility(ctx, projectID, tasks, runner)
+}
+
+func (s *TaskServiceImpl) filterByRunnerEligibility(ctx context.Context, projectID string, tasks []types.ResolvedTask, runner *storage.RunnerRow) ([]types.ResolvedTask, error) {
+	if len(runner.Executors) > 0 {
+		tasks = filterByExecutors(tasks, runner.Executors)
+	}
+
+	capabilities := make(map[string]bool, len(runner.Capabilities))
+	for _, capability := range runner.Capabilities {
+		capabilities[capability] = true
+	}
+
+	filtered := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		if !runnerHasRequiredCapabilities(task, capabilities) {
+			continue
+		}
+		if task.FeatureID != "" {
+			assignment, err := s.storage.GetFeatureAssignment(ctx, projectID, task.FeatureID)
+			if err != nil {
+				return nil, fmt.Errorf("get feature assignment %q/%q: %w", projectID, task.FeatureID, err)
+			}
+			if assignment != nil && assignment.RunnerID != runner.RunnerID {
+				continue
+			}
+		}
+		filtered = append(filtered, task)
+	}
+	return filtered, nil
+}
+
+func filterByGeneratedByPrefix(tasks []types.ResolvedTask, prefix string) []types.ResolvedTask {
+	filtered := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		if strings.HasPrefix(task.GeneratedBy, prefix) {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
+}
+
+func runnerHasRequiredCapabilities(task types.ResolvedTask, capabilities map[string]bool) bool {
+	for _, required := range task.RequiresCapability {
+		if !capabilities[required] {
+			return false
+		}
+	}
+	return true
 }
 
 // ClaimTask claims a task for a runner. Returns ErrConflict if already claimed by another runner.
+// Claims are persisted to SQLite via the storage layer, surviving API server restarts.
 func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error) {
-	key := claimKey(projectId, taskId)
+	return s.ClaimTaskWithDuration(ctx, projectId, taskId, runnerId, DefaultLeaseDuration)
+}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
+// ClaimTaskWithDuration claims a task with a custom lease duration.
+// Used for pre-claims (dispatch) with shorter expiry.
+func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, taskId, runnerId string, leaseDuration time.Duration) (*types.ClaimResponse, error) {
+	featureID, err := s.featureIDForTaskClaim(ctx, projectId, taskId)
+	if err != nil {
+		return nil, err
+	}
 
-	if existing, ok := s.claims[key]; ok {
-		stale := isStale(existing)
-		if !stale && existing.RunnerID != runnerId {
-			slog.Warn("claim conflict", "project", projectId, "task_id", taskId, "runner_id", runnerId, "held_by", existing.RunnerID)
-			return &types.ClaimResponse{
-				Success:   false,
-				TaskID:    taskId,
-				RunnerID:  runnerId,
-				Error:     "already claimed",
-				Message:   fmt.Sprintf("task %s is already claimed by %s", taskId, existing.RunnerID),
-				ClaimedBy: existing.RunnerID,
-				IsStale:   &stale,
-			}, api.ErrConflict
+	ok, existing, err := s.storage.ClaimTask(ctx, projectId, taskId, runnerId, leaseDuration)
+	if err != nil {
+		return nil, fmt.Errorf("storage claim task: %w", err)
+	}
+
+	if !ok {
+		// Claim failed — another active runner holds it
+		stale := false
+		if existing != nil {
+			stale = isExpired(existing)
 		}
-		// Stale claim or same runner — allow re-claim
-		if stale {
-			slog.Info("stale claim overridden", "project", projectId, "task_id", taskId, "new_runner", runnerId, "old_runner", existing.RunnerID)
+		holder := ""
+		if existing != nil {
+			holder = existing.RunnerID
+		}
+		slog.Warn("claim conflict", "project", projectId, "task_id", taskId, "runner_id", runnerId, "held_by", holder)
+		return &types.ClaimResponse{
+			Success:   false,
+			TaskID:    taskId,
+			RunnerID:  runnerId,
+			Error:     "already claimed",
+			Message:   fmt.Sprintf("task %s is already claimed by %s", taskId, holder),
+			ClaimedBy: holder,
+			IsStale:   &stale,
+		}, api.ErrConflict
+	}
+	if featureID != "" {
+		assigned, assignment, err := s.storage.AssignFeatureIfEmpty(ctx, projectId, featureID, runnerId, "auto", "active")
+		if err != nil {
+			if releaseErr := s.ReleaseTask(ctx, projectId, taskId, runnerId); releaseErr != nil {
+				slog.Warn("failed to release task after feature assignment error", "project", projectId, "task_id", taskId, "runner_id", runnerId, "release_error", releaseErr)
+			}
+			return nil, fmt.Errorf("assign feature for claimed task: %w", err)
+		}
+		if !assigned {
+			if assignment == nil {
+				if releaseErr := s.ReleaseTask(ctx, projectId, taskId, runnerId); releaseErr != nil {
+					slog.Warn("failed to release task after missing feature assignment", "project", projectId, "task_id", taskId, "runner_id", runnerId, "release_error", releaseErr)
+				}
+				return nil, fmt.Errorf("feature %q assignment disappeared", featureID)
+			}
+			if assignment.RunnerID != runnerId {
+				if releaseErr := s.ReleaseTask(ctx, projectId, taskId, runnerId); releaseErr != nil {
+					slog.Warn("failed to release task after feature assignment conflict", "project", projectId, "task_id", taskId, "runner_id", runnerId, "release_error", releaseErr)
+				}
+				slog.Warn("feature assignment conflict", "project", projectId, "feature_id", featureID, "runner_id", runnerId, "assigned_to", assignment.RunnerID)
+				return &types.ClaimResponse{
+					Success:   false,
+					TaskID:    taskId,
+					RunnerID:  runnerId,
+					Error:     "feature assigned to another runner",
+					Message:   fmt.Sprintf("feature %s is assigned to %s", featureID, assignment.RunnerID),
+					ClaimedBy: assignment.RunnerID,
+				}, api.ErrConflict
+			}
 		}
 	}
 
-	now := time.Now().UnixMilli()
-	s.claims[key] = &types.TaskClaim{
-		RunnerID:  runnerId,
-		ClaimedAt: now,
-	}
-
-	claimedAt := time.UnixMilli(now).UTC().Format(time.RFC3339)
+	claimedAt := time.Now().UTC().Format(time.RFC3339)
 	slog.Info("task claimed", "project", projectId, "task_id", taskId, "runner_id", runnerId)
 	return &types.ClaimResponse{
 		Success:   true,
@@ -214,36 +432,100 @@ func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runn
 	}, nil
 }
 
-// ReleaseTask releases a task claim. Returns ErrNotFound if not claimed.
+func (s *TaskServiceImpl) featureIDForTaskClaim(ctx context.Context, projectID, taskID string) (string, error) {
+	note, err := s.storage.GetNoteByPath(ctx, fmt.Sprintf("projects/%s/task/%s.md", projectID, taskID))
+	if err != nil {
+		return "", fmt.Errorf("get task note for claim: %w", err)
+	}
+	if note == nil {
+		return "", nil
+	}
+	return NoteRowToBrainEntry(note).FeatureID, nil
+}
+
+// ReleaseTask releases a task claim. Returns ErrNotFound if not claimed,
+// ErrConflict if claimed by a different runner.
 func (s *TaskServiceImpl) ReleaseTask(ctx context.Context, projectId, taskId, runnerId string) error {
-	key := claimKey(projectId, taskId)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	existing, ok := s.claims[key]
-	if !ok {
+	// First check if a claim exists at all and who owns it
+	existing, err := s.storage.GetClaim(ctx, projectId, taskId)
+	if err != nil {
+		return fmt.Errorf("storage get claim: %w", err)
+	}
+	if existing == nil {
 		return api.ErrNotFound
 	}
-
 	if existing.RunnerID != runnerId {
 		return api.ErrConflict
 	}
 
-	delete(s.claims, key)
+	released, err := s.storage.ReleaseClaim(ctx, projectId, taskId, runnerId)
+	if err != nil {
+		return fmt.Errorf("storage release claim: %w", err)
+	}
+	if !released {
+		return api.ErrNotFound
+	}
+
 	slog.Info("task released", "project", projectId, "task_id", taskId, "runner_id", runnerId)
 	return nil
 }
 
+// RenewClaim extends the claim's expiry by DefaultLeaseDuration.
+// Returns ErrNotFound if the claim doesn't exist, is expired, or is owned by a different runner.
+func (s *TaskServiceImpl) RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+	// Verify the claim exists and is owned by this runner
+	existing, err := s.storage.GetClaim(ctx, projectId, taskId)
+	if err != nil {
+		return nil, fmt.Errorf("storage get claim: %w", err)
+	}
+	if existing == nil {
+		return &types.RenewClaimResponse{
+			Success:  false,
+			TaskID:   taskId,
+			RunnerID: runnerId,
+			Error:    "claim not found",
+		}, api.ErrNotFound
+	}
+	if existing.RunnerID != runnerId {
+		return &types.RenewClaimResponse{
+			Success:  false,
+			TaskID:   taskId,
+			RunnerID: runnerId,
+			Error:    "claim owned by different runner",
+		}, api.ErrConflict
+	}
+	if isExpired(existing) {
+		return &types.RenewClaimResponse{
+			Success:  false,
+			TaskID:   taskId,
+			RunnerID: runnerId,
+			Error:    "claim expired",
+		}, api.ErrNotFound
+	}
+
+	// Extend the expiry
+	newExpiry := time.Now().Add(DefaultLeaseDuration)
+	if err := s.storage.RenewClaim(ctx, projectId, taskId, runnerId, newExpiry); err != nil {
+		return nil, fmt.Errorf("storage renew claim: %w", err)
+	}
+
+	slog.Info("claim renewed", "project", projectId, "task_id", taskId, "runner_id", runnerId, "expires_at", newExpiry.UTC().Format(time.RFC3339))
+	return &types.RenewClaimResponse{
+		Success:   true,
+		TaskID:    taskId,
+		RunnerID:  runnerId,
+		ExpiresAt: newExpiry.UTC().Format(time.RFC3339),
+	}, nil
+}
+
 // GetClaimStatus returns the claim status of a task.
 func (s *TaskServiceImpl) GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error) {
-	key := claimKey(projectId, taskId)
+	existing, err := s.storage.GetClaim(ctx, projectId, taskId)
+	if err != nil {
+		return nil, fmt.Errorf("storage get claim: %w", err)
+	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	existing, ok := s.claims[key]
-	if !ok {
+	if existing == nil {
 		return &types.ClaimStatusResponse{
 			TaskID:  taskId,
 			Claimed: false,
@@ -251,15 +533,22 @@ func (s *TaskServiceImpl) GetClaimStatus(ctx context.Context, projectId, taskId 
 		}, nil
 	}
 
-	stale := isStale(existing)
+	expired := isExpired(existing)
 	claimedAt := time.UnixMilli(existing.ClaimedAt).UTC().Format(time.RFC3339)
 	return &types.ClaimStatusResponse{
 		TaskID:    taskId,
 		Claimed:   true,
 		RunnerID:  existing.RunnerID,
 		ClaimedAt: claimedAt,
-		IsStale:   stale,
+		IsStale:   expired,
 	}, nil
+}
+
+// DispatchTask creates a pre-claim for direct dispatch to a target runner.
+// Pre-claims have a shorter 60-second expiry to allow quick recovery if the runner doesn't respond.
+func (s *TaskServiceImpl) DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error) {
+	const dispatchLeaseDuration = 60 * time.Second
+	return s.ClaimTaskWithDuration(ctx, projectId, taskId, targetRunnerId, dispatchLeaseDuration)
 }
 
 // GetMultiTaskStatus returns status of multiple tasks.
@@ -295,6 +584,17 @@ func (s *TaskServiceImpl) GetMultiTaskStatus(ctx context.Context, projectId stri
 		Tasks:        tasks,
 		AllCompleted: allCompleted,
 	}, nil
+}
+
+// GetTasksByFeature returns all resolved tasks belonging to a specific feature.
+// This satisfies the FeatureTaskLister interface used by EventServiceImpl
+// for server-side feature completion detection.
+func (s *TaskServiceImpl) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
+	result, err := s.GetTasks(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return filterByFeatureIDs(result.Tasks, []string{featureID}), nil
 }
 
 // GetFeatures returns computed features for a project.
@@ -965,6 +1265,18 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "model"); ok {
 		entry.Model = v
 	}
+	if v, ok := metaString(meta, "executor"); ok {
+		entry.Executor = v
+	}
+	if v, ok := meta["extensions"]; ok {
+		if arr, ok := v.([]interface{}); ok {
+			for _, item := range arr {
+				if s, ok := item.(string); ok {
+					entry.Extensions = append(entry.Extensions, s)
+				}
+			}
+		}
+	}
 	if v, ok := metaBool(meta, "complete_on_idle"); ok {
 		entry.CompleteOnIdle = &v
 	}
@@ -976,6 +1288,11 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	}
 	if v, ok := metaStringSlice(meta, "extensions"); ok {
 		entry.Extensions = v
+	}
+	if v, ok := metaStringSlice(meta, "requires_capability"); ok {
+		entry.RequiresCapability = v
+	} else if v, ok := metaString(meta, "requires_capability"); ok {
+		entry.RequiresCapability = []string{v}
 	}
 
 	// Feature grouping (feature_id from metadata as fallback)
@@ -1024,7 +1341,13 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 
 	// Automation fields (nested maps from metadata JSON)
 	if v, ok := meta["trigger"]; ok {
-		entry.Trigger = metaToAutomationTrigger(v)
+		data, err := json.Marshal(v)
+		if err == nil {
+			var tc types.TriggerConfig
+			if err := json.Unmarshal(data, &tc); err == nil {
+				entry.Trigger = &tc
+			}
+		}
 	}
 	if v, ok := meta["action"]; ok {
 		entry.Action = metaToAutomationAction(v)

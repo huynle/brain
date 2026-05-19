@@ -34,7 +34,9 @@ func TestSchemaCreation_TablesExist(t *testing.T) {
 	s := newTestStorage(t)
 
 	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version", "api_tokens",
-		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens"}
+		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens",
+		"task_claims", "runners", "webhooks", "webhook_deliveries", "feature_assignments",
+		"note_embeddings", "note_embeddings_meta"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
@@ -72,6 +74,11 @@ func TestSchemaCreation_IndexesExist(t *testing.T) {
 		{"idx_links_target_path", "links"},
 		{"idx_tags_note", "tags"},
 		{"idx_tags_tag", "tags"},
+		{"idx_note_embeddings_meta_project", "note_embeddings_meta"},
+		{"idx_note_embeddings_meta_type", "note_embeddings_meta"},
+		{"idx_note_embeddings_meta_status", "note_embeddings_meta"},
+		{"idx_note_embeddings_meta_feature", "note_embeddings_meta"},
+		{"idx_note_embeddings_meta_priority", "note_embeddings_meta"},
 	}
 
 	for _, idx := range indexes {
@@ -555,5 +562,490 @@ func TestNew_MaxOpenConns(t *testing.T) {
 		if err != nil {
 			t.Fatalf("insert %d failed: %v", i, err)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// task_claims table: fresh DB has correct schema
+// ---------------------------------------------------------------------------
+
+func TestTaskClaimsTable_FreshDB(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Table should exist
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='task_claims'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("task_claims table not found: %v", err)
+	}
+
+	// Verify columns by inserting and querying a row
+	_, err = s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj1', 'task1', 'runner1', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert into task_claims failed: %v", err)
+	}
+
+	var projectID, taskID, runnerID string
+	var claimedAt, expiresAt int64
+	err = s.DB().QueryRow("SELECT project_id, task_id, runner_id, claimed_at, expires_at FROM task_claims").
+		Scan(&projectID, &taskID, &runnerID, &claimedAt, &expiresAt)
+	if err != nil {
+		t.Fatalf("select from task_claims failed: %v", err)
+	}
+	if projectID != "proj1" || taskID != "task1" || runnerID != "runner1" {
+		t.Errorf("got (%q, %q, %q), want (proj1, task1, runner1)", projectID, taskID, runnerID)
+	}
+	if claimedAt != 1000 || expiresAt != 2000 {
+		t.Errorf("got (claimed_at=%d, expires_at=%d), want (1000, 2000)", claimedAt, expiresAt)
+	}
+}
+
+func TestTaskClaimsTable_PrimaryKey(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Insert first claim
+	_, err := s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj1', 'task1', 'runner1', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+
+	// Duplicate (project_id, task_id) should fail — composite PK
+	_, err = s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj1', 'task1', 'runner2', 3000, 4000)`)
+	if err == nil {
+		t.Fatal("expected PK violation for duplicate (project_id, task_id), got nil")
+	}
+
+	// Same task_id but different project_id should succeed
+	_, err = s.DB().Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj2', 'task1', 'runner1', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert with different project_id failed: %v", err)
+	}
+}
+
+func TestTaskClaimsTable_Indexes(t *testing.T) {
+	s := newTestStorage(t)
+
+	indexes := []string{
+		"idx_claims_runner",
+		"idx_claims_expires",
+	}
+	for _, idx := range indexes {
+		t.Run(idx, func(t *testing.T) {
+			var name string
+			err := s.DB().QueryRow(
+				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
+			).Scan(&name)
+			if err != nil {
+				t.Fatalf("index %q not found: %v", idx, err)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// task_claims table: migration from v4 to v5
+// ---------------------------------------------------------------------------
+
+func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
+	db := openMemoryDB(t)
+	defer db.Close()
+
+	// Simulate a v4 database: create schema_version and set version to 4
+	_, err := db.Exec(createSchemaVersionTable)
+	if err != nil {
+		t.Fatalf("create schema_version table: %v", err)
+	}
+	_, err = db.Exec("INSERT INTO schema_version (version) VALUES (4)")
+	if err != nil {
+		t.Fatalf("insert v4: %v", err)
+	}
+
+	// Run migration
+	err = migrateSchema(db)
+	if err != nil {
+		t.Fatalf("migrateSchema failed: %v", err)
+	}
+
+	// task_claims table should now exist
+	var name string
+	err = db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='task_claims'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("task_claims table not found after migration: %v", err)
+	}
+
+	// Should be able to insert data
+	_, err = db.Exec(`INSERT INTO task_claims (project_id, task_id, runner_id, claimed_at, expires_at)
+		VALUES ('proj1', 'task1', 'runner1', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert after migration failed: %v", err)
+	}
+}
+
+func TestSchemaVersion_IncludesFeatureAssignments(t *testing.T) {
+	if CurrentSchemaVersion != 12 {
+		t.Errorf("CurrentSchemaVersion = %d, want 12", CurrentSchemaVersion)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// feature_assignments table: fresh DB has correct schema
+// ---------------------------------------------------------------------------
+
+func TestFeatureAssignmentsTable_FreshDB(t *testing.T) {
+	s := newTestStorage(t)
+
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='feature_assignments'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("feature_assignments table not found: %v", err)
+	}
+
+	_, err = s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj1', 'feat1', 'runner1', 'auto', 'active', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert into feature_assignments failed: %v", err)
+	}
+
+	var projectID, featureID, runnerID, source, status string
+	var assignedAt, updatedAt int64
+	err = s.DB().QueryRow("SELECT project_id, feature_id, runner_id, source, status, assigned_at, updated_at FROM feature_assignments").
+		Scan(&projectID, &featureID, &runnerID, &source, &status, &assignedAt, &updatedAt)
+	if err != nil {
+		t.Fatalf("select from feature_assignments failed: %v", err)
+	}
+	if projectID != "proj1" || featureID != "feat1" || runnerID != "runner1" {
+		t.Errorf("got (%q, %q, %q), want (proj1, feat1, runner1)", projectID, featureID, runnerID)
+	}
+	if source != "auto" || status != "active" {
+		t.Errorf("got (source=%q, status=%q), want (auto, active)", source, status)
+	}
+	if assignedAt != 1000 || updatedAt != 2000 {
+		t.Errorf("got (assigned_at=%d, updated_at=%d), want (1000, 2000)", assignedAt, updatedAt)
+	}
+}
+
+func TestFeatureAssignmentsTable_PrimaryKey(t *testing.T) {
+	s := newTestStorage(t)
+
+	_, err := s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj1', 'feat1', 'runner1', 'auto', 'active', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+
+	_, err = s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj1', 'feat1', 'runner2', 'manual', 'active', 3000, 4000)`)
+	if err == nil {
+		t.Fatal("expected PK violation for duplicate (project_id, feature_id), got nil")
+	}
+
+	_, err = s.DB().Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj2', 'feat1', 'runner2', 'manual', 'active', 3000, 4000)`)
+	if err != nil {
+		t.Fatalf("insert with different project_id failed: %v", err)
+	}
+}
+
+func TestFeatureAssignmentsTable_Indexes(t *testing.T) {
+	s := newTestStorage(t)
+
+	indexes := []string{
+		"idx_feature_assignments_runner",
+		"idx_feature_assignments_project",
+		"idx_feature_assignments_status",
+	}
+	for _, idx := range indexes {
+		t.Run(idx, func(t *testing.T) {
+			var name string
+			err := s.DB().QueryRow(
+				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
+			).Scan(&name)
+			if err != nil {
+				t.Fatalf("index %q not found: %v", idx, err)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// feature_assignments table: migration from v9 to v10
+// ---------------------------------------------------------------------------
+
+func TestFeatureAssignmentsTable_MigrationFromV9(t *testing.T) {
+	db := openMemoryDB(t)
+	defer db.Close()
+
+	_, err := db.Exec(createSchemaVersionTable)
+	if err != nil {
+		t.Fatalf("create schema_version table: %v", err)
+	}
+	_, err = db.Exec("INSERT INTO schema_version (version) VALUES (9)")
+	if err != nil {
+		t.Fatalf("insert v9: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE runners (
+		runner_id TEXT PRIMARY KEY,
+		hostname TEXT NOT NULL,
+		labels TEXT DEFAULT '{}',
+		executors TEXT DEFAULT '[]',
+		max_parallel INTEGER NOT NULL DEFAULT 1,
+		feature_ids TEXT DEFAULT '',
+		registered_at INTEGER NOT NULL,
+		last_heartbeat INTEGER NOT NULL,
+		status TEXT NOT NULL DEFAULT 'online'
+	)`); err != nil {
+		t.Fatalf("create v9 runners table: %v", err)
+	}
+
+	err = migrateSchema(db)
+	if err != nil {
+		t.Fatalf("migrateSchema failed: %v", err)
+	}
+
+	var name string
+	err = db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='feature_assignments'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("feature_assignments table not found after migration: %v", err)
+	}
+
+	_, err = db.Exec(`INSERT INTO feature_assignments (project_id, feature_id, runner_id, source, status, assigned_at, updated_at)
+		VALUES ('proj1', 'feat1', 'runner1', 'auto', 'active', 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert after migration failed: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// runners table: fresh DB has correct schema
+// ---------------------------------------------------------------------------
+
+func TestRunnersTable_FreshDB(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Table should exist
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='runners'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("runners table not found: %v", err)
+	}
+
+	// Verify columns by inserting and querying a row
+	_, err = s.DB().Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, max_parallel, feature_ids, registered_at, last_heartbeat, status)
+		VALUES ('runner-1', 'host1.local', '{"env":"prod"}', '["opencode"]', 4, 'feat-a,feat-b', 1000, 2000, 'online')`)
+	if err != nil {
+		t.Fatalf("insert into runners failed: %v", err)
+	}
+
+	var runnerID, hostname, labels, executors, featureIDs, status string
+	var maxParallel int
+	var registeredAt, lastHeartbeat int64
+	err = s.DB().QueryRow("SELECT runner_id, hostname, labels, executors, max_parallel, feature_ids, registered_at, last_heartbeat, status FROM runners").
+		Scan(&runnerID, &hostname, &labels, &executors, &maxParallel, &featureIDs, &registeredAt, &lastHeartbeat, &status)
+	if err != nil {
+		t.Fatalf("select from runners failed: %v", err)
+	}
+	if runnerID != "runner-1" || hostname != "host1.local" {
+		t.Errorf("got (runner_id=%q, hostname=%q), want (runner-1, host1.local)", runnerID, hostname)
+	}
+	if labels != `{"env":"prod"}` || executors != `["opencode"]` {
+		t.Errorf("got (labels=%q, executors=%q), want JSON values", labels, executors)
+	}
+	if maxParallel != 4 {
+		t.Errorf("max_parallel = %d, want 4", maxParallel)
+	}
+	if featureIDs != "feat-a,feat-b" {
+		t.Errorf("feature_ids = %q, want %q", featureIDs, "feat-a,feat-b")
+	}
+	if registeredAt != 1000 || lastHeartbeat != 2000 {
+		t.Errorf("got (registered_at=%d, last_heartbeat=%d), want (1000, 2000)", registeredAt, lastHeartbeat)
+	}
+	if status != "online" {
+		t.Errorf("status = %q, want %q", status, "online")
+	}
+}
+
+func TestRunnersTable_FreshDB_CapabilitiesColumn(t *testing.T) {
+	s := newTestStorage(t)
+
+	var columnName string
+	var defaultValue sql.NullString
+	err := s.DB().QueryRow(`SELECT name, dflt_value FROM pragma_table_info('runners') WHERE name = 'capabilities'`).
+		Scan(&columnName, &defaultValue)
+	if err != nil {
+		t.Fatalf("capabilities column not found in fresh runners table: %v", err)
+	}
+	if columnName != "capabilities" {
+		t.Fatalf("column name = %q, want capabilities", columnName)
+	}
+	if !defaultValue.Valid || defaultValue.String != "'[]'" {
+		t.Fatalf("capabilities default = %q (valid=%v), want '[]'", defaultValue.String, defaultValue.Valid)
+	}
+
+	_, err = s.DB().Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, capabilities, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-cap', 'host-cap', '{}', '["opencode"]', '["gpu","docker"]', 1, 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert runner with capabilities failed: %v", err)
+	}
+
+	var capabilities string
+	err = s.DB().QueryRow("SELECT capabilities FROM runners WHERE runner_id = 'runner-cap'").Scan(&capabilities)
+	if err != nil {
+		t.Fatalf("select capabilities failed: %v", err)
+	}
+	if capabilities != `["gpu","docker"]` {
+		t.Fatalf("capabilities = %q, want JSON array", capabilities)
+	}
+}
+
+func TestRunnersTable_MigrationFromV10AddsCapabilities(t *testing.T) {
+	db := openMemoryDB(t)
+	defer db.Close()
+
+	if _, err := db.Exec(createSchemaVersionTable); err != nil {
+		t.Fatalf("create schema_version table: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO schema_version (version) VALUES (10)"); err != nil {
+		t.Fatalf("insert v10: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE runners (
+		runner_id TEXT PRIMARY KEY,
+		hostname TEXT NOT NULL,
+		labels TEXT DEFAULT '{}',
+		executors TEXT DEFAULT '[]',
+		max_parallel INTEGER NOT NULL DEFAULT 1,
+		feature_ids TEXT DEFAULT '',
+		registered_at INTEGER NOT NULL,
+		last_heartbeat INTEGER NOT NULL,
+		status TEXT NOT NULL DEFAULT 'online'
+	)`); err != nil {
+		t.Fatalf("create v10 runners table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, max_parallel, registered_at, last_heartbeat)
+		VALUES ('legacy-runner', 'legacy-host', '{}', '["opencode"]', 1, 1000, 2000)`); err != nil {
+		t.Fatalf("insert legacy runner: %v", err)
+	}
+
+	if err := migrateSchema(db); err != nil {
+		t.Fatalf("migrateSchema failed: %v", err)
+	}
+
+	var capabilities string
+	if err := db.QueryRow("SELECT capabilities FROM runners WHERE runner_id = 'legacy-runner'").Scan(&capabilities); err != nil {
+		t.Fatalf("select migrated capabilities failed: %v", err)
+	}
+	if capabilities != "[]" {
+		t.Fatalf("legacy capabilities = %q, want []", capabilities)
+	}
+}
+
+func TestRunnersTable_DefaultStatus(t *testing.T) {
+	s := newTestStorage(t)
+
+	// Insert without explicit status — should default to 'online'
+	_, err := s.DB().Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-2', 'host2.local', 1, 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert with defaults failed: %v", err)
+	}
+
+	var status string
+	err = s.DB().QueryRow("SELECT status FROM runners WHERE runner_id = 'runner-2'").Scan(&status)
+	if err != nil {
+		t.Fatalf("select status failed: %v", err)
+	}
+	if status != "online" {
+		t.Errorf("default status = %q, want %q", status, "online")
+	}
+}
+
+func TestRunnersTable_PrimaryKey(t *testing.T) {
+	s := newTestStorage(t)
+
+	_, err := s.DB().Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-1', 'host1', 1, 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("first insert failed: %v", err)
+	}
+
+	// Duplicate runner_id should fail
+	_, err = s.DB().Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-1', 'host2', 2, 3000, 4000)`)
+	if err == nil {
+		t.Fatal("expected PK violation for duplicate runner_id, got nil")
+	}
+}
+
+func TestRunnersTable_Index(t *testing.T) {
+	s := newTestStorage(t)
+
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_runners_status'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("index idx_runners_status not found: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// runners table: migration from v5 to v6
+// ---------------------------------------------------------------------------
+
+func TestRunnersTable_MigrationFromV5(t *testing.T) {
+	db := openMemoryDB(t)
+	defer db.Close()
+
+	// Simulate a v5 database: create schema_version and set version to 5
+	_, err := db.Exec(createSchemaVersionTable)
+	if err != nil {
+		t.Fatalf("create schema_version table: %v", err)
+	}
+	_, err = db.Exec("INSERT INTO schema_version (version) VALUES (5)")
+	if err != nil {
+		t.Fatalf("insert v5: %v", err)
+	}
+
+	// Run migration
+	err = migrateSchema(db)
+	if err != nil {
+		t.Fatalf("migrateSchema failed: %v", err)
+	}
+
+	// runners table should now exist
+	var name string
+	err = db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='runners'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("runners table not found after migration: %v", err)
+	}
+
+	// Should be able to insert data
+	_, err = db.Exec(`INSERT INTO runners (runner_id, hostname, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-1', 'host1.local', 2, 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert after migration failed: %v", err)
+	}
+
+	// Index should exist
+	err = db.QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='index' AND name='idx_runners_status'",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("idx_runners_status not found after migration: %v", err)
 	}
 }

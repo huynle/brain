@@ -8,14 +8,16 @@ import (
 
 // HelpBar displays keyboard shortcuts at the bottom of the TUI.
 type HelpBar struct {
-	ActivePanel      Panel
-	ViewMode         ViewMode
-	TextWrap         bool
-	IsPaused         bool
-	AllPaused        bool
-	HasTaskSessions  bool       // whether selected task has sessions (shows o/O shortcuts)
-	HasSelectedTasks bool       // whether tasks are currently selected (shows delete shortcut)
-	ActiveContentTab ContentTab // which content tab is active (Tasks/Dream)
+	ActivePanel            Panel
+	ViewMode               ViewMode
+	TextWrap               bool
+	IsPaused               bool
+	AllPaused              bool
+	HasTaskSessions        bool       // whether selected task has sessions (shows o/O shortcuts)
+	HasSelectedTasks       bool       // whether tasks are currently selected (shows delete shortcut)
+	ActiveContentTab       ContentTab // which content tab is active
+	ActiveAutomationSubTab AutomationSubTab
+	RunnerPanelVisible     bool // whether the runner panel is shown
 }
 
 // NewHelpBar creates a new HelpBar.
@@ -35,19 +37,27 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Content tab indicator
 	shortcuts += fmt.Sprintf("%s Tab  ", bold("H/L"))
 
-	// Dream tab has vim-style navigation help
-	if h.ActiveContentTab == ContentTabDream {
-		shortcuts += fmt.Sprintf("%s Scroll  ", bold("j/k"))
-		shortcuts += fmt.Sprintf("%s Page  ", bold("ctrl+d/u"))
+	// Automation tab has subtab-specific navigation help.
+	if h.ActiveContentTab == ContentTabAutomation {
+		shortcuts += fmt.Sprintf("%s Subtab  ", bold("C"))
+		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
 		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
-		shortcuts += fmt.Sprintf("%s Search  ", bold("/"))
+		if h.ActiveAutomationSubTab == AutomationSubTabAutomations {
+			shortcuts += fmt.Sprintf("%s Toggle  ", bold("Space"))
+			shortcuts += fmt.Sprintf("%s Run  ", bold("x"))
+			shortcuts += fmt.Sprintf("%s Pause  ", bold("p"))
+			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
+		} else {
+			shortcuts += fmt.Sprintf("%s Search  ", bold("/"))
+			shortcuts += fmt.Sprintf("%s Page  ", bold("ctrl+d/u"))
+		}
 		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
 		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
 
 		// Focus indicator on the right
 		focusLabel := dim("Tab: ") +
-			lipgloss.NewStyle().Foreground(ColorCyan).Render("Dream")
+			lipgloss.NewStyle().Foreground(ColorCyan).Render("Automation > "+h.ActiveAutomationSubTab.String())
 
 		leftStyle := lipgloss.NewStyle().
 			PaddingLeft(1).
@@ -67,6 +77,8 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	if h.ActiveContentTab == ContentTabRunners {
 		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
 		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
+		shortcuts += fmt.Sprintf("%s Assign  ", bold("a"))
+		shortcuts += fmt.Sprintf("%s Shutdown  ", bold("s"))
 		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
 		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
@@ -82,6 +94,53 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 		rightStyle := lipgloss.NewStyle().
 			Align(lipgloss.Right).
 			Width(18)
+
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			leftStyle.Render(dim(shortcuts)),
+			rightStyle.Render(focusLabel),
+		)
+	}
+
+	// Logs tab has log navigation help
+	if h.ActiveContentTab == ContentTabLogs {
+		shortcuts += fmt.Sprintf("%s Scroll  ", bold("j/k"))
+		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
+		shortcuts += fmt.Sprintf("%s Filter  ", bold("f"))
+		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
+		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
+		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
+
+		focusLabel := dim("Tab: ") +
+			lipgloss.NewStyle().Foreground(ColorCyan).Render("Logs")
+
+		leftStyle := lipgloss.NewStyle().PaddingLeft(1).Width(width - 20)
+		rightStyle := lipgloss.NewStyle().Align(lipgloss.Right).Width(18)
+
+		return lipgloss.JoinHorizontal(lipgloss.Top,
+			leftStyle.Render(dim(shortcuts)),
+			rightStyle.Render(focusLabel),
+		)
+	}
+
+	// Brain tab has entry-tree navigation help.
+	if h.ActiveContentTab == ContentTabBrain {
+		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
+		shortcuts += fmt.Sprintf("%s Collapse  ", bold("Enter"))
+		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
+		shortcuts += fmt.Sprintf("%s Search  ", bold("/"))
+		shortcuts += fmt.Sprintf("%s Clear  ", bold("Esc"))
+		shortcuts += fmt.Sprintf("%s Embed  ", bold("b/B"))
+		shortcuts += fmt.Sprintf("%s Force  ", bold("F/A"))
+		shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
+		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
+		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
+		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
+
+		focusLabel := dim("Tab: ") +
+			lipgloss.NewStyle().Foreground(ColorCyan).Render("Brain")
+
+		leftStyle := lipgloss.NewStyle().PaddingLeft(1).Width(width - 20)
+		rightStyle := lipgloss.NewStyle().Align(lipgloss.Right).Width(18)
 
 		return lipgloss.JoinHorizontal(lipgloss.Top,
 			leftStyle.Render(dim(shortcuts)),
@@ -105,7 +164,12 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	shortcuts += fmt.Sprintf("%s Top/Bottom  ", bold("g/G"))
 
 	// Panel-specific shortcuts (view mode aware)
-	if h.ActivePanel == PanelLogs {
+	if h.ActivePanel == PanelRunners {
+		shortcuts += fmt.Sprintf("%s Navigate  ", bold("j/k"))
+		shortcuts += fmt.Sprintf("%s Info  ", bold("i"))
+		shortcuts += fmt.Sprintf("%s Assign  ", bold("a"))
+		shortcuts += fmt.Sprintf("%s Shutdown  ", bold("s"))
+	} else if h.ActivePanel == PanelLogs {
 		shortcuts += fmt.Sprintf("%s Filter  ", bold("f"))
 	} else if h.ActivePanel == PanelDetails {
 		if h.ViewMode == ViewModeSchedules {
@@ -165,11 +229,11 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Tab Panel
 	shortcuts += fmt.Sprintf("%s Panel  ", bold("Tab"))
 
-	// l Logs
-	shortcuts += fmt.Sprintf("%s Logs  ", bold("l"))
-
 	// T Detail
 	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
+
+	// R Runners
+	shortcuts += fmt.Sprintf("%s Runners  ", bold("R"))
 
 	// r Refresh
 	shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))

@@ -12,6 +12,8 @@ trigger:
   schedule: "0 3 * * *"
   filter:
     project: "*"
+  cooldown: 24h
+  max_concurrent: 1
 action:
   type: prompt
   execution_mode: current_branch
@@ -101,7 +103,8 @@ Periodically reads all knowledge in a project and synthesizes it into a single, 
 ### Behavior
 
 - Runs daily at 3:00 AM by default
-- Performs gate checks before doing work (24h cooldown, 3-entry threshold)
+- Uses automation-level guards to avoid overlapping or repeated runs (`cooldown: 24h`, `max_concurrent: 1`)
+- Performs content gate checks before doing work (existing dream age, 3-entry threshold)
 - Reads all entry types: decisions, patterns, learnings, summaries, plans, explorations, ideas, tasks
 - Synthesizes a structured dream document covering project identity, architecture, context, conventions, decisions, learnings, and open questions
 - Replaces existing dream entry with updated version

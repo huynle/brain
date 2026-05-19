@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/huynle/brain-api/internal/apiserver"
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/lifecycle"
 	"github.com/huynle/brain-api/internal/runner"
 )
@@ -36,6 +36,8 @@ type UnifiedConfig struct {
 		LogMaxSize    int // MB
 		LogMaxBackups int
 		LogMaxAge     int // days
+		TaskDefaults  config.TaskDefaultsConfig
+		Embedding    config.EmbeddingConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -72,13 +74,15 @@ func (c *APICommand) Type() string {
 func (c *APICommand) Execute() error {
 	// Build options from config + flags
 	opts := apiserver.ServerOptions{
-		Port:       c.Config.Server.Port,
-		Host:       c.Config.Server.Host,
-		BrainDir:   c.Config.Server.BrainDir,
-		EnableAuth: c.Config.Server.EnableAuth,
-		LogLevel:   c.Config.Server.LogLevel,
-		CORSOrigin: c.Config.Server.CORSOrigin,
-		OAuthPIN:   c.Config.Server.OAuthPIN,
+		Port:         c.Config.Server.Port,
+		Host:         c.Config.Server.Host,
+		BrainDir:     c.Config.Server.BrainDir,
+		EnableAuth:   c.Config.Server.EnableAuth,
+		LogLevel:     c.Config.Server.LogLevel,
+		CORSOrigin:   c.Config.Server.CORSOrigin,
+		OAuthPIN:     c.Config.Server.OAuthPIN,
+		TaskDefaults: c.Config.Server.TaskDefaults,
+		Embedding:    c.Config.Server.Embedding,
 	}
 
 	// Flags override config
@@ -97,8 +101,7 @@ func (c *APICommand) Execute() error {
 	if c.Flags.Daemon {
 		pidFile := c.Config.Server.PIDFile
 		if pidFile == "" {
-			homeDir, _ := os.UserHomeDir()
-			pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+			pidFile = defaultPIDFile()
 		}
 
 		logFile := c.Flags.LogFile
@@ -106,8 +109,7 @@ func (c *APICommand) Execute() error {
 			logFile = c.Config.Server.LogFile
 		}
 		if logFile == "" {
-			homeDir, _ := os.UserHomeDir()
-			logFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+			logFile = defaultLogFile()
 		}
 
 		return daemonizeServer(ctx, opts, pidFile, logFile, c.Config)

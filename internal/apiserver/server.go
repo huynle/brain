@@ -12,8 +12,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
-	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
+	"github.com/huynle/brain-api/internal/logbuffer"
 	mcppkg "github.com/huynle/brain-api/internal/mcp"
 	"github.com/huynle/brain-api/internal/oauth"
 	"github.com/huynle/brain-api/internal/realtime"
@@ -24,13 +24,15 @@ import (
 
 // ServerOptions holds configuration for running the Brain API server.
 type ServerOptions struct {
-	Host       string
-	Port       int
-	BrainDir   string
-	EnableAuth bool
-	LogLevel   string
-	CORSOrigin string
-	OAuthPIN   string
+	Host         string
+	Port         int
+	BrainDir     string
+	EnableAuth   bool
+	LogLevel     string
+	CORSOrigin   string
+	OAuthPIN     string
+	TaskDefaults config.TaskDefaultsConfig
+	Embedding    config.EmbeddingConfig
 }
 
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
@@ -94,44 +96,115 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		corsOrigin = "*" // Match standalone brain-api default
 	}
 	cfg := config.Config{
-		BrainDir:   opts.BrainDir,
-		Host:       opts.Host,
-		Port:       opts.Port,
-		EnableAuth: opts.EnableAuth,
-		CORSOrigin: corsOrigin,
-		OAuthPIN:   opts.OAuthPIN,
+		BrainDir:     opts.BrainDir,
+		Host:         opts.Host,
+		Port:         opts.Port,
+		EnableAuth:   opts.EnableAuth,
+		CORSOrigin:   corsOrigin,
+		OAuthPIN:     opts.OAuthPIN,
+		TaskDefaults: opts.TaskDefaults,
+		Embedding:    opts.Embedding,
 	}
 
-	// ─── Event Bus ──────────────────────────────────────────────────
-	eventBus := events.NewMemoryBus()
-	defer eventBus.Close()
-
 	// ─── Services ───────────────────────────────────────────────────
-	brainSvc := service.NewBrainService(&cfg, store, idx, eventBus)
+	// Create embedding client if enabled
+	var embeddingClient service.EmbeddingClient
+	if cfg.Embedding.Enabled {
+		var err error
+		embeddingClient, err = service.NewAiFactoryEmbeddingClient(cfg.Embedding)
+		if err != nil {
+			slog.Warn("Failed to create embedding client, semantic search disabled", "error", err)
+			embeddingClient = nil
+		}
+	}
+
+	brainSvc := service.NewBrainService(&cfg, store, idx, nil, embeddingClient)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
-	runnersSvc := service.NewRunnersService(store, taskSvc)
+	runnerRegistrySvc := service.NewRunnerRegistryService(store)
 	monitorSvc := service.NewMonitorService(brainSvc)
+	webhookSvc := service.NewWebhookService(store)
+
+	// ─── Background Claim Cleanup ──────────────────────────────────
+	taskSvc.StartClaimCleanup(ctx, service.DefaultClaimCleanupInterval)
+
+	// ─── Runner Lifecycle Management ───────────────────────────────
+	runnerRegistrySvc.StartLifecycleManager(ctx, service.DefaultLifecycleInterval)
 
 	// ─── Realtime Hub ───────────────────────────────────────────────
 	hub := realtime.NewHub()
 
-	// Bridge: subscribe Hub to EventBus entry events for backward-compatible SSE
-	realtime.BridgeBusToHub(eventBus, hub, taskSvc)
+	// ─── Event Hub & Services ──────────────────────────────────────
+	eventHub := realtime.NewEventHub()
+	eventSvc := service.NewEventService(eventHub)
+	eventSvc.SetFeatureTaskLister(taskSvc)
+	eventSvc.SetFeatureAssignmentCleaner(store)
+	automationSvc := service.NewAutomationService(brainSvc)
+	automationSvc.SetPauseChecker(runnerSvc)
+	go automationSvc.Start(ctx, eventHub)
+
+	// ─── Webhook Dispatcher ────────────────────────────────────────
+	// Subscribe to all EventHub events and deliver to matching webhooks.
+	webhookDispatcher := realtime.NewWebhookDispatcher(eventHub, webhookSvc)
+	go webhookDispatcher.Start(ctx)
+
+	// ─── Trigger Dispatcher ────────────────────────────────────────
+	// Subscribe to all EventHub events and evaluate task triggers.
+	// When events match a task's trigger config, the task is activated (set to pending).
+	triggerStore := service.NewTriggerTaskStoreAdapter(store)
+	triggerSvc := service.NewTriggerService(triggerStore)
+	triggerDispatcher := realtime.NewTriggerDispatcher(eventHub, triggerSvc)
+	go triggerDispatcher.Start(ctx)
+
+	// Wire hub into runner registry for lifecycle sweep SSE events
+	runnerRegistrySvc.SetHub(hub)
+
+	// ─── Log Buffer ─────────────────────────────────────────────────
+	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
 
 	// ─── API Handler & Router ───────────────────────────────────────
 	handler := api.NewHandler(
 		brainSvc,
 		api.WithTaskService(taskSvc),
 		api.WithRunnerService(runnerSvc),
-		api.WithRunnersService(runnersSvc),
+		api.WithRunnerRegistryService(runnerRegistrySvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
-		api.WithEventBus(eventBus),
+		api.WithEventService(eventSvc),
+		api.WithWebhookService(webhookSvc),
+		api.WithLogBuffer(logBuf),
+		api.WithTaskDefaults(cfg.TaskDefaults),
 	)
 
-	router := api.NewRouter(cfg, api.WithHandler(handler), api.WithDualAuth(store, store))
+	// ─── Rate Limiting ─────────────────────────────────────────────
+	var rateLimiter *api.RateLimiter
+	if cfg.RateLimitPerMinute > 0 {
+		burst := cfg.RateLimitBurst
+		if burst <= 0 {
+			burst = cfg.RateLimitPerMinute
+		}
+		rateLimiter = api.NewRateLimiter(api.RateLimitConfig{
+			RequestsPerMinute: cfg.RateLimitPerMinute,
+			BurstSize:         burst,
+			CleanupInterval:   5 * time.Minute,
+		})
+		defer rateLimiter.Stop()
+		slog.Info("rate limiting enabled",
+			"requests_per_minute", cfg.RateLimitPerMinute,
+			"burst", burst,
+		)
+	}
+
+	routerOpts := []api.RouterOption{
+		api.WithHandler(handler),
+		api.WithDualAuth(store, store),
+		api.WithEmbeddingReady(!cfg.Embedding.Enabled || embeddingClient != nil),
+	}
+	if rateLimiter != nil {
+		routerOpts = append(routerOpts, api.WithRateLimiter(rateLimiter))
+	}
+	router := api.NewRouter(cfg, routerOpts...)
 
 	// ─── OAuth ─────────────────────────────────────────────────────
 	oauthStore := oauth.NewStore()
@@ -158,34 +231,6 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		r.Get("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})
-
-	// ─── Stale Runner Detection ────────────────────────────────────
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				staleIDs, err := runnersSvc.MarkStaleAndRelease(ctx)
-				if err != nil {
-					slog.Debug("stale runner check failed", "error", err)
-				} else if len(staleIDs) > 0 {
-					slog.Info("stale runners detected and tasks released", "runners", staleIDs)
-				}
-			}
-		}
-	}()
-
-	// ─── Cron Emitter ──────────────────────────────────────────────
-	cronSource := events.NewStorageScheduleSource(store)
-	cronEmitter := events.NewCronEmitter(events.CronEmitterConfig{
-		Bus:    eventBus,
-		Source: cronSource,
-		// Default 30s tick interval
-	})
-	go cronEmitter.Start(ctx)
 
 	// ─── HTTP Server ────────────────────────────────────────────────
 	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)

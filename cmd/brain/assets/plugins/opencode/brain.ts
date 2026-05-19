@@ -53,7 +53,8 @@ type BrainEntryType =
   | "exploration"
   | "execution"
   | "task"
-  | "dream";
+  | "dream"
+  | "automation";
 
 type BrainEntryStatus =
   | "draft"
@@ -355,6 +356,7 @@ const ENTRY_TYPES: BrainEntryType[] = [
   "execution",
   "task",
   "dream",
+  "automation",
 ];
 
 const ENTRY_STATUSES: BrainEntryStatus[] = [
@@ -473,6 +475,109 @@ async function apiRequest<T>(
   }
 }
 
+function addNonEmptyStringFields(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+  keys: string[]
+) {
+  for (const key of keys) {
+    const value = source[key];
+    if (typeof value === "string" && value !== "") {
+      target[key] = value;
+    }
+  }
+}
+
+function addPresentFields(
+  target: Record<string, unknown>,
+  source: Record<string, unknown>,
+  keys: string[]
+) {
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined && value !== null) {
+      target[key] = value;
+    }
+  }
+}
+
+const OPENCODE_OPTIONAL_DEFAULTS: Record<string, unknown> = {
+  priority: "medium",
+  feature_priority: "high",
+  merge_policy: "prompt_only",
+  merge_strategy: "squash",
+  remote_branch_policy: "keep",
+  execution_mode: "worktree",
+  executor: "opencode",
+  open_pr_before_merge: false,
+  complete_on_idle: false,
+  schedule_enabled: false,
+  max_runs: 0,
+};
+
+function isOpenCodeOptionalDefault(key: string, value: unknown): boolean {
+  if (!(key in OPENCODE_OPTIONAL_DEFAULTS)) return false;
+  return OPENCODE_OPTIONAL_DEFAULTS[key] === value;
+}
+
+function sanitizeUpdateArgs(source: Record<string, unknown>): Record<string, unknown> {
+  const clean: Record<string, unknown> = {};
+  let defaultCount = 0;
+
+  for (const [key, value] of Object.entries(source)) {
+    if (value === undefined || value === null) continue;
+    if (typeof value === "string" && value === "") continue;
+    if (isOpenCodeOptionalDefault(key, value)) defaultCount++;
+    clean[key] = value;
+  }
+
+  // OpenCode can materialize optional schema fields with defaults. Treat a
+  // cluster of those sentinel values as tool noise, while preserving intentional
+  // single-field updates such as priority="medium".
+  if (defaultCount >= 3) {
+    for (const [key, value] of Object.entries(clean)) {
+      if (isOpenCodeOptionalDefault(key, value)) {
+        delete clean[key];
+      }
+    }
+  }
+
+  return clean;
+}
+
+function sanitizeObjectArg(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+
+  const clean: Record<string, unknown> = {};
+  for (const [key, field] of Object.entries(value as Record<string, unknown>)) {
+    if (field === undefined || field === null) continue;
+    if (typeof field === "string" && field === "") continue;
+    if (Array.isArray(field) && field.length === 0) continue;
+    clean[key] = field;
+  }
+  return clean;
+}
+
+function hasFields(value: unknown): boolean {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return value !== undefined && value !== null;
+  }
+  return Object.keys(value as Record<string, unknown>).length > 0;
+}
+
+function sanitizeBulkUpdateEntries(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+
+  return value.map((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
+    const clean: Record<string, unknown> = { ...(entry as Record<string, unknown>) };
+    if (clean.updates && typeof clean.updates === "object" && !Array.isArray(clean.updates)) {
+      clean.updates = sanitizeUpdateArgs(clean.updates as Record<string, unknown>);
+    }
+    return clean;
+  });
+}
+
 
 
 // ============================================================================
@@ -499,7 +604,12 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
 - ideas: Ideas for future exploration
 - scratch: Temporary working notes
 - decision: Architectural decisions, ADRs
-- exploration: Investigation notes, research findings`,
+- exploration: Investigation notes, research findings
+
+Feature orchestration:
+- Use feature_id to group tasks into a feature.
+- Use feature_depends_on to make a feature wait for one or more other features before starting.
+- Use trigger.event="feature.completed" with trigger.filter.feature_id to create post-feature tasks that activate after a feature completes.`,
         args: {
           type: tool.schema
             .enum(ENTRY_TYPES)
@@ -548,8 +658,51 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .array(tool.schema.string())
             .optional()
             .describe(
-              "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start."
+              "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start. Use this for before-feature orchestration (e.g., feature 'main' depends on feature 'preflight')."
             ),
+          trigger: tool.schema
+            .object({
+              type: tool.schema.string().optional().describe("Trigger type for automation entries: event, cron, webhook, or session"),
+              event: tool.schema.string().optional().describe("Event pattern to match, e.g. 'feature.completed', 'task.completed', or 'task.*'"),
+              schedule: tool.schema.string().optional().describe("Cron schedule for cron automation triggers"),
+              webhook: tool.schema.string().optional().describe("Webhook path/name for webhook-triggered automations"),
+              filter: tool.schema.object({
+                feature_id: tool.schema.string().optional().describe("Only match events for this feature ID"),
+                project_id: tool.schema.string().optional().describe("Only match events for this project ID"),
+                task_id: tool.schema.string().optional().describe("Only match events for this task ID"),
+                runner_id: tool.schema.string().optional().describe("Only match events from this runner ID"),
+                from_status: tool.schema.string().optional().describe("Only match status-change events from this status"),
+                to_status: tool.schema.string().optional().describe("Only match status-change events to this status"),
+              }).optional().describe("Event field filters. For post-feature tasks use {feature_id:'main-feature', project_id:'my-project'}."),
+              once_per: tool.schema.string().optional().describe("Dedup key for automations, e.g. feature_id, session, or day"),
+              cooldown: tool.schema.string().optional().describe("Minimum interval between automation firings, e.g. '5m' or '1h'"),
+              max_concurrent: tool.schema.number().optional().describe("Maximum concurrent executions for this trigger"),
+              ignore_automation_events: tool.schema.boolean().optional().describe("Whether to ignore events emitted by automations"),
+            })
+            .optional()
+            .describe("Event trigger for inactive/active tasks or automation entries. For post-feature tasks use event='feature.completed' and filter.feature_id=<completed feature>."),
+          action: tool.schema
+            .object({
+              type: tool.schema.string().optional().describe("Automation action type, e.g. create_task or script"),
+              title_template: tool.schema.string().optional().describe("Template for generated task title"),
+              prompt_template: tool.schema.string().optional().describe("Template for generated task prompt/content"),
+              direct_prompt: tool.schema.string().optional().describe("Direct prompt for generated tasks"),
+              command: tool.schema.string().optional().describe("Script command for script actions"),
+              agent: tool.schema.string().optional().describe("Agent override for generated tasks"),
+              model: tool.schema.string().optional().describe("Model override for generated tasks"),
+              executor: tool.schema.string().optional().describe("Executor override for generated tasks"),
+              target_workdir: tool.schema.string().optional().describe("Target workdir for generated tasks"),
+            })
+            .optional()
+            .describe("Automation action config for automation entries."),
+          retry: tool.schema
+            .object({
+              max_attempts: tool.schema.number().optional().describe("Maximum retry attempts"),
+              backoff: tool.schema.string().optional().describe("Backoff policy or duration"),
+              timeout: tool.schema.string().optional().describe("Action timeout"),
+            })
+            .optional()
+            .describe("Automation retry policy for automation entries."),
           global: tool.schema
             .boolean()
             .optional()
@@ -632,6 +785,14 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
             .describe(
               "Override the default model for this task (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"
             ),
+          executor: tool.schema
+            .enum(["opencode", "pi", "script"])
+            .optional()
+            .describe("Executor backend for this task. Runner must advertise the selected executor."),
+          extensions: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Additional executor extensions to load for this task."),
           schedule: tool.schema
             .string()
             .optional()
@@ -754,10 +915,15 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
               feature_id: args.type === "task" ? args.feature_id : undefined,
               feature_priority: args.type === "task" ? args.feature_priority : undefined,
               feature_depends_on: args.type === "task" ? args.feature_depends_on : undefined,
+              trigger: args.type === "task" || args.type === "automation" ? args.trigger : undefined,
+              action: args.type === "automation" ? args.action : undefined,
+              retry: args.type === "automation" ? args.retry : undefined,
               // OpenCode execution options for tasks
               direct_prompt: args.type === "task" ? args.direct_prompt : undefined,
               agent: args.type === "task" ? args.agent : undefined,
               model: args.type === "task" ? args.model : undefined,
+              executor: args.type === "task" ? args.executor : undefined,
+              extensions: args.type === "task" ? args.extensions : undefined,
               // Cron scheduling for tasks
               schedule: args.type === "task" ? args.schedule : undefined,
               schedule_enabled: args.type === "task" ? args.schedule_enabled : undefined,
@@ -930,9 +1096,9 @@ ${response.content}`;
             .optional()
             .describe("Filter by priority level"),
           strategy: tool.schema
-            .enum(["fts", "exact", "like"])
+            .enum(["fts", "exact", "like", "semantic", "hybrid"])
             .optional()
-            .describe("Search strategy: 'fts' (full-text, default), 'exact' (exact phrase), 'like' (substring/wildcard)"),
+            .describe("Search strategy: 'fts' (full-text, default), 'exact' (exact phrase), 'like' (substring/wildcard), 'semantic' (embedding-based), or 'hybrid' (combined FTS + semantic)"),
         },
         async execute(args) {
           try {
@@ -1477,7 +1643,7 @@ Entry marked as still accurate. It will not appear in stale entry lists for 30 d
       // brain_update
       // ========================================
       brain_update: tool({
-        description: `Update an existing brain entry's status, title, dependencies, or append content.
+        description: `Update an existing brain entry's status, title, dependencies, trigger configuration, or append content.
 
 Use cases:
 - Mark a plan as completed: brain_update(path: "...", status: "completed")
@@ -1486,6 +1652,8 @@ Use cases:
 - Append progress notes: brain_update(path: "...", append: "## Progress\\n- Completed auth module")
 - Update title: brain_update(path: "...", title: "New Title")
 - Update dependencies: brain_update(path: "...", depends_on: ["task-id-1", "task-id-2"])
+- Update feature dependencies: brain_update(path: "...", feature_depends_on: ["pre-feature"])
+- Add a post-feature trigger: brain_update(path: "...", trigger: {event:"feature.completed", filter:{feature_id:"main-feature"}})
 - Update tags: brain_update(path: "...", tags: ["tag1", "tag2"])
 - Update priority: brain_update(path: "...", priority: "high")
 
@@ -1531,7 +1699,50 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
           feature_depends_on: tool.schema
             .array(tool.schema.string())
             .optional()
-            .describe("Feature IDs this feature depends on"),
+            .describe("Feature IDs this feature depends on. Use this for feature-to-feature ordering."),
+          trigger: tool.schema
+            .object({
+              type: tool.schema.string().optional().describe("Trigger type for automation entries: event, cron, webhook, or session"),
+              event: tool.schema.string().optional().describe("Event pattern to match, e.g. 'feature.completed', 'task.completed', or 'task.*'"),
+              schedule: tool.schema.string().optional().describe("Cron schedule for cron automation triggers"),
+              webhook: tool.schema.string().optional().describe("Webhook path/name for webhook-triggered automations"),
+              filter: tool.schema.object({
+                feature_id: tool.schema.string().optional().describe("Only match events for this feature ID"),
+                project_id: tool.schema.string().optional().describe("Only match events for this project ID"),
+                task_id: tool.schema.string().optional().describe("Only match events for this task ID"),
+                runner_id: tool.schema.string().optional().describe("Only match events from this runner ID"),
+                from_status: tool.schema.string().optional().describe("Only match status-change events from this status"),
+                to_status: tool.schema.string().optional().describe("Only match status-change events to this status"),
+              }).optional().describe("Event field filters. For post-feature tasks use {feature_id:'main-feature', project_id:'my-project'}."),
+              once_per: tool.schema.string().optional().describe("Dedup key for automations, e.g. feature_id, session, or day"),
+              cooldown: tool.schema.string().optional().describe("Minimum interval between automation firings, e.g. '5m' or '1h'"),
+              max_concurrent: tool.schema.number().optional().describe("Maximum concurrent executions for this trigger"),
+              ignore_automation_events: tool.schema.boolean().optional().describe("Whether to ignore events emitted by automations"),
+            })
+            .optional()
+            .describe("Event trigger for inactive/active tasks or automation entries. For post-feature tasks use event='feature.completed' and filter.feature_id=<completed feature>."),
+          action: tool.schema
+            .object({
+              type: tool.schema.string().optional().describe("Automation action type, e.g. create_task or script"),
+              title_template: tool.schema.string().optional().describe("Template for generated task title"),
+              prompt_template: tool.schema.string().optional().describe("Template for generated task prompt/content"),
+              direct_prompt: tool.schema.string().optional().describe("Direct prompt for generated tasks"),
+              command: tool.schema.string().optional().describe("Script command for script actions"),
+              agent: tool.schema.string().optional().describe("Agent override for generated tasks"),
+              model: tool.schema.string().optional().describe("Model override for generated tasks"),
+              executor: tool.schema.string().optional().describe("Executor override for generated tasks"),
+              target_workdir: tool.schema.string().optional().describe("Target workdir for generated tasks"),
+            })
+            .optional()
+            .describe("Automation action config for automation entries."),
+          retry: tool.schema
+            .object({
+              max_attempts: tool.schema.number().optional().describe("Maximum retry attempts"),
+              backoff: tool.schema.string().optional().describe("Backoff policy or duration"),
+              timeout: tool.schema.string().optional().describe("Action timeout"),
+            })
+            .optional()
+            .describe("Automation retry policy for automation entries."),
           target_workdir: tool.schema
             .string()
             .optional()
@@ -1628,10 +1839,32 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
             .string()
             .optional()
             .describe("Override model (format: 'provider/model-id')"),
+          executor: tool.schema
+            .enum(["opencode", "pi", "script"])
+            .optional()
+            .describe("Executor backend for this task. Runner must advertise the selected executor."),
+          extensions: tool.schema
+            .array(tool.schema.string())
+            .optional()
+            .describe("Additional executor extensions to load for this task."),
         },
         async execute(args) {
-          if (!args.status && !args.title && !args.append && !args.note && !args.depends_on && args.tags === undefined && args.priority === undefined && !args.feature_id && !args.feature_priority && !args.feature_depends_on && args.target_workdir === undefined && args.git_branch === undefined && args.merge_target_branch === undefined && args.merge_policy === undefined && args.merge_strategy === undefined && args.open_pr_before_merge === undefined && args.execution_mode === undefined && args.complete_on_idle === undefined && args.remote_branch_policy === undefined && args.schedule === undefined && args.schedule_enabled === undefined && args.max_runs === undefined && args.run_once_at === undefined && args.timezone === undefined && args.starts_at === undefined && args.expires_at === undefined && args.feature_schedule === undefined && args.feature_starts_at === undefined && args.feature_expires_at === undefined && args.feature_run_once_at === undefined && args.feature_timezone === undefined && args.direct_prompt === undefined && args.agent === undefined && args.model === undefined) {
-            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, max_runs, run_once_at, timezone, starts_at, expires_at, feature_schedule, feature_starts_at, feature_expires_at, feature_run_once_at, feature_timezone, direct_prompt, agent, model`;
+          const cleanArgs = sanitizeUpdateArgs(args as Record<string, unknown>);
+          const updates: Record<string, unknown> = {};
+          addNonEmptyStringFields(updates, cleanArgs, [
+            "status", "title", "append", "note", "priority", "feature_id", "feature_priority",
+            "target_workdir", "git_branch", "merge_target_branch", "merge_policy", "merge_strategy",
+            "execution_mode", "remote_branch_policy", "schedule", "run_once_at", "timezone",
+            "starts_at", "expires_at", "feature_schedule", "feature_starts_at", "feature_expires_at",
+            "feature_run_once_at", "feature_timezone", "direct_prompt", "agent", "model", "executor",
+          ]);
+          addPresentFields(updates, cleanArgs, [
+            "depends_on", "tags", "feature_depends_on", "trigger", "action", "retry",
+            "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs", "extensions",
+          ]);
+
+          if (Object.keys(updates).length === 0) {
+            return `No updates specified. Provide at least one of: status, title, append, note, depends_on, tags, priority, feature_id, feature_priority, feature_depends_on, trigger, action, retry, target_workdir, git_branch, merge_target_branch, merge_policy, merge_strategy, open_pr_before_merge, execution_mode, complete_on_idle, remote_branch_policy, schedule, schedule_enabled, max_runs, run_once_at, timezone, starts_at, expires_at, feature_schedule, feature_starts_at, feature_expires_at, feature_run_once_at, feature_timezone, direct_prompt, agent, model, executor, extensions`;
           }
 
           try {
@@ -1640,113 +1873,85 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
               title: string;
               status: string;
               changes: string[];
-            }>("PATCH", `/entries/${args.path}`, {
-              status: args.status,
-              title: args.title,
-              append: args.append,
-              note: args.note,
-              depends_on: args.depends_on,
-              tags: args.tags,
-              priority: args.priority,
-              feature_id: args.feature_id,
-              feature_priority: args.feature_priority,
-              feature_depends_on: args.feature_depends_on,
-              target_workdir: args.target_workdir,
-              git_branch: args.git_branch,
-              merge_target_branch: args.merge_target_branch,
-              merge_policy: args.merge_policy,
-              merge_strategy: args.merge_strategy,
-              open_pr_before_merge: args.open_pr_before_merge,
-              execution_mode: args.execution_mode,
-
-              complete_on_idle: args.complete_on_idle,
-              remote_branch_policy: args.remote_branch_policy,
-              schedule: args.schedule,
-              schedule_enabled: args.schedule_enabled,
-              max_runs: args.max_runs,
-              // Time-based scheduling fields
-              run_once_at: args.run_once_at,
-              timezone: args.timezone,
-              starts_at: args.starts_at,
-              expires_at: args.expires_at,
-              // Feature schedule fields
-              feature_schedule: args.feature_schedule,
-              feature_starts_at: args.feature_starts_at,
-              feature_expires_at: args.feature_expires_at,
-              feature_run_once_at: args.feature_run_once_at,
-              feature_timezone: args.feature_timezone,
-              direct_prompt: args.direct_prompt,
-              agent: args.agent,
-              model: args.model,
-            });
+            }>("PATCH", `/entries/${args.path}`, updates);
 
             const changes: string[] = [];
-            if (args.status) changes.push(`Status: -> ${args.status}`);
-            if (args.title) changes.push(`Title: -> "${args.title}"`);
-            if (args.note) changes.push(`Note: "${args.note}"`);
-            if (args.append)
-              changes.push(`Appended ${args.append.length} characters`);
-            if (args.depends_on)
-              changes.push(`Dependencies: ${args.depends_on.length} task(s)`);
-            if (args.tags !== undefined)
-              changes.push(`Tags: ${args.tags.length > 0 ? args.tags.join(", ") : "(cleared)"}`);
-            if (args.priority)
-              changes.push(`Priority: ${args.priority}`);
-            if (args.feature_id)
-              changes.push(`Feature ID: ${args.feature_id}`);
-            if (args.feature_priority)
-              changes.push(`Feature Priority: ${args.feature_priority}`);
-            if (args.feature_depends_on)
-              changes.push(`Feature Dependencies: ${args.feature_depends_on.length} feature(s)`);
-            if (args.target_workdir)
-              changes.push(`Target Workdir: ${args.target_workdir}`);
-            if (args.git_branch)
-              changes.push(`Git Branch: ${args.git_branch}`);
-            if (args.merge_target_branch)
-              changes.push(`Merge Target Branch: ${args.merge_target_branch}`);
-            if (args.merge_policy)
-              changes.push(`Merge Policy: ${args.merge_policy}`);
-            if (args.merge_strategy)
-              changes.push(`Merge Strategy: ${args.merge_strategy}`);
-            if (args.open_pr_before_merge !== undefined)
-              changes.push(`Open PR Before Merge: ${args.open_pr_before_merge}`);
-            if (args.execution_mode)
-              changes.push(`Execution Mode: ${args.execution_mode}`);
+            if (cleanArgs.status) changes.push(`Status: -> ${cleanArgs.status}`);
+            if (cleanArgs.title) changes.push(`Title: -> "${cleanArgs.title}"`);
+            if (cleanArgs.note) changes.push(`Note: "${cleanArgs.note}"`);
+            if (cleanArgs.append)
+              changes.push(`Appended ${(cleanArgs.append as string).length} characters`);
+            if (cleanArgs.depends_on)
+              changes.push(`Dependencies: ${(cleanArgs.depends_on as unknown[]).length} task(s)`);
+            if (cleanArgs.tags !== undefined)
+              changes.push(`Tags: ${(cleanArgs.tags as unknown[]).length > 0 ? (cleanArgs.tags as string[]).join(", ") : "(cleared)"}`);
+            if (cleanArgs.priority)
+              changes.push(`Priority: ${cleanArgs.priority}`);
+            if (cleanArgs.feature_id)
+              changes.push(`Feature ID: ${cleanArgs.feature_id}`);
+            if (cleanArgs.feature_priority)
+              changes.push(`Feature Priority: ${cleanArgs.feature_priority}`);
+            if (cleanArgs.feature_depends_on)
+              changes.push(`Feature Dependencies: ${(cleanArgs.feature_depends_on as unknown[]).length} feature(s)`);
+            if (cleanArgs.trigger !== undefined)
+              changes.push(`Trigger: set`);
+            if (cleanArgs.action !== undefined)
+              changes.push(`Action: set`);
+            if (cleanArgs.retry !== undefined)
+              changes.push(`Retry: set`);
+            if (cleanArgs.target_workdir)
+              changes.push(`Target Workdir: ${cleanArgs.target_workdir}`);
+            if (cleanArgs.git_branch)
+              changes.push(`Git Branch: ${cleanArgs.git_branch}`);
+            if (cleanArgs.merge_target_branch)
+              changes.push(`Merge Target Branch: ${cleanArgs.merge_target_branch}`);
+            if (cleanArgs.merge_policy)
+              changes.push(`Merge Policy: ${cleanArgs.merge_policy}`);
+            if (cleanArgs.merge_strategy)
+              changes.push(`Merge Strategy: ${cleanArgs.merge_strategy}`);
+            if (cleanArgs.open_pr_before_merge !== undefined)
+              changes.push(`Open PR Before Merge: ${cleanArgs.open_pr_before_merge}`);
+            if (cleanArgs.execution_mode)
+              changes.push(`Execution Mode: ${cleanArgs.execution_mode}`);
 
-            if (args.complete_on_idle !== undefined)
-              changes.push(`Complete On Idle: ${args.complete_on_idle}`);
-            if (args.remote_branch_policy)
-              changes.push(`Remote Branch Policy: ${args.remote_branch_policy}`);
-            if (args.schedule)
-              changes.push(`Schedule: ${args.schedule}`);
-            if (args.schedule_enabled !== undefined)
-              changes.push(`Schedule Enabled: ${args.schedule_enabled}`);
-            if (args.max_runs !== undefined)
-              changes.push(`Max Runs: ${args.max_runs === 0 ? "unlimited" : args.max_runs}`);
-            if (args.run_once_at)
-              changes.push(`Run Once At: ${args.run_once_at}`);
-            if (args.timezone)
-              changes.push(`Timezone: ${args.timezone}`);
-            if (args.starts_at)
-              changes.push(`Starts At: ${args.starts_at}`);
-            if (args.expires_at)
-              changes.push(`Expires At: ${args.expires_at}`);
-            if (args.feature_schedule)
-              changes.push(`Feature Schedule: ${args.feature_schedule}`);
-            if (args.feature_starts_at)
-              changes.push(`Feature Starts At: ${args.feature_starts_at}`);
-            if (args.feature_expires_at)
-              changes.push(`Feature Expires At: ${args.feature_expires_at}`);
-            if (args.feature_run_once_at)
-              changes.push(`Feature Run Once At: ${args.feature_run_once_at}`);
-            if (args.feature_timezone)
-              changes.push(`Feature Timezone: ${args.feature_timezone}`);
-            if (args.direct_prompt)
+            if (cleanArgs.complete_on_idle !== undefined)
+              changes.push(`Complete On Idle: ${cleanArgs.complete_on_idle}`);
+            if (cleanArgs.remote_branch_policy)
+              changes.push(`Remote Branch Policy: ${cleanArgs.remote_branch_policy}`);
+            if (cleanArgs.schedule)
+              changes.push(`Schedule: ${cleanArgs.schedule}`);
+            if (cleanArgs.schedule_enabled !== undefined)
+              changes.push(`Schedule Enabled: ${cleanArgs.schedule_enabled}`);
+            if (cleanArgs.max_runs !== undefined)
+              changes.push(`Max Runs: ${cleanArgs.max_runs === 0 ? "unlimited" : cleanArgs.max_runs}`);
+            if (cleanArgs.run_once_at)
+              changes.push(`Run Once At: ${cleanArgs.run_once_at}`);
+            if (cleanArgs.timezone)
+              changes.push(`Timezone: ${cleanArgs.timezone}`);
+            if (cleanArgs.starts_at)
+              changes.push(`Starts At: ${cleanArgs.starts_at}`);
+            if (cleanArgs.expires_at)
+              changes.push(`Expires At: ${cleanArgs.expires_at}`);
+            if (cleanArgs.feature_schedule)
+              changes.push(`Feature Schedule: ${cleanArgs.feature_schedule}`);
+            if (cleanArgs.feature_starts_at)
+              changes.push(`Feature Starts At: ${cleanArgs.feature_starts_at}`);
+            if (cleanArgs.feature_expires_at)
+              changes.push(`Feature Expires At: ${cleanArgs.feature_expires_at}`);
+            if (cleanArgs.feature_run_once_at)
+              changes.push(`Feature Run Once At: ${cleanArgs.feature_run_once_at}`);
+            if (cleanArgs.feature_timezone)
+              changes.push(`Feature Timezone: ${cleanArgs.feature_timezone}`);
+            if (cleanArgs.direct_prompt)
               changes.push(`Direct Prompt: set`);
-            if (args.agent)
-              changes.push(`Agent: ${args.agent}`);
-            if (args.model)
-              changes.push(`Model: ${args.model}`);
+            if (cleanArgs.agent)
+              changes.push(`Agent: ${cleanArgs.agent}`);
+            if (cleanArgs.model)
+              changes.push(`Model: ${cleanArgs.model}`);
+            if (cleanArgs.executor)
+              changes.push(`Executor: ${cleanArgs.executor}`);
+            if (cleanArgs.extensions)
+              changes.push(`Extensions: ${(cleanArgs.extensions as unknown[]).length} extension(s)`);
 
             return `Updated: ${args.path}
 
@@ -1778,6 +1983,7 @@ Supports two modes:
    - Great for batch status changes on known entries
 
 Primary use case: reassigning tasks across features or projects in bulk.
+Important: omit filter fields you do not want to match. Do not include \`priority\` in the filter unless you intentionally want to update only one priority.
 
 Examples:
 - Reassign all tasks in a feature: filter={feature_id:"old-feature"}, updates={feature_id:"new-feature"}
@@ -1843,8 +2049,12 @@ Examples:
             .describe("Preview changes without applying them (default: false)"),
         },
         async execute(args) {
+          const filter = sanitizeObjectArg(args.filter);
+          const updates = sanitizeUpdateArgs((args.updates ?? {}) as Record<string, unknown>);
+
           // Validate: must have (filter+updates) XOR entries
-          const hasFilter = !!args.filter;
+          const hasFilter = hasFields(filter);
+          const hasUpdates = hasFields(updates);
           const hasEntries = args.entries && args.entries.length > 0;
 
           if (!hasFilter && !hasEntries) {
@@ -1853,7 +2063,7 @@ Examples:
           if (hasFilter && hasEntries) {
             return "Cannot use both 'filter' and 'entries' modes. Choose one: filter-based (filter+updates) or explicit (entries).";
           }
-          if (hasFilter && !args.updates) {
+          if (hasFilter && !hasUpdates) {
             return "When using 'filter' mode, 'updates' is required to specify what changes to apply.";
           }
 
@@ -1863,10 +2073,10 @@ Examples:
             };
 
             if (hasFilter) {
-              body.filter = args.filter;
-              body.updates = args.updates;
+              body.filter = filter;
+              body.updates = updates;
             } else {
-              body.entries = args.entries;
+              body.entries = sanitizeBulkUpdateEntries(args.entries);
             }
 
             const response = await apiRequest<{

@@ -2,9 +2,11 @@ package indexer
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,6 +16,12 @@ import (
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/pkg/markdown"
 )
+
+// EmbeddingClient defines the interface for generating embeddings.
+// This is defined here to avoid import cycles with internal/service.
+type EmbeddingClient interface {
+	Embed(ctx context.Context, inputs []string) ([][]float32, error)
+}
 
 // Indexer synchronizes markdown files on disk with the SQLite database.
 type Indexer struct {
@@ -297,6 +305,267 @@ func (idx *Indexer) GetHealth() (*IndexHealth, error) {
 	}, nil
 }
 
+// IndexEmbeddings generates and stores embeddings for notes that need them.
+// It uses staleness checks to avoid re-embedding unchanged notes.
+// Embedding generation is best-effort: errors are logged but do not break the process.
+func (idx *Indexer) IndexEmbeddings(ctx context.Context, embeddingClient EmbeddingClient) (*EmbeddingIndexResult, error) {
+	return idx.IndexEmbeddingsWithOptions(ctx, embeddingClient, EmbeddingIndexOptions{})
+}
+
+// EmbeddingIndexOptions filters and controls embedding generation.
+type EmbeddingIndexOptions struct {
+	Project string
+	Path    string
+	Force   bool
+}
+
+// ListEmbeddingBackfillCandidates returns notes matching an embedding backfill request.
+func (idx *Indexer) ListEmbeddingBackfillCandidates(ctx context.Context, opts EmbeddingIndexOptions) ([]EmbeddingBackfillCandidate, error) {
+	query := `
+		SELECT DISTINCT n.id, n.path, n.title, n.project_id, n.type
+		FROM notes n
+		LEFT JOIN (
+			SELECT note_id, MAX(embedding_indexed_at) as latest_indexed
+			FROM note_embeddings_meta
+			GROUP BY note_id
+		) m ON n.id = m.note_id
+	`
+	var conditions []string
+	var args []interface{}
+	if !opts.Force {
+		conditions = append(conditions, "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed)")
+	}
+	if opts.Project != "" {
+		conditions = append(conditions, "n.project_id = ?")
+		args = append(args, opts.Project)
+	}
+	if opts.Path != "" {
+		conditions = append(conditions, "n.path LIKE ?")
+		args = append(args, opts.Path+"%")
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	rows, err := idx.storage.DB().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query embedding backfill candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []EmbeddingBackfillCandidate
+	for rows.Next() {
+		var c EmbeddingBackfillCandidate
+		if err := rows.Scan(&c.ID, &c.Path, &c.Title, &c.Project, &c.Type); err != nil {
+			return nil, fmt.Errorf("scan embedding backfill candidate: %w", err)
+		}
+		candidates = append(candidates, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate embedding backfill candidates: %w", err)
+	}
+	return candidates, nil
+}
+
+// IndexEmbeddingsWithOptions generates and stores embeddings for matching notes.
+func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingClient EmbeddingClient, opts EmbeddingIndexOptions) (*EmbeddingIndexResult, error) {
+	if embeddingClient == nil {
+		return nil, fmt.Errorf("embedding client is nil")
+	}
+
+	start := time.Now()
+	var processed, skipped, failed int
+
+	// Query notes that need embedding (re)generation
+	// A note needs embeddings if:
+	// 1. It has no embeddings at all, OR
+	// 2. Its indexed_at is newer than its most recent embedding_indexed_at
+	query := `
+		SELECT DISTINCT n.id, COALESCE(n.body, ''), n.project_id, n.type, n.status, n.feature_id, n.priority
+		FROM notes n
+		LEFT JOIN (
+			SELECT note_id, MAX(embedding_indexed_at) as latest_indexed
+			FROM note_embeddings_meta
+			GROUP BY note_id
+		) m ON n.id = m.note_id
+	`
+	var conditions []string
+	var args []interface{}
+	if !opts.Force {
+		conditions = append(conditions, "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed)")
+	}
+	if opts.Project != "" {
+		conditions = append(conditions, "n.project_id = ?")
+		args = append(args, opts.Project)
+	}
+	if opts.Path != "" {
+		conditions = append(conditions, "n.path LIKE ?")
+		args = append(args, opts.Path+"%")
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
+	}
+
+	rows, err := idx.storage.DB().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query stale notes: %w", err)
+	}
+	defer rows.Close()
+
+	// Collect notes to process
+	type noteToEmbed struct {
+		id        int64
+		body      string
+		projectID *string
+		noteType  *string
+		status    *string
+		featureID *string
+		priority  *string
+	}
+
+	var notes []noteToEmbed
+	for rows.Next() {
+		var n noteToEmbed
+		if err := rows.Scan(&n.id, &n.body, &n.projectID, &n.noteType, &n.status, &n.featureID, &n.priority); err != nil {
+			slog.Warn("failed to scan note row", "error", err)
+			continue
+		}
+		notes = append(notes, n)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate note rows: %w", err)
+	}
+
+	// Process each note
+	for _, note := range notes {
+		if opts.Force {
+			if err := idx.storage.DeleteNoteEmbeddings(ctx, note.id); err != nil {
+				slog.Warn("failed to delete existing embeddings for note", "note_id", note.id, "error", err)
+				failed++
+				continue
+			}
+		}
+		// Skip notes with empty body
+		if note.body == "" {
+			skipped++
+			continue
+		}
+
+		// Generate chunks
+		chunks := markdown.ChunkNote(note.id, note.body)
+		if len(chunks) == 0 {
+			skipped++
+			continue
+		}
+
+		// Extract chunk texts for embedding
+		chunkTexts := make([]string, len(chunks))
+		for i, chunk := range chunks {
+			chunkTexts[i] = chunk.Text
+		}
+
+		// Generate embeddings (best-effort)
+		embeddings, err := embeddingClient.Embed(ctx, chunkTexts)
+		if err != nil {
+			slog.Warn("failed to generate embeddings for note",
+				"note_id", note.id,
+				"error", err)
+			failed++
+			continue
+		}
+
+		if len(embeddings) != len(chunks) {
+			slog.Warn("embedding count mismatch",
+				"note_id", note.id,
+				"expected", len(chunks),
+				"got", len(embeddings))
+			failed++
+			continue
+		}
+
+		// Build EmbeddingRecord slice
+		records := make([]storage.EmbeddingRecord, len(chunks))
+		for i, chunk := range chunks {
+			records[i] = storage.EmbeddingRecord{
+				NoteID:     note.id,
+				ChunkIndex: chunk.ChunkIndex,
+				Vector:     embeddings[i],
+				ProjectID:  note.projectID,
+				Type:       note.noteType,
+				Status:     note.status,
+				FeatureID:  note.featureID,
+				Priority:   note.priority,
+			}
+		}
+
+		// Upsert embeddings (best-effort)
+		if err := idx.storage.UpsertNoteEmbeddings(ctx, records); err != nil {
+			slog.Warn("failed to upsert embeddings for note",
+				"note_id", note.id,
+				"error", err)
+			failed++
+			continue
+		}
+
+		processed++
+	}
+
+	return &EmbeddingIndexResult{
+		Processed: processed,
+		Skipped:   skipped,
+		Failed:    failed,
+		Duration:  time.Since(start),
+	}, nil
+}
+
+// GetEmbeddingHealth returns statistics about the embedding index.
+func (idx *Indexer) GetEmbeddingHealth() (*EmbeddingHealth, error) {
+	ctx := context.Background()
+
+	// Count total notes
+	var totalNotes int
+	if err := idx.storage.DB().QueryRow("SELECT COUNT(*) FROM notes").Scan(&totalNotes); err != nil {
+		return nil, fmt.Errorf("count notes: %w", err)
+	}
+
+	// Count notes with embeddings
+	var notesWithEmbeddings int
+	query := `
+		SELECT COUNT(DISTINCT note_id)
+		FROM note_embeddings_meta
+	`
+	if err := idx.storage.DB().QueryRow(query).Scan(&notesWithEmbeddings); err != nil {
+		return nil, fmt.Errorf("count notes with embeddings: %w", err)
+	}
+
+	// Count stale embeddings (indexed_at > embedding_indexed_at)
+	var staleEmbeddings int
+	staleQuery := `
+		SELECT COUNT(DISTINCT n.id)
+		FROM notes n
+		INNER JOIN (
+			SELECT note_id, MAX(embedding_indexed_at) as latest_indexed
+			FROM note_embeddings_meta
+			GROUP BY note_id
+		) m ON n.id = m.note_id
+		WHERE n.indexed_at > m.latest_indexed
+	`
+	if err := idx.storage.DB().QueryRowContext(ctx, staleQuery).Scan(&staleEmbeddings); err != nil && err != sql.ErrNoRows {
+		return nil, fmt.Errorf("count stale embeddings: %w", err)
+	}
+
+	// Count notes without embeddings
+	notesWithoutEmbeddings := totalNotes - notesWithEmbeddings
+
+	return &EmbeddingHealth{
+		TotalNotes:             totalNotes,
+		NotesWithEmbeddings:    notesWithEmbeddings,
+		NotesWithoutEmbeddings: notesWithoutEmbeddings,
+		StaleEmbeddings:        staleEmbeddings,
+	}, nil
+}
+
 // ---------------------------------------------------------------------------
 // Helper functions
 // ---------------------------------------------------------------------------
@@ -413,4 +682,10 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
+}
+
+// DB returns the underlying database connection for direct queries.
+// This is exposed for use cases like dry-run queries in CLI commands.
+func (idx *Indexer) DB() *sql.DB {
+	return idx.storage.DB()
 }

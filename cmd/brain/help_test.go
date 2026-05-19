@@ -82,6 +82,51 @@ func TestShowHelp_SubTopicsAndAliases(t *testing.T) {
 	}
 }
 
+func TestShowHelp_AutomationSurfacesMentionSupportedTriggersAndGuards(t *testing.T) {
+	tests := []struct {
+		name  string
+		topic string
+		wants []string
+	}{
+		{
+			name:  "automation overview",
+			topic: "automation",
+			wants: []string{
+				"event",
+				"cron",
+				"webhook",
+				"session",
+				"cooldown",
+				"max_concurrent",
+			},
+		},
+		{
+			name:  "automation create wizard",
+			topic: "automation create",
+			wants: []string{
+				"Trigger type (event, cron, webhook, session)",
+				"runner.session_discovered",
+				"cooldown",
+				"max_concurrent",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := captureOutput(func() {
+				ShowHelp(tt.topic)
+			})
+
+			for _, want := range tt.wants {
+				if !strings.Contains(output, want) {
+					t.Errorf("help for %q missing %q", tt.topic, want)
+				}
+			}
+		})
+	}
+}
+
 func TestShowHelp_UnknownTopicFallsBackToMain(t *testing.T) {
 	output := captureOutput(func() {
 		ShowHelp("definitely-not-a-command")

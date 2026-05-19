@@ -27,13 +27,17 @@ type mockTaskService struct {
 	getNextFunc          func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error)
 	claimTaskFunc        func(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error)
 	releaseTaskFunc      func(ctx context.Context, projectId, taskId, runnerId string) error
+	renewClaimFunc       func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
 	getClaimStatusFunc   func(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
 	getMultiTaskStatusFn func(ctx context.Context, projectId string, req types.MultiTaskStatusRequest) (*types.MultiTaskStatusResponse, error)
 	getFeaturesFunc      func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
 	getReadyFeaturesFunc func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
 	getFeatureFunc       func(ctx context.Context, projectId, featureId string) (*types.FeatureResponse, error)
 	checkoutFeatureFunc  func(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
+	assignFeatureFunc    func(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
+	clearFeatureFunc     func(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
 	triggerTaskFunc      func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
+	getTaskFunc          func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
 }
 
 func (m *mockTaskService) ListProjects(ctx context.Context) ([]string, error) {
@@ -92,6 +96,13 @@ func (m *mockTaskService) ReleaseTask(ctx context.Context, projectId, taskId, ru
 	return fmt.Errorf("releaseTaskFunc not set")
 }
 
+func (m *mockTaskService) RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+	if m.renewClaimFunc != nil {
+		return m.renewClaimFunc(ctx, projectId, taskId, runnerId)
+	}
+	return nil, fmt.Errorf("renewClaimFunc not set")
+}
+
 func (m *mockTaskService) GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error) {
 	if m.getClaimStatusFunc != nil {
 		return m.getClaimStatusFunc(ctx, projectId, taskId)
@@ -134,6 +145,20 @@ func (m *mockTaskService) CheckoutFeature(ctx context.Context, projectId, featur
 	return nil, fmt.Errorf("checkoutFeatureFunc not set")
 }
 
+func (m *mockTaskService) AssignFeatureToRunner(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+	if m.assignFeatureFunc != nil {
+		return m.assignFeatureFunc(ctx, projectId, featureId, req)
+	}
+	return nil, fmt.Errorf("assignFeatureFunc not set")
+}
+
+func (m *mockTaskService) ClearFeatureAssignment(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+	if m.clearFeatureFunc != nil {
+		return m.clearFeatureFunc(ctx, projectId, featureId, req)
+	}
+	return nil, fmt.Errorf("clearFeatureFunc not set")
+}
+
 func (m *mockTaskService) TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error) {
 	if m.triggerTaskFunc != nil {
 		return m.triggerTaskFunc(ctx, projectId, taskId)
@@ -141,16 +166,29 @@ func (m *mockTaskService) TriggerTask(ctx context.Context, projectId, taskId str
 	return nil, fmt.Errorf("triggerTaskFunc not set")
 }
 
+func (m *mockTaskService) DispatchTask(ctx context.Context, projectId, taskId, runnerID string) (*types.ClaimResponse, error) {
+	return nil, fmt.Errorf("dispatchTask not implemented in mock")
+}
+
+func (m *mockTaskService) GetTask(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+	if m.getTaskFunc != nil {
+		return m.getTaskFunc(ctx, projectId, taskId)
+	}
+	return nil, fmt.Errorf("getTaskFunc not set")
+}
+
 // =============================================================================
 // Mock RunnerService
 // =============================================================================
 
 type mockRunnerService struct {
-	pauseFunc     func(ctx context.Context, projectId string) error
-	resumeFunc    func(ctx context.Context, projectId string) error
-	pauseAllFunc  func(ctx context.Context) error
-	resumeAllFunc func(ctx context.Context) error
-	getStatusFunc func(ctx context.Context) (*types.RunnerStatusResponse, error)
+	pauseFunc             func(ctx context.Context, projectId string) error
+	resumeFunc            func(ctx context.Context, projectId string) error
+	pauseAllFunc          func(ctx context.Context) error
+	resumeAllFunc         func(ctx context.Context) error
+	pauseAutomationsFunc  func(ctx context.Context) error
+	resumeAutomationsFunc func(ctx context.Context) error
+	getStatusFunc         func(ctx context.Context) (*types.RunnerStatusResponse, error)
 }
 
 func (m *mockRunnerService) Pause(ctx context.Context, projectId string) error {
@@ -179,6 +217,20 @@ func (m *mockRunnerService) ResumeAll(ctx context.Context) error {
 		return m.resumeAllFunc(ctx)
 	}
 	return fmt.Errorf("resumeAllFunc not set")
+}
+
+func (m *mockRunnerService) PauseAutomations(ctx context.Context) error {
+	if m.pauseAutomationsFunc != nil {
+		return m.pauseAutomationsFunc(ctx)
+	}
+	return fmt.Errorf("pauseAutomationsFunc not set")
+}
+
+func (m *mockRunnerService) ResumeAutomations(ctx context.Context) error {
+	if m.resumeAutomationsFunc != nil {
+		return m.resumeAutomationsFunc(ctx)
+	}
+	return fmt.Errorf("resumeAutomationsFunc not set")
 }
 
 func (m *mockRunnerService) GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error) {
@@ -223,11 +275,13 @@ func newTaskTestRouter(taskMock *mockTaskService, runnerMock *mockRunnerService)
 			r.Get("/features/ready", h.HandleGetReadyFeatures)
 			r.Get("/features/{featureId}", h.HandleGetFeature)
 			r.Post("/features/{featureId}/checkout", h.HandleCheckoutFeature)
-
 			r.Get("/stream", h.HandleSSEStream)
 
+			r.Get("/{taskId}", h.HandleGetTask)
+			r.Get("/{taskId}/metadata", h.HandleGetTaskMetadata)
 			r.Post("/{taskId}/claim", h.HandleClaimTask)
 			r.Post("/{taskId}/release", h.HandleReleaseTask)
+			r.Post("/{taskId}/renew", h.HandleRenewClaim)
 			r.Get("/{taskId}/claim-status", h.HandleGetClaimStatus)
 			r.Post("/{taskId}/trigger", h.HandleTriggerTask)
 		})
@@ -383,12 +437,93 @@ func TestHandleGetTasks(t *testing.T) {
 }
 
 // =============================================================================
+// Get Single Task Tests
+// =============================================================================
+
+func TestHandleGetTask_ReturnsTaskWithDefaults(t *testing.T) {
+	tests := []struct {
+		name       string
+		projectId  string
+		taskId     string
+		mockFn     func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
+		wantStatus int
+		checkBody  func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name:      "returns existing task",
+			projectId: "my-project",
+			taskId:    "abc12def",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return &types.ResolvedTask{
+					ID:             taskId,
+					Classification: "ready",
+					Agent:          "tdd-dev",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ResolvedTask](t, resp)
+				if body.ID != "abc12def" {
+					t.Errorf("id = %q, want %q", body.ID, "abc12def")
+				}
+				if body.Agent != "tdd-dev" {
+					t.Errorf("agent = %q, want %q", body.Agent, "tdd-dev")
+				}
+			},
+		},
+		{
+			name:      "returns 404 for nonexistent task",
+			projectId: "my-project",
+			taskId:    "nonexistent",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return nil, fmt.Errorf("task %q not found in project %q", taskId, projectId)
+			},
+			wantStatus: http.StatusNotFound,
+		},
+		{
+			name:      "service error returns 500",
+			projectId: "my-project",
+			taskId:    "abc12def",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return nil, fmt.Errorf("unexpected disk error")
+			},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taskMock := &mockTaskService{getTaskFunc: tt.mockFn}
+			router := newTaskTestRouter(taskMock, &mockRunnerService{})
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			resp, err := http.Get(srv.URL + "/tasks/" + tt.projectId + "/" + tt.taskId)
+			if err != nil {
+				t.Fatalf("GET /tasks/%s/%s failed: %v", tt.projectId, tt.taskId, err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
+			}
+		})
+	}
+}
+
+// =============================================================================
 // Get Ready/Waiting/Blocked Tests
 // =============================================================================
 
 func TestHandleGetReady(t *testing.T) {
 	taskMock := &mockTaskService{
 		getReadyFunc: func(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error) {
+			if opts != nil {
+				return nil, fmt.Errorf("opts = %+v, want nil for no filters", opts)
+			}
 			return []types.ResolvedTask{
 				{ID: "task1", Classification: "ready"},
 			}, nil
@@ -414,6 +549,35 @@ func TestHandleGetReady(t *testing.T) {
 	json.NewDecoder(resp.Body).Decode(&body)
 	if len(body.Tasks) != 1 {
 		t.Errorf("tasks count = %d, want 1", len(body.Tasks))
+	}
+}
+
+func TestHandleGetReadyPassesRunnerIDFilter(t *testing.T) {
+	taskMock := &mockTaskService{
+		getReadyFunc: func(ctx context.Context, projectId string, opts *TaskFilterOptions) ([]types.ResolvedTask, error) {
+			if projectId != "my-project" {
+				return nil, fmt.Errorf("projectId = %q, want %q", projectId, "my-project")
+			}
+			if err := validateTaskFilterRunnerID(opts, "runner-123"); err != nil {
+				return nil, err
+			}
+			return []types.ResolvedTask{
+				{ID: "task1", Classification: "ready"},
+			}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/tasks/my-project/ready?runner_id=runner-123")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 }
 
@@ -475,6 +639,9 @@ func TestHandleGetNext(t *testing.T) {
 		{
 			name: "success",
 			mockFn: func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error) {
+				if opts != nil {
+					return nil, fmt.Errorf("opts = %+v, want nil for no filters", opts)
+				}
 				return &types.ResolvedTask{ID: "task1", Title: "Next Task"}, nil
 			},
 			wantStatus: http.StatusOK,
@@ -515,6 +682,70 @@ func TestHandleGetNext(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHandleGetNextPassesRunnerIDWithExecutorFilters(t *testing.T) {
+	taskMock := &mockTaskService{
+		getNextFunc: func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error) {
+			if projectId != "my-project" {
+				return nil, fmt.Errorf("projectId = %q, want %q", projectId, "my-project")
+			}
+			if err := validateTaskFilterRunnerID(opts, "runner-456"); err != nil {
+				return nil, err
+			}
+			if len(opts.Executors) != 2 || opts.Executors[0] != "pi" || opts.Executors[1] != "opencode" {
+				return nil, fmt.Errorf("executors = %#v, want %#v", opts.Executors, []string{"pi", "opencode"})
+			}
+			return &types.ResolvedTask{ID: "task1", Title: "Next Task"}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/tasks/my-project/next?runner_id=runner-456&executors=pi,opencode")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestHandleGetNextPassesCamelCaseRunnerIDFilter(t *testing.T) {
+	taskMock := &mockTaskService{
+		getNextFunc: func(ctx context.Context, projectId string, opts *TaskFilterOptions) (*types.ResolvedTask, error) {
+			if err := validateTaskFilterRunnerID(opts, "runner-camel"); err != nil {
+				return nil, err
+			}
+			return &types.ResolvedTask{ID: "task1", Title: "Next Task"}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/tasks/my-project/next?runnerId=runner-camel")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func validateTaskFilterRunnerID(opts *TaskFilterOptions, want string) error {
+	if opts == nil {
+		return fmt.Errorf("opts = nil, want non-nil options with runner_id")
+	}
+	if opts.RunnerID != want {
+		return fmt.Errorf("RunnerID = %q, want %q", opts.RunnerID, want)
+	}
+	return nil
 }
 
 // =============================================================================
@@ -672,6 +903,115 @@ func TestHandleReleaseTask(t *testing.T) {
 
 			if resp.StatusCode != tt.wantStatus {
 				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+		})
+	}
+}
+
+// =============================================================================
+// Renew Claim Tests
+// =============================================================================
+
+func TestHandleRenewClaim(t *testing.T) {
+	tests := []struct {
+		name       string
+		body       any
+		mockFn     func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
+		wantStatus int
+		checkBody  func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name: "success",
+			body: map[string]any{"runnerId": "runner-001"},
+			mockFn: func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+				return &types.RenewClaimResponse{
+					Success:   true,
+					TaskID:    taskId,
+					RunnerID:  runnerId,
+					ExpiresAt: "2024-01-01T00:10:00Z",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.RenewClaimResponse](t, resp)
+				if !body.Success {
+					t.Error("expected success = true")
+				}
+				if body.ExpiresAt == "" {
+					t.Error("expected non-empty expiresAt")
+				}
+			},
+		},
+		{
+			name: "not found",
+			body: map[string]any{"runnerId": "runner-001"},
+			mockFn: func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+				return &types.RenewClaimResponse{
+					Success:  false,
+					TaskID:   taskId,
+					RunnerID: runnerId,
+					Error:    "claim not found",
+				}, ErrNotFound
+			},
+			wantStatus: http.StatusNotFound,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.RenewClaimResponse](t, resp)
+				if body.Success {
+					t.Error("expected success = false")
+				}
+			},
+		},
+		{
+			name: "conflict - wrong runner",
+			body: map[string]any{"runnerId": "runner-002"},
+			mockFn: func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
+				return &types.RenewClaimResponse{
+					Success:  false,
+					TaskID:   taskId,
+					RunnerID: runnerId,
+					Error:    "claim owned by different runner",
+				}, ErrConflict
+			},
+			wantStatus: http.StatusConflict,
+		},
+		{
+			name:       "missing runnerId",
+			body:       map[string]any{},
+			wantStatus: http.StatusBadRequest,
+		},
+		{
+			name:       "invalid JSON",
+			body:       "not json",
+			wantStatus: http.StatusBadRequest,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taskMock := &mockTaskService{renewClaimFunc: tt.mockFn}
+			router := newTaskTestRouter(taskMock, &mockRunnerService{})
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			var body *bytes.Buffer
+			switch v := tt.body.(type) {
+			case string:
+				body = bytes.NewBufferString(v)
+			default:
+				body = jsonBody(t, v)
+			}
+
+			resp, err := http.Post(srv.URL+"/tasks/my-project/task1/renew", "application/json", body)
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
 			}
 		})
 	}
@@ -1186,5 +1526,339 @@ func TestHandleRunnerStatusError(t *testing.T) {
 
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusInternalServerError)
+	}
+}
+
+// =============================================================================
+// Task Event Emission Tests
+// =============================================================================
+
+func newTaskTestRouterWithEvents(taskMock *mockTaskService, es *mockEventService) *chi.Mux {
+	hub := realtime.NewHub()
+	h := NewHandler(
+		&mockBrainService{},
+		WithTaskService(taskMock),
+		WithRunnerService(&mockRunnerService{}),
+		WithEventService(es),
+		WithHub(hub),
+	)
+	r := chi.NewRouter()
+	r.Route("/tasks/{projectId}", func(r chi.Router) {
+		r.Post("/{taskId}/claim", h.HandleClaimTask)
+		r.Post("/{taskId}/release", h.HandleReleaseTask)
+		r.Post("/{taskId}/trigger", h.HandleTriggerTask)
+	})
+	return r
+}
+
+func TestHandleClaimTask_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	taskMock := &mockTaskService{
+		claimTaskFunc: func(_ context.Context, _, _, _ string) (*types.ClaimResponse, error) {
+			return &types.ClaimResponse{Success: true}, nil
+		},
+	}
+	router := newTaskTestRouterWithEvents(taskMock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{"runnerId": "runner-1"})
+	resp, err := http.Post(srv.URL+"/tasks/myproj/task123/claim", "application/json", body)
+	if err != nil {
+		t.Fatalf("POST claim failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventTaskClaimed {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventTaskClaimed)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "myproj" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "myproj")
+	}
+	if evt.TaskID != "task123" {
+		t.Errorf("task_id = %q, want %q", evt.TaskID, "task123")
+	}
+	if evt.Metadata["runner_id"] != "runner-1" {
+		t.Errorf("metadata[runner_id] = %q, want %q", evt.Metadata["runner_id"], "runner-1")
+	}
+}
+
+func TestHandleReleaseTask_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	taskMock := &mockTaskService{
+		releaseTaskFunc: func(_ context.Context, _, _, _ string) error {
+			return nil
+		},
+	}
+	router := newTaskTestRouterWithEvents(taskMock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{"runnerId": "runner-1"})
+	resp, err := http.Post(srv.URL+"/tasks/myproj/task123/release", "application/json", body)
+	if err != nil {
+		t.Fatalf("POST release failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventTaskReleased {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventTaskReleased)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "myproj" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "myproj")
+	}
+	if evt.TaskID != "task123" {
+		t.Errorf("task_id = %q, want %q", evt.TaskID, "task123")
+	}
+}
+
+// =============================================================================
+// Get Task Metadata Tests
+// =============================================================================
+
+func TestHandleGetTaskMetadata_ReturnsExecutionFields(t *testing.T) {
+	completeOnIdle := true
+	openPR := false
+
+	tests := []struct {
+		name       string
+		projectId  string
+		taskId     string
+		mockFn     func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
+		wantStatus int
+		checkBody  func(t *testing.T, resp *http.Response)
+	}{
+		{
+			name:      "returns metadata fields without content or title",
+			projectId: "my-project",
+			taskId:    "abc12def",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return &types.ResolvedTask{
+					ID:                  taskId,
+					Path:                "projects/my-project/task/abc12def.md",
+					Title:               "Some Task Title",
+					Agent:               "tdd-dev",
+					Model:               "claude-sonnet",
+					ExecutionMode:       "worktree",
+					GitBranch:           "feature/abc",
+					GitRemote:           "origin",
+					MergePolicy:         "auto_merge",
+					MergeStrategy:       "squash",
+					MergeTargetBranch:   "main",
+					RemoteBranchPolicy:  "delete",
+					CompleteOnIdle:      &completeOnIdle,
+					OpenPRBeforeMerge:   &openPR,
+					TargetWorkdir:       "/tmp/work",
+					ResolvedWorkdir:     "/tmp/work/resolved",
+					DirectPrompt:        "Fix the auth bug",
+					Executor:            "opencode",
+					FeatureID:           "auth-system",
+					FeaturePriority:     "high",
+					FeatureDependsOn:    []string{"setup-feat"},
+					DependsOn:           []string{"dep1"},
+					ResolvedDeps:        []string{"dep1"},
+					UnresolvedDeps:      []string{},
+					Classification:      "ready",
+					BlockedBy:           []string{},
+					WaitingOn:           []string{},
+					InCycle:             false,
+					Status:              "pending",
+					Priority:            "high",
+					Created:             "2025-01-01T00:00:00Z",
+					UserOriginalRequest: "Please fix the auth bug",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[TaskMetadataResponse](t, resp)
+
+				// Verify metadata fields are present
+				if body.Agent != "tdd-dev" {
+					t.Errorf("agent = %q, want %q", body.Agent, "tdd-dev")
+				}
+				if body.Model != "claude-sonnet" {
+					t.Errorf("model = %q, want %q", body.Model, "claude-sonnet")
+				}
+				if body.ExecutionMode != "worktree" {
+					t.Errorf("execution_mode = %q, want %q", body.ExecutionMode, "worktree")
+				}
+				if body.GitBranch != "feature/abc" {
+					t.Errorf("git_branch = %q, want %q", body.GitBranch, "feature/abc")
+				}
+				if body.MergePolicy != "auto_merge" {
+					t.Errorf("merge_policy = %q, want %q", body.MergePolicy, "auto_merge")
+				}
+				if body.FeatureID != "auth-system" {
+					t.Errorf("feature_id = %q, want %q", body.FeatureID, "auth-system")
+				}
+				if body.DirectPrompt != "Fix the auth bug" {
+					t.Errorf("direct_prompt = %q, want %q", body.DirectPrompt, "Fix the auth bug")
+				}
+				if body.Path != "projects/my-project/task/abc12def.md" {
+					t.Errorf("path = %q, want %q", body.Path, "projects/my-project/task/abc12def.md")
+				}
+				if body.Executor != "opencode" {
+					t.Errorf("executor = %q, want %q", body.Executor, "opencode")
+				}
+				if body.CompleteOnIdle == nil || !*body.CompleteOnIdle {
+					t.Error("expected complete_on_idle = true")
+				}
+				if body.OpenPRBeforeMerge == nil || *body.OpenPRBeforeMerge {
+					t.Error("expected open_pr_before_merge = false")
+				}
+
+				// Verify content and title are NOT in the response
+				// (We decode into a raw map to check for absence of these keys)
+			},
+		},
+		{
+			name:      "returns 404 for nonexistent task",
+			projectId: "my-project",
+			taskId:    "nonexistent",
+			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+				return nil, ErrNotFound
+			},
+			wantStatus: http.StatusNotFound,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			taskMock := &mockTaskService{getTaskFunc: tt.mockFn}
+			router := newTaskTestRouter(taskMock, &mockRunnerService{})
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			resp, err := http.Get(srv.URL + "/tasks/" + tt.projectId + "/" + tt.taskId + "/metadata")
+			if err != nil {
+				t.Fatalf("GET /tasks/%s/%s/metadata failed: %v", tt.projectId, tt.taskId, err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != tt.wantStatus {
+				t.Errorf("status = %d, want %d", resp.StatusCode, tt.wantStatus)
+			}
+			if tt.checkBody != nil {
+				tt.checkBody(t, resp)
+			}
+		})
+	}
+}
+
+func TestHandleGetTaskMetadata_ExcludesTitleAndContent(t *testing.T) {
+	taskMock := &mockTaskService{
+		getTaskFunc: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
+			return &types.ResolvedTask{
+				ID:                  taskId,
+				Title:               "Should Not Appear",
+				Agent:               "tdd-dev",
+				UserOriginalRequest: "Should Not Appear Either",
+			}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/tasks/my-project/abc12def/metadata")
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	// Decode into a raw map to verify title and user_original_request are absent
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if _, ok := raw["title"]; ok {
+		t.Error("response should NOT contain 'title' field")
+	}
+	if _, ok := raw["user_original_request"]; ok {
+		t.Error("response should NOT contain 'user_original_request' field")
+	}
+	if _, ok := raw["id"]; ok {
+		t.Error("response should NOT contain 'id' field")
+	}
+
+	// But metadata fields should be present
+	if _, ok := raw["agent"]; !ok {
+		t.Error("response should contain 'agent' field")
+	}
+}
+
+func TestHandleTriggerTask_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	taskMock := &mockTaskService{
+		triggerTaskFunc: func(_ context.Context, _, _ string) (*types.TriggerResponse, error) {
+			return &types.TriggerResponse{
+				Triggered: true,
+				TaskID:    "task123",
+				Success:   true,
+			}, nil
+		},
+	}
+	router := newTaskTestRouterWithEvents(taskMock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/myproj/task123/trigger", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST trigger failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventTaskTriggered {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventTaskTriggered)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "myproj" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "myproj")
+	}
+	if evt.TaskID != "task123" {
+		t.Errorf("task_id = %q, want %q", evt.TaskID, "task123")
 	}
 }

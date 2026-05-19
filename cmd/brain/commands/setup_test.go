@@ -310,6 +310,8 @@ func TestConfigCommand_Execute_DefaultConfig(t *testing.T) {
 	cfg.Server.Host = "localhost"
 	cfg.Server.BrainDir = "~/brain"
 	cfg.Server.LogLevel = "info"
+	cfg.Server.Embedding.Provider = "openrouter"
+	cfg.Server.Embedding.Model = "text-embedding-3-small"
 	cfg.Runner.MaxParallel = 3
 	cfg.Runner.PollInterval = 5000
 	cfg.MCP.APIURL = "http://localhost:3333"
@@ -336,6 +338,9 @@ func TestConfigCommand_Execute_DefaultConfig(t *testing.T) {
 	}
 	if !strings.Contains(output, "localhost") {
 		t.Errorf("Expected host 'localhost' in output")
+	}
+	if !strings.Contains(output, "Embedding") || !strings.Contains(output, "text-embedding-3-small") {
+		t.Errorf("Expected embedding config in output")
 	}
 
 	// Check for runner section
@@ -415,5 +420,112 @@ func TestConfigCommand_Execute_CustomValues(t *testing.T) {
 	}
 	if !strings.Contains(output, "10") || !strings.Contains(output, "MaxParallel") {
 		t.Errorf("Expected custom MaxParallel '10' in output")
+	}
+}
+
+func TestConfigCommand_DefaultsPrintsFullYAMLWithOpenAIEmbeddingDefaults(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	var out bytes.Buffer
+	cmd := &ConfigCommand{
+		Subcommand: "defaults",
+		Out:        &out,
+	}
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	output := out.String()
+	for _, want := range []string{
+		"server:",
+		"embedding:",
+		"provider: openrouter",
+		"base_url: https://openrouter.ai/api/v1",
+		"api_key_env: OPENROUTER_API_KEY",
+		"model: text-embedding-3-small",
+		"dim: 1536",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected defaults YAML to contain %q, got:\n%s", want, output)
+		}
+	}
+}
+
+func TestConfigCommand_InitWritesDefaultConfigWhenMissing(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	var out bytes.Buffer
+	cmd := &ConfigCommand{
+		Subcommand: "init",
+		Out:        &out,
+	}
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	configPath := filepath.Join(configHome, "brain", "config.yaml")
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("expected config file to be written: %v", err)
+	}
+	if !strings.Contains(string(content), "model: text-embedding-3-small") {
+		t.Fatalf("expected written config to include OpenAI embedding defaults, got:\n%s", string(content))
+	}
+	if !strings.Contains(out.String(), configPath) {
+		t.Fatalf("expected output to mention written config path, got:\n%s", out.String())
+	}
+}
+
+func TestConfigCommand_InitRefusesToOverwriteExistingConfig(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	configDir := filepath.Join(configHome, "brain")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	original := []byte("server:\n  port: 9999\n")
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+
+	cmd := &ConfigCommand{Subcommand: "init", Out: &bytes.Buffer{}}
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected init to refuse overwriting existing config")
+	}
+
+	content, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read existing config: %v", err)
+	}
+	if string(content) != string(original) {
+		t.Fatalf("expected existing config to remain unchanged, got:\n%s", string(content))
+	}
+}
+
+func TestConfigCommand_InitPrintDoesNotWriteConfig(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	var out bytes.Buffer
+	cmd := &ConfigCommand{
+		Subcommand: "init",
+		Flags:      &ConfigFlags{Print: true},
+		Out:        &out,
+	}
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !strings.Contains(out.String(), "model: text-embedding-3-small") {
+		t.Fatalf("expected init --print to emit default YAML, got:\n%s", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(configHome, "brain", "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("expected init --print not to write config file, stat error: %v", err)
 	}
 }

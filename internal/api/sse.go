@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -37,6 +38,11 @@ func (h *Handler) HandleSSEStream(w http.ResponseWriter, r *http.Request) {
 	// Subscribe to hub for this project
 	ch, unsub := h.hub.Subscribe(projectId)
 	defer unsub()
+
+	// Also subscribe to global runner lifecycle events so TUI clients
+	// receive runner_registered and runner_offline events.
+	runnerCh, runnerUnsub := h.hub.Subscribe(realtime.RunnerLifecycleTopic)
+	defer runnerUnsub()
 
 	now := types.TimeNowUTC().Format(time.RFC3339)
 
@@ -85,6 +91,14 @@ func (h *Handler) HandleSSEStream(w http.ResponseWriter, r *http.Request) {
 		case msg, ok := <-ch:
 			if !ok {
 				// Channel closed
+				return
+			}
+			writeSSEEvent(w, msg.Event, msg.Data)
+			flusher.Flush()
+
+		case msg, ok := <-runnerCh:
+			if !ok {
+				// Runner lifecycle channel closed
 				return
 			}
 			writeSSEEvent(w, msg.Event, msg.Data)

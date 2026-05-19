@@ -165,6 +165,12 @@ func (m *ModalManager) HandleMouse(msg tea.MouseMsg, screenW, screenH int) (bool
 	if m.activeModal == nil {
 		return false, nil
 	}
+	if msg.Type == tea.MouseWheelDown {
+		return m.activeModal.HandleKey("j")
+	}
+	if msg.Type == tea.MouseWheelUp {
+		return m.activeModal.HandleKey("k")
+	}
 
 	// Check if the modal supports mouse events
 	mm, ok := m.activeModal.(MouseModal)
@@ -194,7 +200,12 @@ func (m *ModalManager) HandleMouse(msg tea.MouseMsg, screenW, screenH int) (bool
 	// Total box width = content width + border (2) + horizontal padding (4)
 	boxW := modalW + 6
 
-	// Compute visible content height (same as in View)
+	// Compute visible content height (same as in View). Do not rely on
+	// m.contentLines being populated by View: Model.View has a value receiver, so
+	// render-time ModalManager mutations may be lost before mouse hit testing.
+	contentLines := countRenderedLines(m.activeModal.View())
+	m.contentLines = contentLines
+
 	title := m.activeModal.Title()
 	titleLines := 0
 	if title != "" {
@@ -205,7 +216,8 @@ func (m *ModalManager) HandleMouse(msg tea.MouseMsg, screenW, screenH int) (bool
 	if maxContentH < 3 {
 		maxContentH = 3
 	}
-	visibleContentH := m.contentLines
+	m.viewportH = maxContentH
+	visibleContentH := contentLines
 	if visibleContentH > maxContentH {
 		visibleContentH = maxContentH
 	}
@@ -231,6 +243,14 @@ func (m *ModalManager) HandleMouse(msg tea.MouseMsg, screenW, screenH int) (bool
 	}
 
 	return mm.HandleMouse(msg, relX, relY)
+}
+
+func countRenderedLines(content string) int {
+	lines := strings.Split(content, "\n")
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	return len(lines)
 }
 
 // HandleKey routes key presses to the active modal.

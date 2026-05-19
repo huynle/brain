@@ -1,6 +1,7 @@
 package plugins
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -64,6 +65,8 @@ func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 	}
 
 	installed := 0
+	updated := 0
+	identical := 0
 	for _, relPath := range files {
 		// Skip README.md files
 		if filepath.Base(relPath) == "README.md" {
@@ -87,24 +90,42 @@ func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 			header := generateHeader(relPath)
 			content = append([]byte(header), content...)
 		} else if isMarkdownFile(relPath) {
-			header := generateMarkdownHeader(relPath)
-			content = append([]byte(header), content...)
+			content = addMarkdownHeader(content, relPath)
 		}
 
+		existingContent, readErr := os.ReadFile(destPath)
+		exists := readErr == nil
+		if readErr != nil && !os.IsNotExist(readErr) {
+			return fmt.Errorf("failed to read existing %s: %w", relPath, readErr)
+		}
+		isIdentical := exists && bytes.Equal(existingContent, content)
+
 		// Check for existing file if not Force mode
-		if !opts.Force {
-			if _, err := os.Stat(destPath); !os.IsNotExist(err) {
-				if opts.DryRun {
-					fmt.Printf("  [DRY RUN] Would skip (exists): %s\n", relPath)
-				}
-				continue // skip silently instead of erroring — install all other files
+		if !opts.Force && exists {
+			if isIdentical {
+				identical++
+				fmt.Printf("  Identical: %s (left untouched)\n", relPath)
+			} else if opts.DryRun {
+				fmt.Printf("  [DRY RUN] Would skip (exists): %s\n", relPath)
 			}
+			continue // skip silently instead of erroring — install all other files
+		}
+
+		if isIdentical {
+			identical++
+			fmt.Printf("  Identical: %s (left untouched)\n", relPath)
+			continue
 		}
 
 		// DryRun mode just prints
 		if opts.DryRun {
-			fmt.Printf("  [DRY RUN] Would install: %s -> %s\n", relPath, destPath)
-			installed++
+			if exists {
+				fmt.Printf("  [DRY RUN] Would update: %s -> %s\n", relPath, destPath)
+				updated++
+			} else {
+				fmt.Printf("  [DRY RUN] Would install: %s -> %s\n", relPath, destPath)
+				installed++
+			}
 			continue
 		}
 
@@ -118,14 +139,19 @@ func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 			return fmt.Errorf("failed to write %s: %w", relPath, err)
 		}
 
-		installed++
-		fmt.Printf("  Installed: %s\n", relPath)
+		if exists {
+			updated++
+			fmt.Printf("  Updated: %s\n", relPath)
+		} else {
+			installed++
+			fmt.Printf("  Installed: %s\n", relPath)
+		}
 	}
 
 	if opts.DryRun {
-		fmt.Printf("\n  [DRY RUN] Would install %d files\n", installed)
+		fmt.Printf("\n  [DRY RUN] Would install %d files, update %d files, leave %d identical files untouched\n", installed, updated, identical)
 	} else {
-		fmt.Printf("\n  %d files installed to %s\n", installed, t.configPath)
+		fmt.Printf("\n  %d files installed, %d updated, %d identical left untouched in %s\n", installed, updated, identical, t.configPath)
 	}
 
 	return nil
@@ -158,6 +184,53 @@ func isCodeFile(path string) bool {
 
 func isMarkdownFile(path string) bool {
 	return filepath.Ext(path) == ".md"
+}
+
+// addMarkdownHeader inserts the generated header without hiding YAML frontmatter.
+// OpenCode requires component markdown files such as SKILL.md to start with
+// frontmatter, so generated comments must be placed after the closing delimiter
+// when frontmatter is present.
+func addMarkdownHeader(content []byte, filename string) []byte {
+	header := []byte(generateMarkdownHeader(filename))
+	frontmatterEnd := yamlFrontmatterEnd(content)
+	if frontmatterEnd == 0 {
+		return append(header, content...)
+	}
+
+	result := make([]byte, 0, len(content)+len(header))
+	result = append(result, content[:frontmatterEnd]...)
+	result = append(result, header...)
+	result = append(result, content[frontmatterEnd:]...)
+	return result
+}
+
+// yamlFrontmatterEnd returns the byte offset immediately after the closing
+// frontmatter delimiter line, or 0 when the file does not start with YAML
+// frontmatter.
+func yamlFrontmatterEnd(content []byte) int {
+	if !bytes.HasPrefix(content, []byte("---\n")) && !bytes.HasPrefix(content, []byte("---\r\n")) {
+		return 0
+	}
+
+	lineStart := 0
+	for lineStart < len(content) {
+		lineEndRel := bytes.IndexByte(content[lineStart:], '\n')
+		lineEnd := len(content)
+		nextLineStart := len(content)
+		if lineEndRel >= 0 {
+			lineEnd = lineStart + lineEndRel
+			nextLineStart = lineEnd + 1
+		}
+
+		line := bytes.TrimRight(content[lineStart:lineEnd], "\r")
+		if lineStart != 0 && bytes.Equal(line, []byte("---")) {
+			return nextLineStart
+		}
+
+		lineStart = nextLineStart
+	}
+
+	return 0
 }
 
 // generateMarkdownHeader creates auto-generated header for markdown files

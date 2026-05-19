@@ -82,9 +82,17 @@ type BrainService interface {
 	GenerateLink(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
 }
 
+// EmbeddingService is optionally implemented by BrainService implementations that can generate embeddings.
+type EmbeddingService interface {
+	EmbedEntries(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error)
+}
+
 // TaskFilterOptions holds optional filters for task queries.
 type TaskFilterOptions struct {
-	FeatureIDs []string
+	FeatureIDs        []string
+	Executors         []string // Filter tasks by executor type (e.g., "opencode", "pi")
+	RunnerID          string   // Runner requesting task selection, for server-side eligibility checks.
+	GeneratedByPrefix string   // Filter tasks by generated_by prefix (e.g., "automation:").
 }
 
 // TaskService defines the interface for task queue operations.
@@ -115,6 +123,12 @@ type TaskService interface {
 	// ReleaseTask releases a task claim. Returns ErrNotFound if not claimed.
 	ReleaseTask(ctx context.Context, projectId, taskId, runnerId string) error
 
+	// RenewClaim extends the claim's expiry. Returns ErrNotFound if not claimed or expired.
+	RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
+
+	// DispatchTask creates a pre-claim for direct dispatch to a target runner (60-second expiry).
+	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error)
+
 	// GetClaimStatus returns the claim status of a task.
 	GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
 
@@ -132,6 +146,15 @@ type TaskService interface {
 
 	// CheckoutFeature marks a feature for checkout.
 	CheckoutFeature(ctx context.Context, projectId, featureId string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error)
+
+	// AssignFeatureToRunner manually assigns or reassigns a feature to a runner.
+	AssignFeatureToRunner(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
+
+	// ClearFeatureAssignment manually clears a feature assignment.
+	ClearFeatureAssignment(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
+
+	// GetTask returns a single task by ID with dependency resolution applied.
+	GetTask(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
 
 	// TriggerTask manually triggers a scheduled task.
 	TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
@@ -151,24 +174,61 @@ type RunnerService interface {
 	// ResumeAll resumes task execution for all projects.
 	ResumeAll(ctx context.Context) error
 
+	// PauseAutomations pauses automation-generated task execution.
+	PauseAutomations(ctx context.Context) error
+
+	// ResumeAutomations resumes automation-generated task execution.
+	ResumeAutomations(ctx context.Context) error
+
 	// GetStatus returns the current runner status.
 	GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error)
 }
 
-// RunnersService defines the interface for runner registration and discovery.
-// This is separate from RunnerService (which handles pause/resume control).
-type RunnersService interface {
-	// Register registers a runner or updates its registration.
-	Register(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error)
+// EventService defines the interface for event ingestion and querying.
+// Implementations accept events from runners and API mutations,
+// publish them to the EventHub, and support querying recent events.
+type EventService interface {
+	// Ingest accepts a batch of events, validates them, assigns IDs if missing,
+	// deduplicates by ID, and publishes to the EventHub.
+	Ingest(ctx context.Context, events []types.Event) error
 
-	// Heartbeat updates a runner's heartbeat timestamp.
-	Heartbeat(ctx context.Context, req types.HeartbeatRequest) error
+	// Recent returns recent events from the ring buffer with optional filters.
+	// Filters are key-value pairs matching event fields (e.g., "project_id", "type").
+	Recent(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error)
 
-	// List returns all registered runners with status.
-	List(ctx context.Context) (*types.RunnerListResponse, error)
+	// Subscribe returns a channel of events matching the given filters and
+	// an unsubscribe function. Used by the SSE handler for real-time streaming.
+	Subscribe(ctx context.Context, filters map[string]string) (<-chan types.Event, func())
 
-	// MarkStaleAndRelease detects stale runners and releases their claimed tasks.
-	MarkStaleAndRelease(ctx context.Context) ([]string, error)
+	// CheckFeatureCompletion checks if all tasks in a feature are completed
+	// after a task status update. Emits feature.completed or feature.progress
+	// events as appropriate. Safe to call with empty featureID.
+	CheckFeatureCompletion(ctx context.Context, projectID, featureID, taskID string)
+}
+
+// RunnerRegistryService defines the interface for runner lifecycle management.
+// This handles registration, heartbeat, deregistration, and listing of runners.
+type RunnerRegistryService interface {
+	// Register registers or re-registers a runner.
+	Register(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error)
+
+	// Heartbeat updates a runner's heartbeat timestamp and running task count.
+	Heartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error
+
+	// Deregister removes a runner and releases all its task claims.
+	Deregister(ctx context.Context, runnerID string) error
+
+	// ListRunners returns all runners with computed status.
+	ListRunners(ctx context.Context) (*types.RunnerListResponse, error)
+
+	// GetRunner returns a single runner by ID with computed status.
+	GetRunner(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
+
+	// UpdateConfig updates a runner's max_parallel configuration and persists it to the database.
+	UpdateConfig(ctx context.Context, runnerID string, maxParallel int) error
+
+	// UpdateAffinity updates a runner's feature affinity.
+	UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error
 }
 
 // MonitorService defines the interface for monitor operations.
@@ -196,4 +256,37 @@ type MonitorService interface {
 
 	// Find finds an existing monitor for a template+scope combo.
 	Find(ctx context.Context, templateID string, scope types.MonitorScope) (*types.MonitorFindResult, error)
+}
+
+// WebhookService defines the interface for webhook CRUD, event matching,
+// and HTTP delivery with HMAC signing.
+type WebhookService interface {
+	// Create registers a new webhook.
+	Create(ctx context.Context, req types.CreateWebhookRequest) (*types.WebhookResponse, error)
+
+	// Get returns a webhook by ID.
+	Get(ctx context.Context, id string) (*types.WebhookResponse, error)
+
+	// List returns all webhooks, optionally filtered by enabled status.
+	List(ctx context.Context, enabledOnly bool) ([]types.WebhookResponse, error)
+
+	// Update modifies an existing webhook.
+	Update(ctx context.Context, id string, req types.UpdateWebhookRequest) (*types.WebhookResponse, error)
+
+	// Delete removes a webhook by ID.
+	Delete(ctx context.Context, id string) error
+
+	// Deliver sends an event to all matching webhooks.
+	// It matches the event type and filters against registered webhooks,
+	// delivers via HTTP POST with HMAC-SHA256 signing, retries on failure,
+	// and logs delivery results.
+	Deliver(ctx context.Context, event types.Event) error
+
+	// ListDeliveries returns recent delivery attempts for a webhook.
+	ListDeliveries(ctx context.Context, webhookID string, limit int) ([]types.WebhookDeliveryResponse, error)
+
+	// TestDeliver sends a synthetic test event to a specific webhook synchronously
+	// and returns the delivery result. Unlike Deliver, this targets a single webhook
+	// by ID and waits for the result.
+	TestDeliver(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error)
 }

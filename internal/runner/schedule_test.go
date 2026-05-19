@@ -576,16 +576,19 @@ func (m *schedMockClient) CheckHealth(ctx context.Context) (APIHealth, error) {
 func (m *schedMockClient) ListProjects(ctx context.Context) ([]string, error) {
 	return m.projects, m.projectsErr
 }
-func (m *schedMockClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
+func (m *schedMockClient) GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error) {
 	return m.readyTasks[projectID], nil
 }
-func (m *schedMockClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
+func (m *schedMockClient) GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error) {
 	return m.nextTask[projectID], nil
 }
 func (m *schedMockClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error) {
 	return m.claimResult, nil
 }
-func (m *schedMockClient) ReleaseTask(ctx context.Context, projectID, taskID string) error {
+func (m *schedMockClient) RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error {
+	return nil
+}
+func (m *schedMockClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
 	return nil
 }
 func (m *schedMockClient) UpdateTaskStatus(ctx context.Context, taskPath, status string) error {
@@ -638,14 +641,22 @@ func (m *schedMockClient) GetAllTasks(ctx context.Context, projectID string) ([]
 	}
 	return m.allTasks[projectID], nil
 }
-func (m *schedMockClient) EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error {
+func (m *schedMockClient) RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
+	return &types.RunnerInfo{RunnerID: req.RunnerID, Status: types.RunnerStatusOnline}, nil
+}
+func (m *schedMockClient) SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
 	return nil
 }
-func (m *schedMockClient) RegisterRunner(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error) {
-	return &types.RunnerInfo{RunnerID: req.RunnerID, Hostname: req.Hostname}, nil
-}
-func (m *schedMockClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error {
+func (m *schedMockClient) DeregisterRunner(ctx context.Context, runnerID string) error {
 	return nil
+}
+
+func (m *schedMockClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error {
+	return nil
+}
+
+func (m *schedMockClient) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
+	return nil, nil
 }
 
 func (m *schedMockClient) getUpdateMetadataCalls() []updateMetadataCall {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
+	uconfig "github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/runner"
 )
 
@@ -32,11 +33,16 @@ type RunnerFlags struct {
 	Foreground   bool
 	Headless     bool
 	Dashboard    bool
+	Monitor      bool
 	MaxParallel  int
 	PollInterval int
 	Workdir      string
 	Agent        string
 	Model        string
+	Executor     string
+	PiBin        string
+	PiModel      string
+	PiThinking   string
 	Include      []string
 	Exclude      []string
 	FeatureIDs   []string
@@ -50,7 +56,8 @@ type MCPFlags struct {
 
 // TokenFlags for token command
 type TokenFlags struct {
-	Name string
+	Name  string
+	Scope string
 }
 
 // PluginFlags for plugin commands (install, uninstall, plugin-status)
@@ -114,6 +121,7 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs.BoolVar(&flags.Headless, "headless", false, "Headless mode (no TUI, no tmux)")
 	fs.BoolVar(&flags.Headless, "b", false, "Headless (short)")
 	fs.BoolVar(&flags.Dashboard, "dashboard", false, "Tmux dashboard")
+	fs.BoolVar(&flags.Monitor, "monitor", false, "Monitor-only TUI (no local runner)")
 	fs.IntVar(&flags.MaxParallel, "max-parallel", 0, "Max parallel tasks")
 	fs.IntVar(&flags.MaxParallel, "p", 0, "Max parallel (short)")
 	fs.IntVar(&flags.PollInterval, "poll-interval", 0, "Poll interval seconds")
@@ -122,6 +130,10 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs.StringVar(&flags.Agent, "agent", "", "OpenCode agent")
 	fs.StringVar(&flags.Model, "model", "", "Model to use")
 	fs.StringVar(&flags.Model, "m", "", "Model (short)")
+	fs.StringVar(&flags.Executor, "executor", "", "Default executor (opencode or pi)")
+	fs.StringVar(&flags.PiBin, "pi-bin", "", "Pi binary path")
+	fs.StringVar(&flags.PiModel, "pi-model", "", "Pi model")
+	fs.StringVar(&flags.PiThinking, "pi-thinking", "", "Pi thinking level (off, minimal, low, medium, high, xhigh)")
 	fs.BoolVar(&flags.Follow, "follow", false, "Follow logs")
 
 	// Multi-value flags
@@ -177,6 +189,7 @@ func ParseTokenFlags(args []string) (*TokenFlags, error) {
 	fs := flag.NewFlagSet("token", flag.ExitOnError)
 
 	fs.StringVar(&flags.Name, "name", "", "Token name")
+	fs.StringVar(&flags.Scope, "scope", "", "Token scope: admin:*, runner:*, or read:* (default: admin:*)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -225,8 +238,10 @@ type UnifiedConfig struct {
 			CertPath string
 			KeyPath  string
 		}
-		PIDFile string
-		LogFile string
+		PIDFile      string
+		LogFile      string
+		TaskDefaults uconfig.TaskDefaultsConfig
+		Embedding    uconfig.EmbeddingConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -273,6 +288,21 @@ func ApplyFlagsToConfig(cfg *UnifiedConfig, globalFlags *GlobalFlags, cmdFlags i
 		}
 		if flags.Model != "" {
 			cfg.Runner.Opencode.Model = flags.Model
+		}
+		if len(flags.Include) > 0 {
+			cfg.Runner.IncludeProjects = append(cfg.Runner.IncludeProjects, flags.Include...)
+		}
+		if flags.Executor != "" {
+			cfg.Runner.DefaultExecutor = flags.Executor
+		}
+		if flags.PiBin != "" {
+			cfg.Runner.Pi.Bin = flags.PiBin
+		}
+		if flags.PiModel != "" {
+			cfg.Runner.Pi.Model = flags.PiModel
+		}
+		if flags.PiThinking != "" {
+			cfg.Runner.Pi.Thinking = flags.PiThinking
 		}
 		if len(flags.Exclude) > 0 {
 			cfg.Runner.ExcludeProjects = append(cfg.Runner.ExcludeProjects, flags.Exclude...)
@@ -1112,4 +1142,57 @@ func convertToCommandsEntryListFlags(flags *EntryListFlags) *commands.EntryListF
 		f.Output.Delimiter = "\n"
 	}
 	return f
+}
+
+// EmbeddingsFlags for embeddings command
+type EmbeddingsFlags struct {
+	Project string
+	Path    string
+	All     bool
+	Force   bool
+	DryRun  bool
+	Verbose bool
+}
+
+// ParseEmbeddingsFlags parses embeddings command flags from args.
+func ParseEmbeddingsFlags(args []string) (*EmbeddingsFlags, error) {
+	flags := &EmbeddingsFlags{}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--project":
+			if i+1 < len(args) {
+				flags.Project = args[i+1]
+				i++
+			}
+		case "--path":
+			if i+1 < len(args) {
+				flags.Path = args[i+1]
+				i++
+			}
+		case "--all":
+			flags.All = true
+		case "--force":
+			flags.Force = true
+		case "--dry-run":
+			flags.DryRun = true
+		case "-v", "--verbose":
+			flags.Verbose = true
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsEmbeddingsFlags converts main.EmbeddingsFlags to commands.EmbeddingsFlags.
+func convertToCommandsEmbeddingsFlags(flags *EmbeddingsFlags) *commands.EmbeddingsFlags {
+	return &commands.EmbeddingsFlags{
+		Project: flags.Project,
+		Path:    flags.Path,
+		All:     flags.All,
+		Force:   flags.Force,
+		DryRun:  flags.DryRun,
+		Verbose: flags.Verbose,
+	}
 }

@@ -135,3 +135,31 @@ type MonitorTemplatesResponse struct {
 type MonitorListResponse struct {
 	Monitors []MonitorInfo `json:"monitors"`
 }
+
+// =============================================================================
+// Feature Assignment Types
+// =============================================================================
+
+// FeatureAssignmentRequest is the request body for assigning a feature to a runner.
+type FeatureAssignmentRequest struct {
+	RunnerID string `json:"runner_id"`
+	Intent   string `json:"intent,omitempty"`
+	Force    bool   `json:"force,omitempty"`
+}
+
+// ClearFeatureAssignmentRequest is the request body for clearing a feature assignment.
+type ClearFeatureAssignmentRequest struct {
+	Intent string `json:"intent"`
+}
+
+// FeatureAssignmentResponse describes the current or cleared feature assignment state.
+type FeatureAssignmentResponse struct {
+	ProjectID      string `json:"project_id"`
+	FeatureID      string `json:"feature_id"`
+	RunnerID       string `json:"runner_id,omitempty"`
+	PreviousRunner string `json:"previous_runner,omitempty"`
+	Source         string `json:"source"`
+	Status         string `json:"status"`
+	AssignedAt     string `json:"assigned_at,omitempty"`
+	UpdatedAt      string `json:"updated_at,omitempty"`
+}

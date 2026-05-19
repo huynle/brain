@@ -12,6 +12,7 @@ trigger:
   schedule: "*/15 * * * *"
   filter:
     project: "*"
+  max_concurrent: 1
 action:
   type: prompt
   execution_mode: current_branch
@@ -76,6 +77,7 @@ Periodically checks for blocked tasks and attempts to unblock them by analyzing 
 ### Behavior
 
 - Runs every 15 minutes by default
+- Limits inspection runs to one runnable generated task at a time (`max_concurrent: 1`)
 - Discovers blocked tasks in the target project
 - Classifies the block type (worktree failure, idle timeout, crash, self-block, dependency)
 - Attempts safe resolution for recoverable blocks

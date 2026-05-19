@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -121,17 +122,34 @@ func (c *APIClient) ListProjects(ctx context.Context) ([]string, error) {
 	return data.Projects, nil
 }
 
-// GetReadyTasks returns tasks that are ready for execution in a project.
-// Optional featureIDs filter results to specific features.
-func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, featureIDs ...string) ([]types.ResolvedTask, error) {
-	path := fmt.Sprintf("/api/v1/tasks/%s/ready", projectID)
-	if len(featureIDs) > 0 {
-		params := url.Values{}
-		for _, fid := range featureIDs {
-			params.Add("feature_id", fid)
-		}
-		path += "?" + params.Encode()
+// buildTaskQueryParams encodes TaskFetchOptions into URL query parameters.
+func buildTaskQueryParams(opts *TaskFetchOptions) string {
+	if opts == nil {
+		return ""
 	}
+	params := url.Values{}
+	for _, fid := range opts.FeatureIDs {
+		params.Add("feature_id", fid)
+	}
+	if len(opts.Executors) > 0 {
+		params.Set("executors", strings.Join(opts.Executors, ","))
+	}
+	if opts.RunnerID != "" {
+		params.Set("runner_id", opts.RunnerID)
+	}
+	if opts.GeneratedByPrefix != "" {
+		params.Set("generated_by_prefix", opts.GeneratedByPrefix)
+	}
+	if encoded := params.Encode(); encoded != "" {
+		return "?" + encoded
+	}
+	return ""
+}
+
+// GetReadyTasks returns tasks that are ready for execution in a project.
+// Pass nil opts for no filtering (backward compatible).
+func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, opts *TaskFetchOptions) ([]types.ResolvedTask, error) {
+	path := fmt.Sprintf("/api/v1/tasks/%s/ready", projectID) + buildTaskQueryParams(opts)
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get ready tasks: %w", err)
@@ -150,16 +168,9 @@ func (c *APIClient) GetReadyTasks(ctx context.Context, projectID string, feature
 }
 
 // GetNextTask returns the highest-priority ready task, or nil if none.
-// Optional featureIDs filter results to specific features.
-func (c *APIClient) GetNextTask(ctx context.Context, projectID string, featureIDs ...string) (*types.ResolvedTask, error) {
-	path := fmt.Sprintf("/api/v1/tasks/%s/next", projectID)
-	if len(featureIDs) > 0 {
-		params := url.Values{}
-		for _, fid := range featureIDs {
-			params.Add("feature_id", fid)
-		}
-		path += "?" + params.Encode()
-	}
+// Pass nil opts for no filtering (backward compatible).
+func (c *APIClient) GetNextTask(ctx context.Context, projectID string, opts *TaskFetchOptions) (*types.ResolvedTask, error) {
+	path := fmt.Sprintf("/api/v1/tasks/%s/next", projectID) + buildTaskQueryParams(opts)
 	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
 	if err != nil {
 		return nil, fmt.Errorf("get next task: %w", err)
@@ -351,10 +362,33 @@ func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID s
 	return ClaimResult{Success: true, TaskID: taskID}, nil
 }
 
+// RenewClaim extends the lease on a claimed task.
+// Returns nil on success, or an error if the claim doesn't exist, is expired,
+// or is owned by a different runner. The caller should treat any error as a
+// signal to abort the task.
+func (c *APIClient) RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/%s/%s/renew", projectID, taskID)
+	body := map[string]string{"runnerId": runnerID}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return fmt.Errorf("renew claim: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // ReleaseTask releases a previously claimed task.
-func (c *APIClient) ReleaseTask(ctx context.Context, projectID, taskID string) error {
+// The runnerID must match the runner that originally claimed the task.
+func (c *APIClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error {
 	path := fmt.Sprintf("/api/v1/tasks/%s/%s/release", projectID, taskID)
-	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	body := map[string]string{"runnerId": runnerID}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return fmt.Errorf("release task: %w", err)
 	}
@@ -451,6 +485,49 @@ func (c *APIClient) GetFeatures(ctx context.Context, projectID string) ([]types.
 	return data.Features, nil
 }
 
+// AssignFeatureToRunner manually assigns or reassigns a project feature to a runner.
+func (c *APIClient) AssignFeatureToRunner(ctx context.Context, projectID, featureID string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+	apiPath := fmt.Sprintf("/api/v1/tasks/%s/features/%s/assignment", projectID, featureID)
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPut, apiPath, req)
+	if err != nil {
+		return nil, fmt.Errorf("assign feature to runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.FeatureAssignmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode feature assignment: %w", err)
+	}
+	return &result, nil
+}
+
+// ClearFeatureAssignment manually clears a project feature assignment.
+func (c *APIClient) ClearFeatureAssignment(ctx context.Context, projectID, featureID string) (*types.FeatureAssignmentResponse, error) {
+	apiPath := fmt.Sprintf("/api/v1/tasks/%s/features/%s/assignment/clear", projectID, featureID)
+	req := types.ClearFeatureAssignmentRequest{Intent: "clear"}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, apiPath, req)
+	if err != nil {
+		return nil, fmt.Errorf("clear feature assignment: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.FeatureAssignmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode feature assignment clear: %w", err)
+	}
+	return &result, nil
+}
+
 // GetTasksByFeature fetches all tasks belonging to a feature within a project.
 // Uses the dedicated feature endpoint which correctly filters by feature ID.
 func (c *APIClient) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
@@ -504,6 +581,35 @@ func (c *APIClient) SearchEntries(ctx context.Context, req types.SearchRequest) 
 		return nil, fmt.Errorf("decode search response: %w", err)
 	}
 	return &result, nil
+}
+
+// BackfillEmbeddings generates embeddings for matching entries via POST /api/v1/embeddings/backfill.
+func (c *APIClient) BackfillEmbeddings(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error) {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal embedding backfill request: %w", err)
+	}
+	resp, err := c.doRequestWithClient(ctx, c.longRunningClient(), http.MethodPost, "/api/v1/embeddings/backfill", strings.NewReader(string(data)))
+	if err != nil {
+		return nil, fmt.Errorf("backfill embeddings: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.EmbeddingBackfillResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode embedding backfill response: %w", err)
+	}
+	return &result, nil
+}
+
+func (c *APIClient) longRunningClient() *http.Client {
+	timeout := time.Duration(c.cfg.APITimeout) * time.Millisecond
+	if timeout < 30*time.Minute {
+		timeout = 30 * time.Minute
+	}
+	return &http.Client{Timeout: timeout}
 }
 
 // ListEntries lists entries with optional filters via GET /api/v1/entries.
@@ -609,7 +715,7 @@ func (c *APIClient) UpdateEntryRaw(ctx context.Context, entryPath string, conten
 	encodedPath := encodePathComponent(entryPath)
 	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
 
-	resp, err := c.doRequestWithHeaders(ctx, http.MethodPut, apiPath, strings.NewReader(content), map[string]string{
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodPatch, apiPath, strings.NewReader(content), map[string]string{
 		"Content-Type": "text/markdown",
 	})
 	if err != nil {
@@ -629,7 +735,7 @@ func (c *APIClient) UpdateEntryFull(ctx context.Context, entryPath string, fullC
 	encodedPath := encodePathComponent(entryPath)
 	apiPath := fmt.Sprintf("/api/v1/entries/%s", encodedPath)
 
-	resp, err := c.doRequestWithHeaders(ctx, http.MethodPut, apiPath, strings.NewReader(fullContent), map[string]string{
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodPatch, apiPath, strings.NewReader(fullContent), map[string]string{
 		"Content-Type": "text/x-brain-full",
 	})
 	if err != nil {
@@ -644,14 +750,27 @@ func (c *APIClient) UpdateEntryFull(ctx context.Context, entryPath string, fullC
 }
 
 // =============================================================================
-// Event Emission
+// Event Forwarding
 // =============================================================================
 
-// EmitEvent publishes an event to the brain event bus via POST /api/v1/events/emit.
-func (c *APIClient) EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error {
-	body := map[string]any{
-		"type": eventType,
+// PostEvents sends a batch of events to the Brain API.
+// Implements the EventPoster interface for EventForwarder.
+func (c *APIClient) PostEvents(ctx context.Context, events []types.Event) error {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/events", events)
+	if err != nil {
+		return fmt.Errorf("post events: %w", err)
 	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted && resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// EmitEvent publishes an event into the event bus via POST /api/v1/events/emit.
+func (c *APIClient) EmitEvent(ctx context.Context, eventType string, payload map[string]any, dedupKey string) error {
+	body := map[string]any{"type": eventType}
 	if payload != nil {
 		body["payload"] = payload
 	}
@@ -672,33 +791,52 @@ func (c *APIClient) EmitEvent(ctx context.Context, eventType string, payload map
 }
 
 // =============================================================================
-// Runner Registration
+// Runner Registration & Heartbeat
 // =============================================================================
 
-// RegisterRunner registers this runner with the brain API server.
-func (c *APIClient) RegisterRunner(ctx context.Context, req types.RegisterRunnerRequest) (*types.RunnerInfo, error) {
+// RegisterRunner registers this runner with the Brain API server.
+// Returns the RunnerInfo on success or an error. A non-2xx response is returned
+// as an *APIError so callers can decide whether to treat it as fatal.
+func (c *APIClient) RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
 	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/runners/register", req)
 	if err != nil {
 		return nil, fmt.Errorf("register runner: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
 		return nil, c.readError(resp)
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read register response body: %w", err)
+	}
+
 	var info types.RunnerInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+	if err := json.Unmarshal(body, &info); err != nil {
 		return nil, fmt.Errorf("decode register response: %w", err)
+	}
+	if info.RunnerID == "" {
+		var wrapped struct {
+			Runner types.RunnerInfo `json:"runner"`
+		}
+		if err := json.Unmarshal(body, &wrapped); err != nil {
+			return nil, fmt.Errorf("decode register response: %w", err)
+		}
+		if wrapped.Runner.RunnerID != "" {
+			info = wrapped.Runner
+		}
 	}
 	return &info, nil
 }
 
-// HeartbeatRunner sends a heartbeat to the brain API server.
-func (c *APIClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequest) error {
-	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/runners/heartbeat", req)
+// SendHeartbeat sends a heartbeat for this runner to the Brain API server.
+func (c *APIClient) SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/heartbeat", runnerID)
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, req)
 	if err != nil {
-		return fmt.Errorf("heartbeat runner: %w", err)
+		return fmt.Errorf("send heartbeat: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -708,7 +846,22 @@ func (c *APIClient) HeartbeatRunner(ctx context.Context, req types.HeartbeatRequ
 	return nil
 }
 
-// ListRunners returns all registered runners from the brain API.
+// DeregisterRunner removes this runner from the Brain API server.
+func (c *APIClient) DeregisterRunner(ctx context.Context, runnerID string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/deregister", runnerID)
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("deregister runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ListRunners fetches all registered runners from the Brain API.
 func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/runners", nil)
 	if err != nil {
@@ -720,11 +873,130 @@ func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse,
 		return nil, c.readError(resp)
 	}
 
-	var data types.RunnerListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
-		return nil, fmt.Errorf("decode runners list: %w", err)
+	var result types.RunnerListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode runners response: %w", err)
 	}
-	return &data, nil
+	return &result, nil
+}
+
+// UpdateRunnerConfig updates a runner's maxParallel configuration.
+func (c *APIClient) UpdateRunnerConfig(ctx context.Context, runnerID string, maxParallel int) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/config", runnerID)
+	body := map[string]int{"maxParallel": maxParallel}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPatch, path, body)
+	if err != nil {
+		return fmt.Errorf("update runner config: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ToggleRunnerFeature enables or disables a feature on a specific runner.
+func (c *APIClient) ToggleRunnerFeature(ctx context.Context, runnerID, featureID string, enabled bool) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/features/%s/toggle", runnerID, featureID)
+	body := map[string]bool{"enabled": enabled}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return fmt.Errorf("toggle runner feature: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// UpdateRunnerAffinity updates which features a runner can execute.
+func (c *APIClient) UpdateRunnerAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/affinity", runnerID)
+	body := map[string][]string{"feature_ids": featureIDs}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPut, path, body)
+	if err != nil {
+		return fmt.Errorf("update runner affinity: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// =============================================================================
+// Log Streaming
+// =============================================================================
+
+// PostTaskLogs sends a batch of log lines to the Brain API for a given task.
+// This is fire-and-forget from the caller's perspective: failures are returned
+// but should not block task execution.
+func (c *APIClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error {
+	if len(lines) == 0 {
+		return nil
+	}
+
+	path := fmt.Sprintf("/api/v1/tasks/%s/%s/logs", projectID, taskID)
+	body := types.LogIngestRequest{
+		RunnerID: runnerID,
+		Lines:    lines,
+	}
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return fmt.Errorf("post task logs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// =============================================================================
+// Configuration
+// =============================================================================
+
+// TaskDefaultsResponse mirrors the JSON from GET /api/v1/config/task-defaults.
+type TaskDefaultsResponse struct {
+	Agent              string `json:"agent"`
+	Model              string `json:"model"`
+	ExecutionMode      string `json:"execution_mode"`
+	CompleteOnIdle     *bool  `json:"complete_on_idle"`
+	MergePolicy        string `json:"merge_policy"`
+	MergeStrategy      string `json:"merge_strategy"`
+	MergeTargetBranch  string `json:"merge_target_branch"`
+	RemoteBranchPolicy string `json:"remote_branch_policy"`
+	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge"`
+	TargetWorkdir      string `json:"target_workdir"`
+}
+
+// GetTaskDefaults fetches the server's task_defaults configuration.
+// Returns nil (not an error) if the endpoint is unavailable (e.g., older server).
+func (c *APIClient) GetTaskDefaults(ctx context.Context) (*TaskDefaultsResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/config/task-defaults", nil)
+	if err != nil {
+		return nil, nil // graceful fallback
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil // graceful fallback for older servers
+	}
+
+	var defaults TaskDefaultsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&defaults); err != nil {
+		return nil, nil // graceful fallback
+	}
+	return &defaults, nil
 }
 
 // =============================================================================
@@ -789,6 +1061,53 @@ func (c *APIClient) ResumeAll(ctx context.Context) error {
 	return nil
 }
 
+// PauseAutomations pauses automation-generated task execution.
+func (c *APIClient) PauseAutomations(ctx context.Context) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/automations/pause", nil)
+	if err != nil {
+		return fmt.Errorf("pause automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ResumeAutomations resumes automation-generated task execution.
+func (c *APIClient) ResumeAutomations(ctx context.Context) error {
+	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/automations/resume", nil)
+	if err != nil {
+		return fmt.Errorf("resume automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ShutdownRunner requests graceful shutdown for a specific registered runner.
+func (c *APIClient) ShutdownRunner(ctx context.Context, runnerID string, reason string) error {
+	body, err := json.Marshal(map[string]string{"reason": reason})
+	if err != nil {
+		return fmt.Errorf("encode shutdown runner request: %w", err)
+	}
+	path := fmt.Sprintf("/api/v1/runners/%s/shutdown", runnerID)
+	resp, err := c.doRequest(ctx, http.MethodPut, path, bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("shutdown runner: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // GetRunnerStatus returns the current runner status including pause state.
 func (c *APIClient) GetRunnerStatus(ctx context.Context) (*types.RunnerStatusResponse, error) {
 	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/tasks/runner/status", nil)
@@ -814,6 +1133,10 @@ func (c *APIClient) GetRunnerStatus(ctx context.Context) (*types.RunnerStatusRes
 
 // doRequest performs an HTTP request with auth headers and context.
 func (c *APIClient) doRequest(ctx context.Context, method, path string, body io.Reader) (*http.Response, error) {
+	return c.doRequestWithClient(ctx, c.client, method, path, body)
+}
+
+func (c *APIClient) doRequestWithClient(ctx context.Context, client *http.Client, method, path string, body io.Reader) (*http.Response, error) {
 	reqURL := c.cfg.BrainAPIURL + path
 
 	req, err := http.NewRequestWithContext(ctx, method, reqURL, body)
@@ -827,7 +1150,7 @@ func (c *APIClient) doRequest(ctx context.Context, method, path string, body io.
 		req.Header.Set("Authorization", "Bearer "+c.cfg.APIToken)
 	}
 
-	return c.client.Do(req)
+	return client.Do(req)
 }
 
 // doRequestWithHeaders performs an HTTP request with custom headers, overriding defaults.

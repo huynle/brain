@@ -33,8 +33,9 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import { execSync } from "child_process";
 import { readFileSync } from "fs";
+import { readFile } from "fs/promises";
 import { homedir } from "os";
-import { join } from "path";
+import { basename, join } from "path";
 
 // ============================================================================
 // Types
@@ -386,6 +387,38 @@ interface ApiError {
   details?: unknown;
 }
 
+interface AttachmentDerived {
+  id: string;
+  kind?: string;
+  content_type?: string;
+  size?: number;
+  storage_key?: string;
+  created?: string;
+}
+
+interface AttachmentReference {
+  id: string;
+  filename?: string;
+  content_type?: string;
+  size?: number;
+  sha256?: string;
+  metadata?: Record<string, string>;
+  download_url?: string;
+  text_url?: string;
+  role?: string;
+  caption?: string;
+  derived?: AttachmentDerived[];
+}
+
+interface Attachment extends AttachmentReference {
+  filename: string;
+  content_type: string;
+  size: number;
+  storage_key?: string;
+  created?: string;
+  modified?: string;
+}
+
 class BrainUnavailableError extends Error {
   constructor(state: BrainConnectionState) {
     super(formatUnavailableMessage(state));
@@ -473,6 +506,110 @@ async function apiRequest<T>(
     
     throw error;
   }
+}
+
+async function attachmentUploadRequest(
+  projectId: string,
+  filePath: string,
+  metadata?: Record<string, unknown>
+): Promise<{ attachment: Attachment }> {
+  const health = await checkBrainHealth();
+  if (!health.available) {
+    throw new BrainUnavailableError(health);
+  }
+
+  const data = await readFile(filePath);
+  const form = new FormData();
+  form.append("project_id", projectId);
+  if (metadata && Object.keys(metadata).length > 0) {
+    form.append("metadata", JSON.stringify(metadata));
+  }
+  form.append("file", new Blob([data]), basename(filePath));
+
+  const response = await fetch(`${BRAIN_API_URL}/api/v1/attachments`, {
+    method: "POST",
+    headers: getAuthHeaders(),
+    body: form,
+  });
+
+  if (!response.ok) {
+    throw new Error(await formatAPIError(response));
+  }
+
+  return response.json();
+}
+
+async function attachmentTextRequest(
+  projectId: string,
+  attachmentId: string
+): Promise<string> {
+  const health = await checkBrainHealth();
+  if (!health.available) {
+    throw new BrainUnavailableError(health);
+  }
+
+  const params = new URLSearchParams({ project_id: projectId });
+  const response = await fetch(
+    `${BRAIN_API_URL}/api/v1/attachments/${encodeURIComponent(attachmentId)}/text?${params.toString()}`,
+    { headers: getAuthHeaders() }
+  );
+
+  if (!response.ok) {
+    throw new Error(await formatAPIError(response));
+  }
+
+  return response.text();
+}
+
+async function formatAPIError(response: Response): Promise<string> {
+  try {
+    const errorData = await response.json() as ApiError;
+    return errorData.message || `HTTP ${response.status}: ${response.statusText}`;
+  } catch {
+    return `HTTP ${response.status}: ${response.statusText}`;
+  }
+}
+
+function formatDerivedAttachments(derived?: AttachmentDerived[]): string {
+  if (!derived || derived.length === 0) return "";
+  const items = derived.map((item) => {
+    const parts = [item.id, item.kind, item.content_type, item.size ? `${item.size} bytes` : undefined, item.storage_key].filter(Boolean);
+    return parts.join(" / ");
+  });
+  return items.join("; ");
+}
+
+function formatAttachmentReference(attachment: AttachmentReference): string {
+  const parts = [`\`${attachment.id}\``];
+  if (attachment.filename) parts.push(attachment.filename);
+  if (attachment.content_type) parts.push(attachment.content_type);
+  if (attachment.size) parts.push(`${attachment.size} bytes`);
+  if (attachment.role) parts.push(`role: ${attachment.role}`);
+
+  let line = `- ${parts.join(" — ")}`;
+  if (attachment.caption) line += `\n  Caption: ${attachment.caption}`;
+  if (attachment.sha256) line += `\n  SHA256: ${attachment.sha256}`;
+  if (attachment.download_url) line += `\n  Download: ${attachment.download_url}`;
+  if (attachment.text_url) line += `\n  Text: ${attachment.text_url}`;
+  const derived = formatDerivedAttachments(attachment.derived);
+  if (derived) line += `\n  Derived: ${derived}`;
+  if (attachment.metadata && Object.keys(attachment.metadata).length > 0) {
+    const metadata = Object.keys(attachment.metadata)
+      .sort()
+      .map((key) => `${key}=${attachment.metadata?.[key]}`)
+      .join(", ");
+    line += `\n  Metadata: ${metadata}`;
+  }
+  return line;
+}
+
+function formatAttachmentReferences(attachments?: AttachmentReference[]): string {
+  if (!attachments || attachments.length === 0) return "";
+  return ["", "### Attachments", ...attachments.map(formatAttachmentReference)].join("\n");
+}
+
+function formatAttachment(attachment: Attachment): string {
+  return formatAttachmentReference(attachment);
 }
 
 function addNonEmptyStringFields(
@@ -968,7 +1105,7 @@ Use \`brain_link\` to generate links to this entry from other notes.`;
       // ========================================
       brain_recall: tool({
         description:
-          "Retrieve a specific entry from the brain by path, ID, or title. Updates access statistics.",
+          "Retrieve a specific entry from the brain by path, ID, or title. Updates access statistics. Use include: ['attachments'] or include: ['attachments', 'attachment_text'] to include model-friendly attachment metadata for pasted-image/local-PDF workflows.",
         args: {
           path: tool.schema
             .string()
@@ -978,6 +1115,10 @@ Use \`brain_link\` to generate links to this entry from other notes.`;
             .string()
             .optional()
             .describe("Title to search for (exact match)"),
+          include: tool.schema
+            .array(tool.schema.enum(["attachments", "attachment_text"]))
+            .optional()
+            .describe("Optional related data to include. Use ['attachments'] for attachment metadata or ['attachments','attachment_text'] when you need derived text references for PDFs/images."),
         },
         async execute(args) {
           if (!args.path && !args.title) {
@@ -1022,7 +1163,10 @@ Use \`brain_link\` to generate links to this entry from other notes.`;
               access_count?: number;
               backlinks?: Array<{ id: string; title: string; path: string }>;
               user_original_request?: string;
-            }>("GET", `/entries/${entryPath}`);
+              attachments?: AttachmentReference[];
+            }>("GET", `/entries/${entryPath}`, undefined, {
+              include: args.include?.length ? args.include.join(",") : undefined,
+            });
 
             const backlinkLinks =
               response.backlinks && response.backlinks.length > 0
@@ -1040,6 +1184,7 @@ Use \`brain_link\` to generate links to this entry from other notes.`;
 **Access Count:** ${response.access_count ?? 1}
 ${backlinkLinks.length > 0 ? `**Backlinks:** ${backlinkLinks.join(", ")}` : ""}
 ${response.user_original_request ? `**User Original Request:** ${response.user_original_request}` : ""}
+${formatAttachmentReferences(response.attachments)}
 
 ---
 
@@ -1047,6 +1192,205 @@ ${response.content}`;
           } catch (error) {
             const identifier = args.path || args.title;
             return `No entry found${args.path ? ` at path: ${args.path}` : ` matching title: "${args.title}"`}: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_attachment_upload
+      // ========================================
+      brain_attachment_upload: tool({
+        description: `Upload a local file as a first-class Brain attachment.
+
+Use this for pasted-image or local-PDF workflows: save the file locally, upload it with this tool, then attach the returned attachment_id to an entry with brain_attachment_attach. The file is sent as multipart/form-data; content is not base64 encoded.`,
+        args: {
+          project_id: tool.schema.string().describe("Project that owns the uploaded attachment"),
+          file_path: tool.schema.string().describe("Absolute or relative path to the local file to upload"),
+          metadata: tool.schema.object({}).optional().describe("Optional JSON metadata stored with the attachment, e.g. {kind:'source-pdf', description:'original document'}"),
+        },
+        async execute(args) {
+          if (!args.project_id || !args.file_path) {
+            return "Please provide project_id and file_path";
+          }
+
+          try {
+            const response = await attachmentUploadRequest(args.project_id, args.file_path, args.metadata);
+            return `Uploaded attachment
+
+${formatAttachment(response.attachment)}
+
+Next: attach it to an entry with \`brain_attachment_attach\` using attachment_id \`${response.attachment.id}\`.
+
+Workflow tip: for pasted images or local PDFs, upload the local file here, attach it to the relevant entry, then use \`brain_recall\` with include: ["attachments"] or \`brain_attachment_text\` for extracted text when available.`;
+          } catch (error) {
+            return `Attachment upload failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_attachment_attach
+      // ========================================
+      brain_attachment_attach: tool({
+        description: "Attach an existing Brain attachment to an entry with optional role and caption metadata.",
+        args: {
+          project_id: tool.schema.string().describe("Project containing the entry and attachment"),
+          entry_id: tool.schema.string().describe("Entry ID or path to attach to"),
+          attachment_id: tool.schema.string().describe("Attachment ID returned by brain_attachment_upload or brain_attachment_list"),
+          role: tool.schema.string().optional().describe("Optional attachment role, e.g. source, inline, image, pdf"),
+          caption: tool.schema.string().optional().describe("Optional model-friendly caption describing the attachment"),
+        },
+        async execute(args) {
+          if (!args.project_id || !args.entry_id || !args.attachment_id) {
+            return "Please provide project_id, entry_id, and attachment_id";
+          }
+
+          const attachment: Record<string, unknown> = { id: args.attachment_id };
+          if (args.role) attachment.role = args.role;
+          if (args.caption) attachment.caption = args.caption;
+
+          try {
+            const response = await apiRequest<{
+              path: string;
+              entry_id: string;
+              attachments: AttachmentReference[];
+            }>("POST", `/entries/${args.entry_id}/attachments`, { attachment }, { project_id: args.project_id });
+
+            return `Attached attachment ${args.attachment_id} to entry ${args.entry_id}
+
+**Entry Path:** ${response.path}
+${formatAttachmentReferences(response.attachments)}
+
+Use \`brain_recall\` with include: ["attachments"] to view attachment metadata with the entry.`;
+          } catch (error) {
+            return `Attachment attach failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_attachment_detach
+      // ========================================
+      brain_attachment_detach: tool({
+        description: "Detach an attachment from an entry. Provide role when detaching a role-specific reference.",
+        args: {
+          project_id: tool.schema.string().describe("Project containing the entry and attachment"),
+          entry_id: tool.schema.string().describe("Entry ID or path to detach from"),
+          attachment_id: tool.schema.string().describe("Attachment ID to detach"),
+          role: tool.schema.string().optional().describe("Optional role to detach"),
+        },
+        async execute(args) {
+          if (!args.project_id || !args.entry_id || !args.attachment_id) {
+            return "Please provide project_id, entry_id, and attachment_id";
+          }
+
+          try {
+            const response = await apiRequest<{
+              path: string;
+              entry_id: string;
+              attachments: AttachmentReference[];
+            }>(
+              "DELETE",
+              `/entries/${args.entry_id}/attachments/${encodeURIComponent(args.attachment_id)}`,
+              undefined,
+              { project_id: args.project_id, role: args.role }
+            );
+
+            return `Detached attachment ${args.attachment_id} from entry ${args.entry_id}
+
+Remaining:${formatAttachmentReferences(response.attachments) || " none"}`;
+          } catch (error) {
+            return `Attachment detach failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_attachment_list
+      // ========================================
+      brain_attachment_list: tool({
+        description: "List attachments available in a project, including metadata and derived artifacts.",
+        args: {
+          project_id: tool.schema.string().describe("Project whose attachments should be listed"),
+        },
+        async execute(args) {
+          if (!args.project_id) {
+            return "Please provide project_id";
+          }
+
+          try {
+            const response = await apiRequest<{ attachments: Attachment[]; total: number }>(
+              "GET",
+              "/attachments",
+              undefined,
+              { project_id: args.project_id }
+            );
+
+            if (!response.attachments || response.attachments.length === 0) {
+              return `No attachments found for project ${args.project_id}`;
+            }
+
+            return [`Attachments (${response.total})`, "", ...response.attachments.map(formatAttachment)].join("\n");
+          } catch (error) {
+            return `Attachment list failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_attachment_get
+      // ========================================
+      brain_attachment_get: tool({
+        description: "Get attachment metadata, download/text URLs, and derived artifact references.",
+        args: {
+          project_id: tool.schema.string().describe("Project containing the attachment"),
+          attachment_id: tool.schema.string().describe("Attachment ID to retrieve"),
+        },
+        async execute(args) {
+          if (!args.project_id || !args.attachment_id) {
+            return "Please provide project_id and attachment_id";
+          }
+
+          try {
+            const response = await apiRequest<Attachment>(
+              "GET",
+              `/attachments/${encodeURIComponent(args.attachment_id)}`,
+              undefined,
+              { project_id: args.project_id }
+            );
+            return `${formatAttachment(response)}
+
+Use \`brain_attachment_text\` with this attachment_id to retrieve extracted text when available.`;
+          } catch (error) {
+            return `Attachment get failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_attachment_text
+      // ========================================
+      brain_attachment_text: tool({
+        description: "Retrieve extracted plain text for an attachment, useful for local PDF/image OCR workflows after upload.",
+        args: {
+          project_id: tool.schema.string().describe("Project containing the attachment"),
+          attachment_id: tool.schema.string().describe("Attachment ID whose extracted text should be retrieved"),
+        },
+        async execute(args) {
+          if (!args.project_id || !args.attachment_id) {
+            return "Please provide project_id and attachment_id";
+          }
+
+          try {
+            const text = await attachmentTextRequest(args.project_id, args.attachment_id);
+            if (!text.trim()) {
+              return `No extracted text is available for attachment ${args.attachment_id}`;
+            }
+            return `## Attachment Text: ${args.attachment_id}
+
+${text}`;
+          } catch (error) {
+            return `Attachment text failed: ${error instanceof Error ? error.message : String(error)}`;
           }
         },
       }),

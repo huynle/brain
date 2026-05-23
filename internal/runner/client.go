@@ -3,11 +3,16 @@ package runner
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -439,6 +444,197 @@ func (c *APIClient) DeleteEntry(ctx context.Context, entryPath string) error {
 		return c.readError(resp)
 	}
 	return nil
+}
+
+// UploadAttachment uploads a local file as multipart/form-data and returns its metadata.
+func (c *APIClient) UploadAttachment(ctx context.Context, projectID, filePath string, metadata map[string]string) (*types.Attachment, error) {
+	if strings.TrimSpace(projectID) == "" {
+		return nil, fmt.Errorf("project_id is required")
+	}
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("read attachment file: %w", err)
+	}
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("project_id", projectID); err != nil {
+		return nil, fmt.Errorf("write project field: %w", err)
+	}
+	if len(metadata) > 0 {
+		raw, err := json.Marshal(metadata)
+		if err != nil {
+			return nil, fmt.Errorf("marshal attachment metadata: %w", err)
+		}
+		if err := writer.WriteField("metadata", string(raw)); err != nil {
+			return nil, fmt.Errorf("write metadata field: %w", err)
+		}
+	}
+	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("create file field: %w", err)
+	}
+	if _, err := part.Write(content); err != nil {
+		return nil, fmt.Errorf("write file field: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodPost, "/api/v1/attachments", body, map[string]string{"Content-Type": writer.FormDataContentType(), "Accept": "application/json"})
+	if err != nil {
+		return nil, fmt.Errorf("upload attachment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated && resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.CreateAttachmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode attachment upload: %w", err)
+	}
+	return &result.Attachment, nil
+}
+
+// GetAttachment fetches attachment metadata by ID within a project.
+func (c *APIClient) GetAttachment(ctx context.Context, projectID, attachmentID string) (*types.Attachment, error) {
+	path := "/api/v1/attachments/" + url.PathEscape(attachmentID) + "?project_id=" + url.QueryEscape(projectID)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get attachment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var attachment types.Attachment
+	if err := json.NewDecoder(resp.Body).Decode(&attachment); err != nil {
+		return nil, fmt.Errorf("decode attachment: %w", err)
+	}
+	return &attachment, nil
+}
+
+// ListAttachments lists all project attachments.
+func (c *APIClient) ListAttachments(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error) {
+	path := "/api/v1/attachments?project_id=" + url.QueryEscape(projectID)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list attachments: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.ListAttachmentsResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode attachments: %w", err)
+	}
+	return &result, nil
+}
+
+// AttachEntryAttachment links an existing attachment to an entry.
+func (c *APIClient) AttachEntryAttachment(ctx context.Context, projectID, entryID string, attachment types.AttachmentReference) (*types.AttachEntryAttachmentResponse, error) {
+	path := "/api/v1/entries/" + encodePathComponent(entryID) + "/attachments?project_id=" + url.QueryEscape(projectID)
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, types.AttachEntryAttachmentRequest{Attachment: attachment})
+	if err != nil {
+		return nil, fmt.Errorf("attach entry attachment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.AttachEntryAttachmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode entry attachments: %w", err)
+	}
+	return &result, nil
+}
+
+// ListEntryAttachments lists attachments linked to an entry.
+func (c *APIClient) ListEntryAttachments(ctx context.Context, projectID, entryID string) (*types.AttachEntryAttachmentResponse, error) {
+	path := "/api/v1/entries/" + encodePathComponent(entryID) + "/attachments?project_id=" + url.QueryEscape(projectID)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list entry attachments: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.AttachEntryAttachmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode entry attachments: %w", err)
+	}
+	return &result, nil
+}
+
+// DetachEntryAttachment removes an attachment link from an entry.
+func (c *APIClient) DetachEntryAttachment(ctx context.Context, projectID, entryID, attachmentID, role string) (*types.AttachEntryAttachmentResponse, error) {
+	params := url.Values{"project_id": {projectID}}
+	if role != "" {
+		params.Set("role", role)
+	}
+	path := "/api/v1/entries/" + encodePathComponent(entryID) + "/attachments/" + url.PathEscape(attachmentID) + "?" + params.Encode()
+	resp, err := c.doRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("detach entry attachment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.AttachEntryAttachmentResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode entry attachments: %w", err)
+	}
+	return &result, nil
+}
+
+// DeleteAttachment deletes an unreferenced attachment from a project.
+func (c *APIClient) DeleteAttachment(ctx context.Context, projectID, attachmentID string) error {
+	path := "/api/v1/attachments/" + url.PathEscape(attachmentID) + "?project_id=" + url.QueryEscape(projectID)
+	resp, err := c.doRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("delete attachment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// DownloadAttachment returns metadata and exact original bytes, verifying SHA256 when present.
+func (c *APIClient) DownloadAttachment(ctx context.Context, projectID, attachmentID string) (*types.Attachment, []byte, error) {
+	attachment, err := c.GetAttachment(ctx, projectID, attachmentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	path := "/api/v1/attachments/" + url.PathEscape(attachmentID) + "/content?project_id=" + url.QueryEscape(projectID)
+	resp, err := c.doRequestWithHeaders(ctx, http.MethodGet, path, nil, map[string]string{"Accept": "application/octet-stream"})
+	if err != nil {
+		return nil, nil, fmt.Errorf("download attachment: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, c.readError(resp)
+	}
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read attachment bytes: %w", err)
+	}
+	if attachment.SHA256 != "" {
+		actual := sha256BytesHex(data)
+		if !strings.EqualFold(actual, attachment.SHA256) {
+			return nil, nil, fmt.Errorf("sha256 mismatch: got %s want %s", actual, attachment.SHA256)
+		}
+	}
+	return attachment, data, nil
+}
+
+func sha256BytesHex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // GetFeature fetches a feature and its tasks by project ID and feature ID.

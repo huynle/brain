@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -20,8 +22,8 @@ func TestRegisterBrainTools_Count(t *testing.T) {
 
 	// Count registered tools
 	count := len(s.tools)
-	if count != 22 {
-		t.Errorf("expected 22 brain tools registered, got %d", count)
+	if count != 28 {
+		t.Errorf("expected 28 brain tools registered, got %d", count)
 	}
 }
 
@@ -53,6 +55,12 @@ func TestRegisterBrainTools_Names(t *testing.T) {
 		"brain_related",
 		"brain_automation_list",
 		"brain_automation_test",
+		"brain_attachment_upload",
+		"brain_attachment_attach",
+		"brain_attachment_detach",
+		"brain_attachment_list",
+		"brain_attachment_get",
+		"brain_attachment_text",
 	}
 
 	for _, name := range expectedTools {
@@ -908,6 +916,258 @@ func TestBrainRecall_NoPathOrTitle(t *testing.T) {
 
 	if !strings.Contains(result, "provide a path or title") {
 		t.Errorf("result should ask for path/title, got: %s", result)
+	}
+}
+
+func TestBrainRecall_IncludeQueryAndAttachmentFormatting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/entries/projects/test/report/abc.md" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if got := r.URL.Query().Get("include"); got != "attachments,attachment_text" {
+			t.Errorf("include query = %q, want attachments,attachment_text", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"id":      "abc",
+			"path":    "projects/test/report/abc.md",
+			"title":   "Report With PDF",
+			"type":    "report",
+			"status":  "active",
+			"content": "Report body",
+			"tags":    []string{"pdf"},
+			"attachments": []map[string]any{
+				{
+					"id":           "att_123",
+					"filename":     "source.pdf",
+					"content_type": "application/pdf",
+					"size":         42,
+					"role":         "source",
+					"caption":      "Original source PDF",
+					"download_url": "/api/v1/attachments/att_123/content",
+					"text_url":     "/api/v1/attachments/att_123/text",
+					"derived": []map[string]any{
+						{"id": "drv_1", "kind": "text", "content_type": "text/plain", "size": 100},
+					},
+				},
+			},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	result, err := s.tools["brain_recall"].handler(context.Background(), map[string]any{
+		"path":    "projects/test/report/abc.md",
+		"include": []any{"attachments", "attachment_text"},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	for _, want := range []string{"Attachments", "att_123", "source.pdf", "Original source PDF", "Derived", "drv_1", "text/plain"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result should contain %q, got: %s", want, result)
+		}
+	}
+}
+
+func TestAttachmentToolSchemas(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:3333")
+	RegisterBrainTools(s, client)
+
+	tests := []struct {
+		tool     string
+		required []string
+	}{
+		{"brain_attachment_upload", []string{"project_id", "file_path"}},
+		{"brain_attachment_attach", []string{"project_id", "entry_id", "attachment_id"}},
+		{"brain_attachment_detach", []string{"project_id", "entry_id", "attachment_id"}},
+		{"brain_attachment_list", []string{"project_id"}},
+		{"brain_attachment_get", []string{"project_id", "attachment_id"}},
+		{"brain_attachment_text", []string{"project_id", "attachment_id"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			tool, ok := s.tools[tt.tool]
+			if !ok {
+				t.Fatalf("tool %q not registered", tt.tool)
+			}
+			if strings.TrimSpace(tool.tool.Description) == "" {
+				t.Fatalf("tool %q has empty description", tt.tool)
+			}
+			if len(tool.tool.InputSchema.Required) != len(tt.required) {
+				t.Fatalf("required = %v, want %v", tool.tool.InputSchema.Required, tt.required)
+			}
+			for _, req := range tt.required {
+				if _, ok := tool.tool.InputSchema.Properties[req]; !ok {
+					t.Errorf("schema missing required property %q", req)
+				}
+			}
+		})
+	}
+}
+
+func TestBrainAttachmentUpload_HandlerUsesMultipartHelper(t *testing.T) {
+	tmpDir := t.TempDir()
+	filePath := filepath.Join(tmpDir, "source.txt")
+	if err := os.WriteFile(filePath, []byte("hello attachment"), 0o600); err != nil {
+		t.Fatalf("write temp file: %v", err)
+	}
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/attachments" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			t.Fatalf("content type = %q, want multipart/form-data", r.Header.Get("Content-Type"))
+		}
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		if got := r.FormValue("project_id"); got != "test-project" {
+			t.Errorf("project_id = %q, want test-project", got)
+		}
+		if !strings.Contains(r.FormValue("metadata"), "fixture") {
+			t.Errorf("metadata = %q, want fixture marker", r.FormValue("metadata"))
+		}
+		f, _, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("missing file part: %v", err)
+		}
+		defer f.Close()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"attachment": map[string]any{"id": "att_123", "filename": "source.txt", "content_type": "text/plain", "size": 16}})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	result, err := s.tools["brain_attachment_upload"].handler(context.Background(), map[string]any{
+		"project_id": "test-project",
+		"file_path":  filePath,
+		"metadata":   map[string]any{"kind": "fixture"},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(result, "att_123") || !strings.Contains(result, "brain_attachment_attach") {
+		t.Errorf("result should contain uploaded ID and attach hint, got: %s", result)
+	}
+}
+
+func TestBrainAttachmentAttachDetachListGetText_RequestShapes(t *testing.T) {
+	requests := make([]string, 0, 5)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries/entry-123/attachments":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode attach body: %v", err)
+			}
+			att := body["attachment"].(map[string]any)
+			if att["id"] != "att_123" || att["role"] != "source" || att["caption"] != "PDF source" {
+				t.Fatalf("attach body = %#v", body)
+			}
+			json.NewEncoder(w).Encode(map[string]any{"path": "projects/test/report/abc.md", "entry_id": "entry-123", "attachments": []map[string]any{{"id": "att_123", "filename": "source.pdf", "role": "source"}}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/entries/entry-123/attachments/att_123":
+			if r.URL.Query().Get("role") != "source" || r.URL.Query().Get("project_id") != "test-project" {
+				t.Fatalf("detach query = %s", r.URL.RawQuery)
+			}
+			json.NewEncoder(w).Encode(map[string]any{"path": "projects/test/report/abc.md", "entry_id": "entry-123", "attachments": []any{}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments":
+			json.NewEncoder(w).Encode(map[string]any{"attachments": []map[string]any{{"id": "att_123", "filename": "source.pdf", "content_type": "application/pdf", "size": 42}}, "total": 1})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments/att_123":
+			json.NewEncoder(w).Encode(map[string]any{"id": "att_123", "filename": "source.pdf", "content_type": "application/pdf", "size": 42, "derived": []map[string]any{{"id": "drv_1", "kind": "text"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments/att_123/text":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("extracted text"))
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	calls := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"brain_attachment_attach", map[string]any{"project_id": "test-project", "entry_id": "entry-123", "attachment_id": "att_123", "role": "source", "caption": "PDF source"}, "Attached"},
+		{"brain_attachment_detach", map[string]any{"project_id": "test-project", "entry_id": "entry-123", "attachment_id": "att_123", "role": "source"}, "Detached"},
+		{"brain_attachment_list", map[string]any{"project_id": "test-project"}, "source.pdf"},
+		{"brain_attachment_get", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "drv_1"},
+		{"brain_attachment_text", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "extracted text"},
+	}
+	for _, call := range calls {
+		t.Run(call.tool, func(t *testing.T) {
+			result, err := s.tools[call.tool].handler(context.Background(), call.args)
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+			if !strings.Contains(result, call.want) {
+				t.Fatalf("result = %q, want substring %q", result, call.want)
+			}
+		})
+	}
+
+	wantRequests := []string{
+		"POST /api/v1/entries/entry-123/attachments?project_id=test-project",
+		"DELETE /api/v1/entries/entry-123/attachments/att_123?project_id=test-project&role=source",
+		"GET /api/v1/attachments?project_id=test-project",
+		"GET /api/v1/attachments/att_123?project_id=test-project",
+		"GET /api/v1/attachments/att_123/text?project_id=test-project",
+	}
+	if len(requests) != len(wantRequests) {
+		t.Fatalf("requests = %#v, want %#v", requests, wantRequests)
+	}
+	for i := range wantRequests {
+		if requests[i] != wantRequests[i] {
+			t.Errorf("request[%d] = %q, want %q", i, requests[i], wantRequests[i])
+		}
+	}
+}
+
+func TestBrainAttachmentTools_ValidateRequiredIDsBeforeRequest(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:1")
+	RegisterBrainTools(s, client)
+
+	tests := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"brain_attachment_upload", map[string]any{"project_id": "test-project"}, "project_id and file_path"},
+		{"brain_attachment_attach", map[string]any{"project_id": "test-project", "entry_id": "entry-123"}, "project_id, entry_id, and attachment_id"},
+		{"brain_attachment_detach", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, entry_id, and attachment_id"},
+		{"brain_attachment_list", map[string]any{}, "project_id"},
+		{"brain_attachment_get", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
+		{"brain_attachment_text", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			result, err := s.tools[tt.tool].handler(context.Background(), tt.args)
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+			if !strings.Contains(result, tt.want) {
+				t.Fatalf("result = %q, want substring %q", result, tt.want)
+			}
+		})
 	}
 }
 

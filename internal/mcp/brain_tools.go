@@ -34,6 +34,12 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainRelated(s, client)
 	registerBrainAutomationList(s, client)
 	registerBrainAutomationTest(s, client)
+	registerBrainAttachmentUpload(s, client)
+	registerBrainAttachmentAttach(s, client)
+	registerBrainAttachmentDetach(s, client)
+	registerBrainAttachmentList(s, client)
+	registerBrainAttachmentGet(s, client)
+	registerBrainAttachmentText(s, client)
 }
 
 // =============================================================================
@@ -204,8 +210,9 @@ func registerBrainRecall(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"path":  {Type: "string", Description: "Path or ID to the note"},
-				"title": {Type: "string", Description: "Title to search for (exact match)"},
+				"path":    {Type: "string", Description: "Path or ID to the note"},
+				"title":   {Type: "string", Description: "Title to search for (exact match)"},
+				"include": {Type: "array", Items: &Property{Type: "string"}, Description: "Optional related data to include, e.g. ['attachments', 'attachment_text']. Passed to the API as a comma-separated include query."},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -241,16 +248,21 @@ func registerBrainRecall(s *Server, client *APIClient) {
 		}
 
 		var resp struct {
-			ID                  string   `json:"id"`
-			Path                string   `json:"path"`
-			Title               string   `json:"title"`
-			Type                string   `json:"type"`
-			Status              string   `json:"status"`
-			Content             string   `json:"content"`
-			Tags                []string `json:"tags"`
-			UserOriginalRequest string   `json:"user_original_request"`
+			ID                  string                      `json:"id"`
+			Path                string                      `json:"path"`
+			Title               string                      `json:"title"`
+			Type                string                      `json:"type"`
+			Status              string                      `json:"status"`
+			Content             string                      `json:"content"`
+			Tags                []string                    `json:"tags"`
+			UserOriginalRequest string                      `json:"user_original_request"`
+			Attachments         []types.AttachmentReference `json:"attachments,omitempty"`
 		}
-		if err := client.Request(ctx, "GET", "/entries/"+entryPath, nil, nil, &resp); err != nil {
+		params := make(map[string]string)
+		if include := StringSliceArg(args, "include"); len(include) > 0 {
+			params["include"] = strings.Join(include, ",")
+		}
+		if err := client.Request(ctx, "GET", "/entries/"+entryPath, nil, params, &resp); err != nil {
 			return "", err
 		}
 
@@ -264,9 +276,292 @@ func registerBrainRecall(s *Server, client *APIClient) {
 			userRequest = fmt.Sprintf("\nUser Original Request: %s", resp.UserOriginalRequest)
 		}
 
-		return fmt.Sprintf("## %s\n\nPath: %s\nType: %s\nStatus: %s\nTags: %s%s\n\n---\n\n%s",
-			resp.Title, resp.Path, resp.Type, resp.Status, tags, userRequest, resp.Content), nil
+		attachments := formatAttachmentReferences(resp.Attachments)
+
+		return fmt.Sprintf("## %s\n\nPath: %s\nType: %s\nStatus: %s\nTags: %s%s%s\n\n---\n\n%s",
+			resp.Title, resp.Path, resp.Type, resp.Status, tags, userRequest, attachments, resp.Content), nil
 	})
+}
+
+// =============================================================================
+// Attachment tools
+// =============================================================================
+
+func registerBrainAttachmentUpload(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name: "brain_attachment_upload",
+		Description: `Upload a local file as a first-class Brain attachment.
+
+Use this for pasted-image or local-PDF workflows: save the file locally, upload it with this tool, then attach the returned attachment_id to an entry with brain_attachment_attach.`,
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id": {Type: "string", Description: "Project that owns the uploaded attachment"},
+			"file_path":  {Type: "string", Description: "Absolute or relative path to the local file to upload"},
+			"metadata":   {Type: "object", Description: "Optional string key/value metadata stored with the attachment"},
+		}, Required: []string{"project_id", "file_path"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		filePath := StringArg(args, "file_path", "")
+		if projectID == "" || filePath == "" {
+			return "Please provide project_id and file_path", nil
+		}
+
+		resp, err := client.UploadAttachment(ctx, projectID, filePath, stringMapArg(args, "metadata"))
+		if err != nil {
+			return "", err
+		}
+
+		return fmt.Sprintf("Uploaded attachment\n\n%s\n\nNext: attach it to an entry with `brain_attachment_attach` using attachment_id `%s`.",
+			formatAttachment(resp.Attachment), resp.Attachment.ID), nil
+	})
+}
+
+func registerBrainAttachmentAttach(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_attachment_attach",
+		Description: "Attach an existing Brain attachment to an entry with optional role and caption metadata.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id":    {Type: "string", Description: "Project containing the entry and attachment"},
+			"entry_id":      {Type: "string", Description: "Entry ID or path to attach to"},
+			"attachment_id": {Type: "string", Description: "Attachment ID returned by brain_attachment_upload or brain_attachment_list"},
+			"role":          {Type: "string", Description: "Optional attachment role, e.g. source, inline, image, pdf"},
+			"caption":       {Type: "string", Description: "Optional model-friendly caption describing the attachment"},
+		}, Required: []string{"project_id", "entry_id", "attachment_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		entryID := StringArg(args, "entry_id", "")
+		attachmentID := StringArg(args, "attachment_id", "")
+		if projectID == "" || entryID == "" || attachmentID == "" {
+			return "Please provide project_id, entry_id, and attachment_id", nil
+		}
+
+		body := map[string]any{"attachment": map[string]any{"id": attachmentID}}
+		attachment := body["attachment"].(map[string]any)
+		if role := StringArg(args, "role", ""); role != "" {
+			attachment["role"] = role
+		}
+		if caption := StringArg(args, "caption", ""); caption != "" {
+			attachment["caption"] = caption
+		}
+
+		var resp types.AttachEntryAttachmentResponse
+		if err := client.Request(ctx, "POST", "/entries/"+entryID+"/attachments", body, map[string]string{"project_id": projectID}, &resp); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Attached attachment %s to entry %s\n\n%s", attachmentID, entryID, formatAttachmentReferences(resp.Attachments)), nil
+	})
+}
+
+func registerBrainAttachmentDetach(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_attachment_detach",
+		Description: "Detach an attachment from an entry. Provide role when detaching a role-specific reference.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id":    {Type: "string", Description: "Project containing the entry and attachment"},
+			"entry_id":      {Type: "string", Description: "Entry ID or path to detach from"},
+			"attachment_id": {Type: "string", Description: "Attachment ID to detach"},
+			"role":          {Type: "string", Description: "Optional role to detach"},
+		}, Required: []string{"project_id", "entry_id", "attachment_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		entryID := StringArg(args, "entry_id", "")
+		attachmentID := StringArg(args, "attachment_id", "")
+		if projectID == "" || entryID == "" || attachmentID == "" {
+			return "Please provide project_id, entry_id, and attachment_id", nil
+		}
+
+		params := map[string]string{"project_id": projectID}
+		if role := StringArg(args, "role", ""); role != "" {
+			params["role"] = role
+		}
+		var resp types.AttachEntryAttachmentResponse
+		if err := client.Request(ctx, "DELETE", "/entries/"+entryID+"/attachments/"+url.PathEscape(attachmentID), nil, params, &resp); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Detached attachment %s from entry %s\n\nRemaining:%s", attachmentID, entryID, formatAttachmentReferences(resp.Attachments)), nil
+	})
+}
+
+func registerBrainAttachmentList(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_attachment_list",
+		Description: "List attachments available in a project, including metadata and derived artifacts.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id": {Type: "string", Description: "Project whose attachments should be listed"},
+		}, Required: []string{"project_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		if projectID == "" {
+			return "Please provide project_id", nil
+		}
+		var resp types.ListAttachmentsResponse
+		if err := client.Request(ctx, "GET", "/attachments", nil, map[string]string{"project_id": projectID}, &resp); err != nil {
+			return "", err
+		}
+		if len(resp.Attachments) == 0 {
+			return fmt.Sprintf("No attachments found for project %s", projectID), nil
+		}
+		lines := []string{fmt.Sprintf("Attachments (%d)", resp.Total), ""}
+		for _, attachment := range resp.Attachments {
+			lines = append(lines, formatAttachment(attachment), "")
+		}
+		return strings.TrimSpace(strings.Join(lines, "\n")), nil
+	})
+}
+
+func registerBrainAttachmentGet(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_attachment_get",
+		Description: "Get attachment metadata, download/text URLs, and derived artifact references.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"attachment_id": {Type: "string", Description: "Attachment ID to retrieve"},
+		}, Required: []string{"project_id", "attachment_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		attachmentID := StringArg(args, "attachment_id", "")
+		if projectID == "" || attachmentID == "" {
+			return "Please provide project_id and attachment_id", nil
+		}
+		var resp types.Attachment
+		if err := client.Request(ctx, "GET", "/attachments/"+url.PathEscape(attachmentID), nil, map[string]string{"project_id": projectID}, &resp); err != nil {
+			return "", err
+		}
+		return formatAttachment(resp), nil
+	})
+}
+
+func registerBrainAttachmentText(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_attachment_text",
+		Description: "Retrieve extracted plain text for an attachment, useful for local PDF/image OCR workflows after upload.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"attachment_id": {Type: "string", Description: "Attachment ID whose extracted text should be retrieved"},
+		}, Required: []string{"project_id", "attachment_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		attachmentID := StringArg(args, "attachment_id", "")
+		if projectID == "" || attachmentID == "" {
+			return "Please provide project_id and attachment_id", nil
+		}
+		text, err := client.DownloadAttachmentText(ctx, projectID, attachmentID)
+		if err != nil {
+			return "", err
+		}
+		if strings.TrimSpace(text) == "" {
+			return fmt.Sprintf("No extracted text is available for attachment %s", attachmentID), nil
+		}
+		return fmt.Sprintf("## Attachment Text: %s\n\n%s", attachmentID, text), nil
+	})
+}
+
+func stringMapArg(args map[string]any, key string) map[string]string {
+	value, ok := args[key]
+	if !ok || value == nil {
+		return nil
+	}
+	result := map[string]string{}
+	switch metadata := value.(type) {
+	case map[string]string:
+		return metadata
+	case map[string]any:
+		for k, v := range metadata {
+			if s, ok := v.(string); ok {
+				result[k] = s
+			} else if v != nil {
+				result[k] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return result
+}
+
+func formatAttachmentReferences(attachments []types.AttachmentReference) string {
+	if len(attachments) == 0 {
+		return ""
+	}
+	lines := []string{"", "\n### Attachments"}
+	for _, attachment := range attachments {
+		lines = append(lines, formatAttachmentReference(attachment))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func formatAttachmentReference(a types.AttachmentReference) string {
+	parts := []string{fmt.Sprintf("- `%s`", a.ID)}
+	if a.Filename != "" {
+		parts = append(parts, a.Filename)
+	}
+	if a.ContentType != "" {
+		parts = append(parts, a.ContentType)
+	}
+	if a.Size > 0 {
+		parts = append(parts, fmt.Sprintf("%d bytes", a.Size))
+	}
+	if a.Role != "" {
+		parts = append(parts, "role: "+a.Role)
+	}
+	line := strings.Join(parts, " — ")
+	if a.Caption != "" {
+		line += "\n  Caption: " + a.Caption
+	}
+	if a.DownloadURL != "" {
+		line += "\n  Download: " + a.DownloadURL
+	}
+	if a.TextURL != "" {
+		line += "\n  Text: " + a.TextURL
+	}
+	if len(a.Derived) > 0 {
+		line += "\n  Derived: " + formatDerived(a.Derived)
+	}
+	return line
+}
+
+func formatAttachment(a types.Attachment) string {
+	ref := types.AttachmentReference{
+		ID:          a.ID,
+		Filename:    a.Filename,
+		ContentType: a.ContentType,
+		Size:        a.Size,
+		SHA256:      a.SHA256,
+		Metadata:    a.Metadata,
+		Derived:     a.Derived,
+	}
+	line := formatAttachmentReference(ref)
+	if len(a.Metadata) > 0 {
+		keys := make([]string, 0, len(a.Metadata))
+		for key := range a.Metadata {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		metadata := make([]string, 0, len(keys))
+		for _, key := range keys {
+			metadata = append(metadata, fmt.Sprintf("%s=%s", key, a.Metadata[key]))
+		}
+		line += "\n  Metadata: " + strings.Join(metadata, ", ")
+	}
+	return line
+}
+
+func formatDerived(derived []types.AttachmentDerived) string {
+	items := make([]string, 0, len(derived))
+	for _, item := range derived {
+		parts := []string{item.ID, item.Kind}
+		if item.ContentType != "" {
+			parts = append(parts, item.ContentType)
+		}
+		if item.Size > 0 {
+			parts = append(parts, fmt.Sprintf("%d bytes", item.Size))
+		}
+		if item.StorageKey != "" {
+			parts = append(parts, item.StorageKey)
+		}
+		items = append(items, strings.Join(parts, " / "))
+	}
+	return strings.Join(items, "; ")
 }
 
 // =============================================================================

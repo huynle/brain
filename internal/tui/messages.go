@@ -130,11 +130,20 @@ type BrainEmbeddingBackfillMsg struct {
 
 // BrainEntryContentMsg is sent when a selected brain entry's full content has been fetched.
 type BrainEntryContentMsg struct {
-	Path    string
-	Title   string
-	Type    string
-	Content string
-	Err     error
+	Path        string
+	Title       string
+	Type        string
+	Content     string
+	Attachments []types.AttachmentReference
+	Err         error
+}
+
+// AttachmentActionMsg is sent when a user-triggered attachment download/open completes.
+type AttachmentActionMsg struct {
+	Action       string
+	AttachmentID string
+	Path         string
+	Err          error
 }
 
 // RunnersUpdatedMsg is sent when the SSE stream pushes an updated runner list.

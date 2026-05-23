@@ -748,6 +748,77 @@ func convertToCommandsEntryUpdateFlags(flags *EntryUpdateFlags) *commands.EntryU
 	}
 }
 
+// AttachmentFlags holds flags for the brain attachments command.
+type AttachmentFlags struct {
+	Project     string
+	Entry       string
+	Role        string
+	Description string
+	Output      string
+	Format      string
+	Quiet       bool
+}
+
+// ParseAttachmentFlags parses attachment subcommand flags and returns positional args.
+func ParseAttachmentFlags(args []string) (*AttachmentFlags, []string, error) {
+	flags := &AttachmentFlags{}
+	var positionals []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--project", "-p":
+			if i+1 < len(args) {
+				flags.Project = args[i+1]
+				i++
+			}
+		case "--entry", "-e":
+			if i+1 < len(args) {
+				flags.Entry = args[i+1]
+				i++
+			}
+		case "--role", "-r":
+			if i+1 < len(args) {
+				flags.Role = args[i+1]
+				i++
+			}
+		case "--description", "--caption", "-d":
+			if i+1 < len(args) {
+				flags.Description = args[i+1]
+				i++
+			}
+		case "--output", "-o":
+			if i+1 < len(args) {
+				flags.Output = args[i+1]
+				i++
+			}
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		case "-q", "--quiet":
+			flags.Quiet = true
+		default:
+			if !isFlag(arg) {
+				positionals = append(positionals, arg)
+			}
+		}
+	}
+	return flags, positionals, nil
+}
+
+func convertToCommandsAttachmentFlags(flags *AttachmentFlags) *commands.AttachmentFlags {
+	return &commands.AttachmentFlags{
+		Project:     flags.Project,
+		Entry:       flags.Entry,
+		Role:        flags.Role,
+		Description: flags.Description,
+		Output:      flags.Output,
+		Format:      flags.Format,
+		Quiet:       flags.Quiet,
+	}
+}
+
 // EntrySearchFlags holds flags for the brain search command (main package mirror).
 type EntrySearchFlags struct {
 	Type        string

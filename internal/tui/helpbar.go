@@ -132,6 +132,7 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 		shortcuts += fmt.Sprintf("%s Embed  ", bold("b/B"))
 		shortcuts += fmt.Sprintf("%s Force  ", bold("F/A"))
 		shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
+		shortcuts += fmt.Sprintf("%s Attach  ", bold("a/d/o"))
 		shortcuts += fmt.Sprintf("%s Tabs  ", bold("H/L"))
 		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 		shortcuts += fmt.Sprintf("%s Quit", bold("q"))

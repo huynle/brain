@@ -90,6 +90,7 @@ var builtinCommands = map[string]bool{
 	"search":        true,
 	"list":          true,
 	"automation":    true,
+	"attachments":   true,
 	"migrate":       true,
 	"embeddings":    true,
 	"help":          true,
@@ -263,6 +264,11 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parsePluginStatusCommand(cmdArgs)
 	case "automation":
 		return parseAutomationCommand(cmdArgs)
+	case "attachments":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "attachments"}, nil
+		}
+		return parseAttachmentsCommand(cmdArgs)
 	case "migrate":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "migrate"}, nil
@@ -1126,6 +1132,58 @@ func parseAutomationCommand(args []string) (Command, error) {
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsAutomationFlags(flags),
 	}, nil
+}
+
+// parseAttachmentsCommand creates an AttachmentCommand from args.
+func parseAttachmentsCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	if len(args) == 0 {
+		return &commands.AttachmentCommand{Subcommand: "", Config: convertToCommandsConfig(defaultConfig()), Flags: &commands.AttachmentFlags{}}, nil
+	}
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &commands.AttachmentCommand{Config: convertToCommandsConfig(cfg), Flags: &commands.AttachmentFlags{}}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "attachments"}, nil
+	}
+
+	flags, positionals, err := ParseAttachmentFlags(args[1:])
+	if err != nil {
+		return nil, err
+	}
+	cmd := &commands.AttachmentCommand{Subcommand: subcommand, Config: convertToCommandsConfig(cfg), Flags: convertToCommandsAttachmentFlags(flags)}
+	switch subcommand {
+	case "upload":
+		if len(positionals) > 0 {
+			cmd.Path = positionals[0]
+		}
+	case "attach":
+		if len(positionals) > 0 {
+			cmd.Entry = positionals[0]
+		}
+		if len(positionals) > 1 {
+			cmd.AttachmentID = positionals[1]
+		}
+	case "list":
+		if len(positionals) > 0 {
+			cmd.Entry = positionals[0]
+		} else if flags.Entry != "" {
+			cmd.Entry = flags.Entry
+		}
+	case "download", "delete":
+		if len(positionals) > 0 {
+			cmd.AttachmentID = positionals[0]
+		}
+	case "detach":
+		if len(positionals) > 0 {
+			cmd.Entry = positionals[0]
+		}
+		if len(positionals) > 1 {
+			cmd.AttachmentID = positionals[1]
+		}
+	}
+	return cmd, nil
 }
 
 // parseEmbeddingsCommand creates an EmbeddingsCommand from args.

@@ -38,6 +38,7 @@ func TestShowHelp_BasicTopics(t *testing.T) {
 		{name: "doctor", topic: "doctor", wants: []string{"brain doctor", "--skip-version-check"}},
 		{name: "install", topic: "install", wants: []string{"brain install", "opencode", "--api-url"}},
 		{name: "token", topic: "token", wants: []string{"brain token", "create", "revoke"}},
+		{name: "attachments", topic: "attachments", wants: []string{"brain attachments", "upload <path>", "download <attachment-id>", "delete <attachment-id>"}},
 	}
 
 	for _, tt := range tests {

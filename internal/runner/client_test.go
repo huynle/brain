@@ -2,11 +2,16 @@ package runner
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -40,6 +45,153 @@ func testConfig(serverURL string) RunnerConfig {
 			Model: "",
 		},
 	}
+}
+
+func TestAPIClient_UploadAttachmentSendsMultipart(t *testing.T) {
+	tmp := t.TempDir()
+	path := filepath.Join(tmp, "sample.txt")
+	if err := os.WriteFile(path, []byte("hello attachment"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotProject, gotFilename, gotBody, gotDescription string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/attachments" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			t.Fatalf("Content-Type = %q, want multipart/form-data", r.Header.Get("Content-Type"))
+		}
+		gotProject = r.FormValue("project_id")
+		metadata := map[string]string{}
+		if err := json.Unmarshal([]byte(r.FormValue("metadata")), &metadata); err != nil {
+			t.Fatalf("decode metadata: %v", err)
+		}
+		gotDescription = metadata["description"]
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("missing file part: %v", err)
+		}
+		defer file.Close()
+		gotFilename = header.Filename
+		body, _ := io.ReadAll(file)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.CreateAttachmentResponse{Attachment: types.Attachment{ID: "att_123", Filename: header.Filename, SHA256: testSHA256Hex(body)}})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	attachment, err := client.UploadAttachment(context.Background(), "brain-api", path, map[string]string{"description": "fixture"})
+	if err != nil {
+		t.Fatalf("UploadAttachment() error = %v", err)
+	}
+	if attachment.ID != "att_123" {
+		t.Fatalf("attachment ID = %q, want att_123", attachment.ID)
+	}
+	if gotProject != "brain-api" || gotFilename != "sample.txt" || gotBody != "hello attachment" || gotDescription != "fixture" {
+		t.Fatalf("request project=%q filename=%q body=%q description=%q", gotProject, gotFilename, gotBody, gotDescription)
+	}
+}
+
+func TestAPIClient_AttachmentCRUDHelpersUseExpectedRoutes(t *testing.T) {
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries/entry-123/attachments":
+			_ = json.NewEncoder(w).Encode(types.AttachEntryAttachmentResponse{EntryID: "entry-123"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/entries/entry-123/attachments":
+			_ = json.NewEncoder(w).Encode(types.AttachEntryAttachmentResponse{EntryID: "entry-123"})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments":
+			_ = json.NewEncoder(w).Encode(types.ListAttachmentsResponse{Total: 0})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/entries/entry-123/attachments/att_123":
+			_ = json.NewEncoder(w).Encode(types.AttachEntryAttachmentResponse{EntryID: "entry-123"})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/attachments/att_123":
+			_ = json.NewEncoder(w).Encode(map[string]any{"deleted": true})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	ctx := context.Background()
+	if _, err := client.AttachEntryAttachment(ctx, "brain-api", "entry-123", types.AttachmentReference{ID: "att_123", Role: "source"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListEntryAttachments(ctx, "brain-api", "entry-123"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ListAttachments(ctx, "brain-api"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.DetachEntryAttachment(ctx, "brain-api", "entry-123", "att_123", "source"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.DeleteAttachment(ctx, "brain-api", "att_123"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{
+		"POST /api/v1/entries/entry-123/attachments?project_id=brain-api",
+		"GET /api/v1/entries/entry-123/attachments?project_id=brain-api",
+		"GET /api/v1/attachments?project_id=brain-api",
+		"DELETE /api/v1/entries/entry-123/attachments/att_123?project_id=brain-api&role=source",
+		"DELETE /api/v1/attachments/att_123?project_id=brain-api",
+	}
+	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("requests = %#v, want %#v", requests, want)
+	}
+}
+
+func TestAPIClient_DownloadAttachmentVerifiesSHA256(t *testing.T) {
+	payload := []byte("exact bytes")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments/att_123":
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(types.Attachment{ID: "att_123", Filename: "payload.bin", SHA256: testSHA256Hex(payload)})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments/att_123/content":
+			_, _ = w.Write(payload)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.RequestURI())
+		}
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	attachment, data, err := client.DownloadAttachment(context.Background(), "brain-api", "att_123")
+	if err != nil {
+		t.Fatalf("DownloadAttachment() error = %v", err)
+	}
+	if attachment.Filename != "payload.bin" || string(data) != string(payload) {
+		t.Fatalf("attachment=%#v data=%q", attachment, string(data))
+	}
+}
+
+func TestAPIClient_DownloadAttachmentRejectsSHA256Mismatch(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/content") {
+			_, _ = w.Write([]byte("actual"))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.Attachment{ID: "att_123", SHA256: testSHA256Hex([]byte("expected"))})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	_, _, err := client.DownloadAttachment(context.Background(), "brain-api", "att_123")
+	if err == nil || !strings.Contains(err.Error(), "sha256 mismatch") {
+		t.Fatalf("DownloadAttachment() error = %v, want sha256 mismatch", err)
+	}
+}
+
+func testSHA256Hex(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 // ---------------------------------------------------------------------------

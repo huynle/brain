@@ -47,7 +47,7 @@ func TestRoute_UnknownArg_RoutesToHelp(t *testing.T) {
 
 func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	builtins := []string{
-		"api", "mcp", "run", "runner", "start", "stop",
+		"api", "mcp", "run", "runner", "start", "stop", "attachments",
 		"dev", "init", "doctor",
 		"config", "install", "uninstall", "plugin-status", "token", "dream", "help",
 	}
@@ -72,6 +72,44 @@ func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 			}
 			if cmdType != expected {
 				t.Errorf("Type() = %q, want %q", cmdType, expected)
+			}
+		})
+	}
+}
+
+func TestRoute_AttachmentsCommandParsesSubcommands(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		subcommand string
+		path       string
+		entry      string
+		attachment string
+		project    string
+		role       string
+		output     string
+	}{
+		{name: "upload", args: []string{"attachments", "upload", "file.txt", "--project", "brain-api", "--description", "fixture"}, subcommand: "upload", path: "file.txt", project: "brain-api"},
+		{name: "attach", args: []string{"attachments", "attach", "entry-123", "att_123", "--project", "brain-api", "--role", "source"}, subcommand: "attach", entry: "entry-123", attachment: "att_123", project: "brain-api", role: "source"},
+		{name: "list entry", args: []string{"attachments", "list", "--entry", "entry-123", "--project", "brain-api"}, subcommand: "list", entry: "entry-123", project: "brain-api"},
+		{name: "download", args: []string{"attachments", "download", "att_123", "--project", "brain-api", "--output", "out.bin"}, subcommand: "download", attachment: "att_123", project: "brain-api", output: "out.bin"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd, err := route(tt.args)
+			if err != nil {
+				t.Fatalf("route() error = %v", err)
+			}
+			attachmentCmd, ok := cmd.(*commands.AttachmentCommand)
+			if !ok {
+				t.Fatalf("expected *commands.AttachmentCommand, got %T", cmd)
+			}
+			if attachmentCmd.Subcommand != tt.subcommand || attachmentCmd.Path != tt.path || attachmentCmd.Entry != tt.entry || attachmentCmd.AttachmentID != tt.attachment {
+				t.Fatalf("command = %#v", attachmentCmd)
+			}
+			if attachmentCmd.Flags.Project != tt.project || attachmentCmd.Flags.Role != tt.role || attachmentCmd.Flags.Output != tt.output {
+				t.Fatalf("flags = %#v", attachmentCmd.Flags)
 			}
 		})
 	}

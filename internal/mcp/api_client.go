@@ -6,9 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"time"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // APIClient is an HTTP client for the Brain API REST endpoints.
@@ -101,15 +106,8 @@ func (c *APIClient) Request(ctx context.Context, method, path string, body any, 
 	}
 
 	// Check for HTTP errors
-	if resp.StatusCode >= 400 {
-		var apiErr apiErrorResponse
-		if err := json.Unmarshal(respBody, &apiErr); err != nil {
-			return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
-		}
-		if apiErr.Message != "" {
-			return fmt.Errorf("%s", apiErr.Message)
-		}
-		return fmt.Errorf("API error: %s", apiErr.Error)
+	if err := checkAPIError(resp, respBody); err != nil {
+		return err
 	}
 
 	// Decode response
@@ -120,4 +118,120 @@ func (c *APIClient) Request(ctx context.Context, method, path string, body any, 
 	}
 
 	return nil
+}
+
+// UploadAttachment uploads a local file as multipart/form-data to the Brain API.
+func (c *APIClient) UploadAttachment(ctx context.Context, projectID, filePath string, metadata map[string]string) (*types.CreateAttachmentResponse, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("open attachment file: %w", err)
+	}
+	defer file.Close()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	if err := writer.WriteField("project_id", projectID); err != nil {
+		return nil, fmt.Errorf("write project_id field: %w", err)
+	}
+	if len(metadata) > 0 {
+		data, err := json.Marshal(metadata)
+		if err != nil {
+			return nil, fmt.Errorf("marshal metadata: %w", err)
+		}
+		if err := writer.WriteField("metadata", string(data)); err != nil {
+			return nil, fmt.Errorf("write metadata field: %w", err)
+		}
+	}
+
+	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	if err != nil {
+		return nil, fmt.Errorf("create file part: %w", err)
+	}
+	if _, err := io.Copy(part, file); err != nil {
+		return nil, fmt.Errorf("copy file part: %w", err)
+	}
+	if err := writer.Close(); err != nil {
+		return nil, fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/api/v1/attachments", &body)
+	if err != nil {
+		return nil, fmt.Errorf("create request: %w", err)
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if err := checkAPIError(resp, respBody); err != nil {
+		return nil, err
+	}
+
+	var result types.CreateAttachmentResponse
+	if len(respBody) > 0 {
+		if err := json.Unmarshal(respBody, &result); err != nil {
+			return nil, fmt.Errorf("decode response: %w", err)
+		}
+	}
+	return &result, nil
+}
+
+// DownloadAttachmentText downloads extracted plain text for an attachment.
+func (c *APIClient) DownloadAttachmentText(ctx context.Context, projectID, attachmentID string) (string, error) {
+	params := url.Values{}
+	if projectID != "" {
+		params.Set("project_id", projectID)
+	}
+	u := c.baseURL + "/api/v1/attachments/" + url.PathEscape(attachmentID) + "/text"
+	if encoded := params.Encode(); encoded != "" {
+		u += "?" + encoded
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request: %w", err)
+	}
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("read response: %w", err)
+	}
+	if err := checkAPIError(resp, respBody); err != nil {
+		return "", err
+	}
+	return string(respBody), nil
+}
+
+func checkAPIError(resp *http.Response, respBody []byte) error {
+	if resp.StatusCode < 400 {
+		return nil
+	}
+	var apiErr apiErrorResponse
+	if err := json.Unmarshal(respBody, &apiErr); err != nil {
+		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, resp.Status)
+	}
+	if apiErr.Message != "" {
+		return fmt.Errorf("%s", apiErr.Message)
+	}
+	return fmt.Errorf("API error: %s", apiErr.Error)
 }

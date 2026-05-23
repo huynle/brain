@@ -111,6 +111,20 @@ func (h *Handler) HandleGetAttachment(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, attachment)
 }
 
+// HandleDeleteAttachment handles DELETE /attachments/{attachmentID}?project_id=...
+func (h *Handler) HandleDeleteAttachment(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := attachmentProjectID(w, r)
+	if !ok {
+		return
+	}
+	deleted, err := h.attachments.Delete(r.Context(), projectID, chi.URLParam(r, "attachmentID"))
+	if err != nil {
+		writeAttachmentServiceError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]bool{"deleted": deleted})
+}
+
 // HandleDownloadAttachment handles GET /attachments/{attachmentID}/content?project_id=...
 func (h *Handler) HandleDownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	projectID, ok := attachmentProjectID(w, r)

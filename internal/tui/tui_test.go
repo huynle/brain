@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -353,6 +355,151 @@ func TestBrainTabToggleDetailShowsSelectedEntryContent(t *testing.T) {
 	}
 }
 
+func TestBrainEntryContentKeepsSelectedEntryAttachmentsInDetail(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabBrain
+	m.detailVisible = true
+	m.entryTree.SetEntries([]types.BrainEntry{{
+		ID:    "a",
+		Path:  "projects/brain-api/decision/a.md",
+		Title: "A",
+		Type:  "decision",
+		Attachments: []types.AttachmentReference{{
+			ID:          "att_123",
+			Filename:    "evidence.pdf",
+			ContentType: "application/pdf",
+			Size:        1536,
+			Role:        "source",
+		}},
+	}})
+	m.taskDetail.SetEntryLoading(*m.entryTree.SelectedEntry(), "Entry Detail")
+
+	updated, _ := m.Update(BrainEntryContentMsg{Path: "projects/brain-api/decision/a.md", Title: "A", Type: "decision", Content: "# A\nbody"})
+	model := updated.(Model)
+	view := model.taskDetail.View()
+	for _, want := range []string{"Attachments (1)", "att_123", "evidence.pdf", "application/pdf", "1.5 KB"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected entry detail to preserve attachment metadata %q, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestFetchBrainEntryContentCmdCarriesAttachmentMetadataOnly(t *testing.T) {
+	var requestedPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestedPaths = append(requestedPaths, r.URL.Path)
+		if strings.Contains(r.URL.Path, "/attachments/") {
+			t.Fatalf("should not fetch attachment bytes/text in Phase 1, got %s", r.URL.Path)
+		}
+		if r.Header.Get("Accept") != "text/x-brain-full" {
+			t.Fatalf("Accept = %q, want text/x-brain-full", r.Header.Get("Accept"))
+		}
+		_, _ = w.Write([]byte("---\ntitle: A\n---\nbody"))
+	}))
+	defer srv.Close()
+
+	entry := types.BrainEntry{
+		Path:  "projects/brain-api/decision/a.md",
+		Title: "A",
+		Type:  "decision",
+		Attachments: []types.AttachmentReference{{
+			ID:          "att_123",
+			Filename:    "evidence.pdf",
+			ContentType: "application/pdf",
+			Size:        1536,
+			Role:        "source",
+		}},
+	}
+
+	msg := fetchBrainEntryContentCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, entry)().(BrainEntryContentMsg)
+	if msg.Err != nil {
+		t.Fatalf("fetch content failed: %v", msg.Err)
+	}
+	if len(msg.Attachments) != 1 || msg.Attachments[0].ID != "att_123" {
+		t.Fatalf("message attachments = %#v, want selected entry attachment metadata", msg.Attachments)
+	}
+	if len(requestedPaths) != 1 || strings.Contains(requestedPaths[0], "/attachments/") {
+		t.Fatalf("unexpected requests: %#v", requestedPaths)
+	}
+}
+
+func TestBrainAttachmentDownloadCmdFetchesBytesOnlyOnAction(t *testing.T) {
+	contentRequests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/attachments/att_123":
+			if r.URL.Query().Get("project_id") != "brain-api" {
+				t.Fatalf("project_id = %q, want brain-api", r.URL.Query().Get("project_id"))
+			}
+			_ = json.NewEncoder(w).Encode(types.Attachment{ID: "att_123", Filename: "evidence.pdf"})
+		case "/api/v1/attachments/att_123/content":
+			contentRequests++
+			if r.URL.Query().Get("project_id") != "brain-api" {
+				t.Fatalf("project_id = %q, want brain-api", r.URL.Query().Get("project_id"))
+			}
+			_, _ = w.Write([]byte("attachment bytes"))
+		default:
+			t.Fatalf("unexpected request path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cmd := brainAttachmentActionCmd(
+		runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000},
+		"brain-api",
+		types.AttachmentReference{ID: "att_123", Filename: "evidence.pdf"},
+		"download",
+	)
+	msg := cmd().(AttachmentActionMsg)
+	if msg.Err != nil {
+		t.Fatalf("download action failed: %v", msg.Err)
+	}
+	if contentRequests != 1 {
+		t.Fatalf("contentRequests = %d, want 1", contentRequests)
+	}
+	if msg.Path != filepath.Join(home, "Downloads", "evidence.pdf") {
+		t.Fatalf("download path = %q", msg.Path)
+	}
+	data, err := os.ReadFile(msg.Path)
+	if err != nil {
+		t.Fatalf("read downloaded file: %v", err)
+	}
+	if string(data) != "attachment bytes" {
+		t.Fatalf("downloaded data = %q", string(data))
+	}
+}
+
+func TestBrainDetailAttachmentKeysSelectAndDownload(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabBrain
+	m.activePanel = PanelDetails
+	m.detailVisible = true
+	m.taskDetail.SetEntryContentWithAttachments("projects/brain-api/decision/a.md", "A", "decision", "body", []types.AttachmentReference{
+		{ID: "att_1", Filename: "one.pdf"},
+		{ID: "att_2", Filename: "two.pdf"},
+	}, "Entry Detail")
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
+	model := updated.(Model)
+	if cmd != nil {
+		t.Fatalf("selection should be local-only, got command")
+	}
+	selected, ok := model.taskDetail.SelectedAttachment()
+	if !ok || selected.ID != "att_2" {
+		t.Fatalf("selected attachment = %#v, want att_2", selected)
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	if cmd == nil {
+		t.Fatal("download key should return attachment action command")
+	}
+}
+
 func TestAutomationTabToggleDetailShowsSelectedRowContent(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.width = 100
@@ -644,6 +791,59 @@ func TestBrainSearchCmdUsesSemanticWhenEmbeddingReady(t *testing.T) {
 	}
 	if len(msg.Entries) != 1 || msg.Entries[0].ID != "x" {
 		t.Fatalf("unexpected entries: %#v", msg.Entries)
+	}
+}
+
+func TestFetchBrainEntriesCmdRequestsAttachmentMetadata(t *testing.T) {
+	var gotInclude string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/entries" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		gotInclude = r.URL.Query().Get("include")
+		_ = json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "x", Path: "projects/brain-api/report/x.md", Title: "X", Type: "report"}}})
+	}))
+	defer srv.Close()
+
+	msg := fetchBrainEntriesCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api")().(BrainEntriesMsg)
+	if msg.Err != nil {
+		t.Fatalf("list failed: %v", msg.Err)
+	}
+	if gotInclude != "attachments" {
+		t.Fatalf("include query = %q, want attachments", gotInclude)
+	}
+}
+
+func TestBrainSearchCmdRequestsAndPreservesAttachmentMetadata(t *testing.T) {
+	var got types.SearchRequest
+	wantAttachment := types.AttachmentReference{ID: "att_123", Filename: "evidence.pdf", ContentType: "application/pdf", Size: 1536, Role: "source"}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/search" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode search request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(types.SearchResponse{Results: []types.SearchResult{{
+			ID:          "x",
+			Path:        "projects/brain-api/report/x.md",
+			Title:       "X",
+			Type:        "report",
+			Status:      "active",
+			Attachments: []types.AttachmentReference{wantAttachment},
+		}}})
+	}))
+	defer srv.Close()
+
+	msg := fetchBrainSearchCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000}, "brain-api", "evidence")().(BrainSearchMsg)
+	if msg.Err != nil {
+		t.Fatalf("search failed: %v", msg.Err)
+	}
+	if len(got.Include) != 1 || got.Include[0] != "attachments" {
+		t.Fatalf("search include = %#v, want [attachments]", got.Include)
+	}
+	if len(msg.Entries) != 1 || len(msg.Entries[0].Attachments) != 1 || msg.Entries[0].Attachments[0].ID != wantAttachment.ID {
+		t.Fatalf("search entries attachments not preserved: %#v", msg.Entries)
 	}
 }
 

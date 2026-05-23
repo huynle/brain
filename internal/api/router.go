@@ -74,8 +74,10 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Use(RequireScope("admin:*"))
 					if o.handler != nil && o.handler.attachments != nil {
 						r.Post("/", o.handler.HandleCreateAttachment)
+						r.Delete("/{attachmentID}", o.handler.HandleDeleteAttachment)
 					} else {
 						r.Post("/", notImplemented)
+						r.Delete("/{attachmentID}", notImplemented)
 					}
 				})
 			})

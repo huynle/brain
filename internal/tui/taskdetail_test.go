@@ -9,6 +9,45 @@ import (
 )
 
 // =============================================================================
+// TaskDetail - Brain Entry Attachments
+// =============================================================================
+
+func TestTaskDetail_EntryMode_RendersAttachmentMetadata(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(100, 30)
+	attachments := []types.AttachmentReference{{
+		ID:          "att_123",
+		Role:        "source",
+		Filename:    "evidence.pdf",
+		ContentType: "application/pdf",
+		Size:        1536,
+		Derived: []types.AttachmentDerived{{
+			ID:          "drv_1",
+			Kind:        "text",
+			ContentType: "text/markdown",
+			Size:        512,
+		}},
+	}}
+	td.SetEntryContentWithAttachments("projects/brain-api/report/r.md", "Report", "report", "entry body", attachments, "Entry Detail")
+
+	view := td.View()
+	for _, want := range []string{
+		"Attachments (1)",
+		"att_123",
+		"source",
+		"evidence.pdf",
+		"application/pdf",
+		"1.5 KB",
+		"extracted: text (text/markdown, 512 B)",
+		"search: available",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected entry attachment detail to contain %q, got:\n%s", want, view)
+		}
+	}
+}
+
+// =============================================================================
 // TaskDetail - No Task Selected
 // =============================================================================
 

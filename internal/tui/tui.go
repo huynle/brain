@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -139,6 +140,8 @@ type Model struct {
 	brainSearchState         FilterMode
 	brainSearchQuery         string
 	brainSearchLabel         string
+	lastAttachmentClickIndex int
+	lastAttachmentClickTime  time.Time
 
 	// Runner panel state
 	runnerPanel        RunnerPanel
@@ -842,7 +845,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activeContentTab == ContentTabAutomation && msg.Type == "automation" {
 			content = m.automationDetailContent(msg.Path, content)
 		}
-		m.taskDetail.SetEntryContent(msg.Path, msg.Title, msg.Type, content, header)
+		attachments := m.taskDetail.entryAttachments
+		if msg.Attachments != nil {
+			attachments = msg.Attachments
+		}
+		m.taskDetail.SetEntryContentWithAttachments(msg.Path, msg.Title, msg.Type, content, attachments, header)
+		return m, nil
+
+	case AttachmentActionMsg:
+		if msg.Err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Attachment %s failed: %v", msg.Action, msg.Err))
+			m.addLog("error", fmt.Sprintf("Attachment %s failed for %s: %v", msg.Action, msg.AttachmentID, msg.Err))
+			return m, nil
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Attachment %s complete: %s", msg.Action, msg.Path))
+		m.addLog("info", fmt.Sprintf("Attachment %s complete: %s", msg.Action, msg.Path))
 		return m, nil
 
 	case AutomationToggleMsg:
@@ -1535,6 +1552,20 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.activeContentTab == ContentTabBrain {
 			if m.activePanel == PanelDetails {
 				switch string(msg.Runes) {
+				case "a":
+					if !m.taskDetail.SelectNextAttachment() {
+						m.setStatusMessage("info", "No attachments on selected entry")
+					}
+					return m, nil
+				case "A":
+					if !m.taskDetail.SelectPrevAttachment() {
+						m.setStatusMessage("info", "No attachments on selected entry")
+					}
+					return m, nil
+				case "d":
+					return m, m.selectedBrainAttachmentCmd("download")
+				case "o":
+					return m, m.selectedBrainAttachmentCmd("open")
 				case "j":
 					m.taskDetail.ScrollDown()
 					return m, nil
@@ -2395,6 +2426,17 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if m.detailVisible && y >= mainContentStartY+taskPanelOuterHeight {
 			m.activePanel = PanelDetails
 			m.helpBar.ActivePanel = m.activePanel
+			line := y - (mainContentStartY + taskPanelOuterHeight) - 2 + m.taskDetail.scrollOffset
+			if m.taskDetail.SelectAttachmentAtEntryLine(line) {
+				idx := m.taskDetail.selectedAttachment
+				now := time.Now()
+				isDoubleClick := idx == m.lastAttachmentClickIndex && now.Sub(m.lastAttachmentClickTime) <= 500*time.Millisecond
+				m.lastAttachmentClickIndex = idx
+				m.lastAttachmentClickTime = now
+				if isDoubleClick {
+					return m, m.selectedBrainAttachmentCmd("open")
+				}
+			}
 			return m, nil
 		}
 		m.activePanel = PanelTasks
@@ -2456,6 +2498,123 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	return m, nil
+}
+
+func (m Model) selectedBrainAttachmentCmd(action string) tea.Cmd {
+	att, ok := m.taskDetail.SelectedAttachment()
+	if !ok {
+		return func() tea.Msg {
+			return AttachmentActionMsg{Action: action, Err: fmt.Errorf("selected entry has no attachments")}
+		}
+	}
+	return brainAttachmentActionCmd(m.apiRunnerConfig(), m.currentProjectID(), att, action)
+}
+
+func brainAttachmentActionCmd(cfg runner.RunnerConfig, projectID string, att types.AttachmentReference, action string) tea.Cmd {
+	return func() tea.Msg {
+		if action != "download" && action != "open" {
+			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: fmt.Errorf("unsupported attachment action %q", action)}
+		}
+		if strings.TrimSpace(att.ID) == "" {
+			return AttachmentActionMsg{Action: action, Err: fmt.Errorf("attachment ID is required")}
+		}
+		client := runner.NewAPIClient(cfg)
+		attachment, data, err := client.DownloadAttachment(context.Background(), projectID, att.ID)
+		if err != nil {
+			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: err}
+		}
+		filename := att.Filename
+		if filename == "" && attachment != nil {
+			filename = attachment.Filename
+		}
+		if filename == "" {
+			filename = att.ID
+		}
+
+		dir := attachmentDownloadDir(action)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: fmt.Errorf("create attachment directory: %w", err)}
+		}
+		path, err := writeUniqueAttachmentFile(dir, filename, data)
+		if err != nil {
+			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: err}
+		}
+		if action == "open" {
+			if err := openFileWithDefaultApp(path); err != nil {
+				return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Path: path, Err: err}
+			}
+		}
+		return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Path: path}
+	}
+}
+
+func attachmentDownloadDir(action string) string {
+	if action == "open" {
+		return filepath.Join(os.TempDir(), "brain-attachments")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "."
+	}
+	return filepath.Join(home, "Downloads")
+}
+
+func writeUniqueAttachmentFile(dir, filename string, data []byte) (string, error) {
+	name := sanitizeAttachmentFilename(filename)
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	for i := 0; i < 1000; i++ {
+		candidate := filepath.Join(dir, name)
+		if i > 0 {
+			candidate = filepath.Join(dir, fmt.Sprintf("%s-%d%s", base, i, ext))
+		}
+		file, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("create attachment file: %w", err)
+		}
+		if _, err := file.Write(data); err != nil {
+			_ = file.Close()
+			return "", fmt.Errorf("write attachment file: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return "", fmt.Errorf("close attachment file: %w", err)
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("could not choose unique filename for %q", filename)
+}
+
+func sanitizeAttachmentFilename(filename string) string {
+	name := filepath.Base(strings.TrimSpace(filename))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return "attachment"
+	}
+	name = strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == 0 {
+			return '-'
+		}
+		return r
+	}, name)
+	if strings.Trim(name, ". ") == "" {
+		return "attachment"
+	}
+	return name
+}
+
+func openFileWithDefaultApp(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Start()
 }
 
 func (m Model) handleContentTabClick(x int) (tea.Model, tea.Cmd) {
@@ -4567,7 +4726,7 @@ func (m *Model) fetchDreamTabCmd() tea.Cmd {
 func fetchBrainEntriesCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 	return func() tea.Msg {
 		client := runner.NewAPIClient(cfg)
-		params := map[string]string{"sortBy": "modified", "sortOrder": "desc", "limit": "500"}
+		params := map[string]string{"sortBy": "modified", "sortOrder": "desc", "limit": "500", "include": "attachments"}
 		if project != "" && project != "all" {
 			params["project"] = project
 		}
@@ -4586,7 +4745,7 @@ func fetchBrainEntryContentCmd(cfg runner.RunnerConfig, entry types.BrainEntry) 
 		}
 		client := runner.NewAPIClient(cfg)
 		content, err := client.GetEntryFull(context.Background(), entry.Path)
-		return BrainEntryContentMsg{Path: entry.Path, Title: entry.Title, Type: entry.Type, Content: content, Err: err}
+		return BrainEntryContentMsg{Path: entry.Path, Title: entry.Title, Type: entry.Type, Content: content, Attachments: append([]types.AttachmentReference(nil), entry.Attachments...), Err: err}
 	}
 }
 
@@ -4600,6 +4759,7 @@ func fetchBrainSearchCmd(cfg runner.RunnerConfig, project, query string) tea.Cmd
 			Project:  project,
 			Strategy: strategy,
 			Limit:    &limit,
+			Include:  []string{"attachments"},
 		})
 		if err != nil {
 			return BrainSearchMsg{Query: query, Strategy: strategy, Err: err}
@@ -4607,12 +4767,13 @@ func fetchBrainSearchCmd(cfg runner.RunnerConfig, project, query string) tea.Cmd
 		entries := make([]types.BrainEntry, 0, len(resp.Results))
 		for _, result := range resp.Results {
 			entries = append(entries, types.BrainEntry{
-				ID:        result.ID,
-				Path:      result.Path,
-				Title:     result.Title,
-				Type:      result.Type,
-				Status:    result.Status,
-				ProjectID: project,
+				ID:          result.ID,
+				Path:        result.Path,
+				Title:       result.Title,
+				Type:        result.Type,
+				Status:      result.Status,
+				ProjectID:   project,
+				Attachments: append([]types.AttachmentReference(nil), result.Attachments...),
 			})
 		}
 		return BrainSearchMsg{Entries: entries, Query: query, Strategy: strategy}

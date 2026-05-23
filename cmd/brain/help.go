@@ -53,6 +53,13 @@ ENTRIES:
   list                           List brain entries with filters
   embeddings backfill            Generate missing/stale embeddings
 
+ATTACHMENTS:
+  attachments upload <path>       Upload a file to a project
+  attachments attach <entry> <id> Attach an existing attachment to an entry
+  attachments list                List project or entry attachments
+  attachments download <id>       Download original bytes and verify SHA256
+  attachments delete <id>         Delete an unreferenced attachment
+
 AUTOMATIONS:
   automation                     List automations
   automation create              Create automation (interactive wizard)
@@ -109,6 +116,42 @@ EXAMPLES:
   brain embeddings backfill --all
   brain embeddings backfill --project brain-api --force
   brain embeddings backfill --dry-run --verbose
+`
+
+const attachmentsHelp = `brain attachments - Manage first-class binary attachments
+
+USAGE:
+  brain attachments upload <path> --project <project> [--description <text>]
+  brain attachments attach <entry> <attachment-id> --project <project> [--role <role>] [--description <text>]
+  brain attachments list --project <project> [--entry <entry>]
+  brain attachments download <attachment-id> --project <project> [--output <path>]
+  brain attachments detach <entry> <attachment-id> --project <project> [--role <role>]
+  brain attachments delete <attachment-id> --project <project>
+
+SUBCOMMANDS:
+  upload <path>                   Upload a local file and print attachment metadata
+  attach <entry> <attachment-id>  Attach an existing attachment to an entry
+  list                            List project attachments or --entry attachments
+  download <attachment-id>        Download exact original bytes and verify SHA256
+  detach <entry> <attachment-id>  Remove an attachment reference from an entry
+  delete <attachment-id>          Delete an unreferenced attachment from storage
+
+FLAGS:
+  -p, --project <project>         Project ID (required)
+  -e, --entry <entry>             Entry ID/path for list
+  -r, --role <role>               Attachment role for attach/detach
+  -d, --description <text>        Description/caption metadata
+  -o, --output <path>             Download destination (use - for stdout)
+  -h, --help                      Show this help
+
+EXAMPLES:
+  brain attachments upload ./diagram.png --project brain-api
+  brain attachments attach abc12def att_123 --project brain-api --role source --description "Design diagram"
+  brain attachments list --project brain-api
+  brain attachments list --project brain-api --entry abc12def
+  brain attachments download att_123 --project brain-api --output diagram.png
+  brain attachments detach abc12def att_123 --project brain-api --role source
+  brain attachments delete att_123 --project brain-api
 `
 
 const apiHelp = `brain api - API server operations
@@ -1016,6 +1059,8 @@ func ShowHelp(command string) {
 		fmt.Print(automationCreateHelp)
 	case "automation test":
 		fmt.Print(automationTestHelp)
+	case "attachments":
+		fmt.Print(attachmentsHelp)
 	case "dream":
 		fmt.Print(dreamHelp)
 	case "save":

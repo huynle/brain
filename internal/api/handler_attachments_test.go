@@ -21,6 +21,7 @@ type mockAttachmentService struct {
 	listCalled   bool
 	attachCalled bool
 	detachCalled bool
+	deleteCalled bool
 	createCalled bool
 	openCalled   bool
 	textCalled   bool
@@ -39,6 +40,7 @@ type mockAttachmentService struct {
 	listForEntryErr error
 	attachErr       error
 	detachErr       error
+	deleteErr       error
 	openErr         error
 	textErr         error
 }
@@ -135,7 +137,13 @@ func (m *mockAttachmentService) Detach(ctx context.Context, projectID, pathOrID,
 }
 
 func (m *mockAttachmentService) Delete(ctx context.Context, projectID, attachmentID string) (bool, error) {
-	return false, nil
+	m.deleteCalled = true
+	m.projectID = projectID
+	m.attachmentID = attachmentID
+	if m.deleteErr != nil {
+		return false, m.deleteErr
+	}
+	return true, nil
 }
 
 func TestWithAttachmentServiceSetsHandlerDependency(t *testing.T) {
@@ -160,6 +168,25 @@ func TestAttachmentTopLevelRoutesAreRegistered(t *testing.T) {
 	}
 	if rec.Code == http.StatusNotFound || rec.Code == http.StatusMethodNotAllowed {
 		t.Fatalf("attachment metadata route was not registered, status = %d", rec.Code)
+	}
+}
+
+func TestDeleteAttachmentRouteDispatchesToService(t *testing.T) {
+	attachments := &mockAttachmentService{}
+	router := newAttachmentTestRouter(attachments)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/attachments/att_123?project_id=test-project", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !attachments.deleteCalled || attachments.projectID != "test-project" || attachments.attachmentID != "att_123" {
+		t.Fatalf("Delete called=%v projectID=%q attachmentID=%q", attachments.deleteCalled, attachments.projectID, attachments.attachmentID)
+	}
+	if !strings.Contains(rec.Body.String(), `"deleted":true`) {
+		t.Fatalf("body = %s, want deleted true", rec.Body.String())
 	}
 }
 

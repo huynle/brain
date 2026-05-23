@@ -276,6 +276,55 @@ func TestAttachmentServiceCreateGetOpenListAndDeleteUnreferenced(t *testing.T) {
 	}
 }
 
+func TestAttachmentServiceOpenTextReturnsTextualBlob(t *testing.T) {
+	svc, _, _ := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	content := []byte("plain text attachment")
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{
+		Filename:    "note.txt",
+		ContentType: "text/plain",
+		Size:        int64(len(content)),
+	}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	att, stream, err := svc.OpenText(ctx, "proj", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("OpenText returned error: %v", err)
+	}
+	defer stream.Close()
+	readBack, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("ReadAll stream failed: %v", err)
+	}
+	if att.ID != created.Attachment.ID || string(readBack) != string(content) {
+		t.Fatalf("OpenText metadata/content = %#v/%q, want %s", att, readBack, content)
+	}
+}
+
+func TestAttachmentServiceOpenTextReturnsNotFoundForNonTextualBlob(t *testing.T) {
+	svc, _, _ := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	content := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{
+		Filename:    "image.png",
+		ContentType: "image/png",
+		Size:        int64(len(content)),
+	}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	att, stream, err := svc.OpenText(ctx, "proj", created.Attachment.ID)
+	if !errors.Is(err, api.ErrNotFound) {
+		t.Fatalf("OpenText error = %v, want api.ErrNotFound", err)
+	}
+	if att != nil || stream != nil {
+		t.Fatalf("OpenText returned attachment/stream for non-text: %#v/%#v", att, stream)
+	}
+}
+
 func TestAttachmentServiceCreateValidationAndCleanup(t *testing.T) {
 	ctx := context.Background()
 

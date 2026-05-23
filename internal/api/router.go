@@ -51,6 +51,35 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 		r.Group(func(r chi.Router) {
 			r.Use(Auth(cfg.EnableAuth, o.validator))
 
+			// ─── Attachments ───────────────────────────────────────
+			r.Route("/attachments", func(r chi.Router) {
+				// Attachment read operations — read:* scope
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.attachments != nil {
+						r.Get("/", o.handler.HandleListAttachments)
+						r.Get("/{attachmentID}", o.handler.HandleGetAttachment)
+						r.Get("/{attachmentID}/content", o.handler.HandleDownloadAttachment)
+						r.Get("/{attachmentID}/text", o.handler.HandleGetAttachmentText)
+					} else {
+						r.Get("/", notImplemented)
+						r.Get("/{attachmentID}", notImplemented)
+						r.Get("/{attachmentID}/content", notImplemented)
+						r.Get("/{attachmentID}/text", notImplemented)
+					}
+				})
+
+				// Attachment write operations — admin:* scope
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*"))
+					if o.handler != nil && o.handler.attachments != nil {
+						r.Post("/", o.handler.HandleCreateAttachment)
+					} else {
+						r.Post("/", notImplemented)
+					}
+				})
+			})
+
 			// ─── Config (read:* scope) ───────────────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
@@ -114,6 +143,13 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Get("/", notImplemented)
 					}
 
+					// Attachment routes (must be before wildcard /{id})
+					if o.handler != nil && o.handler.attachments != nil {
+						r.Get("/{id}/attachments", o.handler.HandleListEntryAttachments)
+					} else {
+						r.Get("/{id}/attachments", notImplemented)
+					}
+
 					// Section routes (must be before wildcard /{id})
 					if o.handler != nil {
 						r.Get("/{id}/sections", o.handler.HandleGetSections)
@@ -148,6 +184,13 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					if o.handler != nil {
 						r.Post("/", o.handler.HandleCreateEntry)
 						r.Post("/bulk-update", o.handler.HandleBulkUpdate)
+						if o.handler.attachments != nil {
+							r.Post("/{id}/attachments", o.handler.HandleAttachEntryAttachment)
+							r.Delete("/{id}/attachments/{attachmentID}", o.handler.HandleDetachEntryAttachment)
+						} else {
+							r.Post("/{id}/attachments", notImplemented)
+							r.Delete("/{id}/attachments/{attachmentID}", notImplemented)
+						}
 						r.Post("/*", o.handler.HandlePostWildcard)
 						r.Patch("/*", o.handler.HandleUpdateOrMetadata)
 						r.Delete("/*", o.handler.HandleDeleteEntry)

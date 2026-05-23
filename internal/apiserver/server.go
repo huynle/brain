@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/logbuffer"
@@ -33,6 +34,19 @@ type ServerOptions struct {
 	OAuthPIN     string
 	TaskDefaults config.TaskDefaultsConfig
 	Embedding    config.EmbeddingConfig
+	Attachments  config.AttachmentConfig
+}
+
+const defaultAttachmentMaxUploadSizeBytes int64 = 100 * 1024 * 1024
+
+func normalizeAttachmentConfig(brainDir string, cfg config.AttachmentConfig) config.AttachmentConfig {
+	if cfg.StorageRoot == "" {
+		cfg.StorageRoot = filepath.Join(brainDir, "attachments")
+	}
+	if cfg.MaxUploadSizeBytes <= 0 {
+		cfg.MaxUploadSizeBytes = defaultAttachmentMaxUploadSizeBytes
+	}
+	return cfg
 }
 
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
@@ -104,6 +118,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		OAuthPIN:     opts.OAuthPIN,
 		TaskDefaults: opts.TaskDefaults,
 		Embedding:    opts.Embedding,
+		Attachments:  normalizeAttachmentConfig(opts.BrainDir, opts.Attachments),
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
@@ -119,6 +134,11 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	}
 
 	brainSvc := service.NewBrainService(&cfg, store, idx, nil, embeddingClient)
+	blobStore, err := blobstore.NewFilesystemStore(cfg.Attachments.StorageRoot, cfg.Attachments.MaxUploadSizeBytes)
+	if err != nil {
+		return fmt.Errorf("failed to initialize attachment blob store: %w", err)
+	}
+	attachmentSvc := service.NewAttachmentService(store, blobStore, brainSvc, cfg.Attachments.MaxUploadSizeBytes)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)
@@ -165,6 +185,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	// ─── API Handler & Router ───────────────────────────────────────
 	handler := api.NewHandler(
 		brainSvc,
+		api.WithAttachmentService(attachmentSvc),
 		api.WithTaskService(taskSvc),
 		api.WithRunnerService(runnerSvc),
 		api.WithRunnerRegistryService(runnerRegistrySvc),

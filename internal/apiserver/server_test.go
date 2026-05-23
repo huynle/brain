@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/huynle/brain-api/internal/config"
 )
 
 // TestRunServer_BasicStartup tests that RunServer can start and stop gracefully.
@@ -139,5 +141,31 @@ func TestRunServer_PortAlreadyInUse(t *testing.T) {
 	err = RunServer(ctx, opts)
 	if err == nil {
 		t.Fatal("expected error for port already in use, got nil")
+	}
+}
+
+func TestNormalizeAttachmentConfigDefaultsStorageAndMaxSize(t *testing.T) {
+	brainDir := filepath.Join(t.TempDir(), "brain")
+
+	got := normalizeAttachmentConfig(brainDir, config.AttachmentConfig{})
+
+	if got.StorageRoot != filepath.Join(brainDir, "attachments") {
+		t.Fatalf("StorageRoot = %q, want %q", got.StorageRoot, filepath.Join(brainDir, "attachments"))
+	}
+	if got.MaxUploadSizeBytes != defaultAttachmentMaxUploadSizeBytes {
+		t.Fatalf("MaxUploadSizeBytes = %d, want %d", got.MaxUploadSizeBytes, defaultAttachmentMaxUploadSizeBytes)
+	}
+}
+
+func TestNormalizeAttachmentConfigPreservesExplicitValues(t *testing.T) {
+	explicitRoot := filepath.Join(t.TempDir(), "custom-blobs")
+
+	got := normalizeAttachmentConfig("/brain", config.AttachmentConfig{StorageRoot: explicitRoot, MaxUploadSizeBytes: 42})
+
+	if got.StorageRoot != explicitRoot {
+		t.Fatalf("StorageRoot = %q, want %q", got.StorageRoot, explicitRoot)
+	}
+	if got.MaxUploadSizeBytes != 42 {
+		t.Fatalf("MaxUploadSizeBytes = %d, want 42", got.MaxUploadSizeBytes)
 	}
 }

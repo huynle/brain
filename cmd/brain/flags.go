@@ -242,6 +242,7 @@ type UnifiedConfig struct {
 		LogFile      string
 		TaskDefaults uconfig.TaskDefaultsConfig
 		Embedding    uconfig.EmbeddingConfig
+		Attachments  uconfig.AttachmentConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {

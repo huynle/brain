@@ -101,8 +101,14 @@ type AttachmentService interface {
 	// Open returns attachment metadata plus a readable content stream. Callers must close the stream.
 	Open(ctx context.Context, projectID, attachmentID string) (*types.Attachment, io.ReadCloser, error)
 
+	// OpenText returns derived/plain text for a textual attachment. Callers must close the stream.
+	OpenText(ctx context.Context, projectID, attachmentID string) (*types.Attachment, io.ReadCloser, error)
+
 	// List returns attachments visible within a project.
 	List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error)
+
+	// ListForEntry returns attachment references associated with a brain entry.
+	ListForEntry(ctx context.Context, projectID, pathOrID string) (*types.AttachEntryAttachmentResponse, error)
 
 	// Attach links an existing attachment to a brain entry and returns updated entry attachment refs.
 	Attach(ctx context.Context, projectID, pathOrID string, req types.AttachEntryAttachmentRequest) (*types.AttachEntryAttachmentResponse, error)

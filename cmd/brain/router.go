@@ -519,6 +519,7 @@ func defaultConfig() *UnifiedConfig {
 		// Thread task defaults from unified config
 		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
 		cfg.Server.Embedding = ucfg.Server.Embedding
+		cfg.Server.Attachments = ucfg.Server.Attachments
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -599,6 +600,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
 	cmdCfg.Server.TaskDefaults = cfg.Server.TaskDefaults
 	cmdCfg.Server.Embedding = cfg.Server.Embedding
+	cmdCfg.Server.Attachments = cfg.Server.Attachments
 	// Runner — assign the full config directly, no lossy field-by-field copying
 	cmdCfg.Runner = cfg.Runner
 

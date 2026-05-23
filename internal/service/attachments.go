@@ -159,6 +159,21 @@ func (s *AttachmentServiceImpl) Open(ctx context.Context, projectID, attachmentI
 	return att, stream, nil
 }
 
+// OpenText returns attachment text when text is derivable from the original blob.
+// Minimal derived text behavior treats textual media types as their own text and
+// reports not found for non-text blobs with no derived text available.
+func (s *AttachmentServiceImpl) OpenText(ctx context.Context, projectID, attachmentID string) (*types.Attachment, io.ReadCloser, error) {
+	att, stream, err := s.Open(ctx, projectID, attachmentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !isTextualAttachmentContentType(att.ContentType) {
+		_ = stream.Close()
+		return nil, nil, api.ErrNotFound
+	}
+	return att, stream, nil
+}
+
 // List returns attachments visible within a project.
 func (s *AttachmentServiceImpl) List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error) {
 	if err := s.ensureReady(); err != nil {
@@ -183,6 +198,21 @@ func (s *AttachmentServiceImpl) List(ctx context.Context, projectID string) (*ty
 		attachments = append(attachments, att)
 	}
 	return &types.ListAttachmentsResponse{Attachments: attachments, Total: len(attachments)}, nil
+}
+
+// ListForEntry returns attachment references associated with a brain entry.
+func (s *AttachmentServiceImpl) ListForEntry(ctx context.Context, projectID, pathOrID string) (*types.AttachEntryAttachmentResponse, error) {
+	if err := s.ensureReadyForEntryAssociation(); err != nil {
+		return nil, err
+	}
+	entry, err := s.getProjectEntry(ctx, projectID, pathOrID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := s.storage.ListAttachmentsForEntry(ctx, entry.Path); err != nil {
+		return nil, normalizeAttachmentStorageNotFound(err)
+	}
+	return attachmentEntryResponse(entry), nil
 }
 
 // Attach links an existing attachment to a brain entry.
@@ -540,6 +570,19 @@ func sniffAttachmentContentType(declared string, sample []byte) string {
 		return declared
 	}
 	return http.DetectContentType(sample)
+}
+
+func isTextualAttachmentContentType(contentType string) bool {
+	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	if strings.HasPrefix(mediaType, "text/") {
+		return true
+	}
+	switch mediaType {
+	case "application/json", "application/xml", "application/x-yaml", "application/yaml", "application/javascript":
+		return true
+	default:
+		return false
+	}
 }
 
 func attachmentRowToDTO(row *storage.AttachmentRow) (types.Attachment, error) {

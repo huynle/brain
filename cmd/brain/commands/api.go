@@ -37,7 +37,8 @@ type UnifiedConfig struct {
 		LogMaxBackups int
 		LogMaxAge     int // days
 		TaskDefaults  config.TaskDefaultsConfig
-		Embedding    config.EmbeddingConfig
+		Embedding     config.EmbeddingConfig
+		Attachments   config.AttachmentConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -83,6 +84,7 @@ func (c *APICommand) Execute() error {
 		OAuthPIN:     c.Config.Server.OAuthPIN,
 		TaskDefaults: c.Config.Server.TaskDefaults,
 		Embedding:    c.Config.Server.Embedding,
+		Attachments:  c.Config.Server.Attachments,
 	}
 
 	// Flags override config

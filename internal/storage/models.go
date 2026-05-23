@@ -20,6 +20,10 @@ type NoteRow struct {
 	Created    *string // nullable
 	Modified   *string // nullable
 	IndexedAt  string
+
+	// MatchSource is populated by search queries to indicate whether the match
+	// came from entry content or attachment-derived text. It is not stored in DB.
+	MatchSource string
 }
 
 // LinkRow represents a row in the links table.

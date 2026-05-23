@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -305,6 +306,11 @@ func (s *BrainServiceImpl) Recall(ctx context.Context, pathOrID string, include 
 	}
 
 	entry := NoteRowToBrainEntry(row)
+	if wantsAttachmentMetadata(include) {
+		if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
+			return nil, err
+		}
+	}
 
 	// Record access
 	_ = s.storage.RecordAccess(ctx, row.Path)
@@ -1621,6 +1627,11 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 	entries := make([]types.BrainEntry, 0, len(filtered))
 	for _, row := range filtered {
 		entry := NoteRowToBrainEntry(row)
+		if wantsAttachmentMetadata(req.Include) {
+			if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
+				return nil, err
+			}
+		}
 		if status, err := s.storage.EmbeddingStatus(ctx, row); err == nil {
 			entry.EmbeddingStatus = status
 		}
@@ -1699,7 +1710,7 @@ func (s *BrainServiceImpl) searchFTS(ctx context.Context, req types.SearchReques
 		return nil, fmt.Errorf("search notes: %w", err)
 	}
 
-	return s.buildSearchResponse(rows), nil
+	return s.buildSearchResponse(ctx, rows, req.Include)
 }
 
 // searchSemantic performs embedding-based semantic search.
@@ -1742,7 +1753,7 @@ func (s *BrainServiceImpl) searchSemantic(ctx context.Context, req types.SearchR
 		return s.searchFTS(ctx, req, opts)
 	}
 
-	return s.buildSearchResponse(rows), nil
+	return s.buildSearchResponse(ctx, rows, req.Include)
 }
 
 // searchHybrid combines FTS and semantic search results.
@@ -1757,18 +1768,18 @@ func (s *BrainServiceImpl) searchHybrid(ctx context.Context, req types.SearchReq
 	// Check if embedding client is available
 	if s.embeddingClient == nil {
 		slog.Warn("hybrid search requested but embedding client is nil, returning FTS results only", "query", req.Query)
-		return s.buildSearchResponse(ftsRows), nil
+		return s.buildSearchResponse(ctx, ftsRows, req.Include)
 	}
 
 	// Generate query embedding
 	embeddings, err := s.embeddingClient.Embed(ctx, []string{req.Query})
 	if err != nil {
 		slog.Error("failed to generate query embedding in hybrid mode, returning FTS results only", "query", req.Query, "error", err)
-		return s.buildSearchResponse(ftsRows), nil
+		return s.buildSearchResponse(ctx, ftsRows, req.Include)
 	}
 	if len(embeddings) == 0 {
 		slog.Warn("no embeddings returned for query in hybrid mode, returning FTS results only", "query", req.Query)
-		return s.buildSearchResponse(ftsRows), nil
+		return s.buildSearchResponse(ctx, ftsRows, req.Include)
 	}
 
 	queryVec := embeddings[0]
@@ -1788,13 +1799,13 @@ func (s *BrainServiceImpl) searchHybrid(ctx context.Context, req types.SearchReq
 	embRows, err := s.storage.SearchByEmbedding(ctx, queryVec, embOpts)
 	if err != nil {
 		slog.Error("embedding search failed in hybrid mode, returning FTS results only", "query", req.Query, "error", err)
-		return s.buildSearchResponse(ftsRows), nil
+		return s.buildSearchResponse(ctx, ftsRows, req.Include)
 	}
 
 	// Merge results: deduplicate by path, FTS results take precedence for ordering
 	merged := s.mergeSearchResults(ftsRows, embRows, opts.Limit)
 
-	return s.buildSearchResponse(merged), nil
+	return s.buildSearchResponse(ctx, merged, req.Include)
 }
 
 // mergeSearchResults combines FTS and embedding search results, deduplicating by path.
@@ -1835,27 +1846,134 @@ func (s *BrainServiceImpl) mergeSearchResults(ftsRows, embRows []*storage.NoteRo
 }
 
 // buildSearchResponse converts NoteRow slice to SearchResponse.
-func (s *BrainServiceImpl) buildSearchResponse(rows []*storage.NoteRow) *types.SearchResponse {
+func (s *BrainServiceImpl) buildSearchResponse(ctx context.Context, rows []*storage.NoteRow, include []string) (*types.SearchResponse, error) {
 	results := make([]types.SearchResult, 0, len(rows))
+	includeAttachments := wantsAttachmentMetadata(include)
 	for _, row := range rows {
 		snippet := ""
 		if row.Lead != nil {
 			snippet = *row.Lead
 		}
+		var attachments []types.AttachmentReference
+		if includeAttachments {
+			entry := NoteRowToBrainEntry(row)
+			if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
+				return nil, err
+			}
+			attachments = entry.Attachments
+		}
 		results = append(results, types.SearchResult{
-			ID:      row.ShortID,
-			Path:    row.Path,
-			Title:   row.Title,
-			Type:    derefStr(row.Type),
-			Status:  derefStr(row.Status),
-			Snippet: snippet,
+			ID:          row.ShortID,
+			Path:        row.Path,
+			Title:       row.Title,
+			Type:        derefStr(row.Type),
+			Status:      derefStr(row.Status),
+			Snippet:     snippet,
+			MatchSource: row.MatchSource,
+			Attachments: attachments,
 		})
 	}
 
 	return &types.SearchResponse{
 		Results: results,
 		Total:   len(results),
+	}, nil
+}
+
+func wantsAttachmentMetadata(include []string) bool {
+	for _, value := range include {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "attachments", "attachment_metadata":
+			return true
+		}
 	}
+	return false
+}
+
+func (s *BrainServiceImpl) enrichEntryAttachmentMetadata(ctx context.Context, entry *types.BrainEntry) error {
+	if entry == nil || strings.TrimSpace(entry.Path) == "" {
+		return nil
+	}
+	rows, err := s.storage.ListAttachmentsForEntry(ctx, entry.Path)
+	if err != nil {
+		return fmt.Errorf("list attachment metadata for %s: %w", entry.Path, err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	attachmentsByID := make(map[string]types.Attachment, len(rows))
+	orderedIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		att, err := attachmentRowToDTO(row)
+		if err != nil {
+			return err
+		}
+		attachmentsByID[att.ID] = att
+		orderedIDs = append(orderedIDs, att.ID)
+	}
+
+	projectID := attachmentURLProjectID(entry, attachmentsByID)
+	refs := make([]types.AttachmentReference, 0, max(len(entry.Attachments), len(rows)))
+	seen := make(map[string]bool, len(rows))
+	for _, ref := range entry.Attachments {
+		if att, ok := attachmentsByID[ref.ID]; ok {
+			ref = enrichedAttachmentReference(att, ref, projectID)
+			seen[ref.ID] = true
+		}
+		refs = append(refs, ref)
+	}
+	for _, id := range orderedIDs {
+		if seen[id] {
+			continue
+		}
+		refs = append(refs, enrichedAttachmentReference(attachmentsByID[id], types.AttachmentReference{ID: id}, projectID))
+	}
+	entry.Attachments = refs
+	return nil
+}
+
+func enrichedAttachmentReference(att types.Attachment, ref types.AttachmentReference, projectID string) types.AttachmentReference {
+	ref.ID = att.ID
+	ref.Filename = att.Filename
+	ref.ContentType = att.ContentType
+	ref.Size = att.Size
+	ref.SHA256 = att.SHA256
+	ref.Metadata = copyStringMap(att.Metadata)
+	if projectID != "" {
+		escapedProject := url.QueryEscape(projectID)
+		ref.DownloadURL = "/api/v1/attachments/" + url.PathEscape(att.ID) + "/content?project_id=" + escapedProject
+		ref.TextURL = "/api/v1/attachments/" + url.PathEscape(att.ID) + "/text?project_id=" + escapedProject
+	}
+	return ref
+}
+
+func attachmentURLProjectID(entry *types.BrainEntry, attachments map[string]types.Attachment) string {
+	if entry != nil {
+		if strings.TrimSpace(entry.ProjectID) != "" {
+			return strings.TrimSpace(entry.ProjectID)
+		}
+		if projectID := extractProjectFromPath(entry.Path); projectID != "" {
+			return projectID
+		}
+	}
+	for _, att := range attachments {
+		if projectID := strings.TrimSpace(att.Metadata["project_id"]); projectID != "" {
+			return projectID
+		}
+	}
+	return ""
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // =============================================================================

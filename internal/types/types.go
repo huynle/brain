@@ -275,6 +275,9 @@ type AttachmentReference struct {
 	ContentType string              `json:"content_type,omitempty"`
 	Size        int64               `json:"size,omitempty"`
 	SHA256      string              `json:"sha256,omitempty"`
+	Metadata    map[string]string   `json:"metadata,omitempty"`
+	DownloadURL string              `json:"download_url,omitempty"`
+	TextURL     string              `json:"text_url,omitempty"`
 	Role        string              `json:"role,omitempty"`
 	Caption     string              `json:"caption,omitempty"`
 	Derived     []AttachmentDerived `json:"derived,omitempty"`

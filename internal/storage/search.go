@@ -64,12 +64,18 @@ func (s *StorageLayer) searchFTS(ctx context.Context, query string, limit int, o
 	notes, err := scanNoteRows(rows)
 	if err != nil {
 		// FTS5 errors can also surface during row iteration — catch gracefully.
-		return []*NoteRow{}, nil
+		notes = []*NoteRow{}
 	}
 	if notes == nil {
-		return []*NoteRow{}, nil
+		notes = []*NoteRow{}
 	}
-	return notes, nil
+	markMatchSource(notes, "entry")
+
+	attachmentMatches, err := s.searchAttachmentDerivedText(ctx, query, limit, opts)
+	if err != nil {
+		return nil, err
+	}
+	return mergeSearchRows(notes, attachmentMatches, limit), nil
 }
 
 // searchExact performs exact title match OR body LIKE substring search.
@@ -93,9 +99,15 @@ func (s *StorageLayer) searchExact(ctx context.Context, query string, limit int,
 		return nil, fmt.Errorf("search exact: %w", err)
 	}
 	if notes == nil {
-		return []*NoteRow{}, nil
+		notes = []*NoteRow{}
 	}
-	return notes, nil
+	markMatchSource(notes, "entry")
+
+	attachmentMatches, err := s.searchAttachmentDerivedText(ctx, query, limit, opts)
+	if err != nil {
+		return nil, err
+	}
+	return mergeSearchRows(notes, attachmentMatches, limit), nil
 }
 
 // searchLike performs LIKE substring search across title, body, and path.
@@ -120,9 +132,93 @@ func (s *StorageLayer) searchLike(ctx context.Context, query string, limit int, 
 		return nil, fmt.Errorf("search like: %w", err)
 	}
 	if notes == nil {
+		notes = []*NoteRow{}
+	}
+	markMatchSource(notes, "entry")
+
+	attachmentMatches, err := s.searchAttachmentDerivedText(ctx, query, limit, opts)
+	if err != nil {
+		return nil, err
+	}
+	return mergeSearchRows(notes, attachmentMatches, limit), nil
+}
+
+func (s *StorageLayer) searchAttachmentDerivedText(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+	likeQuery := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
+	if likeQuery == "%%" {
 		return []*NoteRow{}, nil
 	}
+
+	sql := "SELECT DISTINCT " + noteColumnsAliased + `
+		FROM notes n
+		JOIN entry_attachments ea ON ea.note_id = n.id
+		JOIN attachments a ON a.id = ea.attachment_id
+		WHERE (` + attachmentDerivedTextPredicate("a.metadata", "?") + `)`
+	params := []interface{}{}
+	for range attachmentDerivedTextJSONPaths() {
+		params = append(params, likeQuery)
+	}
+
+	sql, params = appendFilters(sql, params, "n", opts)
+
+	sql += " ORDER BY n.modified DESC, n.id DESC LIMIT ?"
+	params = append(params, limit)
+
+	rows, err := s.db.QueryContext(ctx, sql, params...)
+	if err != nil {
+		return nil, fmt.Errorf("search attachment derived text: %w", err)
+	}
+	defer rows.Close()
+
+	notes, err := scanNoteRows(rows)
+	if err != nil {
+		return nil, fmt.Errorf("search attachment derived text: %w", err)
+	}
+	if notes == nil {
+		notes = []*NoteRow{}
+	}
+	markMatchSource(notes, "attachment")
 	return notes, nil
+}
+
+func attachmentDerivedTextJSONPaths() []string {
+	return []string{"$.derived_text", "$.extracted_text", "$.ocr_text", "$.transcript", "$.text", "$.markdown"}
+}
+
+func attachmentDerivedTextPredicate(metadataColumn, placeholder string) string {
+	paths := attachmentDerivedTextJSONPaths()
+	parts := make([]string, 0, len(paths))
+	for _, path := range paths {
+		parts = append(parts, fmt.Sprintf("LOWER(CAST(COALESCE(json_extract(%s, '%s'), '') AS TEXT)) LIKE %s", metadataColumn, path, placeholder))
+	}
+	return strings.Join(parts, " OR ")
+}
+
+func markMatchSource(rows []*NoteRow, source string) {
+	for _, row := range rows {
+		row.MatchSource = source
+	}
+}
+
+func mergeSearchRows(primary, secondary []*NoteRow, limit int) []*NoteRow {
+	if limit <= 0 {
+		limit = defaultSearchLimit
+	}
+	merged := make([]*NoteRow, 0, min(limit, len(primary)+len(secondary)))
+	seen := make(map[string]bool, len(primary)+len(secondary))
+	for _, group := range [][]*NoteRow{primary, secondary} {
+		for _, row := range group {
+			if len(merged) >= limit {
+				return merged
+			}
+			if seen[row.Path] {
+				continue
+			}
+			seen[row.Path] = true
+			merged = append(merged, row)
+		}
+	}
+	return merged
 }
 
 // appendFilters adds optional WHERE clauses for PathPrefix, Type, and Status.

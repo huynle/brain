@@ -830,3 +830,45 @@ func TestSearchNotes_FilterByTags(t *testing.T) {
 		t.Errorf("expected tags0002, got %s", results[0].ShortID)
 	}
 }
+
+func TestSearchNotes_FindsAttachmentDerivedText(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	note := sampleNote("projects/proj/report/attachment-derived.md", "adtx0001", "Attachment Derived Entry")
+	body := "body without the attachment-only token"
+	note.Body = &body
+	typ := "report"
+	note.Type = &typ
+	if _, err := s.InsertNote(ctx, note); err != nil {
+		t.Fatalf("insert note: %v", err)
+	}
+
+	attachment, err := s.CreateAttachment(ctx, AttachmentInput{
+		Digest:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Size:      128,
+		MediaType: "application/pdf",
+		Metadata:  `{"filename":"source.pdf","derived_text":"needleattachmenttoken appears only in extracted attachment text"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAttachment failed: %v", err)
+	}
+	if err := s.LinkAttachmentToEntry(ctx, note.Path, attachment.ID, "source"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+
+	results, err := s.SearchNotes(ctx, "needleattachmenttoken", nil)
+	if err != nil {
+		t.Fatalf("SearchNotes error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("SearchNotes returned %d results, want 1 attachment-derived match", len(results))
+	}
+	if results[0].ShortID != "adtx0001" {
+		t.Fatalf("SearchNotes result short_id = %q, want adtx0001", results[0].ShortID)
+	}
+
+	if results[0].MatchSource != "attachment" {
+		t.Fatalf("MatchSource = %q, want attachment", results[0].MatchSource)
+	}
+}

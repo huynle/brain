@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 12
+const CurrentSchemaVersion = 13
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -232,6 +232,26 @@ CREATE TABLE IF NOT EXISTS note_embeddings_meta (
   FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
 );`
 
+const createAttachmentsTable = `
+CREATE TABLE IF NOT EXISTS attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  digest TEXT UNIQUE NOT NULL,
+  size INTEGER NOT NULL,
+  media_type TEXT DEFAULT '',
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);`
+
+const createEntryAttachmentsTable = `
+CREATE TABLE IF NOT EXISTS entry_attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  attachment_id INTEGER NOT NULL REFERENCES attachments(id) ON DELETE RESTRICT,
+  role TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(note_id, attachment_id, role)
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -275,6 +295,11 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_status ON note_embeddings_meta(status);",
 	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_feature ON note_embeddings_meta(feature_id);",
 	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_priority ON note_embeddings_meta(priority);",
+	// Attachment indexes
+	"CREATE INDEX IF NOT EXISTS idx_attachments_digest ON attachments(digest);",
+	"CREATE INDEX IF NOT EXISTS idx_entry_attachments_note ON entry_attachments(note_id);",
+	"CREATE INDEX IF NOT EXISTS idx_entry_attachments_attachment ON entry_attachments(attachment_id);",
+	"CREATE UNIQUE INDEX IF NOT EXISTS idx_entry_attachments_note_attachment_role ON entry_attachments(note_id, attachment_id, role);",
 }
 
 // ---------------------------------------------------------------------------
@@ -537,6 +562,32 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 13 {
+		// v13: add attachment metadata and entry-reference tables.
+		attachmentTables := []string{
+			createAttachmentsTable,
+			createEntryAttachmentsTable,
+		}
+		for _, ddl := range attachmentTables {
+			if _, err := db.Exec(ddl); err != nil {
+				if !isTableExistsError(err) {
+					return fmt.Errorf("migrate v13 (attachment tables): %w", err)
+				}
+			}
+		}
+		attachmentIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_attachments_digest ON attachments(digest)",
+			"CREATE INDEX IF NOT EXISTS idx_entry_attachments_note ON entry_attachments(note_id)",
+			"CREATE INDEX IF NOT EXISTS idx_entry_attachments_attachment ON entry_attachments(attachment_id)",
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_entry_attachments_note_attachment_role ON entry_attachments(note_id, attachment_id, role)",
+		}
+		for _, stmt := range attachmentIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v13 (attachment indexes): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -650,6 +701,8 @@ func InitSchema(db *sql.DB) error {
 		createWebhooksTable,
 		createWebhookDeliveriesTable,
 		createNoteEmbeddingsMetaTable,
+		createAttachmentsTable,
+		createEntryAttachmentsTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

@@ -50,6 +50,34 @@ type LinkInput struct {
 	Snippet    string
 }
 
+// AttachmentInput is the input for CreateAttachment.
+type AttachmentInput struct {
+	Digest    string
+	Size      int64
+	MediaType string
+	Metadata  string // JSON, defaults to "{}" if empty
+}
+
+// AttachmentRow represents a row in the attachments table.
+type AttachmentRow struct {
+	ID        int64
+	Digest    string
+	Size      int64
+	MediaType string
+	Metadata  string // JSON
+	CreatedAt string
+}
+
+// EntryAttachmentRow represents a row in the entry_attachments table.
+type EntryAttachmentRow struct {
+	ID           int64
+	NoteID       int64
+	NotePath     string
+	AttachmentID int64
+	Role         string
+	CreatedAt    string
+}
+
 // EntryMetaRow represents a row in the entry_meta table.
 type EntryMetaRow struct {
 	Path         string
@@ -91,13 +119,13 @@ type ListOptions struct {
 
 // EmbeddingSearchOptions configures embedding-based semantic search.
 type EmbeddingSearchOptions struct {
-	Limit      int
-	ProjectID  string
-	Type       string
-	Status     string
-	FeatureID  string
-	Priority   string
-	Tags       []string
+	Limit     int
+	ProjectID string
+	Type      string
+	Status    string
+	FeatureID string
+	Priority  string
+	Tags      []string
 }
 
 // OrphanOptions configures the GetOrphans query.

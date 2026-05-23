@@ -1090,6 +1090,11 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		req.DependsOn = &deps
 	}
 
+	if len(fm.Attachments) > 0 {
+		attachments := attachmentRefsFromFM(fm.Attachments)
+		req.Attachments = &attachments
+	}
+
 	// FeatureDependsOn (pointer to slice)
 	if len(fm.FeatureDependsOn) > 0 {
 		fdeps := fm.FeatureDependsOn
@@ -1119,4 +1124,42 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 	}
 
 	return req
+}
+
+func attachmentRefsFromFM(refs []frontmatter.AttachmentReference) []types.AttachmentReference {
+	if len(refs) == 0 {
+		return nil
+	}
+	result := make([]types.AttachmentReference, 0, len(refs))
+	for _, ref := range refs {
+		result = append(result, types.AttachmentReference{
+			ID:          ref.ID,
+			Filename:    ref.Filename,
+			ContentType: ref.ContentType,
+			Size:        ref.Size,
+			SHA256:      ref.SHA256,
+			Role:        ref.Role,
+			Caption:     ref.Caption,
+			Derived:     attachmentDerivedFromFM(ref.Derived),
+		})
+	}
+	return result
+}
+
+func attachmentDerivedFromFM(items []frontmatter.AttachmentDerived) []types.AttachmentDerived {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]types.AttachmentDerived, 0, len(items))
+	for _, item := range items {
+		result = append(result, types.AttachmentDerived{
+			ID:          item.ID,
+			Kind:        item.Kind,
+			ContentType: item.ContentType,
+			Size:        item.Size,
+			StorageKey:  item.StorageKey,
+			Created:     item.Created,
+		})
+	}
+	return result
 }

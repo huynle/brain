@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/pkg/frontmatter"
 )
 
 // =============================================================================
@@ -40,6 +41,36 @@ type mockBrainService struct {
 	generateLinkFunc   func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
 	bulkUpdateFunc     func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
 	updateMetadataFunc func(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error)
+}
+
+func TestMapFrontmatterToUpdateRequest_Attachments(t *testing.T) {
+	req := mapFrontmatterToUpdateRequest(frontmatter.Frontmatter{
+		Title:  "Attachment Entry",
+		Status: "active",
+		Attachments: []frontmatter.AttachmentReference{{
+			ID:          "att_x",
+			Filename:    "notes.pdf",
+			ContentType: "application/pdf",
+			Size:        1234,
+			Caption:     "Source notes",
+			Derived: []frontmatter.AttachmentDerived{{
+				ID:         "att_thumb",
+				Kind:       "thumbnail",
+				StorageKey: "thumbnails/att_thumb.png",
+			}},
+		}},
+	}, "Body")
+
+	if req.Attachments == nil {
+		t.Fatal("Attachments pointer is nil, want explicit update")
+	}
+	attachments := *req.Attachments
+	if len(attachments) != 1 || attachments[0].ID != "att_x" || attachments[0].ContentType != "application/pdf" || attachments[0].Caption != "Source notes" {
+		t.Fatalf("attachments = %#v, want mapped attachment reference", attachments)
+	}
+	if len(attachments[0].Derived) != 1 || attachments[0].Derived[0].Kind != "thumbnail" || attachments[0].Derived[0].StorageKey != "thumbnails/att_thumb.png" {
+		t.Fatalf("derived attachments = %#v, want thumbnail reference", attachments[0].Derived)
+	}
 }
 
 func (m *mockBrainService) Save(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {

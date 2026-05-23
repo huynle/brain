@@ -65,6 +65,28 @@ type RunFinalization struct {
 	SessionID   string `yaml:"session_id,omitempty" json:"session_id,omitempty"`
 }
 
+// AttachmentReference is the entry-frontmatter representation for an attachment.
+type AttachmentReference struct {
+	ID          string              `yaml:"id" json:"id"`
+	Filename    string              `yaml:"filename,omitempty" json:"filename,omitempty"`
+	ContentType string              `yaml:"content_type,omitempty" json:"content_type,omitempty"`
+	Size        int64               `yaml:"size,omitempty" json:"size,omitempty"`
+	SHA256      string              `yaml:"sha256,omitempty" json:"sha256,omitempty"`
+	Role        string              `yaml:"role,omitempty" json:"role,omitempty"`
+	Caption     string              `yaml:"caption,omitempty" json:"caption,omitempty"`
+	Derived     []AttachmentDerived `yaml:"derived,omitempty" json:"derived,omitempty"`
+}
+
+// AttachmentDerived references generated artifacts for an attachment.
+type AttachmentDerived struct {
+	ID          string `yaml:"id" json:"id"`
+	Kind        string `yaml:"kind" json:"kind"`
+	ContentType string `yaml:"content_type,omitempty" json:"content_type,omitempty"`
+	Size        int64  `yaml:"size,omitempty" json:"size,omitempty"`
+	StorageKey  string `yaml:"storage_key,omitempty" json:"storage_key,omitempty"`
+	Created     string `yaml:"created,omitempty" json:"created,omitempty"`
+}
+
 // AutomationTrigger defines when an automation fires (frontmatter representation).
 type AutomationTrigger struct {
 	Type     string            `yaml:"type" json:"type"`
@@ -108,6 +130,8 @@ type Frontmatter struct {
 	Tags     []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	Priority string   `yaml:"priority,omitempty" json:"priority,omitempty"`
 	Created  string   `yaml:"created,omitempty" json:"created,omitempty"`
+
+	Attachments []AttachmentReference `yaml:"attachments,omitempty" json:"attachments,omitempty"`
 
 	// Scheduling
 	Schedule        string    `yaml:"schedule,omitempty" json:"schedule,omitempty"`
@@ -239,6 +263,8 @@ type GenerateOptions struct {
 	Action  *AutomationAction
 	Retry   *AutomationRetry
 
+	Attachments []AttachmentReference
+
 	Sessions         map[string]SessionInfo
 	RunFinalizations map[string]RunFinalization
 }
@@ -268,6 +294,7 @@ type rawFrontmatter struct {
 	Name                string                     `yaml:"name"`
 	Status              string                     `yaml:"status"`
 	Tags                []string                   `yaml:"tags"`
+	Attachments         []AttachmentReference      `yaml:"attachments"`
 	Priority            string                     `yaml:"priority"`
 	Created             string                     `yaml:"created"`
 	Schedule            string                     `yaml:"schedule"`
@@ -327,7 +354,8 @@ type rawFrontmatter struct {
 var knownFields = map[string]bool{
 	"title": true, "type": true, "name": true, "status": true,
 	"tags": true, "priority": true, "created": true,
-	"schedule": true, "schedule_enabled": true, "next_run": true,
+	"attachments": true,
+	"schedule":    true, "schedule_enabled": true, "next_run": true,
 	"max_runs": true, "starts_at": true, "expires_at": true,
 	"run_once_at": true, "timezone": true, "runs": true,
 	"parent_id": true, "projectId": true,
@@ -440,6 +468,7 @@ func Parse(content string) (*Document, error) {
 		Name:                raw.Name,
 		Status:              raw.Status,
 		Tags:                raw.Tags,
+		Attachments:         raw.Attachments,
 		Priority:            raw.Priority,
 		Created:             raw.Created,
 		Schedule:            raw.Schedule,
@@ -635,6 +664,10 @@ func Serialize(fm *Frontmatter) string {
 		for _, tag := range fm.Tags {
 			lines = append(lines, "  - "+EscapeYamlValue(tag))
 		}
+	}
+
+	if len(fm.Attachments) > 0 {
+		lines = append(lines, serializeNestedStruct("attachments", fm.Attachments)...)
 	}
 
 	emitPlain("status", fm.Status)
@@ -846,6 +879,7 @@ func Generate(opts *GenerateOptions) string {
 		Name:                opts.Name,
 		Status:              status,
 		Tags:                tags,
+		Attachments:         opts.Attachments,
 		Priority:            opts.Priority,
 		Created:             opts.Created,
 		Schedule:            opts.Schedule,

@@ -1196,6 +1196,15 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaStringSlice(meta, "tags"); ok {
 		entry.Tags = v
 	}
+	if v, ok := meta["attachments"]; ok {
+		data, err := json.Marshal(v)
+		if err == nil {
+			var attachments []types.AttachmentReference
+			if err := json.Unmarshal(data, &attachments); err == nil {
+				entry.Attachments = attachments
+			}
+		}
+	}
 
 	// Schedule fields
 	if v, ok := metaString(meta, "schedule"); ok {

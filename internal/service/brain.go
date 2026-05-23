@@ -160,6 +160,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		Type:                req.Type,
 		Status:              status,
 		Tags:                sanitizedTags,
+		Attachments:         attachmentRefsToFM(req.Attachments),
 		Priority:            req.Priority,
 		Created:             now,
 		DependsOn:           sanitizedDeps,
@@ -446,6 +447,9 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["depends_on"]; ok {
 			fm.DependsOn = metaToStringSlice(v)
 		}
+		if v, ok := meta["attachments"]; ok {
+			fm.Attachments = metaToAttachmentRefsFM(v)
+		}
 		if v, ok := meta["parent_id"].(string); ok {
 			fm.ParentID = v
 		}
@@ -556,6 +560,56 @@ func metaToStringSlice(v interface{}) []string {
 	}
 }
 
+func attachmentRefsToFM(refs []types.AttachmentReference) []frontmatter.AttachmentReference {
+	if len(refs) == 0 {
+		return nil
+	}
+	result := make([]frontmatter.AttachmentReference, 0, len(refs))
+	for _, ref := range refs {
+		result = append(result, frontmatter.AttachmentReference{
+			ID:          ref.ID,
+			Filename:    ref.Filename,
+			ContentType: ref.ContentType,
+			Size:        ref.Size,
+			SHA256:      ref.SHA256,
+			Role:        ref.Role,
+			Caption:     ref.Caption,
+			Derived:     attachmentDerivedToFM(ref.Derived),
+		})
+	}
+	return result
+}
+
+func attachmentDerivedToFM(items []types.AttachmentDerived) []frontmatter.AttachmentDerived {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]frontmatter.AttachmentDerived, 0, len(items))
+	for _, item := range items {
+		result = append(result, frontmatter.AttachmentDerived{
+			ID:          item.ID,
+			Kind:        item.Kind,
+			ContentType: item.ContentType,
+			Size:        item.Size,
+			StorageKey:  item.StorageKey,
+			Created:     item.Created,
+		})
+	}
+	return result
+}
+
+func metaToAttachmentRefsFM(v interface{}) []frontmatter.AttachmentReference {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var refs []frontmatter.AttachmentReference
+	if err := json.Unmarshal(data, &refs); err != nil {
+		return nil
+	}
+	return refs
+}
+
 // =============================================================================
 // Update
 // =============================================================================
@@ -617,6 +671,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 			}
 		}
 		fm.DependsOn = sanitized
+	}
+	if req.Attachments != nil {
+		fm.Attachments = attachmentRefsToFM(*req.Attachments)
 	}
 
 	// Schedule fields

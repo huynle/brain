@@ -34,6 +34,9 @@ var linkRe = regexp.MustCompile(`(^|[^!])\[([^\]]*)\]\(([^)]+)\)`)
 // urlPrefixRe matches http:// or https:// at the start of a string.
 var urlPrefixRe = regexp.MustCompile(`^https?://`)
 
+// attachmentPrefix identifies first-class brain attachment references.
+const attachmentPrefix = "brain-attachment://"
+
 // Lead-stripping patterns
 var (
 	headingRe         = regexp.MustCompile(`(?m)^#{1,6}\s+`)
@@ -79,7 +82,9 @@ func ExtractLinks(markdown string) []ExtractedLink {
 
 		// Classify link type
 		linkType := "markdown"
-		if urlPrefixRe.MatchString(href) {
+		if strings.HasPrefix(href, attachmentPrefix) {
+			linkType = "attachment"
+		} else if urlPrefixRe.MatchString(href) {
 			linkType = "url"
 		}
 

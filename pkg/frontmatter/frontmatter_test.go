@@ -92,6 +92,53 @@ func TestParse_Tags(t *testing.T) {
 	}
 }
 
+func TestParse_Attachments(t *testing.T) {
+	content := `---
+title: Test
+type: report
+status: active
+attachments:
+  - id: att_x
+    filename: notes.pdf
+    content_type: application/pdf
+    size: 1234
+    sha256: abc123
+    role: source
+    caption: Source notes
+    derived:
+      - id: att_thumb
+        kind: thumbnail
+        content_type: image/png
+        size: 55
+        storage_key: thumbnails/att_thumb.png
+        created: "2026-05-20T12:00:00Z"
+---
+
+Content`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	attachments := doc.Frontmatter.Attachments
+	if len(attachments) != 1 {
+		t.Fatalf("attachments length = %d, want 1", len(attachments))
+	}
+	att := attachments[0]
+	if att.ID != "att_x" || att.Filename != "notes.pdf" || att.ContentType != "application/pdf" || att.Size != 1234 || att.SHA256 != "abc123" || att.Role != "source" || att.Caption != "Source notes" {
+		t.Fatalf("attachment = %#v, want parsed metadata", att)
+	}
+	if len(att.Derived) != 1 || att.Derived[0].ID != "att_thumb" || att.Derived[0].Kind != "thumbnail" || att.Derived[0].StorageKey != "thumbnails/att_thumb.png" {
+		t.Fatalf("derived attachment = %#v, want thumbnail metadata", att.Derived)
+	}
+	if doc.Frontmatter.Extra != nil {
+		if _, ok := doc.Frontmatter.Extra["attachments"]; ok {
+			t.Fatal("attachments should be a typed frontmatter field, not Extra")
+		}
+	}
+}
+
 func TestParse_QuotedTitleWithSpecialChars(t *testing.T) {
 	content := "---\ntitle: \"Test: With Colon\"\ntype: task\nstatus: active\n---\n\nContent"
 
@@ -893,6 +940,59 @@ func TestSerialize_TagsArray(t *testing.T) {
 	}
 	if !strings.Contains(result, "  - urgent") {
 		t.Errorf("missing tag 'urgent' in:\n%s", result)
+	}
+}
+
+func TestSerialize_Attachments(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Task",
+		Type:   "task",
+		Status: "active",
+		Attachments: []AttachmentReference{{
+			ID:          "att_x",
+			Filename:    "notes.pdf",
+			ContentType: "application/pdf",
+			Size:        1234,
+			SHA256:      "abc123",
+			Role:        "source",
+			Caption:     "Source notes",
+			Derived: []AttachmentDerived{{
+				ID:          "att_thumb",
+				Kind:        "thumbnail",
+				ContentType: "image/png",
+				Size:        55,
+				StorageKey:  "thumbnails/att_thumb.png",
+				Created:     "2026-05-20T12:00:00Z",
+			}},
+		}},
+	}
+
+	result := Serialize(fm)
+	for _, want := range []string{
+		"attachments:",
+		"  - id: att_x",
+		"    filename: notes.pdf",
+		"    content_type: application/pdf",
+		"    size: 1234",
+		"    sha256: abc123",
+		"    role: source",
+		"    caption: Source notes",
+		"    derived:",
+		"      - id: att_thumb",
+		"        kind: thumbnail",
+		"        storage_key: thumbnails/att_thumb.png",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in:\n%s", want, result)
+		}
+	}
+
+	doc, err := Parse("---\n" + result + "---\n\nBody")
+	if err != nil {
+		t.Fatalf("parse serialized result: %v", err)
+	}
+	if len(doc.Frontmatter.Attachments) != 1 || doc.Frontmatter.Attachments[0].ID != "att_x" || len(doc.Frontmatter.Attachments[0].Derived) != 1 {
+		t.Fatalf("round-tripped attachments = %#v, want typed attachment metadata", doc.Frontmatter.Attachments)
 	}
 }
 

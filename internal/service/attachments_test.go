@@ -47,7 +47,7 @@ func newMockBrainForAttachments(entries ...*types.BrainEntry) *mockBrainForAttac
 	return m
 }
 
-func (m *mockBrainForAttachments) Recall(_ context.Context, pathOrID string) (*types.BrainEntry, error) {
+func (m *mockBrainForAttachments) Recall(_ context.Context, pathOrID string, include ...string) (*types.BrainEntry, error) {
 	m.recallCalls = append(m.recallCalls, pathOrID)
 	entry := m.entries[pathOrID]
 	if entry == nil {

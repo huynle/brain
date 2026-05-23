@@ -140,7 +140,7 @@ func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
 		id = chi.URLParam(r, "id")
 	}
 
-	entry, err := h.brain.Recall(r.Context(), id)
+	entry, err := h.brain.Recall(r.Context(), id, parseIncludeQuery(r.URL.Query().Get("include"))...)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("Entry not found: %s", id))
@@ -234,6 +234,7 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 		FeatureID: q.Get("feature_id"),
 		Filename:  q.Get("filename"),
 		Tags:      q.Get("tags"),
+		Include:   parseIncludeQuery(q.Get("include")),
 		SortBy:    q.Get("sortBy"),
 		Project:   q.Get("project"),
 		SortOrder: q.Get("sortOrder"),
@@ -978,6 +979,24 @@ func isValidSortBy(s string) bool {
 // isValidPriority checks if a priority value is valid.
 func isValidPriority(p string) bool {
 	return p == "high" || p == "medium" || p == "low"
+}
+
+// parseIncludeQuery parses comma-separated include query values while ignoring
+// empty segments. It preserves caller order so services can apply precedence.
+func parseIncludeQuery(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	include := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		include = append(include, part)
+	}
+	return include
 }
 
 // strPtr returns a pointer to the given string, or nil if empty.

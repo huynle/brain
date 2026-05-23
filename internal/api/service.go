@@ -21,7 +21,7 @@ type BrainService interface {
 	Save(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error)
 
 	// Recall retrieves a brain entry by path or 8-char ID.
-	Recall(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
+	Recall(ctx context.Context, pathOrID string, include ...string) (*types.BrainEntry, error)
 
 	// RecallFull returns the full raw file content (frontmatter + body) for an entry.
 	// Used when the caller needs the complete file, not just the parsed body.

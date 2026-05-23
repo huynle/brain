@@ -195,7 +195,7 @@ func (m *mockBrainForMonitor) List(_ context.Context, req types.ListEntriesReque
 	}, nil
 }
 
-func (m *mockBrainForMonitor) Recall(_ context.Context, pathOrID string) (*types.BrainEntry, error) {
+func (m *mockBrainForMonitor) Recall(_ context.Context, pathOrID string, include ...string) (*types.BrainEntry, error) {
 	if entry, ok := m.entries[pathOrID]; ok {
 		return entry, nil
 	}

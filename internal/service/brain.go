@@ -291,7 +291,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 // =============================================================================
 
 // Recall retrieves a brain entry by path, short ID, or title.
-func (s *BrainServiceImpl) Recall(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+func (s *BrainServiceImpl) Recall(ctx context.Context, pathOrID string, include ...string) (*types.BrainEntry, error) {
 	if pathOrID == "" {
 		return nil, fmt.Errorf("path or ID is required")
 	}

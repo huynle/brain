@@ -521,18 +521,19 @@ type BulkUpdateResponse struct {
 
 // ListEntriesRequest holds query parameters for GET /entries.
 type ListEntriesRequest struct {
-	Type      string `json:"type,omitempty"`
-	Status    string `json:"status,omitempty"`
-	FeatureID string `json:"feature_id,omitempty"`
-	Filename  string `json:"filename,omitempty"`
-	Tags      string `json:"tags,omitempty"`
-	Limit     int    `json:"limit,omitempty"`
-	Offset    int    `json:"offset,omitempty"`
-	Global    *bool  `json:"global,omitempty"`
-	SortBy    string `json:"sortBy,omitempty"`
-	Project   string `json:"project,omitempty"`
-	SortOrder string `json:"sortOrder,omitempty"`
-	Priority  string `json:"priority,omitempty"`
+	Type      string   `json:"type,omitempty"`
+	Status    string   `json:"status,omitempty"`
+	FeatureID string   `json:"feature_id,omitempty"`
+	Filename  string   `json:"filename,omitempty"`
+	Tags      string   `json:"tags,omitempty"`
+	Include   []string `json:"include,omitempty"`
+	Limit     int      `json:"limit,omitempty"`
+	Offset    int      `json:"offset,omitempty"`
+	Global    *bool    `json:"global,omitempty"`
+	SortBy    string   `json:"sortBy,omitempty"`
+	Project   string   `json:"project,omitempty"`
+	SortOrder string   `json:"sortOrder,omitempty"`
+	Priority  string   `json:"priority,omitempty"`
 }
 
 // ListEntriesResponse is the response for GET /entries.
@@ -567,6 +568,7 @@ type SearchRequest struct {
 	Status    string   `json:"status,omitempty"`
 	FeatureID string   `json:"feature_id,omitempty"`
 	Tags      []string `json:"tags,omitempty"`
+	Include   []string `json:"include,omitempty"`
 	Limit     *int     `json:"limit,omitempty"`
 	Global    *bool    `json:"global,omitempty"`
 	Project   string   `json:"project,omitempty"`
@@ -576,12 +578,14 @@ type SearchRequest struct {
 
 // SearchResult is a single search result.
 type SearchResult struct {
-	ID      string `json:"id"`
-	Path    string `json:"path"`
-	Title   string `json:"title"`
-	Type    string `json:"type"`
-	Status  string `json:"status"`
-	Snippet string `json:"snippet"`
+	ID          string                `json:"id"`
+	Path        string                `json:"path"`
+	Title       string                `json:"title"`
+	Type        string                `json:"type"`
+	Status      string                `json:"status"`
+	Snippet     string                `json:"snippet"`
+	MatchSource string                `json:"match_source,omitempty"`
+	Attachments []AttachmentReference `json:"attachments,omitempty"`
 }
 
 // SearchResponse is the response for POST /search.

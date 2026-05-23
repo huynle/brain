@@ -22,6 +22,7 @@ import (
 type mockBrainService struct {
 	saveFunc           func(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error)
 	recallFunc         func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
+	recallIncludeFunc  func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error)
 	recallFullFunc     func(ctx context.Context, pathOrID string) (string, error)
 	updateFunc         func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
 	deleteFunc         func(ctx context.Context, pathOrID string) error
@@ -80,7 +81,10 @@ func (m *mockBrainService) Save(ctx context.Context, req types.CreateEntryReques
 	return nil, fmt.Errorf("saveFunc not set")
 }
 
-func (m *mockBrainService) Recall(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+func (m *mockBrainService) Recall(ctx context.Context, pathOrID string, include ...string) (*types.BrainEntry, error) {
+	if m.recallIncludeFunc != nil {
+		return m.recallIncludeFunc(ctx, pathOrID, include)
+	}
 	if m.recallFunc != nil {
 		return m.recallFunc(ctx, pathOrID)
 	}
@@ -492,16 +496,19 @@ func TestHandleGetEntry(t *testing.T) {
 	tests := []struct {
 		name       string
 		id         string
-		mockRecall func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
+		mockRecall func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error)
 		wantStatus int
 		checkBody  func(t *testing.T, resp *http.Response)
 	}{
 		{
 			name: "success by ID",
 			id:   "abc12def",
-			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
 				if pathOrID != "abc12def" {
 					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
+				}
+				if len(include) != 0 {
+					return nil, fmt.Errorf("include = %#v, want empty", include)
 				}
 				return &types.BrainEntry{
 					ID:      "abc12def",
@@ -527,7 +534,7 @@ func TestHandleGetEntry(t *testing.T) {
 		{
 			name: "not found",
 			id:   "notexist",
-			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
 				return nil, ErrNotFound
 			},
 			wantStatus: http.StatusNotFound,
@@ -541,7 +548,7 @@ func TestHandleGetEntry(t *testing.T) {
 		{
 			name: "service error",
 			id:   "abc12def",
-			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
 				return nil, fmt.Errorf("database error")
 			},
 			wantStatus: http.StatusInternalServerError,
@@ -549,7 +556,7 @@ func TestHandleGetEntry(t *testing.T) {
 		{
 			name: "success by full path",
 			id:   "projects/govpu/task/1bg4bj9y.md",
-			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
 				if pathOrID != "projects/govpu/task/1bg4bj9y.md" {
 					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
 				}
@@ -574,11 +581,25 @@ func TestHandleGetEntry(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "passes include query values",
+			id:   "abc12def?include=attachments,attachment_text",
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
+				if pathOrID != "abc12def" {
+					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
+				}
+				if len(include) != 2 || include[0] != "attachments" || include[1] != "attachment_text" {
+					return nil, fmt.Errorf("include = %#v, want attachments and attachment_text", include)
+				}
+				return &types.BrainEntry{ID: "abc12def", Path: "projects/default/plan/test.md", Title: "Test Entry", Type: "plan", Status: "active"}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockBrainService{recallFunc: tt.mockRecall}
+			mock := &mockBrainService{recallIncludeFunc: tt.mockRecall}
 			router := newTestRouter(mock)
 			srv := httptest.NewServer(router)
 			defer srv.Close()
@@ -889,7 +910,7 @@ func TestHandleListEntries(t *testing.T) {
 		},
 		{
 			name:  "with all query params",
-			query: "?type=task&status=pending&feature_id=auth&filename=abc&tags=go,api&limit=10&offset=5&global=true&sortBy=modified",
+			query: "?type=task&status=pending&feature_id=auth&filename=abc&tags=go,api&limit=10&offset=5&global=true&sortBy=modified&include=attachments,attachment_text",
 			mockList: func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error) {
 				// Verify all query params were parsed correctly
 				if req.Type != "task" {
@@ -918,6 +939,9 @@ func TestHandleListEntries(t *testing.T) {
 				}
 				if req.SortBy != "modified" {
 					return nil, fmt.Errorf("sortBy = %q, want %q", req.SortBy, "modified")
+				}
+				if len(req.Include) != 2 || req.Include[0] != "attachments" || req.Include[1] != "attachment_text" {
+					return nil, fmt.Errorf("include = %#v, want attachments and attachment_text", req.Include)
 				}
 				return &types.ListEntriesResponse{
 					Entries: []types.BrainEntry{},

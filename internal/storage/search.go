@@ -152,12 +152,11 @@ func (s *StorageLayer) searchAttachmentDerivedText(ctx context.Context, query st
 	sql := "SELECT DISTINCT " + noteColumnsAliased + `
 		FROM notes n
 		JOIN entry_attachments ea ON ea.note_id = n.id
-		JOIN attachments a ON a.id = ea.attachment_id
-		WHERE (` + attachmentDerivedTextPredicate("a.metadata", "?") + `)`
-	params := []interface{}{}
-	for range attachmentDerivedTextJSONPaths() {
-		params = append(params, likeQuery)
-	}
+		JOIN attachment_derived ad ON ad.attachment_id = ea.attachment_id
+		WHERE ad.kind = 'text'
+			AND ad.status = 'ready'
+			AND LOWER(ad.text) LIKE ?`
+	params := []interface{}{likeQuery}
 
 	sql, params = appendFilters(sql, params, "n", opts)
 
@@ -179,19 +178,6 @@ func (s *StorageLayer) searchAttachmentDerivedText(ctx context.Context, query st
 	}
 	markMatchSource(notes, "attachment")
 	return notes, nil
-}
-
-func attachmentDerivedTextJSONPaths() []string {
-	return []string{"$.derived_text", "$.extracted_text", "$.ocr_text", "$.transcript", "$.text", "$.markdown"}
-}
-
-func attachmentDerivedTextPredicate(metadataColumn, placeholder string) string {
-	paths := attachmentDerivedTextJSONPaths()
-	parts := make([]string, 0, len(paths))
-	for _, path := range paths {
-		parts = append(parts, fmt.Sprintf("LOWER(CAST(COALESCE(json_extract(%s, '%s'), '') AS TEXT)) LIKE %s", metadataColumn, path, placeholder))
-	}
-	return strings.Join(parts, " OR ")
 }
 
 func markMatchSource(rows []*NoteRow, source string) {

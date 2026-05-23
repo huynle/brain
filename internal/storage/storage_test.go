@@ -693,9 +693,9 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 	}
 }
 
-func TestSchemaVersion_IncludesFeatureAssignments(t *testing.T) {
-	if CurrentSchemaVersion != 13 {
-		t.Errorf("CurrentSchemaVersion = %d, want 13", CurrentSchemaVersion)
+func TestSchemaVersion_IncludesAttachmentDerived(t *testing.T) {
+	if CurrentSchemaVersion != 14 {
+		t.Errorf("CurrentSchemaVersion = %d, want 14", CurrentSchemaVersion)
 	}
 }
 

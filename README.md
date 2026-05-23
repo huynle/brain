@@ -668,9 +668,14 @@ brain doctor --fix --dry-run
 |----------|--------|
 | **Storage Layer** | SQLite database accessible and healthy |
 | **Database Health** | Tables exist, migrations applied |
+| **Attachment Storage** | Attachment storage root exists, upload limits are configured, database attachment digests match stored blobs, and orphan blobs are reported |
 | **Directory Permissions** | Brain directory readable and writable |
 | **Tool Versions** | Go version (optional, skippable) |
 | **OpenCode Integration** | Plugin installed and configured |
+
+#### Attachment Backup Guidance
+
+First-class attachments are split across SQLite metadata (`brain.db`) and blob files under `server.attachments.storage_root` (default: `<brain_dir>/attachments`). Production backups and exports must include both. If `storage_root` is outside `BRAIN_DIR`, `brain doctor -v` warns so backup jobs can explicitly include that external path alongside `brain.db`.
 
 ### Runner Commands
 
@@ -763,6 +768,8 @@ max_runs: 0
 | `BRAIN_HOST` | `0.0.0.0` | API server host |
 | `BRAIN_DIR` | `~/.brain` | Brain data directory |
 | `BRAIN_API_URL` | `http://localhost:3333` | API URL (for runner) |
+| `server.attachments.storage_root` | `<BRAIN_DIR>/attachments` | Attachment blob storage root in `config.yaml`; include with `brain.db` in backups |
+| `server.attachments.max_upload_size_bytes` | `104857600` | Maximum attachment upload size in bytes |
 | `ENABLE_TLS` | `false` | Enable HTTPS/TLS |
 | `TLS_KEY` | — | Path to TLS private key file (PEM format) |
 | `TLS_CERT` | — | Path to TLS certificate file (PEM format) |

@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 13
+const CurrentSchemaVersion = 14
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -252,6 +252,21 @@ CREATE TABLE IF NOT EXISTS entry_attachments (
   UNIQUE(note_id, attachment_id, role)
 );`
 
+const createAttachmentDerivedTable = `
+CREATE TABLE IF NOT EXISTS attachment_derived (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attachment_id INTEGER NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'text',
+  status TEXT NOT NULL DEFAULT '',
+  content_type TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(attachment_id, kind)
+);`
+
 // ---------------------------------------------------------------------------
 // Indexes
 // ---------------------------------------------------------------------------
@@ -300,6 +315,8 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_entry_attachments_note ON entry_attachments(note_id);",
 	"CREATE INDEX IF NOT EXISTS idx_entry_attachments_attachment ON entry_attachments(attachment_id);",
 	"CREATE UNIQUE INDEX IF NOT EXISTS idx_entry_attachments_note_attachment_role ON entry_attachments(note_id, attachment_id, role);",
+	"CREATE INDEX IF NOT EXISTS idx_attachment_derived_attachment ON attachment_derived(attachment_id);",
+	"CREATE INDEX IF NOT EXISTS idx_attachment_derived_status ON attachment_derived(status);",
 }
 
 // ---------------------------------------------------------------------------
@@ -588,6 +605,24 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 14 {
+		// v14: add derived attachment extraction status/text table.
+		if _, err := db.Exec(createAttachmentDerivedTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v14 (attachment derived table): %w", err)
+			}
+		}
+		attachmentDerivedIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_attachment_derived_attachment ON attachment_derived(attachment_id)",
+			"CREATE INDEX IF NOT EXISTS idx_attachment_derived_status ON attachment_derived(status)",
+		}
+		for _, stmt := range attachmentDerivedIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v14 (attachment derived indexes): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -703,6 +738,7 @@ func InitSchema(db *sql.DB) error {
 		createNoteEmbeddingsMetaTable,
 		createAttachmentsTable,
 		createEntryAttachmentsTable,
+		createAttachmentDerivedTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/doctor"
 )
+
+const defaultDoctorAttachmentMaxUploadSizeBytes int64 = 100 * 1024 * 1024
 
 // DoctorFlags holds flags for the doctor command.
 type DoctorFlags struct {
@@ -42,6 +45,14 @@ func (c *DoctorCommand) Execute() error {
 	brainDir := expandPath(c.Config.Server.BrainDir)
 
 	// Create doctor options
+	attachmentRoot := c.Config.Server.Attachments.StorageRoot
+	if attachmentRoot == "" {
+		attachmentRoot = filepath.Join(brainDir, "attachments")
+	}
+	attachmentMaxUpload := c.Config.Server.Attachments.MaxUploadSizeBytes
+	if attachmentMaxUpload <= 0 {
+		attachmentMaxUpload = defaultDoctorAttachmentMaxUploadSizeBytes
+	}
 	opts := doctor.DoctorOptions{
 		Fix:              c.Flags.Fix,
 		Force:            c.Flags.Force,
@@ -49,6 +60,10 @@ func (c *DoctorCommand) Execute() error {
 		Verbose:          c.Flags.Verbose,
 		SkipVersionCheck: c.Flags.SkipVersionCheck,
 		BrainDir:         brainDir,
+
+		EnableAttachmentDiagnostics:  true,
+		AttachmentStorageRoot:        attachmentRoot,
+		AttachmentMaxUploadSizeBytes: attachmentMaxUpload,
 	}
 
 	// Create doctor service

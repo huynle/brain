@@ -276,6 +276,52 @@ func TestAttachmentServiceCreateGetOpenListAndDeleteUnreferenced(t *testing.T) {
 	}
 }
 
+func TestAttachmentServiceCreateEnforcesMIMEPolicy(t *testing.T) {
+	tests := []struct {
+		name    string
+		allowed []string
+		blocked []string
+		reqType string
+		content string
+	}{
+		{
+			name:    "rejects media type not on allow list",
+			allowed: []string{"application/pdf"},
+			reqType: "text/plain",
+			content: "hello text",
+		},
+		{
+			name:    "rejects blocked media type",
+			blocked: []string{"text/plain"},
+			reqType: "text/plain",
+			content: "hello text",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store, err := storage.New(t.TempDir() + "/brain.db")
+			if err != nil {
+				t.Fatalf("storage.New failed: %v", err)
+			}
+			t.Cleanup(func() { _ = store.Close() })
+			svc := NewAttachmentService(store, newRecordingBlobStore(), nil, 1024, WithAttachmentMIMEPolicy(tt.allowed, tt.blocked))
+
+			_, err = svc.Create(context.Background(), "proj", types.CreateAttachmentRequest{
+				Filename:    "note.txt",
+				ContentType: tt.reqType,
+				Size:        int64(len(tt.content)),
+			}, strings.NewReader(tt.content))
+			if err == nil {
+				t.Fatal("Create returned nil error, want MIME policy rejection")
+			}
+			if !strings.Contains(strings.ToLower(err.Error()), "mime type") {
+				t.Fatalf("error = %v, want MIME policy error", err)
+			}
+		})
+	}
+}
+
 func TestAttachmentServiceOpenTextReturnsTextualBlob(t *testing.T) {
 	svc, _, _ := newAttachmentServiceForTest(t, 1024)
 	ctx := context.Background()
@@ -322,6 +368,94 @@ func TestAttachmentServiceOpenTextReturnsNotFoundForNonTextualBlob(t *testing.T)
 	}
 	if att != nil || stream != nil {
 		t.Fatalf("OpenText returned attachment/stream for non-text: %#v/%#v", att, stream)
+	}
+}
+
+func TestAttachmentServiceOpenTextPrefersReadyDerivedText(t *testing.T) {
+	svc, _, _ := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	content := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{
+		Filename:    "scan.png",
+		ContentType: "image/png",
+		Size:        int64(len(content)),
+	}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+
+	stored, err := svc.StoreDerivedText(ctx, "proj", created.Attachment.ID, types.AttachmentDerivedText{
+		Kind:        "text",
+		Status:      "ready",
+		ContentType: "text/plain; charset=utf-8",
+		Text:        "ocr text from image",
+		Metadata:    map[string]string{"extractor": "test"},
+	})
+	if err != nil {
+		t.Fatalf("StoreDerivedText returned error: %v", err)
+	}
+	if stored.Status != "ready" || stored.Text != "ocr text from image" || stored.Metadata["extractor"] != "test" {
+		t.Fatalf("StoreDerivedText = %#v, want ready derived text", stored)
+	}
+
+	att, stream, err := svc.OpenText(ctx, "proj", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("OpenText returned error: %v", err)
+	}
+	defer stream.Close()
+	readBack, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("ReadAll stream failed: %v", err)
+	}
+	if att.ID != created.Attachment.ID || string(readBack) != "ocr text from image" {
+		t.Fatalf("OpenText metadata/content = %#v/%q, want derived text", att, readBack)
+	}
+}
+
+func TestAttachmentServiceFailedDerivedTextDoesNotBlockAttachmentBehavior(t *testing.T) {
+	svc, _, _ := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	content := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{
+		Filename:    "scan.png",
+		ContentType: "image/png",
+		Size:        int64(len(content)),
+	}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	if _, err := svc.StoreDerivedText(ctx, "proj", created.Attachment.ID, types.AttachmentDerivedText{
+		Kind:   "text",
+		Status: "failed",
+		Error:  "unsupported image format",
+	}); err != nil {
+		t.Fatalf("StoreDerivedText failed status returned error: %v", err)
+	}
+
+	if got, err := svc.Get(ctx, "proj", created.Attachment.ID); err != nil || got.ID != created.Attachment.ID {
+		t.Fatalf("Get after failed extraction = %#v/%v, want original attachment", got, err)
+	}
+	opened, stream, err := svc.Open(ctx, "proj", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("Open after failed extraction returned error: %v", err)
+	}
+	_ = stream.Close()
+	if opened.ID != created.Attachment.ID {
+		t.Fatalf("Open after failed extraction = %#v, want original attachment", opened)
+	}
+	list, err := svc.List(ctx, "proj")
+	if err != nil || list.Total != 1 {
+		t.Fatalf("List after failed extraction = %#v/%v, want one original attachment", list, err)
+	}
+	status, err := svc.GetDerivedText(ctx, "proj", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("GetDerivedText returned error: %v", err)
+	}
+	if status == nil || status.Status != "failed" || status.Error != "unsupported image format" {
+		t.Fatalf("GetDerivedText = %#v, want failed status", status)
+	}
+	if att, text, err := svc.OpenText(ctx, "proj", created.Attachment.ID); !errors.Is(err, api.ErrNotFound) || att != nil || text != nil {
+		t.Fatalf("OpenText after failed extraction = %#v/%#v/%v, want api.ErrNotFound", att, text, err)
 	}
 }
 

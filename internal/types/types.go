@@ -294,6 +294,19 @@ type AttachmentDerived struct {
 	Created     string `json:"created,omitempty"`
 }
 
+// AttachmentDerivedText stores extracted text and extraction status for an attachment.
+type AttachmentDerivedText struct {
+	ID          string            `json:"id,omitempty"`
+	Kind        string            `json:"kind,omitempty"`
+	Status      string            `json:"status"`
+	ContentType string            `json:"content_type,omitempty"`
+	Text        string            `json:"text,omitempty"`
+	Error       string            `json:"error,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+	Created     string            `json:"created,omitempty"`
+	Modified    string            `json:"modified,omitempty"`
+}
+
 // CreateAttachmentRequest is metadata submitted before/with an attachment upload.
 // The binary payload is transported separately; do not add base64 fields here.
 type CreateAttachmentRequest struct {

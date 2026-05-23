@@ -104,6 +104,12 @@ type AttachmentService interface {
 	// OpenText returns derived/plain text for a textual attachment. Callers must close the stream.
 	OpenText(ctx context.Context, projectID, attachmentID string) (*types.Attachment, io.ReadCloser, error)
 
+	// StoreDerivedText upserts extracted text/status for an attachment.
+	StoreDerivedText(ctx context.Context, projectID, attachmentID string, derived types.AttachmentDerivedText) (*types.AttachmentDerivedText, error)
+
+	// GetDerivedText returns extracted text/status for an attachment, or nil when absent.
+	GetDerivedText(ctx context.Context, projectID, attachmentID string) (*types.AttachmentDerivedText, error)
+
 	// List returns attachments visible within a project.
 	List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error)
 

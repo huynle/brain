@@ -10,6 +10,7 @@ import (
 )
 
 const attachmentColumns = `id, digest, size, media_type, metadata, created_at`
+const attachmentDerivedColumns = `id, attachment_id, kind, status, content_type, text, error, metadata, created_at, updated_at`
 
 func (s *StorageLayer) CreateAttachment(ctx context.Context, in AttachmentInput) (*AttachmentRow, error) {
 	if err := validateAttachmentInput(in); err != nil {
@@ -196,6 +197,67 @@ func (s *StorageLayer) CountAttachmentReferences(ctx context.Context, attachment
 	return count, nil
 }
 
+func (s *StorageLayer) UpsertAttachmentDerived(ctx context.Context, in AttachmentDerivedInput) (*AttachmentDerivedRow, error) {
+	if err := validateAttachmentDerivedInput(in); err != nil {
+		return nil, err
+	}
+	metadata := in.Metadata
+	if metadata == "" {
+		metadata = "{}"
+	}
+	kind := strings.TrimSpace(in.Kind)
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO attachment_derived (attachment_id, kind, status, content_type, text, error, metadata)
+		VALUES (?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(attachment_id, kind) DO UPDATE SET
+			status = excluded.status,
+			content_type = excluded.content_type,
+			text = excluded.text,
+			error = excluded.error,
+			metadata = excluded.metadata,
+			updated_at = datetime('now')
+	`, in.AttachmentID, kind, strings.TrimSpace(in.Status), strings.TrimSpace(in.ContentType), in.Text, in.Error, metadata)
+	if err != nil {
+		return nil, fmt.Errorf("upsert attachment derived: %w", err)
+	}
+	row, err := s.GetAttachmentDerived(ctx, in.AttachmentID, kind)
+	if err != nil {
+		return nil, fmt.Errorf("read attachment derived: %w", err)
+	}
+	return row, nil
+}
+
+func (s *StorageLayer) GetAttachmentDerived(ctx context.Context, attachmentID int64, kind string) (*AttachmentDerivedRow, error) {
+	if attachmentID <= 0 {
+		return nil, errors.New("attachment id must be positive")
+	}
+	kind = strings.TrimSpace(kind)
+	if !isSafeAttachmentRole(kind) {
+		return nil, fmt.Errorf("attachment derived kind %q is unsafe", kind)
+	}
+	row := s.db.QueryRowContext(ctx, "SELECT "+attachmentDerivedColumns+" FROM attachment_derived WHERE attachment_id = ? AND kind = ?", attachmentID, kind)
+	derived, err := scanAttachmentDerivedRow(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get attachment derived: %w", err)
+	}
+	return derived, nil
+}
+
+func (s *StorageLayer) ListAttachmentDerived(ctx context.Context, attachmentID int64) ([]*AttachmentDerivedRow, error) {
+	if attachmentID <= 0 {
+		return nil, errors.New("attachment id must be positive")
+	}
+	rows, err := s.db.QueryContext(ctx, "SELECT "+attachmentDerivedColumns+" FROM attachment_derived WHERE attachment_id = ? ORDER BY id", attachmentID)
+	if err != nil {
+		return nil, fmt.Errorf("list attachment derived: %w", err)
+	}
+	defer rows.Close()
+	return scanAttachmentDerivedRows(rows)
+}
+
 func (s *StorageLayer) DeleteAttachmentIfUnreferenced(ctx context.Context, attachmentID int64) (bool, error) {
 	if attachmentID <= 0 {
 		return false, errors.New("attachment id must be positive")
@@ -260,6 +322,26 @@ func validateReferenceInput(notePath string, attachmentID int64, role string) er
 	return nil
 }
 
+func validateAttachmentDerivedInput(in AttachmentDerivedInput) error {
+	if in.AttachmentID <= 0 {
+		return errors.New("attachment id must be positive")
+	}
+	if !isSafeAttachmentRole(strings.TrimSpace(in.Kind)) {
+		return fmt.Errorf("attachment derived kind %q is unsafe", in.Kind)
+	}
+	if strings.TrimSpace(in.Status) == "" {
+		return errors.New("attachment derived status must not be empty")
+	}
+	metadata := in.Metadata
+	if metadata == "" {
+		metadata = "{}"
+	}
+	if !json.Valid([]byte(metadata)) {
+		return errors.New("attachment derived metadata must be valid JSON")
+	}
+	return nil
+}
+
 func isSafeAttachmentRole(role string) bool {
 	if role == "" {
 		return false
@@ -294,4 +376,27 @@ func scanAttachmentRows(rows *sql.Rows) ([]*AttachmentRow, error) {
 		return nil, fmt.Errorf("iterate attachments: %w", err)
 	}
 	return attachments, nil
+}
+
+func scanAttachmentDerivedRow(row *sql.Row) (*AttachmentDerivedRow, error) {
+	var derived AttachmentDerivedRow
+	if err := row.Scan(&derived.ID, &derived.AttachmentID, &derived.Kind, &derived.Status, &derived.ContentType, &derived.Text, &derived.Error, &derived.Metadata, &derived.CreatedAt, &derived.UpdatedAt); err != nil {
+		return nil, err
+	}
+	return &derived, nil
+}
+
+func scanAttachmentDerivedRows(rows *sql.Rows) ([]*AttachmentDerivedRow, error) {
+	derivedRows := make([]*AttachmentDerivedRow, 0)
+	for rows.Next() {
+		var derived AttachmentDerivedRow
+		if err := rows.Scan(&derived.ID, &derived.AttachmentID, &derived.Kind, &derived.Status, &derived.ContentType, &derived.Text, &derived.Error, &derived.Metadata, &derived.CreatedAt, &derived.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan attachment derived: %w", err)
+		}
+		derivedRows = append(derivedRows, &derived)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate attachment derived: %w", err)
+	}
+	return derivedRows, nil
 }

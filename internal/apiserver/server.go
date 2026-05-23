@@ -138,7 +138,13 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	if err != nil {
 		return fmt.Errorf("failed to initialize attachment blob store: %w", err)
 	}
-	attachmentSvc := service.NewAttachmentService(store, blobStore, brainSvc, cfg.Attachments.MaxUploadSizeBytes)
+	attachmentSvc := service.NewAttachmentService(
+		store,
+		blobStore,
+		brainSvc,
+		cfg.Attachments.MaxUploadSizeBytes,
+		service.WithAttachmentMIMEPolicy(cfg.Attachments.AllowedMIMETypes, cfg.Attachments.BlockedMIMETypes),
+	)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)

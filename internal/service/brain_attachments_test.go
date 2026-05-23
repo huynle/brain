@@ -1,12 +1,19 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -206,7 +213,7 @@ func TestSearchAttachmentDerivedTextSetsMatchSource(t *testing.T) {
 		Digest:    strings.Repeat("c", 64),
 		Size:      321,
 		MediaType: "application/pdf",
-		Metadata:  `{"filename":"derived.pdf","project_id":"default","derived_text":"servicederivedneedle exists only in extracted attachment text"}`,
+		Metadata:  `{"filename":"derived.pdf","project_id":"default"}`,
 	})
 	if err != nil {
 		t.Fatalf("CreateAttachment failed: %v", err)
@@ -222,6 +229,16 @@ func TestSearchAttachmentDerivedTextSetsMatchSource(t *testing.T) {
 	}
 	if err := store.LinkAttachmentToEntry(ctx, saved.Path, row.ID, "source"); err != nil {
 		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+	if _, err := store.UpsertAttachmentDerived(ctx, storage.AttachmentDerivedInput{
+		AttachmentID: row.ID,
+		Kind:         "text",
+		Status:       "ready",
+		ContentType:  "text/plain",
+		Text:         "servicederivedneedle exists only in extracted attachment text",
+		Metadata:     `{}`,
+	}); err != nil {
+		t.Fatalf("UpsertAttachmentDerived failed: %v", err)
 	}
 
 	search, err := svc.Search(ctx, types.SearchRequest{Query: "servicederivedneedle", Include: []string{"attachments"}, Limit: intPtr(10)})
@@ -239,5 +256,113 @@ func TestSearchAttachmentDerivedTextSetsMatchSource(t *testing.T) {
 	}
 	if got := search.Results[0].Attachments; len(got) != 1 || got[0].Filename != "derived.pdf" || got[0].DownloadURL == "" {
 		t.Fatalf("search attachments = %#v, want hydrated attachment metadata", got)
+	}
+}
+
+func TestAttachmentEndToEndSafetyAndDerivedSearch(t *testing.T) {
+	brain, store, _ := newTestBrainService(t)
+	blobRoot := t.TempDir()
+	blobs, err := blobstore.NewFilesystemStore(blobRoot, 32)
+	if err != nil {
+		t.Fatalf("NewFilesystemStore failed: %v", err)
+	}
+	attachments := NewAttachmentService(store, blobs, brain, 32)
+	ctx := context.Background()
+
+	entry, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "report",
+		Title:   "End-to-End Attachment Entry",
+		Content: "entry body without derived search token",
+		Project: "default",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	content := []byte("hello derived attachment")
+	sum := sha256.Sum256(content)
+	wantSHA := hex.EncodeToString(sum[:])
+	created, err := attachments.Create(ctx, "default", types.CreateAttachmentRequest{
+		Filename:    "source.txt",
+		ContentType: "text/plain",
+		Size:        int64(len(content)),
+		SHA256:      wantSHA,
+		Metadata:    map[string]string{"purpose": "e2e"},
+	}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if created.Attachment.SHA256 != wantSHA {
+		t.Fatalf("created SHA256 = %q, want %q", created.Attachment.SHA256, wantSHA)
+	}
+
+	attached, err := attachments.Attach(ctx, "default", entry.ID, types.AttachEntryAttachmentRequest{Attachment: types.AttachmentReference{ID: created.Attachment.ID, Role: "source", Caption: "fixture"}})
+	if err != nil {
+		t.Fatalf("Attach failed: %v", err)
+	}
+	if len(attached.Attachments) != 1 || attached.Attachments[0].ID != created.Attachment.ID {
+		t.Fatalf("Attach response = %#v", attached)
+	}
+
+	recalled, err := brain.Recall(ctx, entry.ID, "attachments")
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if got := recalled.Attachments; len(got) != 1 || got[0].Filename != "source.txt" || got[0].SHA256 != wantSHA || got[0].DownloadURL == "" {
+		t.Fatalf("recalled attachments = %#v, want hydrated metadata and download URL", got)
+	}
+
+	_, stream, err := attachments.Open(ctx, "default", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	downLoaded, err := io.ReadAll(stream)
+	_ = stream.Close()
+	if err != nil {
+		t.Fatalf("ReadAll failed: %v", err)
+	}
+	downloadSum := sha256.Sum256(downLoaded)
+	if gotSHA := hex.EncodeToString(downloadSum[:]); gotSHA != wantSHA {
+		t.Fatalf("download SHA256 = %q, want %q", gotSHA, wantSHA)
+	}
+
+	if _, err := attachments.StoreDerivedText(ctx, "default", created.Attachment.ID, types.AttachmentDerivedText{Kind: "text", Status: "ready", ContentType: "text/plain", Text: "uniquephase3derivedneedle"}); err != nil {
+		t.Fatalf("StoreDerivedText failed: %v", err)
+	}
+	search, err := brain.Search(ctx, types.SearchRequest{Query: "uniquephase3derivedneedle", Include: []string{"attachments"}, Limit: intPtr(10)})
+	if err != nil {
+		t.Fatalf("Search failed: %v", err)
+	}
+	if len(search.Results) != 1 || search.Results[0].ID != entry.ID || search.Results[0].MatchSource != "attachment" {
+		t.Fatalf("derived search = %#v, want entry match from attachment", search.Results)
+	}
+
+	deleted, err := attachments.Delete(ctx, "default", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("Delete referenced failed: %v", err)
+	}
+	if deleted {
+		t.Fatal("Delete removed referenced attachment; want refusal")
+	}
+
+	if _, err := attachments.Detach(ctx, "default", entry.ID, created.Attachment.ID, "source"); err != nil {
+		t.Fatalf("Detach failed: %v", err)
+	}
+	deleted, err = attachments.Delete(ctx, "default", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("Delete detached failed: %v", err)
+	}
+	if !deleted {
+		t.Fatal("Delete detached returned false, want true")
+	}
+	if _, _, err := attachments.Open(ctx, "default", created.Attachment.ID); !errors.Is(err, api.ErrNotFound) {
+		t.Fatalf("Open deleted err = %v, want api.ErrNotFound", err)
+	}
+
+	if _, err := attachments.Create(ctx, "default", types.CreateAttachmentRequest{Filename: "too-large.txt", Size: 33}, strings.NewReader(strings.Repeat("x", 33))); !errors.Is(err, blobstore.ErrTooLarge) {
+		t.Fatalf("oversized create err = %v, want ErrTooLarge", err)
+	}
+	if _, err := attachments.Create(ctx, "default", types.CreateAttachmentRequest{Filename: "../unsafe.txt", Size: 4}, strings.NewReader("safe")); err == nil || !strings.Contains(err.Error(), "filename") {
+		t.Fatalf("unsafe filename err = %v, want filename validation", err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -41,6 +42,7 @@ type mockAttachmentService struct {
 	attachErr       error
 	detachErr       error
 	deleteErr       error
+	deleteResult    *bool
 	openErr         error
 	textErr         error
 }
@@ -86,6 +88,18 @@ func (m *mockAttachmentService) OpenText(ctx context.Context, projectID, attachm
 		return nil, nil, m.textErr
 	}
 	return &types.Attachment{ID: attachmentID, Filename: "note.txt", ContentType: "text/plain; charset=utf-8", Size: 11}, io.NopCloser(strings.NewReader("hello world")), nil
+}
+
+func (m *mockAttachmentService) StoreDerivedText(ctx context.Context, projectID, attachmentID string, derived types.AttachmentDerivedText) (*types.AttachmentDerivedText, error) {
+	m.projectID = projectID
+	m.attachmentID = attachmentID
+	return &derived, nil
+}
+
+func (m *mockAttachmentService) GetDerivedText(ctx context.Context, projectID, attachmentID string) (*types.AttachmentDerivedText, error) {
+	m.projectID = projectID
+	m.attachmentID = attachmentID
+	return nil, nil
 }
 
 func (m *mockAttachmentService) List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error) {
@@ -143,6 +157,9 @@ func (m *mockAttachmentService) Delete(ctx context.Context, projectID, attachmen
 	if m.deleteErr != nil {
 		return false, m.deleteErr
 	}
+	if m.deleteResult != nil {
+		return *m.deleteResult, nil
+	}
 	return true, nil
 }
 
@@ -187,6 +204,23 @@ func TestDeleteAttachmentRouteDispatchesToService(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"deleted":true`) {
 		t.Fatalf("body = %s, want deleted true", rec.Body.String())
+	}
+}
+
+func TestDeleteAttachmentRouteReturnsConflictWhenReferenced(t *testing.T) {
+	deleteResult := false
+	attachments := &mockAttachmentService{deleteResult: &deleteResult}
+	router := newAttachmentTestRouter(attachments)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/v1/attachments/att_123?project_id=test-project", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusConflict, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "referenced") {
+		t.Fatalf("body = %s, want referenced deletion refusal", rec.Body.String())
 	}
 }
 
@@ -241,6 +275,66 @@ func TestCreateAttachmentMultipartUpload(t *testing.T) {
 	}
 	if string(attachments.createBody) != "hello world" {
 		t.Fatalf("content body = %q", string(attachments.createBody))
+	}
+}
+
+func TestCreateAttachmentMapsTooLargeError(t *testing.T) {
+	attachments := &mockAttachmentService{createErr: blobstore.ErrTooLarge}
+	router := newAttachmentTestRouter(attachments)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("project_id", "test-project"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "large.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("too large")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusRequestEntityTooLarge, rec.Body.String())
+	}
+}
+
+func TestCreateAttachmentMapsMIMEPolicyError(t *testing.T) {
+	attachments := &mockAttachmentService{createErr: errors.New(`attachment MIME type "application/x-msdownload" is blocked`)}
+	router := newAttachmentTestRouter(attachments)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("project_id", "test-project"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "blocked.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("blocked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, http.StatusUnsupportedMediaType, rec.Body.String())
 	}
 }
 

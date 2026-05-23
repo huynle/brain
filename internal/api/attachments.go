@@ -14,6 +14,7 @@ import (
 	"unicode"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -65,11 +66,7 @@ func (h *Handler) HandleCreateAttachment(w http.ResponseWriter, r *http.Request)
 
 	resp, err := h.attachments.Create(r.Context(), projectID, req, bytes.NewReader(content))
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "Not Found", err.Error())
-			return
-		}
-		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		writeAttachmentServiceError(w, err)
 		return
 	}
 	WriteJSON(w, http.StatusCreated, resp)
@@ -120,6 +117,10 @@ func (h *Handler) HandleDeleteAttachment(w http.ResponseWriter, r *http.Request)
 	deleted, err := h.attachments.Delete(r.Context(), projectID, chi.URLParam(r, "attachmentID"))
 	if err != nil {
 		writeAttachmentServiceError(w, err)
+		return
+	}
+	if !deleted {
+		WriteError(w, http.StatusConflict, "Conflict", "attachment is still referenced by one or more entries")
 		return
 	}
 	WriteJSON(w, http.StatusOK, map[string]bool{"deleted": deleted})
@@ -311,6 +312,14 @@ func writeAttachmentServiceError(w http.ResponseWriter, err error) {
 		WriteError(w, http.StatusNotFound, "Not Found", err.Error())
 		return
 	}
+	if errors.Is(err, blobstore.ErrTooLarge) {
+		WriteError(w, http.StatusRequestEntityTooLarge, "Request Entity Too Large", err.Error())
+		return
+	}
+	if isAttachmentUnsupportedMediaTypeError(err) {
+		WriteError(w, http.StatusUnsupportedMediaType, "Unsupported Media Type", err.Error())
+		return
+	}
 	if isAttachmentBadRequestError(err) {
 		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
 		return
@@ -324,4 +333,12 @@ func isAttachmentBadRequestError(err error) bool {
 	}
 	msg := strings.ToLower(err.Error())
 	return strings.Contains(msg, "required") || strings.Contains(msg, "unsafe") || strings.Contains(msg, "must") || strings.Contains(msg, "invalid")
+}
+
+func isAttachmentUnsupportedMediaTypeError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "mime type") && (strings.Contains(msg, "blocked") || strings.Contains(msg, "not allowed"))
 }

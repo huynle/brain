@@ -3,6 +3,7 @@ package doctor
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -97,6 +98,36 @@ func TestDoctorService_Diagnose(t *testing.T) {
 		}
 		if templatesCheck.Status != CheckStatusFail {
 			t.Errorf("templates status = %v, want %v", templatesCheck.Status, CheckStatusFail)
+		}
+	})
+
+	t.Run("runs attachment diagnostics when configured", func(t *testing.T) {
+		brainDir := t.TempDir()
+		setupCompleteBrain(t, brainDir)
+		storageRoot := filepath.Join(t.TempDir(), "attachments")
+		if err := os.MkdirAll(storageRoot, 0755); err != nil {
+			t.Fatal(err)
+		}
+
+		result, err := NewDoctorService().Diagnose(DoctorOptions{
+			BrainDir:                     brainDir,
+			AttachmentStorageRoot:        storageRoot,
+			AttachmentMaxUploadSizeBytes: 1024,
+			AttachmentDigestChecks:       []AttachmentDigestCheck{},
+			EnableAttachmentDiagnostics:  true,
+		})
+		if err != nil {
+			t.Fatalf("Diagnose() error = %v", err)
+		}
+
+		for _, name := range []string{"attachment-storage", "attachment-upload-limits", "attachment-integrity"} {
+			check := findCheckForDoctorTest(result, name)
+			if check == nil {
+				t.Fatalf("check %q not found in %#v", name, result.Checks)
+			}
+		}
+		if storage := findCheckForDoctorTest(result, "attachment-storage"); storage.Status != CheckStatusWarn || !strings.Contains(storage.Message, "outside brain directory") {
+			t.Fatalf("attachment-storage = %#v, want outside-brain backup warning", storage)
 		}
 	})
 }
@@ -221,6 +252,15 @@ func TestNewDoctorService(t *testing.T) {
 	}
 }
 
+func findCheckForDoctorTest(result *DoctorResult, name string) *Check {
+	for i := range result.Checks {
+		if result.Checks[i].Name == name {
+			return &result.Checks[i]
+		}
+	}
+	return nil
+}
+
 // Helper function to setup a complete brain installation for testing
 func setupCompleteBrain(t *testing.T, brainDir string) {
 	t.Helper()
@@ -228,6 +268,7 @@ func setupCompleteBrain(t *testing.T, brainDir string) {
 	// Create directory structure
 	dirs := []string{
 		brainDir,
+		filepath.Join(brainDir, "attachments"),
 		filepath.Join(brainDir, ".brain-data"),
 		filepath.Join(brainDir, ".brain-data", "templates"),
 		filepath.Join(brainDir, "global"),

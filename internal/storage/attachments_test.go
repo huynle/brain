@@ -9,7 +9,7 @@ import (
 func TestAttachmentSchema_TablesAndIndexesExist(t *testing.T) {
 	s := newTestStorage(t)
 
-	tables := []string{"attachments", "entry_attachments"}
+	tables := []string{"attachments", "entry_attachments", "attachment_derived"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
@@ -27,6 +27,8 @@ func TestAttachmentSchema_TablesAndIndexesExist(t *testing.T) {
 		"idx_entry_attachments_note",
 		"idx_entry_attachments_attachment",
 		"idx_entry_attachments_note_attachment_role",
+		"idx_attachment_derived_attachment",
+		"idx_attachment_derived_status",
 	}
 	for _, idx := range indexes {
 		t.Run(idx, func(t *testing.T) {
@@ -38,6 +40,37 @@ func TestAttachmentSchema_TablesAndIndexesExist(t *testing.T) {
 				t.Fatalf("index %q not found: %v", idx, err)
 			}
 		})
+	}
+}
+
+func TestAttachmentSchema_DeleteAttachmentCascadesDerivedRows(t *testing.T) {
+	s := newTestStorage(t)
+
+	res, err := s.DB().Exec(`INSERT INTO attachments (digest, size, media_type, metadata) VALUES ('sha256:derived-delete', 12, 'image/png', '{}')`)
+	if err != nil {
+		t.Fatalf("insert attachment failed: %v", err)
+	}
+	attachmentID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("LastInsertId failed: %v", err)
+	}
+	if _, err := s.DB().Exec(`
+		INSERT INTO attachment_derived (attachment_id, kind, status, content_type, text, error, metadata)
+		VALUES (?, 'text', 'ready', 'text/plain; charset=utf-8', 'extracted text', '', '{}')
+	`, attachmentID); err != nil {
+		t.Fatalf("insert derived row failed: %v", err)
+	}
+
+	if _, err := s.DB().Exec(`DELETE FROM attachments WHERE id = ?`, attachmentID); err != nil {
+		t.Fatalf("delete attachment failed: %v", err)
+	}
+
+	var derivedCount int
+	if err := s.DB().QueryRow(`SELECT count(*) FROM attachment_derived WHERE attachment_id = ?`, attachmentID).Scan(&derivedCount); err != nil {
+		t.Fatalf("count derived rows failed: %v", err)
+	}
+	if derivedCount != 0 {
+		t.Fatalf("derived row count after attachment delete = %d, want 0", derivedCount)
 	}
 }
 
@@ -106,7 +139,7 @@ func TestAttachmentSchema_MigrationFromV12(t *testing.T) {
 		t.Fatalf("migrateSchema failed: %v", err)
 	}
 
-	for _, table := range []string{"attachments", "entry_attachments"} {
+	for _, table := range []string{"attachments", "entry_attachments", "attachment_derived"} {
 		t.Run(table, func(t *testing.T) {
 			var name string
 			if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name); err != nil {
@@ -259,6 +292,95 @@ func TestAttachmentStorage_ReferenceLookupAndSafeDelete(t *testing.T) {
 	}
 	if !deleted {
 		t.Fatal("DeleteAttachmentIfUnreferenced returned false for unreferenced attachment")
+	}
+}
+
+func TestAttachmentStorage_UpsertGetAndListDerivedText(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	att, err := s.CreateAttachment(ctx, AttachmentInput{Digest: "sha256:derived", Size: 9, MediaType: "image/png", Metadata: `{}`})
+	if err != nil {
+		t.Fatalf("CreateAttachment failed: %v", err)
+	}
+
+	ready, err := s.UpsertAttachmentDerived(ctx, AttachmentDerivedInput{
+		AttachmentID: att.ID,
+		Kind:         "text",
+		Status:       "ready",
+		ContentType:  "text/plain; charset=utf-8",
+		Text:         "extracted text",
+		Metadata:     `{"extractor":"test"}`,
+	})
+	if err != nil {
+		t.Fatalf("UpsertAttachmentDerived ready failed: %v", err)
+	}
+	if ready.ID == 0 || ready.AttachmentID != att.ID || ready.Kind != "text" || ready.Status != "ready" || ready.Text != "extracted text" || ready.ContentType != "text/plain; charset=utf-8" {
+		t.Fatalf("ready derived row = %#v, want persisted ready text", ready)
+	}
+
+	got, err := s.GetAttachmentDerived(ctx, att.ID, "text")
+	if err != nil {
+		t.Fatalf("GetAttachmentDerived failed: %v", err)
+	}
+	if got == nil || got.ID != ready.ID || got.Metadata != `{"extractor":"test"}` {
+		t.Fatalf("GetAttachmentDerived = %#v, want ready row %#v", got, ready)
+	}
+
+	failed, err := s.UpsertAttachmentDerived(ctx, AttachmentDerivedInput{
+		AttachmentID: att.ID,
+		Kind:         "text",
+		Status:       "failed",
+		Error:        "unsupported image format",
+		Metadata:     `{}`,
+	})
+	if err != nil {
+		t.Fatalf("UpsertAttachmentDerived failed status failed: %v", err)
+	}
+	if failed.ID != ready.ID || failed.Status != "failed" || failed.Text != "" || failed.Error != "unsupported image format" {
+		t.Fatalf("failed derived row = %#v, want updated failed status on same row", failed)
+	}
+
+	list, err := s.ListAttachmentDerived(ctx, att.ID)
+	if err != nil {
+		t.Fatalf("ListAttachmentDerived failed: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != ready.ID || list[0].Status != "failed" {
+		t.Fatalf("ListAttachmentDerived = %#v, want updated single row", list)
+	}
+}
+
+func TestAttachmentStorage_DerivedValidationAndMissingRows(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	if _, err := s.GetAttachmentDerived(ctx, 12345, "text"); err != nil {
+		t.Fatalf("GetAttachmentDerived missing row error = %v, want nil", err)
+	}
+	missing, err := s.GetAttachmentDerived(ctx, 12345, "text")
+	if err != nil {
+		t.Fatalf("GetAttachmentDerived missing row failed: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("GetAttachmentDerived missing = %#v, want nil", missing)
+	}
+
+	for _, tt := range []struct {
+		name string
+		in   AttachmentDerivedInput
+	}{
+		{name: "non-positive attachment", in: AttachmentDerivedInput{AttachmentID: 0, Kind: "text", Status: "ready", Metadata: `{}`}},
+		{name: "empty kind", in: AttachmentDerivedInput{AttachmentID: 1, Kind: "", Status: "ready", Metadata: `{}`}},
+		{name: "unsafe kind", in: AttachmentDerivedInput{AttachmentID: 1, Kind: "bad/kind", Status: "ready", Metadata: `{}`}},
+		{name: "empty status", in: AttachmentDerivedInput{AttachmentID: 1, Kind: "text", Status: "", Metadata: `{}`}},
+		{name: "invalid metadata", in: AttachmentDerivedInput{AttachmentID: 1, Kind: "text", Status: "ready", Metadata: `{not-json}`}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.UpsertAttachmentDerived(ctx, tt.in)
+			if err == nil {
+				t.Fatal("expected validation error, got nil")
+			}
+		})
 	}
 }
 

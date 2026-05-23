@@ -34,19 +34,39 @@ type AttachmentServiceImpl struct {
 	blobs        blobstore.Store
 	brain        api.BrainService
 	maxSizeBytes int64
+	allowedMIME  map[string]struct{}
+	blockedMIME  map[string]struct{}
+}
+
+// AttachmentServiceOption configures attachment service policy.
+type AttachmentServiceOption func(*AttachmentServiceImpl)
+
+// WithAttachmentMIMEPolicy configures allowed and blocked MIME media types.
+// Blocked types take precedence. Empty allowed list permits all non-blocked types.
+func WithAttachmentMIMEPolicy(allowed, blocked []string) AttachmentServiceOption {
+	return func(s *AttachmentServiceImpl) {
+		s.allowedMIME = normalizeMIMEPolicy(allowed)
+		s.blockedMIME = normalizeMIMEPolicy(blocked)
+	}
 }
 
 // NewAttachmentService creates an attachment orchestration service.
-func NewAttachmentService(store *storage.StorageLayer, blobs blobstore.Store, brain api.BrainService, maxSizeBytes int64) *AttachmentServiceImpl {
+func NewAttachmentService(store *storage.StorageLayer, blobs blobstore.Store, brain api.BrainService, maxSizeBytes int64, opts ...AttachmentServiceOption) *AttachmentServiceImpl {
 	if maxSizeBytes <= 0 {
 		maxSizeBytes = defaultAttachmentMaxSizeBytes
 	}
-	return &AttachmentServiceImpl{
+	svc := &AttachmentServiceImpl{
 		storage:      store,
 		blobs:        blobs,
 		brain:        brain,
 		maxSizeBytes: maxSizeBytes,
 	}
+	for _, opt := range opts {
+		if opt != nil {
+			opt(svc)
+		}
+	}
+	return svc
 }
 
 // Create stores binary content and creates/reuses attachment metadata for a project.
@@ -84,6 +104,9 @@ func (s *AttachmentServiceImpl) Create(ctx context.Context, projectID string, re
 		sample = sample[:512]
 	}
 	mediaType := sniffAttachmentContentType(req.ContentType, sample)
+	if err := s.validateAttachmentMIMEType(mediaType); err != nil {
+		return nil, err
+	}
 	storedDigest, size, err := s.blobs.Put(bytes.NewReader(data))
 	if err != nil {
 		return nil, err
@@ -159,19 +182,88 @@ func (s *AttachmentServiceImpl) Open(ctx context.Context, projectID, attachmentI
 	return att, stream, nil
 }
 
-// OpenText returns attachment text when text is derivable from the original blob.
-// Minimal derived text behavior treats textual media types as their own text and
-// reports not found for non-text blobs with no derived text available.
+// OpenText returns ready derived text first, then falls back to textual original blobs.
 func (s *AttachmentServiceImpl) OpenText(ctx context.Context, projectID, attachmentID string) (*types.Attachment, io.ReadCloser, error) {
-	att, stream, err := s.Open(ctx, projectID, attachmentID)
+	row, err := s.getProjectAttachmentRow(ctx, projectID, attachmentID)
 	if err != nil {
+		return nil, nil, err
+	}
+	att, err := attachmentRowToDTO(row)
+	if err != nil {
+		return nil, nil, err
+	}
+	derived, err := s.storage.GetAttachmentDerived(ctx, row.ID, "text")
+	if err != nil {
+		return nil, nil, err
+	}
+	if derived != nil && derived.Status == "ready" && derived.Text != "" {
+		return &att, io.NopCloser(strings.NewReader(derived.Text)), nil
+	}
+	stream, err := s.blobs.Get(att.StorageKey)
+	if err != nil {
+		if errors.Is(err, blobstore.ErrNotFound) || errors.Is(err, blobstore.ErrInvalidHash) {
+			return nil, nil, api.ErrNotFound
+		}
 		return nil, nil, err
 	}
 	if !isTextualAttachmentContentType(att.ContentType) {
 		_ = stream.Close()
 		return nil, nil, api.ErrNotFound
 	}
-	return att, stream, nil
+	return &att, stream, nil
+}
+
+// StoreDerivedText upserts extracted text/status for an attachment.
+func (s *AttachmentServiceImpl) StoreDerivedText(ctx context.Context, projectID, attachmentID string, derived types.AttachmentDerivedText) (*types.AttachmentDerivedText, error) {
+	row, err := s.getProjectAttachmentRow(ctx, projectID, attachmentID)
+	if err != nil {
+		return nil, err
+	}
+	kind := strings.TrimSpace(derived.Kind)
+	if kind == "" {
+		kind = "text"
+	}
+	metadata, err := attachmentDerivedMetadataToJSON(derived.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	stored, err := s.storage.UpsertAttachmentDerived(ctx, storage.AttachmentDerivedInput{
+		AttachmentID: row.ID,
+		Kind:         kind,
+		Status:       derived.Status,
+		ContentType:  derived.ContentType,
+		Text:         derived.Text,
+		Error:        derived.Error,
+		Metadata:     metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	dto, err := attachmentDerivedRowToDTO(stored)
+	if err != nil {
+		return nil, err
+	}
+	return &dto, nil
+}
+
+// GetDerivedText returns extracted text/status for an attachment, or nil when absent.
+func (s *AttachmentServiceImpl) GetDerivedText(ctx context.Context, projectID, attachmentID string) (*types.AttachmentDerivedText, error) {
+	row, err := s.getProjectAttachmentRow(ctx, projectID, attachmentID)
+	if err != nil {
+		return nil, err
+	}
+	derived, err := s.storage.GetAttachmentDerived(ctx, row.ID, "text")
+	if err != nil {
+		return nil, err
+	}
+	if derived == nil {
+		return nil, nil
+	}
+	dto, err := attachmentDerivedRowToDTO(derived)
+	if err != nil {
+		return nil, err
+	}
+	return &dto, nil
 }
 
 // List returns attachments visible within a project.
@@ -572,8 +664,45 @@ func sniffAttachmentContentType(declared string, sample []byte) string {
 	return http.DetectContentType(sample)
 }
 
+func normalizeMIMEPolicy(values []string) map[string]struct{} {
+	if len(values) == 0 {
+		return nil
+	}
+	policy := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		mediaType := normalizeAttachmentMediaType(value)
+		if mediaType != "" {
+			policy[mediaType] = struct{}{}
+		}
+	}
+	if len(policy) == 0 {
+		return nil
+	}
+	return policy
+}
+
+func normalizeAttachmentMediaType(contentType string) string {
+	return strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+}
+
+func (s *AttachmentServiceImpl) validateAttachmentMIMEType(contentType string) error {
+	mediaType := normalizeAttachmentMediaType(contentType)
+	if mediaType == "" {
+		mediaType = "application/octet-stream"
+	}
+	if _, blocked := s.blockedMIME[mediaType]; blocked {
+		return fmt.Errorf("attachment MIME type %q is blocked", mediaType)
+	}
+	if len(s.allowedMIME) > 0 {
+		if _, allowed := s.allowedMIME[mediaType]; !allowed {
+			return fmt.Errorf("attachment MIME type %q is not allowed", mediaType)
+		}
+	}
+	return nil
+}
+
 func isTextualAttachmentContentType(contentType string) bool {
-	mediaType := strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	mediaType := normalizeAttachmentMediaType(contentType)
 	if strings.HasPrefix(mediaType, "text/") {
 		return true
 	}
@@ -633,4 +762,36 @@ func attachmentMetadataToJSON(req types.CreateAttachmentRequest, projectID strin
 		return "", fmt.Errorf("encode attachment metadata: %w", err)
 	}
 	return string(data), nil
+}
+
+func attachmentDerivedMetadataToJSON(metadata map[string]string) (string, error) {
+	if metadata == nil {
+		metadata = map[string]string{}
+	}
+	data, err := json.Marshal(metadata)
+	if err != nil {
+		return "", fmt.Errorf("encode attachment derived metadata: %w", err)
+	}
+	return string(data), nil
+}
+
+func attachmentDerivedRowToDTO(row *storage.AttachmentDerivedRow) (types.AttachmentDerivedText, error) {
+	if row == nil {
+		return types.AttachmentDerivedText{}, errors.New("attachment derived row is nil")
+	}
+	metadata, err := attachmentMetadataFromJSON(row.Metadata)
+	if err != nil {
+		return types.AttachmentDerivedText{}, err
+	}
+	return types.AttachmentDerivedText{
+		ID:          strconv.FormatInt(row.ID, 10),
+		Kind:        row.Kind,
+		Status:      row.Status,
+		ContentType: row.ContentType,
+		Text:        row.Text,
+		Error:       row.Error,
+		Metadata:    metadata,
+		Created:     row.CreatedAt,
+		Modified:    row.UpdatedAt,
+	}, nil
 }

@@ -72,6 +72,31 @@ type AttachmentRow struct {
 	CreatedAt string
 }
 
+// AttachmentDerivedInput is the input for UpsertAttachmentDerived.
+type AttachmentDerivedInput struct {
+	AttachmentID int64
+	Kind         string
+	Status       string
+	ContentType  string
+	Text         string
+	Error        string
+	Metadata     string // JSON, defaults to "{}" if empty
+}
+
+// AttachmentDerivedRow represents derived attachment extraction output/status.
+type AttachmentDerivedRow struct {
+	ID           int64
+	AttachmentID int64
+	Kind         string
+	Status       string
+	ContentType  string
+	Text         string
+	Error        string
+	Metadata     string
+	CreatedAt    string
+	UpdatedAt    string
+}
+
 // EntryAttachmentRow represents a row in the entry_attachments table.
 type EntryAttachmentRow struct {
 	ID           int64

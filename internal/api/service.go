@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -85,6 +86,33 @@ type BrainService interface {
 // EmbeddingService is optionally implemented by BrainService implementations that can generate embeddings.
 type EmbeddingService interface {
 	EmbedEntries(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error)
+}
+
+// AttachmentService defines orchestration operations for binary attachments.
+// Implementations own validation, blob persistence, metadata persistence, entry
+// association, and safe deletion semantics; HTTP handlers own transport details.
+type AttachmentService interface {
+	// Create stores binary content and creates/reuses attachment metadata for a project.
+	Create(ctx context.Context, projectID string, req types.CreateAttachmentRequest, content io.Reader) (*types.CreateAttachmentResponse, error)
+
+	// Get returns attachment metadata by ID within a project.
+	Get(ctx context.Context, projectID, attachmentID string) (*types.Attachment, error)
+
+	// Open returns attachment metadata plus a readable content stream. Callers must close the stream.
+	Open(ctx context.Context, projectID, attachmentID string) (*types.Attachment, io.ReadCloser, error)
+
+	// List returns attachments visible within a project.
+	List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error)
+
+	// Attach links an existing attachment to a brain entry and returns updated entry attachment refs.
+	Attach(ctx context.Context, projectID, pathOrID string, req types.AttachEntryAttachmentRequest) (*types.AttachEntryAttachmentResponse, error)
+
+	// Detach removes an attachment link from a brain entry and returns updated entry attachment refs.
+	Detach(ctx context.Context, projectID, pathOrID, attachmentID, role string) (*types.AttachEntryAttachmentResponse, error)
+
+	// Delete removes an attachment only when it is safe to do so.
+	// The boolean reports whether metadata/blob content was actually deleted.
+	Delete(ctx context.Context, projectID, attachmentID string) (bool, error)
 }
 
 // TaskFilterOptions holds optional filters for task queries.

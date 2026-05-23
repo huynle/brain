@@ -9,6 +9,7 @@ import (
 // Handler holds service dependencies for HTTP handlers.
 type Handler struct {
 	brain          BrainService
+	attachments    AttachmentService
 	tasks          TaskService
 	runner         RunnerService
 	runnerRegistry RunnerRegistryService
@@ -37,6 +38,13 @@ func NewHandler(brain BrainService, opts ...HandlerOption) *Handler {
 func WithTaskService(ts TaskService) HandlerOption {
 	return func(h *Handler) {
 		h.tasks = ts
+	}
+}
+
+// WithAttachmentService sets the AttachmentService on the Handler.
+func WithAttachmentService(as AttachmentService) HandlerOption {
+	return func(h *Handler) {
+		h.attachments = as
 	}
 }
 

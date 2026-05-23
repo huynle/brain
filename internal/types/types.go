@@ -133,6 +133,10 @@ type BrainEntry struct {
 	Tags     []string `json:"tags"`
 	Priority string   `json:"priority,omitempty"`
 
+	// Attachments contains typed references to binary artifacts associated with
+	// this entry. Binary data is stored outside entry DTOs and referenced by ID.
+	Attachments []AttachmentReference `json:"attachments,omitempty"`
+
 	// EmbeddingStatus is optional semantic-search index state when reported by the API.
 	// Expected values include current, missing, stale, and unknown.
 	EmbeddingStatus string `json:"embedding_status,omitempty"`
@@ -245,6 +249,82 @@ type BacklinkEntry struct {
 }
 
 // =============================================================================
+// Attachment Types
+// =============================================================================
+
+// Attachment represents first-class metadata for a stored binary artifact.
+// It intentionally contains no canonical binary payload or base64 field.
+type Attachment struct {
+	ID          string              `json:"id"`
+	Filename    string              `json:"filename"`
+	ContentType string              `json:"content_type"`
+	Size        int64               `json:"size"`
+	SHA256      string              `json:"sha256,omitempty"`
+	StorageKey  string              `json:"storage_key,omitempty"`
+	Created     string              `json:"created,omitempty"`
+	Modified    string              `json:"modified,omitempty"`
+	Metadata    map[string]string   `json:"metadata,omitempty"`
+	Derived     []AttachmentDerived `json:"derived,omitempty"`
+}
+
+// AttachmentReference is the entry-frontmatter/API representation for an
+// attachment associated with a brain entry.
+type AttachmentReference struct {
+	ID          string              `json:"id"`
+	Filename    string              `json:"filename,omitempty"`
+	ContentType string              `json:"content_type,omitempty"`
+	Size        int64               `json:"size,omitempty"`
+	SHA256      string              `json:"sha256,omitempty"`
+	Role        string              `json:"role,omitempty"`
+	Caption     string              `json:"caption,omitempty"`
+	Derived     []AttachmentDerived `json:"derived,omitempty"`
+}
+
+// AttachmentDerived references generated artifacts such as thumbnails,
+// extracted markdown, OCR text, or previews for an attachment.
+type AttachmentDerived struct {
+	ID          string `json:"id"`
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type,omitempty"`
+	Size        int64  `json:"size,omitempty"`
+	StorageKey  string `json:"storage_key,omitempty"`
+	Created     string `json:"created,omitempty"`
+}
+
+// CreateAttachmentRequest is metadata submitted before/with an attachment upload.
+// The binary payload is transported separately; do not add base64 fields here.
+type CreateAttachmentRequest struct {
+	Filename    string            `json:"filename"`
+	ContentType string            `json:"content_type"`
+	Size        int64             `json:"size,omitempty"`
+	SHA256      string            `json:"sha256,omitempty"`
+	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+// CreateAttachmentResponse is returned after attachment metadata/storage is created.
+type CreateAttachmentResponse struct {
+	Attachment Attachment `json:"attachment"`
+}
+
+// AttachEntryAttachmentRequest associates an existing attachment with an entry.
+type AttachEntryAttachmentRequest struct {
+	Attachment AttachmentReference `json:"attachment"`
+}
+
+// AttachEntryAttachmentResponse reports an entry attachment association.
+type AttachEntryAttachmentResponse struct {
+	EntryID     string                `json:"entry_id"`
+	Path        string                `json:"path"`
+	Attachments []AttachmentReference `json:"attachments"`
+}
+
+// ListAttachmentsResponse is the response for listing stored attachments.
+type ListAttachmentsResponse struct {
+	Attachments []Attachment `json:"attachments"`
+	Total       int          `json:"total"`
+}
+
+// =============================================================================
 // Request / Response Types
 // =============================================================================
 
@@ -255,6 +335,8 @@ type CreateEntryRequest struct {
 	Content string   `json:"content"`
 	Tags    []string `json:"tags,omitempty"`
 	Status  string   `json:"status,omitempty"`
+
+	Attachments []AttachmentReference `json:"attachments,omitempty"`
 
 	Priority  string   `json:"priority,omitempty"`
 	DependsOn []string `json:"depends_on,omitempty"`
@@ -333,6 +415,8 @@ type UpdateEntryRequest struct {
 	Append  *string  `json:"append,omitempty"`
 	Note    *string  `json:"note,omitempty"`
 	Tags    []string `json:"tags,omitempty"`
+
+	Attachments *[]AttachmentReference `json:"attachments,omitempty"`
 
 	DependsOn *[]string `json:"depends_on,omitempty"`
 	Priority  *string   `json:"priority,omitempty"`

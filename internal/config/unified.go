@@ -86,6 +86,17 @@ type EmbeddingConfig struct {
 	TimeoutMs int    `yaml:"timeout_ms"`
 }
 
+// AttachmentConfig holds storage and policy placeholders for first-class
+// attachment support. StorageRoot is where attachment binaries will be stored;
+// MaxUploadSizeBytes limits incoming uploads; MIME allow/block lists are policy
+// placeholders for upload validation.
+type AttachmentConfig struct {
+	StorageRoot        string   `yaml:"storage_root"`
+	MaxUploadSizeBytes int64    `yaml:"max_upload_size_bytes"`
+	AllowedMIMETypes   []string `yaml:"allowed_mime_types"`
+	BlockedMIMETypes   []string `yaml:"blocked_mime_types"`
+}
+
 type ServerConfig struct {
 	Port         int                `yaml:"port"`
 	Host         string             `yaml:"host"`
@@ -100,6 +111,7 @@ type ServerConfig struct {
 	LogFile      string             `yaml:"log_file"`
 	TaskDefaults TaskDefaultsConfig `yaml:"task_defaults"`
 	Embedding    EmbeddingConfig    `yaml:"embedding"`
+	Attachments  AttachmentConfig   `yaml:"attachments"`
 }
 
 // RunnerConfig holds task runner configuration.
@@ -198,6 +210,12 @@ func defaultConfig() UnifiedConfig {
 				Dim:       1536,
 				BatchSize: 32,
 				TimeoutMs: 30000,
+			},
+			Attachments: AttachmentConfig{
+				StorageRoot:        filepath.Join(brainDir, "attachments"),
+				MaxUploadSizeBytes: 100 * 1024 * 1024,
+				AllowedMIMETypes:   []string{},
+				BlockedMIMETypes:   []string{},
 			},
 		},
 		Runner: RunnerConfig{

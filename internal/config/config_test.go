@@ -181,13 +181,10 @@ func TestLoadTaskDefaults_EmptyByDefault(t *testing.T) {
 
 	cfg := Load()
 
-	// Without config file or env vars, task defaults should be empty
-	// (Note: if config file has task_defaults, those would be loaded)
-	// We just verify the env vars were cleared and don't override
-	if cfg.TaskDefaults.Agent != "" && os.Getenv("BRAIN_DEFAULT_AGENT") == "" {
-		// Only fail if the value came from somewhere unexpected
-		// Config file may set these, so this is a soft check
-	}
+	// Without config file or env vars, task defaults should be empty.
+	// Config file may set these, so this test only verifies Load completes
+	// after env vars are cleared and does not assert ambient config state.
+	_ = cfg
 }
 
 func TestLoadTaskDefaults_ThreadsFromConfigFile(t *testing.T) {
@@ -263,5 +260,44 @@ func TestLoadTaskDefaults_EnvOverridesConfigFile(t *testing.T) {
 	}
 	if cfg.TaskDefaults.Model != "from-env-model" {
 		t.Errorf("TaskDefaults.Model = %q, want %q (env should override config)", cfg.TaskDefaults.Model, "from-env-model")
+	}
+}
+
+func TestLoadAttachments_ThreadsFromConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.yaml")
+	yamlContent := `server:
+  attachments:
+    storage_root: "/tmp/brain-attachments"
+    max_upload_size_bytes: 1048576
+    allowed_mime_types:
+      - "image/png"
+    blocked_mime_types:
+      - "application/x-msdownload"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := Load()
+
+	if cfg.Attachments.StorageRoot != "/tmp/brain-attachments" {
+		t.Errorf("Attachments.StorageRoot = %q, want %q", cfg.Attachments.StorageRoot, "/tmp/brain-attachments")
+	}
+	if cfg.Attachments.MaxUploadSizeBytes != 1048576 {
+		t.Errorf("Attachments.MaxUploadSizeBytes = %d, want 1048576", cfg.Attachments.MaxUploadSizeBytes)
+	}
+	if len(cfg.Attachments.AllowedMIMETypes) != 1 || cfg.Attachments.AllowedMIMETypes[0] != "image/png" {
+		t.Errorf("Attachments.AllowedMIMETypes = %#v, want image/png", cfg.Attachments.AllowedMIMETypes)
+	}
+	if len(cfg.Attachments.BlockedMIMETypes) != 1 || cfg.Attachments.BlockedMIMETypes[0] != "application/x-msdownload" {
+		t.Errorf("Attachments.BlockedMIMETypes = %#v, want application/x-msdownload", cfg.Attachments.BlockedMIMETypes)
 	}
 }

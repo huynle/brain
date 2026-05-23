@@ -33,6 +33,12 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.EnableAuth != false {
 		t.Errorf("Server.EnableAuth = %v, want false", cfg.Server.EnableAuth)
 	}
+	if cfg.Server.Attachments.StorageRoot != filepath.Join(expectedBrainDir, "attachments") {
+		t.Errorf("Server.Attachments.StorageRoot = %q, want %q", cfg.Server.Attachments.StorageRoot, filepath.Join(expectedBrainDir, "attachments"))
+	}
+	if cfg.Server.Attachments.MaxUploadSizeBytes != 100*1024*1024 {
+		t.Errorf("Server.Attachments.MaxUploadSizeBytes = %d, want %d", cfg.Server.Attachments.MaxUploadSizeBytes, int64(100*1024*1024))
+	}
 
 	// Runner defaults
 	if cfg.Runner.BrainAPIURL != "http://localhost:3333" {
@@ -174,6 +180,12 @@ func TestUnifiedConfigYAMLMarshaling(t *testing.T) {
 	if decoded.Server.Host != cfg.Server.Host {
 		t.Errorf("After round-trip: Server.Host = %q, want %q", decoded.Server.Host, cfg.Server.Host)
 	}
+	if decoded.Server.Attachments.StorageRoot != cfg.Server.Attachments.StorageRoot {
+		t.Errorf("After round-trip: Server.Attachments.StorageRoot = %q, want %q", decoded.Server.Attachments.StorageRoot, cfg.Server.Attachments.StorageRoot)
+	}
+	if decoded.Server.Attachments.MaxUploadSizeBytes != cfg.Server.Attachments.MaxUploadSizeBytes {
+		t.Errorf("After round-trip: Server.Attachments.MaxUploadSizeBytes = %d, want %d", decoded.Server.Attachments.MaxUploadSizeBytes, cfg.Server.Attachments.MaxUploadSizeBytes)
+	}
 	if decoded.Runner.MaxParallel != cfg.Runner.MaxParallel {
 		t.Errorf("After round-trip: Runner.MaxParallel = %d, want %d", decoded.Runner.MaxParallel, cfg.Runner.MaxParallel)
 	}
@@ -252,6 +264,38 @@ mcp:
 	}
 	if cfg.MCP.APIURL != "http://custom:9999" {
 		t.Errorf("LoadConfig() MCP.APIURL = %q, want %q", cfg.MCP.APIURL, "http://custom:9999")
+	}
+}
+
+func TestAttachmentConfigYAMLParsing(t *testing.T) {
+	data := []byte(`server:
+  attachments:
+    storage_root: "/var/lib/brain/attachments"
+    max_upload_size_bytes: 5242880
+    allowed_mime_types:
+      - "image/png"
+      - "application/pdf"
+    blocked_mime_types:
+      - "application/x-msdownload"
+`)
+
+	cfg := defaultConfig()
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	attachments := cfg.Server.Attachments
+	if attachments.StorageRoot != "/var/lib/brain/attachments" {
+		t.Errorf("Attachments.StorageRoot = %q, want %q", attachments.StorageRoot, "/var/lib/brain/attachments")
+	}
+	if attachments.MaxUploadSizeBytes != 5242880 {
+		t.Errorf("Attachments.MaxUploadSizeBytes = %d, want 5242880", attachments.MaxUploadSizeBytes)
+	}
+	if len(attachments.AllowedMIMETypes) != 2 || attachments.AllowedMIMETypes[0] != "image/png" || attachments.AllowedMIMETypes[1] != "application/pdf" {
+		t.Errorf("Attachments.AllowedMIMETypes = %#v, want image/png and application/pdf", attachments.AllowedMIMETypes)
+	}
+	if len(attachments.BlockedMIMETypes) != 1 || attachments.BlockedMIMETypes[0] != "application/x-msdownload" {
+		t.Errorf("Attachments.BlockedMIMETypes = %#v, want application/x-msdownload", attachments.BlockedMIMETypes)
 	}
 }
 

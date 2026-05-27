@@ -374,6 +374,35 @@ type AttachmentExtractionResult struct {
 	LinkedEntries []AttachmentLinkedEntry `json:"linked_entries,omitempty"`
 }
 
+// AttachmentExtractionBackfillRequest configures project-level attachment text extraction.
+type AttachmentExtractionBackfillRequest struct {
+	DryRun           bool `json:"dry_run,omitempty"`
+	Force            bool `json:"force,omitempty"`
+	BatchSize        int  `json:"batch_size,omitempty"`
+	RateLimitDelayMs int  `json:"rate_limit_delay_ms,omitempty"`
+}
+
+// AttachmentExtractionBackfillItem reports one attachment considered by extraction backfill.
+type AttachmentExtractionBackfillItem struct {
+	AttachmentID string `json:"attachment_id"`
+	Filename     string `json:"filename,omitempty"`
+	Status       string `json:"status"`
+	Error        string `json:"error,omitempty"`
+	Skipped      bool   `json:"skipped,omitempty"`
+	Reason       string `json:"reason,omitempty"`
+}
+
+// AttachmentExtractionBackfillResponse summarizes project-level extraction backfill.
+type AttachmentExtractionBackfillResponse struct {
+	Total       int                                `json:"total"`
+	Candidates  int                                `json:"candidates"`
+	Processed   int                                `json:"processed"`
+	Skipped     int                                `json:"skipped"`
+	Failed      int                                `json:"failed"`
+	DryRun      bool                               `json:"dry_run,omitempty"`
+	Attachments []AttachmentExtractionBackfillItem `json:"attachments,omitempty"`
+}
+
 // CreateAttachmentRequest is metadata submitted before/with an attachment upload.
 // The binary payload is transported separately; do not add base64 fields here.
 type CreateAttachmentRequest struct {

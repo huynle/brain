@@ -134,6 +134,11 @@ func (m *mockAttachmentService) ExtractAttachmentText(ctx context.Context, proje
 	}, nil
 }
 
+func (m *mockAttachmentService) BackfillAttachmentExtraction(ctx context.Context, projectID string, req types.AttachmentExtractionBackfillRequest) (*types.AttachmentExtractionBackfillResponse, error) {
+	m.projectID = projectID
+	return &types.AttachmentExtractionBackfillResponse{DryRun: req.DryRun}, nil
+}
+
 func (m *mockAttachmentService) List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error) {
 	m.listCalled = true
 	m.projectID = projectID

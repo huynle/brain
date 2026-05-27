@@ -39,6 +39,9 @@ type AttachmentServiceImpl struct {
 	maxSizeBytes int64
 	allowedMIME  map[string]struct{}
 	blockedMIME  map[string]struct{}
+
+	extractAttachmentTextForBackfill func(context.Context, string, string, types.AttachmentExtractionRequest) (*types.AttachmentExtractionResult, error)
+	backfillSleep                    func(context.Context, time.Duration) error
 }
 
 // AttachmentDerivedChangeHook is notified after attachment-derived text reaches
@@ -560,6 +563,113 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 		return nil, err
 	}
 	return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
+}
+
+// BackfillAttachmentExtraction runs project-level media-to-text extraction for
+// attachments that do not already have ready derived text. Processing is
+// intentionally sequential so callers can apply predictable provider rate limits.
+func (s *AttachmentServiceImpl) BackfillAttachmentExtraction(ctx context.Context, projectID string, req types.AttachmentExtractionBackfillRequest) (*types.AttachmentExtractionBackfillResponse, error) {
+	if err := s.ensureReady(); err != nil {
+		return nil, err
+	}
+	if err := validateAttachmentProject(projectID); err != nil {
+		return nil, err
+	}
+	listed, err := s.List(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	resp := &types.AttachmentExtractionBackfillResponse{
+		Total:  len(listed.Attachments),
+		DryRun: req.DryRun,
+	}
+
+	candidates := make([]types.Attachment, 0, len(listed.Attachments))
+	for _, att := range listed.Attachments {
+		derived, err := s.GetDerivedText(ctx, projectID, att.ID)
+		if err != nil {
+			return nil, err
+		}
+		if !req.Force && derived != nil && derived.Status == types.AttachmentExtractionStatusReady {
+			resp.Skipped++
+			continue
+		}
+		candidates = append(candidates, att)
+	}
+	if req.BatchSize > 0 && len(candidates) > req.BatchSize {
+		candidates = candidates[:req.BatchSize]
+	}
+	resp.Candidates = len(candidates)
+	resp.Attachments = make([]types.AttachmentExtractionBackfillItem, 0, len(candidates))
+	for _, att := range candidates {
+		item := types.AttachmentExtractionBackfillItem{
+			AttachmentID: att.ID,
+			Filename:     att.Filename,
+			Status:       "candidate",
+		}
+		if req.DryRun {
+			resp.Attachments = append(resp.Attachments, item)
+			continue
+		}
+
+		result, err := s.extractAttachmentForBackfill(ctx, projectID, att.ID)
+		if err != nil {
+			item.Status = types.AttachmentExtractionStatusFailed
+			item.Error = err.Error()
+			resp.Failed++
+			resp.Attachments = append(resp.Attachments, item)
+			if err := s.sleepBetweenBackfillItems(ctx, req.RateLimitDelayMs, len(resp.Attachments), len(candidates)); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		item.Status = result.DerivedText.Status
+		item.Error = result.DerivedText.Error
+		switch result.DerivedText.Status {
+		case types.AttachmentExtractionStatusReady:
+			resp.Processed++
+		case types.AttachmentExtractionStatusFailed:
+			resp.Failed++
+		case types.AttachmentExtractionStatusSkipped:
+			item.Skipped = true
+			resp.Skipped++
+		default:
+			resp.Failed++
+			if item.Error == "" {
+				item.Error = fmt.Sprintf("unexpected extraction status %q", result.DerivedText.Status)
+			}
+		}
+		resp.Attachments = append(resp.Attachments, item)
+		if err := s.sleepBetweenBackfillItems(ctx, req.RateLimitDelayMs, len(resp.Attachments), len(candidates)); err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
+}
+
+func (s *AttachmentServiceImpl) extractAttachmentForBackfill(ctx context.Context, projectID, attachmentID string) (*types.AttachmentExtractionResult, error) {
+	if s.extractAttachmentTextForBackfill != nil {
+		return s.extractAttachmentTextForBackfill(ctx, projectID, attachmentID, types.AttachmentExtractionRequest{})
+	}
+	return s.ExtractAttachmentText(ctx, projectID, attachmentID, types.AttachmentExtractionRequest{})
+}
+
+func (s *AttachmentServiceImpl) sleepBetweenBackfillItems(ctx context.Context, delayMs int, completed, total int) error {
+	if delayMs <= 0 || completed >= total {
+		return nil
+	}
+	delay := time.Duration(delayMs) * time.Millisecond
+	if s.backfillSleep != nil {
+		return s.backfillSleep(ctx, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // List returns attachments visible within a project.

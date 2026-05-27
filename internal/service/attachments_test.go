@@ -10,6 +10,7 @@ import (
 	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/blobstore"
@@ -194,6 +195,16 @@ func createAttachmentForServiceTest(t *testing.T, svc *AttachmentServiceImpl, pr
 	t.Helper()
 	content := strings.NewReader("data")
 	created, err := svc.Create(context.Background(), projectID, types.CreateAttachmentRequest{Filename: filename, Size: 4}, content)
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	return created.Attachment
+}
+
+func createUniqueAttachmentForServiceTest(t *testing.T, svc *AttachmentServiceImpl, projectID string, filename string) types.Attachment {
+	t.Helper()
+	content := []byte("content for " + filename)
+	created, err := svc.Create(context.Background(), projectID, types.CreateAttachmentRequest{Filename: filename, ContentType: "image/png", Size: int64(len(content))}, bytes.NewReader(content))
 	if err != nil {
 		t.Fatalf("Create returned error: %v", err)
 	}
@@ -831,6 +842,104 @@ func TestAttachmentServiceExtractAttachmentTextInvokesChangeHookOnlyForTerminalD
 	}
 	if len(call.linked) != 1 || call.linked[0].Path != note.Path || call.linked[0].Role != "inline" {
 		t.Fatalf("hook linked entries = %#v, want extraction linked note", call.linked)
+	}
+}
+
+func TestAttachmentServiceBackfillExtractionDryRunSelectsNonReadyCandidatesWithoutMutation(t *testing.T) {
+	svc, _, _ := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	ready := createUniqueAttachmentForServiceTest(t, svc, "proj", "ready.png")
+	missing := createUniqueAttachmentForServiceTest(t, svc, "proj", "missing.png")
+	failed := createUniqueAttachmentForServiceTest(t, svc, "proj", "failed.png")
+	if _, err := svc.StoreDerivedText(ctx, "proj", ready.ID, types.AttachmentDerivedText{Kind: "text", Status: types.AttachmentExtractionStatusReady, Text: "existing"}); err != nil {
+		t.Fatalf("StoreDerivedText ready returned error: %v", err)
+	}
+	if _, err := svc.StoreDerivedText(ctx, "proj", failed.ID, types.AttachmentDerivedText{Kind: "text", Status: types.AttachmentExtractionStatusFailed, Error: "old failure"}); err != nil {
+		t.Fatalf("StoreDerivedText failed returned error: %v", err)
+	}
+	extractor := &recordingAttachmentExtractor{resp: types.AttachmentExtractionResponse{Status: types.AttachmentExtractionStatusReady, Text: "new text"}}
+	svc.extractor = extractor
+
+	resp, err := svc.BackfillAttachmentExtraction(ctx, "proj", types.AttachmentExtractionBackfillRequest{DryRun: true})
+	if err != nil {
+		t.Fatalf("BackfillAttachmentExtraction returned error: %v", err)
+	}
+	if !resp.DryRun || resp.Total != 3 || resp.Candidates != 2 || resp.Processed != 0 || resp.Skipped != 1 || resp.Failed != 0 {
+		t.Fatalf("response summary = %#v, want dry-run total 3 candidates 2 skipped 1 no processing", resp)
+	}
+	if len(resp.Attachments) != 2 || resp.Attachments[0].AttachmentID != missing.ID || resp.Attachments[1].AttachmentID != failed.ID {
+		t.Fatalf("dry-run attachments = %#v, want missing then failed candidates", resp.Attachments)
+	}
+	if len(extractor.calls) != 0 {
+		t.Fatalf("extractor calls = %#v, want none for dry-run", extractor.calls)
+	}
+	status, err := svc.GetDerivedText(ctx, "proj", missing.ID)
+	if err != nil {
+		t.Fatalf("GetDerivedText missing returned error: %v", err)
+	}
+	if status != nil {
+		t.Fatalf("missing derived after dry-run = %#v, want nil mutation", status)
+	}
+}
+
+func TestAttachmentServiceBackfillExtractionForceIncludesReadyAndContinuesAfterFailures(t *testing.T) {
+	svc, _, _ := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	ready := createUniqueAttachmentForServiceTest(t, svc, "proj", "ready.png")
+	missing := createUniqueAttachmentForServiceTest(t, svc, "proj", "missing.png")
+	if _, err := svc.StoreDerivedText(ctx, "proj", ready.ID, types.AttachmentDerivedText{Kind: "text", Status: types.AttachmentExtractionStatusReady, Text: "existing"}); err != nil {
+		t.Fatalf("StoreDerivedText ready returned error: %v", err)
+	}
+	extractor := &recordingAttachmentExtractor{resp: types.AttachmentExtractionResponse{Status: types.AttachmentExtractionStatusReady, Text: "fresh text"}}
+	svc.extractor = extractor
+	svc.extractAttachmentTextForBackfill = func(ctx context.Context, projectID, attachmentID string, req types.AttachmentExtractionRequest) (*types.AttachmentExtractionResult, error) {
+		if attachmentID == ready.ID {
+			return nil, errors.New("ready failed")
+		}
+		return svc.ExtractAttachmentText(ctx, projectID, attachmentID, req)
+	}
+
+	resp, err := svc.BackfillAttachmentExtraction(ctx, "proj", types.AttachmentExtractionBackfillRequest{Force: true})
+	if err != nil {
+		t.Fatalf("BackfillAttachmentExtraction returned error: %v", err)
+	}
+	if resp.Total != 2 || resp.Candidates != 2 || resp.Processed != 1 || resp.Failed != 1 || resp.Skipped != 0 {
+		t.Fatalf("response summary = %#v, want one processed and one failed", resp)
+	}
+	if len(resp.Attachments) != 2 || resp.Attachments[0].Status != types.AttachmentExtractionStatusFailed || resp.Attachments[0].Error != "ready failed" || resp.Attachments[1].Status != types.AttachmentExtractionStatusReady {
+		t.Fatalf("attachment results = %#v, want failed ready then processed missing", resp.Attachments)
+	}
+	if len(extractor.calls) != 1 || extractor.calls[0].AttachmentID != missing.ID {
+		t.Fatalf("extractor calls = %#v, want continued extraction for missing only", extractor.calls)
+	}
+}
+
+func TestAttachmentServiceBackfillExtractionHonorsBatchLimitAndRateLimitSleeps(t *testing.T) {
+	svc, _, _ := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	first := createUniqueAttachmentForServiceTest(t, svc, "proj", "one.png")
+	second := createUniqueAttachmentForServiceTest(t, svc, "proj", "two.png")
+	_ = createUniqueAttachmentForServiceTest(t, svc, "proj", "three.png")
+	extractor := &recordingAttachmentExtractor{resp: types.AttachmentExtractionResponse{Status: types.AttachmentExtractionStatusReady, Text: "fresh text"}}
+	svc.extractor = extractor
+	var sleeps []time.Duration
+	svc.backfillSleep = func(ctx context.Context, d time.Duration) error {
+		sleeps = append(sleeps, d)
+		return ctx.Err()
+	}
+
+	resp, err := svc.BackfillAttachmentExtraction(ctx, "proj", types.AttachmentExtractionBackfillRequest{BatchSize: 2, RateLimitDelayMs: 25})
+	if err != nil {
+		t.Fatalf("BackfillAttachmentExtraction returned error: %v", err)
+	}
+	if resp.Total != 3 || resp.Candidates != 2 || resp.Processed != 2 || resp.Skipped != 0 || resp.Failed != 0 {
+		t.Fatalf("response summary = %#v, want only first batch processed", resp)
+	}
+	if len(resp.Attachments) != 2 || resp.Attachments[0].AttachmentID != first.ID || resp.Attachments[1].AttachmentID != second.ID {
+		t.Fatalf("processed attachments = %#v, want first two in list order", resp.Attachments)
+	}
+	if len(sleeps) != 1 || sleeps[0] != 25*time.Millisecond {
+		t.Fatalf("sleeps = %#v, want one 25ms sleep between two extractions", sleeps)
 	}
 }
 

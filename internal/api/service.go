@@ -113,6 +113,9 @@ type AttachmentService interface {
 	// ExtractAttachmentText orchestrates media-to-text extraction for an attachment.
 	ExtractAttachmentText(ctx context.Context, projectID, attachmentID string, req types.AttachmentExtractionRequest) (*types.AttachmentExtractionResult, error)
 
+	// BackfillAttachmentExtraction orchestrates project-level media-to-text extraction.
+	BackfillAttachmentExtraction(ctx context.Context, projectID string, req types.AttachmentExtractionBackfillRequest) (*types.AttachmentExtractionBackfillResponse, error)
+
 	// List returns attachments visible within a project.
 	List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error)
 

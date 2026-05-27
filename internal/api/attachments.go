@@ -126,6 +126,29 @@ func (h *Handler) HandleDeleteAttachment(w http.ResponseWriter, r *http.Request)
 	WriteJSON(w, http.StatusOK, map[string]bool{"deleted": deleted})
 }
 
+// HandleExtractAttachment handles POST /attachments/{attachmentID}/extract?project_id=...
+func (h *Handler) HandleExtractAttachment(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := attachmentProjectID(w, r)
+	if !ok {
+		return
+	}
+
+	var req types.AttachmentExtractionRequest
+	if r.Body != nil && r.Body != http.NoBody {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "request body must be JSON compatible with AttachmentExtractionRequest")
+			return
+		}
+	}
+
+	result, err := h.attachments.ExtractAttachmentText(r.Context(), projectID, chi.URLParam(r, "attachmentID"), req)
+	if err != nil {
+		writeAttachmentServiceError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, result)
+}
+
 // HandleDownloadAttachment handles GET /attachments/{attachmentID}/content?project_id=...
 func (h *Handler) HandleDownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	projectID, ok := attachmentProjectID(w, r)

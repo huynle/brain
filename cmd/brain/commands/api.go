@@ -39,6 +39,8 @@ type UnifiedConfig struct {
 		TaskDefaults  config.TaskDefaultsConfig
 		Embedding     config.EmbeddingConfig
 		Attachments   config.AttachmentConfig
+
+		AttachmentExtraction config.AttachmentExtractionConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -85,6 +87,8 @@ func (c *APICommand) Execute() error {
 		TaskDefaults: c.Config.Server.TaskDefaults,
 		Embedding:    c.Config.Server.Embedding,
 		Attachments:  c.Config.Server.Attachments,
+
+		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
 	}
 
 	// Flags override config

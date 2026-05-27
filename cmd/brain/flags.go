@@ -243,6 +243,8 @@ type UnifiedConfig struct {
 		TaskDefaults uconfig.TaskDefaultsConfig
 		Embedding    uconfig.EmbeddingConfig
 		Attachments  uconfig.AttachmentConfig
+
+		AttachmentExtraction uconfig.AttachmentExtractionConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {

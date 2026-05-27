@@ -153,6 +153,8 @@ func (c *StartCommand) startForeground(pidFile string) error {
 		TaskDefaults: c.Config.Server.TaskDefaults,
 		Embedding:    c.Config.Server.Embedding,
 		Attachments:  c.Config.Server.Attachments,
+
+		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
 	}
 
 	// Create context with signal handling for graceful shutdown

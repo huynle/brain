@@ -18,14 +18,15 @@ import (
 )
 
 type mockAttachmentService struct {
-	getCalled    bool
-	listCalled   bool
-	attachCalled bool
-	detachCalled bool
-	deleteCalled bool
-	createCalled bool
-	openCalled   bool
-	textCalled   bool
+	getCalled     bool
+	listCalled    bool
+	attachCalled  bool
+	detachCalled  bool
+	deleteCalled  bool
+	createCalled  bool
+	openCalled    bool
+	textCalled    bool
+	extractCalled bool
 
 	projectID    string
 	entryID      string
@@ -33,6 +34,7 @@ type mockAttachmentService struct {
 	role         string
 	createReq    types.CreateAttachmentRequest
 	attachReq    types.AttachEntryAttachmentRequest
+	extractReq   types.AttachmentExtractionRequest
 	createBody   []byte
 
 	createErr       error
@@ -45,6 +47,8 @@ type mockAttachmentService struct {
 	deleteResult    *bool
 	openErr         error
 	textErr         error
+	extractErr      error
+	extractResult   *types.AttachmentExtractionResult
 }
 
 func (m *mockAttachmentService) Create(ctx context.Context, projectID string, req types.CreateAttachmentRequest, content io.Reader) (*types.CreateAttachmentResponse, error) {
@@ -103,9 +107,31 @@ func (m *mockAttachmentService) GetDerivedText(ctx context.Context, projectID, a
 }
 
 func (m *mockAttachmentService) ExtractAttachmentText(ctx context.Context, projectID, attachmentID string, req types.AttachmentExtractionRequest) (*types.AttachmentExtractionResult, error) {
+	m.extractCalled = true
 	m.projectID = projectID
 	m.attachmentID = attachmentID
-	return &types.AttachmentExtractionResult{}, nil
+	m.extractReq = req
+	if m.extractErr != nil {
+		return nil, m.extractErr
+	}
+	if m.extractResult != nil {
+		return m.extractResult, nil
+	}
+	return &types.AttachmentExtractionResult{
+		Attachment: types.Attachment{ID: attachmentID, Filename: "scan.pdf", ContentType: "application/pdf"},
+		DerivedText: types.AttachmentDerivedText{
+			ID:          "derived_123",
+			Kind:        "extracted_text",
+			Status:      types.AttachmentExtractionStatusReady,
+			ContentType: "text/markdown; charset=utf-8",
+			Text:        "# Extracted text",
+			Metadata: map[string]string{
+				"provider": "openrouter",
+				"model":    "google/gemini-2.5-flash",
+			},
+		},
+		LinkedEntries: []types.AttachmentLinkedEntry{{Path: "projects/test-project/report/entry.md", Role: "inline"}},
+	}, nil
 }
 
 func (m *mockAttachmentService) List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error) {
@@ -434,6 +460,130 @@ func TestGetAttachmentTextStreamsPlainText(t *testing.T) {
 	}
 	if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
 		t.Fatalf("X-Content-Type-Options = %q", got)
+	}
+}
+
+func TestExtractAttachmentRouteDispatchesToServiceWithEmptyBody(t *testing.T) {
+	attachments := &mockAttachmentService{}
+	router := newAttachmentTestRouter(attachments)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments/att_123/extract?project_id=test-project", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !attachments.extractCalled || attachments.projectID != "test-project" || attachments.attachmentID != "att_123" {
+		t.Fatalf("Extract called = %v, projectID = %q, attachmentID = %q", attachments.extractCalled, attachments.projectID, attachments.attachmentID)
+	}
+	if attachments.extractReq.ProjectID != "" || attachments.extractReq.AttachmentID != "" {
+		t.Fatalf("path/query should be authoritative, req = %#v", attachments.extractReq)
+	}
+	var resp types.AttachmentExtractionResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.DerivedText.Status != types.AttachmentExtractionStatusReady || resp.DerivedText.Metadata["provider"] != "openrouter" || resp.DerivedText.Metadata["model"] == "" {
+		t.Fatalf("response derived text = %#v", resp.DerivedText)
+	}
+	if len(resp.LinkedEntries) != 1 || resp.LinkedEntries[0].Path == "" {
+		t.Fatalf("linked entries = %#v", resp.LinkedEntries)
+	}
+}
+
+func TestExtractAttachmentRouteParsesOptionalJSONBody(t *testing.T) {
+	attachments := &mockAttachmentService{}
+	router := newAttachmentTestRouter(attachments)
+	body := strings.NewReader(`{"project_id":"ignored-project","attachment_id":"ignored-att","entry_id":"entry-123","filename":"scan.pdf","content_type":"application/pdf","size":42,"metadata":{"source":"test"}}`)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments/att_123/extract?project_id=test-project", body)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if attachments.projectID != "test-project" || attachments.attachmentID != "att_123" {
+		t.Fatalf("service args projectID = %q, attachmentID = %q", attachments.projectID, attachments.attachmentID)
+	}
+	if attachments.extractReq.ProjectID != "ignored-project" || attachments.extractReq.AttachmentID != "ignored-att" || attachments.extractReq.EntryID != "entry-123" {
+		t.Fatalf("extractReq = %#v", attachments.extractReq)
+	}
+	if attachments.extractReq.Metadata["source"] != "test" {
+		t.Fatalf("metadata = %#v", attachments.extractReq.Metadata)
+	}
+}
+
+func TestExtractAttachmentRouteRequiresProjectID(t *testing.T) {
+	attachments := &mockAttachmentService{}
+	router := newAttachmentTestRouter(attachments)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments/att_123/extract", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if attachments.extractCalled {
+		t.Fatal("ExtractAttachmentText should not be called without project_id")
+	}
+}
+
+func TestExtractAttachmentRouteMapsServiceErrors(t *testing.T) {
+	tests := []struct {
+		name       string
+		err        error
+		wantStatus int
+	}{
+		{name: "not found", err: ErrNotFound, wantStatus: http.StatusNotFound},
+		{name: "bad request", err: errors.New("attachment content_type is required"), wantStatus: http.StatusBadRequest},
+		{name: "internal", err: errors.New("extractor unavailable"), wantStatus: http.StatusInternalServerError},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			attachments := &mockAttachmentService{extractErr: tt.err}
+			router := newAttachmentTestRouter(attachments)
+
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments/att_123/extract?project_id=test-project", nil)
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d, body = %s", rec.Code, tt.wantStatus, rec.Body.String())
+			}
+		})
+	}
+}
+
+func TestExtractAttachmentRouteDoesNotShadowContentOrTextRoutes(t *testing.T) {
+	attachments := &mockAttachmentService{}
+	router := newAttachmentTestRouter(attachments)
+
+	for _, tt := range []struct {
+		name      string
+		path      string
+		wantCheck func(*mockAttachmentService) bool
+	}{
+		{name: "content", path: "/api/v1/attachments/att_123/content?project_id=test-project", wantCheck: func(m *mockAttachmentService) bool { return m.openCalled && !m.extractCalled }},
+		{name: "text", path: "/api/v1/attachments/att_123/text?project_id=test-project", wantCheck: func(m *mockAttachmentService) bool { return m.textCalled && !m.extractCalled }},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			*attachments = mockAttachmentService{}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+			router.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			if !tt.wantCheck(attachments) {
+				t.Fatalf("route dispatch state = %#v", attachments)
+			}
+		})
 	}
 }
 

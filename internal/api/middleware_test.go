@@ -988,6 +988,13 @@ func TestScopeEnforcement_EndToEnd(t *testing.T) {
 			token:      "admin-token",
 			wantStatus: http.StatusNotImplemented,
 		},
+		{
+			name:       "admin can trigger attachment extraction",
+			method:     "POST",
+			path:       "/api/v1/attachments/att_123/extract?project_id=test-project",
+			token:      "admin-token",
+			wantStatus: http.StatusNotImplemented, // passes auth + scope; no handler in this router
+		},
 
 		// Runner token — can read tasks and claim/release
 		{
@@ -1001,6 +1008,13 @@ func TestScopeEnforcement_EndToEnd(t *testing.T) {
 			name:       "runner blocked from token management",
 			method:     "GET",
 			path:       "/api/v1/tokens",
+			token:      "runner-token",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "runner blocked from attachment extraction",
+			method:     "POST",
+			path:       "/api/v1/attachments/att_123/extract?project_id=test-project",
 			token:      "runner-token",
 			wantStatus: http.StatusForbidden,
 		},
@@ -1024,6 +1038,13 @@ func TestScopeEnforcement_EndToEnd(t *testing.T) {
 			name:       "read blocked from token management",
 			method:     "GET",
 			path:       "/api/v1/tokens",
+			token:      "read-token",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "read blocked from attachment extraction",
+			method:     "POST",
+			path:       "/api/v1/attachments/att_123/extract?project_id=test-project",
 			token:      "read-token",
 			wantStatus: http.StatusForbidden,
 		},

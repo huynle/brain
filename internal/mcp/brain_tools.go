@@ -447,11 +447,11 @@ func registerBrainAttachmentExtract(s *Server, client *APIClient) {
 			return "Please provide project_id and attachment_id", nil
 		}
 
-		var resp types.AttachmentExtractionResult
-		if err := client.Request(ctx, "POST", "/attachments/"+url.PathEscape(attachmentID)+"/extract", nil, map[string]string{"project_id": projectID}, &resp); err != nil {
+		resp, err := client.ExtractAttachmentText(ctx, projectID, attachmentID, types.AttachmentExtractionRequest{})
+		if err != nil {
 			return "", err
 		}
-		return formatAttachmentExtractionResult(resp), nil
+		return formatAttachmentExtractionResult(*resp), nil
 	})
 }
 

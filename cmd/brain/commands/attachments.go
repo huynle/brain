@@ -80,6 +80,12 @@ func (c *AttachmentCommand) Execute() error {
 		return writeAttachments(out, resp.Attachments)
 	case "download":
 		return c.download(ctx, client, out)
+	case "extract":
+		result, err := c.extract(ctx, client)
+		if err != nil {
+			return err
+		}
+		return writeAttachmentExtraction(out, result)
 	case "detach":
 		resp, err := c.detach(ctx, client)
 		if err != nil {
@@ -93,7 +99,7 @@ func (c *AttachmentCommand) Execute() error {
 		fmt.Fprintf(out, "Deleted: %s\n", c.AttachmentID)
 		return nil
 	default:
-		return fmt.Errorf("usage: brain attachments <upload|attach|list|download|detach|delete>")
+		return fmt.Errorf("usage: brain attachments <upload|attach|list|download|extract|detach|delete>")
 	}
 }
 
@@ -202,6 +208,19 @@ func (c *AttachmentCommand) delete(ctx context.Context, client *runner.APIClient
 	return client.DeleteAttachment(ctx, project, attachmentID)
 }
 
+func (c *AttachmentCommand) extract(ctx context.Context, client *runner.APIClient) (*types.AttachmentExtractionResult, error) {
+	attachmentID := strings.TrimSpace(c.AttachmentID)
+	project := strings.TrimSpace(c.Flags.Project)
+	if attachmentID == "" || project == "" {
+		return nil, fmt.Errorf("usage: brain attachments extract <attachment-id> --project <project>")
+	}
+	result, err := client.ExtractAttachmentText(ctx, project, attachmentID)
+	if err != nil {
+		return nil, fmt.Errorf("extract attachment: %w", err)
+	}
+	return result, nil
+}
+
 func (c *AttachmentCommand) entryAttachmentProject() (string, string, string, error) {
 	entry := strings.TrimSpace(c.Entry)
 	if entry == "" {
@@ -248,6 +267,46 @@ func writeEntryAttachments(out io.Writer, resp *types.AttachEntryAttachmentRespo
 	}
 	for _, a := range resp.Attachments {
 		if _, err := fmt.Fprintf(out, "ID: %s\nFilename: %s\nRole: %s\nDescription: %s\n", a.ID, a.Filename, a.Role, a.Caption); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func writeAttachmentExtraction(out io.Writer, result *types.AttachmentExtractionResult) error {
+	if result == nil {
+		return nil
+	}
+	derived := result.DerivedText
+	if _, err := fmt.Fprintf(out, "ID: %s\nStatus: %s\n", result.Attachment.ID, derived.Status); err != nil {
+		return err
+	}
+	if provider := strings.TrimSpace(derived.Metadata["provider"]); provider != "" {
+		if _, err := fmt.Fprintf(out, "Provider: %s\n", provider); err != nil {
+			return err
+		}
+	}
+	if model := strings.TrimSpace(derived.Metadata["model"]); model != "" {
+		if _, err := fmt.Fprintf(out, "Model: %s\n", model); err != nil {
+			return err
+		}
+	}
+	if derived.Error != "" {
+		if _, err := fmt.Fprintf(out, "Reason: %s\n", derived.Error); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(out, "Content-Type: %s\nText-Length: %d\nLinked-Entries: %d\n", derived.ContentType, len(derived.Text), len(result.LinkedEntries)); err != nil {
+		return err
+	}
+	for _, entry := range result.LinkedEntries {
+		if entry.Role != "" {
+			if _, err := fmt.Fprintf(out, "- %s (%s)\n", entry.Path, entry.Role); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := fmt.Fprintf(out, "- %s\n", entry.Path); err != nil {
 			return err
 		}
 	}

@@ -222,6 +222,18 @@ func (c *APIClient) DownloadAttachmentText(ctx context.Context, projectID, attac
 	return string(respBody), nil
 }
 
+// ExtractAttachmentText triggers server-side text extraction for an attachment.
+func (c *APIClient) ExtractAttachmentText(ctx context.Context, projectID, attachmentID string, req types.AttachmentExtractionRequest) (*types.AttachmentExtractionResult, error) {
+	if req.AttachmentID == "" {
+		req.AttachmentID = attachmentID
+	}
+	var result types.AttachmentExtractionResult
+	if err := c.Request(ctx, http.MethodPost, "/attachments/"+url.PathEscape(attachmentID)+"/extract", req, map[string]string{"project_id": projectID}, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // DownloadAttachmentToFile streams raw attachment bytes to outputPath.
 func (c *APIClient) DownloadAttachmentToFile(ctx context.Context, projectID, attachmentID, outputPath string) error {
 	params := url.Values{}

@@ -129,6 +129,61 @@ func TestAttachmentCommandAttachListDetachAndDeleteUseAttachmentEndpoints(t *tes
 	}
 }
 
+func TestAttachmentCommandExtractPrintsExtractionSummary(t *testing.T) {
+	var gotRequest string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequest = r.Method + " " + r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.AttachmentExtractionResult{
+			Attachment: types.Attachment{ID: "att_123", Filename: "scan.pdf"},
+			DerivedText: types.AttachmentDerivedText{
+				Status:      types.AttachmentExtractionStatusReady,
+				ContentType: "text/markdown",
+				Text:        "derived text",
+				Metadata:    map[string]string{"provider": "openrouter", "model": "google/gemini"},
+			},
+			LinkedEntries: []types.AttachmentLinkedEntry{{Path: "projects/brain-api/report/scan.md", Role: "source"}},
+		})
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	cmd := &AttachmentCommand{Subcommand: "extract", AttachmentID: "att_123", Config: attachmentTestConfig(srv.URL), Flags: &AttachmentFlags{Project: "brain-api"}, Out: &out}
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if gotRequest != "POST /api/v1/attachments/att_123/extract?project_id=brain-api" {
+		t.Fatalf("request = %q, want extract endpoint", gotRequest)
+	}
+	output := out.String()
+	for _, want := range []string{"Status: ready", "Provider: openrouter", "Model: google/gemini", "Content-Type: text/markdown", "Text-Length: 12", "Linked-Entries: 1", "projects/brain-api/report/scan.md (source)"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output %q missing %q", output, want)
+		}
+	}
+}
+
+func TestAttachmentCommandExtractPrintsSkippedReason(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.AttachmentExtractionResult{
+			Attachment:  types.Attachment{ID: "att_skip", Filename: "large.bin"},
+			DerivedText: types.AttachmentDerivedText{Status: types.AttachmentExtractionStatusSkipped, Error: "unsupported content type"},
+		})
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	cmd := &AttachmentCommand{Subcommand: "extract", AttachmentID: "att_skip", Config: attachmentTestConfig(srv.URL), Flags: &AttachmentFlags{Project: "brain-api"}, Out: &out}
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+	if output := out.String(); !strings.Contains(output, "Status: skipped") || !strings.Contains(output, "Reason: unsupported content type") {
+		t.Fatalf("output = %q, want skipped reason", output)
+	}
+}
+
 func TestAttachmentCommandDownloadWritesExactBytesAndVerifiesSHA256(t *testing.T) {
 	payload := []byte{0, 1, 2, 3, 255, 'b', 'r', 'a', 'i', 'n'}
 	sum := shaHex(payload)

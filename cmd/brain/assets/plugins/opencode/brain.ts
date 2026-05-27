@@ -419,6 +419,29 @@ interface Attachment extends AttachmentReference {
   modified?: string;
 }
 
+interface AttachmentDerivedText {
+  id?: string;
+  kind?: string;
+  status: string;
+  content_type?: string;
+  text?: string;
+  error?: string;
+  metadata?: Record<string, string>;
+  created?: string;
+  modified?: string;
+}
+
+interface AttachmentLinkedEntry {
+  path: string;
+  role?: string;
+}
+
+interface AttachmentExtractionResult {
+  attachment: Attachment;
+  derived_text: AttachmentDerivedText;
+  linked_entries?: AttachmentLinkedEntry[];
+}
+
 class BrainUnavailableError extends Error {
   constructor(state: BrainConnectionState) {
     super(formatUnavailableMessage(state));
@@ -589,6 +612,19 @@ async function attachmentDownloadRequest(
   await writeFile(outputPath, bytes);
 }
 
+async function attachmentExtractRequest(
+  projectId: string,
+  attachmentId: string,
+  body?: Record<string, unknown>
+): Promise<AttachmentExtractionResult> {
+  return apiRequest<AttachmentExtractionResult>(
+    "POST",
+    `/attachments/${encodeURIComponent(attachmentId)}/extract`,
+    body && Object.keys(body).length > 0 ? body : undefined,
+    { project_id: projectId }
+  );
+}
+
 async function formatAPIError(response: Response): Promise<string> {
   try {
     const errorData = await response.json() as ApiError;
@@ -638,6 +674,56 @@ function formatAttachmentReferences(attachments?: AttachmentReference[]): string
 
 function formatAttachment(attachment: Attachment): string {
   return formatAttachmentReference(attachment);
+}
+
+function metadataValue(metadata: Record<string, string> | undefined, ...keys: string[]): string | undefined {
+  if (!metadata) return undefined;
+  for (const key of keys) {
+    const value = metadata[key]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function formatAttachmentExtractionResult(result: AttachmentExtractionResult): string {
+  const derived = result.derived_text || { status: "unknown" };
+  const metadata = derived.metadata || {};
+  const attachmentID = result.attachment?.id || metadata.attachment_id || "unknown";
+  const lines = [
+    `## Attachment Extraction: ${attachmentID}`,
+    "",
+    `Status: ${derived.status || "unknown"}`,
+  ];
+
+  if (result.attachment?.filename) lines.push(`Filename: ${result.attachment.filename}`);
+  const provider = metadataValue(metadata, "provider", "extraction_provider");
+  if (provider) lines.push(`Provider: ${provider}`);
+  const model = metadataValue(metadata, "model", "extraction_model");
+  if (model) lines.push(`Model: ${model}`);
+  if (derived.error) lines.push(`Reason: ${derived.error}`);
+  if (derived.content_type) lines.push(`Derived content type: ${derived.content_type}`);
+  if (derived.id) lines.push(`Derived text ID: ${derived.id}`);
+  if (derived.kind) lines.push(`Derived kind: ${derived.kind}`);
+  if (derived.created) lines.push(`Derived created: ${derived.created}`);
+  if (derived.modified) lines.push(`Derived modified: ${derived.modified}`);
+  lines.push(`Text: ${(derived.text || "").length} chars`);
+
+  const metadataKeys = Object.keys(metadata).sort();
+  if (metadataKeys.length > 0) {
+    lines.push("", "Metadata:");
+    for (const key of metadataKeys) {
+      lines.push(`- ${key}: ${metadata[key]}`);
+    }
+  }
+
+  if (result.linked_entries && result.linked_entries.length > 0) {
+    lines.push("", "Linked entries:");
+    for (const entry of result.linked_entries) {
+      lines.push(`- ${entry.path}${entry.role ? ` (role: ${entry.role})` : ""}`);
+    }
+  }
+
+  return lines.join("\n").trim();
 }
 
 function addNonEmptyStringFields(
@@ -1391,6 +1477,41 @@ Remaining:${formatAttachmentReferences(response.attachments) || " none"}`;
 Use \`brain_attachment_text\` with this attachment_id to retrieve extracted text when available.`;
           } catch (error) {
             return `Attachment get failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_attachment_extract
+      // ========================================
+      brain_attachment_extract: tool({
+        description: "Trigger server-side media-to-text extraction for an attachment and return extraction status, provider/model, reason, and derived text metadata.",
+        args: {
+          project_id: tool.schema.string().describe("Project containing the attachment"),
+          attachment_id: tool.schema.string().describe("Attachment ID whose text extraction should be triggered"),
+          entry_id: tool.schema.string().optional().describe("Optional linked entry ID/path for extraction context"),
+          metadata: tool.schema.object({}).optional().describe("Optional extraction metadata to pass through to the backend"),
+        },
+        async execute(args) {
+          if (!args.project_id || !args.attachment_id) {
+            return "Please provide project_id and attachment_id";
+          }
+
+          const body: Record<string, unknown> = {
+            attachment_id: args.attachment_id,
+          };
+          if (args.entry_id) body.entry_id = args.entry_id;
+          if (args.metadata && Object.keys(args.metadata).length > 0) {
+            body.metadata = args.metadata;
+          }
+
+          try {
+            const response = await attachmentExtractRequest(args.project_id, args.attachment_id, body);
+            return `${formatAttachmentExtractionResult(response)}
+
+Use \`brain_attachment_text\` with attachment_id \`${args.attachment_id}\` to retrieve extracted text when status is ready.`;
+          } catch (error) {
+            return `Attachment extraction failed: ${error instanceof Error ? error.message : String(error)}`;
           }
         },
       }),

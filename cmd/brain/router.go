@@ -1173,7 +1173,7 @@ func parseAttachmentsCommand(args []string) (Command, error) {
 		} else if flags.Entry != "" {
 			cmd.Entry = flags.Entry
 		}
-	case "download", "delete":
+	case "download", "extract", "delete":
 		if len(positionals) > 0 {
 			cmd.AttachmentID = positionals[0]
 		}

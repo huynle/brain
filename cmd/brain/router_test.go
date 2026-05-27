@@ -93,6 +93,7 @@ func TestRoute_AttachmentsCommandParsesSubcommands(t *testing.T) {
 		{name: "attach", args: []string{"attachments", "attach", "entry-123", "att_123", "--project", "brain-api", "--role", "source"}, subcommand: "attach", entry: "entry-123", attachment: "att_123", project: "brain-api", role: "source"},
 		{name: "list entry", args: []string{"attachments", "list", "--entry", "entry-123", "--project", "brain-api"}, subcommand: "list", entry: "entry-123", project: "brain-api"},
 		{name: "download", args: []string{"attachments", "download", "att_123", "--project", "brain-api", "--output", "out.bin"}, subcommand: "download", attachment: "att_123", project: "brain-api", output: "out.bin"},
+		{name: "extract", args: []string{"attachments", "extract", "att_123", "--project", "brain-api"}, subcommand: "extract", attachment: "att_123", project: "brain-api"},
 	}
 
 	for _, tt := range tests {

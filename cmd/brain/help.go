@@ -58,6 +58,7 @@ ATTACHMENTS:
   attachments attach <entry> <id> Attach an existing attachment to an entry
   attachments list                List project or entry attachments
   attachments download <id>       Download original bytes and verify SHA256
+  attachments extract <id>        Extract derived searchable text
   attachments delete <id>         Delete an unreferenced attachment
 
 AUTOMATIONS:
@@ -125,6 +126,7 @@ USAGE:
   brain attachments attach <entry> <attachment-id> --project <project> [--role <role>] [--description <text>]
   brain attachments list --project <project> [--entry <entry>]
   brain attachments download <attachment-id> --project <project> [--output <path>]
+  brain attachments extract <attachment-id> --project <project>
   brain attachments detach <entry> <attachment-id> --project <project> [--role <role>]
   brain attachments delete <attachment-id> --project <project>
 
@@ -133,6 +135,7 @@ SUBCOMMANDS:
   attach <entry> <attachment-id>  Attach an existing attachment to an entry
   list                            List project attachments or --entry attachments
   download <attachment-id>        Download exact original bytes and verify SHA256
+  extract <attachment-id>         Extract derived text for search/indexing
   detach <entry> <attachment-id>  Remove an attachment reference from an entry
   delete <attachment-id>          Delete an unreferenced attachment from storage
 
@@ -150,6 +153,7 @@ EXAMPLES:
   brain attachments list --project brain-api
   brain attachments list --project brain-api --entry abc12def
   brain attachments download att_123 --project brain-api --output diagram.png
+  brain attachments extract att_123 --project brain-api
   brain attachments detach abc12def att_123 --project brain-api --role source
   brain attachments delete att_123 --project brain-api
 `

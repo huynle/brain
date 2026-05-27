@@ -39,6 +39,7 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainAttachmentDetach(s, client)
 	registerBrainAttachmentList(s, client)
 	registerBrainAttachmentGet(s, client)
+	registerBrainAttachmentExtract(s, client)
 	registerBrainAttachmentText(s, client)
 	registerBrainAttachmentDownload(s, client)
 }
@@ -431,6 +432,29 @@ func registerBrainAttachmentGet(s *Server, client *APIClient) {
 	})
 }
 
+func registerBrainAttachmentExtract(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_attachment_extract",
+		Description: "Trigger server-side media-to-text extraction for an attachment and return extraction status, provider/model, reason, and derived text metadata.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"attachment_id": {Type: "string", Description: "Attachment ID whose text extraction should be triggered"},
+		}, Required: []string{"project_id", "attachment_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		attachmentID := StringArg(args, "attachment_id", "")
+		if projectID == "" || attachmentID == "" {
+			return "Please provide project_id and attachment_id", nil
+		}
+
+		var resp types.AttachmentExtractionResult
+		if err := client.Request(ctx, "POST", "/attachments/"+url.PathEscape(attachmentID)+"/extract", nil, map[string]string{"project_id": projectID}, &resp); err != nil {
+			return "", err
+		}
+		return formatAttachmentExtractionResult(resp), nil
+	})
+}
+
 func registerBrainAttachmentText(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_attachment_text",
@@ -586,6 +610,75 @@ func formatDerived(derived []types.AttachmentDerived) string {
 		items = append(items, strings.Join(parts, " / "))
 	}
 	return strings.Join(items, "; ")
+}
+
+func formatAttachmentExtractionResult(result types.AttachmentExtractionResult) string {
+	derived := result.DerivedText
+	attachmentID := result.Attachment.ID
+	if attachmentID == "" {
+		attachmentID = derived.Metadata["attachment_id"]
+	}
+	if attachmentID == "" {
+		attachmentID = "unknown"
+	}
+
+	lines := []string{
+		fmt.Sprintf("## Attachment Extraction: %s", attachmentID),
+		"",
+		fmt.Sprintf("Status: %s", derived.Status),
+	}
+	if result.Attachment.Filename != "" {
+		lines = append(lines, "Filename: "+result.Attachment.Filename)
+	}
+	provider := strings.TrimSpace(derived.Metadata["provider"])
+	if provider == "" {
+		provider = strings.TrimSpace(derived.Metadata["extraction_provider"])
+	}
+	if provider != "" {
+		lines = append(lines, "Provider: "+provider)
+	}
+	model := strings.TrimSpace(derived.Metadata["model"])
+	if model == "" {
+		model = strings.TrimSpace(derived.Metadata["extraction_model"])
+	}
+	if model != "" {
+		lines = append(lines, "Model: "+model)
+	}
+	if derived.Error != "" {
+		lines = append(lines, "Reason: "+derived.Error)
+	}
+	if derived.ContentType != "" {
+		lines = append(lines, "Derived content type: "+derived.ContentType)
+	}
+	if derived.ID != "" {
+		lines = append(lines, "Derived text ID: "+derived.ID)
+	}
+	lines = append(lines, fmt.Sprintf("Text: %d chars", len(derived.Text)))
+
+	if len(derived.Metadata) > 0 {
+		keys := make([]string, 0, len(derived.Metadata))
+		for key := range derived.Metadata {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		lines = append(lines, "", "Metadata:")
+		for _, key := range keys {
+			lines = append(lines, fmt.Sprintf("- %s: %s", key, derived.Metadata[key]))
+		}
+	}
+
+	if len(result.LinkedEntries) > 0 {
+		lines = append(lines, "", "Linked entries:")
+		for _, entry := range result.LinkedEntries {
+			line := "- " + entry.Path
+			if entry.Role != "" {
+				line += " (role: " + entry.Role + ")"
+			}
+			lines = append(lines, line)
+		}
+	}
+
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 // =============================================================================

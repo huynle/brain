@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // =============================================================================
@@ -22,8 +24,8 @@ func TestRegisterBrainTools_Count(t *testing.T) {
 
 	// Count registered tools
 	count := len(s.tools)
-	if count != 29 {
-		t.Errorf("expected 29 brain tools registered, got %d", count)
+	if count != 30 {
+		t.Errorf("expected 30 brain tools registered, got %d", count)
 	}
 }
 
@@ -60,6 +62,7 @@ func TestRegisterBrainTools_Names(t *testing.T) {
 		"brain_attachment_detach",
 		"brain_attachment_list",
 		"brain_attachment_get",
+		"brain_attachment_extract",
 		"brain_attachment_text",
 		"brain_attachment_download",
 	}
@@ -989,6 +992,7 @@ func TestAttachmentToolSchemas(t *testing.T) {
 		{"brain_attachment_detach", []string{"project_id", "entry_id", "attachment_id"}},
 		{"brain_attachment_list", []string{"project_id"}},
 		{"brain_attachment_get", []string{"project_id", "attachment_id"}},
+		{"brain_attachment_extract", []string{"project_id", "attachment_id"}},
 		{"brain_attachment_text", []string{"project_id", "attachment_id"}},
 		{"brain_attachment_download", []string{"project_id", "attachment_id", "output_path"}},
 	}
@@ -1064,7 +1068,7 @@ func TestBrainAttachmentUpload_HandlerUsesMultipartHelper(t *testing.T) {
 	}
 }
 
-func TestBrainAttachmentAttachDetachListGetTextDownload_RequestShapes(t *testing.T) {
+func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *testing.T) {
 	tmpDir := t.TempDir()
 	outputPath := filepath.Join(tmpDir, "downloaded.pdf")
 	requests := make([]string, 0, 5)
@@ -1095,6 +1099,28 @@ func TestBrainAttachmentAttachDetachListGetTextDownload_RequestShapes(t *testing
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments/att_123":
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{"id": "att_123", "filename": "source.pdf", "content_type": "application/pdf", "size": 42, "derived": []map[string]any{{"id": "drv_1", "kind": "text"}}})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/attachments/att_123/extract":
+			if got := r.URL.Query().Get("project_id"); got != "test-project" {
+				t.Fatalf("extract project_id = %q, want test-project", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(types.AttachmentExtractionResult{
+				Attachment: types.Attachment{ID: "att_123", Filename: "source.pdf", ContentType: "application/pdf", Size: 42},
+				DerivedText: types.AttachmentDerivedText{
+					ID:          "drv_1",
+					Kind:        "text",
+					Status:      types.AttachmentExtractionStatusReady,
+					ContentType: "text/plain",
+					Text:        "extracted text",
+					Metadata: map[string]string{
+						"provider":        "openrouter",
+						"model":           "google/gemini-2.5-flash",
+						"extracted_chars": "14",
+						"elapsed_ms":      "1234",
+					},
+				},
+				LinkedEntries: []types.AttachmentLinkedEntry{{Path: "projects/test/report/abc.md", Role: "source"}},
+			})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments/att_123/text":
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = w.Write([]byte("extracted text"))
@@ -1120,6 +1146,7 @@ func TestBrainAttachmentAttachDetachListGetTextDownload_RequestShapes(t *testing
 		{"brain_attachment_detach", map[string]any{"project_id": "test-project", "entry_id": "entry-123", "attachment_id": "att_123", "role": "source"}, "Detached"},
 		{"brain_attachment_list", map[string]any{"project_id": "test-project"}, "source.pdf"},
 		{"brain_attachment_get", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "drv_1"},
+		{"brain_attachment_extract", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "Status: ready"},
 		{"brain_attachment_text", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "extracted text"},
 		{"brain_attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123", "output_path": outputPath}, "Downloaded"},
 	}
@@ -1132,6 +1159,13 @@ func TestBrainAttachmentAttachDetachListGetTextDownload_RequestShapes(t *testing
 			if !strings.Contains(result, call.want) {
 				t.Fatalf("result = %q, want substring %q", result, call.want)
 			}
+			if call.tool == "brain_attachment_extract" {
+				for _, want := range []string{"Provider: openrouter", "Model: google/gemini-2.5-flash", "extracted_chars: 14", "elapsed_ms: 1234", "Linked entries", "projects/test/report/abc.md", "Text: 14 chars"} {
+					if !strings.Contains(result, want) {
+						t.Fatalf("extract result missing %q:\n%s", want, result)
+					}
+				}
+			}
 		})
 	}
 
@@ -1140,6 +1174,7 @@ func TestBrainAttachmentAttachDetachListGetTextDownload_RequestShapes(t *testing
 		"DELETE /api/v1/entries/entry-123/attachments/att_123?project_id=test-project&role=source",
 		"GET /api/v1/attachments?project_id=test-project",
 		"GET /api/v1/attachments/att_123?project_id=test-project",
+		"POST /api/v1/attachments/att_123/extract?project_id=test-project",
 		"GET /api/v1/attachments/att_123/text?project_id=test-project",
 		"GET /api/v1/attachments/att_123/content?project_id=test-project",
 	}
@@ -1175,6 +1210,7 @@ func TestBrainAttachmentTools_ValidateRequiredIDsBeforeRequest(t *testing.T) {
 		{"brain_attachment_detach", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, entry_id, and attachment_id"},
 		{"brain_attachment_list", map[string]any{}, "project_id"},
 		{"brain_attachment_get", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
+		{"brain_attachment_extract", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
 		{"brain_attachment_text", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
 		{"brain_attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, attachment_id, and output_path"},
 	}

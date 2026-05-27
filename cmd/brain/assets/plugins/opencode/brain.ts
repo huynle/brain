@@ -33,9 +33,9 @@ import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import { execSync } from "child_process";
 import { readFileSync } from "fs";
-import { readFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { homedir } from "os";
-import { basename, join } from "path";
+import { basename, dirname, join } from "path";
 
 // ============================================================================
 // Types
@@ -559,6 +559,34 @@ async function attachmentTextRequest(
   }
 
   return response.text();
+}
+
+async function attachmentDownloadRequest(
+  projectId: string,
+  attachmentId: string,
+  outputPath: string
+): Promise<void> {
+  const health = await checkBrainHealth();
+  if (!health.available) {
+    throw new BrainUnavailableError(health);
+  }
+
+  const params = new URLSearchParams({ project_id: projectId });
+  const response = await fetch(
+    `${BRAIN_API_URL}/api/v1/attachments/${encodeURIComponent(attachmentId)}/content?${params.toString()}`,
+    { headers: getAuthHeaders() }
+  );
+
+  if (!response.ok) {
+    throw new Error(await formatAPIError(response));
+  }
+
+  const parent = dirname(outputPath);
+  if (parent && parent !== ".") {
+    await mkdir(parent, { recursive: true });
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer());
+  await writeFile(outputPath, bytes);
 }
 
 async function formatAPIError(response: Response): Promise<string> {
@@ -1391,6 +1419,30 @@ Use \`brain_attachment_text\` with this attachment_id to retrieve extracted text
 ${text}`;
           } catch (error) {
             return `Attachment text failed: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
+      // ========================================
+      // brain_attachment_download
+      // ========================================
+      brain_attachment_download: tool({
+        description: "Download raw attachment bytes to a local output path. Use this when an agent needs the exact original image, PDF, or media file for later processing.",
+        args: {
+          project_id: tool.schema.string().describe("Project containing the attachment"),
+          attachment_id: tool.schema.string().describe("Attachment ID whose raw content should be downloaded"),
+          output_path: tool.schema.string().describe("Local path where the downloaded bytes should be written"),
+        },
+        async execute(args) {
+          if (!args.project_id || !args.attachment_id || !args.output_path) {
+            return "Please provide project_id, attachment_id, and output_path";
+          }
+
+          try {
+            await attachmentDownloadRequest(args.project_id, args.attachment_id, args.output_path);
+            return `Downloaded attachment ${args.attachment_id} to ${args.output_path}`;
+          } catch (error) {
+            return `Attachment download failed: ${error instanceof Error ? error.message : String(error)}`;
           }
         },
       }),

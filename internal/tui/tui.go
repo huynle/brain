@@ -1137,6 +1137,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case projectSelectedMsg:
 		m.modalManager.Close()
 		return m.selectProject(msg.projectID)
+
+	case attachmentModalActionMsg:
+		m.modalManager.Close()
+		return m, brainAttachmentActionCmd(m.apiRunnerConfig(), m.currentProjectID(), msg.Attachment, msg.Action)
 	}
 
 	// Route unhandled messages to the active modal (e.g., metadataFetchedMsg,
@@ -1553,10 +1557,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.activePanel == PanelDetails {
 				switch string(msg.Runes) {
 				case "a":
-					if !m.taskDetail.SelectNextAttachment() {
+					if !m.taskDetail.HasEntryAttachments() {
 						m.setStatusMessage("info", "No attachments on selected entry")
+						return m, nil
 					}
-					return m, nil
+					modal := NewAttachmentModal(m.taskDetail.entryAttachments, m.taskDetail.selectedAttachment)
+					return m, m.modalManager.Open(modal)
 				case "A":
 					if !m.taskDetail.SelectPrevAttachment() {
 						m.setStatusMessage("info", "No attachments on selected entry")

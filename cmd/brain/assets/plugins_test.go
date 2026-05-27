@@ -23,6 +23,12 @@ func TestGetPluginFile_OpenCodeBrain(t *testing.T) {
 	if !strings.Contains(text, "BRAIN_API_URL") {
 		t.Error("brain.ts missing expected BRAIN_API_URL constant")
 	}
+	if !strings.Contains(text, "brain_attachment_download") {
+		t.Error("brain.ts missing raw binary attachment download tool")
+	}
+	if !strings.Contains(text, "attachmentDownloadRequest") {
+		t.Error("brain.ts missing attachment download request helper")
+	}
 }
 
 // Test GetPluginFile can read opencode/brain-planning.ts

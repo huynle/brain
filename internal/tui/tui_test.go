@@ -474,29 +474,55 @@ func TestBrainAttachmentDownloadCmdFetchesBytesOnlyOnAction(t *testing.T) {
 	}
 }
 
-func TestBrainDetailAttachmentKeysSelectAndDownload(t *testing.T) {
+func TestBrainDetailAttachmentKeyOpensModalWithActions(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.activeContentTab = ContentTabBrain
 	m.activePanel = PanelDetails
 	m.detailVisible = true
 	m.taskDetail.SetEntryContentWithAttachments("projects/brain-api/decision/a.md", "A", "decision", "body", []types.AttachmentReference{
-		{ID: "att_1", Filename: "one.pdf"},
-		{ID: "att_2", Filename: "two.pdf"},
+		{ID: "att_1", Filename: "one.pdf", ContentType: "application/pdf", Size: 1536, Role: "source", Caption: "Source drawing"},
+		{ID: "att_2", Filename: "two.png", ContentType: "image/png", Size: 2048, Role: "screenshot"},
 	}, "Entry Detail")
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'a'}})
 	model := updated.(Model)
 	if cmd != nil {
-		t.Fatalf("selection should be local-only, got command")
+		t.Fatalf("opening attachment modal should be local-only, got command")
 	}
-	selected, ok := model.taskDetail.SelectedAttachment()
-	if !ok || selected.ID != "att_2" {
-		t.Fatalf("selected attachment = %#v, want att_2", selected)
+	if !model.modalManager.IsOpen() {
+		t.Fatal("expected attachment modal to open")
+	}
+	modal, ok := model.modalManager.activeModal.(*AttachmentModal)
+	if !ok {
+		t.Fatalf("expected AttachmentModal, got %T", model.modalManager.activeModal)
+	}
+	view := modal.View()
+	for _, want := range []string{"one.pdf", "application/pdf", "1.5 KB", "Source drawing", "two.png", "o: open", "d: download"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected attachment modal to contain %q, got:\n%s", want, view)
+		}
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	model = updated.(Model)
+	modal = model.modalManager.activeModal.(*AttachmentModal)
+	if got := modal.SelectedAttachment().ID; got != "att_2" {
+		t.Fatalf("selected attachment after j = %q, want att_2", got)
+	}
+
+	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	model = updated.(Model)
 	if cmd == nil {
-		t.Fatal("download key should return attachment action command")
+		t.Fatal("open key in attachment modal should return modal action command")
+	}
+
+	updated, cmd = model.Update(cmd())
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("attachment modal action should return attachment open command")
+	}
+	if model.modalManager.IsOpen() {
+		t.Fatal("attachment modal should close after open action")
 	}
 }
 

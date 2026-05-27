@@ -222,6 +222,56 @@ func (c *APIClient) DownloadAttachmentText(ctx context.Context, projectID, attac
 	return string(respBody), nil
 }
 
+// DownloadAttachmentToFile streams raw attachment bytes to outputPath.
+func (c *APIClient) DownloadAttachmentToFile(ctx context.Context, projectID, attachmentID, outputPath string) error {
+	params := url.Values{}
+	if projectID != "" {
+		params.Set("project_id", projectID)
+	}
+	u := c.baseURL + "/api/v1/attachments/" + url.PathEscape(attachmentID) + "/content"
+	if encoded := params.Encode(); encoded != "" {
+		u += "?" + encoded
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	if c.authToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.authToken)
+	}
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return fmt.Errorf("read response: %w", err)
+		}
+		return checkAPIError(resp, respBody)
+	}
+
+	if dir := filepath.Dir(outputPath); dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create output directory: %w", err)
+		}
+	}
+	out, err := os.OpenFile(outputPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
+	if err != nil {
+		return fmt.Errorf("create output file: %w", err)
+	}
+	defer out.Close()
+
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		return fmt.Errorf("write output file: %w", err)
+	}
+	return nil
+}
+
 func checkAPIError(resp *http.Response, respBody []byte) error {
 	if resp.StatusCode < 400 {
 		return nil

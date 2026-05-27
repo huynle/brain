@@ -40,6 +40,7 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainAttachmentList(s, client)
 	registerBrainAttachmentGet(s, client)
 	registerBrainAttachmentText(s, client)
+	registerBrainAttachmentDownload(s, client)
 }
 
 // =============================================================================
@@ -452,6 +453,29 @@ func registerBrainAttachmentText(s *Server, client *APIClient) {
 			return fmt.Sprintf("No extracted text is available for attachment %s", attachmentID), nil
 		}
 		return fmt.Sprintf("## Attachment Text: %s\n\n%s", attachmentID, text), nil
+	})
+}
+
+func registerBrainAttachmentDownload(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_attachment_download",
+		Description: "Download raw attachment bytes to a local output path. Use this when an agent needs the exact original image, PDF, or media file for later processing.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"attachment_id": {Type: "string", Description: "Attachment ID whose raw content should be downloaded"},
+			"output_path":   {Type: "string", Description: "Local path where the downloaded bytes should be written"},
+		}, Required: []string{"project_id", "attachment_id", "output_path"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		attachmentID := StringArg(args, "attachment_id", "")
+		outputPath := StringArg(args, "output_path", "")
+		if projectID == "" || attachmentID == "" || outputPath == "" {
+			return "Please provide project_id, attachment_id, and output_path", nil
+		}
+		if err := client.DownloadAttachmentToFile(ctx, projectID, attachmentID, outputPath); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Downloaded attachment %s to %s", attachmentID, outputPath), nil
 	})
 }
 

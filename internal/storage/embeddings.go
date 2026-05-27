@@ -162,6 +162,22 @@ func (s *StorageLayer) EmbeddingStatus(ctx context.Context, note *NoteRow) (stri
 	if note.IndexedAt != "" && note.IndexedAt > latest {
 		return "stale", nil
 	}
+	var latestReadyAttachmentDerived string
+	err = s.db.QueryRowContext(ctx, `
+		SELECT COALESCE(MAX(ad.updated_at), '')
+		FROM entry_attachments ea
+		JOIN attachment_derived ad ON ad.attachment_id = ea.attachment_id
+		WHERE ea.note_id = ?
+		  AND ad.kind = 'text'
+		  AND ad.status = 'ready'
+		  AND TRIM(ad.text) <> ''
+	`, note.ID).Scan(&latestReadyAttachmentDerived)
+	if err != nil {
+		return "", fmt.Errorf("query attachment derived embedding status: %w", err)
+	}
+	if latestReadyAttachmentDerived != "" && latestReadyAttachmentDerived > latest {
+		return "stale", nil
+	}
 	return "current", nil
 }
 

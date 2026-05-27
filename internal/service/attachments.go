@@ -35,9 +35,17 @@ type AttachmentServiceImpl struct {
 	blobs        blobstore.Store
 	brain        api.BrainService
 	extractor    AttachmentExtractor
+	derivedHook  AttachmentDerivedChangeHook
 	maxSizeBytes int64
 	allowedMIME  map[string]struct{}
 	blockedMIME  map[string]struct{}
+}
+
+// AttachmentDerivedChangeHook is notified after attachment-derived text reaches
+// a terminal stored state so linked entry indexes can be refreshed without
+// coupling attachment extraction to embedding internals.
+type AttachmentDerivedChangeHook interface {
+	AttachmentDerivedTextChanged(ctx context.Context, projectID, attachmentID string, derived types.AttachmentDerivedText, linked []types.AttachmentLinkedEntry) error
 }
 
 // AttachmentServiceOption configures attachment service policy.
@@ -56,6 +64,14 @@ func WithAttachmentMIMEPolicy(allowed, blocked []string) AttachmentServiceOption
 func WithAttachmentExtractor(extractor AttachmentExtractor) AttachmentServiceOption {
 	return func(s *AttachmentServiceImpl) {
 		s.extractor = extractor
+	}
+}
+
+// WithAttachmentDerivedChangeHook configures an optional callback that is
+// invoked after derived attachment text is written in a terminal state.
+func WithAttachmentDerivedChangeHook(hook AttachmentDerivedChangeHook) AttachmentServiceOption {
+	return func(s *AttachmentServiceImpl) {
+		s.derivedHook = hook
 	}
 }
 
@@ -252,6 +268,7 @@ func (s *AttachmentServiceImpl) StoreDerivedText(ctx context.Context, projectID,
 	if err != nil {
 		return nil, err
 	}
+	s.notifyAttachmentDerivedTextChanged(ctx, projectID, attachmentID, row.ID, dto, nil)
 	return &dto, nil
 }
 
@@ -335,6 +352,25 @@ func (s *AttachmentServiceImpl) storeAttachmentExtractionTerminal(ctx context.Co
 		Error:       errorMessage,
 		Metadata:    metadata,
 	})
+}
+
+func (s *AttachmentServiceImpl) notifyAttachmentDerivedTextChanged(ctx context.Context, projectID, attachmentID string, attachmentRowID int64, derived types.AttachmentDerivedText, linked []types.AttachmentLinkedEntry) {
+	if s == nil || s.derivedHook == nil {
+		return
+	}
+	if linked == nil {
+		var err error
+		linked, err = s.attachmentLinkedEntries(ctx, attachmentRowID)
+		if err != nil {
+			return
+		}
+	}
+	_ = s.derivedHook.AttachmentDerivedTextChanged(ctx, projectID, attachmentID, derived, linked)
+}
+
+func (s *AttachmentServiceImpl) attachmentExtractionResult(ctx context.Context, projectID string, att types.Attachment, attachmentRowID int64, derived *types.AttachmentDerivedText, linked []types.AttachmentLinkedEntry) *types.AttachmentExtractionResult {
+	s.notifyAttachmentDerivedTextChanged(ctx, projectID, att.ID, attachmentRowID, *derived, linked)
+	return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linked}
 }
 
 func attachmentExtractionBaseMetadata(att types.Attachment, resp types.AttachmentExtractionResponse, elapsedMs int64) map[string]string {
@@ -431,7 +467,7 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 		if err != nil {
 			return nil, err
 		}
-		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+		return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
 	}
 
 	if err := s.validateAttachmentMIMEType(att.ContentType); err != nil {
@@ -444,7 +480,7 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 		if storeErr != nil {
 			return nil, storeErr
 		}
-		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+		return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
 	}
 
 	if err := validateAttachmentSize(att.Size, s.maxSizeBytes); err != nil {
@@ -457,7 +493,7 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 		if storeErr != nil {
 			return nil, storeErr
 		}
-		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+		return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
 	}
 
 	stream, err := s.blobs.Get(att.StorageKey)
@@ -471,7 +507,7 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 		if storeErr != nil {
 			return nil, storeErr
 		}
-		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+		return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
 	}
 	data, readErr := readAttachmentContent(stream, s.maxSizeBytes)
 	closeErr := stream.Close()
@@ -485,7 +521,7 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 		if storeErr != nil {
 			return nil, storeErr
 		}
-		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+		return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
 	}
 	if closeErr != nil {
 		derived, storeErr := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, types.AttachmentExtractionResponse{
@@ -497,7 +533,7 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 		if storeErr != nil {
 			return nil, storeErr
 		}
-		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+		return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
 	}
 
 	extractReq := req
@@ -523,7 +559,7 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 	if err != nil {
 		return nil, err
 	}
-	return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+	return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
 }
 
 // List returns attachments visible within a project.

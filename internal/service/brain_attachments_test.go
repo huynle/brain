@@ -106,6 +106,16 @@ func TestRecallWithIncludeAttachmentsHydratesMetadataOnly(t *testing.T) {
 	if err := store.LinkAttachmentToEntry(ctx, saved.Path, row.ID, "source"); err != nil {
 		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
 	}
+	if _, err := store.UpsertAttachmentDerived(ctx, storage.AttachmentDerivedInput{
+		AttachmentID: row.ID,
+		Kind:         "text",
+		Status:       types.AttachmentExtractionStatusReady,
+		ContentType:  "text/markdown",
+		Text:         "ready derived text",
+		Metadata:     `{"provider":"openrouter","model":"google/gemini-2.5-flash"}`,
+	}); err != nil {
+		t.Fatalf("UpsertAttachmentDerived failed: %v", err)
+	}
 
 	defaultRecall, err := svc.Recall(ctx, saved.ID)
 	if err != nil {
@@ -137,6 +147,9 @@ func TestRecallWithIncludeAttachmentsHydratesMetadataOnly(t *testing.T) {
 	}
 	if got.TextURL != "/api/v1/attachments/1/text?project_id=default" {
 		t.Fatalf("TextURL = %q", got.TextURL)
+	}
+	if got.DerivedText == nil || got.DerivedText.Status != types.AttachmentExtractionStatusReady || got.DerivedText.Metadata["model"] != "google/gemini-2.5-flash" {
+		t.Fatalf("DerivedText = %#v, want ready status and model metadata", got.DerivedText)
 	}
 }
 
@@ -364,5 +377,51 @@ func TestAttachmentEndToEndSafetyAndDerivedSearch(t *testing.T) {
 	}
 	if _, err := attachments.Create(ctx, "default", types.CreateAttachmentRequest{Filename: "../unsafe.txt", Size: 4}, strings.NewReader("safe")); err == nil || !strings.Contains(err.Error(), "filename") {
 		t.Fatalf("unsafe filename err = %v, want filename validation", err)
+	}
+}
+
+func TestStoreDerivedTextRefreshesLinkedEntryEmbeddings(t *testing.T) {
+	var embeddedInputs []string
+	brain, store, _ := newTestBrainServiceWithEmbedding(t, &mockEmbeddingClient{
+		embedFunc: func(ctx context.Context, inputs []string) ([][]float32, error) {
+			embeddedInputs = append([]string(nil), inputs...)
+			vectors := make([][]float32, len(inputs))
+			for i := range inputs {
+				vectors[i] = []float32{0.1, 0.2, 0.3, 0.4, 0.5}
+			}
+			return vectors, nil
+		},
+	})
+	blobs := newRecordingBlobStore()
+	attachments := NewAttachmentService(store, blobs, brain, 1024, WithAttachmentDerivedChangeHook(brain))
+	ctx := context.Background()
+
+	entry, err := brain.Save(ctx, types.CreateEntryRequest{Type: "report", Title: "Embeddable Attachment Entry", Content: "entry body", Project: "default"})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	content := []byte("image bytes")
+	created, err := attachments.Create(ctx, "default", types.CreateAttachmentRequest{Filename: "scan.png", ContentType: "image/png", Size: int64(len(content))}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if _, err := attachments.Attach(ctx, "default", entry.ID, types.AttachEntryAttachmentRequest{Attachment: types.AttachmentReference{ID: created.Attachment.ID, Role: "source"}}); err != nil {
+		t.Fatalf("Attach failed: %v", err)
+	}
+	embeddedInputs = nil
+
+	if _, err := attachments.StoreDerivedText(ctx, "default", created.Attachment.ID, types.AttachmentDerivedText{Kind: "text", Status: "ready", ContentType: "text/plain", Text: "fresh semantic derived attachment text"}); err != nil {
+		t.Fatalf("StoreDerivedText failed: %v", err)
+	}
+
+	foundDerivedText := false
+	for _, input := range embeddedInputs {
+		if strings.Contains(input, "fresh semantic derived attachment text") {
+			foundDerivedText = true
+			break
+		}
+	}
+	if !foundDerivedText {
+		t.Fatalf("embedding inputs = %#v, want refreshed linked entry embedding to include derived attachment text", embeddedInputs)
 	}
 }

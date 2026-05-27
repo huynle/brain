@@ -29,6 +29,20 @@ type Indexer struct {
 	storage  *storage.StorageLayer
 }
 
+const latestReadyAttachmentDerivedJoin = `
+		LEFT JOIN (
+			SELECT ea.note_id, MAX(ad.updated_at) as latest_ready_derived
+			FROM entry_attachments ea
+			JOIN attachment_derived ad ON ad.attachment_id = ea.attachment_id
+			WHERE ad.kind = 'text'
+			  AND ad.status = 'ready'
+			  AND TRIM(ad.text) <> ''
+			GROUP BY ea.note_id
+		) d ON n.id = d.note_id
+`
+
+const embeddingStaleCondition = "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed OR d.latest_ready_derived > m.latest_indexed)"
+
 // NewIndexer creates a new Indexer for the given brain directory and storage layer.
 func NewIndexer(brainDir string, store *storage.StorageLayer) *Indexer {
 	return &Indexer{
@@ -329,11 +343,11 @@ func (idx *Indexer) ListEmbeddingBackfillCandidates(ctx context.Context, opts Em
 			FROM note_embeddings_meta
 			GROUP BY note_id
 		) m ON n.id = m.note_id
-	`
+	` + latestReadyAttachmentDerivedJoin
 	var conditions []string
 	var args []interface{}
 	if !opts.Force {
-		conditions = append(conditions, "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed)")
+		conditions = append(conditions, embeddingStaleCondition)
 	}
 	if opts.Project != "" {
 		conditions = append(conditions, "n.project_id = ?")
@@ -379,7 +393,8 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 	// Query notes that need embedding (re)generation
 	// A note needs embeddings if:
 	// 1. It has no embeddings at all, OR
-	// 2. Its indexed_at is newer than its most recent embedding_indexed_at
+	// 2. Its indexed_at is newer than its most recent embedding_indexed_at, OR
+	// 3. Ready linked attachment-derived text is newer than embedding_indexed_at
 	query := `
 		SELECT DISTINCT n.id, COALESCE(n.body, ''), n.project_id, n.type, n.status, n.feature_id, n.priority
 		FROM notes n
@@ -388,11 +403,11 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 			FROM note_embeddings_meta
 			GROUP BY note_id
 		) m ON n.id = m.note_id
-	`
+	` + latestReadyAttachmentDerivedJoin
 	var conditions []string
 	var args []interface{}
 	if !opts.Force {
-		conditions = append(conditions, "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed)")
+		conditions = append(conditions, embeddingStaleCondition)
 	}
 	if opts.Project != "" {
 		conditions = append(conditions, "n.project_id = ?")
@@ -446,14 +461,23 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 				continue
 			}
 		}
-		// Skip notes with empty body
-		if note.body == "" {
+		embeddingSource, err := idx.embeddingSourceForNote(ctx, note.id, note.body)
+		if err != nil {
+			slog.Warn("failed to build embedding source for note",
+				"note_id", note.id,
+				"error", err)
+			failed++
+			continue
+		}
+
+		// Skip notes whose combined embedding source is empty.
+		if strings.TrimSpace(embeddingSource) == "" {
 			skipped++
 			continue
 		}
 
 		// Generate chunks
-		chunks := markdown.ChunkNote(note.id, note.body)
+		chunks := markdown.ChunkNote(note.id, embeddingSource)
 		if len(chunks) == 0 {
 			skipped++
 			continue
@@ -519,6 +543,50 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 	}, nil
 }
 
+func (idx *Indexer) embeddingSourceForNote(ctx context.Context, noteID int64, body string) (string, error) {
+	rows, err := idx.storage.DB().QueryContext(ctx, `
+		SELECT ad.text
+		FROM entry_attachments ea
+		JOIN attachment_derived ad ON ad.attachment_id = ea.attachment_id
+		WHERE ea.note_id = ?
+		  AND ad.kind = 'text'
+		  AND ad.status = 'ready'
+		  AND TRIM(ad.text) <> ''
+		ORDER BY ea.id, ad.id
+	`, noteID)
+	if err != nil {
+		return "", fmt.Errorf("query ready attachment derived text: %w", err)
+	}
+	defer rows.Close()
+
+	var attachmentTexts []string
+	for rows.Next() {
+		var text string
+		if err := rows.Scan(&text); err != nil {
+			return "", fmt.Errorf("scan ready attachment derived text: %w", err)
+		}
+		text = strings.TrimSpace(text)
+		if text != "" {
+			attachmentTexts = append(attachmentTexts, text)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterate ready attachment derived text: %w", err)
+	}
+	if len(attachmentTexts) == 0 {
+		return body, nil
+	}
+
+	var b strings.Builder
+	if strings.TrimSpace(body) != "" {
+		b.WriteString(body)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("Attachments:\n")
+	b.WriteString(strings.Join(attachmentTexts, "\n\n"))
+	return b.String(), nil
+}
+
 // GetEmbeddingHealth returns statistics about the embedding index.
 func (idx *Indexer) GetEmbeddingHealth() (*EmbeddingHealth, error) {
 	ctx := context.Background()
@@ -539,7 +607,7 @@ func (idx *Indexer) GetEmbeddingHealth() (*EmbeddingHealth, error) {
 		return nil, fmt.Errorf("count notes with embeddings: %w", err)
 	}
 
-	// Count stale embeddings (indexed_at > embedding_indexed_at)
+	// Count stale embeddings (note or ready linked attachment-derived text is newer than embedding_indexed_at)
 	var staleEmbeddings int
 	staleQuery := `
 		SELECT COUNT(DISTINCT n.id)
@@ -549,7 +617,9 @@ func (idx *Indexer) GetEmbeddingHealth() (*EmbeddingHealth, error) {
 			FROM note_embeddings_meta
 			GROUP BY note_id
 		) m ON n.id = m.note_id
+	` + latestReadyAttachmentDerivedJoin + `
 		WHERE n.indexed_at > m.latest_indexed
+		   OR d.latest_ready_derived > m.latest_indexed
 	`
 	if err := idx.storage.DB().QueryRowContext(ctx, staleQuery).Scan(&staleEmbeddings); err != nil && err != sql.ErrNoRows {
 		return nil, fmt.Errorf("count stale embeddings: %w", err)

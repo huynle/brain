@@ -1,6 +1,7 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -186,6 +187,252 @@ func TestSaveAndUpdate_ReembedChangedEntry(t *testing.T) {
 	}
 	if calls <= saveCalls {
 		t.Fatalf("expected update to re-generate embeddings, calls before=%d after=%d", saveCalls, calls)
+	}
+}
+
+func TestSearch_Semantic_FindsEntryFromReadyAttachmentDerivedText(t *testing.T) {
+	mockClient := &mockEmbeddingClient{
+		embedFunc: func(ctx context.Context, inputs []string) ([][]float32, error) {
+			vectors := make([][]float32, len(inputs))
+			for i, input := range inputs {
+				switch {
+				case strings.Contains(input, "instrument calibration") || strings.Contains(input, "spectrometer alignment protocol"):
+					vectors[i] = []float32{1, 0, 0, 0, 0}
+				case strings.Contains(input, "control baseline"):
+					vectors[i] = []float32{0.8, 0.2, 0, 0, 0}
+				default:
+					vectors[i] = []float32{0, 1, 0, 0, 0}
+				}
+			}
+			return vectors, nil
+		},
+	}
+	svc, store, _ := newTestBrainServiceWithEmbedding(t, mockClient)
+	ctx := context.Background()
+
+	entry, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "report",
+		Title:   "Lab Attachment Note",
+		Content: "body discusses unrelated office supplies",
+		Project: "default",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	if _, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "report",
+		Title:   "Control Semantic Note",
+		Content: "control baseline",
+		Project: "default",
+	}); err != nil {
+		t.Fatalf("Save control failed: %v", err)
+	}
+	attachment, err := store.CreateAttachment(ctx, storage.AttachmentInput{
+		Digest:    strings.Repeat("a", 64),
+		Size:      128,
+		MediaType: "application/pdf",
+		Metadata:  `{"filename":"lab.pdf","project_id":"default"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAttachment failed: %v", err)
+	}
+	if err := store.LinkAttachmentToEntry(ctx, entry.Path, attachment.ID, "source"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+	if _, err := store.UpsertAttachmentDerived(ctx, storage.AttachmentDerivedInput{
+		AttachmentID: attachment.ID,
+		Kind:         "text",
+		Status:       types.AttachmentExtractionStatusReady,
+		ContentType:  "text/plain",
+		Text:         "spectrometer alignment protocol appears only in ready attachment text",
+	}); err != nil {
+		t.Fatalf("UpsertAttachmentDerived failed: %v", err)
+	}
+	if _, err := svc.EmbedEntries(ctx, types.EmbeddingBackfillRequest{Path: entry.Path, Force: true}); err != nil {
+		t.Fatalf("EmbedEntries failed: %v", err)
+	}
+
+	resp, err := svc.Search(ctx, types.SearchRequest{Query: "instrument calibration", Strategy: "semantic", Limit: intPtr(10)})
+	if err != nil {
+		t.Fatalf("semantic search failed: %v", err)
+	}
+	if resp.Total == 0 || resp.Results[0].ID != entry.ID {
+		t.Fatalf("semantic results = %#v, want entry found through derived attachment text", resp.Results)
+	}
+}
+
+func TestSearch_Hybrid_FindsEntryFromReadyAttachmentDerivedTextEmbedding(t *testing.T) {
+	mockClient := &mockEmbeddingClient{
+		embedFunc: func(ctx context.Context, inputs []string) ([][]float32, error) {
+			vectors := make([][]float32, len(inputs))
+			for i, input := range inputs {
+				if strings.Contains(input, "instrument calibration") || strings.Contains(input, "spectrometer alignment protocol") {
+					vectors[i] = []float32{1, 0, 0, 0, 0}
+				} else if strings.Contains(input, "control baseline") {
+					vectors[i] = []float32{0.8, 0.2, 0, 0, 0}
+				} else {
+					vectors[i] = []float32{0, 1, 0, 0, 0}
+				}
+			}
+			return vectors, nil
+		},
+	}
+	svc, store, _ := newTestBrainServiceWithEmbedding(t, mockClient)
+	ctx := context.Background()
+
+	entry, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "report",
+		Title:   "Hybrid Derived Attachment Note",
+		Content: "body contains no matching search terms",
+		Project: "default",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	if _, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "report",
+		Title:   "Control Hybrid Note",
+		Content: "control baseline",
+		Project: "default",
+	}); err != nil {
+		t.Fatalf("Save control failed: %v", err)
+	}
+	attachment, err := store.CreateAttachment(ctx, storage.AttachmentInput{Digest: strings.Repeat("b", 64), Size: 64, MediaType: "application/pdf"})
+	if err != nil {
+		t.Fatalf("CreateAttachment failed: %v", err)
+	}
+	if err := store.LinkAttachmentToEntry(ctx, entry.Path, attachment.ID, "source"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+	if _, err := store.UpsertAttachmentDerived(ctx, storage.AttachmentDerivedInput{
+		AttachmentID: attachment.ID,
+		Kind:         "text",
+		Status:       types.AttachmentExtractionStatusReady,
+		ContentType:  "text/plain",
+		Text:         "spectrometer alignment protocol appears only in ready attachment text",
+	}); err != nil {
+		t.Fatalf("UpsertAttachmentDerived failed: %v", err)
+	}
+	if _, err := svc.EmbedEntries(ctx, types.EmbeddingBackfillRequest{Path: entry.Path, Force: true}); err != nil {
+		t.Fatalf("EmbedEntries failed: %v", err)
+	}
+
+	resp, err := svc.Search(ctx, types.SearchRequest{Query: "instrument calibration", Strategy: "hybrid", Limit: intPtr(10)})
+	if err != nil {
+		t.Fatalf("hybrid search failed: %v", err)
+	}
+	found := false
+	for _, result := range resp.Results {
+		if result.ID == entry.ID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("hybrid results = %#v, want entry found through derived attachment text embedding", resp.Results)
+	}
+}
+
+func TestSearch_Semantic_NoteBodyEmbeddingsStillWork(t *testing.T) {
+	mockClient := &mockEmbeddingClient{
+		embedFunc: func(ctx context.Context, inputs []string) ([][]float32, error) {
+			vectors := make([][]float32, len(inputs))
+			for i, input := range inputs {
+				if strings.Contains(input, "distributed tracing") || strings.Contains(input, "observability spans") {
+					vectors[i] = []float32{0, 0, 1, 0, 0}
+				} else {
+					vectors[i] = []float32{0, 1, 0, 0, 0}
+				}
+			}
+			return vectors, nil
+		},
+	}
+	svc, _, _ := newTestBrainServiceWithEmbedding(t, mockClient)
+	ctx := context.Background()
+
+	entry, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "decision",
+		Title:   "Tracing Decision",
+		Content: "Use observability spans for request debugging.",
+		Project: "default",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	resp, err := svc.Search(ctx, types.SearchRequest{Query: "distributed tracing", Strategy: "semantic", Limit: intPtr(10)})
+	if err != nil {
+		t.Fatalf("semantic search failed: %v", err)
+	}
+	if resp.Total == 0 || resp.Results[0].ID != entry.ID {
+		t.Fatalf("semantic results = %#v, want body embedding result", resp.Results)
+	}
+}
+
+func TestStoreDerivedTextReextractRefreshesLinkedEntryEmbeddingState(t *testing.T) {
+	var embeddedInputs []string
+	mockClient := &mockEmbeddingClient{
+		embedFunc: func(ctx context.Context, inputs []string) ([][]float32, error) {
+			embeddedInputs = append(embeddedInputs, inputs...)
+			vectors := make([][]float32, len(inputs))
+			for i, input := range inputs {
+				switch {
+				case strings.Contains(input, "second extraction") || strings.Contains(input, "updated calibration"):
+					vectors[i] = []float32{0, 0, 0, 1, 0}
+				case strings.Contains(input, "first extraction") || strings.Contains(input, "old calibration"):
+					vectors[i] = []float32{1, 0, 0, 0, 0}
+				default:
+					vectors[i] = []float32{0, 1, 0, 0, 0}
+				}
+			}
+			return vectors, nil
+		},
+	}
+	brain, store, _ := newTestBrainServiceWithEmbedding(t, mockClient)
+	blobs := newRecordingBlobStore()
+	attachments := NewAttachmentService(store, blobs, brain, 1024, WithAttachmentDerivedChangeHook(brain))
+	ctx := context.Background()
+
+	entry, err := brain.Save(ctx, types.CreateEntryRequest{Type: "report", Title: "Reextract Attachment", Content: "body", Project: "default"})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+	content := []byte("image bytes")
+	created, err := attachments.Create(ctx, "default", types.CreateAttachmentRequest{Filename: "scan.png", ContentType: "image/png", Size: int64(len(content))}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+	if _, err := attachments.Attach(ctx, "default", entry.ID, types.AttachEntryAttachmentRequest{Attachment: types.AttachmentReference{ID: created.Attachment.ID, Role: "source"}}); err != nil {
+		t.Fatalf("Attach failed: %v", err)
+	}
+
+	if _, err := attachments.StoreDerivedText(ctx, "default", created.Attachment.ID, types.AttachmentDerivedText{Kind: "text", Status: "ready", ContentType: "text/plain", Text: "first extraction old calibration text"}); err != nil {
+		t.Fatalf("StoreDerivedText first failed: %v", err)
+	}
+	embeddedInputs = nil
+	if _, err := attachments.StoreDerivedText(ctx, "default", created.Attachment.ID, types.AttachmentDerivedText{Kind: "text", Status: "ready", ContentType: "text/plain", Text: "second extraction updated calibration text"}); err != nil {
+		t.Fatalf("StoreDerivedText second failed: %v", err)
+	}
+
+	foundUpdatedInput := false
+	for _, input := range embeddedInputs {
+		if strings.Contains(input, "second extraction updated calibration text") {
+			foundUpdatedInput = true
+		}
+		if strings.Contains(input, "first extraction old calibration text") {
+			t.Fatalf("embedding inputs after re-extract = %#v, want refreshed text only", embeddedInputs)
+		}
+	}
+	if !foundUpdatedInput {
+		t.Fatalf("embedding inputs after re-extract = %#v, want updated derived text", embeddedInputs)
+	}
+
+	resp, err := brain.Search(ctx, types.SearchRequest{Query: "updated calibration", Strategy: "semantic", Limit: intPtr(10)})
+	if err != nil {
+		t.Fatalf("semantic search failed: %v", err)
+	}
+	if resp.Total == 0 || resp.Results[0].ID != entry.ID {
+		t.Fatalf("semantic results = %#v, want re-extracted derived text embedding", resp.Results)
 	}
 }
 

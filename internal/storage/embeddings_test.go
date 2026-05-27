@@ -250,6 +250,63 @@ func TestUpsertNoteEmbeddings_EmptyBatch(t *testing.T) {
 	}
 }
 
+func TestEmbeddingStatus_StaleWhenReadyAttachmentDerivedTextIsNewerThanEmbedding(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStorage(t)
+
+	note := sampleNote("projects/test/attachment-stale.md", "attstale", "Attachment Stale")
+	inserted, err := store.InsertNote(ctx, note)
+	if err != nil {
+		t.Fatalf("failed to insert note: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `UPDATE notes SET indexed_at = '2025-01-01 00:00:00' WHERE id = ?`, inserted.ID); err != nil {
+		t.Fatalf("set note indexed_at failed: %v", err)
+	}
+
+	if err := store.UpsertNoteEmbeddings(ctx, []EmbeddingRecord{sampleEmbeddingRecord(inserted.ID, 0, 384)}); err != nil {
+		t.Fatalf("UpsertNoteEmbeddings failed: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `UPDATE note_embeddings_meta SET embedding_indexed_at = '2025-01-02 00:00:00' WHERE note_id = ?`, inserted.ID); err != nil {
+		t.Fatalf("set embedding_indexed_at failed: %v", err)
+	}
+
+	attachment, err := store.CreateAttachment(ctx, AttachmentInput{
+		Digest:    "sha256:attachment-status-stale",
+		Size:      42,
+		MediaType: "text/plain",
+	})
+	if err != nil {
+		t.Fatalf("CreateAttachment failed: %v", err)
+	}
+	if err := store.LinkAttachmentToEntry(ctx, inserted.Path, attachment.ID, "inline"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+	if _, err := store.UpsertAttachmentDerived(ctx, AttachmentDerivedInput{
+		AttachmentID: attachment.ID,
+		Kind:         "text",
+		Status:       "ready",
+		ContentType:  "text/plain",
+		Text:         "new derived text",
+	}); err != nil {
+		t.Fatalf("UpsertAttachmentDerived failed: %v", err)
+	}
+	if _, err := store.DB().ExecContext(ctx, `UPDATE attachment_derived SET updated_at = '2025-01-03 00:00:00' WHERE attachment_id = ?`, attachment.ID); err != nil {
+		t.Fatalf("set attachment derived updated_at failed: %v", err)
+	}
+
+	refetched, err := store.GetNoteByPath(ctx, inserted.Path)
+	if err != nil {
+		t.Fatalf("GetNoteByPath failed: %v", err)
+	}
+	status, err := store.EmbeddingStatus(ctx, refetched)
+	if err != nil {
+		t.Fatalf("EmbeddingStatus failed: %v", err)
+	}
+	if status != "stale" {
+		t.Fatalf("EmbeddingStatus = %q, want stale", status)
+	}
+}
+
 func TestUpsertNoteEmbeddings_TransactionRollback(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStorage(t)

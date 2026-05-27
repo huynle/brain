@@ -48,9 +48,31 @@ type recordingAttachmentExtractor struct {
 	calls []types.AttachmentExtractionRequest
 }
 
+type recordingAttachmentDerivedChangeHook struct {
+	err   error
+	calls []recordingAttachmentDerivedChangeCall
+}
+
+type recordingAttachmentDerivedChangeCall struct {
+	projectID    string
+	attachmentID string
+	derived      types.AttachmentDerivedText
+	linked       []types.AttachmentLinkedEntry
+}
+
 func (e *recordingAttachmentExtractor) Extract(_ context.Context, req types.AttachmentExtractionRequest) (types.AttachmentExtractionResponse, error) {
 	e.calls = append(e.calls, req)
 	return e.resp, e.err
+}
+
+func (h *recordingAttachmentDerivedChangeHook) AttachmentDerivedTextChanged(_ context.Context, projectID, attachmentID string, derived types.AttachmentDerivedText, linked []types.AttachmentLinkedEntry) error {
+	h.calls = append(h.calls, recordingAttachmentDerivedChangeCall{
+		projectID:    projectID,
+		attachmentID: attachmentID,
+		derived:      derived,
+		linked:       append([]types.AttachmentLinkedEntry(nil), linked...),
+	})
+	return h.err
 }
 
 func newMockBrainForAttachments(entries ...*types.BrainEntry) *mockBrainForAttachments {
@@ -730,6 +752,85 @@ func TestAttachmentServiceOpenTextPrefersReadyDerivedText(t *testing.T) {
 	}
 	if att.ID != created.Attachment.ID || string(readBack) != "ocr text from image" {
 		t.Fatalf("OpenText metadata/content = %#v/%q, want derived text", att, readBack)
+	}
+}
+
+func TestAttachmentServiceStoreDerivedTextInvokesChangeHookForLinkedEntriesAndSwallowsHookError(t *testing.T) {
+	store, err := storage.New(t.TempDir() + "/brain.db")
+	if err != nil {
+		t.Fatalf("storage.New failed: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	blobs := newRecordingBlobStore()
+	hook := &recordingAttachmentDerivedChangeHook{err: errors.New("embedding refresh unavailable")}
+	svc := NewAttachmentService(store, blobs, nil, 1024, WithAttachmentDerivedChangeHook(hook))
+	ctx := context.Background()
+	content := []byte("image bytes")
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{Filename: "scan.png", ContentType: "image/png", Size: int64(len(content))}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	note := insertAttachmentNoteForTest(t, store, "proj", "projects/proj/report/ref.md", "refatt02")
+	if err := store.LinkAttachmentToEntry(ctx, note.Path, mustParseAttachmentIDForTest(t, created.Attachment.ID), "source"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+
+	stored, err := svc.StoreDerivedText(ctx, "proj", created.Attachment.ID, types.AttachmentDerivedText{Kind: "text", Status: "ready", ContentType: "text/plain", Text: "fresh derived text"})
+	if err != nil {
+		t.Fatalf("StoreDerivedText returned hook error: %v", err)
+	}
+	if stored.Status != "ready" || stored.Text != "fresh derived text" {
+		t.Fatalf("stored derived = %#v, want ready derived text", stored)
+	}
+	if len(hook.calls) != 1 {
+		t.Fatalf("hook calls = %d, want 1", len(hook.calls))
+	}
+	call := hook.calls[0]
+	if call.projectID != "proj" || call.attachmentID != created.Attachment.ID || call.derived.Status != "ready" || call.derived.Text != "fresh derived text" {
+		t.Fatalf("hook call = %#v, want project/attachment/terminal derived text", call)
+	}
+	if len(call.linked) != 1 || call.linked[0].Path != note.Path || call.linked[0].Role != "source" {
+		t.Fatalf("hook linked entries = %#v, want linked note", call.linked)
+	}
+}
+
+func TestAttachmentServiceExtractAttachmentTextInvokesChangeHookOnlyForTerminalDerivedText(t *testing.T) {
+	store, err := storage.New(t.TempDir() + "/brain.db")
+	if err != nil {
+		t.Fatalf("storage.New failed: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	blobs := newRecordingBlobStore()
+	hook := &recordingAttachmentDerivedChangeHook{}
+	svc := NewAttachmentService(store, blobs, nil, 1024, WithAttachmentDerivedChangeHook(hook))
+	ctx := context.Background()
+	content := []byte("image bytes")
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{Filename: "scan.png", ContentType: "image/png", Size: int64(len(content))}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	note := insertAttachmentNoteForTest(t, store, "proj", "projects/proj/report/extract.md", "refatt03")
+	if err := store.LinkAttachmentToEntry(ctx, note.Path, mustParseAttachmentIDForTest(t, created.Attachment.ID), "inline"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+	svc.extractor = &recordingAttachmentExtractor{resp: types.AttachmentExtractionResponse{Status: types.AttachmentExtractionStatusReady, Text: "terminal extracted text", ContentType: "text/plain"}}
+
+	result, err := svc.ExtractAttachmentText(ctx, "proj", created.Attachment.ID, types.AttachmentExtractionRequest{})
+	if err != nil {
+		t.Fatalf("ExtractAttachmentText returned error: %v", err)
+	}
+	if result.DerivedText.Status != types.AttachmentExtractionStatusReady {
+		t.Fatalf("derived status = %q, want ready", result.DerivedText.Status)
+	}
+	if len(hook.calls) != 1 {
+		t.Fatalf("hook calls = %d, want 1 terminal callback", len(hook.calls))
+	}
+	call := hook.calls[0]
+	if call.derived.Status == types.AttachmentExtractionStatusPending || call.derived.Text != "terminal extracted text" {
+		t.Fatalf("hook derived = %#v, want terminal extracted text not pending", call.derived)
+	}
+	if len(call.linked) != 1 || call.linked[0].Path != note.Path || call.linked[0].Role != "inline" {
+		t.Fatalf("hook linked entries = %#v, want extraction linked note", call.linked)
 	}
 }
 

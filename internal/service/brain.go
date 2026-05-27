@@ -23,6 +23,7 @@ import (
 
 // Compile-time check that BrainServiceImpl implements api.BrainService.
 var _ api.BrainService = (*BrainServiceImpl)(nil)
+var _ AttachmentDerivedChangeHook = (*BrainServiceImpl)(nil)
 
 // BrainServiceImpl implements api.BrainService using filesystem + SQLite storage.
 type BrainServiceImpl struct {
@@ -1527,6 +1528,26 @@ func (s *BrainServiceImpl) indexEmbeddingsForEntry(ctx context.Context, path str
 	}
 	_, err = s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, indexer.EmbeddingIndexOptions{Path: path})
 	return err
+}
+
+// AttachmentDerivedTextChanged refreshes semantic embeddings for entries linked
+// to an attachment whose derived text has changed.
+func (s *BrainServiceImpl) AttachmentDerivedTextChanged(ctx context.Context, projectID, attachmentID string, derived types.AttachmentDerivedText, linked []types.AttachmentLinkedEntry) error {
+	seen := make(map[string]struct{}, len(linked))
+	for _, entry := range linked {
+		path := strings.TrimSpace(entry.Path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		if err := s.indexEmbeddingsForEntry(ctx, path); err != nil {
+			return fmt.Errorf("refresh attachment-derived embeddings for %q: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // EmbedEntries generates embeddings for matching entries.

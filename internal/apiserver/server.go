@@ -150,6 +150,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		cfg.Attachments.MaxUploadSizeBytes,
 		service.WithAttachmentMIMEPolicy(cfg.Attachments.AllowedMIMETypes, cfg.Attachments.BlockedMIMETypes),
 		service.WithAttachmentExtractor(attachmentExtractor),
+		service.WithAttachmentDerivedChangeHook(brainSvc),
 	)
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()

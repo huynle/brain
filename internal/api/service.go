@@ -110,6 +110,9 @@ type AttachmentService interface {
 	// GetDerivedText returns extracted text/status for an attachment, or nil when absent.
 	GetDerivedText(ctx context.Context, projectID, attachmentID string) (*types.AttachmentDerivedText, error)
 
+	// ExtractAttachmentText orchestrates media-to-text extraction for an attachment.
+	ExtractAttachmentText(ctx context.Context, projectID, attachmentID string, req types.AttachmentExtractionRequest) (*types.AttachmentExtractionResult, error)
+
 	// List returns attachments visible within a project.
 	List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error)
 

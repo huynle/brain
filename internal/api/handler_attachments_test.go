@@ -102,6 +102,12 @@ func (m *mockAttachmentService) GetDerivedText(ctx context.Context, projectID, a
 	return nil, nil
 }
 
+func (m *mockAttachmentService) ExtractAttachmentText(ctx context.Context, projectID, attachmentID string, req types.AttachmentExtractionRequest) (*types.AttachmentExtractionResult, error) {
+	m.projectID = projectID
+	m.attachmentID = attachmentID
+	return &types.AttachmentExtractionResult{}, nil
+}
+
 func (m *mockAttachmentService) List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error) {
 	m.listCalled = true
 	m.projectID = projectID

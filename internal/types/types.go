@@ -357,6 +357,22 @@ type AttachmentExtractionResponse struct {
 	Metadata     map[string]string `json:"metadata,omitempty"`
 }
 
+// AttachmentLinkedEntry identifies an entry that references an attachment and
+// may need dependent processing, such as embedding refresh, after extraction.
+type AttachmentLinkedEntry struct {
+	Path string `json:"path"`
+	Role string `json:"role,omitempty"`
+}
+
+// AttachmentExtractionResult is the service-level orchestration result for
+// attachment text extraction. It pairs the derived text status with linked
+// entry references so downstream work can refresh searchable representations.
+type AttachmentExtractionResult struct {
+	Attachment    Attachment              `json:"attachment"`
+	DerivedText   AttachmentDerivedText   `json:"derived_text"`
+	LinkedEntries []AttachmentLinkedEntry `json:"linked_entries,omitempty"`
+}
+
 // CreateAttachmentRequest is metadata submitted before/with an attachment upload.
 // The binary payload is transported separately; do not add base64 fields here.
 type CreateAttachmentRequest struct {

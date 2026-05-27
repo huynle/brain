@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/blobstore"
@@ -33,6 +34,7 @@ type AttachmentServiceImpl struct {
 	storage      *storage.StorageLayer
 	blobs        blobstore.Store
 	brain        api.BrainService
+	extractor    AttachmentExtractor
 	maxSizeBytes int64
 	allowedMIME  map[string]struct{}
 	blockedMIME  map[string]struct{}
@@ -47,6 +49,13 @@ func WithAttachmentMIMEPolicy(allowed, blocked []string) AttachmentServiceOption
 	return func(s *AttachmentServiceImpl) {
 		s.allowedMIME = normalizeMIMEPolicy(allowed)
 		s.blockedMIME = normalizeMIMEPolicy(blocked)
+	}
+}
+
+// WithAttachmentExtractor configures an optional media-to-text extractor.
+func WithAttachmentExtractor(extractor AttachmentExtractor) AttachmentServiceOption {
+	return func(s *AttachmentServiceImpl) {
+		s.extractor = extractor
 	}
 }
 
@@ -264,6 +273,257 @@ func (s *AttachmentServiceImpl) GetDerivedText(ctx context.Context, projectID, a
 		return nil, err
 	}
 	return &dto, nil
+}
+
+func (s *AttachmentServiceImpl) storeAttachmentExtractionDerived(ctx context.Context, attachmentRowID int64, derived types.AttachmentDerivedText) (*types.AttachmentDerivedText, error) {
+	kind := strings.TrimSpace(derived.Kind)
+	if kind == "" {
+		kind = "text"
+	}
+	metadata, err := attachmentDerivedMetadataToJSON(derived.Metadata)
+	if err != nil {
+		return nil, err
+	}
+	stored, err := s.storage.UpsertAttachmentDerived(ctx, storage.AttachmentDerivedInput{
+		AttachmentID: attachmentRowID,
+		Kind:         kind,
+		Status:       derived.Status,
+		ContentType:  derived.ContentType,
+		Text:         derived.Text,
+		Error:        derived.Error,
+		Metadata:     metadata,
+	})
+	if err != nil {
+		return nil, err
+	}
+	dto, err := attachmentDerivedRowToDTO(stored)
+	if err != nil {
+		return nil, err
+	}
+	return &dto, nil
+}
+
+func (s *AttachmentServiceImpl) storeAttachmentExtractionTerminal(ctx context.Context, attachmentRowID int64, att types.Attachment, resp types.AttachmentExtractionResponse, elapsedMs int64) (*types.AttachmentDerivedText, error) {
+	status := normalizeAttachmentExtractionStatus(resp.Status)
+	metadata := attachmentExtractionBaseMetadata(att, resp, elapsedMs)
+	for key, value := range resp.Metadata {
+		if strings.TrimSpace(key) != "" {
+			metadata[key] = value
+		}
+	}
+	contentType := strings.TrimSpace(resp.ContentType)
+	if contentType == "" {
+		contentType = "text/plain; charset=utf-8"
+	}
+	text := resp.Text
+	errorMessage := strings.TrimSpace(resp.Error)
+	if status == types.AttachmentExtractionStatusReady && strings.TrimSpace(text) == "" {
+		status = types.AttachmentExtractionStatusFailed
+		errorMessage = "attachment extraction returned no text"
+	}
+	if status != types.AttachmentExtractionStatusReady {
+		text = ""
+	}
+	if status != types.AttachmentExtractionStatusReady && errorMessage == "" {
+		errorMessage = fmt.Sprintf("attachment extraction %s", status)
+	}
+	return s.storeAttachmentExtractionDerived(ctx, attachmentRowID, types.AttachmentDerivedText{
+		Kind:        "text",
+		Status:      status,
+		ContentType: contentType,
+		Text:        text,
+		Error:       errorMessage,
+		Metadata:    metadata,
+	})
+}
+
+func attachmentExtractionBaseMetadata(att types.Attachment, resp types.AttachmentExtractionResponse, elapsedMs int64) map[string]string {
+	metadata := map[string]string{
+		"original_content_type": att.ContentType,
+		"extracted_at":          types.TimeNowUTC().Format(time.RFC3339),
+	}
+	if strings.TrimSpace(resp.Provider) != "" {
+		metadata["provider"] = strings.TrimSpace(resp.Provider)
+	}
+	if strings.TrimSpace(resp.Model) != "" {
+		metadata["model"] = strings.TrimSpace(resp.Model)
+	}
+	if strings.TrimSpace(resp.Summary) != "" {
+		metadata["summary"] = strings.TrimSpace(resp.Summary)
+	}
+	if resp.DurationMs > 0 {
+		metadata["elapsed_ms"] = strconv.FormatInt(resp.DurationMs, 10)
+	} else if elapsedMs > 0 {
+		metadata["elapsed_ms"] = strconv.FormatInt(elapsedMs, 10)
+	}
+	return metadata
+}
+
+func normalizeAttachmentExtractionStatus(status string) string {
+	status = strings.TrimSpace(status)
+	if types.IsValidAttachmentExtractionStatus(status) && status != types.AttachmentExtractionStatusPending {
+		return status
+	}
+	return types.AttachmentExtractionStatusFailed
+}
+
+func (s *AttachmentServiceImpl) attachmentLinkedEntries(ctx context.Context, attachmentRowID int64) ([]types.AttachmentLinkedEntry, error) {
+	refs, err := s.storage.ListEntryReferencesForAttachment(ctx, attachmentRowID)
+	if err != nil {
+		return nil, err
+	}
+	linked := make([]types.AttachmentLinkedEntry, 0, len(refs))
+	for _, ref := range refs {
+		if ref == nil {
+			continue
+		}
+		linked = append(linked, types.AttachmentLinkedEntry{Path: ref.NotePath, Role: ref.Role})
+	}
+	return linked, nil
+}
+
+func copyAttachmentStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for key, value := range in {
+		out[key] = value
+	}
+	return out
+}
+
+// ExtractAttachmentText orchestrates media-to-text extraction for an attachment.
+// It records derived status transitions, reads blob bytes only after validation,
+// invokes the configured extractor, and returns linked entries for downstream
+// embedding refresh work.
+func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, projectID, attachmentID string, req types.AttachmentExtractionRequest) (*types.AttachmentExtractionResult, error) {
+	if err := s.ensureReady(); err != nil {
+		return nil, err
+	}
+	row, err := s.getProjectAttachmentRow(ctx, projectID, attachmentID)
+	if err != nil {
+		return nil, err
+	}
+	att, err := attachmentRowToDTO(row)
+	if err != nil {
+		return nil, err
+	}
+	linkedEntries, err := s.attachmentLinkedEntries(ctx, row.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	pending, err := s.storeAttachmentExtractionDerived(ctx, row.ID, types.AttachmentDerivedText{
+		Kind:        "text",
+		Status:      types.AttachmentExtractionStatusPending,
+		ContentType: "text/plain; charset=utf-8",
+		Metadata:    attachmentExtractionBaseMetadata(att, types.AttachmentExtractionResponse{}, 0),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if s.extractor == nil {
+		derived, err := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, types.AttachmentExtractionResponse{
+			AttachmentID: att.ID,
+			Status:       types.AttachmentExtractionStatusSkipped,
+			Error:        "attachment extraction disabled",
+			ContentType:  "text/plain; charset=utf-8",
+		}, 0)
+		if err != nil {
+			return nil, err
+		}
+		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+	}
+
+	if err := s.validateAttachmentMIMEType(att.ContentType); err != nil {
+		derived, storeErr := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, types.AttachmentExtractionResponse{
+			AttachmentID: att.ID,
+			Status:       types.AttachmentExtractionStatusSkipped,
+			Error:        err.Error(),
+			ContentType:  pending.ContentType,
+		}, 0)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+	}
+
+	if err := validateAttachmentSize(att.Size, s.maxSizeBytes); err != nil {
+		derived, storeErr := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, types.AttachmentExtractionResponse{
+			AttachmentID: att.ID,
+			Status:       types.AttachmentExtractionStatusSkipped,
+			Error:        err.Error(),
+			ContentType:  pending.ContentType,
+		}, 0)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+	}
+
+	stream, err := s.blobs.Get(att.StorageKey)
+	if err != nil {
+		derived, storeErr := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, types.AttachmentExtractionResponse{
+			AttachmentID: att.ID,
+			Status:       types.AttachmentExtractionStatusFailed,
+			Error:        fmt.Sprintf("read attachment blob: %v", err),
+			ContentType:  pending.ContentType,
+		}, 0)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+	}
+	data, readErr := readAttachmentContent(stream, s.maxSizeBytes)
+	closeErr := stream.Close()
+	if readErr != nil {
+		derived, storeErr := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, types.AttachmentExtractionResponse{
+			AttachmentID: att.ID,
+			Status:       types.AttachmentExtractionStatusFailed,
+			Error:        fmt.Sprintf("read attachment blob: %v", readErr),
+			ContentType:  pending.ContentType,
+		}, 0)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+	}
+	if closeErr != nil {
+		derived, storeErr := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, types.AttachmentExtractionResponse{
+			AttachmentID: att.ID,
+			Status:       types.AttachmentExtractionStatusFailed,
+			Error:        fmt.Sprintf("close attachment blob: %v", closeErr),
+			ContentType:  pending.ContentType,
+		}, 0)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
+	}
+
+	extractReq := req
+	extractReq.ProjectID = strings.TrimSpace(projectID)
+	extractReq.AttachmentID = att.ID
+	extractReq.Filename = att.Filename
+	extractReq.ContentType = att.ContentType
+	extractReq.Size = att.Size
+	extractReq.Content = data
+	extractReq.Metadata = copyAttachmentStringMap(att.Metadata)
+	started := time.Now()
+	resp, extractErr := s.extractor.Extract(ctx, extractReq)
+	elapsedMs := time.Since(started).Milliseconds()
+	if extractErr != nil {
+		resp = types.AttachmentExtractionResponse{
+			AttachmentID: att.ID,
+			Status:       types.AttachmentExtractionStatusFailed,
+			Error:        extractErr.Error(),
+			ContentType:  "text/plain; charset=utf-8",
+		}
+	}
+	derived, err := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, resp, elapsedMs)
+	if err != nil {
+		return nil, err
+	}
+	return &types.AttachmentExtractionResult{Attachment: att, DerivedText: *derived, LinkedEntries: linkedEntries}, nil
 }
 
 // List returns attachments visible within a project.

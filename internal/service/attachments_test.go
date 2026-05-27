@@ -36,6 +36,23 @@ type mockBrainForAttachments struct {
 	updateCalls []string
 }
 
+type stubAttachmentExtractor struct{}
+
+func (stubAttachmentExtractor) Extract(context.Context, types.AttachmentExtractionRequest) (types.AttachmentExtractionResponse, error) {
+	return types.AttachmentExtractionResponse{}, nil
+}
+
+type recordingAttachmentExtractor struct {
+	resp  types.AttachmentExtractionResponse
+	err   error
+	calls []types.AttachmentExtractionRequest
+}
+
+func (e *recordingAttachmentExtractor) Extract(_ context.Context, req types.AttachmentExtractionRequest) (types.AttachmentExtractionResponse, error) {
+	e.calls = append(e.calls, req)
+	return e.resp, e.err
+}
+
 func newMockBrainForAttachments(entries ...*types.BrainEntry) *mockBrainForAttachments {
 	m := &mockBrainForAttachments{entries: map[string]*types.BrainEntry{}}
 	for _, entry := range entries {
@@ -171,6 +188,310 @@ func insertAttachmentNoteForTest(t *testing.T, store *storage.StorageLayer, proj
 
 func TestNewAttachmentServiceImplementsAPIContract(t *testing.T) {
 	var _ api.AttachmentService = NewAttachmentService(nil, nil, nil, 0)
+}
+
+func TestAttachmentServiceCanInjectExtractor(t *testing.T) {
+	extractor := stubAttachmentExtractor{}
+	svc := NewAttachmentService(nil, nil, nil, 0, WithAttachmentExtractor(extractor))
+	if svc.extractor == nil {
+		t.Fatal("WithAttachmentExtractor did not set extractor dependency")
+	}
+}
+
+func TestAttachmentServiceExtractAttachmentTextOrchestratesSuccessfulExtraction(t *testing.T) {
+	svc, store, _ := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	content := []byte("image bytes")
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{
+		Filename:    "scan.png",
+		ContentType: "image/png",
+		Size:        int64(len(content)),
+		Metadata:    map[string]string{"source": "unit-test"},
+	}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	note := insertAttachmentNoteForTest(t, store, "proj", "projects/proj/report/ref.md", "refatt01")
+	if err := store.LinkAttachmentToEntry(ctx, note.Path, mustParseAttachmentIDForTest(t, created.Attachment.ID), "inline"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+
+	extractor := &recordingAttachmentExtractor{resp: types.AttachmentExtractionResponse{
+		Status:      types.AttachmentExtractionStatusReady,
+		Text:        "extracted text from scan",
+		Summary:     "short scan summary",
+		Provider:    "test-provider",
+		Model:       "test-model",
+		ContentType: "text/markdown",
+		DurationMs:  123,
+		Metadata:    map[string]string{"page_count": "1"},
+	}}
+	svc.extractor = extractor
+
+	result, err := svc.ExtractAttachmentText(ctx, "proj", created.Attachment.ID, types.AttachmentExtractionRequest{EntryID: note.ID})
+	if err != nil {
+		t.Fatalf("ExtractAttachmentText returned error: %v", err)
+	}
+	if len(extractor.calls) != 1 {
+		t.Fatalf("extractor calls = %d, want 1", len(extractor.calls))
+	}
+	call := extractor.calls[0]
+	if call.ProjectID != "proj" || call.EntryID != note.ID || call.AttachmentID != created.Attachment.ID || call.Filename != "scan.png" || call.ContentType != "image/png" || call.Size != int64(len(content)) {
+		t.Fatalf("extractor request = %#v, want stored attachment fields plus caller entry", call)
+	}
+	if string(call.Content) != string(content) {
+		t.Fatalf("extractor content = %q, want original bytes", call.Content)
+	}
+	if call.Metadata["source"] != "unit-test" {
+		t.Fatalf("extractor metadata = %#v, want stored attachment metadata", call.Metadata)
+	}
+	if result.Attachment.ID != created.Attachment.ID {
+		t.Fatalf("result attachment = %#v, want created attachment", result.Attachment)
+	}
+	if result.DerivedText.Status != types.AttachmentExtractionStatusReady || result.DerivedText.Text != "extracted text from scan" || result.DerivedText.ContentType != "text/markdown" {
+		t.Fatalf("derived text = %#v, want ready extracted text", result.DerivedText)
+	}
+	metadata := result.DerivedText.Metadata
+	for key, want := range map[string]string{
+		"provider":              "test-provider",
+		"model":                 "test-model",
+		"original_content_type": "image/png",
+		"elapsed_ms":            "123",
+		"summary":               "short scan summary",
+		"page_count":            "1",
+	} {
+		if metadata[key] != want {
+			t.Fatalf("metadata[%q] = %q, want %q in %#v", key, metadata[key], want, metadata)
+		}
+	}
+	if metadata["extracted_at"] == "" {
+		t.Fatalf("metadata extracted_at missing in %#v", metadata)
+	}
+	if len(result.LinkedEntries) != 1 || result.LinkedEntries[0].Path != note.Path || result.LinkedEntries[0].Role != "inline" {
+		t.Fatalf("linked entries = %#v, want linked note", result.LinkedEntries)
+	}
+	_, text, err := svc.OpenText(ctx, "proj", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("OpenText after extraction returned error: %v", err)
+	}
+	defer text.Close()
+	readBack, err := io.ReadAll(text)
+	if err != nil {
+		t.Fatalf("ReadAll derived text failed: %v", err)
+	}
+	if string(readBack) != "extracted text from scan" {
+		t.Fatalf("OpenText read %q, want extracted text", readBack)
+	}
+}
+
+func TestAttachmentServiceExtractAttachmentTextDisabledSkipsAndPreservesAttachment(t *testing.T) {
+	svc, _, blobs := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	content := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{
+		Filename:    "scan.png",
+		ContentType: "image/png",
+		Size:        int64(len(content)),
+	}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	blobs.getCalls = nil
+
+	result, err := svc.ExtractAttachmentText(ctx, "proj", created.Attachment.ID, types.AttachmentExtractionRequest{})
+	if err != nil {
+		t.Fatalf("ExtractAttachmentText returned error: %v", err)
+	}
+	if result.DerivedText.Status != types.AttachmentExtractionStatusSkipped || result.DerivedText.Error != "attachment extraction disabled" {
+		t.Fatalf("derived = %#v, want skipped disabled status/error", result.DerivedText)
+	}
+	if len(blobs.getCalls) != 0 {
+		t.Fatalf("blob Get calls = %#v, want none when extraction is disabled", blobs.getCalls)
+	}
+	status, err := svc.GetDerivedText(ctx, "proj", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("GetDerivedText returned error: %v", err)
+	}
+	if status == nil || status.Status != types.AttachmentExtractionStatusSkipped || status.Error != "attachment extraction disabled" {
+		t.Fatalf("GetDerivedText = %#v, want visible skipped disabled status/error", status)
+	}
+	opened, stream, err := svc.Open(ctx, "proj", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("Open after disabled extraction returned error: %v", err)
+	}
+	defer stream.Close()
+	readBack, err := io.ReadAll(stream)
+	if err != nil {
+		t.Fatalf("ReadAll original stream failed: %v", err)
+	}
+	if opened.ID != created.Attachment.ID || !bytes.Equal(readBack, content) {
+		t.Fatalf("Open after disabled extraction = %#v/%q, want original attachment bytes", opened, readBack)
+	}
+}
+
+func TestAttachmentServiceExtractAttachmentTextSkipsUnsupportedMIMEBeforeBlobRead(t *testing.T) {
+	svc, _, blobs := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	content := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{
+		Filename:    "scan.png",
+		ContentType: "image/png",
+		Size:        int64(len(content)),
+	}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	extractor := &recordingAttachmentExtractor{resp: types.AttachmentExtractionResponse{Status: types.AttachmentExtractionStatusReady, Text: "should not run"}}
+	svc.extractor = extractor
+	svc.allowedMIME = normalizeMIMEPolicy([]string{"application/pdf"})
+	blobs.getCalls = nil
+
+	result, err := svc.ExtractAttachmentText(ctx, "proj", created.Attachment.ID, types.AttachmentExtractionRequest{})
+	if err != nil {
+		t.Fatalf("ExtractAttachmentText returned error: %v", err)
+	}
+	if len(extractor.calls) != 0 {
+		t.Fatalf("extractor calls = %#v, want none for unsupported MIME", extractor.calls)
+	}
+	if len(blobs.getCalls) != 0 {
+		t.Fatalf("blob Get calls = %#v, want none before unsupported MIME skip", blobs.getCalls)
+	}
+	if result.DerivedText.Status != types.AttachmentExtractionStatusSkipped || !strings.Contains(result.DerivedText.Error, "not allowed") {
+		t.Fatalf("derived = %#v, want skipped unsupported MIME error", result.DerivedText)
+	}
+	status, err := svc.GetDerivedText(ctx, "proj", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("GetDerivedText returned error: %v", err)
+	}
+	if status == nil || status.Status != types.AttachmentExtractionStatusSkipped || !strings.Contains(status.Error, "not allowed") {
+		t.Fatalf("GetDerivedText = %#v, want visible unsupported MIME status/error", status)
+	}
+}
+
+func TestAttachmentServiceExtractAttachmentTextSkipsOversizedBeforeBlobRead(t *testing.T) {
+	svc, _, blobs := newAttachmentServiceForTest(t, 1024)
+	ctx := context.Background()
+	content := []byte("large enough for extraction limit")
+	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{
+		Filename:    "scan.pdf",
+		ContentType: "application/pdf",
+		Size:        int64(len(content)),
+	}, bytes.NewReader(content))
+	if err != nil {
+		t.Fatalf("Create returned error: %v", err)
+	}
+	extractor := &recordingAttachmentExtractor{resp: types.AttachmentExtractionResponse{Status: types.AttachmentExtractionStatusReady, Text: "should not run"}}
+	svc.extractor = extractor
+	svc.maxSizeBytes = int64(len(content) - 1)
+	blobs.getCalls = nil
+
+	result, err := svc.ExtractAttachmentText(ctx, "proj", created.Attachment.ID, types.AttachmentExtractionRequest{})
+	if err != nil {
+		t.Fatalf("ExtractAttachmentText returned error: %v", err)
+	}
+	if len(extractor.calls) != 0 {
+		t.Fatalf("extractor calls = %#v, want none for oversized attachment", extractor.calls)
+	}
+	if len(blobs.getCalls) != 0 {
+		t.Fatalf("blob Get calls = %#v, want none before oversized skip", blobs.getCalls)
+	}
+	if result.DerivedText.Status != types.AttachmentExtractionStatusSkipped || result.DerivedText.Error == "" {
+		t.Fatalf("derived = %#v, want skipped oversized status/error", result.DerivedText)
+	}
+	if got, err := svc.Get(ctx, "proj", created.Attachment.ID); err != nil || got.ID != created.Attachment.ID {
+		t.Fatalf("Get after oversized extraction skip = %#v/%v, want original attachment", got, err)
+	}
+}
+
+func TestAttachmentServiceExtractAttachmentTextStoresExtractorSkippedAndFailedTransitions(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("extractor skipped", func(t *testing.T) {
+		svc, _, _ := newAttachmentServiceForTest(t, 1024)
+		created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{Filename: "scan.pdf", ContentType: "application/pdf", Size: 4}, strings.NewReader("data"))
+		if err != nil {
+			t.Fatalf("Create returned error: %v", err)
+		}
+		svc.extractor = &recordingAttachmentExtractor{resp: types.AttachmentExtractionResponse{
+			Status:      types.AttachmentExtractionStatusSkipped,
+			Text:        "ignored text",
+			Error:       "model unavailable",
+			Provider:    "test-provider",
+			Model:       "test-model",
+			ContentType: "text/markdown",
+		}}
+
+		result, err := svc.ExtractAttachmentText(ctx, "proj", created.Attachment.ID, types.AttachmentExtractionRequest{})
+		if err != nil {
+			t.Fatalf("ExtractAttachmentText returned error: %v", err)
+		}
+		if result.DerivedText.Status != types.AttachmentExtractionStatusSkipped || result.DerivedText.Error != "model unavailable" || result.DerivedText.Text != "" {
+			t.Fatalf("derived = %#v, want skipped status/error with no text", result.DerivedText)
+		}
+		status, err := svc.GetDerivedText(ctx, "proj", created.Attachment.ID)
+		if err != nil {
+			t.Fatalf("GetDerivedText returned error: %v", err)
+		}
+		if status == nil || status.Status != types.AttachmentExtractionStatusSkipped || status.Error != "model unavailable" || status.Metadata["provider"] != "test-provider" || status.Metadata["model"] != "test-model" {
+			t.Fatalf("GetDerivedText = %#v, want visible skipped status/error metadata", status)
+		}
+	})
+
+	t.Run("extractor failed", func(t *testing.T) {
+		svc, _, _ := newAttachmentServiceForTest(t, 1024)
+		created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{Filename: "scan.pdf", ContentType: "application/pdf", Size: 4}, strings.NewReader("data"))
+		if err != nil {
+			t.Fatalf("Create returned error: %v", err)
+		}
+		svc.extractor = &recordingAttachmentExtractor{err: errors.New("extractor crashed")}
+
+		result, err := svc.ExtractAttachmentText(ctx, "proj", created.Attachment.ID, types.AttachmentExtractionRequest{})
+		if err != nil {
+			t.Fatalf("ExtractAttachmentText returned error: %v", err)
+		}
+		if result.DerivedText.Status != types.AttachmentExtractionStatusFailed || result.DerivedText.Error != "extractor crashed" || result.DerivedText.Text != "" {
+			t.Fatalf("derived = %#v, want failed status/error with no text", result.DerivedText)
+		}
+		status, err := svc.GetDerivedText(ctx, "proj", created.Attachment.ID)
+		if err != nil {
+			t.Fatalf("GetDerivedText returned error: %v", err)
+		}
+		if status == nil || status.Status != types.AttachmentExtractionStatusFailed || status.Error != "extractor crashed" {
+			t.Fatalf("GetDerivedText = %#v, want visible failed status/error", status)
+		}
+		opened, stream, err := svc.Open(ctx, "proj", created.Attachment.ID)
+		if err != nil {
+			t.Fatalf("Open after extractor failure returned error: %v", err)
+		}
+		defer stream.Close()
+		if opened.ID != created.Attachment.ID {
+			t.Fatalf("Open after extractor failure = %#v, want original attachment", opened)
+		}
+	})
+
+	t.Run("extractor failed response without error gets visible generic error", func(t *testing.T) {
+		svc, _, _ := newAttachmentServiceForTest(t, 1024)
+		created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{Filename: "scan.pdf", ContentType: "application/pdf", Size: 4}, strings.NewReader("data"))
+		if err != nil {
+			t.Fatalf("Create returned error: %v", err)
+		}
+		svc.extractor = &recordingAttachmentExtractor{resp: types.AttachmentExtractionResponse{Status: types.AttachmentExtractionStatusFailed}}
+
+		result, err := svc.ExtractAttachmentText(ctx, "proj", created.Attachment.ID, types.AttachmentExtractionRequest{})
+		if err != nil {
+			t.Fatalf("ExtractAttachmentText returned error: %v", err)
+		}
+		if result.DerivedText.Status != types.AttachmentExtractionStatusFailed || result.DerivedText.Error == "" {
+			t.Fatalf("derived = %#v, want failed status with visible generic error", result.DerivedText)
+		}
+		status, err := svc.GetDerivedText(ctx, "proj", created.Attachment.ID)
+		if err != nil {
+			t.Fatalf("GetDerivedText returned error: %v", err)
+		}
+		if status == nil || status.Status != types.AttachmentExtractionStatusFailed || status.Error == "" {
+			t.Fatalf("GetDerivedText = %#v, want visible failed status/error", status)
+		}
+	})
 }
 
 func TestAttachmentRowToDTOScaffold(t *testing.T) {

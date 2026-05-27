@@ -270,17 +270,18 @@ type Attachment struct {
 // AttachmentReference is the entry-frontmatter/API representation for an
 // attachment associated with a brain entry.
 type AttachmentReference struct {
-	ID          string              `json:"id"`
-	Filename    string              `json:"filename,omitempty"`
-	ContentType string              `json:"content_type,omitempty"`
-	Size        int64               `json:"size,omitempty"`
-	SHA256      string              `json:"sha256,omitempty"`
-	Metadata    map[string]string   `json:"metadata,omitempty"`
-	DownloadURL string              `json:"download_url,omitempty"`
-	TextURL     string              `json:"text_url,omitempty"`
-	Role        string              `json:"role,omitempty"`
-	Caption     string              `json:"caption,omitempty"`
-	Derived     []AttachmentDerived `json:"derived,omitempty"`
+	ID          string                 `json:"id"`
+	Filename    string                 `json:"filename,omitempty"`
+	ContentType string                 `json:"content_type,omitempty"`
+	Size        int64                  `json:"size,omitempty"`
+	SHA256      string                 `json:"sha256,omitempty"`
+	Metadata    map[string]string      `json:"metadata,omitempty"`
+	DownloadURL string                 `json:"download_url,omitempty"`
+	TextURL     string                 `json:"text_url,omitempty"`
+	Role        string                 `json:"role,omitempty"`
+	Caption     string                 `json:"caption,omitempty"`
+	Derived     []AttachmentDerived    `json:"derived,omitempty"`
+	DerivedText *AttachmentDerivedText `json:"derived_text,omitempty"`
 }
 
 // AttachmentDerived references generated artifacts such as thumbnails,

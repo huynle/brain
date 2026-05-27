@@ -474,6 +474,61 @@ func TestBrainAttachmentDownloadCmdFetchesBytesOnlyOnAction(t *testing.T) {
 	}
 }
 
+func TestBrainAttachmentExtractCmdTriggersExtractionEndpoint(t *testing.T) {
+	var gotRequest string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequest = r.Method + " " + r.URL.RequestURI()
+		if r.URL.Path != "/api/v1/attachments/att_123/extract" {
+			t.Fatalf("unexpected request path %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("project_id") != "brain-api" {
+			t.Fatalf("project_id = %q, want brain-api", r.URL.Query().Get("project_id"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.AttachmentExtractionResult{
+			Attachment: types.Attachment{ID: "att_123", Filename: "evidence.pdf"},
+			DerivedText: types.AttachmentDerivedText{
+				Status:   types.AttachmentExtractionStatusReady,
+				Metadata: map[string]string{"provider": "openrouter", "model": "google/gemini-2.5-flash"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	cmd := brainAttachmentActionCmd(
+		runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 1000},
+		"brain-api",
+		types.AttachmentReference{ID: "att_123", Filename: "evidence.pdf"},
+		"extract",
+	)
+	msg := cmd().(AttachmentActionMsg)
+	if msg.Err != nil {
+		t.Fatalf("extract action failed: %v", msg.Err)
+	}
+	if gotRequest != "POST /api/v1/attachments/att_123/extract?project_id=brain-api" {
+		t.Fatalf("request = %q, want extraction endpoint", gotRequest)
+	}
+	if msg.Action != "extract" || msg.AttachmentID != "att_123" {
+		t.Fatalf("message = %#v, want extract for att_123", msg)
+	}
+}
+
+func TestUpdate_AttachmentExtractResultShowsStatusFeedback(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+
+	updated, _ := m.Update(AttachmentActionMsg{Action: "extract", AttachmentID: "att_123", Status: types.AttachmentExtractionStatusReady, Provider: "openrouter", Model: "google/gemini-2.5-flash"})
+	model := updated.(Model)
+
+	if model.statusMessageType != "success" {
+		t.Fatalf("statusMessageType = %q, want success", model.statusMessageType)
+	}
+	for _, want := range []string{"Attachment extract", "ready", "openrouter", "google/gemini-2.5-flash"} {
+		if !strings.Contains(model.statusMessage, want) {
+			t.Fatalf("expected status message to contain %q, got %q", want, model.statusMessage)
+		}
+	}
+}
+
 func TestBrainDetailAttachmentKeyOpensModalWithActions(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.activeContentTab = ContentTabBrain

@@ -146,6 +146,37 @@ func TestAPIClient_AttachmentCRUDHelpersUseExpectedRoutes(t *testing.T) {
 	}
 }
 
+func TestAPIClient_ExtractAttachmentTextUsesExpectedRoute(t *testing.T) {
+	var gotRequestURI string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequestURI = r.Method + " " + r.URL.RequestURI()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.AttachmentExtractionResult{
+			Attachment: types.Attachment{ID: "att_123", Filename: "scan.pdf"},
+			DerivedText: types.AttachmentDerivedText{
+				Status:      types.AttachmentExtractionStatusReady,
+				ContentType: "text/markdown",
+				Text:        "extracted text",
+				Metadata:    map[string]string{"provider": "openrouter", "model": "anthropic/claude-sonnet-4"},
+			},
+			LinkedEntries: []types.AttachmentLinkedEntry{{Path: "projects/brain-api/report/scan.md", Role: "source"}},
+		})
+	}))
+	defer srv.Close()
+
+	client := NewAPIClient(testConfig(srv.URL))
+	result, err := client.ExtractAttachmentText(context.Background(), "brain-api", "att_123")
+	if err != nil {
+		t.Fatalf("ExtractAttachmentText() error = %v", err)
+	}
+	if gotRequestURI != "POST /api/v1/attachments/att_123/extract?project_id=brain-api" {
+		t.Fatalf("request = %q, want extract endpoint", gotRequestURI)
+	}
+	if result.DerivedText.Status != types.AttachmentExtractionStatusReady || result.DerivedText.Metadata["model"] == "" || len(result.LinkedEntries) != 1 {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestAPIClient_DownloadAttachmentVerifiesSHA256(t *testing.T) {
 	payload := []byte("exact bytes")
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

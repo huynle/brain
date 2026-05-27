@@ -143,6 +143,9 @@ type AttachmentActionMsg struct {
 	Action       string
 	AttachmentID string
 	Path         string
+	Status       string
+	Provider     string
+	Model        string
 	Err          error
 }
 

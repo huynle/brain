@@ -42,7 +42,7 @@ func (m *AttachmentModal) View() string {
 		return b.String()
 	}
 
-	b.WriteString(dimStyle.Render("Select an attachment, then open or download it."))
+	b.WriteString(dimStyle.Render("Select an attachment, then open, download, or extract it."))
 	b.WriteString("\n\n")
 	for i, att := range m.attachments {
 		marker := "  "
@@ -67,6 +67,10 @@ func (m *AttachmentModal) View() string {
 		b.WriteString("\n")
 		b.WriteString(dimStyle.Render(fmt.Sprintf("    Size: %s", formatAttachmentSize(att.Size))))
 		b.WriteString("\n")
+		for _, line := range attachmentExtractionLines(att) {
+			b.WriteString(dimStyle.Render("    " + line))
+			b.WriteString("\n")
+		}
 		if att.Caption != "" {
 			b.WriteString(dimStyle.Render("    Caption: " + att.Caption))
 			b.WriteString("\n")
@@ -80,7 +84,7 @@ func (m *AttachmentModal) View() string {
 		}
 	}
 	b.WriteString("\n")
-	b.WriteString(dimStyle.Render("j/k: select  o: open  d: download  Enter: open  Esc/q: close"))
+	b.WriteString(dimStyle.Render("j/k: select  o: open  d: download  x: extract  Enter: open  Esc/q: close"))
 	return b.String()
 }
 
@@ -96,6 +100,8 @@ func (m *AttachmentModal) HandleKey(key string) (bool, tea.Cmd) {
 		return true, m.actionCmd("open")
 	case "d":
 		return true, m.actionCmd("download")
+	case "x":
+		return true, m.actionCmd("extract")
 	case "q":
 		return false, nil
 	default:
@@ -131,6 +137,7 @@ func (m *AttachmentModal) Height() int {
 	height := 4 // intro, blank, help, final spacing
 	for _, att := range m.attachments {
 		height += 5
+		height += len(attachmentExtractionLines(att))
 		if att.Caption != "" {
 			height++
 		}
@@ -178,6 +185,7 @@ func (m *AttachmentModal) indexAtLine(y int) int {
 	line := y - 2
 	for i, att := range m.attachments {
 		rowLines := 5
+		rowLines += len(attachmentExtractionLines(att))
 		if att.Caption != "" {
 			rowLines++
 		}
@@ -207,4 +215,34 @@ func attachmentDisplayValue(value, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func attachmentExtractionLines(att types.AttachmentReference) []string {
+	textStatus := "none"
+	status := att.Metadata["extraction_status"]
+	provider := att.Metadata["extraction_provider"]
+	model := att.Metadata["extraction_model"]
+	errText := att.Metadata["extraction_error"]
+	if att.DerivedText != nil {
+		status = att.DerivedText.Status
+		provider = att.DerivedText.Metadata["provider"]
+		model = att.DerivedText.Metadata["model"]
+		errText = att.DerivedText.Error
+	}
+	if len(att.Derived) > 0 || status == types.AttachmentExtractionStatusReady {
+		textStatus = "ready"
+	}
+
+	if status == "" {
+		status = "not requested"
+	}
+
+	lines := []string{"Text: " + textStatus, "Extraction: " + status}
+	if provider != "" || model != "" {
+		lines = append(lines, fmt.Sprintf("Model: %s / %s", attachmentDisplayValue(provider, "unknown provider"), attachmentDisplayValue(model, "unknown model")))
+	}
+	if errText != "" {
+		lines = append(lines, "Error: "+errText)
+	}
+	return lines
 }

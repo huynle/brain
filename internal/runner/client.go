@@ -604,6 +604,24 @@ func (c *APIClient) DeleteAttachment(ctx context.Context, projectID, attachmentI
 	return nil
 }
 
+// ExtractAttachmentText triggers server-side media-to-text extraction for an attachment.
+func (c *APIClient) ExtractAttachmentText(ctx context.Context, projectID, attachmentID string) (*types.AttachmentExtractionResult, error) {
+	path := "/api/v1/attachments/" + url.PathEscape(attachmentID) + "/extract?project_id=" + url.QueryEscape(projectID)
+	resp, err := c.doRequestWithClient(ctx, c.longRunningClient(), http.MethodPost, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("extract attachment text: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.AttachmentExtractionResult
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode attachment extraction: %w", err)
+	}
+	return &result, nil
+}
+
 // DownloadAttachment returns metadata and exact original bytes, verifying SHA256 when present.
 func (c *APIClient) DownloadAttachment(ctx context.Context, projectID, attachmentID string) (*types.Attachment, []byte, error) {
 	attachment, err := c.GetAttachment(ctx, projectID, attachmentID)

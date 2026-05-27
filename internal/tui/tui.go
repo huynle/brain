@@ -858,6 +858,16 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.addLog("error", fmt.Sprintf("Attachment %s failed for %s: %v", msg.Action, msg.AttachmentID, msg.Err))
 			return m, nil
 		}
+		if msg.Action == "extract" {
+			status := attachmentDisplayValue(msg.Status, "complete")
+			detail := status
+			if msg.Provider != "" || msg.Model != "" {
+				detail = fmt.Sprintf("%s via %s / %s", status, attachmentDisplayValue(msg.Provider, "unknown provider"), attachmentDisplayValue(msg.Model, "unknown model"))
+			}
+			m.setStatusMessage("success", fmt.Sprintf("Attachment extract %s: %s", detail, msg.AttachmentID))
+			m.addLog("info", fmt.Sprintf("Attachment extract %s for %s", detail, msg.AttachmentID))
+			return m, nil
+		}
 		m.setStatusMessage("success", fmt.Sprintf("Attachment %s complete: %s", msg.Action, msg.Path))
 		m.addLog("info", fmt.Sprintf("Attachment %s complete: %s", msg.Action, msg.Path))
 		return m, nil
@@ -2518,13 +2528,26 @@ func (m Model) selectedBrainAttachmentCmd(action string) tea.Cmd {
 
 func brainAttachmentActionCmd(cfg runner.RunnerConfig, projectID string, att types.AttachmentReference, action string) tea.Cmd {
 	return func() tea.Msg {
-		if action != "download" && action != "open" {
+		if action != "download" && action != "open" && action != "extract" {
 			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: fmt.Errorf("unsupported attachment action %q", action)}
 		}
 		if strings.TrimSpace(att.ID) == "" {
 			return AttachmentActionMsg{Action: action, Err: fmt.Errorf("attachment ID is required")}
 		}
 		client := runner.NewAPIClient(cfg)
+		if action == "extract" {
+			result, err := client.ExtractAttachmentText(context.Background(), projectID, att.ID)
+			if err != nil {
+				return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: err}
+			}
+			msg := AttachmentActionMsg{Action: action, AttachmentID: att.ID}
+			if result != nil {
+				msg.Status = result.DerivedText.Status
+				msg.Provider = result.DerivedText.Metadata["provider"]
+				msg.Model = result.DerivedText.Metadata["model"]
+			}
+			return msg
+		}
 		attachment, data, err := client.DownloadAttachment(context.Background(), projectID, att.ID)
 		if err != nil {
 			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: err}

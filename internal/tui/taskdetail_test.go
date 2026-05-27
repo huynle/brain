@@ -27,6 +27,13 @@ func TestTaskDetail_EntryMode_RendersAttachmentMetadata(t *testing.T) {
 			ContentType: "text/markdown",
 			Size:        512,
 		}},
+		DerivedText: &types.AttachmentDerivedText{
+			Status: types.AttachmentExtractionStatusReady,
+			Metadata: map[string]string{
+				"provider": "openrouter",
+				"model":    "google/gemini-2.5-flash",
+			},
+		},
 	}}
 	td.SetEntryContentWithAttachments("projects/brain-api/report/r.md", "Report", "report", "entry body", attachments, "Entry Detail")
 
@@ -39,6 +46,9 @@ func TestTaskDetail_EntryMode_RendersAttachmentMetadata(t *testing.T) {
 		"application/pdf",
 		"1.5 KB",
 		"extracted: text (text/markdown, 512 B)",
+		"Text: ready",
+		"Extraction: ready",
+		"Model: openrouter / google/gemini-2.5-flash",
 		"search: available",
 	} {
 		if !strings.Contains(view, want) {

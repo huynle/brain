@@ -208,7 +208,7 @@ func (td *TaskDetail) attachmentIndexAtEntryLine(line int) int {
 	}
 	attachmentLine -= 2 // blank line + Attachments header
 	for i, att := range td.entryAttachments {
-		rowLines := 5 + len(att.Derived)
+		rowLines := 5 + len(attachmentExtractionLines(att)) + len(att.Derived)
 		if len(att.Derived) > 0 {
 			rowLines++
 		}
@@ -517,6 +517,9 @@ func (td *TaskDetail) renderEntryAttachmentLines() []string {
 		lines = append(lines, fmt.Sprintf("    MIME: %s", contentType))
 		lines = append(lines, fmt.Sprintf("    Size: %s", size))
 		lines = append(lines, fmt.Sprintf("    ID: %s", att.ID))
+		for _, extractionLine := range attachmentExtractionLines(att) {
+			lines = append(lines, "    "+extractionLine)
+		}
 
 		for _, derived := range att.Derived {
 			derivedType := derived.ContentType

@@ -1939,7 +1939,7 @@ func (s *BrainServiceImpl) enrichEntryAttachmentMetadata(ctx context.Context, en
 	seen := make(map[string]bool, len(rows))
 	for _, ref := range entry.Attachments {
 		if att, ok := attachmentsByID[ref.ID]; ok {
-			ref = enrichedAttachmentReference(att, ref, projectID)
+			ref = s.enrichedAttachmentReference(ctx, att, ref, projectID)
 			seen[ref.ID] = true
 		}
 		refs = append(refs, ref)
@@ -1948,13 +1948,13 @@ func (s *BrainServiceImpl) enrichEntryAttachmentMetadata(ctx context.Context, en
 		if seen[id] {
 			continue
 		}
-		refs = append(refs, enrichedAttachmentReference(attachmentsByID[id], types.AttachmentReference{ID: id}, projectID))
+		refs = append(refs, s.enrichedAttachmentReference(ctx, attachmentsByID[id], types.AttachmentReference{ID: id}, projectID))
 	}
 	entry.Attachments = refs
 	return nil
 }
 
-func enrichedAttachmentReference(att types.Attachment, ref types.AttachmentReference, projectID string) types.AttachmentReference {
+func (s *BrainServiceImpl) enrichedAttachmentReference(ctx context.Context, att types.Attachment, ref types.AttachmentReference, projectID string) types.AttachmentReference {
 	ref.ID = att.ID
 	ref.Filename = att.Filename
 	ref.ContentType = att.ContentType
@@ -1965,6 +1965,13 @@ func enrichedAttachmentReference(att types.Attachment, ref types.AttachmentRefer
 		escapedProject := url.QueryEscape(projectID)
 		ref.DownloadURL = "/api/v1/attachments/" + url.PathEscape(att.ID) + "/content?project_id=" + escapedProject
 		ref.TextURL = "/api/v1/attachments/" + url.PathEscape(att.ID) + "/text?project_id=" + escapedProject
+	}
+	if id, err := parseAttachmentID(att.ID); err == nil && s.storage != nil {
+		if row, err := s.storage.GetAttachmentDerived(ctx, id, "text"); err == nil && row != nil {
+			if derived, err := attachmentDerivedRowToDTO(row); err == nil {
+				ref.DerivedText = &derived
+			}
+		}
 	}
 	return ref
 }

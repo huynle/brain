@@ -86,6 +86,20 @@ type EmbeddingConfig struct {
 	TimeoutMs int    `yaml:"timeout_ms"`
 }
 
+// AttachmentExtractionConfig holds multimodal model-role configuration for
+// deriving searchable text from media attachments. Zero text limits mean unset.
+type AttachmentExtractionConfig struct {
+	Enabled             bool     `yaml:"enabled"`
+	Provider            string   `yaml:"provider"`
+	BaseURL             string   `yaml:"base_url"`
+	APIKeyEnv           string   `yaml:"api_key_env"`
+	Model               string   `yaml:"model"`
+	TimeoutMs           int      `yaml:"timeout_ms"`
+	MaxSizeBytes        int64    `yaml:"max_size_bytes"`
+	SupportedMIMETypes  []string `yaml:"supported_mime_types"`
+	MaxDerivedTextChars int      `yaml:"max_derived_text_chars"`
+}
+
 // AttachmentConfig holds storage and policy placeholders for first-class
 // attachment support. StorageRoot is where attachment binaries will be stored;
 // MaxUploadSizeBytes limits incoming uploads; MIME allow/block lists are policy
@@ -112,6 +126,8 @@ type ServerConfig struct {
 	TaskDefaults TaskDefaultsConfig `yaml:"task_defaults"`
 	Embedding    EmbeddingConfig    `yaml:"embedding"`
 	Attachments  AttachmentConfig   `yaml:"attachments"`
+
+	AttachmentExtraction AttachmentExtractionConfig `yaml:"attachment_extraction"`
 }
 
 // RunnerConfig holds task runner configuration.
@@ -216,6 +232,17 @@ func defaultConfig() UnifiedConfig {
 				MaxUploadSizeBytes: 100 * 1024 * 1024,
 				AllowedMIMETypes:   []string{},
 				BlockedMIMETypes:   []string{},
+			},
+			AttachmentExtraction: AttachmentExtractionConfig{
+				Enabled:             false,
+				Provider:            "openrouter",
+				BaseURL:             "https://openrouter.ai/api/v1",
+				APIKeyEnv:           "OPENROUTER_API_KEY",
+				Model:               "google/gemini-2.5-flash",
+				TimeoutMs:           60000,
+				MaxSizeBytes:        10 * 1024 * 1024,
+				SupportedMIMETypes:  []string{"image/*", "application/pdf"},
+				MaxDerivedTextChars: 0,
 			},
 		},
 		Runner: RunnerConfig{

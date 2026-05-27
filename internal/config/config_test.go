@@ -230,6 +230,56 @@ func TestLoadTaskDefaults_ThreadsFromConfigFile(t *testing.T) {
 	}
 }
 
+func TestLoadAttachmentExtraction_ThreadsFromConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.yaml")
+	yamlContent := `server:
+  embedding:
+    enabled: true
+    model: "text-embedding-3-small"
+  attachment_extraction:
+    enabled: true
+    provider: "openrouter"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "BRAIN_ATTACHMENT_EXTRACTION_API_KEY"
+    model: "google/gemini-2.5-pro"
+    timeout_ms: 90000
+    max_size_bytes: 12345
+    supported_mime_types:
+      - "image/png"
+    max_derived_text_chars: 4096
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := Load()
+	ext := cfg.AttachmentExtraction
+
+	if !ext.Enabled {
+		t.Error("AttachmentExtraction.Enabled = false, want true")
+	}
+	if ext.APIKeyEnv != "BRAIN_ATTACHMENT_EXTRACTION_API_KEY" {
+		t.Errorf("AttachmentExtraction.APIKeyEnv = %q, want BRAIN_ATTACHMENT_EXTRACTION_API_KEY", ext.APIKeyEnv)
+	}
+	if ext.Model != "google/gemini-2.5-pro" {
+		t.Errorf("AttachmentExtraction.Model = %q, want google/gemini-2.5-pro", ext.Model)
+	}
+	if ext.MaxDerivedTextChars != 4096 {
+		t.Errorf("AttachmentExtraction.MaxDerivedTextChars = %d, want 4096", ext.MaxDerivedTextChars)
+	}
+	if cfg.Embedding.Model != "text-embedding-3-small" {
+		t.Errorf("Embedding.Model = %q, want unchanged text-embedding-3-small", cfg.Embedding.Model)
+	}
+}
+
 func TestLoadTaskDefaults_EnvOverridesConfigFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)

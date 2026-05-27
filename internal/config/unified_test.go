@@ -1732,6 +1732,93 @@ func TestDefaultConfigIncludesOpenAIEmbeddingDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigIncludesAttachmentExtractionDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	ext := cfg.Server.AttachmentExtraction
+
+	if ext.Enabled {
+		t.Error("default attachment extraction enabled = true, want false")
+	}
+	if ext.Provider != "openrouter" {
+		t.Errorf("default attachment extraction provider = %q, want openrouter", ext.Provider)
+	}
+	if ext.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Errorf("default attachment extraction base_url = %q, want OpenRouter API", ext.BaseURL)
+	}
+	if ext.APIKeyEnv != "OPENROUTER_API_KEY" {
+		t.Errorf("default attachment extraction api_key_env = %q, want OPENROUTER_API_KEY", ext.APIKeyEnv)
+	}
+	if ext.Model != "google/gemini-2.5-flash" {
+		t.Errorf("default attachment extraction model = %q, want google/gemini-2.5-flash", ext.Model)
+	}
+	if ext.TimeoutMs != 60000 {
+		t.Errorf("default attachment extraction timeout_ms = %d, want 60000", ext.TimeoutMs)
+	}
+	if ext.MaxSizeBytes != 10*1024*1024 {
+		t.Errorf("default attachment extraction max_size_bytes = %d, want %d", ext.MaxSizeBytes, int64(10*1024*1024))
+	}
+	if len(ext.SupportedMIMETypes) != 2 || ext.SupportedMIMETypes[0] != "image/*" || ext.SupportedMIMETypes[1] != "application/pdf" {
+		t.Errorf("default attachment extraction supported_mime_types = %#v, want image/* and application/pdf", ext.SupportedMIMETypes)
+	}
+	if ext.MaxDerivedTextChars != 0 {
+		t.Errorf("default attachment extraction max_derived_text_chars = %d, want 0", ext.MaxDerivedTextChars)
+	}
+}
+
+func TestAttachmentExtractionConfigYAMLParsing(t *testing.T) {
+	data := []byte(`server:
+  embedding:
+    enabled: true
+    provider: openrouter
+    model: text-embedding-3-small
+  attachment_extraction:
+    enabled: true
+    provider: openrouter
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "BRAIN_ATTACHMENT_EXTRACTION_API_KEY"
+    model: "google/gemini-2.5-pro"
+    timeout_ms: 120000
+    max_size_bytes: 20971520
+    supported_mime_types:
+      - "image/*"
+      - "application/pdf"
+      - "audio/*"
+    max_derived_text_chars: 50000
+`)
+
+	cfg := defaultConfig()
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	ext := cfg.Server.AttachmentExtraction
+	if !ext.Enabled {
+		t.Error("AttachmentExtraction.Enabled = false, want true")
+	}
+	if ext.APIKeyEnv != "BRAIN_ATTACHMENT_EXTRACTION_API_KEY" {
+		t.Errorf("AttachmentExtraction.APIKeyEnv = %q, want BRAIN_ATTACHMENT_EXTRACTION_API_KEY", ext.APIKeyEnv)
+	}
+	if ext.Model != "google/gemini-2.5-pro" {
+		t.Errorf("AttachmentExtraction.Model = %q, want google/gemini-2.5-pro", ext.Model)
+	}
+	if ext.TimeoutMs != 120000 {
+		t.Errorf("AttachmentExtraction.TimeoutMs = %d, want 120000", ext.TimeoutMs)
+	}
+	if ext.MaxSizeBytes != 20971520 {
+		t.Errorf("AttachmentExtraction.MaxSizeBytes = %d, want 20971520", ext.MaxSizeBytes)
+	}
+	if len(ext.SupportedMIMETypes) != 3 || ext.SupportedMIMETypes[2] != "audio/*" {
+		t.Errorf("AttachmentExtraction.SupportedMIMETypes = %#v, want image/*, application/pdf, audio/*", ext.SupportedMIMETypes)
+	}
+	if ext.MaxDerivedTextChars != 50000 {
+		t.Errorf("AttachmentExtraction.MaxDerivedTextChars = %d, want 50000", ext.MaxDerivedTextChars)
+	}
+
+	if cfg.Server.Embedding.Model != "text-embedding-3-small" {
+		t.Errorf("Embedding.Model = %q, want unchanged text-embedding-3-small", cfg.Server.Embedding.Model)
+	}
+}
+
 // TestLoadConfigCopiesTaskDefaults verifies that LoadConfig() from a unified
 // config file correctly populates the TaskDefaults field.
 func TestLoadConfigCopiesTaskDefaults(t *testing.T) {

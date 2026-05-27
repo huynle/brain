@@ -307,6 +307,56 @@ type AttachmentDerivedText struct {
 	Modified    string            `json:"modified,omitempty"`
 }
 
+// Attachment extraction statuses describe the media-to-text lifecycle.
+const (
+	AttachmentExtractionStatusPending = "pending"
+	AttachmentExtractionStatusReady   = "ready"
+	AttachmentExtractionStatusFailed  = "failed"
+	AttachmentExtractionStatusSkipped = "skipped"
+)
+
+// AttachmentExtractionStatuses enumerates all valid attachment extraction statuses.
+var AttachmentExtractionStatuses = []string{
+	AttachmentExtractionStatusPending,
+	AttachmentExtractionStatusReady,
+	AttachmentExtractionStatusFailed,
+	AttachmentExtractionStatusSkipped,
+}
+
+var attachmentExtractionStatusSet = makeSet(AttachmentExtractionStatuses)
+
+// IsValidAttachmentExtractionStatus returns true if s is a valid extraction status.
+func IsValidAttachmentExtractionStatus(s string) bool {
+	return attachmentExtractionStatusSet[s]
+}
+
+// AttachmentExtractionRequest is the shared request shape for extracting text
+// from a stored attachment. Raw bytes are carried in Content and are not JSON encoded.
+type AttachmentExtractionRequest struct {
+	ProjectID    string            `json:"project_id,omitempty"`
+	EntryID      string            `json:"entry_id,omitempty"`
+	AttachmentID string            `json:"attachment_id"`
+	Filename     string            `json:"filename,omitempty"`
+	ContentType  string            `json:"content_type"`
+	Size         int64             `json:"size,omitempty"`
+	Content      []byte            `json:"-"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+// AttachmentExtractionResponse reports the result of media-to-text extraction.
+type AttachmentExtractionResponse struct {
+	AttachmentID string            `json:"attachment_id"`
+	Status       string            `json:"status"`
+	Text         string            `json:"text,omitempty"`
+	Summary      string            `json:"summary,omitempty"`
+	Error        string            `json:"error,omitempty"`
+	Provider     string            `json:"provider,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	ContentType  string            `json:"content_type,omitempty"`
+	DurationMs   int64             `json:"duration_ms,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
 // CreateAttachmentRequest is metadata submitted before/with an attachment upload.
 // The binary payload is transported separately; do not add base64 fields here.
 type CreateAttachmentRequest struct {

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -88,12 +89,19 @@ func TestRoute_AttachmentsCommandParsesSubcommands(t *testing.T) {
 		project    string
 		role       string
 		output     string
+		dryRun     bool
+		force      bool
+		skipReady  bool
+		batchSize  int
+		rateLimit  int
 	}{
 		{name: "upload", args: []string{"attachments", "upload", "file.txt", "--project", "brain-api", "--description", "fixture"}, subcommand: "upload", path: "file.txt", project: "brain-api"},
 		{name: "attach", args: []string{"attachments", "attach", "entry-123", "att_123", "--project", "brain-api", "--role", "source"}, subcommand: "attach", entry: "entry-123", attachment: "att_123", project: "brain-api", role: "source"},
 		{name: "list entry", args: []string{"attachments", "list", "--entry", "entry-123", "--project", "brain-api"}, subcommand: "list", entry: "entry-123", project: "brain-api"},
 		{name: "download", args: []string{"attachments", "download", "att_123", "--project", "brain-api", "--output", "out.bin"}, subcommand: "download", attachment: "att_123", project: "brain-api", output: "out.bin"},
 		{name: "extract", args: []string{"attachments", "extract", "att_123", "--project", "brain-api"}, subcommand: "extract", attachment: "att_123", project: "brain-api"},
+		{name: "backfill", args: []string{"attachments", "backfill", "--project", "brain-api", "--dry-run", "--force", "--batch-size", "10", "--rate-limit-ms", "25"}, subcommand: "backfill", project: "brain-api", dryRun: true, force: true, batchSize: 10, rateLimit: 25},
+		{name: "backfill skip ready", args: []string{"attachments", "backfill", "--project", "brain-api", "--force", "--skip-ready"}, subcommand: "backfill", project: "brain-api", skipReady: true},
 	}
 
 	for _, tt := range tests {
@@ -112,8 +120,29 @@ func TestRoute_AttachmentsCommandParsesSubcommands(t *testing.T) {
 			if attachmentCmd.Flags.Project != tt.project || attachmentCmd.Flags.Role != tt.role || attachmentCmd.Flags.Output != tt.output {
 				t.Fatalf("flags = %#v", attachmentCmd.Flags)
 			}
+			if boolAttachmentFlagForTest(t, attachmentCmd.Flags, "DryRun") != tt.dryRun || boolAttachmentFlagForTest(t, attachmentCmd.Flags, "Force") != tt.force || boolAttachmentFlagForTest(t, attachmentCmd.Flags, "SkipReady") != tt.skipReady || intAttachmentFlagForTest(t, attachmentCmd.Flags, "BatchSize") != tt.batchSize || intAttachmentFlagForTest(t, attachmentCmd.Flags, "RateLimitDelayMs") != tt.rateLimit {
+				t.Fatalf("backfill flags = %#v", attachmentCmd.Flags)
+			}
 		})
 	}
+}
+
+func boolAttachmentFlagForTest(t *testing.T, flags *commands.AttachmentFlags, name string) bool {
+	t.Helper()
+	field := reflect.ValueOf(flags).Elem().FieldByName(name)
+	if !field.IsValid() {
+		t.Fatalf("AttachmentFlags missing field %s", name)
+	}
+	return field.Bool()
+}
+
+func intAttachmentFlagForTest(t *testing.T, flags *commands.AttachmentFlags, name string) int {
+	t.Helper()
+	field := reflect.ValueOf(flags).Elem().FieldByName(name)
+	if !field.IsValid() {
+		t.Fatalf("AttachmentFlags missing field %s", name)
+	}
+	return int(field.Int())
 }
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -184,6 +185,115 @@ func TestAttachmentCommandExtractPrintsSkippedReason(t *testing.T) {
 	}
 }
 
+func TestAttachmentCommandBackfillSendsRequestAndPrintsPartialFailureSummary(t *testing.T) {
+	var gotRequest string
+	var gotReq types.AttachmentExtractionBackfillRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRequest = r.Method + " " + r.URL.RequestURI()
+		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+			t.Fatalf("decode backfill request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.AttachmentExtractionBackfillResponse{
+			Total:      4,
+			Candidates: 3,
+			Processed:  2,
+			Skipped:    1,
+			Failed:     1,
+			DryRun:     false,
+			Attachments: []types.AttachmentExtractionBackfillItem{
+				{AttachmentID: "att_ready", Filename: "ready.pdf", Status: string(types.AttachmentExtractionStatusReady)},
+				{AttachmentID: "att_fail", Filename: "bad.png", Status: string(types.AttachmentExtractionStatusFailed), Error: "model unavailable"},
+				{AttachmentID: "att_skip", Filename: "done.pdf", Status: string(types.AttachmentExtractionStatusReady), Skipped: true, Reason: "already ready"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	cmd := &AttachmentCommand{
+		Subcommand: "backfill",
+		Config:     attachmentTestConfig(srv.URL),
+		Flags:      &AttachmentFlags{Project: "brain-api"},
+		Out:        &out,
+	}
+	setAttachmentFlagForTest(t, cmd.Flags, "Force", true)
+	setAttachmentFlagForTest(t, cmd.Flags, "BatchSize", 10)
+	setAttachmentFlagForTest(t, cmd.Flags, "RateLimitDelayMs", 25)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if gotRequest != "POST /api/v1/attachments/backfill/extraction?project_id=brain-api" {
+		t.Fatalf("request = %q, want backfill endpoint", gotRequest)
+	}
+	if !gotReq.Force || gotReq.DryRun || gotReq.BatchSize != 10 || gotReq.RateLimitDelayMs != 25 {
+		t.Fatalf("request body = %#v", gotReq)
+	}
+	output := out.String()
+	for _, want := range []string{
+		"Attachment extraction backfill complete",
+		"Total: 4",
+		"Candidates: 3",
+		"Processed: 2",
+		"Skipped: 1",
+		"Failed: 1",
+		"Partial failures:",
+		"att_fail bad.png: model unavailable",
+		"Skipped attachments:",
+		"att_skip done.pdf: already ready",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output %q missing %q", output, want)
+		}
+	}
+}
+
+func TestAttachmentCommandBackfillDryRunOutputIsExplicit(t *testing.T) {
+	var gotReq types.AttachmentExtractionBackfillRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+			t.Fatalf("decode backfill request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.AttachmentExtractionBackfillResponse{
+			Total:      2,
+			Candidates: 2,
+			DryRun:     true,
+			Attachments: []types.AttachmentExtractionBackfillItem{
+				{AttachmentID: "att_one", Filename: "one.pdf", Status: string(types.AttachmentExtractionStatusPending)},
+				{AttachmentID: "att_two", Filename: "two.png", Status: string(types.AttachmentExtractionStatusPending)},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	var out bytes.Buffer
+	cmd := &AttachmentCommand{Subcommand: "backfill", Config: attachmentTestConfig(srv.URL), Flags: &AttachmentFlags{Project: "brain-api"}, Out: &out}
+	setAttachmentFlagForTest(t, cmd.Flags, "DryRun", true)
+	setAttachmentFlagForTest(t, cmd.Flags, "BatchSize", 2)
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if !gotReq.DryRun || gotReq.BatchSize != 2 {
+		t.Fatalf("request body = %#v", gotReq)
+	}
+	output := out.String()
+	for _, want := range []string{"DRY RUN", "would extract", "att_one one.pdf", "att_two two.png", "Processed: 0"} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("output %q missing %q", output, want)
+		}
+	}
+}
+
+func TestAttachmentCommandBackfillRequiresProject(t *testing.T) {
+	cmd := &AttachmentCommand{Subcommand: "backfill", Flags: &AttachmentFlags{}, Out: io.Discard}
+	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--project is required") {
+		t.Fatalf("Execute() error = %v, want --project required", err)
+	}
+}
+
 func TestAttachmentCommandDownloadWritesExactBytesAndVerifiesSHA256(t *testing.T) {
 	payload := []byte{0, 1, 2, 3, 255, 'b', 'r', 'a', 'i', 'n'}
 	sum := shaHex(payload)
@@ -253,4 +363,13 @@ func multipartBodyForTest(t *testing.T, field, filename string, data []byte) (*b
 		t.Fatal(err)
 	}
 	return body, writer.FormDataContentType()
+}
+
+func setAttachmentFlagForTest(t *testing.T, flags *AttachmentFlags, name string, value any) {
+	t.Helper()
+	field := reflect.ValueOf(flags).Elem().FieldByName(name)
+	if !field.IsValid() {
+		t.Fatalf("AttachmentFlags missing field %s", name)
+	}
+	field.Set(reflect.ValueOf(value))
 }

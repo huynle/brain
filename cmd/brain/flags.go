@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"strconv"
 
 	"github.com/huynle/brain-api/cmd/brain/commands"
 	uconfig "github.com/huynle/brain-api/internal/config"
@@ -752,13 +753,18 @@ func convertToCommandsEntryUpdateFlags(flags *EntryUpdateFlags) *commands.EntryU
 
 // AttachmentFlags holds flags for the brain attachments command.
 type AttachmentFlags struct {
-	Project     string
-	Entry       string
-	Role        string
-	Description string
-	Output      string
-	Format      string
-	Quiet       bool
+	Project          string
+	Entry            string
+	Role             string
+	Description      string
+	Output           string
+	Format           string
+	Quiet            bool
+	DryRun           bool
+	Force            bool
+	SkipReady        bool
+	BatchSize        int
+	RateLimitDelayMs int
 }
 
 // ParseAttachmentFlags parses attachment subcommand flags and returns positional args.
@@ -800,6 +806,32 @@ func ParseAttachmentFlags(args []string) (*AttachmentFlags, []string, error) {
 			}
 		case "-q", "--quiet":
 			flags.Quiet = true
+		case "--dry-run":
+			flags.DryRun = true
+		case "--force":
+			flags.Force = true
+			flags.SkipReady = false
+		case "--skip-ready":
+			flags.SkipReady = true
+			flags.Force = false
+		case "--batch-size", "--batch":
+			if i+1 < len(args) {
+				value, err := strconv.Atoi(args[i+1])
+				if err != nil {
+					return nil, nil, fmt.Errorf("%s must be an integer", arg)
+				}
+				flags.BatchSize = value
+				i++
+			}
+		case "--rate-limit-ms", "--rate-limit-delay-ms":
+			if i+1 < len(args) {
+				value, err := strconv.Atoi(args[i+1])
+				if err != nil {
+					return nil, nil, fmt.Errorf("%s must be an integer", arg)
+				}
+				flags.RateLimitDelayMs = value
+				i++
+			}
 		default:
 			if !isFlag(arg) {
 				positionals = append(positionals, arg)
@@ -811,13 +843,18 @@ func ParseAttachmentFlags(args []string) (*AttachmentFlags, []string, error) {
 
 func convertToCommandsAttachmentFlags(flags *AttachmentFlags) *commands.AttachmentFlags {
 	return &commands.AttachmentFlags{
-		Project:     flags.Project,
-		Entry:       flags.Entry,
-		Role:        flags.Role,
-		Description: flags.Description,
-		Output:      flags.Output,
-		Format:      flags.Format,
-		Quiet:       flags.Quiet,
+		Project:          flags.Project,
+		Entry:            flags.Entry,
+		Role:             flags.Role,
+		Description:      flags.Description,
+		Output:           flags.Output,
+		Format:           flags.Format,
+		Quiet:            flags.Quiet,
+		DryRun:           flags.DryRun,
+		Force:            flags.Force,
+		SkipReady:        flags.SkipReady,
+		BatchSize:        flags.BatchSize,
+		RateLimitDelayMs: flags.RateLimitDelayMs,
 	}
 }
 

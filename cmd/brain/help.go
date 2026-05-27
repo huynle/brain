@@ -59,6 +59,7 @@ ATTACHMENTS:
   attachments list                List project or entry attachments
   attachments download <id>       Download original bytes and verify SHA256
   attachments extract <id>        Extract derived searchable text
+  attachments backfill            Backfill derived text for project attachments
   attachments delete <id>         Delete an unreferenced attachment
 
 AUTOMATIONS:
@@ -127,6 +128,7 @@ USAGE:
   brain attachments list --project <project> [--entry <entry>]
   brain attachments download <attachment-id> --project <project> [--output <path>]
   brain attachments extract <attachment-id> --project <project>
+  brain attachments backfill --project <project> [--dry-run] [--force] [--batch-size <n>] [--rate-limit-ms <ms>]
   brain attachments detach <entry> <attachment-id> --project <project> [--role <role>]
   brain attachments delete <attachment-id> --project <project>
 
@@ -136,6 +138,7 @@ SUBCOMMANDS:
   list                            List project attachments or --entry attachments
   download <attachment-id>        Download exact original bytes and verify SHA256
   extract <attachment-id>         Extract derived text for search/indexing
+  backfill                        Extract derived text for project attachments
   detach <entry> <attachment-id>  Remove an attachment reference from an entry
   delete <attachment-id>          Delete an unreferenced attachment from storage
 
@@ -145,6 +148,11 @@ FLAGS:
   -r, --role <role>               Attachment role for attach/detach
   -d, --description <text>        Description/caption metadata
   -o, --output <path>             Download destination (use - for stdout)
+      --dry-run                   Preview backfill candidates without extracting
+      --force                     Re-extract attachments that already have ready text
+      --skip-ready                Skip attachments that already have ready text
+      --batch-size <n>            Limit attachments processed in this run
+      --rate-limit-ms <ms>        Delay between extraction requests
   -h, --help                      Show this help
 
 EXAMPLES:
@@ -154,6 +162,7 @@ EXAMPLES:
   brain attachments list --project brain-api --entry abc12def
   brain attachments download att_123 --project brain-api --output diagram.png
   brain attachments extract att_123 --project brain-api
+  brain attachments backfill --project brain-api --dry-run
   brain attachments detach abc12def att_123 --project brain-api --role source
   brain attachments delete att_123 --project brain-api
 `

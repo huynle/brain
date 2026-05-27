@@ -818,6 +818,28 @@ func (c *APIClient) BackfillEmbeddings(ctx context.Context, req types.EmbeddingB
 	return &result, nil
 }
 
+// BackfillAttachmentExtraction extracts derived text for project attachments via POST /api/v1/attachments/backfill/extraction.
+func (c *APIClient) BackfillAttachmentExtraction(ctx context.Context, projectID string, req types.AttachmentExtractionBackfillRequest) (*types.AttachmentExtractionBackfillResponse, error) {
+	data, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal attachment extraction backfill request: %w", err)
+	}
+	path := "/api/v1/attachments/backfill/extraction?project_id=" + url.QueryEscape(projectID)
+	resp, err := c.doRequestWithClient(ctx, c.longRunningClient(), http.MethodPost, path, strings.NewReader(string(data)))
+	if err != nil {
+		return nil, fmt.Errorf("backfill attachment extraction: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.AttachmentExtractionBackfillResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode attachment extraction backfill response: %w", err)
+	}
+	return &result, nil
+}
+
 func (c *APIClient) longRunningClient() *http.Client {
 	timeout := time.Duration(c.cfg.APITimeout) * time.Millisecond
 	if timeout < 30*time.Minute {

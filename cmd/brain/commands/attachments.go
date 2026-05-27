@@ -15,13 +15,18 @@ import (
 
 // AttachmentFlags holds flags for brain attachments subcommands.
 type AttachmentFlags struct {
-	Project     string
-	Entry       string
-	Role        string
-	Description string
-	Output      string
-	Format      string
-	Quiet       bool
+	Project          string
+	Entry            string
+	Role             string
+	Description      string
+	Output           string
+	Format           string
+	Quiet            bool
+	DryRun           bool
+	Force            bool
+	SkipReady        bool
+	BatchSize        int
+	RateLimitDelayMs int
 }
 
 // AttachmentCommand implements attachment upload, attach, list, download,
@@ -86,6 +91,12 @@ func (c *AttachmentCommand) Execute() error {
 			return err
 		}
 		return writeAttachmentExtraction(out, result)
+	case "backfill":
+		result, err := c.backfill(ctx, client)
+		if err != nil {
+			return err
+		}
+		return writeAttachmentExtractionBackfill(out, result)
 	case "detach":
 		resp, err := c.detach(ctx, client)
 		if err != nil {
@@ -99,7 +110,7 @@ func (c *AttachmentCommand) Execute() error {
 		fmt.Fprintf(out, "Deleted: %s\n", c.AttachmentID)
 		return nil
 	default:
-		return fmt.Errorf("usage: brain attachments <upload|attach|list|download|extract|detach|delete>")
+		return fmt.Errorf("usage: brain attachments <upload|attach|list|download|extract|backfill|detach|delete>")
 	}
 }
 
@@ -221,6 +232,24 @@ func (c *AttachmentCommand) extract(ctx context.Context, client *runner.APIClien
 	return result, nil
 }
 
+func (c *AttachmentCommand) backfill(ctx context.Context, client *runner.APIClient) (*types.AttachmentExtractionBackfillResponse, error) {
+	project := strings.TrimSpace(c.Flags.Project)
+	if project == "" {
+		return nil, fmt.Errorf("--project is required")
+	}
+	req := types.AttachmentExtractionBackfillRequest{
+		DryRun:           c.Flags.DryRun,
+		Force:            c.Flags.Force && !c.Flags.SkipReady,
+		BatchSize:        c.Flags.BatchSize,
+		RateLimitDelayMs: c.Flags.RateLimitDelayMs,
+	}
+	result, err := client.BackfillAttachmentExtraction(ctx, project, req)
+	if err != nil {
+		return nil, fmt.Errorf("backfill attachment extraction: %w", err)
+	}
+	return result, nil
+}
+
 func (c *AttachmentCommand) entryAttachmentProject() (string, string, string, error) {
 	entry := strings.TrimSpace(c.Entry)
 	if entry == "" {
@@ -311,6 +340,88 @@ func writeAttachmentExtraction(out io.Writer, result *types.AttachmentExtraction
 		}
 	}
 	return nil
+}
+
+func writeAttachmentExtractionBackfill(out io.Writer, result *types.AttachmentExtractionBackfillResponse) error {
+	if result == nil {
+		return nil
+	}
+	if result.DryRun {
+		if _, err := fmt.Fprintln(out, "DRY RUN: Attachment extraction backfill would extract matching attachments"); err != nil {
+			return err
+		}
+	} else if _, err := fmt.Fprintln(out, "Attachment extraction backfill complete"); err != nil {
+		return err
+	}
+
+	if _, err := fmt.Fprintf(out, "Total: %d\nCandidates: %d\nProcessed: %d\nSkipped: %d\nFailed: %d\n", result.Total, result.Candidates, result.Processed, result.Skipped, result.Failed); err != nil {
+		return err
+	}
+
+	if result.DryRun && len(result.Attachments) > 0 {
+		if _, err := fmt.Fprintln(out, "Would extract:"); err != nil {
+			return err
+		}
+		for _, item := range result.Attachments {
+			if _, err := fmt.Fprintf(out, "- %s %s\n", item.AttachmentID, item.Filename); err != nil {
+				return err
+			}
+		}
+	}
+
+	failures := attachmentBackfillFailures(result.Attachments)
+	if len(failures) > 0 {
+		if _, err := fmt.Fprintln(out, "Partial failures:"); err != nil {
+			return err
+		}
+		for _, item := range failures {
+			if _, err := fmt.Fprintf(out, "- %s %s: %s\n", item.AttachmentID, item.Filename, firstNonEmpty(item.Error, item.Reason)); err != nil {
+				return err
+			}
+		}
+	}
+
+	skipped := attachmentBackfillSkipped(result.Attachments)
+	if len(skipped) > 0 {
+		if _, err := fmt.Fprintln(out, "Skipped attachments:"); err != nil {
+			return err
+		}
+		for _, item := range skipped {
+			if _, err := fmt.Fprintf(out, "- %s %s: %s\n", item.AttachmentID, item.Filename, firstNonEmpty(item.Reason, item.Error)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func attachmentBackfillFailures(items []types.AttachmentExtractionBackfillItem) []types.AttachmentExtractionBackfillItem {
+	failures := make([]types.AttachmentExtractionBackfillItem, 0)
+	for _, item := range items {
+		if item.Error != "" || strings.EqualFold(item.Status, string(types.AttachmentExtractionStatusFailed)) {
+			failures = append(failures, item)
+		}
+	}
+	return failures
+}
+
+func attachmentBackfillSkipped(items []types.AttachmentExtractionBackfillItem) []types.AttachmentExtractionBackfillItem {
+	skipped := make([]types.AttachmentExtractionBackfillItem, 0)
+	for _, item := range items {
+		if item.Skipped {
+			skipped = append(skipped, item)
+		}
+	}
+	return skipped
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return "n/a"
 }
 
 func runnerSHA256ForDisplay(data []byte) string {

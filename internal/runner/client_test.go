@@ -1950,6 +1950,44 @@ func TestAPIClient_BackfillEmbeddings_UsesLongRunningTimeout(t *testing.T) {
 	}
 }
 
+func TestAPIClient_BackfillAttachmentExtraction_PostsJSONToBackfillRoute(t *testing.T) {
+	var gotMethod string
+	var gotPath string
+	var gotReq types.AttachmentExtractionBackfillRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotMethod = r.Method
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotReq); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		time.Sleep(100 * time.Millisecond)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.AttachmentExtractionBackfillResponse{Processed: 2, Failed: 1, DryRun: true})
+	}))
+	defer srv.Close()
+
+	cfg := testConfig(srv.URL)
+	cfg.APITimeout = 50
+	client := NewAPIClient(cfg)
+
+	result, err := client.BackfillAttachmentExtraction(context.Background(), "brain-api", types.AttachmentExtractionBackfillRequest{DryRun: true, Force: true, BatchSize: 10, RateLimitDelayMs: 25})
+	if err != nil {
+		t.Fatalf("BackfillAttachmentExtraction() error = %v", err)
+	}
+	if gotMethod != http.MethodPost {
+		t.Fatalf("method = %q, want POST", gotMethod)
+	}
+	if gotPath != "/api/v1/attachments/backfill/extraction" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if !gotReq.DryRun || !gotReq.Force || gotReq.BatchSize != 10 || gotReq.RateLimitDelayMs != 25 {
+		t.Fatalf("request = %#v", gotReq)
+	}
+	if result.Processed != 2 || result.Failed != 1 || !result.DryRun {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ListEntries
 // ---------------------------------------------------------------------------

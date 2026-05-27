@@ -149,6 +149,29 @@ func (h *Handler) HandleExtractAttachment(w http.ResponseWriter, r *http.Request
 	WriteJSON(w, http.StatusOK, result)
 }
 
+// HandleBackfillAttachmentExtraction handles POST /attachments/backfill/extraction?project_id=...
+func (h *Handler) HandleBackfillAttachmentExtraction(w http.ResponseWriter, r *http.Request) {
+	projectID, ok := attachmentProjectID(w, r)
+	if !ok {
+		return
+	}
+
+	var req types.AttachmentExtractionBackfillRequest
+	if r.Body != nil && r.Body != http.NoBody {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "request body must be JSON compatible with AttachmentExtractionBackfillRequest")
+			return
+		}
+	}
+
+	result, err := h.attachments.BackfillAttachmentExtraction(r.Context(), projectID, req)
+	if err != nil {
+		writeAttachmentServiceError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, result)
+}
+
 // HandleDownloadAttachment handles GET /attachments/{attachmentID}/content?project_id=...
 func (h *Handler) HandleDownloadAttachment(w http.ResponseWriter, r *http.Request) {
 	projectID, ok := attachmentProjectID(w, r)

@@ -18,15 +18,16 @@ import (
 )
 
 type mockAttachmentService struct {
-	getCalled     bool
-	listCalled    bool
-	attachCalled  bool
-	detachCalled  bool
-	deleteCalled  bool
-	createCalled  bool
-	openCalled    bool
-	textCalled    bool
-	extractCalled bool
+	getCalled      bool
+	listCalled     bool
+	attachCalled   bool
+	detachCalled   bool
+	deleteCalled   bool
+	createCalled   bool
+	openCalled     bool
+	textCalled     bool
+	extractCalled  bool
+	backfillCalled bool
 
 	projectID    string
 	entryID      string
@@ -35,6 +36,7 @@ type mockAttachmentService struct {
 	createReq    types.CreateAttachmentRequest
 	attachReq    types.AttachEntryAttachmentRequest
 	extractReq   types.AttachmentExtractionRequest
+	backfillReq  types.AttachmentExtractionBackfillRequest
 	createBody   []byte
 
 	createErr       error
@@ -48,7 +50,9 @@ type mockAttachmentService struct {
 	openErr         error
 	textErr         error
 	extractErr      error
+	backfillErr     error
 	extractResult   *types.AttachmentExtractionResult
+	backfillResult  *types.AttachmentExtractionBackfillResponse
 }
 
 func (m *mockAttachmentService) Create(ctx context.Context, projectID string, req types.CreateAttachmentRequest, content io.Reader) (*types.CreateAttachmentResponse, error) {
@@ -135,7 +139,15 @@ func (m *mockAttachmentService) ExtractAttachmentText(ctx context.Context, proje
 }
 
 func (m *mockAttachmentService) BackfillAttachmentExtraction(ctx context.Context, projectID string, req types.AttachmentExtractionBackfillRequest) (*types.AttachmentExtractionBackfillResponse, error) {
+	m.backfillCalled = true
 	m.projectID = projectID
+	m.backfillReq = req
+	if m.backfillErr != nil {
+		return nil, m.backfillErr
+	}
+	if m.backfillResult != nil {
+		return m.backfillResult, nil
+	}
 	return &types.AttachmentExtractionBackfillResponse{DryRun: req.DryRun}, nil
 }
 
@@ -589,6 +601,93 @@ func TestExtractAttachmentRouteDoesNotShadowContentOrTextRoutes(t *testing.T) {
 				t.Fatalf("route dispatch state = %#v", attachments)
 			}
 		})
+	}
+}
+
+func TestBackfillAttachmentExtractionRouteDispatchesToService(t *testing.T) {
+	attachments := &mockAttachmentService{backfillResult: &types.AttachmentExtractionBackfillResponse{
+		Total:      3,
+		Candidates: 2,
+		Processed:  1,
+		Skipped:    1,
+		Failed:     1,
+		DryRun:     true,
+		Attachments: []types.AttachmentExtractionBackfillItem{
+			{AttachmentID: "att_ready", Status: types.AttachmentExtractionStatusReady},
+			{AttachmentID: "att_failed", Status: types.AttachmentExtractionStatusFailed, Error: "extract failed"},
+		},
+	}}
+	router := newAttachmentTestRouter(attachments)
+	body := strings.NewReader(`{"dry_run":true,"force":true,"batch_size":5,"rate_limit_delay_ms":25}`)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments/backfill/extraction?project_id=test-project", body)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if !attachments.backfillCalled || attachments.projectID != "test-project" {
+		t.Fatalf("Backfill called = %v, projectID = %q", attachments.backfillCalled, attachments.projectID)
+	}
+	if !attachments.backfillReq.DryRun || !attachments.backfillReq.Force || attachments.backfillReq.BatchSize != 5 || attachments.backfillReq.RateLimitDelayMs != 25 {
+		t.Fatalf("backfillReq = %#v", attachments.backfillReq)
+	}
+	var resp types.AttachmentExtractionBackfillResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Failed != 1 || resp.Processed != 1 || len(resp.Attachments) != 2 {
+		t.Fatalf("response = %#v", resp)
+	}
+}
+
+func TestBackfillAttachmentExtractionRouteRequiresProjectID(t *testing.T) {
+	attachments := &mockAttachmentService{}
+	router := newAttachmentTestRouter(attachments)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments/backfill/extraction", strings.NewReader(`{"dry_run":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if attachments.backfillCalled {
+		t.Fatal("BackfillAttachmentExtraction should not be called without project_id")
+	}
+}
+
+func TestBackfillAttachmentExtractionRouteRejectsInvalidJSON(t *testing.T) {
+	attachments := &mockAttachmentService{}
+	router := newAttachmentTestRouter(attachments)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments/backfill/extraction?project_id=test-project", strings.NewReader(`{"dry_run":`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if attachments.backfillCalled {
+		t.Fatal("BackfillAttachmentExtraction should not be called for invalid JSON")
+	}
+}
+
+func TestBackfillAttachmentExtractionRouteMapsServiceErrors(t *testing.T) {
+	attachments := &mockAttachmentService{backfillErr: errors.New("batch_size must be positive")}
+	router := newAttachmentTestRouter(attachments)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments/backfill/extraction?project_id=test-project", strings.NewReader(`{"batch_size":-1}`))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
 	}
 }
 

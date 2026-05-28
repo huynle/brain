@@ -472,6 +472,24 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 		}
 		return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
 	}
+	if availability, ok := s.extractor.(AttachmentExtractorAvailability); ok {
+		available, reason := availability.AttachmentExtractionAvailable()
+		if !available {
+			if strings.TrimSpace(reason) == "" {
+				reason = "attachment extraction disabled"
+			}
+			derived, err := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, types.AttachmentExtractionResponse{
+				AttachmentID: att.ID,
+				Status:       types.AttachmentExtractionStatusSkipped,
+				Error:        reason,
+				ContentType:  pending.ContentType,
+			}, 0)
+			if err != nil {
+				return nil, err
+			}
+			return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
+		}
+	}
 
 	if err := s.validateAttachmentMIMEType(att.ContentType); err != nil {
 		derived, storeErr := s.storeAttachmentExtractionTerminal(ctx, row.ID, att, types.AttachmentExtractionResponse{

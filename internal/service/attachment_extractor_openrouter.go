@@ -141,6 +141,22 @@ func NewOpenRouterAttachmentExtractor(cfg config.AttachmentExtractionConfig) Att
 	return extractor
 }
 
+// AttachmentExtractionAvailable reports whether the OpenRouter extractor can
+// process attachments without first reading attachment content.
+func (e *OpenRouterAttachmentExtractor) AttachmentExtractionAvailable() (bool, string) {
+	if e == nil {
+		return false, "attachment extraction disabled"
+	}
+	if e.enabled {
+		return true, ""
+	}
+	reason := strings.TrimSpace(e.disabledReason)
+	if reason == "" {
+		reason = "attachment extraction disabled"
+	}
+	return false, reason
+}
+
 // Extract derives text from a supported image attachment. Non-image media are
 // intentionally skipped in this phase even when present in configuration.
 func (e *OpenRouterAttachmentExtractor) Extract(ctx context.Context, req types.AttachmentExtractionRequest) (types.AttachmentExtractionResponse, error) {

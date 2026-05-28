@@ -14,6 +14,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/blobstore"
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -359,6 +360,65 @@ func TestAttachmentServiceExtractAttachmentTextDisabledSkipsAndPreservesAttachme
 	}
 	if opened.ID != created.Attachment.ID || !bytes.Equal(readBack, content) {
 		t.Fatalf("Open after disabled extraction = %#v/%q, want original attachment bytes", opened, readBack)
+	}
+}
+
+func TestAttachmentServiceExtractAttachmentTextSkipsUnavailableOpenRouterBeforeBlobRead(t *testing.T) {
+	tests := []struct {
+		name      string
+		cfg       config.AttachmentExtractionConfig
+		wantError string
+	}{
+		{
+			name:      "disabled config",
+			cfg:       config.AttachmentExtractionConfig{Enabled: false},
+			wantError: "attachment extraction disabled",
+		},
+		{
+			name: "missing API key",
+			cfg: config.AttachmentExtractionConfig{
+				Enabled:   true,
+				APIKeyEnv: "BRAIN_ATTACHMENT_TEST_OPENROUTER_KEY",
+			},
+			wantError: "attachment extraction API key not found in environment variable BRAIN_ATTACHMENT_TEST_OPENROUTER_KEY",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("BRAIN_ATTACHMENT_TEST_OPENROUTER_KEY", "")
+			svc, _, blobs := newAttachmentServiceForTest(t, 1024)
+			svc.extractor = NewOpenRouterAttachmentExtractor(tt.cfg)
+			ctx := context.Background()
+			content := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'}
+			created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{
+				Filename:    "scan.png",
+				ContentType: "image/png",
+				Size:        int64(len(content)),
+			}, bytes.NewReader(content))
+			if err != nil {
+				t.Fatalf("Create returned error: %v", err)
+			}
+			blobs.getCalls = nil
+
+			result, err := svc.ExtractAttachmentText(ctx, "proj", created.Attachment.ID, types.AttachmentExtractionRequest{})
+			if err != nil {
+				t.Fatalf("ExtractAttachmentText returned error: %v", err)
+			}
+			if len(blobs.getCalls) != 0 {
+				t.Fatalf("blob Get calls = %#v, want none when extractor is unavailable", blobs.getCalls)
+			}
+			if result.DerivedText.Status != types.AttachmentExtractionStatusSkipped || result.DerivedText.Error != tt.wantError {
+				t.Fatalf("derived = %#v, want skipped error %q", result.DerivedText, tt.wantError)
+			}
+			status, err := svc.GetDerivedText(ctx, "proj", created.Attachment.ID)
+			if err != nil {
+				t.Fatalf("GetDerivedText returned error: %v", err)
+			}
+			if status == nil || status.Status != types.AttachmentExtractionStatusSkipped || status.Error != tt.wantError {
+				t.Fatalf("GetDerivedText = %#v, want visible skipped error %q", status, tt.wantError)
+			}
+		})
 	}
 }
 

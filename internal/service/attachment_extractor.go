@@ -11,3 +11,9 @@ import (
 type AttachmentExtractor interface {
 	Extract(ctx context.Context, req types.AttachmentExtractionRequest) (types.AttachmentExtractionResponse, error)
 }
+
+// AttachmentExtractorAvailability lets extractors expose disabled/unavailable
+// state before the attachment service reads blob bytes.
+type AttachmentExtractorAvailability interface {
+	AttachmentExtractionAvailable() (bool, string)
+}

@@ -13,6 +13,12 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+const (
+	attachmentCommandTimeout         = 30 * time.Second
+	attachmentExtractCommandTimeout  = 2 * time.Minute
+	attachmentBackfillCommandTimeout = 30 * time.Minute
+)
+
 // AttachmentFlags holds flags for brain attachments subcommands.
 type AttachmentFlags struct {
 	Project          string
@@ -54,7 +60,7 @@ func (c *AttachmentCommand) Execute() error {
 		c.Flags = &AttachmentFlags{}
 	}
 	client := c.getAPIClient()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), c.timeout())
 	defer cancel()
 
 	switch c.Subcommand {
@@ -111,6 +117,17 @@ func (c *AttachmentCommand) Execute() error {
 		return nil
 	default:
 		return fmt.Errorf("usage: brain attachments <upload|attach|list|download|extract|backfill|detach|delete>")
+	}
+}
+
+func (c *AttachmentCommand) timeout() time.Duration {
+	switch c.Subcommand {
+	case "extract":
+		return attachmentExtractCommandTimeout
+	case "backfill":
+		return attachmentBackfillCommandTimeout
+	default:
+		return attachmentCommandTimeout
 	}
 }
 

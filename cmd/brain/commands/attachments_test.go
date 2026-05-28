@@ -14,6 +14,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/internal/types"
@@ -291,6 +292,37 @@ func TestAttachmentCommandBackfillRequiresProject(t *testing.T) {
 	cmd := &AttachmentCommand{Subcommand: "backfill", Flags: &AttachmentFlags{}, Out: io.Discard}
 	if err := cmd.Execute(); err == nil || !strings.Contains(err.Error(), "--project is required") {
 		t.Fatalf("Execute() error = %v, want --project required", err)
+	}
+}
+
+func TestAttachmentCommandTimeoutsAllowLongRunningExtractionWorkflows(t *testing.T) {
+	tests := []struct {
+		name        string
+		subcommand  string
+		wantAtLeast time.Duration
+	}{
+		{name: "extract", subcommand: "extract", wantAtLeast: time.Minute},
+		{name: "backfill", subcommand: "backfill", wantAtLeast: 30 * time.Minute},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &AttachmentCommand{Subcommand: tt.subcommand}
+			if got := cmd.timeout(); got < tt.wantAtLeast {
+				t.Fatalf("timeout() = %s, want at least %s", got, tt.wantAtLeast)
+			}
+		})
+	}
+}
+
+func TestAttachmentCommandTimeoutsKeepFastTimeoutForNormalOperations(t *testing.T) {
+	for _, subcommand := range []string{"upload", "attach", "list", "download", "detach", "delete", ""} {
+		t.Run(subcommand, func(t *testing.T) {
+			cmd := &AttachmentCommand{Subcommand: subcommand}
+			if got := cmd.timeout(); got != 30*time.Second {
+				t.Fatalf("timeout() = %s, want 30s", got)
+			}
+		})
 	}
 }
 

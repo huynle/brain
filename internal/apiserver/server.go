@@ -70,6 +70,65 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		Level: logLevel,
 	})))
 
+	router, dbPath, cleanup, err := buildHTTPHandler(ctx, opts)
+	if err != nil {
+		return err
+	}
+	defer cleanup()
+
+	// ─── HTTP Server ────────────────────────────────────────────────
+	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
+	corsOrigin := opts.CORSOrigin
+	if corsOrigin == "" {
+		corsOrigin = "*"
+	}
+	srv := &http.Server{
+		Addr:        addr,
+		Handler:     router,
+		ReadTimeout: 15 * time.Second,
+		// WriteTimeout disabled (0) to support SSE long-lived streaming connections.
+		// Heartbeats at 15s intervals keep SSE connections alive and detect dead clients.
+		WriteTimeout: 0,
+		IdleTimeout:  120 * time.Second,
+	}
+
+	// Start server in background
+	errCh := make(chan error, 1)
+	go func() {
+		slog.Info("starting brain-api",
+			"addr", addr,
+			"brain_dir", opts.BrainDir,
+			"db_path", dbPath,
+			"auth_enabled", opts.EnableAuth,
+			"oauth_enabled", true,
+			"cors_origin", corsOrigin,
+		)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
+	}()
+
+	// Wait for context cancellation or server error
+	select {
+	case <-ctx.Done():
+		slog.Info("shutting down server")
+	case err := <-errCh:
+		return fmt.Errorf("server error: %w", err)
+	}
+
+	// Graceful shutdown with 10s timeout
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		return fmt.Errorf("shutdown error: %w", err)
+	}
+
+	slog.Info("server stopped")
+	return nil
+}
+
+func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, string, func(), error) {
 	// ─── Storage Layer ──────────────────────────────────────────────
 	// Expand ~ to home directory (Go does not do this automatically)
 	opts.BrainDir = pathutil.ExpandTilde(opts.BrainDir)
@@ -78,14 +137,14 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 
 	// Ensure the data directory exists
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-		return fmt.Errorf("failed to create database directory: %w", err)
+		return nil, "", nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
 	store, err := storage.New(dbPath)
 	if err != nil {
-		return fmt.Errorf("failed to open database at %s: %w", dbPath, err)
+		return nil, "", nil, fmt.Errorf("failed to open database at %s: %w", dbPath, err)
 	}
-	defer store.Close()
+	cleanup := func() { _ = store.Close() }
 
 	// ─── Indexer ────────────────────────────────────────────────────
 	idx := indexer.NewIndexer(opts.BrainDir, store)
@@ -140,7 +199,8 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	brainSvc := service.NewBrainService(&cfg, store, idx, nil, embeddingClient)
 	blobStore, err := blobstore.NewFilesystemStore(cfg.Attachments.StorageRoot, cfg.Attachments.MaxUploadSizeBytes)
 	if err != nil {
-		return fmt.Errorf("failed to initialize attachment blob store: %w", err)
+		cleanup()
+		return nil, "", nil, fmt.Errorf("failed to initialize attachment blob store: %w", err)
 	}
 	attachmentExtractor := service.NewOpenRouterAttachmentExtractor(cfg.AttachmentExtraction)
 	attachmentSvc := service.NewAttachmentService(
@@ -266,50 +326,5 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})
 
-	// ─── HTTP Server ────────────────────────────────────────────────
-	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
-	srv := &http.Server{
-		Addr:        addr,
-		Handler:     router,
-		ReadTimeout: 15 * time.Second,
-		// WriteTimeout disabled (0) to support SSE long-lived streaming connections.
-		// Heartbeats at 15s intervals keep SSE connections alive and detect dead clients.
-		WriteTimeout: 0,
-		IdleTimeout:  120 * time.Second,
-	}
-
-	// Start server in background
-	errCh := make(chan error, 1)
-	go func() {
-		slog.Info("starting brain-api",
-			"addr", addr,
-			"brain_dir", opts.BrainDir,
-			"db_path", dbPath,
-			"auth_enabled", opts.EnableAuth,
-			"oauth_enabled", true,
-			"cors_origin", cfg.CORSOrigin,
-		)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			errCh <- err
-		}
-	}()
-
-	// Wait for context cancellation or server error
-	select {
-	case <-ctx.Done():
-		slog.Info("shutting down server")
-	case err := <-errCh:
-		return fmt.Errorf("server error: %w", err)
-	}
-
-	// Graceful shutdown with 10s timeout
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	if err := srv.Shutdown(shutdownCtx); err != nil {
-		return fmt.Errorf("shutdown error: %w", err)
-	}
-
-	slog.Info("server stopped")
-	return nil
+	return router, dbPath, cleanup, nil
 }

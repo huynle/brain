@@ -106,6 +106,11 @@ func GoalIDTag(goalID string) string {
 	return GoalTag + ":" + goalID
 }
 
+// EventGoalReconcile is the audit event type recorded for each goal reconcile
+// decision. It is written to the event_log (not the realtime hub) and is not
+// part of AllEventTypes — InsertEvent does not validate against that set.
+const EventGoalReconcile = "goal.reconcile"
+
 // =============================================================================
 // Event Struct
 // =============================================================================

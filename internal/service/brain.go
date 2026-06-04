@@ -199,6 +199,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		Trigger:             fmTriggerFromTypes(req.Trigger),
 		Action:              automationActionToFM(req.Action),
 		Retry:               automationRetryToFM(req.Retry),
+		Goal:                goalConfigToFM(req.Goal),
 		Schedule:            req.Schedule,
 		ScheduleEnabled:     req.ScheduleEnabled,
 		NextRun:             req.NextRun,

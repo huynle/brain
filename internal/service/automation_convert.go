@@ -57,6 +57,22 @@ func automationRetryToFM(r *types.AutomationRetry) *frontmatter.AutomationRetry 
 	}
 }
 
+// goalConfigToFM converts a domain GoalConfig to a frontmatter GoalConfig.
+func goalConfigToFM(g *types.GoalConfig) *frontmatter.GoalConfig {
+	if g == nil {
+		return nil
+	}
+	return &frontmatter.GoalConfig{
+		ID:               g.ID,
+		Criteria:         g.Criteria,
+		Validation:       g.Validation,
+		Workdir:          g.Workdir,
+		TriggerSource:    g.TriggerSource,
+		CompleteStatuses: g.CompleteStatuses,
+		BlockedStatuses:  g.BlockedStatuses,
+	}
+}
+
 // fmTriggerToType converts a frontmatter AutomationTrigger to a domain AutomationTrigger.
 func fmTriggerToType(t *frontmatter.AutomationTrigger) *types.AutomationTrigger {
 	if t == nil {

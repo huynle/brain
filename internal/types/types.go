@@ -509,6 +509,7 @@ type CreateEntryRequest struct {
 	Trigger *TriggerConfig    `json:"trigger,omitempty"`
 	Action  *AutomationAction `json:"action,omitempty"`
 	Retry   *AutomationRetry  `json:"retry,omitempty"`
+	Goal    *GoalConfig       `json:"goal,omitempty"`
 
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`

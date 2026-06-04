@@ -1367,6 +1367,15 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := meta["retry"]; ok {
 		entry.Retry = metaToAutomationRetry(v)
 	}
+	if v, ok := meta["goal"]; ok {
+		data, err := json.Marshal(v)
+		if err == nil {
+			var gc types.GoalConfig
+			if err := json.Unmarshal(data, &gc); err == nil {
+				entry.Goal = &gc
+			}
+		}
+	}
 
 	// Sessions: map[string]SessionInfo from metadata JSON
 	if sessionsRaw, ok := meta["sessions"]; ok {

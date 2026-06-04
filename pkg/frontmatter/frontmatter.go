@@ -121,6 +121,18 @@ type AutomationRetry struct {
 	Delay       string `yaml:"delay,omitempty" json:"delay,omitempty"`
 }
 
+// GoalConfig holds goal-specific configuration (frontmatter representation).
+// Mirrors internal/types.GoalConfig for the frontmatter package boundary.
+type GoalConfig struct {
+	ID               string   `yaml:"id" json:"id"`
+	Criteria         string   `yaml:"criteria,omitempty" json:"criteria,omitempty"`
+	Validation       string   `yaml:"validation,omitempty" json:"validation,omitempty"`
+	Workdir          string   `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+	TriggerSource    string   `yaml:"trigger_source,omitempty" json:"trigger_source,omitempty"`
+	CompleteStatuses []string `yaml:"complete_statuses,omitempty" json:"complete_statuses,omitempty"`
+	BlockedStatuses  []string `yaml:"blocked_statuses,omitempty" json:"blocked_statuses,omitempty"`
+}
+
 // Frontmatter holds all known brain entry frontmatter fields.
 // Boolean fields use *bool so nil (absent) is distinguishable from false.
 // Integer fields use *int for the same reason.
@@ -193,6 +205,7 @@ type Frontmatter struct {
 	Trigger *TriggerConfig    `yaml:"trigger,omitempty" json:"trigger,omitempty"`
 	Action  *AutomationAction `yaml:"action,omitempty" json:"action,omitempty"`
 	Retry   *AutomationRetry  `yaml:"retry,omitempty" json:"retry,omitempty"`
+	Goal    *GoalConfig       `yaml:"goal,omitempty" json:"goal,omitempty"`
 
 	// Session traceability
 	Sessions         map[string]SessionInfo     `yaml:"sessions,omitempty" json:"sessions,omitempty"`
@@ -268,6 +281,7 @@ type GenerateOptions struct {
 	Trigger *TriggerConfig
 	Action  *AutomationAction
 	Retry   *AutomationRetry
+	Goal    *GoalConfig
 
 	Attachments []AttachmentReference
 
@@ -348,6 +362,7 @@ type rawFrontmatter struct {
 	Trigger             *TriggerConfig             `yaml:"trigger"`
 	Action              *AutomationAction          `yaml:"action"`
 	Retry               *AutomationRetry           `yaml:"retry"`
+	Goal                *GoalConfig                `yaml:"goal"`
 	Sessions            map[string]SessionInfo     `yaml:"sessions"`
 	RunFinalizations    map[string]RunFinalization `yaml:"run_finalizations"`
 
@@ -379,7 +394,7 @@ var knownFields = map[string]bool{
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
 	"generated_by": true,
-	"trigger":      true, "action": true, "retry": true,
+	"trigger":      true, "action": true, "retry": true, "goal": true,
 	"sessions": true, "run_finalizations": true,
 	// Legacy fields (consumed during normalization, not emitted)
 	"session_ids": true, "session_timestamps": true,
@@ -523,6 +538,7 @@ func Parse(content string) (*Document, error) {
 		Trigger:             raw.Trigger,
 		Action:              raw.Action,
 		Retry:               raw.Retry,
+		Goal:                raw.Goal,
 		Sessions:            sessions,
 		RunFinalizations:    raw.RunFinalizations,
 	}
@@ -799,6 +815,9 @@ func Serialize(fm *Frontmatter) string {
 	if fm.Retry != nil {
 		lines = append(lines, serializeNestedStruct("retry", fm.Retry)...)
 	}
+	if fm.Goal != nil {
+		lines = append(lines, serializeNestedStruct("goal", fm.Goal)...)
+	}
 
 	// Sessions map
 	if len(fm.Sessions) > 0 {
@@ -935,6 +954,7 @@ func Generate(opts *GenerateOptions) string {
 		Trigger:             opts.Trigger,
 		Action:              opts.Action,
 		Retry:               opts.Retry,
+		Goal:                opts.Goal,
 		Sessions:            opts.Sessions,
 		RunFinalizations:    opts.RunFinalizations,
 	}

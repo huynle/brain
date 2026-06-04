@@ -1999,6 +1999,114 @@ func TestGenerate_WithTrigger(t *testing.T) {
 }
 
 // =============================================================================
+// Goal field tests
+// =============================================================================
+
+func TestRoundTrip_GoalConfig(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Round Trip Goal",
+		Type:   "automation",
+		Status: "active",
+		Goal: &GoalConfig{
+			ID:               "ship-feature",
+			Criteria:         "all acceptance tests pass",
+			Validation:       "run integration suite",
+			Workdir:          "/work/dir",
+			TriggerSource:    "both",
+			CompleteStatuses: []string{"completed", "validated"},
+			BlockedStatuses:  []string{"blocked", "cancelled"},
+		},
+	}
+
+	serialized := Serialize(fm)
+	content := "---\n" + serialized + "---\n\nBody"
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	goal := doc.Frontmatter.Goal
+	if goal == nil {
+		t.Fatal("goal should not be nil after round-trip")
+	}
+	if goal.ID != fm.Goal.ID {
+		t.Errorf("goal.id = %q, want %q", goal.ID, fm.Goal.ID)
+	}
+	if goal.Criteria != fm.Goal.Criteria {
+		t.Errorf("goal.criteria = %q, want %q", goal.Criteria, fm.Goal.Criteria)
+	}
+	if goal.Validation != fm.Goal.Validation {
+		t.Errorf("goal.validation = %q, want %q", goal.Validation, fm.Goal.Validation)
+	}
+	if goal.Workdir != fm.Goal.Workdir {
+		t.Errorf("goal.workdir = %q, want %q", goal.Workdir, fm.Goal.Workdir)
+	}
+	if goal.TriggerSource != fm.Goal.TriggerSource {
+		t.Errorf("goal.trigger_source = %q, want %q", goal.TriggerSource, fm.Goal.TriggerSource)
+	}
+	if len(goal.CompleteStatuses) != len(fm.Goal.CompleteStatuses) {
+		t.Fatalf("goal.complete_statuses length = %d, want %d", len(goal.CompleteStatuses), len(fm.Goal.CompleteStatuses))
+	}
+	for i, v := range fm.Goal.CompleteStatuses {
+		if goal.CompleteStatuses[i] != v {
+			t.Errorf("goal.complete_statuses[%d] = %q, want %q", i, goal.CompleteStatuses[i], v)
+		}
+	}
+	if len(goal.BlockedStatuses) != len(fm.Goal.BlockedStatuses) {
+		t.Fatalf("goal.blocked_statuses length = %d, want %d", len(goal.BlockedStatuses), len(fm.Goal.BlockedStatuses))
+	}
+	for i, v := range fm.Goal.BlockedStatuses {
+		if goal.BlockedStatuses[i] != v {
+			t.Errorf("goal.blocked_statuses[%d] = %q, want %q", i, goal.BlockedStatuses[i], v)
+		}
+	}
+}
+
+func TestParse_NoGoal(t *testing.T) {
+	content := `---
+title: No Goal
+type: task
+status: pending
+---
+
+Body`
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc.Frontmatter.Goal != nil {
+		t.Errorf("goal should be nil, got %v", doc.Frontmatter.Goal)
+	}
+}
+
+func TestGenerate_WithGoal(t *testing.T) {
+	opts := &GenerateOptions{
+		Title:  "Generated Goal",
+		Type:   "automation",
+		Status: "active",
+		Goal: &GoalConfig{
+			ID:               "my-goal",
+			Criteria:         "done when ready",
+			CompleteStatuses: []string{"completed"},
+		},
+	}
+	result := Generate(opts)
+	if !strings.Contains(result, "goal:") {
+		t.Errorf("generated YAML should contain goal, got:\n%s", result)
+	}
+	if !strings.Contains(result, "  id: my-goal") {
+		t.Errorf("generated YAML should contain goal id, got:\n%s", result)
+	}
+	if !strings.Contains(result, "  criteria: done when ready") {
+		t.Errorf("generated YAML should contain goal criteria, got:\n%s", result)
+	}
+	if !strings.Contains(result, "completed") {
+		t.Errorf("generated YAML should contain complete status, got:\n%s", result)
+	}
+}
+
+// =============================================================================
 // Helpers
 // =============================================================================
 

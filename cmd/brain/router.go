@@ -1105,6 +1105,9 @@ func parseAutomationCommand(args []string) (Command, error) {
 	if isHelpArg(subcommand) {
 		return &HelpCommand{command: "automation"}, nil
 	}
+	if subcommand == "goal" {
+		return parseAutomationGoalCommand(args[1:])
+	}
 	if len(args) > 1 && wantsHelp(args[1:]) {
 		return &HelpCommand{command: "automation " + subcommand}, nil
 	}
@@ -1133,6 +1136,71 @@ func parseAutomationCommand(args []string) (Command, error) {
 		IDOrName:   idOrName,
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsAutomationFlags(flags),
+	}, nil
+}
+
+// parseAutomationGoalCommand creates an AutomationGoalCommand from the args
+// following "automation goal". Usage:
+//
+//	brain automation goal <subcommand> [arg1] [arg2] [flags]
+//
+// The first positional is the project; the second is the goal ID (for `set`,
+// the second positional is the goal objective text stored in GoalID).
+func parseAutomationGoalCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		// Default: list goals.
+		cfg := defaultConfig()
+		flags, _ := ParseAutomationGoalFlags(nil)
+		return &commands.AutomationGoalCommand{
+			Subcommand: "list",
+			Config:     convertToCommandsConfig(cfg),
+			Flags:      convertToCommandsGoalFlags(flags),
+		}, nil
+	}
+
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "automation goal"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "automation goal " + subcommand}, nil
+	}
+
+	subArgs := args[1:]
+
+	// Collect up to two positionals (project, goalId) in order; the rest are flags.
+	var positionals []string
+	var flagArgs []string
+	for i := 0; i < len(subArgs); i++ {
+		arg := subArgs[i]
+		if !isFlag(arg) && len(positionals) < 2 {
+			positionals = append(positionals, arg)
+		} else {
+			flagArgs = append(flagArgs, arg)
+		}
+	}
+
+	project := ""
+	goalID := ""
+	if len(positionals) > 0 {
+		project = positionals[0]
+	}
+	if len(positionals) > 1 {
+		goalID = positionals[1]
+	}
+
+	cfg := defaultConfig()
+	flags, err := ParseAutomationGoalFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.AutomationGoalCommand{
+		Subcommand: subcommand,
+		Project:    project,
+		GoalID:     goalID,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsGoalFlags(flags),
 	}, nil
 }
 

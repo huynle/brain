@@ -492,3 +492,78 @@ func TestRoute_RunStart_ArgOrder(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Test: automation goal subtree routing
+// ---------------------------------------------------------------------------
+
+func TestRoute_AutomationGoal_List(t *testing.T) {
+	cmd, err := route([]string{"automation", "goal", "list"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	gc, ok := cmd.(*commands.AutomationGoalCommand)
+	if !ok {
+		t.Fatalf("expected *commands.AutomationGoalCommand, got %T", cmd)
+	}
+	if gc.Subcommand != "list" {
+		t.Errorf("Subcommand = %q, want %q", gc.Subcommand, "list")
+	}
+	if gc.Type() != "automation goal" {
+		t.Errorf("Type() = %q, want %q", gc.Type(), "automation goal")
+	}
+}
+
+func TestRoute_AutomationGoal_Positionals(t *testing.T) {
+	cmd, err := route([]string{"automation", "goal", "show", "my-project", "goal-123"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	gc, ok := cmd.(*commands.AutomationGoalCommand)
+	if !ok {
+		t.Fatalf("expected *commands.AutomationGoalCommand, got %T", cmd)
+	}
+	if gc.Subcommand != "show" {
+		t.Errorf("Subcommand = %q, want %q", gc.Subcommand, "show")
+	}
+	if gc.Project != "my-project" {
+		t.Errorf("Project = %q, want %q", gc.Project, "my-project")
+	}
+	if gc.GoalID != "goal-123" {
+		t.Errorf("GoalID = %q, want %q", gc.GoalID, "goal-123")
+	}
+}
+
+func TestRoute_AutomationGoal_SetObjective(t *testing.T) {
+	cmd, err := route([]string{"automation", "goal", "set", "proj", "Ship dark mode", "--agent", "tdd-dev"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	gc, ok := cmd.(*commands.AutomationGoalCommand)
+	if !ok {
+		t.Fatalf("expected *commands.AutomationGoalCommand, got %T", cmd)
+	}
+	if gc.Subcommand != "set" {
+		t.Errorf("Subcommand = %q, want %q", gc.Subcommand, "set")
+	}
+	if gc.Project != "proj" {
+		t.Errorf("Project = %q, want %q", gc.Project, "proj")
+	}
+	// For `set`, the second positional is the objective text stored in GoalID.
+	if gc.GoalID != "Ship dark mode" {
+		t.Errorf("GoalID (objective) = %q, want %q", gc.GoalID, "Ship dark mode")
+	}
+	if gc.Flags.Agent != "tdd-dev" {
+		t.Errorf("Flags.Agent = %q, want %q", gc.Flags.Agent, "tdd-dev")
+	}
+}
+
+func TestRoute_AutomationGoal_Help(t *testing.T) {
+	cmd, err := route([]string{"automation", "goal", "help"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cmd.Type() != "help" {
+		t.Errorf("Type() = %q, want %q", cmd.Type(), "help")
+	}
+}

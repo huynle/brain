@@ -1,6 +1,8 @@
 package main
 
 import (
+	"io"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -567,3 +569,148 @@ func TestRoute_AutomationGoal_Help(t *testing.T) {
 		t.Errorf("Type() = %q, want %q", cmd.Type(), "help")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Test: deprecation alias "brain goal" -> "brain automation goal"
+// ---------------------------------------------------------------------------
+
+func TestRoute_GoalAlias_DelegatesToAutomationGoal(t *testing.T) {
+	cmd, err := route([]string{"goal", "list"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	alias, ok := cmd.(*deprecatedAliasCommand)
+	if !ok {
+		t.Fatalf("expected *deprecatedAliasCommand, got %T", cmd)
+	}
+	if alias.notice == "" {
+		t.Error("expected a non-empty deprecation notice")
+	}
+
+	gc, ok := alias.inner.(*commands.AutomationGoalCommand)
+	if !ok {
+		t.Fatalf("expected inner *commands.AutomationGoalCommand, got %T", alias.inner)
+	}
+	if gc.Subcommand != "list" {
+		t.Errorf("Subcommand = %q, want %q", gc.Subcommand, "list")
+	}
+	// Type() delegates to the inner command for transparency.
+	if alias.Type() != "automation goal" {
+		t.Errorf("Type() = %q, want %q", alias.Type(), "automation goal")
+	}
+}
+
+func TestRoute_GoalAlias_PreservesPositionals(t *testing.T) {
+	cmd, err := route([]string{"goal", "show", "my-project", "goal-123"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	alias, ok := cmd.(*deprecatedAliasCommand)
+	if !ok {
+		t.Fatalf("expected *deprecatedAliasCommand, got %T", cmd)
+	}
+	gc, ok := alias.inner.(*commands.AutomationGoalCommand)
+	if !ok {
+		t.Fatalf("expected inner *commands.AutomationGoalCommand, got %T", alias.inner)
+	}
+	if gc.Subcommand != "show" {
+		t.Errorf("Subcommand = %q, want %q", gc.Subcommand, "show")
+	}
+	if gc.Project != "my-project" {
+		t.Errorf("Project = %q, want %q", gc.Project, "my-project")
+	}
+	if gc.GoalID != "goal-123" {
+		t.Errorf("GoalID = %q, want %q", gc.GoalID, "goal-123")
+	}
+}
+
+func TestRoute_GoalAlias_SetPassesFlags(t *testing.T) {
+	cmd, err := route([]string{"goal", "set", "proj", "Ship dark mode", "--agent", "tdd-dev"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	alias, ok := cmd.(*deprecatedAliasCommand)
+	if !ok {
+		t.Fatalf("expected *deprecatedAliasCommand, got %T", cmd)
+	}
+	gc, ok := alias.inner.(*commands.AutomationGoalCommand)
+	if !ok {
+		t.Fatalf("expected inner *commands.AutomationGoalCommand, got %T", alias.inner)
+	}
+	if gc.Subcommand != "set" {
+		t.Errorf("Subcommand = %q, want %q", gc.Subcommand, "set")
+	}
+	if gc.Project != "proj" {
+		t.Errorf("Project = %q, want %q", gc.Project, "proj")
+	}
+	if gc.GoalID != "Ship dark mode" {
+		t.Errorf("GoalID (objective) = %q, want %q", gc.GoalID, "Ship dark mode")
+	}
+	if gc.Flags.Agent != "tdd-dev" {
+		t.Errorf("Flags.Agent = %q, want %q", gc.Flags.Agent, "tdd-dev")
+	}
+}
+
+func TestRoute_GoalAlias_HelpPassesThrough(t *testing.T) {
+	cmd, err := route([]string{"goal", "help"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// Help should pass through directly (no alias wrapper) so help output
+	// stays clean.
+	if _, ok := cmd.(*deprecatedAliasCommand); ok {
+		t.Fatalf("expected help to pass through, got *deprecatedAliasCommand")
+	}
+	if cmd.Type() != "help" {
+		t.Errorf("Type() = %q, want %q", cmd.Type(), "help")
+	}
+}
+
+func TestDeprecatedAliasCommand_Execute_PrintsNotice(t *testing.T) {
+	// Capture stderr to verify the deprecation notice is printed.
+	oldStderr := os.Stderr
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("failed to create pipe: %v", err)
+	}
+	os.Stderr = w
+
+	executed := false
+	alias := &deprecatedAliasCommand{
+		inner:  &stubExecCommand{onExec: func() { executed = true }},
+		notice: "Warning: deprecated",
+	}
+	execErr := alias.Execute()
+
+	w.Close()
+	os.Stderr = oldStderr
+
+	out, _ := io.ReadAll(r)
+
+	if execErr != nil {
+		t.Fatalf("unexpected error: %v", execErr)
+	}
+	if !executed {
+		t.Error("expected inner command to be executed")
+	}
+	if !strings.Contains(string(out), "deprecated") {
+		t.Errorf("expected deprecation notice on stderr, got %q", string(out))
+	}
+}
+
+// stubExecCommand is a minimal Command for testing the alias wrapper.
+type stubExecCommand struct {
+	onExec func()
+}
+
+func (c *stubExecCommand) Execute() error {
+	if c.onExec != nil {
+		c.onExec()
+	}
+	return nil
+}
+
+func (c *stubExecCommand) Type() string { return "stub-exec" }

@@ -133,15 +133,35 @@ type Event struct {
 // =============================================================================
 
 // TriggerConfig defines when a hook should fire based on an event.
+//
+// A single TriggerConfig can express multiple events and OR-able filter
+// values, allowing one automation entry to match a set of related events
+// (e.g., task.completed OR feature.completed) and a set of statuses
+// (e.g., to_status in {completed, blocked}).
+//
+// Backward compatibility: the legacy single-event field Event and plain
+// exact-match filter values continue to work unchanged. New shapes are
+// opt-in via the Events slice and the "in:" filter value prefix.
 type TriggerConfig struct {
 	// Type is optional and used by automation entries (event, cron, webhook, session).
 	// For legacy trigger-based tasks, this is typically empty and Event carries the match rule.
 	Type string `json:"type,omitempty" yaml:"type,omitempty"`
 	// Event is the event pattern to match (e.g., "task.completed", "task.*").
-	Event string `json:"event" yaml:"event"`
+	// For multi-event triggers, use Events. Event and Events are combined
+	// (OR semantics) by EventPatterns().
+	Event string `json:"event,omitempty" yaml:"event,omitempty"`
+	// Events is an optional list of event patterns to match (OR semantics).
+	// An event matches the trigger if it matches Event OR any entry in Events.
+	Events []string `json:"events,omitempty" yaml:"events,omitempty"`
 	// Schedule is used by cron-style automations.
 	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty"`
 	// Filter is optional key-value filters applied to event fields.
+	//
+	// Filter values support two forms:
+	//   - Exact match (default): "to_status": "completed" matches only "completed".
+	//   - OR-able set via "in:" prefix: "to_status": "in:completed,blocked"
+	//     matches if the event field is any of the comma-separated values.
+	//   - Wildcard "*" matches any non-empty value.
 	Filter map[string]string `json:"filter,omitempty" yaml:"filter,omitempty"`
 	// OncePer is an automation dedup key (e.g. feature_id, session, day).
 	OncePer string `json:"once_per,omitempty" yaml:"once_per,omitempty"`
@@ -153,6 +173,113 @@ type TriggerConfig struct {
 	Cooldown string `json:"cooldown,omitempty" yaml:"cooldown,omitempty"`
 	// MaxConcurrent limits the number of concurrent executions.
 	MaxConcurrent int `json:"max_concurrent,omitempty" yaml:"max_concurrent,omitempty"`
+}
+
+// EventPatterns returns the union of Event and Events as the full set of
+// event patterns this trigger matches (OR semantics). Empty patterns are
+// skipped and duplicates are removed while preserving first-seen order.
+func (tc *TriggerConfig) EventPatterns() []string {
+	if tc == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	var out []string
+	add := func(p string) {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			return
+		}
+		seen[p] = true
+		out = append(out, p)
+	}
+	add(tc.Event)
+	for _, e := range tc.Events {
+		add(e)
+	}
+	return out
+}
+
+// MatchesEvent reports whether the given event type matches any of this
+// trigger's event patterns (OR semantics). It uses MatchEventPattern for
+// each pattern, so exact matches, namespace wildcards ("task.*"), and the
+// global wildcard ("*") are all supported.
+//
+// A trigger with no event patterns matches nothing.
+func (tc *TriggerConfig) MatchesEvent(eventType string) bool {
+	if tc == nil {
+		return false
+	}
+	for _, pattern := range tc.EventPatterns() {
+		if MatchEventPattern(pattern, eventType) {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchFilterValue reports whether an actual event field value satisfies a
+// filter expression. Supported expression forms:
+//
+//   - "*"                  → matches any non-empty actual value.
+//   - "in:a,b,c"           → matches if actual is any of a, b, or c (OR-able set).
+//   - "<value>" (default)  → exact match against actual.
+//
+// Whitespace around "in:" members is trimmed and empty members are ignored.
+func MatchFilterValue(actual, filterExpr string) bool {
+	if filterExpr == "*" {
+		return actual != ""
+	}
+	if rest, ok := parseInFilter(filterExpr); ok {
+		for _, want := range rest {
+			if actual == want {
+				return true
+			}
+		}
+		return false
+	}
+	return actual == filterExpr
+}
+
+// parseInFilter parses an "in:a,b,c" filter expression into its members.
+// The second return value is false if the expression is not an "in:" form.
+func parseInFilter(filterExpr string) ([]string, bool) {
+	const prefix = "in:"
+	if !strings.HasPrefix(filterExpr, prefix) {
+		return nil, false
+	}
+	raw := strings.TrimPrefix(filterExpr, prefix)
+	parts := strings.Split(raw, ",")
+	members := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			members = append(members, p)
+		}
+	}
+	return members, true
+}
+
+// MatchesFilters reports whether all of this trigger's filters are satisfied
+// for an event, using getField to resolve each filter key to the event's
+// field value. Each filter value is evaluated with MatchFilterValue, so
+// exact, "in:" (OR-able), and "*" (wildcard) semantics are all honored.
+//
+// A trigger with no filters always matches (returns true). getField may be
+// nil only when there are no filters.
+func (tc *TriggerConfig) MatchesFilters(getField func(key string) string) bool {
+	if tc == nil || len(tc.Filter) == 0 {
+		return true
+	}
+	for key, expr := range tc.Filter {
+		actual := ""
+		if getField != nil {
+			actual = getField(key)
+		}
+		if !MatchFilterValue(actual, expr) {
+			return false
+		}
+	}
+	return true
 }
 
 // =============================================================================

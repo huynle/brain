@@ -290,6 +290,293 @@ func TestTriggerConfig_JSONSerialization(t *testing.T) {
 }
 
 // =============================================================================
+// TriggerConfig Multi-Event + OR-able Filter Tests (Route T)
+// =============================================================================
+
+func TestTriggerConfig_EventPatterns(t *testing.T) {
+	tests := []struct {
+		name string
+		tc   TriggerConfig
+		want []string
+	}{
+		{
+			name: "single event field only (back-compat)",
+			tc:   TriggerConfig{Event: "task.completed"},
+			want: []string{"task.completed"},
+		},
+		{
+			name: "events slice only",
+			tc:   TriggerConfig{Events: []string{"task.completed", "feature.completed"}},
+			want: []string{"task.completed", "feature.completed"},
+		},
+		{
+			name: "event + events combined (OR union)",
+			tc:   TriggerConfig{Event: "task.completed", Events: []string{"feature.completed"}},
+			want: []string{"task.completed", "feature.completed"},
+		},
+		{
+			name: "dedupes overlapping event and events",
+			tc:   TriggerConfig{Event: "task.completed", Events: []string{"task.completed", "feature.completed"}},
+			want: []string{"task.completed", "feature.completed"},
+		},
+		{
+			name: "skips empty entries and trims whitespace",
+			tc:   TriggerConfig{Event: "", Events: []string{"  task.completed  ", ""}},
+			want: []string{"task.completed"},
+		},
+		{
+			name: "no patterns",
+			tc:   TriggerConfig{},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.tc.EventPatterns()
+			if len(got) != len(tt.want) {
+				t.Fatalf("EventPatterns() = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("EventPatterns()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestTriggerConfig_EventPatterns_NilReceiver(t *testing.T) {
+	var tc *TriggerConfig
+	if got := tc.EventPatterns(); got != nil {
+		t.Errorf("nil receiver EventPatterns() = %v, want nil", got)
+	}
+}
+
+func TestTriggerConfig_MatchesEvent(t *testing.T) {
+	tests := []struct {
+		name      string
+		tc        TriggerConfig
+		eventType string
+		want      bool
+	}{
+		// Single-event back-compat
+		{"single exact match", TriggerConfig{Event: "task.completed"}, "task.completed", true},
+		{"single exact no match", TriggerConfig{Event: "task.completed"}, "task.blocked", false},
+		{"single wildcard match", TriggerConfig{Event: "task.*"}, "task.blocked", true},
+
+		// Multi-event OR semantics
+		{"multi-event first matches", TriggerConfig{Events: []string{"task.completed", "feature.completed"}}, "task.completed", true},
+		{"multi-event second matches", TriggerConfig{Events: []string{"task.completed", "feature.completed"}}, "feature.completed", true},
+		{"multi-event none match", TriggerConfig{Events: []string{"task.completed", "feature.completed"}}, "entry.created", false},
+
+		// Combined Event + Events
+		{"combined matches event field", TriggerConfig{Event: "task.completed", Events: []string{"feature.completed"}}, "task.completed", true},
+		{"combined matches events slice", TriggerConfig{Event: "task.completed", Events: []string{"feature.completed"}}, "feature.completed", true},
+
+		// Wildcard in events slice
+		{"wildcard in events matches", TriggerConfig{Events: []string{"feature.*"}}, "feature.blocked", true},
+		{"global wildcard in events", TriggerConfig{Events: []string{"*"}}, "anything.goes", true},
+
+		// Empty trigger matches nothing
+		{"empty trigger no match", TriggerConfig{}, "task.completed", false},
+		{"empty event type", TriggerConfig{Event: "task.*"}, "", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.tc.MatchesEvent(tt.eventType)
+			if got != tt.want {
+				t.Errorf("MatchesEvent(%q) = %v, want %v", tt.eventType, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTriggerConfig_MatchesEvent_NilReceiver(t *testing.T) {
+	var tc *TriggerConfig
+	if tc.MatchesEvent("task.completed") {
+		t.Error("nil receiver MatchesEvent() = true, want false")
+	}
+}
+
+func TestMatchFilterValue(t *testing.T) {
+	tests := []struct {
+		name       string
+		actual     string
+		filterExpr string
+		want       bool
+	}{
+		// Exact match (default, back-compat)
+		{"exact match", "completed", "completed", true},
+		{"exact no match", "blocked", "completed", false},
+		{"exact empty both", "", "", true},
+
+		// Wildcard
+		{"wildcard non-empty", "anything", "*", true},
+		{"wildcard empty actual", "", "*", false},
+
+		// in: OR-able set
+		{"in: first member", "completed", "in:completed,blocked", true},
+		{"in: second member", "blocked", "in:completed,blocked", true},
+		{"in: no member matches", "cancelled", "in:completed,blocked", false},
+		{"in: single member match", "completed", "in:completed", true},
+		{"in: whitespace trimmed", "blocked", "in: completed , blocked ", true},
+		{"in: empty members ignored", "completed", "in:completed,,", true},
+		{"in: empty actual no match", "", "in:completed,blocked", false},
+		{"in: empty actual matches empty member excluded", "", "in:,", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := MatchFilterValue(tt.actual, tt.filterExpr)
+			if got != tt.want {
+				t.Errorf("MatchFilterValue(%q, %q) = %v, want %v", tt.actual, tt.filterExpr, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTriggerConfig_MatchesFilters(t *testing.T) {
+	fields := map[string]string{
+		"project_id": "brain-api",
+		"feature_id": "goals",
+		"to_status":  "blocked",
+	}
+	getField := func(key string) string { return fields[key] }
+
+	tests := []struct {
+		name   string
+		filter map[string]string
+		want   bool
+	}{
+		{"no filters matches", nil, true},
+		{"empty filters matches", map[string]string{}, true},
+		{"single exact match", map[string]string{"project_id": "brain-api"}, true},
+		{"single exact no match", map[string]string{"project_id": "other"}, false},
+		{"in: OR-able match", map[string]string{"to_status": "in:completed,blocked"}, true},
+		{"in: OR-able no match", map[string]string{"to_status": "in:completed,cancelled"}, false},
+		{"wildcard match present field", map[string]string{"feature_id": "*"}, true},
+		{"wildcard no match absent field", map[string]string{"missing": "*"}, false},
+		{"all filters must match (AND across keys)", map[string]string{"project_id": "brain-api", "to_status": "in:completed,blocked"}, true},
+		{"one filter fails fails all", map[string]string{"project_id": "brain-api", "to_status": "completed"}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := TriggerConfig{Filter: tt.filter}
+			got := tc.MatchesFilters(getField)
+			if got != tt.want {
+				t.Errorf("MatchesFilters() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestTriggerConfig_MatchesFilters_NilReceiverAndGetter(t *testing.T) {
+	var tc *TriggerConfig
+	if !tc.MatchesFilters(nil) {
+		t.Error("nil receiver MatchesFilters(nil) = false, want true (no filters)")
+	}
+
+	// No filters with nil getter still matches.
+	empty := TriggerConfig{}
+	if !empty.MatchesFilters(nil) {
+		t.Error("empty filters MatchesFilters(nil) = false, want true")
+	}
+}
+
+func TestTriggerConfig_MultiEvent_Serialization_RoundTrip(t *testing.T) {
+	tc := TriggerConfig{
+		Type:   "event",
+		Event:  "task.status_changed",
+		Events: []string{"feature.completed", "feature.blocked"},
+		Filter: map[string]string{
+			"project_id": "brain-api",
+			"to_status":  "in:completed,blocked",
+		},
+		OncePer:       "feature_id",
+		MaxConcurrent: 1,
+	}
+
+	t.Run("JSON round-trip", func(t *testing.T) {
+		data, err := json.Marshal(tc)
+		if err != nil {
+			t.Fatalf("json.Marshal failed: %v", err)
+		}
+		var decoded TriggerConfig
+		if err := json.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("json.Unmarshal failed: %v", err)
+		}
+		if decoded.Event != tc.Event {
+			t.Errorf("Event: got %q, want %q", decoded.Event, tc.Event)
+		}
+		if len(decoded.Events) != 2 || decoded.Events[0] != "feature.completed" || decoded.Events[1] != "feature.blocked" {
+			t.Errorf("Events: got %v, want %v", decoded.Events, tc.Events)
+		}
+		if decoded.Filter["to_status"] != "in:completed,blocked" {
+			t.Errorf("Filter[to_status]: got %q, want %q", decoded.Filter["to_status"], "in:completed,blocked")
+		}
+		if decoded.OncePer != tc.OncePer {
+			t.Errorf("OncePer: got %q, want %q", decoded.OncePer, tc.OncePer)
+		}
+	})
+
+	t.Run("YAML round-trip", func(t *testing.T) {
+		data, err := yaml.Marshal(tc)
+		if err != nil {
+			t.Fatalf("yaml.Marshal failed: %v", err)
+		}
+		var decoded TriggerConfig
+		if err := yaml.Unmarshal(data, &decoded); err != nil {
+			t.Fatalf("yaml.Unmarshal failed: %v", err)
+		}
+		if len(decoded.Events) != 2 {
+			t.Errorf("Events: got %d items, want 2", len(decoded.Events))
+		}
+		if decoded.Filter["to_status"] != "in:completed,blocked" {
+			t.Errorf("Filter[to_status]: got %q, want %q", decoded.Filter["to_status"], "in:completed,blocked")
+		}
+	})
+}
+
+func TestTriggerConfig_SingleEvent_BackCompat_Serialization(t *testing.T) {
+	// A legacy single-event config (no Events slice) must still round-trip
+	// and must not emit an "events" key when empty.
+	tc := TriggerConfig{Event: "task.completed", Filter: map[string]string{"project_id": "p"}}
+
+	data, err := json.Marshal(tc)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+	jsonStr := string(data)
+	if strings.Contains(jsonStr, "events") {
+		t.Errorf("expected no 'events' key in JSON for single-event config, got: %s", jsonStr)
+	}
+
+	var decoded TriggerConfig
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+	if decoded.Event != "task.completed" {
+		t.Errorf("Event: got %q, want %q", decoded.Event, "task.completed")
+	}
+	if decoded.Events != nil {
+		t.Errorf("Events: got %v, want nil", decoded.Events)
+	}
+
+	// A config that previously serialized an empty "event" can still be parsed.
+	legacy := `{"event":"feature.completed","filter":{"feature_id":"x"}}`
+	var fromLegacy TriggerConfig
+	if err := json.Unmarshal([]byte(legacy), &fromLegacy); err != nil {
+		t.Fatalf("unmarshal legacy failed: %v", err)
+	}
+	if !fromLegacy.MatchesEvent("feature.completed") {
+		t.Error("legacy single-event config should MatchesEvent(feature.completed)")
+	}
+}
+
+// =============================================================================
 // WebhookConfig Tests
 // =============================================================================
 

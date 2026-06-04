@@ -1186,6 +1186,37 @@ func TestSerialize_BooleanFields(t *testing.T) {
 	}
 }
 
+func TestSerialize_ActionSessionMode(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Automation",
+		Type:   "automation",
+		Status: "active",
+		Action: &AutomationAction{
+			Type:        "prompt",
+			SessionMode: "fresh",
+		},
+	}
+	result := Serialize(fm)
+	if !strings.Contains(result, "session_mode: fresh") {
+		t.Errorf("missing session_mode in:\n%s", result)
+	}
+}
+
+func TestParse_ActionSessionMode(t *testing.T) {
+	content := "---\ntitle: Automation\ntype: automation\nstatus: active\naction:\n  type: prompt\n  session_mode: continue\n---\n\nBody"
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc.Frontmatter.Action == nil {
+		t.Fatal("expected action to be parsed, got nil")
+	}
+	if doc.Frontmatter.Action.SessionMode != "continue" {
+		t.Errorf("action.session_mode = %q, want %q", doc.Frontmatter.Action.SessionMode, "continue")
+	}
+}
+
 func TestSerialize_GeneratedFalse(t *testing.T) {
 	f := false
 	fm := &Frontmatter{

@@ -171,6 +171,7 @@ type BrainEntry struct {
 	RemoteBranchPolicy string `json:"remote_branch_policy,omitempty"`
 	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"`
+	SessionMode        string `json:"session_mode,omitempty"`
 
 	// Task execution fields
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
@@ -477,6 +478,7 @@ type CreateEntryRequest struct {
 	RemoteBranchPolicy string `json:"remote_branch_policy,omitempty"`
 	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"`
+	SessionMode        string `json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool  `json:"complete_on_idle,omitempty"`
 
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`

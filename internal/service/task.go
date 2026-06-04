@@ -1260,6 +1260,9 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "execution_mode"); ok {
 		entry.ExecutionMode = v
 	}
+	if v, ok := metaString(meta, "session_mode"); ok {
+		entry.SessionMode = v
+	}
 
 	// Task execution fields
 	if v, ok := metaString(meta, "user_original_request"); ok {

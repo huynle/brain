@@ -86,6 +86,64 @@ func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *t
 	}
 }
 
+func TestAutomationService_HandleEventThreadsSessionModeOntoGeneratedTask(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Session mode automation",
+		Content: "Creates a follow-up task with a session mode.",
+		Status:  "active",
+		Project: "automation-test",
+		Trigger: &types.TriggerConfig{
+			Type:    "event",
+			Event:   types.EventTaskCompleted,
+			Filter:  map[string]string{"project_id": "automation-test"},
+			OncePer: "feature_id",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Create the follow-up summary.",
+			Agent:        "general",
+			SessionMode:  "fresh",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-session-mode-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-test",
+		TaskID:    "source-task",
+		FeatureID: "feature-a",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated task, got %d", len(resp.Entries))
+	}
+
+	task := resp.Entries[0]
+	if task.SessionMode != "fresh" {
+		t.Errorf("generated task session_mode = %q, want %q", task.SessionMode, "fresh")
+	}
+}
+
 func TestAutomationService_StartConsumesEventHubEvents(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx, cancel := context.WithCancel(context.Background())

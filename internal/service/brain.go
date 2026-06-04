@@ -183,6 +183,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		RemoteBranchPolicy:  req.RemoteBranchPolicy,
 		OpenPRBeforeMerge:   req.OpenPRBeforeMerge,
 		ExecutionMode:       req.ExecutionMode,
+		SessionMode:         req.SessionMode,
 		CompleteOnIdle:      req.CompleteOnIdle,
 		TargetWorkdir:       frontmatter.SanitizeSimpleValue(req.TargetWorkdir),
 		UserOriginalRequest: req.UserOriginalRequest,

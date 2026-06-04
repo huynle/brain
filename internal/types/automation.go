@@ -23,6 +23,7 @@ type AutomationAction struct {
 	Agent              string `json:"agent,omitempty" yaml:"agent,omitempty"`                             // agent to use for type=prompt
 	Model              string `json:"model,omitempty" yaml:"model,omitempty"`                             // model override
 	ExecutionMode      string `json:"execution_mode,omitempty" yaml:"execution_mode,omitempty"`           // worktree, current_branch
+	SessionMode        string `json:"session_mode,omitempty" yaml:"session_mode,omitempty"`               // continue, fresh
 	CompleteOnIdle     *bool  `json:"complete_on_idle,omitempty" yaml:"complete_on_idle,omitempty"`       // auto-complete on idle
 	Timeout            string `json:"timeout,omitempty" yaml:"timeout,omitempty"`                         // execution timeout (e.g. "5m", "1h")
 	RequiresCapability string `json:"requires_capability,omitempty" yaml:"requires_capability,omitempty"` // required runner capability

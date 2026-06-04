@@ -273,6 +273,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		Agent:          automation.Action.Agent,
 		Model:          automation.Action.Model,
 		ExecutionMode:  automation.Action.ExecutionMode,
+		SessionMode:    automation.Action.SessionMode,
 		CompleteOnIdle: automation.Action.CompleteOnIdle,
 	}
 

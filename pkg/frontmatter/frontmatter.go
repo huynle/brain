@@ -105,6 +105,7 @@ type AutomationAction struct {
 	Agent              string `yaml:"agent,omitempty" json:"agent,omitempty"`
 	Model              string `yaml:"model,omitempty" json:"model,omitempty"`
 	ExecutionMode      string `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	SessionMode        string `yaml:"session_mode,omitempty" json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool  `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`
 	Timeout            string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	RequiresCapability string `yaml:"requires_capability,omitempty" json:"requires_capability,omitempty"`
@@ -167,6 +168,7 @@ type Frontmatter struct {
 	RemoteBranchPolicy string   `yaml:"remote_branch_policy,omitempty" json:"remote_branch_policy,omitempty"`
 	OpenPRBeforeMerge  *bool    `yaml:"open_pr_before_merge,omitempty" json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string   `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	SessionMode        string   `yaml:"session_mode,omitempty" json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool    `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`
 	TargetWorkdir      string   `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
 	Executor           string   `yaml:"executor,omitempty" json:"executor,omitempty"`
@@ -244,6 +246,7 @@ type GenerateOptions struct {
 	RemoteBranchPolicy string
 	OpenPRBeforeMerge  *bool
 	ExecutionMode      string
+	SessionMode        string
 	CompleteOnIdle     *bool
 	TargetWorkdir      string
 	Executor           string
@@ -326,6 +329,7 @@ type rawFrontmatter struct {
 	RemoteBranchPolicy  string                     `yaml:"remote_branch_policy"`
 	OpenPRBeforeMerge   *bool                      `yaml:"open_pr_before_merge"`
 	ExecutionMode       string                     `yaml:"execution_mode"`
+	SessionMode         string                     `yaml:"session_mode"`
 	CompleteOnIdle      *bool                      `yaml:"complete_on_idle"`
 	TargetWorkdir       string                     `yaml:"target_workdir"`
 	Executor            string                     `yaml:"executor"`
@@ -500,6 +504,7 @@ func Parse(content string) (*Document, error) {
 		RemoteBranchPolicy:  raw.RemoteBranchPolicy,
 		OpenPRBeforeMerge:   raw.OpenPRBeforeMerge,
 		ExecutionMode:       raw.ExecutionMode,
+		SessionMode:         raw.SessionMode,
 		CompleteOnIdle:      raw.CompleteOnIdle,
 		TargetWorkdir:       raw.TargetWorkdir,
 		Executor:            raw.Executor,
@@ -746,6 +751,7 @@ func Serialize(fm *Frontmatter) string {
 	}
 
 	emitPlain("execution_mode", fm.ExecutionMode)
+	emitPlain("session_mode", fm.SessionMode)
 
 	if fm.CompleteOnIdle != nil {
 		lines = append(lines, fmt.Sprintf("complete_on_idle: %v", *fm.CompleteOnIdle))
@@ -910,6 +916,7 @@ func Generate(opts *GenerateOptions) string {
 		RemoteBranchPolicy:  opts.RemoteBranchPolicy,
 		OpenPRBeforeMerge:   opts.OpenPRBeforeMerge,
 		ExecutionMode:       opts.ExecutionMode,
+		SessionMode:         opts.SessionMode,
 		CompleteOnIdle:      opts.CompleteOnIdle,
 		TargetWorkdir:       opts.TargetWorkdir,
 		Executor:            opts.Executor,

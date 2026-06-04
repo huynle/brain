@@ -316,6 +316,167 @@ func (c *APIClient) UpdateEntry(ctx context.Context, entryPath string, updates m
 	return &entry, nil
 }
 
+// =============================================================================
+// Goal Automation API
+//
+// These methods call the dedicated /api/v1/goals routes. A goal is an
+// automation entry whose trigger/action drive a deterministic in-process
+// reconcile loop. See internal/types/automation.go for the DTOs.
+// =============================================================================
+
+// CreateGoal creates a new goal automation. Returns the created goal summary.
+func (c *APIClient) CreateGoal(ctx context.Context, req types.CreateGoalRequest) (*types.GoalSummary, error) {
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, "/api/v1/goals", req)
+	if err != nil {
+		return nil, fmt.Errorf("create goal: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		return nil, c.readError(resp)
+	}
+
+	var goal types.GoalSummary
+	if err := json.NewDecoder(resp.Body).Decode(&goal); err != nil {
+		return nil, fmt.Errorf("decode goal: %w", err)
+	}
+
+	return &goal, nil
+}
+
+// UpdateGoal merges the provided fields onto an existing goal automation.
+// Returns the updated goal summary.
+func (c *APIClient) UpdateGoal(ctx context.Context, goalID string, req types.UpdateGoalRequest) (*types.GoalSummary, error) {
+	path := fmt.Sprintf("/api/v1/goals/%s", goalID)
+
+	resp, err := c.doJSONRequest(ctx, http.MethodPatch, path, req)
+	if err != nil {
+		return nil, fmt.Errorf("update goal: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var goal types.GoalSummary
+	if err := json.NewDecoder(resp.Body).Decode(&goal); err != nil {
+		return nil, fmt.Errorf("decode goal: %w", err)
+	}
+
+	return &goal, nil
+}
+
+// ListGoals returns goal automations, optionally filtered by project and
+// feature ID. Empty filter values are omitted from the query string.
+func (c *APIClient) ListGoals(ctx context.Context, project, featureID string) ([]types.GoalSummary, error) {
+	path := "/api/v1/goals"
+	q := url.Values{}
+	if project != "" {
+		q.Set("project", project)
+	}
+	if featureID != "" {
+		q.Set("feature_id", featureID)
+	}
+	if encoded := q.Encode(); encoded != "" {
+		path += "?" + encoded
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("list goals: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result struct {
+		Goals []types.GoalSummary `json:"goals"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode goals: %w", err)
+	}
+
+	return result.Goals, nil
+}
+
+// RunGoal triggers a manual reconcile of the goal and returns the audit record
+// for the resulting decision.
+func (c *APIClient) RunGoal(ctx context.Context, goalID string) (*types.GoalReconcileAudit, error) {
+	path := fmt.Sprintf("/api/v1/goals/%s/run", goalID)
+
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("run goal: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var audit types.GoalReconcileAudit
+	if err := json.NewDecoder(resp.Body).Decode(&audit); err != nil {
+		return nil, fmt.Errorf("decode goal audit: %w", err)
+	}
+
+	return &audit, nil
+}
+
+// GoalProgress returns goal-scoped linked-task progress.
+func (c *APIClient) GoalProgress(ctx context.Context, goalID string) (*types.GoalProgressResponse, error) {
+	path := fmt.Sprintf("/api/v1/goals/%s/progress", goalID)
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("goal progress: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var progress types.GoalProgressResponse
+	if err := json.NewDecoder(resp.Body).Decode(&progress); err != nil {
+		return nil, fmt.Errorf("decode goal progress: %w", err)
+	}
+
+	return &progress, nil
+}
+
+// GoalAudit returns the goal's reconcile audit history. When limit > 0 it is
+// passed through as the limit query parameter; otherwise no limit is sent.
+func (c *APIClient) GoalAudit(ctx context.Context, goalID string, limit int) ([]types.GoalReconcileAudit, error) {
+	path := fmt.Sprintf("/api/v1/goals/%s/audit", goalID)
+	if limit > 0 {
+		q := url.Values{}
+		q.Set("limit", fmt.Sprintf("%d", limit))
+		path += "?" + q.Encode()
+	}
+
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("goal audit: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result struct {
+		Audit []types.GoalReconcileAudit `json:"audit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode goal audit: %w", err)
+	}
+
+	return result.Audit, nil
+}
+
 // UpdateMetadata merges fields into the entry's metadata JSON column.
 // This uses the /metadata suffix endpoint which works directly on SQLite
 // without touching the filesystem.

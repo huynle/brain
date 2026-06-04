@@ -859,16 +859,21 @@ USAGE:
 
 SUBCOMMANDS:
   automations                    Convert hardcoded monitor tasks to automation entries
+  goals                          Convert legacy V1 goals to goal automation entries
 
 FLAGS:
   --dry-run                      Show what would be done without making changes
-  --force                        Overwrite existing files
+  --force                        Overwrite existing files / recreate existing entries
+  --project <name>               Scope goal migration to a single project
   -h, --help                     Show this help
 
 EXAMPLES:
   brain migrate automations
   brain migrate automations --dry-run
   brain migrate automations --force
+  brain migrate goals
+  brain migrate goals --dry-run
+  brain migrate goals --project my-project
 `
 
 const migrateAutomationsHelp = `brain migrate automations - Convert hardcoded monitors to automation entries
@@ -882,8 +887,8 @@ FLAGS:
   -h, --help                     Show this help
 
 DESCRIPTION:
-  Migrates the 3 hardcoded monitor templates (blocked-inspector, dream-consolidation,
-  feature-review) into automation entries stored in global/automation/.
+  Migrates hardcoded monitor templates into automation entries stored in
+  global/automation/ and installs the default built-in automations.
 
   Step 1: Deploys default automation entry files to global/automation/
   Step 2: Finds existing monitor tasks and disables their schedules
@@ -899,6 +904,47 @@ EXAMPLES:
   brain migrate automations
   brain migrate automations --dry-run
   brain migrate automations --force
+`
+
+const migrateGoalsHelp = `brain migrate goals - Convert legacy V1 goals to goal automation entries
+
+USAGE:
+  brain migrate goals [flags]
+
+FLAGS:
+  --dry-run                      Show what would be done without making changes
+  --force                        Recreate goal automations that already exist
+  --project <name>               Scope migration to a single project
+  -h, --help                     Show this help
+
+DESCRIPTION:
+  Migrates legacy V1 goals into the new goal automation model.
+
+  A legacy goal is a "goal:plan" plan entry paired with an optional
+  "goal:reconciler" task. This command converts each plan (and its paired
+  reconciler) into a single goal automation entry (type=automation,
+  generated_by=brain-goal) whose trigger fires on task/feature lifecycle
+  events and whose action drives the in-process reconcile loop.
+
+  Step 1: Lists legacy goal plans (and pairs their reconciler tasks by slug).
+  Step 2: Converts each plan into a goal automation entry and creates it
+          through the API, skipping goals that already have an automation
+          (unless --force is given).
+  Step 3: Archives the legacy plan and cancels the paired reconciler task,
+          annotating each with a migration note.
+
+  Legacy entries are preserved (archived/cancelled), not deleted. The command
+  is idempotent: already-archived plans and already-disabled reconcilers are
+  skipped.
+
+  If the brain API is not running, the command prints a notice and exits
+  without error. Run it again once the API is available.
+
+EXAMPLES:
+  brain migrate goals
+  brain migrate goals --dry-run
+  brain migrate goals --force
+  brain migrate goals --project my-project
 `
 
 const automationHelp = `brain automation - Manage automations
@@ -1066,6 +1112,8 @@ func ShowHelp(command string) {
 		fmt.Print(migrateHelp)
 	case "migrate automations":
 		fmt.Print(migrateAutomationsHelp)
+	case "migrate goals":
+		fmt.Print(migrateGoalsHelp)
 	case "automation":
 		fmt.Print(automationHelp)
 	case "automation create":

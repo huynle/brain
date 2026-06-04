@@ -1195,9 +1195,10 @@ func convertToCommandsAutomationFlags(flags *AutomationFlags) *commands.Automati
 
 // MigrateFlags for migrate command
 type MigrateFlags struct {
-	DryRun bool
-	Force  bool
-	Format string
+	DryRun  bool
+	Force   bool
+	Format  string
+	Project string
 }
 
 // ParseMigrateFlags parses migrate command flags from args.
@@ -1216,6 +1217,11 @@ func ParseMigrateFlags(args []string) (*MigrateFlags, error) {
 				flags.Format = args[i+1]
 				i++
 			}
+		case "--project":
+			if i+1 < len(args) {
+				flags.Project = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -1225,9 +1231,10 @@ func ParseMigrateFlags(args []string) (*MigrateFlags, error) {
 // convertToCommandsMigrateFlags converts main.MigrateFlags to commands.MigrateFlags.
 func convertToCommandsMigrateFlags(flags *MigrateFlags) *commands.MigrateFlags {
 	return &commands.MigrateFlags{
-		DryRun: flags.DryRun,
-		Force:  flags.Force,
-		Format: flags.Format,
+		DryRun:  flags.DryRun,
+		Force:   flags.Force,
+		Format:  flags.Format,
+		Project: flags.Project,
 	}
 }
 

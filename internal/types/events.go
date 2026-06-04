@@ -91,6 +91,22 @@ func IsValidEventType(s string) bool {
 }
 
 // =============================================================================
+// Goal Automation Identity
+// =============================================================================
+
+const (
+	// GoalGeneratedBy marks an automation entry as a goal (generated_by field).
+	GoalGeneratedBy = "brain-goal"
+	// GoalTag is the base tag applied to all goal automation entries.
+	GoalTag = "goal"
+)
+
+// GoalIDTag returns the scoped tag for a specific goal id (e.g. "goal:g-oauth").
+func GoalIDTag(goalID string) string {
+	return GoalTag + ":" + goalID
+}
+
+// =============================================================================
 // Event Struct
 // =============================================================================
 

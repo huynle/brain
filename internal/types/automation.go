@@ -35,3 +35,58 @@ type AutomationRetry struct {
 	Backoff     string `json:"backoff,omitempty" yaml:"backoff,omitempty"`           // fixed, exponential
 	Delay       string `json:"delay,omitempty" yaml:"delay,omitempty"`               // delay between retries (e.g. "30s", "5m")
 }
+
+// =============================================================================
+// Goal Automation Types
+// =============================================================================
+
+// Goal trigger sources control which lifecycle events a goal automation
+// reacts to. "both" subscribes to task status changes AND feature completion.
+const (
+	// GoalTriggerSourceTask reacts to task.status_changed events only.
+	GoalTriggerSourceTask = "task"
+	// GoalTriggerSourceFeature reacts to feature.completed events only.
+	GoalTriggerSourceFeature = "feature"
+	// GoalTriggerSourceBoth reacts to both task and feature lifecycle events.
+	GoalTriggerSourceBoth = "both"
+)
+
+// GoalConfig holds the goal-specific configuration carried by a goal
+// automation entry. A goal is an automation entry (type=automation,
+// generated_by=brain-goal) whose trigger/action drive a deterministic
+// in-process reconcile loop. GoalConfig captures the inputs that the
+// reconcile core consumes: success criteria, validation rules, the working
+// directory for generated work, the trigger source, and the set of task
+// statuses that count as "complete" vs. "blocked"/other for state tracking.
+type GoalConfig struct {
+	// ID is the stable goal identifier (used for tag goal:<id> and dedup).
+	ID string `json:"id" yaml:"id"`
+	// Criteria describes the success criteria the goal must satisfy.
+	Criteria string `json:"criteria,omitempty" yaml:"criteria,omitempty"`
+	// Validation describes how completion is validated.
+	Validation string `json:"validation,omitempty" yaml:"validation,omitempty"`
+	// Workdir is the working directory for goal-generated work.
+	Workdir string `json:"workdir,omitempty" yaml:"workdir,omitempty"`
+	// TriggerSource controls which events the goal reacts to
+	// (task | feature | both). Defaults to both.
+	TriggerSource string `json:"trigger_source,omitempty" yaml:"trigger_source,omitempty"`
+	// CompleteStatuses are task statuses that count toward goal completion.
+	CompleteStatuses []string `json:"complete_statuses,omitempty" yaml:"complete_statuses,omitempty"`
+	// BlockedStatuses are task statuses that mark the goal as blocked
+	// (tracked separately so the reconcile loop can surface blocked work).
+	BlockedStatuses []string `json:"blocked_statuses,omitempty" yaml:"blocked_statuses,omitempty"`
+}
+
+// NormalizedTriggerSource returns the effective trigger source, defaulting
+// empty/unknown values to GoalTriggerSourceBoth.
+func (g *GoalConfig) NormalizedTriggerSource() string {
+	if g == nil {
+		return GoalTriggerSourceBoth
+	}
+	switch g.TriggerSource {
+	case GoalTriggerSourceTask, GoalTriggerSourceFeature, GoalTriggerSourceBoth:
+		return g.TriggerSource
+	default:
+		return GoalTriggerSourceBoth
+	}
+}

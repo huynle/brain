@@ -206,6 +206,9 @@ type BrainEntry struct {
 	Action  *AutomationAction `json:"action,omitempty"`
 	Retry   *AutomationRetry  `json:"retry,omitempty"`
 
+	// Goal automation configuration (set when generated_by=brain-goal).
+	Goal *GoalConfig `json:"goal,omitempty"`
+
 	// Session tracking
 	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
 	Runs             []CronRun                  `json:"runs,omitempty"`

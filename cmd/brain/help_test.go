@@ -56,6 +56,37 @@ func TestShowHelp_BasicTopics(t *testing.T) {
 	}
 }
 
+func TestShowHelp_AutomationGoalTopics(t *testing.T) {
+	wants := []string{
+		"brain automation goal",
+		"set <project>",
+		"--trigger-source",
+		"--session-mode",
+		"--criteria",
+		"reconcile",
+	}
+	topics := []string{
+		"automation goal",
+		"automation goal set",
+		"automation goal list",
+		"automation goal run",
+		"automation goal reconcile",
+		"automation goal validate",
+	}
+	for _, topic := range topics {
+		t.Run(topic, func(t *testing.T) {
+			output := captureOutput(func() {
+				ShowHelp(topic)
+			})
+			for _, want := range wants {
+				if !strings.Contains(output, want) {
+					t.Errorf("help for %q missing %q", topic, want)
+				}
+			}
+		})
+	}
+}
+
 func TestShowHelp_SubTopicsAndAliases(t *testing.T) {
 	tests := []struct {
 		name  string

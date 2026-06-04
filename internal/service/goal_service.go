@@ -13,35 +13,37 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+// ErrGoalNotFound is returned by the goal API when no active goal automation
+// matches the requested goal ID. Aliases types.ErrGoalNotFound so both api and
+// service callers share one sentinel.
+var ErrGoalNotFound = types.ErrGoalNotFound
+
 // ReconcileDecision is the outcome of the deterministic reconcile decision.
 //
 // The reconcile core inspects a goal's config and its linked task states and
 // produces exactly one of these decisions. The decision is pure (no I/O, no
-// LLM) and deterministic given the same inputs.
-type ReconcileDecision string
+// LLM) and deterministic given the same inputs. It aliases types.ReconcileDecision
+// so the goal API contract lives in the shared types package.
+type ReconcileDecision = types.ReconcileDecision
 
 const (
 	// ReconcileComplete means every linked task counts as complete; the goal
 	// is satisfied and can be marked done.
-	ReconcileComplete ReconcileDecision = "complete"
+	ReconcileComplete = types.ReconcileComplete
 	// ReconcileBlock means linked work is blocked with nothing active; the
 	// goal is stuck and should surface as blocked.
-	ReconcileBlock ReconcileDecision = "block"
+	ReconcileBlock = types.ReconcileBlock
 	// ReconcileNeedWork means more work must be generated (no linked tasks, or
 	// only un-started pending work remains with nothing active/blocked).
-	ReconcileNeedWork ReconcileDecision = "need_work"
+	ReconcileNeedWork = types.ReconcileNeedWork
 	// ReconcileNoop means work is already in progress; the reconcile loop
 	// should do nothing and wait.
-	ReconcileNoop ReconcileDecision = "noop"
+	ReconcileNoop = types.ReconcileNoop
 )
 
 // LinkedTaskSnapshot is a serializable snapshot of a goal's linked task,
-// captured for the reconcile audit record.
-type LinkedTaskSnapshot struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
-}
+// captured for the reconcile audit record. Aliases types.LinkedTaskSnapshot.
+type LinkedTaskSnapshot = types.LinkedTaskSnapshot
 
 // linkedTaskSnapshot maps linked tasks to their serializable snapshot form.
 //
@@ -128,19 +130,9 @@ func decideReconcile(cfg types.GoalConfig, tasks []types.ResolvedTask) (Reconcil
 // It captures the inputs (triggering event, linked task snapshot) and the
 // outputs (decision, reason, optionally generated task) of a deterministic
 // reconcile so the decision can be replayed, inspected, and mirrored onto the
-// goal entry.
-type GoalReconcileAudit struct {
-	Timestamp       string               `json:"timestamp"` // RFC3339 UTC
-	GoalID          string               `json:"goal_id"`
-	Project         string               `json:"project,omitempty"`
-	FeatureID       string               `json:"feature_id,omitempty"`
-	TriggeringEvent string               `json:"triggering_event"` // evt.Type (or "manual")
-	EventID         string               `json:"event_id,omitempty"`
-	Decision        ReconcileDecision    `json:"decision"`
-	Reason          string               `json:"reason"`
-	LinkedTasks     []LinkedTaskSnapshot `json:"linked_tasks"`
-	GeneratedTaskID string               `json:"generated_task_id,omitempty"`
-}
+// goal entry. Aliases types.GoalReconcileAudit so the goal API contract lives
+// in the shared types package.
+type GoalReconcileAudit = types.GoalReconcileAudit
 
 // GoalService orchestrates the deterministic in-process reconcile loop for a
 // single goal automation entry: it computes the decision, generates runner

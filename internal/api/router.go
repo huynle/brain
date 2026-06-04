@@ -223,6 +223,37 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Goals ───────────────────────────────────────────
+			r.Route("/goals", func(r chi.Router) {
+				// Goal read operations — read:* scope
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.goalService != nil {
+						r.Get("/", o.handler.HandleListGoals)
+						r.Get("/{goalId}/progress", o.handler.HandleGoalProgress)
+						r.Get("/{goalId}/audit", o.handler.HandleGoalAudit)
+					} else {
+						r.Get("/", notImplemented)
+						r.Get("/{goalId}/progress", notImplemented)
+						r.Get("/{goalId}/audit", notImplemented)
+					}
+				})
+
+				// Goal write operations — admin:* scope
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*"))
+					if o.handler != nil && o.handler.goalService != nil {
+						r.Post("/", o.handler.HandleCreateGoal)
+						r.Patch("/{goalId}", o.handler.HandleUpdateGoal)
+						r.Post("/{goalId}/run", o.handler.HandleRunGoal)
+					} else {
+						r.Post("/", notImplemented)
+						r.Patch("/{goalId}", notImplemented)
+						r.Post("/{goalId}/run", notImplemented)
+					}
+				})
+			})
+
 			// ─── Tasks ───────────────────────────────────────────
 			r.Route("/tasks", func(r chi.Router) {
 				// Task read operations — read:* scope

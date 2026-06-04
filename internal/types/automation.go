@@ -1,5 +1,7 @@
 package types
 
+import "errors"
+
 // =============================================================================
 // Automation Entry Types
 // =============================================================================
@@ -89,4 +91,105 @@ func (g *GoalConfig) NormalizedTriggerSource() string {
 	default:
 		return GoalTriggerSourceBoth
 	}
+}
+
+// =============================================================================
+// Goal API DTOs
+//
+// These request/response types form the goal API contract. They live in the
+// shared types package so both the api and service packages can reference them
+// without creating an api<->service import cycle.
+// =============================================================================
+
+// ErrGoalNotFound is returned by the goal API when no active goal automation
+// matches the requested goal ID.
+var ErrGoalNotFound = errors.New("goal not found")
+
+// ReconcileDecision is the outcome of the deterministic reconcile decision.
+type ReconcileDecision string
+
+const (
+	// ReconcileComplete means every linked task counts as complete.
+	ReconcileComplete ReconcileDecision = "complete"
+	// ReconcileBlock means linked work is blocked with nothing active.
+	ReconcileBlock ReconcileDecision = "block"
+	// ReconcileNeedWork means more work must be generated.
+	ReconcileNeedWork ReconcileDecision = "need_work"
+	// ReconcileNoop means work is already in progress; nothing to do.
+	ReconcileNoop ReconcileDecision = "noop"
+)
+
+// LinkedTaskSnapshot is a serializable snapshot of a goal's linked task,
+// captured for the reconcile audit record and progress reporting.
+type LinkedTaskSnapshot struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
+// GoalReconcileAudit is the auditable record of a single reconcile decision.
+type GoalReconcileAudit struct {
+	Timestamp       string               `json:"timestamp"` // RFC3339 UTC
+	GoalID          string               `json:"goal_id"`
+	Project         string               `json:"project,omitempty"`
+	FeatureID       string               `json:"feature_id,omitempty"`
+	TriggeringEvent string               `json:"triggering_event"` // evt.Type (or "manual")
+	EventID         string               `json:"event_id,omitempty"`
+	Decision        ReconcileDecision    `json:"decision"`
+	Reason          string               `json:"reason"`
+	LinkedTasks     []LinkedTaskSnapshot `json:"linked_tasks"`
+	GeneratedTaskID string               `json:"generated_task_id,omitempty"`
+}
+
+// CreateGoalRequest is the input for creating a goal automation over the API.
+type CreateGoalRequest struct {
+	Project   string           `json:"project"`
+	FeatureID string           `json:"feature_id,omitempty"`
+	Title     string           `json:"title"`
+	Content   string           `json:"content,omitempty"`
+	Config    GoalConfig       `json:"config"`
+	Action    AutomationAction `json:"action"`
+}
+
+// UpdateGoalRequest is the input for updating an existing goal automation.
+// Provided fields are merged onto the existing goal; nil fields are unchanged.
+type UpdateGoalRequest struct {
+	Title            *string           `json:"title,omitempty"`
+	Content          *string           `json:"content,omitempty"`
+	Status           *string           `json:"status,omitempty"`
+	Criteria         *string           `json:"criteria,omitempty"`
+	Validation       *string           `json:"validation,omitempty"`
+	Workdir          *string           `json:"workdir,omitempty"`
+	TriggerSource    *string           `json:"trigger_source,omitempty"`
+	CompleteStatuses *[]string         `json:"complete_statuses,omitempty"`
+	BlockedStatuses  *[]string         `json:"blocked_statuses,omitempty"`
+	Action           *AutomationAction `json:"action,omitempty"`
+}
+
+// GoalSummary is a serializable view of a goal automation entry.
+type GoalSummary struct {
+	EntryID   string            `json:"entry_id"`
+	GoalID    string            `json:"goal_id"`
+	Title     string            `json:"title"`
+	Project   string            `json:"project,omitempty"`
+	FeatureID string            `json:"feature_id,omitempty"`
+	Status    string            `json:"status"`
+	Config    *GoalConfig       `json:"config,omitempty"`
+	Action    *AutomationAction `json:"action,omitempty"`
+	Trigger   *TriggerConfig    `json:"trigger,omitempty"`
+}
+
+// GoalProgressResponse reports goal-scoped linked-task progress.
+type GoalProgressResponse struct {
+	GoalID        string               `json:"goal_id"`
+	EntryID       string               `json:"entry_id"`
+	Project       string               `json:"project,omitempty"`
+	FeatureID     string               `json:"feature_id,omitempty"`
+	FeatureStatus string               `json:"feature_status"`
+	Total         int                  `json:"total"`
+	Pending       int                  `json:"pending"`
+	InProgress    int                  `json:"in_progress"`
+	Completed     int                  `json:"completed"`
+	Blocked       int                  `json:"blocked"`
+	Tasks         []LinkedTaskSnapshot `json:"tasks"`
 }

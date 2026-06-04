@@ -63,6 +63,56 @@ func (s *StorageLayer) MarkProcessed(ctx context.Context, id int64) error {
 	return nil
 }
 
+// GetEventsByType returns events of the given event_type, ordered newest
+// first (created_at DESC, id DESC). A non-positive limit defaults to 100;
+// the limit is capped at 1000. Uses the idx_event_log_type_created index.
+func (s *StorageLayer) GetEventsByType(ctx context.Context, eventType string, limit int) ([]*EventRow, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, event_type, payload, dedup_key, source, created_at, processed_at
+		 FROM event_log
+		 WHERE event_type = ?
+		 ORDER BY created_at DESC, id DESC
+		 LIMIT ?`,
+		eventType, limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query events by type: %w", err)
+	}
+	defer rows.Close()
+
+	var events []*EventRow
+	for rows.Next() {
+		e := &EventRow{}
+		var dedupKey sql.NullString
+		var processedAt sql.NullString
+		if err := rows.Scan(&e.ID, &e.EventType, &e.Payload, &dedupKey, &e.Source, &e.CreatedAt, &processedAt); err != nil {
+			return nil, fmt.Errorf("scan event: %w", err)
+		}
+		if dedupKey.Valid {
+			e.DedupKey = &dedupKey.String
+		}
+		if processedAt.Valid {
+			e.ProcessedAt = &processedAt.String
+		}
+		events = append(events, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("rows error: %w", err)
+	}
+
+	if events == nil {
+		return []*EventRow{}, nil
+	}
+	return events, nil
+}
+
 // GetUnprocessed returns all events where processed_at IS NULL,
 // ordered by created_at ASC (oldest first, FIFO).
 func (s *StorageLayer) GetUnprocessed(ctx context.Context) ([]*EventRow, error) {

@@ -17,6 +17,7 @@ type Handler struct {
 	tokens         TokenService
 	events         EventService
 	webhooks       WebhookService
+	goalService    GoalService
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
 	taskDefaults   config.TaskDefaultsConfig
@@ -80,6 +81,13 @@ func WithEventService(es EventService) HandlerOption {
 func WithWebhookService(ws WebhookService) HandlerOption {
 	return func(h *Handler) {
 		h.webhooks = ws
+	}
+}
+
+// WithGoalService sets the GoalService on the Handler.
+func WithGoalService(gs GoalService) HandlerOption {
+	return func(h *Handler) {
+		h.goalService = gs
 	}
 }
 

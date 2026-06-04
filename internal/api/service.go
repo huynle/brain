@@ -252,6 +252,33 @@ type EventService interface {
 	CheckFeatureCompletion(ctx context.Context, projectID, featureID, taskID string)
 }
 
+// GoalService defines the interface for goal automation operations exposed over
+// the API: create/update/list/run a goal, fetch goal-scoped linked-task
+// progress, and fetch reconcile audit history. The concrete
+// service.GoalService satisfies this interface. Request/response types live in
+// the shared types package to avoid an api->service import cycle.
+type GoalService interface {
+	// CreateGoal builds and persists a goal automation, returning its summary.
+	CreateGoal(ctx context.Context, req types.CreateGoalRequest) (*types.GoalSummary, error)
+
+	// UpdateGoal merges the request onto an existing goal (by goal ID),
+	// rebuilds its trigger/action, and persists the change.
+	UpdateGoal(ctx context.Context, goalID string, req types.UpdateGoalRequest) (*types.GoalSummary, error)
+
+	// ListGoals returns active goal summaries, optionally filtered by project
+	// and/or feature ID.
+	ListGoals(ctx context.Context, project, featureID string) ([]types.GoalSummary, error)
+
+	// RunGoal triggers a manual reconcile for a goal and returns the audit.
+	RunGoal(ctx context.Context, goalID string) (*types.GoalReconcileAudit, error)
+
+	// GoalProgress computes goal-scoped linked-task progress.
+	GoalProgress(ctx context.Context, goalID string) (*types.GoalProgressResponse, error)
+
+	// GoalAuditHistory returns reconcile audit history for a goal, newest first.
+	GoalAuditHistory(ctx context.Context, goalID string, limit int) ([]types.GoalReconcileAudit, error)
+}
+
 // RunnerRegistryService defines the interface for runner lifecycle management.
 // This handles registration, heartbeat, deregistration, and listing of runners.
 type RunnerRegistryService interface {

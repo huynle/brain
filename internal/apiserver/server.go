@@ -274,6 +274,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithHub(hub),
 		api.WithEventService(eventSvc),
 		api.WithWebhookService(webhookSvc),
+		api.WithGoalService(goalSvc),
 		api.WithLogBuffer(logBuf),
 		api.WithTaskDefaults(cfg.TaskDefaults),
 	)

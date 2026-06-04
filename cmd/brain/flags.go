@@ -1193,6 +1193,140 @@ func convertToCommandsAutomationFlags(flags *AutomationFlags) *commands.Automati
 	}
 }
 
+// GoalFlags for the `automation goal` subcommands.
+type GoalFlags struct {
+	Project       string   // --project
+	Feature       string   // --feature
+	Title         string   // --title
+	Content       string   // --content
+	TriggerSource string   // --trigger-source (task|feature|both)
+	SessionMode   string   // --session-mode (continue|fresh)
+	Agent         string   // --agent
+	Model         string   // --model
+	Executor      string   // --executor
+	Workdir       string   // --workdir
+	Status        string   // --status
+	Criteria      []string // --criteria (repeatable)
+	Validate      []string // --validate (repeatable)
+	Format        string   // --format (json|table)
+	Limit         int      // --limit
+	Quiet         bool     // -q, --quiet
+}
+
+// ParseAutomationGoalFlags parses `automation goal` command flags from args.
+func ParseAutomationGoalFlags(args []string) (*GoalFlags, error) {
+	flags := &GoalFlags{Limit: 20}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--project":
+			if i+1 < len(args) {
+				flags.Project = args[i+1]
+				i++
+			}
+		case "--feature":
+			if i+1 < len(args) {
+				flags.Feature = args[i+1]
+				i++
+			}
+		case "--title":
+			if i+1 < len(args) {
+				flags.Title = args[i+1]
+				i++
+			}
+		case "--content":
+			if i+1 < len(args) {
+				flags.Content = args[i+1]
+				i++
+			}
+		case "--trigger-source":
+			if i+1 < len(args) {
+				flags.TriggerSource = args[i+1]
+				i++
+			}
+		case "--session-mode":
+			if i+1 < len(args) {
+				flags.SessionMode = args[i+1]
+				i++
+			}
+		case "--agent":
+			if i+1 < len(args) {
+				flags.Agent = args[i+1]
+				i++
+			}
+		case "--model":
+			if i+1 < len(args) {
+				flags.Model = args[i+1]
+				i++
+			}
+		case "--executor":
+			if i+1 < len(args) {
+				flags.Executor = args[i+1]
+				i++
+			}
+		case "--workdir":
+			if i+1 < len(args) {
+				flags.Workdir = args[i+1]
+				i++
+			}
+		case "--status":
+			if i+1 < len(args) {
+				flags.Status = args[i+1]
+				i++
+			}
+		case "--criteria":
+			if i+1 < len(args) {
+				flags.Criteria = append(flags.Criteria, args[i+1])
+				i++
+			}
+		case "--validate":
+			if i+1 < len(args) {
+				flags.Validate = append(flags.Validate, args[i+1])
+				i++
+			}
+		case "--format":
+			if i+1 < len(args) {
+				flags.Format = args[i+1]
+				i++
+			}
+		case "--limit":
+			if i+1 < len(args) {
+				limit := 20
+				fmt.Sscanf(args[i+1], "%d", &limit)
+				flags.Limit = limit
+				i++
+			}
+		case "-q", "--quiet":
+			flags.Quiet = true
+		}
+	}
+
+	return flags, nil
+}
+
+// convertToCommandsGoalFlags converts main.GoalFlags to commands.GoalFlags.
+func convertToCommandsGoalFlags(flags *GoalFlags) *commands.GoalFlags {
+	return &commands.GoalFlags{
+		Project:       flags.Project,
+		Feature:       flags.Feature,
+		Title:         flags.Title,
+		Content:       flags.Content,
+		TriggerSource: flags.TriggerSource,
+		SessionMode:   flags.SessionMode,
+		Agent:         flags.Agent,
+		Model:         flags.Model,
+		Executor:      flags.Executor,
+		Workdir:       flags.Workdir,
+		Status:        flags.Status,
+		Criteria:      flags.Criteria,
+		Validate:      flags.Validate,
+		Format:        flags.Format,
+		Limit:         flags.Limit,
+		Quiet:         flags.Quiet,
+	}
+}
+
 // MigrateFlags for migrate command
 type MigrateFlags struct {
 	DryRun  bool

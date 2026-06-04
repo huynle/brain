@@ -504,3 +504,194 @@ func TestReconcile_GuardNonGoalEntry(t *testing.T) {
 		t.Fatal("Reconcile on entry with Goal==nil returned nil error, want error")
 	}
 }
+
+// =============================================================================
+// HandleEvent dispatch tests (GA P2.3)
+// =============================================================================
+
+// saveFullGoalAutomation builds a canonical goal automation entry (trigger +
+// goal config populated) via BuildGoalAutomation and persists it through
+// brain.Save so it round-trips with both Trigger and Goal config from
+// metadata. This is required to exercise HandleEvent's listing + matching.
+func saveFullGoalAutomation(t *testing.T, brain *BrainServiceImpl, project, featureID, goalID, title string) {
+	t.Helper()
+	ctx := context.Background()
+
+	entry, err := BuildGoalAutomation(GoalInput{
+		Project:   project,
+		FeatureID: featureID,
+		Title:     title,
+		Config:    types.GoalConfig{ID: goalID, Workdir: "/tmp/goal-work"},
+		Action:    *defaultGoalAction(),
+	})
+	if err != nil {
+		t.Fatalf("build goal automation: %v", err)
+	}
+
+	if _, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:        entry.Type,
+		Title:       entry.Title,
+		Content:     entry.Content,
+		Status:      entry.Status,
+		Project:     entry.ProjectID,
+		FeatureID:   entry.FeatureID,
+		GeneratedBy: entry.GeneratedBy,
+		Tags:        entry.Tags,
+		Trigger:     entry.Trigger,
+		Action:      entry.Action,
+		Goal:        entry.Goal,
+	}); err != nil {
+		t.Fatalf("save goal automation: %v", err)
+	}
+}
+
+// TestHandleEvent_DispatchesReconcileForMatchingGoal verifies a goal-scoped
+// task.status_changed event drives the reconcile, generating a need_work task.
+func TestHandleEvent_DispatchesReconcileForMatchingGoal(t *testing.T) {
+	brain, store, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saveFullGoalAutomation(t, brain, "proj", "feat-1", "g-dispatch", "Ship feature")
+
+	// Empty lister => need_work => task generated when reconcile runs.
+	svc := NewGoalService(brain, &mockFeatureTaskLister{}, store)
+
+	err := svc.HandleEvent(ctx, types.Event{
+		Type:      types.EventTaskStatusChanged,
+		ID:        "evt_dispatch",
+		ProjectID: "proj",
+		FeatureID: "feat-1",
+		ToStatus:  "completed",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent error: %v", err)
+	}
+
+	tasks := listGeneratedGoalTasks(t, brain, "proj")
+	if len(tasks) != 1 {
+		t.Fatalf("generated task count = %d, want 1 (reconcile should have dispatched)", len(tasks))
+	}
+
+	audit := findGoalReconcileAudit(t, store)
+	if audit.GoalID != "g-dispatch" {
+		t.Errorf("audit GoalID = %q, want %q", audit.GoalID, "g-dispatch")
+	}
+	if audit.TriggeringEvent != types.EventTaskStatusChanged {
+		t.Errorf("audit TriggeringEvent = %q, want %q", audit.TriggeringEvent, types.EventTaskStatusChanged)
+	}
+}
+
+// TestHandleEvent_SkipsNonMatchingFeature verifies an event for a different
+// feature does not trigger the goal's reconcile.
+func TestHandleEvent_SkipsNonMatchingFeature(t *testing.T) {
+	brain, store, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saveFullGoalAutomation(t, brain, "proj", "feat-1", "g-skip-feature", "Ship feature")
+	svc := NewGoalService(brain, &mockFeatureTaskLister{}, store)
+
+	// Event is for feat-2; the goal's trigger filters on feature_id=feat-1.
+	err := svc.HandleEvent(ctx, types.Event{
+		Type:      types.EventTaskStatusChanged,
+		ProjectID: "proj",
+		FeatureID: "feat-2",
+		ToStatus:  "completed",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent error: %v", err)
+	}
+
+	if tasks := listGeneratedGoalTasks(t, brain, "proj"); len(tasks) != 0 {
+		t.Errorf("generated task count = %d, want 0 (non-matching feature must not reconcile)", len(tasks))
+	}
+}
+
+// TestHandleEvent_SkipsNonMatchingEventType verifies an unrelated event type
+// does not trigger the goal's reconcile.
+func TestHandleEvent_SkipsNonMatchingEventType(t *testing.T) {
+	brain, store, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Task-only trigger source => only task.status_changed matches.
+	entry, err := BuildGoalAutomation(GoalInput{
+		Project:   "proj",
+		FeatureID: "feat-1",
+		Title:     "Ship feature",
+		Config: types.GoalConfig{
+			ID:            "g-skip-type",
+			Workdir:       "/tmp/goal-work",
+			TriggerSource: types.GoalTriggerSourceTask,
+		},
+		Action: *defaultGoalAction(),
+	})
+	if err != nil {
+		t.Fatalf("build goal automation: %v", err)
+	}
+	if _, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:        entry.Type,
+		Title:       entry.Title,
+		Content:     entry.Content,
+		Status:      entry.Status,
+		Project:     entry.ProjectID,
+		FeatureID:   entry.FeatureID,
+		GeneratedBy: entry.GeneratedBy,
+		Tags:        entry.Tags,
+		Trigger:     entry.Trigger,
+		Action:      entry.Action,
+		Goal:        entry.Goal,
+	}); err != nil {
+		t.Fatalf("save goal automation: %v", err)
+	}
+
+	svc := NewGoalService(brain, &mockFeatureTaskLister{}, store)
+
+	// feature.completed does not match a task-only trigger source.
+	err = svc.HandleEvent(ctx, types.Event{
+		Type:      types.EventFeatureCompleted,
+		ProjectID: "proj",
+		FeatureID: "feat-1",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent error: %v", err)
+	}
+
+	if tasks := listGeneratedGoalTasks(t, brain, "proj"); len(tasks) != 0 {
+		t.Errorf("generated task count = %d, want 0 (non-matching event type must not reconcile)", len(tasks))
+	}
+}
+
+// TestHandleEvent_IgnoresNonGoalAutomations verifies a regular (non-goal)
+// automation entry is not treated as a goal even if active.
+func TestHandleEvent_IgnoresNonGoalAutomations(t *testing.T) {
+	brain, store, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// A plain active automation (no goal tag / generated_by) that would match
+	// the event type but must be ignored by the goal handler.
+	if _, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Plain automation",
+		Content: "not a goal",
+		Status:  "active",
+		Project: "proj",
+		Trigger: &types.TriggerConfig{Type: "event", Event: types.EventTaskStatusChanged},
+		Action:  defaultGoalAction(),
+	}); err != nil {
+		t.Fatalf("save plain automation: %v", err)
+	}
+
+	svc := NewGoalService(brain, &mockFeatureTaskLister{}, store)
+
+	err := svc.HandleEvent(ctx, types.Event{
+		Type:      types.EventTaskStatusChanged,
+		ProjectID: "proj",
+		FeatureID: "feat-1",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent error: %v", err)
+	}
+
+	if tasks := listGeneratedGoalTasks(t, brain, "proj"); len(tasks) != 0 {
+		t.Errorf("generated task count = %d, want 0 (non-goal automation must be ignored)", len(tasks))
+	}
+}

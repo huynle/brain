@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
+	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -145,8 +147,9 @@ type GoalReconcileAudit struct {
 // work when needed, persists an audit record, and mirrors the audit onto the
 // goal entry.
 //
-// It intentionally does NOT handle event dispatch / HandleEvent — that wiring
-// lives in a separate follow-up (GA P2.3).
+// It also acts as an EventHub event handler: Start subscribes to the hub and
+// HandleEvent drives the reconcile for every goal automation whose trigger
+// matches an incoming task/feature lifecycle event.
 type GoalService struct {
 	brain *BrainServiceImpl
 	tasks FeatureTaskLister
@@ -328,4 +331,141 @@ func (s *GoalService) mirrorAudit(ctx context.Context, goal types.BrainEntry, au
 	}); err != nil {
 		fmt.Fprintf(os.Stderr, "WARNING: goal reconcile: mirror metadata to %q: %v\n", goal.ID, err)
 	}
+}
+
+// =============================================================================
+// Event dispatch (EventHub handler)
+// =============================================================================
+
+// Start subscribes to the EventHub and drives the goal reconcile loop for
+// every incoming event until the context is cancelled. It mirrors how
+// AutomationService.Start consumes the hub: it replays buffered events on
+// startup, dedupes by event ID, and routes each event through HandleEvent.
+//
+// Start is the wiring entrypoint registered in server.go alongside the other
+// event handlers (TriggerService / AutomationService).
+func (s *GoalService) Start(ctx context.Context, hub *realtime.EventHub) {
+	if s == nil || hub == nil {
+		return
+	}
+
+	ch, unsub := hub.Subscribe(realtime.EventFilter{})
+	defer unsub()
+
+	slog.Info("goal service event handler started")
+
+	seen := make(map[string]struct{})
+	process := func(evt types.Event) {
+		if evt.ID != "" {
+			if _, ok := seen[evt.ID]; ok {
+				return
+			}
+			seen[evt.ID] = struct{}{}
+		}
+		if err := s.HandleEvent(ctx, evt); err != nil {
+			slog.Warn("goal service: handle event error",
+				"event_id", evt.ID,
+				"event_type", evt.Type,
+				"error", err,
+			)
+		}
+	}
+
+	for _, evt := range hub.Replay("") {
+		process(evt)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("goal service event handler stopped")
+			return
+		case evt, ok := <-ch:
+			if !ok {
+				slog.Info("goal service: event channel closed")
+				return
+			}
+			process(evt)
+		}
+	}
+}
+
+// HandleEvent reconciles every active goal automation whose trigger matches the
+// incoming event. It lists active goal automation entries (type=automation,
+// generated_by=brain-goal), filters those whose trigger matches the event, and
+// runs the deterministic Reconcile for each match.
+//
+// A reconcile failure for one goal does not abort the others: errors are
+// logged and the first error is returned so a single misbehaving goal cannot
+// block the rest of the batch.
+func (s *GoalService) HandleEvent(ctx context.Context, evt types.Event) error {
+	if s == nil || s.brain == nil {
+		return nil
+	}
+
+	goals, err := s.listActiveGoals(ctx)
+	if err != nil {
+		return fmt.Errorf("goal handle event: list goals: %w", err)
+	}
+
+	var firstErr error
+	for _, goal := range goals {
+		if goal.Goal == nil {
+			continue
+		}
+		if !goalMatchesEvent(goal, evt) {
+			continue
+		}
+		if _, err := s.Reconcile(ctx, goal, evt); err != nil {
+			slog.Warn("goal service: reconcile error",
+				"goal_id", goal.Goal.ID,
+				"entry_id", goal.ID,
+				"event_id", evt.ID,
+				"event_type", evt.Type,
+				"error", err,
+			)
+			if firstErr == nil {
+				firstErr = fmt.Errorf("reconcile goal %q: %w", goal.Goal.ID, err)
+			}
+		}
+	}
+
+	return firstErr
+}
+
+// listActiveGoals returns active goal automation entries (type=automation,
+// generated_by=brain-goal, tagged GoalTag) with their Goal config populated.
+func (s *GoalService) listActiveGoals(ctx context.Context) ([]types.BrainEntry, error) {
+	resp, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type:   "automation",
+		Status: "active",
+		Tags:   types.GoalTag,
+		Limit:  1000,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]types.BrainEntry, 0, len(resp.Entries))
+	for _, entry := range resp.Entries {
+		if entry.GeneratedBy != types.GoalGeneratedBy {
+			continue
+		}
+		out = append(out, entry)
+	}
+	return out, nil
+}
+
+// goalMatchesEvent reports whether a goal automation's trigger matches the
+// event. Goal triggers are always type=event (built by buildGoalTrigger), so we
+// match the event pattern plus the trigger filters, reusing the shared
+// automation filter matcher.
+func goalMatchesEvent(goal types.BrainEntry, evt types.Event) bool {
+	if goal.Trigger == nil {
+		return false
+	}
+	if !goal.Trigger.MatchesEvent(evt.Type) {
+		return false
+	}
+	return matchAutomationFilters(goal.Trigger.Filter, evt)
 }

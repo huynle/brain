@@ -236,6 +236,13 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	automationSvc.SetPauseChecker(runnerSvc)
 	go automationSvc.Start(ctx, eventHub)
 
+	// ─── Goal Reconcile Handler ────────────────────────────────────
+	// GoalService subscribes to the EventHub and drives the deterministic
+	// in-process reconcile for goal automations when their linked task/feature
+	// lifecycle events fire.
+	goalSvc := service.NewGoalService(brainSvc, taskSvc, store)
+	go goalSvc.Start(ctx, eventHub)
+
 	// ─── Webhook Dispatcher ────────────────────────────────────────
 	// Subscribe to all EventHub events and deliver to matching webhooks.
 	webhookDispatcher := realtime.NewWebhookDispatcher(eventHub, webhookSvc)

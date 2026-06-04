@@ -2615,6 +2615,7 @@ func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
 	return &frontmatter.TriggerConfig{
 		Type:                   t.Type,
 		Event:                  t.Event,
+		Events:                 t.Events,
 		Schedule:               t.Schedule,
 		Filter:                 t.Filter,
 		OncePer:                t.OncePer,
@@ -2633,6 +2634,7 @@ func typesTriggerFromFM(t *frontmatter.TriggerConfig) *types.TriggerConfig {
 	return &types.TriggerConfig{
 		Type:                   t.Type,
 		Event:                  t.Event,
+		Events:                 t.Events,
 		Schedule:               t.Schedule,
 		Filter:                 t.Filter,
 		OncePer:                t.OncePer,

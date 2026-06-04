@@ -144,6 +144,238 @@ func TestAutomationService_HandleEventThreadsSessionModeOntoGeneratedTask(t *tes
 	}
 }
 
+func TestAutomationService_HandleEventMatchesAnyOfMultipleEvents(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+	}{
+		{name: "first event in set", eventType: types.EventTaskCompleted},
+		{name: "second event in set", eventType: types.EventFeatureCompleted},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			brain, _, _ := newTestBrainService(t)
+			ctx := context.Background()
+			project := "automation-multi-event-test-" + tt.eventType
+
+			_, err := brain.Save(ctx, types.CreateEntryRequest{
+				Type:    "automation",
+				Title:   "Multi-event follow-up",
+				Content: "Triggers on task.completed OR feature.completed.",
+				Status:  "active",
+				Project: project,
+				Trigger: &types.TriggerConfig{
+					Type:   "event",
+					Event:  types.EventTaskCompleted,
+					Events: []string{types.EventFeatureCompleted},
+				},
+				Action: &types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Handle the multi-event trigger.",
+				},
+			})
+			if err != nil {
+				t.Fatalf("Save automation failed: %v", err)
+			}
+
+			automation := NewAutomationService(brain)
+			err = automation.HandleEvent(ctx, types.Event{
+				ID:        "evt-multi-" + tt.eventType,
+				Type:      tt.eventType,
+				Source:    types.EventSourceRunner,
+				ProjectID: project,
+				TaskID:    "source-task",
+			})
+			if err != nil {
+				t.Fatalf("HandleEvent failed: %v", err)
+			}
+
+			resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: project, Limit: 10})
+			if err != nil {
+				t.Fatalf("List tasks failed: %v", err)
+			}
+			if len(resp.Entries) != 1 {
+				t.Fatalf("expected one generated task for event %q, got %d", tt.eventType, len(resp.Entries))
+			}
+		})
+	}
+}
+
+func TestAutomationService_HandleEventSkipsEventNotInMultiEventSet(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	project := "automation-multi-event-skip-test"
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Multi-event follow-up",
+		Content: "Triggers on task.completed OR feature.completed only.",
+		Status:  "active",
+		Project: project,
+		Trigger: &types.TriggerConfig{
+			Type:   "event",
+			Event:  types.EventTaskCompleted,
+			Events: []string{types.EventFeatureCompleted},
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Should not run for task.blocked.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-multi-skip-1",
+		Type:      types.EventTaskBlocked,
+		Source:    types.EventSourceRunner,
+		ProjectID: project,
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: project, Limit: 10})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 0 {
+		t.Fatalf("expected no generated task for event outside multi-event set, got %d", len(resp.Entries))
+	}
+}
+
+func TestAutomationService_HandleEventMatchesOrableStatusFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		toStatus string
+		want     int
+	}{
+		{name: "completed in set", toStatus: "completed", want: 1},
+		{name: "blocked in set", toStatus: "blocked", want: 1},
+		{name: "cancelled not in set", toStatus: "cancelled", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			brain, _, _ := newTestBrainService(t)
+			ctx := context.Background()
+			project := "automation-or-status-test-" + tt.toStatus
+
+			_, err := brain.Save(ctx, types.CreateEntryRequest{
+				Type:    "automation",
+				Title:   "OR-able status follow-up",
+				Content: "Triggers when to_status is completed OR blocked.",
+				Status:  "active",
+				Project: project,
+				Trigger: &types.TriggerConfig{
+					Type:  "event",
+					Event: types.EventTaskStatusChanged,
+					Filter: map[string]string{
+						"to_status": "in:completed,blocked",
+					},
+				},
+				Action: &types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Handle the OR-able status trigger.",
+				},
+			})
+			if err != nil {
+				t.Fatalf("Save automation failed: %v", err)
+			}
+
+			automation := NewAutomationService(brain)
+			err = automation.HandleEvent(ctx, types.Event{
+				ID:        "evt-or-status-" + tt.toStatus,
+				Type:      types.EventTaskStatusChanged,
+				Source:    types.EventSourceRunner,
+				ProjectID: project,
+				TaskID:    "source-task",
+				ToStatus:  tt.toStatus,
+			})
+			if err != nil {
+				t.Fatalf("HandleEvent failed: %v", err)
+			}
+
+			resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: project, Limit: 10})
+			if err != nil {
+				t.Fatalf("List tasks failed: %v", err)
+			}
+			if len(resp.Entries) != tt.want {
+				t.Fatalf("to_status=%q: expected %d generated tasks, got %d", tt.toStatus, tt.want, len(resp.Entries))
+			}
+		})
+	}
+}
+
+func TestAutomationService_HandleEventCombinesMultiEventAndOrableStatus(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		toStatus  string
+		want      int
+	}{
+		{name: "task.status_changed + completed", eventType: types.EventTaskStatusChanged, toStatus: "completed", want: 1},
+		{name: "feature.status_changed + blocked", eventType: "feature.status_changed", toStatus: "blocked", want: 1},
+		{name: "matching event but status not in set", eventType: types.EventTaskStatusChanged, toStatus: "active", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			brain, _, _ := newTestBrainService(t)
+			ctx := context.Background()
+			project := "automation-combo-test-" + tt.name
+
+			_, err := brain.Save(ctx, types.CreateEntryRequest{
+				Type:    "automation",
+				Title:   "Combined multi-event + OR-status follow-up",
+				Content: "Triggers on multiple events with OR-able to_status filter.",
+				Status:  "active",
+				Project: project,
+				Trigger: &types.TriggerConfig{
+					Type:   "event",
+					Event:  types.EventTaskStatusChanged,
+					Events: []string{"feature.status_changed"},
+					Filter: map[string]string{
+						"to_status": "in:completed,blocked",
+					},
+				},
+				Action: &types.AutomationAction{
+					Type:         "prompt",
+					DirectPrompt: "Handle the combined trigger.",
+				},
+			})
+			if err != nil {
+				t.Fatalf("Save automation failed: %v", err)
+			}
+
+			automation := NewAutomationService(brain)
+			err = automation.HandleEvent(ctx, types.Event{
+				ID:        "evt-combo-" + tt.name,
+				Type:      tt.eventType,
+				Source:    types.EventSourceRunner,
+				ProjectID: project,
+				TaskID:    "source-task",
+				ToStatus:  tt.toStatus,
+			})
+			if err != nil {
+				t.Fatalf("HandleEvent failed: %v", err)
+			}
+
+			resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: project, Limit: 10})
+			if err != nil {
+				t.Fatalf("List tasks failed: %v", err)
+			}
+			if len(resp.Entries) != tt.want {
+				t.Fatalf("%s: expected %d generated tasks, got %d", tt.name, tt.want, len(resp.Entries))
+			}
+		})
+	}
+}
+
 func TestAutomationService_StartConsumesEventHubEvents(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx, cancel := context.WithCancel(context.Background())

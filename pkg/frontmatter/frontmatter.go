@@ -33,8 +33,11 @@ type SessionInfo struct {
 type TriggerConfig struct {
 	Type string `yaml:"type,omitempty" json:"type,omitempty"`
 	// Event is the event pattern to match (e.g., "task.completed", "task.*").
-	Event    string `yaml:"event" json:"event"`
-	Schedule string `yaml:"schedule,omitempty" json:"schedule,omitempty"`
+	Event string `yaml:"event" json:"event"`
+	// Events is an optional list of event patterns to match (OR semantics).
+	// An event matches the trigger if it matches Event OR any entry in Events.
+	Events   []string `yaml:"events,omitempty" json:"events,omitempty"`
+	Schedule string   `yaml:"schedule,omitempty" json:"schedule,omitempty"`
 	// Filter is optional key-value filters applied to event fields.
 	Filter                 map[string]string `yaml:"filter,omitempty" json:"filter,omitempty"`
 	OncePer                string            `yaml:"once_per,omitempty" json:"once_per,omitempty"`

@@ -103,7 +103,7 @@ func (s *TriggerService) Evaluate(ctx context.Context, evt types.Event) ([]Trigg
 	var results []TriggerResult
 
 	for _, entry := range entries {
-		if entry.Trigger == nil || entry.Trigger.Event == "" {
+		if entry.Trigger == nil || len(entry.Trigger.EventPatterns()) == 0 {
 			continue
 		}
 
@@ -117,8 +117,8 @@ func (s *TriggerService) Evaluate(ctx context.Context, evt types.Event) ([]Trigg
 			continue
 		}
 
-		// Step 1: Match event type pattern.
-		if !types.MatchEventPattern(entry.Trigger.Event, evt.Type) {
+		// Step 1: Match event type pattern (supports multi-event OR triggers).
+		if !entry.Trigger.MatchesEvent(evt.Type) {
 			continue
 		}
 
@@ -206,10 +206,13 @@ func (s *TriggerService) Activate(ctx context.Context, results []TriggerResult) 
 // matchTriggerFilters checks whether an event matches all filter key-value pairs.
 // Filter keys map to event struct fields: project_id, feature_id, task_id, source,
 // from_status, to_status. Unknown keys are checked against event Metadata.
+//
+// Filter values support exact match, the OR-able "in:a,b,c" form, and the "*"
+// wildcard via types.MatchFilterValue.
 func matchTriggerFilters(filters map[string]string, evt types.Event) bool {
-	for key, expected := range filters {
+	for key, expr := range filters {
 		actual := getEventField(evt, key)
-		if actual != expected {
+		if !types.MatchFilterValue(actual, expr) {
 			return false
 		}
 	}

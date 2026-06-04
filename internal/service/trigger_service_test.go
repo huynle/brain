@@ -33,7 +33,7 @@ func (m *mockTriggerTaskStore) ListTriggeredTasks(ctx context.Context) ([]types.
 	}
 	var result []types.BrainEntry
 	for _, e := range m.entries {
-		if e.Trigger != nil && e.Trigger.Event != "" {
+		if e.Trigger != nil && len(e.Trigger.EventPatterns()) > 0 {
 			result = append(result, e)
 		}
 	}
@@ -158,6 +158,180 @@ func TestTriggerService_NoMatchOnDifferentEventType(t *testing.T) {
 	}
 	if len(results) != 0 {
 		t.Fatalf("expected 0 results, got %d", len(results))
+	}
+}
+
+func TestTriggerService_MatchesAnyOfMultipleEvents(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		want      int
+	}{
+		{name: "first event in set", eventType: "task.completed", want: 1},
+		{name: "second event in set", eventType: "feature.completed", want: 1},
+		{name: "event not in set", eventType: "task.started", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockTriggerTaskStore()
+			store.entries = []types.BrainEntry{
+				{
+					Path:      "projects/myproj/task/abc.md",
+					ID:        "abc12345",
+					Status:    "active",
+					ProjectID: "myproj",
+					Trigger: &types.TriggerConfig{
+						Event:  "task.completed",
+						Events: []string{"feature.completed"},
+					},
+				},
+			}
+			svc := NewTriggerService(store)
+
+			evt := types.Event{
+				ID:        "evt_multi_" + tt.eventType,
+				Type:      tt.eventType,
+				Source:    "runner",
+				ProjectID: "myproj",
+			}
+
+			results, err := svc.Evaluate(context.Background(), evt)
+			if err != nil {
+				t.Fatalf("Evaluate() error: %v", err)
+			}
+			if len(results) != tt.want {
+				t.Fatalf("event %q: expected %d results, got %d", tt.eventType, tt.want, len(results))
+			}
+		})
+	}
+}
+
+func TestTriggerService_MatchesEventsOnlyTrigger(t *testing.T) {
+	store := newMockTriggerTaskStore()
+	store.entries = []types.BrainEntry{
+		{
+			Path:      "projects/myproj/task/abc.md",
+			ID:        "abc12345",
+			Status:    "active",
+			ProjectID: "myproj",
+			Trigger: &types.TriggerConfig{
+				Events: []string{"task.completed", "feature.completed"},
+			},
+		},
+	}
+	svc := NewTriggerService(store)
+
+	evt := types.Event{
+		ID:        "evt_events_only",
+		Type:      "feature.completed",
+		Source:    "runner",
+		ProjectID: "myproj",
+	}
+
+	results, err := svc.Evaluate(context.Background(), evt)
+	if err != nil {
+		t.Fatalf("Evaluate() error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 result for events-only trigger, got %d", len(results))
+	}
+}
+
+func TestTriggerService_MatchesOrableStatusFilter(t *testing.T) {
+	tests := []struct {
+		name     string
+		toStatus string
+		want     int
+	}{
+		{name: "completed in set", toStatus: "completed", want: 1},
+		{name: "blocked in set", toStatus: "blocked", want: 1},
+		{name: "active not in set", toStatus: "active", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockTriggerTaskStore()
+			store.entries = []types.BrainEntry{
+				{
+					Path:      "projects/myproj/task/abc.md",
+					ID:        "abc12345",
+					Status:    "active",
+					ProjectID: "myproj",
+					Trigger: &types.TriggerConfig{
+						Event:  "task.status_changed",
+						Filter: map[string]string{"to_status": "in:completed,blocked"},
+					},
+				},
+			}
+			svc := NewTriggerService(store)
+
+			evt := types.Event{
+				ID:        "evt_or_status_" + tt.toStatus,
+				Type:      "task.status_changed",
+				Source:    "runner",
+				ProjectID: "myproj",
+				ToStatus:  tt.toStatus,
+			}
+
+			results, err := svc.Evaluate(context.Background(), evt)
+			if err != nil {
+				t.Fatalf("Evaluate() error: %v", err)
+			}
+			if len(results) != tt.want {
+				t.Fatalf("to_status=%q: expected %d results, got %d", tt.toStatus, tt.want, len(results))
+			}
+		})
+	}
+}
+
+func TestTriggerService_CombinesMultiEventAndOrableStatus(t *testing.T) {
+	tests := []struct {
+		name      string
+		eventType string
+		toStatus  string
+		want      int
+	}{
+		{name: "task event + completed", eventType: "task.status_changed", toStatus: "completed", want: 1},
+		{name: "feature event + blocked", eventType: "feature.status_changed", toStatus: "blocked", want: 1},
+		{name: "matching event but status not in set", eventType: "task.status_changed", toStatus: "active", want: 0},
+		{name: "status in set but event not in set", eventType: "task.started", toStatus: "completed", want: 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			store := newMockTriggerTaskStore()
+			store.entries = []types.BrainEntry{
+				{
+					Path:      "projects/myproj/task/abc.md",
+					ID:        "abc12345",
+					Status:    "active",
+					ProjectID: "myproj",
+					Trigger: &types.TriggerConfig{
+						Event:  "task.status_changed",
+						Events: []string{"feature.status_changed"},
+						Filter: map[string]string{"to_status": "in:completed,blocked"},
+					},
+				},
+			}
+			svc := NewTriggerService(store)
+
+			evt := types.Event{
+				ID:        "evt_combo_" + tt.name,
+				Type:      tt.eventType,
+				Source:    "runner",
+				ProjectID: "myproj",
+				ToStatus:  tt.toStatus,
+			}
+
+			results, err := svc.Evaluate(context.Background(), evt)
+			if err != nil {
+				t.Fatalf("Evaluate() error: %v", err)
+			}
+			if len(results) != tt.want {
+				t.Fatalf("%s: expected %d results, got %d", tt.name, tt.want, len(results))
+			}
+		})
 	}
 }
 

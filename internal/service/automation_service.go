@@ -174,7 +174,7 @@ func automationMatchesEvent(automation types.BrainEntry, evt types.Event) bool {
 }
 
 func automationMatchesNamedEvent(automation types.BrainEntry, evt types.Event) bool {
-	if !types.MatchEventPattern(automation.Trigger.Event, evt.Type) {
+	if !automation.Trigger.MatchesEvent(evt.Type) {
 		return false
 	}
 	if automation.ProjectID != "" && automation.ProjectID != evt.ProjectID {
@@ -218,16 +218,12 @@ func automationMatchesSession(automation types.BrainEntry, evt types.Event) bool
 }
 
 func matchAutomationFilters(filters map[string]string, evt types.Event) bool {
-	for key, expected := range filters {
-		if expected == "*" {
-			continue
-		}
-
+	for key, expr := range filters {
 		actual := getEventField(evt, key)
 		if key == "project" {
 			actual = evt.ProjectID
 		}
-		if actual != expected {
+		if !types.MatchFilterValue(actual, expr) {
 			return false
 		}
 	}

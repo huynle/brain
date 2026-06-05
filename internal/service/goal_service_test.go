@@ -506,6 +506,115 @@ func TestReconcile_GuardNonGoalEntry(t *testing.T) {
 }
 
 // =============================================================================
+// UpdateGoal trigger_source persistence round-trip (regression)
+//
+// Regression: saving the goal config modal updated the automation trigger
+// (events/filter) but did NOT persist the rebuilt goal.trigger_source config
+// field, so the entry's goal.trigger_source drifted from its trigger. These
+// tests re-read goals from storage (via ListGoals -> goalSummaryFromEntry,
+// which reads e.Goal/e.Trigger from the persisted entry) and assert both the
+// persisted Config.TriggerSource AND the persisted Trigger events match the
+// updated trigger source. BuildGoalAutomation is the single source of truth.
+// =============================================================================
+
+func TestUpdateGoal_PersistsTriggerSource(t *testing.T) {
+	tests := []struct {
+		name       string
+		source     string
+		wantEvents []string
+	}{
+		{
+			name:       "task -> task.status_changed",
+			source:     types.GoalTriggerSourceTask,
+			wantEvents: []string{types.EventTaskStatusChanged},
+		},
+		{
+			name:       "feature -> feature.completed",
+			source:     types.GoalTriggerSourceFeature,
+			wantEvents: []string{types.EventFeatureCompleted},
+		},
+		{
+			name:       "both -> task.status_changed + feature.completed",
+			source:     types.GoalTriggerSourceBoth,
+			wantEvents: []string{types.EventTaskStatusChanged, types.EventFeatureCompleted},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			brain, store, _ := newTestBrainService(t)
+			ctx := context.Background()
+
+			const (
+				project   = "proj"
+				featureID = "feat-1"
+				goalID    = "g1"
+			)
+
+			svc := NewGoalService(brain, &mockFeatureTaskLister{}, store)
+
+			// Create a goal with a DIFFERENT trigger source than the target,
+			// so the update genuinely changes it. Use "both" as the baseline,
+			// except for the "both" case where we start from "task".
+			startSource := types.GoalTriggerSourceBoth
+			if tt.source == types.GoalTriggerSourceBoth {
+				startSource = types.GoalTriggerSourceTask
+			}
+
+			if _, err := svc.CreateGoal(ctx, types.CreateGoalRequest{
+				Project:   project,
+				FeatureID: featureID,
+				Title:     "Ship feature",
+				Config: types.GoalConfig{
+					ID:            goalID,
+					Workdir:       "/tmp/goal-work",
+					TriggerSource: startSource,
+				},
+				Action: *defaultGoalAction(),
+			}); err != nil {
+				t.Fatalf("CreateGoal: %v", err)
+			}
+
+			// Update the trigger source.
+			ts := tt.source
+			if _, err := svc.UpdateGoal(ctx, goalID, types.UpdateGoalRequest{
+				TriggerSource: &ts,
+			}); err != nil {
+				t.Fatalf("UpdateGoal: %v", err)
+			}
+
+			// Re-read from storage (NOT the returned summary) to prove the
+			// trigger_source config field was actually persisted.
+			goals, err := svc.ListGoals(ctx, project, featureID)
+			if err != nil {
+				t.Fatalf("ListGoals: %v", err)
+			}
+			if len(goals) != 1 {
+				t.Fatalf("ListGoals returned %d goals, want 1", len(goals))
+			}
+			got := goals[0]
+
+			if got.Config == nil {
+				t.Fatalf("persisted goal Config is nil")
+			}
+			if got.Config.TriggerSource != tt.source {
+				t.Errorf("persisted Config.TriggerSource = %q, want %q",
+					got.Config.TriggerSource, tt.source)
+			}
+
+			if got.Trigger == nil {
+				t.Fatalf("persisted goal Trigger is nil")
+			}
+			gotEvents := got.Trigger.EventPatterns()
+			if !reflect.DeepEqual(gotEvents, tt.wantEvents) {
+				t.Errorf("persisted Trigger events = %v, want %v",
+					gotEvents, tt.wantEvents)
+			}
+		})
+	}
+}
+
+// =============================================================================
 // HandleEvent dispatch tests (GA P2.3)
 // =============================================================================
 

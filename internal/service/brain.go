@@ -788,6 +788,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.Action != nil {
 		fm.Action = automationActionToFM(req.Action)
 	}
+	if req.Goal != nil {
+		fm.Goal = goalConfigToFM(req.Goal)
+	}
 	if req.Retry != nil {
 		fm.Retry = automationRetryToFM(req.Retry)
 	}

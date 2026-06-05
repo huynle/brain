@@ -587,6 +587,7 @@ type UpdateEntryRequest struct {
 	Trigger *TriggerConfig    `json:"trigger,omitempty"`
 	Action  *AutomationAction `json:"action,omitempty"`
 	Retry   *AutomationRetry  `json:"retry,omitempty"`
+	Goal    *GoalConfig       `json:"goal,omitempty"`
 }
 
 // =============================================================================

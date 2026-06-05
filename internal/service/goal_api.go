@@ -159,6 +159,7 @@ func (s *GoalService) UpdateGoal(ctx context.Context, goalID string, req UpdateG
 		Content: &rebuilt.Content,
 		Trigger: rebuilt.Trigger,
 		Action:  rebuilt.Action,
+		Goal:    rebuilt.Goal,
 	}
 	if req.Status != nil {
 		update.Status = req.Status

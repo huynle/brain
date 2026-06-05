@@ -2,14 +2,13 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/types"
 )
-
-const dreamAutomationRowID = "__dream__"
 
 // AutomationListRow is the normalized row model for automation entries and
 // scheduled task entries shown together in the automation tab.
@@ -18,6 +17,7 @@ type AutomationListRow struct {
 	Path          string
 	Title         string
 	Source        string
+	Scope         string
 	Status        string
 	Enabled       bool
 	TriggerKind   string
@@ -26,6 +26,15 @@ type AutomationListRow struct {
 	RunSummary    string
 	RunTaskID     string
 	RunStatus     string
+
+	// IsGoal marks rows that represent goal automations
+	// (entry.generated_by == brain-goal). Goal rows render a [goal] badge and
+	// a linked-task progress segment.
+	IsGoal bool
+	// GoalDone and GoalTotal capture goal progress derived from linked tasks
+	// (tasks sharing the goal's feature_id). Used to render the progress bar.
+	GoalDone  int
+	GoalTotal int
 }
 
 // AutomationList displays automation entries and cron/run-once task entries.
@@ -60,8 +69,7 @@ func (al *AutomationList) SetError(msg string) {
 
 // SetEntriesAndTasks normalizes automation entries and scheduled tasks into one list.
 func (al *AutomationList) SetEntriesAndTasks(entries []types.BrainEntry, tasks []types.ResolvedTask) {
-	rows := make([]AutomationListRow, 0, len(entries)+len(tasks)+1)
-	rows = append(rows, DreamAutomationRow())
+	rows := make([]AutomationListRow, 0, len(entries)+len(tasks))
 	for _, entry := range entries {
 		if entry.Type != "automation" {
 			continue
@@ -74,14 +82,15 @@ func (al *AutomationList) SetEntriesAndTasks(entries []types.BrainEntry, tasks [
 		}
 		rows = append(rows, AutomationRowFromTask(task))
 	}
+	sortAutomationRows(rows)
 	al.SetRows(rows)
 }
 
 // SetEntryRows normalizes automation entries and scheduled task entries into one list.
 func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types.BrainEntry, generatedTasks []types.BrainEntry) {
-	rows := make([]AutomationListRow, 0, len(entries)+len(tasks)+1)
-	rows = append(rows, DreamAutomationRow())
+	rows := make([]AutomationListRow, 0, len(entries)+len(tasks))
 	runsByAutomation := automationRunSummaries(generatedTasks)
+	goalProgress := goalProgressByFeature(generatedTasks)
 	for _, entry := range entries {
 		if entry.Type != "automation" {
 			continue
@@ -92,6 +101,12 @@ func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types
 			row.RunTaskID = summary.latestID
 			row.RunStatus = summary.latestStatus
 		}
+		if row.IsGoal && entry.FeatureID != "" {
+			if progress, ok := goalProgress[entry.FeatureID]; ok {
+				row.GoalDone = progress.done
+				row.GoalTotal = progress.total
+			}
+		}
 		rows = append(rows, row)
 	}
 	for _, task := range tasks {
@@ -100,6 +115,7 @@ func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types
 		}
 		rows = append(rows, AutomationRowFromTaskEntry(task))
 	}
+	sortAutomationRows(rows)
 	al.SetRows(rows)
 }
 
@@ -308,6 +324,69 @@ func automationRunSummaries(tasks []types.BrainEntry) map[string]automationRunSu
 	return summaries
 }
 
+// goalTaskProgress accumulates linked-task counts for a single goal feature.
+type goalTaskProgress struct {
+	done  int
+	total int
+}
+
+// goalProgressByFeature derives goal progress (done/total) keyed by feature_id
+// from the supplied generated tasks. Goal automations link their work via the
+// shared feature_id, mirroring the server-side GetTasksByFeature used by
+// GoalProgress. A task counts as "done" when its status is completed or
+// validated.
+func goalProgressByFeature(tasks []types.BrainEntry) map[string]goalTaskProgress {
+	progress := make(map[string]goalTaskProgress)
+	for _, task := range tasks {
+		if task.FeatureID == "" {
+			continue
+		}
+		p := progress[task.FeatureID]
+		p.total++
+		switch task.Status {
+		case "completed", "validated":
+			p.done++
+		}
+		progress[task.FeatureID] = p
+	}
+	return progress
+}
+
+func sortAutomationRows(rows []AutomationListRow) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		left := automationRowSortKey(rows[i])
+		right := automationRowSortKey(rows[j])
+		for idx := range left {
+			if left[idx] != right[idx] {
+				return left[idx] < right[idx]
+			}
+		}
+		return false
+	})
+}
+
+func automationRowSortKey(row AutomationListRow) [6]string {
+	return [6]string{
+		automationSourceSortRank(row.Source),
+		strings.ToLower(row.Title),
+		strings.ToLower(row.TriggerKind),
+		strings.ToLower(row.TriggerDetail),
+		strings.ToLower(row.Status),
+		row.ID,
+	}
+}
+
+func automationSourceSortRank(source string) string {
+	switch source {
+	case "automation":
+		return "1"
+	case "task":
+		return "2"
+	default:
+		return "9"
+	}
+}
+
 func (al *AutomationList) ensureCursorVisible(viewportHeight int) {
 	if viewportHeight < 1 {
 		viewportHeight = len(al.rows)
@@ -338,9 +417,6 @@ func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width 
 
 	state := "enabled"
 	stateStyle := lipgloss.NewStyle().Foreground(ColorReady)
-	if row.Source == "dream" {
-		state = "available"
-	}
 	if !row.Enabled {
 		state = "disabled"
 		stateStyle = lipgloss.NewStyle().Foreground(ColorDim)
@@ -374,13 +450,23 @@ func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width 
 		}
 	}
 
-	line := fmt.Sprintf("%s%s  %s  %s  %s%s%s",
+	badge := ""
+	goalProgress := ""
+	if row.IsGoal {
+		badge = "  " + lipgloss.NewStyle().Foreground(ColorMagenta).Render("[goal]")
+		goalProgress = "  " + renderGoalProgress(row.GoalDone, row.GoalTotal)
+	}
+
+	line := fmt.Sprintf("%s%s  %s  %s  %s%s  %s%s%s%s",
 		marker,
 		DimStyle.Render(fmt.Sprintf("%-10s", row.Source)),
+		DimStyle.Render(fmt.Sprintf("%-7s", row.Scope)),
 		title,
 		stateStyle.Render("["+state+"]"),
+		badge,
 		DimStyle.Render(trigger),
 		priority,
+		goalProgress,
 		runs,
 	)
 	if width > 0 && lipgloss.Width(line) > width {
@@ -389,17 +475,41 @@ func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width 
 	return line
 }
 
-// DreamAutomationRow returns the built-in Dream automation row.
-func DreamAutomationRow() AutomationListRow {
-	return AutomationListRow{
-		ID:            dreamAutomationRowID,
-		Title:         "Dream",
-		Source:        "dream",
-		Status:        "active",
-		Enabled:       true,
-		TriggerKind:   "built-in",
-		TriggerDetail: "memory consolidation",
+// renderGoalProgress renders a compact block-character progress bar plus a
+// done/total counter for a goal automation row. With no linked tasks it shows
+// an empty bar and "0/0".
+func renderGoalProgress(done, total int) string {
+	const barWidth = 8
+	if done < 0 {
+		done = 0
 	}
+	if total < 0 {
+		total = 0
+	}
+	if done > total {
+		done = total
+	}
+
+	filled := 0
+	if total > 0 {
+		filled = done * barWidth / total
+		if filled == 0 && done > 0 {
+			filled = 1
+		}
+		if filled > barWidth {
+			filled = barWidth
+		}
+	}
+
+	bar := strings.Repeat("█", filled) + strings.Repeat("░", barWidth-filled)
+	barColor := ColorWaiting
+	if total > 0 && done == total {
+		barColor = ColorReady
+	}
+
+	styledBar := lipgloss.NewStyle().Foreground(barColor).Render(bar)
+	counter := DimStyle.Render(fmt.Sprintf(" %d/%d", done, total))
+	return styledBar + counter
 }
 
 // AutomationRowFromEntry converts a type=automation brain entry into a row.
@@ -409,8 +519,10 @@ func AutomationRowFromEntry(entry types.BrainEntry) AutomationListRow {
 		Path:    entry.Path,
 		Title:   entry.Title,
 		Source:  "automation",
+		Scope:   automationEntryScope(entry),
 		Status:  entry.Status,
 		Enabled: entry.Status == "active",
+		IsGoal:  entry.GeneratedBy == types.GoalGeneratedBy,
 	}
 	if entry.Trigger != nil {
 		row.TriggerKind = entry.Trigger.Type
@@ -443,6 +555,7 @@ func AutomationRowFromTask(task types.ResolvedTask) AutomationListRow {
 		Path:     task.Path,
 		Title:    task.Title,
 		Source:   "task",
+		Scope:    "project",
 		Status:   task.Status,
 		Enabled:  enabled,
 		Priority: task.Priority,
@@ -471,6 +584,7 @@ func AutomationRowFromTaskEntry(task types.BrainEntry) AutomationListRow {
 		Path:     task.Path,
 		Title:    task.Title,
 		Source:   "task",
+		Scope:    "project",
 		Status:   task.Status,
 		Enabled:  enabled,
 		Priority: task.Priority,
@@ -485,4 +599,14 @@ func AutomationRowFromTaskEntry(task types.BrainEntry) AutomationListRow {
 	}
 
 	return row
+}
+
+func automationEntryScope(entry types.BrainEntry) string {
+	if strings.HasPrefix(entry.Path, "global/") {
+		return "global"
+	}
+	if entry.ProjectID != "" || strings.HasPrefix(entry.Path, "projects/") {
+		return "project"
+	}
+	return "unknown"
 }

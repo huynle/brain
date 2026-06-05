@@ -710,7 +710,7 @@ func TestRunAutomationRowCmdCreatesGeneratedTaskFromDisabledAutomation(t *testin
 		Title:  "Disabled automation",
 		Source: "automation",
 		Status: "archived",
-	})
+	}, "brain-api")
 	msg := cmd().(AutomationRunMsg)
 	if msg.Error != nil {
 		t.Fatalf("run automation failed: %v", msg.Error)
@@ -726,6 +726,48 @@ func TestRunAutomationRowCmdCreatesGeneratedTaskFromDisabledAutomation(t *testin
 	}
 	if gotCreate.Generated == nil || !*gotCreate.Generated || gotCreate.GeneratedBy != "automation:auto1234" {
 		t.Fatalf("created task generated fields invalid: generated=%v generated_by=%q", gotCreate.Generated, gotCreate.GeneratedBy)
+	}
+}
+
+func TestRunAutomationRowCmdUsesActiveProjectForGlobalAutomation(t *testing.T) {
+	var gotCreate types.CreateEntryRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			json.NewEncoder(w).Encode(types.BrainEntry{
+				ID:     "global-auto",
+				Path:   "global/automation/global-auto.md",
+				Title:  "Global automation",
+				Type:   "automation",
+				Status: "active",
+				Action: &types.AutomationAction{Type: "prompt", DirectPrompt: "Run global"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			if err := json.NewDecoder(r.Body).Decode(&gotCreate); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "task1234", Path: "projects/brain-api/task/task1234.md", Title: gotCreate.Title, Type: "task", Status: "pending"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	cmd := runAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:     "global-auto",
+		Path:   "global/automation/global-auto.md",
+		Title:  "Global automation",
+		Source: "automation",
+		Scope:  "global",
+		Status: "active",
+	}, "brain-api")
+	msg := cmd().(AutomationRunMsg)
+	if msg.Error != nil {
+		t.Fatalf("run global automation failed: %v", msg.Error)
+	}
+	if gotCreate.Project != "brain-api" {
+		t.Fatalf("created task project = %q, want brain-api", gotCreate.Project)
 	}
 }
 
@@ -753,17 +795,44 @@ func TestAutomationDetailShowsGeneratedRuns(t *testing.T) {
 	}
 }
 
-func TestAutomationListIncludesDreamRowWhenEmpty(t *testing.T) {
-	list := NewAutomationList()
-	list.SetEntryRows(nil, nil, nil)
+func TestFetchAutomationDataIncludesGlobalAutomationsForProject(t *testing.T) {
+	var requests []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.URL.RawQuery)
+		if r.URL.Path != "/api/v1/entries" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
 
-	row := list.SelectedRow()
-	if row == nil || row.Source != "dream" || row.Title != "Dream" {
-		t.Fatalf("expected Dream row to be selected by default, got %#v", row)
+		if r.URL.Query().Get("type") == "automation" && r.URL.Query().Get("global") == "true" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "global-auto", Path: "global/automation/blocked-task-dream.md", Title: "Blocked Task Dream", Type: "automation", Status: "active"}}})
+			return
+		}
+		if r.URL.Query().Get("type") == "automation" && r.URL.Query().Get("project") == "brain-api" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "project-auto", Path: "projects/brain-api/automation/project.md", Title: "Project Automation", Type: "automation", Status: "active", ProjectID: "brain-api"}}})
+			return
+		}
+		if r.URL.Query().Get("type") == "task" && r.URL.Query().Get("project") == "brain-api" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+			return
+		}
+
+		t.Fatalf("unexpected query: %s", r.URL.RawQuery)
+	}))
+	defer srv.Close()
+
+	msg := fetchAutomationDataCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, "brain-api")()
+	data, ok := msg.(AutomationDataMsg)
+	if !ok {
+		t.Fatalf("message type = %T, want AutomationDataMsg", msg)
 	}
-	view := list.View(100, 10)
-	if !strings.Contains(view, "Dream") || strings.Contains(view, "No automations found") {
-		t.Fatalf("expected Dream row instead of empty automation state, got:\n%s", view)
+	if data.Error != nil {
+		t.Fatalf("fetchAutomationDataCmd returned error: %v", data.Error)
+	}
+	if len(data.Automations) != 2 {
+		t.Fatalf("automations = %#v, want global and project automations; requests=%v", data.Automations, requests)
+	}
+	if data.Automations[0].ID != "global-auto" || data.Automations[1].ID != "project-auto" {
+		t.Fatalf("automation order/ids = %#v", data.Automations)
 	}
 }
 

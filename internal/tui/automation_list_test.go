@@ -42,6 +42,25 @@ func TestAutomationList_SetEntriesAndTasks_MergesAutomationAndScheduledRows(t *t
 	}
 }
 
+func TestAutomationList_View_ShowsAutomationScope(t *testing.T) {
+	al := NewAutomationList()
+	al.SetEntryRows(
+		[]types.BrainEntry{
+			{ID: "global", Path: "global/automation/global.md", Title: "Global auto", Type: "automation", Status: "active"},
+			{ID: "project", Path: "projects/brain-api/automation/project.md", Title: "Project auto", Type: "automation", Status: "active", ProjectID: "brain-api"},
+		},
+		nil,
+		nil,
+	)
+
+	view := al.View(140, 20)
+	for _, want := range []string{"global", "project"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected scope %q in view, got:\n%s", want, view)
+		}
+	}
+}
+
 func TestAutomationList_AutomationRowFromEntry_RendersTriggerDetails(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -152,6 +171,159 @@ func TestAutomationList_View_ShowsGeneratedTaskLifecycle(t *testing.T) {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected view to contain %q, got:\n%s", want, view)
 		}
+	}
+}
+
+func TestAutomationList_View_GoalAutomationShowsBadgeAndProgress(t *testing.T) {
+	al := NewAutomationList()
+	al.SetEntryRows(
+		[]types.BrainEntry{
+			{
+				ID:          "goal1",
+				Title:       "Ship feature",
+				Type:        "automation",
+				Status:      "active",
+				GeneratedBy: types.GoalGeneratedBy,
+				FeatureID:   "ship-it",
+			},
+			{ID: "auto1", Title: "Regular automation", Type: "automation", Status: "active"},
+		},
+		nil,
+		[]types.BrainEntry{
+			{ID: "t1", Type: "task", Status: "completed", FeatureID: "ship-it"},
+			{ID: "t2", Type: "task", Status: "validated", FeatureID: "ship-it"},
+			{ID: "t3", Type: "task", Status: "pending", FeatureID: "ship-it"},
+			{ID: "t4", Type: "task", Status: "in_progress", FeatureID: "ship-it"},
+		},
+	)
+
+	view := al.View(160, 20)
+	if !strings.Contains(view, "[goal]") {
+		t.Fatalf("expected goal badge in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "2/4") {
+		t.Fatalf("expected progress counter 2/4 in view, got:\n%s", view)
+	}
+	// Regular (non-goal) automation rows must not gain a goal badge.
+	if strings.Count(view, "[goal]") != 1 {
+		t.Fatalf("expected exactly one goal badge, got %d in:\n%s", strings.Count(view, "[goal]"), view)
+	}
+}
+
+func TestAutomationList_GoalRowWithoutLinkedTasksShowsZeroProgress(t *testing.T) {
+	al := NewAutomationList()
+	al.SetEntryRows(
+		[]types.BrainEntry{
+			{
+				ID:          "goal1",
+				Title:       "Empty goal",
+				Type:        "automation",
+				Status:      "active",
+				GeneratedBy: types.GoalGeneratedBy,
+				FeatureID:   "empty",
+			},
+		},
+		nil,
+		nil,
+	)
+
+	view := al.View(160, 20)
+	if !strings.Contains(view, "[goal]") {
+		t.Fatalf("expected goal badge in view, got:\n%s", view)
+	}
+	if !strings.Contains(view, "0/0") {
+		t.Fatalf("expected 0/0 progress for goal without linked tasks, got:\n%s", view)
+	}
+}
+
+func TestAutomationRowFromEntry_SetsIsGoalForGoalAutomations(t *testing.T) {
+	goalRow := AutomationRowFromEntry(types.BrainEntry{
+		ID:          "goal1",
+		Type:        "automation",
+		Status:      "active",
+		GeneratedBy: types.GoalGeneratedBy,
+	})
+	if !goalRow.IsGoal {
+		t.Fatal("expected IsGoal=true for generated_by=brain-goal entry")
+	}
+
+	plainRow := AutomationRowFromEntry(types.BrainEntry{
+		ID:     "auto1",
+		Type:   "automation",
+		Status: "active",
+	})
+	if plainRow.IsGoal {
+		t.Fatal("expected IsGoal=false for non-goal automation entry")
+	}
+}
+
+func TestRenderGoalProgress_FillsBarProportionally(t *testing.T) {
+	tests := []struct {
+		name        string
+		done, total int
+		wantCounter string
+	}{
+		{name: "empty", done: 0, total: 0, wantCounter: "0/0"},
+		{name: "partial", done: 1, total: 4, wantCounter: "1/4"},
+		{name: "complete", done: 3, total: 3, wantCounter: "3/3"},
+		{name: "clamps overflow", done: 5, total: 3, wantCounter: "3/3"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			out := renderGoalProgress(tt.done, tt.total)
+			if !strings.Contains(out, tt.wantCounter) {
+				t.Fatalf("expected counter %q in %q", tt.wantCounter, out)
+			}
+		})
+	}
+
+	// A complete goal should render a fully-filled bar (no empty cells).
+	complete := renderGoalProgress(4, 4)
+	if strings.Contains(complete, "░") {
+		t.Fatalf("expected no empty cells for complete goal, got %q", complete)
+	}
+	// A partial goal should contain at least one empty cell.
+	partial := renderGoalProgress(1, 4)
+	if !strings.Contains(partial, "░") {
+		t.Fatalf("expected empty cells for partial goal, got %q", partial)
+	}
+}
+
+func TestAutomationList_SetEntryRowsSortsRowsDeterministically(t *testing.T) {
+	al := NewAutomationList()
+	al.SetEntryRows(
+		[]types.BrainEntry{
+			{ID: "auto-z", Title: "Zulu", Type: "automation", Status: "active", Trigger: &types.TriggerConfig{Type: "event", Event: "task.completed"}},
+			{ID: "auto-a2", Title: "Alpha", Type: "automation", Status: "active", Trigger: &types.TriggerConfig{Type: "cron", Schedule: "0 1 * * *"}},
+			{ID: "auto-a1", Title: "Alpha", Type: "automation", Status: "active", Trigger: &types.TriggerConfig{Type: "event", Event: "task.status_changed"}},
+		},
+		[]types.BrainEntry{
+			{ID: "task-z", Title: "Zulu scheduled", Type: "task", Status: "pending", Schedule: "0 2 * * *"},
+			{ID: "task-a", Title: "Alpha scheduled", Type: "task", Status: "pending", Schedule: "0 3 * * *"},
+		},
+		nil,
+	)
+
+	var got []string
+	for _, row := range al.rows {
+		got = append(got, row.ID)
+	}
+	want := []string{"auto-a2", "auto-a1", "auto-z", "task-a", "task-z"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("row order = %v, want %v", got, want)
+	}
+}
+
+func TestAutomationList_EmptyEntriesShowsEmptyState(t *testing.T) {
+	list := NewAutomationList()
+	list.SetEntryRows(nil, nil, nil)
+
+	if row := list.SelectedRow(); row != nil {
+		t.Fatalf("expected no selected row, got %#v", row)
+	}
+	view := list.View(100, 10)
+	if !strings.Contains(view, "No automations found") || strings.Contains(view, "Dream") {
+		t.Fatalf("expected empty automation state without synthetic Dream row, got:\n%s", view)
 	}
 }
 

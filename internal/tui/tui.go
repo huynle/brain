@@ -801,9 +801,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.dreamViewer.SetContent(msg.Content)
 		}
-		if m.detailVisible && m.selectedAutomationRowIsDream() {
-			return m, m.syncAutomationEntryDetail()
-		}
 		return m, nil
 
 	case DreamConfigMsg:
@@ -811,9 +808,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.dreamViewer.SetDreamConfigError(msg.Error.Error())
 		} else if msg.Config != nil {
 			m.dreamViewer.SetDreamConfig(*msg.Config)
-		}
-		if m.detailVisible && m.selectedAutomationRowIsDream() {
-			return m, m.syncAutomationEntryDetail()
 		}
 		return m, nil
 
@@ -3529,17 +3523,6 @@ func (m *Model) syncBrainEntryDetail() tea.Cmd {
 func (m *Model) syncAutomationEntryDetail() tea.Cmd {
 	row := m.automationList.SelectedRow()
 	if row == nil || row.Path == "" {
-		if row != nil && row.Source == "dream" {
-			entry := types.BrainEntry{ID: row.ID, Path: row.ID, Title: row.Title, Type: row.Source}
-			if !m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig() {
-				m.taskDetail.SetEntryLoading(entry, "Automation Detail")
-				m.syncPanelSizes()
-				return m.fetchDreamTabCmd()
-			}
-			m.taskDetail.SetEntryContent(row.ID, row.Title, row.Source, m.dreamViewer.scrollableContent(), "Automation Detail")
-			m.syncPanelSizes()
-			return nil
-		}
 		m.taskDetail.SetTask(nil)
 		m.syncPanelSizes()
 		return nil
@@ -3586,14 +3569,6 @@ func (m *Model) automationDetailContent(path, content string) string {
 		b.WriteString("\n")
 	}
 	return b.String()
-}
-
-func (m Model) selectedAutomationRowIsDream() bool {
-	if m.activeContentTab != ContentTabAutomation || m.activeAutomationSubTab != AutomationSubTabAutomations {
-		return false
-	}
-	row := m.automationList.SelectedRow()
-	return row != nil && row.Source == "dream"
 }
 
 // syncPanelSizes computes and sets the inner dimensions for detail/log panels.
@@ -4671,10 +4646,6 @@ func (m *Model) toggleSelectedAutomationRow() tea.Cmd {
 	if row == nil {
 		return nil
 	}
-	if row.Source == "dream" {
-		m.setStatusMessage("info", "Dream is configured from the Dream detail")
-		return nil
-	}
 	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row)
 }
 
@@ -4683,20 +4654,12 @@ func (m *Model) runSelectedAutomationRow() tea.Cmd {
 	if row == nil {
 		return nil
 	}
-	if row.Source == "dream" {
-		m.setStatusMessage("info", "Dream cannot be run manually from this list")
-		return nil
-	}
-	return runAutomationRowCmd(m.apiRunnerConfig(), *row)
+	return runAutomationRowCmd(m.apiRunnerConfig(), *row, m.activeAutomationProject())
 }
 
 func (m *Model) editSelectedAutomationRow() tea.Cmd {
 	row := m.automationList.SelectedRow()
 	if row == nil {
-		return nil
-	}
-	if row.Source == "dream" {
-		m.setStatusMessage("info", "Dream has no editable entry file")
 		return nil
 	}
 	path := row.Path
@@ -5048,9 +5011,26 @@ func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 		if err != nil {
 			return AutomationDataMsg{Error: fmt.Errorf("fetch automation entries: %w", err)}
 		}
+		if project != "" {
+			globalAutomations, err := apiClient.ListEntries(ctx, map[string]string{"type": "automation", "global": "true"})
+			if err != nil {
+				return AutomationDataMsg{Error: fmt.Errorf("fetch global automation entries: %w", err)}
+			}
+			automations.Entries = appendUniqueAutomationEntries(globalAutomations.Entries, automations.Entries)
+		}
 		tasks, err := apiClient.ListEntries(ctx, taskParams)
 		if err != nil {
 			return AutomationDataMsg{Error: fmt.Errorf("fetch scheduled task entries: %w", err)}
+		}
+
+		// Collect feature IDs of goal automations so their linked tasks can be
+		// included in generatedTasks for progress computation. Goal automations
+		// link work via the shared feature_id (mirroring server GetTasksByFeature).
+		goalFeatureIDs := make(map[string]bool)
+		for _, entry := range automations.Entries {
+			if entry.GeneratedBy == types.GoalGeneratedBy && entry.FeatureID != "" {
+				goalFeatureIDs[entry.FeatureID] = true
+			}
 		}
 
 		scheduledTasks := make([]types.BrainEntry, 0, len(tasks.Entries))
@@ -5061,11 +5041,34 @@ func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 			}
 			if strings.HasPrefix(task.GeneratedBy, "automation:") {
 				generatedTasks = append(generatedTasks, task)
+			} else if task.FeatureID != "" && goalFeatureIDs[task.FeatureID] {
+				generatedTasks = append(generatedTasks, task)
 			}
 		}
 
 		return AutomationDataMsg{Automations: automations.Entries, ScheduledTasks: scheduledTasks, GeneratedTasks: generatedTasks}
 	}
+}
+
+func appendUniqueAutomationEntries(first, second []types.BrainEntry) []types.BrainEntry {
+	entries := make([]types.BrainEntry, 0, len(first)+len(second))
+	seen := make(map[string]struct{}, len(first)+len(second))
+	for _, group := range [][]types.BrainEntry{first, second} {
+		for _, entry := range group {
+			key := entry.Path
+			if key == "" {
+				key = entry.ID
+			}
+			if key != "" {
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				seen[key] = struct{}{}
+			}
+			entries = append(entries, entry)
+		}
+	}
+	return entries
 }
 
 func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd {
@@ -5098,7 +5101,7 @@ func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.
 	}
 }
 
-func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd {
+func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeProject string) tea.Cmd {
 	return func() tea.Msg {
 		path := row.Path
 		if path == "" {
@@ -5122,6 +5125,9 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd
 
 		project := entry.ProjectID
 		if project == "" {
+			project = activeProject
+		}
+		if project == "" || project == "all" {
 			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation has no project")}
 		}
 

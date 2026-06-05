@@ -132,6 +132,18 @@ func (m *HelpModal) View() string {
 		b.WriteString("\n")
 	}
 
+	// Automations tab — goal row actions
+	b.WriteString(categoryStyle.Render("Automations (Goal Rows):"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("e", "Open goal config modal"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("x", "Run goal reconcile"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("Space", "Enable/disable goal"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("ctrl+s", "Save config (in modal)"))
+	b.WriteString("\n")
+
 	// Help and quit
 	b.WriteString(categoryStyle.Render("Other:"))
 	b.WriteString("\n")
@@ -176,10 +188,13 @@ func (m *HelpModal) Width() int {
 // Height implements Modal.
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
-	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (5-6), Other (2)
-	// Plus category headers (5 or 6) and footer (2)
+	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (5-6),
+	// Automations/Goal Rows (4), Other (2)
+	// Plus category headers (6 or 7) and footer (2)
 	viewLines := 6
-	baseLines := 5 + 10 + 3 + viewLines + 2 + 5 + 2
+	automationLines := 4
+	// content lines + category headers (6) + footer (2)
+	baseLines := 5 + 10 + 3 + viewLines + automationLines + 2 + 6 + 2
 
 	// Add 3 more lines if multi-project mode (Projects section)
 	if m.isMultiProject {

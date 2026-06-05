@@ -145,6 +145,11 @@ func (m *ModalManager) IsOpen() bool {
 	return m.activeModal != nil
 }
 
+// ActiveModal returns the currently active modal, or nil when none is open.
+func (m *ModalManager) ActiveModal() Modal {
+	return m.activeModal
+}
+
 // Update routes messages to the active modal.
 func (m ModalManager) Update(msg tea.Msg) (ModalManager, tea.Cmd) {
 	if m.activeModal == nil {

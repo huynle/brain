@@ -134,6 +134,14 @@ type Model struct {
 	activeAutomationSubTab   AutomationSubTab
 	automationList           AutomationList
 	automationGeneratedTasks []types.BrainEntry
+	// goalAuditByEntry caches the reconcile audit history for goal automation
+	// rows, keyed by the automation entry ID (AutomationListRow.ID). Populated
+	// asynchronously when a goal detail pane syncs (goalDetailAuditMsg).
+	goalAuditByEntry map[string][]types.GoalReconcileAudit
+	// goalDetailRaw caches the raw (un-decorated) entry content for goal detail
+	// rows keyed by entry path, so the detail pane can be re-rendered with the
+	// reconcile section once the audit history loads asynchronously.
+	goalDetailRaw            map[string]string
 	dreamViewer              DreamViewer
 	entryTree                EntryTree
 	brainEntries             []types.BrainEntry
@@ -337,6 +345,8 @@ func NewModel(cfg Config) Model {
 		enabledFeatures:        make(map[string]bool),
 		activeAutomationSubTab: AutomationSubTabAutomations,
 		automationList:         NewAutomationList(),
+		goalAuditByEntry:       make(map[string][]types.GoalReconcileAudit),
+		goalDetailRaw:          make(map[string]string),
 		dreamViewer:            NewDreamViewer(),
 		entryTree:              NewEntryTree(),
 		runnerPanel:            NewRunnerPanel(),
@@ -837,6 +847,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		content := msg.Content
 		if m.activeContentTab == ContentTabAutomation && msg.Type == "automation" {
+			// Cache the raw content for goal rows so the detail pane can be
+			// re-decorated when reconcile audit history loads asynchronously.
+			if row := m.automationList.SelectedRow(); row != nil && row.IsGoal && row.Path == msg.Path {
+				if m.goalDetailRaw == nil {
+					m.goalDetailRaw = make(map[string]string)
+				}
+				m.goalDetailRaw[msg.Path] = msg.Content
+			}
 			content = m.automationDetailContent(msg.Path, content)
 		}
 		attachments := m.taskDetail.entryAttachments
@@ -881,6 +899,58 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.setStatusMessage("success", fmt.Sprintf("Automation run queued: %s", msg.TaskID))
 		return m, m.refreshActiveAutomationSubTab()
+
+	case goalConfigOpenMsg:
+		// Resolved goal summary -> open the GoalConfigModal. Opening a modal
+		// mutates the manager, so it must happen here on the Model.
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to load goal: %v", msg.err))
+			return m, nil
+		}
+		if msg.summary == nil {
+			m.setStatusMessage("error", "Goal summary unavailable")
+			return m, nil
+		}
+		modal := NewGoalConfigModal(*msg.summary, runner.NewAPIClient(m.apiRunnerConfig()))
+		return m, m.modalManager.Open(modal)
+
+	case goalConfigSavedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to save goal: %v", msg.err))
+			return m, nil
+		}
+		m.setStatusMessage("success", "Goal updated")
+		m.modalManager.Close()
+		return m, m.refreshActiveAutomationSubTab()
+
+	case goalReconcileResultMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Reconcile failed: %v", msg.err))
+			return m, nil
+		}
+		if msg.audit != nil {
+			m.setStatusMessage("success", fmt.Sprintf("Reconcile: %s — %s", string(msg.audit.Decision), msg.audit.Reason))
+		} else {
+			m.setStatusMessage("success", "Reconcile complete")
+		}
+		return m, m.refreshActiveAutomationSubTab()
+
+	case goalDetailAuditMsg:
+		if msg.err == nil {
+			if m.goalAuditByEntry == nil {
+				m.goalAuditByEntry = make(map[string][]types.GoalReconcileAudit)
+			}
+			m.goalAuditByEntry[msg.entryID] = msg.audit
+		}
+		// Re-render the goal detail pane with the now-available reconcile
+		// history, using the cached raw content for the matching path.
+		if row := m.automationList.SelectedRow(); row != nil && row.IsGoal && row.ID == msg.entryID && m.detailVisible {
+			if raw, ok := m.goalDetailRaw[row.Path]; ok {
+				content := m.automationDetailContent(row.Path, raw)
+				m.taskDetail.SetEntryContent(row.Path, row.Title, "automation", content, "Automation Detail")
+			}
+		}
+		return m, nil
 
 	case featureExecutedMsg:
 		if msg.err != nil {
@@ -1162,7 +1232,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case sessionSelectedMsg, taskExecutedMsg, featureExecutedMsg, taskCompletedMsg, taskCancelledMsg,
 			batchTasksCompletedMsg, batchTasksCancelledMsg, taskDeletedMsg, batchTasksDeletedMsg,
-			sessionOpenedMsg, statusPickerResultMsg:
+			sessionOpenedMsg, statusPickerResultMsg,
+			goalConfigOpenMsg, goalConfigSavedMsg, goalReconcileResultMsg:
 			// Let these fall through to the main switch above (they won't match
 			// because we're past it, so we need to handle them here)
 		default:
@@ -1492,12 +1563,24 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					return m, nil
 				case "e":
+					// Goal rows open the GoalConfigModal; non-goal rows open $EDITOR.
+					if row := m.automationList.SelectedRow(); row != nil && row.IsGoal {
+						return m, m.editSelectedGoalRow()
+					}
 					return m, m.editSelectedAutomationRow()
 				case "r":
 					return m, m.refreshActiveAutomationSubTab()
 				case " ":
+					// Toggle enable/disable. For goals this flips the underlying
+					// automation entry status (active <-> archived), same as any
+					// automation entry — toggleSelectedAutomationRow handles both.
 					return m, m.toggleSelectedAutomationRow()
 				case "x":
+					// Goal rows run an inline reconcile via RunGoal; non-goal rows
+					// use the generic manual-run that creates a task.
+					if row := m.automationList.SelectedRow(); row != nil && row.IsGoal {
+						return m, m.runSelectedGoalRow()
+					}
 					return m, m.runSelectedAutomationRow()
 				case "p":
 					currentlyPaused := m.automationsPaused
@@ -3530,7 +3613,13 @@ func (m *Model) syncAutomationEntryDetail() tea.Cmd {
 	entry := types.BrainEntry{ID: row.ID, Path: row.Path, Title: row.Title, Type: row.Source}
 	m.taskDetail.SetEntryLoading(entry, "Automation Detail")
 	m.syncPanelSizes()
-	return fetchBrainEntryContentCmd(m.apiRunnerConfig(), entry)
+	contentCmd := fetchBrainEntryContentCmd(m.apiRunnerConfig(), entry)
+	// Goal rows additionally load reconcile audit history for the detail pane.
+	if row.IsGoal {
+		auditCmd := fetchGoalDetailAuditCmd(m.apiRunnerConfig(), *row, m.activeAutomationProject())
+		return tea.Batch(contentCmd, auditCmd)
+	}
+	return contentCmd
 }
 
 func (m *Model) automationDetailContent(path, content string) string {
@@ -3538,6 +3627,11 @@ func (m *Model) automationDetailContent(path, content string) string {
 	if row == nil || row.Path != path {
 		return content
 	}
+
+	var b strings.Builder
+	b.WriteString(content)
+
+	// Runs section: generated tasks linked to this automation entry.
 	generatedBy := "automation:" + row.ID
 	runs := make([]types.BrainEntry, 0)
 	for _, task := range m.automationGeneratedTasks {
@@ -3546,25 +3640,60 @@ func (m *Model) automationDetailContent(path, content string) string {
 		}
 	}
 	if len(runs) == 0 {
-		return content + "\n\n## Runs\nNo generated runs."
+		b.WriteString("\n\n## Runs\nNo generated runs.")
+	} else {
+		sort.SliceStable(runs, func(i, j int) bool {
+			return runs[i].Modified > runs[j].Modified
+		})
+		b.WriteString("\n\n## Runs\n")
+		for _, task := range runs {
+			status := task.Status
+			if status == "" {
+				status = "unknown"
+			}
+			b.WriteString(fmt.Sprintf("- %s [%s] %s", task.ID, status, task.Title))
+			if task.Modified != "" {
+				b.WriteString(" modified=" + task.Modified)
+			}
+			if task.Path != "" {
+				b.WriteString(" path=" + task.Path)
+			}
+			b.WriteString("\n")
+		}
 	}
-	sort.SliceStable(runs, func(i, j int) bool {
-		return runs[i].Modified > runs[j].Modified
-	})
+
+	// Goal rows additionally render the last reconcile decision and audit
+	// history from the asynchronously-cached audit (m.goalAuditByEntry).
+	if row.IsGoal {
+		b.WriteString(m.goalReconcileDetailSection(row.ID))
+	}
+
+	return b.String()
+}
+
+// goalReconcileDetailSection renders the "Last Reconcile" + "Audit" detail
+// markdown for a goal automation row, using the audit cached under entryID. It
+// returns a placeholder when no audit has been cached yet (the audit loads
+// asynchronously, mirroring how Runs render off cached generated tasks).
+func (m *Model) goalReconcileDetailSection(entryID string) string {
+	audit := m.goalAuditByEntry[entryID]
+	if len(audit) == 0 {
+		return "\n\n## Last Reconcile\nNo reconcile history (or loading…)."
+	}
+
+	last := audit[0]
 	var b strings.Builder
-	b.WriteString(content)
-	b.WriteString("\n\n## Runs\n")
-	for _, task := range runs {
-		status := task.Status
-		if status == "" {
-			status = "unknown"
-		}
-		b.WriteString(fmt.Sprintf("- %s [%s] %s", task.ID, status, task.Title))
-		if task.Modified != "" {
-			b.WriteString(" modified=" + task.Modified)
-		}
-		if task.Path != "" {
-			b.WriteString(" path=" + task.Path)
+	b.WriteString("\n\n## Last Reconcile\n")
+	b.WriteString(fmt.Sprintf("%s — %s", string(last.Decision), last.Reason))
+	if last.Timestamp != "" {
+		b.WriteString("\n" + last.Timestamp)
+	}
+
+	b.WriteString("\n\n## Audit\n")
+	for _, a := range audit {
+		b.WriteString(fmt.Sprintf("- %s [%s] %s", a.Timestamp, string(a.Decision), a.Reason))
+		if a.GeneratedTaskID != "" {
+			b.WriteString(" task=" + a.GeneratedTaskID)
 		}
 		b.WriteString("\n")
 	}
@@ -4700,6 +4829,124 @@ func (m *Model) editSelectedAutomationRow() tea.Cmd {
 			err:             err,
 		}
 	})
+}
+
+// ============================================================================
+// Goal automation row actions (Phase 3)
+//
+// When the selected Automations row is a goal (IsGoal == true), the `e` and `x`
+// keys route to goal-specific behavior instead of the generic automation
+// editor / manual-run:
+//   - `e` -> editSelectedGoalRow(): resolves the goal's GoalSummary and opens
+//            the GoalConfigModal (NOT $EDITOR).
+//   - `x` -> runSelectedGoalRow(): runs an inline goal reconcile via
+//            apiClient.RunGoal (NOT the generic automation manual-run that
+//            creates a task).
+//
+// Goal id resolution: AutomationListRow carries the automation entry id (ID)
+// and path, but the goal API methods key off the goal id. We resolve the goal
+// id by calling apiClient.ListGoals(project, "") and matching on
+// GoalSummary.EntryID == row.ID. This is preferred over GetEntry because it
+// returns a fully-populated types.GoalSummary that can be passed straight into
+// NewGoalConfigModal, AND yields GoalID for RunGoal/GoalAudit — one fetch
+// serves both needs.
+// ============================================================================
+
+// goalConfigOpenMsg is emitted after editSelectedGoalRow resolves the goal's
+// summary. The main Update opens the GoalConfigModal (opening a modal mutates
+// the ModalManager, which must happen on the Model in Update, not in a cmd).
+type goalConfigOpenMsg struct {
+	summary *types.GoalSummary
+	err     error
+}
+
+// goalReconcileResultMsg is emitted after runSelectedGoalRow triggers an inline
+// goal reconcile via apiClient.RunGoal.
+type goalReconcileResultMsg struct {
+	goalID string
+	audit  *types.GoalReconcileAudit
+	err    error
+}
+
+// goalDetailAuditMsg carries reconcile audit history fetched for the goal detail
+// pane. It is DISTINCT from the modal's goalAuditLoadedMsg so the two consumers
+// (detail pane vs config modal) never clash. entryID is the automation entry id
+// (AutomationListRow.ID) used as the cache key in m.goalAuditByEntry.
+type goalDetailAuditMsg struct {
+	entryID string
+	audit   []types.GoalReconcileAudit
+	err     error
+}
+
+// resolveGoalSummaryForRow fetches the fully-populated GoalSummary for an
+// automation row by listing goals for the project and matching on EntryID.
+func resolveGoalSummaryForRow(cfg runner.RunnerConfig, row AutomationListRow, project string) (*types.GoalSummary, error) {
+	apiClient := runner.NewAPIClient(cfg)
+	goals, err := apiClient.ListGoals(context.Background(), project, "")
+	if err != nil {
+		return nil, err
+	}
+	for i := range goals {
+		if goals[i].EntryID == row.ID {
+			return &goals[i], nil
+		}
+	}
+	return nil, fmt.Errorf("goal not found for automation entry %q", row.ID)
+}
+
+// editSelectedGoalRow returns a command that resolves the selected goal row's
+// GoalSummary and emits goalConfigOpenMsg. Returns nil when no row is selected
+// or the selected row is not a goal (callers fall back to generic behavior).
+func (m *Model) editSelectedGoalRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil || !row.IsGoal {
+		return nil
+	}
+	cfg := m.apiRunnerConfig()
+	project := m.activeAutomationProject()
+	selected := *row
+	return func() tea.Msg {
+		summary, err := resolveGoalSummaryForRow(cfg, selected, project)
+		return goalConfigOpenMsg{summary: summary, err: err}
+	}
+}
+
+// runSelectedGoalRow returns a command that resolves the selected goal row's
+// goal id and triggers an inline reconcile via apiClient.RunGoal, emitting
+// goalReconcileResultMsg. Returns nil when no row is selected or the selected
+// row is not a goal.
+func (m *Model) runSelectedGoalRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil || !row.IsGoal {
+		return nil
+	}
+	cfg := m.apiRunnerConfig()
+	project := m.activeAutomationProject()
+	selected := *row
+	return func() tea.Msg {
+		summary, err := resolveGoalSummaryForRow(cfg, selected, project)
+		if err != nil {
+			return goalReconcileResultMsg{err: err}
+		}
+		apiClient := runner.NewAPIClient(cfg)
+		audit, err := apiClient.RunGoal(context.Background(), summary.GoalID)
+		return goalReconcileResultMsg{goalID: summary.GoalID, audit: audit, err: err}
+	}
+}
+
+// fetchGoalDetailAuditCmd returns a command that loads the reconcile audit
+// history for a goal row's detail pane and emits goalDetailAuditMsg.
+func fetchGoalDetailAuditCmd(cfg runner.RunnerConfig, row AutomationListRow, project string) tea.Cmd {
+	entryID := row.ID
+	return func() tea.Msg {
+		summary, err := resolveGoalSummaryForRow(cfg, row, project)
+		if err != nil {
+			return goalDetailAuditMsg{entryID: entryID, err: err}
+		}
+		apiClient := runner.NewAPIClient(cfg)
+		audit, err := apiClient.GoalAudit(context.Background(), summary.GoalID, 10)
+		return goalDetailAuditMsg{entryID: entryID, audit: audit, err: err}
+	}
 }
 
 func (m *Model) prepareDreamFetch() {

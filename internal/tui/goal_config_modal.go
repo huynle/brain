@@ -268,30 +268,61 @@ func (m *GoalConfigModal) View() string {
 	return b.String()
 }
 
-// renderStatusSubrow renders the horizontal status options for a focused
-// multi-select field, marking selected and sub-cursor highlighted entries.
+// statusSubrowColumns controls how many status options render per row in the
+// multi-select sub-grid. Keeping a fixed column count produces an aligned grid
+// instead of a single line that wraps mid-word.
+const statusSubrowColumns = 3
+
+// renderStatusSubrow renders the status options for a focused multi-select
+// field as an aligned grid. Selected entries use a filled checkbox, the
+// sub-cursor entry is highlighted, and cells are padded to a fixed width so
+// columns line up.
 func (m *GoalConfigModal) renderStatusSubrow(field MetadataField) string {
 	selected := m.statusSet(field)
-	cursorStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
+	cursorStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("0")).Background(ColorCyan).Bold(true)
 	onStyle := lipgloss.NewStyle().Foreground(ColorReady)
 	offStyle := lipgloss.NewStyle().Foreground(ColorDim)
 
-	parts := make([]string, 0, len(types.EntryStatuses))
-	for i, s := range types.EntryStatuses {
-		mark := " "
-		if selected[s] {
-			mark = "x"
-		}
-		label := fmt.Sprintf("[%s]%s", mark, s)
-		if i == m.subCursor {
-			parts = append(parts, cursorStyle.Render(label))
-		} else if selected[s] {
-			parts = append(parts, onStyle.Render(label))
-		} else {
-			parts = append(parts, offStyle.Render(label))
+	// Compute the widest "[x] status" cell so every column aligns.
+	cellWidth := 0
+	for _, s := range types.EntryStatuses {
+		if w := len(s) + 4; w > cellWidth { // 4 = len("[x] ")
+			cellWidth = w
 		}
 	}
-	return "    " + strings.Join(parts, " ")
+
+	const indent = "    "
+	var b strings.Builder
+	for i, s := range types.EntryStatuses {
+		if i > 0 && i%statusSubrowColumns == 0 {
+			b.WriteString("\n")
+		}
+		if i%statusSubrowColumns == 0 {
+			b.WriteString(indent)
+		}
+
+		box := "[ ]"
+		if selected[s] {
+			box = "[x]"
+		}
+		cell := fmt.Sprintf("%s %s", box, s)
+		// Pad to the fixed cell width before styling so background highlight
+		// covers the whole cell and columns stay aligned.
+		if pad := cellWidth - len(cell); pad > 0 {
+			cell += strings.Repeat(" ", pad)
+		}
+
+		switch {
+		case i == m.subCursor:
+			b.WriteString(cursorStyle.Render(cell))
+		case selected[s]:
+			b.WriteString(onStyle.Render(cell))
+		default:
+			b.WriteString(offStyle.Render(cell))
+		}
+		b.WriteString(" ")
+	}
+	return b.String()
 }
 
 // displayValue returns the printable value for a field row.

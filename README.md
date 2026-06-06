@@ -798,6 +798,19 @@ HTTPS is required for PWA installation and is normally provided by your reverse
 proxy (Traefik labels are stubbed in `docker-compose.yml`); the server honors
 `X-Forwarded-Proto`.
 
+### Keyboard shortcuts (desktop)
+
+The PWA mirrors the TUI's keyboard model — press `?` for the full list. Highlights:
+
+- `j`/`k`, `g`/`G` — move the cursor; `Enter` opens.
+- `H`/`L` — switch tabs; `h`/`l`/`[`/`]`/`1–9` — switch projects.
+- Tasks: `Space` select, `A`/`D` select/clear all, `c` complete, `x` run, `X`
+  cancel, `d` delete, `s` metadata, `e` edit, `y` yank, `/` filter, `C`
+  Tasks⇄Schedules, `n` new — selection enables batch complete/edit/delete.
+- Brain: `/` search, `e` edit, `b`/`B`/`F`/`A` embed/re-embed; Automations:
+  `Space` enable, `x` reconcile, `e` configure, `C` Automations⇄Dream.
+- `p`/`P` pause project/all, `S` settings, `w` wrap, `r` refresh.
+
 ### Build & develop
 
 The web app lives in [`web/`](web/README.md) and compiles into

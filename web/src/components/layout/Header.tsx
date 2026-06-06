@@ -1,5 +1,6 @@
 import { useLive } from "../../lib/sse";
 import { ALL_PROJECTS, useUI } from "../../store/ui";
+import { useNav } from "../../store/nav";
 import { useLiveTasks, deriveCounts } from "../../hooks/useLiveTasks";
 
 function shortName(id: string): string {
@@ -18,6 +19,7 @@ export function Header({
   const activeProject = useUI((s) => s.activeProject);
   const setActiveProject = useUI((s) => s.setActiveProject);
   const liveProjects = useLive((s) => s.projects);
+  const setHelpOpen = useNav((s) => s.setHelpOpen);
 
   const { tasks, stats, connected } = useLiveTasks(activeProject);
   const { active, completed } = deriveCounts(tasks);
@@ -38,9 +40,17 @@ export function Header({
         <div className="spacer" />
         <button
           className="icon-btn"
+          onClick={() => setHelpOpen(true)}
+          aria-label="keyboard shortcuts"
+          title="Keyboard shortcuts (?)"
+        >
+          ?
+        </button>
+        <button
+          className="icon-btn"
           onClick={onOpenSettings}
           aria-label="settings"
-          title="Settings"
+          title="Settings (S)"
         >
           ⚙
         </button>

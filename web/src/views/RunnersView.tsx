@@ -1,7 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLive } from "../lib/sse";
 import { useUI } from "../store/ui";
+import { useNav } from "../store/nav";
+import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import {
   getRunnerStatus,
   getRunners,
@@ -39,6 +41,35 @@ export function RunnersView() {
   // Prefer the live SSE list when present; fall back to the polled query.
   const runners = liveRunners.length ? liveRunners : runnersQ.data ?? [];
   const status = statusQ.data;
+
+  const scope = "runners";
+  const cursor = useNav((s) => Math.min(s.cursor[scope] ?? 0, Math.max(0, runners.length - 1)));
+
+  useViewKeyboard(
+    (e) => {
+      if (handleListNavKey(e, scope, runners.length)) return true;
+      const cur = runners[cursor];
+      switch (e.key) {
+        case "s":
+          if (cur) setConfirmKill(cur);
+          return true;
+        case "p":
+          void (status?.paused ? act("Resumed", resumeAll) : act("Paused", pauseAll));
+          return true;
+        case "P":
+          void act("Paused all", pauseAll);
+          return true;
+        default:
+          return false;
+      }
+    },
+    [runners, cursor, status?.paused],
+  );
+
+  useEffect(() => {
+    const el = document.querySelector<HTMLElement>('[data-cursor="1"]');
+    el?.scrollIntoView({ block: "nearest" });
+  }, [cursor]);
 
   async function act(label: string, fn: () => Promise<unknown>) {
     setBusy(true);
@@ -124,10 +155,11 @@ export function RunnersView() {
           hint="Start one with: brain run start <project> --headless"
         />
       ) : (
-        runners.map((r) => (
+        runners.map((r, i) => (
           <RunnerCard
             key={r.runner_id}
             runner={r}
+            cursored={i === cursor}
             onKill={() => setConfirmKill(r)}
           />
         ))
@@ -160,9 +192,11 @@ export function RunnersView() {
 
 function RunnerCard({
   runner,
+  cursored,
   onKill,
 }: {
   runner: RunnerInfo;
+  cursored?: boolean;
   onKill: () => void;
 }) {
   const statusColor =
@@ -172,7 +206,11 @@ function RunnerCard({
         ? "var(--yellow)"
         : "var(--red)";
   return (
-    <div className="card section-pad" style={{ marginBottom: "0.6rem" }}>
+    <div
+      className={`card section-pad ${cursored ? "kbd-cursor" : ""}`}
+      data-cursor={cursored ? "1" : undefined}
+      style={{ marginBottom: "0.6rem" }}
+    >
       <div className="row">
         <span className="conn-dot" style={{ background: statusColor }} />
         <strong className="mono" style={{ fontSize: 13 }}>

@@ -223,6 +223,12 @@ export const getEntry = (path: string) =>
 export const search = (req: SearchRequest) =>
   api<SearchResponse>("/api/v1/search", { method: "POST", body: req });
 
+export const embedBackfill = (body: {
+  project?: string;
+  force?: boolean;
+  dry_run?: boolean;
+}) => api<unknown>("/api/v1/embeddings/backfill", { method: "POST", body });
+
 // ─── Goals ───────────────────────────────────────────────────────
 
 export const listGoals = () =>

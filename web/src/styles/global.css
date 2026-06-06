@@ -541,6 +541,120 @@ a {
   z-index: 5;
 }
 
+/* ─── Sub-tabs (Automations / Dream) ─────────────────────── */
+
+.subtabs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.8rem;
+  border-bottom: 1px solid var(--border);
+}
+.subtabs button {
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 0.25rem 0.2rem;
+  color: var(--fg-dim);
+  font-size: 14px;
+  font-weight: 600;
+}
+.subtabs button.on {
+  color: var(--fg);
+  border-bottom-color: var(--accent);
+}
+
+.dream-content mark {
+  background: color-mix(in srgb, var(--yellow) 45%, transparent);
+  color: var(--fg);
+  border-radius: 2px;
+}
+.dream-content mark.current {
+  background: var(--orange);
+  color: var(--bg);
+}
+
+/* ─── Keyboard / help ────────────────────────────────────── */
+
+kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  padding: 0.05rem 0.4rem;
+  color: var(--fg);
+  white-space: nowrap;
+}
+.help-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1rem;
+}
+@media (min-width: 560px) {
+  .help-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+.help-group h3 {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+  margin: 0 0 0.4rem;
+}
+.help-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.15rem 0;
+  font-size: 13px;
+}
+.help-keys {
+  display: inline-flex;
+  gap: 0.2rem;
+  flex: 0 0 96px;
+}
+.help-desc {
+  color: var(--fg-dim);
+}
+
+/* keyboard cursor + selection on list rows */
+.kbd-cursor {
+  box-shadow: inset 2px 0 0 0 var(--accent);
+  background: var(--bg-2) !important;
+}
+.sel-check {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid var(--border-strong);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--bg);
+  background: var(--bg-2);
+}
+.sel-check.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.selbar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.8rem;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-1));
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  font-size: 13px;
+}
+
 /* ─── Editor ─────────────────────────────────────────────── */
 
 .editor-toolbar {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLive } from "../lib/sse";
 import { useUI, ALL_PROJECTS } from "../store/ui";
+import { useViewKeyboard } from "../lib/keyboard";
 import { clockTime, logLevelColor } from "../lib/format";
 import { EmptyState } from "../components/common/states";
 
@@ -37,6 +38,42 @@ export function LogsView() {
       el.scrollHeight - el.scrollTop - el.clientHeight < 60;
     setFollow(atBottom);
   }
+
+  useViewKeyboard(
+    (e) => {
+      const el = scrollRef.current;
+      switch (e.key) {
+        case "j":
+        case "ArrowDown":
+          if (el) el.scrollTop += 60;
+          setFollow(false);
+          return true;
+        case "k":
+        case "ArrowUp":
+          if (el) el.scrollTop -= 60;
+          setFollow(false);
+          return true;
+        case "g":
+          if (el) el.scrollTop = 0;
+          setFollow(false);
+          return true;
+        case "G":
+          setFollow(true);
+          bottomRef.current?.scrollIntoView({ block: "end" });
+          return true;
+        case "f":
+          setFollow((v) => {
+            const nv = !v;
+            if (nv) bottomRef.current?.scrollIntoView({ block: "end" });
+            return nv;
+          });
+          return true;
+        default:
+          return false;
+      }
+    },
+    [],
+  );
 
   return (
     <div>

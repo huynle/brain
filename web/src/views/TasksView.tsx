@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useLiveTasks } from "../hooks/useLiveTasks";
 import { filterTasks, groupByFeature, UNGROUPED } from "./tasks/grouping";
@@ -7,12 +7,19 @@ import { TaskDetail } from "./tasks/TaskDetail";
 import { EmptyState } from "../components/common/states";
 import type { Task } from "../lib/types";
 
+const ComposeModal = lazy(() =>
+  import("../components/compose/ComposeModal").then((m) => ({
+    default: m.ComposeModal,
+  })),
+);
+
 export function TasksView() {
   const activeProject = useUI((s) => s.activeProject);
   const { tasks, connected } = useLiveTasks(activeProject);
   const [query, setQuery] = useState("");
   const [showDone, setShowDone] = useState(false);
   const [selected, setSelected] = useState<Task | null>(null);
+  const [composing, setComposing] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const groups = useMemo(() => {
@@ -45,6 +52,13 @@ export function TasksView() {
           title="Toggle completed/cancelled tasks"
         >
           {showDone ? "All" : "Active"}
+        </button>
+        <button
+          className="btn sm primary"
+          onClick={() => setComposing(true)}
+          title="New task"
+        >
+          + New
         </button>
       </div>
 
@@ -119,6 +133,11 @@ export function TasksView() {
 
       {selected && (
         <TaskDetail task={selected} onClose={() => setSelected(null)} />
+      )}
+      {composing && (
+        <Suspense fallback={null}>
+          <ComposeModal kind="task" onClose={() => setComposing(false)} />
+        </Suspense>
       )}
     </div>
   );

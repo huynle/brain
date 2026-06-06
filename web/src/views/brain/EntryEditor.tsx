@@ -1,8 +1,6 @@
 import { useState } from "react";
-import CodeMirror from "@uiw/react-codemirror";
-import { markdown } from "@codemirror/lang-markdown";
-import { oneDark } from "@codemirror/theme-one-dark";
 import { Modal } from "../../components/common/Modal";
+import { MarkdownEditor } from "../../components/editor/MarkdownEditor";
 import { updateEntry } from "../../lib/api";
 import { useUI } from "../../store/ui";
 
@@ -58,26 +56,7 @@ export function EntryEditor({
         </>
       }
     >
-      <div
-        style={{
-          border: "1px solid var(--border)",
-          borderRadius: "var(--radius-sm)",
-          overflow: "hidden",
-        }}
-      >
-        <CodeMirror
-          value={content}
-          height="55vh"
-          theme={oneDark}
-          extensions={[markdown()]}
-          onChange={setContent}
-          basicSetup={{
-            lineNumbers: true,
-            highlightActiveLine: true,
-            foldGutter: false,
-          }}
-        />
-      </div>
+      <MarkdownEditor value={content} onChange={setContent} />
     </Modal>
   );
 }

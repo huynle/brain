@@ -135,6 +135,28 @@ export const getTaskLogs = (
 
 // ─── Task actions (via entries endpoint) ─────────────────────────
 
+export interface CreateEntryRequest {
+  type: string; // "task" | "note" | "automation" | …
+  title: string;
+  content?: string;
+  project?: string;
+  status?: string;
+  priority?: string;
+  feature_id?: string;
+  agent?: string;
+  tags?: string[];
+  [k: string]: unknown;
+}
+
+export interface CreateEntryResponse {
+  id?: string;
+  path: string;
+  title?: string;
+}
+
+export const createEntry = (body: CreateEntryRequest) =>
+  api<CreateEntryResponse>("/api/v1/entries", { method: "POST", body });
+
 export const updateEntry = (path: string, patch: Record<string, unknown>) =>
   api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
     method: "PATCH",

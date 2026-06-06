@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { lazy, Suspense, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { listEntries, search } from "../lib/api";
 import { Pill } from "../components/common/Badge";
@@ -7,12 +7,20 @@ import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { EntryView } from "./brain/EntryView";
 import { relativeTime } from "../lib/format";
 
+const ComposeModal = lazy(() =>
+  import("../components/compose/ComposeModal").then((m) => ({
+    default: m.ComposeModal,
+  })),
+);
+
 export function BrainView() {
   const activeProject = useUI((s) => s.activeProject);
   const project = activeProject === ALL_PROJECTS ? undefined : activeProject;
+  const qc = useQueryClient();
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
   const [openPath, setOpenPath] = useState<string | null>(null);
+  const [composing, setComposing] = useState(false);
 
   const browseQ = useQuery({
     queryKey: ["entries", project],
@@ -59,6 +67,14 @@ export function BrainView() {
             Search
           </button>
         )}
+        <button
+          className="btn sm"
+          type="button"
+          onClick={() => setComposing(true)}
+          title="New entry"
+        >
+          + New
+        </button>
       </form>
 
       <div className="section-pad">
@@ -103,6 +119,18 @@ export function BrainView() {
 
       {openPath && (
         <EntryView path={openPath} onClose={() => setOpenPath(null)} />
+      )}
+      {composing && (
+        <Suspense fallback={null}>
+          <ComposeModal
+            kind="note"
+            onClose={() => setComposing(false)}
+            onCreated={(path) => {
+              void qc.invalidateQueries({ queryKey: ["entries"] });
+              setOpenPath(path);
+            }}
+          />
+        </Suspense>
       )}
     </div>
   );

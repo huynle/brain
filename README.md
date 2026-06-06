@@ -760,6 +760,63 @@ max_runs: 0
 ---
 ```
 
+## Web UI (PWA)
+
+Brain ships an installable Progressive Web App that mirrors the TUI — tasks,
+real-time logs, automations/goals, the knowledge base, and runners — and is
+**embedded directly in the `brain` binary**. When the server runs, the app is
+served at `/` from the same origin as the API, so visiting your Brain URL (e.g.
+`https://brain.example.com`) loads the full dashboard with no separate deploy
+and no CORS.
+
+### Install on your phone
+
+1. Deploy Brain behind HTTPS with auth enabled (see below) and open your domain
+   in a mobile browser.
+2. Use the browser's **Add to Home Screen / Install app** option. The app
+   launches standalone, full-screen, with its own icon.
+
+### Sign in
+
+When `ENABLE_AUTH=true`, the app uses the OAuth 2.1 + PKCE flow built into the
+server:
+
+1. Tap **Sign in with PIN** — you're sent to the server's consent page.
+2. Enter the `OAUTH_PIN` you configured; you're redirected back, signed in.
+
+Tokens are stored in the browser and refreshed silently. You can also paste a
+long-lived API token instead ("Use an API token").
+
+```bash
+# Minimum for a phone-installable, authenticated deployment:
+ENABLE_AUTH=true
+OAUTH_PIN=your-secure-pin
+CORS_ORIGIN=https://brain.example.com   # optional; same-origin needs no CORS
+```
+
+HTTPS is required for PWA installation and is normally provided by your reverse
+proxy (Traefik labels are stubbed in `docker-compose.yml`); the server honors
+`X-Forwarded-Proto`.
+
+### Build & develop
+
+The web app lives in [`web/`](web/README.md) and compiles into
+`internal/webui/dist`.
+
+```bash
+just web-dev      # PWA dev server (HMR) at :5179, proxying the API
+just web-build    # compile the PWA into internal/webui/dist
+just build-all    # web-build + build the Go binary with the UI embedded
+```
+
+`just release` and `docker build` build the web UI automatically. A plain
+`just build` embeds whatever assets are already present (a placeholder page is
+served if the UI hasn't been built).
+
+> Two TUI features have no browser equivalent and are intentionally omitted:
+> spawning your local `$EDITOR` (replaced by an in-app editor) and tmux/full-screen
+> session reattach (logs are streamed instead).
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -770,6 +827,9 @@ max_runs: 0
 | `BRAIN_API_URL` | `http://localhost:3333` | API URL (for runner) |
 | `server.attachments.storage_root` | `<BRAIN_DIR>/attachments` | Attachment blob storage root in `config.yaml`; include with `brain.db` in backups |
 | `server.attachments.max_upload_size_bytes` | `104857600` | Maximum attachment upload size in bytes |
+| `ENABLE_AUTH` | `false` | Require auth (API token or OAuth) on `/api/v1/*` |
+| `OAUTH_PIN` | — | PIN shown on the OAuth consent page; used by the PWA "Sign in with PIN" flow |
+| `CORS_ORIGIN` | `*` | Allowed CORS origin; the embedded PWA is same-origin and needs no CORS |
 | `ENABLE_TLS` | `false` | Enable HTTPS/TLS |
 | `TLS_KEY` | — | Path to TLS private key file (PEM format) |
 | `TLS_CERT` | — | Path to TLS certificate file (PEM format) |

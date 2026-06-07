@@ -5,6 +5,7 @@ import { useLive } from "../lib/sse";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import { useLiveTasks } from "../hooks/useLiveTasks";
 import { filterTasks, groupByFeature, UNGROUPED } from "./tasks/grouping";
+import { buildTaskTree } from "./tasks/tree";
 import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
 import { EntryView } from "./brain/EntryView";
@@ -56,7 +57,7 @@ function glyph(t: Task): { ch: string; color: string } {
 
 type Row =
   | { kind: "header"; feature: string; label: string; count: number }
-  | { kind: "task"; task: Task; last: boolean };
+  | { kind: "task"; task: Task; lead: string; inCycle: boolean };
 
 export function TasksView() {
   const activeProject = useUI((s) => s.activeProject);
@@ -107,10 +108,18 @@ export function TasksView() {
       if (showHeader)
         r.push({ kind: "header", feature: g.feature, label: g.label, count: g.tasks.length });
       if (!collapsed[g.feature]) {
-        g.tasks.forEach((t, i) => {
-          r.push({ kind: "task", task: t, last: i === g.tasks.length - 1 });
-          flat.push(t);
-        });
+        if (mode === "schedules") {
+          g.tasks.forEach((t) => {
+            r.push({ kind: "task", task: t, lead: "", inCycle: false });
+            flat.push(t);
+          });
+        } else {
+          // build the dependency tree within this feature group (TUI parity)
+          for (const tr of buildTaskTree(g.tasks)) {
+            r.push({ kind: "task", task: tr.task, lead: tr.lead, inCycle: tr.inCycle });
+            flat.push(tr.task);
+          }
+        }
       }
     }
     return { rows: r, taskList: flat };
@@ -319,7 +328,7 @@ export function TasksView() {
                 onClick={() => nav.setCursor(scope, i)}
                 onDoubleClick={() => setFocus("detail")}
               >
-                <span className="connector">{row.last ? "└─ " : "├─ "}</span>
+                <span className="connector">{row.lead}</span>
                 {selCount > 0 && (
                   <span
                     className="checkbox"
@@ -330,7 +339,7 @@ export function TasksView() {
                 )}
                 <span className="glyph" style={{ color: isCur ? undefined : g.color }}>{g.ch}</span>
                 <span className={`title ${wrap ? "" : "truncate"}`}>
-                  {t.in_cycle && <span style={{ color: "var(--red)" }}>↺ </span>}
+                  {(row.inCycle || t.in_cycle) && <span style={{ color: "var(--red)" }}>↺ </span>}
                   {t.title || t.id}
                   {t.priority === "high" && <span style={{ color: "var(--red)" }}> !</span>}
                 </span>

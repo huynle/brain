@@ -28,7 +28,7 @@ export function AutomationsView() {
 
   const [subTab, setSubTab] = useState<SubTab>("automations");
   const [editing, setEditing] = useState<GoalSummary | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [, setBusy] = useState(false);
   const dreamRef = useRef<DreamHandle>(null);
 
   const goalsQ = useQuery({ queryKey: ["goals"], queryFn: listGoals });
@@ -177,13 +177,13 @@ export function AutomationsView() {
           hint="Goal automations reconcile feature progress toward an objective."
         />
       ) : (
-        <div className="section-pad">
+        <div>
           {goals.map((g, i) => (
-            <GoalCard
+            <GoalRow
               key={g.goal_id}
               goal={g}
               cursored={i === cursor}
-              busy={busy}
+              last={i === goals.length - 1}
               onConfigure={() => setEditing(g)}
               onReconcile={() => reconcile(g)}
               onToggle={() => toggleEnable(g)}
@@ -199,17 +199,23 @@ export function AutomationsView() {
   );
 }
 
-function GoalCard({
+function bar(done: number, total: number, width = 8): string {
+  if (total <= 0) return "";
+  const filled = Math.round((done / total) * width);
+  return "█".repeat(filled) + "░".repeat(Math.max(0, width - filled));
+}
+
+function GoalRow({
   goal,
   cursored,
-  busy,
+  last,
   onConfigure,
   onReconcile,
   onToggle,
 }: {
   goal: GoalSummary;
   cursored: boolean;
-  busy: boolean;
+  last: boolean;
   onConfigure: () => void;
   onReconcile: () => void;
   onToggle: () => void;
@@ -220,62 +226,46 @@ function GoalCard({
     refetchInterval: 15_000,
   });
   const p = progQ.data;
-  const pct = p && p.total > 0 ? Math.round((p.completed / p.total) * 100) : 0;
-
+  const active = goal.status === "active";
   return (
     <div
-      className={`card section-pad ${cursored ? "kbd-cursor" : ""}`}
+      className={`tree-row ${cursored ? "cursor" : ""}`}
       data-cursor={cursored ? "1" : undefined}
-      style={{ marginBottom: "0.6rem" }}
+      style={{ gap: 4 }}
+      onClick={onConfigure}
     >
-      <div className="row" style={{ gap: "0.5rem", alignItems: "flex-start" }}>
-        <Pill color="var(--purple)">goal</Pill>
-        <strong style={{ flex: 1, lineHeight: 1.3 }}>{goal.title}</strong>
-        <button
-          className="sel-check"
-          onClick={onToggle}
-          title={goal.status === "active" ? "Disable" : "Enable"}
-          style={{
-            background: goal.status === "active" ? "var(--green)" : "var(--bg-2)",
-            borderColor: goal.status === "active" ? "var(--green)" : "var(--border-strong)",
-          }}
-        >
-          {goal.status === "active" ? "✓" : ""}
-        </button>
-      </div>
-
-      <div className="row wrap" style={{ gap: "0.35rem", marginTop: "0.5rem" }}>
-        {goal.project && <Pill color="var(--cyan)">{goal.project}</Pill>}
-        {goal.feature_id && <Pill color="var(--blue)">⊞ {goal.feature_id}</Pill>}
-        {goal.config?.trigger_source && (
-          <Pill className="faint">on {goal.config.trigger_source}</Pill>
-        )}
-      </div>
-
+      <span className="connector">{last ? "└─ " : "├─ "}</span>
+      <span
+        className="glyph"
+        style={{ color: cursored ? undefined : active ? "var(--green)" : "var(--fg-faint)" }}
+        title={active ? "active — Space to disable" : "archived — Space to enable"}
+        onClick={(e) => { e.stopPropagation(); onToggle(); }}
+      >
+        {active ? "◉" : "○"}
+      </span>
+      <span className="title truncate">
+        {goal.title} <span style={{ color: "var(--purple)" }}>[goal]</span>
+      </span>
       {p && p.total > 0 && (
-        <div style={{ marginTop: "0.7rem" }}>
-          <div className="row" style={{ justifyContent: "space-between", fontSize: 12.5 }}>
-            <span className="muted">
-              {p.completed}/{p.total} complete
-              {p.blocked > 0 && <span style={{ color: "var(--red)" }}> · {p.blocked} blocked</span>}
-              {p.in_progress > 0 && <span style={{ color: "var(--blue)" }}> · {p.in_progress} active</span>}
-            </span>
-            <span className="faint">{pct}%</span>
-          </div>
-          <div style={{ height: 6, background: "var(--bg-3)", borderRadius: 4, marginTop: 4, overflow: "hidden" }}>
-            <div style={{ height: "100%", width: `${pct}%`, background: "var(--green)", transition: "width 0.3s ease" }} />
-          </div>
-        </div>
+        <span className="suffix" title={`${p.completed}/${p.total} complete`}>
+          <span style={{ color: "var(--green)" }}>{bar(p.completed, p.total)}</span>{" "}
+          <span className="faint">
+            {p.completed}/{p.total}
+            {p.blocked > 0 && <span style={{ color: "var(--red)" }}> ✗{p.blocked}</span>}
+          </span>
+        </span>
       )}
-
-      <div className="btn-row" style={{ marginTop: "0.7rem" }}>
-        <button className="btn sm primary" disabled={busy} onClick={onReconcile}>
-          ⟳ Reconcile
-        </button>
-        <button className="btn sm" onClick={onConfigure}>
-          ✎ Configure
-        </button>
-      </div>
+      {goal.config?.trigger_source && (
+        <span className="suffix faint">on:{goal.config.trigger_source}</span>
+      )}
+      <span
+        className="suffix"
+        style={{ cursor: "pointer", color: "var(--blue)" }}
+        title="Reconcile (x)"
+        onClick={(e) => { e.stopPropagation(); onReconcile(); }}
+      >
+        ⟳
+      </span>
     </div>
   );
 }

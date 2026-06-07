@@ -156,10 +156,11 @@ export function RunnersView() {
         />
       ) : (
         runners.map((r, i) => (
-          <RunnerCard
+          <RunnerRow
             key={r.runner_id}
             runner={r}
             cursored={i === cursor}
+            last={i === runners.length - 1}
             onKill={() => setConfirmKill(r)}
           />
         ))
@@ -190,13 +191,15 @@ export function RunnersView() {
   );
 }
 
-function RunnerCard({
+function RunnerRow({
   runner,
   cursored,
+  last,
   onKill,
 }: {
   runner: RunnerInfo;
   cursored?: boolean;
+  last?: boolean;
   onKill: () => void;
 }) {
   const statusColor =
@@ -207,47 +210,33 @@ function RunnerCard({
         : "var(--red)";
   return (
     <div
-      className={`card section-pad ${cursored ? "kbd-cursor" : ""}`}
+      className={`tree-row ${cursored ? "cursor" : ""}`}
       data-cursor={cursored ? "1" : undefined}
-      style={{ marginBottom: "0.6rem" }}
+      style={{ gap: 4 }}
     >
-      <div className="row">
-        <span className="conn-dot" style={{ background: statusColor }} />
-        <strong className="mono" style={{ fontSize: 13 }}>
-          {runner.runner_id}
-        </strong>
-        <div style={{ flex: 1 }} />
-        <Pill color={statusColor}>{runner.status}</Pill>
-      </div>
-      <div className="row wrap" style={{ gap: "0.35rem", marginTop: "0.5rem" }}>
-        <Pill>{runner.hostname}</Pill>
-        <Pill color="var(--blue)">
-          {runner.active_tasks ?? 0}/{runner.max_parallel} active
-        </Pill>
-        {runner.executors?.map((e) => (
-          <Pill key={e} color="var(--teal)">
-            {e}
-          </Pill>
-        ))}
-        {runner.version && <Pill className="faint">v{runner.version}</Pill>}
-      </div>
-      {runner.feature_assignments && runner.feature_assignments.length > 0 && (
-        <div className="muted" style={{ fontSize: 12.5, marginTop: "0.4rem" }}>
-          features:{" "}
-          {runner.feature_assignments.map((f) => f.feature_id).join(", ")}
-        </div>
-      )}
-      <div
-        className="row"
-        style={{ marginTop: "0.5rem", justifyContent: "space-between" }}
-      >
-        <span className="faint" style={{ fontSize: 12 }}>
-          heartbeat {relativeTime(runner.last_heartbeat)}
+      <span className="connector">{last ? "└─ " : "├─ "}</span>
+      <span className="glyph" style={{ color: cursored ? undefined : statusColor }}>
+        ●
+      </span>
+      <span className="title truncate">{runner.runner_id}</span>
+      <span className="suffix faint">{runner.hostname}</span>
+      <span className="suffix" style={{ color: "var(--blue)" }}>
+        {runner.active_tasks ?? 0}/{runner.max_parallel}
+      </span>
+      {runner.executors && runner.executors.length > 0 && (
+        <span className="suffix" style={{ color: "var(--teal)" }}>
+          {runner.executors.join(",")}
         </span>
-        <button className="btn danger sm" onClick={onKill}>
-          Shut down
-        </button>
-      </div>
+      )}
+      <span className="suffix faint">hb {relativeTime(runner.last_heartbeat)}</span>
+      <span
+        className="suffix"
+        style={{ cursor: "pointer", color: "var(--red)" }}
+        title="Shut down (s)"
+        onClick={(e) => { e.stopPropagation(); onKill(); }}
+      >
+        ⏻
+      </span>
     </div>
   );
 }

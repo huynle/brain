@@ -192,7 +192,7 @@ export function BrainView() {
         </div>
       )}
 
-      <div className="section-pad">
+      <div>
         {searching ? (
           searchQ.isLoading ? (
             <Loading label="Searching…" />
@@ -201,14 +201,14 @@ export function BrainView() {
           ) : !searchQ.data?.results.length ? (
             <EmptyState glyph="◇" title="No results" hint={`Nothing matched “${query}”.`} />
           ) : (
-            searchQ.data.results.map((r, i) => (
+            searchQ.data.results.map((r, i, arr) => (
               <EntryRow
                 key={r.id}
                 title={r.title}
                 type={r.type}
                 meta={r.snippet}
-                badge={r.match_source}
                 cursored={i === cursor}
+                last={i === arr.length - 1}
                 onClick={() => setOpenPath(r.path)}
               />
             ))
@@ -220,14 +220,14 @@ export function BrainView() {
         ) : !browseQ.data?.entries.length ? (
           <EmptyState glyph="◆" title="No entries" hint="This project's knowledge base is empty." />
         ) : (
-          browseQ.data.entries.map((e, i) => (
+          browseQ.data.entries.map((e, i, arr) => (
             <EntryRow
               key={e.id}
               title={e.title}
               type={e.type}
-              meta={e.modified ? `updated ${relativeTime(e.modified)}` : e.path}
-              tags={e.tags}
+              meta={e.modified ? relativeTime(e.modified) : e.path}
               cursored={i === cursor}
+              last={i === arr.length - 1}
               onClick={() => setOpenPath(e.path)}
             />
           ))
@@ -253,69 +253,43 @@ export function BrainView() {
   );
 }
 
+const TYPE_GLYPH: Record<string, { ch: string; color: string }> = {
+  note: { ch: "◆", color: "var(--blue)" },
+  task: { ch: "▸", color: "var(--green)" },
+  automation: { ch: "⟳", color: "var(--purple)" },
+  dream: { ch: "☾", color: "var(--cyan)" },
+  goal: { ch: "◎", color: "var(--purple)" },
+};
+
 function EntryRow({
   title,
   type,
   meta,
-  badge,
-  tags,
   cursored,
+  last,
   onClick,
 }: {
   title: string;
   type: string;
   meta?: string;
-  badge?: string;
-  tags?: string[];
   cursored?: boolean;
+  last?: boolean;
   onClick: () => void;
 }) {
+  const g = TYPE_GLYPH[type] ?? { ch: "◇", color: "var(--fg-dim)" };
   return (
-    <button
-      onClick={onClick}
+    <div
+      className={`tree-row ${cursored ? "cursor" : ""}`}
       data-cursor={cursored ? "1" : undefined}
-      className={cursored ? "kbd-cursor" : ""}
-      style={{
-        display: "block",
-        width: "100%",
-        textAlign: "left",
-        background: "var(--bg-1)",
-        border: "1px solid var(--border)",
-        borderRadius: "var(--radius-sm)",
-        padding: "0.6rem 0.7rem",
-        marginBottom: "0.4rem",
-      }}
+      onClick={onClick}
     >
-      <div className="row" style={{ gap: "0.5rem" }}>
-        <span style={{ flex: 1, fontWeight: 500 }}>{title}</span>
-        <Pill color="var(--purple)">{type}</Pill>
-        {badge && <Pill className="faint">{badge}</Pill>}
-      </div>
-      {meta && (
-        <div
-          className="muted"
-          style={{
-            fontSize: 12.5,
-            marginTop: "0.3rem",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            display: "-webkit-box",
-            WebkitLineClamp: 2,
-            WebkitBoxOrient: "vertical",
-          }}
-        >
-          {meta}
-        </div>
-      )}
-      {tags && tags.length > 0 && (
-        <div className="row wrap" style={{ gap: "0.25rem", marginTop: "0.4rem" }}>
-          {tags.slice(0, 5).map((t) => (
-            <Pill key={t} color="var(--teal)">
-              #{t}
-            </Pill>
-          ))}
-        </div>
-      )}
-    </button>
+      <span className="connector">{last ? "└─ " : "├─ "}</span>
+      <span className="glyph" style={{ color: cursored ? undefined : g.color }}>
+        {g.ch}
+      </span>
+      <span className="title truncate">{title}</span>
+      <span className="suffix faint">{type}</span>
+      {meta && <span className="suffix faint">{meta}</span>}
+    </div>
   );
 }

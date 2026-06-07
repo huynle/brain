@@ -10,22 +10,35 @@ export function Login() {
   const [busy, setBusy] = useState(false);
 
   return (
-    <div className="app">
+    <div
+      style={{
+        height: "100dvh",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 12,
+      }}
+    >
       <div
-        className="center-state"
-        style={{ flex: 1, justifyContent: "center" }}
+        className="panel focused"
+        style={{ width: "min(96vw, 380px)", padding: "1.4rem 1.2rem" }}
       >
-        <img
-          src="/icons/pwa-192x192.png"
-          width={84}
-          height={84}
-          alt="Brain"
-          style={{ borderRadius: 20 }}
-        />
-        <h1 style={{ margin: "0.3rem 0 0", color: "var(--fg)" }}>Brain</h1>
-        <p className="muted" style={{ maxWidth: 320 }}>
-          Sign in to view tasks, automations, runners, and your knowledge base.
-        </p>
+        <span className="panel-title">brain · sign in</span>
+        <div
+          className="center-state"
+          style={{ padding: "0.5rem 0", gap: "0.7rem" }}
+        >
+          <img
+            src="/icons/pwa-192x192.png"
+            width={72}
+            height={72}
+            alt="Brain"
+            style={{ borderRadius: 16 }}
+          />
+          <h1 style={{ margin: 0, color: "var(--cyan)", fontSize: 20 }}>Brain</h1>
+          <p className="muted" style={{ maxWidth: 320, fontSize: 12.5 }}>
+            Sign in to view tasks, automations, runners, and your knowledge base.
+          </p>
 
         {error && (
           <div
@@ -80,6 +93,7 @@ export function Login() {
             </button>
           </form>
         )}
+        </div>
       </div>
     </div>
   );

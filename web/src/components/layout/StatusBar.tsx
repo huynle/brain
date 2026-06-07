@@ -3,7 +3,7 @@ import { useLive } from "../../lib/sse";
 import { useNav } from "../../store/nav";
 import { ALL_PROJECTS, useUI } from "../../store/ui";
 import { useLiveTasks, deriveCounts } from "../../hooks/useLiveTasks";
-import { getHealth } from "../../lib/api";
+import { getHealth, getRunnerStatus } from "../../lib/api";
 
 function shortName(id: string): string {
   if (id === ALL_PROJECTS) return "all";
@@ -16,6 +16,23 @@ export function StatusBar() {
   const selected = useNav((s) => Object.keys(s.selected).length);
   const { tasks, stats, connected } = useLiveTasks(activeProject);
   const { active, completed } = deriveCounts(tasks);
+
+  const activeFeatures = new Set(
+    tasks
+      .filter((t) => t.status === "in_progress" || t.status === "active")
+      .map((t) => t.feature_id)
+      .filter(Boolean),
+  ).size;
+
+  const statusQ = useQuery({
+    queryKey: ["runner-status"],
+    queryFn: getRunnerStatus,
+    staleTime: 8_000,
+  });
+  const paused =
+    activeProject === ALL_PROJECTS
+      ? statusQ.data?.paused
+      : statusQ.data?.pausedProjects?.includes(activeProject) || statusQ.data?.paused;
 
   const healthQ = useQuery({ queryKey: ["health"], queryFn: getHealth, staleTime: 30_000 });
   const embedding = healthQ.data?.embedding as
@@ -38,6 +55,15 @@ export function StatusBar() {
     <div className="tui-statusbar">
       <div className="tui-statusrow">
         <span className="sb-project">{shortName(activeProject)}</span>
+        {activeFeatures > 0 ? (
+          <span style={{ color: "var(--purple)", fontWeight: 700, marginRight: 12 }}>
+            ▶{activeFeatures}
+          </span>
+        ) : paused ? (
+          <span style={{ color: "var(--fg-faint)", marginRight: 12 }} title="paused">
+            ⏸
+          </span>
+        ) : null}
         <span className="sb-stats">
           <Seg glyph="●" color="var(--green)" n={stats.ready} label="ready" />
           <Seg glyph="○" color="var(--yellow)" n={stats.waiting} label="waiting" />

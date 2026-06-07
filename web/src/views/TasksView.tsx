@@ -265,7 +265,7 @@ export function TasksView() {
     <>
       <Panel
         title={mode === "schedules" ? "Schedules" : "Tasks"}
-        meta={`${taskList.length}`}
+        meta={query ? `filter "${query}" · ${taskList.length}` : `${taskList.length}`}
         focused={focus === "tasks"}
         onFocus={() => setFocus("tasks")}
         bodyRef={treeBodyRef}
@@ -444,17 +444,51 @@ function DetailBody({
       {task.agent && <Field l="Agent" v={task.agent} />}
       {task.model && <Field l="Model" v={task.model} />}
       {task.executor && <Field l="Executor" v={task.executor} />}
+      {task.execution_mode && <Field l="Execution" v={task.execution_mode} />}
       {task.workdir && <Field l="Workdir" v={task.workdir} />}
       {task.git_branch && <Field l="Branch" v={task.git_branch} />}
+      {task.merge_policy && <Field l="Merge" v={task.merge_policy} />}
       {task.schedule && <Field l="Schedule" v={task.schedule} />}
+      {task.next_run && <Field l="Next run" v={relativeTime(task.next_run)} />}
       {task.created && <Field l="Created" v={relativeTime(task.created)} />}
       {task.tags && task.tags.length > 0 && <Field l="Tags" v={task.tags.join(", ")} />}
+
       {task.depends_on && task.depends_on.length > 0 && (
         <Field l="Depends on" v={task.depends_on.join(", ")} />
+      )}
+      {(task.waiting_on?.length ?? 0) > 0 && (
+        <Field l="Waiting on" v={task.waiting_on!.join(", ")} color="var(--yellow)" />
       )}
       {(task.blocked_by?.length ?? 0) > 0 && (
         <Field l="Blocked by" v={task.blocked_by!.join(", ")} color="var(--red)" />
       )}
+      {task.blocked_by_reason && (
+        <Field l="Reason" v={task.blocked_by_reason} color="var(--red)" />
+      )}
+
+      {task.sessions && Object.keys(task.sessions).length > 0 && (
+        <>
+          <div className="detail-section">
+            Sessions ({Object.keys(task.sessions).length})
+          </div>
+          {Object.entries(task.sessions)
+            .sort((a, b) => (b[1]?.timestamp || "").localeCompare(a[1]?.timestamp || ""))
+            .slice(0, 6)
+            .map(([sid, info]) => (
+              <div className="detail-field" key={sid}>
+                <span className="dv" style={{ color: "var(--cyan)" }}>{sid}</span>
+                <span className="dl">{relativeTime(info?.timestamp)}</span>
+              </div>
+            ))}
+        </>
+      )}
+
+      {task.in_cycle && (
+        <div style={{ color: "var(--red)", marginTop: 6 }}>
+          ↺ part of a dependency cycle
+        </div>
+      )}
+
       {desc && (
         <>
           <div className="detail-section">Description</div>

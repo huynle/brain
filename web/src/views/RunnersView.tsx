@@ -13,7 +13,6 @@ import {
   resumeAutomations,
   shutdownRunner,
 } from "../lib/api";
-import { Pill } from "../components/common/Badge";
 import { ConfirmDialog } from "../components/common/Modal";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { relativeTime } from "../lib/format";
@@ -89,62 +88,47 @@ export function RunnersView() {
     return <ErrorState error={runnersQ.error} onRetry={() => void runnersQ.refetch()} />;
 
   return (
-    <div className="section-pad">
+    <div>
       {status && (
-        <div className="card section-pad" style={{ marginBottom: "0.8rem" }}>
-          <div className="row" style={{ marginBottom: "0.6rem" }}>
-            <strong>Runner pool</strong>
-            <div className="spacer" style={{ flex: 1 }} />
-            <Pill color={status.paused ? "var(--red)" : "var(--green)"}>
-              {status.paused ? "paused" : "running"}
-            </Pill>
-            <Pill
-              color={status.automationsPaused ? "var(--red)" : "var(--green)"}
-            >
-              automations {status.automationsPaused ? "off" : "on"}
-            </Pill>
-          </div>
-          <div className="btn-row">
-            {status.paused ? (
-              <button
-                className="btn sm primary"
-                disabled={busy}
-                onClick={() => void act("Resumed", resumeAll)}
-              >
-                ▶ Resume all
-              </button>
-            ) : (
-              <button
-                className="btn sm"
-                disabled={busy}
-                onClick={() => void act("Paused", pauseAll)}
-              >
-                ⏸ Pause all
-              </button>
-            )}
-            {status.automationsPaused ? (
-              <button
-                className="btn sm"
-                disabled={busy}
-                onClick={() => void act("Automations resumed", resumeAutomations)}
-              >
-                Resume automations
-              </button>
-            ) : (
-              <button
-                className="btn sm"
-                disabled={busy}
-                onClick={() => void act("Automations paused", pauseAutomations)}
-              >
-                Pause automations
-              </button>
-            )}
-          </div>
-          {status.pausedProjects?.length > 0 && (
-            <div className="muted" style={{ marginTop: "0.5rem", fontSize: 13 }}>
-              Paused projects: {status.pausedProjects.join(", ")}
-            </div>
-          )}
+        <div
+          className="row wrap"
+          style={{
+            gap: 8,
+            padding: "2px 2px 6px",
+            marginBottom: 4,
+            borderBottom: "1px solid var(--border)",
+            fontSize: 12.5,
+          }}
+        >
+          <span style={{ color: status.paused ? "var(--red)" : "var(--green)" }}>
+            ● pool {status.paused ? "paused" : "running"}
+          </span>
+          <span style={{ color: status.automationsPaused ? "var(--red)" : "var(--green)" }}>
+            ● automations {status.automationsPaused ? "off" : "on"}
+          </span>
+          <div style={{ flex: 1 }} />
+          <button
+            className="btn sm ghost"
+            disabled={busy}
+            onClick={() =>
+              status.paused
+                ? void act("Resumed", resumeAll)
+                : void act("Paused", pauseAll)
+            }
+          >
+            {status.paused ? "▶ resume all" : "⏸ pause all"}
+          </button>
+          <button
+            className="btn sm ghost"
+            disabled={busy}
+            onClick={() =>
+              status.automationsPaused
+                ? void act("Automations resumed", resumeAutomations)
+                : void act("Automations paused", pauseAutomations)
+            }
+          >
+            {status.automationsPaused ? "resume autos" : "pause autos"}
+          </button>
         </div>
       )}
 

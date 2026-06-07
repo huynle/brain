@@ -196,16 +196,19 @@ export interface ListEntriesResponse {
   offset: number;
 }
 
+export type SearchStrategy = "semantic" | "fts" | "hybrid";
+
 export interface SearchRequest {
   query: string;
   type?: string;
   status?: string;
   feature_id?: string;
   tags?: string[];
+  include?: string[];
   limit?: number;
   global?: boolean;
   project?: string;
-  strategy?: string;
+  strategy?: SearchStrategy;
 }
 
 export interface SearchResult {

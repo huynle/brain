@@ -540,6 +540,19 @@ a {
   background: var(--bg);
   z-index: 5;
 }
+.search-bar .strategy-select {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 0.35rem 0.5rem;
+  font-size: 13px;
+}
+.search-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.85rem 0.4rem;
+  font-size: 12.5px;
+}
 
 /* ─── Sub-tabs (Automations / Dream) ─────────────────────── */
 

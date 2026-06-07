@@ -8,6 +8,13 @@ import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { EntryView } from "./brain/EntryView";
 import { relativeTime } from "../lib/format";
+import type { SearchStrategy } from "../lib/types";
+
+const STRATEGIES: { value: SearchStrategy; label: string }[] = [
+  { value: "semantic", label: "Semantic" },
+  { value: "fts", label: "Full-text" },
+  { value: "hybrid", label: "Hybrid" },
+];
 
 const ComposeModal = lazy(() =>
   import("../components/compose/ComposeModal").then((m) => ({
@@ -30,6 +37,7 @@ export function BrainView() {
   }
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
+  const [strategy, setStrategy] = useState<SearchStrategy>("semantic");
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [composing, setComposing] = useState(false);
 
@@ -40,9 +48,18 @@ export function BrainView() {
   });
 
   const searchQ = useQuery({
-    queryKey: ["search", project, query],
+    queryKey: ["search", project, query, strategy],
     queryFn: () =>
-      search({ query, project, global: !project, limit: 50 }),
+      // No `global` flag: with a project we scope to it; without one (the All
+      // tab) we search across everything. `global:true` would restrict to
+      // global/-prefixed entries only.
+      search({
+        query,
+        project,
+        strategy,
+        include: ["attachments"],
+        limit: 50,
+      }),
     enabled: query.trim() !== "",
   });
 
@@ -121,6 +138,19 @@ export function BrainView() {
             if (e.key === "Escape") e.currentTarget.blur();
           }}
         />
+        <select
+          className="strategy-select"
+          value={strategy}
+          onChange={(e) => setStrategy(e.target.value as SearchStrategy)}
+          title="Search strategy"
+          aria-label="Search strategy"
+        >
+          {STRATEGIES.map((s) => (
+            <option key={s.value} value={s.value}>
+              {s.label}
+            </option>
+          ))}
+        </select>
         {searching ? (
           <button
             className="btn sm"
@@ -143,9 +173,24 @@ export function BrainView() {
           onClick={() => setComposing(true)}
           title="New entry"
         >
-          + New
+          +
         </button>
       </form>
+
+      {searching && !searchQ.isLoading && !searchQ.error && (
+        <div className="search-meta">
+          <Pill color="var(--purple)">{strategy}</Pill>
+          <span className="faint">
+            {searchQ.data?.results.length ?? 0} result
+            {(searchQ.data?.results.length ?? 0) === 1 ? "" : "s"} for “{query}”
+          </span>
+          {strategy === "semantic" && (
+            <span className="faint" style={{ marginLeft: "auto", fontSize: 11 }}>
+              falls back to full-text if embeddings are off
+            </span>
+          )}
+        </div>
+      )}
 
       <div className="section-pad">
         {searching ? (

@@ -32,7 +32,7 @@
   --safe-bottom: env(safe-area-inset-bottom, 0px);
   --nav-h: 58px;
 
-  --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
   --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
 }
 
@@ -51,8 +51,8 @@ body {
   background: var(--bg);
   color: var(--fg);
   font-family: var(--font);
-  font-size: 15px;
-  line-height: 1.45;
+  font-size: 13px;
+  line-height: 1.4;
   -webkit-font-smoothing: antialiased;
   overscroll-behavior-y: none;
 }
@@ -791,3 +791,219 @@ kbd {
   border-top: 1px solid var(--border);
   margin: 0.8rem 0;
 }
+
+/* ════════════════════════════════════════════════════════════════
+   TUI-style terminal layout
+   ════════════════════════════════════════════════════════════════ */
+
+.tui {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  max-width: none;
+  margin: 0;
+  padding: 3px;
+  gap: 3px;
+  background: var(--bg);
+}
+
+/* ─── Status bar (bordered, cyan) ─────────────────────────── */
+.tui-statusbar {
+  border: 1px solid var(--cyan);
+  padding: 1px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  flex: 0 0 auto;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tui-statusrow {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  overflow: hidden;
+}
+.tui-statusrow .sb-project {
+  font-weight: 700;
+  color: var(--cyan);
+  margin-right: 12px;
+}
+.tui-statusrow .sb-stats {
+  display: flex;
+  gap: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tui-statusrow .sb-spacer { flex: 1; }
+.sb-seg { color: var(--fg-dim); }
+.sb-seg b { color: var(--fg); font-weight: 700; }
+
+/* ─── Content tab bar ─────────────────────────────────────── */
+.tui-tabbar {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  flex: 0 0 auto;
+  overflow-x: auto;
+  scrollbar-width: none;
+  font-size: 12.5px;
+}
+.tui-tabbar::-webkit-scrollbar { display: none; }
+.tui-tab {
+  background: none;
+  border: none;
+  padding: 2px 12px;
+  color: var(--fg-faint);
+  white-space: nowrap;
+}
+.tui-tab.on {
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+}
+.tui-tab.proj.on { background: var(--purple); }
+.tui-tabdiv {
+  color: var(--border-strong);
+  padding: 2px 6px;
+  align-self: center;
+}
+.tui-tab .cnt { opacity: 0.7; margin-left: 5px; }
+
+/* ─── Main area + panels ──────────────────────────────────── */
+.tui-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  gap: 3px;
+}
+.tui-bottom {
+  display: flex;
+  gap: 3px;
+  min-height: 0;
+  flex: 0 0 auto;
+}
+@media (max-width: 720px) {
+  .tui-bottom { flex-direction: column; }
+}
+
+.panel {
+  border: 1px solid var(--border-strong);
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  background: var(--bg);
+}
+.panel.focused {
+  border-color: var(--cyan);
+}
+.panel-title {
+  position: absolute;
+  top: -0.72em;
+  left: 10px;
+  background: var(--bg);
+  padding: 0 6px;
+  font-size: 11px;
+  color: var(--fg-dim);
+  letter-spacing: 0.03em;
+}
+.panel.focused > .panel-title {
+  color: var(--cyan);
+}
+.panel-title .ttl-meta { color: var(--fg-faint); margin-left: 6px; }
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 4px 6px;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ─── Help bar ────────────────────────────────────────────── */
+.tui-helpbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 1px 8px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  white-space: nowrap;
+  padding-bottom: max(1px, env(safe-area-inset-bottom));
+}
+.tui-helpbar .hk {
+  margin-right: 12px;
+}
+.tui-helpbar .hk b {
+  color: var(--fg);
+  font-weight: 700;
+}
+.tui-helpbar .hspacer { flex: 1; }
+.tui-helpbar .focus {
+  color: var(--cyan);
+  font-weight: 700;
+}
+
+/* ─── Tree rows ───────────────────────────────────────────── */
+.tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0;
+  padding: 0 2px;
+  white-space: pre;
+  cursor: pointer;
+  line-height: 1.55;
+}
+.tree-row.cursor {
+  background: var(--accent);
+  color: var(--bg);
+}
+.tree-row.cursor .dim,
+.tree-row.cursor .faint,
+.tree-row.cursor .muted { color: var(--bg); opacity: 0.8; }
+.tree-row .connector { color: var(--border-strong); }
+.tree-row.cursor .connector { color: var(--bg); opacity: 0.7; }
+.tree-row .glyph { width: 1.4em; display: inline-block; text-align: center; }
+.tree-row .checkbox { color: var(--accent); }
+.tree-row.cursor .checkbox { color: var(--bg); }
+.tree-row .title {
+  flex: 1;
+  min-width: 0;
+}
+.tree-row .title.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-row .suffix { margin-left: 8px; }
+.tree-header {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 1px 2px;
+  cursor: pointer;
+  color: #6699cc;
+  font-weight: 700;
+  white-space: pre;
+  line-height: 1.55;
+}
+.tree-header.cursor { background: var(--bg-3); }
+.tree-header .htri { color: var(--purple); }
+.tree-header .hcount { color: var(--fg-faint); font-weight: 400; }
+
+/* detail panel rows */
+.detail-field { display: flex; gap: 8px; padding: 0; line-height: 1.5; }
+.detail-field .dl { color: var(--fg-faint); flex: 0 0 auto; min-width: 90px; }
+.detail-field .dv { color: var(--fg); word-break: break-word; }
+.detail-section { color: var(--cyan); text-decoration: underline; margin-top: 6px; }
+
+/* log lines in panel */
+.logline { display: flex; gap: 8px; line-height: 1.45; }
+.logline .lt { color: var(--fg-faint); flex: 0 0 auto; }
+.logline .ll { flex: 0 0 auto; width: 40px; text-transform: uppercase; font-size: 10px; }
+.logline .lc { white-space: pre-wrap; word-break: break-word; }

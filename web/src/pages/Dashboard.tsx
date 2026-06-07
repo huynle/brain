@@ -13,8 +13,10 @@ import { useAuth } from "../lib/auth";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useGlobalKeyboard } from "../lib/keyboard";
-import { Header } from "../components/layout/Header";
-import { BottomNav } from "../components/layout/BottomNav";
+import { StatusBar } from "../components/layout/StatusBar";
+import { ContentTabs } from "../components/layout/ContentTabs";
+import { HelpBar } from "../components/layout/HelpBar";
+import { Panel } from "../components/layout/Panel";
 import { HelpModal } from "../components/common/HelpModal";
 import { ErrorState, Loading } from "../components/common/states";
 import { TasksView } from "../views/TasksView";
@@ -26,6 +28,7 @@ import { SettingsSheet } from "../views/SettingsSheet";
 
 export function Dashboard() {
   const view = useUI((s) => s.view);
+  const activeProject = useUI((s) => s.activeProject);
   const settingsOpen = useUI((s) => s.settingsOpen);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
   const token = useAuth((s) => s.token);
@@ -40,7 +43,6 @@ export function Dashboard() {
     refetchInterval: 12_000,
   });
 
-  // Open/refresh SSE streams whenever the project set or token changes.
   useEffect(() => {
     if (!projects) return;
     streams.sync(projects);
@@ -51,7 +53,6 @@ export function Dashboard() {
     if (token) streams.restartAll();
   }, [token]);
 
-  const activeProject = useUI((s) => s.activeProject);
   async function runPause(label: string, fn: () => Promise<unknown>) {
     try {
       await fn();
@@ -91,19 +92,33 @@ export function Dashboard() {
   if (error) return <ErrorState error={error} onRetry={() => void refetch()} />;
 
   return (
-    <div className="app">
-      <Header
-        projects={projects ?? []}
-        onOpenSettings={() => setSettingsOpen(true)}
-      />
-      <main className="app-main">
+    <div className="tui">
+      <StatusBar />
+      <ContentTabs projects={projects ?? []} />
+      <div className="tui-main">
         {view === "tasks" && <TasksView />}
-        {view === "brain" && <BrainView />}
-        {view === "automations" && <AutomationsView />}
-        {view === "runners" && <RunnersView />}
-        {view === "logs" && <LogsView />}
-      </main>
-      <BottomNav />
+        {view === "brain" && (
+          <Panel title="Brain" focused style={{ flex: 1 }}>
+            <BrainView />
+          </Panel>
+        )}
+        {view === "automations" && (
+          <Panel title="Automations" focused style={{ flex: 1 }}>
+            <AutomationsView />
+          </Panel>
+        )}
+        {view === "runners" && (
+          <Panel title="Runners" focused style={{ flex: 1 }}>
+            <RunnersView />
+          </Panel>
+        )}
+        {view === "logs" && (
+          <Panel title="Logs" focused style={{ flex: 1 }}>
+            <LogsView />
+          </Panel>
+        )}
+      </div>
+      <HelpBar />
       {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
     </div>

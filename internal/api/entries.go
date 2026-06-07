@@ -468,6 +468,16 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture old status before update so we can emit task.status_changed.
+	// The runner marks task completion through this endpoint, so this is the
+	// emission path that drives goal/automation reconcile loops.
+	var oldStatus string
+	if _, ok := fields["status"]; ok && h.events != nil {
+		if oldEntry, err := h.brain.Recall(r.Context(), id); err == nil {
+			oldStatus = oldEntry.Status
+		}
+	}
+
 	entry, err := h.brain.UpdateMetadata(r.Context(), id, fields)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -493,6 +503,21 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		"action":     "metadata_update",
 	}
 	h.emitEvent(r.Context(), evt)
+
+	// Emit task.status_changed when a task's status actually changed. This
+	// mirrors HandleUpdateEntry so that runner-driven status updates (which go
+	// through this metadata endpoint) trigger goal/automation reconcile loops.
+	if entry.Type == "task" && entry.Status != "" && oldStatus != "" && oldStatus != entry.Status {
+		statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+		statusEvt.ProjectID = projectID
+		statusEvt.TaskID = entry.ID
+		statusEvt.TaskPath = entry.Path
+		statusEvt.TaskTitle = entry.Title
+		statusEvt.FeatureID = entry.FeatureID
+		statusEvt.FromStatus = oldStatus
+		statusEvt.ToStatus = entry.Status
+		h.emitEvent(r.Context(), statusEvt)
+	}
 
 	if h.events != nil && entry.Type == "task" && entry.FeatureID != "" {
 		if _, ok := fields["status"]; ok {

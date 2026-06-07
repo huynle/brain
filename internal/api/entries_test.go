@@ -2615,6 +2615,141 @@ func TestHandleUpdateMetadata_ChecksFeatureCompletionOnTaskStatusChange(t *testi
 	}
 }
 
+func TestHandleUpdateMetadata_EmitsTaskStatusChanged(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		// Recall returns the OLD status so the handler can detect the change.
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "in_progress",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+		updateMetadataFunc: func(_ context.Context, _ string, fields map[string]interface{}) (*types.BrainEntry, error) {
+			if fields["status"] != "completed" {
+				t.Fatalf("status field = %v, want completed", fields["status"])
+			}
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "completed",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"status": "completed",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/projects/myproj/task/abc12def.md/metadata", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/.../metadata failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	// Find the task.status_changed event among the ingested events.
+	var statusEvt *types.Event
+	for i := range es.ingested {
+		if es.ingested[i].Type == types.EventTaskStatusChanged {
+			statusEvt = &es.ingested[i]
+			break
+		}
+	}
+	if statusEvt == nil {
+		t.Fatalf("no %q event ingested; got %d events: %+v",
+			types.EventTaskStatusChanged, len(es.ingested), es.ingested)
+	}
+	if statusEvt.Source != types.EventSourceAPI {
+		t.Errorf("status event source = %q, want %q", statusEvt.Source, types.EventSourceAPI)
+	}
+	if statusEvt.ProjectID != "myproj" {
+		t.Errorf("status event project_id = %q, want %q", statusEvt.ProjectID, "myproj")
+	}
+	if statusEvt.TaskID != "abc12def" {
+		t.Errorf("status event task_id = %q, want %q", statusEvt.TaskID, "abc12def")
+	}
+	if statusEvt.FeatureID != "feat-1" {
+		t.Errorf("status event feature_id = %q, want %q", statusEvt.FeatureID, "feat-1")
+	}
+	if statusEvt.FromStatus != "in_progress" {
+		t.Errorf("status event from_status = %q, want %q", statusEvt.FromStatus, "in_progress")
+	}
+	if statusEvt.ToStatus != "completed" {
+		t.Errorf("status event to_status = %q, want %q", statusEvt.ToStatus, "completed")
+	}
+}
+
+func TestHandleUpdateMetadata_NoStatusChange_NoTaskStatusChangedEvent(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "completed",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+		updateMetadataFunc: func(_ context.Context, _ string, _ map[string]interface{}) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "completed",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	// Update a non-status field; status stays "completed".
+	body := jsonBody(t, map[string]any{
+		"status": "completed",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/projects/myproj/task/abc12def.md/metadata", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/.../metadata failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	for _, evt := range es.ingested {
+		if evt.Type == types.EventTaskStatusChanged {
+			t.Fatalf("unexpected %q event when status did not change", types.EventTaskStatusChanged)
+		}
+	}
+}
+
 func TestHandleUpdateEntry_NoStatusChange_EmitsSingleEvent(t *testing.T) {
 	es := &mockEventService{}
 	mock := &mockBrainService{

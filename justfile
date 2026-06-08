@@ -23,13 +23,12 @@ cmds := "brain"
 web_dir := "web"
 web_dist := "internal/webui/dist"
 
-# Install web dependencies (idempotent). Reinstalls when node_modules is missing
-# OR incomplete (e.g. an interrupted install) — detected via the vite binary.
+# Install web dependencies. Runs `npm install` unconditionally — it's idempotent
+# and fast (~1s) when already in sync, and ensures dependency changes (and
+# interrupted/partial installs) are always applied before a build.
 web-install:
-    @if [ ! -x {{ web_dir }}/node_modules/.bin/vite ]; then \
-        echo "Installing web dependencies..."; \
-        cd {{ web_dir }} && npm install --no-audit --no-fund; \
-    fi
+    @echo "Syncing web dependencies..."
+    @cd {{ web_dir }} && npm install --no-audit --no-fund
 
 # Build the PWA into internal/webui/dist (embedded by go:embed). Clears stale
 # assets first while preserving the committed .gitkeep/.gitignore placeholders.

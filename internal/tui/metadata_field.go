@@ -50,6 +50,8 @@ const (
 	FieldGoalValidation    MetadataField = "goal_validation"
 	FieldGoalWorkdir       MetadataField = "goal_workdir"
 	FieldGoalObjective     MetadataField = "goal_objective"
+	FieldGoalProject       MetadataField = "goal_project"
+	FieldGoalFeature       MetadataField = "goal_feature"
 )
 
 // ============================================================================
@@ -264,6 +266,16 @@ var fieldMetadata = map[MetadataField]FieldMeta{
 	FieldGoalObjective: {
 		Label: "Objective",
 		Hint:  "The goal objective / title",
+		Type:  FieldTypeText,
+	},
+	FieldGoalProject: {
+		Label: "Project",
+		Hint:  "Project the goal belongs to (required)",
+		Type:  FieldTypeText,
+	},
+	FieldGoalFeature: {
+		Label: "Feature",
+		Hint:  "Optional feature id the goal scopes to",
 		Type:  FieldTypeText,
 	},
 }

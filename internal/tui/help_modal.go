@@ -135,6 +135,8 @@ func (m *HelpModal) View() string {
 	// Automations tab — goal row actions
 	b.WriteString(categoryStyle.Render("Automations (Goal Rows):"))
 	b.WriteString("\n")
+	b.WriteString(formatShortcut("n", "New goal"))
+	b.WriteString("\n")
 	b.WriteString(formatShortcut("e", "Open goal config modal"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("x", "Run goal reconcile"))
@@ -189,10 +191,10 @@ func (m *HelpModal) Width() int {
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
 	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (5-6),
-	// Automations/Goal Rows (4), Other (2)
+	// Automations/Goal Rows (5), Other (2)
 	// Plus category headers (6 or 7) and footer (2)
 	viewLines := 6
-	automationLines := 4
+	automationLines := 5
 	// content lines + category headers (6) + footer (2)
 	baseLines := 5 + 10 + 3 + viewLines + automationLines + 2 + 6 + 2
 

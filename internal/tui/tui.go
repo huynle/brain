@@ -916,10 +916,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case goalConfigSavedMsg:
 		if msg.err != nil {
-			m.setStatusMessage("error", fmt.Sprintf("Failed to save goal: %v", msg.err))
+			verb := "save"
+			if msg.created {
+				verb = "create"
+			}
+			m.setStatusMessage("error", fmt.Sprintf("Failed to %s goal: %v", verb, msg.err))
 			return m, nil
 		}
-		m.setStatusMessage("success", "Goal updated")
+		if msg.created {
+			m.setStatusMessage("success", "Goal created")
+		} else {
+			m.setStatusMessage("success", "Goal updated")
+		}
 		m.modalManager.Close()
 		return m, m.refreshActiveAutomationSubTab()
 
@@ -1562,6 +1570,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						return m, m.syncAutomationEntryDetail()
 					}
 					return m, nil
+				case "n":
+					// Create a brand-new goal automation.
+					modal := NewGoalCreateModal(m.activeAutomationProject(), runner.NewAPIClient(m.apiRunnerConfig()))
+					return m, m.modalManager.Open(modal)
 				case "e":
 					// Goal rows open the GoalConfigModal; non-goal rows open $EDITOR.
 					if row := m.automationList.SelectedRow(); row != nil && row.IsGoal {

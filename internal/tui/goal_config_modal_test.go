@@ -491,3 +491,85 @@ func equalStringSets(a, b []string) bool {
 	}
 	return true
 }
+
+// --- Create-mode (New Goal) ---
+
+func TestGoalCreateModal_Seeding(t *testing.T) {
+	m := NewGoalCreateModal("demo", throwawayClient())
+	if !m.createMode {
+		t.Fatal("expected createMode=true")
+	}
+	if m.Title() != "New Goal" {
+		t.Errorf("title = %q, want New Goal", m.Title())
+	}
+	if got := m.values[FieldGoalProject]; got != "demo" {
+		t.Errorf("project seed = %q, want demo", got)
+	}
+	if m.Init() != nil {
+		t.Error("Init should be nil in create mode (no audit load)")
+	}
+	// Project + Feature fields present in the field list.
+	var hasProject, hasFeature bool
+	for _, f := range m.fields {
+		if f == FieldGoalProject {
+			hasProject = true
+		}
+		if f == FieldGoalFeature {
+			hasFeature = true
+		}
+	}
+	if !hasProject || !hasFeature {
+		t.Errorf("expected Project and Feature fields; project=%v feature=%v", hasProject, hasFeature)
+	}
+}
+
+func TestGoalCreateModal_BuildCreateRequest(t *testing.T) {
+	m := NewGoalCreateModal("demo", throwawayClient())
+	m.values[FieldGoalObjective] = "Reach 90% Coverage!"
+	m.values[FieldGoalCriteria] = "all packages > 90%"
+	m.values[FieldGoalFeature] = "tests"
+	m.values[FieldAgent] = "tdd-dev"
+
+	req := m.buildCreateRequest()
+	if req.Project != "demo" {
+		t.Errorf("project = %q", req.Project)
+	}
+	if req.Title != "Reach 90% Coverage!" {
+		t.Errorf("title = %q", req.Title)
+	}
+	if req.FeatureID != "tests" {
+		t.Errorf("feature = %q", req.FeatureID)
+	}
+	if req.Action.Type != "prompt" {
+		t.Errorf("action type = %q, want prompt", req.Action.Type)
+	}
+	if req.Action.Agent != "tdd-dev" {
+		t.Errorf("agent = %q", req.Action.Agent)
+	}
+	if req.Config.ID == "" {
+		t.Error("config.id must be generated (non-empty)")
+	}
+	if !strings.HasPrefix(req.Config.ID, "reach-90-coverage") {
+		t.Errorf("config.id = %q, want slug prefix reach-90-coverage", req.Config.ID)
+	}
+	if req.Config.Criteria != "all packages > 90%" {
+		t.Errorf("criteria = %q", req.Config.Criteria)
+	}
+	// Content falls back to criteria.
+	if req.Content != "all packages > 90%" {
+		t.Errorf("content = %q, want criteria fallback", req.Content)
+	}
+}
+
+func TestGenerateGoalID(t *testing.T) {
+	id := generateGoalID("Ship the PWA!!!")
+	if !strings.HasPrefix(id, "ship-the-pwa-") {
+		t.Errorf("id = %q, want ship-the-pwa- prefix", id)
+	}
+	if generateGoalID("") == "" {
+		t.Error("empty objective should still yield a non-empty id")
+	}
+	if strings.HasPrefix(generateGoalID(""), "-") {
+		t.Error("id should not start with a dash")
+	}
+}

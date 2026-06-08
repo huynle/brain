@@ -12,3 +12,10 @@ dist/
 .worktrees/
 
 .worktrees
+
+# Embedded PWA build output: the dist/ rule above ignores the whole directory,
+# but go:embed needs the dir to exist with at least one file on a fresh clone.
+# Keep the .gitkeep placeholder tracked while ignoring the built assets.
+!internal/webui/dist/
+internal/webui/dist/*
+!internal/webui/dist/.gitkeep

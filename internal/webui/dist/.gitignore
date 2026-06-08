@@ -1,0 +1,4 @@
+# Built SPA assets — produced by `just web-build`. Keep .gitkeep so go:embed works.
+*
+!.gitkeep
+!.gitignore

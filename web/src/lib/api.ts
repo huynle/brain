@@ -234,6 +234,12 @@ export const embedBackfill = (body: {
 export const listGoals = () =>
   api<GoalListResponse>("/api/v1/goals").then((r) => r.goals || []);
 
+export const createGoal = (body: import("./types").CreateGoalRequest) =>
+  api<import("./types").GoalSummary>("/api/v1/goals", {
+    method: "POST",
+    body,
+  });
+
 export const goalProgress = (goalId: string) =>
   api<GoalProgressResponse>(
     `/api/v1/goals/${encodeURIComponent(goalId)}/progress`,

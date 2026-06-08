@@ -29,12 +29,12 @@ const HINTS: Record<string, Hint[]> = {
   ],
   automations: [
     ["j/k", "Nav"],
+    ["n", "New"],
     ["Spc", "Toggle"],
     ["x", "Run"],
     ["e", "Config"],
     ["p", "Pause"],
     ["C", "Dream"],
-    ["H/L", "Tabs"],
     ["?", "Help"],
   ],
   runners: [

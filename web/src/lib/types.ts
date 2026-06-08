@@ -324,6 +324,15 @@ export interface UpdateGoalRequest {
   action?: AutomationAction;
 }
 
+export interface CreateGoalRequest {
+  project: string;
+  feature_id?: string;
+  title: string;
+  content?: string;
+  config: GoalConfig; // requires a non-empty `id`
+  action: AutomationAction; // requires a non-empty `type`
+}
+
 // ─── SSE payloads ────────────────────────────────────────────────
 
 export interface SSEBase {

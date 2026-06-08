@@ -63,6 +63,7 @@ const GROUPS: Group[] = [
   {
     title: "Automations",
     rows: [
+      { keys: ["n"], desc: "New goal" },
       { keys: ["Space"], desc: "Enable / disable" },
       { keys: ["x"], desc: "Run / reconcile" },
       { keys: ["e"], desc: "Configure goal" },

@@ -15,6 +15,7 @@ import {
 import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { GoalConfigModal } from "./automations/GoalConfigModal";
+import { NewGoalModal } from "./automations/NewGoalModal";
 import { DreamPane, type DreamHandle } from "./automations/DreamPane";
 import type { GoalSummary } from "../lib/types";
 
@@ -28,6 +29,7 @@ export function AutomationsView() {
 
   const [subTab, setSubTab] = useState<SubTab>("automations");
   const [editing, setEditing] = useState<GoalSummary | null>(null);
+  const [creating, setCreating] = useState(false);
   const [, setBusy] = useState(false);
   const dreamRef = useRef<DreamHandle>(null);
 
@@ -132,6 +134,9 @@ export function AutomationsView() {
         case "r":
           void goalsQ.refetch();
           return true;
+        case "n":
+          setCreating(true);
+          return true;
         default:
           return false;
       }
@@ -162,6 +167,16 @@ export function AutomationsView() {
         {subTab === "automations" && automationsPaused && (
           <Pill color="var(--red)">paused</Pill>
         )}
+        <div style={{ flex: 1 }} />
+        {subTab === "automations" && (
+          <button
+            className="btn sm primary"
+            onClick={() => setCreating(true)}
+            title="New goal (n)"
+          >
+            + New goal
+          </button>
+        )}
       </div>
 
       {subTab === "dream" ? (
@@ -174,7 +189,7 @@ export function AutomationsView() {
         <EmptyState
           glyph="⟳"
           title="No goals"
-          hint="Goal automations reconcile feature progress toward an objective."
+          hint="Goal automations reconcile feature progress toward an objective. Press n to create one."
         />
       ) : (
         <div>
@@ -194,6 +209,12 @@ export function AutomationsView() {
 
       {editing && (
         <GoalConfigModal goal={editing} onClose={() => setEditing(null)} />
+      )}
+      {creating && (
+        <NewGoalModal
+          onClose={() => setCreating(false)}
+          onCreated={() => void qc.invalidateQueries({ queryKey: ["goals"] })}
+        />
       )}
     </div>
   );

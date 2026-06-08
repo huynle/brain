@@ -23,9 +23,10 @@ cmds := "brain"
 web_dir := "web"
 web_dist := "internal/webui/dist"
 
-# Install web dependencies (idempotent)
+# Install web dependencies (idempotent). Reinstalls when node_modules is missing
+# OR incomplete (e.g. an interrupted install) — detected via the vite binary.
 web-install:
-    @if [ ! -d {{ web_dir }}/node_modules ]; then \
+    @if [ ! -x {{ web_dir }}/node_modules/.bin/vite ]; then \
         echo "Installing web dependencies..."; \
         cd {{ web_dir }} && npm install --no-audit --no-fund; \
     fi

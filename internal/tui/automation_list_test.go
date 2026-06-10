@@ -61,6 +61,29 @@ func TestAutomationList_View_ShowsAutomationScope(t *testing.T) {
 	}
 }
 
+func TestAutomationList_SetEntryRowsPrefersRealRunRecords(t *testing.T) {
+	al := NewAutomationList()
+	al.SetEntryRows(
+		[]types.BrainEntry{{ID: "auto1", Path: "projects/brain-api/automation/auto1.md", Title: "Real audit", Type: "automation", Status: "active"}},
+		nil,
+		[]types.BrainEntry{
+			{ID: "fallback-task", Type: "task", Status: "completed", GeneratedBy: "automation:auto1"},
+			{ID: "run1", Type: "automation_run", Status: "failed", Modified: "2026-06-10T12:00:00Z", Content: "automation_id: auto1\nerror: dispatch failed\n### Generated Tasks\n- task1 [blocked] Review\n"},
+		},
+	)
+
+	row := al.SelectedRow()
+	if row == nil {
+		t.Fatal("expected selected row")
+	}
+	if !strings.Contains(row.RunSummary, "failed") {
+		t.Fatalf("RunSummary = %q, want real failed run status", row.RunSummary)
+	}
+	if row.RunTaskID != "run1" {
+		t.Fatalf("RunTaskID = %q, want run1", row.RunTaskID)
+	}
+}
+
 func TestAutomationList_AutomationRowFromEntry_RendersTriggerDetails(t *testing.T) {
 	tests := []struct {
 		name    string

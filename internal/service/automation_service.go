@@ -96,6 +96,16 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 			continue
 		}
 		if s.isAutomationPaused(automation, types.Event{}) {
+			_, err := s.createRunAudit(ctx, automationRunAudit{
+				automation: automation,
+				evt:        types.Event{ProjectID: automation.ProjectID},
+				project:    automation.ProjectID,
+				status:     "skipped",
+				skipReason: "paused",
+			})
+			if err != nil {
+				return err
+			}
 			continue
 		}
 		if automation.Trigger.Schedule == "" {
@@ -139,6 +149,20 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 			continue
 		}
 		if s.isAutomationPaused(automation, evt) {
+			project := automation.ProjectID
+			if project == "" {
+				project = evt.ProjectID
+			}
+			_, err := s.createRunAudit(ctx, automationRunAudit{
+				automation: automation,
+				evt:        evt,
+				project:    project,
+				status:     "skipped",
+				skipReason: "paused",
+			})
+			if err != nil {
+				return err
+			}
 			continue
 		}
 
@@ -235,9 +259,19 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	if project == "" {
 		project = evt.ProjectID
 	}
-	if skip, err := s.shouldSkipTaskGeneration(ctx, project, automation); err != nil {
+	if skip, reason, err := s.shouldSkipTaskGeneration(ctx, project, automation); err != nil {
 		return err
 	} else if skip {
+		_, err := s.createRunAudit(ctx, automationRunAudit{
+			automation: automation,
+			evt:        evt,
+			project:    project,
+			status:     "skipped",
+			skipReason: reason,
+		})
+		if err != nil {
+			return err
+		}
 		return nil
 	}
 
@@ -252,6 +286,17 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 			return err
 		}
 		if exists {
+			_, err := s.createRunAudit(ctx, automationRunAudit{
+				automation:   automation,
+				evt:          evt,
+				project:      project,
+				status:       "skipped",
+				generatedKey: generatedKey,
+				skipReason:   "dedup",
+			})
+			if err != nil {
+				return err
+			}
 			return nil
 		}
 	}
@@ -279,32 +324,165 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		req.DirectPrompt = automation.Action.Command
 	}
 
-	_, err := s.brain.Save(ctx, req)
+	taskResp, err := s.brain.Save(ctx, req)
 	if err != nil {
 		return fmt.Errorf("create automation task: %w", err)
+	}
+	runID, err := s.createRunAudit(ctx, automationRunAudit{
+		automation:   automation,
+		evt:          evt,
+		project:      project,
+		status:       "queued",
+		generatedKey: generatedKey,
+		taskIDs:      []string{taskResp.ID},
+	})
+	if err != nil {
+		return err
+	}
+	if runID != "" {
+		_, err = s.brain.Update(ctx, taskResp.ID, types.UpdateEntryRequest{AutomationRunID: &runID})
+		if err != nil {
+			return fmt.Errorf("link automation task to run audit: %w", err)
+		}
 	}
 	return nil
 }
 
-func (s *AutomationService) shouldSkipTaskGeneration(ctx context.Context, project string, automation types.BrainEntry) (bool, error) {
+type automationRunAudit struct {
+	automation   types.BrainEntry
+	evt          types.Event
+	project      string
+	status       string
+	generatedKey string
+	taskIDs      []string
+	errorText    string
+	skipReason   string
+}
+
+func (s *AutomationService) createRunAudit(ctx context.Context, audit automationRunAudit) (string, error) {
+	if s == nil || s.brain == nil {
+		return "", nil
+	}
+	started := types.TimeNowUTC().UTC()
+	triggerType := "manual"
+	triggerEvent := audit.evt.Type
+	if audit.automation.Trigger != nil {
+		triggerType = audit.automation.Trigger.Type
+		if triggerEvent == "" {
+			switch audit.automation.Trigger.Type {
+			case "event":
+				triggerEvent = audit.automation.Trigger.Event
+			case "cron":
+				triggerEvent = audit.automation.Trigger.Schedule
+			case "webhook":
+				triggerEvent = audit.automation.Trigger.Webhook
+			case "session":
+				triggerEvent = audit.automation.Trigger.Event
+				if triggerEvent == "" {
+					triggerEvent = types.EventRunnerSessionDiscovered
+				}
+			}
+		}
+	}
+
+	var content strings.Builder
+	content.WriteString("## Automation Run Audit\n\n")
+	content.WriteString(fmt.Sprintf("automation_id: %s\n", audit.automation.ID))
+	content.WriteString(fmt.Sprintf("automation_path: %s\n", audit.automation.Path))
+	content.WriteString(fmt.Sprintf("project: %s\n", audit.project))
+	content.WriteString(fmt.Sprintf("trigger_type: %s\n", triggerType))
+	if triggerEvent != "" {
+		content.WriteString(fmt.Sprintf("trigger_event: %s\n", triggerEvent))
+	}
+	if audit.evt.ID != "" {
+		content.WriteString(fmt.Sprintf("source_event_id: %s\n", audit.evt.ID))
+	}
+	if audit.generatedKey != "" {
+		content.WriteString(fmt.Sprintf("dedup_key: %s\n", audit.generatedKey))
+	}
+	content.WriteString(fmt.Sprintf("started_at: %s\n", started.Format(time.RFC3339)))
+	content.WriteString(fmt.Sprintf("completed_at: %s\n", started.Format(time.RFC3339)))
+	content.WriteString("duration_ms: 0\n")
+	if audit.skipReason != "" {
+		content.WriteString(fmt.Sprintf("skip_reason: %s\n", audit.skipReason))
+	}
+	if audit.errorText != "" {
+		content.WriteString(fmt.Sprintf("error: %s\n", audit.errorText))
+	}
+	content.WriteString("\n### Trigger Payload Summary\n")
+	content.WriteString(summarizeAutomationEvent(audit.evt))
+	content.WriteString("\n### Generated Tasks\n")
+	if len(audit.taskIDs) == 0 {
+		content.WriteString("- none\n")
+	} else {
+		for _, id := range audit.taskIDs {
+			content.WriteString(fmt.Sprintf("- %s\n", id))
+		}
+	}
+
+	resp, err := s.brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation_run",
+		Title:   fmt.Sprintf("Automation Run: %s", audit.automation.ID),
+		Content: content.String(),
+		Status:  audit.status,
+		Project: audit.project,
+	})
+	if err != nil {
+		return "", fmt.Errorf("create automation run audit: %w", err)
+	}
+	return resp.ID, nil
+}
+
+func summarizeAutomationEvent(evt types.Event) string {
+	lines := make([]string, 0, 8)
+	if evt.Type != "" {
+		lines = append(lines, fmt.Sprintf("- type: %s", evt.Type))
+	}
+	if evt.ProjectID != "" {
+		lines = append(lines, fmt.Sprintf("- project_id: %s", evt.ProjectID))
+	}
+	if evt.TaskID != "" {
+		lines = append(lines, fmt.Sprintf("- task_id: %s", evt.TaskID))
+	}
+	if evt.FeatureID != "" {
+		lines = append(lines, fmt.Sprintf("- feature_id: %s", evt.FeatureID))
+	}
+	if evt.FromStatus != "" {
+		lines = append(lines, fmt.Sprintf("- from_status: %s", evt.FromStatus))
+	}
+	if evt.ToStatus != "" {
+		lines = append(lines, fmt.Sprintf("- to_status: %s", evt.ToStatus))
+	}
+	for _, key := range []string{"session_id", "webhook_path", "runner_id"} {
+		if value := getEventField(evt, key); value != "" {
+			lines = append(lines, fmt.Sprintf("- %s: %s", key, value))
+		}
+	}
+	if len(lines) == 0 {
+		return "- none\n"
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func (s *AutomationService) shouldSkipTaskGeneration(ctx context.Context, project string, automation types.BrainEntry) (bool, string, error) {
 	if automation.Trigger == nil || (automation.Trigger.MaxConcurrent <= 0 && automation.Trigger.Cooldown == "") {
-		return false, nil
+		return false, "", nil
 	}
 
 	tasks, err := s.listAutomationGeneratedTasks(ctx, project, automation.ID)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 
 	if automation.Trigger.MaxConcurrent > 0 && countRunnableGeneratedTasks(tasks) >= automation.Trigger.MaxConcurrent {
-		return true, nil
+		return true, "max_concurrent", nil
 	}
 
 	if automation.Trigger.Cooldown != "" && cooldownActive(tasks, automation.Trigger.Cooldown, types.TimeNowUTC()) {
-		return true, nil
+		return true, "cooldown", nil
 	}
 
-	return false, nil
+	return false, "", nil
 }
 
 func (s *AutomationService) listAutomationGeneratedTasks(ctx context.Context, project, automationID string) ([]types.BrainEntry, error) {

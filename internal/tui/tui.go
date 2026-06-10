@@ -3643,15 +3643,44 @@ func (m *Model) automationDetailContent(path, content string) string {
 	var b strings.Builder
 	b.WriteString(content)
 
-	// Runs section: generated tasks linked to this automation entry.
+	// Runs section: first-class automation_run entries when available, with
+	// generated-task inference retained as compatibility fallback.
 	generatedBy := "automation:" + row.ID
+	realRuns := make([]types.BrainEntry, 0)
 	runs := make([]types.BrainEntry, 0)
 	for _, task := range m.automationGeneratedTasks {
-		if task.GeneratedBy == generatedBy {
+		if task.Type == "automation_run" && automationRunContentField(task.Content, "automation_id") == row.ID {
+			realRuns = append(realRuns, task)
+		} else if task.GeneratedBy == generatedBy {
 			runs = append(runs, task)
 		}
 	}
-	if len(runs) == 0 {
+	if len(realRuns) > 0 {
+		sort.SliceStable(realRuns, func(i, j int) bool {
+			return realRuns[i].Modified > realRuns[j].Modified
+		})
+		b.WriteString("\n\n## Runs\n")
+		for _, run := range realRuns {
+			status := run.Status
+			if status == "" {
+				status = "unknown"
+			}
+			b.WriteString(fmt.Sprintf("- %s [%s] %s", run.ID, status, run.Title))
+			if run.Modified != "" {
+				b.WriteString(" modified=" + run.Modified)
+			}
+			if errText := automationRunContentField(run.Content, "error"); errText != "" {
+				b.WriteString(" error=" + errText)
+			}
+			if skipReason := automationRunContentField(run.Content, "skip_reason"); skipReason != "" {
+				b.WriteString(" skip=" + skipReason)
+			}
+			b.WriteString("\n")
+			for _, taskLine := range automationRunTaskLines(run.Content) {
+				b.WriteString("  - " + taskLine + "\n")
+			}
+		}
+	} else if len(runs) == 0 {
 		b.WriteString("\n\n## Runs\nNo generated runs.")
 	} else {
 		sort.SliceStable(runs, func(i, j int) bool {
@@ -3681,6 +3710,27 @@ func (m *Model) automationDetailContent(path, content string) string {
 	}
 
 	return b.String()
+}
+
+func automationRunTaskLines(content string) []string {
+	lines := strings.Split(content, "\n")
+	result := make([]string, 0)
+	inTasks := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "## ") {
+			inTasks = strings.EqualFold(strings.TrimSpace(strings.TrimLeft(trimmed, "#")), "Generated Tasks")
+			continue
+		}
+		if !inTasks || !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		item := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		if item != "" && item != "none" {
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 // goalReconcileDetailSection renders the "Last Reconcile" + "Audit" detail
@@ -5303,6 +5353,13 @@ func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 			} else if task.FeatureID != "" && goalFeatureIDs[task.FeatureID] {
 				generatedTasks = append(generatedTasks, task)
 			}
+		}
+		runParams := map[string]string{"type": "automation_run"}
+		if project != "" {
+			runParams["project"] = project
+		}
+		if automationRuns, err := apiClient.ListEntries(ctx, runParams); err == nil {
+			generatedTasks = append(generatedTasks, automationRuns.Entries...)
 		}
 
 		return AutomationDataMsg{Automations: automations.Entries, ScheduledTasks: scheduledTasks, GeneratedTasks: generatedTasks}

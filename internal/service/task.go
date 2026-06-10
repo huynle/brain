@@ -1350,6 +1350,9 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "generated_by"); ok {
 		entry.GeneratedBy = v
 	}
+	if v, ok := metaString(meta, "automation_run_id"); ok {
+		entry.AutomationRunID = v
+	}
 
 	// Automation fields (nested maps from metadata JSON)
 	if v, ok := meta["trigger"]; ok {

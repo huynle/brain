@@ -795,6 +795,33 @@ func TestAutomationDetailShowsGeneratedRuns(t *testing.T) {
 	}
 }
 
+func TestAutomationDetailPrefersRealRunRecords(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.detailVisible = true
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: true}})
+	m.taskDetail.SetEntryLoading(types.BrainEntry{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation"}, "Automation Detail")
+	m.automationGeneratedTasks = []types.BrainEntry{
+		{ID: "old-task", Path: "projects/brain-api/task/old-task.md", Title: "Automation: auto", Type: "task", Status: "completed", GeneratedBy: "automation:auto"},
+		{ID: "run1", Path: "projects/brain-api/automation_run/run1.md", Title: "Automation Run: auto", Type: "automation_run", Status: "failed", Modified: "2026-06-10T12:00:00Z", Content: "automation_id: auto\nerror: dispatch failed\n### Generated Tasks\n- task1 [blocked] Review\n"},
+	}
+
+	updated, _ := m.Update(BrainEntryContentMsg{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation", Content: "trigger: cron"})
+	model := updated.(Model)
+	view := model.taskDetail.View()
+	for _, want := range []string{"## Runs", "run1 [failed]", "dispatch failed", "task1 [blocked]"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected automation detail to contain %q, got:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "old-task [completed]") {
+		t.Fatalf("expected real run records to suppress generated-task fallback, got:\n%s", view)
+	}
+}
+
 func TestFetchAutomationDataIncludesGlobalAutomationsForProject(t *testing.T) {
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -812,6 +839,10 @@ func TestFetchAutomationDataIncludesGlobalAutomationsForProject(t *testing.T) {
 			return
 		}
 		if r.URL.Query().Get("type") == "task" && r.URL.Query().Get("project") == "brain-api" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+			return
+		}
+		if r.URL.Query().Get("type") == "automation_run" && r.URL.Query().Get("project") == "brain-api" {
 			json.NewEncoder(w).Encode(types.ListEntriesResponse{})
 			return
 		}

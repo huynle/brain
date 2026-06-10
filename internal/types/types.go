@@ -27,6 +27,7 @@ var EntryTypes = []string{
 	"task",
 	"dream",
 	"automation",
+	"automation_run",
 }
 
 // entryTypeSet is a lookup set for O(1) validation.
@@ -196,10 +197,11 @@ type BrainEntry struct {
 	FeatureTimezone  string `json:"feature_timezone,omitempty"`
 
 	// Generated entry metadata
-	Generated     *bool  `json:"generated,omitempty"`
-	GeneratedKind string `json:"generated_kind,omitempty"`
-	GeneratedKey  string `json:"generated_key,omitempty"`
-	GeneratedBy   string `json:"generated_by,omitempty"`
+	Generated       *bool  `json:"generated,omitempty"`
+	GeneratedKind   string `json:"generated_kind,omitempty"`
+	GeneratedKey    string `json:"generated_key,omitempty"`
+	GeneratedBy     string `json:"generated_by,omitempty"`
+	AutomationRunID string `json:"automation_run_id,omitempty"`
 
 	// Event trigger configuration
 	Trigger *TriggerConfig    `json:"trigger,omitempty"`
@@ -501,10 +503,11 @@ type CreateEntryRequest struct {
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`
 
-	Generated     *bool  `json:"generated,omitempty"`
-	GeneratedKind string `json:"generated_kind,omitempty"`
-	GeneratedKey  string `json:"generated_key,omitempty"`
-	GeneratedBy   string `json:"generated_by,omitempty"`
+	Generated       *bool  `json:"generated,omitempty"`
+	GeneratedKind   string `json:"generated_kind,omitempty"`
+	GeneratedKey    string `json:"generated_key,omitempty"`
+	GeneratedBy     string `json:"generated_by,omitempty"`
+	AutomationRunID string `json:"automation_run_id,omitempty"`
 
 	Trigger *TriggerConfig    `json:"trigger,omitempty"`
 	Action  *AutomationAction `json:"action,omitempty"`
@@ -579,10 +582,11 @@ type UpdateEntryRequest struct {
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
 
-	Generated     *bool   `json:"generated,omitempty"`
-	GeneratedKind *string `json:"generated_kind,omitempty"`
-	GeneratedKey  *string `json:"generated_key,omitempty"`
-	GeneratedBy   *string `json:"generated_by,omitempty"`
+	Generated       *bool   `json:"generated,omitempty"`
+	GeneratedKind   *string `json:"generated_kind,omitempty"`
+	GeneratedKey    *string `json:"generated_key,omitempty"`
+	GeneratedBy     *string `json:"generated_by,omitempty"`
+	AutomationRunID *string `json:"automation_run_id,omitempty"`
 
 	Trigger *TriggerConfig    `json:"trigger,omitempty"`
 	Action  *AutomationAction `json:"action,omitempty"`

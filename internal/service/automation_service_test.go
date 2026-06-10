@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *t
 	ctx := context.Background()
 	completeOnIdle := true
 
-	_, err := brain.Save(ctx, types.CreateEntryRequest{
+	automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
 		Type:    "automation",
 		Title:   "Follow up when task completes",
 		Content: "Creates a follow-up task when a matching task completes.",
@@ -83,6 +84,43 @@ func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *t
 	}
 	if task.GeneratedKey == "" {
 		t.Error("expected generated_key for once_per dedup")
+	}
+
+	runResp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "automation_run",
+		Project: "automation-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List automation runs failed: %v", err)
+	}
+	if len(runResp.Entries) != 1 {
+		t.Fatalf("expected one automation run audit entry, got %d", len(runResp.Entries))
+	}
+
+	run := runResp.Entries[0]
+	if run.Status != "queued" {
+		t.Errorf("automation run status = %q, want queued", run.Status)
+	}
+	if !strings.Contains(run.Content, "automation_id: "+automationResp.ID) {
+		t.Errorf("automation run content missing automation_id %q:\n%s", automationResp.ID, run.Content)
+	}
+	if !strings.Contains(run.Content, "source_event_id: evt-test-1") {
+		t.Errorf("automation run content missing source event id:\n%s", run.Content)
+	}
+	if !strings.Contains(run.Content, "- "+task.ID) {
+		t.Errorf("automation run content missing generated task id %q:\n%s", task.ID, run.Content)
+	}
+	if !strings.Contains(run.Content, "trigger_event: "+types.EventTaskCompleted) {
+		t.Errorf("automation run content missing trigger event:\n%s", run.Content)
+	}
+
+	rawTask, err := brain.RecallFull(ctx, task.Path)
+	if err != nil {
+		t.Fatalf("RecallFull generated task failed: %v", err)
+	}
+	if !strings.Contains(rawTask, "automation_run_id: "+run.ID) {
+		t.Errorf("generated task frontmatter missing automation_run_id %q:\n%s", run.ID, rawTask)
 	}
 }
 
@@ -424,7 +462,7 @@ func TestAutomationService_HandleEventSkipsWhenAutomationsPaused(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()
 
-	_, err := brain.Save(ctx, types.CreateEntryRequest{
+	automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
 		Type:    "automation",
 		Title:   "Paused event automation",
 		Content: "Should not run while the project is paused.",
@@ -461,6 +499,20 @@ func TestAutomationService_HandleEventSkipsWhenAutomationsPaused(t *testing.T) {
 	}
 	if len(resp.Entries) != 0 {
 		t.Fatalf("expected no generated tasks while project paused, got %d", len(resp.Entries))
+	}
+
+	runs, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation_run", Project: "automation-paused-event-test", Limit: 10})
+	if err != nil {
+		t.Fatalf("List automation runs failed: %v", err)
+	}
+	if len(runs.Entries) != 1 {
+		t.Fatalf("expected one skipped automation run audit entry, got %d", len(runs.Entries))
+	}
+	if runs.Entries[0].Status != "skipped" {
+		t.Fatalf("run status = %q, want skipped", runs.Entries[0].Status)
+	}
+	if !strings.Contains(runs.Entries[0].Content, "automation_id: "+automationResp.ID) || !strings.Contains(runs.Entries[0].Content, "skip_reason: paused") {
+		t.Fatalf("skipped run content missing automation_id/skip_reason:\n%s", runs.Entries[0].Content)
 	}
 }
 

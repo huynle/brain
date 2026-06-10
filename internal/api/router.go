@@ -223,6 +223,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Automation Runs ─────────────────────────────────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil {
+					r.Get("/automation-runs", o.handler.HandleListAutomationRuns)
+					r.Get("/automation-runs/{runId}", o.handler.HandleGetAutomationRun)
+				} else {
+					r.Get("/automation-runs", notImplemented)
+					r.Get("/automation-runs/{runId}", notImplemented)
+				}
+			})
+
 			// ─── Goals ───────────────────────────────────────────
 			r.Route("/goals", func(r chi.Router) {
 				// Goal read operations — read:* scope

@@ -196,10 +196,11 @@ type Frontmatter struct {
 	Model               string `yaml:"model,omitempty" json:"model,omitempty"`
 
 	// Generated task metadata
-	Generated     *bool  `yaml:"generated,omitempty" json:"generated,omitempty"`
-	GeneratedKind string `yaml:"generated_kind,omitempty" json:"generated_kind,omitempty"`
-	GeneratedKey  string `yaml:"generated_key,omitempty" json:"generated_key,omitempty"`
-	GeneratedBy   string `yaml:"generated_by,omitempty" json:"generated_by,omitempty"`
+	Generated       *bool  `yaml:"generated,omitempty" json:"generated,omitempty"`
+	GeneratedKind   string `yaml:"generated_kind,omitempty" json:"generated_kind,omitempty"`
+	GeneratedKey    string `yaml:"generated_key,omitempty" json:"generated_key,omitempty"`
+	GeneratedBy     string `yaml:"generated_by,omitempty" json:"generated_by,omitempty"`
+	AutomationRunID string `yaml:"automation_run_id,omitempty" json:"automation_run_id,omitempty"`
 
 	// Event trigger configuration
 	Trigger *TriggerConfig    `yaml:"trigger,omitempty" json:"trigger,omitempty"`
@@ -273,10 +274,11 @@ type GenerateOptions struct {
 	Agent               string
 	Model               string
 
-	Generated     *bool
-	GeneratedKind string
-	GeneratedKey  string
-	GeneratedBy   string
+	Generated       *bool
+	GeneratedKind   string
+	GeneratedKey    string
+	GeneratedBy     string
+	AutomationRunID string
 
 	Trigger *TriggerConfig
 	Action  *AutomationAction
@@ -359,6 +361,7 @@ type rawFrontmatter struct {
 	GeneratedKind       string                     `yaml:"generated_kind"`
 	GeneratedKey        string                     `yaml:"generated_key"`
 	GeneratedBy         string                     `yaml:"generated_by"`
+	AutomationRunID     string                     `yaml:"automation_run_id"`
 	Trigger             *TriggerConfig             `yaml:"trigger"`
 	Action              *AutomationAction          `yaml:"action"`
 	Retry               *AutomationRetry           `yaml:"retry"`
@@ -393,8 +396,8 @@ var knownFields = map[string]bool{
 	"user_original_request": true, "direct_prompt": true,
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
-	"generated_by": true,
-	"trigger":      true, "action": true, "retry": true, "goal": true,
+	"generated_by": true, "automation_run_id": true,
+	"trigger": true, "action": true, "retry": true, "goal": true,
 	"sessions": true, "run_finalizations": true,
 	// Legacy fields (consumed during normalization, not emitted)
 	"session_ids": true, "session_timestamps": true,
@@ -535,6 +538,7 @@ func Parse(content string) (*Document, error) {
 		GeneratedKind:       raw.GeneratedKind,
 		GeneratedKey:        raw.GeneratedKey,
 		GeneratedBy:         raw.GeneratedBy,
+		AutomationRunID:     raw.AutomationRunID,
 		Trigger:             raw.Trigger,
 		Action:              raw.Action,
 		Retry:               raw.Retry,
@@ -804,6 +808,7 @@ func Serialize(fm *Frontmatter) string {
 	emitPlain("generated_kind", fm.GeneratedKind)
 	emit("generated_key", fm.GeneratedKey)
 	emit("generated_by", fm.GeneratedBy)
+	emit("automation_run_id", fm.AutomationRunID)
 
 	// Automation fields (nested YAML structs)
 	if fm.Trigger != nil {
@@ -951,6 +956,7 @@ func Generate(opts *GenerateOptions) string {
 		GeneratedKind:       opts.GeneratedKind,
 		GeneratedKey:        opts.GeneratedKey,
 		GeneratedBy:         opts.GeneratedBy,
+		AutomationRunID:     opts.AutomationRunID,
 		Trigger:             opts.Trigger,
 		Action:              opts.Action,
 		Retry:               opts.Retry,

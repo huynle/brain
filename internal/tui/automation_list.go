@@ -280,9 +280,17 @@ type automationRunSummary struct {
 	inactive     int
 	latestID     string
 	latestStatus string
+	realRunCount int
 }
 
 func (s automationRunSummary) summary() string {
+	if s.realRunCount > 0 {
+		status := s.latestStatus
+		if status == "" {
+			status = "unknown"
+		}
+		return fmt.Sprintf("last %s (%d runs)", status, s.realRunCount)
+	}
 	parts := make([]string, 0, 3)
 	if s.pending > 0 {
 		parts = append(parts, fmt.Sprintf("%d queued", s.pending))
@@ -299,6 +307,20 @@ func (s automationRunSummary) summary() string {
 func automationRunSummaries(tasks []types.BrainEntry) map[string]automationRunSummary {
 	summaries := make(map[string]automationRunSummary)
 	for _, task := range tasks {
+		if task.Type == "automation_run" {
+			automationID := automationRunContentField(task.Content, "automation_id")
+			if automationID == "" {
+				continue
+			}
+			summary := summaries[automationID]
+			summary.realRunCount++
+			if summary.latestID == "" || task.Modified > "" {
+				summary.latestID = task.ID
+				summary.latestStatus = task.Status
+			}
+			summaries[automationID] = summary
+			continue
+		}
 		if !strings.HasPrefix(task.GeneratedBy, "automation:") {
 			continue
 		}
@@ -322,6 +344,17 @@ func automationRunSummaries(tasks []types.BrainEntry) map[string]automationRunSu
 		summaries[automationID] = summary
 	}
 	return summaries
+}
+
+func automationRunContentField(content, field string) string {
+	prefix := field + ":"
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
 }
 
 // goalTaskProgress accumulates linked-task counts for a single goal feature.

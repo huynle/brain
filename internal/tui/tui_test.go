@@ -807,12 +807,13 @@ func TestAutomationDetailPrefersRealRunRecords(t *testing.T) {
 	m.automationGeneratedTasks = []types.BrainEntry{
 		{ID: "old-task", Path: "projects/brain-api/task/old-task.md", Title: "Automation: auto", Type: "task", Status: "completed", GeneratedBy: "automation:auto"},
 		{ID: "run1", Path: "projects/brain-api/automation_run/run1.md", Title: "Automation Run: auto", Type: "automation_run", Status: "failed", Modified: "2026-06-10T12:00:00Z", Content: "automation_id: auto\nerror: dispatch failed\n### Generated Tasks\n- task1 [blocked] Review\n"},
+		{ID: "task1", Path: "projects/brain-api/task/task1.md", Title: "Review", Type: "task", Status: "blocked", GeneratedBy: "automation:auto", AutomationRunID: "run1"},
 	}
 
 	updated, _ := m.Update(BrainEntryContentMsg{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation", Content: "trigger: cron"})
 	model := updated.(Model)
 	view := model.taskDetail.View()
-	for _, want := range []string{"## Runs", "run1 [failed]", "dispatch failed", "task1 [blocked]"} {
+	for _, want := range []string{"## Runs", "run1 [failed]", "dispatch failed", "task1 [blocked] Review", "generated_by=automation:auto", "automation_run_id=run1", "path=projects/brain-api/task/task1.md"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected automation detail to contain %q, got:\n%s", want, view)
 		}

@@ -3656,6 +3656,7 @@ func (m *Model) automationDetailContent(path, content string) string {
 		}
 	}
 	if len(realRuns) > 0 {
+		tasksByRun := automationTasksByRun(m.automationGeneratedTasks)
 		sort.SliceStable(realRuns, func(i, j int) bool {
 			return realRuns[i].Modified > realRuns[j].Modified
 		})
@@ -3676,8 +3677,27 @@ func (m *Model) automationDetailContent(path, content string) string {
 				b.WriteString(" skip=" + skipReason)
 			}
 			b.WriteString("\n")
-			for _, taskLine := range automationRunTaskLines(run.Content) {
-				b.WriteString("  - " + taskLine + "\n")
+			seenTasks := make(map[string]bool)
+			for _, taskID := range automationRunTaskIDs(run.Content) {
+				seenTasks[taskID] = true
+				if task, ok := tasksByRun[run.ID][taskID]; ok {
+					b.WriteString("  - " + automationRunTaskDetailLine(task) + "\n")
+					continue
+				}
+				b.WriteString("  - " + taskID + "\n")
+			}
+			extraTasks := make([]types.BrainEntry, 0, len(tasksByRun[run.ID]))
+			for _, task := range tasksByRun[run.ID] {
+				if seenTasks[task.ID] {
+					continue
+				}
+				extraTasks = append(extraTasks, task)
+			}
+			sort.SliceStable(extraTasks, func(i, j int) bool {
+				return extraTasks[i].ID < extraTasks[j].ID
+			})
+			for _, task := range extraTasks {
+				b.WriteString("  - " + automationRunTaskDetailLine(task) + "\n")
 			}
 		}
 	} else if len(runs) == 0 {
@@ -3712,7 +3732,7 @@ func (m *Model) automationDetailContent(path, content string) string {
 	return b.String()
 }
 
-func automationRunTaskLines(content string) []string {
+func automationRunTaskIDs(content string) []string {
 	lines := strings.Split(content, "\n")
 	result := make([]string, 0)
 	inTasks := false
@@ -3727,10 +3747,42 @@ func automationRunTaskLines(content string) []string {
 		}
 		item := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
 		if item != "" && item != "none" {
-			result = append(result, item)
+			result = append(result, strings.Fields(item)[0])
 		}
 	}
 	return result
+}
+
+func automationTasksByRun(entries []types.BrainEntry) map[string]map[string]types.BrainEntry {
+	result := make(map[string]map[string]types.BrainEntry)
+	for _, entry := range entries {
+		if entry.Type != "task" || entry.AutomationRunID == "" {
+			continue
+		}
+		if result[entry.AutomationRunID] == nil {
+			result[entry.AutomationRunID] = make(map[string]types.BrainEntry)
+		}
+		result[entry.AutomationRunID][entry.ID] = entry
+	}
+	return result
+}
+
+func automationRunTaskDetailLine(task types.BrainEntry) string {
+	status := task.Status
+	if status == "" {
+		status = "unknown"
+	}
+	line := fmt.Sprintf("%s [%s] %s", task.ID, status, task.Title)
+	if task.GeneratedBy != "" {
+		line += " generated_by=" + task.GeneratedBy
+	}
+	if task.AutomationRunID != "" {
+		line += " automation_run_id=" + task.AutomationRunID
+	}
+	if task.Path != "" {
+		line += " path=" + task.Path
+	}
+	return line
 }
 
 // goalReconcileDetailSection renders the "Last Reconcile" + "Audit" detail

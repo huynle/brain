@@ -54,6 +54,8 @@ The Brain is a persistent knowledge store powered by zk (Zettelkasten CLI) that 
 
 Start with `brain_project_context` when working inside a project checkout. It automatically registers the current Brain client/workspace, resolves the Brain project across hosts and git worktrees, and returns the latest `dream` entry as consolidated context.
 
+Use the `brain-dream-context` skill when you need that same dream refresh mid-task because project context feels thin or assumptions are starting to pile up.
+
 ### Link Notes When:
 - A new entry relates to existing patterns or learnings
 - You discover connections between different pieces of work

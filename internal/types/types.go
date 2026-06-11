@@ -1057,6 +1057,48 @@ type RunnerListResponse struct {
 	Total   int          `json:"total"`
 }
 
+type BrainClientInfo struct {
+	ClientID     string            `json:"client_id"`
+	Kind         string            `json:"kind,omitempty"`
+	HostID       string            `json:"host_id"`
+	Hostname     string            `json:"hostname,omitempty"`
+	OS           string            `json:"os,omitempty"`
+	Arch         string            `json:"arch,omitempty"`
+	Username     string            `json:"username,omitempty"`
+	HomeDir      string            `json:"home_dir,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+}
+
+type WorkspaceObservation struct {
+	Path            string `json:"path"`
+	GitRoot         string `json:"git_root,omitempty"`
+	GitCommonDir    string `json:"git_common_dir,omitempty"`
+	GitWorktreeMain string `json:"git_worktree_main,omitempty"`
+	GitBranch       string `json:"git_branch,omitempty"`
+	GitRemote       string `json:"git_remote,omitempty"`
+	FolderName      string `json:"folder_name,omitempty"`
+}
+
+type ResolveClientContextRequest struct {
+	Client    BrainClientInfo      `json:"client"`
+	Workspace WorkspaceObservation `json:"workspace"`
+}
+
+type DreamContext struct {
+	ID      string `json:"id,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
+type ResolveClientContextResponse struct {
+	ProjectID  string        `json:"project_id"`
+	Confidence string        `json:"confidence"`
+	Source     string        `json:"source"`
+	Dream      *DreamContext `json:"dream,omitempty"`
+}
+
 // =============================================================================
 // Health / Stats Types
 // =============================================================================

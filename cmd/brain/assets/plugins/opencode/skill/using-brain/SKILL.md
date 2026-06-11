@@ -19,7 +19,7 @@ The Brain is a persistent knowledge store powered by zk (Zettelkasten CLI) that 
 - [ ] Step 7: Consider linking to suggested related entries
 
 ### When Recalling
-- [ ] Step 1: Use `brain_inject` to load context at session start
+- [ ] Step 1: Use `brain_project_context` to load project dream context at session start
 - [ ] Step 2: Search before creating to avoid duplicates
 - [ ] Step 3: Use `brain_links` to explore the knowledge graph
 
@@ -51,6 +51,8 @@ The Brain is a persistent knowledge store powered by zk (Zettelkasten CLI) that 
 - Resuming work from a previous session
 - Looking for patterns or approaches used before
 - Needing context about past decisions
+
+Start with `brain_project_context` when working inside a project checkout. It automatically registers the current Brain client/workspace, resolves the Brain project across hosts and git worktrees, and returns the latest `dream` entry as consolidated context.
 
 ### Link Notes When:
 - A new entry relates to existing patterns or learnings

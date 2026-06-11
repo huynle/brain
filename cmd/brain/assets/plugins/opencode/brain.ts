@@ -32,9 +32,10 @@
 import type { Plugin } from "@opencode-ai/plugin";
 import { tool } from "@opencode-ai/plugin";
 import { execSync } from "child_process";
+import { randomUUID } from "crypto";
 import { readFileSync } from "fs";
 import { mkdir, readFile, writeFile } from "fs/promises";
-import { homedir } from "os";
+import { arch, hostname, homedir, platform, userInfo } from "os";
 import { basename, dirname, join } from "path";
 
 // ============================================================================
@@ -257,8 +258,24 @@ The brain tools will automatically reconnect when the server becomes available.`
 interface ExecutionContext {
   projectId: string; // Short project name (last path segment)
   workdir: string; // $HOME-relative path to main repo
+  directory: string; // Absolute current working directory
+  gitRoot?: string; // Current worktree root
+  gitCommonDir?: string; // Common .git directory for linked worktrees
+  gitWorktreeMain?: string; // Main worktree path from git worktree list
   gitRemote?: string; // Git remote URL
   gitBranch?: string; // Current branch (worktree derived from this)
+  folderName?: string; // Basename used as a project hint
+}
+
+interface ClientIdentity {
+  client_id: string;
+  kind: string;
+  host_id: string;
+  hostname: string;
+  os: string;
+  arch: string;
+  username: string;
+  home_dir: string;
 }
 
 /**
@@ -290,6 +307,8 @@ function getExecutionContext(directory: string): ExecutionContext {
 
   // Get main repo path (resolves worktrees to their main repo)
   let mainRepoPath = directory;
+  let gitRoot: string | undefined;
+  let gitCommonDir: string | undefined;
   let gitRemote: string | undefined;
   let gitBranch: string | undefined;
 
@@ -305,6 +324,16 @@ function getExecutionContext(directory: string): ExecutionContext {
     if (firstWorktreeLine) {
       mainRepoPath = firstWorktreeLine.replace("worktree ", "");
     }
+
+    gitRoot = execSync("git rev-parse --show-toplevel", {
+      cwd: directory,
+      encoding: "utf-8",
+    }).trim();
+
+    gitCommonDir = execSync("git rev-parse --git-common-dir", {
+      cwd: directory,
+      encoding: "utf-8",
+    }).trim();
 
     // Get git remote
     gitRemote = execSync("git remote get-url origin", {
@@ -338,9 +367,52 @@ function getExecutionContext(directory: string): ExecutionContext {
   return {
     projectId,
     workdir,
+    directory,
+    gitRoot,
+    gitCommonDir,
+    gitWorktreeMain: mainRepoPath,
     gitRemote,
     gitBranch,
+    folderName: basename(mainRepoPath),
   };
+}
+
+async function loadOrCreateClientIdentity(): Promise<ClientIdentity> {
+  const configDir = join(homedir(), ".config", "brain");
+  const hostID = await loadOrCreateID(join(configDir, "host_id"), "host");
+  const clientID = await loadOrCreateID(join(configDir, "opencode_client_id"), "opencode");
+
+  let username = "";
+  try {
+    username = userInfo().username;
+  } catch {
+    username = process.env.USER || process.env.USERNAME || "";
+  }
+
+  return {
+    client_id: clientID,
+    kind: "opencode",
+    host_id: hostID,
+    hostname: hostname(),
+    os: platform(),
+    arch: arch(),
+    username,
+    home_dir: homedir(),
+  };
+}
+
+async function loadOrCreateID(path: string, prefix: string): Promise<string> {
+  let id = "";
+
+  try {
+    id = (await readFile(path, "utf-8")).trim();
+  } catch {
+    id = `${prefix}-${randomUUID()}`;
+    await mkdir(dirname(path), { recursive: true });
+    await writeFile(path, id + "\n", "utf-8");
+  }
+
+  return id;
 }
 
 const ENTRY_TYPES: BrainEntryType[] = [
@@ -841,6 +913,62 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
 
   return {
     tool: {
+      // ========================================
+      // brain_project_context
+      // ========================================
+      brain_project_context: tool({
+        description:
+          "Resolve the current workspace to a Brain project, register this Brain client/workspace automatically, and return the project's latest dream context. Use at session start, when resuming work, or whenever prior project context may be needed.",
+        args: {},
+        async execute() {
+          try {
+            const identity = await loadOrCreateClientIdentity();
+            const response = await apiRequest<{
+              project_id: string;
+              confidence: string;
+              source: string;
+              dream?: {
+                id?: string;
+                title?: string;
+                path?: string;
+                content?: string;
+              };
+            }>("POST", "/context/resolve", {
+              client: identity,
+              workspace: {
+                path: context.directory,
+                git_root: context.gitRoot,
+                git_common_dir: context.gitCommonDir,
+                git_worktree_main: context.gitWorktreeMain,
+                git_branch: context.gitBranch,
+                git_remote: context.gitRemote,
+                folder_name: context.folderName || projectId,
+              },
+            });
+
+            const lines = [
+              "## Brain Project Context",
+              "",
+              `Project: ${response.project_id}`,
+              `Confidence: ${response.confidence}`,
+              `Source: ${response.source}`,
+              `Client: ${identity.client_id}`,
+              `Host: ${identity.hostname}`,
+            ];
+
+            if (response.dream?.content) {
+              lines.push("", `## Dream: ${response.dream.title || response.dream.id || "latest"}`, "", response.dream.content);
+            } else {
+              lines.push("", "No dream entry found for this project yet.");
+            }
+
+            return lines.join("\n");
+          } catch (error) {
+            return `Failed to resolve project context: ${error instanceof Error ? error.message : String(error)}`;
+          }
+        },
+      }),
+
       // ========================================
       // brain_save
       // ========================================

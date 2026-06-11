@@ -421,6 +421,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Client Context ─────────────────────────────────
+			r.Route("/context", func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil && o.handler.clientContext != nil {
+					r.Post("/resolve", o.handler.HandleResolveClientContext)
+				} else {
+					r.Post("/resolve", notImplemented)
+				}
+			})
+
 			// ─── Webhooks ────────────────────────────────────────
 			r.Route("/webhooks", func(r chi.Router) {
 				if o.handler != nil && o.handler.webhooks != nil {

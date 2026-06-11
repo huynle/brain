@@ -304,6 +304,11 @@ type RunnerRegistryService interface {
 	UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error
 }
 
+// ClientContextService resolves Brain client workspace context into project context.
+type ClientContextService interface {
+	Resolve(ctx context.Context, req types.ResolveClientContextRequest) (*types.ResolveClientContextResponse, error)
+}
+
 // MonitorService defines the interface for monitor operations.
 type MonitorService interface {
 	// ListTemplates returns all available monitor templates.

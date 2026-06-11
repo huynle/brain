@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 )
@@ -694,8 +695,30 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 }
 
 func TestSchemaVersion_IncludesAttachmentDerived(t *testing.T) {
-	if CurrentSchemaVersion != 14 {
-		t.Errorf("CurrentSchemaVersion = %d, want 14", CurrentSchemaVersion)
+	if CurrentSchemaVersion != 15 {
+		t.Errorf("CurrentSchemaVersion = %d, want 15", CurrentSchemaVersion)
+	}
+}
+
+func TestBrainClientTables_FreshDB(t *testing.T) {
+	s := newTestStorage(t)
+
+	for _, table := range []string{"brain_clients", "brain_client_workspaces"} {
+		var name string
+		err := s.DB().QueryRow(
+			"SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+			table,
+		).Scan(&name)
+		if err != nil {
+			t.Fatalf("%s table not found: %v", table, err)
+		}
+	}
+
+	if err := s.UpsertBrainClient(context.Background(), &BrainClientRow{ClientID: "client-1", HostID: "host-1"}); err != nil {
+		t.Fatalf("UpsertBrainClient failed: %v", err)
+	}
+	if err := s.UpsertBrainClientWorkspace(context.Background(), &BrainClientWorkspaceRow{ClientID: "client-1", HostID: "host-1", ProjectID: "brain", Path: "/work/brain"}); err != nil {
+		t.Fatalf("UpsertBrainClientWorkspace failed: %v", err)
 	}
 }
 

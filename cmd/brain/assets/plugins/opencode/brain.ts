@@ -988,7 +988,11 @@ export const BrainPlugin: Plugin = async ({ project, directory }) => {
 Feature orchestration:
 - Use feature_id to group tasks into a feature.
 - Use feature_depends_on to make a feature wait for one or more other features before starting.
-- Use trigger.event="feature.completed" with trigger.filter.feature_id to create post-feature tasks that activate after a feature completes.`,
+- Use trigger.event="feature.completed" with trigger.filter.feature_id to create post-feature tasks that activate after a feature completes.
+
+Automation guidance:
+- For user-facing requests to create an automation, monitor something, or run/check/review something repeatedly, prefer type="automation" with trigger.type="cron"/"event" and action.type="create_task". This creates a collapsible automation parent with generated run tasks in the Automations tab.
+- Use type="task" with schedule/run_once_at only when the user explicitly asks for a scheduled task row or one fixed task on a clock.`,
         args: {
           type: tool.schema
             .enum(ENTRY_TYPES)
@@ -1176,7 +1180,7 @@ Feature orchestration:
             .string()
             .optional()
             .describe(
-              "Cron schedule expression (e.g., '*/5 * * * *', '0 2 * * *'). When provided for tasks, automatically creates and links a cron entry titled '{task-title} (Cron)'. This simplifies recurring task setup from 3 steps (create task + create cron + link) to 1 step."
+              "Cron schedule expression for type='task' scheduled task rows (e.g., '*/5 * * * *', '0 2 * * *'). If the user asked to create a project-level automation, monitor, or recurring check, prefer type='automation' with trigger.type='cron' instead so runs appear under a collapsible Automation parent."
             ),
           schedule_enabled: tool.schema
             .boolean()

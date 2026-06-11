@@ -9,9 +9,9 @@ description: Use when the user wants Brain to do something later, repeatedly, or
 
 **Core Principle:** If the user asks for repeatable, delayed, or event-driven work, encode it in Brain instead of relying on conversation memory.
 
-Brain supports two automation shapes:
-- **Scheduled tasks:** Save `type: "task"` with `schedule`, `run_once_at`, or feature schedule fields when the work itself should run on a clock.
-- **Automation entries:** Save `type: "automation"` with `trigger`, `action`, and optional `retry` when an event, webhook, session, or cron trigger should create tasks or run scripts.
+Brain supports two timed-work shapes, but user-facing project automations should use automation entries:
+- **Automation entries:** Save `type: "automation"` with `trigger`, `action`, and optional `retry`. This is the default for user requests like "create an automation", "run this every N minutes", "monitor X", or "do Y when Z happens". These appear in the Automations tab like Feature Code Review, Blocked Task Inspector, and Dream Consolidation, and their generated runs can be expanded/collapsed.
+- **Scheduled tasks:** Save `type: "task"` with `schedule`, `run_once_at`, or feature schedule fields only when the user explicitly asks for a scheduled task or when creating internal runner work. Scheduled tasks show up as task rows, not as collapsible automation entries.
 
 ## When to Use
 - The user asks to do something at a specific time, after a delay, or on a recurring schedule.
@@ -27,7 +27,7 @@ Brain supports two automation shapes:
 - The request would create destructive unattended work without explicit user approval.
 
 ## Workflow
-1. Identify whether this is a scheduled task or an automation entry.
+1. Identify whether this is a user-facing automation or an explicit scheduled task. Default to `type: "automation"` for project-level automations.
 2. Ask one clarifying question only if the trigger time/event, project, or action is ambiguous.
 3. Resolve project context with `brain_project_context` when working from a checkout.
 4. Save the durable Brain entry with the minimum fields needed.
@@ -35,15 +35,47 @@ Brain supports two automation shapes:
 6. Set safeguards: `once_per`, `cooldown`, `max_concurrent`, `max_runs`, `expires_at`, or retry limits when appropriate.
 7. Report the created entry ID/path, trigger/schedule, and what will happen.
 
+## Default Pattern: Cron Automation Entry
+
+Use this for user-facing project automations that should run repeatedly. This is the right shape for requests such as "check Teams every 5 minutes", "monitor blockers hourly", or "summarize activity every day".
+
+```
+brain_save(
+  type: "automation",
+  title: "Monitor Teams activity for project work log",
+  content: "Every 5 minutes, create a read-only task to inspect recent Teams activity and save concise project-work notes to Brain.",
+  status: "active",
+  project: "<project>",
+  trigger: {
+    type: "cron",
+    schedule: "*/5 * * * *",
+    once_per: "5m",
+    cooldown: "4m",
+    max_concurrent: 1
+  },
+  action: {
+    type: "create_task",
+    title_template: "Teams activity work-log check {{time}}",
+    direct_prompt: "Use the daily-office-chromeuse skill. Read recent Microsoft Teams activity only. Extract concise, timestamped project/work evidence and save new findings to Brain. Do not send messages or modify external systems.",
+    agent: "assistant",
+    executor: "opencode",
+    target_workdir: "<absolute-workdir>"
+  },
+  retry: { max_attempts: 1, timeout: "20m" }
+)
+```
+
+Expected UI behavior: one parent row in the Automations tab. Each cron firing creates a generated task/run under that automation, and the row can expand/collapse to show run history.
+
 ## Scheduled Task Patterns
 
-### Recurring Task
-Use this when the same task should run repeatedly.
+### Explicit Scheduled Task
+Use this only when the user specifically asks for a scheduled task rather than an automation entry. This will appear in the Tasks tab and as a task row in the Automations tab, not like the built-in Automation rows.
 
 ```
 brain_save(
   type: "task",
-  title: "Weekly Dependency Audit",
+  title: "Weekly Dependency Audit Task",
   content: "Audit dependencies, identify risky updates, and save a report.",
   status: "active",
   project: "<project>",
@@ -152,7 +184,7 @@ brain_save(
 ```
 
 ### Cron Automation Entry
-Use this when the trigger creates dynamic work, not when a single fixed task should simply run on a cron.
+Use this when a cron trigger should create generated run tasks under a collapsible automation parent. For user-facing project-level automations, prefer this over `type: "task"` schedules.
 
 ```
 brain_save(
@@ -180,8 +212,10 @@ brain_save(
 
 | Need | Field |
 |------|-------|
-| Repeat a task on cron | `schedule` on `type: "task"` |
-| Run once in the future | `run_once_at` on `type: "task"` |
+| User asks for an automation on cron | `type: "automation"` + `trigger.type: "cron"` + `action.type: "create_task"` |
+| User asks to monitor/review/summarize periodically | `type: "automation"` + cron trigger |
+| User explicitly asks for a scheduled task | `schedule` on `type: "task"` |
+| User explicitly asks for one scheduled task in the future | `run_once_at` on `type: "task"` |
 | Schedule an entire feature | `feature_schedule` or `feature_run_once_at` |
 | React to event | `type: "automation"` + `trigger.type: "event"` |
 | React to webhook | `type: "automation"` + `trigger.type: "webhook"` + `webhook` |
@@ -198,12 +232,13 @@ brain_save(
 - Use `status: "active"` only when the user clearly wants the automation enabled now.
 - Use `status: "draft"` when proposing an automation for review.
 - Include `expires_at`, `max_runs`, or `cooldown` for recurring work that could run indefinitely.
+- Do not create `type: "task"` + `schedule` for requests phrased as "automation", "monitor", "check every", or "repeat every" unless the user explicitly asks for a scheduled task row.
 - For generated tasks, include enough context in `direct_prompt` that a future agent can execute without this conversation.
 - For cross-project work, set `project` and `target_workdir` explicitly.
 - Never schedule destructive unattended actions unless the user explicitly asked for unattended execution.
 
 ## Checklist
-- [ ] Classified the request as scheduled task, feature schedule, or automation entry.
+- [ ] Classified user-facing project automation requests as `type: "automation"`, not scheduled task rows.
 - [ ] Captured project, trigger/schedule, action, and target workdir.
 - [ ] Added deduplication/cooldown/concurrency safeguards where useful.
 - [ ] Included `user_original_request` for task-like work.

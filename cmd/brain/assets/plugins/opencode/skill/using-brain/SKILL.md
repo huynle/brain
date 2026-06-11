@@ -263,21 +263,30 @@ Use this flow for screenshots, pasted images saved locally, PDFs, logs, and othe
 ### Task Scheduling and Automation
 For detailed workflows, use the `brain-automation` skill.
 
-Quick scheduled task:
+Quick project-level automation:
 ```
 brain_save(
-  type: "task",
+  type: "automation",
   title: "Nightly test audit",
-  content: "Run test audit and save a report.",
+  content: "Create a generated run task every night to audit tests and save a report.",
   status: "active",
   project: "<project>",
-  schedule: "0 2 * * *",
-  timezone: "America/Denver",
-  direct_prompt: "Run the nightly test audit and save findings to Brain.",
-  complete_on_idle: true,
-  user_original_request: "<verbatim user request>"
+  trigger: {
+    type: "cron",
+    schedule: "0 2 * * *",
+    once_per: "day",
+    cooldown: "20h",
+    max_concurrent: 1
+  },
+  action: {
+    type: "create_task",
+    title_template: "Nightly test audit {{date}}",
+    direct_prompt: "Run the nightly test audit and save findings to Brain."
+  }
 )
 ```
+
+Use `type: "task"` with `schedule` only when the user explicitly asks for a scheduled task row. For requests phrased as automations, monitors, periodic checks, or recurring reviews, use `type: "automation"` so the Automations tab shows a collapsible parent with generated run history.
 
 Quick event automation:
 ```

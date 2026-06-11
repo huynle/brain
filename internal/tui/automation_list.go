@@ -42,10 +42,13 @@ type AutomationList struct {
 	SelectedID string
 	Cursor     int
 
-	rows         []AutomationListRow
-	loading      bool
-	errMsg       string
-	scrollOffset int
+	rows              []AutomationListRow
+	generatedTasks    []types.BrainEntry
+	expandedID        string
+	selectedRunTaskID string
+	loading           bool
+	errMsg            string
+	scrollOffset      int
 }
 
 // NewAutomationList creates an empty AutomationList component.
@@ -88,6 +91,7 @@ func (al *AutomationList) SetEntriesAndTasks(entries []types.BrainEntry, tasks [
 
 // SetEntryRows normalizes automation entries and scheduled task entries into one list.
 func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types.BrainEntry, generatedTasks []types.BrainEntry) {
+	al.generatedTasks = append([]types.BrainEntry(nil), generatedTasks...)
 	rows := make([]AutomationListRow, 0, len(entries)+len(tasks))
 	runsByAutomation := automationRunSummaries(generatedTasks)
 	goalProgress := goalProgressByFeature(generatedTasks)
@@ -164,17 +168,49 @@ func (al *AutomationList) Update(msg tea.Msg) {
 
 // MoveDown moves the cursor down one row.
 func (al *AutomationList) MoveDown() {
+	if al.expandedID == al.SelectedID {
+		runs := al.runTasksForSelectedRow()
+		if len(runs) > 0 {
+			if al.selectedRunTaskID == "" {
+				al.selectedRunTaskID = runs[0].ID
+				return
+			}
+			for i, task := range runs {
+				if task.ID == al.selectedRunTaskID && i < len(runs)-1 {
+					al.selectedRunTaskID = runs[i+1].ID
+					return
+				}
+			}
+		}
+	}
 	if al.Cursor < len(al.rows)-1 {
 		al.Cursor++
 		al.SelectedID = al.rows[al.Cursor].ID
+		al.selectedRunTaskID = ""
 	}
 }
 
 // MoveUp moves the cursor up one row.
 func (al *AutomationList) MoveUp() {
+	if al.expandedID == al.SelectedID && al.selectedRunTaskID != "" {
+		runs := al.runTasksForSelectedRow()
+		for i, task := range runs {
+			if task.ID == al.selectedRunTaskID {
+				if i > 0 {
+					al.selectedRunTaskID = runs[i-1].ID
+				} else {
+					al.selectedRunTaskID = ""
+				}
+				return
+			}
+		}
+		al.selectedRunTaskID = ""
+		return
+	}
 	if al.Cursor > 0 {
 		al.Cursor--
 		al.SelectedID = al.rows[al.Cursor].ID
+		al.selectedRunTaskID = ""
 	}
 }
 
@@ -185,6 +221,7 @@ func (al *AutomationList) MoveToTop() {
 	}
 	al.Cursor = 0
 	al.SelectedID = al.rows[0].ID
+	al.selectedRunTaskID = ""
 }
 
 // MoveToBottom moves selection to the last row.
@@ -194,6 +231,7 @@ func (al *AutomationList) MoveToBottom() {
 	}
 	al.Cursor = len(al.rows) - 1
 	al.SelectedID = al.rows[al.Cursor].ID
+	al.selectedRunTaskID = ""
 }
 
 // SelectVisibleRow selects a rendered row by its zero-based visible index.
@@ -204,7 +242,38 @@ func (al *AutomationList) SelectVisibleRow(visibleIndex int) bool {
 	}
 	al.Cursor = idx
 	al.SelectedID = al.rows[idx].ID
+	al.selectedRunTaskID = ""
 	return true
+}
+
+func (al *AutomationList) ToggleExpandedSelected() {
+	if al.SelectedID == "" {
+		return
+	}
+	if al.expandedID == al.SelectedID {
+		al.expandedID = ""
+		al.selectedRunTaskID = ""
+		return
+	}
+	al.expandedID = al.SelectedID
+	runs := al.runTasksForSelectedRow()
+	if len(runs) > 0 {
+		al.selectedRunTaskID = runs[0].ID
+	} else {
+		al.selectedRunTaskID = ""
+	}
+}
+
+func (al *AutomationList) SelectedRunTask() (types.BrainEntry, bool) {
+	if al.expandedID != al.SelectedID || al.selectedRunTaskID == "" {
+		return types.BrainEntry{}, false
+	}
+	for _, task := range al.runTasksForSelectedRow() {
+		if task.ID == al.selectedRunTaskID {
+			return task, true
+		}
+	}
+	return types.BrainEntry{}, false
 }
 
 // ScrollUp moves the selection up by n rows.
@@ -269,9 +338,67 @@ func (al *AutomationList) View(width, height int) string {
 	lines := []string{header}
 	for i := start; i < end; i++ {
 		lines = append(lines, al.renderRow(al.rows[i], i == al.Cursor, width))
+		if al.expandedID == al.rows[i].ID {
+			for _, task := range al.runTasksForRow(al.rows[i]) {
+				lines = append(lines, al.renderRunTaskRow(task, width))
+			}
+		}
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func (al *AutomationList) runTasksForSelectedRow() []types.BrainEntry {
+	row := al.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	return al.runTasksForRow(*row)
+}
+
+func (al *AutomationList) runTasksForRow(row AutomationListRow) []types.BrainEntry {
+	if row.ID == "" {
+		return nil
+	}
+	generatedBy := "automation:" + row.ID
+	tasks := make([]types.BrainEntry, 0)
+	for _, task := range al.generatedTasks {
+		if task.Type != "task" || task.GeneratedBy != generatedBy {
+			continue
+		}
+		tasks = append(tasks, task)
+	}
+	sort.SliceStable(tasks, func(i, j int) bool {
+		if tasks[i].Modified != tasks[j].Modified {
+			return tasks[i].Modified > tasks[j].Modified
+		}
+		return tasks[i].ID > tasks[j].ID
+	})
+	return tasks
+}
+
+func (al *AutomationList) renderRunTaskRow(task types.BrainEntry, width int) string {
+	marker := "  "
+	if task.ID == al.selectedRunTaskID {
+		marker = "▸ "
+	}
+	status := task.Status
+	if status == "" {
+		status = "unknown"
+	}
+	line := fmt.Sprintf("  %s%s [%s] %s", marker, task.ID, status, task.Title)
+	if task.AutomationRunID != "" {
+		line += " run=" + task.AutomationRunID
+	}
+	if sessionID := newestSessionID(task.Sessions); sessionID != "" {
+		line += " session=" + sessionID + " (o: open, O: tmux)"
+	} else {
+		line += " session=none"
+	}
+	if width > 0 && lipgloss.Width(line) > width {
+		line = truncateTitle(line, width)
+	}
+	return line
 }
 
 type automationRunSummary struct {

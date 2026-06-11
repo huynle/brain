@@ -514,6 +514,39 @@ func TestModalManager_ScrollUp_ClampsToZero(t *testing.T) {
 	}
 }
 
+func TestModalManager_HandleKeyScrollsHelpModalWithJK(t *testing.T) {
+	mgr := NewModalManager()
+	mgr.Open(NewHelpModal(false))
+
+	// Render first so the manager knows the modal content and viewport sizes.
+	mgr.View(80, 20)
+	if !mgr.NeedsScroll() {
+		t.Fatal("expected help modal to need scrolling in a short viewport")
+	}
+
+	handled, cmd := mgr.HandleKey("j")
+	if !handled {
+		t.Fatal("expected j to be handled by help modal scrolling")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if mgr.scrollOffset == 0 {
+		t.Fatal("expected j to scroll help modal down")
+	}
+
+	handled, cmd = mgr.HandleKey("k")
+	if !handled {
+		t.Fatal("expected k to be handled by help modal scrolling")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if mgr.scrollOffset != 0 {
+		t.Fatalf("expected k to scroll help modal back up to 0, got %d", mgr.scrollOffset)
+	}
+}
+
 func TestModalManager_Open_ResetsScroll(t *testing.T) {
 	mgr := NewModalManager()
 

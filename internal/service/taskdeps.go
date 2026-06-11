@@ -186,6 +186,7 @@ func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 		ID:                  task.ID,
 		Path:                task.Path,
 		Title:               task.Title,
+		Content:             task.Content,
 		Priority:            task.Priority,
 		Status:              task.Status,
 		ParentID:            task.ParentID,

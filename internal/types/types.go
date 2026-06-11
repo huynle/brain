@@ -787,6 +787,7 @@ type ResolvedTask struct {
 	ID        string   `json:"id"`
 	Path      string   `json:"path"`
 	Title     string   `json:"title"`
+	Content   string   `json:"content,omitempty"`
 	Priority  string   `json:"priority"`
 	Status    string   `json:"status"`
 	ParentID  string   `json:"parent_id,omitempty"`

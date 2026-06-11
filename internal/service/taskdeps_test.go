@@ -73,6 +73,20 @@ func TestBuildLookupMaps_Empty(t *testing.T) {
 	}
 }
 
+func TestResolveDependencies_PreservesTaskContent(t *testing.T) {
+	task := makeTask("aaa", "Task A", "pending", "high", nil)
+	task.Content = "Task body should be visible in the TUI."
+
+	resp := ResolveDependencies([]types.BrainEntry{task})
+
+	if len(resp.Tasks) != 1 {
+		t.Fatalf("expected 1 resolved task, got %d", len(resp.Tasks))
+	}
+	if resp.Tasks[0].Content != task.Content {
+		t.Fatalf("resolved content = %q, want %q", resp.Tasks[0].Content, task.Content)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // ResolveDep
 // ---------------------------------------------------------------------------

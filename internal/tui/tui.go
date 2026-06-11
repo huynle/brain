@@ -847,9 +847,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		content := msg.Content
 		if m.activeContentTab == ContentTabAutomation && msg.Type == "automation" {
-			// Cache the raw content for goal rows so the detail pane can be
-			// re-decorated when reconcile audit history loads asynchronously.
-			if row := m.automationList.SelectedRow(); row != nil && row.IsGoal && row.Path == msg.Path {
+			// Cache raw automation content so the detail pane can be re-decorated
+			// when async data loads or the generated-task cursor moves.
+			if row := m.automationList.SelectedRow(); row != nil && row.Path == msg.Path {
 				if m.goalDetailRaw == nil {
 					m.goalDetailRaw = make(map[string]string)
 				}
@@ -1434,6 +1434,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.Type {
 	case tea.KeyBackspace:
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			return m, m.deleteSelectedAutomationRunTask()
+		}
 		// Delete task(s) - with confirmation modal (tasks view only)
 		// Only handle when NOT in filter mode (filter mode consumes backspace for editing)
 		if m.filterState == FilterOff && m.viewMode == ViewModeTasks && m.activePanel == PanelTasks {
@@ -1498,6 +1501,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyEnter:
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			m.automationList.ToggleExpandedSelected()
+			return m, nil
+		}
 		if m.activeContentTab == ContentTabBrain && m.entryTree.ToggleCollapse() {
 			return m, nil
 		}
@@ -1546,6 +1553,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// When on Automation tab, handle active-subtab keys.
 		if m.activeContentTab == ContentTabAutomation {
+			if m.activeAutomationSubTab == AutomationSubTabAutomations && msg.String() == "enter" {
+				m.automationList.ToggleExpandedSelected()
+				return m, nil
+			}
 			if m.activePanel == PanelDetails {
 				switch string(msg.Runes) {
 				case "j":
@@ -1564,6 +1575,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.activeAutomationSubTab == AutomationSubTabAutomations {
 				switch string(msg.Runes) {
+				case "o":
+					return m, m.openSessionForAutomationGeneratedTask(false)
+				case "O":
+					return m, m.openSessionForAutomationGeneratedTask(true)
+				case "d":
+					return m, m.deleteSelectedAutomationRunTask()
 				case "j", "k", "g", "G":
 					m.automationList.Update(msg)
 					if m.detailVisible {
@@ -1588,6 +1605,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					// automation entry — toggleSelectedAutomationRow handles both.
 					return m, m.toggleSelectedAutomationRow()
 				case "x":
+					if _, ok := m.automationList.SelectedRunTask(); ok {
+						return m, m.executeSelectedAutomationRunTask()
+					}
 					// Goal rows run an inline reconcile via RunGoal; non-goal rows
 					// use the generic manual-run that creates a task.
 					if row := m.automationList.SelectedRow(); row != nil && row.IsGoal {
@@ -3708,18 +3728,11 @@ func (m *Model) automationDetailContent(path, content string) string {
 		})
 		b.WriteString("\n\n## Runs\n")
 		for _, task := range runs {
-			status := task.Status
-			if status == "" {
-				status = "unknown"
-			}
-			b.WriteString(fmt.Sprintf("- %s [%s] %s", task.ID, status, task.Title))
+			line := automationRunTaskDetailLine(task)
 			if task.Modified != "" {
-				b.WriteString(" modified=" + task.Modified)
+				line += " modified=" + task.Modified
 			}
-			if task.Path != "" {
-				b.WriteString(" path=" + task.Path)
-			}
-			b.WriteString("\n")
+			b.WriteString("- " + line + "\n")
 		}
 	}
 
@@ -3782,7 +3795,37 @@ func automationRunTaskDetailLine(task types.BrainEntry) string {
 	if task.Path != "" {
 		line += " path=" + task.Path
 	}
+	if sessionID := newestSessionID(task.Sessions); sessionID != "" {
+		line += " session=" + sessionID + " (o: open, O: tmux)"
+	} else {
+		line += " session=none"
+	}
 	return line
+}
+
+func newestSessionID(sessions map[string]types.SessionInfo) string {
+	sessionIDs := sortedSessionIDs(sessions)
+	if len(sessionIDs) == 0 {
+		return ""
+	}
+	return sessionIDs[0]
+}
+
+func (m *Model) openSessionForAutomationGeneratedTask(tmuxMode bool) tea.Cmd {
+	task, ok := m.automationList.SelectedRunTask()
+	if !ok || len(task.Sessions) == 0 {
+		m.setStatusMessage("warn", "No sessions available for generated tasks")
+		m.addLog("warn", "No sessions available for generated tasks")
+		return nil
+	}
+	sessionIDs := sortedSessionIDs(task.Sessions)
+	return func() tea.Msg {
+		return sessionsFetchedMsg{
+			sessionIDs: sessionIDs,
+			taskPath:   task.Path,
+			tmuxMode:   tmuxMode,
+		}
+	}
 }
 
 // goalReconcileDetailSection renders the "Last Reconcile" + "Audit" detail
@@ -4898,6 +4941,72 @@ func (m *Model) runSelectedAutomationRow() tea.Cmd {
 		return nil
 	}
 	return runAutomationRowCmd(m.apiRunnerConfig(), *row, m.activeAutomationProject())
+}
+
+func (m *Model) executeSelectedAutomationRunTask() tea.Cmd {
+	entry, ok := m.automationList.SelectedRunTask()
+	if !ok {
+		return nil
+	}
+	task := resolvedTaskFromAutomationRunEntry(entry)
+	actionLabel := "Execute"
+	if task.Status == "in_progress" {
+		actionLabel = "Resume"
+	}
+	projectID := m.activeAutomationProject()
+	rc := m.runnerController
+	taskCopy := task
+	modal := NewConfirmModal(actionLabel+" Task", fmt.Sprintf("%s task '%s' now?", actionLabel, task.Title)).
+		WithOnConfirm(func() tea.Msg {
+			if rc != nil {
+				return executeTaskViaRunnerCmd(rc, taskCopy, projectID)()
+			}
+			runnerID := "manual-tui"
+			if m.config.RunnerID != "" {
+				runnerID = m.config.RunnerID
+			}
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+			return executeTaskCmd(apiClient, projectID, taskCopy.ID, runnerID)()
+		})
+	return m.modalManager.Open(modal)
+}
+
+func (m *Model) deleteSelectedAutomationRunTask() tea.Cmd {
+	entry, ok := m.automationList.SelectedRunTask()
+	if !ok {
+		return nil
+	}
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	modal := NewConfirmModal("Delete Task", "Delete 1 task(s)?").
+		WithTaskTitles([]string{entry.Title}).
+		WithDestructive(true).
+		WithOnConfirm(func() tea.Msg {
+			return deleteTaskCmd(apiClient, entry.Path)()
+		})
+	return m.modalManager.Open(modal)
+}
+
+func resolvedTaskFromAutomationRunEntry(entry types.BrainEntry) *types.ResolvedTask {
+	return &types.ResolvedTask{
+		ID:            entry.ID,
+		Path:          entry.Path,
+		Title:         entry.Title,
+		Content:       entry.Content,
+		Priority:      entry.Priority,
+		Status:        entry.Status,
+		Created:       entry.Created,
+		Workdir:       entry.Workdir,
+		GitRemote:     entry.GitRemote,
+		GitBranch:     entry.GitBranch,
+		TargetWorkdir: entry.TargetWorkdir,
+		DirectPrompt:  entry.DirectPrompt,
+		Agent:         entry.Agent,
+		Model:         entry.Model,
+		Executor:      entry.Executor,
+		Sessions:      entry.Sessions,
+		Generated:     entry.Generated,
+		GeneratedBy:   entry.GeneratedBy,
+	}
 }
 
 func (m *Model) editSelectedAutomationRow() tea.Cmd {

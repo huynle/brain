@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -99,7 +100,10 @@ func openSessionTmux(sessionID string, taskID string) tea.Cmd {
 			windowName = windowName[:20]
 		}
 
-		cmd := exec.Command("tmux", "new-window", "-n", windowName, opencodeBin, "-s", sessionID)
+		// Run through the shell so the viewer window closes as soon as OpenCode exits.
+		// Without this, completed automation sessions linger as stale tmux windows.
+		script := fmt.Sprintf("%s -s %s; tmux kill-window -t %s", strconv.Quote(opencodeBin), strconv.Quote(sessionID), strconv.Quote(windowName))
+		cmd := exec.Command("tmux", "new-window", "-n", windowName, "sh", "-lc", script)
 		err := cmd.Run()
 		return sessionOpenedMsg{taskID: taskID, sessionID: sessionID, err: err}
 	}

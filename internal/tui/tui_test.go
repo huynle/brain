@@ -769,6 +769,51 @@ func TestRunAutomationRowCmdUsesActiveProjectForGlobalAutomation(t *testing.T) {
 	if gotCreate.Project != "brain-api" {
 		t.Fatalf("created task project = %q, want brain-api", gotCreate.Project)
 	}
+	if gotCreate.CompleteOnIdle == nil || !*gotCreate.CompleteOnIdle {
+		t.Fatalf("created task complete_on_idle = %v, want true by default", gotCreate.CompleteOnIdle)
+	}
+}
+
+func TestRunAutomationRowCmdInterpolatesActiveProjectForGlobalAutomation(t *testing.T) {
+	var gotCreate types.CreateEntryRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			json.NewEncoder(w).Encode(types.BrainEntry{
+				ID:     "dream-auto",
+				Path:   "global/automation/dream-auto.md",
+				Title:  "Dream Consolidation",
+				Type:   "automation",
+				Status: "active",
+				Action: &types.AutomationAction{Type: "prompt", DirectPrompt: "Consolidate {{.Project}} / {{.ProjectID}}"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			if err := json.NewDecoder(r.Body).Decode(&gotCreate); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "task1234", Path: "projects/orion-ai/task/task1234.md", Title: gotCreate.Title, Type: "task", Status: "pending"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	cmd := runAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:     "dream-auto",
+		Path:   "global/automation/dream-auto.md",
+		Title:  "Dream Consolidation",
+		Source: "automation",
+		Scope:  "global",
+		Status: "active",
+	}, "orion-ai")
+	msg := cmd().(AutomationRunMsg)
+	if msg.Error != nil {
+		t.Fatalf("run global automation failed: %v", msg.Error)
+	}
+	if gotCreate.DirectPrompt != "Consolidate orion-ai / orion-ai" || gotCreate.Content != gotCreate.DirectPrompt {
+		t.Fatalf("created task prompt = content %q direct_prompt %q, want interpolated project", gotCreate.Content, gotCreate.DirectPrompt)
+	}
 }
 
 func TestAutomationDetailShowsGeneratedRuns(t *testing.T) {

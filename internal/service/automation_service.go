@@ -1,9 +1,11 @@
 package service
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/huynle/brain-api/internal/realtime"
@@ -301,27 +303,29 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		}
 	}
 
+	prompt := renderAutomationProjectTemplate(automation.Action.DirectPrompt, project)
 	req := types.CreateEntryRequest{
 		Type:           "task",
 		Title:          fmt.Sprintf("Automation: %s", automation.ID),
-		Content:        automation.Action.DirectPrompt,
+		Content:        prompt,
 		Status:         "pending",
 		Project:        project,
 		Generated:      &generated,
 		GeneratedBy:    fmt.Sprintf("automation:%s", automation.ID),
 		GeneratedKey:   generatedKey,
-		DirectPrompt:   automation.Action.DirectPrompt,
+		DirectPrompt:   prompt,
 		Agent:          automation.Action.Agent,
 		Model:          automation.Action.Model,
 		ExecutionMode:  automation.Action.ExecutionMode,
 		SessionMode:    automation.Action.SessionMode,
-		CompleteOnIdle: automation.Action.CompleteOnIdle,
+		CompleteOnIdle: automationCompleteOnIdle(automation.Action.CompleteOnIdle),
 	}
 
 	if automation.Action.Type == "script" {
+		command := renderAutomationProjectTemplate(automation.Action.Command, project)
 		req.Executor = "script"
-		req.Content = automation.Action.Command
-		req.DirectPrompt = automation.Action.Command
+		req.Content = command
+		req.DirectPrompt = command
 	}
 
 	taskResp, err := s.brain.Save(ctx, req)
@@ -346,6 +350,36 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		}
 	}
 	return nil
+}
+
+func automationCompleteOnIdle(value *bool) *bool {
+	if value != nil {
+		return value
+	}
+	defaultValue := true
+	return &defaultValue
+}
+
+func renderAutomationProjectTemplate(input, project string) string {
+	if input == "" {
+		return ""
+	}
+	tmpl, err := template.New("automation-project").Option("missingkey=error").Parse(input)
+	if err != nil {
+		return input
+	}
+	data := struct {
+		Project   string
+		ProjectID string
+	}{
+		Project:   project,
+		ProjectID: project,
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return input
+	}
+	return buf.String()
 }
 
 type automationRunAudit struct {

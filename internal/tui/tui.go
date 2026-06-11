@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -5609,14 +5611,15 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 		}
 
 		generated := true
-		prompt := entry.Action.DirectPrompt
+		prompt := interpolateAutomationManualPrompt(entry.Action.DirectPrompt, project)
 		if entry.Action.Type == "script" {
-			prompt = entry.Action.Command
+			prompt = interpolateAutomationManualPrompt(entry.Action.Command, project)
 		}
 		if prompt == "" {
 			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation action has no prompt or command")}
 		}
 
+		completeOnIdle := automationManualCompleteOnIdle(entry.Action.CompleteOnIdle)
 		req := types.CreateEntryRequest{
 			Type:           "task",
 			Title:          fmt.Sprintf("Automation: %s", entry.ID),
@@ -5630,7 +5633,7 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 			Agent:          entry.Action.Agent,
 			Model:          entry.Action.Model,
 			ExecutionMode:  entry.Action.ExecutionMode,
-			CompleteOnIdle: entry.Action.CompleteOnIdle,
+			CompleteOnIdle: completeOnIdle,
 		}
 		if entry.Action.Type == "script" {
 			req.Executor = "script"
@@ -5642,6 +5645,36 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 		}
 		return AutomationRunMsg{RowID: row.ID, TaskID: created.ID}
 	}
+}
+
+func automationManualCompleteOnIdle(value *bool) *bool {
+	if value != nil {
+		return value
+	}
+	defaultValue := true
+	return &defaultValue
+}
+
+func interpolateAutomationManualPrompt(prompt, project string) string {
+	if prompt == "" {
+		return ""
+	}
+	tmpl, err := template.New("automation-manual-run").Option("missingkey=error").Parse(prompt)
+	if err != nil {
+		return prompt
+	}
+	data := struct {
+		Project   string
+		ProjectID string
+	}{
+		Project:   project,
+		ProjectID: project,
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return prompt
+	}
+	return buf.String()
 }
 
 // completeTaskCmd completes a single task.

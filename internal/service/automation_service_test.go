@@ -124,6 +124,109 @@ func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *t
 	}
 }
 
+func TestAutomationService_HandleEventInterpolatesProjectInPrompt(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Project-aware automation",
+		Content: "Creates a task using project template variables.",
+		Status:  "active",
+		Project: "automation-template-test",
+		Trigger: &types.TriggerConfig{
+			Type:   "event",
+			Event:  types.EventTaskCompleted,
+			Filter: map[string]string{"project_id": "automation-template-test"},
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Consolidate {{.Project}} / {{.ProjectID}}",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-template-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-template-test",
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-template-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated task, got %d", len(resp.Entries))
+	}
+	if got := resp.Entries[0].DirectPrompt; got != "Consolidate automation-template-test / automation-template-test" {
+		t.Fatalf("generated task direct_prompt = %q, want interpolated project", got)
+	}
+	if got := resp.Entries[0].Content; got != resp.Entries[0].DirectPrompt {
+		t.Fatalf("generated task content = %q, direct_prompt = %q, want both interpolated", got, resp.Entries[0].DirectPrompt)
+	}
+}
+
+func TestAutomationService_HandleEventDefaultsGeneratedTaskCompleteOnIdle(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Automation without explicit idle setting",
+		Content: "Creates a task that should auto-complete when idle.",
+		Status:  "active",
+		Project: "automation-idle-test",
+		Trigger: &types.TriggerConfig{
+			Type:   "event",
+			Event:  types.EventTaskCompleted,
+			Filter: map[string]string{"project_id": "automation-idle-test"},
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Run automation work.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-idle-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-idle-test",
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: "automation-idle-test", Limit: 10})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated task, got %d", len(resp.Entries))
+	}
+	if resp.Entries[0].CompleteOnIdle == nil || !*resp.Entries[0].CompleteOnIdle {
+		t.Fatalf("generated task complete_on_idle = %v, want true by default", resp.Entries[0].CompleteOnIdle)
+	}
+}
+
 func TestAutomationService_HandleEventThreadsSessionModeOntoGeneratedTask(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()

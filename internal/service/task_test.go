@@ -305,6 +305,34 @@ func TestNoteRowToBrainEntry_MetadataParsing(t *testing.T) {
 	}
 }
 
+func TestGetTask_ResolvesBuiltinMonitorPromptFromTag(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	projectID := "brain-api"
+	stalePrompt := "stale prompt copied when monitor was created"
+
+	insertTaskNote(t, store, "dream01", "Monitor: Dream Consolidation (project brain-api)", "pending", "medium", projectID, map[string]interface{}{
+		"tags":             []interface{}{"scheduled", "dream", "monitor:dream:project:brain-api"},
+		"direct_prompt":    stalePrompt,
+		"schedule":         "0 3 * * *",
+		"schedule_enabled": true,
+	})
+
+	task, err := svc.GetTask(context.Background(), projectID, "dream01")
+	if err != nil {
+		t.Fatalf("GetTask failed: %v", err)
+	}
+
+	if task.DirectPrompt == stalePrompt {
+		t.Fatal("expected built-in monitor prompt to be resolved live, got stale stored direct_prompt")
+	}
+	if !strings.Contains(task.DirectPrompt, "You are the **Dream Consolidator**") {
+		t.Fatalf("DirectPrompt does not contain current dream prompt: %q", task.DirectPrompt)
+	}
+	if !strings.Contains(task.DirectPrompt, `project: "brain-api"`) {
+		t.Fatalf("DirectPrompt does not include project scope: %q", task.DirectPrompt)
+	}
+}
+
 func TestNoteRowToBrainEntry_EmptyMetadata(t *testing.T) {
 	typ := "task"
 	status := "pending"
@@ -1628,6 +1656,50 @@ func TestGetTasks_MetadataFlowsToResolution(t *testing.T) {
 	}
 	if len(taskB.ResolvedDeps) != 1 || taskB.ResolvedDeps[0] != "aaa11111" {
 		t.Errorf("ResolvedDeps = %v, want [aaa11111]", taskB.ResolvedDeps)
+	}
+}
+
+func TestGetTasks_MetadataRunFinalizationsFlowToEntries(t *testing.T) {
+	metaJSON, err := json.Marshal(map[string]interface{}{
+		"run_finalizations": map[string]interface{}{
+			"run1": map[string]interface{}{
+				"status":       "completed",
+				"finalized_at": "2026-06-10T21:00:00Z",
+				"session_id":   "ses_finalized",
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	entryType := "automation"
+	status := "active"
+	priority := "medium"
+	project := "proj"
+	row := &storage.NoteRow{
+		Path:      "projects/proj/automation/auto1111.md",
+		ShortID:   "auto1111",
+		Title:     "Automation",
+		Type:      &entryType,
+		Status:    &status,
+		Priority:  &priority,
+		ProjectID: &project,
+		Metadata:  string(metaJSON),
+	}
+
+	entry := NoteRowToBrainEntry(row)
+	finalization, ok := entry.RunFinalizations["run1"]
+	if !ok {
+		t.Fatalf("missing run finalization in %#v", entry.RunFinalizations)
+	}
+	if finalization.SessionID != "ses_finalized" {
+		t.Fatalf("SessionID = %q, want ses_finalized", finalization.SessionID)
+	}
+	if finalization.Status != "completed" {
+		t.Fatalf("Status = %q, want completed", finalization.Status)
+	}
+	if finalization.FinalizedAt != "2026-06-10T21:00:00Z" {
+		t.Fatalf("FinalizedAt = %q, want timestamp", finalization.FinalizedAt)
 	}
 }
 

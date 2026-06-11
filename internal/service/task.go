@@ -144,6 +144,10 @@ func (s *TaskServiceImpl) GetTask(ctx context.Context, projectId, taskId string)
 func (s *TaskServiceImpl) applyTaskDefaults(tasks []types.ResolvedTask) {
 	d := s.config.TaskDefaults
 
+	for i := range tasks {
+		resolveBuiltinMonitorPrompt(&tasks[i])
+	}
+
 	// Quick check: if all defaults are zero, nothing to do.
 	if d.Agent == "" && d.Model == "" && d.Executor == "" &&
 		len(d.Extensions) == 0 && d.ExecutionMode == "" &&
@@ -204,6 +208,20 @@ func (s *TaskServiceImpl) applyTaskDefaults(tasks []types.ResolvedTask) {
 			v := *d.OpenPRBeforeMerge
 			t.OpenPRBeforeMerge = &v
 		}
+	}
+}
+
+func resolveBuiltinMonitorPrompt(task *types.ResolvedTask) {
+	for _, tag := range task.Tags {
+		parsed := ParseMonitorTag(tag)
+		if parsed == nil {
+			continue
+		}
+		if _, ok := monitorTemplates[parsed.TemplateID]; !ok {
+			continue
+		}
+		task.DirectPrompt = buildMonitorPrompt(parsed.TemplateID, parsed.Scope)
+		return
 	}
 }
 
@@ -1394,6 +1412,29 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 				sessions[sid] = si
 			}
 			entry.Sessions = sessions
+		}
+	}
+
+	// Run finalizations: map[runID]RunFinalization from metadata JSON.
+	if finalizationsRaw, ok := meta["run_finalizations"]; ok {
+		if finalizationsMap, ok := finalizationsRaw.(map[string]interface{}); ok {
+			finalizations := make(map[string]types.RunFinalization, len(finalizationsMap))
+			for runID, infoRaw := range finalizationsMap {
+				finalization := types.RunFinalization{}
+				if infoMap, ok := infoRaw.(map[string]interface{}); ok {
+					if status, ok := infoMap["status"].(string); ok {
+						finalization.Status = status
+					}
+					if finalizedAt, ok := infoMap["finalized_at"].(string); ok {
+						finalization.FinalizedAt = finalizedAt
+					}
+					if sessionID, ok := infoMap["session_id"].(string); ok {
+						finalization.SessionID = sessionID
+					}
+				}
+				finalizations[runID] = finalization
+			}
+			entry.RunFinalizations = finalizations
 		}
 	}
 

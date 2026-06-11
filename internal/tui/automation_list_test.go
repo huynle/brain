@@ -53,7 +53,7 @@ func TestAutomationList_View_ShowsAutomationScope(t *testing.T) {
 		nil,
 	)
 
-	view := al.View(140, 20)
+	view := stripANSI(al.View(140, 20))
 	for _, want := range []string{"global", "project"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected scope %q in view, got:\n%s", want, view)
@@ -189,11 +189,59 @@ func TestAutomationList_View_ShowsGeneratedTaskLifecycle(t *testing.T) {
 		},
 	)
 
-	view := al.View(140, 20)
+	view := stripANSI(al.View(140, 20))
 	for _, want := range []string{"run:", "1 queued", "1 running", "1 done"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected view to contain %q, got:\n%s", want, view)
 		}
+	}
+}
+
+func TestAutomationList_View_UsesArrowsOnlyForRowsWithChildren(t *testing.T) {
+	al := NewAutomationList()
+	al.SetEntryRows(
+		[]types.BrainEntry{
+			{ID: "auto1", Title: "Has runs", Type: "automation", Status: "active"},
+			{ID: "auto2", Title: "No runs", Type: "automation", Status: "active"},
+		},
+		nil,
+		[]types.BrainEntry{{ID: "task1", Type: "task", Status: "completed", GeneratedBy: "automation:auto1"}},
+	)
+
+	view := stripANSI(al.View(140, 20))
+	if !strings.Contains(view, "▸ automation") || !strings.Contains(view, "Has runs") {
+		t.Fatalf("expected collapsed arrow for automation with child runs, got:\n%s", view)
+	}
+	if strings.Contains(view, "▸ automation  unknown  No runs") || strings.Contains(view, "▾ automation  unknown  No runs") {
+		t.Fatalf("expected no arrow for automation without child runs, got:\n%s", view)
+	}
+
+	al.ToggleExpandedSelected()
+	view = stripANSI(al.View(140, 20))
+	if !strings.Contains(view, "▾ automation") || !strings.Contains(view, "Has runs") {
+		t.Fatalf("expected expanded arrow for expanded automation with child runs, got:\n%s", view)
+	}
+}
+
+func TestAutomationList_EnterOnSelectedRunDoesNotCollapseParent(t *testing.T) {
+	m := automationSessionTestModel([]types.BrainEntry{
+		{ID: "task1", Path: "projects/demo/task/task1.md", Title: "Generated task", Type: "task", Status: "completed", GeneratedBy: "automation:auto1"},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")})
+	m = updated.(Model)
+	view := stripANSI(m.automationList.View(140, 20))
+	if !strings.Contains(view, "▾ automation") || !strings.Contains(view, "▸ task1 [completed] Generated task") {
+		t.Fatalf("expected expanded parent and selected child before enter, got:\n%s", view)
+}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	view = stripANSI(m.automationList.View(140, 20))
+	if !strings.Contains(view, "▾ automation") || !strings.Contains(view, "▸ task1 [completed] Generated task") {
+		t.Fatalf("expected enter on selected child to keep parent expanded, got:\n%s", view)
 	}
 }
 

@@ -3815,19 +3815,55 @@ func newestSessionID(sessions map[string]types.SessionInfo) string {
 
 func (m *Model) openSessionForAutomationGeneratedTask(tmuxMode bool) tea.Cmd {
 	task, ok := m.automationList.SelectedRunTask()
-	if !ok || len(task.Sessions) == 0 {
+	if !ok || task.Path == "" {
 		m.setStatusMessage("warn", "No sessions available for generated tasks")
 		m.addLog("warn", "No sessions available for generated tasks")
 		return nil
 	}
-	sessionIDs := sortedSessionIDs(task.Sessions)
-	return func() tea.Msg {
-		return sessionsFetchedMsg{
-			sessionIDs: sessionIDs,
-			taskPath:   task.Path,
-			tmuxMode:   tmuxMode,
+	if len(task.Sessions) == 0 {
+		if sessionID := m.automationRunFinalizationSessionID(task); sessionID != "" {
+			return func() tea.Msg {
+				return sessionsFetchedMsg{
+					sessionIDs: []string{sessionID},
+					taskPath:   task.Path,
+					tmuxMode:   tmuxMode,
+				}
+			}
+		}
+		if sessionID := localOpenCodeSessionIDForTask(task); sessionID != "" {
+			return func() tea.Msg {
+				return sessionsFetchedMsg{
+					sessionIDs: []string{sessionID},
+					taskPath:   task.Path,
+					tmuxMode:   tmuxMode,
+				}
+			}
 		}
 	}
+	resolved := types.ResolvedTask{
+		ID:       task.ID,
+		Path:     task.Path,
+		Title:    task.Title,
+		Status:   task.Status,
+		Sessions: task.Sessions,
+	}
+	return m.openSessionForTask(&resolved, tmuxMode)
+}
+
+func (m *Model) automationRunFinalizationSessionID(task types.BrainEntry) string {
+	automationID := strings.TrimPrefix(task.GeneratedBy, "automation:")
+	if automationID == task.GeneratedBy || automationID == "" || task.AutomationRunID == "" {
+		return ""
+	}
+	entry, ok := m.automationList.automationsByID[automationID]
+	if !ok {
+		return ""
+	}
+	finalization, ok := entry.RunFinalizations[task.AutomationRunID]
+	if !ok {
+		return ""
+	}
+	return finalization.SessionID
 }
 
 // goalReconcileDetailSection renders the "Last Reconcile" + "Audit" detail

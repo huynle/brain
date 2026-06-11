@@ -100,6 +100,60 @@ func TestAutomationListEnterExpandsRunsAndOpenKeyUsesSelectedRun(t *testing.T) {
 	}
 }
 
+func TestAutomationListOpenKeyUsesParentRunFinalizationSession(t *testing.T) {
+	m := automationSessionTestModelWithAutomation(types.BrainEntry{
+		ID:     "auto1",
+		Path:   "projects/demo/automation/auto1.md",
+		Title:  "Automation auto1",
+		Type:   "automation",
+		Status: "active",
+		RunFinalizations: map[string]types.RunFinalization{
+			"run1": {Status: "completed", FinalizedAt: "2026-06-10T21:00:00Z", SessionID: "ses_finalized"},
+		},
+	}, []types.BrainEntry{
+		{
+			ID:              "task1",
+			Path:            "projects/demo/task/task1.md",
+			Title:           "Generated task",
+			Type:            "task",
+			Status:          "completed",
+			GeneratedBy:     "automation:auto1",
+			AutomationRunID: "run1",
+		},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+	view := m.automationList.View(140, 20)
+	if !strings.Contains(view, "session=ses_finalized") {
+		t.Fatalf("expected generated task row to show finalized session, got:\n%s", view)
+	}
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	if cmd == nil {
+		t.Fatal("expected o to open finalized session")
+	}
+	fetched, ok := cmd().(sessionsFetchedMsg)
+	if !ok {
+		t.Fatalf("expected sessionsFetchedMsg, got %T", cmd())
+	}
+	if got, want := strings.Join(fetched.sessionIDs, ","), "ses_finalized"; got != want {
+		t.Fatalf("sessionIDs = %q, want %q", got, want)
+	}
+	if fetched.tmuxMode {
+		t.Fatal("expected fullscreen mode for o")
+	}
+
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("O")})
+	if cmd == nil {
+		t.Fatal("expected O to open finalized session")
+	}
+	fetched = cmd().(sessionsFetchedMsg)
+	if !fetched.tmuxMode {
+		t.Fatal("expected tmux mode for O")
+	}
+}
+
 func TestAutomationListRunSelectionChoosesSpecificRun(t *testing.T) {
 	m := automationSessionTestModel([]types.BrainEntry{
 		{
@@ -243,7 +297,7 @@ func TestAutomationDetailOpenTmuxKeyUsesTmuxMode(t *testing.T) {
 	}
 }
 
-func TestAutomationDetailOpenKeyWithoutSessionsWarnsAndDoesNotOpen(t *testing.T) {
+func TestAutomationDetailOpenKeyWithoutLoadedSessionsFetchesPersistedSessions(t *testing.T) {
 	m := automationSessionTestModel([]types.BrainEntry{
 		{
 			ID:          "script1",
@@ -256,9 +310,38 @@ func TestAutomationDetailOpenKeyWithoutSessionsWarnsAndDoesNotOpen(t *testing.T)
 		},
 	})
 
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
+	if cmd == nil {
+		t.Fatal("expected command to fetch persisted sessions for generated task")
+	}
+
+	_, cmd = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("O")})
+	if cmd == nil {
+		t.Fatal("expected command to fetch persisted sessions in tmux mode for generated task")
+	}
+}
+
+func TestAutomationDetailOpenKeyWithoutTaskPathWarnsAndDoesNotOpen(t *testing.T) {
+	m := automationSessionTestModel([]types.BrainEntry{
+		{
+			ID:          "script1",
+			Title:       "Script generated task",
+			Type:        "task",
+			Status:      "completed",
+			GeneratedBy: "automation:auto1",
+			Executor:    "script",
+		},
+	})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("o")})
 	if cmd != nil {
-		t.Fatal("expected no command when no generated task has sessions")
+		t.Fatal("expected no command when generated task has no path")
 	}
 	updatedModel := updated.(Model)
 	if updatedModel.statusMessageType != "warn" {
@@ -270,11 +353,6 @@ func TestAutomationDetailOpenKeyWithoutSessionsWarnsAndDoesNotOpen(t *testing.T)
 }
 
 func automationSessionTestModel(generatedTasks []types.BrainEntry) Model {
-	m := NewModel(Config{Project: "demo", APIURL: "http://127.0.0.1:1"})
-	m.activeContentTab = ContentTabAutomation
-	m.activeAutomationSubTab = AutomationSubTabAutomations
-	m.activePanel = PanelTasks
-	m.detailVisible = true
 	automation := types.BrainEntry{
 		ID:     "auto1",
 		Path:   "projects/demo/automation/auto1.md",
@@ -282,6 +360,15 @@ func automationSessionTestModel(generatedTasks []types.BrainEntry) Model {
 		Type:   "automation",
 		Status: "active",
 	}
+	return automationSessionTestModelWithAutomation(automation, generatedTasks)
+}
+
+func automationSessionTestModelWithAutomation(automation types.BrainEntry, generatedTasks []types.BrainEntry) Model {
+	m := NewModel(Config{Project: "demo", APIURL: "http://127.0.0.1:1"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.detailVisible = true
 	m.automationGeneratedTasks = generatedTasks
 	m.automationList.SetEntryRows([]types.BrainEntry{automation}, nil, generatedTasks)
 	return m

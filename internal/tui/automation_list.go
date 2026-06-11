@@ -44,6 +44,7 @@ type AutomationList struct {
 
 	rows              []AutomationListRow
 	generatedTasks    []types.BrainEntry
+	automationsByID   map[string]types.BrainEntry
 	expandedID        string
 	selectedRunTaskID string
 	loading           bool
@@ -92,6 +93,7 @@ func (al *AutomationList) SetEntriesAndTasks(entries []types.BrainEntry, tasks [
 // SetEntryRows normalizes automation entries and scheduled task entries into one list.
 func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types.BrainEntry, generatedTasks []types.BrainEntry) {
 	al.generatedTasks = append([]types.BrainEntry(nil), generatedTasks...)
+	al.automationsByID = make(map[string]types.BrainEntry)
 	rows := make([]AutomationListRow, 0, len(entries)+len(tasks))
 	runsByAutomation := automationRunSummaries(generatedTasks)
 	goalProgress := goalProgressByFeature(generatedTasks)
@@ -99,6 +101,7 @@ func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types
 		if entry.Type != "automation" {
 			continue
 		}
+		al.automationsByID[entry.ID] = entry
 		row := AutomationRowFromEntry(entry)
 		if summary, ok := runsByAutomation[entry.ID]; ok {
 			row.RunSummary = summary.summary()
@@ -250,6 +253,12 @@ func (al *AutomationList) ToggleExpandedSelected() {
 	if al.SelectedID == "" {
 		return
 	}
+	if al.selectedRunTaskID != "" {
+		return
+	}
+	if len(al.runTasksForSelectedRow()) == 0 {
+		return
+	}
 	if al.expandedID == al.SelectedID {
 		al.expandedID = ""
 		al.selectedRunTaskID = ""
@@ -337,7 +346,7 @@ func (al *AutomationList) View(width, height int) string {
 
 	lines := []string{header}
 	for i := start; i < end; i++ {
-		lines = append(lines, al.renderRow(al.rows[i], i == al.Cursor, width))
+		lines = append(lines, al.renderRow(al.rows[i], i == al.Cursor, al.rowHasRunTasks(al.rows[i]), al.expandedID == al.rows[i].ID, width))
 		if al.expandedID == al.rows[i].ID {
 			for _, task := range al.runTasksForRow(al.rows[i]) {
 				lines = append(lines, al.renderRunTaskRow(task, width))
@@ -354,6 +363,10 @@ func (al *AutomationList) runTasksForSelectedRow() []types.BrainEntry {
 		return nil
 	}
 	return al.runTasksForRow(*row)
+}
+
+func (al *AutomationList) rowHasRunTasks(row AutomationListRow) bool {
+	return len(al.runTasksForRow(row)) > 0
 }
 
 func (al *AutomationList) runTasksForRow(row AutomationListRow) []types.BrainEntry {
@@ -390,7 +403,7 @@ func (al *AutomationList) renderRunTaskRow(task types.BrainEntry, width int) str
 	if task.AutomationRunID != "" {
 		line += " run=" + task.AutomationRunID
 	}
-	if sessionID := newestSessionID(task.Sessions); sessionID != "" {
+	if sessionID := al.runTaskSessionID(task); sessionID != "" {
 		line += " session=" + sessionID + " (o: open, O: tmux)"
 	} else {
 		line += " session=none"
@@ -399,6 +412,25 @@ func (al *AutomationList) renderRunTaskRow(task types.BrainEntry, width int) str
 		line = truncateTitle(line, width)
 	}
 	return line
+}
+
+func (al *AutomationList) runTaskSessionID(task types.BrainEntry) string {
+	if sessionID := newestSessionID(task.Sessions); sessionID != "" {
+		return sessionID
+	}
+	automationID := strings.TrimPrefix(task.GeneratedBy, "automation:")
+	if automationID == task.GeneratedBy || automationID == "" || task.AutomationRunID == "" {
+		return ""
+	}
+	parent, ok := al.automationsByID[automationID]
+	if !ok {
+		return ""
+	}
+	finalization, ok := parent.RunFinalizations[task.AutomationRunID]
+	if !ok {
+		return ""
+	}
+	return finalization.SessionID
 }
 
 type automationRunSummary struct {
@@ -569,10 +601,14 @@ func (al *AutomationList) ensureCursorVisible(viewportHeight int) {
 	}
 }
 
-func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width int) string {
+func (al *AutomationList) renderRow(row AutomationListRow, selected bool, hasChildren bool, expanded bool, width int) string {
 	marker := "  "
-	if selected {
-		marker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
+	if hasChildren {
+		marker = "▸ "
+		if expanded {
+			marker = "▾ "
+		}
+		marker = lipgloss.NewStyle().Foreground(ColorCyan).Render(marker)
 	}
 
 	state := "enabled"

@@ -226,6 +226,7 @@ func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 		RunOnceAt:           task.RunOnceAt,
 		Timezone:            task.Timezone,
 		Runs:                task.Runs,
+		Tags:                task.Tags,
 		CompleteOnIdle:      task.CompleteOnIdle,
 		TargetWorkdir:       task.TargetWorkdir,
 		Generated:           task.Generated,

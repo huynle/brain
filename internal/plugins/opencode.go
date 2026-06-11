@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/huynle/brain-api/cmd/brain/assets"
 )
@@ -242,10 +241,9 @@ This file was installed by: brain install opencode
 To update: brain install opencode
 To check status: brain doctor
 Source: https://github.com/huynle/brain-api
-Generated: %s
 -->
 
-`, time.Now().Format(time.RFC3339))
+`)
 }
 
 // Uninstall removes all installed brain components.
@@ -308,8 +306,7 @@ func generateHeader(filename string) string {
  * To update: brain install opencode --force
  * To check status: brain plugin-status
  * Source: https://github.com/huynle/brain-api
- * Generated: %s
  */
 
-`, time.Now().Format(time.RFC3339))
+`)
 }

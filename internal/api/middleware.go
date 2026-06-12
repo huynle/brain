@@ -348,9 +348,16 @@ func RequireScope(allowed ...string) func(http.Handler) http.Handler {
 				return
 			}
 
-			// OAuth tokens pass scope checks (they have their own scope system)
+			// OAuth tokens carry a space-delimited scope set with its own
+			// grammar; evaluate it against the route's allowed scopes.
 			if auth.Type == "oauth" {
-				next.ServeHTTP(w, r)
+				if oauthScopeSatisfies(auth.Scope, allowedSet) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				WriteError(w, http.StatusForbidden, "Forbidden",
+					fmt.Sprintf("OAuth scope %q insufficient; requires one of: %s",
+						auth.Scope, scopeList(allowed)))
 				return
 			}
 
@@ -366,6 +373,51 @@ func RequireScope(allowed ...string) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// oauthScopeSatisfies evaluates an OAuth token's space-delimited scope set
+// against a route's allowed scopes.
+//
+// Grammar:
+//   - "admin:*" grants everything.
+//   - "control" (or "control:*") grants the remote-control surface.
+//   - "mcp" is the legacy full-access scope and satisfies every allowed
+//     scope EXCEPT "control:*" — remote control means code execution on
+//     runner machines, so it must be requested explicitly.
+//   - any other granted scope matches an allowed scope verbatim.
+func oauthScopeSatisfies(grantedStr string, allowed map[string]bool) bool {
+	granted := strings.Fields(grantedStr)
+	if len(granted) == 0 {
+		// Clients that never requested a scope historically had full access;
+		// treat them as the legacy "mcp" grant (still excludes control).
+		granted = []string{"mcp"}
+	}
+	for _, g := range granted {
+		switch g {
+		case "admin:*":
+			return true
+		case "control", "control:*":
+			if allowed[ScopeControl] {
+				return true
+			}
+		case "mcp":
+			for a := range allowed {
+				if a != ScopeControl {
+					return true
+				}
+			}
+		default:
+			if allowed[g] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ScopeControl gates the remote-control surface (proxied OpenCode access,
+// ad-hoc instance spawning). Granting it is equivalent to granting code
+// execution on connected runner machines.
+const ScopeControl = "control:*"
 
 // scopeList formats a list of scopes for display.
 func scopeList(scopes []string) string {

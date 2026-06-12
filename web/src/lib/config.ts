@@ -9,7 +9,7 @@ export const OAUTH = {
   authorizeEndpoint: "/authorize",
   tokenEndpoint: "/token",
   registerEndpoint: "/register",
-  scope: "mcp",
+  scope: "mcp control",
   clientName: "Brain PWA",
   // The redirect target is a client-side route handled by the SPA.
   redirectPath: "/auth/callback",

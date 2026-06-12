@@ -545,13 +545,14 @@ USAGE:
 FLAGS:
   --name <name>                  Token name
   --scope <scope>                Token scope (default: admin:*)
-                                 Values: admin:*, runner:*, read:*
+                                 Values: admin:*, runner:*, read:*, control:*
   -h, --help                     Show this help
 
 SCOPES:
   admin:*                        Full access to all endpoints
   runner:*                       Runner operations (claim/release/heartbeat) + read
   read:*                         Read-only access to entries and tasks
+  control:*                      Remote control: attach to / spawn OpenCode instances
 
 EXAMPLES:
   brain token create --name dev

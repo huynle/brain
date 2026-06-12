@@ -236,7 +236,7 @@ func (h *Handler) HandleServerMetadata(w http.ResponseWriter, r *http.Request) {
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic", "none"},
-		"scopes_supported":                      []string{"mcp", "mcp:read", "mcp:write"},
+		"scopes_supported":                      []string{"mcp", "mcp:read", "mcp:write", "control"},
 	})
 }
 
@@ -250,7 +250,7 @@ func (h *Handler) HandleProtectedResourceMetadata(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]any{
 		"resource":                 base,
 		"authorization_servers":    []string{base},
-		"scopes_supported":         []string{"mcp", "mcp:read", "mcp:write"},
+		"scopes_supported":         []string{"mcp", "mcp:read", "mcp:write", "control"},
 		"bearer_methods_supported": []string{"header"},
 	})
 }

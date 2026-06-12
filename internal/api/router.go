@@ -510,6 +510,39 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Remote Control (control:* scope) ────────────────
+			// Browser-facing surface for attaching to and spawning OpenCode
+			// instances. control:* is code execution on runner machines —
+			// never grant it implicitly (see oauthScopeSatisfies).
+			// NOTE: control routes require ONLY control:* — admin:* passes via
+			// RequireScope's wildcard early-return. Listing admin:* here would
+			// let the legacy OAuth "mcp" grant (which satisfies any non-control
+			// scope) leak into remote control.
+			r.Route("/control", func(r chi.Router) {
+				r.Use(RequireScope(ScopeControl))
+				if o.handler != nil && o.handler.bridge != nil {
+					r.Route("/runners/{runnerId}/instances", func(r chi.Router) {
+						r.Post("/", o.handler.HandleControlSpawn)
+						r.Route("/{instanceId}", func(r chi.Router) {
+							r.Delete("/", o.handler.HandleControlKill)
+							r.Get("/sessions", o.handler.HandleControlListSessions)
+							r.Post("/sessions", o.handler.HandleControlCreateSession)
+							r.Get("/sessions/status", o.handler.HandleControlSessionStatus)
+							r.Get("/sessions/{sessionId}/messages", o.handler.HandleControlListMessages)
+							r.Post("/sessions/{sessionId}/prompt", o.handler.HandleControlPrompt)
+							r.Post("/sessions/{sessionId}/abort", o.handler.HandleControlAbort)
+							r.Post("/sessions/{sessionId}/permissions/{permissionId}", o.handler.HandleControlPermission)
+							r.Get("/permissions", o.handler.HandleControlPendingPermissions)
+							r.Get("/events", o.handler.HandleControlEvents)
+							r.Get("/agents", o.handler.HandleControlAgents)
+							r.Get("/providers", o.handler.HandleControlProviders)
+						})
+					})
+				} else {
+					r.HandleFunc("/*", notImplemented)
+				}
+			})
+
 			// ─── Monitors ────────────────────────────────────────
 			r.Route("/monitors", func(r chi.Router) {
 				// Read operations — read:* scope

@@ -190,7 +190,7 @@ func ParseTokenFlags(args []string) (*TokenFlags, error) {
 	fs := flag.NewFlagSet("token", flag.ExitOnError)
 
 	fs.StringVar(&flags.Name, "name", "", "Token name")
-	fs.StringVar(&flags.Scope, "scope", "", "Token scope: admin:*, runner:*, or read:* (default: admin:*)")
+	fs.StringVar(&flags.Scope, "scope", "", "Token scope: admin:*, runner:*, read:*, or control:* (default: admin:*)")
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err

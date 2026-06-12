@@ -42,10 +42,14 @@ type AutomationList struct {
 	SelectedID string
 	Cursor     int
 
-	rows         []AutomationListRow
-	loading      bool
-	errMsg       string
-	scrollOffset int
+	rows              []AutomationListRow
+	generatedTasks    []types.BrainEntry
+	automationsByID   map[string]types.BrainEntry
+	expandedID        string
+	selectedRunTaskID string
+	loading           bool
+	errMsg            string
+	scrollOffset      int
 }
 
 // NewAutomationList creates an empty AutomationList component.
@@ -88,6 +92,8 @@ func (al *AutomationList) SetEntriesAndTasks(entries []types.BrainEntry, tasks [
 
 // SetEntryRows normalizes automation entries and scheduled task entries into one list.
 func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types.BrainEntry, generatedTasks []types.BrainEntry) {
+	al.generatedTasks = append([]types.BrainEntry(nil), generatedTasks...)
+	al.automationsByID = make(map[string]types.BrainEntry)
 	rows := make([]AutomationListRow, 0, len(entries)+len(tasks))
 	runsByAutomation := automationRunSummaries(generatedTasks)
 	goalProgress := goalProgressByFeature(generatedTasks)
@@ -95,6 +101,7 @@ func (al *AutomationList) SetEntryRows(entries []types.BrainEntry, tasks []types
 		if entry.Type != "automation" {
 			continue
 		}
+		al.automationsByID[entry.ID] = entry
 		row := AutomationRowFromEntry(entry)
 		if summary, ok := runsByAutomation[entry.ID]; ok {
 			row.RunSummary = summary.summary()
@@ -164,17 +171,49 @@ func (al *AutomationList) Update(msg tea.Msg) {
 
 // MoveDown moves the cursor down one row.
 func (al *AutomationList) MoveDown() {
+	if al.expandedID == al.SelectedID {
+		runs := al.runTasksForSelectedRow()
+		if len(runs) > 0 {
+			if al.selectedRunTaskID == "" {
+				al.selectedRunTaskID = runs[0].ID
+				return
+			}
+			for i, task := range runs {
+				if task.ID == al.selectedRunTaskID && i < len(runs)-1 {
+					al.selectedRunTaskID = runs[i+1].ID
+					return
+				}
+			}
+		}
+	}
 	if al.Cursor < len(al.rows)-1 {
 		al.Cursor++
 		al.SelectedID = al.rows[al.Cursor].ID
+		al.selectedRunTaskID = ""
 	}
 }
 
 // MoveUp moves the cursor up one row.
 func (al *AutomationList) MoveUp() {
+	if al.expandedID == al.SelectedID && al.selectedRunTaskID != "" {
+		runs := al.runTasksForSelectedRow()
+		for i, task := range runs {
+			if task.ID == al.selectedRunTaskID {
+				if i > 0 {
+					al.selectedRunTaskID = runs[i-1].ID
+				} else {
+					al.selectedRunTaskID = ""
+				}
+				return
+			}
+		}
+		al.selectedRunTaskID = ""
+		return
+	}
 	if al.Cursor > 0 {
 		al.Cursor--
 		al.SelectedID = al.rows[al.Cursor].ID
+		al.selectedRunTaskID = ""
 	}
 }
 
@@ -185,6 +224,7 @@ func (al *AutomationList) MoveToTop() {
 	}
 	al.Cursor = 0
 	al.SelectedID = al.rows[0].ID
+	al.selectedRunTaskID = ""
 }
 
 // MoveToBottom moves selection to the last row.
@@ -194,6 +234,7 @@ func (al *AutomationList) MoveToBottom() {
 	}
 	al.Cursor = len(al.rows) - 1
 	al.SelectedID = al.rows[al.Cursor].ID
+	al.selectedRunTaskID = ""
 }
 
 // SelectVisibleRow selects a rendered row by its zero-based visible index.
@@ -204,7 +245,44 @@ func (al *AutomationList) SelectVisibleRow(visibleIndex int) bool {
 	}
 	al.Cursor = idx
 	al.SelectedID = al.rows[idx].ID
+	al.selectedRunTaskID = ""
 	return true
+}
+
+func (al *AutomationList) ToggleExpandedSelected() {
+	if al.SelectedID == "" {
+		return
+	}
+	if al.selectedRunTaskID != "" {
+		return
+	}
+	if len(al.runTasksForSelectedRow()) == 0 {
+		return
+	}
+	if al.expandedID == al.SelectedID {
+		al.expandedID = ""
+		al.selectedRunTaskID = ""
+		return
+	}
+	al.expandedID = al.SelectedID
+	runs := al.runTasksForSelectedRow()
+	if len(runs) > 0 {
+		al.selectedRunTaskID = runs[0].ID
+	} else {
+		al.selectedRunTaskID = ""
+	}
+}
+
+func (al *AutomationList) SelectedRunTask() (types.BrainEntry, bool) {
+	if al.expandedID != al.SelectedID || al.selectedRunTaskID == "" {
+		return types.BrainEntry{}, false
+	}
+	for _, task := range al.runTasksForSelectedRow() {
+		if task.ID == al.selectedRunTaskID {
+			return task, true
+		}
+	}
+	return types.BrainEntry{}, false
 }
 
 // ScrollUp moves the selection up by n rows.
@@ -268,10 +346,91 @@ func (al *AutomationList) View(width, height int) string {
 
 	lines := []string{header}
 	for i := start; i < end; i++ {
-		lines = append(lines, al.renderRow(al.rows[i], i == al.Cursor, width))
+		lines = append(lines, al.renderRow(al.rows[i], i == al.Cursor, al.rowHasRunTasks(al.rows[i]), al.expandedID == al.rows[i].ID, width))
+		if al.expandedID == al.rows[i].ID {
+			for _, task := range al.runTasksForRow(al.rows[i]) {
+				lines = append(lines, al.renderRunTaskRow(task, width))
+			}
+		}
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func (al *AutomationList) runTasksForSelectedRow() []types.BrainEntry {
+	row := al.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	return al.runTasksForRow(*row)
+}
+
+func (al *AutomationList) rowHasRunTasks(row AutomationListRow) bool {
+	return len(al.runTasksForRow(row)) > 0
+}
+
+func (al *AutomationList) runTasksForRow(row AutomationListRow) []types.BrainEntry {
+	if row.ID == "" {
+		return nil
+	}
+	generatedBy := "automation:" + row.ID
+	tasks := make([]types.BrainEntry, 0)
+	for _, task := range al.generatedTasks {
+		if task.Type != "task" || task.GeneratedBy != generatedBy {
+			continue
+		}
+		tasks = append(tasks, task)
+	}
+	sort.SliceStable(tasks, func(i, j int) bool {
+		if tasks[i].Modified != tasks[j].Modified {
+			return tasks[i].Modified > tasks[j].Modified
+		}
+		return tasks[i].ID > tasks[j].ID
+	})
+	return tasks
+}
+
+func (al *AutomationList) renderRunTaskRow(task types.BrainEntry, width int) string {
+	marker := "  "
+	if task.ID == al.selectedRunTaskID {
+		marker = "▸ "
+	}
+	status := task.Status
+	if status == "" {
+		status = "unknown"
+	}
+	line := fmt.Sprintf("  %s%s [%s] %s", marker, task.ID, status, task.Title)
+	if task.AutomationRunID != "" {
+		line += " run=" + task.AutomationRunID
+	}
+	if sessionID := al.runTaskSessionID(task); sessionID != "" {
+		line += " session=" + sessionID + " (o: open, O: tmux)"
+	} else {
+		line += " session=none"
+	}
+	if width > 0 && lipgloss.Width(line) > width {
+		line = truncateTitle(line, width)
+	}
+	return line
+}
+
+func (al *AutomationList) runTaskSessionID(task types.BrainEntry) string {
+	if sessionID := newestSessionID(task.Sessions); sessionID != "" {
+		return sessionID
+	}
+	automationID := strings.TrimPrefix(task.GeneratedBy, "automation:")
+	if automationID == task.GeneratedBy || automationID == "" || task.AutomationRunID == "" {
+		return ""
+	}
+	parent, ok := al.automationsByID[automationID]
+	if !ok {
+		return ""
+	}
+	finalization, ok := parent.RunFinalizations[task.AutomationRunID]
+	if !ok {
+		return ""
+	}
+	return finalization.SessionID
 }
 
 type automationRunSummary struct {
@@ -280,9 +439,17 @@ type automationRunSummary struct {
 	inactive     int
 	latestID     string
 	latestStatus string
+	realRunCount int
 }
 
 func (s automationRunSummary) summary() string {
+	if s.realRunCount > 0 {
+		status := s.latestStatus
+		if status == "" {
+			status = "unknown"
+		}
+		return fmt.Sprintf("last %s (%d runs)", status, s.realRunCount)
+	}
 	parts := make([]string, 0, 3)
 	if s.pending > 0 {
 		parts = append(parts, fmt.Sprintf("%d queued", s.pending))
@@ -299,6 +466,20 @@ func (s automationRunSummary) summary() string {
 func automationRunSummaries(tasks []types.BrainEntry) map[string]automationRunSummary {
 	summaries := make(map[string]automationRunSummary)
 	for _, task := range tasks {
+		if task.Type == "automation_run" {
+			automationID := automationRunContentField(task.Content, "automation_id")
+			if automationID == "" {
+				continue
+			}
+			summary := summaries[automationID]
+			summary.realRunCount++
+			if summary.latestID == "" || task.Modified > "" {
+				summary.latestID = task.ID
+				summary.latestStatus = task.Status
+			}
+			summaries[automationID] = summary
+			continue
+		}
 		if !strings.HasPrefix(task.GeneratedBy, "automation:") {
 			continue
 		}
@@ -322,6 +503,17 @@ func automationRunSummaries(tasks []types.BrainEntry) map[string]automationRunSu
 		summaries[automationID] = summary
 	}
 	return summaries
+}
+
+func automationRunContentField(content, field string) string {
+	prefix := field + ":"
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		}
+	}
+	return ""
 }
 
 // goalTaskProgress accumulates linked-task counts for a single goal feature.
@@ -409,10 +601,14 @@ func (al *AutomationList) ensureCursorVisible(viewportHeight int) {
 	}
 }
 
-func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width int) string {
+func (al *AutomationList) renderRow(row AutomationListRow, selected bool, hasChildren bool, expanded bool, width int) string {
 	marker := "  "
-	if selected {
-		marker = lipgloss.NewStyle().Foreground(ColorCyan).Render("▸ ")
+	if hasChildren {
+		marker = "▸ "
+		if expanded {
+			marker = "▾ "
+		}
+		marker = lipgloss.NewStyle().Foreground(ColorCyan).Render(marker)
 	}
 
 	state := "enabled"
@@ -457,10 +653,15 @@ func (al *AutomationList) renderRow(row AutomationListRow, selected bool, width 
 		goalProgress = "  " + renderGoalProgress(row.GoalDone, row.GoalTotal)
 	}
 
+	scope := row.Scope
+	if scope == "global" {
+		scope = "built-in"
+	}
+
 	line := fmt.Sprintf("%s%s  %s  %s  %s%s  %s%s%s%s",
 		marker,
 		DimStyle.Render(fmt.Sprintf("%-10s", row.Source)),
-		DimStyle.Render(fmt.Sprintf("%-7s", row.Scope)),
+		DimStyle.Render(fmt.Sprintf("%-8s", scope)),
 		title,
 		stateStyle.Render("["+state+"]"),
 		badge,

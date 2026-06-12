@@ -17,10 +17,41 @@ ldflags := "-s -w -X " + module + "/internal/config.Version=" + version + " -X "
 cmds := "brain"
 
 # =============================================================================
+# Web PWA (internal/webui — embedded into the Go binary)
+# =============================================================================
+
+web_dir := "web"
+web_dist := "internal/webui/dist"
+
+# Install web dependencies. Runs `npm install` unconditionally — it's idempotent
+# and fast (~1s) when already in sync, and ensures dependency changes (and
+# interrupted/partial installs) are always applied before a build.
+web-install:
+    @echo "Syncing web dependencies..."
+    @cd {{ web_dir }} && npm install --no-audit --no-fund
+
+# Build the PWA into internal/webui/dist (embedded by go:embed). Clears stale
+# assets first while preserving the committed .gitkeep/.gitignore placeholders.
+web-build: web-install
+    @echo "Building Brain PWA..."
+    @rm -rf {{ web_dist }}/assets
+    @find {{ web_dist }} -maxdepth 1 -type f ! -name '.gitkeep' ! -name '.gitignore' -delete 2>/dev/null || true
+    @cd {{ web_dir }} && npm run build
+    @echo "PWA built into {{ web_dist }}/"
+
+# Run the PWA dev server (proxies API to $BRAIN_API_URL or http://localhost:3333)
+web-dev:
+    cd {{ web_dir }} && npm run dev
+
+# Typecheck the web app
+web-check:
+    cd {{ web_dir }} && npm run typecheck
+
+# =============================================================================
 # Go Development
 # =============================================================================
 
-# Build all Go binaries
+# Build all Go binaries (Go only — embeds whatever is already in {{ web_dist }})
 build:
     @mkdir -p {{ binary_dir }}
     @for cmd in {{ cmds }}; do \
@@ -28,6 +59,9 @@ build:
         go build -ldflags '{{ ldflags }}' -o {{ binary_dir }}/$cmd ./cmd/$cmd; \
     done
     @echo "Build complete: {{ binary_dir }}/"
+
+# Build the PWA then the Go binaries (full build with the web UI embedded)
+build-all: web-build build
 
 # Build a specific binary (e.g., just build-one brain-api)
 build-one cmd:
@@ -76,9 +110,11 @@ fmt:
 tidy:
     go mod tidy
 
-# Clean build artifacts
+# Clean build artifacts (Go + embedded web assets, preserving placeholders)
 clean:
     rm -rf {{ binary_dir }} coverage.out coverage.html
+    @rm -rf {{ web_dist }}/assets
+    @find {{ web_dist }} -maxdepth 1 -type f ! -name '.gitkeep' ! -name '.gitignore' -delete 2>/dev/null || true
     go clean -cache -testcache
 
 # Run brain API server (development)
@@ -96,8 +132,8 @@ install: build
     done
     @echo "Installed to $(go env GOPATH)/bin"
 
-# Cross-compile for release (linux/darwin/windows, amd64/arm64)
-release:
+# Cross-compile for release (linux/darwin/windows, amd64/arm64) with the PWA embedded
+release: web-build
     @mkdir -p {{ binary_dir }}/release
     @for cmd in {{ cmds }}; do \
         echo "Cross-compiling $cmd..."; \

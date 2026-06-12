@@ -13,6 +13,7 @@ type Handler struct {
 	tasks          TaskService
 	runner         RunnerService
 	runnerRegistry RunnerRegistryService
+	clientContext  ClientContextService
 	monitor        MonitorService
 	tokens         TokenService
 	events         EventService
@@ -67,6 +68,13 @@ func WithMonitorService(ms MonitorService) HandlerOption {
 func WithRunnerRegistryService(rrs RunnerRegistryService) HandlerOption {
 	return func(h *Handler) {
 		h.runnerRegistry = rrs
+	}
+}
+
+// WithClientContextService sets the ClientContextService on the Handler.
+func WithClientContextService(ccs ClientContextService) HandlerOption {
+	return func(h *Handler) {
+		h.clientContext = ccs
 	}
 }
 

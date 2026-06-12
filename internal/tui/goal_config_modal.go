@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"strings"
@@ -36,6 +37,7 @@ type goalConfigSavedMsg struct {
 	goalID  string
 	summary *types.GoalSummary
 	err     error
+	created bool // true when a new goal was created (vs updated)
 }
 
 // goalAuditLoadedMsg is emitted after the reconcile audit history loads.
@@ -80,6 +82,10 @@ type GoalConfigModal struct {
 
 	// actionType preserves the goal's existing action type for the save payload.
 	actionType string
+
+	// createMode is true when this modal creates a new goal (POST /goals) rather
+	// than editing an existing one (PATCH /goals/{id}).
+	createMode bool
 
 	// Audit state.
 	audit        []types.GoalReconcileAudit
@@ -178,8 +184,57 @@ func NewGoalConfigModal(goal types.GoalSummary, apiClient *runner.APIClient) *Go
 	return m
 }
 
-// Init loads the reconcile audit history.
+// NewGoalCreateModal builds a goal config modal for creating a brand-new goal.
+// It seeds empty values (project defaulted to defaultProject) and switches the
+// save path to POST /goals. The goal id is generated from the objective on save.
+func NewGoalCreateModal(defaultProject string, apiClient *runner.APIClient) *GoalConfigModal {
+	workdir := ""
+	if cwd, err := os.Getwd(); err == nil {
+		workdir = cwd
+	}
+	values := map[MetadataField]string{
+		FieldGoalObjective:     "",
+		FieldGoalProject:       defaultProject,
+		FieldGoalFeature:       "",
+		FieldGoalCriteria:      "",
+		FieldGoalValidation:    "",
+		FieldGoalWorkdir:       workdir,
+		FieldGoalTriggerSource: normalizeTriggerSource(""),
+		FieldGoalSessionMode:   "continue",
+		FieldAgent:             "",
+		FieldModel:             "",
+		FieldGoalExecutor:      "opencode",
+	}
+	return &GoalConfigModal{
+		apiClient:        apiClient,
+		values:           values,
+		completeStatuses: map[string]bool{},
+		blockedStatuses:  map[string]bool{},
+		createMode:       true,
+		actionType:       "prompt",
+		fields: []MetadataField{
+			FieldGoalObjective,
+			FieldGoalProject,
+			FieldGoalFeature,
+			FieldGoalCriteria,
+			FieldGoalValidation,
+			FieldGoalWorkdir,
+			FieldGoalTriggerSource,
+			FieldGoalSessionMode,
+			FieldAgent,
+			FieldModel,
+			FieldGoalExecutor,
+			FieldGoalCompleteStatuses,
+			FieldGoalBlockedStatuses,
+		},
+	}
+}
+
+// Init loads the reconcile audit history (skipped in create mode).
 func (m *GoalConfigModal) Init() tea.Cmd {
+	if m.createMode {
+		return nil
+	}
 	apiClient := m.apiClient
 	goalID := m.goalID
 	return func() tea.Msg {
@@ -246,7 +301,10 @@ func (m *GoalConfigModal) View() string {
 	b.WriteString(footerStyle.Render("j/k: field  l/h: change  enter: edit  ctrl+s: save  esc: cancel"))
 	b.WriteString("\n\n")
 
-	// Last Reconcile section.
+	// Last Reconcile section (edit mode only — a new goal has no history).
+	if m.createMode {
+		return b.String()
+	}
 	titleStyle := lipgloss.NewStyle().Foreground(ColorCyan).Bold(true)
 	b.WriteString(titleStyle.Render("Last Reconcile"))
 	b.WriteString("\n")
@@ -552,9 +610,66 @@ func (m *GoalConfigModal) buildUpdateRequest() types.UpdateGoalRequest {
 	}
 }
 
-// saveCmd builds a command that persists the goal config and emits a typed msg.
+// buildCreateRequest builds a CreateGoalRequest from current modal values.
+func (m *GoalConfigModal) buildCreateRequest() types.CreateGoalRequest {
+	objective := strings.TrimSpace(m.values[FieldGoalObjective])
+	criteria := m.values[FieldGoalCriteria]
+	content := criteria
+	if strings.TrimSpace(content) == "" {
+		content = objective
+	}
+	actionType := m.actionType
+	if actionType == "" {
+		actionType = "prompt"
+	}
+	return types.CreateGoalRequest{
+		Project:   strings.TrimSpace(m.values[FieldGoalProject]),
+		FeatureID: strings.TrimSpace(m.values[FieldGoalFeature]),
+		Title:     objective,
+		Content:   content,
+		Config: types.GoalConfig{
+			ID:               generateGoalID(objective),
+			Criteria:         criteria,
+			Validation:       m.values[FieldGoalValidation],
+			Workdir:          m.values[FieldGoalWorkdir],
+			TriggerSource:    m.values[FieldGoalTriggerSource],
+			CompleteStatuses: m.CompleteStatuses(),
+			BlockedStatuses:  m.BlockedStatuses(),
+		},
+		Action: types.AutomationAction{
+			Type:        actionType,
+			Agent:       m.values[FieldAgent],
+			Model:       m.values[FieldModel],
+			SessionMode: m.values[FieldGoalSessionMode],
+		},
+	}
+}
+
+// saveCmd builds a command that persists the goal and emits a typed msg.
+// In create mode it POSTs a new goal; otherwise it PATCHes the existing one.
 func (m *GoalConfigModal) saveCmd() tea.Cmd {
 	apiClient := m.apiClient
+
+	if m.createMode {
+		// Guard required fields client-side for a clear message.
+		if strings.TrimSpace(m.values[FieldGoalObjective]) == "" ||
+			strings.TrimSpace(m.values[FieldGoalProject]) == "" {
+			return func() tea.Msg {
+				return goalConfigSavedMsg{created: true, err: fmt.Errorf("objective and project are required")}
+			}
+		}
+		req := m.buildCreateRequest()
+		return func() tea.Msg {
+			ctx := context.Background()
+			summary, err := apiClient.CreateGoal(ctx, req)
+			goalID := ""
+			if summary != nil {
+				goalID = summary.GoalID
+			}
+			return goalConfigSavedMsg{goalID: goalID, summary: summary, err: err, created: true}
+		}
+	}
+
 	goalID := m.goalID
 	req := m.buildUpdateRequest()
 	return func() tea.Msg {
@@ -564,8 +679,43 @@ func (m *GoalConfigModal) saveCmd() tea.Cmd {
 	}
 }
 
+// generateGoalID derives a goal id from the objective (slug + short suffix).
+func generateGoalID(objective string) string {
+	var b strings.Builder
+	prevDash := false
+	for _, r := range strings.ToLower(objective) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+			prevDash = false
+		default:
+			if !prevDash && b.Len() > 0 {
+				b.WriteByte('-')
+				prevDash = true
+			}
+		}
+	}
+	slug := strings.Trim(b.String(), "-")
+	if len(slug) > 40 {
+		slug = strings.Trim(slug[:40], "-")
+	}
+	if slug == "" {
+		slug = "goal"
+	}
+	buf := make([]byte, 2)
+	if _, err := rand.Read(buf); err == nil {
+		return fmt.Sprintf("%s-%02x%02x", slug, buf[0], buf[1])
+	}
+	return slug
+}
+
 // Title implements Modal.
-func (m *GoalConfigModal) Title() string { return "Configure Goal" }
+func (m *GoalConfigModal) Title() string {
+	if m.createMode {
+		return "New Goal"
+	}
+	return "Configure Goal"
+}
 
 // Width implements Modal.
 func (m *GoalConfigModal) Width() int { return 64 }

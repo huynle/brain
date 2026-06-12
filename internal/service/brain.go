@@ -196,6 +196,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		GeneratedKind:       req.GeneratedKind,
 		GeneratedKey:        req.GeneratedKey,
 		GeneratedBy:         req.GeneratedBy,
+		AutomationRunID:     req.AutomationRunID,
 		Trigger:             fmTriggerFromTypes(req.Trigger),
 		Action:              automationActionToFM(req.Action),
 		Retry:               automationRetryToFM(req.Retry),
@@ -781,6 +782,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.GeneratedBy != nil {
 		fm.GeneratedBy = *req.GeneratedBy
 	}
+	if req.AutomationRunID != nil {
+		fm.AutomationRunID = *req.AutomationRunID
+	}
 
 	if req.Trigger != nil {
 		fm.Trigger = fmTriggerFromTypes(req.Trigger)
@@ -1205,6 +1209,7 @@ var durableMetadataFields = map[string]bool{
 	"expires_at":         true,
 	"run_once_at":        true,
 	"timezone":           true,
+	"automation_run_id":  true,
 }
 
 // UpdateMetadata performs a shallow merge of fields into the entry's metadata
@@ -1365,6 +1370,11 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	if v, ok := fields["timezone"]; ok {
 		if s, ok := v.(string); ok {
 			fm.Timezone = s
+		}
+	}
+	if v, ok := fields["automation_run_id"]; ok {
+		if s, ok := v.(string); ok {
+			fm.AutomationRunID = s
 		}
 	}
 

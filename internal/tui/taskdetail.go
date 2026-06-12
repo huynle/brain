@@ -379,6 +379,12 @@ func (td *TaskDetail) countContentLines() int {
 		count++ // header
 		count += len(task.Sessions)
 	}
+	// Content/body
+	if strings.TrimSpace(task.Content) != "" {
+		count++ // blank line
+		count++ // header
+		count += len(strings.Split(task.Content, "\n"))
+	}
 	// Frontmatter — compute actual count
 	fmLines := td.renderFrontmatter(task)
 	if len(fmLines) > 0 {
@@ -723,6 +729,12 @@ func (td *TaskDetail) renderTask() string {
 		for _, pLine := range strings.Split(prompt, "\n") {
 			lines = append(lines, DimStyle.Render("  "+pLine))
 		}
+	}
+
+	if strings.TrimSpace(task.Content) != "" {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Content:"))
+		lines = append(lines, strings.Split(task.Content, "\n")...)
 	}
 
 	// Store total content lines

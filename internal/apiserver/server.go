@@ -20,6 +20,7 @@ import (
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/webui"
 	"github.com/huynle/brain-api/pkg/pathutil"
 )
 
@@ -215,6 +216,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	taskSvc := service.NewTaskService(&cfg, store)
 	runnerSvc := service.NewRunnerService()
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)
+	clientContextSvc := service.NewClientContextService(store)
 	monitorSvc := service.NewMonitorService(brainSvc)
 	webhookSvc := service.NewWebhookService(store)
 
@@ -269,6 +271,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithTaskService(taskSvc),
 		api.WithRunnerService(runnerSvc),
 		api.WithRunnerRegistryService(runnerRegistrySvc),
+		api.WithClientContextService(clientContextSvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
@@ -326,13 +329,18 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		r.Get("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})
-	// MCP at root / (for clients that use the base URL as the MCP endpoint)
+	// MCP at root / (for clients that use the base URL as the MCP endpoint).
+	// Note: GET / is intentionally omitted here — the embedded web UI (see
+	// webui.Handler below) owns browser navigations to "/", while MCP clients
+	// use POST/DELETE at the root. Clients that need a GET stream use /mcp.
 	router.Group(func(r chi.Router) {
 		r.Use(api.Auth(opts.EnableAuth, authValidator))
 		r.Post("/", mcpHTTP.ServeHTTP)
-		r.Get("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})
 
-	return router, dbPath, cleanup, nil
+	// Wrap the API router with the embedded Brain PWA. The webui handler serves
+	// the SPA + static assets for browser navigations and delegates all API,
+	// OAuth, MCP, and well-known routes back to the router untouched.
+	return webui.Handler(router), dbPath, cleanup, nil
 }

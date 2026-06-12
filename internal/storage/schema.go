@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 14
+const CurrentSchemaVersion = 15
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -181,6 +181,43 @@ CREATE TABLE IF NOT EXISTS runners (
   registered_at INTEGER NOT NULL,
   last_heartbeat INTEGER NOT NULL,
   status TEXT NOT NULL DEFAULT 'online'
+);`
+
+const createBrainClientsTable = `
+CREATE TABLE IF NOT EXISTS brain_clients (
+  client_id TEXT PRIMARY KEY,
+  kind TEXT DEFAULT '',
+  host_id TEXT NOT NULL,
+  hostname TEXT DEFAULT '',
+  os TEXT DEFAULT '',
+  arch TEXT DEFAULT '',
+  username TEXT DEFAULT '',
+  home_dir TEXT DEFAULT '',
+  labels TEXT DEFAULT '{}',
+  capabilities TEXT DEFAULT '[]',
+  registered_at INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'online'
+);`
+
+const createBrainClientWorkspacesTable = `
+CREATE TABLE IF NOT EXISTS brain_client_workspaces (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL,
+  host_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  git_root TEXT DEFAULT '',
+  git_common_dir TEXT DEFAULT '',
+  git_worktree_main TEXT DEFAULT '',
+  git_branch TEXT DEFAULT '',
+  git_remote TEXT DEFAULT '',
+  folder_name TEXT DEFAULT '',
+  confidence TEXT DEFAULT '',
+  resolution_source TEXT DEFAULT '',
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  UNIQUE(client_id, path)
 );`
 
 const createWebhooksTable = `
@@ -619,6 +656,32 @@ func migrateSchema(db *sql.DB) error {
 		for _, stmt := range attachmentDerivedIndexes {
 			if _, err := db.Exec(stmt); err != nil {
 				return fmt.Errorf("migrate v14 (attachment derived indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 15 {
+		// v15: register Brain clients and observed workspaces for project context resolution.
+		clientTables := []string{
+			createBrainClientsTable,
+			createBrainClientWorkspacesTable,
+		}
+		for _, ddl := range clientTables {
+			if _, err := db.Exec(ddl); err != nil {
+				if !isTableExistsError(err) {
+					return fmt.Errorf("migrate v15 (brain client tables): %w", err)
+				}
+			}
+		}
+		clientIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_brain_clients_host ON brain_clients(host_id)",
+			"CREATE INDEX IF NOT EXISTS idx_brain_client_workspaces_project ON brain_client_workspaces(project_id)",
+			"CREATE INDEX IF NOT EXISTS idx_brain_client_workspaces_host_path ON brain_client_workspaces(host_id, path)",
+			"CREATE INDEX IF NOT EXISTS idx_brain_client_workspaces_git_remote ON brain_client_workspaces(git_remote)",
+		}
+		for _, stmt := range clientIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v15 (brain client indexes): %w", err)
 			}
 		}
 	}

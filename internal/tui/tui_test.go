@@ -619,6 +619,143 @@ func TestAutomationTabSpaceTogglesSelectedAutomation(t *testing.T) {
 	}
 }
 
+func TestAutomationTabDDeletesProjectAutomation(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.automationList.SetRows([]AutomationListRow{{
+		ID:      "project-auto",
+		Path:    "projects/brain-api/automation/project-auto.md",
+		Title:   "Project Automation",
+		Source:  "automation",
+		Scope:   "project",
+		Enabled: true,
+	}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(Model)
+	modal, ok := m.modalManager.activeModal.(*ConfirmModal)
+	if !ok {
+		t.Fatalf("expected confirm modal, got %T", m.modalManager.activeModal)
+	}
+	view := modal.View()
+	if !strings.Contains(view, "Delete project automation?") || !strings.Contains(view, "Project Automation") {
+		t.Fatalf("expected delete automation confirmation, got:\n%s", view)
+	}
+}
+
+func TestAutomationTabDDoesNotDeleteBuiltInAutomation(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.automationList.SetRows([]AutomationListRow{{
+		ID:      "dream-consolidation",
+		Path:    "global/automation/dream-consolidation.md",
+		Title:   "Dream Consolidation",
+		Source:  "automation",
+		Scope:   "built-in",
+		Enabled: true,
+	}})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(Model)
+	if cmd != nil {
+		t.Fatal("expected no delete command for built-in automation")
+	}
+	if m.modalManager.IsOpen() {
+		t.Fatal("expected no modal for built-in automation deletion")
+	}
+	if !strings.Contains(m.statusMessage, "Built-in automations cannot be deleted") {
+		t.Fatalf("expected built-in delete warning, got %q", m.statusMessage)
+	}
+}
+
+func TestDeleteAutomationRowCmdDeletesEntry(t *testing.T) {
+	var deletedPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || !strings.HasPrefix(r.URL.Path, "/api/v1/entries/") {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		deletedPath = strings.TrimPrefix(r.URL.Path, "/api/v1/entries/")
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	msg := deleteAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:     "project-auto",
+		Path:   "projects/brain-api/automation/project-auto.md",
+		Title:  "Project Automation",
+		Source: "automation",
+		Scope:  "project",
+	})().(AutomationDeletedMsg)
+
+	if msg.Error != nil {
+		t.Fatalf("delete automation failed: %v", msg.Error)
+	}
+	if deletedPath != "projects/brain-api/automation/project-auto.md" {
+		t.Fatalf("deleted path = %q, want project automation path", deletedPath)
+	}
+}
+
+func TestAutomationDeleteResultClosesConfirmModal(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.automationList.SetRows([]AutomationListRow{{
+		ID:      "project-auto",
+		Path:    "projects/brain-api/automation/project-auto.md",
+		Title:   "Project Automation",
+		Source:  "automation",
+		Scope:   "project",
+		Enabled: true,
+	}})
+
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'d'}})
+	m = updated.(Model)
+	if !m.modalManager.IsOpen() {
+		t.Fatal("expected delete confirmation modal to be open")
+	}
+
+	updated, _ = m.Update(AutomationDeletedMsg{RowID: "project-auto"})
+	m = updated.(Model)
+	if m.modalManager.IsOpen() {
+		t.Fatal("expected delete confirmation modal to close after successful delete")
+	}
+	if m.statusMessage != "Automation deleted" {
+		t.Fatalf("statusMessage = %q, want Automation deleted", m.statusMessage)
+	}
+}
+
+func TestAutomationTabSOpensMetadataModalForSelectedAutomation(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.automationList.SetRows([]AutomationListRow{{
+		ID:      "project-auto",
+		Path:    "projects/brain-api/automation/project-auto.md",
+		Title:   "Project Automation",
+		Source:  "automation",
+		Scope:   "project",
+		Enabled: true,
+	}})
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	m = updated.(Model)
+	if !m.modalManager.IsOpen() {
+		t.Fatal("expected metadata modal to open for selected automation")
+	}
+	if _, ok := m.modalManager.activeModal.(*MetadataModal); !ok {
+		t.Fatalf("expected MetadataModal, got %T", m.modalManager.activeModal)
+	}
+	if cmd == nil {
+		t.Fatal("expected metadata modal init command")
+	}
+}
+
 func TestAutomationTabXRunsSelectedAutomation(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.activeContentTab = ContentTabAutomation
@@ -683,11 +820,13 @@ func TestRunAutomationRowCmdCreatesGeneratedTaskFromDisabledAutomation(t *testin
 				Type:      "automation",
 				Status:    "archived",
 				ProjectID: "brain-api",
+				Agent:     "build",
+				Model:     "entry-model",
+				Executor:  "pi",
 				Action: &types.AutomationAction{
 					Type:           "prompt",
 					DirectPrompt:   "Run now",
 					Agent:          "assistant",
-					Model:          "test-model",
 					ExecutionMode:  "current_branch",
 					CompleteOnIdle: boolPtr(true),
 				},
@@ -721,7 +860,7 @@ func TestRunAutomationRowCmdCreatesGeneratedTaskFromDisabledAutomation(t *testin
 	if gotCreate.Project != "brain-api" {
 		t.Fatalf("created task project = %q, want brain-api", gotCreate.Project)
 	}
-	if gotCreate.DirectPrompt != "Run now" || gotCreate.Agent != "assistant" || gotCreate.Model != "test-model" {
+	if gotCreate.DirectPrompt != "Run now" || gotCreate.Agent != "build" || gotCreate.Model != "entry-model" || gotCreate.Executor != "pi" {
 		t.Fatalf("created task action fields not copied: %#v", gotCreate)
 	}
 	if gotCreate.Generated == nil || !*gotCreate.Generated || gotCreate.GeneratedBy != "automation:auto1234" {
@@ -769,6 +908,51 @@ func TestRunAutomationRowCmdUsesActiveProjectForGlobalAutomation(t *testing.T) {
 	if gotCreate.Project != "brain-api" {
 		t.Fatalf("created task project = %q, want brain-api", gotCreate.Project)
 	}
+	if gotCreate.CompleteOnIdle == nil || !*gotCreate.CompleteOnIdle {
+		t.Fatalf("created task complete_on_idle = %v, want true by default", gotCreate.CompleteOnIdle)
+	}
+}
+
+func TestRunAutomationRowCmdInterpolatesActiveProjectForGlobalAutomation(t *testing.T) {
+	var gotCreate types.CreateEntryRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			json.NewEncoder(w).Encode(types.BrainEntry{
+				ID:     "dream-auto",
+				Path:   "global/automation/dream-auto.md",
+				Title:  "Dream Consolidation",
+				Type:   "automation",
+				Status: "active",
+				Action: &types.AutomationAction{Type: "prompt", DirectPrompt: "Consolidate {{.Project}} / {{.ProjectID}}"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			if err := json.NewDecoder(r.Body).Decode(&gotCreate); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "task1234", Path: "projects/orion-ai/task/task1234.md", Title: gotCreate.Title, Type: "task", Status: "pending"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	cmd := runAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:     "dream-auto",
+		Path:   "global/automation/dream-auto.md",
+		Title:  "Dream Consolidation",
+		Source: "automation",
+		Scope:  "global",
+		Status: "active",
+	}, "orion-ai")
+	msg := cmd().(AutomationRunMsg)
+	if msg.Error != nil {
+		t.Fatalf("run global automation failed: %v", msg.Error)
+	}
+	if gotCreate.DirectPrompt != "Consolidate orion-ai / orion-ai" || gotCreate.Content != gotCreate.DirectPrompt {
+		t.Fatalf("created task prompt = content %q direct_prompt %q, want interpolated project", gotCreate.Content, gotCreate.DirectPrompt)
+	}
 }
 
 func TestAutomationDetailShowsGeneratedRuns(t *testing.T) {
@@ -795,6 +979,34 @@ func TestAutomationDetailShowsGeneratedRuns(t *testing.T) {
 	}
 }
 
+func TestAutomationDetailPrefersRealRunRecords(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+	m.width = 100
+	m.height = 30
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.detailVisible = true
+	m.automationList.SetRows([]AutomationListRow{{ID: "auto", Path: "projects/brain-api/automation/auto.md", Title: "Auto", Source: "automation", Enabled: true}})
+	m.taskDetail.SetEntryLoading(types.BrainEntry{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation"}, "Automation Detail")
+	m.automationGeneratedTasks = []types.BrainEntry{
+		{ID: "old-task", Path: "projects/brain-api/task/old-task.md", Title: "Automation: auto", Type: "task", Status: "completed", GeneratedBy: "automation:auto"},
+		{ID: "run1", Path: "projects/brain-api/automation_run/run1.md", Title: "Automation Run: auto", Type: "automation_run", Status: "failed", Modified: "2026-06-10T12:00:00Z", Content: "automation_id: auto\nerror: dispatch failed\n### Generated Tasks\n- task1 [blocked] Review\n"},
+		{ID: "task1", Path: "projects/brain-api/task/task1.md", Title: "Review", Type: "task", Status: "blocked", GeneratedBy: "automation:auto", AutomationRunID: "run1"},
+	}
+
+	updated, _ := m.Update(BrainEntryContentMsg{Path: "projects/brain-api/automation/auto.md", Title: "Auto", Type: "automation", Content: "trigger: cron"})
+	model := updated.(Model)
+	view := model.taskDetail.View()
+	for _, want := range []string{"## Runs", "run1 [failed]", "dispatch failed", "task1 [blocked] Review", "generated_by=automation:auto", "automation_run_id=run1", "path=projects/brain-api/task/task1.md"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected automation detail to contain %q, got:\n%s", want, view)
+		}
+	}
+	if strings.Contains(view, "old-task [completed]") {
+		t.Fatalf("expected real run records to suppress generated-task fallback, got:\n%s", view)
+	}
+}
+
 func TestFetchAutomationDataIncludesGlobalAutomationsForProject(t *testing.T) {
 	var requests []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -812,6 +1024,10 @@ func TestFetchAutomationDataIncludesGlobalAutomationsForProject(t *testing.T) {
 			return
 		}
 		if r.URL.Query().Get("type") == "task" && r.URL.Query().Get("project") == "brain-api" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+			return
+		}
+		if r.URL.Query().Get("type") == "automation_run" && r.URL.Query().Get("project") == "brain-api" {
 			json.NewEncoder(w).Encode(types.ListEntriesResponse{})
 			return
 		}

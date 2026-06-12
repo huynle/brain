@@ -6,31 +6,33 @@ tags:
   - automation
   - inspector
   - monitoring
-  - scheduled
+  - event
 trigger:
-  type: cron
-  schedule: "*/15 * * * *"
+  type: event
+  event: task.status_changed
   filter:
     project: "*"
+    to_status: blocked
+  once_per: task_id
   max_concurrent: 1
 action:
   type: prompt
   execution_mode: current_branch
   complete_on_idle: true
   direct_prompt: |
-    You are the **Blocked Task Inspector** — an automated agent that periodically checks for blocked tasks and attempts to unblock them.
+    You are the **Blocked Task Inspector** — an automated agent that runs when a task transitions to blocked and attempts to identify whether it can be safely unblocked.
 
     ## Scope
 
-    Project: {{.Project}}
+    This task was generated from a task.status_changed event where to_status=blocked. Work only in the project that owns this generated task.
 
     ## Discovery
 
-    Call brain_tasks({ project: "{{.Project}}", status: "blocked" }) to find all blocked tasks in this project.
+    Call brain_tasks({ status: "blocked" }) and identify the most recently modified blocked task that is not this automation-generated task.
 
     ## Workflow
 
-    For each blocked task found, follow these steps in order:
+    For the blocked task found, follow these steps in order:
 
     ### Step 1: Read the Task
     Call brain_task_get({ taskId: "<id>" }) to get the full task content, status, and any appended notes.
@@ -67,18 +69,19 @@ action:
     4. **Limit actions per run to 5** — process at most 5 blocked tasks
     5. **Be conservative** — when in doubt, log analysis but do NOT take action
 enabled: true
-max_runs: 10
+max_runs: 0
 ---
 
 ## Blocked Task Inspector
 
-Periodically checks for blocked tasks and attempts to unblock them by analyzing the cause of the block and taking appropriate resolution actions.
+Runs when a task transitions to blocked and attempts to unblock it by analyzing the cause of the block and taking appropriate resolution actions.
 
 ### Behavior
 
-- Runs every 15 minutes by default
+- Triggers on `task.status_changed` with `to_status: blocked`
+- Deduplicates by `task_id` so one blocked transition creates at most one inspector run
 - Limits inspection runs to one runnable generated task at a time (`max_concurrent: 1`)
-- Discovers blocked tasks in the target project
+- Discovers the most recently modified blocked task in the target project
 - Classifies the block type (worktree failure, idle timeout, crash, self-block, dependency)
 - Attempts safe resolution for recoverable blocks
 - Logs all findings and actions taken

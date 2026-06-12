@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *t
 	ctx := context.Background()
 	completeOnIdle := true
 
-	_, err := brain.Save(ctx, types.CreateEntryRequest{
+	automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
 		Type:    "automation",
 		Title:   "Follow up when task completes",
 		Content: "Creates a follow-up task when a matching task completes.",
@@ -83,6 +84,146 @@ func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *t
 	}
 	if task.GeneratedKey == "" {
 		t.Error("expected generated_key for once_per dedup")
+	}
+
+	runResp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "automation_run",
+		Project: "automation-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List automation runs failed: %v", err)
+	}
+	if len(runResp.Entries) != 1 {
+		t.Fatalf("expected one automation run audit entry, got %d", len(runResp.Entries))
+	}
+
+	run := runResp.Entries[0]
+	if run.Status != "queued" {
+		t.Errorf("automation run status = %q, want queued", run.Status)
+	}
+	if !strings.Contains(run.Content, "automation_id: "+automationResp.ID) {
+		t.Errorf("automation run content missing automation_id %q:\n%s", automationResp.ID, run.Content)
+	}
+	if !strings.Contains(run.Content, "source_event_id: evt-test-1") {
+		t.Errorf("automation run content missing source event id:\n%s", run.Content)
+	}
+	if !strings.Contains(run.Content, "- "+task.ID) {
+		t.Errorf("automation run content missing generated task id %q:\n%s", task.ID, run.Content)
+	}
+	if !strings.Contains(run.Content, "trigger_event: "+types.EventTaskCompleted) {
+		t.Errorf("automation run content missing trigger event:\n%s", run.Content)
+	}
+
+	rawTask, err := brain.RecallFull(ctx, task.Path)
+	if err != nil {
+		t.Fatalf("RecallFull generated task failed: %v", err)
+	}
+	if !strings.Contains(rawTask, "automation_run_id: "+run.ID) {
+		t.Errorf("generated task frontmatter missing automation_run_id %q:\n%s", run.ID, rawTask)
+	}
+}
+
+func TestAutomationService_HandleEventInterpolatesProjectInPrompt(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Project-aware automation",
+		Content: "Creates a task using project template variables.",
+		Status:  "active",
+		Project: "automation-template-test",
+		Trigger: &types.TriggerConfig{
+			Type:   "event",
+			Event:  types.EventTaskCompleted,
+			Filter: map[string]string{"project_id": "automation-template-test"},
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Consolidate {{.Project}} / {{.ProjectID}}",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-template-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-template-test",
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-template-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated task, got %d", len(resp.Entries))
+	}
+	if got := resp.Entries[0].DirectPrompt; got != "Consolidate automation-template-test / automation-template-test" {
+		t.Fatalf("generated task direct_prompt = %q, want interpolated project", got)
+	}
+	if got := resp.Entries[0].Content; got != resp.Entries[0].DirectPrompt {
+		t.Fatalf("generated task content = %q, direct_prompt = %q, want both interpolated", got, resp.Entries[0].DirectPrompt)
+	}
+}
+
+func TestAutomationService_HandleEventDefaultsGeneratedTaskCompleteOnIdle(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Automation without explicit idle setting",
+		Content: "Creates a task that should auto-complete when idle.",
+		Status:  "active",
+		Project: "automation-idle-test",
+		Trigger: &types.TriggerConfig{
+			Type:   "event",
+			Event:  types.EventTaskCompleted,
+			Filter: map[string]string{"project_id": "automation-idle-test"},
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Run automation work.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-idle-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "automation-idle-test",
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: "automation-idle-test", Limit: 10})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated task, got %d", len(resp.Entries))
+	}
+	if resp.Entries[0].CompleteOnIdle == nil || !*resp.Entries[0].CompleteOnIdle {
+		t.Fatalf("generated task complete_on_idle = %v, want true by default", resp.Entries[0].CompleteOnIdle)
 	}
 }
 
@@ -424,7 +565,7 @@ func TestAutomationService_HandleEventSkipsWhenAutomationsPaused(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()
 
-	_, err := brain.Save(ctx, types.CreateEntryRequest{
+	automationResp, err := brain.Save(ctx, types.CreateEntryRequest{
 		Type:    "automation",
 		Title:   "Paused event automation",
 		Content: "Should not run while the project is paused.",
@@ -461,6 +602,20 @@ func TestAutomationService_HandleEventSkipsWhenAutomationsPaused(t *testing.T) {
 	}
 	if len(resp.Entries) != 0 {
 		t.Fatalf("expected no generated tasks while project paused, got %d", len(resp.Entries))
+	}
+
+	runs, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation_run", Project: "automation-paused-event-test", Limit: 10})
+	if err != nil {
+		t.Fatalf("List automation runs failed: %v", err)
+	}
+	if len(runs.Entries) != 1 {
+		t.Fatalf("expected one skipped automation run audit entry, got %d", len(runs.Entries))
+	}
+	if runs.Entries[0].Status != "skipped" {
+		t.Fatalf("run status = %q, want skipped", runs.Entries[0].Status)
+	}
+	if !strings.Contains(runs.Entries[0].Content, "automation_id: "+automationResp.ID) || !strings.Contains(runs.Entries[0].Content, "skip_reason: paused") {
+		t.Fatalf("skipped run content missing automation_id/skip_reason:\n%s", runs.Entries[0].Content)
 	}
 }
 
@@ -1398,6 +1553,9 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 		Content: "Creates a generated task on a cron schedule.",
 		Status:  "active",
 		Project: "automation-cron-entry-test",
+		Agent:   "build",
+		Model:   "test-model",
+		Executor: "pi",
 		Trigger: &types.TriggerConfig{
 			Type:     "cron",
 			Schedule: "* * * * *",
@@ -1405,6 +1563,7 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 		Action: &types.AutomationAction{
 			Type:         "prompt",
 			DirectPrompt: "Create the cron automation summary.",
+			Agent:        "assistant",
 		},
 	})
 	if err != nil {
@@ -1433,6 +1592,12 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	expectedKey := "automation:cron:" + resp.Entries[0].GeneratedBy[len("automation:"):] + ":202604291305"
 	if resp.Entries[0].GeneratedKey != expectedKey {
 		t.Fatalf("generated key = %q, want %q", resp.Entries[0].GeneratedKey, expectedKey)
+	}
+	if resp.Entries[0].CompleteOnIdle == nil || !*resp.Entries[0].CompleteOnIdle {
+		t.Fatalf("generated cron task complete_on_idle = %v, want true by default", resp.Entries[0].CompleteOnIdle)
+	}
+	if resp.Entries[0].Agent != "build" || resp.Entries[0].Model != "test-model" || resp.Entries[0].Executor != "pi" {
+		t.Fatalf("generated cron task execution metadata agent/model/executor = %q/%q/%q, want build/test-model/pi", resp.Entries[0].Agent, resp.Entries[0].Model, resp.Entries[0].Executor)
 	}
 }
 

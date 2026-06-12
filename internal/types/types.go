@@ -27,6 +27,7 @@ var EntryTypes = []string{
 	"task",
 	"dream",
 	"automation",
+	"automation_run",
 }
 
 // entryTypeSet is a lookup set for O(1) validation.
@@ -196,10 +197,11 @@ type BrainEntry struct {
 	FeatureTimezone  string `json:"feature_timezone,omitempty"`
 
 	// Generated entry metadata
-	Generated     *bool  `json:"generated,omitempty"`
-	GeneratedKind string `json:"generated_kind,omitempty"`
-	GeneratedKey  string `json:"generated_key,omitempty"`
-	GeneratedBy   string `json:"generated_by,omitempty"`
+	Generated       *bool  `json:"generated,omitempty"`
+	GeneratedKind   string `json:"generated_kind,omitempty"`
+	GeneratedKey    string `json:"generated_key,omitempty"`
+	GeneratedBy     string `json:"generated_by,omitempty"`
+	AutomationRunID string `json:"automation_run_id,omitempty"`
 
 	// Event trigger configuration
 	Trigger *TriggerConfig    `json:"trigger,omitempty"`
@@ -501,10 +503,11 @@ type CreateEntryRequest struct {
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`
 
-	Generated     *bool  `json:"generated,omitempty"`
-	GeneratedKind string `json:"generated_kind,omitempty"`
-	GeneratedKey  string `json:"generated_key,omitempty"`
-	GeneratedBy   string `json:"generated_by,omitempty"`
+	Generated       *bool  `json:"generated,omitempty"`
+	GeneratedKind   string `json:"generated_kind,omitempty"`
+	GeneratedKey    string `json:"generated_key,omitempty"`
+	GeneratedBy     string `json:"generated_by,omitempty"`
+	AutomationRunID string `json:"automation_run_id,omitempty"`
 
 	Trigger *TriggerConfig    `json:"trigger,omitempty"`
 	Action  *AutomationAction `json:"action,omitempty"`
@@ -579,10 +582,11 @@ type UpdateEntryRequest struct {
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
 
-	Generated     *bool   `json:"generated,omitempty"`
-	GeneratedKind *string `json:"generated_kind,omitempty"`
-	GeneratedKey  *string `json:"generated_key,omitempty"`
-	GeneratedBy   *string `json:"generated_by,omitempty"`
+	Generated       *bool   `json:"generated,omitempty"`
+	GeneratedKind   *string `json:"generated_kind,omitempty"`
+	GeneratedKey    *string `json:"generated_key,omitempty"`
+	GeneratedBy     *string `json:"generated_by,omitempty"`
+	AutomationRunID *string `json:"automation_run_id,omitempty"`
 
 	Trigger *TriggerConfig    `json:"trigger,omitempty"`
 	Action  *AutomationAction `json:"action,omitempty"`
@@ -783,6 +787,7 @@ type ResolvedTask struct {
 	ID        string   `json:"id"`
 	Path      string   `json:"path"`
 	Title     string   `json:"title"`
+	Content   string   `json:"content,omitempty"`
 	Priority  string   `json:"priority"`
 	Status    string   `json:"status"`
 	ParentID  string   `json:"parent_id,omitempty"`
@@ -1050,6 +1055,48 @@ type RunnerInfo struct {
 type RunnerListResponse struct {
 	Runners []RunnerInfo `json:"runners"`
 	Total   int          `json:"total"`
+}
+
+type BrainClientInfo struct {
+	ClientID     string            `json:"client_id"`
+	Kind         string            `json:"kind,omitempty"`
+	HostID       string            `json:"host_id"`
+	Hostname     string            `json:"hostname,omitempty"`
+	OS           string            `json:"os,omitempty"`
+	Arch         string            `json:"arch,omitempty"`
+	Username     string            `json:"username,omitempty"`
+	HomeDir      string            `json:"home_dir,omitempty"`
+	Labels       map[string]string `json:"labels,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+}
+
+type WorkspaceObservation struct {
+	Path            string `json:"path"`
+	GitRoot         string `json:"git_root,omitempty"`
+	GitCommonDir    string `json:"git_common_dir,omitempty"`
+	GitWorktreeMain string `json:"git_worktree_main,omitempty"`
+	GitBranch       string `json:"git_branch,omitempty"`
+	GitRemote       string `json:"git_remote,omitempty"`
+	FolderName      string `json:"folder_name,omitempty"`
+}
+
+type ResolveClientContextRequest struct {
+	Client    BrainClientInfo      `json:"client"`
+	Workspace WorkspaceObservation `json:"workspace"`
+}
+
+type DreamContext struct {
+	ID      string `json:"id,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Path    string `json:"path,omitempty"`
+	Content string `json:"content,omitempty"`
+}
+
+type ResolveClientContextResponse struct {
+	ProjectID  string        `json:"project_id"`
+	Confidence string        `json:"confidence"`
+	Source     string        `json:"source"`
+	Dream      *DreamContext `json:"dream,omitempty"`
 }
 
 // =============================================================================

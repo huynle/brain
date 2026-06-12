@@ -24,6 +24,8 @@ type AutomationAction struct {
 	Command            string `json:"command,omitempty" yaml:"command,omitempty"`                         // shell command for type=script
 	Agent              string `json:"agent,omitempty" yaml:"agent,omitempty"`                             // agent to use for type=prompt
 	Model              string `json:"model,omitempty" yaml:"model,omitempty"`                             // model override
+	Executor           string `json:"executor,omitempty" yaml:"executor,omitempty"`                       // executor override
+	TargetWorkdir      string `json:"target_workdir,omitempty" yaml:"target_workdir,omitempty"`           // workdir override
 	ExecutionMode      string `json:"execution_mode,omitempty" yaml:"execution_mode,omitempty"`           // worktree, current_branch
 	SessionMode        string `json:"session_mode,omitempty" yaml:"session_mode,omitempty"`               // continue, fresh
 	CompleteOnIdle     *bool  `json:"complete_on_idle,omitempty" yaml:"complete_on_idle,omitempty"`       // auto-complete on idle

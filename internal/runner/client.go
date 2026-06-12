@@ -262,7 +262,7 @@ func (c *APIClient) AppendToTask(ctx context.Context, taskPath, content string) 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return c.readError(resp)
 	}
 	return nil
@@ -490,7 +490,7 @@ func (c *APIClient) UpdateMetadata(ctx context.Context, entryPath string, fields
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return c.readError(resp)
 	}
 
@@ -542,7 +542,7 @@ func (c *APIClient) RenewClaim(ctx context.Context, projectID, taskID, runnerID 
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return c.readError(resp)
 	}
 	return nil
@@ -601,7 +601,7 @@ func (c *APIClient) DeleteEntry(ctx context.Context, entryPath string) error {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent {
 		return c.readError(resp)
 	}
 	return nil

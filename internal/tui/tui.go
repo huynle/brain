@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -847,9 +849,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		content := msg.Content
 		if m.activeContentTab == ContentTabAutomation && msg.Type == "automation" {
-			// Cache the raw content for goal rows so the detail pane can be
-			// re-decorated when reconcile audit history loads asynchronously.
-			if row := m.automationList.SelectedRow(); row != nil && row.IsGoal && row.Path == msg.Path {
+			// Cache raw automation content so the detail pane can be re-decorated
+			// when async data loads or the generated-task cursor moves.
+			if row := m.automationList.SelectedRow(); row != nil && row.Path == msg.Path {
 				if m.goalDetailRaw == nil {
 					m.goalDetailRaw = make(map[string]string)
 				}
@@ -900,6 +902,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setStatusMessage("success", fmt.Sprintf("Automation run queued: %s", msg.TaskID))
 		return m, m.refreshActiveAutomationSubTab()
 
+	case AutomationDeletedMsg:
+		if m.modalManager.IsOpen() {
+			m.modalManager.Close()
+		}
+		if msg.Error != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to delete automation: %v", msg.Error))
+			return m, nil
+		}
+		m.setStatusMessage("success", "Automation deleted")
+		return m, m.refreshActiveAutomationSubTab()
+
 	case goalConfigOpenMsg:
 		// Resolved goal summary -> open the GoalConfigModal. Opening a modal
 		// mutates the manager, so it must happen here on the Model.
@@ -916,10 +929,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case goalConfigSavedMsg:
 		if msg.err != nil {
-			m.setStatusMessage("error", fmt.Sprintf("Failed to save goal: %v", msg.err))
+			verb := "save"
+			if msg.created {
+				verb = "create"
+			}
+			m.setStatusMessage("error", fmt.Sprintf("Failed to %s goal: %v", verb, msg.err))
 			return m, nil
 		}
-		m.setStatusMessage("success", "Goal updated")
+		if msg.created {
+			m.setStatusMessage("success", "Goal created")
+		} else {
+			m.setStatusMessage("success", "Goal updated")
+		}
 		m.modalManager.Close()
 		return m, m.refreshActiveAutomationSubTab()
 
@@ -1232,7 +1253,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case sessionSelectedMsg, taskExecutedMsg, featureExecutedMsg, taskCompletedMsg, taskCancelledMsg,
 			batchTasksCompletedMsg, batchTasksCancelledMsg, taskDeletedMsg, batchTasksDeletedMsg,
-			sessionOpenedMsg, statusPickerResultMsg,
+			sessionOpenedMsg, statusPickerResultMsg, AutomationDeletedMsg,
 			goalConfigOpenMsg, goalConfigSavedMsg, goalReconcileResultMsg:
 			// Let these fall through to the main switch above (they won't match
 			// because we're past it, so we need to handle them here)
@@ -1426,6 +1447,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.Type {
 	case tea.KeyBackspace:
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			return m, m.deleteSelectedAutomationRunTask()
+		}
 		// Delete task(s) - with confirmation modal (tasks view only)
 		// Only handle when NOT in filter mode (filter mode consumes backspace for editing)
 		if m.filterState == FilterOff && m.viewMode == ViewModeTasks && m.activePanel == PanelTasks {
@@ -1490,6 +1514,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyEnter:
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			m.automationList.ToggleExpandedSelected()
+			return m, nil
+		}
 		if m.activeContentTab == ContentTabBrain && m.entryTree.ToggleCollapse() {
 			return m, nil
 		}
@@ -1538,6 +1566,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 		// When on Automation tab, handle active-subtab keys.
 		if m.activeContentTab == ContentTabAutomation {
+			if m.activeAutomationSubTab == AutomationSubTabAutomations && msg.String() == "enter" {
+				m.automationList.ToggleExpandedSelected()
+				return m, nil
+			}
 			if m.activePanel == PanelDetails {
 				switch string(msg.Runes) {
 				case "j":
@@ -1556,12 +1588,24 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.activeAutomationSubTab == AutomationSubTabAutomations {
 				switch string(msg.Runes) {
+				case "o":
+					return m, m.openSessionForAutomationGeneratedTask(false)
+				case "O":
+					return m, m.openSessionForAutomationGeneratedTask(true)
+				case "d":
+					return m, m.deleteSelectedAutomationItem()
+				case "s":
+					return m, m.openSelectedAutomationMetadata()
 				case "j", "k", "g", "G":
 					m.automationList.Update(msg)
 					if m.detailVisible {
 						return m, m.syncAutomationEntryDetail()
 					}
 					return m, nil
+				case "n":
+					// Create a brand-new goal automation.
+					modal := NewGoalCreateModal(m.activeAutomationProject(), runner.NewAPIClient(m.apiRunnerConfig()))
+					return m, m.modalManager.Open(modal)
 				case "e":
 					// Goal rows open the GoalConfigModal; non-goal rows open $EDITOR.
 					if row := m.automationList.SelectedRow(); row != nil && row.IsGoal {
@@ -1576,6 +1620,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					// automation entry — toggleSelectedAutomationRow handles both.
 					return m, m.toggleSelectedAutomationRow()
 				case "x":
+					if _, ok := m.automationList.SelectedRunTask(); ok {
+						return m, m.executeSelectedAutomationRunTask()
+					}
 					// Goal rows run an inline reconcile via RunGoal; non-goal rows
 					// use the generic manual-run that creates a task.
 					if row := m.automationList.SelectedRow(); row != nil && row.IsGoal {
@@ -3631,15 +3678,64 @@ func (m *Model) automationDetailContent(path, content string) string {
 	var b strings.Builder
 	b.WriteString(content)
 
-	// Runs section: generated tasks linked to this automation entry.
+	// Runs section: first-class automation_run entries when available, with
+	// generated-task inference retained as compatibility fallback.
 	generatedBy := "automation:" + row.ID
+	realRuns := make([]types.BrainEntry, 0)
 	runs := make([]types.BrainEntry, 0)
 	for _, task := range m.automationGeneratedTasks {
-		if task.GeneratedBy == generatedBy {
+		if task.Type == "automation_run" && automationRunContentField(task.Content, "automation_id") == row.ID {
+			realRuns = append(realRuns, task)
+		} else if task.GeneratedBy == generatedBy {
 			runs = append(runs, task)
 		}
 	}
-	if len(runs) == 0 {
+	if len(realRuns) > 0 {
+		tasksByRun := automationTasksByRun(m.automationGeneratedTasks)
+		sort.SliceStable(realRuns, func(i, j int) bool {
+			return realRuns[i].Modified > realRuns[j].Modified
+		})
+		b.WriteString("\n\n## Runs\n")
+		for _, run := range realRuns {
+			status := run.Status
+			if status == "" {
+				status = "unknown"
+			}
+			b.WriteString(fmt.Sprintf("- %s [%s] %s", run.ID, status, run.Title))
+			if run.Modified != "" {
+				b.WriteString(" modified=" + run.Modified)
+			}
+			if errText := automationRunContentField(run.Content, "error"); errText != "" {
+				b.WriteString(" error=" + errText)
+			}
+			if skipReason := automationRunContentField(run.Content, "skip_reason"); skipReason != "" {
+				b.WriteString(" skip=" + skipReason)
+			}
+			b.WriteString("\n")
+			seenTasks := make(map[string]bool)
+			for _, taskID := range automationRunTaskIDs(run.Content) {
+				seenTasks[taskID] = true
+				if task, ok := tasksByRun[run.ID][taskID]; ok {
+					b.WriteString("  - " + automationRunTaskDetailLine(task) + "\n")
+					continue
+				}
+				b.WriteString("  - " + taskID + "\n")
+			}
+			extraTasks := make([]types.BrainEntry, 0, len(tasksByRun[run.ID]))
+			for _, task := range tasksByRun[run.ID] {
+				if seenTasks[task.ID] {
+					continue
+				}
+				extraTasks = append(extraTasks, task)
+			}
+			sort.SliceStable(extraTasks, func(i, j int) bool {
+				return extraTasks[i].ID < extraTasks[j].ID
+			})
+			for _, task := range extraTasks {
+				b.WriteString("  - " + automationRunTaskDetailLine(task) + "\n")
+			}
+		}
+	} else if len(runs) == 0 {
 		b.WriteString("\n\n## Runs\nNo generated runs.")
 	} else {
 		sort.SliceStable(runs, func(i, j int) bool {
@@ -3647,18 +3743,11 @@ func (m *Model) automationDetailContent(path, content string) string {
 		})
 		b.WriteString("\n\n## Runs\n")
 		for _, task := range runs {
-			status := task.Status
-			if status == "" {
-				status = "unknown"
-			}
-			b.WriteString(fmt.Sprintf("- %s [%s] %s", task.ID, status, task.Title))
+			line := automationRunTaskDetailLine(task)
 			if task.Modified != "" {
-				b.WriteString(" modified=" + task.Modified)
+				line += " modified=" + task.Modified
 			}
-			if task.Path != "" {
-				b.WriteString(" path=" + task.Path)
-			}
-			b.WriteString("\n")
+			b.WriteString("- " + line + "\n")
 		}
 	}
 
@@ -3669,6 +3758,125 @@ func (m *Model) automationDetailContent(path, content string) string {
 	}
 
 	return b.String()
+}
+
+func automationRunTaskIDs(content string) []string {
+	lines := strings.Split(content, "\n")
+	result := make([]string, 0)
+	inTasks := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "## ") {
+			inTasks = strings.EqualFold(strings.TrimSpace(strings.TrimLeft(trimmed, "#")), "Generated Tasks")
+			continue
+		}
+		if !inTasks || !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		item := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		if item != "" && item != "none" {
+			result = append(result, strings.Fields(item)[0])
+		}
+	}
+	return result
+}
+
+func automationTasksByRun(entries []types.BrainEntry) map[string]map[string]types.BrainEntry {
+	result := make(map[string]map[string]types.BrainEntry)
+	for _, entry := range entries {
+		if entry.Type != "task" || entry.AutomationRunID == "" {
+			continue
+		}
+		if result[entry.AutomationRunID] == nil {
+			result[entry.AutomationRunID] = make(map[string]types.BrainEntry)
+		}
+		result[entry.AutomationRunID][entry.ID] = entry
+	}
+	return result
+}
+
+func automationRunTaskDetailLine(task types.BrainEntry) string {
+	status := task.Status
+	if status == "" {
+		status = "unknown"
+	}
+	line := fmt.Sprintf("%s [%s] %s", task.ID, status, task.Title)
+	if task.GeneratedBy != "" {
+		line += " generated_by=" + task.GeneratedBy
+	}
+	if task.AutomationRunID != "" {
+		line += " automation_run_id=" + task.AutomationRunID
+	}
+	if task.Path != "" {
+		line += " path=" + task.Path
+	}
+	if sessionID := newestSessionID(task.Sessions); sessionID != "" {
+		line += " session=" + sessionID + " (o: open, O: tmux)"
+	} else {
+		line += " session=none"
+	}
+	return line
+}
+
+func newestSessionID(sessions map[string]types.SessionInfo) string {
+	sessionIDs := sortedSessionIDs(sessions)
+	if len(sessionIDs) == 0 {
+		return ""
+	}
+	return sessionIDs[0]
+}
+
+func (m *Model) openSessionForAutomationGeneratedTask(tmuxMode bool) tea.Cmd {
+	task, ok := m.automationList.SelectedRunTask()
+	if !ok || task.Path == "" {
+		m.setStatusMessage("warn", "No sessions available for generated tasks")
+		m.addLog("warn", "No sessions available for generated tasks")
+		return nil
+	}
+	if len(task.Sessions) == 0 {
+		if sessionID := m.automationRunFinalizationSessionID(task); sessionID != "" {
+			return func() tea.Msg {
+				return sessionsFetchedMsg{
+					sessionIDs: []string{sessionID},
+					taskPath:   task.Path,
+					tmuxMode:   tmuxMode,
+				}
+			}
+		}
+		if sessionID := localOpenCodeSessionIDForTask(task); sessionID != "" {
+			return func() tea.Msg {
+				return sessionsFetchedMsg{
+					sessionIDs: []string{sessionID},
+					taskPath:   task.Path,
+					tmuxMode:   tmuxMode,
+				}
+			}
+		}
+	}
+	resolved := types.ResolvedTask{
+		ID:       task.ID,
+		Path:     task.Path,
+		Title:    task.Title,
+		Status:   task.Status,
+		Sessions: task.Sessions,
+	}
+	return m.openSessionForTask(&resolved, tmuxMode)
+}
+
+func (m *Model) automationRunFinalizationSessionID(task types.BrainEntry) string {
+	automationID := strings.TrimPrefix(task.GeneratedBy, "automation:")
+	if automationID == task.GeneratedBy || automationID == "" || task.AutomationRunID == "" {
+		return ""
+	}
+	entry, ok := m.automationList.automationsByID[automationID]
+	if !ok {
+		return ""
+	}
+	finalization, ok := entry.RunFinalizations[task.AutomationRunID]
+	if !ok {
+		return ""
+	}
+	return finalization.SessionID
 }
 
 // goalReconcileDetailSection renders the "Last Reconcile" + "Audit" detail
@@ -4786,6 +4994,126 @@ func (m *Model) runSelectedAutomationRow() tea.Cmd {
 	return runAutomationRowCmd(m.apiRunnerConfig(), *row, m.activeAutomationProject())
 }
 
+func (m *Model) executeSelectedAutomationRunTask() tea.Cmd {
+	entry, ok := m.automationList.SelectedRunTask()
+	if !ok {
+		return nil
+	}
+	task := resolvedTaskFromAutomationRunEntry(entry)
+	actionLabel := "Execute"
+	if task.Status == "in_progress" {
+		actionLabel = "Resume"
+	}
+	projectID := m.activeAutomationProject()
+	rc := m.runnerController
+	taskCopy := task
+	modal := NewConfirmModal(actionLabel+" Task", fmt.Sprintf("%s task '%s' now?", actionLabel, task.Title)).
+		WithOnConfirm(func() tea.Msg {
+			if rc != nil {
+				return executeTaskViaRunnerCmd(rc, taskCopy, projectID)()
+			}
+			runnerID := "manual-tui"
+			if m.config.RunnerID != "" {
+				runnerID = m.config.RunnerID
+			}
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+			return executeTaskCmd(apiClient, projectID, taskCopy.ID, runnerID)()
+		})
+	return m.modalManager.Open(modal)
+}
+
+func (m *Model) deleteSelectedAutomationRunTask() tea.Cmd {
+	entry, ok := m.automationList.SelectedRunTask()
+	if !ok {
+		return nil
+	}
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	modal := NewConfirmModal("Delete Task", "Delete 1 task(s)?").
+		WithTaskTitles([]string{entry.Title}).
+		WithDestructive(true).
+		WithOnConfirm(func() tea.Msg {
+			return deleteTaskCmd(apiClient, entry.Path)()
+		})
+	return m.modalManager.Open(modal)
+}
+
+func (m *Model) deleteSelectedAutomationItem() tea.Cmd {
+	if _, ok := m.automationList.SelectedRunTask(); ok {
+		return m.deleteSelectedAutomationRunTask()
+	}
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	if row.Source != "automation" {
+		m.setStatusMessage("warn", "Only automation entries can be deleted here")
+		return nil
+	}
+	if row.Scope == "global" || row.Scope == "built-in" || strings.HasPrefix(row.Path, "global/") {
+		m.setStatusMessage("warn", "Built-in automations cannot be deleted")
+		return nil
+	}
+	if !strings.HasPrefix(row.Path, "projects/") {
+		m.setStatusMessage("warn", "Only project-level automations can be deleted")
+		return nil
+	}
+	rowCopy := *row
+	modal := NewConfirmModal("Delete Automation", "Delete project automation?").
+		WithTaskTitles([]string{row.Title}).
+		WithDestructive(true).
+		WithOnConfirm(func() tea.Msg {
+			return deleteAutomationRowCmd(m.apiRunnerConfig(), rowCopy)()
+		})
+	return m.modalManager.Open(modal)
+}
+
+func (m *Model) openSelectedAutomationMetadata() tea.Cmd {
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	if entry, ok := m.automationList.SelectedRunTask(); ok {
+		if entry.Path == "" {
+			m.setStatusMessage("error", "Selected automation run task has no path")
+			return nil
+		}
+		return m.modalManager.Open(NewMetadataModal(entry.Path, apiClient))
+	}
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	path := row.Path
+	if path == "" {
+		path = row.ID
+	}
+	if path == "" {
+		m.setStatusMessage("error", "Selected automation has no path")
+		return nil
+	}
+	return m.modalManager.Open(NewMetadataModal(path, apiClient))
+}
+
+func resolvedTaskFromAutomationRunEntry(entry types.BrainEntry) *types.ResolvedTask {
+	return &types.ResolvedTask{
+		ID:            entry.ID,
+		Path:          entry.Path,
+		Title:         entry.Title,
+		Content:       entry.Content,
+		Priority:      entry.Priority,
+		Status:        entry.Status,
+		Created:       entry.Created,
+		Workdir:       entry.Workdir,
+		GitRemote:     entry.GitRemote,
+		GitBranch:     entry.GitBranch,
+		TargetWorkdir: entry.TargetWorkdir,
+		DirectPrompt:  entry.DirectPrompt,
+		Agent:         entry.Agent,
+		Model:         entry.Model,
+		Executor:      entry.Executor,
+		Sessions:      entry.Sessions,
+		Generated:     entry.Generated,
+		GeneratedBy:   entry.GeneratedBy,
+	}
+}
+
 func (m *Model) editSelectedAutomationRow() tea.Cmd {
 	row := m.automationList.SelectedRow()
 	if row == nil {
@@ -5292,6 +5620,13 @@ func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 				generatedTasks = append(generatedTasks, task)
 			}
 		}
+		runParams := map[string]string{"type": "automation_run"}
+		if project != "" {
+			runParams["project"] = project
+		}
+		if automationRuns, err := apiClient.ListEntries(ctx, runParams); err == nil {
+			generatedTasks = append(generatedTasks, automationRuns.Entries...)
+		}
 
 		return AutomationDataMsg{Automations: automations.Entries, ScheduledTasks: scheduledTasks, GeneratedTasks: generatedTasks}
 	}
@@ -5348,6 +5683,31 @@ func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.
 	}
 }
 
+func deleteAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd {
+	return func() tea.Msg {
+		path := row.Path
+		if path == "" {
+			path = row.ID
+		}
+		if path == "" {
+			return AutomationDeletedMsg{RowID: row.ID, Error: fmt.Errorf("automation row has no path or id")}
+		}
+		if row.Source != "automation" {
+			return AutomationDeletedMsg{RowID: row.ID, Error: fmt.Errorf("delete only supports automation entries")}
+		}
+		if row.Scope == "global" || row.Scope == "built-in" || strings.HasPrefix(path, "global/") {
+			return AutomationDeletedMsg{RowID: row.ID, Error: fmt.Errorf("built-in automations cannot be deleted")}
+		}
+		if !strings.HasPrefix(path, "projects/") {
+			return AutomationDeletedMsg{RowID: row.ID, Error: fmt.Errorf("only project-level automations can be deleted")}
+		}
+
+		apiClient := runner.NewAPIClient(cfg)
+		err := apiClient.DeleteEntry(context.Background(), path)
+		return AutomationDeletedMsg{RowID: row.ID, Error: err}
+	}
+}
+
 func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeProject string) tea.Cmd {
 	return func() tea.Msg {
 		path := row.Path
@@ -5379,14 +5739,20 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 		}
 
 		generated := true
-		prompt := entry.Action.DirectPrompt
+		prompt := interpolateAutomationManualPrompt(entry.Action.DirectPrompt, project)
 		if entry.Action.Type == "script" {
-			prompt = entry.Action.Command
+			prompt = interpolateAutomationManualPrompt(entry.Action.Command, project)
 		}
 		if prompt == "" {
 			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation action has no prompt or command")}
 		}
 
+		completeOnIdle := automationManualCompleteOnIdle(entry.Action.CompleteOnIdle)
+		agent := firstNonEmpty(entry.Agent, entry.Action.Agent)
+		model := firstNonEmpty(entry.Model, entry.Action.Model)
+		executor := firstNonEmpty(entry.Executor, entry.Action.Executor)
+		executionMode := firstNonEmpty(entry.ExecutionMode, entry.Action.ExecutionMode)
+		targetWorkdir := firstNonEmpty(entry.TargetWorkdir, entry.Action.TargetWorkdir)
 		req := types.CreateEntryRequest{
 			Type:           "task",
 			Title:          fmt.Sprintf("Automation: %s", entry.ID),
@@ -5397,10 +5763,12 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 			GeneratedBy:    fmt.Sprintf("automation:%s", entry.ID),
 			GeneratedKey:   fmt.Sprintf("automation:manual:%s:%d", entry.ID, time.Now().UTC().UnixNano()),
 			DirectPrompt:   prompt,
-			Agent:          entry.Action.Agent,
-			Model:          entry.Action.Model,
-			ExecutionMode:  entry.Action.ExecutionMode,
-			CompleteOnIdle: entry.Action.CompleteOnIdle,
+			Agent:          agent,
+			Model:          model,
+			Executor:       executor,
+			ExecutionMode:  executionMode,
+			CompleteOnIdle: completeOnIdle,
+			TargetWorkdir:  targetWorkdir,
 		}
 		if entry.Action.Type == "script" {
 			req.Executor = "script"
@@ -5412,6 +5780,45 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 		}
 		return AutomationRunMsg{RowID: row.ID, TaskID: created.ID}
 	}
+}
+
+func automationManualCompleteOnIdle(value *bool) *bool {
+	if value != nil {
+		return value
+	}
+	defaultValue := true
+	return &defaultValue
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func interpolateAutomationManualPrompt(prompt, project string) string {
+	if prompt == "" {
+		return ""
+	}
+	tmpl, err := template.New("automation-manual-run").Option("missingkey=error").Parse(prompt)
+	if err != nil {
+		return prompt
+	}
+	data := struct {
+		Project   string
+		ProjectID string
+	}{
+		Project:   project,
+		ProjectID: project,
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return prompt
+	}
+	return buf.String()
 }
 
 // completeTaskCmd completes a single task.

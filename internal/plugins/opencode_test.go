@@ -360,6 +360,48 @@ func TestOpenCodeTarget_Install_ForceReportsIdenticalFilesAndLeavesUntouched(t *
 	}
 }
 
+func TestOpenCodeTarget_Install_ForceIsIdempotentAcrossRuns(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ".config", "opencode")
+	target := &OpenCodeTarget{configPath: configPath}
+
+	if err := target.Install(InstallOptions{}); err != nil {
+		t.Fatalf("initial Install() failed: %v", err)
+	}
+
+	installedFile := filepath.Join(configPath, "plugin", "brain.ts")
+	before, err := os.ReadFile(installedFile)
+	if err != nil {
+		t.Fatalf("failed to read installed file: %v", err)
+	}
+
+	// The generated file content must be stable across invocations so --force
+	// only updates files when the embedded source changes.
+	time.Sleep(1100 * time.Millisecond)
+
+	var installErr error
+	output := capturePluginOutput(t, func() {
+		installErr = target.Install(InstallOptions{Force: true})
+	})
+	if installErr != nil {
+		t.Fatalf("force Install() failed: %v", installErr)
+	}
+
+	after, err := os.ReadFile(installedFile)
+	if err != nil {
+		t.Fatalf("failed to read installed file after force: %v", err)
+	}
+	if !bytes.Equal(after, before) {
+		t.Fatal("force install should not rewrite unchanged generated content")
+	}
+	if !strings.Contains(output, "Identical: brain.ts (left untouched)") {
+		t.Fatalf("force install should report unchanged file as identical, output:\n%s", output)
+	}
+	if strings.Contains(output, "Updated: brain.ts") {
+		t.Fatalf("force install should not update unchanged file, output:\n%s", output)
+	}
+}
+
 func TestOpenCodeTarget_Install_WithoutForceSkipsExistingFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, ".config", "opencode")

@@ -143,7 +143,7 @@ func buildDreamPrompt(scope types.MonitorScope) string {
 
 Before doing any work, check if consolidation is needed:
 
-1. **Find existing dream:** Call brain_search({ query: "Project Dream", type: "dream"%s }) to look for an existing dream entry for this project.
+1. **Find existing dream:** Call brain_search({ query: "Project Dream", type: "dream"%[2]s }) to look for an existing dream entry for this project.
 2. **Check cooldown:** If a dream entry exists, check its modification timestamp. If it was modified less than 24 hours ago, skip this run.
 3. **Check entry threshold:** Call brain_list({ type: "decision"%[2]s }), brain_list({ type: "pattern"%[2]s }), brain_list({ type: "learning"%[2]s }), brain_list({ type: "summary"%[2]s }), and brain_list({ type: "exploration"%[2]s }) to count entries modified since the last dream. If fewer than 3 new or modified entries exist since the last dream, skip this run.
 4. **If skipping:** Call brain_update({ path: "<your-own-task-path>", append: "Skipped: <reason> at <timestamp>" }) and exit without further action.

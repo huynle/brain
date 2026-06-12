@@ -171,10 +171,10 @@ func (m *ModalManager) HandleMouse(msg tea.MouseMsg, screenW, screenH int) (bool
 		return false, nil
 	}
 	if msg.Type == tea.MouseWheelDown {
-		return m.activeModal.HandleKey("j")
+		return m.HandleKey("j")
 	}
 	if msg.Type == tea.MouseWheelUp {
-		return m.activeModal.HandleKey("k")
+		return m.HandleKey("k")
 	}
 
 	// Check if the modal supports mouse events
@@ -269,6 +269,16 @@ func (m *ModalManager) HandleKey(key string) (bool, tea.Cmd) {
 	// Handle scroll keys when content overflows (before routing to modal)
 	if m.NeedsScroll() {
 		switch key {
+		case "j", "down":
+			if _, ok := m.activeModal.(*HelpModal); ok {
+				m.ScrollDown()
+				return true, nil
+			}
+		case "k", "up":
+			if _, ok := m.activeModal.(*HelpModal); ok {
+				m.ScrollUp()
+				return true, nil
+			}
 		case "ctrl+d":
 			// Half-page down
 			for i := 0; i < m.viewportH/2; i++ {

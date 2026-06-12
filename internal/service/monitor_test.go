@@ -117,6 +117,17 @@ func TestBuildMonitorTitle_FeatureScope(t *testing.T) {
 	}
 }
 
+func TestBuildDreamPrompt_UsesValidProjectFilter(t *testing.T) {
+	prompt := buildDreamPrompt(MonitorScope{Type: "project", Project: "brain-api"})
+
+	if strings.Contains(prompt, `type: "dream"brain-api`) {
+		t.Fatalf("dream prompt contains malformed search filter: %s", prompt)
+	}
+	if !strings.Contains(prompt, `brain_search({ query: "Project Dream", type: "dream", project: "brain-api" })`) {
+		t.Fatalf("dream prompt missing valid project-scoped search filter: %s", prompt)
+	}
+}
+
 // =============================================================================
 // MonitorService Tests (with mock BrainService)
 // =============================================================================
@@ -305,6 +316,37 @@ func TestMonitorService_Create(t *testing.T) {
 	if !strings.Contains(result.Title, "Blocked Task Inspector") {
 		t.Errorf("expected title to contain 'Blocked Task Inspector', got %s", result.Title)
 	}
+}
+
+func TestMonitorService_CreateBuiltinMonitorStoresReferenceOnly(t *testing.T) {
+	mock := newMockBrainForMonitor()
+	svc := NewMonitorService(mock)
+	ctx := context.Background()
+
+	result, err := svc.Create(ctx, "dream", MonitorScope{Type: "project", Project: "brain-api"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entry, err := mock.Recall(ctx, result.Path)
+	if err != nil {
+		t.Fatalf("recall created monitor: %v", err)
+	}
+	if entry.DirectPrompt != "" {
+		t.Fatalf("DirectPrompt = %q, want empty so built-in prompt resolves live", entry.DirectPrompt)
+	}
+	if !monitorTestContainsString(entry.Tags, "monitor:dream:project:brain-api") {
+		t.Fatalf("created monitor tags = %v, want built-in monitor reference tag", entry.Tags)
+	}
+}
+
+func monitorTestContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMonitorService_Create_UnknownTemplate(t *testing.T) {

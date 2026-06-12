@@ -826,6 +826,7 @@ func TestRunAutomationRowCmdCreatesGeneratedTaskFromDisabledAutomation(t *testin
 				Action: &types.AutomationAction{
 					Type:           "prompt",
 					DirectPrompt:   "Run now",
+					Agent:          "assistant",
 					ExecutionMode:  "current_branch",
 					CompleteOnIdle: boolPtr(true),
 				},

@@ -1563,6 +1563,7 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 		Action: &types.AutomationAction{
 			Type:         "prompt",
 			DirectPrompt: "Create the cron automation summary.",
+			Agent:        "assistant",
 		},
 	})
 	if err != nil {

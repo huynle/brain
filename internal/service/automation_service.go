@@ -304,11 +304,11 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	}
 
 	prompt := renderAutomationProjectTemplate(automation.Action.DirectPrompt, project)
-	agent := firstNonEmpty(automation.Action.Agent, automation.Agent)
-	model := firstNonEmpty(automation.Action.Model, automation.Model)
-	executor := firstNonEmpty(automation.Action.Executor, automation.Executor)
-	executionMode := firstNonEmpty(automation.Action.ExecutionMode, automation.ExecutionMode)
-	targetWorkdir := firstNonEmpty(automation.Action.TargetWorkdir, automation.TargetWorkdir)
+	agent := firstNonEmpty(automation.Agent, automation.Action.Agent)
+	model := firstNonEmpty(automation.Model, automation.Action.Model)
+	executor := firstNonEmpty(automation.Executor, automation.Action.Executor)
+	executionMode := firstNonEmpty(automation.ExecutionMode, automation.Action.ExecutionMode)
+	targetWorkdir := firstNonEmpty(automation.TargetWorkdir, automation.Action.TargetWorkdir)
 	req := types.CreateEntryRequest{
 		Type:           "task",
 		Title:          fmt.Sprintf("Automation: %s", automation.ID),

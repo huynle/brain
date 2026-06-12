@@ -5748,11 +5748,11 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 		}
 
 		completeOnIdle := automationManualCompleteOnIdle(entry.Action.CompleteOnIdle)
-		agent := firstNonEmpty(entry.Action.Agent, entry.Agent)
-		model := firstNonEmpty(entry.Action.Model, entry.Model)
-		executor := firstNonEmpty(entry.Action.Executor, entry.Executor)
-		executionMode := firstNonEmpty(entry.Action.ExecutionMode, entry.ExecutionMode)
-		targetWorkdir := firstNonEmpty(entry.Action.TargetWorkdir, entry.TargetWorkdir)
+		agent := firstNonEmpty(entry.Agent, entry.Action.Agent)
+		model := firstNonEmpty(entry.Model, entry.Action.Model)
+		executor := firstNonEmpty(entry.Executor, entry.Action.Executor)
+		executionMode := firstNonEmpty(entry.ExecutionMode, entry.Action.ExecutionMode)
+		targetWorkdir := firstNonEmpty(entry.TargetWorkdir, entry.Action.TargetWorkdir)
 		req := types.CreateEntryRequest{
 			Type:           "task",
 			Title:          fmt.Sprintf("Automation: %s", entry.ID),

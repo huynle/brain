@@ -28,12 +28,20 @@ Brain supports two timed-work shapes, but user-facing project automations should
 
 ## Workflow
 1. Identify whether this is a user-facing automation or an explicit scheduled task. Default to `type: "automation"` for project-level automations.
-2. Ask one clarifying question only if the trigger time/event, project, or action is ambiguous.
-3. Resolve project context with `brain_project_context` when working from a checkout.
-4. Save the durable Brain entry with the minimum fields needed.
-5. Include `user_original_request` verbatim for generated tasks or task-like work.
-6. Set safeguards: `once_per`, `cooldown`, `max_concurrent`, `max_runs`, `expires_at`, or retry limits when appropriate.
-7. Report the created entry ID/path, trigger/schedule, and what will happen.
+2. Resolve the destination Brain project before saving. Use `brain_project_context` when working from a checkout, but do not assume the current checkout is the right project for personal, cross-project, office, or external-system automations.
+3. Ask one clarifying question if the destination project is not obvious from the user's words or workspace. Example: "Which Brain project should own this automation?"
+4. Ask one clarifying question only if the trigger time/event or action is ambiguous.
+5. Save the durable Brain entry with the minimum fields needed, including explicit `project: "<project>"`.
+6. Include `user_original_request` verbatim for generated tasks or task-like work.
+7. Set safeguards: `once_per`, `cooldown`, `max_concurrent`, `max_runs`, `expires_at`, or retry limits when appropriate.
+8. Report the created entry ID/path, owning project, trigger/schedule, and what will happen.
+
+## Project Selection Rules
+- If the user names a project, use that project.
+- If the automation is clearly tied to the current repository, use the project returned by `brain_project_context`.
+- If the automation is personal productivity, office activity, cross-project summarization, or not tied to the current repository, ask which Brain project should own it.
+- If the user names an output path like `/tmp`, do not infer the Brain project from the path. The output path and the owning Brain project are separate decisions.
+- Always set `project` explicitly in `brain_save`; do not rely on the plugin's default project when creating automations.
 
 ## Default Pattern: Cron Automation Entry
 
@@ -45,7 +53,7 @@ brain_save(
   title: "Monitor Teams activity for project work log",
   content: "Every 5 minutes, create a read-only task to inspect recent Teams activity and save concise project-work notes to Brain.",
   status: "active",
-  project: "<project>",
+  project: "<explicit-project>",
   trigger: {
     type: "cron",
     schedule: "*/5 * * * *",
@@ -59,7 +67,8 @@ brain_save(
     direct_prompt: "Use the daily-office-chromeuse skill. Read recent Microsoft Teams activity only. Extract concise, timestamped project/work evidence and save new findings to Brain. Do not send messages or modify external systems.",
     agent: "assistant",
     executor: "opencode",
-    target_workdir: "<absolute-workdir>"
+    target_workdir: "<absolute-workdir>",
+    complete_on_idle: true
   },
   retry: { max_attempts: 1, timeout: "20m" }
 )
@@ -152,7 +161,8 @@ brain_save(
     direct_prompt: "Use the feature-checkout skill to audit completed tasks for {{feature_id}}.",
     agent: "tdd-dev",
     executor: "opencode",
-    target_workdir: "<absolute-workdir>"
+    target_workdir: "<absolute-workdir>",
+    complete_on_idle: true
   },
   retry: { max_attempts: 2, backoff: "5m", timeout: "30m" }
 )
@@ -178,7 +188,8 @@ brain_save(
   action: {
     type: "create_task",
     title_template: "Summarize completed task {{task_id}}",
-    direct_prompt: "Summarize task {{task_id}}, include commit/results, and save a Brain report."
+    direct_prompt: "Summarize task {{task_id}}, include commit/results, and save a Brain report.",
+    complete_on_idle: true
   }
 )
 ```
@@ -203,7 +214,8 @@ brain_save(
   action: {
     type: "create_task",
     title_template: "Daily stale task review {{date}}",
-    direct_prompt: "Review stale pending or blocked tasks and save recommendations."
+    direct_prompt: "Review stale pending or blocked tasks and save recommendations.",
+    complete_on_idle: true
   }
 )
 ```
@@ -227,19 +239,24 @@ brain_save(
 | Limit retry loops | `retry.max_attempts` |
 | Select executor | `executor` or `action.executor` |
 | Force target repo | `target_workdir` or `action.target_workdir` |
+| Complete generated tasks when idle | `action.complete_on_idle: true` |
 
 ## Safety Rules
 - Use `status: "active"` only when the user clearly wants the automation enabled now.
 - Use `status: "draft"` when proposing an automation for review.
 - Include `expires_at`, `max_runs`, or `cooldown` for recurring work that could run indefinitely.
 - Do not create `type: "task"` + `schedule` for requests phrased as "automation", "monitor", "check every", or "repeat every" unless the user explicitly asks for a scheduled task row.
+- Do not write project-level automations to the current repo project merely because that is where the chat is running; choose or ask for the owning Brain project.
+- Set `action.complete_on_idle: true` for generated automation tasks unless there is a concrete reason to keep them open after the executor becomes idle. The runtime also defaults automation-generated tasks to true.
 - For generated tasks, include enough context in `direct_prompt` that a future agent can execute without this conversation.
 - For cross-project work, set `project` and `target_workdir` explicitly.
 - Never schedule destructive unattended actions unless the user explicitly asked for unattended execution.
 
 ## Checklist
 - [ ] Classified user-facing project automation requests as `type: "automation"`, not scheduled task rows.
+- [ ] Confirmed or asked for the owning Brain project before saving.
 - [ ] Captured project, trigger/schedule, action, and target workdir.
+- [ ] Set `action.complete_on_idle: true` for generated automation tasks unless intentionally disabled.
 - [ ] Added deduplication/cooldown/concurrency safeguards where useful.
 - [ ] Included `user_original_request` for task-like work.
 - [ ] Reported created ID/path and the exact trigger behavior.

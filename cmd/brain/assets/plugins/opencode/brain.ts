@@ -1075,6 +1075,7 @@ Automation guidance:
               model: tool.schema.string().optional().describe("Model override for generated tasks"),
               executor: tool.schema.string().optional().describe("Executor override for generated tasks"),
               target_workdir: tool.schema.string().optional().describe("Target workdir for generated tasks"),
+              complete_on_idle: tool.schema.boolean().optional().describe("Whether generated automation tasks should complete when the executor becomes idle. Defaults to true for automation-generated tasks; set true explicitly unless there is a concrete reason not to."),
             })
             .optional()
             .describe("Automation action config for automation entries."),

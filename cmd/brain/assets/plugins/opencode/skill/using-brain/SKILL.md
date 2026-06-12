@@ -281,7 +281,8 @@ brain_save(
   action: {
     type: "create_task",
     title_template: "Nightly test audit {{date}}",
-    direct_prompt: "Run the nightly test audit and save findings to Brain."
+    direct_prompt: "Run the nightly test audit and save findings to Brain.",
+    complete_on_idle: true
   }
 )
 ```
@@ -307,7 +308,8 @@ brain_save(
   action: {
     type: "create_task",
     title_template: "Checkout {{feature_id}}",
-    direct_prompt: "Use feature-checkout to audit {{feature_id}} against original requests."
+    direct_prompt: "Use feature-checkout to audit {{feature_id}} against original requests.",
+    complete_on_idle: true
   }
 )
 ```

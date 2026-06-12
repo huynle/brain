@@ -1553,6 +1553,9 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 		Content: "Creates a generated task on a cron schedule.",
 		Status:  "active",
 		Project: "automation-cron-entry-test",
+		Agent:   "build",
+		Model:   "test-model",
+		Executor: "pi",
 		Trigger: &types.TriggerConfig{
 			Type:     "cron",
 			Schedule: "* * * * *",
@@ -1588,6 +1591,12 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	expectedKey := "automation:cron:" + resp.Entries[0].GeneratedBy[len("automation:"):] + ":202604291305"
 	if resp.Entries[0].GeneratedKey != expectedKey {
 		t.Fatalf("generated key = %q, want %q", resp.Entries[0].GeneratedKey, expectedKey)
+	}
+	if resp.Entries[0].CompleteOnIdle == nil || !*resp.Entries[0].CompleteOnIdle {
+		t.Fatalf("generated cron task complete_on_idle = %v, want true by default", resp.Entries[0].CompleteOnIdle)
+	}
+	if resp.Entries[0].Agent != "build" || resp.Entries[0].Model != "test-model" || resp.Entries[0].Executor != "pi" {
+		t.Fatalf("generated cron task execution metadata agent/model/executor = %q/%q/%q, want build/test-model/pi", resp.Entries[0].Agent, resp.Entries[0].Model, resp.Entries[0].Executor)
 	}
 }
 

@@ -99,6 +99,12 @@ type AutomationRunMsg struct {
 	Error  error
 }
 
+// AutomationDeletedMsg is sent when a project-level automation entry is deleted.
+type AutomationDeletedMsg struct {
+	RowID string
+	Error error
+}
+
 // RunnerListMsg is sent when the runner list has been fetched from the API.
 type RunnerListMsg struct {
 	Runners []types.RunnerInfo

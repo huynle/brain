@@ -653,10 +653,15 @@ func (al *AutomationList) renderRow(row AutomationListRow, selected bool, hasChi
 		goalProgress = "  " + renderGoalProgress(row.GoalDone, row.GoalTotal)
 	}
 
+	scope := row.Scope
+	if scope == "global" {
+		scope = "built-in"
+	}
+
 	line := fmt.Sprintf("%s%s  %s  %s  %s%s  %s%s%s%s",
 		marker,
 		DimStyle.Render(fmt.Sprintf("%-10s", row.Source)),
-		DimStyle.Render(fmt.Sprintf("%-7s", row.Scope)),
+		DimStyle.Render(fmt.Sprintf("%-8s", scope)),
 		title,
 		stateStyle.Render("["+state+"]"),
 		badge,

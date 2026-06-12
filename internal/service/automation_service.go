@@ -304,6 +304,11 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	}
 
 	prompt := renderAutomationProjectTemplate(automation.Action.DirectPrompt, project)
+	agent := firstNonEmpty(automation.Action.Agent, automation.Agent)
+	model := firstNonEmpty(automation.Action.Model, automation.Model)
+	executor := firstNonEmpty(automation.Action.Executor, automation.Executor)
+	executionMode := firstNonEmpty(automation.Action.ExecutionMode, automation.ExecutionMode)
+	targetWorkdir := firstNonEmpty(automation.Action.TargetWorkdir, automation.TargetWorkdir)
 	req := types.CreateEntryRequest{
 		Type:           "task",
 		Title:          fmt.Sprintf("Automation: %s", automation.ID),
@@ -314,11 +319,13 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		GeneratedBy:    fmt.Sprintf("automation:%s", automation.ID),
 		GeneratedKey:   generatedKey,
 		DirectPrompt:   prompt,
-		Agent:          automation.Action.Agent,
-		Model:          automation.Action.Model,
-		ExecutionMode:  automation.Action.ExecutionMode,
+		Agent:          agent,
+		Model:          model,
+		Executor:       executor,
+		ExecutionMode:  executionMode,
 		SessionMode:    automation.Action.SessionMode,
 		CompleteOnIdle: automationCompleteOnIdle(automation.Action.CompleteOnIdle),
+		TargetWorkdir:  targetWorkdir,
 	}
 
 	if automation.Action.Type == "script" {

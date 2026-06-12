@@ -54,10 +54,13 @@ func TestAutomationList_View_ShowsAutomationScope(t *testing.T) {
 	)
 
 	view := stripANSI(al.View(140, 20))
-	for _, want := range []string{"global", "project"} {
+	for _, want := range []string{"built-in", "project"} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("expected scope %q in view, got:\n%s", want, view)
 		}
+	}
+	if strings.Contains(view, "global") {
+		t.Fatalf("expected global automation scope to render as built-in, got:\n%s", view)
 	}
 }
 

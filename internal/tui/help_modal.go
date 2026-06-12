@@ -132,16 +132,20 @@ func (m *HelpModal) View() string {
 		b.WriteString("\n")
 	}
 
-	// Automations tab — goal row actions
-	b.WriteString(categoryStyle.Render("Automations (Goal Rows):"))
+	// Automations tab — automation and goal row actions
+	b.WriteString(categoryStyle.Render("Automations:"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("n", "New goal"))
+	b.WriteString(formatShortcut("n", "New goal automation"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("e", "Open goal config modal"))
+	b.WriteString(formatShortcut("s", "Edit automation metadata"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("x", "Run goal reconcile"))
+	b.WriteString(formatShortcut("e", "Edit automation / goal config"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("Space", "Enable/disable goal"))
+	b.WriteString(formatShortcut("x", "Run automation / goal reconcile"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("Space", "Enable/disable automation"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("d", "Delete project automation only"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("ctrl+s", "Save config (in modal)"))
 	b.WriteString("\n")

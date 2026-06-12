@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -82,12 +83,16 @@ func (h *Handler) emitControlAudit(r *http.Request, eventType, runnerID, instanc
 	}
 	evt := types.Event{
 		Type:      eventType,
-		Source:    "api",
+		Source:    types.EventSourceAPI,
 		Timestamp: types.TimeNowUTC(),
 		RunnerID:  runnerID,
 		Metadata:  md,
 	}
-	_ = h.events.Ingest(r.Context(), []types.Event{evt})
+	if err := h.events.Ingest(r.Context(), []types.Event{evt}); err != nil {
+		// Audit is best-effort, but a rejected event means a misconfigured
+		// event type — log loudly so it surfaces rather than silently dropping.
+		slog.Warn("control audit event rejected", "type", eventType, "error", err)
+	}
 }
 
 // controlProxy forwards a request to an instance over the bridge and writes
@@ -218,7 +223,7 @@ func (h *Handler) HandleControlPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := chi.URLParam(r, "sessionId")
-	h.emitControlAudit(r, "control.prompt_sent",
+	h.emitControlAudit(r, types.EventControlPromptSent,
 		chi.URLParam(r, "runnerId"), chi.URLParam(r, "instanceId"),
 		map[string]string{"session_id": sessionID})
 
@@ -244,7 +249,7 @@ func (h *Handler) HandleControlPermission(w http.ResponseWriter, r *http.Request
 
 	sessionID := chi.URLParam(r, "sessionId")
 	permissionID := chi.URLParam(r, "permissionId")
-	h.emitControlAudit(r, "control.permission_responded",
+	h.emitControlAudit(r, types.EventControlPermissionResponded,
 		chi.URLParam(r, "runnerId"), chi.URLParam(r, "instanceId"),
 		map[string]string{"session_id": sessionID, "permission_id": permissionID})
 
@@ -317,7 +322,7 @@ func (h *Handler) HandleControlSpawn(w http.ResponseWriter, r *http.Request) {
 		_ = h.runnerRegistry.UpsertInstance(r.Context(), runnerID, *inst)
 	}
 
-	h.emitControlAudit(r, "control.instance_spawned", runnerID, inst.InstanceID,
+	h.emitControlAudit(r, types.EventControlInstanceSpawned, runnerID, inst.InstanceID,
 		map[string]string{"workdir": spec.Workdir})
 
 	WriteJSON(w, http.StatusCreated, map[string]any{
@@ -356,7 +361,7 @@ func (h *Handler) HandleControlKill(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	h.emitControlAudit(r, "control.instance_killed", runnerID, instanceID, nil)
+	h.emitControlAudit(r, types.EventControlInstanceKilled, runnerID, instanceID, nil)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 

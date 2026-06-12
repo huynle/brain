@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -1206,4 +1208,40 @@ func TestSecureHeaders_HSTS(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStatusWriter_Hijack verifies the Logger middleware's statusWriter
+// exposes http.Hijacker, which the runner WebSocket bridge requires. Without
+// it, the bridge upgrade fails with "does not implement http.Hijacker" and
+// the entire remote-control tunnel is dead behind the Logger middleware.
+func TestStatusWriter_Hijack(t *testing.T) {
+	// A ResponseWriter that supports hijacking.
+	hijackable := &hijackableRecorder{ResponseRecorder: httptest.NewRecorder()}
+	sw := &statusWriter{ResponseWriter: hijackable, status: http.StatusOK}
+
+	if _, ok := interface{}(sw).(http.Hijacker); !ok {
+		t.Fatal("statusWriter does not implement http.Hijacker")
+	}
+	if _, _, err := sw.Hijack(); err != nil {
+		t.Errorf("Hijack() through statusWriter failed: %v", err)
+	}
+	if !hijackable.hijacked {
+		t.Error("Hijack() did not delegate to the underlying ResponseWriter")
+	}
+
+	// A non-hijackable writer should yield a clear error, not a panic.
+	plain := &statusWriter{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK}
+	if _, _, err := plain.Hijack(); err == nil {
+		t.Error("expected error hijacking a non-hijackable ResponseWriter")
+	}
+}
+
+type hijackableRecorder struct {
+	*httptest.ResponseRecorder
+	hijacked bool
+}
+
+func (h *hijackableRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h.hijacked = true
+	return nil, nil, nil
 }

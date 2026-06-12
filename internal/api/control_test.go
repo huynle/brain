@@ -235,6 +235,66 @@ func TestControlKill_RefusesTaskInstances(t *testing.T) {
 	}
 }
 
+// recordingEventService captures Ingest calls and validates event types the
+// way the real EventService does, so this catches unregistered control.*
+// types (which the mock bridge tests can't surface).
+type recordingEventService struct {
+	mu        sync.Mutex
+	ingested  []types.Event
+	rejectErr error
+}
+
+func (s *recordingEventService) Ingest(_ context.Context, events []types.Event) error {
+	for _, e := range events {
+		if !types.IsValidEventType(e.Type) {
+			s.rejectErr = errContains("invalid event type " + e.Type)
+			return s.rejectErr
+		}
+	}
+	s.mu.Lock()
+	s.ingested = append(s.ingested, events...)
+	s.mu.Unlock()
+	return nil
+}
+func (s *recordingEventService) Recent(_ context.Context, _ int, _ map[string]string) ([]types.Event, error) {
+	return nil, nil
+}
+func (s *recordingEventService) Subscribe(_ context.Context, _ map[string]string) (<-chan types.Event, func()) {
+	ch := make(chan types.Event)
+	return ch, func() {}
+}
+func (s *recordingEventService) CheckFeatureCompletion(_ context.Context, _, _, _ string) {}
+
+func TestControlAudit_EmitsValidEvents(t *testing.T) {
+	mock := &mockBridgeService{doStatus: http.StatusNoContent}
+	events := &recordingEventService{}
+	h := NewHandler(&mockBrainService{}, WithBridgeService(mock), WithEventService(events))
+	r := chi.NewRouter()
+	r.Post(
+		"/control/runners/{runnerId}/instances/{instanceId}/sessions/{sessionId}/prompt",
+		h.HandleControlPrompt,
+	)
+
+	req := httptest.NewRequest(http.MethodPost,
+		"/control/runners/r1/instances/i1/sessions/ses_1/prompt",
+		strings.NewReader(`{"text":"hi"}`))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+	if events.rejectErr != nil {
+		t.Fatalf("audit event rejected by EventService: %v", events.rejectErr)
+	}
+	if len(events.ingested) != 1 || events.ingested[0].Type != types.EventControlPromptSent {
+		t.Fatalf("expected one control.prompt_sent event, got %+v", events.ingested)
+	}
+	if events.ingested[0].Source != types.EventSourceAPI {
+		t.Errorf("audit event source = %q, want %q", events.ingested[0].Source, types.EventSourceAPI)
+	}
+}
+
 func TestControlPendingPermissions(t *testing.T) {
 	mock := &mockBridgeService{
 		pending: []json.RawMessage{json.RawMessage(`{"type":"permission.updated","properties":{"id":"perm_1"}}`)},

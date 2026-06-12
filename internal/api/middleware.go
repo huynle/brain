@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"runtime/debug"
@@ -156,6 +158,16 @@ func (sw *statusWriter) Flush() {
 	if f, ok := sw.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}
+}
+
+// Hijack implements http.Hijacker by delegating to the underlying
+// ResponseWriter. Required for WebSocket upgrades (the runner bridge) to
+// work through the Logger middleware.
+func (sw *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := sw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
 }
 
 // CORS returns middleware that sets CORS headers based on config.

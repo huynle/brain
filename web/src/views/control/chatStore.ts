@@ -234,10 +234,18 @@ function applyEvent(
         const merged: OcMessage = existing
           ? { info: { ...existing.info, ...info }, parts: existing.parts }
           : { info, parts: [] };
-        const order = c.order.includes(info.id) ? c.order : [...c.order, info.id];
-        // A new assistant message means the optimistic local echo is now
-        // redundant if the server echoed the user message too.
-        return { ...c, messages: { ...c.messages, [info.id]: merged }, order, busy: true };
+        let order = c.order.includes(info.id) ? c.order : [...c.order, info.id];
+        let messages = { ...c.messages, [info.id]: merged };
+        // The server echoed the real user message — drop the optimistic
+        // local placeholder so the prompt doesn't render twice.
+        if (info.role === "user" && !info.id.startsWith("local_")) {
+          const locals = order.filter((id) => id.startsWith("local_"));
+          if (locals.length > 0) {
+            order = order.filter((id) => !id.startsWith("local_"));
+            for (const id of locals) delete messages[id];
+          }
+        }
+        return { ...c, messages, order, busy: true };
       });
       return;
     }

@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -326,6 +328,29 @@ type BridgeService interface {
 	// DecorateInstances merges live bridge state (pending permission counts,
 	// connection-derived status) into instance records.
 	DecorateInstances(instances []types.OpencodeInstance)
+
+	// ServeBridge upgrades the request to a WebSocket and serves a runner's
+	// bridge connection until it drops.
+	ServeBridge(w http.ResponseWriter, r *http.Request, runnerID string)
+
+	// Connected reports whether a runner has a live bridge connection.
+	Connected(runnerID string) bool
+
+	// Do proxies one HTTP request to an instance on a connected runner.
+	Do(ctx context.Context, runnerID, instanceID, method, path string, body []byte) (int, []byte, error)
+
+	// SpawnInstance asks a runner to spawn a fresh ad-hoc OpenCode instance.
+	SpawnInstance(ctx context.Context, runnerID string, spec types.SpawnInstanceSpec) (*types.OpencodeInstance, error)
+
+	// KillInstance asks a runner to terminate an ad-hoc instance.
+	KillInstance(ctx context.Context, runnerID, instanceID string) error
+
+	// AcquireStream enables full event forwarding for an instance
+	// (refcounted); the release function must be called on detach.
+	AcquireStream(runnerID, instanceID string) (func(), error)
+
+	// PendingPermissions returns raw permission events awaiting a response.
+	PendingPermissions(runnerID, instanceID string) []json.RawMessage
 }
 
 // ClientContextService resolves Brain client workspace context into project context.

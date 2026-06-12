@@ -90,6 +90,18 @@ func (h *Hub) PublishError(projectId string, message string) {
 	})
 }
 
+// InstanceTopic returns the topic key for an OpenCode instance's event
+// stream, namespaced by runner so instance IDs cannot collide across runners.
+func InstanceTopic(runnerID, instanceID string) string {
+	return "instance:" + runnerID + ":" + instanceID
+}
+
+// Publish sends an arbitrary event to all subscribers of a topic. Used by
+// the bridge hub to fan out instance events to browser SSE streams.
+func (h *Hub) Publish(topic string, event string, data interface{}) {
+	h.publish(topic, SSEMessage{Event: event, Data: data})
+}
+
 // RunnerTopic returns the topic key for a runner's SSE stream.
 // Uses "runner:" prefix to namespace runner subscriptions separately from project subscriptions.
 func RunnerTopic(runnerID string) string {

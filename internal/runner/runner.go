@@ -228,6 +228,9 @@ type TaskRunner struct {
 	commandCh   chan RunnerCommand
 	sseListener *SSEListener
 
+	// Remote-control bridge (outbound WS tunnel to the Brain API)
+	bridgeClient *BridgeClient
+
 	// Lifecycle
 	cancel context.CancelFunc
 	done   chan struct{}
@@ -431,6 +434,13 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		)
 	}
 
+	// Start the remote-control bridge (outbound WS; reconnects internally)
+	if tr.config.BrainAPIURL != "" && !tr.config.Control.Disabled {
+		tr.bridgeClient = NewBridgeClient(tr)
+		go tr.bridgeClient.Start(ctx)
+		slog.Info("bridge client started", "runner_id", tr.runnerID)
+	}
+
 	// Start periodic claim renewal goroutine
 	renewTicker := time.NewTicker(DefaultRenewInterval)
 	go func() {
@@ -530,6 +540,20 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 		case tr.wakeCh <- struct{}{}:
 		default:
 		}
+
+	case CommandFeatureToggle:
+		if cmd.ToggleFeatureID == "" {
+			slog.Warn("feature_toggle command missing featureId")
+			break
+		}
+		enabled := cmd.Enabled == nil || *cmd.Enabled
+		if enabled {
+			tr.EnableFeature(cmd.ToggleFeatureID)
+		} else {
+			tr.DisableFeature(cmd.ToggleFeatureID)
+		}
+		slog.Info("feature toggled via SSE command",
+			"feature_id", cmd.ToggleFeatureID, "enabled", enabled)
 
 	case CommandShutdown:
 		slog.Info("shutdown command received", "reason", cmd.Reason)

@@ -86,6 +86,9 @@ func (tr *TaskRunner) instanceSnapshot() []types.OpencodeInstance {
 		inst := tr.taskInstance(&info, hostname)
 		out = append(out, inst)
 	}
+	if tr.bridgeClient != nil {
+		out = append(out, tr.bridgeClient.AdhocInstances(hostname)...)
+	}
 	return out
 }
 
@@ -101,6 +104,11 @@ func (tr *TaskRunner) reportInstance(inst types.OpencodeInstance) {
 	if err := reporter.UpsertInstance(ctx, tr.runnerID, inst); err != nil {
 		tr.logger.Printf("instance report: upsert %s failed: %v", inst.InstanceID, err)
 	}
+	// Keep the bridge event pump running for every known instance so
+	// control events (permissions, idle) flow even without a browser attached.
+	if tr.bridgeClient != nil && inst.Port > 0 {
+		tr.bridgeClient.EnsurePump(inst.InstanceID)
+	}
 }
 
 // removeInstance deletes a single instance record from the Brain API.
@@ -108,6 +116,9 @@ func (tr *TaskRunner) reportInstance(inst types.OpencodeInstance) {
 func (tr *TaskRunner) removeInstance(instanceID string) {
 	if instanceID == "" {
 		return
+	}
+	if tr.bridgeClient != nil {
+		tr.bridgeClient.StopPump(instanceID)
 	}
 	reporter, ok := tr.client.(instanceReporterClient)
 	if !ok {

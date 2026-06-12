@@ -469,6 +469,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Post("/{runnerId}/features/{featureId}/toggle", o.handler.HandleToggleRunnerFeature)
 						r.Put("/{runnerId}/instances/{instanceId}", o.handler.HandleUpsertInstance)
 						r.Delete("/{runnerId}/instances/{instanceId}", o.handler.HandleDeleteInstance)
+						r.Get("/{runnerId}/bridge", o.handler.HandleRunnerBridge)
 					} else {
 						r.Post("/register", notImplemented)
 						r.Post("/{runnerId}/heartbeat", notImplemented)

@@ -1083,6 +1083,15 @@ type InstanceListResponse struct {
 	Total     int                `json:"total"`
 }
 
+// SpawnInstanceSpec describes an ad-hoc OpenCode instance to spawn on a
+// runner. The workdir must be absolute and under the runner's allowed roots.
+type SpawnInstanceSpec struct {
+	Workdir string `json:"workdir"`
+	Agent   string `json:"agent,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Title   string `json:"title,omitempty"`
+}
+
 // RunnerInfo is the API-level runner representation with computed status.
 type RunnerInfo struct {
 	RunnerID           string                      `json:"runner_id"`

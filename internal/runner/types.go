@@ -79,6 +79,21 @@ type RunnerConfig struct {
 	// Untagged tasks are claimable by any runner (backward compatible).
 	// Set via config file or RUNNER_CAPABILITIES env var (comma-separated).
 	Capabilities []string `yaml:"capabilities" json:"capabilities"`
+
+	// Control holds remote-control bridge settings (WebSocket tunnel to the
+	// Brain API for proxied OpenCode access and ad-hoc spawning).
+	Control ControlConfig `yaml:"control" json:"control"`
+}
+
+// ControlConfig holds remote-control bridge settings.
+type ControlConfig struct {
+	// Disabled turns off the bridge connection. The bridge is enabled by
+	// default whenever a Brain API URL is configured.
+	Disabled bool `yaml:"disabled" json:"disabled"`
+
+	// AllowedWorkdirRoots restricts where ad-hoc OpenCode instances may be
+	// spawned. Defaults to the user's home directory when empty.
+	AllowedWorkdirRoots []string `yaml:"allowed_workdir_roots" json:"allowed_workdir_roots"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.
@@ -442,6 +457,9 @@ const (
 
 	// CommandShutdown signals the runner to initiate graceful shutdown.
 	CommandShutdown RunnerCommandType = "shutdown"
+
+	// CommandFeatureToggle signals the runner to enable/disable a feature.
+	CommandFeatureToggle RunnerCommandType = "feature_toggle"
 )
 
 // RunnerCommand represents a server-pushed command received via the runner SSE stream.
@@ -462,4 +480,8 @@ type RunnerCommand struct {
 
 	// Populated for shutdown commands.
 	Reason string `json:"reason,omitempty"`
+
+	// Populated for feature_toggle commands.
+	ToggleFeatureID string `json:"featureId,omitempty"`
+	Enabled         *bool  `json:"enabled,omitempty"`
 }

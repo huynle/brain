@@ -330,7 +330,7 @@ func (h *Handler) HandleUpdateRunnerConfig(w http.ResponseWriter, r *http.Reques
 
 	// Push config change to runner via SSE command channel
 	if h.hub != nil {
-		h.hub.PublishRunnerCommand(runnerID, "config_update", map[string]interface{}{
+		h.hub.PublishRunnerCommand(runnerID, "config_updated", map[string]interface{}{
 			"maxParallel": req.MaxParallel,
 		})
 	}
@@ -431,6 +431,17 @@ func (h *Handler) HandleShutdownRunner(w http.ResponseWriter, r *http.Request) {
 		"action":   "shutdown",
 		"success":  true,
 	})
+}
+
+// HandleRunnerBridge handles GET /runners/{runnerId}/bridge — upgrades to the
+// runner's WebSocket bridge connection (runner-scoped auth).
+func (h *Handler) HandleRunnerBridge(w http.ResponseWriter, r *http.Request) {
+	if h.bridge == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "bridge not available")
+		return
+	}
+	runnerID := chi.URLParam(r, "runnerId")
+	h.bridge.ServeBridge(w, r, runnerID)
 }
 
 // HandleUpsertInstance handles PUT /runners/{runnerId}/instances/{instanceId}

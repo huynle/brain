@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/blobstore"
+	"github.com/huynle/brain-api/internal/bridge"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/logbuffer"
@@ -261,6 +262,9 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// Wire hub into runner registry for lifecycle sweep SSE events
 	runnerRegistrySvc.SetHub(hub)
 
+	// ─── Runner Bridge Hub (remote control) ────────────────────────
+	bridgeHub := bridge.NewHub(hub)
+
 	// ─── Log Buffer ─────────────────────────────────────────────────
 	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
 
@@ -278,6 +282,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithEventService(eventSvc),
 		api.WithWebhookService(webhookSvc),
 		api.WithGoalService(goalSvc),
+		api.WithBridgeService(bridgeHub),
 		api.WithLogBuffer(logBuf),
 		api.WithTaskDefaults(cfg.TaskDefaults),
 	)

@@ -1076,6 +1076,9 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 	}
 	if executorType == "opencode" {
 		runningTask.InstanceID = generateInstanceID()
+		// Headless serve+attach reports its attachable port up front; TUI/
+		// dashboard discover it from the tmux child via discoverAndSaveSession.
+		runningTask.OpencodePort = spawnResult.OpencodePort
 	}
 
 	// Track in process manager
@@ -1116,7 +1119,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			Task: runningTask,
 			Proc: NewPidProcess(runningTask.PID),
 		}, runnerHostname()))
-		go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort)
 	}
 
 	return nil
@@ -1125,27 +1128,33 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 // discoverAndSaveSession discovers the opencode port and session ID for a
 // spawned process and persists it on the task's entry for later "o"/"O" access.
 // The pid is typically a tmux shell PID; the actual opencode runs as a child.
-func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int) {
-	if pid <= 0 {
-		return
-	}
-
-	// Wait for opencode to start its HTTP server
-	time.Sleep(5 * time.Second)
-
-	// Find opencode's port by checking child processes
-	var port int
-	var err error
-	for attempt := 0; attempt < 5; attempt++ {
-		port, err = discoverChildPort(pid)
-		if err == nil && port > 0 {
-			break
+//
+// knownPort, when > 0, is the already-resolved server port (headless
+// serve+attach reports it at spawn time, and the run --attach process binds
+// no port of its own); discovery via the PID is skipped in that case.
+func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort int) {
+	port := knownPort
+	if port <= 0 {
+		if pid <= 0 {
+			return
 		}
-		time.Sleep(3 * time.Second)
-	}
-	if err != nil || port == 0 {
-		tr.logger.Printf("session discovery: failed to discover port for PID %d: %v", pid, err)
-		return
+
+		// Wait for opencode to start its HTTP server
+		time.Sleep(5 * time.Second)
+
+		// Find opencode's port by checking child processes
+		var err error
+		for attempt := 0; attempt < 5; attempt++ {
+			port, err = discoverChildPort(pid)
+			if err == nil && port > 0 {
+				break
+			}
+			time.Sleep(3 * time.Second)
+		}
+		if err != nil || port == 0 {
+			tr.logger.Printf("session discovery: failed to discover port for PID %d: %v", pid, err)
+			return
+		}
 	}
 
 	// Store the discovered port on the running task for idle detection
@@ -1157,8 +1166,18 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int) {
 	}
 	tr.reportTaskInstanceByPath(taskPath)
 
-	// Query opencode's session endpoint
-	sessionID, err := discoverSessionID(port)
+	// Query opencode's session endpoint. With serve+attach the session is
+	// created by the run process a beat after the server is up, so retry
+	// briefly until one appears.
+	var sessionID string
+	var err error
+	for attempt := 0; attempt < 5; attempt++ {
+		sessionID, err = discoverSessionID(port)
+		if err == nil && sessionID != "" {
+			break
+		}
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
 		tr.logger.Printf("session discovery: failed to get session from port %d: %v", port, err)
 		return

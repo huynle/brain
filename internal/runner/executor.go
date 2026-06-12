@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -54,6 +56,13 @@ type CommandFactory func(name string, args ...string) *exec.Cmd
 type OpenCodeExecutor struct {
 	config         RunnerConfig
 	CommandFactory CommandFactory
+
+	// serveProcs holds the persistent `opencode serve` process backing each
+	// attachable headless task, keyed by task ID. The task is driven by a
+	// separate `opencode run --attach` process (tracked for completion); the
+	// serve process is torn down in Cleanup.
+	serveMu    sync.Mutex
+	serveProcs map[string]Process
 }
 
 // Compile-time interface check.
@@ -67,6 +76,28 @@ func NewExecutor(cfg RunnerConfig) *OpenCodeExecutor {
 		CommandFactory: func(name string, args ...string) *exec.Cmd {
 			return exec.Command(name, args...)
 		},
+		serveProcs: make(map[string]Process),
+	}
+}
+
+// trackServeProc records the persistent serve process backing a headless task.
+func (e *OpenCodeExecutor) trackServeProc(taskID string, proc Process) {
+	e.serveMu.Lock()
+	defer e.serveMu.Unlock()
+	if e.serveProcs == nil {
+		e.serveProcs = make(map[string]Process)
+	}
+	e.serveProcs[taskID] = proc
+}
+
+// killServeProc terminates and forgets the serve process for a task, if any.
+func (e *OpenCodeExecutor) killServeProc(taskID string) {
+	e.serveMu.Lock()
+	proc := e.serveProcs[taskID]
+	delete(e.serveProcs, taskID)
+	e.serveMu.Unlock()
+	if proc != nil && !proc.Exited() {
+		_ = proc.Kill(syscall.SIGTERM)
 	}
 }
 
@@ -397,7 +428,18 @@ func (e *OpenCodeExecutor) validateScriptWorkdir(workdir string) error {
 // Background Mode
 // =============================================================================
 
-// spawnHeadless spawns an OpenCode process in headless mode using `opencode run`.
+// spawnHeadless spawns a headless OpenCode task.
+//
+// By default it makes the task attachable: a persistent `opencode serve`
+// process is started (a discoverable HTTP port → registered as the task
+// instance), and the task is driven by `opencode run --attach` against it.
+// Completion is detected by the run process exiting (unchanged); the serve
+// process is torn down in Cleanup.
+//
+// `opencode run` alone never binds a port (it serves in-process), so it is
+// not attachable. When the bridge is disabled (config.Control.Disabled) or
+// the serve process fails to come up, this falls back to a plain in-process
+// `opencode run` so the task still executes — just not attachable.
 func (e *OpenCodeExecutor) spawnHeadless(
 	ctx context.Context,
 	task *types.ResolvedTask,
@@ -406,27 +448,69 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	promptFile string,
 	opts SpawnOptions,
 ) (*SpawnResult, error) {
-	// Create output log file
+	if e.config.Control.Disabled {
+		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0)
+	}
+
+	port, serveProc, err := e.startHeadlessServer(workdir, projectID, task.ID)
+	if err != nil {
+		slog.Warn("headless server unavailable, running task non-attachable",
+			"task_id", task.ID, "error", err)
+		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0)
+	}
+
+	res, err := e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, port)
+	if err != nil {
+		// Driver failed to start — don't leak the server we started.
+		_ = serveProc.Kill(syscall.SIGTERM)
+		return nil, err
+	}
+	e.trackServeProc(task.ID, serveProc)
+
+	// Tie the server's lifetime to the driver process: when the run process
+	// exits (completion, kill, crash, or runner shutdown), tear the server
+	// down. Cleanup() is a redundant idempotent safety net.
+	driver := res.Proc
+	go func() {
+		for !driver.Exited() {
+			time.Sleep(time.Second)
+		}
+		e.killServeProc(task.ID)
+	}()
+
+	return res, nil
+}
+
+// spawnHeadlessDirect runs `opencode run`. When attachPort > 0 it drives a
+// persistent server via `--attach`; otherwise it runs the model in-process
+// (not attachable). Returns a SpawnResult whose Proc is the run process
+// (its exit signals completion) and whose OpencodePort is attachPort.
+func (e *OpenCodeExecutor) spawnHeadlessDirect(
+	workdir, projectID string,
+	task *types.ResolvedTask,
+	promptFile string,
+	opts SpawnOptions,
+	attachPort int,
+) (*SpawnResult, error) {
 	outputFile := filepath.Join(e.config.StateDir, fmt.Sprintf("output_%s_%s.log", projectID, task.ID))
 	logFile, err := os.Create(outputFile)
 	if err != nil {
 		return nil, fmt.Errorf("create output log: %w", err)
 	}
 
-	// Read prompt content
 	promptContent, err := os.ReadFile(promptFile)
 	if err != nil {
 		logFile.Close()
 		return nil, fmt.Errorf("read prompt file: %w", err)
 	}
 
-	// Build command args
 	agent := e.GetEffectiveAgent(task)
 	model := e.GetEffectiveModel(task, opts.RuntimeDefaultModel)
 
-	// --port 0 starts opencode's local HTTP server on a random port so the
-	// instance registry can discover and attach to headless tasks.
-	args := []string{"run", "--port", "0"}
+	args := []string{"run"}
+	if attachPort > 0 {
+		args = append(args, "--attach", fmt.Sprintf("http://127.0.0.1:%d", attachPort))
+	}
 	if agent != "" {
 		args = append(args, "--agent", agent)
 	}
@@ -435,7 +519,6 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	}
 	args = append(args, string(promptContent))
 
-	// Create command via factory (allows test injection)
 	cmd := e.CommandFactory(e.config.Opencode.Bin, args...)
 	cmd.Dir = workdir
 
@@ -451,22 +534,58 @@ func (e *OpenCodeExecutor) spawnHeadless(
 		return nil, fmt.Errorf("start opencode process: %w", err)
 	}
 
-	// Create process wrapper that tracks exit status.
-	// NewOsProcess starts a goroutine that calls cmd.Wait() internally.
 	proc := NewOsProcess(cmd)
-
-	// Close the log file when the process exits
 	go func() {
 		<-proc.Done()
 		logFile.Close()
 	}()
 
 	return &SpawnResult{
-		PID:        cmd.Process.Pid,
-		Proc:       proc,
-		PromptFile: promptFile,
-		Workdir:    workdir,
+		PID:          cmd.Process.Pid,
+		Proc:         proc,
+		PromptFile:   promptFile,
+		Workdir:      workdir,
+		OpencodePort: attachPort,
 	}, nil
+}
+
+// startHeadlessServer spawns `opencode serve --port 0` and waits for it to
+// bind a healthy HTTP port. Returns the port and the server process, or an
+// error if it never becomes ready (caller falls back to in-process run).
+func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string) (int, Process, error) {
+	serveLog := filepath.Join(e.config.StateDir, fmt.Sprintf("serve_%s_%s.log", projectID, taskID))
+	logFile, err := os.Create(serveLog)
+	if err != nil {
+		return 0, nil, fmt.Errorf("create serve log: %w", err)
+	}
+
+	cmd := e.CommandFactory(e.config.Opencode.Bin, "serve", "--port", "0")
+	cmd.Dir = workdir
+	cmd.Stdout = logFile
+	cmd.Stderr = logFile
+
+	if err := cmd.Start(); err != nil {
+		logFile.Close()
+		return 0, nil, fmt.Errorf("start opencode serve: %w", err)
+	}
+	proc := NewOsProcess(cmd)
+	go func() {
+		<-proc.Done()
+		logFile.Close()
+	}()
+
+	// Poll for the listening port, then confirm the HTTP server is ready.
+	for attempt := 0; attempt < 15; attempt++ {
+		if proc.Exited() {
+			return 0, nil, fmt.Errorf("opencode serve exited during startup (code %d)", proc.ExitCode())
+		}
+		if port, derr := DiscoverPort(proc.Pid()); derr == nil && port > 0 && instanceHealthy(port) {
+			return port, proc, nil
+		}
+		time.Sleep(1 * time.Second)
+	}
+	_ = proc.Kill(syscall.SIGTERM)
+	return 0, nil, fmt.Errorf("opencode serve did not bind a port in time")
 }
 
 // =============================================================================
@@ -630,8 +749,10 @@ func (e *OpenCodeExecutor) spawnDashboard(
 // Cleanup (delegates to common)
 // =============================================================================
 
-// Cleanup removes temporary files for a task.
+// Cleanup tears down the task's persistent serve process (if any) and removes
+// temporary files. Called on task completion via cleanupTaskArtifacts.
 func (e *OpenCodeExecutor) Cleanup(taskID, projectID string) error {
+	e.killServeProc(taskID)
 	return CommonCleanup(e.config.StateDir, taskID, projectID)
 }
 

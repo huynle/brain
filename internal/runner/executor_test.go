@@ -2183,3 +2183,89 @@ func indexOf(slice []string, item string) int {
 func containsArg(slice []string, item string) bool {
 	return indexOf(slice, item) >= 0
 }
+
+// ─── Headless serve+attach (remote-control attachability) ─────────
+
+// TestSpawnHeadless_ControlDisabled_DirectRun verifies that with the bridge
+// disabled, headless spawn uses a plain in-process `opencode run` (no serve,
+// no --attach, no port).
+func TestSpawnHeadless_ControlDisabled_DirectRun(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.StateDir = t.TempDir()
+	cfg.Control.Disabled = true
+
+	var calls [][]string
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, args)
+		return exec.Command("/bin/echo", "mock")
+	}
+
+	res, err := e.Spawn(context.Background(), testResolvedTask("t1"), "proj", SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Spawn failed: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected exactly 1 command (direct run), got %d: %v", len(calls), calls)
+	}
+	args := calls[0]
+	if args[0] != "run" {
+		t.Errorf("expected 'run', got %v", args)
+	}
+	if indexOf(args, "--attach") >= 0 {
+		t.Errorf("control disabled should not use --attach: %v", args)
+	}
+	if indexOf(args, "--port") >= 0 {
+		t.Errorf("the dead --port flag should not be passed: %v", args)
+	}
+	if res.OpencodePort != 0 {
+		t.Errorf("expected no port when control disabled, got %d", res.OpencodePort)
+	}
+}
+
+// TestSpawnHeadless_ServeFailsFallsBackToDirect verifies that when the serve
+// process can't bind a port (the mock exits immediately), spawn falls back to
+// an in-process `opencode run` so the task still executes.
+func TestSpawnHeadless_ServeFailsFallsBackToDirect(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.StateDir = t.TempDir()
+	// Control enabled (default) → serve+attach attempted.
+
+	var lastArgs []string
+	var serveAttempted bool
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if len(args) > 0 && args[0] == "serve" {
+			serveAttempted = true
+		}
+		lastArgs = args
+		// /bin/echo exits immediately → serve never binds a port → fallback.
+		return exec.Command("/bin/echo", "mock")
+	}
+
+	res, err := e.Spawn(context.Background(), testResolvedTask("t2"), "proj", SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Spawn failed: %v", err)
+	}
+	if !serveAttempted {
+		t.Error("expected a serve attempt when control is enabled")
+	}
+	if lastArgs[0] != "run" {
+		t.Errorf("fallback should be a direct run, got %v", lastArgs)
+	}
+	if indexOf(lastArgs, "--attach") >= 0 {
+		t.Errorf("fallback run must not use --attach: %v", lastArgs)
+	}
+	if res.OpencodePort != 0 {
+		t.Errorf("fallback (non-attachable) should report no port, got %d", res.OpencodePort)
+	}
+	if res.PID <= 0 {
+		t.Errorf("expected a tracked PID, got %d", res.PID)
+	}
+}

@@ -520,6 +520,14 @@ func (m *mockProcessMgr) UpdatePort(taskID string, port int) {
 	}
 }
 
+func (m *mockProcessMgr) UpdateSessionID(taskID string, sessionID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, exists := m.processes[taskID]; exists {
+		info.Task.SessionID = sessionID
+	}
+}
+
 func (m *mockProcessMgr) UpdateIdleSince(taskID string, idleSince string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

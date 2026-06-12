@@ -85,9 +85,20 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 }
 
 // Heartbeat updates a runner's heartbeat timestamp and running task count.
+// When the request carries an instance list, the runner's instance registry
+// rows are reconciled to exactly that set (self-healing for missed reports).
 func (s *RunnerRegistryServiceImpl) Heartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
 	if err := s.storage.UpdateHeartbeat(ctx, runnerID, req.RunningTasks, req.Stats); err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
+	}
+	if req.Instances != nil {
+		rows := make([]storage.InstanceRow, 0, len(req.Instances))
+		for i := range req.Instances {
+			rows = append(rows, instanceToRow(runnerID, &req.Instances[i]))
+		}
+		if err := s.storage.ReplaceInstancesForRunner(ctx, runnerID, rows); err != nil {
+			return fmt.Errorf("heartbeat instance reconcile: %w", err)
+		}
 	}
 	return nil
 }
@@ -101,6 +112,9 @@ func (s *RunnerRegistryServiceImpl) Deregister(ctx context.Context, runnerID str
 	}
 	if _, err := s.storage.ClearFeatureAssignmentsByRunner(ctx, runnerID); err != nil {
 		return fmt.Errorf("clear feature assignments on deregister: %w", err)
+	}
+	if _, err := s.storage.DeleteInstancesByRunner(ctx, runnerID); err != nil {
+		return fmt.Errorf("delete instances on deregister: %w", err)
 	}
 
 	// Delete the runner record
@@ -174,6 +188,126 @@ func (s *RunnerRegistryServiceImpl) UpdateAffinity(ctx context.Context, runnerID
 }
 
 // ---------------------------------------------------------------------------
+// Instance Registry
+// ---------------------------------------------------------------------------
+
+// UpsertInstance records or updates an OpenCode instance reported by a runner.
+func (s *RunnerRegistryServiceImpl) UpsertInstance(ctx context.Context, runnerID string, inst types.OpencodeInstance) error {
+	row := instanceToRow(runnerID, &inst)
+	if err := s.storage.UpsertInstance(ctx, &row); err != nil {
+		return fmt.Errorf("upsert instance: %w", err)
+	}
+	return nil
+}
+
+// DeleteInstance removes an instance record reported by a runner.
+func (s *RunnerRegistryServiceImpl) DeleteInstance(ctx context.Context, runnerID, instanceID string) error {
+	deleted, err := s.storage.DeleteInstance(ctx, runnerID, instanceID)
+	if err != nil {
+		return fmt.Errorf("delete instance: %w", err)
+	}
+	if !deleted {
+		return api.ErrNotFound
+	}
+	return nil
+}
+
+// GetInstance returns a single instance scoped to a runner.
+func (s *RunnerRegistryServiceImpl) GetInstance(ctx context.Context, runnerID, instanceID string) (*types.OpencodeInstance, error) {
+	row, err := s.storage.GetInstance(ctx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("get instance: %w", err)
+	}
+	if row == nil || row.RunnerID != runnerID {
+		return nil, api.ErrNotFound
+	}
+	inst := rowToInstance(row)
+	return &inst, nil
+}
+
+// ListInstances returns all instances reported by one runner.
+func (s *RunnerRegistryServiceImpl) ListInstances(ctx context.Context, runnerID string) (*types.InstanceListResponse, error) {
+	rows, err := s.storage.ListInstancesByRunner(ctx, runnerID)
+	if err != nil {
+		return nil, fmt.Errorf("list instances: %w", err)
+	}
+	return instanceListResponse(rows), nil
+}
+
+// ListAllInstances returns every instance across all runners.
+func (s *RunnerRegistryServiceImpl) ListAllInstances(ctx context.Context) (*types.InstanceListResponse, error) {
+	rows, err := s.storage.ListAllInstances(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list all instances: %w", err)
+	}
+	return instanceListResponse(rows), nil
+}
+
+func instanceListResponse(rows []storage.InstanceRow) *types.InstanceListResponse {
+	instances := make([]types.OpencodeInstance, 0, len(rows))
+	for i := range rows {
+		instances = append(instances, rowToInstance(&rows[i]))
+	}
+	return &types.InstanceListResponse{Instances: instances, Total: len(instances)}
+}
+
+func instanceToRow(runnerID string, inst *types.OpencodeInstance) storage.InstanceRow {
+	lastSeen := inst.LastSeen
+	if lastSeen == 0 {
+		lastSeen = time.Now().UnixMilli()
+	}
+	kind := inst.Kind
+	if kind == "" {
+		kind = types.InstanceKindTask
+	}
+	status := inst.Status
+	if status == "" {
+		status = types.InstanceStatusStarting
+	}
+	executor := inst.Executor
+	if executor == "" {
+		executor = "opencode"
+	}
+	return storage.InstanceRow{
+		InstanceID: inst.InstanceID,
+		RunnerID:   runnerID,
+		Hostname:   inst.Hostname,
+		Kind:       kind,
+		ProjectID:  inst.ProjectID,
+		TaskID:     inst.TaskID,
+		Title:      inst.Title,
+		Workdir:    inst.Workdir,
+		Port:       inst.Port,
+		PID:        inst.PID,
+		SessionIDs: inst.SessionIDs,
+		Status:     status,
+		Executor:   executor,
+		StartedAt:  inst.StartedAt,
+		LastSeen:   lastSeen,
+	}
+}
+
+func rowToInstance(row *storage.InstanceRow) types.OpencodeInstance {
+	return types.OpencodeInstance{
+		InstanceID: row.InstanceID,
+		RunnerID:   row.RunnerID,
+		Hostname:   row.Hostname,
+		Kind:       row.Kind,
+		ProjectID:  row.ProjectID,
+		TaskID:     row.TaskID,
+		Title:      row.Title,
+		Workdir:    row.Workdir,
+		Port:       row.Port,
+		PID:        row.PID,
+		SessionIDs: row.SessionIDs,
+		Status:     row.Status,
+		Executor:   row.Executor,
+		StartedAt:  row.StartedAt,
+		LastSeen:   row.LastSeen,
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Lifecycle Management
 // ---------------------------------------------------------------------------
 
@@ -242,6 +376,11 @@ func (s *RunnerRegistryServiceImpl) RunLifecycleSweep(ctx context.Context) {
 			featuresReleased, err := s.storage.ClearFeatureAssignmentsByRunner(ctx, row.RunnerID)
 			if err != nil {
 				slog.Error("lifecycle sweep: clear feature assignments failed",
+					"runner_id", row.RunnerID, "error", err)
+				continue
+			}
+			if _, err := s.storage.DeleteInstancesByRunner(ctx, row.RunnerID); err != nil {
+				slog.Error("lifecycle sweep: delete instances failed",
 					"runner_id", row.RunnerID, "error", err)
 				continue
 			}

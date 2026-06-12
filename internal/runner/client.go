@@ -1243,6 +1243,37 @@ func (c *APIClient) SendHeartbeat(ctx context.Context, runnerID string, req type
 	return nil
 }
 
+// UpsertInstance reports an OpenCode instance to the Brain API instance registry.
+func (c *APIClient) UpsertInstance(ctx context.Context, runnerID string, inst types.OpencodeInstance) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/instances/%s", runnerID, inst.InstanceID)
+	resp, err := c.doJSONRequest(ctx, http.MethodPut, path, inst)
+	if err != nil {
+		return fmt.Errorf("upsert instance: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// DeleteInstance removes an OpenCode instance from the Brain API instance registry.
+func (c *APIClient) DeleteInstance(ctx context.Context, runnerID, instanceID string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/instances/%s", runnerID, instanceID)
+	resp, err := c.doJSONRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("delete instance: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 404 is acceptable — the heartbeat reconcile may have already removed it.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // DeregisterRunner removes this runner from the Brain API server.
 func (c *APIClient) DeregisterRunner(ctx context.Context, runnerID string) error {
 	path := fmt.Sprintf("/api/v1/runners/%s/deregister", runnerID)

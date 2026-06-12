@@ -424,7 +424,9 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	agent := e.GetEffectiveAgent(task)
 	model := e.GetEffectiveModel(task, opts.RuntimeDefaultModel)
 
-	args := []string{"run"}
+	// --port 0 starts opencode's local HTTP server on a random port so the
+	// instance registry can discover and attach to headless tasks.
+	args := []string{"run", "--port", "0"}
 	if agent != "" {
 		args = append(args, "--agent", agent)
 	}

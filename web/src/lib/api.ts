@@ -11,6 +11,7 @@ import type {
   GoalListResponse,
   GoalProgressResponse,
   Health,
+  InstanceListResponse,
   ListEntriesResponse,
   ProjectListResponse,
   RunnerListResponse,
@@ -208,6 +209,16 @@ export const shutdownRunner = (runnerId: string, reason = "manual") =>
     method: "PUT",
     body: { reason },
   });
+
+// ─── OpenCode instances (remote control) ─────────────────────────
+
+export const listInstances = () =>
+  api<InstanceListResponse>("/api/v1/instances").then((r) => r.instances || []);
+
+export const listRunnerInstances = (runnerId: string) =>
+  api<InstanceListResponse>(
+    `/api/v1/runners/${encodeURIComponent(runnerId)}/instances`,
+  ).then((r) => r.instances || []);
 
 // ─── Brain entries / search ──────────────────────────────────────
 

@@ -7,6 +7,7 @@ import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import {
   getRunnerStatus,
   getRunners,
+  listInstances,
   pauseAll,
   resumeAll,
   pauseAutomations,
@@ -16,7 +17,7 @@ import {
 import { ConfirmDialog } from "../components/common/Modal";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { relativeTime } from "../lib/format";
-import type { RunnerInfo } from "../lib/types";
+import type { OpencodeInstance, RunnerInfo } from "../lib/types";
 
 export function RunnersView() {
   const toast = useUI((s) => s.toast);
@@ -32,6 +33,11 @@ export function RunnersView() {
     queryKey: ["runner-status"],
     queryFn: getRunnerStatus,
     refetchInterval: 8_000,
+  });
+  const instancesQ = useQuery({
+    queryKey: ["instances"],
+    queryFn: listInstances,
+    refetchInterval: 10_000,
   });
 
   const [confirmKill, setConfirmKill] = useState<RunnerInfo | null>(null);
@@ -143,6 +149,9 @@ export function RunnersView() {
           <RunnerRow
             key={r.runner_id}
             runner={r}
+            instances={(instancesQ.data ?? []).filter(
+              (inst) => inst.runner_id === r.runner_id,
+            )}
             cursored={i === cursor}
             last={i === runners.length - 1}
             onKill={() => setConfirmKill(r)}
@@ -177,11 +186,13 @@ export function RunnersView() {
 
 function RunnerRow({
   runner,
+  instances,
   cursored,
   last,
   onKill,
 }: {
   runner: RunnerInfo;
+  instances: OpencodeInstance[];
   cursored?: boolean;
   last?: boolean;
   onKill: () => void;
@@ -193,34 +204,112 @@ function RunnerRow({
         ? "var(--yellow)"
         : "var(--red)";
   return (
-    <div
-      className={`tree-row ${cursored ? "cursor" : ""}`}
-      data-cursor={cursored ? "1" : undefined}
-      style={{ gap: 4 }}
-    >
-      <span className="connector">{last ? "└─ " : "├─ "}</span>
-      <span className="glyph" style={{ color: cursored ? undefined : statusColor }}>
-        ●
-      </span>
-      <span className="title truncate">{runner.runner_id}</span>
-      <span className="suffix faint">{runner.hostname}</span>
-      <span className="suffix" style={{ color: "var(--blue)" }}>
-        {runner.active_tasks ?? 0}/{runner.max_parallel}
-      </span>
-      {runner.executors && runner.executors.length > 0 && (
-        <span className="suffix" style={{ color: "var(--teal)" }}>
-          {runner.executors.join(",")}
+    <>
+      <div
+        className={`tree-row ${cursored ? "cursor" : ""}`}
+        data-cursor={cursored ? "1" : undefined}
+        style={{ gap: 4 }}
+      >
+        <span className="connector">{last ? "└─ " : "├─ "}</span>
+        <span className="glyph" style={{ color: cursored ? undefined : statusColor }}>
+          ●
         </span>
-      )}
-      <span className="suffix faint">hb {relativeTime(runner.last_heartbeat)}</span>
+        <span className="title truncate">{runner.runner_id}</span>
+        <span className="suffix faint">{runner.hostname}</span>
+        <span className="suffix" style={{ color: "var(--blue)" }}>
+          {runner.active_tasks ?? 0}/{runner.max_parallel}
+        </span>
+        {runner.executors && runner.executors.length > 0 && (
+          <span className="suffix" style={{ color: "var(--teal)" }}>
+            {runner.executors.join(",")}
+          </span>
+        )}
+        <span className="suffix faint">hb {relativeTime(runner.last_heartbeat)}</span>
+        <span
+          className="suffix"
+          style={{ cursor: "pointer", color: "var(--red)" }}
+          title="Shut down (s)"
+          onClick={(e) => { e.stopPropagation(); onKill(); }}
+        >
+          ⏻
+        </span>
+      </div>
+      {instances.map((inst, j) => (
+        <InstanceRow
+          key={inst.instance_id}
+          instance={inst}
+          parentLast={!!last}
+          last={j === instances.length - 1}
+        />
+      ))}
+    </>
+  );
+}
+
+function instanceStatusColor(status: OpencodeInstance["status"]): string {
+  switch (status) {
+    case "busy":
+      return "var(--yellow)";
+    case "idle":
+      return "var(--green)";
+    case "starting":
+      return "var(--blue)";
+    default:
+      return "var(--red)";
+  }
+}
+
+function InstanceRow({
+  instance,
+  parentLast,
+  last,
+}: {
+  instance: OpencodeInstance;
+  parentLast: boolean;
+  last: boolean;
+}) {
+  const sessions = instance.session_ids?.length ?? 0;
+  return (
+    <div className="tree-row" style={{ gap: 4 }}>
+      <span className="connector">
+        {parentLast ? "   " : "│  "}
+        {last ? "└─ " : "├─ "}
+      </span>
+      <span
+        className="glyph"
+        style={{ color: instanceStatusColor(instance.status) }}
+        title={instance.status}
+      >
+        ▣
+      </span>
       <span
         className="suffix"
-        style={{ cursor: "pointer", color: "var(--red)" }}
-        title="Shut down (s)"
-        onClick={(e) => { e.stopPropagation(); onKill(); }}
+        style={{
+          color: instance.kind === "adhoc" ? "var(--purple, var(--teal))" : "var(--teal)",
+        }}
       >
-        ⏻
+        {instance.kind}
       </span>
+      <span className="title truncate">
+        {instance.title || instance.task_id || instance.instance_id}
+      </span>
+      {instance.workdir && (
+        <span className="suffix faint truncate" title={instance.workdir}>
+          {instance.workdir.replace(/^.*\//, "…/")}
+        </span>
+      )}
+      <span className="suffix faint">{instance.status}</span>
+      {instance.port ? <span className="suffix faint">:{instance.port}</span> : null}
+      {sessions > 0 && (
+        <span className="suffix" style={{ color: "var(--blue)" }}>
+          {sessions} ses
+        </span>
+      )}
+      {(instance.pending_permissions ?? 0) > 0 && (
+        <span className="suffix" style={{ color: "var(--red)" }}>
+          {instance.pending_permissions} ⚠ perm
+        </span>
+      )}
     </div>
   );
 }

@@ -94,6 +94,7 @@ type TaskProcessManager interface {
 	KillAll(ctx context.Context)
 	ToProcessStates() []ProcessState
 	UpdatePort(taskID string, port int)
+	UpdateSessionID(taskID string, sessionID string)
 	UpdateIdleSince(taskID string, idleSince string)
 }
 
@@ -1049,6 +1050,9 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		FeatureID:      task.FeatureID,
 		GeneratedBy:    task.GeneratedBy,
 	}
+	if executorType == "opencode" {
+		runningTask.InstanceID = generateInstanceID()
+	}
 
 	// Track in process manager
 	if spawnResult.Proc != nil {
@@ -1082,6 +1086,12 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 
 	// Discover opencode session ID and port in background (only for opencode executor)
 	if executorType == "opencode" {
+		// Report the instance immediately (status "starting", port unknown);
+		// discovery updates it with the real port and session.
+		tr.reportInstance(tr.taskInstance(&ProcessInfo{
+			Task: runningTask,
+			Proc: NewPidProcess(runningTask.PID),
+		}, runnerHostname()))
 		go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
 	}
 
@@ -1121,6 +1131,7 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int) {
 			break
 		}
 	}
+	tr.reportTaskInstanceByPath(taskPath)
 
 	// Query opencode's session endpoint
 	sessionID, err := discoverSessionID(port)
@@ -1147,6 +1158,15 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int) {
 		tr.logger.Printf("session discovery: failed to persist session %s for %s: %v", sessionID, taskPath, err)
 	}
 
+	// Update the tracked task and instance registry with the session ID
+	for _, info := range tr.processMgr.GetAll() {
+		if info.Task.Path == taskPath {
+			tr.processMgr.UpdateSessionID(info.Task.ID, sessionID)
+			break
+		}
+	}
+	tr.reportTaskInstanceByPath(taskPath)
+
 	// Also emit event so the TUI updates in-memory immediately
 	tr.emitEvent(RunnerEvent{
 		Type:      EventSessionDiscovered,
@@ -1154,6 +1174,19 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int) {
 		SessionID: sessionID,
 	})
 	tr.logger.Printf("session discovery: saved session %s for %s (port %d)", sessionID, taskPath, port)
+}
+
+// reportTaskInstanceByPath re-reports the instance record for the tracked
+// task with the given path, reflecting newly discovered port/session state.
+func (tr *TaskRunner) reportTaskInstanceByPath(taskPath string) {
+	for _, info := range tr.processMgr.GetAll() {
+		if info.Task.Path == taskPath {
+			if info.Task.InstanceID != "" {
+				tr.reportInstance(tr.taskInstance(&info, runnerHostname()))
+			}
+			return
+		}
+	}
 }
 
 // discoverChildPort finds the LISTEN port on any child process of the given PID.
@@ -1291,6 +1324,7 @@ func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
 			"failed":       stats.Failed,
 			"totalRuntime": stats.TotalRuntime,
 		},
+		Instances: tr.instanceSnapshot(),
 	}
 
 	if err := tr.client.SendHeartbeat(ctx, tr.runnerID, req); err != nil {
@@ -1370,8 +1404,9 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		}
 	}
 
-	// Remove from process manager
+	// Remove from process manager and the instance registry
 	tr.processMgr.Remove(taskID)
+	tr.removeInstance(task.InstanceID)
 
 	// Map completion status to API status
 	var apiStatus string
@@ -1483,8 +1518,9 @@ func (tr *TaskRunner) renewClaims(ctx context.Context) {
 			// Kill the running process
 			tr.processMgr.Kill(ctx, task.ID)
 
-			// Remove from process manager
+			// Remove from process manager and the instance registry
 			tr.processMgr.Remove(task.ID)
+			tr.removeInstance(task.InstanceID)
 
 			// Set task back to pending so another runner can pick it up
 			if updateErr := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); updateErr != nil {

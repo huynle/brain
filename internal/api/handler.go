@@ -19,6 +19,7 @@ type Handler struct {
 	events         EventService
 	webhooks       WebhookService
 	goalService    GoalService
+	bridge         BridgeService
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
 	taskDefaults   config.TaskDefaultsConfig
@@ -96,6 +97,13 @@ func WithWebhookService(ws WebhookService) HandlerOption {
 func WithGoalService(gs GoalService) HandlerOption {
 	return func(h *Handler) {
 		h.goalService = gs
+	}
+}
+
+// WithBridgeService sets the runner BridgeService on the Handler.
+func WithBridgeService(b BridgeService) HandlerOption {
+	return func(h *Handler) {
+		h.bridge = b
 	}
 }
 

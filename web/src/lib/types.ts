@@ -160,6 +160,37 @@ export interface RunnerListResponse {
   total: number;
 }
 
+// ─── OpenCode instances (remote control) ─────────────────────────
+
+export type InstanceKind = "task" | "adhoc";
+export type InstanceStatus = "starting" | "idle" | "busy" | "exited";
+
+export interface OpencodeInstance {
+  instance_id: string;
+  runner_id: string;
+  hostname?: string;
+  kind: InstanceKind;
+  project_id?: string;
+  task_id?: string;
+  title?: string;
+  workdir?: string;
+  port?: number;
+  pid?: number;
+  session_ids?: string[];
+  status: InstanceStatus;
+  executor?: string;
+  started_at?: number; // unix ms
+  last_seen?: number; // unix ms
+  // Live bridge decorations (present when the runner bridge is connected)
+  pending_permissions?: number;
+  bridge_connected?: boolean;
+}
+
+export interface InstanceListResponse {
+  instances: OpencodeInstance[];
+  total: number;
+}
+
 export interface RunnerStatusResponse {
   running: boolean;
   paused: boolean;

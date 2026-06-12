@@ -467,6 +467,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Put("/{runnerId}/shutdown", o.handler.HandleShutdownRunner)
 						r.Patch("/{runnerId}/config", o.handler.HandleUpdateRunnerConfig)
 						r.Post("/{runnerId}/features/{featureId}/toggle", o.handler.HandleToggleRunnerFeature)
+						r.Put("/{runnerId}/instances/{instanceId}", o.handler.HandleUpsertInstance)
+						r.Delete("/{runnerId}/instances/{instanceId}", o.handler.HandleDeleteInstance)
 					} else {
 						r.Post("/register", notImplemented)
 						r.Post("/{runnerId}/heartbeat", notImplemented)
@@ -487,12 +489,24 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Get("/", o.handler.HandleListRunners)
 						r.Get("/{runnerId}", o.handler.HandleGetRunner)
 						r.Get("/{runnerId}/stream", o.handler.HandleRunnerStream)
+						r.Get("/{runnerId}/instances", o.handler.HandleListRunnerInstances)
 					} else {
 						r.Get("/", notImplemented)
 						r.Get("/{runnerId}", notImplemented)
 						r.Get("/{runnerId}/stream", notImplemented)
+						r.Get("/{runnerId}/instances", notImplemented)
 					}
 				})
+			})
+
+			// ─── OpenCode Instances (cross-runner overview) ──────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil && o.handler.runnerRegistry != nil {
+					r.Get("/instances", o.handler.HandleListAllInstances)
+				} else {
+					r.Get("/instances", notImplemented)
+				}
 			})
 
 			// ─── Monitors ────────────────────────────────────────

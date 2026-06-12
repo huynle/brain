@@ -302,6 +302,30 @@ type RunnerRegistryService interface {
 
 	// UpdateAffinity updates a runner's feature affinity.
 	UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error
+
+	// UpsertInstance records or updates an OpenCode instance reported by a runner.
+	UpsertInstance(ctx context.Context, runnerID string, inst types.OpencodeInstance) error
+
+	// DeleteInstance removes an instance record reported by a runner.
+	DeleteInstance(ctx context.Context, runnerID, instanceID string) error
+
+	// GetInstance returns a single instance scoped to a runner.
+	GetInstance(ctx context.Context, runnerID, instanceID string) (*types.OpencodeInstance, error)
+
+	// ListInstances returns all instances reported by one runner.
+	ListInstances(ctx context.Context, runnerID string) (*types.InstanceListResponse, error)
+
+	// ListAllInstances returns every instance across all runners.
+	ListAllInstances(ctx context.Context) (*types.InstanceListResponse, error)
+}
+
+// BridgeService is the runner-bridge surface used by API handlers. The
+// concrete implementation lives in internal/bridge; this interface avoids an
+// api->bridge import cycle.
+type BridgeService interface {
+	// DecorateInstances merges live bridge state (pending permission counts,
+	// connection-derived status) into instance records.
+	DecorateInstances(instances []types.OpencodeInstance)
 }
 
 // ClientContextService resolves Brain client workspace context into project context.

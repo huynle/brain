@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 15
+const CurrentSchemaVersion = 16
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -183,6 +183,25 @@ CREATE TABLE IF NOT EXISTS runners (
   status TEXT NOT NULL DEFAULT 'online'
 );`
 
+const createOpencodeInstancesTable = `
+CREATE TABLE IF NOT EXISTS opencode_instances (
+  instance_id TEXT PRIMARY KEY,
+  runner_id TEXT NOT NULL,
+  hostname TEXT DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'task',
+  project_id TEXT DEFAULT '',
+  task_id TEXT DEFAULT '',
+  title TEXT DEFAULT '',
+  workdir TEXT DEFAULT '',
+  port INTEGER DEFAULT 0,
+  pid INTEGER DEFAULT 0,
+  session_ids TEXT DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'starting',
+  executor TEXT DEFAULT 'opencode',
+  started_at INTEGER NOT NULL DEFAULT 0,
+  last_seen INTEGER NOT NULL DEFAULT 0
+);`
+
 const createBrainClientsTable = `
 CREATE TABLE IF NOT EXISTS brain_clients (
   client_id TEXT PRIMARY KEY,
@@ -330,6 +349,9 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_status ON feature_assignments(status);",
 	// Runners indexes
 	"CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status);",
+	// OpenCode instance indexes
+	"CREATE INDEX IF NOT EXISTS idx_opencode_instances_runner ON opencode_instances(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_opencode_instances_task ON opencode_instances(project_id, task_id);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -686,6 +708,24 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 16 {
+		// v16: add opencode_instances table for the remote-control instance registry.
+		if _, err := db.Exec(createOpencodeInstancesTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v16 (opencode_instances table): %w", err)
+			}
+		}
+		instanceIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_opencode_instances_runner ON opencode_instances(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_opencode_instances_task ON opencode_instances(project_id, task_id)",
+		}
+		for _, stmt := range instanceIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v16 (opencode_instances indexes): %w", err)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -796,6 +836,7 @@ func InitSchema(db *sql.DB) error {
 		createTaskClaimsTable,
 		createFeatureAssignmentsTable,
 		createRunnersTable,
+		createOpencodeInstancesTable,
 		createWebhooksTable,
 		createWebhookDeliveriesTable,
 		createNoteEmbeddingsMetaTable,

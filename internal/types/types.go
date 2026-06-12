@@ -1031,6 +1031,56 @@ type RunnerRegistration struct {
 type RunnerHeartbeatRequest struct {
 	RunningTasks int                    `json:"running_tasks"`
 	Stats        map[string]interface{} `json:"stats,omitempty"`
+
+	// Instances is a full reconcile list of OpenCode instances managed by this
+	// runner. nil means the runner does not report instances (older runners);
+	// an empty list means the runner has no instances.
+	Instances []OpencodeInstance `json:"instances"`
+}
+
+// OpencodeInstance describes an OpenCode HTTP server instance managed by a
+// runner. The port is informational only — the API never dials it directly;
+// all access goes through the runner's bridge connection.
+type OpencodeInstance struct {
+	InstanceID string   `json:"instance_id"`
+	RunnerID   string   `json:"runner_id"`
+	Hostname   string   `json:"hostname,omitempty"`
+	Kind       string   `json:"kind"` // "task" | "adhoc"
+	ProjectID  string   `json:"project_id,omitempty"`
+	TaskID     string   `json:"task_id,omitempty"`
+	Title      string   `json:"title,omitempty"`
+	Workdir    string   `json:"workdir,omitempty"`
+	Port       int      `json:"port,omitempty"`
+	PID        int      `json:"pid,omitempty"`
+	SessionIDs []string `json:"session_ids,omitempty"`
+	Status     string   `json:"status"` // "starting" | "idle" | "busy" | "exited"
+	Executor   string   `json:"executor,omitempty"`
+	StartedAt  int64    `json:"started_at,omitempty"` // Unix milliseconds
+	LastSeen   int64    `json:"last_seen,omitempty"`  // Unix milliseconds
+
+	// Live decorations merged from the bridge hub on read paths; not persisted.
+	PendingPermissions int  `json:"pending_permissions,omitempty"`
+	BridgeConnected    bool `json:"bridge_connected,omitempty"`
+}
+
+// Instance kinds.
+const (
+	InstanceKindTask  = "task"
+	InstanceKindAdhoc = "adhoc"
+)
+
+// Instance statuses.
+const (
+	InstanceStatusStarting = "starting"
+	InstanceStatusIdle     = "idle"
+	InstanceStatusBusy     = "busy"
+	InstanceStatusExited   = "exited"
+)
+
+// InstanceListResponse is the response for instance list endpoints.
+type InstanceListResponse struct {
+	Instances []OpencodeInstance `json:"instances"`
+	Total     int                `json:"total"`
 }
 
 // RunnerInfo is the API-level runner representation with computed status.

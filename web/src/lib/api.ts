@@ -13,6 +13,13 @@ import type {
   Health,
   InstanceListResponse,
   ListEntriesResponse,
+  OcAgent,
+  OcMessage,
+  OcPermission,
+  OcProvider,
+  OcSession,
+  OpencodeInstance,
+  SpawnInstanceSpec,
   ProjectListResponse,
   RunnerListResponse,
   RunnerStatusResponse,
@@ -219,6 +226,89 @@ export const listRunnerInstances = (runnerId: string) =>
   api<InstanceListResponse>(
     `/api/v1/runners/${encodeURIComponent(runnerId)}/instances`,
   ).then((r) => r.instances || []);
+
+// ─── Remote control plane ────────────────────────────────────────
+
+const controlBase = (runnerId: string, instanceId: string) =>
+  `/api/v1/control/runners/${encodeURIComponent(runnerId)}/instances/${encodeURIComponent(instanceId)}`;
+
+export const controlListSessions = (runnerId: string, instanceId: string) =>
+  api<OcSession[]>(`${controlBase(runnerId, instanceId)}/sessions`);
+
+export const controlCreateSession = (runnerId: string, instanceId: string, title?: string) =>
+  api<OcSession>(`${controlBase(runnerId, instanceId)}/sessions`, {
+    method: "POST",
+    body: title ? { title } : {},
+  });
+
+export const controlListMessages = (
+  runnerId: string,
+  instanceId: string,
+  sessionId: string,
+  limit = 50,
+) =>
+  api<OcMessage[]>(
+    `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/messages`,
+    { query: { limit: String(limit) } },
+  );
+
+export const controlPrompt = (
+  runnerId: string,
+  instanceId: string,
+  sessionId: string,
+  body: { text: string; agent?: string; model?: { providerID: string; modelID: string } },
+) =>
+  api<unknown>(
+    `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/prompt`,
+    { method: "POST", body },
+  );
+
+export const controlAbort = (runnerId: string, instanceId: string, sessionId: string) =>
+  api<unknown>(
+    `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/abort`,
+    { method: "POST" },
+  );
+
+export const controlRespondPermission = (
+  runnerId: string,
+  instanceId: string,
+  sessionId: string,
+  permissionId: string,
+  response: "once" | "always" | "reject",
+) =>
+  api<unknown>(
+    `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`,
+    { method: "POST", body: { response } },
+  );
+
+export const controlPendingPermissions = (runnerId: string, instanceId: string) =>
+  api<{ permissions: OcPermission[]; total: number }>(
+    `${controlBase(runnerId, instanceId)}/permissions`,
+  );
+
+export const controlAgents = (runnerId: string, instanceId: string) =>
+  api<OcAgent[]>(`${controlBase(runnerId, instanceId)}/agents`);
+
+export const controlProviders = (runnerId: string, instanceId: string) =>
+  api<{ providers?: OcProvider[] } | OcProvider[]>(
+    `${controlBase(runnerId, instanceId)}/providers`,
+  );
+
+export const controlSpawnInstance = (runnerId: string, spec: SpawnInstanceSpec) =>
+  api<{ success: boolean; instance: OpencodeInstance }>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/instances`,
+    { method: "POST", body: spec },
+  );
+
+export const controlKillInstance = (runnerId: string, instanceId: string) =>
+  api<{ success: boolean }>(controlBase(runnerId, instanceId), { method: "DELETE" });
+
+/** EventSource URL for an instance's live event stream (?token= auth). */
+export function controlEventsUrl(runnerId: string, instanceId: string): string {
+  const base = `${controlBase(runnerId, instanceId)}/events`;
+  const token = useAuth.getState().token;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
 
 // ─── Brain entries / search ──────────────────────────────────────
 

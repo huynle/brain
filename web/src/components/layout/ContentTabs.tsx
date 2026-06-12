@@ -3,6 +3,7 @@ import { ALL_PROJECTS, useUI, type View } from "../../store/ui";
 
 const GLOBAL: { view: View; label: string }[] = [
   { view: "runners", label: "Runners" },
+  { view: "control", label: "Control" },
   { view: "logs", label: "Logs" },
 ];
 const PROJECT: { view: View; label: string }[] = [

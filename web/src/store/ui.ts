@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type View = "tasks" | "brain" | "automations" | "runners" | "logs";
+export type View = "tasks" | "brain" | "automations" | "runners" | "control" | "logs";
 
 export const ALL_PROJECTS = "__all__";
 
@@ -14,6 +14,7 @@ export interface Toast {
 // (global tabs first, then project-scoped).
 export const VIEW_ORDER: View[] = [
   "runners",
+  "control",
   "logs",
   "tasks",
   "brain",

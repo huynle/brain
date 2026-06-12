@@ -23,6 +23,7 @@ import { TasksView } from "../views/TasksView";
 import { BrainView } from "../views/BrainView";
 import { AutomationsView } from "../views/AutomationsView";
 import { RunnersView } from "../views/RunnersView";
+import { ControlView } from "../views/control/ControlView";
 import { LogsView } from "../views/LogsView";
 import { SettingsSheet } from "../views/SettingsSheet";
 
@@ -110,6 +111,11 @@ export function Dashboard() {
         {view === "runners" && (
           <Panel title="Runners" focused style={{ flex: 1 }}>
             <RunnersView />
+          </Panel>
+        )}
+        {view === "control" && (
+          <Panel title="Control" focused style={{ flex: 1 }}>
+            <ControlView />
           </Panel>
         )}
         {view === "logs" && (

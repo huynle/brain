@@ -191,6 +191,92 @@ export interface InstanceListResponse {
   total: number;
 }
 
+export interface SpawnInstanceSpec {
+  workdir: string;
+  agent?: string;
+  model?: string;
+  title?: string;
+}
+
+// ─── Remote control: OpenCode session/message shapes ─────────────
+// Mirrors the subset of OpenCode's API the chat UI renders. Extra fields
+// flow through untouched.
+
+export interface OcSession {
+  id: string;
+  title?: string;
+  version?: string;
+  time?: { created?: number; updated?: number };
+  [k: string]: unknown;
+}
+
+export interface OcMessageInfo {
+  id: string;
+  sessionID?: string;
+  role: "user" | "assistant" | string;
+  time?: { created?: number; completed?: number };
+  error?: unknown;
+  [k: string]: unknown;
+}
+
+export interface OcPart {
+  id: string;
+  messageID?: string;
+  sessionID?: string;
+  type: string; // "text" | "reasoning" | "tool" | "step-start" | "step-finish" | ...
+  text?: string;
+  tool?: string;
+  callID?: string;
+  state?: {
+    status?: string; // "pending" | "running" | "completed" | "error"
+    title?: string;
+    input?: unknown;
+    output?: string;
+    error?: string;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
+export interface OcMessage {
+  info: OcMessageInfo;
+  parts: OcPart[];
+}
+
+export interface OcPermission {
+  id: string;
+  sessionID?: string;
+  messageID?: string;
+  title?: string;
+  type?: string;
+  pattern?: string;
+  metadata?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+
+export interface OcEvent {
+  type: string;
+  properties?: Record<string, unknown> & {
+    info?: Record<string, unknown>;
+    part?: OcPart;
+    sessionID?: string;
+  };
+}
+
+export interface OcAgent {
+  name: string;
+  description?: string;
+  mode?: string;
+  [k: string]: unknown;
+}
+
+export interface OcProvider {
+  id: string;
+  name?: string;
+  models?: Record<string, { id?: string; name?: string }>;
+  [k: string]: unknown;
+}
+
 export interface RunnerStatusResponse {
   running: boolean;
   paused: boolean;

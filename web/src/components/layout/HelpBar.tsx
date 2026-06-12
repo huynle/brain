@@ -44,6 +44,12 @@ const HINTS: Record<string, Hint[]> = {
     ["H/L", "Tabs"],
     ["?", "Help"],
   ],
+  control: [
+    ["Click", "Attach"],
+    ["Enter", "Send"],
+    ["H/L", "Tabs"],
+    ["?", "Help"],
+  ],
   logs: [
     ["j/k", "Scroll"],
     ["g/G", "Top/Bot"],
@@ -58,6 +64,7 @@ const FOCUS_LABEL: Record<string, string> = {
   brain: "Brain",
   automations: "Automations",
   runners: "Runners",
+  control: "Control",
   logs: "Logs",
 };
 

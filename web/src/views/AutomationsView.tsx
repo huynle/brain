@@ -5,6 +5,7 @@ import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import {
   executeAutomation,
+  getEntry,
   getRunnerStatus,
   listAutomationData,
   listGoals,
@@ -24,7 +25,19 @@ import {
   normalizeAutomationRows,
   triggerLabel,
 } from "./automations/rows";
-import type { BrainEntry, GoalSummary, OpencodeInstance } from "../lib/types";
+import type { BrainEntry, GoalSummary, OpencodeInstance, SessionInfo } from "../lib/types";
+
+// pickLatestSession returns the most recently recorded session pointer on a
+// task entry (by timestamp), or null if none were recorded.
+function pickLatestSession(
+  sessions: Record<string, SessionInfo> | undefined,
+): { sessionId: string; info: SessionInfo } | null {
+  if (!sessions) return null;
+  const entries = Object.entries(sessions);
+  if (entries.length === 0) return null;
+  entries.sort((a, b) => (b[1]?.timestamp ?? "").localeCompare(a[1]?.timestamp ?? ""));
+  return { sessionId: entries[0][0], info: entries[0][1] };
+}
 
 interface GoalProgress {
   completed: number;
@@ -183,18 +196,42 @@ export function AutomationsView() {
     setExpandedId((id) => (id === row.id ? null : row.id));
   }
 
-  // Open a run-task's live OpenCode session in the Control tab.
-  function openTaskInControl(task: BrainEntry) {
+  // Open a run-task's OpenCode session in the Control tab. A live instance is
+  // attached directly; otherwise we fall back to the recorded session pointer
+  // so a completed session can still be reviewed (and resumed).
+  async function openTaskInControl(task: BrainEntry) {
     const inst = instanceByTaskId.get(task.id);
-    if (!inst) {
-      toast("No live session — task isn't running on a connected runner", "info");
+    if (inst) {
+      openInControl({
+        mode: "live",
+        runnerId: inst.runner_id,
+        instanceId: inst.instance_id,
+        sessionId: inst.session_ids?.[0],
+        taskTitle: task.title,
+      });
       return;
     }
-    openInControl({
-      runnerId: inst.runner_id,
-      instanceId: inst.instance_id,
-      sessionId: inst.session_ids?.[0],
-    });
+    // No live instance — look up where the session was recorded. The list
+    // endpoint may omit metadata, so fetch the full entry.
+    try {
+      const full = task.sessions ? task : await getEntry(task.path);
+      const latest = pickLatestSession(full.sessions);
+      if (!latest) {
+        toast("No session recorded for this task", "info");
+        return;
+      }
+      openInControl({
+        mode: "history",
+        runnerId: latest.info.runner_id || "",
+        sessionId: latest.sessionId,
+        machineId: latest.info.machine_id,
+        hostname: latest.info.hostname,
+        workdir: latest.info.workdir,
+        taskTitle: task.title,
+      });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not open session", "error");
+    }
   }
 
   const automationsPaused = statusQ.data?.automationsPaused;
@@ -206,10 +243,10 @@ export function AutomationsView() {
       switch (e.key) {
         case "o":
         case "O":
-          if (cur?.kind === "task") openTaskInControl(cur.task);
+          if (cur?.kind === "task") void openTaskInControl(cur.task);
           return true;
         case "Enter":
-          if (cur?.kind === "task") openTaskInControl(cur.task);
+          if (cur?.kind === "task") void openTaskInControl(cur.task);
           else if (cur?.kind === "auto") {
             if (childRunTasks(cur.row.id, tasks).length > 0) toggleExpand(cur.row);
             else configure(cur.row);
@@ -256,7 +293,7 @@ export function AutomationsView() {
         {automationsPaused && <Pill color="var(--red)">automations paused</Pill>}
         <div style={{ flex: 1 }} />
         <span className="faint" style={{ fontSize: 11.5 }}>
-          x run · Spc toggle · Enter expand · o open session · n new goal
+          x run · Spc toggle · Enter expand · o open/review · n new goal
         </span>
         <button className="btn sm primary" onClick={() => setCreating(true)} title="New goal (n)">
           + New goal
@@ -301,7 +338,7 @@ export function AutomationsView() {
                 task={entry.task}
                 cursored={i === cursor}
                 live={instanceByTaskId.has(entry.task.id)}
-                onOpen={() => openTaskInControl(entry.task)}
+                onOpen={() => void openTaskInControl(entry.task)}
               />
             ),
           )}
@@ -451,7 +488,7 @@ function RunTaskRow({
       data-cursor={cursored ? "1" : undefined}
       style={{ gap: 4 }}
       onClick={onOpen}
-      title={live ? "Open session in Control (o)" : "No live session (task not running)"}
+      title={live ? "Open live session in Control (o)" : "Review session in Control (o)"}
     >
       <span className="connector">{"   ├─ "}</span>
       <span className="glyph" style={{ color: statusColor }} title={task.status}>
@@ -462,10 +499,10 @@ function RunTaskRow({
       <span className="title truncate">{task.title}</span>
       <span
         className="suffix"
-        style={{ color: live ? "var(--cyan, var(--teal))" : "var(--fg-faint)" }}
-        title={live ? "Open session in Control (o)" : "No live session"}
+        style={{ color: live ? "var(--cyan, var(--teal))" : "var(--blue)" }}
+        title={live ? "Open live session in Control (o)" : "Review session in Control (o)"}
       >
-        {live ? "⧉ open" : "—"}
+        {live ? "⧉ open" : "⊙ review"}
       </span>
     </div>
   );

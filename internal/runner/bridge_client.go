@@ -187,6 +187,8 @@ func (bc *BridgeClient) handleFrame(f bridge.Frame) {
 		go bc.handleSpawn(f)
 	case bridge.FrameKill:
 		go bc.handleKill(f)
+	case bridge.FrameHistory:
+		go bc.handleHistory(f)
 	default:
 		slog.Debug("bridge client: unhandled frame", "type", f.Type)
 	}
@@ -633,6 +635,84 @@ func (bc *BridgeClient) killAdhoc(instanceID string) error {
 	bc.runner.removeInstance(instanceID)
 	slog.Info("bridge client: killed ad-hoc instance", "instance_id", instanceID)
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Session history (hybrid: live instance proxy, else on-disk read)
+// ---------------------------------------------------------------------------
+
+func (bc *BridgeClient) handleHistory(f bridge.Frame) {
+	body, err := bc.fetchSessionHistory(f.SessionID)
+	res := bridge.Frame{Type: bridge.FrameRes, ID: f.ID}
+	if err != nil {
+		res.Error = err.Error()
+	} else {
+		res.Status = http.StatusOK
+		res.Body = body
+	}
+	bc.sendFrame(res)
+}
+
+// fetchSessionHistory returns the transcript for a session as the same JSON
+// array OpenCode's GET /session/:id/message produces. It first looks for a
+// live instance that already hosts the session (so an in-flight session is
+// served from its running server); failing that it reads the messages from
+// OpenCode's on-disk storage, which survives the instance's exit.
+func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
+	if sessionID == "" {
+		return nil, errors.New("missing session id")
+	}
+	if port := bc.portForSession(sessionID); port > 0 {
+		path := "/session/" + sessionID + "/message"
+		if status, body, err := bc.httpGet(port, path); err == nil && status == http.StatusOK {
+			return body, nil
+		}
+		// Fall through to on-disk read if the live server can't answer.
+	}
+	return readSessionHistory(sessionID)
+}
+
+// portForSession returns the localhost port of a live instance whose session
+// set includes sessionID, or 0 if none. Ports never come from the wire.
+func (bc *BridgeClient) portForSession(sessionID string) int {
+	bc.mu.Lock()
+	for _, ad := range bc.adhoc {
+		for _, sid := range ad.Instance.SessionIDs {
+			if sid == sessionID && ad.Instance.Port > 0 {
+				bc.mu.Unlock()
+				return ad.Instance.Port
+			}
+		}
+	}
+	bc.mu.Unlock()
+	for _, info := range bc.runner.processMgr.GetAll() {
+		if info.Task.SessionID == sessionID && info.Task.OpencodePort > 0 {
+			return info.Task.OpencodePort
+		}
+	}
+	return 0
+}
+
+// httpGet performs a bounded GET against a localhost instance port.
+func (bc *BridgeClient) httpGet(port int, path string) (int, []byte, error) {
+	ctx, cancel := context.WithTimeout(bc.baseContext(),
+		time.Duration(bridge.DefaultTimeoutMs)*time.Millisecond)
+	defer cancel()
+	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	resp, err := bc.httpClient.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, bridge.MaxBodyBytes))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	return resp.StatusCode, body, nil
 }
 
 // AdhocInstances returns instance records for all live ad-hoc instances,

@@ -360,7 +360,7 @@ function flattenProviders(
   return out;
 }
 
-function MessageRow({ message }: { message: OcMessage }) {
+export function MessageRow({ message }: { message: OcMessage }) {
   const role = message.info.role;
   const visible = message.parts.filter(
     (p) =>

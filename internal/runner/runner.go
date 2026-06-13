@@ -2,8 +2,6 @@ package runner
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -176,8 +174,9 @@ type RunnerStatusInfo struct {
 
 // TaskRunner orchestrates task polling, claiming, spawning, and lifecycle.
 type TaskRunner struct {
-	runnerID string
-	projects []string
+	runnerID  string
+	machineID string
+	projects  []string
 	config   RunnerConfig
 	mode     ExecutionMode
 	logger   *log.Logger
@@ -238,10 +237,12 @@ type TaskRunner struct {
 
 // NewTaskRunner creates a new TaskRunner with the given options.
 func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
-	// Generate runner ID
-	idBytes := make([]byte, 4)
-	rand.Read(idBytes)
-	runnerID := "runner_" + hex.EncodeToString(idBytes)
+	// Resolve stable identity: a machine-wide id shared by all runners on this
+	// host, and a per-runner id persisted in the state dir so a restart
+	// re-registers under the same id (remote control relies on this to find
+	// the machine that ran a past session).
+	runnerID := ResolveRunnerID(opts.Config.StateDir)
+	machineID := ResolveMachineID()
 
 	// Determine projects list
 	projects := opts.Projects
@@ -287,6 +288,7 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 
 	tr := &TaskRunner{
 		runnerID:         runnerID,
+		machineID:        machineID,
 		projects:         projects,
 		config:           opts.Config,
 		mode:             mode,
@@ -1186,14 +1188,31 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 		return
 	}
 
-	// Persist session ID to the task's metadata in SQLite via API
+	// Capture the workdir so the session can be re-served/resumed later from
+	// the machine that ran it.
+	var workdir string
+	for _, info := range tr.processMgr.GetAll() {
+		if info.Task.Path == taskPath {
+			workdir = info.Task.Workdir
+			break
+		}
+	}
+
+	// Persist session ID to the task's metadata in SQLite via API. Alongside the
+	// timestamp we record where the session lives — runner, machine, host and
+	// workdir — so remote control can locate and re-open it after the task's
+	// live instance is gone (instances are deleted on completion).
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
 	err = tr.client.UpdateMetadata(ctx, taskPath, map[string]interface{}{
 		"sessions": map[string]interface{}{
 			sessionID: map[string]interface{}{
-				"timestamp": time.Now().UTC().Format(time.RFC3339),
+				"timestamp":  time.Now().UTC().Format(time.RFC3339),
+				"runner_id":  tr.runnerID,
+				"machine_id": tr.machineID,
+				"hostname":   runnerHostname(),
+				"workdir":    workdir,
 			},
 		},
 	})
@@ -1332,6 +1351,7 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 
 	req := types.RunnerRegistration{
 		RunnerID:     tr.runnerID,
+		MachineID:    tr.machineID,
 		Hostname:     hostname,
 		Executors:    tr.executorNames(),
 		Capabilities: tr.config.Capabilities,

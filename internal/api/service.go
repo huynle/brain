@@ -345,6 +345,11 @@ type BridgeService interface {
 	// KillInstance asks a runner to terminate an ad-hoc instance.
 	KillInstance(ctx context.Context, runnerID, instanceID string) error
 
+	// FetchHistory returns the transcript of a session by ID from a runner,
+	// served from a live instance if one hosts it, otherwise read from
+	// OpenCode's on-disk storage. Returns raw JSON (array of {info, parts}).
+	FetchHistory(ctx context.Context, runnerID, sessionID string) ([]byte, error)
+
 	// AcquireStream enables full event forwarding for an instance
 	// (refcounted); the release function must be called on detach.
 	AcquireStream(runnerID, instanceID string) (func(), error)

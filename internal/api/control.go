@@ -171,6 +171,29 @@ func (h *Handler) HandleControlListMessages(w http.ResponseWriter, r *http.Reque
 	h.controlProxy(w, r, http.MethodGet, path, nil)
 }
 
+// HandleControlSessionHistory handles
+// GET /control/runners/{runnerId}/sessions/{sessionId}/history — the transcript
+// of a session by ID, even with no live instance. The runner serves it from a
+// running instance if one hosts the session, otherwise reads it from OpenCode's
+// on-disk storage. This is how completed/historical sessions are reviewed.
+func (h *Handler) HandleControlSessionHistory(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	sessionID := chi.URLParam(r, "sessionId")
+
+	body, err := h.bridge.FetchHistory(r.Context(), runnerID, sessionID)
+	if err != nil {
+		writeBridgeError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if len(body) > 0 {
+		w.Write(body)
+	} else {
+		w.Write([]byte("[]"))
+	}
+}
+
 // controlFilePart is a browser-attached file (e.g. a pasted image). The URL
 // is a data: URL (base64) the model receives directly, or a file:// path on
 // the runner.

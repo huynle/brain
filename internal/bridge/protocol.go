@@ -31,6 +31,7 @@ const (
 	FrameInstanceEvent = "instance_event" // runner → api: always-on control event
 	FrameSpawn         = "spawn"          // api → runner: spawn ad-hoc instance
 	FrameKill          = "kill"           // api → runner: kill ad-hoc instance
+	FrameHistory       = "history"        // api → runner: fetch a session transcript (no live instance needed)
 )
 
 // Limits enforced on both sides of the tunnel.
@@ -55,6 +56,9 @@ type Frame struct {
 	RunnerID  string                   `json:"runner_id,omitempty"`
 	Proto     int                      `json:"proto,omitempty"`
 	Instances []types.OpencodeInstance `json:"instances,omitempty"`
+
+	// history
+	SessionID string `json:"session_id,omitempty"`
 
 	// req / res / streams / kill
 	InstanceID string          `json:"instance_id,omitempty"`

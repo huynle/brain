@@ -178,6 +178,29 @@ func (h *Hub) SpawnInstance(ctx context.Context, runnerID string, spec types.Spa
 	return &inst, nil
 }
 
+// FetchHistory asks a runner for the full transcript of a session by ID,
+// even when no live instance hosts it: the runner serves it from a live
+// instance if one has the session, otherwise reads it from OpenCode's on-disk
+// storage. Returns the raw JSON body (an array of {info, parts}).
+func (h *Hub) FetchHistory(ctx context.Context, runnerID, sessionID string) ([]byte, error) {
+	conn := h.conn(runnerID)
+	if conn == nil {
+		return nil, ErrRunnerNotConnected
+	}
+	res, err := conn.roundTrip(ctx, Frame{
+		Type:      FrameHistory,
+		SessionID: sessionID,
+		TimeoutMs: DefaultTimeoutMs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if res.Error != "" {
+		return nil, errors.New(res.Error)
+	}
+	return res.Body, nil
+}
+
 // KillInstance asks a runner to terminate an ad-hoc instance.
 func (h *Hub) KillInstance(ctx context.Context, runnerID, instanceID string) error {
 	conn := h.conn(runnerID)

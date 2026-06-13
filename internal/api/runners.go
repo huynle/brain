@@ -150,6 +150,14 @@ func (h *Handler) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	// Decorate with live bridge connectivity so callers can tell which runners
+	// can actually serve remote-control requests right now (distinct from the
+	// heartbeat-derived online/stale status).
+	if h.bridge != nil {
+		for i := range resp.Runners {
+			resp.Runners[i].BridgeConnected = h.bridge.Connected(resp.Runners[i].RunnerID)
+		}
+	}
 	WriteJSON(w, http.StatusOK, resp)
 }
 

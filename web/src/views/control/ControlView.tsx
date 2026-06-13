@@ -15,9 +15,11 @@ import {
 import { Modal, ConfirmDialog } from "../../components/common/Modal";
 import { EmptyState, ErrorState, Loading, Spinner } from "../../components/common/states";
 import { useUI } from "../../store/ui";
+import type { ControlTarget } from "../../store/ui";
 import { sessionName } from "../../lib/types";
 import type { OcSession, OpencodeInstance, RunnerInfo } from "../../lib/types";
 import { Chat } from "./Chat";
+import { HistoryPane } from "./HistoryPane";
 
 interface Selection {
   runnerId: string;
@@ -30,6 +32,7 @@ export function ControlView() {
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Selection | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<ControlTarget | null>(null);
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [confirmKill, setConfirmKill] = useState<OpencodeInstance | null>(null);
 
@@ -50,9 +53,37 @@ export function ControlView() {
   useEffect(() => {
     const target = consumeControlTarget();
     if (!target) return;
-    setSelected({ runnerId: target.runnerId, instanceId: target.instanceId });
+    if (target.mode === "history") {
+      // Completed/historical session: show the read-only review pane.
+      setHistoryTarget(target);
+      setSelected(null);
+      setSessionId(target.sessionId ?? null);
+      return;
+    }
+    setHistoryTarget(null);
+    if (target.instanceId) setSelected({ runnerId: target.runnerId, instanceId: target.instanceId });
     if (target.sessionId) setSessionId(target.sessionId);
   }, [consumeControlTarget]);
+
+  // Resume a reviewed session: spawn a server in the recorded workdir on a
+  // connected runner; the session reloads from disk and becomes live.
+  async function resumeHistory(runnerId: string) {
+    const t = historyTarget;
+    if (!t || !t.workdir) return;
+    try {
+      const res = await controlSpawnInstance(runnerId, {
+        workdir: t.workdir,
+        title: t.taskTitle,
+      });
+      void qc.invalidateQueries({ queryKey: ["instances"] });
+      setHistoryTarget(null);
+      pick(res.instance);
+      if (t.sessionId) setSessionId(t.sessionId);
+      toast("Session resumed", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Resume failed", "error");
+    }
+  }
   const selectedInstance = useMemo(
     () => instances.find((i) => i.instance_id === selected?.instanceId) ?? null,
     [instances, selected],
@@ -81,7 +112,7 @@ export function ControlView() {
   if (runnersQ.error && !runners.length)
     return <ErrorState error={runnersQ.error} onRetry={() => void runnersQ.refetch()} />;
 
-  const chatOpen = !!selected;
+  const chatOpen = !!selected || !!historyTarget;
 
   return (
     <div className={`ctl-layout ${chatOpen ? "chat-open" : ""}`}>
@@ -115,17 +146,25 @@ export function ControlView() {
       </div>
 
       <div className="ctl-main">
-        {!selected && (
+        {historyTarget ? (
+          <HistoryPane
+            target={historyTarget}
+            runners={runners}
+            onBack={() => {
+              setHistoryTarget(null);
+              setSessionId(null);
+            }}
+            onResume={resumeHistory}
+          />
+        ) : !selected ? (
           <EmptyState
             glyph="⌁"
             title="No instance attached"
             hint="Pick an instance on the left, or spawn a new one."
           />
-        )}
-        {selected && !selectedInstance && (
+        ) : !selectedInstance ? (
           <EmptyState glyph="⌁" title="Instance gone" hint="It may have exited." />
-        )}
-        {selected && selectedInstance && (
+        ) : (
           <InstancePane
             instance={selectedInstance}
             sessionId={sessionId}

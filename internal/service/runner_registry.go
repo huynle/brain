@@ -55,6 +55,11 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 	if labels == nil {
 		labels = make(map[string]string)
 	}
+	// Persist the machine id in labels so we avoid a schema migration; it's
+	// surfaced as a typed field via rowToRunnerInfo.
+	if req.MachineID != "" {
+		labels[machineIDLabel] = req.MachineID
+	}
 
 	executors := req.Executors
 	if executors == nil {
@@ -465,10 +470,15 @@ func computeRunnerStatus(lastHeartbeatMs int64) types.RunnerStatus {
 	return types.RunnerStatusOffline
 }
 
+// machineIDLabel is the internal labels key under which the machine id is
+// stored (avoids a runners-table schema migration).
+const machineIDLabel = "_machine_id"
+
 // rowToRunnerInfo converts a storage RunnerRow to an API RunnerInfo.
 func rowToRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
 	return &types.RunnerInfo{
 		RunnerID:      row.RunnerID,
+		MachineID:     row.Labels[machineIDLabel],
 		Hostname:      row.Hostname,
 		Labels:        row.Labels,
 		Executors:     row.Executors,

@@ -25,10 +25,19 @@ export type Panel = "tasks" | "detail" | "logs";
 
 // A request to open a specific instance/session in the Control tab — set by
 // other views (e.g. Automations "o") and consumed by ControlView on mount.
+//
+// "live" targets a running instance directly. "history" targets a session that
+// may no longer have a live instance: ControlView resolves a connected runner
+// on the recorded machine, shows the read-only transcript, and offers resume.
 export interface ControlTarget {
-  runnerId: string;
-  instanceId: string;
+  mode: "live" | "history";
+  runnerId: string; // recorded/owning runner (may be offline)
+  instanceId?: string; // present for live targets
   sessionId?: string;
+  machineId?: string; // recorded machine, for same-host fallback resolution
+  hostname?: string;
+  workdir?: string; // recorded workdir, enables resume
+  taskTitle?: string;
 }
 
 interface UIState {

@@ -1405,9 +1405,19 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 			for sid, infoRaw := range sessionsMap {
 				si := types.SessionInfo{}
 				if infoMap, ok := infoRaw.(map[string]interface{}); ok {
-					if ts, ok := infoMap["timestamp"].(string); ok {
-						si.Timestamp = ts
+					str := func(k string) string {
+						if v, ok := infoMap[k].(string); ok {
+							return v
+						}
+						return ""
 					}
+					si.Timestamp = str("timestamp")
+					si.CronID = str("cron_id")
+					si.RunID = str("run_id")
+					si.RunnerID = str("runner_id")
+					si.MachineID = str("machine_id")
+					si.Hostname = str("hostname")
+					si.Workdir = str("workdir")
 				}
 				sessions[sid] = si
 			}

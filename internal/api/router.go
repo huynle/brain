@@ -521,6 +521,11 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			r.Route("/control", func(r chi.Router) {
 				r.Use(RequireScope(ScopeControl))
 				if o.handler != nil && o.handler.bridge != nil {
+					// Session history is instance-independent: a completed
+					// session is served by ID from any connected runner that
+					// holds its on-disk storage.
+					r.Get("/runners/{runnerId}/sessions/{sessionId}/history",
+						o.handler.HandleControlSessionHistory)
 					r.Route("/runners/{runnerId}/instances", func(r chi.Router) {
 						r.Post("/", o.handler.HandleControlSpawn)
 						r.Route("/{instanceId}", func(r chi.Router) {

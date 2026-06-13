@@ -1052,6 +1052,17 @@ kbd {
 }
 .ctl-back { display: none; }
 
+.ctl-history-notice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  flex: 1;
+  padding: 24px;
+  gap: 2px;
+}
+
 .ctl-chat { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .ctl-chat-head {
   display: flex;

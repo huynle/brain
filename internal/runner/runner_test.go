@@ -692,17 +692,40 @@ func TestNewTaskRunner_GeneratesRunnerID(t *testing.T) {
 	}
 }
 
-func TestNewTaskRunner_UniqueIDs(t *testing.T) {
-	client := newMockClient()
-	executor := newMockExecutor()
-	processMgr := newMockProcessMgr()
-	stateMgr := newMockStateMgr()
+// runnerID is now stable per state dir: the same deployment re-registers under
+// the same id across restarts, while distinct state dirs (distinct runners on
+// one machine) get distinct ids.
+func TestRunnerID_StablePerStateDir(t *testing.T) {
+	dirA := t.TempDir()
+	dirB := t.TempDir()
 
-	tr1 := newTestRunner(client, executor, processMgr, stateMgr)
-	tr2 := newTestRunner(client, executor, processMgr, stateMgr)
+	a1 := ResolveRunnerID(dirA)
+	a2 := ResolveRunnerID(dirA) // simulated restart, same state dir
+	b1 := ResolveRunnerID(dirB)
 
-	if tr1.runnerID == tr2.runnerID {
-		t.Errorf("two runners should have different IDs: %q == %q", tr1.runnerID, tr2.runnerID)
+	if a1 == "" || !strings.HasPrefix(a1, "runner_") {
+		t.Fatalf("unexpected runner id %q", a1)
+	}
+	if a1 != a2 {
+		t.Errorf("same state dir should yield a stable id: %q != %q", a1, a2)
+	}
+	if a1 == b1 {
+		t.Errorf("distinct state dirs should yield distinct ids: %q == %q", a1, b1)
+	}
+}
+
+// machineID is shared across runners on a host and stable across restarts.
+func TestMachineID_StableAcrossCalls(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	m1 := ResolveMachineID()
+	m2 := ResolveMachineID()
+	if m1 == "" || !strings.HasPrefix(m1, "machine_") {
+		t.Fatalf("unexpected machine id %q", m1)
+	}
+	if m1 != m2 {
+		t.Errorf("machine id should be stable: %q != %q", m1, m2)
 	}
 }
 

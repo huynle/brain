@@ -22,9 +22,11 @@ type mockBridgeService struct {
 	doBody      []byte
 	doErr       error
 
-	spawnFunc func(ctx context.Context, runnerID string, spec types.SpawnInstanceSpec) (*types.OpencodeInstance, error)
-	killErr   error
-	pending   []json.RawMessage
+	spawnFunc  func(ctx context.Context, runnerID string, spec types.SpawnInstanceSpec) (*types.OpencodeInstance, error)
+	killErr    error
+	pending    []json.RawMessage
+	historyOut []byte
+	historyErr error
 }
 
 func (m *mockBridgeService) DecorateInstances(instances []types.OpencodeInstance) {}
@@ -63,6 +65,13 @@ func (m *mockBridgeService) SpawnInstance(ctx context.Context, runnerID string, 
 
 func (m *mockBridgeService) KillInstance(ctx context.Context, runnerID, instanceID string) error {
 	return m.killErr
+}
+
+func (m *mockBridgeService) FetchHistory(ctx context.Context, runnerID, sessionID string) ([]byte, error) {
+	if m.historyErr != nil {
+		return nil, m.historyErr
+	}
+	return m.historyOut, nil
 }
 
 func (m *mockBridgeService) AcquireStream(runnerID, instanceID string) (func(), error) {

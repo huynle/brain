@@ -305,6 +305,15 @@ export const controlProviders = (runnerId: string, instanceId: string) =>
     `${controlBase(runnerId, instanceId)}/providers`,
   );
 
+// controlSessionHistory fetches the transcript of a session by ID without a
+// live instance — the runner serves it from a running instance if one hosts
+// the session, otherwise from OpenCode's on-disk storage. Used to review a
+// completed task's session in the Control tab.
+export const controlSessionHistory = (runnerId: string, sessionId: string) =>
+  api<OcMessage[]>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/sessions/${encodeURIComponent(sessionId)}/history`,
+  );
+
 export const controlSpawnInstance = (runnerId: string, spec: SpawnInstanceSpec) =>
   api<{ success: boolean; instance: OpencodeInstance }>(
     `/api/v1/control/runners/${encodeURIComponent(runnerId)}/instances`,

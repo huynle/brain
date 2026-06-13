@@ -33,6 +33,12 @@ export interface SessionInfo {
   timestamp: string;
   cron_id?: string;
   run_id?: string;
+  // Where the session lives — recorded at discovery so it can be re-opened
+  // after the task's live instance is gone.
+  runner_id?: string;
+  machine_id?: string;
+  hostname?: string;
+  workdir?: string;
 }
 
 export interface AttachmentReference {
@@ -146,6 +152,8 @@ export interface RunnerInfo {
   last_heartbeat: string;
   status: "online" | "stale" | "offline";
   version?: string;
+  machine_id?: string;
+  bridge_connected?: boolean;
 }
 
 export interface FeatureAssignment {
@@ -329,7 +337,7 @@ export interface BrainEntry {
   execution_mode?: string;
   target_workdir?: string;
   complete_on_idle?: boolean;
-  sessions?: Record<string, unknown>;
+  sessions?: Record<string, SessionInfo>;
 }
 
 // GoalGeneratedBy marks an automation entry as a goal automation.

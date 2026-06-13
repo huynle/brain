@@ -220,11 +220,17 @@ type BrainEntry struct {
 	Backlinks []BacklinkEntry `json:"backlinks,omitempty"`
 }
 
-// SessionInfo tracks session metadata.
+// SessionInfo tracks session metadata. The runner/machine/host/workdir fields
+// record where an OpenCode session lives so remote control can re-open or
+// resume it after the task's live instance is gone.
 type SessionInfo struct {
 	Timestamp string `json:"timestamp"`
 	CronID    string `json:"cron_id,omitempty"`
 	RunID     string `json:"run_id,omitempty"`
+	RunnerID  string `json:"runner_id,omitempty"`
+	MachineID string `json:"machine_id,omitempty"`
+	Hostname  string `json:"hostname,omitempty"`
+	Workdir   string `json:"workdir,omitempty"`
 }
 
 // CronRun tracks a single cron execution.
@@ -1020,6 +1026,7 @@ const (
 // RunnerRegistration is the request body for POST /runners (register).
 type RunnerRegistration struct {
 	RunnerID     string            `json:"runner_id"`
+	MachineID    string            `json:"machine_id,omitempty"`
 	Hostname     string            `json:"hostname"`
 	Labels       map[string]string `json:"labels,omitempty"`
 	Executors    []string          `json:"executors,omitempty"`
@@ -1095,7 +1102,9 @@ type SpawnInstanceSpec struct {
 // RunnerInfo is the API-level runner representation with computed status.
 type RunnerInfo struct {
 	RunnerID           string                      `json:"runner_id"`
+	MachineID          string                      `json:"machine_id,omitempty"`
 	Hostname           string                      `json:"hostname"`
+	BridgeConnected    bool                        `json:"bridge_connected,omitempty"`
 	Labels             map[string]string           `json:"labels,omitempty"`
 	Executors          []string                    `json:"executors,omitempty"`
 	Projects           []string                    `json:"projects,omitempty"`

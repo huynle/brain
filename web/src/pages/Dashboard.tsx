@@ -95,7 +95,7 @@ export function Dashboard() {
   return (
     <div className="tui">
       <StatusBar />
-      <ContentTabs projects={projects ?? []} />
+      <ContentTabs />
       <div className="tui-main">
         {/* Top-level views render without a panel title — the active content
             tab already names them, so a titled border just duplicated it. */}

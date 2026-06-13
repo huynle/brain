@@ -196,8 +196,9 @@ func TestUpdate_TabNavigation_SingleProjectMode(t *testing.T) {
 	// No panic = success (tab navigation ignored in single-project mode)
 }
 
-// TestView_ShowsProjectTabs_MultiProject verifies tabs are rendered in multi-project mode.
-func TestView_ShowsProjectTabs_MultiProject(t *testing.T) {
+// TestProjectTabs_ViewNotRendered verifies the project-tab row is intentionally
+// not rendered — projects are switched with H/L and shown in the status bar.
+func TestProjectTabs_ViewNotRendered(t *testing.T) {
 	cfg := Config{
 		APIURL:   "http://localhost:3333",
 		Projects: []string{"proj1", "proj2"},
@@ -205,25 +206,11 @@ func TestView_ShowsProjectTabs_MultiProject(t *testing.T) {
 	m := NewModel(cfg)
 	m.width = 120
 	m.height = 40
-
-	// Add some tasks to create stats
-	m.tasksByProject["proj1"] = []types.ResolvedTask{
-		{ID: "t1", Title: "Task 1", Classification: "ready"},
-	}
-
-	// Update ProjectTabs stats
 	m.projectTabs.UpdateStats("proj1", TaskStats{Ready: 1})
 
-	view := m.View()
-
-	// Should contain "All" tab
-	if !strings.Contains(view, "All") {
-		t.Error("Expected view to contain 'All' tab in multi-project mode")
-	}
-
-	// Should contain project names
-	if !strings.Contains(view, "proj1") || !strings.Contains(view, "proj2") {
-		t.Error("Expected view to contain project names in multi-project mode")
+	// The ProjectTabs.View() renders nothing regardless of project count.
+	if got := m.projectTabs.View(m.width); got != "" {
+		t.Errorf("expected ProjectTabs.View to render nothing, got %q", got)
 	}
 }
 

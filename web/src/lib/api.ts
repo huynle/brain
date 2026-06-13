@@ -252,11 +252,22 @@ export const controlListMessages = (
     { query: { limit: String(limit) } },
   );
 
+export interface ControlFilePart {
+  mime: string;
+  url: string; // data: URL (base64) or file:// path on the runner
+  filename?: string;
+}
+
 export const controlPrompt = (
   runnerId: string,
   instanceId: string,
   sessionId: string,
-  body: { text: string; agent?: string; model?: { providerID: string; modelID: string } },
+  body: {
+    text: string;
+    agent?: string;
+    model?: { providerID: string; modelID: string };
+    files?: ControlFilePart[];
+  },
 ) =>
   api<unknown>(
     `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/prompt`,

@@ -35,10 +35,11 @@ const (
 
 // Limits enforced on both sides of the tunnel.
 const (
-	// MaxBodyBytes caps proxied request/response bodies.
-	MaxBodyBytes = 1 << 20 // 1 MB
-	// MaxFrameBytes caps a whole frame on the wire.
-	MaxFrameBytes = 2 << 20 // 2 MB
+	// MaxBodyBytes caps proxied request/response bodies. Generous enough to
+	// carry a pasted image as a base64 data URL in a prompt.
+	MaxBodyBytes = 24 << 20 // 24 MB
+	// MaxFrameBytes caps a whole frame on the wire (body + envelope overhead).
+	MaxFrameBytes = 28 << 20 // 28 MB
 	// MaxInFlight caps concurrent proxied requests per runner connection.
 	MaxInFlight = 64
 	// DefaultTimeoutMs is the default per-request timeout when none is given.

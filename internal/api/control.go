@@ -171,6 +171,15 @@ func (h *Handler) HandleControlListMessages(w http.ResponseWriter, r *http.Reque
 	h.controlProxy(w, r, http.MethodGet, path, nil)
 }
 
+// controlFilePart is a browser-attached file (e.g. a pasted image). The URL
+// is a data: URL (base64) the model receives directly, or a file:// path on
+// the runner.
+type controlFilePart struct {
+	Mime     string `json:"mime"`
+	URL      string `json:"url"`
+	Filename string `json:"filename,omitempty"`
+}
+
 // controlPromptRequest is the browser-facing prompt body.
 type controlPromptRequest struct {
 	Text  string `json:"text"`
@@ -179,7 +188,12 @@ type controlPromptRequest struct {
 		ProviderID string `json:"providerID"`
 		ModelID    string `json:"modelID"`
 	} `json:"model,omitempty"`
+	Files []controlFilePart `json:"files,omitempty"`
 }
+
+// controlPromptMaxBytes bounds a prompt body. Larger than the default proxy
+// cap because pasted images arrive as base64 data URLs.
+const controlPromptMaxBytes = 24 << 20 // 24 MB
 
 // HandleControlPrompt handles POST .../sessions/{sessionId}/prompt — sends a
 // prompt via prompt_async (204; output streams via the events endpoint).
@@ -190,23 +204,35 @@ func (h *Handler) HandleControlPrompt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req controlPromptRequest
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, controlPromptMaxBytes)).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
 		return
 	}
-	if strings.TrimSpace(req.Text) == "" {
+	// A prompt needs text or at least one attachment.
+	if strings.TrimSpace(req.Text) == "" && len(req.Files) == 0 {
 		WriteValidationError(w, []types.ValidationDetail{
-			{Field: "text", Message: "text is required"},
+			{Field: "text", Message: "text or an attachment is required"},
 		})
 		return
 	}
 
-	// Translate to OpenCode's prompt_async shape.
-	upstream := map[string]interface{}{
-		"parts": []map[string]interface{}{
-			{"type": "text", "text": req.Text},
-		},
+	// Translate to OpenCode's prompt_async shape: a text part (if any)
+	// followed by file parts (images paste through as data: URLs).
+	parts := make([]map[string]interface{}, 0, 1+len(req.Files))
+	if strings.TrimSpace(req.Text) != "" {
+		parts = append(parts, map[string]interface{}{"type": "text", "text": req.Text})
 	}
+	for _, f := range req.Files {
+		if f.URL == "" || f.Mime == "" {
+			continue
+		}
+		part := map[string]interface{}{"type": "file", "mime": f.Mime, "url": f.URL}
+		if f.Filename != "" {
+			part["filename"] = f.Filename
+		}
+		parts = append(parts, part)
+	}
+	upstream := map[string]interface{}{"parts": parts}
 	if req.Agent != "" {
 		upstream["agent"] = req.Agent
 	}

@@ -17,6 +17,11 @@ import { useUI } from "../../store/ui";
 import { Spinner } from "../../components/common/states";
 import type { OcMessage, OcPart, OcPermission, OcProvider } from "../../lib/types";
 import { chatKey, useChat } from "./chatStore";
+import {
+  type Attachment,
+  attachmentsFromDataTransfer,
+  fileToAttachment,
+} from "./images";
 
 export function Chat({
   runnerId,
@@ -39,7 +44,10 @@ export function Chat({
   const [text, setText] = useState("");
   const [agent, setAgent] = useState("");
   const [model, setModel] = useState(""); // "providerID/modelID"
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Attach the event stream first, then hydrate (dedupe by message id).
   useEffect(() => {
@@ -83,9 +91,11 @@ export function Chat({
 
   async function send() {
     const t = text.trim();
-    if (!t) return;
+    const files = attachments;
+    if (!t && files.length === 0) return;
     setText("");
-    optimistic(key, sessionId, t);
+    setAttachments([]);
+    optimistic(key, sessionId, t || `[${files.length} image${files.length > 1 ? "s" : ""}]`);
     try {
       const body: Parameters<typeof controlPrompt>[3] = { text: t };
       if (agent) body.agent = agent;
@@ -93,11 +103,48 @@ export function Chat({
         const [providerID, ...rest] = model.split("/");
         body.model = { providerID, modelID: rest.join("/") };
       }
+      if (files.length > 0) {
+        body.files = files.map((f) => ({
+          mime: f.mime,
+          url: f.dataUrl,
+          filename: f.filename,
+        }));
+      }
       await controlPrompt(runnerId, instanceId, sessionId, body);
     } catch (e) {
       setBusy(key, false);
       toast(e instanceof Error ? e.message : "Prompt failed", "error");
     }
+  }
+
+  async function addFiles(list: Attachment[]) {
+    if (list.length > 0) setAttachments((a) => [...a, ...list]);
+  }
+
+  async function onPaste(e: React.ClipboardEvent) {
+    const imgs = await attachmentsFromDataTransfer(e.clipboardData);
+    if (imgs.length > 0) {
+      e.preventDefault();
+      void addFiles(imgs);
+    }
+  }
+
+  async function onDrop(e: React.DragEvent) {
+    e.preventDefault();
+    setDragOver(false);
+    void addFiles(await attachmentsFromDataTransfer(e.dataTransfer));
+  }
+
+  async function onPickFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = e.target.files ? Array.from(e.target.files) : [];
+    const imgs: Attachment[] = [];
+    for (const f of files) if (f.type.startsWith("image/")) imgs.push(await fileToAttachment(f));
+    void addFiles(imgs);
+    e.target.value = "";
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((a) => a.filter((x) => x.id !== id));
   }
 
   async function respond(perm: OcPermission, response: "once" | "always" | "reject") {
@@ -135,13 +182,27 @@ export function Chat({
         ) : (
           <span style={{ color: "var(--yellow)", fontSize: 12 }}>● connecting…</span>
         )}
-        {chat?.busy && (
+        {chat?.busy ? (
           <>
+            <span style={{ color: "var(--yellow)", fontSize: 12 }}>working</span>
             <Spinner />
-            <button className="btn sm ghost" onClick={() => void abort()}>
-              ◼ abort
+            <button
+              className="btn sm"
+              style={{ background: "var(--red)", color: "#fff", borderColor: "var(--red)" }}
+              onClick={() => void abort()}
+              title="Stop the current generation"
+            >
+              ◼ stop
             </button>
           </>
+        ) : (
+          <button
+            className="btn sm ghost"
+            onClick={() => void abort()}
+            title="Interrupt the session (no-op if already idle)"
+          >
+            ◼ stop
+          </button>
         )}
       </div>
 
@@ -183,12 +244,43 @@ export function Chat({
         </div>
       ))}
 
-      <div className="ctl-composer">
+      <div
+        className={`ctl-composer ${dragOver ? "dragover" : ""}`}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes("Files")) {
+            e.preventDefault();
+            setDragOver(true);
+          }
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => void onDrop(e)}
+      >
+        {attachments.length > 0 && (
+          <div className="ctl-attach-row">
+            {attachments.map((a) => (
+              <div key={a.id} className="ctl-attach" title={a.filename}>
+                <img src={a.dataUrl} alt={a.filename} />
+                <button
+                  className="ctl-attach-x"
+                  onClick={() => removeAttachment(a.id)}
+                  title="Remove"
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
         <textarea
           value={text}
-          placeholder="Send a prompt… (Enter to send, Shift+Enter for newline)"
+          placeholder={
+            dragOver
+              ? "Drop image to attach…"
+              : "Send a prompt… (Enter to send, Shift+Enter for newline, paste an image to attach)"
+          }
           rows={2}
           onChange={(e) => setText(e.target.value)}
+          onPaste={(e) => void onPaste(e)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
@@ -197,6 +289,21 @@ export function Chat({
           }}
         />
         <div className="row wrap" style={{ gap: 6 }}>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            style={{ display: "none" }}
+            onChange={(e) => void onPickFiles(e)}
+          />
+          <button
+            className="btn sm ghost"
+            onClick={() => fileInputRef.current?.click()}
+            title="Attach image(s)"
+          >
+            📎 image
+          </button>
           <select value={agent} onChange={(e) => setAgent(e.target.value)} title="Agent">
             <option value="">agent: default</option>
             {(agentsQ.data ?? []).map((a) => (
@@ -214,7 +321,11 @@ export function Chat({
             ))}
           </select>
           <span style={{ flex: 1 }} />
-          <button className="btn" disabled={!text.trim()} onClick={() => void send()}>
+          <button
+            className="btn"
+            disabled={!text.trim() && attachments.length === 0}
+            onClick={() => void send()}
+          >
             Send ↵
           </button>
         </div>
@@ -243,7 +354,11 @@ function flattenProviders(
 function MessageRow({ message }: { message: OcMessage }) {
   const role = message.info.role;
   const visible = message.parts.filter(
-    (p) => p.type === "text" || p.type === "tool" || p.type === "reasoning",
+    (p) =>
+      p.type === "text" ||
+      p.type === "tool" ||
+      p.type === "reasoning" ||
+      (p.type === "file" && isImagePart(p)),
   );
   if (visible.length === 0) return null;
   return (
@@ -254,6 +369,11 @@ function MessageRow({ message }: { message: OcMessage }) {
       ))}
     </div>
   );
+}
+
+function isImagePart(part: OcPart): boolean {
+  const mime = (part as { mime?: string }).mime ?? "";
+  return part.type === "file" && mime.startsWith("image/");
 }
 
 function PartView({ part }: { part: OcPart }) {
@@ -269,6 +389,10 @@ function PartView({ part }: { part: OcPart }) {
   }
   if (part.type === "tool") {
     return <ToolCard part={part} />;
+  }
+  if (isImagePart(part)) {
+    const url = (part as { url?: string }).url;
+    if (url) return <img className="ctl-msg-img" src={url} alt={(part as { filename?: string }).filename ?? "image"} />;
   }
   return null;
 }

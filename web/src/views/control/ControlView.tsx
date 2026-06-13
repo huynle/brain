@@ -2,7 +2,7 @@
 // Desktop: rail + chat side by side. Mobile: single column, the rail
 // collapses behind a back button once an instance is selected.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   controlCreateSession,
@@ -35,7 +35,9 @@ export function ControlView() {
   const instancesQ = useQuery({
     queryKey: ["instances"],
     queryFn: listInstances,
-    refetchInterval: 8_000,
+    // Poll briskly so a freshly-triggered task surfaces here within a few
+    // seconds without a manual refresh.
+    refetchInterval: 3_000,
   });
 
   const runners = runnersQ.data ?? [];
@@ -263,7 +265,9 @@ function InstancePane({
   const sessionsQ = useQuery({
     queryKey: ["control-sessions", rid, iid],
     queryFn: () => controlListSessions(rid, iid),
-    refetchInterval: sessionId ? false : 10_000,
+    // Keep polling until a session is selected — a just-started task's
+    // session appears a beat after the instance does.
+    refetchInterval: sessionId ? false : 3_000,
     retry: 1,
   });
 
@@ -271,6 +275,14 @@ function InstancePane({
     const list = sessionsQ.data ?? [];
     return [...list].sort((a, b) => (b.time?.updated ?? 0) - (a.time?.updated ?? 0));
   }, [sessionsQ.data]);
+
+  // Auto-attach to the most-recently-active session so opening a running task
+  // drops you straight into its live conversation.
+  useEffect(() => {
+    if (!sessionId && sessions.length > 0) {
+      onSession(sessions[0].id);
+    }
+  }, [sessionId, sessions, onSession]);
 
   async function newSession() {
     try {

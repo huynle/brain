@@ -15,11 +15,12 @@ import (
 
 // mockBridgeService records proxied calls and returns canned responses.
 type mockBridgeService struct {
-	mu       sync.Mutex
-	doCalls  []string // "METHOD path"
-	doStatus int
-	doBody   []byte
-	doErr    error
+	mu          sync.Mutex
+	doCalls     []string // "METHOD path"
+	lastReqBody []byte   // body of the most recent Do() call
+	doStatus    int
+	doBody      []byte
+	doErr       error
 
 	spawnFunc func(ctx context.Context, runnerID string, spec types.SpawnInstanceSpec) (*types.OpencodeInstance, error)
 	killErr   error
@@ -35,6 +36,7 @@ func (m *mockBridgeService) Connected(runnerID string) bool { return true }
 func (m *mockBridgeService) Do(ctx context.Context, runnerID, instanceID, method, path string, body []byte) (int, []byte, error) {
 	m.mu.Lock()
 	m.doCalls = append(m.doCalls, method+" "+path)
+	m.lastReqBody = body
 	m.mu.Unlock()
 	if m.doErr != nil {
 		return 0, nil, m.doErr
@@ -144,12 +146,67 @@ func TestControlPrompt_TranslatesBody(t *testing.T) {
 		t.Errorf("proxied call = %q", mock.lastCall())
 	}
 
-	// Empty text is rejected before hitting the bridge.
+	// Empty text AND no files is rejected before hitting the bridge.
 	req = httptest.NewRequest(http.MethodPost, "/control/runners/r1/instances/i1/sessions/ses_1/prompt", strings.NewReader(`{"text":"  "}`))
 	rec = httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity && rec.Code != http.StatusBadRequest {
 		t.Errorf("expected validation error, got %d", rec.Code)
+	}
+}
+
+func TestControlPrompt_WithImageAttachment(t *testing.T) {
+	mock := &mockBridgeService{doStatus: http.StatusNoContent}
+	router := newControlTestRouter(mock, nil)
+
+	// A pasted image arrives as a data: URL with no text — must be accepted
+	// and forwarded as a file part alongside any text.
+	dataURL := "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAAAAAA="
+	body := `{"text":"what is this?","files":[{"mime":"image/png","url":"` + dataURL + `","filename":"shot.png"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/control/runners/r1/instances/i1/sessions/ses_1/prompt", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var upstream struct {
+		Parts []map[string]interface{} `json:"parts"`
+	}
+	if err := json.Unmarshal(mock.lastReqBody, &upstream); err != nil {
+		t.Fatalf("decode forwarded body: %v (%s)", err, mock.lastReqBody)
+	}
+	if len(upstream.Parts) != 2 {
+		t.Fatalf("expected text + file parts, got %d: %+v", len(upstream.Parts), upstream.Parts)
+	}
+	if upstream.Parts[0]["type"] != "text" || upstream.Parts[0]["text"] != "what is this?" {
+		t.Errorf("first part should be the text: %+v", upstream.Parts[0])
+	}
+	file := upstream.Parts[1]
+	if file["type"] != "file" || file["mime"] != "image/png" || file["url"] != dataURL || file["filename"] != "shot.png" {
+		t.Errorf("file part not forwarded correctly: %+v", file)
+	}
+}
+
+func TestControlPrompt_ImageOnlyNoText(t *testing.T) {
+	mock := &mockBridgeService{doStatus: http.StatusNoContent}
+	router := newControlTestRouter(mock, nil)
+
+	body := `{"text":"","files":[{"mime":"image/jpeg","url":"data:image/jpeg;base64,AAAA"}]}`
+	req := httptest.NewRequest(http.MethodPost, "/control/runners/r1/instances/i1/sessions/ses_1/prompt", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("image-only prompt should be accepted, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var upstream struct {
+		Parts []map[string]interface{} `json:"parts"`
+	}
+	json.Unmarshal(mock.lastReqBody, &upstream)
+	if len(upstream.Parts) != 1 || upstream.Parts[0]["type"] != "file" {
+		t.Errorf("expected a single file part, got %+v", upstream.Parts)
 	}
 }
 

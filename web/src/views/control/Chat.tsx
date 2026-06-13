@@ -27,10 +27,12 @@ export function Chat({
   runnerId,
   instanceId,
   sessionId,
+  sessionLabel,
 }: {
   runnerId: string;
   instanceId: string;
   sessionId: string;
+  sessionLabel?: string;
 }) {
   const key = chatKey(runnerId, instanceId);
   const toast = useUI((s) => s.toast);
@@ -175,7 +177,14 @@ export function Chat({
   return (
     <div className="ctl-chat">
       <div className="ctl-chat-head">
-        <span className="mono faint truncate">{sessionId}</span>
+        {sessionLabel && sessionLabel !== sessionId ? (
+          <>
+            <span className="truncate" style={{ fontWeight: 600 }}>{sessionLabel}</span>
+            <span className="mono faint truncate" style={{ fontSize: 11 }}>{sessionId}</span>
+          </>
+        ) : (
+          <span className="mono faint truncate">{sessionId}</span>
+        )}
         <span style={{ flex: 1 }} />
         {chat?.connected ? (
           <span style={{ color: "var(--green)", fontSize: 12 }}>● live</span>

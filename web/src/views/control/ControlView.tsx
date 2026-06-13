@@ -15,6 +15,7 @@ import {
 import { Modal, ConfirmDialog } from "../../components/common/Modal";
 import { EmptyState, ErrorState, Loading, Spinner } from "../../components/common/states";
 import { useUI } from "../../store/ui";
+import { sessionName } from "../../lib/types";
 import type { OcSession, OpencodeInstance, RunnerInfo } from "../../lib/types";
 import { Chat } from "./Chat";
 
@@ -316,7 +317,7 @@ function InstancePane({
           </option>
           {sessions.map((s: OcSession) => (
             <option key={s.id} value={s.id}>
-              {(s.title || s.id).slice(0, 60)}
+              {sessionName(s).slice(0, 60)}
             </option>
           ))}
         </select>
@@ -332,7 +333,16 @@ function InstancePane({
       )}
 
       {sessionId ? (
-        <Chat runnerId={rid} instanceId={iid} sessionId={sessionId} />
+        <Chat
+          runnerId={rid}
+          instanceId={iid}
+          sessionId={sessionId}
+          sessionLabel={
+            sessions.find((s) => s.id === sessionId)
+              ? sessionName(sessions.find((s) => s.id === sessionId)!)
+              : undefined
+          }
+        />
       ) : (
         <EmptyState
           glyph="◌"

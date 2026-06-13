@@ -205,9 +205,20 @@ export interface SpawnInstanceSpec {
 export interface OcSession {
   id: string;
   title?: string;
+  slug?: string; // OpenCode's memorable auto-generated name (e.g. "hidden-engine")
   version?: string;
   time?: { created?: number; updated?: number };
   [k: string]: unknown;
+}
+
+// sessionName returns OpenCode's friendly session name: the slug, falling back
+// to a meaningful title, then the raw id. OpenCode leaves `title` as the
+// default "New session - <timestamp>" until/unless it summarizes, so the slug
+// is the human-readable name shown in the OpenCode TUI.
+export function sessionName(s: OcSession): string {
+  if (s.slug) return s.slug;
+  if (s.title && !/^New session - /.test(s.title)) return s.title;
+  return s.id;
 }
 
 export interface OcMessageInfo {

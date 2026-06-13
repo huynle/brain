@@ -42,6 +42,10 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: "autoUpdate",
+      // We register the SW ourselves in main.tsx so we can poll for updates
+      // on long-open tabs (otherwise an open tab keeps serving the cached
+      // build until the user manually reloads).
+      injectRegister: false,
       // The OAuth flow does full-page redirects to server-rendered routes; the
       // SW must let these through to the network rather than serving the shell.
       workbox: {

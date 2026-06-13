@@ -297,13 +297,6 @@ export interface RunnerStatusResponse {
 
 // ─── Brain entries ───────────────────────────────────────────────
 
-export interface TriggerConfig {
-  type?: string; // "event" | "cron" | "webhook" | "session"
-  event?: string;
-  schedule?: string;
-  webhook?: string;
-}
-
 export interface BrainEntry {
   id: string;
   path: string;
@@ -329,6 +322,14 @@ export interface BrainEntry {
   schedule?: string;
   schedule_enabled?: boolean;
   run_once_at?: string;
+  // Present on a GET of a single automation entry (used to execute it) and on
+  // task entries (sessions discovered by the runner).
+  action?: AutomationAction;
+  executor?: string;
+  execution_mode?: string;
+  target_workdir?: string;
+  complete_on_idle?: boolean;
+  sessions?: Record<string, unknown>;
 }
 
 // GoalGeneratedBy marks an automation entry as a goal automation.
@@ -393,7 +394,10 @@ export interface AutomationAction {
 }
 
 export interface TriggerConfig {
+  type?: string; // "event" | "cron" | "webhook" | "session"
   event?: string;
+  schedule?: string;
+  webhook?: string;
   filter?: Record<string, unknown>;
   cooldown?: string;
   max_concurrent?: number;

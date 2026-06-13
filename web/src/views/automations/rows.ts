@@ -183,10 +183,12 @@ export function normalizeAutomationRows(
 }
 
 // childRunTasks returns the automation-generated task entries for a row,
-// newest first (for the expandable run-task list).
+// newest first (for the expandable run-task list). The `tasks` array is
+// already the type=task result, and the list endpoint omits the `type` field,
+// so we match on generated_by alone.
 export function childRunTasks(rowID: string, tasks: BrainEntry[]): BrainEntry[] {
   const generatedBy = "automation:" + rowID;
   return tasks
-    .filter((t) => t.type === "task" && t.generated_by === generatedBy)
+    .filter((t) => t.generated_by === generatedBy)
     .sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? "") || b.id.localeCompare(a.id));
 }

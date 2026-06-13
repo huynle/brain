@@ -23,10 +23,19 @@ export const VIEW_ORDER: View[] = [
 
 export type Panel = "tasks" | "detail" | "logs";
 
+// A request to open a specific instance/session in the Control tab — set by
+// other views (e.g. Automations "o") and consumed by ControlView on mount.
+export interface ControlTarget {
+  runnerId: string;
+  instanceId: string;
+  sessionId?: string;
+}
+
 interface UIState {
   view: View;
   activeProject: string; // project id or ALL_PROJECTS
   logFilter: string; // task id filter applied when opening the logs view
+  controlTarget: ControlTarget | null; // pending Control attach request
   settingsOpen: boolean;
   wrap: boolean; // text-wrap toggle (w)
   detailVisible: boolean; // T
@@ -39,6 +48,8 @@ interface UIState {
   setActiveProject: (p: string) => void;
   showLogsFor: (taskId: string) => void;
   setLogFilter: (f: string) => void;
+  openInControl: (target: ControlTarget) => void;
+  consumeControlTarget: () => ControlTarget | null;
   setSettingsOpen: (open: boolean) => void;
   toggleWrap: () => void;
   toggleDetail: () => void;
@@ -53,6 +64,7 @@ export const useUI = create<UIState>((set, get) => ({
   view: "tasks",
   activeProject: ALL_PROJECTS,
   logFilter: "",
+  controlTarget: null,
   settingsOpen: false,
   wrap: false,
   detailVisible: true,
@@ -81,6 +93,12 @@ export const useUI = create<UIState>((set, get) => ({
   setActiveProject: (p) => set({ activeProject: p }),
   showLogsFor: (taskId) => set({ view: "logs", logFilter: taskId }),
   setLogFilter: (f) => set({ logFilter: f }),
+  openInControl: (target) => set({ controlTarget: target, view: "control" }),
+  consumeControlTarget: () => {
+    const t = get().controlTarget;
+    if (t) set({ controlTarget: null });
+    return t;
+  },
   setSettingsOpen: (open) => set({ settingsOpen: open }),
   toggleWrap: () => set((s) => ({ wrap: !s.wrap })),
   toast: (message, kind = "info") => {

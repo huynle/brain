@@ -26,6 +26,7 @@ interface Selection {
 
 export function ControlView() {
   const toast = useUI((s) => s.toast);
+  const consumeControlTarget = useUI((s) => s.consumeControlTarget);
   const qc = useQueryClient();
   const [selected, setSelected] = useState<Selection | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -43,6 +44,15 @@ export function ControlView() {
 
   const runners = runnersQ.data ?? [];
   const instances = instancesQ.data ?? [];
+
+  // Honor an "open in Control" request from another view (e.g. Automations "o"):
+  // select the requested instance and session once it's known to the registry.
+  useEffect(() => {
+    const target = consumeControlTarget();
+    if (!target) return;
+    setSelected({ runnerId: target.runnerId, instanceId: target.instanceId });
+    if (target.sessionId) setSessionId(target.sessionId);
+  }, [consumeControlTarget]);
   const selectedInstance = useMemo(
     () => instances.find((i) => i.instance_id === selected?.instanceId) ?? null,
     [instances, selected],

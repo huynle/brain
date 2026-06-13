@@ -358,6 +358,43 @@ export async function listAutomationData(project?: string): Promise<{
   return { automations: [...byId.values()], tasks, runs };
 }
 
+// executeAutomation triggers a manual run of an automation entry: it reads the
+// entry's action and creates a generated task (generated_by automation:<id>),
+// mirroring the TUI's runAutomationRowCmd. The runner then picks it up and the
+// task appears under the automation via its generated_by linkage.
+export async function executeAutomation(
+  path: string,
+  fallbackProject: string,
+): Promise<CreateEntryResponse> {
+  const entry = await getEntry(path);
+  const action = entry.action;
+  if (!action) throw new Error("automation has no action");
+  const project = entry.project_id || fallbackProject;
+  if (!project || project === "all") throw new Error("automation has no project");
+  const prompt =
+    (action.type === "script" ? (action.command as string) : (action.direct_prompt as string)) || "";
+  if (!prompt) throw new Error("automation action has no prompt or command");
+
+  const now = Date.now();
+  const body: Record<string, unknown> = {
+    type: "task",
+    title: `Automation: ${entry.id}`,
+    content: prompt,
+    status: "pending",
+    project,
+    generated_by: `automation:${entry.id}`,
+    generated_key: `automation:manual:${entry.id}:${now}`,
+    direct_prompt: prompt,
+    agent: entry.agent || action.agent,
+    model: entry.model || action.model,
+    executor: action.type === "script" ? "script" : entry.executor || action.executor,
+    execution_mode: entry.execution_mode || (action.execution_mode as string),
+    complete_on_idle: (action.complete_on_idle as boolean) ?? true,
+    target_workdir: entry.target_workdir || (action.target_workdir as string),
+  };
+  return api<CreateEntryResponse>("/api/v1/entries", { method: "POST", body });
+}
+
 export const getEntry = (path: string) =>
   api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`);
 

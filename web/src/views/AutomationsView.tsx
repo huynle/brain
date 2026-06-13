@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUI } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import {
+  executeAutomation,
   getRunnerStatus,
   listAutomationData,
   listGoals,
+  listInstances,
   pauseAutomations,
   resumeAutomations,
   runGoal,
@@ -16,16 +18,13 @@ import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { GoalConfigModal } from "./automations/GoalConfigModal";
 import { NewGoalModal } from "./automations/NewGoalModal";
-import { DreamPane, type DreamHandle } from "./automations/DreamPane";
 import {
   type AutomationRow,
   childRunTasks,
   normalizeAutomationRows,
   triggerLabel,
 } from "./automations/rows";
-import type { BrainEntry, GoalSummary } from "../lib/types";
-
-type SubTab = "automations" | "dream";
+import type { BrainEntry, GoalSummary, OpencodeInstance } from "../lib/types";
 
 interface GoalProgress {
   completed: number;
@@ -33,30 +32,39 @@ interface GoalProgress {
   blocked: number;
 }
 
+// A flattened display entry: an automation row, or one of its run-task children
+// (shown when the automation is expanded).
+type DisplayEntry =
+  | { kind: "auto"; row: AutomationRow }
+  | { kind: "task"; task: BrainEntry; parent: AutomationRow };
+
 export function AutomationsView() {
-  // Automations are a global view (built-ins span all projects), so they are
-  // not scoped to the active project tab — mirrors the TUI.
+  // Automations are a global view (built-ins span all projects).
   const project: string | undefined = undefined;
   const toast = useUI((s) => s.toast);
+  const openInControl = useUI((s) => s.openInControl);
   const qc = useQueryClient();
 
-  const [subTab, setSubTab] = useState<SubTab>("automations");
   const [editing, setEditing] = useState<GoalSummary | null>(null);
   const [creating, setCreating] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [, setBusy] = useState(false);
-  const dreamRef = useRef<DreamHandle>(null);
 
   const dataQ = useQuery({
-    queryKey: ["automation-data", project ?? "all"],
+    queryKey: ["automation-data", "all"],
     queryFn: () => listAutomationData(project),
-    refetchInterval: 12_000,
+    refetchInterval: 8_000,
   });
   const goalsQ = useQuery({ queryKey: ["goals"], queryFn: listGoals });
   const statusQ = useQuery({
     queryKey: ["runner-status"],
     queryFn: getRunnerStatus,
     refetchInterval: 10_000,
+  });
+  const instancesQ = useQuery({
+    queryKey: ["instances"],
+    queryFn: listInstances,
+    refetchInterval: 5_000,
   });
 
   const automations = dataQ.data?.automations ?? [];
@@ -68,16 +76,12 @@ export function AutomationsView() {
     [automations, tasks, runs],
   );
 
-  // Correlate goal automation rows to their GoalSummary (by entry_id) so the
-  // goal-specific configure/reconcile actions stay available.
   const goalByEntryId = useMemo(() => {
     const m = new Map<string, GoalSummary>();
     for (const g of goalsQ.data ?? []) if (g.entry_id) m.set(g.entry_id, g);
     return m;
   }, [goalsQ.data]);
 
-  // Goal progress computed client-side from task feature_id (mirrors the TUI's
-  // goalProgressByFeature) — no extra per-goal API calls.
   const progressByFeature = useMemo(() => {
     const m = new Map<string, GoalProgress>();
     const goalFeatures = new Set(
@@ -94,10 +98,33 @@ export function AutomationsView() {
     return m;
   }, [tasks, goalsQ.data]);
 
-  const scope = `automations:${project ?? "all"}`;
+  // Flatten automations + their expanded children into one navigable list.
+  const display = useMemo<DisplayEntry[]>(() => {
+    const out: DisplayEntry[] = [];
+    for (const row of rows) {
+      out.push({ kind: "auto", row });
+      if (expandedId === row.id) {
+        for (const task of childRunTasks(row.id, tasks)) {
+          out.push({ kind: "task", task, parent: row });
+        }
+      }
+    }
+    return out;
+  }, [rows, expandedId, tasks]);
+
+  const scope = "automations";
   const cursor = useNav((s) =>
-    Math.min(s.cursor[scope] ?? 0, Math.max(0, rows.length - 1)),
+    Math.min(s.cursor[scope] ?? 0, Math.max(0, display.length - 1)),
   );
+
+  // Map a task id → its live OpenCode instance (for "open in Control").
+  const instanceByTaskId = useMemo(() => {
+    const m = new Map<string, OpencodeInstance>();
+    for (const inst of instancesQ.data ?? []) {
+      if (inst.task_id) m.set(inst.task_id, inst);
+    }
+    return m;
+  }, [instancesQ.data]);
 
   async function run(label: string, fn: () => Promise<unknown>) {
     setBusy(true);
@@ -114,6 +141,18 @@ export function AutomationsView() {
   function refresh() {
     void qc.invalidateQueries({ queryKey: ["automation-data"] });
     void qc.invalidateQueries({ queryKey: ["goals"] });
+    void qc.invalidateQueries({ queryKey: ["instances"] });
+  }
+
+  function execute(row: AutomationRow) {
+    if (row.source !== "automation") {
+      toast("Only automations can be executed", "info");
+      return;
+    }
+    void run("Automation triggered", () => executeAutomation(row.path || row.id, "all")).then(() => {
+      setExpandedId(row.id); // reveal the new task underneath
+      refresh();
+    });
   }
 
   function toggle(row: AutomationRow) {
@@ -129,7 +168,7 @@ export function AutomationsView() {
   function reconcile(row: AutomationRow) {
     const goal = goalByEntryId.get(row.id);
     if (!goal) {
-      toast("Only goal automations can be reconciled here", "info");
+      toast("Only goal automations can be reconciled", "info");
       return;
     }
     void run("Reconcile triggered", () => runGoal(goal.goal_id)).then(refresh);
@@ -140,57 +179,50 @@ export function AutomationsView() {
     if (goal) setEditing(goal);
   }
 
+  function toggleExpand(row: AutomationRow) {
+    setExpandedId((id) => (id === row.id ? null : row.id));
+  }
+
+  // Open a run-task's live OpenCode session in the Control tab.
+  function openTaskInControl(task: BrainEntry) {
+    const inst = instanceByTaskId.get(task.id);
+    if (!inst) {
+      toast("No live session — task isn't running on a connected runner", "info");
+      return;
+    }
+    openInControl({
+      runnerId: inst.runner_id,
+      instanceId: inst.instance_id,
+      sessionId: inst.session_ids?.[0],
+    });
+  }
+
   const automationsPaused = statusQ.data?.automationsPaused;
 
   useViewKeyboard(
     (e) => {
-      if (e.key === "C") {
-        setSubTab((s) => (s === "automations" ? "dream" : "automations"));
-        return true;
-      }
-      if (subTab === "dream") {
-        switch (e.key) {
-          case "/":
-            dreamRef.current?.focusSearch();
-            return true;
-          case "n":
-            dreamRef.current?.next();
-            return true;
-          case "N":
-            dreamRef.current?.prev();
-            return true;
-          case "g":
-            dreamRef.current?.top();
-            return true;
-          case "G":
-            dreamRef.current?.bottom();
-            return true;
-          case "r":
-            void qc.invalidateQueries({ queryKey: ["dream"] });
-            return true;
-          default:
-            return false;
-        }
-      }
-      // automations subtab
-      if (handleListNavKey(e, scope, rows.length)) return true;
-      const row = rows[cursor];
+      if (handleListNavKey(e, scope, display.length)) return true;
+      const cur = display[cursor];
       switch (e.key) {
+        case "o":
+        case "O":
+          if (cur?.kind === "task") openTaskInControl(cur.task);
+          return true;
         case "Enter":
-          if (row && childRunTasks(row.id, tasks).length > 0) {
-            setExpandedId((id) => (id === row.id ? null : row.id));
-          } else if (row) {
-            configure(row);
+          if (cur?.kind === "task") openTaskInControl(cur.task);
+          else if (cur?.kind === "auto") {
+            if (childRunTasks(cur.row.id, tasks).length > 0) toggleExpand(cur.row);
+            else configure(cur.row);
           }
           return true;
-        case "e":
-          if (row) configure(row);
-          return true;
         case "x":
-          if (row) reconcile(row);
+          if (cur?.kind === "auto") execute(cur.row);
+          return true;
+        case "e":
+          if (cur?.kind === "auto") configure(cur.row);
           return true;
         case " ":
-          if (row) toggle(row);
+          if (cur?.kind === "auto") toggle(cur.row);
           return true;
         case "p":
           void run(
@@ -208,7 +240,7 @@ export function AutomationsView() {
           return false;
       }
     },
-    [subTab, rows, cursor, scope, automationsPaused, tasks, goalByEntryId],
+    [display, cursor, tasks, automationsPaused, instanceByTaskId, goalByEntryId],
   );
 
   useEffect(() => {
@@ -220,37 +252,18 @@ export function AutomationsView() {
 
   return (
     <div>
-      <div className="subtabs">
-        <button
-          className={subTab === "automations" ? "on" : ""}
-          onClick={() => setSubTab("automations")}
-        >
-          Automations
-        </button>
-        <button
-          className={subTab === "dream" ? "on" : ""}
-          onClick={() => setSubTab("dream")}
-        >
-          ☾ Dream
-        </button>
-        {subTab === "automations" && automationsPaused && (
-          <Pill color="var(--red)">paused</Pill>
-        )}
+      <div className="row" style={{ gap: 8, padding: "2px 2px 6px", alignItems: "center" }}>
+        {automationsPaused && <Pill color="var(--red)">automations paused</Pill>}
         <div style={{ flex: 1 }} />
-        {subTab === "automations" && (
-          <button
-            className="btn sm primary"
-            onClick={() => setCreating(true)}
-            title="New goal (n)"
-          >
-            + New goal
-          </button>
-        )}
+        <span className="faint" style={{ fontSize: 11.5 }}>
+          x run · Spc toggle · Enter expand · o open session · n new goal
+        </span>
+        <button className="btn sm primary" onClick={() => setCreating(true)} title="New goal (n)">
+          + New goal
+        </button>
       </div>
 
-      {subTab === "dream" ? (
-        <DreamPane ref={dreamRef} project={project} />
-      ) : loading ? (
+      {loading ? (
         <Loading label="Loading automations…" />
       ) : dataQ.error ? (
         <ErrorState error={dataQ.error} onRetry={() => void dataQ.refetch()} />
@@ -262,47 +275,40 @@ export function AutomationsView() {
         />
       ) : (
         <div>
-          {rows.map((row, i) => {
-            const children = childRunTasks(row.id, tasks);
-            const goal = goalByEntryId.get(row.id);
-            const progress =
-              row.isGoal && goal?.feature_id
-                ? progressByFeature.get(goal.feature_id)
-                : undefined;
-            return (
-              <div key={row.id}>
-                <AutomationRowView
-                  row={row}
-                  cursored={i === cursor}
-                  last={i === rows.length - 1 && expandedId !== row.id}
-                  hasChildren={children.length > 0}
-                  expanded={expandedId === row.id}
-                  isGoalConfigurable={!!goal}
-                  progress={progress}
-                  onToggle={() => toggle(row)}
-                  onReconcile={() => reconcile(row)}
-                  onConfigure={() => configure(row)}
-                  onExpand={() =>
-                    setExpandedId((id) => (id === row.id ? null : row.id))
-                  }
-                />
-                {expandedId === row.id &&
-                  children.map((task, j) => (
-                    <RunTaskRow
-                      key={task.id}
-                      task={task}
-                      last={j === children.length - 1}
-                    />
-                  ))}
-              </div>
-            );
-          })}
+          {display.map((entry, i) =>
+            entry.kind === "auto" ? (
+              <AutomationRowView
+                key={"a:" + entry.row.id}
+                row={entry.row}
+                cursored={i === cursor}
+                hasChildren={childRunTasks(entry.row.id, tasks).length > 0}
+                expanded={expandedId === entry.row.id}
+                isGoalConfigurable={!!goalByEntryId.get(entry.row.id)}
+                progress={
+                  entry.row.isGoal
+                    ? progressByFeature.get(goalByEntryId.get(entry.row.id)?.feature_id ?? "")
+                    : undefined
+                }
+                onToggle={() => toggle(entry.row)}
+                onExecute={() => execute(entry.row)}
+                onReconcile={() => reconcile(entry.row)}
+                onConfigure={() => configure(entry.row)}
+                onExpand={() => toggleExpand(entry.row)}
+              />
+            ) : (
+              <RunTaskRow
+                key={"t:" + entry.task.id}
+                task={entry.task}
+                cursored={i === cursor}
+                live={instanceByTaskId.has(entry.task.id)}
+                onOpen={() => openTaskInControl(entry.task)}
+              />
+            ),
+          )}
         </div>
       )}
 
-      {editing && (
-        <GoalConfigModal goal={editing} onClose={() => setEditing(null)} />
-      )}
+      {editing && <GoalConfigModal goal={editing} onClose={() => setEditing(null)} />}
       {creating && (
         <NewGoalModal
           onClose={() => setCreating(false)}
@@ -324,24 +330,24 @@ function bar(done: number, total: number, width = 8): string {
 function AutomationRowView({
   row,
   cursored,
-  last,
   hasChildren,
   expanded,
   isGoalConfigurable,
   progress,
   onToggle,
+  onExecute,
   onReconcile,
   onConfigure,
   onExpand,
 }: {
   row: AutomationRow;
   cursored: boolean;
-  last: boolean;
   hasChildren: boolean;
   expanded: boolean;
   isGoalConfigurable: boolean;
   progress?: GoalProgress;
   onToggle: () => void;
+  onExecute: () => void;
   onReconcile: () => void;
   onConfigure: () => void;
   onExpand: () => void;
@@ -358,7 +364,7 @@ function AutomationRowView({
         style={{ cursor: hasChildren ? "pointer" : undefined, color: "var(--cyan, var(--teal))" }}
         onClick={(e) => { if (hasChildren) { e.stopPropagation(); onExpand(); } }}
       >
-        {hasChildren ? (expanded ? "▾ " : "▸ ") : last ? "└─ " : "├─ "}
+        {hasChildren ? (expanded ? "▾ " : "▸ ") : "  "}
       </span>
       <span
         className="glyph"
@@ -375,10 +381,7 @@ function AutomationRowView({
         {row.title}
         {row.isGoal && <span style={{ color: "var(--purple)" }}> [goal]</span>}
       </span>
-      <span
-        className="suffix"
-        style={{ color: row.enabled ? "var(--green)" : "var(--fg-faint)" }}
-      >
+      <span className="suffix" style={{ color: row.enabled ? "var(--green)" : "var(--fg-faint)" }}>
         [{row.enabled ? "enabled" : "disabled"}]
       </span>
       {progress && progress.total > 0 && (
@@ -399,11 +402,21 @@ function AutomationRowView({
           {row.runTaskID && <span className="faint"> #{row.runTaskID}</span>}
         </span>
       )}
+      {row.source === "automation" && (
+        <span
+          className="suffix"
+          style={{ cursor: "pointer", color: "var(--green)" }}
+          title="Execute now (x)"
+          onClick={(e) => { e.stopPropagation(); onExecute(); }}
+        >
+          ▶
+        </span>
+      )}
       {isGoalConfigurable && (
         <span
           className="suffix"
           style={{ cursor: "pointer", color: "var(--blue)" }}
-          title="Reconcile (x)"
+          title="Reconcile"
           onClick={(e) => { e.stopPropagation(); onReconcile(); }}
         >
           ⟳
@@ -413,7 +426,17 @@ function AutomationRowView({
   );
 }
 
-function RunTaskRow({ task, last }: { task: BrainEntry; last: boolean }) {
+function RunTaskRow({
+  task,
+  cursored,
+  live,
+  onOpen,
+}: {
+  task: BrainEntry;
+  cursored: boolean;
+  live: boolean;
+  onOpen: () => void;
+}) {
   const statusColor =
     task.status === "completed" || task.status === "validated"
       ? "var(--green)"
@@ -423,14 +446,27 @@ function RunTaskRow({ task, last }: { task: BrainEntry; last: boolean }) {
           ? "var(--yellow)"
           : "var(--fg-faint)";
   return (
-    <div className="tree-row" style={{ gap: 4 }}>
-      <span className="connector">{"   "}{last ? "└─ " : "├─ "}</span>
+    <div
+      className={`tree-row ${cursored ? "cursor" : ""}`}
+      data-cursor={cursored ? "1" : undefined}
+      style={{ gap: 4 }}
+      onClick={onOpen}
+      title={live ? "Open session in Control (o)" : "No live session (task not running)"}
+    >
+      <span className="connector">{"   ├─ "}</span>
       <span className="glyph" style={{ color: statusColor }} title={task.status}>
         ●
       </span>
       <span className="suffix faint mono">{task.id}</span>
       <span className="suffix faint">[{task.status || "unknown"}]</span>
       <span className="title truncate">{task.title}</span>
+      <span
+        className="suffix"
+        style={{ color: live ? "var(--cyan, var(--teal))" : "var(--fg-faint)" }}
+        title={live ? "Open session in Control (o)" : "No live session"}
+      >
+        {live ? "⧉ open" : "—"}
+      </span>
     </div>
   );
 }

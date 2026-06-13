@@ -1,7 +1,7 @@
 // Keyboard system providing TUI-parity shortcuts on desktop.
 //
 // One global listener (useGlobalKeyboard, mounted in Dashboard) handles the
-// cross-view keys — content-tab cycling (H/L), project tabs (h/l/[/]/1-9),
+// cross-view keys — content-tab cycling (h/l/[/]), project tabs (H/L/1-9),
 // help (?), settings (S), wrap (w), refresh (r/R) — and otherwise delegates to
 // the active view's handler, registered via useViewKeyboard. Views build their
 // handler with handleListNavKey() for j/k/g/G + a switch for their action keys.
@@ -122,23 +122,25 @@ export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
         case "w":
           ui.toggleWrap();
           break;
-        case "L":
+        // h/l (and [/]) cycle content tabs (Tasks / Brain / Automations / …).
+        case "l":
+        case "]":
           ui.cycleView(1);
           break;
-        case "H":
+        case "h":
+        case "[":
           ui.cycleView(-1);
           break;
         case "R":
           ui.setView("runners");
           break;
-        case "l":
-        case "]": {
+        // H/L (shift) switch between project tabs in multi-project mode.
+        case "L": {
           const i = tabs.indexOf(ui.activeProject);
           ui.setActiveProject(tabs[Math.min(i + 1, tabs.length - 1)]);
           break;
         }
-        case "h":
-        case "[": {
+        case "H": {
           const i = tabs.indexOf(ui.activeProject);
           ui.setActiveProject(tabs[Math.max(i - 1, 0)]);
           break;

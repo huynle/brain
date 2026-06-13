@@ -164,34 +164,34 @@ func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
 	m.dreamViewer.SetContent("dream content")
 	m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "brain-api"})
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
 	if m.activeContentTab != ContentTabBrain {
-		t.Fatalf("after first L, got %v", m.activeContentTab)
+		t.Fatalf("after first l, got %v", m.activeContentTab)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
 	if m.activeContentTab != ContentTabAutomation {
-		t.Fatalf("after second L, got %v", m.activeContentTab)
+		t.Fatalf("after second l, got %v", m.activeContentTab)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
 	if m.activeContentTab != ContentTabRunners {
-		t.Fatalf("after third L, got %v", m.activeContentTab)
+		t.Fatalf("after third l, got %v", m.activeContentTab)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
 	if m.activeContentTab != ContentTabLogs {
-		t.Fatalf("after fourth L, got %v", m.activeContentTab)
+		t.Fatalf("after fourth l, got %v", m.activeContentTab)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
 	if m.activeContentTab != ContentTabTasks {
-		t.Fatalf("after fifth L, got %v", m.activeContentTab)
+		t.Fatalf("after fifth l, got %v", m.activeContentTab)
 	}
 }
 
@@ -2652,13 +2652,14 @@ func TestUpdate_LKeyStillNavigatesProjectsInMultiProjectMode(t *testing.T) {
 		Projects: []string{"alpha", "beta"},
 	})
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// H/L (shift) navigate projects in multi-project mode.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	model := updated.(Model)
 	if model.logsVisible {
-		t.Fatal("expected l not to toggle logs in multi-project mode")
+		t.Fatal("expected L not to toggle logs in multi-project mode")
 	}
 	if model.activeProjectID != "alpha" {
-		t.Fatalf("expected l to navigate to alpha project, got %q", model.activeProjectID)
+		t.Fatalf("expected L to navigate to alpha project, got %q", model.activeProjectID)
 	}
 }
 
@@ -2671,10 +2672,11 @@ func TestUpdate_ProjectSwitchFetchesBrainEntriesWhenBrainTabActive(t *testing.T)
 	m.activeContentTab = ContentTabBrain
 	m.entryTree.SetEntries([]types.BrainEntry{{ID: "old", Path: "projects/old/idea/old.md", Title: "Old"}})
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// 'L' (shift) switches project even while the Brain content tab is active.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	model := updated.(Model)
 	if model.activeProjectID != "alpha" {
-		t.Fatalf("expected l to navigate to alpha project, got %q", model.activeProjectID)
+		t.Fatalf("expected L to navigate to alpha project, got %q", model.activeProjectID)
 	}
 	if cmd == nil {
 		t.Fatal("expected project switch on Brain tab to fetch entries for active project")

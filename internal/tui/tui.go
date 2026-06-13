@@ -1332,7 +1332,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Configurable keybindings (checked via key.Matches before hardcoded switch).
-	// In multi-project mode, plain 'l' still means next project tab; 'z' toggles logs.
+	// h/l navigate content tabs; H/L (shift) switch projects in multi-project
+	// mode. The guard keeps a custom logs binding from shadowing project nav.
 	if key.Matches(msg, m.keymap.ToggleLogs) && !(m.config.IsMultiProject() && key.Matches(msg, m.keymap.NextTab)) {
 		m.logsVisible = !m.logsVisible
 		if !m.logsVisible && m.activePanel == PanelLogs {
@@ -1547,13 +1548,14 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
-		// Multi-project tab navigation
+		// Multi-project tab navigation: H/L (shift) switch projects, leaving
+		// h/l for content-tab navigation (handled above via the keymap).
 		if m.config.IsMultiProject() {
 			switch string(msg.Runes) {
-			case "h", "[":
+			case "H":
 				m.projectTabs.PrevTab()
 				return m.selectProject(m.projectTabs.ActiveProject())
-			case "l", "]":
+			case "L":
 				m.projectTabs.NextTab()
 				return m.selectProject(m.projectTabs.ActiveProject())
 			case "1", "2", "3", "4", "5", "6", "7", "8", "9":

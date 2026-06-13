@@ -4,7 +4,7 @@ import { forwardRef } from "react";
 export const Panel = forwardRef<
   HTMLDivElement,
   {
-    title: string;
+    title?: string;
     meta?: string;
     focused?: boolean;
     onFocus?: () => void;
@@ -24,10 +24,14 @@ export const Panel = forwardRef<
       style={style}
       onMouseDown={onFocus}
     >
-      <span className="panel-title">
-        {title}
-        {meta && <span className="ttl-meta">{meta}</span>}
-      </span>
+      {/* Title is omitted for top-level views — the active content tab already
+          identifies them; rendering it here would duplicate the tab label. */}
+      {title && (
+        <span className="panel-title">
+          {title}
+          {meta && <span className="ttl-meta">{meta}</span>}
+        </span>
+      )}
       <div className="panel-body" ref={bodyRef}>
         {children}
       </div>

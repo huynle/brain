@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUI, ALL_PROJECTS } from "../store/ui";
+import { useUI } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import {
@@ -34,8 +34,9 @@ interface GoalProgress {
 }
 
 export function AutomationsView() {
-  const activeProject = useUI((s) => s.activeProject);
-  const project = activeProject === ALL_PROJECTS ? undefined : activeProject;
+  // Automations are a global view (built-ins span all projects), so they are
+  // not scoped to the active project tab — mirrors the TUI.
+  const project: string | undefined = undefined;
   const toast = useUI((s) => s.toast);
   const qc = useQueryClient();
 

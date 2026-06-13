@@ -23,7 +23,10 @@ export function ContentTabs({ projects }: { projects: string[] }) {
   const setActiveProject = useUI((s) => s.setActiveProject);
   const liveProjects = useLive((s) => s.projects);
 
-  const showProjectTabs = view === "tasks" || view === "brain" || view === "automations";
+  // Project tabs apply to project-scoped views only. Automations are global
+  // (built-ins span all projects), so they get no project tab row — matching
+  // the way the TUI treats the automation list as a global view.
+  const showProjectTabs = view === "tasks" || view === "brain";
 
   return (
     <>

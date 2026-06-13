@@ -97,29 +97,31 @@ export function Dashboard() {
       <StatusBar />
       <ContentTabs projects={projects ?? []} />
       <div className="tui-main">
+        {/* Top-level views render without a panel title — the active content
+            tab already names them, so a titled border just duplicated it. */}
         {view === "tasks" && <TasksView />}
         {view === "brain" && (
-          <Panel title="Brain" focused style={{ flex: 1 }}>
+          <Panel focused style={{ flex: 1 }}>
             <BrainView />
           </Panel>
         )}
         {view === "automations" && (
-          <Panel title="Automations" focused style={{ flex: 1 }}>
+          <Panel focused style={{ flex: 1 }}>
             <AutomationsView />
           </Panel>
         )}
         {view === "runners" && (
-          <Panel title="Runners" focused style={{ flex: 1 }}>
+          <Panel focused style={{ flex: 1 }}>
             <RunnersView />
           </Panel>
         )}
         {view === "control" && (
-          <Panel title="Control" focused style={{ flex: 1 }}>
+          <Panel focused style={{ flex: 1 }}>
             <ControlView />
           </Panel>
         )}
         {view === "logs" && (
-          <Panel title="Logs" focused style={{ flex: 1 }}>
+          <Panel focused style={{ flex: 1 }}>
             <LogsView />
           </Panel>
         )}

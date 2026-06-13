@@ -889,6 +889,12 @@ kbd {
   min-width: 0;
   background: var(--bg);
 }
+/* The title overlays the top border and overhangs ~0.72em above the panel
+   edge; reserve that space so it never collides with the row above (tabs,
+   project tabs, or a stacked panel). Applies to every titled pane at once. */
+.panel.has-title {
+  margin-top: 0.85em;
+}
 .panel.focused {
   border-color: var(--cyan);
 }

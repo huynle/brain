@@ -20,7 +20,7 @@ export const Panel = forwardRef<
   return (
     <div
       ref={ref}
-      className={`panel ${focused ? "focused" : ""} ${className ?? ""}`}
+      className={`panel ${title ? "has-title" : ""} ${focused ? "focused" : ""} ${className ?? ""}`}
       style={style}
       onMouseDown={onFocus}
     >

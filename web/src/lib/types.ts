@@ -286,6 +286,13 @@ export interface RunnerStatusResponse {
 
 // ─── Brain entries ───────────────────────────────────────────────
 
+export interface TriggerConfig {
+  type?: string; // "event" | "cron" | "webhook" | "session"
+  event?: string;
+  schedule?: string;
+  webhook?: string;
+}
+
 export interface BrainEntry {
   id: string;
   path: string;
@@ -304,7 +311,17 @@ export interface BrainEntry {
   modified?: string;
   agent?: string;
   model?: string;
+  // Automation / scheduling fields (present on type=automation and type=task).
+  generated_by?: string;
+  automation_run_id?: string;
+  trigger?: TriggerConfig;
+  schedule?: string;
+  schedule_enabled?: boolean;
+  run_once_at?: string;
 }
+
+// GoalGeneratedBy marks an automation entry as a goal automation.
+export const GOAL_GENERATED_BY = "brain-goal";
 
 export interface ListEntriesResponse {
   entries: BrainEntry[];

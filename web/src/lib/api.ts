@@ -327,7 +327,36 @@ export const listEntries = (query?: {
   project?: string;
   type?: string;
   limit?: number;
+  global?: string;
 }) => api<ListEntriesResponse>("/api/v1/entries", { query });
+
+// ─── Automations (mirrors the TUI Automations tab) ───────────────
+// Fetches all automation entries (project-scoped + global/built-in), the
+// scheduled/generated task entries, and automation_run records so the PWA can
+// render the same unified list the TUI does.
+export async function listAutomationData(project?: string): Promise<{
+  automations: BrainEntry[];
+  tasks: BrainEntry[];
+  runs: BrainEntry[];
+}> {
+  const [scoped, global, tasks, runs] = await Promise.all([
+    listEntries({ type: "automation", ...(project ? { project } : {}) }).then(
+      (r) => r.entries || [],
+    ),
+    // Built-in automations are global; always include them.
+    listEntries({ type: "automation", global: "true" }).then((r) => r.entries || []),
+    listEntries({ type: "task", ...(project ? { project } : {}) }).then(
+      (r) => r.entries || [],
+    ),
+    listEntries({ type: "automation_run", ...(project ? { project } : {}) })
+      .then((r) => r.entries || [])
+      .catch(() => [] as BrainEntry[]),
+  ]);
+  // Merge scoped + global automation entries, de-duped by id.
+  const byId = new Map<string, BrainEntry>();
+  for (const e of [...global, ...scoped]) byId.set(e.id, e);
+  return { automations: [...byId.values()], tasks, runs };
+}
 
 export const getEntry = (path: string) =>
   api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`);

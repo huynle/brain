@@ -5,21 +5,33 @@ import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import {
   getRunnerStatus,
-  goalProgress,
+  listAutomationData,
   listGoals,
   pauseAutomations,
   resumeAutomations,
   runGoal,
-  updateGoal,
+  updateEntry,
 } from "../lib/api";
 import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { GoalConfigModal } from "./automations/GoalConfigModal";
 import { NewGoalModal } from "./automations/NewGoalModal";
 import { DreamPane, type DreamHandle } from "./automations/DreamPane";
-import type { GoalSummary } from "../lib/types";
+import {
+  type AutomationRow,
+  childRunTasks,
+  normalizeAutomationRows,
+  triggerLabel,
+} from "./automations/rows";
+import type { BrainEntry, GoalSummary } from "../lib/types";
 
 type SubTab = "automations" | "dream";
+
+interface GoalProgress {
+  completed: number;
+  total: number;
+  blocked: number;
+}
 
 export function AutomationsView() {
   const activeProject = useUI((s) => s.activeProject);
@@ -30,9 +42,15 @@ export function AutomationsView() {
   const [subTab, setSubTab] = useState<SubTab>("automations");
   const [editing, setEditing] = useState<GoalSummary | null>(null);
   const [creating, setCreating] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   const [, setBusy] = useState(false);
   const dreamRef = useRef<DreamHandle>(null);
 
+  const dataQ = useQuery({
+    queryKey: ["automation-data", project ?? "all"],
+    queryFn: () => listAutomationData(project),
+    refetchInterval: 12_000,
+  });
   const goalsQ = useQuery({ queryKey: ["goals"], queryFn: listGoals });
   const statusQ = useQuery({
     queryKey: ["runner-status"],
@@ -40,17 +58,44 @@ export function AutomationsView() {
     refetchInterval: 10_000,
   });
 
-  const goals = useMemo(
-    () =>
-      (goalsQ.data ?? []).filter(
-        (g) => activeProject === ALL_PROJECTS || !g.project || g.project === activeProject,
-      ),
-    [goalsQ.data, activeProject],
+  const automations = dataQ.data?.automations ?? [];
+  const tasks = dataQ.data?.tasks ?? [];
+  const runs = dataQ.data?.runs ?? [];
+
+  const rows = useMemo(
+    () => normalizeAutomationRows(automations, tasks, runs),
+    [automations, tasks, runs],
   );
+
+  // Correlate goal automation rows to their GoalSummary (by entry_id) so the
+  // goal-specific configure/reconcile actions stay available.
+  const goalByEntryId = useMemo(() => {
+    const m = new Map<string, GoalSummary>();
+    for (const g of goalsQ.data ?? []) if (g.entry_id) m.set(g.entry_id, g);
+    return m;
+  }, [goalsQ.data]);
+
+  // Goal progress computed client-side from task feature_id (mirrors the TUI's
+  // goalProgressByFeature) — no extra per-goal API calls.
+  const progressByFeature = useMemo(() => {
+    const m = new Map<string, GoalProgress>();
+    const goalFeatures = new Set(
+      (goalsQ.data ?? []).map((g) => g.feature_id).filter(Boolean) as string[],
+    );
+    for (const t of tasks) {
+      if (!t.feature_id || !goalFeatures.has(t.feature_id)) continue;
+      const p = m.get(t.feature_id) ?? { completed: 0, total: 0, blocked: 0 };
+      p.total++;
+      if (t.status === "completed" || t.status === "validated") p.completed++;
+      else if (t.status === "blocked") p.blocked++;
+      m.set(t.feature_id, p);
+    }
+    return m;
+  }, [tasks, goalsQ.data]);
 
   const scope = `automations:${project ?? "all"}`;
   const cursor = useNav((s) =>
-    Math.min(s.cursor[scope] ?? 0, Math.max(0, goals.length - 1)),
+    Math.min(s.cursor[scope] ?? 0, Math.max(0, rows.length - 1)),
   );
 
   async function run(label: string, fn: () => Promise<unknown>) {
@@ -65,18 +110,33 @@ export function AutomationsView() {
     }
   }
 
-  function reconcile(g: GoalSummary) {
-    void run("Reconcile triggered", () => runGoal(g.goal_id)).then(() => {
-      void qc.invalidateQueries({ queryKey: ["goal-progress", g.goal_id] });
-      void qc.invalidateQueries({ queryKey: ["goal-audit", g.goal_id] });
-    });
+  function refresh() {
+    void qc.invalidateQueries({ queryKey: ["automation-data"] });
+    void qc.invalidateQueries({ queryKey: ["goals"] });
   }
 
-  function toggleEnable(g: GoalSummary) {
-    const next = g.status === "active" ? "archived" : "active";
-    void run(next === "active" ? "Enabled" : "Disabled", () =>
-      updateGoal(g.goal_id, { status: next }),
-    ).then(() => void qc.invalidateQueries({ queryKey: ["goals"] }));
+  function toggle(row: AutomationRow) {
+    const patch =
+      row.source === "automation"
+        ? { status: row.enabled ? "archived" : "active" }
+        : { schedule_enabled: !row.enabled };
+    void run(row.enabled ? "Disabled" : "Enabled", () =>
+      updateEntry(row.path || row.id, patch),
+    ).then(refresh);
+  }
+
+  function reconcile(row: AutomationRow) {
+    const goal = goalByEntryId.get(row.id);
+    if (!goal) {
+      toast("Only goal automations can be reconciled here", "info");
+      return;
+    }
+    void run("Reconcile triggered", () => runGoal(goal.goal_id)).then(refresh);
+  }
+
+  function configure(row: AutomationRow) {
+    const goal = goalByEntryId.get(row.id);
+    if (goal) setEditing(goal);
   }
 
   const automationsPaused = statusQ.data?.automationsPaused;
@@ -112,18 +172,24 @@ export function AutomationsView() {
         }
       }
       // automations subtab
-      if (handleListNavKey(e, scope, goals.length)) return true;
-      const g = goals[cursor];
+      if (handleListNavKey(e, scope, rows.length)) return true;
+      const row = rows[cursor];
       switch (e.key) {
         case "Enter":
+          if (row && childRunTasks(row.id, tasks).length > 0) {
+            setExpandedId((id) => (id === row.id ? null : row.id));
+          } else if (row) {
+            configure(row);
+          }
+          return true;
         case "e":
-          if (g) setEditing(g);
+          if (row) configure(row);
           return true;
         case "x":
-          if (g) reconcile(g);
+          if (row) reconcile(row);
           return true;
         case " ":
-          if (g) toggleEnable(g);
+          if (row) toggle(row);
           return true;
         case "p":
           void run(
@@ -132,7 +198,7 @@ export function AutomationsView() {
           ).then(() => void qc.invalidateQueries({ queryKey: ["runner-status"] }));
           return true;
         case "r":
-          void goalsQ.refetch();
+          refresh();
           return true;
         case "n":
           setCreating(true);
@@ -141,13 +207,15 @@ export function AutomationsView() {
           return false;
       }
     },
-    [subTab, goals, cursor, scope, automationsPaused],
+    [subTab, rows, cursor, scope, automationsPaused, tasks, goalByEntryId],
   );
 
   useEffect(() => {
     const el = document.querySelector<HTMLElement>('[data-cursor="1"]');
     el?.scrollIntoView({ block: "nearest" });
   }, [cursor]);
+
+  const loading = dataQ.isLoading && !dataQ.data;
 
   return (
     <div>
@@ -181,29 +249,53 @@ export function AutomationsView() {
 
       {subTab === "dream" ? (
         <DreamPane ref={dreamRef} project={project} />
-      ) : goalsQ.isLoading ? (
+      ) : loading ? (
         <Loading label="Loading automations…" />
-      ) : goalsQ.error ? (
-        <ErrorState error={goalsQ.error} onRetry={() => void goalsQ.refetch()} />
-      ) : !goals.length ? (
+      ) : dataQ.error ? (
+        <ErrorState error={dataQ.error} onRetry={() => void dataQ.refetch()} />
+      ) : !rows.length ? (
         <EmptyState
           glyph="⟳"
-          title="No goals"
-          hint="Goal automations reconcile feature progress toward an objective. Press n to create one."
+          title="No automations"
+          hint="Built-in automations, scheduled tasks, and goals appear here. Press n to create a goal."
         />
       ) : (
         <div>
-          {goals.map((g, i) => (
-            <GoalRow
-              key={g.goal_id}
-              goal={g}
-              cursored={i === cursor}
-              last={i === goals.length - 1}
-              onConfigure={() => setEditing(g)}
-              onReconcile={() => reconcile(g)}
-              onToggle={() => toggleEnable(g)}
-            />
-          ))}
+          {rows.map((row, i) => {
+            const children = childRunTasks(row.id, tasks);
+            const goal = goalByEntryId.get(row.id);
+            const progress =
+              row.isGoal && goal?.feature_id
+                ? progressByFeature.get(goal.feature_id)
+                : undefined;
+            return (
+              <div key={row.id}>
+                <AutomationRowView
+                  row={row}
+                  cursored={i === cursor}
+                  last={i === rows.length - 1 && expandedId !== row.id}
+                  hasChildren={children.length > 0}
+                  expanded={expandedId === row.id}
+                  isGoalConfigurable={!!goal}
+                  progress={progress}
+                  onToggle={() => toggle(row)}
+                  onReconcile={() => reconcile(row)}
+                  onConfigure={() => configure(row)}
+                  onExpand={() =>
+                    setExpandedId((id) => (id === row.id ? null : row.id))
+                  }
+                />
+                {expandedId === row.id &&
+                  children.map((task, j) => (
+                    <RunTaskRow
+                      key={task.id}
+                      task={task}
+                      last={j === children.length - 1}
+                    />
+                  ))}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -221,72 +313,123 @@ export function AutomationsView() {
 }
 
 function bar(done: number, total: number, width = 8): string {
-  if (total <= 0) return "";
-  const filled = Math.round((done / total) * width);
+  if (total <= 0) return "░".repeat(width);
+  let filled = Math.round((done / total) * width);
+  if (filled === 0 && done > 0) filled = 1;
+  if (filled > width) filled = width;
   return "█".repeat(filled) + "░".repeat(Math.max(0, width - filled));
 }
 
-function GoalRow({
-  goal,
+function AutomationRowView({
+  row,
   cursored,
   last,
-  onConfigure,
-  onReconcile,
+  hasChildren,
+  expanded,
+  isGoalConfigurable,
+  progress,
   onToggle,
+  onReconcile,
+  onConfigure,
+  onExpand,
 }: {
-  goal: GoalSummary;
+  row: AutomationRow;
   cursored: boolean;
   last: boolean;
-  onConfigure: () => void;
-  onReconcile: () => void;
+  hasChildren: boolean;
+  expanded: boolean;
+  isGoalConfigurable: boolean;
+  progress?: GoalProgress;
   onToggle: () => void;
+  onReconcile: () => void;
+  onConfigure: () => void;
+  onExpand: () => void;
 }) {
-  const progQ = useQuery({
-    queryKey: ["goal-progress", goal.goal_id],
-    queryFn: () => goalProgress(goal.goal_id),
-    refetchInterval: 15_000,
-  });
-  const p = progQ.data;
-  const active = goal.status === "active";
   return (
     <div
       className={`tree-row ${cursored ? "cursor" : ""}`}
       data-cursor={cursored ? "1" : undefined}
       style={{ gap: 4 }}
-      onClick={onConfigure}
+      onClick={() => (isGoalConfigurable ? onConfigure() : hasChildren ? onExpand() : undefined)}
     >
-      <span className="connector">{last ? "└─ " : "├─ "}</span>
+      <span
+        className="connector"
+        style={{ cursor: hasChildren ? "pointer" : undefined, color: "var(--cyan, var(--teal))" }}
+        onClick={(e) => { if (hasChildren) { e.stopPropagation(); onExpand(); } }}
+      >
+        {hasChildren ? (expanded ? "▾ " : "▸ ") : last ? "└─ " : "├─ "}
+      </span>
       <span
         className="glyph"
-        style={{ color: cursored ? undefined : active ? "var(--green)" : "var(--fg-faint)" }}
-        title={active ? "active — Space to disable" : "archived — Space to enable"}
+        style={{ color: cursored ? undefined : row.enabled ? "var(--green)" : "var(--fg-faint)" }}
+        title={row.enabled ? "enabled — click to disable" : "disabled — click to enable"}
         onClick={(e) => { e.stopPropagation(); onToggle(); }}
       >
-        {active ? "◉" : "○"}
+        {row.enabled ? "◉" : "○"}
       </span>
-      <span className="title truncate">
-        {goal.title} <span style={{ color: "var(--purple)" }}>[goal]</span>
+      <span className="suffix faint" style={{ minWidth: 64 }}>
+        {row.scope === "built-in" ? "built-in" : row.source}
       </span>
-      {p && p.total > 0 && (
-        <span className="suffix" title={`${p.completed}/${p.total} complete`}>
-          <span style={{ color: "var(--green)" }}>{bar(p.completed, p.total)}</span>{" "}
+      <span className={`title truncate ${row.enabled ? "" : "faint"}`}>
+        {row.title}
+        {row.isGoal && <span style={{ color: "var(--purple)" }}> [goal]</span>}
+      </span>
+      <span
+        className="suffix"
+        style={{ color: row.enabled ? "var(--green)" : "var(--fg-faint)" }}
+      >
+        [{row.enabled ? "enabled" : "disabled"}]
+      </span>
+      {progress && progress.total > 0 && (
+        <span className="suffix" title={`${progress.completed}/${progress.total} complete`}>
+          <span style={{ color: progress.completed === progress.total ? "var(--green)" : "var(--yellow)" }}>
+            {bar(progress.completed, progress.total)}
+          </span>{" "}
           <span className="faint">
-            {p.completed}/{p.total}
-            {p.blocked > 0 && <span style={{ color: "var(--red)" }}> ✗{p.blocked}</span>}
+            {progress.completed}/{progress.total}
+            {progress.blocked > 0 && <span style={{ color: "var(--red)" }}> ✗{progress.blocked}</span>}
           </span>
         </span>
       )}
-      {goal.config?.trigger_source && (
-        <span className="suffix faint">on:{goal.config.trigger_source}</span>
+      <span className="suffix faint truncate">{triggerLabel(row)}</span>
+      {row.runSummary && (
+        <span className="suffix" style={{ color: "var(--yellow)" }}>
+          run: {row.runSummary}
+          {row.runTaskID && <span className="faint"> #{row.runTaskID}</span>}
+        </span>
       )}
-      <span
-        className="suffix"
-        style={{ cursor: "pointer", color: "var(--blue)" }}
-        title="Reconcile (x)"
-        onClick={(e) => { e.stopPropagation(); onReconcile(); }}
-      >
-        ⟳
+      {isGoalConfigurable && (
+        <span
+          className="suffix"
+          style={{ cursor: "pointer", color: "var(--blue)" }}
+          title="Reconcile (x)"
+          onClick={(e) => { e.stopPropagation(); onReconcile(); }}
+        >
+          ⟳
+        </span>
+      )}
+    </div>
+  );
+}
+
+function RunTaskRow({ task, last }: { task: BrainEntry; last: boolean }) {
+  const statusColor =
+    task.status === "completed" || task.status === "validated"
+      ? "var(--green)"
+      : task.status === "blocked"
+        ? "var(--red)"
+        : task.status === "in_progress" || task.status === "active"
+          ? "var(--yellow)"
+          : "var(--fg-faint)";
+  return (
+    <div className="tree-row" style={{ gap: 4 }}>
+      <span className="connector">{"   "}{last ? "└─ " : "├─ "}</span>
+      <span className="glyph" style={{ color: statusColor }} title={task.status}>
+        ●
       </span>
+      <span className="suffix faint mono">{task.id}</span>
+      <span className="suffix faint">[{task.status || "unknown"}]</span>
+      <span className="title truncate">{task.title}</span>
     </div>
   );
 }

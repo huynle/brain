@@ -1410,6 +1410,28 @@ func (c *APIClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerI
 	return nil
 }
 
+// GetTaskLogs fetches the persisted log lines for a task (historical + current),
+// newest-bounded by limit. Used by the TUI logs pane to show stored output for
+// completed tasks, not just the live SSE stream.
+func (c *APIClient) GetTaskLogs(ctx context.Context, projectID, taskID string, limit int) (*types.LogQueryResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/%s/%s/logs?limit=%d", projectID, taskID, limit)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get task logs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.LogQueryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode task logs response: %w", err)
+	}
+	return &result, nil
+}
+
 // =============================================================================
 // Configuration
 // =============================================================================

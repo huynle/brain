@@ -311,6 +311,19 @@ func (al *AutomationList) SelectedRunTaskID() string {
 	return al.selectedRunTaskID
 }
 
+// RunTaskByID returns the generated run-task entry with the given id, or nil.
+func (al *AutomationList) RunTaskByID(id string) *types.BrainEntry {
+	if id == "" {
+		return nil
+	}
+	for i := range al.generatedTasks {
+		if al.generatedTasks[i].ID == id {
+			return &al.generatedTasks[i]
+		}
+	}
+	return nil
+}
+
 // SelectedRow returns the selected normalized row, or nil when the list is empty.
 func (al *AutomationList) SelectedRow() *AutomationListRow {
 	if al.SelectedID == "" || len(al.rows) == 0 {

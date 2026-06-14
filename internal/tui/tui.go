@@ -88,6 +88,12 @@ type Model struct {
 	// Global server-request log (Logs tab); refreshed while that tab is active.
 	serverRequests []types.ServerRequestRecord
 
+	// Persisted logs for the task the logs pane is scoped to (Brain/Automations
+	// and filtered Tasks). Fetched from the API so completed tasks show their
+	// stored output, not just the live SSE buffer.
+	scopedTaskLogs  []types.LogLine
+	scopedTaskLogID string
+
 	// Filter state (3-mode state machine: Off → Typing → Locked)
 	filterState FilterMode // Current filter mode
 	filterQuery string     // Current filter text
@@ -616,11 +622,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.activeContentTab == ContentTabLogs {
 			cmds = append(cmds, fetchServerRequestsCmd(m.apiRunnerConfig()))
 		}
+		// Refresh the scoped task's persisted logs while the logs pane is open.
+		if c := m.maybeFetchScopedLogs(); c != nil {
+			cmds = append(cmds, c)
+		}
 		return m, tea.Batch(cmds...)
 
 	case serverRequestsMsg:
 		if msg.err == nil {
 			m.serverRequests = msg.requests
+		}
+		return m, nil
+
+	case taskLogsLoadedMsg:
+		if msg.err == nil {
+			m.scopedTaskLogID = msg.taskID
+			m.scopedTaskLogs = msg.lines
 		}
 		return m, nil
 
@@ -1353,6 +1370,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelTasks
 		}
 		m.syncPanelSizes()
+		if m.logsVisible {
+			// Load the scoped task's persisted logs immediately.
+			return m, m.maybeFetchScopedLogs()
+		}
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.ToggleDetail) {
@@ -4548,6 +4569,64 @@ func (m Model) automationLogTaskID() string {
 	return ""
 }
 
+// scopedLogTarget returns the (projectID, taskID) whose persisted logs the logs
+// pane should display for the active tab, or ("","") when the pane isn't scoped
+// to a specific task.
+func (m Model) scopedLogTarget() (string, string) {
+	switch m.activeContentTab {
+	case ContentTabBrain:
+		if e := m.entryTree.SelectedEntry(); e != nil && e.Type == "task" {
+			return e.ProjectID, e.ID
+		}
+	case ContentTabAutomation:
+		if taskID := m.automationLogTaskID(); taskID != "" {
+			if t := m.automationList.RunTaskByID(taskID); t != nil {
+				return t.ProjectID, t.ID
+			}
+			return m.activeAutomationProject(), taskID
+		}
+	case ContentTabTasks:
+		if m.filterLogsByTask {
+			if t := m.taskTree.SelectedTask(); t != nil {
+				return t.ProjectID, t.ID
+			}
+		}
+	}
+	return "", ""
+}
+
+// taskLogsLoadedMsg carries persisted logs for a scoped task.
+type taskLogsLoadedMsg struct {
+	taskID string
+	lines  []types.LogLine
+	err    error
+}
+
+// fetchTaskLogsCmd fetches a task's persisted logs for the scoped logs pane.
+func fetchTaskLogsCmd(cfg runner.RunnerConfig, projectID, taskID string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		resp, err := apiClient.GetTaskLogs(context.Background(), projectID, taskID, 500)
+		if err != nil {
+			return taskLogsLoadedMsg{taskID: taskID, err: err}
+		}
+		return taskLogsLoadedMsg{taskID: taskID, lines: resp.Lines}
+	}
+}
+
+// maybeFetchScopedLogs returns a command to refresh the scoped task's persisted
+// logs when the logs pane is visible and scoped to a task.
+func (m Model) maybeFetchScopedLogs() tea.Cmd {
+	if !m.logsVisible {
+		return nil
+	}
+	projectID, taskID := m.scopedLogTarget()
+	if taskID == "" || projectID == "" {
+		return nil
+	}
+	return fetchTaskLogsCmd(m.apiRunnerConfig(), projectID, taskID)
+}
+
 // renderServerRequestsPanel renders the global server-request log (Logs tab):
 // every HTTP request the Brain server handled, with actor, method, status, and
 // duration. Newest at the bottom.
@@ -4655,55 +4734,71 @@ func (m Model) renderLogPanel(width, height int) string {
 		innerHeight = 1
 	}
 
-	// Temporarily set size for rendering
+	render := func(content string) string {
+		return style.
+			Width(width - 2).
+			Height(innerHeight).
+			MaxHeight(height).
+			Render(truncateToHeight(content, innerHeight))
+	}
+
+	// When the pane is scoped to a specific task (Brain/Automations, or a
+	// filtered Tasks view), render that task's PERSISTED logs (historical +
+	// current) fetched from the API — so completed tasks show their stored
+	// output, matching the PWA. Otherwise fall back to the live SSE stream.
+	_, scopedTaskID := m.scopedLogTarget()
+	if scopedTaskID != "" {
+		if m.scopedTaskLogID != scopedTaskID {
+			return render(DimStyle.Render("Loading logs…"))
+		}
+		if len(m.scopedTaskLogs) == 0 {
+			return render(DimStyle.Render("No logs for this task."))
+		}
+		return render(renderTaskLogLines(m.scopedTaskLogs, innerWidth, innerHeight))
+	}
+	// Scoped tab but nothing selected (e.g. a non-task Brain entry).
+	if m.activeContentTab == ContentTabBrain || m.activeContentTab == ContentTabAutomation {
+		return render(DimStyle.Render("No logs — highlight a task to see its output."))
+	}
+
+	// Live SSE stream (Tasks tab, all output).
 	lv := m.logViewer
 	lv.SetSize(innerWidth, innerHeight)
+	lv.IsFiltering = false
+	lv.FilterTaskID = ""
+	return render(lv.View())
+}
 
-	// Wire log filtering. In the Tasks tab the logs pane shows all output (or
-	// the selected task's when filterLogsByTask is on). In the Brain and
-	// Automations tabs the pane is always scoped to the highlighted entry's
-	// task; an empty selection uses a no-match sentinel so it shows nothing
-	// rather than the firehose.
-	filterID := ""
-	scoped := false
-	switch m.activeContentTab {
-	case ContentTabBrain:
-		scoped = true
-		if e := m.entryTree.SelectedEntry(); e != nil && e.Type == "task" {
-			filterID = e.ID
+// renderTaskLogLines formats persisted task log lines, newest that fit, with a
+// dim timestamp and level prefix; only the content is truncated (ANSI-safe).
+func renderTaskLogLines(lines []types.LogLine, width, height int) string {
+	start := 0
+	if len(lines) > height {
+		start = len(lines) - height
+	}
+	contentWidth := width - 15
+	if contentWidth < 5 {
+		contentWidth = 5
+	}
+	var b strings.Builder
+	for i := start; i < len(lines); i++ {
+		l := lines[i]
+		ts := l.Timestamp
+		if t, err := time.Parse(time.RFC3339, l.Timestamp); err == nil {
+			ts = t.Format("15:04:05")
+		} else if len(ts) > 8 {
+			ts = ts[:8]
 		}
-	case ContentTabAutomation:
-		scoped = true
-		filterID = m.automationLogTaskID()
-	default:
-		if m.filterLogsByTask {
-			scoped = true
-			if t := m.taskTree.SelectedTask(); t != nil {
-				filterID = t.ID
-			}
+		level := strings.ToUpper(l.Level)
+		if len(level) > 5 {
+			level = level[:5]
+		}
+		b.WriteString(fmt.Sprintf("%s %-5s %s", DimStyle.Render(ts), level, truncateMsg(l.Content, contentWidth)))
+		if i < len(lines)-1 {
+			b.WriteString("\n")
 		}
 	}
-	if scoped {
-		lv.IsFiltering = true
-		if filterID == "" {
-			filterID = "\x00no-task"
-		}
-		lv.FilterTaskID = filterID
-	} else {
-		lv.IsFiltering = false
-		lv.FilterTaskID = ""
-	}
-
-	content := lv.View()
-
-	// Truncate content to fit within allocated height
-	content = truncateToHeight(content, innerHeight)
-
-	return style.
-		Width(width - 2).
-		Height(innerHeight).
-		MaxHeight(height).
-		Render(content)
+	return b.String()
 }
 
 // =============================================================================

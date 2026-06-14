@@ -32,6 +32,19 @@ func TestFormatServerRequestLine_FallsBackToAnon(t *testing.T) {
 	}
 }
 
+func TestRenderTaskLogLines(t *testing.T) {
+	lines := []types.LogLine{
+		{Timestamp: "2026-06-13T12:00:00Z", Level: "info", Content: "starting build"},
+		{Timestamp: "2026-06-13T12:00:01Z", Level: "error", Content: "compile failed"},
+	}
+	out := renderTaskLogLines(lines, 120, 20)
+	for _, want := range []string{"starting build", "compile failed", "INFO", "ERROR"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("task log output missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderServerRequestsPanel(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "all"})
 	m.serverRequests = []types.ServerRequestRecord{

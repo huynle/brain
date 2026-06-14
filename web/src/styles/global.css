@@ -821,6 +821,25 @@ kbd {
   color: var(--cyan);
   margin-right: 12px;
 }
+/* The project name is a button (opens the searchable picker). On desktop it
+   looks like plain text; the mobile chip styling is added under .tui.mobile. */
+.sb-project-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+.sb-project-btn:hover { text-decoration: underline; }
+
+/* Searchable project picker (desktop modal + mobile sheet). */
+.proj-picker { display: flex; flex-direction: column; gap: 8px; min-width: 240px; }
+.proj-search {
+  width: 100%; padding: 8px 10px; font: inherit;
+  background: var(--bg); color: var(--fg);
+  border: 1px solid var(--border-strong); border-radius: 7px;
+}
+.proj-search:focus { outline: none; border-color: var(--cyan); }
 .tui-statusrow .sb-stats {
   display: flex;
   gap: 14px;
@@ -1261,7 +1280,7 @@ kbd {
   overflow-x: auto; scrollbar-width: none; font-size: 12px; gap: 8px;
 }
 .tui.mobile .tui-statusrow::-webkit-scrollbar { display: none; }
-.sb-project-btn {
+.tui.mobile .sb-project-btn {
   background: rgba(127, 127, 127, 0.12);
   border: 1px solid var(--border-strong);
   color: var(--cyan); border-radius: 7px; padding: 3px 9px; font-weight: 700;

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useUI } from "../store/ui";
+import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import { useIsMobile } from "../hooks/useIsMobile";
@@ -54,8 +54,10 @@ type DisplayEntry =
   | { kind: "task"; task: BrainEntry; parent: AutomationRow };
 
 export function AutomationsView() {
-  // Automations are a global view (built-ins span all projects).
-  const project: string | undefined = undefined;
+  // Scope to the active project (built-ins are always included); the "all" tab
+  // shows every project's automations.
+  const activeProject = useUI((s) => s.activeProject);
+  const project = activeProject === ALL_PROJECTS ? undefined : activeProject;
   const toast = useUI((s) => s.toast);
   const openInControl = useUI((s) => s.openInControl);
   const toggleDetail = useUI((s) => s.toggleDetail);
@@ -70,7 +72,7 @@ export function AutomationsView() {
   const [, setBusy] = useState(false);
 
   const dataQ = useQuery({
-    queryKey: ["automation-data", "all"],
+    queryKey: ["automation-data", project ?? "all"],
     queryFn: () => listAutomationData(project),
     refetchInterval: 8_000,
   });
@@ -168,7 +170,7 @@ export function AutomationsView() {
       toast("Only automations can be executed", "info");
       return;
     }
-    void run("Automation triggered", () => executeAutomation(row.path || row.id, "all")).then(() => {
+    void run("Automation triggered", () => executeAutomation(row.path || row.id, project ?? "all")).then(() => {
       setExpandedId(row.id); // reveal the new task underneath
       refresh();
     });

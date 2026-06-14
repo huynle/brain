@@ -136,7 +136,8 @@ export function Dashboard() {
         )}
       </div>
       {isMobile ? <MobileNav /> : <HelpBar />}
-      {isMobile && <ProjectSheet />}
+      {/* Searchable project picker — available on desktop and mobile. */}
+      <ProjectSheet />
       {isMobile && <MobileInspectSheet />}
       {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}

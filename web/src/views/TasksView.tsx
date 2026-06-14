@@ -9,7 +9,6 @@ import { filterTasks, groupByFeature, UNGROUPED } from "./tasks/grouping";
 import { buildTaskTree } from "./tasks/tree";
 import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
-import { EntryView } from "./brain/EntryView";
 import { Panel } from "../components/layout/Panel";
 import { ConfirmDialog } from "../components/common/Modal";
 import { deleteEntry, setTaskStatus, triggerTask } from "../lib/api";
@@ -26,6 +25,11 @@ const ComposeModal = lazy(() =>
   import("../components/compose/ComposeModal").then((m) => ({
     default: m.ComposeModal,
   })),
+);
+
+// CodeMirror is heavy — load the editor only when the user edits.
+const EntryEditModal = lazy(() =>
+  import("./brain/EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
 );
 
 const TERMINAL = ["completed", "cancelled", "archived", "superseded"];
@@ -405,7 +409,15 @@ export function TasksView() {
 
       {editMeta && <MetadataModal task={editMeta} onClose={() => setEditMeta(null)} />}
       {batchMeta && <BatchMetadataModal tasks={batchMeta} onClose={() => setBatchMeta(null)} onDone={() => nav.clearSelect()} />}
-      {editContent && <EntryView path={editContent.path} onClose={() => setEditContent(null)} />}
+      {editContent && (
+        <Suspense fallback={null}>
+          <EntryEditModal
+            path={editContent.path}
+            title={editContent.title || editContent.id}
+            onClose={() => setEditContent(null)}
+          />
+        </Suspense>
+      )}
       {confirmDel && (
         <ConfirmDialog
           title={confirmDel.length > 1 ? `Delete ${confirmDel.length} tasks?` : "Delete task?"}

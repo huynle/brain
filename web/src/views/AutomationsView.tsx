@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
@@ -28,6 +28,11 @@ import {
   triggerLabel,
 } from "./automations/rows";
 import type { BrainEntry, GoalSummary, OpencodeInstance, SessionInfo } from "../lib/types";
+
+// CodeMirror is heavy — load the editor only when the user edits.
+const EntryEditModal = lazy(() =>
+  import("./brain/EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
+);
 
 // pickLatestSession returns the most recently recorded session pointer on a
 // task entry (by timestamp), or null if none were recorded.
@@ -67,6 +72,7 @@ export function AutomationsView() {
   const qc = useQueryClient();
 
   const [editing, setEditing] = useState<GoalSummary | null>(null);
+  const [editEntry, setEditEntry] = useState<{ path: string; title?: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [, setBusy] = useState(false);
@@ -200,6 +206,14 @@ export function AutomationsView() {
     if (goal) setEditing(goal);
   }
 
+  // Edit the underlying markdown file. Goal automations have a structured config
+  // modal instead; everything else (built-in/scheduled automations, run-tasks)
+  // opens the full-file editor — parity with the TUI's `e` → $EDITOR.
+  function edit(row: AutomationRow) {
+    if (goalByEntryId.get(row.id)) configure(row);
+    else setEditEntry({ path: row.path || row.id, title: row.title });
+  }
+
   function toggleExpand(row: AutomationRow) {
     setExpandedId((id) => (id === row.id ? null : row.id));
   }
@@ -276,7 +290,8 @@ export function AutomationsView() {
           if (cur?.kind === "auto") execute(cur.row);
           return true;
         case "e":
-          if (cur?.kind === "auto") configure(cur.row);
+          if (cur?.kind === "auto") edit(cur.row);
+          else if (cur?.kind === "task") setEditEntry({ path: cur.task.path, title: cur.task.title });
           return true;
         case " ":
           if (cur?.kind === "auto") toggle(cur.row);
@@ -320,7 +335,7 @@ export function AutomationsView() {
         {automationsPaused && <Pill color="var(--red)">automations paused</Pill>}
         <div style={{ flex: 1 }} />
         <span className="faint" style={{ fontSize: 11.5 }}>
-          x run · Spc toggle · Enter expand · o open/review · n new goal
+          x run · Spc toggle · Enter expand · e edit · o open/review · n new goal
         </span>
         <button className="btn sm primary" onClick={() => setCreating(true)} title="New goal (n)">
           + New goal
@@ -373,6 +388,16 @@ export function AutomationsView() {
       )}
 
       {editing && <GoalConfigModal goal={editing} onClose={() => setEditing(null)} />}
+      {editEntry && (
+        <Suspense fallback={null}>
+          <EntryEditModal
+            path={editEntry.path}
+            title={editEntry.title}
+            onClose={() => setEditEntry(null)}
+            onSaved={refresh}
+          />
+        </Suspense>
+      )}
       {creating && (
         <NewGoalModal
           onClose={() => setCreating(false)}

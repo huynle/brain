@@ -38,7 +38,8 @@ const VIEW_GROUPS: Record<string, Group> = {
     id: "brain",
     title: "Brain",
     rows: [
-      { keys: ["Enter", "e"], desc: "Open / edit entry" },
+      { keys: ["Enter"], desc: "Open entry" },
+      { keys: ["e"], desc: "Edit entry" },
       { keys: ["/"], desc: "Search" },
       { keys: ["n"], desc: "New entry" },
       { keys: ["b", "B"], desc: "Embed project / all" },
@@ -55,7 +56,7 @@ const VIEW_GROUPS: Record<string, Group> = {
       { keys: ["Enter"], desc: "Expand / configure" },
       { keys: ["o"], desc: "Open / review session" },
       { keys: ["Space"], desc: "Enable / disable" },
-      { keys: ["e"], desc: "Configure goal" },
+      { keys: ["e"], desc: "Edit (goal config / file)" },
       { keys: ["n"], desc: "New goal" },
       { keys: ["p"], desc: "Pause automations" },
       { keys: ["T"], desc: "Toggle detail pane" },

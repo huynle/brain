@@ -43,6 +43,8 @@ export class ApiError extends Error {
 interface FetchOpts {
   method?: string;
   body?: unknown;
+  rawBody?: string; // send this string verbatim (no JSON encoding)
+  headers?: Record<string, string>; // extra request headers (e.g. Accept)
   query?: Record<string, string | number | boolean | undefined>;
   signal?: AbortSignal;
   raw?: boolean; // return Response instead of parsed JSON
@@ -63,10 +65,13 @@ function buildUrl(path: string, query?: FetchOpts["query"]): string {
 
 async function doFetch(path: string, opts: FetchOpts): Promise<Response> {
   const auth = useAuth.getState();
-  const headers: Record<string, string> = { ...auth.authHeader() };
+  const headers: Record<string, string> = { ...auth.authHeader(), ...opts.headers };
   let body: BodyInit | undefined;
-  if (opts.body !== undefined) {
-    headers["Content-Type"] = "application/json";
+  if (opts.rawBody !== undefined) {
+    // Caller supplies the Content-Type via opts.headers (e.g. full-file edits).
+    body = opts.rawBody;
+  } else if (opts.body !== undefined) {
+    if (!headers["Content-Type"]) headers["Content-Type"] = "application/json";
     body = JSON.stringify(opts.body);
   }
   return fetch(buildUrl(path, opts.query), {
@@ -169,6 +174,21 @@ export const updateEntry = (path: string, patch: Record<string, unknown>) =>
   api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
     method: "PATCH",
     body: patch,
+  });
+
+// Full-file (frontmatter + body) get/update — mirrors the TUI's $EDITOR flow so
+// the PWA can edit the entire entry, not just metadata or the body.
+export const getEntryRaw = (path: string) =>
+  api<Response>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+    headers: { Accept: "text/x-brain-full" },
+    raw: true,
+  }).then((r) => r.text());
+
+export const updateEntryRaw = (path: string, content: string) =>
+  api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "text/x-brain-full" },
+    rawBody: content,
   });
 
 export const deleteEntry = (path: string) =>

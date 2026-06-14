@@ -1,8 +1,14 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { useUI } from "../../store/ui";
 import { BottomSheet } from "./BottomSheet";
 import { EntryDetailPane } from "./EntryDetailPane";
 import { EntryLogsPane } from "./EntryLogsPane";
+
+// CodeMirror is heavy — load the editor only when the user edits.
+const EntryEditModal = lazy(() =>
+  import("../../views/brain/EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
+);
 
 // Mobile Detail/Logs viewer — the touch replacement for the desktop split
 // panes (T/z). Opened by tapping a row; a segmented toggle switches between the
@@ -11,15 +17,36 @@ export function MobileInspectSheet() {
   const target = useUI((s) => s.inspect);
   const close = useUI((s) => s.closeInspect);
   const [tab, setTab] = useState<"detail" | "logs">("detail");
+  const [editing, setEditing] = useState(false);
+  const qc = useQueryClient();
 
   // Reset to Detail whenever a new entry is inspected.
   useEffect(() => {
     setTab("detail");
+    setEditing(false);
   }, [target?.path]);
 
   if (!target) return null;
 
   const hasLogs = !!target.taskId;
+
+  // The full-file editor renders its own modal over the sheet.
+  if (editing) {
+    return (
+      <Suspense fallback={null}>
+        <EntryEditModal
+          path={target.path}
+          title={target.title}
+          onClose={() => setEditing(false)}
+          onSaved={() => {
+            void qc.invalidateQueries({ queryKey: ["entry-detail", target.path] });
+            void qc.invalidateQueries({ queryKey: ["entries"] });
+            void qc.invalidateQueries({ queryKey: ["automation-data"] });
+          }}
+        />
+      </Suspense>
+    );
+  }
 
   return (
     <BottomSheet
@@ -38,6 +65,11 @@ export function MobileInspectSheet() {
             Logs
           </button>
         </div>
+      }
+      footer={
+        <button className="btn primary" style={{ width: "100%" }} onClick={() => setEditing(true)}>
+          ✎ Edit
+        </button>
       }
     >
       {tab === "detail" ? (

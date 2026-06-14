@@ -40,7 +40,7 @@ const HINTS: Record<string, Hint[]> = {
     ["Enter", "Expand"],
     ["o", "Open/Review"],
     ["Spc", "Toggle"],
-    ["e", "Config"],
+    ["e", "Edit"],
     ["n", "New"],
     ["T", "Detail"],
     ["z", "Logs"],

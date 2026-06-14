@@ -24,6 +24,11 @@ const ComposeModal = lazy(() =>
   })),
 );
 
+// CodeMirror is heavy — load the editor only when the user edits.
+const EntryEditModal = lazy(() =>
+  import("./brain/EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
+);
+
 export function BrainView() {
   const activeProject = useUI((s) => s.activeProject);
   const toast = useUI((s) => s.toast);
@@ -45,6 +50,7 @@ export function BrainView() {
   const [query, setQuery] = useState("");
   const [strategy, setStrategy] = useState<SearchStrategy>("semantic");
   const [openPath, setOpenPath] = useState<string | null>(null);
+  const [editPath, setEditPath] = useState<{ path: string; title?: string } | null>(null);
   const [composing, setComposing] = useState(false);
 
   const browseQ = useQuery({
@@ -98,8 +104,10 @@ export function BrainView() {
           toggleLogs();
           return true;
         case "Enter":
-        case "e":
           if (cur) setOpenPath(cur.path);
+          return true;
+        case "e":
+          if (cur) setEditPath({ path: cur.path, title: (cur as { title?: string }).title });
           return true;
         case "/":
           searchRef.current?.focus();
@@ -270,6 +278,21 @@ export function BrainView() {
 
       {openPath && (
         <EntryView path={openPath} onClose={() => setOpenPath(null)} />
+      )}
+      {editPath && (
+        <Suspense fallback={null}>
+          <EntryEditModal
+            path={editPath.path}
+            title={editPath.title}
+            onClose={() => setEditPath(null)}
+            onSaved={() => {
+              void qc.invalidateQueries({ queryKey: ["entries"] });
+              void qc.invalidateQueries({ queryKey: ["search"] });
+              void qc.invalidateQueries({ queryKey: ["entry", editPath.path] });
+              void qc.invalidateQueries({ queryKey: ["entry-detail", editPath.path] });
+            }}
+          />
+        </Suspense>
       )}
       {composing && (
         <Suspense fallback={null}>

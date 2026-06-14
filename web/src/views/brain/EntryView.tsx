@@ -10,8 +10,8 @@ import { useAuth } from "../../lib/auth";
 import { relativeTime } from "../../lib/format";
 
 // The CodeMirror editor is heavy; load it only when the user edits.
-const EntryEditor = lazy(() =>
-  import("./EntryEditor").then((m) => ({ default: m.EntryEditor })),
+const EntryEditModal = lazy(() =>
+  import("./EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
 );
 
 export function EntryView({
@@ -117,10 +117,9 @@ export function EntryView({
 
       {editing && q.data && (
         <Suspense fallback={null}>
-          <EntryEditor
+          <EntryEditModal
             path={q.data.path}
             title={q.data.title}
-            initialContent={q.data.content || ""}
             onClose={() => setEditing(false)}
             onSaved={() => void q.refetch()}
           />

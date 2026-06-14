@@ -1250,3 +1250,85 @@ kbd {
   margin: 4px 0;
   display: block;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   Mobile (touch) — bottom nav, sheets, swipe-friendly layout
+   ═══════════════════════════════════════════════════════════ */
+.tui.mobile { padding: 0; gap: 0; padding-top: env(safe-area-inset-top); }
+
+.tui.mobile .tui-statusbar { border: none; border-bottom: 1px solid var(--border-strong); }
+.tui.mobile .tui-statusrow {
+  overflow-x: auto; scrollbar-width: none; font-size: 12px; gap: 8px;
+}
+.tui.mobile .tui-statusrow::-webkit-scrollbar { display: none; }
+.sb-project-btn {
+  background: rgba(127, 127, 127, 0.12);
+  border: 1px solid var(--border-strong);
+  color: var(--cyan); border-radius: 7px; padding: 3px 9px; font-weight: 700;
+  flex: 0 0 auto; white-space: nowrap;
+}
+
+/* Desktop split Detail/Logs panes are replaced by the inspect sheet on mobile. */
+.tui.mobile .tui-bottom { display: none !important; }
+
+/* Comfortable tap rows. */
+.tui.mobile .tree-row { padding-top: 9px; padding-bottom: 9px; line-height: 1.7; }
+.tui.mobile .tree-row .suffix { font-size: 12px; }
+
+/* Bottom tab nav. */
+.mnav {
+  flex: 0 0 auto; display: flex; align-items: stretch;
+  border-top: 1px solid var(--border-strong); background: var(--bg);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.mnav-tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; padding: 7px 2px 6px; background: none; border: none;
+  color: var(--fg-faint); min-height: 50px;
+}
+.mnav-tab.on { color: var(--accent); }
+.mnav-tab.on .mnav-glyph { transform: translateY(-1px); }
+.mnav-glyph { font-size: 17px; line-height: 1; }
+.mnav-label { font-size: 9.5px; letter-spacing: 0.02em; }
+
+/* Bottom sheet (project picker, detail/logs inspect). */
+.sheet-backdrop {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, 0.5); display: flex; align-items: flex-end;
+}
+.sheet-panel {
+  width: 100%; max-height: 85vh; background: var(--bg);
+  border-top: 1px solid var(--border-strong);
+  border-top-left-radius: 14px; border-top-right-radius: 14px;
+  display: flex; flex-direction: column;
+  transition: transform 0.18s ease;
+  padding-bottom: env(safe-area-inset-bottom);
+  animation: sheet-up 0.2s ease;
+}
+@keyframes sheet-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
+.sheet-grab-area {
+  padding: 9px 14px 6px; display: flex; flex-direction: column; align-items: center; gap: 7px;
+}
+.sheet-grab { width: 40px; height: 4px; border-radius: 2px; background: var(--border-strong); flex: 0 0 auto; }
+.sheet-title { width: 100%; font-weight: 600; font-size: 13px; }
+.sheet-content { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 4px 14px 14px; min-height: 90px; }
+.sheet-foot { padding: 8px 14px; border-top: 1px solid var(--border-strong); }
+
+/* Inspect Detail/Logs toggle. */
+.insp-tabs { display: flex; gap: 6px; }
+.insp-tab {
+  flex: 1; padding: 7px; background: none; border: 1px solid var(--border-strong);
+  border-radius: 7px; color: var(--fg-dim); font-size: 12.5px;
+}
+.insp-tab.on { background: var(--accent); color: var(--bg); border-color: var(--accent); font-weight: 700; }
+.insp-tab:disabled { opacity: 0.4; }
+
+/* Project picker list. */
+.proj-list { display: flex; flex-direction: column; }
+.proj-item {
+  display: flex; align-items: center; gap: 10px; padding: 13px 6px;
+  background: none; border: none; border-bottom: 1px solid var(--border);
+  color: var(--fg); text-align: left; font-size: 14px; width: 100%;
+}
+.proj-item.on { color: var(--cyan); font-weight: 700; }
+.proj-dot { color: var(--accent); flex: 0 0 auto; }

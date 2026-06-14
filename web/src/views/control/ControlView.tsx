@@ -16,6 +16,8 @@ import { Modal, ConfirmDialog } from "../../components/common/Modal";
 import { EmptyState, ErrorState, Loading, Spinner } from "../../components/common/states";
 import { useUI } from "../../store/ui";
 import type { ControlTarget } from "../../store/ui";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import { useSwipe } from "../../hooks/useSwipe";
 import { sessionName } from "../../lib/types";
 import type { OcSession, OpencodeInstance, RunnerInfo } from "../../lib/types";
 import { Chat } from "./Chat";
@@ -94,6 +96,16 @@ export function ControlView() {
     setSessionId(inst.session_ids?.[0] ?? null);
   }
 
+  // Mobile: an edge swipe (from the left, dragging right) returns from a
+  // session/chat back to the instance list — the gesture equivalent of ← back.
+  const isMobile = useIsMobile();
+  function goBack() {
+    setHistoryTarget(null);
+    setSelected(null);
+    setSessionId(null);
+  }
+  const backSwipe = useSwipe({ onRight: goBack, edgeOnly: 44 });
+
   async function kill(inst: OpencodeInstance) {
     try {
       await controlKillInstance(inst.runner_id, inst.instance_id);
@@ -145,7 +157,7 @@ export function ControlView() {
         ))}
       </div>
 
-      <div className="ctl-main">
+      <div className="ctl-main" {...(isMobile && chatOpen ? backSwipe : {})}>
         {historyTarget ? (
           <HistoryPane
             target={historyTarget}

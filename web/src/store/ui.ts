@@ -23,6 +23,16 @@ export const VIEW_ORDER: View[] = [
 
 export type Panel = "tasks" | "detail" | "logs";
 
+// A mobile "inspect" request: open the Detail/Logs bottom sheet for one entry.
+// Carries enough to drive EntryDetailPane (path) and EntryLogsPane (task id +
+// project). Set by a row tap on a touch device; consumed by MobileInspectSheet.
+export interface InspectTarget {
+  path: string;
+  title?: string;
+  taskId?: string;
+  projectId?: string;
+}
+
 // A request to open a specific instance/session in the Control tab — set by
 // other views (e.g. Automations "o") and consumed by ControlView on mount.
 //
@@ -50,6 +60,8 @@ interface UIState {
   detailVisible: boolean; // T
   logsVisible: boolean; // z
   focus: Panel; // focused panel within the Tasks view
+  projectSheetOpen: boolean; // mobile: project picker bottom sheet
+  inspect: InspectTarget | null; // mobile: Detail/Logs bottom sheet target
   toasts: Toast[];
   _tid: number;
   setView: (v: View) => void;
@@ -65,6 +77,9 @@ interface UIState {
   toggleLogs: () => void;
   cycleFocus: () => void;
   setFocus: (p: Panel) => void;
+  setProjectSheetOpen: (open: boolean) => void;
+  openInspect: (t: InspectTarget) => void;
+  closeInspect: () => void;
   toast: (message: string, kind?: Toast["kind"]) => void;
   dismissToast: (id: number) => void;
 }
@@ -79,6 +94,8 @@ export const useUI = create<UIState>((set, get) => ({
   detailVisible: true,
   logsVisible: true,
   focus: "tasks",
+  projectSheetOpen: false,
+  inspect: null,
   toasts: [],
   _tid: 0,
   setView: (v) => set({ view: v }),
@@ -111,6 +128,9 @@ export const useUI = create<UIState>((set, get) => ({
     return t;
   },
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setProjectSheetOpen: (open) => set({ projectSheetOpen: open }),
+  openInspect: (t) => set({ inspect: t }),
+  closeInspect: () => set({ inspect: null }),
   toggleWrap: () => set((s) => ({ wrap: !s.wrap })),
   toast: (message, kind = "info") => {
     const id = get()._tid + 1;

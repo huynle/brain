@@ -3,6 +3,7 @@ import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useLive } from "../lib/sse";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { useLiveTasks } from "../hooks/useLiveTasks";
 import { filterTasks, groupByFeature, UNGROUPED } from "./tasks/grouping";
 import { buildTaskTree } from "./tasks/tree";
@@ -70,6 +71,8 @@ export function TasksView() {
   const logsVisible = useUI((s) => s.logsVisible);
   const toggleDetail = useUI((s) => s.toggleDetail);
   const toggleLogs = useUI((s) => s.toggleLogs);
+  const openInspect = useUI((s) => s.openInspect);
+  const isMobile = useIsMobile();
 
   const { tasks, connected } = useLiveTasks(activeProject);
   const logs = useLive((s) => s.logs);
@@ -325,7 +328,10 @@ export function TasksView() {
                 key={taskKey(t)}
                 className={`tree-row ${isCur ? "cursor" : ""}`}
                 data-cursor={isCur ? "1" : undefined}
-                onClick={() => nav.setCursor(scope, i)}
+                onClick={() => {
+                  nav.setCursor(scope, i);
+                  if (isMobile) openInspect({ path: t.path, taskId: t.id, projectId: t.projectId, title: t.title });
+                }}
                 onDoubleClick={() => setFocus("detail")}
               >
                 <span className="connector">{row.lead}</span>

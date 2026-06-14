@@ -3,6 +3,7 @@ import { useLive } from "../../lib/sse";
 import { useNav } from "../../store/nav";
 import { ALL_PROJECTS, useUI } from "../../store/ui";
 import { useLiveTasks, deriveCounts } from "../../hooks/useLiveTasks";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { getHealth, getRunnerStatus } from "../../lib/api";
 
 function shortName(id: string): string {
@@ -12,6 +13,8 @@ function shortName(id: string): string {
 
 export function StatusBar() {
   const activeProject = useUI((s) => s.activeProject);
+  const setProjectSheetOpen = useUI((s) => s.setProjectSheetOpen);
+  const isMobile = useIsMobile();
   const runners = useLive((s) => s.runners);
   const selected = useNav((s) => Object.keys(s.selected).length);
   const { tasks, stats, connected } = useLiveTasks(activeProject);
@@ -54,7 +57,17 @@ export function StatusBar() {
   return (
     <div className="tui-statusbar">
       <div className="tui-statusrow">
-        <span className="sb-project">{shortName(activeProject)}</span>
+        {isMobile ? (
+          <button
+            className="sb-project sb-project-btn"
+            onClick={() => setProjectSheetOpen(true)}
+            title="Switch project"
+          >
+            {shortName(activeProject)} ▾
+          </button>
+        ) : (
+          <span className="sb-project">{shortName(activeProject)}</span>
+        )}
         {activeFeatures > 0 ? (
           <span style={{ color: "var(--purple)", fontWeight: 700, marginRight: 12 }}>
             ▶{activeFeatures}

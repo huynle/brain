@@ -7,6 +7,7 @@ import { embedBackfill, listEntries, search } from "../lib/api";
 import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { ListDetail } from "../components/layout/ListDetail";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { EntryView } from "./brain/EntryView";
 import { relativeTime } from "../lib/format";
 import type { SearchStrategy } from "../lib/types";
@@ -28,6 +29,8 @@ export function BrainView() {
   const toast = useUI((s) => s.toast);
   const toggleDetail = useUI((s) => s.toggleDetail);
   const toggleLogs = useUI((s) => s.toggleLogs);
+  const openInspect = useUI((s) => s.openInspect);
+  const isMobile = useIsMobile();
   const project = activeProject === ALL_PROJECTS ? undefined : activeProject;
   const qc = useQueryClient();
 
@@ -128,6 +131,21 @@ export function BrainView() {
     el?.scrollIntoView({ block: "nearest" });
   }, [cursor]);
 
+  // Row tap: on mobile open the Detail/Logs sheet; on desktop open the entry
+  // editor (the existing behavior).
+  function openEntry(item: { path: string; id?: string; type?: string; project_id?: string; title?: string }) {
+    if (isMobile) {
+      openInspect({
+        path: item.path,
+        title: item.title,
+        taskId: item.type === "task" ? item.id : undefined,
+        projectId: item.project_id,
+      });
+    } else {
+      setOpenPath(item.path);
+    }
+  }
+
   const selItem = items[cursor] as { path: string; id?: string; type?: string; project_id?: string } | undefined;
   const selectedPath = selItem?.path ?? null;
   const logTarget =
@@ -225,7 +243,7 @@ export function BrainView() {
                 meta={r.snippet}
                 cursored={i === cursor}
                 last={i === arr.length - 1}
-                onClick={() => setOpenPath(r.path)}
+                onClick={() => openEntry(r)}
               />
             ))
           )
@@ -244,7 +262,7 @@ export function BrainView() {
               meta={e.modified ? relativeTime(e.modified) : e.path}
               cursored={i === cursor}
               last={i === arr.length - 1}
-              onClick={() => setOpenPath(e.path)}
+              onClick={() => openEntry(e)}
             />
           ))
         )}

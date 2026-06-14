@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUI } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { useIsMobile } from "../hooks/useIsMobile";
 import {
   executeAutomation,
   getEntry,
@@ -59,6 +60,8 @@ export function AutomationsView() {
   const openInControl = useUI((s) => s.openInControl);
   const toggleDetail = useUI((s) => s.toggleDetail);
   const toggleLogs = useUI((s) => s.toggleLogs);
+  const openInspect = useUI((s) => s.openInspect);
+  const isMobile = useIsMobile();
   const qc = useQueryClient();
 
   const [editing, setEditing] = useState<GoalSummary | null>(null);
@@ -203,6 +206,12 @@ export function AutomationsView() {
   // attached directly; otherwise we fall back to the recorded session pointer
   // so a completed session can still be reviewed (and resumed).
   async function openTaskInControl(task: BrainEntry) {
+    // On mobile, tapping a run-task opens its Detail/Logs sheet (consistent
+    // with Tasks/Brain). Session review/resume stays on the Control tab.
+    if (isMobile) {
+      openInspect({ path: task.path, title: task.title, taskId: task.id, projectId: task.project_id });
+      return;
+    }
     const inst = instanceByTaskId.get(task.id);
     if (inst) {
       openInControl({

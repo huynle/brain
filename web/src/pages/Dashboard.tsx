@@ -13,9 +13,14 @@ import { useAuth } from "../lib/auth";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useGlobalKeyboard } from "../lib/keyboard";
+import { useIsMobile } from "../hooks/useIsMobile";
+import { useSwipe } from "../hooks/useSwipe";
 import { StatusBar } from "../components/layout/StatusBar";
 import { ContentTabs } from "../components/layout/ContentTabs";
 import { HelpBar } from "../components/layout/HelpBar";
+import { MobileNav } from "../components/layout/MobileNav";
+import { ProjectSheet } from "../components/layout/ProjectSheet";
+import { MobileInspectSheet } from "../components/layout/MobileInspectSheet";
 import { Panel } from "../components/layout/Panel";
 import { HelpModal } from "../components/common/HelpModal";
 import { ErrorState, Loading } from "../components/common/states";
@@ -29,6 +34,8 @@ import { SettingsSheet } from "../views/SettingsSheet";
 
 export function Dashboard() {
   const view = useUI((s) => s.view);
+  const cycleView = useUI((s) => s.cycleView);
+  const isMobile = useIsMobile();
   const activeProject = useUI((s) => s.activeProject);
   const settingsOpen = useUI((s) => s.settingsOpen);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
@@ -64,6 +71,10 @@ export function Dashboard() {
     }
   }
 
+  // Swipe-to-cycle-tabs handlers (used on mobile). Declared unconditionally
+  // (hook) — applied conditionally in the render.
+  const swipe = useSwipe({ onLeft: () => cycleView(1), onRight: () => cycleView(-1) });
+
   useGlobalKeyboard({
     projects: projects ?? [],
     allLabel: ALL_PROJECTS,
@@ -92,11 +103,15 @@ export function Dashboard() {
   if (isLoading) return <Loading label="Loading projects…" />;
   if (error) return <ErrorState error={error} onRetry={() => void refetch()} />;
 
+  // On touch devices, swipe left/right cycles content tabs. Disabled on the
+  // Control tab, which uses horizontal swipe for session back-navigation.
+  const swipeProps = isMobile && view !== "control" ? swipe : {};
+
   return (
-    <div className="tui">
+    <div className={`tui ${isMobile ? "mobile" : ""}`}>
       <StatusBar />
-      <ContentTabs />
-      <div className="tui-main">
+      {!isMobile && <ContentTabs />}
+      <div className="tui-main" {...swipeProps}>
         {/* Top-level views render without a panel title — the active content
             tab already names them, so a titled border just duplicated it. */}
         {view === "tasks" && <TasksView />}
@@ -120,7 +135,9 @@ export function Dashboard() {
           </Panel>
         )}
       </div>
-      <HelpBar />
+      {isMobile ? <MobileNav /> : <HelpBar />}
+      {isMobile && <ProjectSheet />}
+      {isMobile && <MobileInspectSheet />}
       {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
     </div>

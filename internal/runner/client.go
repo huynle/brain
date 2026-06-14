@@ -1308,6 +1308,27 @@ func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse,
 	return &result, nil
 }
 
+// GetServerRequests fetches the recent server-request log (all HTTP traffic in
+// and out of the Brain server, annotated with the authenticated actor).
+func (c *APIClient) GetServerRequests(ctx context.Context, limit int) (*types.ServerRequestListResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet,
+		fmt.Sprintf("/api/v1/server/requests/recent?limit=%d", limit), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get server requests: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.ServerRequestListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode server requests response: %w", err)
+	}
+	return &result, nil
+}
+
 // UpdateRunnerConfig updates a runner's maxParallel configuration.
 func (c *APIClient) UpdateRunnerConfig(ctx context.Context, runnerID string, maxParallel int) error {
 	path := fmt.Sprintf("/api/v1/runners/%s/config", runnerID)

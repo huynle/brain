@@ -1125,6 +1125,26 @@ type RunnerListResponse struct {
 	Total   int          `json:"total"`
 }
 
+// ServerRequestRecord is one HTTP request handled by the Brain server, for the
+// global server-request log (GET /server/requests/recent).
+type ServerRequestRecord struct {
+	Seq        int64  `json:"seq"`
+	Time       int64  `json:"time"` // unix milliseconds
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Status     int    `json:"status"`
+	DurationMs int64  `json:"duration_ms"`
+	ActorType  string `json:"actor_type"`
+	ActorName  string `json:"actor_name"`
+	RequestID  string `json:"request_id,omitempty"`
+}
+
+// ServerRequestListResponse is the response for GET /server/requests/recent.
+type ServerRequestListResponse struct {
+	Requests []ServerRequestRecord `json:"requests"`
+	Total    int                   `json:"total"`
+}
+
 type BrainClientInfo struct {
 	ClientID     string            `json:"client_id"`
 	Kind         string            `json:"kind,omitempty"`

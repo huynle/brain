@@ -6,6 +6,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // Server request log: an in-memory ring buffer of recent HTTP requests handled
@@ -14,18 +16,9 @@ import (
 // live, global view of traffic in and out of the server — runners, clients,
 // and browsers alike.
 
-// RequestRecord is one recorded HTTP request.
-type RequestRecord struct {
-	Seq        int64  `json:"seq"`
-	Time       int64  `json:"time"` // unix milliseconds
-	Method     string `json:"method"`
-	Path       string `json:"path"`
-	Status     int    `json:"status"`
-	DurationMs int64  `json:"duration_ms"`
-	ActorType  string `json:"actor_type"` // "api_token" | "oauth" | "anonymous"
-	ActorName  string `json:"actor_name"` // token name / client id
-	RequestID  string `json:"request_id,omitempty"`
-}
+// RequestRecord is one recorded HTTP request (alias of the shared type so the
+// runner client and TUI decode the same shape).
+type RequestRecord = types.ServerRequestRecord
 
 // requestRing is a fixed-capacity ring buffer of the most recent requests.
 type requestRing struct {

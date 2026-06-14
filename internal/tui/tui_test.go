@@ -2518,7 +2518,7 @@ func TestUpdate_LKey_DoesNotToggleLogVisibility(t *testing.T) {
 	}
 }
 
-func TestUpdate_ZKey_DoesNotToggleLogVisibilityByDefault(t *testing.T) {
+func TestUpdate_ZKey_TogglesLogVisibility(t *testing.T) {
 	m := NewModel(Config{
 		APIURL:   "http://localhost:3333",
 		Project:  "all",
@@ -2531,8 +2531,14 @@ func TestUpdate_ZKey_DoesNotToggleLogVisibilityByDefault(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	model := updated.(Model)
-	if model.logsVisible {
-		t.Fatal("expected logsVisible to remain false after z press")
+	if !model.logsVisible {
+		t.Fatal("expected z to toggle logsVisible on")
+	}
+
+	updated2, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	model2 := updated2.(Model)
+	if model2.logsVisible {
+		t.Fatal("expected z to toggle logsVisible back off")
 	}
 }
 

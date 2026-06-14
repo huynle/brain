@@ -50,6 +50,8 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 			shortcuts += fmt.Sprintf("%s Metadata  ", bold("s"))
 			shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
 			shortcuts += fmt.Sprintf("%s Delete  ", bold("d"))
+			shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
+			shortcuts += fmt.Sprintf("%s Logs  ", bold("z"))
 		} else {
 			shortcuts += fmt.Sprintf("%s Search  ", bold("/"))
 			shortcuts += fmt.Sprintf("%s Page  ", bold("ctrl+d/u"))
@@ -104,11 +106,9 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 		)
 	}
 
-	// Logs tab has log navigation help
+	// Logs tab: global server-request log.
 	if h.ActiveContentTab == ContentTabLogs {
-		shortcuts += fmt.Sprintf("%s Scroll  ", bold("j/k"))
-		shortcuts += fmt.Sprintf("%s Top/Bot  ", bold("g/G"))
-		shortcuts += fmt.Sprintf("%s Filter  ", bold("f"))
+		shortcuts += fmt.Sprintf("%s server requests (runners · clients · browser)  ", dim("›"))
 		shortcuts += fmt.Sprintf("%s Tabs  ", bold("h/l"))
 		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
@@ -136,6 +136,8 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 		shortcuts += fmt.Sprintf("%s Force  ", bold("F/A"))
 		shortcuts += fmt.Sprintf("%s Edit  ", bold("e"))
 		shortcuts += fmt.Sprintf("%s Attach  ", bold("a/d/o"))
+		shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
+		shortcuts += fmt.Sprintf("%s Logs  ", bold("z"))
 		shortcuts += fmt.Sprintf("%s Tabs  ", bold("h/l"))
 		shortcuts += fmt.Sprintf("%s Refresh  ", bold("r"))
 		shortcuts += fmt.Sprintf("%s Quit", bold("q"))
@@ -235,6 +237,9 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 
 	// T Detail
 	shortcuts += fmt.Sprintf("%s Detail  ", bold("T"))
+
+	// z Logs
+	shortcuts += fmt.Sprintf("%s Logs  ", bold("z"))
 
 	// R Runners
 	shortcuts += fmt.Sprintf("%s Runners  ", bold("R"))

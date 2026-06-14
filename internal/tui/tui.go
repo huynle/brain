@@ -85,6 +85,9 @@ type Model struct {
 	detailVisible bool
 	logsVisible   bool
 
+	// Global server-request log (Logs tab); refreshed while that tab is active.
+	serverRequests []types.ServerRequestRecord
+
 	// Filter state (3-mode state machine: Off → Typing → Locked)
 	filterState FilterMode // Current filter mode
 	filterQuery string     // Current filter text
@@ -609,7 +612,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig()), fetchAPIHealthCmd(m.apiRunnerConfig())}
 		// Always fetch runners for status bar metrics (data goes to both panel and status bar)
 		cmds = append(cmds, fetchRunnerListCmd(m.apiRunnerConfig()))
+		// Refresh the global server-request log while the Logs tab is active.
+		if m.activeContentTab == ContentTabLogs {
+			cmds = append(cmds, fetchServerRequestsCmd(m.apiRunnerConfig()))
+		}
 		return m, tea.Batch(cmds...)
+
+	case serverRequestsMsg:
+		if msg.err == nil {
+			m.serverRequests = msg.requests
+		}
+		return m, nil
 
 	case RunnerListMsg:
 		if msg.Err == nil {
@@ -1373,7 +1386,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelLogs
 			m.helpBar.ActivePanel = m.activePanel
 			m.syncPanelSizes()
-			return m, nil
+			return m, fetchServerRequestsCmd(m.apiRunnerConfig())
 		}
 		if m.activeContentTab == ContentTabBrain {
 			m.activePanel = PanelTasks
@@ -1404,7 +1417,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelLogs
 			m.helpBar.ActivePanel = m.activePanel
 			m.syncPanelSizes()
-			return m, nil
+			return m, fetchServerRequestsCmd(m.apiRunnerConfig())
 		}
 		if m.activeContentTab == ContentTabBrain {
 			m.activePanel = PanelTasks
@@ -2789,7 +2802,7 @@ func (m Model) handleContentTabClick(x int) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelLogs
 			m.helpBar.ActivePanel = m.activePanel
 			m.syncPanelSizes()
-			return m, nil
+			return m, fetchServerRequestsCmd(m.apiRunnerConfig())
 		}
 		if m.activeContentTab == ContentTabBrain {
 			m.activePanel = PanelTasks
@@ -4345,12 +4358,14 @@ func (m Model) renderBaseView() string {
 			Render(runnerView)
 		mainContent = runnerPanel
 	} else if m.activeContentTab == ContentTabLogs {
-		// Logs tab: global full-height log stream.
-		mainContent = m.renderLogPanel(m.width, mainHeight)
+		// Logs tab: global server-request log (all HTTP traffic in/out of the
+		// Brain server, by actor). Per-task output lives in the Logs pane (z).
+		mainContent = m.renderServerRequestsPanel(m.width, mainHeight)
 	} else if m.activeContentTab == ContentTabBrain {
 		// Brain tab: project entry tree for understanding stored memory.
+		brainBottom := m.detailVisible || m.logsVisible
 		entryOuterHeight := mainHeight
-		if m.detailVisible {
+		if brainBottom {
 			entryOuterHeight = topHeight
 		}
 		entryHeight := entryOuterHeight - 2
@@ -4371,7 +4386,7 @@ func (m Model) renderBaseView() string {
 			Height(entryHeight).
 			MaxHeight(entryOuterHeight).
 			Render(entryView)
-		if m.detailVisible {
+		if brainBottom {
 			bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 			mainContent = lipgloss.JoinVertical(lipgloss.Left, entryPanel, bottomPanel)
 		} else {
@@ -4379,8 +4394,9 @@ func (m Model) renderBaseView() string {
 		}
 	} else if m.activeContentTab == ContentTabAutomation {
 		// Automation tab: full-width automation list or Dream subtab.
+		autoBottom := (m.detailVisible || m.logsVisible) && m.activeAutomationSubTab == AutomationSubTabAutomations
 		contentOuterHeight := mainHeight
-		if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		if autoBottom {
 			contentOuterHeight = topHeight
 		}
 		contentHeight := contentOuterHeight - 2
@@ -4402,7 +4418,7 @@ func (m Model) renderBaseView() string {
 			Height(contentHeight).
 			MaxHeight(contentOuterHeight).
 			Render(content)
-		if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		if autoBottom {
 			bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 			mainContent = lipgloss.JoinVertical(lipgloss.Left, automationPanel, bottomPanel)
 		} else {
@@ -4519,6 +4535,108 @@ func (m Model) renderDetailPanel(width, height int) string {
 		Render(content)
 }
 
+// automationLogTaskID returns the task id whose logs the Automations logs pane
+// should show: the highlighted run-task within an expanded row, else the
+// selected automation's latest run task.
+func (m Model) automationLogTaskID() string {
+	if id := m.automationList.SelectedRunTaskID(); id != "" {
+		return id
+	}
+	if row := m.automationList.SelectedRow(); row != nil {
+		return row.RunTaskID
+	}
+	return ""
+}
+
+// renderServerRequestsPanel renders the global server-request log (Logs tab):
+// every HTTP request the Brain server handled, with actor, method, status, and
+// duration. Newest at the bottom.
+func (m Model) renderServerRequestsPanel(width, height int) string {
+	style := InactiveBorder
+	if m.activePanel == PanelLogs {
+		style = ActiveBorder
+	}
+	innerWidth := width - 4
+	innerHeight := height - 2
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+
+	var b strings.Builder
+	reqs := m.serverRequests
+	if len(reqs) == 0 {
+		b.WriteString(DimStyle.Render("No requests yet — traffic from runners, clients, and browsers appears here."))
+	} else {
+		// Show the newest rows that fit.
+		start := 0
+		if len(reqs) > innerHeight {
+			start = len(reqs) - innerHeight
+		}
+		for i := start; i < len(reqs); i++ {
+			b.WriteString(formatServerRequestLine(reqs[i], innerWidth))
+			if i < len(reqs)-1 {
+				b.WriteString("\n")
+			}
+		}
+	}
+
+	content := truncateToHeight(b.String(), innerHeight)
+	return style.
+		Width(width - 2).
+		Height(innerHeight).
+		MaxHeight(height).
+		Render(content)
+}
+
+// formatServerRequestLine renders one server-request row: time, actor, method,
+// status, duration, path.
+func formatServerRequestLine(r types.ServerRequestRecord, width int) string {
+	ts := time.UnixMilli(r.Time).Format("15:04:05")
+	actor := r.ActorName
+	if actor == "" {
+		if r.ActorType != "" && r.ActorType != "anonymous" {
+			actor = r.ActorType
+		} else {
+			actor = "anon"
+		}
+	}
+	if len(actor) > 14 {
+		actor = actor[:14]
+	}
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(serverStatusColor(r.Status)))
+	// Only the variable-length path is truncated (plain text, ANSI-safe); the
+	// fixed-width styled prefix is ~45 visible columns.
+	pathWidth := width - 45
+	if pathWidth < 5 {
+		pathWidth = 5
+	}
+	path := truncateMsg(r.Path, pathWidth)
+	return fmt.Sprintf("%s  %-14s %-6s %s %5dms  %s",
+		DimStyle.Render(ts),
+		actor,
+		r.Method,
+		statusStyle.Render(fmt.Sprintf("%3d", r.Status)),
+		r.DurationMs,
+		path,
+	)
+}
+
+func serverStatusColor(status int) string {
+	switch {
+	case status >= 500:
+		return "9" // red
+	case status >= 400:
+		return "11" // yellow
+	case status >= 300:
+		return "14" // cyan
+	default:
+		return "10" // green
+	}
+}
+
 // renderLogPanel renders the log viewer panel with border.
 // height is the total outer height including borders.
 func (m Model) renderLogPanel(width, height int) string {
@@ -4541,16 +4659,36 @@ func (m Model) renderLogPanel(width, height int) string {
 	lv := m.logViewer
 	lv.SetSize(innerWidth, innerHeight)
 
-	// Wire log filtering by selected task
-	if m.filterLogsByTask {
-		selectedTask := m.taskTree.SelectedTask()
-		if selectedTask != nil {
-			lv.IsFiltering = true
-			lv.FilterTaskID = selectedTask.ID
-		} else {
-			lv.IsFiltering = false
-			lv.FilterTaskID = ""
+	// Wire log filtering. In the Tasks tab the logs pane shows all output (or
+	// the selected task's when filterLogsByTask is on). In the Brain and
+	// Automations tabs the pane is always scoped to the highlighted entry's
+	// task; an empty selection uses a no-match sentinel so it shows nothing
+	// rather than the firehose.
+	filterID := ""
+	scoped := false
+	switch m.activeContentTab {
+	case ContentTabBrain:
+		scoped = true
+		if e := m.entryTree.SelectedEntry(); e != nil && e.Type == "task" {
+			filterID = e.ID
 		}
+	case ContentTabAutomation:
+		scoped = true
+		filterID = m.automationLogTaskID()
+	default:
+		if m.filterLogsByTask {
+			scoped = true
+			if t := m.taskTree.SelectedTask(); t != nil {
+				filterID = t.ID
+			}
+		}
+	}
+	if scoped {
+		lv.IsFiltering = true
+		if filterID == "" {
+			filterID = "\x00no-task"
+		}
+		lv.FilterTaskID = filterID
 	} else {
 		lv.IsFiltering = false
 		lv.FilterTaskID = ""
@@ -6122,6 +6260,24 @@ func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 			return runnerStatusMsg{err: err}
 		}
 		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects, automationsPaused: status.AutomationsPaused}
+	}
+}
+
+// serverRequestsMsg carries the global server-request log.
+type serverRequestsMsg struct {
+	requests []types.ServerRequestRecord
+	err      error
+}
+
+// fetchServerRequestsCmd fetches the recent server-request log for the Logs tab.
+func fetchServerRequestsCmd(cfg runner.RunnerConfig) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		resp, err := apiClient.GetServerRequests(context.Background(), 800)
+		if err != nil {
+			return serverRequestsMsg{err: err}
+		}
+		return serverRequestsMsg{requests: resp.Requests}
 	}
 }
 

@@ -88,7 +88,8 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("h/l", "Tabs"),
 		),
 		ToggleLogs: key.NewBinding(
-			key.WithHelp("", "Logs"),
+			key.WithKeys("z"),
+			key.WithHelp("z", "Logs"),
 		),
 		ToggleDetail: key.NewBinding(
 			key.WithKeys("T"),

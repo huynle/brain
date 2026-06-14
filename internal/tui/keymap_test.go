@@ -33,8 +33,8 @@ func TestKeyMapFromConfig_NoOverrides(t *testing.T) {
 	if key.Matches(makeKeyMsg("l"), result.ToggleLogs) {
 		t.Error("ToggleLogs should not default to l")
 	}
-	if key.Matches(makeKeyMsg("z"), result.ToggleLogs) {
-		t.Error("ToggleLogs should not default to z")
+	if !key.Matches(makeKeyMsg("z"), result.ToggleLogs) {
+		t.Error("ToggleLogs should default to z")
 	}
 	if !key.Matches(makeKeyMsg("T"), result.ToggleDetail) {
 		t.Error("ToggleDetail should default to T")
@@ -110,7 +110,7 @@ func TestKeyMapFromConfig_UnknownKeysIgnored(t *testing.T) {
 func TestDefaultKeyMap_HasContentTabBindings(t *testing.T) {
 	km := DefaultKeyMap()
 
-	// Content tabs use h/l; projects use H/L. Log pane toggling is unassigned by default.
+	// Content tabs use h/l; projects use H/L. Log pane toggles with z.
 	if !key.Matches(makeKeyMsg("h"), km.PrevContentTab) {
 		t.Error("DefaultKeyMap should have PrevContentTab bound to h")
 	}
@@ -126,8 +126,8 @@ func TestDefaultKeyMap_HasContentTabBindings(t *testing.T) {
 	if key.Matches(makeKeyMsg("l"), km.ToggleLogs) {
 		t.Error("DefaultKeyMap should not bind ToggleLogs to l")
 	}
-	if key.Matches(makeKeyMsg("z"), km.ToggleLogs) {
-		t.Error("DefaultKeyMap should not bind ToggleLogs to z")
+	if !key.Matches(makeKeyMsg("z"), km.ToggleLogs) {
+		t.Error("DefaultKeyMap should bind ToggleLogs to z")
 	}
 	if !key.Matches(makeKeyMsg("T"), km.ToggleDetail) {
 		t.Error("DefaultKeyMap should have ToggleDetail bound to T")

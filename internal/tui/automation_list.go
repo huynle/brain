@@ -305,6 +305,12 @@ func (al *AutomationList) ScrollDown(n int) {
 	}
 }
 
+// SelectedRunTaskID returns the run-task id currently highlighted within an
+// expanded automation row, or "" when none is highlighted.
+func (al *AutomationList) SelectedRunTaskID() string {
+	return al.selectedRunTaskID
+}
+
 // SelectedRow returns the selected normalized row, or nil when the list is empty.
 func (al *AutomationList) SelectedRow() *AutomationListRow {
 	if al.SelectedID == "" || len(al.rows) == 0 {

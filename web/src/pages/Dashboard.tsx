@@ -100,16 +100,10 @@ export function Dashboard() {
         {/* Top-level views render without a panel title — the active content
             tab already names them, so a titled border just duplicated it. */}
         {view === "tasks" && <TasksView />}
-        {view === "brain" && (
-          <Panel focused style={{ flex: 1 }}>
-            <BrainView />
-          </Panel>
-        )}
-        {view === "automations" && (
-          <Panel focused style={{ flex: 1 }}>
-            <AutomationsView />
-          </Panel>
-        )}
+        {/* Brain & Automations manage their own list+detail layout (parity
+            with Tasks), so they render without an outer panel. */}
+        {view === "brain" && <BrainView />}
+        {view === "automations" && <AutomationsView />}
         {view === "runners" && (
           <Panel focused style={{ flex: 1 }}>
             <RunnersView />

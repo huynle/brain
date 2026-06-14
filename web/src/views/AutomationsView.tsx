@@ -17,6 +17,7 @@ import {
 } from "../lib/api";
 import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
+import { ListDetail } from "../components/layout/ListDetail";
 import { GoalConfigModal } from "./automations/GoalConfigModal";
 import { NewGoalModal } from "./automations/NewGoalModal";
 import {
@@ -56,6 +57,7 @@ export function AutomationsView() {
   const project: string | undefined = undefined;
   const toast = useUI((s) => s.toast);
   const openInControl = useUI((s) => s.openInControl);
+  const toggleDetail = useUI((s) => s.toggleDetail);
   const qc = useQueryClient();
 
   const [editing, setEditing] = useState<GoalSummary | null>(null);
@@ -241,6 +243,9 @@ export function AutomationsView() {
       if (handleListNavKey(e, scope, display.length)) return true;
       const cur = display[cursor];
       switch (e.key) {
+        case "T":
+          toggleDetail();
+          return true;
         case "o":
         case "O":
           if (cur?.kind === "task") void openTaskInControl(cur.task);
@@ -287,8 +292,11 @@ export function AutomationsView() {
 
   const loading = dataQ.isLoading && !dataQ.data;
 
+  const cur = display[cursor];
+  const selectedPath = cur ? (cur.kind === "auto" ? cur.row.path : cur.task.path) : null;
+
   return (
-    <div>
+    <ListDetail detailPath={selectedPath}>
       <div className="row" style={{ gap: 8, padding: "2px 2px 6px", alignItems: "center" }}>
         {automationsPaused && <Pill color="var(--red)">automations paused</Pill>}
         <div style={{ flex: 1 }} />
@@ -352,7 +360,7 @@ export function AutomationsView() {
           onCreated={() => void qc.invalidateQueries({ queryKey: ["goals"] })}
         />
       )}
-    </div>
+    </ListDetail>
   );
 }
 

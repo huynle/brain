@@ -6,6 +6,7 @@ import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import { embedBackfill, listEntries, search } from "../lib/api";
 import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
+import { ListDetail } from "../components/layout/ListDetail";
 import { EntryView } from "./brain/EntryView";
 import { relativeTime } from "../lib/format";
 import type { SearchStrategy } from "../lib/types";
@@ -25,6 +26,7 @@ const ComposeModal = lazy(() =>
 export function BrainView() {
   const activeProject = useUI((s) => s.activeProject);
   const toast = useUI((s) => s.toast);
+  const toggleDetail = useUI((s) => s.toggleDetail);
   const project = activeProject === ALL_PROJECTS ? undefined : activeProject;
   const qc = useQueryClient();
 
@@ -85,6 +87,9 @@ export function BrainView() {
       if (handleListNavKey(e, scope, items.length)) return true;
       const cur = items[cursor];
       switch (e.key) {
+        case "T":
+          toggleDetail();
+          return true;
         case "Enter":
         case "e":
           if (cur) setOpenPath(cur.path);
@@ -119,8 +124,10 @@ export function BrainView() {
     el?.scrollIntoView({ block: "nearest" });
   }, [cursor]);
 
+  const selectedPath = items[cursor]?.path ?? null;
+
   return (
-    <div>
+    <ListDetail detailPath={selectedPath}>
       <form
         className="search-bar"
         onSubmit={(e) => {
@@ -249,7 +256,7 @@ export function BrainView() {
           />
         </Suspense>
       )}
-    </div>
+    </ListDetail>
   );
 }
 

@@ -58,6 +58,7 @@ export function AutomationsView() {
   const toast = useUI((s) => s.toast);
   const openInControl = useUI((s) => s.openInControl);
   const toggleDetail = useUI((s) => s.toggleDetail);
+  const toggleLogs = useUI((s) => s.toggleLogs);
   const qc = useQueryClient();
 
   const [editing, setEditing] = useState<GoalSummary | null>(null);
@@ -246,6 +247,9 @@ export function AutomationsView() {
         case "T":
           toggleDetail();
           return true;
+        case "z":
+          toggleLogs();
+          return true;
         case "o":
         case "O":
           if (cur?.kind === "task") void openTaskInControl(cur.task);
@@ -294,9 +298,13 @@ export function AutomationsView() {
 
   const cur = display[cursor];
   const selectedPath = cur ? (cur.kind === "auto" ? cur.row.path : cur.task.path) : null;
+  const logTarget =
+    cur?.kind === "task"
+      ? { taskId: cur.task.id, projectId: cur.task.project_id }
+      : null;
 
   return (
-    <ListDetail detailPath={selectedPath}>
+    <ListDetail detailPath={selectedPath} logTarget={logTarget}>
       <div className="row" style={{ gap: 8, padding: "2px 2px 6px", alignItems: "center" }}>
         {automationsPaused && <Pill color="var(--red)">automations paused</Pill>}
         <div style={{ flex: 1 }} />

@@ -191,6 +191,14 @@ export const triggerTask = (projectId: string, taskId: string) =>
 export const getRunners = () =>
   api<RunnerListResponse>("/api/v1/runners").then((r) => r.runners || []);
 
+// getServerRequests fetches the global server-request log (all HTTP traffic in
+// and out of the Brain server, annotated with the authenticated actor).
+export const getServerRequests = (since = 0, limit = 500) =>
+  api<{ requests: import("./types").ServerRequest[]; total: number }>(
+    "/api/v1/server/requests/recent",
+    { query: { since, limit } },
+  ).then((r) => r.requests || []);
+
 export const getRunnerStatus = () =>
   api<RunnerStatusResponse>("/api/v1/tasks/runner/status");
 

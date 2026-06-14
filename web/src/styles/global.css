@@ -1017,6 +1017,17 @@ kbd {
 .help-current h3 { color: var(--green); }
 .help-current { border-left: 2px solid var(--green); padding-left: 8px; }
 
+/* server-request log lines (Logs tab) */
+.req-line { display: flex; gap: 0.5rem; padding: 1px 0; align-items: baseline; }
+.req-actor {
+  flex: 0 0 auto;
+  width: 96px;
+  color: var(--purple);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* log lines in panel */
 .logline { display: flex; gap: 8px; line-height: 1.45; }
 .logline .lt { color: var(--fg-faint); flex: 0 0 auto; }

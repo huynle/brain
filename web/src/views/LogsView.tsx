@@ -1,31 +1,71 @@
+// Global Logs tab: a live tail of every HTTP request handled by the Brain
+// server, annotated with who made it (runner / client / browser). Per-task and
+// per-automation output lives in the Logs *pane* (z) inside those tabs instead.
+
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useLive } from "../lib/sse";
-import { useUI, ALL_PROJECTS } from "../store/ui";
+import { useQuery } from "@tanstack/react-query";
+import { getServerRequests } from "../lib/api";
+import { useUI } from "../store/ui";
 import { useViewKeyboard } from "../lib/keyboard";
-import { clockTime, logLevelColor } from "../lib/format";
+import { clockTime } from "../lib/format";
 import { EmptyState } from "../components/common/states";
+import type { ServerRequest } from "../lib/types";
+
+function statusColor(status: number): string {
+  if (status >= 500) return "var(--red)";
+  if (status >= 400) return "var(--yellow)";
+  if (status >= 300) return "var(--cyan, var(--teal))";
+  return "var(--green)";
+}
+
+function methodColor(method: string): string {
+  switch (method) {
+    case "GET":
+      return "var(--blue)";
+    case "POST":
+      return "var(--green)";
+    case "PATCH":
+    case "PUT":
+      return "var(--yellow)";
+    case "DELETE":
+      return "var(--red)";
+    default:
+      return "var(--fg-dim)";
+  }
+}
+
+function actorLabel(r: ServerRequest): string {
+  if (r.actor_name) return r.actor_name;
+  if (r.actor_type && r.actor_type !== "anonymous") return r.actor_type;
+  return "anon";
+}
 
 export function LogsView() {
-  const logs = useLive((s) => s.logs);
-  const activeProject = useUI((s) => s.activeProject);
   const logFilter = useUI((s) => s.logFilter);
   const setLogFilter = useUI((s) => s.setLogFilter);
   const [follow, setFollow] = useState(true);
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  const reqQ = useQuery({
+    queryKey: ["server-requests"],
+    queryFn: () => getServerRequests(0, 800),
+    refetchInterval: 2_000,
+  });
+
+  const requests = useMemo(() => reqQ.data ?? [], [reqQ.data]);
+
   const filtered = useMemo(() => {
     const q = logFilter.trim().toLowerCase();
-    return logs.filter((r) => {
-      if (activeProject !== ALL_PROJECTS && r.projectId !== activeProject)
-        return false;
-      if (!q) return true;
-      return (
-        r.taskId.toLowerCase().includes(q) ||
-        r.line.content.toLowerCase().includes(q)
-      );
-    });
-  }, [logs, activeProject, logFilter]);
+    if (!q) return requests;
+    return requests.filter(
+      (r) =>
+        r.path.toLowerCase().includes(q) ||
+        r.method.toLowerCase().includes(q) ||
+        actorLabel(r).toLowerCase().includes(q) ||
+        String(r.status).includes(q),
+    );
+  }, [requests, logFilter]);
 
   useEffect(() => {
     if (follow) bottomRef.current?.scrollIntoView({ block: "end" });
@@ -34,9 +74,7 @@ export function LogsView() {
   function onScroll() {
     const el = scrollRef.current;
     if (!el) return;
-    const atBottom =
-      el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-    setFollow(atBottom);
+    setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
   }
 
   useViewKeyboard(
@@ -79,10 +117,13 @@ export function LogsView() {
     <div>
       <div className="search-bar">
         <input
-          placeholder="Filter logs (task id or text)…"
+          placeholder="Filter requests (path, method, actor, status)…"
           value={logFilter}
           onChange={(e) => setLogFilter(e.target.value)}
         />
+        <span className="faint" style={{ fontSize: 11.5, whiteSpace: "nowrap" }}>
+          {filtered.length} req{reqQ.error ? " · offline" : ""}
+        </span>
         <button
           className={`btn sm ${follow ? "primary" : ""}`}
           onClick={() => {
@@ -98,43 +139,23 @@ export function LogsView() {
       {filtered.length === 0 ? (
         <EmptyState
           glyph="▤"
-          title="No logs yet"
-          hint="Runner output appears here in real time as tasks execute."
+          title="No requests yet"
+          hint="Every request to the Brain server (runners, clients, browser) appears here in real time."
         />
       ) : (
         <div
           ref={scrollRef}
           onScroll={onScroll}
-          style={{
-            padding: "0.4rem 0.6rem",
-            fontFamily: "var(--mono)",
-            fontSize: 12.5,
-            lineHeight: 1.5,
-          }}
+          style={{ padding: "0.4rem 0.6rem", fontFamily: "var(--mono)", fontSize: 12.5, lineHeight: 1.5 }}
         >
           {filtered.map((r) => (
-            <div
-              key={r.seq}
-              style={{ display: "flex", gap: "0.5rem", padding: "1px 0" }}
-            >
-              <span className="faint" style={{ flexShrink: 0 }}>
-                {clockTime(r.line.timestamp)}
-              </span>
-              <span
-                style={{
-                  flexShrink: 0,
-                  width: 42,
-                  color: logLevelColor(r.line.level),
-                  textTransform: "uppercase",
-                  fontSize: 10.5,
-                  paddingTop: 1,
-                }}
-              >
-                {r.line.level}
-              </span>
-              <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
-                {r.line.content}
-              </span>
+            <div key={r.seq} className="req-line">
+              <span className="faint" style={{ flexShrink: 0 }}>{clockTime(new Date(r.time).toISOString())}</span>
+              <span className="req-actor" title={`${r.actor_type}`}>{actorLabel(r)}</span>
+              <span style={{ flexShrink: 0, width: 52, color: methodColor(r.method) }}>{r.method}</span>
+              <span style={{ flexShrink: 0, width: 34, color: statusColor(r.status) }}>{r.status}</span>
+              <span className="faint" style={{ flexShrink: 0, width: 56, textAlign: "right" }}>{r.duration_ms}ms</span>
+              <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{r.path}</span>
             </div>
           ))}
           <div ref={bottomRef} />

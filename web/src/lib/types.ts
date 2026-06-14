@@ -131,6 +131,19 @@ export interface LogLine {
   content: string;
 }
 
+// A single HTTP request handled by the Brain server, for the global Logs tab.
+export interface ServerRequest {
+  seq: number;
+  time: number; // unix ms
+  method: string;
+  path: string;
+  status: number;
+  duration_ms: number;
+  actor_type: string; // "api_token" | "oauth" | "anonymous"
+  actor_name: string;
+  request_id?: string;
+}
+
 export interface LogQueryResponse {
   lines: LogLine[];
   total: number;

@@ -27,6 +27,7 @@ export function BrainView() {
   const activeProject = useUI((s) => s.activeProject);
   const toast = useUI((s) => s.toast);
   const toggleDetail = useUI((s) => s.toggleDetail);
+  const toggleLogs = useUI((s) => s.toggleLogs);
   const project = activeProject === ALL_PROJECTS ? undefined : activeProject;
   const qc = useQueryClient();
 
@@ -90,6 +91,9 @@ export function BrainView() {
         case "T":
           toggleDetail();
           return true;
+        case "z":
+          toggleLogs();
+          return true;
         case "Enter":
         case "e":
           if (cur) setOpenPath(cur.path);
@@ -124,10 +128,15 @@ export function BrainView() {
     el?.scrollIntoView({ block: "nearest" });
   }, [cursor]);
 
-  const selectedPath = items[cursor]?.path ?? null;
+  const selItem = items[cursor] as { path: string; id?: string; type?: string; project_id?: string } | undefined;
+  const selectedPath = selItem?.path ?? null;
+  const logTarget =
+    selItem?.type === "task" && selItem.id
+      ? { taskId: selItem.id, projectId: selItem.project_id }
+      : null;
 
   return (
-    <ListDetail detailPath={selectedPath}>
+    <ListDetail detailPath={selectedPath} logTarget={logTarget}>
       <form
         className="search-bar"
         onSubmit={(e) => {

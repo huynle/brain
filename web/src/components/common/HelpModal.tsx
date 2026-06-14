@@ -44,6 +44,7 @@ const VIEW_GROUPS: Record<string, Group> = {
       { keys: ["b", "B"], desc: "Embed project / all" },
       { keys: ["F", "A"], desc: "Re-embed project / all" },
       { keys: ["T"], desc: "Toggle detail pane" },
+      { keys: ["z"], desc: "Toggle logs pane" },
     ],
   },
   automations: {
@@ -58,6 +59,7 @@ const VIEW_GROUPS: Record<string, Group> = {
       { keys: ["n"], desc: "New goal" },
       { keys: ["p"], desc: "Pause automations" },
       { keys: ["T"], desc: "Toggle detail pane" },
+      { keys: ["z"], desc: "Toggle logs pane" },
     ],
   },
   control: {
@@ -80,11 +82,11 @@ const VIEW_GROUPS: Record<string, Group> = {
   },
   logs: {
     id: "logs",
-    title: "Logs",
+    title: "Logs (server requests)",
     rows: [
       { keys: ["j", "k"], desc: "Scroll" },
       { keys: ["g", "G"], desc: "Top / bottom" },
-      { keys: ["f"], desc: "Follow logs" },
+      { keys: ["f"], desc: "Follow / live tail" },
     ],
   },
 };

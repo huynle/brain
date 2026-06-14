@@ -100,7 +100,9 @@ export const useUI = create<UIState>((set, get) => ({
       return { focus: panels[(i + 1) % panels.length] };
     }),
   setActiveProject: (p) => set({ activeProject: p }),
-  showLogsFor: (taskId) => set({ view: "logs", logFilter: taskId }),
+  // The Logs tab is the global server-request log now; a task's own output
+  // lives in the Logs pane under Tasks, so drill-downs open that instead.
+  showLogsFor: (taskId) => set({ view: "tasks", logsVisible: true, logFilter: taskId }),
   setLogFilter: (f) => set({ logFilter: f }),
   openInControl: (target) => set({ controlTarget: target, view: "control" }),
   consumeControlTarget: () => {

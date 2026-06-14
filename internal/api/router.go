@@ -50,6 +50,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 		// All routes below require auth when enabled
 		r.Group(func(r chi.Router) {
 			r.Use(Auth(cfg.EnableAuth, o.validator))
+			// Record each authenticated request (with its actor) for the
+			// global server-request log shown in the Logs tab. Installed after
+			// Auth so the actor is present in context.
+			r.Use(RequestRecorder)
+
+			// ─── Server request log (read:* scope) ─────────────────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				r.Get("/server/requests/recent", o.handler.HandleRecentRequests)
+			})
 
 			// ─── Attachments ───────────────────────────────────────
 			r.Route("/attachments", func(r chi.Router) {

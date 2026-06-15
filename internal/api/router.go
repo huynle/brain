@@ -284,6 +284,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				})
 			})
 
+			// ─── Scheduler ────────────────────────────────────────
+			r.Route("/scheduler", func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil && o.handler.scheduler != nil {
+					r.Get("/status", o.handler.HandleSchedulerStatus)
+				} else {
+					r.Get("/status", notImplemented)
+				}
+			})
+
 			// ─── Projects ──────────────────────────────────────────
 			r.Route("/projects/{projectId}/placement", func(r chi.Router) {
 				r.Group(func(r chi.Router) {
@@ -404,6 +414,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Get("/{taskId}", notImplemented)
 							r.Get("/{taskId}/claim-status", notImplemented)
 							r.Get("/{taskId}/metadata", notImplemented)
+						}
+					})
+
+					// Scheduler visibility (read)
+					r.Group(func(r chi.Router) {
+						r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+						if o.handler != nil && o.handler.schedulerViews != nil {
+							r.Get("/{taskId}/dispatch-lease", o.handler.HandleGetDispatchLease)
+							r.Get("/{taskId}/placement-reasons", o.handler.HandleListPlacementReasons)
+						} else {
+							r.Get("/{taskId}/dispatch-lease", notImplemented)
+							r.Get("/{taskId}/placement-reasons", notImplemented)
 						}
 					})
 

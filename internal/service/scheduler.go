@@ -68,18 +68,12 @@ type SchedulerService struct {
 	nowUnixMS func() int64
 
 	mu     sync.RWMutex
-	status SchedulerStatus
+	status schedulerStatusSnapshot
 }
 
-type SchedulerResult struct {
-	ProjectID  string
-	Considered int
-	Dispatched int
-	Skipped    int
-}
+type SchedulerResult = types.SchedulerResult
 
-// SchedulerStatus is lightweight scheduler loop state suitable for API exposure.
-type SchedulerStatus struct {
+type schedulerStatusSnapshot struct {
 	Started            bool
 	Running            bool
 	Interval           time.Duration
@@ -87,7 +81,7 @@ type SchedulerStatus struct {
 	LastSuccessAt      time.Time
 	LastError          string
 	TotalTicks         int64
-	LastProjectResults map[string]SchedulerResult
+	LastProjectResults map[string]types.SchedulerResult
 	LastExpiredLeases  int64
 }
 
@@ -159,12 +153,25 @@ func (s *SchedulerService) Start(ctx context.Context, interval time.Duration) {
 	}()
 }
 
-func (s *SchedulerService) Status() SchedulerStatus {
+func (s *SchedulerService) Status() types.SchedulerStatus {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	status := s.status
+	status := types.SchedulerStatus{
+		Started:           s.status.Started,
+		Running:           s.status.Running,
+		Interval:          s.status.Interval.String(),
+		LastError:         s.status.LastError,
+		TotalTicks:        s.status.TotalTicks,
+		LastExpiredLeases: s.status.LastExpiredLeases,
+	}
+	if !s.status.LastTickAt.IsZero() {
+		status.LastTickAt = s.status.LastTickAt.Format(time.RFC3339)
+	}
+	if !s.status.LastSuccessAt.IsZero() {
+		status.LastSuccessAt = s.status.LastSuccessAt.Format(time.RFC3339)
+	}
 	if s.status.LastProjectResults != nil {
-		status.LastProjectResults = make(map[string]SchedulerResult, len(s.status.LastProjectResults))
+		status.LastProjectResults = make(map[string]types.SchedulerResult, len(s.status.LastProjectResults))
 		for projectID, result := range s.status.LastProjectResults {
 			status.LastProjectResults[projectID] = result
 		}

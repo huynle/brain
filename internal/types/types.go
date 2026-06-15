@@ -1253,6 +1253,33 @@ type RunnerListResponse struct {
 	Total   int          `json:"total"`
 }
 
+// SchedulerResult summarizes one scheduler pass for a project.
+type SchedulerResult struct {
+	ProjectID  string `json:"project_id"`
+	Considered int    `json:"considered"`
+	Dispatched int    `json:"dispatched"`
+	Skipped    int    `json:"skipped"`
+}
+
+// SchedulerStatus is lightweight scheduler loop state suitable for API exposure.
+type SchedulerStatus struct {
+	Started            bool                       `json:"started"`
+	Running            bool                       `json:"running"`
+	Interval           string                     `json:"interval"`
+	LastTickAt         string                     `json:"last_tick_at,omitempty"`
+	LastSuccessAt      string                     `json:"last_success_at,omitempty"`
+	LastError          string                     `json:"last_error,omitempty"`
+	TotalTicks         int64                      `json:"total_ticks"`
+	LastProjectResults map[string]SchedulerResult `json:"last_project_results,omitempty"`
+	LastExpiredLeases  int64                      `json:"last_expired_leases"`
+}
+
+// PlacementReasonListResponse is the response for task placement diagnostics.
+type PlacementReasonListResponse struct {
+	Reasons []PlacementReason `json:"reasons"`
+	Total   int               `json:"total"`
+}
+
 // ServerRequestRecord is one HTTP request handled by the Brain server, for the
 // global server-request log (GET /server/requests/recent).
 type ServerRequestRecord struct {

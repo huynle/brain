@@ -29,7 +29,7 @@ func TestTaskServiceAckDispatchLeaseMarksAcked(t *testing.T) {
 	if !resp.Success || resp.LeaseID != "lease-abc" || resp.ProjectID != "brain-api" || resp.TaskID != "task-001" || resp.RunnerID != "runner-123" {
 		t.Fatalf("response = %+v", resp)
 	}
-	lease, err := store.GetDispatchLease(ctx, "brain-api", "task-001")
+	lease, err := store.GetDispatchLeaseRow(ctx, "brain-api", "task-001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestTaskServiceRejectDispatchLeaseRecordsStructuredReason(t *testing.T) {
 	if !resp.Success || resp.Reason.Code != reason.Code || resp.Reason.Message != reason.Message {
 		t.Fatalf("response = %+v", resp)
 	}
-	lease, err := store.GetDispatchLease(ctx, "brain-api", "task-001")
+	lease, err := store.GetDispatchLeaseRow(ctx, "brain-api", "task-001")
 	if err != nil {
 		t.Fatal(err)
 	}

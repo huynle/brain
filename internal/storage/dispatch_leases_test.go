@@ -95,7 +95,7 @@ func TestDispatchLeaseOperations_AreAtomicAndPersistState(t *testing.T) {
 		t.Fatal("expected ack to update pushed lease")
 	}
 
-	got, err := s.GetDispatchLease(ctx, "brain-api", "task-1")
+	got, err := s.GetDispatchLeaseRow(ctx, "brain-api", "task-1")
 	if err != nil {
 		t.Fatalf("GetDispatchLease failed: %v", err)
 	}
@@ -126,7 +126,7 @@ func TestDispatchLeaseOperations_AreAtomicAndPersistState(t *testing.T) {
 	if !released {
 		t.Fatal("expected owned lease to be released")
 	}
-	got, err = s.GetDispatchLease(ctx, "brain-api", "task-1")
+	got, err = s.GetDispatchLeaseRow(ctx, "brain-api", "task-1")
 	if err != nil {
 		t.Fatalf("GetDispatchLease after release failed: %v", err)
 	}
@@ -149,7 +149,7 @@ func TestDispatchLeaseRejectAndExpire(t *testing.T) {
 	if !rejected {
 		t.Fatal("expected pushed lease to be rejected")
 	}
-	got, err := s.GetDispatchLease(ctx, "brain-api", "task-2")
+	got, err := s.GetDispatchLeaseRow(ctx, "brain-api", "task-2")
 	if err != nil {
 		t.Fatalf("GetDispatchLease failed: %v", err)
 	}
@@ -171,14 +171,14 @@ func TestDispatchLeaseRejectAndExpire(t *testing.T) {
 	if expired != 1 {
 		t.Fatalf("expired count = %d, want 1", expired)
 	}
-	old, err := s.GetDispatchLease(ctx, "brain-api", "old")
+	old, err := s.GetDispatchLeaseRow(ctx, "brain-api", "old")
 	if err != nil {
 		t.Fatalf("get expired lease: %v", err)
 	}
 	if old == nil || old.State != DispatchLeaseStateExpired {
 		t.Fatalf("old lease after expiry = %#v, want expired row retained", old)
 	}
-	fresh, err := s.GetDispatchLease(ctx, "brain-api", "fresh")
+	fresh, err := s.GetDispatchLeaseRow(ctx, "brain-api", "fresh")
 	if err != nil {
 		t.Fatalf("get fresh lease: %v", err)
 	}
@@ -227,7 +227,7 @@ func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
 		t.Fatalf("expired count = %d, want 1", expired)
 	}
 
-	old, err := s.GetDispatchLease(ctx, "brain-api", "stale-task")
+	old, err := s.GetDispatchLeaseRow(ctx, "brain-api", "stale-task")
 	if err != nil {
 		t.Fatalf("GetDispatchLease expired lease: %v", err)
 	}
@@ -284,7 +284,7 @@ func TestPlacementReasons_AreQueryableSeparatelyFromTaskContent(t *testing.T) {
 		t.Fatalf("RecordPlacementReason rejected failed: %v", err)
 	}
 
-	reasons, err := s.ListPlacementReasons(ctx, "brain-api", "task-1")
+	reasons, err := s.ListPlacementReasonRows(ctx, "brain-api", "task-1")
 	if err != nil {
 		t.Fatalf("ListPlacementReasons failed: %v", err)
 	}

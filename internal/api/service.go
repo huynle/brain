@@ -141,6 +141,17 @@ type ProjectPlacementService interface {
 	Put(ctx context.Context, projectID string, placement types.ProjectPlacement) (*types.ProjectPlacement, error)
 }
 
+// SchedulerService exposes scheduler lifecycle status for API visibility.
+type SchedulerService interface {
+	Status() types.SchedulerStatus
+}
+
+// SchedulerVisibilityService exposes persisted scheduler placement artifacts.
+type SchedulerVisibilityService interface {
+	GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error)
+	ListPlacementReasons(ctx context.Context, projectID, taskID string) ([]types.PlacementReason, error)
+}
+
 // TaskFilterOptions holds optional filters for task queries.
 type TaskFilterOptions struct {
 	FeatureIDs        []string

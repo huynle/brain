@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 const (
@@ -60,14 +62,14 @@ func (s *StorageLayer) CreateDispatchLease(ctx context.Context, in DispatchLease
 	if err != nil {
 		return nil, false, fmt.Errorf("create dispatch lease rows affected: %w", err)
 	}
-	lease, err := s.GetDispatchLease(ctx, in.ProjectID, in.TaskID)
+	lease, err := s.GetDispatchLeaseRow(ctx, in.ProjectID, in.TaskID)
 	if err != nil {
 		return nil, false, err
 	}
 	return lease, rows > 0, nil
 }
 
-func (s *StorageLayer) GetDispatchLease(ctx context.Context, projectID, taskID string) (*DispatchLeaseRow, error) {
+func (s *StorageLayer) GetDispatchLeaseRow(ctx context.Context, projectID, taskID string) (*DispatchLeaseRow, error) {
 	var row DispatchLeaseRow
 	err := s.db.QueryRowContext(ctx, `
 		SELECT project_id, task_id, assigned_runner_id, assigned_machine_id, state,
@@ -182,7 +184,7 @@ func (s *StorageLayer) RecordPlacementReason(ctx context.Context, row *Placement
 	return nil
 }
 
-func (s *StorageLayer) ListPlacementReasons(ctx context.Context, projectID, taskID string) ([]PlacementReasonRow, error) {
+func (s *StorageLayer) ListPlacementReasonRows(ctx context.Context, projectID, taskID string) ([]PlacementReasonRow, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, project_id, task_id, runner_id, machine_id, decision, reason,
 		       required_labels, runner_labels, missing_labels, created_at
@@ -206,6 +208,57 @@ func (s *StorageLayer) ListPlacementReasons(ctx context.Context, projectID, task
 		return nil, fmt.Errorf("placement reason rows: %w", err)
 	}
 	return reasons, nil
+}
+
+func (s *StorageLayer) GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error) {
+	row, err := s.GetDispatchLeaseRow(ctx, projectID, taskID)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	return dispatchLeaseFromRow(row), nil
+}
+
+func (s *StorageLayer) ListPlacementReasons(ctx context.Context, projectID, taskID string) ([]types.PlacementReason, error) {
+	rows, err := s.ListPlacementReasonRows(ctx, projectID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	reasons := make([]types.PlacementReason, 0, len(rows))
+	for i := range rows {
+		reasons = append(reasons, placementReasonFromRow(&rows[i]))
+	}
+	return reasons, nil
+}
+
+func dispatchLeaseFromRow(row *DispatchLeaseRow) *types.DispatchLease {
+	return &types.DispatchLease{
+		ProjectID:         row.ProjectID,
+		TaskID:            row.TaskID,
+		AssignedRunnerID:  row.AssignedRunnerID,
+		AssignedMachineID: row.AssignedMachineID,
+		State:             row.State,
+		PushedAt:          row.PushedAt,
+		AckedAt:           row.AckedAt,
+		RejectedAt:        row.RejectedAt,
+		LastError:         row.LastError,
+		ExpiresAt:         row.ExpiresAt,
+	}
+}
+
+func placementReasonFromRow(row *PlacementReasonRow) types.PlacementReason {
+	return types.PlacementReason{
+		ID:             row.ID,
+		ProjectID:      row.ProjectID,
+		TaskID:         row.TaskID,
+		RunnerID:       row.RunnerID,
+		MachineID:      row.MachineID,
+		Decision:       row.Decision,
+		Reason:         row.Reason,
+		RequiredLabels: row.RequiredLabels,
+		RunnerLabels:   row.RunnerLabels,
+		MissingLabels:  row.MissingLabels,
+		CreatedAt:      row.CreatedAt,
+	}
 }
 
 func (s *StorageLayer) ListExpiredDispatchLeases(ctx context.Context, projectID string, now int64, limit int) ([]DispatchLeaseRow, error) {

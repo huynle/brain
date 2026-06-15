@@ -284,6 +284,8 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithRunnerRegistryService(runnerRegistrySvc),
 		api.WithClientContextService(clientContextSvc),
 		api.WithProjectPlacementService(placementSvc),
+		api.WithSchedulerService(schedulerSvc),
+		api.WithSchedulerVisibilityService(store),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),

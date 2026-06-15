@@ -151,13 +151,13 @@ func TestSchedulerLifecycleTickExpiresLeasesSchedulesProjectsAndUpdatesStatus(t 
 	if !status.Started || !status.Running {
 		t.Fatalf("status started/running = %v/%v, want true/true", status.Started, status.Running)
 	}
-	if status.Interval != time.Hour {
-		t.Fatalf("interval = %v, want %v", status.Interval, time.Hour)
+	if status.Interval != time.Hour.String() {
+		t.Fatalf("interval = %v, want %v", status.Interval, time.Hour.String())
 	}
 	if status.TotalTicks != 1 {
 		t.Fatalf("total ticks = %d, want 1", status.TotalTicks)
 	}
-	if status.LastTickAt.IsZero() || status.LastSuccessAt.IsZero() {
+	if status.LastTickAt == "" || status.LastSuccessAt == "" {
 		t.Fatalf("last tick/success should be set: %#v", status)
 	}
 	if status.LastExpiredLeases != 3 {

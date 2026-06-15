@@ -127,8 +127,8 @@ func (rp *RunnerPanel) View(width, height int) string {
 	}
 
 	// Column header
-	headerLine := fmt.Sprintf("  %-14s %-10s %-8s %-6s %-6s %-18s %s",
-		"ID", "Host", "Status", "Tasks", "Max", "Assigned", "Executors")
+	headerLine := fmt.Sprintf("  %-14s %-10s %-8s %-7s %-8s %-18s %s",
+		"ID", "Host", "Status", "Tasks", "Dispatch", "Assigned", "Executors")
 	b.WriteString(DimStyle.Render(headerLine))
 	b.WriteString("\n")
 
@@ -181,7 +181,34 @@ func (rp RunnerPanel) ViewDetail(width, height int) string {
 	statusStyle := rp.statusStyle(runner.Status)
 	b.WriteString(fmt.Sprintf("  Status:        %s\n", statusStyle.Render(string(runner.Status))))
 	b.WriteString(fmt.Sprintf("  Hostname:      %s\n", runner.Hostname))
-	b.WriteString(fmt.Sprintf("  Max Parallel:  %d\n", runner.MaxParallel))
+	if runner.MachineID != "" {
+		b.WriteString(fmt.Sprintf("  Machine:       %s\n", runner.MachineID))
+	}
+	b.WriteString(fmt.Sprintf("  Tasks:         %d/%d\n", runner.ActiveTasks, runner.MaxParallel))
+	if runner.DispatchPush {
+		b.WriteString("  Dispatch:      push\n")
+	} else {
+		b.WriteString("  Dispatch:      poll\n")
+	}
+	if runner.Draining {
+		b.WriteString("  Draining:      yes\n")
+	}
+
+	if len(runner.Projects) > 0 {
+		b.WriteString(fmt.Sprintf("  Projects:      %s\n", strings.Join(runner.Projects, ", ")))
+	}
+	if len(runner.Capabilities) > 0 {
+		b.WriteString(fmt.Sprintf("  Capabilities:  %s\n", strings.Join(runner.Capabilities, ", ")))
+	}
+	if len(runner.WorkspaceRoots) > 0 {
+		b.WriteString(fmt.Sprintf("  Workspaces:    %s\n", strings.Join(runner.WorkspaceRoots, ", ")))
+	}
+	if len(runner.Resources) > 0 {
+		b.WriteString(fmt.Sprintf("  Resources:     %s\n", formatRunnerMap(runner.Resources)))
+	}
+	if len(runner.Capacity) > 0 {
+		b.WriteString(fmt.Sprintf("  Capacity:      %s\n", formatRunnerMap(runner.Capacity)))
+	}
 
 	// Executors
 	if len(runner.Executors) > 0 {
@@ -250,8 +277,14 @@ func (rp RunnerPanel) renderRunnerLine(runner types.RunnerInfo, width int) strin
 		}
 	}
 
-	// Running tasks (from heartbeat stats, if available)
-	runningTasks := "-"
+	runningTasks := fmt.Sprintf("%d/%d", runner.ActiveTasks, runner.MaxParallel)
+	dispatchState := "poll"
+	if runner.DispatchPush {
+		dispatchState = "push"
+	}
+	if runner.Draining {
+		dispatchState += ",drain"
+	}
 	assignments := formatRunnerAssignments(runner.FeatureAssignments, false)
 	if assignments == "" {
 		assignments = "-"
@@ -260,16 +293,28 @@ func (rp RunnerPanel) renderRunnerLine(runner types.RunnerInfo, width int) strin
 		assignments = assignments[:15] + "..."
 	}
 
-	return fmt.Sprintf("  %s %-14s %-10s %-8s %-6s %-6d %-18s %s",
+	return fmt.Sprintf("  %s %-14s %-10s %-8s %-7s %-8s %-18s %s",
 		statusIndicator,
 		id,
 		host,
 		string(runner.Status),
 		runningTasks,
-		runner.MaxParallel,
+		dispatchState,
 		assignments,
 		executors,
 	)
+}
+
+func formatRunnerMap(values map[string]interface{}) string {
+	if len(values) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(values))
+	for key, value := range values {
+		parts = append(parts, fmt.Sprintf("%s=%v", key, value))
+	}
+	sort.Strings(parts)
+	return strings.Join(parts, ", ")
 }
 
 func formatRunnerAssignments(assignments []types.FeatureAssignmentResponse, includeProject bool) string {

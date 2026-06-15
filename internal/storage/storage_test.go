@@ -694,9 +694,9 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 	}
 }
 
-func TestSchemaVersion_IncludesOpencodeInstances(t *testing.T) {
-	if CurrentSchemaVersion != 16 {
-		t.Errorf("CurrentSchemaVersion = %d, want 16", CurrentSchemaVersion)
+func TestSchemaVersion_IncludesProjectPlacement(t *testing.T) {
+	if CurrentSchemaVersion != 17 {
+		t.Errorf("CurrentSchemaVersion = %d, want 17", CurrentSchemaVersion)
 	}
 }
 

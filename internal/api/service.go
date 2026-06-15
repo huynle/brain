@@ -135,6 +135,12 @@ type AttachmentService interface {
 	Delete(ctx context.Context, projectID, attachmentID string) (bool, error)
 }
 
+// ProjectPlacementService defines project-level scheduling placement metadata operations.
+type ProjectPlacementService interface {
+	Get(ctx context.Context, projectID string) (*types.ProjectPlacement, error)
+	Put(ctx context.Context, projectID string, placement types.ProjectPlacement) (*types.ProjectPlacement, error)
+}
+
 // TaskFilterOptions holds optional filters for task queries.
 type TaskFilterOptions struct {
 	FeatureIDs        []string

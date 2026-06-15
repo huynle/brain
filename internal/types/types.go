@@ -120,6 +120,33 @@ var ExecutionModes = []string{"worktree", "current_branch"}
 var Executors = []string{"opencode", "pi", "script"}
 
 // =============================================================================
+// Project Placement
+// =============================================================================
+
+const (
+	PlacementAffinityStrict = "strict"
+	PlacementAffinitySoft   = "soft"
+	PlacementAffinityNone   = "none"
+)
+
+const (
+	WorkspacePolicyWorktree      = "worktree"
+	WorkspacePolicyCurrentBranch = "current_branch"
+)
+
+// ProjectPlacement stores Brain-owned scheduling placement policy for a project.
+type ProjectPlacement struct {
+	ProjectID            string            `json:"project_id"`
+	Affinity             string            `json:"affinity"`
+	PreferredMachines    []string          `json:"preferred_machines,omitempty"`
+	AllowedMachines      []string          `json:"allowed_machines,omitempty"`
+	WorkspacePolicy      string            `json:"workspace_policy,omitempty"`
+	RequiredLabels       map[string]string `json:"required_labels,omitempty"`
+	RequiredCapabilities []string          `json:"required_capabilities,omitempty"`
+	Resources            map[string]any    `json:"resources,omitempty"`
+}
+
+// =============================================================================
 // Domain Structs
 // =============================================================================
 

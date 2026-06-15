@@ -284,6 +284,26 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				})
 			})
 
+			// ─── Projects ──────────────────────────────────────────
+			r.Route("/projects/{projectId}/placement", func(r chi.Router) {
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.placement != nil {
+						r.Get("/", o.handler.HandleGetProjectPlacement)
+					} else {
+						r.Get("/", notImplemented)
+					}
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*"))
+					if o.handler != nil && o.handler.placement != nil {
+						r.Put("/", o.handler.HandlePutProjectPlacement)
+					} else {
+						r.Put("/", notImplemented)
+					}
+				})
+			})
+
 			// ─── Tasks ───────────────────────────────────────────
 			r.Route("/tasks", func(r chi.Router) {
 				// Task read operations — read:* scope

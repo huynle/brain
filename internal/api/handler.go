@@ -19,6 +19,7 @@ type Handler struct {
 	events         EventService
 	webhooks       WebhookService
 	goalService    GoalService
+	placement      ProjectPlacementService
 	bridge         BridgeService
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
@@ -135,5 +136,12 @@ func WithHub(hub *realtime.Hub) HandlerOption {
 func WithTaskDefaults(td config.TaskDefaultsConfig) HandlerOption {
 	return func(h *Handler) {
 		h.taskDefaults = td
+	}
+}
+
+// WithProjectPlacementService sets the project placement service on the Handler.
+func WithProjectPlacementService(ps ProjectPlacementService) HandlerOption {
+	return func(h *Handler) {
+		h.placement = ps
 	}
 }

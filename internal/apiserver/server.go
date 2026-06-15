@@ -219,6 +219,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	runnerSvc := service.NewRunnerService()
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)
 	clientContextSvc := service.NewClientContextService(store)
+	placementSvc := service.NewProjectPlacementService(store)
 	monitorSvc := service.NewMonitorService(brainSvc)
 	webhookSvc := service.NewWebhookService(store)
 
@@ -280,6 +281,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithRunnerService(runnerSvc),
 		api.WithRunnerRegistryService(runnerRegistrySvc),
 		api.WithClientContextService(clientContextSvc),
+		api.WithProjectPlacementService(placementSvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),

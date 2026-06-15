@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 16
+const CurrentSchemaVersion = 17
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -202,6 +202,20 @@ CREATE TABLE IF NOT EXISTS opencode_instances (
   last_seen INTEGER NOT NULL DEFAULT 0
 );`
 
+const createProjectPlacementTable = `
+CREATE TABLE IF NOT EXISTS project_placement (
+  project_id TEXT PRIMARY KEY,
+  affinity TEXT NOT NULL DEFAULT 'soft',
+  preferred_machines TEXT NOT NULL DEFAULT '[]',
+  allowed_machines TEXT NOT NULL DEFAULT '[]',
+  workspace_policy TEXT NOT NULL DEFAULT '',
+  required_labels TEXT NOT NULL DEFAULT '{}',
+  required_capabilities TEXT NOT NULL DEFAULT '[]',
+  resource_requirements TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);`
+
 const createBrainClientsTable = `
 CREATE TABLE IF NOT EXISTS brain_clients (
   client_id TEXT PRIMARY KEY,
@@ -352,6 +366,7 @@ var createIndexes = []string{
 	// OpenCode instance indexes
 	"CREATE INDEX IF NOT EXISTS idx_opencode_instances_runner ON opencode_instances(runner_id);",
 	"CREATE INDEX IF NOT EXISTS idx_opencode_instances_task ON opencode_instances(project_id, task_id);",
+	"CREATE INDEX IF NOT EXISTS idx_project_placement_affinity ON project_placement(affinity);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -726,6 +741,18 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 17 {
+		// v17: add Brain-owned project placement metadata for scheduling policy.
+		if _, err := db.Exec(createProjectPlacementTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v17 (project_placement table): %w", err)
+			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_project_placement_affinity ON project_placement(affinity)"); err != nil {
+			return fmt.Errorf("migrate v17 (project_placement indexes): %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -837,6 +864,7 @@ func InitSchema(db *sql.DB) error {
 		createFeatureAssignmentsTable,
 		createRunnersTable,
 		createOpencodeInstancesTable,
+		createProjectPlacementTable,
 		createWebhooksTable,
 		createWebhookDeliveriesTable,
 		createNoteEmbeddingsMetaTable,

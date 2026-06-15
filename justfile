@@ -125,8 +125,9 @@ dev:
 # Installation & Release
 # =============================================================================
 
-# Build and install binaries to GOPATH/bin
-install: build
+# Build and install binaries to GOPATH/bin (rebuilds the embedded PWA first,
+# so a fresh `just install` always ships the current web UI).
+install: build-all
     @for cmd in {{ cmds }}; do \
         go install -ldflags '{{ ldflags }}' ./cmd/$cmd; \
     done

@@ -1007,6 +1007,219 @@ func TestTaskRunner_Start_SavesPid(t *testing.T) {
 // Poll Tests
 // =============================================================================
 
+func TestTaskRunner_Poll_DispatchPushCapabilityDoesNotPollNextOrSpawn(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tr.poll(context.Background())
+
+	if got := len(client.getNextTaskCalls()); got != 0 {
+		t.Fatalf("dispatch-push runner should not call GetNextTask, got %d calls", got)
+	}
+	if got := len(executor.getSpawnCalls()); got != 0 {
+		t.Fatalf("dispatch-push runner should not spawn poll-discovered tasks, got %d spawns", got)
+	}
+}
+
+func TestTaskRunner_Poll_DispatchPushConfigDoesNotPollNext(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.DispatchPush = true
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tr.poll(context.Background())
+
+	if got := len(client.getNextTaskCalls()); got != 0 {
+		t.Fatalf("dispatch-push runner should not call GetNextTask, got %d calls", got)
+	}
+	if got := len(executor.getSpawnCalls()); got != 0 {
+		t.Fatalf("dispatch-push runner should not spawn poll-discovered tasks, got %d spawns", got)
+	}
+}
+
+func TestTaskRunner_Poll_PassiveConfigDoesNotPollNext(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Passive = true
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tr.poll(context.Background())
+
+	if got := len(client.getNextTaskCalls()); got != 0 {
+		t.Fatalf("passive runner should not call GetNextTask, got %d calls", got)
+	}
+	if got := len(executor.getSpawnCalls()); got != 0 {
+		t.Fatalf("passive runner should not spawn poll-discovered tasks, got %d spawns", got)
+	}
+}
+
+func TestTaskRunner_PassiveDispatchCommandAcksAndSpawnsWithoutPollingNext(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("other-task", "proj-a")
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type:      CommandDispatch,
+		ProjectID: "proj-a",
+		TaskID:    "task1",
+		LeaseID:   "lease-1",
+	})
+
+	if got := len(client.getNextTaskCalls()); got != 0 {
+		t.Fatalf("dispatch command should not call GetNextTask, got %d calls", got)
+	}
+	if got := len(client.getAckCalls()); got != 1 {
+		t.Fatalf("dispatch command should ack exactly once, got %d", got)
+	}
+	spawns := executor.getSpawnCalls()
+	if got := len(spawns); got != 1 {
+		t.Fatalf("dispatch command should spawn assigned lease task exactly once, got %d", got)
+	}
+	if spawns[0].TaskID != "task1" {
+		t.Fatalf("spawned task ID = %q, want task1", spawns[0].TaskID)
+	}
+}
+
+func TestTaskRunner_Poll_MixedLegacyAndPassiveBehavior(t *testing.T) {
+	activeClient := newMockClient()
+	activeClient.nextTask["proj-a"] = testTask("active-task", "proj-a")
+	passiveClient := newMockClient()
+	passiveClient.nextTask["proj-a"] = testTask("poll-task", "proj-a")
+	passiveClient.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("dispatch-task", "proj-a")}
+
+	activeExecutor := newMockExecutor()
+	passiveExecutor := newMockExecutor()
+
+	active := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     testRunnerConfig(),
+		Mode:       ExecutionModeHeadless,
+		Client:     activeClient,
+		Executor:   activeExecutor,
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+	})
+
+	passiveCfg := testRunnerConfig()
+	passiveCfg.Capabilities = []string{"dispatch_push"}
+	passive := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     passiveCfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     passiveClient,
+		Executor:   passiveExecutor,
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+	})
+
+	active.poll(context.Background())
+	passive.poll(context.Background())
+	passive.handleCommand(context.Background(), RunnerCommand{Type: CommandDispatch, ProjectID: "proj-a", TaskID: "dispatch-task", LeaseID: "lease-1"})
+
+	if got := len(activeClient.getNextTaskCalls()); got == 0 {
+		t.Fatal("legacy active runner should poll GetNextTask")
+	}
+	if got := len(activeExecutor.getSpawnCalls()); got != 1 {
+		t.Fatalf("legacy active runner should spawn polled task once, got %d", got)
+	}
+	if got := len(passiveClient.getNextTaskCalls()); got != 0 {
+		t.Fatalf("passive runner should not poll GetNextTask, got %d calls", got)
+	}
+	spawns := passiveExecutor.getSpawnCalls()
+	if got := len(spawns); got != 1 {
+		t.Fatalf("passive runner should spawn dispatch lease task once, got %d", got)
+	}
+	if spawns[0].TaskID != "dispatch-task" {
+		t.Fatalf("passive runner spawned %q, want dispatch-task", spawns[0].TaskID)
+	}
+}
+
+func TestTaskRunner_RegisterAndHeartbeatAdvertiseDispatchPush(t *testing.T) {
+	client := newMockClient()
+	tr := newTestRunner(client, newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+	tr.config.Capabilities = []string{"dispatch_push"}
+
+	tr.registerWithAPI(context.Background())
+	tr.sendHeartbeat(context.Background())
+
+	if got := len(client.registerCalls); got != 1 {
+		t.Fatalf("register calls = %d, want 1", got)
+	}
+	if !client.registerCalls[0].DispatchPush {
+		t.Fatal("registration DispatchPush = false, want true")
+	}
+	if got := len(client.heartbeatCalls); got != 1 {
+		t.Fatalf("heartbeat calls = %d, want 1", got)
+	}
+	hb := client.heartbeatCalls[0].Request.DispatchPush
+	if hb == nil {
+		t.Fatal("heartbeat DispatchPush pointer is nil, want true")
+	}
+	if !*hb {
+		t.Fatal("heartbeat DispatchPush = false, want true")
+	}
+}
+
 func TestTaskRunner_Poll_HealthCheckFails_NoSpawn(t *testing.T) {
 	client := newMockClient()
 	client.healthResult = APIHealth{Status: "unhealthy"}

@@ -202,6 +202,8 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		HeartbeatInterval: getEnvIntOrDefault("RUNNER_HEARTBEAT_INTERVAL", firstNonZero(fileCfg.HeartbeatInterval, 30)),
 		LogStreaming:      getEnvBoolOrDefault("RUNNER_LOG_STREAMING", defaultLogStreaming(fileCfg.LogStreaming)),
 		Capabilities:      getEnvCSVOrDefault("RUNNER_CAPABILITIES", fileCfg.Capabilities),
+		DispatchPush:      getEnvBoolOrDefault("RUNNER_DISPATCH_PUSH", fileCfg.DispatchPush),
+		Passive:           getEnvBoolOrDefault("RUNNER_PASSIVE", fileCfg.Passive),
 	}
 
 	if err := ValidateConfig(cfg); err != nil {

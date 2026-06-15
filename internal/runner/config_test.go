@@ -262,6 +262,46 @@ poll_interval: 45
 	}
 }
 
+func TestLoadConfig_PassiveDispatchPushEnvOverrides(t *testing.T) {
+	t.Setenv("RUNNER_PASSIVE", "true")
+	t.Setenv("RUNNER_DISPATCH_PUSH", "true")
+
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !cfg.Passive {
+		t.Fatal("Passive = false, want true from RUNNER_PASSIVE")
+	}
+	if !cfg.DispatchPush {
+		t.Fatal("DispatchPush = false, want true from RUNNER_DISPATCH_PUSH")
+	}
+}
+
+func TestLoadConfig_PassiveDispatchPushYAMLFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `passive: true
+dispatch_push: true
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !cfg.Passive {
+		t.Fatal("Passive = false, want true from YAML")
+	}
+	if !cfg.DispatchPush {
+		t.Fatal("DispatchPush = false, want true from YAML")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // LoadConfig — tilde expansion
 // ---------------------------------------------------------------------------

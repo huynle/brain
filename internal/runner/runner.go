@@ -747,6 +747,15 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 	// 2.6. Check scheduled tasks (cron triggers)
 	tr.checkScheduledTasks(ctx, time.Now().UTC())
 
+	// Passive dispatch-capable runners wait for Brain-assigned dispatch leases
+	// instead of actively polling /next for work. Lifecycle maintenance above
+	// still runs on every poll tick.
+	if tr.dispatchPushEnabled() {
+		tr.saveState()
+		tr.emitPollComplete()
+		return
+	}
+
 	// 3. Check capacity
 	running := tr.processMgr.RunningCount()
 	maxParallel := tr.getMaxParallel()
@@ -1456,6 +1465,7 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 		hostname = "unknown"
 	}
 
+	dispatchPush := tr.dispatchPushEnabled()
 	req := types.RunnerRegistration{
 		RunnerID:     tr.runnerID,
 		MachineID:    tr.machineID,
@@ -1464,6 +1474,7 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 		Capabilities: tr.config.Capabilities,
 		Projects:     tr.projects,
 		MaxParallel:  tr.getMaxParallel(),
+		DispatchPush: dispatchPush,
 	}
 
 	info, err := tr.client.RegisterRunner(ctx, req)
@@ -1488,8 +1499,10 @@ func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
 	stats := tr.stats
 	tr.mu.RUnlock()
 
+	dispatchPush := tr.dispatchPushEnabled()
 	req := types.RunnerHeartbeatRequest{
 		RunningTasks: running,
+		DispatchPush: &dispatchPush,
 		Stats: map[string]interface{}{
 			"completed":    stats.Completed,
 			"failed":       stats.Failed,
@@ -2228,6 +2241,18 @@ func (tr *TaskRunner) stopLogStreamer(taskID string) {
 // matchesCapabilities checks whether this runner has all capabilities required
 // by the given task. Tasks without RequiresCapability are claimable by any runner
 // (backward compatible). Returns true if the runner can handle the task.
+func (tr *TaskRunner) dispatchPushEnabled() bool {
+	if tr.config.Passive || tr.config.DispatchPush {
+		return true
+	}
+	for _, capability := range tr.config.Capabilities {
+		if capability == "dispatch_push" {
+			return true
+		}
+	}
+	return false
+}
+
 func (tr *TaskRunner) matchesCapabilities(task *types.ResolvedTask) bool {
 	if len(task.RequiresCapability) == 0 {
 		return true // untagged tasks are claimable by any runner

@@ -84,6 +84,15 @@ type RunnerConfig struct {
 	// Set via config file or RUNNER_CAPABILITIES env var (comma-separated).
 	Capabilities []string `yaml:"capabilities" json:"capabilities"`
 
+	// DispatchPush advertises that this runner accepts Brain-assigned dispatch
+	// leases instead of relying on active /next polling. Set via
+	// RUNNER_DISPATCH_PUSH env var.
+	DispatchPush bool `yaml:"dispatch_push" json:"dispatch_push"`
+
+	// Passive prevents active /next polling. Passive runners only execute
+	// Brain-assigned dispatch leases. Set via RUNNER_PASSIVE env var.
+	Passive bool `yaml:"passive" json:"passive"`
+
 	// Control holds remote-control bridge settings (WebSocket tunnel to the
 	// Brain API for proxied OpenCode access and ad-hoc spawning).
 	Control ControlConfig `yaml:"control" json:"control"`

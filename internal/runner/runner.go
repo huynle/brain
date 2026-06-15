@@ -177,9 +177,9 @@ type TaskRunner struct {
 	runnerID  string
 	machineID string
 	projects  []string
-	config   RunnerConfig
-	mode     ExecutionMode
-	logger   *log.Logger
+	config    RunnerConfig
+	mode      ExecutionMode
+	logger    *log.Logger
 
 	client           Client
 	executor         TaskExecutor
@@ -1355,6 +1355,7 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 		Hostname:     hostname,
 		Executors:    tr.executorNames(),
 		Capabilities: tr.config.Capabilities,
+		Projects:     tr.projects,
 		MaxParallel:  tr.getMaxParallel(),
 	}
 

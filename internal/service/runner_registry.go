@@ -55,8 +55,8 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 	if labels == nil {
 		labels = make(map[string]string)
 	}
-	// Persist the machine id in labels so we avoid a schema migration; it's
-	// surfaced as a typed field via rowToRunnerInfo.
+	// Keep writing the legacy label for older rows/readers while also storing
+	// machine_id as a first-class column for scheduling.
 	if req.MachineID != "" {
 		labels[machineIDLabel] = req.MachineID
 	}
@@ -71,15 +71,22 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 	}
 
 	row := &storage.RunnerRow{
-		RunnerID:      req.RunnerID,
-		Hostname:      req.Hostname,
-		Labels:        labels,
-		Executors:     executors,
-		Capabilities:  capabilities,
-		MaxParallel:   maxParallel,
-		RegisteredAt:  now,
-		LastHeartbeat: now,
-		Status:        string(types.RunnerStatusOnline),
+		RunnerID:       req.RunnerID,
+		MachineID:      req.MachineID,
+		Hostname:       req.Hostname,
+		Labels:         labels,
+		Executors:      executors,
+		Capabilities:   capabilities,
+		DispatchPush:   req.DispatchPush,
+		WorkspaceRoots: req.WorkspaceRoots,
+		Projects:       req.Projects,
+		Resources:      req.Resources,
+		Capacity:       req.Capacity,
+		Draining:       req.Draining,
+		MaxParallel:    maxParallel,
+		RegisteredAt:   now,
+		LastHeartbeat:  now,
+		Status:         string(types.RunnerStatusOnline),
 	}
 
 	if err := s.storage.UpsertRunner(ctx, row); err != nil {
@@ -95,6 +102,11 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 func (s *RunnerRegistryServiceImpl) Heartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
 	if err := s.storage.UpdateHeartbeat(ctx, runnerID, req.RunningTasks, req.Stats); err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
+	}
+	if req.DispatchPush != nil || req.WorkspaceRoots != nil || req.Projects != nil || req.Resources != nil || req.Capacity != nil || req.Draining != nil {
+		if err := s.storage.UpdateRunnerDispatchMetadata(ctx, runnerID, req.DispatchPush, req.WorkspaceRoots, req.Projects, req.Resources, req.Capacity, req.Draining); err != nil {
+			return fmt.Errorf("heartbeat dispatch metadata: %w", err)
+		}
 	}
 	if req.Instances != nil {
 		rows := make([]storage.InstanceRow, 0, len(req.Instances))
@@ -470,24 +482,34 @@ func computeRunnerStatus(lastHeartbeatMs int64) types.RunnerStatus {
 	return types.RunnerStatusOffline
 }
 
-// machineIDLabel is the internal labels key under which the machine id is
-// stored (avoids a runners-table schema migration).
+// machineIDLabel is the legacy labels key under which the machine id was stored
+// before runners had a first-class machine_id column.
 const machineIDLabel = "_machine_id"
 
 // rowToRunnerInfo converts a storage RunnerRow to an API RunnerInfo.
 func rowToRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
+	machineID := row.MachineID
+	if machineID == "" && row.Labels != nil {
+		machineID = row.Labels[machineIDLabel]
+	}
 	return &types.RunnerInfo{
-		RunnerID:      row.RunnerID,
-		MachineID:     row.Labels[machineIDLabel],
-		Hostname:      row.Hostname,
-		Labels:        row.Labels,
-		Executors:     row.Executors,
-		Capabilities:  row.Capabilities,
-		MaxParallel:   row.MaxParallel,
-		FeatureIDs:    row.FeatureIDs,
-		RegisteredAt:  time.UnixMilli(row.RegisteredAt).UTC().Format(time.RFC3339),
-		LastHeartbeat: time.UnixMilli(row.LastHeartbeat).UTC().Format(time.RFC3339),
-		Status:        types.RunnerStatus(row.Status),
+		RunnerID:       row.RunnerID,
+		MachineID:      machineID,
+		Hostname:       row.Hostname,
+		Labels:         row.Labels,
+		Executors:      row.Executors,
+		Projects:       row.Projects,
+		Capabilities:   row.Capabilities,
+		DispatchPush:   row.DispatchPush,
+		WorkspaceRoots: row.WorkspaceRoots,
+		Resources:      row.Resources,
+		Capacity:       row.Capacity,
+		Draining:       row.Draining,
+		MaxParallel:    row.MaxParallel,
+		FeatureIDs:     row.FeatureIDs,
+		RegisteredAt:   time.UnixMilli(row.RegisteredAt).UTC().Format(time.RFC3339),
+		LastHeartbeat:  time.UnixMilli(row.LastHeartbeat).UTC().Format(time.RFC3339),
+		Status:         types.RunnerStatus(row.Status),
 	}
 }
 

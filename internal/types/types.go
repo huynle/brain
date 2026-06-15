@@ -1052,19 +1052,31 @@ const (
 
 // RunnerRegistration is the request body for POST /runners (register).
 type RunnerRegistration struct {
-	RunnerID     string            `json:"runner_id"`
-	MachineID    string            `json:"machine_id,omitempty"`
-	Hostname     string            `json:"hostname"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	Executors    []string          `json:"executors,omitempty"`
-	Capabilities []string          `json:"capabilities,omitempty"`
-	MaxParallel  int               `json:"max_parallel,omitempty"`
+	RunnerID       string                 `json:"runner_id"`
+	MachineID      string                 `json:"machine_id,omitempty"`
+	Hostname       string                 `json:"hostname"`
+	Labels         map[string]string      `json:"labels,omitempty"`
+	Executors      []string               `json:"executors,omitempty"`
+	Capabilities   []string               `json:"capabilities,omitempty"`
+	DispatchPush   bool                   `json:"dispatch_push,omitempty"`
+	WorkspaceRoots []string               `json:"workspace_roots,omitempty"`
+	Projects       []string               `json:"projects,omitempty"`
+	Resources      map[string]interface{} `json:"resources,omitempty"`
+	Capacity       map[string]interface{} `json:"capacity,omitempty"`
+	Draining       bool                   `json:"draining,omitempty"`
+	MaxParallel    int                    `json:"max_parallel,omitempty"`
 }
 
 // RunnerHeartbeatRequest is the request body for POST /runners/:id/heartbeat.
 type RunnerHeartbeatRequest struct {
-	RunningTasks int                    `json:"running_tasks"`
-	Stats        map[string]interface{} `json:"stats,omitempty"`
+	RunningTasks   int                    `json:"running_tasks"`
+	Stats          map[string]interface{} `json:"stats,omitempty"`
+	DispatchPush   *bool                  `json:"dispatch_push,omitempty"`
+	WorkspaceRoots []string               `json:"workspace_roots,omitempty"`
+	Projects       []string               `json:"projects,omitempty"`
+	Resources      map[string]interface{} `json:"resources,omitempty"`
+	Capacity       map[string]interface{} `json:"capacity,omitempty"`
+	Draining       *bool                  `json:"draining,omitempty"`
 
 	// Instances is a full reconcile list of OpenCode instances managed by this
 	// runner. nil means the runner does not report instances (older runners);
@@ -1136,6 +1148,11 @@ type RunnerInfo struct {
 	Executors          []string                    `json:"executors,omitempty"`
 	Projects           []string                    `json:"projects,omitempty"`
 	Capabilities       []string                    `json:"capabilities,omitempty"`
+	DispatchPush       bool                        `json:"dispatch_push,omitempty"`
+	WorkspaceRoots     []string                    `json:"workspace_roots,omitempty"`
+	Resources          map[string]interface{}      `json:"resources,omitempty"`
+	Capacity           map[string]interface{}      `json:"capacity,omitempty"`
+	Draining           bool                        `json:"draining,omitempty"`
 	MaxParallel        int                         `json:"max_parallel"`
 	ActiveTasks        int                         `json:"active_tasks,omitempty"`
 	FeatureIDs         string                      `json:"feature_ids,omitempty"`

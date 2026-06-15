@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 17
+const CurrentSchemaVersion = 18
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -172,10 +172,17 @@ CREATE TABLE IF NOT EXISTS feature_assignments (
 const createRunnersTable = `
 CREATE TABLE IF NOT EXISTS runners (
   runner_id TEXT PRIMARY KEY,
+  machine_id TEXT DEFAULT '',
   hostname TEXT NOT NULL,
   labels TEXT DEFAULT '{}',
   executors TEXT DEFAULT '[]',
   capabilities TEXT DEFAULT '[]',
+  dispatch_push INTEGER NOT NULL DEFAULT 0,
+  workspace_roots TEXT DEFAULT '[]',
+  projects TEXT DEFAULT '[]',
+  resources TEXT DEFAULT '{}',
+  capacity TEXT DEFAULT '{}',
+  draining INTEGER NOT NULL DEFAULT 0,
   max_parallel INTEGER NOT NULL DEFAULT 1,
   feature_ids TEXT DEFAULT '',
   registered_at INTEGER NOT NULL,
@@ -737,6 +744,33 @@ func migrateSchema(db *sql.DB) error {
 		for _, stmt := range instanceIndexes {
 			if _, err := db.Exec(stmt); err != nil {
 				return fmt.Errorf("migrate v16 (opencode_instances indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 18 {
+		// v18: add explicit runner dispatch metadata for push scheduling.
+		var tblName string
+		tblErr := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='runners'").Scan(&tblName)
+		if tblErr == nil {
+			columns := []struct {
+				name string
+				ddl  string
+			}{
+				{"machine_id", "ALTER TABLE runners ADD COLUMN machine_id TEXT DEFAULT ''"},
+				{"dispatch_push", "ALTER TABLE runners ADD COLUMN dispatch_push INTEGER NOT NULL DEFAULT 0"},
+				{"workspace_roots", "ALTER TABLE runners ADD COLUMN workspace_roots TEXT DEFAULT '[]'"},
+				{"projects", "ALTER TABLE runners ADD COLUMN projects TEXT DEFAULT '[]'"},
+				{"resources", "ALTER TABLE runners ADD COLUMN resources TEXT DEFAULT '{}'"},
+				{"capacity", "ALTER TABLE runners ADD COLUMN capacity TEXT DEFAULT '{}'"},
+				{"draining", "ALTER TABLE runners ADD COLUMN draining INTEGER NOT NULL DEFAULT 0"},
+			}
+			for _, column := range columns {
+				if _, err := db.Exec(column.ddl); err != nil {
+					if !isDuplicateColumnError(err) {
+						return fmt.Errorf("migrate v18 (add runner %s): %w", column.name, err)
+					}
+				}
 			}
 		}
 	}

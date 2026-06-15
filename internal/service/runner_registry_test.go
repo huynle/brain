@@ -177,6 +177,143 @@ func assertStringSliceEqual(t *testing.T, got, want []string) {
 	}
 }
 
+func TestRunnerRegistry_Register_PersistsDispatchMetadataAndProjects(t *testing.T) {
+	svc, _ := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	info, err := svc.Register(ctx, types.RunnerRegistration{
+		RunnerID:       "runner-dispatch",
+		MachineID:      "machine-explicit",
+		Hostname:       "host-dispatch",
+		Executors:      []string{"opencode", "pi"},
+		Capabilities:   []string{"docker"},
+		DispatchPush:   true,
+		WorkspaceRoots: []string{"/work/brain", "/tmp/worktrees"},
+		Projects:       []string{"brain-api", "brain-docs"},
+		Resources: map[string]interface{}{
+			"os":   "darwin",
+			"arch": "arm64",
+		},
+		Capacity: map[string]interface{}{
+			"max_parallel": float64(4),
+		},
+		Draining:    true,
+		MaxParallel: 4,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	assertRunnerInfoDispatchMetadata(t, info)
+
+	got, err := svc.GetRunner(ctx, "runner-dispatch")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	assertRunnerInfoDispatchMetadata(t, got)
+
+	listed, err := svc.ListRunners(ctx)
+	if err != nil {
+		t.Fatalf("ListRunners failed: %v", err)
+	}
+	if listed.Total != 1 {
+		t.Fatalf("Total = %d, want 1", listed.Total)
+	}
+	assertRunnerInfoDispatchMetadata(t, &listed.Runners[0])
+}
+
+func TestRowToRunnerInfo_MachineIDFallsBackToLegacyLabel(t *testing.T) {
+	now := time.Now().UnixMilli()
+	info := rowToRunnerInfo(&storage.RunnerRow{
+		RunnerID:      "runner-legacy",
+		Hostname:      "host-legacy",
+		Labels:        map[string]string{"_machine_id": "machine-legacy"},
+		Executors:     []string{"opencode"},
+		MaxParallel:   1,
+		RegisteredAt:  now,
+		LastHeartbeat: now,
+		Status:        string(types.RunnerStatusOnline),
+	})
+
+	if info.MachineID != "machine-legacy" {
+		t.Fatalf("MachineID = %q, want legacy label fallback", info.MachineID)
+	}
+}
+
+func assertRunnerInfoDispatchMetadata(t *testing.T, info *types.RunnerInfo) {
+	t.Helper()
+	if info.MachineID != "machine-explicit" {
+		t.Fatalf("MachineID = %q, want machine-explicit", info.MachineID)
+	}
+	if !info.DispatchPush {
+		t.Fatal("DispatchPush = false, want true")
+	}
+	assertStringSliceEqual(t, info.WorkspaceRoots, []string{"/work/brain", "/tmp/worktrees"})
+	assertStringSliceEqual(t, info.Projects, []string{"brain-api", "brain-docs"})
+	if info.Resources["os"] != "darwin" || info.Resources["arch"] != "arm64" {
+		t.Fatalf("Resources = %#v, want os/arch", info.Resources)
+	}
+	if info.Capacity["max_parallel"] != float64(4) {
+		t.Fatalf("Capacity = %#v, want max_parallel", info.Capacity)
+	}
+	if !info.Draining {
+		t.Fatal("Draining = false, want true")
+	}
+}
+
+func TestRunnerRegistry_Heartbeat_UpdatesDispatchRuntimeMetadata(t *testing.T) {
+	svc, _ := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	_, err := svc.Register(ctx, types.RunnerRegistration{
+		RunnerID:       "runner-heartbeat-meta",
+		MachineID:      "machine-heartbeat",
+		Hostname:       "host-heartbeat",
+		Executors:      []string{"opencode"},
+		WorkspaceRoots: []string{"/old/root"},
+		Projects:       []string{"old-project"},
+		Resources:      map[string]interface{}{"os": "darwin"},
+		Capacity:       map[string]interface{}{"available": float64(1)},
+		MaxParallel:    2,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	draining := true
+	dispatchPush := true
+	err = svc.Heartbeat(ctx, "runner-heartbeat-meta", types.RunnerHeartbeatRequest{
+		RunningTasks:   1,
+		DispatchPush:   &dispatchPush,
+		WorkspaceRoots: []string{"/new/root", "/worktrees"},
+		Projects:       []string{"brain-api", "brain-docs"},
+		Resources:      map[string]interface{}{"os": "darwin", "arch": "arm64"},
+		Capacity:       map[string]interface{}{"available": float64(3), "max_parallel": float64(4)},
+		Draining:       &draining,
+	})
+	if err != nil {
+		t.Fatalf("Heartbeat failed: %v", err)
+	}
+
+	got, err := svc.GetRunner(ctx, "runner-heartbeat-meta")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if !got.DispatchPush {
+		t.Fatal("DispatchPush = false, want true")
+	}
+	assertStringSliceEqual(t, got.WorkspaceRoots, []string{"/new/root", "/worktrees"})
+	assertStringSliceEqual(t, got.Projects, []string{"brain-api", "brain-docs"})
+	if got.Resources["arch"] != "arm64" {
+		t.Fatalf("Resources = %#v, want updated arch", got.Resources)
+	}
+	if got.Capacity["available"] != float64(3) || got.Capacity["max_parallel"] != float64(4) {
+		t.Fatalf("Capacity = %#v, want heartbeat values", got.Capacity)
+	}
+	if !got.Draining {
+		t.Fatal("Draining = false, want true")
+	}
+}
+
 func TestRunnerRegistry_Register_ReRegister(t *testing.T) {
 	svc, _ := newTestRunnerRegistryService(t)
 	ctx := context.Background()

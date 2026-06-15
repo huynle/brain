@@ -196,6 +196,75 @@ func TestRunnerRow_HasCapabilitiesField(t *testing.T) {
 	}
 }
 
+func TestUpsertRunner_DispatchMetadataRoundTripThroughGetListAndHeartbeat(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	r := makeRunner("runner-dispatch", "host-dispatch")
+	r.MachineID = "machine-explicit"
+	r.DispatchPush = true
+	r.WorkspaceRoots = []string{"/work/brain", "/tmp/worktrees"}
+	r.Projects = []string{"brain-api", "brain-docs"}
+	r.Resources = map[string]interface{}{
+		"os":        "darwin",
+		"arch":      "arm64",
+		"cpu_count": float64(10),
+	}
+	r.Capacity = map[string]interface{}{
+		"max_parallel": float64(4),
+		"available":    float64(2),
+	}
+	r.Draining = true
+	if err := s.UpsertRunner(ctx, r); err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	got, err := s.GetRunner(ctx, "runner-dispatch")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	assertRunnerDispatchMetadata(t, got)
+
+	listed, err := s.ListRunners(ctx)
+	if err != nil {
+		t.Fatalf("ListRunners failed: %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("ListRunners returned %d runners, want 1", len(listed))
+	}
+	assertRunnerDispatchMetadata(t, &listed[0])
+
+	if err := s.UpdateHeartbeat(ctx, "runner-dispatch", 1, nil); err != nil {
+		t.Fatalf("UpdateHeartbeat failed: %v", err)
+	}
+	afterHeartbeat, err := s.GetRunner(ctx, "runner-dispatch")
+	if err != nil {
+		t.Fatalf("GetRunner after heartbeat failed: %v", err)
+	}
+	assertRunnerDispatchMetadata(t, afterHeartbeat)
+}
+
+func assertRunnerDispatchMetadata(t *testing.T, got *RunnerRow) {
+	t.Helper()
+	if got.MachineID != "machine-explicit" {
+		t.Fatalf("MachineID = %q, want machine-explicit", got.MachineID)
+	}
+	if !got.DispatchPush {
+		t.Fatal("DispatchPush = false, want true")
+	}
+	assertStringSliceEqual(t, got.WorkspaceRoots, []string{"/work/brain", "/tmp/worktrees"})
+	assertStringSliceEqual(t, got.Projects, []string{"brain-api", "brain-docs"})
+	if got.Resources["os"] != "darwin" || got.Resources["arch"] != "arm64" || got.Resources["cpu_count"] != float64(10) {
+		t.Fatalf("Resources = %#v, want os/arch/cpu_count", got.Resources)
+	}
+	if got.Capacity["max_parallel"] != float64(4) || got.Capacity["available"] != float64(2) {
+		t.Fatalf("Capacity = %#v, want max_parallel/available", got.Capacity)
+	}
+	if !got.Draining {
+		t.Fatal("Draining = false, want true")
+	}
+}
+
 func TestUpsertRunner_Replace(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()

@@ -78,6 +78,12 @@ type mockClient struct {
 
 	deregisterErr   error
 	deregisterCalls []string
+
+	ackErr   error
+	ackCalls []dispatchAckCall
+
+	rejectErr   error
+	rejectCalls []dispatchRejectCall
 }
 
 type nextTaskCall struct {
@@ -118,6 +124,21 @@ type appendCall struct {
 type heartbeatCall struct {
 	RunnerID string
 	Request  types.RunnerHeartbeatRequest
+}
+
+type dispatchAckCall struct {
+	RunnerID  string
+	ProjectID string
+	TaskID    string
+	LeaseID   string
+}
+
+type dispatchRejectCall struct {
+	RunnerID  string
+	ProjectID string
+	TaskID    string
+	LeaseID   string
+	Reason    types.DispatchRejectReason
 }
 
 func newMockClient() *mockClient {
@@ -192,6 +213,20 @@ func (m *mockClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerI
 	defer m.mu.Unlock()
 	m.releaseCalls = append(m.releaseCalls, releaseCall{projectID, taskID, runnerID})
 	return m.releaseErr
+}
+
+func (m *mockClient) AckDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string) (*types.DispatchAckResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ackCalls = append(m.ackCalls, dispatchAckCall{RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID})
+	return &types.DispatchAckResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID}, m.ackErr
+}
+
+func (m *mockClient) RejectDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rejectCalls = append(m.rejectCalls, dispatchRejectCall{RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID, Reason: reason})
+	return &types.DispatchRejectResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID, Reason: reason}, m.rejectErr
 }
 
 func (m *mockClient) UpdateTaskStatus(ctx context.Context, taskPath, status string) error {
@@ -302,6 +337,22 @@ func (m *mockClient) getReleaseCalls() []releaseCall {
 	return result
 }
 
+func (m *mockClient) getAckCalls() []dispatchAckCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]dispatchAckCall, len(m.ackCalls))
+	copy(result, m.ackCalls)
+	return result
+}
+
+func (m *mockClient) getRejectCalls() []dispatchRejectCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]dispatchRejectCall, len(m.rejectCalls))
+	copy(result, m.rejectCalls)
+	return result
+}
+
 // =============================================================================
 // Mock Executor
 // =============================================================================
@@ -311,6 +362,7 @@ type mockExecutor struct {
 
 	buildPromptResult string
 	resolveWorkdir    string
+	resolveWorkdirErr error
 	spawnResult       *SpawnResult
 	spawnErr          error
 	spawnCalls        []spawnCall
@@ -347,6 +399,9 @@ func (m *mockExecutor) BuildPrompt(task *types.ResolvedTask, isResume bool) stri
 func (m *mockExecutor) ResolveWorkdir(task *types.ResolvedTask) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.resolveWorkdirErr != nil {
+		return "", m.resolveWorkdirErr
+	}
 	return m.resolveWorkdir, nil
 }
 

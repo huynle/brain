@@ -488,6 +488,40 @@ func (s *TaskServiceImpl) ReleaseTask(ctx context.Context, projectId, taskId, ru
 	return nil
 }
 
+// AckDispatch acknowledges that a runner received a pushed dispatch command.
+func (s *TaskServiceImpl) AckDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error) {
+	now := time.Now().UnixMilli()
+	ok, err := s.storage.AckDispatchLease(ctx, projectId, taskId, runnerId, now)
+	resp := &types.DispatchAckResponse{Success: ok, ProjectID: projectId, TaskID: taskId, RunnerID: runnerId, LeaseID: leaseId}
+	if err != nil {
+		return resp, fmt.Errorf("storage ack dispatch lease: %w", err)
+	}
+	if !ok {
+		resp.Error = "dispatch lease not found or not ackable"
+		return resp, api.ErrNotFound
+	}
+	return resp, nil
+}
+
+// RejectDispatch records a structured rejection reason for a pushed dispatch lease.
+func (s *TaskServiceImpl) RejectDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error) {
+	now := time.Now().UnixMilli()
+	encodedReason, err := json.Marshal(reason)
+	if err != nil {
+		return nil, fmt.Errorf("marshal dispatch rejection reason: %w", err)
+	}
+	ok, err := s.storage.RejectDispatchLease(ctx, projectId, taskId, runnerId, now, string(encodedReason))
+	resp := &types.DispatchRejectResponse{Success: ok, ProjectID: projectId, TaskID: taskId, RunnerID: runnerId, LeaseID: leaseId, Reason: reason}
+	if err != nil {
+		return resp, fmt.Errorf("storage reject dispatch lease: %w", err)
+	}
+	if !ok {
+		resp.Error = "dispatch lease not found or not rejectable"
+		return resp, api.ErrNotFound
+	}
+	return resp, nil
+}
+
 // RenewClaim extends the claim's expiry by DefaultLeaseDuration.
 // Returns ErrNotFound if the claim doesn't exist, is expired, or is owned by a different runner.
 func (s *TaskServiceImpl) RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {

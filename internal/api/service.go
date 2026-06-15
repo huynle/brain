@@ -180,6 +180,12 @@ type TaskService interface {
 	// RenewClaim extends the claim's expiry. Returns ErrNotFound if not claimed or expired.
 	RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
 
+	// AckDispatch acknowledges a pushed dispatch lease for a runner.
+	AckDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error)
+
+	// RejectDispatch rejects a pushed dispatch lease with a structured reason.
+	RejectDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
+
 	// DispatchTask creates a pre-claim for direct dispatch to a target runner (60-second expiry).
 	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error)
 

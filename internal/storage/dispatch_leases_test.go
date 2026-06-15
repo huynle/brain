@@ -187,6 +187,70 @@ func TestDispatchLeaseRejectAndExpire(t *testing.T) {
 	}
 }
 
+func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	_, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+		ProjectID:         "brain-api",
+		TaskID:            "stale-task",
+		AssignedRunnerID:  "runner-old",
+		AssignedMachineID: "machine-old",
+		PushedAt:          1000,
+		ExpiresAt:         1500,
+	})
+	if err != nil || !created {
+		t.Fatalf("CreateDispatchLease stale target: created=%v err=%v", created, err)
+	}
+
+	acked, err := s.AckDispatchLease(ctx, "brain-api", "stale-task", "runner-old", 1600)
+	if err != nil {
+		t.Fatalf("AckDispatchLease after expiry failed: %v", err)
+	}
+	if acked {
+		t.Fatal("expected ack after lease expiry to be ignored")
+	}
+
+	rejected, err := s.RejectDispatchLease(ctx, "brain-api", "stale-task", "runner-old", 1700, "stale command")
+	if err != nil {
+		t.Fatalf("RejectDispatchLease after expiry failed: %v", err)
+	}
+	if rejected {
+		t.Fatal("expected reject after lease expiry to be ignored")
+	}
+
+	expired, err := s.ExpireDispatchLeases(ctx, 1800)
+	if err != nil {
+		t.Fatalf("ExpireDispatchLeases failed: %v", err)
+	}
+	if expired != 1 {
+		t.Fatalf("expired count = %d, want 1", expired)
+	}
+
+	old, err := s.GetDispatchLease(ctx, "brain-api", "stale-task")
+	if err != nil {
+		t.Fatalf("GetDispatchLease expired lease: %v", err)
+	}
+	if old == nil || old.State != DispatchLeaseStateExpired || old.AssignedRunnerID != "runner-old" {
+		t.Fatalf("expired lease = %#v, want old runner retained in expired state", old)
+	}
+
+	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+		ProjectID:         "brain-api",
+		TaskID:            "stale-task",
+		AssignedRunnerID:  "runner-new",
+		AssignedMachineID: "machine-new",
+		PushedAt:          1900,
+		ExpiresAt:         2500,
+	})
+	if err != nil || !created {
+		t.Fatalf("CreateDispatchLease redispatch: created=%v err=%v", created, err)
+	}
+	if lease.State != DispatchLeaseStatePushed || lease.AssignedRunnerID != "runner-new" || lease.AssignedMachineID != "machine-new" || lease.PushedAt != 1900 || lease.ExpiresAt != 2500 {
+		t.Fatalf("redispatched lease = %#v", lease)
+	}
+}
+
 func TestPlacementReasons_AreQueryableSeparatelyFromTaskContent(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()

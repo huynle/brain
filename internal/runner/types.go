@@ -2,7 +2,11 @@
 // from the Brain API using OpenCode.
 package runner
 
-import "time"
+import (
+	"encoding/json"
+	"strconv"
+	"time"
+)
 
 // =============================================================================
 // Configuration Types
@@ -477,6 +481,9 @@ type RunnerCommand struct {
 	// Populated for dispatch commands.
 	TaskID    string `json:"taskId,omitempty"`
 	ProjectID string `json:"projectId,omitempty"`
+	LeaseID   string `json:"leaseId,omitempty"`
+	Lease     string `json:"-"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
 
 	// Populated for shutdown commands.
 	Reason string `json:"reason,omitempty"`
@@ -484,4 +491,64 @@ type RunnerCommand struct {
 	// Populated for feature_toggle commands.
 	ToggleFeatureID string `json:"featureId,omitempty"`
 	Enabled         *bool  `json:"enabled,omitempty"`
+}
+
+// UnmarshalJSON preserves compatibility with scheduler dispatch payloads that
+// may provide either leaseId directly or a lease object with an id field.
+func (c *RunnerCommand) UnmarshalJSON(data []byte) error {
+	type alias RunnerCommand
+	var raw struct {
+		*alias
+		Lease     json.RawMessage `json:"lease"`
+		ExpiresAt json.RawMessage `json:"expiresAt"`
+	}
+	raw.alias = (*alias)(c)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Lease) > 0 && string(raw.Lease) != "null" {
+		var leaseID string
+		if err := json.Unmarshal(raw.Lease, &leaseID); err == nil {
+			c.Lease = leaseID
+			if c.LeaseID == "" {
+				c.LeaseID = leaseID
+			}
+		} else {
+			var lease struct {
+				ID        string `json:"id"`
+				LeaseID   string `json:"leaseId"`
+				ExpiresAt int64  `json:"expires_at"`
+			}
+			if err := json.Unmarshal(raw.Lease, &lease); err != nil {
+				return err
+			}
+			if lease.ID != "" {
+				c.Lease = lease.ID
+				if c.LeaseID == "" {
+					c.LeaseID = lease.ID
+				}
+			} else if lease.LeaseID != "" {
+				c.Lease = lease.LeaseID
+				if c.LeaseID == "" {
+					c.LeaseID = lease.LeaseID
+				}
+			}
+			if c.ExpiresAt == "" && lease.ExpiresAt > 0 {
+				c.ExpiresAt = strconv.FormatInt(lease.ExpiresAt, 10)
+			}
+		}
+	}
+	if len(raw.ExpiresAt) > 0 && string(raw.ExpiresAt) != "null" {
+		var expires string
+		if err := json.Unmarshal(raw.ExpiresAt, &expires); err == nil {
+			c.ExpiresAt = expires
+		} else {
+			var expiresNum int64
+			if err := json.Unmarshal(raw.ExpiresAt, &expiresNum); err != nil {
+				return err
+			}
+			c.ExpiresAt = strconv.FormatInt(expiresNum, 10)
+		}
+	}
+	return nil
 }

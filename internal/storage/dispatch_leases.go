@@ -106,8 +106,8 @@ func (s *StorageLayer) RejectDispatchLease(ctx context.Context, projectID, taskI
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE task_dispatch_leases
 		SET state = ?, rejected_at = ?, last_error = ?
-		WHERE project_id = ? AND task_id = ? AND assigned_runner_id = ? AND state = ?`,
-		DispatchLeaseStateRejected, rejectedAt, lastError, projectID, taskID, runnerID, DispatchLeaseStatePushed,
+		WHERE project_id = ? AND task_id = ? AND assigned_runner_id = ? AND state = ? AND expires_at >= ?`,
+		DispatchLeaseStateRejected, rejectedAt, lastError, projectID, taskID, runnerID, DispatchLeaseStatePushed, rejectedAt,
 	)
 	if err != nil {
 		return false, fmt.Errorf("reject dispatch lease: %w", err)

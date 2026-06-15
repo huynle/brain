@@ -431,6 +431,80 @@ func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func validateDispatchAckRequest(req types.DispatchAckRequest) []types.ValidationDetail {
+	var details []types.ValidationDetail
+	if strings.TrimSpace(req.LeaseID) == "" {
+		details = append(details, types.ValidationDetail{Field: "leaseId", Message: "leaseId is required"})
+	}
+	if strings.TrimSpace(req.ProjectID) == "" {
+		details = append(details, types.ValidationDetail{Field: "projectId", Message: "projectId is required"})
+	}
+	if strings.TrimSpace(req.TaskID) == "" {
+		details = append(details, types.ValidationDetail{Field: "taskId", Message: "taskId is required"})
+	}
+	return details
+}
+
+// HandleAckDispatch handles POST /tasks/runners/{runnerId}/dispatch/ack.
+func (h *Handler) HandleAckDispatch(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	var req types.DispatchAckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	if details := validateDispatchAckRequest(req); len(details) > 0 {
+		WriteValidationError(w, details)
+		return
+	}
+	resp, err := h.tasks.AckDispatch(r.Context(), req.ProjectID, req.TaskID, runnerID, req.LeaseID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteJSON(w, http.StatusNotFound, resp)
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteJSON(w, http.StatusConflict, resp)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleRejectDispatch handles POST /tasks/runners/{runnerId}/dispatch/reject.
+func (h *Handler) HandleRejectDispatch(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	var req types.DispatchRejectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	details := validateDispatchAckRequest(types.DispatchAckRequest{LeaseID: req.LeaseID, ProjectID: req.ProjectID, TaskID: req.TaskID})
+	if strings.TrimSpace(req.Reason.Code) == "" {
+		details = append(details, types.ValidationDetail{Field: "reason.code", Message: "reason.code is required"})
+	}
+	if len(details) > 0 {
+		WriteValidationError(w, details)
+		return
+	}
+	resp, err := h.tasks.RejectDispatch(r.Context(), req.ProjectID, req.TaskID, runnerID, req.LeaseID, req.Reason)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteJSON(w, http.StatusNotFound, resp)
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteJSON(w, http.StatusConflict, resp)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleRenewClaim handles POST /tasks/{projectId}/{taskId}/renew.
 func (h *Handler) HandleRenewClaim(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")

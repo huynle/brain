@@ -528,6 +528,44 @@ func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID s
 	return ClaimResult{Success: true, TaskID: taskID}, nil
 }
 
+// AckDispatch acknowledges receipt of a pushed dispatch command.
+func (c *APIClient) AckDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string) (*types.DispatchAckResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/runners/%s/dispatch/ack", runnerID)
+	body := types.DispatchAckRequest{LeaseID: leaseID, ProjectID: projectID, TaskID: taskID}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("ack dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.DispatchAckResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode dispatch ack response: %w", err)
+	}
+	return &result, nil
+}
+
+// RejectDispatch rejects a pushed dispatch command with a structured reason.
+func (c *APIClient) RejectDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/runners/%s/dispatch/reject", runnerID)
+	body := types.DispatchRejectRequest{LeaseID: leaseID, ProjectID: projectID, TaskID: taskID, Reason: reason}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("reject dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.DispatchRejectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode dispatch reject response: %w", err)
+	}
+	return &result, nil
+}
+
 // RenewClaim extends the lease on a claimed task.
 // Returns nil on success, or an error if the claim doesn't exist, is expired,
 // or is owned by a different runner. The caller should treat any error as a

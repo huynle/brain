@@ -171,6 +171,49 @@ type DispatchLease struct {
 	ExpiresAt         int64  `json:"expires_at"`
 }
 
+// DispatchAckRequest acknowledges receipt of a pushed dispatch command.
+type DispatchAckRequest struct {
+	LeaseID   string `json:"leaseId"`
+	ProjectID string `json:"projectId"`
+	TaskID    string `json:"taskId"`
+}
+
+// DispatchAckResponse reports the persisted ack state for a dispatch lease.
+type DispatchAckResponse struct {
+	Success   bool   `json:"success"`
+	LeaseID   string `json:"leaseId"`
+	ProjectID string `json:"projectId"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	Error     string `json:"error,omitempty"`
+}
+
+// DispatchRejectReason is a structured rejection reason from a runner.
+type DispatchRejectReason struct {
+	Code    string            `json:"code"`
+	Message string            `json:"message,omitempty"`
+	Details map[string]string `json:"details,omitempty"`
+}
+
+// DispatchRejectRequest rejects a pushed dispatch command.
+type DispatchRejectRequest struct {
+	LeaseID   string               `json:"leaseId"`
+	ProjectID string               `json:"projectId"`
+	TaskID    string               `json:"taskId"`
+	Reason    DispatchRejectReason `json:"reason"`
+}
+
+// DispatchRejectResponse reports the persisted reject state for a dispatch lease.
+type DispatchRejectResponse struct {
+	Success   bool                 `json:"success"`
+	LeaseID   string               `json:"leaseId"`
+	ProjectID string               `json:"projectId"`
+	TaskID    string               `json:"taskId"`
+	RunnerID  string               `json:"runnerId"`
+	Reason    DispatchRejectReason `json:"reason"`
+	Error     string               `json:"error,omitempty"`
+}
+
 // PlacementReason stores scheduler placement decision details independently from
 // task content/status so dispatch decisions remain queryable after task edits.
 type PlacementReason struct {

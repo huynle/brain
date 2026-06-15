@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/sse"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // =============================================================================
@@ -339,6 +341,39 @@ func TestSSEListener_RunnerStream_CommandEnvelope(t *testing.T) {
 	}
 }
 
+func TestSSEListener_RunnerStream_CommandEnvelopePreservesLeaseObject(t *testing.T) {
+	wakeCh := make(chan struct{}, 10)
+	commandCh := make(chan RunnerCommand, 10)
+	listener := NewSSEListener("http://example.invalid", "", nil, wakeCh)
+	listener.SetRunnerStream("runner_test", commandCh)
+
+	data, err := json.Marshal(map[string]interface{}{
+		"command": "dispatch",
+		"payload": map[string]interface{}{
+			"taskId":    "task-123",
+			"projectId": "proj-a",
+			"lease": map[string]interface{}{
+				"id":         "lease-abc",
+				"expires_at": float64(time.Now().Add(time.Minute).UnixMilli()),
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal command envelope: %v", err)
+	}
+
+	listener.handleCommandEvent(sse.Event{Data: data}, "runner_test")
+
+	select {
+	case cmd := <-commandCh:
+		if cmd.LeaseID != "lease-abc" {
+			t.Fatalf("lease id = %q, want lease-abc", cmd.LeaseID)
+		}
+	default:
+		t.Fatal("expected command from envelope")
+	}
+}
+
 func TestSSEListener_RunnerStream_TasksChangedWakes(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
@@ -501,14 +536,9 @@ func TestTaskRunner_HandleCommand_ConfigUpdated_Agent(t *testing.T) {
 	}
 }
 
-func TestTaskRunner_HandleCommand_Dispatch(t *testing.T) {
-	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
-
-	// Drain wake channel first
-	select {
-	case <-tr.wakeCh:
-	default:
-	}
+func TestTaskRunner_HandleCommand_DispatchRejectsMissingLeaseID(t *testing.T) {
+	client := newMockClient()
+	tr := newTestRunner(client, newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
 
 	cmd := RunnerCommand{
 		Type:      CommandDispatch,
@@ -516,15 +546,161 @@ func TestTaskRunner_HandleCommand_Dispatch(t *testing.T) {
 		ProjectID: "proj-a",
 	}
 
-	ctx := context.Background()
-	tr.handleCommand(ctx, cmd)
+	tr.handleCommand(context.Background(), cmd)
 
-	// Should send wake signal
-	select {
-	case <-tr.wakeCh:
-		// Good
-	default:
-		t.Error("dispatch command should send wake signal")
+	rejects := client.getRejectCalls()
+	if len(rejects) != 1 {
+		t.Fatalf("reject calls = %d, want 1", len(rejects))
+	}
+	if rejects[0].Reason.Code != "missing_fields" {
+		t.Fatalf("reject reason code = %q, want missing_fields", rejects[0].Reason.Code)
+	}
+	if got := client.getAckCalls(); len(got) != 0 {
+		t.Fatalf("ack calls = %d, want 0", len(got))
+	}
+}
+
+func TestTaskRunner_HandleCommand_DispatchAcksAndSpawnsTargetTask(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task-99", "proj-a")
+	task.ProjectID = "proj-a"
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	tr := newTestRunner(client, executor, processMgr, newMockStateMgr())
+
+	cmd := RunnerCommand{
+		Type:      CommandDispatch,
+		TaskID:    "task-99",
+		ProjectID: "proj-a",
+		LeaseID:   "lease-abc",
+	}
+
+	tr.handleCommand(context.Background(), cmd)
+
+	acks := client.getAckCalls()
+	if len(acks) != 1 {
+		t.Fatalf("ack calls = %d, want 1", len(acks))
+	}
+	if acks[0].RunnerID != tr.runnerID || acks[0].ProjectID != "proj-a" || acks[0].TaskID != "task-99" || acks[0].LeaseID != "lease-abc" {
+		t.Fatalf("ack call = %+v, want runner/project/task/lease", acks[0])
+	}
+	if got := client.getRejectCalls(); len(got) != 0 {
+		t.Fatalf("reject calls = %d, want 0", len(got))
+	}
+	spawnCalls := executor.getSpawnCalls()
+	if len(spawnCalls) != 1 {
+		t.Fatalf("spawn calls = %d, want 1", len(spawnCalls))
+	}
+	if spawnCalls[0].TaskID != "task-99" || spawnCalls[0].ProjectID != "proj-a" {
+		t.Fatalf("spawn call = %+v", spawnCalls[0])
+	}
+}
+
+func TestTaskRunner_HandleCommand_DispatchRejectsWhenCannotAcceptLocally(t *testing.T) {
+	cases := []struct {
+		name     string
+		setup    func(*mockClient, *mockExecutor, *mockProcessMgr, *TaskRunner)
+		wantCode string
+	}{
+		{
+			name: "unsupported project",
+			setup: func(client *mockClient, executor *mockExecutor, processMgr *mockProcessMgr, tr *TaskRunner) {
+				task := testTask("task-99", "other-proj")
+				client.readyTasks["other-proj"] = []types.ResolvedTask{*task}
+			},
+			wantCode: "project_unsupported",
+		},
+		{
+			name: "paused",
+			setup: func(client *mockClient, executor *mockExecutor, processMgr *mockProcessMgr, tr *TaskRunner) {
+				task := testTask("task-99", "proj-a")
+				client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+				tr.PauseAll()
+			},
+			wantCode: "runner_paused",
+		},
+		{
+			name: "capacity unavailable",
+			setup: func(client *mockClient, executor *mockExecutor, processMgr *mockProcessMgr, tr *TaskRunner) {
+				task := testTask("task-99", "proj-a")
+				client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+				tr.SetMaxParallel(1)
+				_ = processMgr.Add("running-1", RunningTask{ID: "running-1"}, &mockProcess{exited: false})
+			},
+			wantCode: "capacity_unavailable",
+		},
+		{
+			name: "unsupported executor",
+			setup: func(client *mockClient, executor *mockExecutor, processMgr *mockProcessMgr, tr *TaskRunner) {
+				task := testTask("task-99", "proj-a")
+				task.Executor = "pi"
+				client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+			},
+			wantCode: "executor_unsupported",
+		},
+		{
+			name: "workdir unavailable",
+			setup: func(client *mockClient, executor *mockExecutor, processMgr *mockProcessMgr, tr *TaskRunner) {
+				task := testTask("task-99", "proj-a")
+				client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+				executor.resolveWorkdirErr = errors.New("no workdir")
+			},
+			wantCode: "workdir_unavailable",
+		},
+	}
+
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			client := newMockClient()
+			executor := newMockExecutor()
+			processMgr := newMockProcessMgr()
+			tr := newTestRunner(client, executor, processMgr, newMockStateMgr())
+			projectID := "proj-a"
+			if tt.name == "unsupported project" {
+				projectID = "other-proj"
+			}
+			tt.setup(client, executor, processMgr, tr)
+
+			tr.handleCommand(context.Background(), RunnerCommand{Type: CommandDispatch, ProjectID: projectID, TaskID: "task-99", LeaseID: "lease-abc"})
+
+			if got := client.getAckCalls(); len(got) != 0 {
+				t.Fatalf("ack calls = %d, want 0", len(got))
+			}
+			rejects := client.getRejectCalls()
+			if len(rejects) != 1 {
+				t.Fatalf("reject calls = %d, want 1", len(rejects))
+			}
+			if rejects[0].Reason.Code != tt.wantCode {
+				t.Fatalf("reject code = %q, want %q", rejects[0].Reason.Code, tt.wantCode)
+			}
+		})
+	}
+}
+
+func TestTaskRunner_HandleCommand_DispatchRejectsExpiredLeaseBeforeAck(t *testing.T) {
+	client := newMockClient()
+	task := testTask("task-99", "proj-a")
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+	tr := newTestRunner(client, newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type:      CommandDispatch,
+		ProjectID: "proj-a",
+		TaskID:    "task-99",
+		LeaseID:   "lease-abc",
+		ExpiresAt: fmt.Sprintf("%d", time.Now().Add(-time.Minute).UnixMilli()),
+	})
+
+	if got := client.getAckCalls(); len(got) != 0 {
+		t.Fatalf("ack calls = %d, want 0", len(got))
+	}
+	rejects := client.getRejectCalls()
+	if len(rejects) != 1 {
+		t.Fatalf("reject calls = %d, want 1", len(rejects))
+	}
+	if rejects[0].Reason.Code != "lease_expired" {
+		t.Fatalf("reject code = %q, want lease_expired", rejects[0].Reason.Code)
 	}
 }
 

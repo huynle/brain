@@ -306,6 +306,19 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 			// ─── Tasks ───────────────────────────────────────────
 			r.Route("/tasks", func(r chi.Router) {
+				// Runner-scoped dispatch protocol — runner:* scope.
+				// Keep before /{projectId} so "runners" is not parsed as a project ID.
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*"))
+					if o.handler != nil && o.handler.tasks != nil {
+						r.Post("/runners/{runnerId}/dispatch/ack", o.handler.HandleAckDispatch)
+						r.Post("/runners/{runnerId}/dispatch/reject", o.handler.HandleRejectDispatch)
+					} else {
+						r.Post("/runners/{runnerId}/dispatch/ack", notImplemented)
+						r.Post("/runners/{runnerId}/dispatch/reject", notImplemented)
+					}
+				})
+
 				// Task read operations — read:* scope
 				r.Group(func(r chi.Router) {
 					r.Use(RequireScope("admin:*", "runner:*", "read:*"))

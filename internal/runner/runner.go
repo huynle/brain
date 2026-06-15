@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,8 @@ type Client interface {
 	ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error)
 	RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error
 	ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error
+	AckDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string) (*types.DispatchAckResponse, error)
+	RejectDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
 	UpdateTaskStatus(ctx context.Context, taskPath, status string) error
 	AppendToTask(ctx context.Context, taskPath, content string) error
 	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
@@ -498,6 +501,44 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	}
 }
 
+func (tr *TaskRunner) dispatchLeaseExpired(expiresAt string, now time.Time) bool {
+	if strings.TrimSpace(expiresAt) == "" {
+		return false
+	}
+	if t, err := time.Parse(time.RFC3339, expiresAt); err == nil {
+		return !t.After(now)
+	}
+	n, err := strconv.ParseInt(expiresAt, 10, 64)
+	if err != nil {
+		return false
+	}
+	if n > 1_000_000_000_000 {
+		return n <= now.UnixMilli()
+	}
+	return n <= now.Unix()
+}
+
+func (tr *TaskRunner) supportsProject(projectID string) bool {
+	for _, p := range tr.projects {
+		if p == projectID || p == "all" {
+			return true
+		}
+	}
+	return false
+}
+
+func (tr *TaskRunner) rejectDispatch(ctx context.Context, cmd RunnerCommand, leaseID, code, message string) {
+	_, _ = tr.client.RejectDispatch(ctx, tr.runnerID, cmd.ProjectID, cmd.TaskID, leaseID, types.DispatchRejectReason{
+		Code:    code,
+		Message: message,
+	})
+}
+
+func (tr *TaskRunner) ackDispatch(ctx context.Context, cmd RunnerCommand, leaseID string) bool {
+	resp, err := tr.client.AckDispatch(ctx, tr.runnerID, cmd.ProjectID, cmd.TaskID, leaseID)
+	return err == nil && (resp == nil || resp.Success)
+}
+
 // handleCommand processes a server-pushed command received via the runner SSE stream.
 func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 	slog.Info("handling runner command", "type", cmd.Type, "runner_id", tr.runnerID)
@@ -537,10 +578,69 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 
 	case CommandDispatch:
 		slog.Info("dispatch command received", "task_id", cmd.TaskID, "project_id", cmd.ProjectID)
-		// Trigger immediate wake for targeted task pickup
-		select {
-		case tr.wakeCh <- struct{}{}:
-		default:
+		leaseID := cmd.LeaseID
+		if leaseID == "" {
+			leaseID = cmd.Lease
+		}
+		if leaseID == "" || cmd.ProjectID == "" || cmd.TaskID == "" {
+			tr.rejectDispatch(ctx, cmd, leaseID, "missing_fields", "dispatch command missing required leaseId, projectId, or taskId")
+			break
+		}
+		if ctx.Err() != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "runner_shutting_down", ctx.Err().Error())
+			break
+		}
+		if tr.dispatchLeaseExpired(cmd.ExpiresAt, time.Now()) {
+			tr.rejectDispatch(ctx, cmd, leaseID, "lease_expired", "dispatch lease has expired")
+			break
+		}
+		if !tr.supportsProject(cmd.ProjectID) {
+			tr.rejectDispatch(ctx, cmd, leaseID, "project_unsupported", "runner is not assigned to this project")
+			break
+		}
+		tr.pauseMu.RLock()
+		paused := tr.allPaused || tr.pauseCache[cmd.ProjectID]
+		tr.pauseMu.RUnlock()
+		if paused {
+			tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
+			break
+		}
+		if tr.processMgr.RunningCount() >= tr.getMaxParallel() {
+			tr.rejectDispatch(ctx, cmd, leaseID, "capacity_unavailable", "runner has no available execution slots")
+			break
+		}
+
+		tasks, err := tr.client.GetReadyTasks(ctx, cmd.ProjectID, tr.buildFetchOptions())
+		if err != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "task_lookup_failed", err.Error())
+			break
+		}
+		var task *types.ResolvedTask
+		for i := range tasks {
+			if tasks[i].ID == cmd.TaskID {
+				task = &tasks[i]
+				break
+			}
+		}
+		if task == nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "task_not_found", "target task is not ready for this runner")
+			break
+		}
+		taskExecutor, _, err := tr.resolveExecutor(task)
+		if err != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "executor_unsupported", err.Error())
+			break
+		}
+		workdir, err := taskExecutor.ResolveWorkdir(task)
+		if err != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "workdir_unavailable", err.Error())
+			break
+		}
+		if !tr.ackDispatch(ctx, cmd, leaseID) {
+			break
+		}
+		if err := tr.claimAndSpawnWithWorkdir(ctx, task, cmd.ProjectID, workdir); err != nil {
+			tr.logger.Printf("claim and spawn dispatched task failed for %s/%s: %v", cmd.ProjectID, cmd.TaskID, err)
 		}
 
 	case CommandFeatureToggle:
@@ -884,6 +984,10 @@ func (tr *TaskRunner) cleanupTaskArtifacts(task RunningTask) {
 
 // claimAndSpawn claims a task and spawns a process for it.
 func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTask, projectID string) error {
+	return tr.claimAndSpawnWithWorkdir(ctx, task, projectID, "")
+}
+
+func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.ResolvedTask, projectID, resolvedWorkdir string) error {
 	// Claim the task
 	result, err := tr.client.ClaimTask(ctx, projectID, task.ID, tr.runnerID)
 	if err != nil {
@@ -997,8 +1101,11 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		return fmt.Errorf("resolve executor: %w", err)
 	}
 
-	// Resolve workdir (may create git worktree)
-	workdir, err := taskExecutor.ResolveWorkdir(task)
+	// Resolve workdir (may create git worktree) unless dispatch validation already resolved it.
+	workdir := resolvedWorkdir
+	if workdir == "" {
+		workdir, err = taskExecutor.ResolveWorkdir(task)
+	}
 	if err != nil {
 		// Worktree creation failed - mark task as blocked
 		tr.emitEvent(RunnerEvent{

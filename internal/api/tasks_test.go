@@ -28,6 +28,8 @@ type mockTaskService struct {
 	claimTaskFunc        func(ctx context.Context, projectId, taskId, runnerId string) (*types.ClaimResponse, error)
 	releaseTaskFunc      func(ctx context.Context, projectId, taskId, runnerId string) error
 	renewClaimFunc       func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
+	ackDispatchFunc      func(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error)
+	rejectDispatchFunc   func(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
 	getClaimStatusFunc   func(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
 	getMultiTaskStatusFn func(ctx context.Context, projectId string, req types.MultiTaskStatusRequest) (*types.MultiTaskStatusResponse, error)
 	getFeaturesFunc      func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
@@ -101,6 +103,20 @@ func (m *mockTaskService) RenewClaim(ctx context.Context, projectId, taskId, run
 		return m.renewClaimFunc(ctx, projectId, taskId, runnerId)
 	}
 	return nil, fmt.Errorf("renewClaimFunc not set")
+}
+
+func (m *mockTaskService) AckDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error) {
+	if m.ackDispatchFunc != nil {
+		return m.ackDispatchFunc(ctx, projectId, taskId, runnerId, leaseId)
+	}
+	return nil, fmt.Errorf("ackDispatchFunc not set")
+}
+
+func (m *mockTaskService) RejectDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error) {
+	if m.rejectDispatchFunc != nil {
+		return m.rejectDispatchFunc(ctx, projectId, taskId, runnerId, leaseId, reason)
+	}
+	return nil, fmt.Errorf("rejectDispatchFunc not set")
 }
 
 func (m *mockTaskService) GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error) {
@@ -255,6 +271,8 @@ func newTaskTestRouter(taskMock *mockTaskService, runnerMock *mockRunnerService)
 	r := chi.NewRouter()
 	r.Route("/tasks", func(r chi.Router) {
 		r.Get("/", h.HandleListProjects)
+		r.Post("/runners/{runnerId}/dispatch/ack", h.HandleAckDispatch)
+		r.Post("/runners/{runnerId}/dispatch/reject", h.HandleRejectDispatch)
 
 		// Runner routes (must be before {projectId} wildcard)
 		r.Post("/runner/pause/{projectId}", h.HandlePauseProject)

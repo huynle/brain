@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -15,8 +17,15 @@ import (
 
 const defaultDispatchLeaseTTL = 60 * time.Second
 
+// DefaultSchedulerInterval is the default interval for the background scheduler loop.
+const DefaultSchedulerInterval = 5 * time.Second
+
 type schedulerTaskService interface {
 	GetReady(ctx context.Context, projectID string, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error)
+}
+
+type schedulerProjectLister interface {
+	ListProjects(ctx context.Context) ([]string, error)
 }
 
 type schedulerRunnerRegistry interface {
@@ -32,6 +41,10 @@ type schedulerLeaseStore interface {
 	RecordPlacementReason(ctx context.Context, row *storage.PlacementReasonRow) error
 }
 
+type schedulerLeaseExpirer interface {
+	ExpireDispatchLeases(ctx context.Context, now int64) (int64, error)
+}
+
 type schedulerCommandPublisher interface {
 	PublishRunnerCommand(runnerID string, command string, payload interface{})
 }
@@ -44,13 +57,18 @@ type schedulerPauseChecker interface {
 // SchedulerService owns Brain push dispatch placement decisions.
 type SchedulerService struct {
 	tasks     schedulerTaskService
+	projects  schedulerProjectLister
 	runners   schedulerRunnerRegistry
 	placement schedulerPlacementService
 	leases    schedulerLeaseStore
+	expirer   schedulerLeaseExpirer
 	publisher schedulerCommandPublisher
 	pauses    schedulerPauseChecker
 	leaseTTL  time.Duration
 	nowUnixMS func() int64
+
+	mu     sync.RWMutex
+	status SchedulerStatus
 }
 
 type SchedulerResult struct {
@@ -60,27 +78,161 @@ type SchedulerResult struct {
 	Skipped    int
 }
 
+// SchedulerStatus is lightweight scheduler loop state suitable for API exposure.
+type SchedulerStatus struct {
+	Started            bool
+	Running            bool
+	Interval           time.Duration
+	LastTickAt         time.Time
+	LastSuccessAt      time.Time
+	LastError          string
+	TotalTicks         int64
+	LastProjectResults map[string]SchedulerResult
+	LastExpiredLeases  int64
+}
+
 // NewSchedulerService constructs a scheduler from already-tested service/storage primitives.
-func NewSchedulerService(tasks schedulerTaskService, pauses schedulerPauseChecker, deps interface{}) *SchedulerService {
+func NewSchedulerService(tasks schedulerTaskService, pauses schedulerPauseChecker, deps ...interface{}) *SchedulerService {
 	svc := &SchedulerService{
 		tasks:     tasks,
 		pauses:    pauses,
 		leaseTTL:  defaultDispatchLeaseTTL,
 		nowUnixMS: func() int64 { return time.Now().UnixMilli() },
 	}
-	if v, ok := deps.(schedulerRunnerRegistry); ok {
-		svc.runners = v
+	if v, ok := tasks.(schedulerProjectLister); ok {
+		svc.projects = v
 	}
-	if v, ok := deps.(schedulerPlacementService); ok {
-		svc.placement = v
-	}
-	if v, ok := deps.(schedulerLeaseStore); ok {
-		svc.leases = v
-	}
-	if v, ok := deps.(schedulerCommandPublisher); ok {
-		svc.publisher = v
+	for _, dep := range deps {
+		if v, ok := dep.(schedulerRunnerRegistry); ok {
+			svc.runners = v
+		} else if v, ok := dep.(interface {
+			ListRunners(context.Context) (*types.RunnerListResponse, error)
+		}); ok {
+			svc.runners = runnerListResponseAdapter{source: v}
+		}
+		if v, ok := dep.(schedulerPlacementService); ok {
+			svc.placement = v
+		}
+		if v, ok := dep.(schedulerLeaseStore); ok {
+			svc.leases = v
+		}
+		if v, ok := dep.(schedulerLeaseExpirer); ok {
+			svc.expirer = v
+		}
+		if v, ok := dep.(schedulerCommandPublisher); ok {
+			svc.publisher = v
+		}
 	}
 	return svc
+}
+
+func (s *SchedulerService) Start(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = DefaultSchedulerInterval
+	}
+	s.mu.Lock()
+	s.status.Started = true
+	s.status.Running = true
+	s.status.Interval = interval
+	s.mu.Unlock()
+
+	go func() {
+		defer func() {
+			s.mu.Lock()
+			s.status.Running = false
+			s.mu.Unlock()
+			slog.Info("scheduler stopped")
+		}()
+
+		s.RunOnce(ctx)
+
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				s.RunOnce(ctx)
+			}
+		}
+	}()
+}
+
+func (s *SchedulerService) Status() SchedulerStatus {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	status := s.status
+	if s.status.LastProjectResults != nil {
+		status.LastProjectResults = make(map[string]SchedulerResult, len(s.status.LastProjectResults))
+		for projectID, result := range s.status.LastProjectResults {
+			status.LastProjectResults[projectID] = result
+		}
+	}
+	return status
+}
+
+func (s *SchedulerService) RunOnce(ctx context.Context) {
+	now := time.Now().UTC()
+	results := make(map[string]SchedulerResult)
+	var expired int64
+	var lastErr string
+
+	if s.expirer != nil {
+		count, err := s.expirer.ExpireDispatchLeases(ctx, s.nowUnixMS())
+		if err != nil {
+			lastErr = fmt.Sprintf("expire dispatch leases: %v", err)
+		} else {
+			expired = count
+		}
+	}
+
+	if lastErr == "" {
+		if s.projects == nil {
+			lastErr = "scheduler project lister is unavailable"
+		} else {
+			projects, err := s.projects.ListProjects(ctx)
+			if err != nil {
+				lastErr = fmt.Sprintf("list projects: %v", err)
+			} else {
+				for _, projectID := range projects {
+					result, err := s.ScheduleProject(ctx, projectID)
+					if err != nil {
+						lastErr = fmt.Sprintf("schedule project %s: %v", projectID, err)
+						break
+					}
+					if result != nil {
+						results[projectID] = *result
+					}
+				}
+			}
+		}
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.status.TotalTicks++
+	s.status.LastTickAt = now
+	s.status.LastExpiredLeases = expired
+	s.status.LastProjectResults = results
+	s.status.LastError = lastErr
+	if lastErr == "" {
+		s.status.LastSuccessAt = now
+	}
+}
+
+type runnerListResponseAdapter struct {
+	source interface {
+		ListRunners(context.Context) (*types.RunnerListResponse, error)
+	}
+}
+
+func (a runnerListResponseAdapter) ListRunners(ctx context.Context) ([]types.RunnerInfo, error) {
+	resp, err := a.source.ListRunners(ctx)
+	if err != nil || resp == nil {
+		return nil, err
+	}
+	return append([]types.RunnerInfo(nil), resp.Runners...), nil
 }
 
 func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string) (*SchedulerResult, error) {

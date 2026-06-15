@@ -223,14 +223,19 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	monitorSvc := service.NewMonitorService(brainSvc)
 	webhookSvc := service.NewWebhookService(store)
 
+	// ─── Realtime Hub ───────────────────────────────────────────────
+	hub := realtime.NewHub()
+
 	// ─── Background Claim Cleanup ──────────────────────────────────
 	taskSvc.StartClaimCleanup(ctx, service.DefaultClaimCleanupInterval)
 
 	// ─── Runner Lifecycle Management ───────────────────────────────
+	runnerRegistrySvc.SetHub(hub)
 	runnerRegistrySvc.StartLifecycleManager(ctx, service.DefaultLifecycleInterval)
 
-	// ─── Realtime Hub ───────────────────────────────────────────────
-	hub := realtime.NewHub()
+	// ─── Scheduler Lifecycle ────────────────────────────────────────
+	schedulerSvc := service.NewSchedulerService(taskSvc, runnerSvc, runnerRegistrySvc, placementSvc, store, hub)
+	schedulerSvc.Start(ctx, service.DefaultSchedulerInterval)
 
 	// ─── Event Hub & Services ──────────────────────────────────────
 	eventHub := realtime.NewEventHub()
@@ -260,9 +265,6 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	triggerSvc := service.NewTriggerService(triggerStore)
 	triggerDispatcher := realtime.NewTriggerDispatcher(eventHub, triggerSvc)
 	go triggerDispatcher.Start(ctx)
-
-	// Wire hub into runner registry for lifecycle sweep SSE events
-	runnerRegistrySvc.SetHub(hub)
 
 	// ─── Runner Bridge Hub (remote control) ────────────────────────
 	bridgeHub := bridge.NewHub(hub)

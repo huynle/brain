@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/storage"
@@ -122,15 +123,82 @@ func TestSchedulerSkipsPausedProjectAndAutomationGeneratedTasks(t *testing.T) {
 	}
 }
 
+func TestSchedulerLifecycleTickExpiresLeasesSchedulesProjectsAndUpdatesStatus(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.projects = []string{"alpha", "beta"}
+	store.tasksByProject = map[string][]types.ResolvedTask{
+		"alpha": {{ID: "task-alpha", ProjectID: "alpha", Status: "pending", Classification: "ready"}},
+		"beta":  {{ID: "task-beta", ProjectID: "beta", Status: "pending", Classification: "ready"}},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 4}}
+	store.placement = types.ProjectPlacement{Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, nil, store)
+	svc.nowUnixMS = func() int64 { return 1234 }
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	svc.Start(ctx, time.Hour)
+
+	if err := waitForCondition(200*time.Millisecond, func() bool {
+		return len(store.scheduledProjects) == 2
+	}); err != nil {
+		t.Fatalf("scheduler did not schedule expected projects: %v", err)
+	}
+	cancel()
+
+	status := svc.Status()
+	if !status.Started || !status.Running {
+		t.Fatalf("status started/running = %v/%v, want true/true", status.Started, status.Running)
+	}
+	if status.Interval != time.Hour {
+		t.Fatalf("interval = %v, want %v", status.Interval, time.Hour)
+	}
+	if status.TotalTicks != 1 {
+		t.Fatalf("total ticks = %d, want 1", status.TotalTicks)
+	}
+	if status.LastTickAt.IsZero() || status.LastSuccessAt.IsZero() {
+		t.Fatalf("last tick/success should be set: %#v", status)
+	}
+	if status.LastExpiredLeases != 3 {
+		t.Fatalf("last expired leases = %d, want 3", status.LastExpiredLeases)
+	}
+	if got := store.expireCalls; got != 1 {
+		t.Fatalf("expire calls = %d, want 1", got)
+	}
+	if got := store.expireAt; got != 1234 {
+		t.Fatalf("expire timestamp = %d, want 1234", got)
+	}
+	if len(status.LastProjectResults) != 2 || status.LastProjectResults["alpha"].Dispatched != 1 || status.LastProjectResults["beta"].Dispatched != 1 {
+		t.Fatalf("project results = %#v, want alpha and beta dispatched", status.LastProjectResults)
+	}
+}
+
+func waitForCondition(timeout time.Duration, fn func() bool) error {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if fn() {
+			return nil
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	return context.DeadlineExceeded
+}
+
 type fakeSchedulerStore struct {
-	tasks            []types.ResolvedTask
-	runners          []types.RunnerInfo
-	placement        types.ProjectPlacement
-	paused           bool
-	automationPaused bool
-	leases           []storage.DispatchLeaseCreate
-	reasons          []storage.PlacementReasonRow
-	commands         []fakeRunnerCommand
+	tasks             []types.ResolvedTask
+	tasksByProject    map[string][]types.ResolvedTask
+	projects          []string
+	scheduledProjects []string
+	expireCalls       int
+	expireAt          int64
+	runners           []types.RunnerInfo
+	placement         types.ProjectPlacement
+	paused            bool
+	automationPaused  bool
+	leases            []storage.DispatchLeaseCreate
+	reasons           []storage.PlacementReasonRow
+	commands          []fakeRunnerCommand
 }
 
 type fakeRunnerCommand struct {
@@ -144,7 +212,15 @@ func newFakeSchedulerStore() *fakeSchedulerStore {
 }
 
 func (f *fakeSchedulerStore) GetReady(ctx context.Context, projectID string, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error) {
+	f.scheduledProjects = append(f.scheduledProjects, projectID)
+	if f.tasksByProject != nil {
+		return append([]types.ResolvedTask(nil), f.tasksByProject[projectID]...), nil
+	}
 	return append([]types.ResolvedTask(nil), f.tasks...), nil
+}
+
+func (f *fakeSchedulerStore) ListProjects(ctx context.Context) ([]string, error) {
+	return append([]string(nil), f.projects...), nil
 }
 
 func (f *fakeSchedulerStore) ListRunners(ctx context.Context) ([]types.RunnerInfo, error) {
@@ -182,3 +258,9 @@ func (f *fakeSchedulerStore) PublishRunnerCommand(runnerID string, command strin
 func (f *fakeSchedulerStore) IsPaused(projectID string) bool { return f.paused }
 
 func (f *fakeSchedulerStore) IsAutomationsPaused() bool { return f.automationPaused }
+
+func (f *fakeSchedulerStore) ExpireDispatchLeases(ctx context.Context, now int64) (int64, error) {
+	f.expireCalls++
+	f.expireAt = now
+	return 3, nil
+}

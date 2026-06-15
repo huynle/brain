@@ -58,7 +58,13 @@ func (c *AuthCommand) hashPassword() error {
 
 	// The hash goes to stdout (pipeable); guidance goes to stderr.
 	fmt.Println(h)
-	fmt.Fprintf(os.Stderr, "\nAdd these to the server environment (.env):\n  %s=admin\n  %s=%s\n",
+	// bcrypt hashes contain '$', which Docker Compose interpolates in .env files
+	// (it silently mangles the value). Offer a pre-escaped variant for that case.
+	escaped := strings.ReplaceAll(h, "$", "$$")
+	fmt.Fprintf(os.Stderr, "\nAdd to the server environment:\n  %s=admin\n  %s=%s\n",
 		auth.EnvUsername, auth.EnvPasswordHash, h)
+	fmt.Fprintf(os.Stderr, "\n⚠ In a Docker Compose .env file, escape the $ as $$ (otherwise the\n"+
+		"  hash is interpolated and login fails). Use this line instead:\n  %s=%s\n",
+		auth.EnvPasswordHash, escaped)
 	return nil
 }

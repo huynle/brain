@@ -84,9 +84,20 @@ interface UIState {
   dismissToast: (id: number) => void;
 }
 
+// Persist the selected project across reloads so a refresh returns to what you
+// were working on instead of resetting to "all projects".
+const ACTIVE_PROJECT_KEY = "brain.active_project";
+function loadActiveProject(): string {
+  try {
+    return localStorage.getItem(ACTIVE_PROJECT_KEY) || ALL_PROJECTS;
+  } catch {
+    return ALL_PROJECTS;
+  }
+}
+
 export const useUI = create<UIState>((set, get) => ({
   view: "tasks",
-  activeProject: ALL_PROJECTS,
+  activeProject: loadActiveProject(),
   logFilter: "",
   controlTarget: null,
   settingsOpen: false,
@@ -116,7 +127,14 @@ export const useUI = create<UIState>((set, get) => ({
       const i = panels.indexOf(s.focus);
       return { focus: panels[(i + 1) % panels.length] };
     }),
-  setActiveProject: (p) => set({ activeProject: p }),
+  setActiveProject: (p) => {
+    try {
+      localStorage.setItem(ACTIVE_PROJECT_KEY, p);
+    } catch {
+      /* ignore storage errors (private mode, quota) */
+    }
+    set({ activeProject: p });
+  },
   // The Logs tab is the global server-request log now; a task's own output
   // lives in the Logs pane under Tasks, so drill-downs open that instead.
   showLogsFor: (taskId) => set({ view: "tasks", logsVisible: true, logFilter: taskId }),

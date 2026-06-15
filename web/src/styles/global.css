@@ -1308,6 +1308,22 @@ kbd {
 .tui.mobile .tree-row .suffix { font-size: 12px; }
 .tui.mobile .tree-header { padding-top: 4px; padding-bottom: 4px; line-height: 1.3; }
 
+/* On touch, tapping a row shouldn't select its text or trigger the OS
+   "Look Up"/dictionary callout. Disable selection on tappable chrome only —
+   content areas (detail pane, editor) keep normal text selection. */
+.tui.mobile .tree-row,
+.tui.mobile .tree-header,
+.tui.mobile .proj-item,
+.tui.mobile .insp-tabs,
+.tui.mobile .mnav,
+.tui.mobile .sb-project-btn,
+.tui.mobile .req-line {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
 /* Logs tab: on a phone the columns squeeze the path (the actual message).
    Put the path on its own full-width top line, with the metadata small below. */
 .tui.mobile .req-line {

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useUI } from "../../store/ui";
+import { useOpenInControl } from "../../hooks/useOpenInControl";
 import { BottomSheet } from "./BottomSheet";
 import { EntryDetailPane } from "./EntryDetailPane";
 import { EntryLogsPane } from "./EntryLogsPane";
@@ -16,6 +17,7 @@ const EntryEditModal = lazy(() =>
 export function MobileInspectSheet() {
   const target = useUI((s) => s.inspect);
   const close = useUI((s) => s.closeInspect);
+  const openInControl = useOpenInControl();
   const [tab, setTab] = useState<"detail" | "logs">("detail");
   const [editing, setEditing] = useState(false);
   const qc = useQueryClient();
@@ -67,9 +69,28 @@ export function MobileInspectSheet() {
         </div>
       }
       footer={
-        <button className="btn primary" style={{ width: "100%" }} onClick={() => setEditing(true)}>
-          ✎ Edit
-        </button>
+        <div className="btn-row" style={{ width: "100%", gap: 8 }}>
+          {hasLogs && (
+            <button
+              className="btn"
+              style={{ flex: 1 }}
+              onClick={() => {
+                const t = target;
+                close();
+                void openInControl({ taskId: t.taskId, path: t.path, title: t.title });
+              }}
+            >
+              ⊙ Open in Control
+            </button>
+          )}
+          <button
+            className="btn primary"
+            style={{ flex: 1 }}
+            onClick={() => setEditing(true)}
+          >
+            ✎ Edit
+          </button>
+        </div>
       }
     >
       {tab === "detail" ? (

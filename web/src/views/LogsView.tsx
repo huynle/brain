@@ -150,12 +150,12 @@ export function LogsView() {
         >
           {filtered.map((r) => (
             <div key={r.seq} className="req-line">
-              <span className="faint" style={{ flexShrink: 0 }}>{clockTime(new Date(r.time).toISOString())}</span>
+              <span className="req-time faint" style={{ flexShrink: 0 }}>{clockTime(new Date(r.time).toISOString())}</span>
               <span className="req-actor" title={`${r.actor_type}`}>{actorLabel(r)}</span>
-              <span style={{ flexShrink: 0, width: 52, color: methodColor(r.method) }}>{r.method}</span>
-              <span style={{ flexShrink: 0, width: 34, color: statusColor(r.status) }}>{r.status}</span>
-              <span className="faint" style={{ flexShrink: 0, width: 56, textAlign: "right" }}>{r.duration_ms}ms</span>
-              <span style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{r.path}</span>
+              <span className="req-method" style={{ flexShrink: 0, width: 52, color: methodColor(r.method) }}>{r.method}</span>
+              <span className="req-status" style={{ flexShrink: 0, width: 34, color: statusColor(r.status) }}>{r.status}</span>
+              <span className="req-dur faint" style={{ flexShrink: 0, width: 56, textAlign: "right" }}>{r.duration_ms}ms</span>
+              <span className="req-path" style={{ whiteSpace: "pre-wrap", wordBreak: "break-all" }}>{r.path}</span>
             </div>
           ))}
           <div ref={bottomRef} />

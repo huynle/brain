@@ -16,8 +16,8 @@ export const VIEW_ORDER: View[] = [
   "runners",
   "control",
   "logs",
-  "tasks",
   "brain",
+  "tasks",
   "automations",
 ];
 

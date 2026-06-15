@@ -154,8 +154,8 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 	if strings.Index(view, "Runners") > strings.Index(view, "Tasks") {
 		t.Fatalf("expected global tabs to render before project tabs, got:\n%s", view)
 	}
-	if strings.Index(view, "Tasks") > strings.Index(view, "Brain") || strings.Index(view, "Brain") > strings.Index(view, "Automations") {
-		t.Fatalf("expected Brain tab between Tasks and Automations, got:\n%s", view)
+	if strings.Index(view, "Brain") > strings.Index(view, "Tasks") || strings.Index(view, "Tasks") > strings.Index(view, "Automations") {
+		t.Fatalf("expected project tabs in order Brain, Tasks, Automations, got:\n%s", view)
 	}
 }
 
@@ -164,27 +164,28 @@ func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
 	m.dreamViewer.SetContent("dream content")
 	m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "brain-api"})
 
+	// Tab order is [Runners, Logs, Brain, Tasks, Automation]; default tab is Tasks.
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabBrain {
+	if m.activeContentTab != ContentTabAutomation {
 		t.Fatalf("after first l, got %v", m.activeContentTab)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabAutomation {
+	if m.activeContentTab != ContentTabRunners {
 		t.Fatalf("after second l, got %v", m.activeContentTab)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabRunners {
+	if m.activeContentTab != ContentTabLogs {
 		t.Fatalf("after third l, got %v", m.activeContentTab)
 	}
 
 	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
-	if m.activeContentTab != ContentTabLogs {
+	if m.activeContentTab != ContentTabBrain {
 		t.Fatalf("after fourth l, got %v", m.activeContentTab)
 	}
 

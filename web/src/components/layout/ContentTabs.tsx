@@ -6,8 +6,8 @@ const GLOBAL: { view: View; label: string }[] = [
   { view: "logs", label: "Logs" },
 ];
 const PROJECT: { view: View; label: string }[] = [
-  { view: "tasks", label: "Tasks" },
   { view: "brain", label: "Brain" },
+  { view: "tasks", label: "Tasks" },
   { view: "automations", label: "Automations" },
 ];
 

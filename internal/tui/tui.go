@@ -176,7 +176,7 @@ type Model struct {
 }
 
 func visibleContentTabs() []ContentTab {
-	return []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabTasks, ContentTabBrain, ContentTabAutomation}
+	return []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabBrain, ContentTabTasks, ContentTabAutomation}
 }
 
 func nextContentTab(current ContentTab) ContentTab {
@@ -228,9 +228,9 @@ func (m Model) renderContentTabBar() string {
 		"   ",
 		dividerStyle.Render("│"),
 		" ",
-		tab(ContentTabTasks),
-		" ",
 		tab(ContentTabBrain),
+		" ",
+		tab(ContentTabTasks),
 		" ",
 		tab(ContentTabAutomation),
 	)
@@ -259,8 +259,8 @@ func (m Model) contentTabAtX(x int) (ContentTab, bool) {
 		tab   ContentTab
 		label string
 	}{
-		{ContentTabTasks, "Tasks"},
 		{ContentTabBrain, "Brain"},
+		{ContentTabTasks, "Tasks"},
 		{ContentTabAutomation, "Automations"},
 	} {
 		start := len(plain)

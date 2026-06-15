@@ -287,15 +287,20 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "embeddings"}, nil
 		}
 		return parseEmbeddingsCommand(cmdArgs)
-	case "run", "runner":
+	case "runner":
+		// "brain runner <start|stop|status>" — background daemonized runner.
+		if len(cmdArgs) == 0 || isHelpArg(cmdArgs[0]) {
+			return &HelpCommand{command: "runner"}, nil
+		}
+		return parseRunnerCommand(cmdArgs)
+	case "run":
 		if len(cmdArgs) == 0 {
 			return &stubCommand{cmdType: "run"}, nil
 		}
 		if isHelpArg(cmdArgs[0]) {
 			return &HelpCommand{command: "run"}, nil
 		}
-		// Handle "brain run <subcommand>" and "brain runner <subcommand>" patterns
-		// "runner" is a backwards-compat alias for "run" (from old Node.js CLI)
+		// Granular "brain run <subcommand>" (start/stop/status/list/…).
 		return parseRunCommand(cmdArgs)
 	case "help":
 		// "brain help server" / "brain help server start" → show contextual help
@@ -452,6 +457,45 @@ func parseRunCommand(args []string) (Command, error) {
 	}
 
 	return &commands.RunCommand{
+		Subcommand: subcommand,
+		Project:    project,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsRunnerFlags(flags),
+	}, nil
+}
+
+// parseRunnerCommand creates a RunnerDaemonCommand from
+// `brain runner <start|stop|status> [project] [flags]`.
+func parseRunnerCommand(args []string) (Command, error) {
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "runner"}, nil
+	}
+	subArgs := args[1:]
+	if wantsHelp(subArgs) {
+		return &HelpCommand{command: "runner " + subcommand}, nil
+	}
+
+	// Find the first positional (project) regardless of flag order; default "all".
+	project := "all"
+	var flagArgs []string
+	found := false
+	for _, a := range subArgs {
+		if !isFlag(a) && !found {
+			project = a
+			found = true
+		} else {
+			flagArgs = append(flagArgs, a)
+		}
+	}
+
+	flags, err := ParseRunnerFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := defaultConfig()
+	return &commands.RunnerDaemonCommand{
 		Subcommand: subcommand,
 		Project:    project,
 		Config:     convertToCommandsConfig(cfg),
@@ -661,6 +705,7 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Headless:     flags.Headless,
 		Dashboard:    flags.Dashboard,
 		Monitor:      flags.Monitor,
+		Runner:       flags.Runner,
 		MaxParallel:  flags.MaxParallel,
 		PollInterval: flags.PollInterval,
 		Workdir:      flags.Workdir,

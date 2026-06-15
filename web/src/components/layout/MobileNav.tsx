@@ -4,8 +4,8 @@ import { useUI, type View } from "../../store/ui";
 // tabs (also swipeable via the content area), thumb-reachable. The active
 // project is switched from the status bar's project chip (opens a sheet).
 const TABS: { view: View; label: string; glyph: string }[] = [
-  { view: "tasks", label: "Tasks", glyph: "☰" },
   { view: "brain", label: "Brain", glyph: "◆" },
+  { view: "tasks", label: "Tasks", glyph: "☰" },
   { view: "automations", label: "Auto", glyph: "⟳" },
   { view: "control", label: "Control", glyph: "⌁" },
   { view: "logs", label: "Logs", glyph: "▤" },

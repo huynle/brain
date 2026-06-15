@@ -60,6 +60,7 @@ type RunnerFlags struct {
 	Headless     bool
 	Dashboard    bool
 	Monitor      bool
+	Runner       bool
 	MaxParallel  int
 	PollInterval int
 	Workdir      string
@@ -127,18 +128,18 @@ func (c *RunnerTUICommand) Execute() error {
 
 	ctx := context.Background()
 
-	// Monitor mode: TUI without local runner (pure control panel)
-	if c.Flags.Monitor {
-		return runnercli.RunMonitorTUI(ctx, opts)
-	}
-
-	// Non-TUI modes (headless, foreground, dashboard) go through RunTaskRunner
+	// Non-TUI modes (headless, foreground, dashboard) go through RunTaskRunner.
 	if mode != "tui" {
 		return runnercli.RunTaskRunner(ctx, opts)
 	}
 
-	// Default: run with TUI
-	return runnercli.RunTUI(ctx, opts)
+	// TUI modes. `brain start <project>` now opens a monitor-only TUI (no local
+	// runner) by default; pass --runner to also run a local runner that claims
+	// and executes tasks. --monitor remains an explicit alias for the default.
+	if c.Flags.Runner {
+		return runnercli.RunTUI(ctx, opts)
+	}
+	return runnercli.RunMonitorTUI(ctx, opts)
 }
 
 func (c *RunnerTUICommand) resolveProjects(cfg runner.RunnerConfig) ([]string, error) {

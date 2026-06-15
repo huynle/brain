@@ -318,17 +318,23 @@ EXAMPLES:
   brain api health --wait --timeout 60
 `
 
-const startHelp = `brain start - Open runner TUI
+const startHelp = `brain start - Open the dashboard TUI
+
+By default this opens a monitor-only TUI (no local runner) — it shows tasks,
+brain entries, automations, runners, and lets you drive runners remotely. Pass
+--runner to also run a local runner in the same process that claims and executes
+tasks. To run a runner detached in the background instead, use ` + "`brain runner start`" + `.
 
 USAGE:
-  brain start
-  brain start <project>
+  brain start                         Monitor-only TUI for all projects
+  brain start <project>               Monitor-only TUI for one project
+  brain start <project> --runner      TUI + a local runner
   brain start all [filters]
-  brain start <project> --monitor
 
 FLAGS:
+  --runner                       Also run a local runner alongside the TUI
   --tui                          TUI mode (default behavior)
-  --monitor                      Monitor-only TUI (no local runner)
+  --monitor                      Monitor-only TUI (no local runner; the default)
   -f, --foreground               Foreground mode without TUI
   -b, --headless                 Headless mode (no TUI, no tmux)
   --dashboard                    Dashboard mode
@@ -356,6 +362,29 @@ EXAMPLES:
   brain start all --monitor
   brain start all -i 'prod-*' -e 'legacy-*'
   brain start all --max-parallel 5 --poll-interval 3
+`
+
+const runnerHelp = `brain runner - Background task runner
+
+Run a runner on a machine that registers with the Brain API and claims/executes
+tasks. By default it daemonizes (detaches into the background); the runner then
+appears under the Control tab in the web UI for remote interaction.
+
+USAGE:
+  brain runner start [project|all]    Start a background runner (daemonized)
+  brain runner start <p> --foreground Run a headless runner in this terminal
+  brain runner stop                   Stop the background runner
+  brain runner status                 Show whether a runner is running
+
+FLAGS:
+  --foreground                   Run headless in the foreground (don't detach)
+  -p, --max-parallel <n>         Max parallel tasks
+  -i, --include <pattern>        Include projects (repeatable)
+  -e, --exclude <pattern>        Exclude projects (repeatable)
+  --executor <name>              Default executor (opencode or pi)
+  -h, --help                     Show this help
+
+See also: brain start --runner (TUI + a local runner), brain run (granular).
 `
 
 const runHelp = `brain run - Runner management commands
@@ -1143,6 +1172,8 @@ func ShowHelp(command string) {
 		fmt.Print(startHelp)
 	case "run":
 		fmt.Print(runHelp)
+	case "runner":
+		fmt.Print(runnerHelp)
 	case "run start":
 		fmt.Print(runStartHelp)
 	case "mcp":

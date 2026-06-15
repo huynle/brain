@@ -57,7 +57,7 @@ func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 
 	// Commands that return a different Type() than their name
 	aliasExpected := map[string]string{
-		"runner": "run",
+		"runner": "help", // "brain runner" alone → help; "brain runner start" → runner daemon
 		"start":  "runner_tui", // "brain start" → runner TUI for all projects
 	}
 

@@ -450,10 +450,17 @@ function AutomationRowView({
     >
       <span
         className="connector"
-        style={{ cursor: hasChildren ? "pointer" : undefined, color: "var(--cyan, var(--teal))" }}
+        style={{
+          display: "inline-block",
+          width: "1.2em",
+          textAlign: "center",
+          flexShrink: 0,
+          cursor: hasChildren ? "pointer" : undefined,
+          color: "var(--cyan, var(--teal))",
+        }}
         onClick={(e) => { if (hasChildren) { e.stopPropagation(); onExpand(); } }}
       >
-        {hasChildren ? (expanded ? "▾ " : "▸ ") : "  "}
+        {hasChildren ? (expanded ? "▾" : "▸") : ""}
       </span>
       <span
         className="glyph"
@@ -463,7 +470,7 @@ function AutomationRowView({
       >
         {row.enabled ? "◉" : "○"}
       </span>
-      <span className="suffix faint" style={{ minWidth: 64 }}>
+      <span className="suffix faint" style={{ minWidth: 64, flexShrink: 0 }}>
         {row.scope === "built-in" ? "built-in" : row.source}
       </span>
       <span className={`title truncate ${row.enabled ? "" : "faint"}`}>

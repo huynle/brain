@@ -996,9 +996,9 @@ kbd {
 .tree-row.cursor .dim,
 .tree-row.cursor .faint,
 .tree-row.cursor .muted { color: var(--bg); opacity: 0.8; }
-.tree-row .connector { color: var(--border-strong); }
+.tree-row .connector { color: var(--border-strong); flex-shrink: 0; }
 .tree-row.cursor .connector { color: var(--bg); opacity: 0.7; }
-.tree-row .glyph { width: 1.4em; display: inline-block; text-align: center; }
+.tree-row .glyph { width: 1.4em; display: inline-block; text-align: center; flex-shrink: 0; }
 .tree-row .checkbox { color: var(--accent); }
 .tree-row.cursor .checkbox { color: var(--bg); }
 .tree-row .title {

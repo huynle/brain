@@ -97,6 +97,7 @@ const GLOBAL: Group = {
   title: "Global",
   rows: [
     { keys: ["h", "l", "[", "]"], desc: "Previous / next tab" },
+    { keys: ["⌘K", "Ctrl+K"], desc: "Quick-switch project (fuzzy search)" },
     { keys: ["H", "L"], desc: "Previous / next project" },
     { keys: ["1–9"], desc: "Jump to project tab" },
     { keys: ["R"], desc: "Jump to Runners" },

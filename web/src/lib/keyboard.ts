@@ -96,6 +96,15 @@ export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
         return;
       }
 
+      // Quick project switcher: Cmd/Ctrl+K opens the searchable picker from
+      // anywhere (even while typing in a field). Handled before the modifier and
+      // editable-target guards below.
+      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+        e.preventDefault();
+        uiApi().setProjectSheetOpen(true);
+        return;
+      }
+
       // Don't hijack typing or modal interactions.
       if (isEditableTarget(e.target)) return;
       if (anyModalOpen()) return;

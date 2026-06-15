@@ -28,14 +28,14 @@ export function EntryEditModal({
 
   if (q.isLoading) {
     return (
-      <Modal title={`Edit · ${title ?? path}`} onClose={onClose}>
+      <Modal title={`Edit · ${title ?? path}`} onClose={onClose} className="sheet-wide">
         <Loading label="Loading entry…" />
       </Modal>
     );
   }
   if (q.error || q.data == null) {
     return (
-      <Modal title={`Edit · ${title ?? path}`} onClose={onClose}>
+      <Modal title={`Edit · ${title ?? path}`} onClose={onClose} className="sheet-wide">
         <ErrorState error={q.error ?? new Error("Entry not found")} onRetry={() => void q.refetch()} />
       </Modal>
     );
@@ -91,6 +91,7 @@ function EditorBody({
     <Modal
       title={`Edit · ${title}`}
       onClose={onClose}
+      className="sheet-wide"
       footer={
         <>
           <button className="btn ghost" onClick={onClose} disabled={busy}>
@@ -107,7 +108,7 @@ function EditorBody({
         </>
       }
     >
-      <MarkdownEditor value={content} onChange={setContent} autoFocus />
+      <MarkdownEditor value={content} onChange={setContent} autoFocus height="72vh" />
     </Modal>
   );
 }

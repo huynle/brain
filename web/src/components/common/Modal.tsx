@@ -5,11 +5,14 @@ export function Modal({
   onClose,
   children,
   footer,
+  className,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
   footer?: React.ReactNode;
+  /** Extra class on the dialog, e.g. "sheet-wide" for a larger editor modal. */
+  className?: string;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -30,7 +33,7 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className="sheet" role="dialog" aria-modal="true" aria-label={title}>
+      <div className={`sheet${className ? ` ${className}` : ""}`} role="dialog" aria-modal="true" aria-label={title}>
         <div className="sheet-header">
           <h2>{title}</h2>
           <button className="icon-btn" onClick={onClose} aria-label="close">

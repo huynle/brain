@@ -64,6 +64,10 @@ interface UIState {
   inspect: InspectTarget | null; // mobile: Detail/Logs bottom sheet target
   toasts: Toast[];
   _tid: number;
+  // Set when a new service-worker build is waiting; calling it applies the
+  // update and reloads. Null when no update is pending.
+  updateApply: (() => void) | null;
+  setUpdateApply: (fn: (() => void) | null) => void;
   setView: (v: View) => void;
   cycleView: (dir: 1 | -1) => void;
   setActiveProject: (p: string) => void;
@@ -150,6 +154,8 @@ export const useUI = create<UIState>((set, get) => ({
   openInspect: (t) => set({ inspect: t }),
   closeInspect: () => set({ inspect: null }),
   toggleWrap: () => set((s) => ({ wrap: !s.wrap })),
+  updateApply: null,
+  setUpdateApply: (fn) => set({ updateApply: fn }),
   toast: (message, kind = "info") => {
     const id = get()._tid + 1;
     set((s) => ({ _tid: id, toasts: [...s.toasts, { id, kind, message }] }));

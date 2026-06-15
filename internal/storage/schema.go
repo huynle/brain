@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 18
+const CurrentSchemaVersion = 20
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -155,6 +155,36 @@ CREATE TABLE IF NOT EXISTS task_claims (
   claimed_at INTEGER NOT NULL,
   expires_at INTEGER NOT NULL,
   PRIMARY KEY (project_id, task_id)
+);`
+
+const createTaskDispatchLeasesTable = `
+CREATE TABLE IF NOT EXISTS task_dispatch_leases (
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  assigned_runner_id TEXT NOT NULL,
+  assigned_machine_id TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL,
+  pushed_at INTEGER NOT NULL,
+  acked_at INTEGER NOT NULL DEFAULT 0,
+  rejected_at INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, task_id)
+);`
+
+const createTaskPlacementReasonsTable = `
+CREATE TABLE IF NOT EXISTS task_placement_reasons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  runner_id TEXT NOT NULL DEFAULT '',
+  machine_id TEXT NOT NULL DEFAULT '',
+  decision TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  required_labels TEXT NOT NULL DEFAULT '{}',
+  runner_labels TEXT NOT NULL DEFAULT '{}',
+  missing_labels TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL
 );`
 
 const createFeatureAssignmentsTable = `
@@ -364,6 +394,16 @@ var createIndexes = []string{
 	// Task claims indexes
 	"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id);",
 	"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at);",
+	// Task dispatch lease indexes
+	"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_runner ON task_dispatch_leases(assigned_runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_machine ON task_dispatch_leases(assigned_machine_id);",
+	"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_state ON task_dispatch_leases(state);",
+	"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_expires ON task_dispatch_leases(expires_at);",
+	// Task placement reason indexes
+	"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_task ON task_placement_reasons(project_id, task_id);",
+	"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_runner ON task_placement_reasons(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_decision ON task_placement_reasons(decision);",
+	"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_created ON task_placement_reasons(created_at);",
 	// Feature assignment indexes
 	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_runner ON feature_assignments(runner_id);",
 	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_project ON feature_assignments(project_id);",
@@ -775,6 +815,46 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 20 {
+		// v20: add placement reason storage for scheduler decisions.
+		if _, err := db.Exec(createTaskPlacementReasonsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v20 (task_placement_reasons table): %w", err)
+			}
+		}
+		placementReasonIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_task ON task_placement_reasons(project_id, task_id)",
+			"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_runner ON task_placement_reasons(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_decision ON task_placement_reasons(decision)",
+			"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_created ON task_placement_reasons(created_at)",
+		}
+		for _, stmt := range placementReasonIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v20 (task_placement_reasons indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 19 {
+		// v19: add Brain-owned task dispatch leases for push scheduling.
+		if _, err := db.Exec(createTaskDispatchLeasesTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v19 (task_dispatch_leases table): %w", err)
+			}
+		}
+		dispatchLeaseIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_runner ON task_dispatch_leases(assigned_runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_machine ON task_dispatch_leases(assigned_machine_id)",
+			"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_state ON task_dispatch_leases(state)",
+			"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_expires ON task_dispatch_leases(expires_at)",
+		}
+		for _, stmt := range dispatchLeaseIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v19 (task_dispatch_leases indexes): %w", err)
+			}
+		}
+	}
+
 	if ver < 17 {
 		// v17: add Brain-owned project placement metadata for scheduling policy.
 		if _, err := db.Exec(createProjectPlacementTable); err != nil {
@@ -895,6 +975,8 @@ func InitSchema(db *sql.DB) error {
 		createOAuthAccessTokensTable,
 		createOAuthRefreshTokensTable,
 		createTaskClaimsTable,
+		createTaskDispatchLeasesTable,
+		createTaskPlacementReasonsTable,
 		createFeatureAssignmentsTable,
 		createRunnersTable,
 		createOpencodeInstancesTable,

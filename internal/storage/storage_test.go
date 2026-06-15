@@ -36,7 +36,7 @@ func TestSchemaCreation_TablesExist(t *testing.T) {
 
 	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version", "api_tokens",
 		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens",
-		"task_claims", "runners", "webhooks", "webhook_deliveries", "feature_assignments",
+		"task_claims", "task_dispatch_leases", "task_placement_reasons", "runners", "webhooks", "webhook_deliveries", "feature_assignments",
 		"note_embeddings", "note_embeddings_meta", "attachments", "entry_attachments"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
@@ -695,8 +695,8 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 }
 
 func TestSchemaVersion_IncludesRunnerDispatchMetadata(t *testing.T) {
-	if CurrentSchemaVersion != 18 {
-		t.Errorf("CurrentSchemaVersion = %d, want 18", CurrentSchemaVersion)
+	if CurrentSchemaVersion != 20 {
+		t.Errorf("CurrentSchemaVersion = %d, want 20", CurrentSchemaVersion)
 	}
 }
 

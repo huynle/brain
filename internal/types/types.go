@@ -147,6 +147,47 @@ type ProjectPlacement struct {
 }
 
 // =============================================================================
+// Dispatch Leases and Placement Reasons
+// =============================================================================
+
+const (
+	DispatchLeaseStatePushed   = "pushed"
+	DispatchLeaseStateAcked    = "acked"
+	DispatchLeaseStateRejected = "rejected"
+	DispatchLeaseStateExpired  = "expired"
+)
+
+// DispatchLease stores Brain-owned push dispatch state for a task assignment.
+type DispatchLease struct {
+	ProjectID         string `json:"project_id"`
+	TaskID            string `json:"task_id"`
+	AssignedRunnerID  string `json:"assigned_runner_id"`
+	AssignedMachineID string `json:"assigned_machine_id"`
+	State             string `json:"state"`
+	PushedAt          int64  `json:"pushed_at"`
+	AckedAt           int64  `json:"acked_at,omitempty"`
+	RejectedAt        int64  `json:"rejected_at,omitempty"`
+	LastError         string `json:"last_error,omitempty"`
+	ExpiresAt         int64  `json:"expires_at"`
+}
+
+// PlacementReason stores scheduler placement decision details independently from
+// task content/status so dispatch decisions remain queryable after task edits.
+type PlacementReason struct {
+	ID             int64  `json:"id,omitempty"`
+	ProjectID      string `json:"project_id"`
+	TaskID         string `json:"task_id"`
+	RunnerID       string `json:"runner_id,omitempty"`
+	MachineID      string `json:"machine_id,omitempty"`
+	Decision       string `json:"decision"`
+	Reason         string `json:"reason,omitempty"`
+	RequiredLabels string `json:"required_labels,omitempty"`
+	RunnerLabels   string `json:"runner_labels,omitempty"`
+	MissingLabels  string `json:"missing_labels,omitempty"`
+	CreatedAt      int64  `json:"created_at"`
+}
+
+// =============================================================================
 // Domain Structs
 // =============================================================================
 

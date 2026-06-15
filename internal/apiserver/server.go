@@ -11,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/auth"
 	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/bridge"
 	"github.com/huynle/brain-api/internal/config"
@@ -269,6 +270,9 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
 
 	// ─── API Handler & Router ───────────────────────────────────────
+	// Shared operator credential verifier (password login + OAuth consent).
+	credVerifier := auth.NewVerifierFromEnv()
+
 	handler := api.NewHandler(
 		brainSvc,
 		api.WithAttachmentService(attachmentSvc),
@@ -285,6 +289,8 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithBridgeService(bridgeHub),
 		api.WithLogBuffer(logBuf),
 		api.WithTaskDefaults(cfg.TaskDefaults),
+		api.WithCredentialVerifier(credVerifier),
+		api.WithPasswordTokenStore(store),
 	)
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
@@ -317,8 +323,14 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	router := api.NewRouter(cfg, routerOpts...)
 
 	// ─── OAuth ─────────────────────────────────────────────────────
-	oauthStore := oauth.NewStore()
-	oauthHandler := oauth.NewHandler(oauthStore, oauth.WithAccessTokenStore(store))
+	// Persist OAuth flow state (clients, auth codes, refresh tokens) in SQLite
+	// so registered clients survive restarts — otherwise every restart yields
+	// "unknown client_id" for the Claude connector and the PWA.
+	oauthStore := oauth.NewPersistentStore(store)
+	oauthHandler := oauth.NewHandler(oauthStore,
+		oauth.WithAccessTokenStore(store),
+		oauth.WithCredentialVerifier(credVerifier),
+	)
 	oauth.RegisterRoutes(router, oauthHandler)
 
 	// ─── MCP Streamable HTTP Transport ──────────────────────────────

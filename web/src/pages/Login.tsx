@@ -1,11 +1,16 @@
 import { useState } from "react";
 import { useAuth } from "../lib/auth";
 
+type View = "choices" | "password" | "manual";
+
 export function Login() {
   const beginLogin = useAuth((s) => s.beginLogin);
+  const loginPassword = useAuth((s) => s.loginPassword);
   const setManualToken = useAuth((s) => s.setManualToken);
   const error = useAuth((s) => s.error);
-  const [manual, setManual] = useState(false);
+  const [view, setView] = useState<View>("choices");
+  const [username, setUsername] = useState("admin");
+  const [password, setPassword] = useState("");
   const [token, setToken] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -40,59 +45,108 @@ export function Login() {
             Sign in to view tasks, automations, runners, and your knowledge base.
           </p>
 
-        {error && (
-          <div
-            className="toast error"
-            style={{ position: "static", maxWidth: 360 }}
-          >
-            {error}
-          </div>
-        )}
+          {error && (
+            <div
+              className="toast error"
+              style={{ position: "static", maxWidth: 360 }}
+            >
+              {error}
+            </div>
+          )}
 
-        {!manual ? (
-          <div className="col" style={{ width: "min(92%, 340px)" }}>
-            <button
-              className="btn primary"
-              onClick={() => {
+          {view === "choices" && (
+            <div className="col" style={{ width: "min(92%, 340px)" }}>
+              <button className="btn primary" onClick={() => setView("password")}>
+                Sign in with password
+              </button>
+              <button
+                className="btn"
+                onClick={() => {
+                  setBusy(true);
+                  void beginLogin().finally(() => setBusy(false));
+                }}
+                disabled={busy}
+              >
+                {busy ? "Redirecting…" : "Sign in with PIN"}
+              </button>
+              <button className="btn ghost" onClick={() => setView("manual")}>
+                Use an API token instead
+              </button>
+            </div>
+          )}
+
+          {view === "password" && (
+            <form
+              className="col"
+              style={{ width: "min(92%, 340px)" }}
+              onSubmit={(e) => {
+                e.preventDefault();
                 setBusy(true);
-                void beginLogin().finally(() => setBusy(false));
+                void loginPassword(username.trim(), password)
+                  .catch(() => {})
+                  .finally(() => setBusy(false));
               }}
-              disabled={busy}
             >
-              {busy ? "Redirecting…" : "Sign in with PIN"}
-            </button>
-            <button className="btn ghost" onClick={() => setManual(true)}>
-              Use an API token instead
-            </button>
-          </div>
-        ) : (
-          <form
-            className="col"
-            style={{ width: "min(92%, 340px)" }}
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (token.trim()) setManualToken(token.trim());
-            }}
-          >
-            <input
-              type="password"
-              placeholder="Paste API token"
-              value={token}
-              autoFocus
-              onChange={(e) => setToken(e.target.value)}
-            />
-            <button className="btn primary" type="submit" disabled={!token.trim()}>
-              Save token
-            </button>
-            <button
-              className="btn ghost"
-              type="button"
-              onClick={() => setManual(false)}
+              <input
+                type="text"
+                placeholder="Username"
+                autoComplete="username"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                autoComplete="current-password"
+                autoFocus
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+              <button
+                className="btn primary"
+                type="submit"
+                disabled={busy || !username.trim() || !password}
+              >
+                {busy ? "Signing in…" : "Sign in"}
+              </button>
+              <button
+                className="btn ghost"
+                type="button"
+                onClick={() => setView("choices")}
+              >
+                Back
+              </button>
+            </form>
+          )}
+
+          {view === "manual" && (
+            <form
+              className="col"
+              style={{ width: "min(92%, 340px)" }}
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (token.trim()) setManualToken(token.trim());
+              }}
             >
-              Back
-            </button>
-          </form>
-        )}
+              <input
+                type="password"
+                placeholder="Paste API token"
+                value={token}
+                autoFocus
+                onChange={(e) => setToken(e.target.value)}
+              />
+              <button className="btn primary" type="submit" disabled={!token.trim()}>
+                Save token
+              </button>
+              <button
+                className="btn ghost"
+                type="button"
+                onClick={() => setView("choices")}
+              >
+                Back
+              </button>
+            </form>
+          )}
         </div>
       </div>
     </div>

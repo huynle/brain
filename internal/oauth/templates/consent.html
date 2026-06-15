@@ -172,7 +172,16 @@
             <input type="hidden" name="code_challenge_method" value="{{.CodeChallengeMethod}}">
             <input type="hidden" name="response_type" value="code">
 
-            {{if .PINRequired}}
+            {{if .PasswordRequired}}
+            <div class="pin-section">
+                <label for="username">Username</label>
+                <input type="text" id="username" name="username" value="{{.Username}}" placeholder="Username" required autocomplete="username">
+            </div>
+            <div class="pin-section">
+                <label for="password">Password</label>
+                <input type="password" id="password" name="password" placeholder="Enter password" required autocomplete="current-password">
+            </div>
+            {{else if .PINRequired}}
             <div class="pin-section">
                 <label for="pin">Authorization PIN</label>
                 <input type="password" id="pin" name="pin" placeholder="Enter PIN" required autocomplete="off">

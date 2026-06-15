@@ -23,6 +23,9 @@ type Handler struct {
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
 	taskDefaults   config.TaskDefaultsConfig
+	credentials    CredentialVerifier
+	passwordTokens PasswordTokenStore
+	loginThrottle  *loginThrottle
 }
 
 // HandlerOption configures a Handler.
@@ -30,11 +33,25 @@ type HandlerOption func(*Handler)
 
 // NewHandler creates a Handler with the given BrainService and optional services.
 func NewHandler(brain BrainService, opts ...HandlerOption) *Handler {
-	h := &Handler{brain: brain}
+	h := &Handler{brain: brain, loginThrottle: newLoginThrottle()}
 	for _, opt := range opts {
 		opt(h)
 	}
 	return h
+}
+
+// WithCredentialVerifier enables the password login flow with the given verifier.
+func WithCredentialVerifier(v CredentialVerifier) HandlerOption {
+	return func(h *Handler) {
+		h.credentials = v
+	}
+}
+
+// WithPasswordTokenStore sets the store used to issue/rotate password-login tokens.
+func WithPasswordTokenStore(s PasswordTokenStore) HandlerOption {
+	return func(h *Handler) {
+		h.passwordTokens = s
+	}
 }
 
 // WithTaskService sets the TaskService on the Handler.

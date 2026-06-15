@@ -47,6 +47,14 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			r.Post("/tokens/bootstrap", o.handler.HandleBootstrapToken)
 		}
 
+		// Password login — unauthenticated (credentials/refresh token ARE the
+		// auth). The handlers themselves 404 when password login is not enabled.
+		if o.handler != nil {
+			r.Post("/auth/login", o.handler.HandleAuthLogin)
+			r.Post("/auth/refresh", o.handler.HandleAuthRefresh)
+			r.Post("/auth/logout", o.handler.HandleAuthLogout)
+		}
+
 		// All routes below require auth when enabled
 		r.Group(func(r chi.Router) {
 			r.Use(Auth(cfg.EnableAuth, o.validator))

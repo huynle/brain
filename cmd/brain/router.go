@@ -81,6 +81,7 @@ var builtinCommands = map[string]bool{
 	"uninstall":     true,
 	"plugin-status": true,
 	"token":         true,
+	"auth":          true,
 	"dream":         true,
 	"save":          true,
 	"get":           true,
@@ -213,6 +214,8 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parseMCPCommand(cmdArgs)
 	case "token":
 		return parseTokenCommand(cmdArgs)
+	case "auth":
+		return parseAuthCommand(cmdArgs)
 	case "dream":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "dream"}, nil
@@ -398,6 +401,17 @@ func parseTokenCommand(args []string) (Command, error) {
 		Name:       name,
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsTokenFlags(flags),
+	}, nil
+}
+
+// parseAuthCommand creates an AuthCommand from args (e.g. `brain auth hash`).
+func parseAuthCommand(args []string) (Command, error) {
+	if len(args) == 0 || isHelpArg(args[0]) {
+		return &HelpCommand{command: "auth"}, nil
+	}
+	return &commands.AuthCommand{
+		Subcommand: args[0],
+		Args:       args[1:],
 	}, nil
 }
 

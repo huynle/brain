@@ -34,6 +34,8 @@ type ConsentData struct {
 	CodeChallengeMethod string
 	Scopes              []ScopeInfo
 	PINRequired         bool
+	PasswordRequired    bool
+	Username            string
 	Error               string
 }
 

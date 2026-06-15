@@ -53,9 +53,17 @@ export function Dashboard() {
 
   useEffect(() => {
     if (!projects) return;
-    streams.sync(projects);
-    return () => streams.stopAll();
-  }, [projects]);
+    // Always stream the active scope too — even a project with no tasks (or the
+    // "all" scope on a fresh brain) streams a `connected` event, so the view
+    // resolves instead of hanging on "connecting to task stream…". sync() is
+    // incremental, so switching projects only opens/closes the diff.
+    const wanted = new Set(projects);
+    wanted.add(activeProject);
+    streams.sync([...wanted]);
+  }, [projects, activeProject]);
+
+  // Tear down all streams only on unmount.
+  useEffect(() => () => streams.stopAll(), []);
 
   useEffect(() => {
     if (token) streams.restartAll();

@@ -390,6 +390,27 @@ a {
 
 /* ─── Toast ──────────────────────────────────────────────── */
 
+/* "New version available" banner — pinned top-center, above everything. */
+.update-banner {
+  position: fixed;
+  top: calc(var(--safe-top, 0px) + 10px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: max-content;
+  max-width: 92vw;
+  background: var(--bg-3);
+  border: 1px solid var(--cyan);
+  border-radius: var(--radius);
+  padding: 8px 10px 8px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  animation: toast-in 0.18s ease;
+}
+.update-banner-text { font-size: 13px; color: var(--fg); }
+
 .toast-wrap {
   position: fixed;
   left: 50%;

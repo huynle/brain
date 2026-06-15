@@ -41,7 +41,10 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // "prompt" holds a new build in the SW "waiting" state and fires
+      // onNeedRefresh, so we can show an "Update available — Reload" banner
+      // instead of silently swapping the build under the open tab.
+      registerType: "prompt",
       // We register the SW ourselves in main.tsx so we can poll for updates
       // on long-open tabs (otherwise an open tab keeps serving the cached
       // build until the user manually reloads).

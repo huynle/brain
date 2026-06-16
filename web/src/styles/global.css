@@ -535,6 +535,39 @@ a {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+
+.field-section {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+  padding-bottom: 0.4rem;
+}
+.field-section:last-child {
+  border-bottom: 0;
+  margin-bottom: 0;
+}
+.field-section h3 {
+  color: var(--cyan);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.85rem;
+  text-transform: uppercase;
+}
+.field-grid {
+  display: grid;
+  gap: 0 0.85rem;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.field-check {
+  align-items: center;
+  color: var(--fg);
+  display: flex;
+  gap: 0.5rem;
+  margin: 0.2rem 0 0.85rem;
+}
+.field-check input {
+  accent-color: var(--accent);
+}
+
 .chip-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));

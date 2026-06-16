@@ -66,8 +66,10 @@ export interface Task {
   workdir?: string;
   git_branch?: string;
   execution_mode?: string;
+  merge_target_branch?: string;
   merge_policy?: string;
   merge_strategy?: string;
+  open_pr_before_merge?: boolean;
 
   feature_id?: string;
   feature_priority?: string;
@@ -77,6 +79,9 @@ export interface Task {
   schedule_enabled?: boolean;
   next_run?: string;
   run_once_at?: string;
+  starts_at?: string;
+  expires_at?: string;
+  timezone?: string;
 
   user_original_request?: string;
   direct_prompt?: string;

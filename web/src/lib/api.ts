@@ -176,6 +176,12 @@ export const updateEntry = (path: string, patch: Record<string, unknown>) =>
     body: patch,
   });
 
+export const moveEntry = (path: string, project: string) =>
+  api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}/move`, {
+    method: "POST",
+    body: { project },
+  });
+
 // Full-file (frontmatter + body) get/update — mirrors the TUI's $EDITOR flow so
 // the PWA can edit the entire entry, not just metadata or the body.
 export const getEntryRaw = (path: string) =>

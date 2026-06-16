@@ -1455,12 +1455,30 @@ kbd {
 /* Project picker list. */
 .proj-list { display: flex; flex-direction: column; max-height: 52vh; overflow-y: auto; }
 .proj-item {
-  display: flex; align-items: center; gap: 10px; padding: 13px 6px;
+  display: flex; align-items: center; gap: 10px; padding: 10px 6px;
   background: none; border: none; border-bottom: 1px solid var(--border);
   color: var(--fg); text-align: left; font-size: 14px; width: 100%;
   cursor: pointer; border-left: 2px solid transparent;
 }
 .proj-item.on { color: var(--cyan); font-weight: 700; }
+.proj-item.feature { padding-left: 25px; font-size: 12.5px; color: var(--fg-dim); }
 /* Keyboard/hover highlight for the active fuzzy match. */
 .proj-item.cursor { background: var(--bg-hover, rgba(127,127,127,0.14)); border-left-color: var(--cyan); }
-.proj-dot { color: var(--accent); flex: 0 0 auto; }
+.proj-item.cursor .faint,
+.proj-item.cursor .proj-meta { color: var(--fg); opacity: 0.75; }
+.proj-dot { flex: 0 0 auto; width: 0.9em; text-align: center; }
+.proj-label { flex: 1; min-width: 0; }
+.proj-meta { color: var(--fg-faint); font-size: 11px; white-space: nowrap; }
+.proj-actions {
+  display: none; align-items: center; gap: 5px; margin-left: auto;
+}
+.proj-item:hover .proj-actions,
+.proj-item.cursor .proj-actions { display: inline-flex; }
+.proj-action {
+  width: auto; padding: 2px 6px; border: 1px solid var(--border-strong);
+  border-radius: 999px; background: var(--bg-2); color: var(--fg-dim);
+  font-size: 10.5px; line-height: 1.35; white-space: nowrap;
+}
+.proj-action:hover { color: var(--fg); border-color: var(--cyan); }
+.proj-action.run { color: var(--green); }
+.proj-hints { font-size: 11px; padding: 0 2px; }

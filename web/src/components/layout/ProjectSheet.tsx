@@ -1,7 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../../hooks/useProjects";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { ALL_PROJECTS, useUI } from "../../store/ui";
+import {
+  getRunnerStatus,
+  pauseAll,
+  pauseAutomations,
+  pauseProject,
+  resumeAll,
+  resumeAutomations,
+  resumeProject,
+  triggerTask,
+} from "../../lib/api";
+import { useLive } from "../../lib/sse";
+import type { Task } from "../../lib/types";
 import { BottomSheet } from "./BottomSheet";
 import { Modal } from "../common/Modal";
 
@@ -41,6 +54,44 @@ function fuzzyScore(text: string, query: string): number | null {
   return score;
 }
 
+const FEATURELESS = "__ungrouped__";
+
+type ProjectRow = { kind: "project"; project: string };
+type FeatureRow = {
+  kind: "feature";
+  project: string;
+  feature: string;
+  label: string;
+  ready: Task[];
+  total: number;
+};
+type PickerRow = ProjectRow | FeatureRow;
+type RunnerStatus = Awaited<ReturnType<typeof getRunnerStatus>>;
+
+function rowKey(row: PickerRow): string {
+  return row.kind === "project"
+    ? `p:${row.project}`
+    : `f:${row.project}:${row.feature}`;
+}
+
+function isRunnable(t: Task): boolean {
+  return t.status === "pending" || t.status === "active";
+}
+
+function isTaskPaused(project: string, status?: RunnerStatus): boolean {
+  if (!status) return false;
+  return project === ALL_PROJECTS
+    ? status.paused
+    : !!status.pausedProjects?.includes(project);
+}
+
+function areAutomationsPaused(project: string, status?: RunnerStatus): boolean {
+  if (!status) return false;
+  return project === ALL_PROJECTS
+    ? status.automationsPaused
+    : !!status.automationPausedProjects?.includes(project);
+}
+
 // Searchable project picker. Opened by the status-bar project name or the
 // Cmd/Ctrl+K shortcut. Type to fuzzy-filter; the closest match is highlighted,
 // ↑/↓ moves the selection, Enter accepts, Esc closes. Bottom sheet on mobile,
@@ -50,10 +101,20 @@ export function ProjectSheet() {
   const setOpen = useUI((s) => s.setProjectSheetOpen);
   const active = useUI((s) => s.activeProject);
   const setActiveProject = useUI((s) => s.setActiveProject);
+  const toast = useUI((s) => s.toast);
   const isMobile = useIsMobile();
   const projectsQ = useProjects();
+  const statusQ = useQuery({
+    queryKey: ["runner-status"],
+    queryFn: getRunnerStatus,
+    refetchInterval: open ? 8_000 : false,
+    enabled: open,
+  });
+  const qc = useQueryClient();
+  const liveProjects = useLive((s) => s.projects);
   const [q, setQ] = useState("");
   const [cursor, setCursor] = useState(0);
+  const [busy, setBusy] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const all = useMemo(
@@ -61,7 +122,7 @@ export function ProjectSheet() {
     [projectsQ.data],
   );
 
-  const filtered = useMemo(() => {
+  const projectMatches = useMemo(() => {
     const needle = q.trim();
     if (!needle) return all;
     return all
@@ -70,6 +131,45 @@ export function ProjectSheet() {
       .sort((a, b) => b.s - a.s)
       .map((x) => x.p);
   }, [all, q]);
+
+  const rows = useMemo<PickerRow[]>(() => {
+    const out: PickerRow[] = [];
+    for (const project of projectMatches) {
+      out.push({ kind: "project", project });
+      const tasks = project === ALL_PROJECTS
+        ? Object.entries(liveProjects).flatMap(([projectId, state]) =>
+            state.tasks.map((t) => (t.projectId ? t : { ...t, projectId })),
+          )
+        : (liveProjects[project]?.tasks ?? []).map((t) =>
+            t.projectId ? t : { ...t, projectId: project },
+          );
+
+      const groups = new Map<string, Task[]>();
+      for (const task of tasks) {
+        if (!isRunnable(task)) continue;
+        const feature = task.feature_id || FEATURELESS;
+        const arr = groups.get(feature) ?? [];
+        arr.push(task);
+        groups.set(feature, arr);
+      }
+
+      for (const [feature, ready] of [...groups.entries()].sort(([a], [b]) => {
+        if (a === FEATURELESS) return 1;
+        if (b === FEATURELESS) return -1;
+        return a.localeCompare(b);
+      })) {
+        out.push({
+          kind: "feature",
+          project,
+          feature,
+          label: feature === FEATURELESS ? "Ungrouped ready tasks" : feature,
+          ready,
+          total: ready.length,
+        });
+      }
+    }
+    return out;
+  }, [liveProjects, projectMatches]);
 
   // Highlight the best match (top of the sorted list) whenever the query changes.
   useEffect(() => {
@@ -81,7 +181,7 @@ export function ProjectSheet() {
     listRef.current
       ?.querySelector<HTMLElement>('[data-cursor="1"]')
       ?.scrollIntoView({ block: "nearest" });
-  }, [cursor, filtered.length]);
+  }, [cursor, rows.length]);
 
   if (!open) return null;
 
@@ -96,16 +196,76 @@ export function ProjectSheet() {
     close();
   }
 
+  async function act(key: string, label: string, fn: () => Promise<unknown>) {
+    setBusy(key);
+    try {
+      await fn();
+      toast(label, "success");
+      void qc.invalidateQueries({ queryKey: ["runner-status"] });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Action failed", "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function toggleTasks(project: string) {
+    const paused = isTaskPaused(project, statusQ.data);
+    const fn = project === ALL_PROJECTS
+      ? paused ? resumeAll : pauseAll
+      : () => (paused ? resumeProject(project) : pauseProject(project));
+    void act(
+      `tasks:${project}`,
+      paused ? `Resumed ${shortName(project)}` : `Paused ${shortName(project)}`,
+      fn,
+    );
+  }
+
+  function toggleAutomations(project: string) {
+    const paused = areAutomationsPaused(project, statusQ.data);
+    const scoped = project === ALL_PROJECTS ? undefined : project;
+    void act(
+      `autos:${project}`,
+      paused
+        ? `Resumed automations for ${shortName(project)}`
+        : `Paused automations for ${shortName(project)}`,
+      () => (paused ? resumeAutomations(scoped) : pauseAutomations(scoped)),
+    );
+  }
+
+  function triggerFeature(row: FeatureRow) {
+    if (!row.ready.length) return;
+    void act(
+      `feature:${row.project}:${row.feature}`,
+      `Triggered ${row.ready.length} ${row.label}`,
+      () => Promise.all(row.ready.map((t) => triggerTask(t.projectId || row.project, t.id))),
+    );
+  }
+
   function onKeyDown(e: React.KeyboardEvent) {
     if (e.key === "ArrowDown") {
       e.preventDefault();
-      setCursor((c) => Math.min(c + 1, filtered.length - 1));
+      setCursor((c) => Math.min(c + 1, rows.length - 1));
     } else if (e.key === "ArrowUp") {
       e.preventDefault();
       setCursor((c) => Math.max(c - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      pick(filtered[cursor]);
+      const row = rows[cursor];
+      if (row?.kind === "project") pick(row.project);
+      else if (row?.kind === "feature") triggerFeature(row);
+    } else if (e.altKey && (e.key === "p" || e.key === "P")) {
+      e.preventDefault();
+      const row = rows[cursor];
+      if (row) toggleTasks(row.project);
+    } else if (e.altKey && (e.key === "a" || e.key === "A")) {
+      e.preventDefault();
+      const row = rows[cursor];
+      if (row) toggleAutomations(row.project);
+    } else if (e.altKey && (e.key === "x" || e.key === "X")) {
+      e.preventDefault();
+      const row = rows[cursor];
+      if (row?.kind === "feature") triggerFeature(row);
     } else if (e.key === "Escape") {
       e.preventDefault();
       close();
@@ -123,19 +283,74 @@ export function ProjectSheet() {
         onKeyDown={onKeyDown}
       />
       <div className="proj-list" ref={listRef}>
-        {filtered.map((p, i) => (
-          <button
-            key={p}
-            className={`proj-item ${i === cursor ? "cursor" : ""} ${p === active ? "on" : ""}`}
-            data-cursor={i === cursor ? "1" : undefined}
-            onClick={() => pick(p)}
-            onMouseMove={() => setCursor(i)}
-          >
-            <span className="proj-dot">{p === active ? "●" : "○"}</span>
-            <span className="truncate">{shortName(p)}</span>
-          </button>
-        ))}
-        {filtered.length === 0 && (
+        {rows.map((row, i) => {
+          const project = row.project;
+          const taskPaused = isTaskPaused(project, statusQ.data);
+          const automationPaused = areAutomationsPaused(project, statusQ.data);
+          const isProject = row.kind === "project";
+          const label = isProject ? shortName(project) : row.label;
+          return (
+            <div
+              key={rowKey(row)}
+              className={`proj-item ${isProject ? "" : "feature"} ${i === cursor ? "cursor" : ""} ${isProject && project === active ? "on" : ""}`}
+              data-cursor={i === cursor ? "1" : undefined}
+              onClick={() => (isProject ? pick(project) : triggerFeature(row))}
+              onMouseMove={() => setCursor(i)}
+              title={isProject ? "Enter switches project. P toggles tasks. A toggles automations." : "Enter or X triggers this feature's ready tasks. P/A control its project."}
+            >
+              <span
+                className="proj-dot"
+                style={{ color: taskPaused ? "var(--red)" : "var(--green)" }}
+                title={taskPaused ? "tasks paused" : "tasks running"}
+              >
+                {isProject && project === active ? "●" : "○"}
+              </span>
+              <span
+                className="proj-dot"
+                style={{ color: automationPaused ? "var(--orange)" : "var(--teal)" }}
+                title={automationPaused ? "automations paused" : "automations running"}
+              >
+                {automationPaused ? "◌" : "●"}
+              </span>
+              <span className="truncate proj-label">
+                {!isProject && <span className="faint">↳ </span>}
+                {label}
+              </span>
+              {!isProject && <span className="proj-meta">{row.total} ready</span>}
+              <span className="proj-actions" aria-label={`controls for ${label}`}>
+                <button
+                  type="button"
+                  className="proj-action"
+                  disabled={busy === `tasks:${project}`}
+                  title={taskPaused ? "Resume project tasks" : "Pause project tasks"}
+                  onClick={(e) => { e.stopPropagation(); toggleTasks(project); }}
+                >
+                  {taskPaused ? "resume tasks" : "pause tasks"}
+                </button>
+                <button
+                  type="button"
+                  className="proj-action"
+                  disabled={busy === `autos:${project}`}
+                  title={automationPaused ? "Resume project automations" : "Pause project automations"}
+                  onClick={(e) => { e.stopPropagation(); toggleAutomations(project); }}
+                >
+                  {automationPaused ? "resume autos" : "pause autos"}
+                </button>
+                {!isProject && (
+                  <button
+                    type="button"
+                    className="proj-action run"
+                    disabled={busy === `feature:${project}:${row.feature}`}
+                    onClick={(e) => { e.stopPropagation(); triggerFeature(row); }}
+                  >
+                    run
+                  </button>
+                )}
+              </span>
+            </div>
+          );
+        })}
+        {rows.length === 0 && (
           <div className="faint" style={{ padding: 10 }}>
             No match for “{q}”.
           </div>
@@ -146,6 +361,7 @@ export function ProjectSheet() {
           </div>
         )}
       </div>
+      <div className="proj-hints faint">Enter: open/run · Alt+P: tasks · Alt+A: automations · Alt+X: run feature</div>
     </div>
   );
 

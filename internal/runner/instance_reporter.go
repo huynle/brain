@@ -61,6 +61,8 @@ func (tr *TaskRunner) taskInstance(info *ProcessInfo, hostname string) types.Ope
 		Kind:       types.InstanceKindTask,
 		ProjectID:  info.Task.ProjectID,
 		TaskID:     info.Task.ID,
+		FeatureID:  info.Task.FeatureID,
+		Priority:   info.Task.Priority,
 		Title:      info.Task.Title,
 		Workdir:    info.Task.Workdir,
 		Port:       info.Task.OpencodePort,
@@ -68,6 +70,8 @@ func (tr *TaskRunner) taskInstance(info *ProcessInfo, hostname string) types.Ope
 		SessionIDs: sessionIDs,
 		Status:     taskInstanceStatus(info),
 		Executor:   "opencode",
+		Agent:      info.Task.Agent,
+		Model:      info.Task.Model,
 		StartedAt:  info.Task.StartedAt.UnixMilli(),
 		LastSeen:   time.Now().UnixMilli(),
 	}

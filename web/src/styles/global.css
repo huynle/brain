@@ -1112,16 +1112,52 @@ kbd {
 .ctl-runner { margin-bottom: 4px; }
 .ctl-inst {
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: stretch;
   gap: 6px;
-  padding: 3px 6px 3px 18px;
+  padding: 5px 6px 6px 18px;
   font-size: 12.5px;
   cursor: pointer;
   border-radius: 3px;
 }
 .ctl-inst:hover { background: var(--bg-2); }
 .ctl-inst.on { background: var(--bg-3); }
+.ctl-inst-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
 .ctl-kind { font-size: 10.5px; text-transform: uppercase; }
+.ctl-inst-meta,
+.ctl-pane-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 0;
+}
+.ctl-inst-meta { padding-left: 28px; }
+.ctl-pane-meta { max-width: min(560px, 100%); }
+.ctl-meta-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  min-width: 0;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, var(--blue));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-2) 76%, transparent);
+  color: var(--text);
+  font-size: 10.5px;
+  line-height: 1.4;
+}
+.ctl-meta-label {
+  color: var(--faint);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  flex: 0 0 auto;
+}
 
 .ctl-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .ctl-pane-head {

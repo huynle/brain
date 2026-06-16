@@ -216,7 +216,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		service.WithAttachmentDerivedChangeHook(brainSvc),
 	)
 	taskSvc := service.NewTaskService(&cfg, store)
-	runnerSvc := service.NewRunnerService()
+	runnerSvc := service.NewRunnerServiceWithStorage(store)
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)
 	clientContextSvc := service.NewClientContextService(store)
 	placementSvc := service.NewProjectPlacementService(store)

@@ -88,6 +88,8 @@ type mockClient struct {
 
 	releaseDispatchErr   error
 	releaseDispatchCalls []dispatchReleaseCall
+
+	runnerStatus *types.RunnerStatusResponse
 }
 
 type nextTaskCall struct {
@@ -244,6 +246,15 @@ func (m *mockClient) ReleaseDispatch(ctx context.Context, runnerID, projectID, t
 	defer m.mu.Unlock()
 	m.releaseDispatchCalls = append(m.releaseDispatchCalls, dispatchReleaseCall{RunnerID: runnerID, ProjectID: projectID, TaskID: taskID})
 	return &types.DispatchReleaseResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID}, m.releaseDispatchErr
+}
+
+func (m *mockClient) GetRunnerStatus(ctx context.Context) (*types.RunnerStatusResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.runnerStatus == nil {
+		return &types.RunnerStatusResponse{Running: true}, nil
+	}
+	return m.runnerStatus, nil
 }
 
 func (m *mockClient) UpdateTaskStatus(ctx context.Context, taskPath, status string) error {
@@ -1516,6 +1527,23 @@ func TestTaskRunner_Poll_SkipsPausedProjects(t *testing.T) {
 
 	if len(executor.getSpawnCalls()) > 0 {
 		t.Error("should not spawn tasks for paused projects")
+	}
+}
+
+func TestTaskRunner_Poll_UsesServerOwnedProjectPauseState(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+	client.runnerStatus = &types.RunnerStatusResponse{Running: true, PausedProjects: []string{"proj-a"}}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.poll(context.Background())
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Fatal("server-owned task pause should prevent normal task spawn")
 	}
 }
 

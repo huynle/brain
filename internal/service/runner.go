@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -15,6 +16,7 @@ var _ api.RunnerService = (*RunnerServiceImpl)(nil)
 // This is a stub implementation that tracks pause/resume state without
 // actually controlling task execution (that's the runner's job).
 type RunnerServiceImpl struct {
+	store                    *storage.StorageLayer
 	mu                       sync.RWMutex
 	globalPaused             bool
 	automationsPaused        bool
@@ -24,14 +26,23 @@ type RunnerServiceImpl struct {
 
 // NewRunnerService creates a new RunnerServiceImpl.
 func NewRunnerService() *RunnerServiceImpl {
+	return NewRunnerServiceWithStorage(nil)
+}
+
+// NewRunnerServiceWithStorage creates a RunnerServiceImpl backed by durable storage.
+func NewRunnerServiceWithStorage(store *storage.StorageLayer) *RunnerServiceImpl {
 	return &RunnerServiceImpl{
+		store:                    store,
 		pausedProjects:           make(map[string]bool),
 		automationPausedProjects: make(map[string]bool),
 	}
 }
 
 // Pause pauses task execution for a specific project.
-func (s *RunnerServiceImpl) Pause(_ context.Context, projectId string) error {
+func (s *RunnerServiceImpl) Pause(ctx context.Context, projectId string) error {
+	if s.store != nil {
+		return s.store.SetProjectTaskPaused(ctx, projectId, true)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.pausedProjects[projectId] = true
@@ -39,7 +50,10 @@ func (s *RunnerServiceImpl) Pause(_ context.Context, projectId string) error {
 }
 
 // Resume resumes task execution for a specific project.
-func (s *RunnerServiceImpl) Resume(_ context.Context, projectId string) error {
+func (s *RunnerServiceImpl) Resume(ctx context.Context, projectId string) error {
+	if s.store != nil {
+		return s.store.SetProjectTaskPaused(ctx, projectId, false)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.pausedProjects, projectId)
@@ -47,7 +61,10 @@ func (s *RunnerServiceImpl) Resume(_ context.Context, projectId string) error {
 }
 
 // PauseAll pauses task execution for all projects.
-func (s *RunnerServiceImpl) PauseAll(_ context.Context) error {
+func (s *RunnerServiceImpl) PauseAll(ctx context.Context) error {
+	if s.store != nil {
+		return s.store.SetAllProjectTasksPaused(ctx, true)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.globalPaused = true
@@ -55,7 +72,10 @@ func (s *RunnerServiceImpl) PauseAll(_ context.Context) error {
 }
 
 // ResumeAll resumes task execution for all projects.
-func (s *RunnerServiceImpl) ResumeAll(_ context.Context) error {
+func (s *RunnerServiceImpl) ResumeAll(ctx context.Context) error {
+	if s.store != nil {
+		return s.store.SetAllProjectTasksPaused(ctx, false)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.globalPaused = false
@@ -65,7 +85,10 @@ func (s *RunnerServiceImpl) ResumeAll(_ context.Context) error {
 }
 
 // PauseAutomations pauses automation-generated task execution.
-func (s *RunnerServiceImpl) PauseAutomations(_ context.Context) error {
+func (s *RunnerServiceImpl) PauseAutomations(ctx context.Context) error {
+	if s.store != nil {
+		return s.store.SetAllProjectAutomationsPaused(ctx, true)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.automationsPaused = true
@@ -73,7 +96,10 @@ func (s *RunnerServiceImpl) PauseAutomations(_ context.Context) error {
 }
 
 // ResumeAutomations resumes automation-generated task execution.
-func (s *RunnerServiceImpl) ResumeAutomations(_ context.Context) error {
+func (s *RunnerServiceImpl) ResumeAutomations(ctx context.Context) error {
+	if s.store != nil {
+		return s.store.SetAllProjectAutomationsPaused(ctx, false)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.automationsPaused = false
@@ -81,7 +107,30 @@ func (s *RunnerServiceImpl) ResumeAutomations(_ context.Context) error {
 }
 
 // GetStatus returns the current runner status.
-func (s *RunnerServiceImpl) GetStatus(_ context.Context) (*types.RunnerStatusResponse, error) {
+func (s *RunnerServiceImpl) GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error) {
+	if s.store != nil {
+		rows, err := s.store.ListProjectPauseStates(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var pausedProjects []string
+		var automationPausedProjects []string
+		for _, row := range rows {
+			if row.TasksPaused {
+				pausedProjects = append(pausedProjects, row.ProjectID)
+			}
+			if row.AutomationsPaused {
+				automationPausedProjects = append(automationPausedProjects, row.ProjectID)
+			}
+		}
+		return &types.RunnerStatusResponse{
+			Running:                  true,
+			Paused:                   len(pausedProjects) > 0,
+			PausedProjects:           pausedProjects,
+			AutomationsPaused:        len(automationPausedProjects) > 0,
+			AutomationPausedProjects: automationPausedProjects,
+		}, nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 

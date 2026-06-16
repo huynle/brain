@@ -87,6 +87,7 @@ const VIEW_GROUPS: Record<string, Group> = {
     rows: [
       { keys: ["j", "k"], desc: "Scroll" },
       { keys: ["g", "G"], desc: "Top / bottom" },
+      { keys: ["/"], desc: "Filter" },
       { keys: ["f"], desc: "Follow / live tail" },
     ],
   },

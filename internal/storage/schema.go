@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 21
+const CurrentSchemaVersion = 22
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -229,6 +229,8 @@ CREATE TABLE IF NOT EXISTS opencode_instances (
   kind TEXT NOT NULL DEFAULT 'task',
   project_id TEXT DEFAULT '',
   task_id TEXT DEFAULT '',
+  feature_id TEXT DEFAULT '',
+  priority TEXT DEFAULT '',
   title TEXT DEFAULT '',
   workdir TEXT DEFAULT '',
   port INTEGER DEFAULT 0,
@@ -236,8 +238,18 @@ CREATE TABLE IF NOT EXISTS opencode_instances (
   session_ids TEXT DEFAULT '[]',
   status TEXT NOT NULL DEFAULT 'starting',
   executor TEXT DEFAULT 'opencode',
+  agent TEXT DEFAULT '',
+  model TEXT DEFAULT '',
   started_at INTEGER NOT NULL DEFAULT 0,
   last_seen INTEGER NOT NULL DEFAULT 0
+);`
+
+const createProjectPauseStateTable = `
+CREATE TABLE IF NOT EXISTS project_pause_state (
+  project_id TEXT PRIMARY KEY,
+  tasks_paused INTEGER NOT NULL DEFAULT 0,
+  automations_paused INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
 );`
 
 const createProjectPlacementTable = `
@@ -415,6 +427,8 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_opencode_instances_runner ON opencode_instances(runner_id);",
 	"CREATE INDEX IF NOT EXISTS idx_opencode_instances_task ON opencode_instances(project_id, task_id);",
 	"CREATE INDEX IF NOT EXISTS idx_project_placement_affinity ON project_placement(affinity);",
+	"CREATE INDEX IF NOT EXISTS idx_project_pause_state_tasks ON project_pause_state(tasks_paused);",
+	"CREATE INDEX IF NOT EXISTS idx_project_pause_state_automations ON project_pause_state(automations_paused);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -789,6 +803,25 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if exists, err := tableExists(db, "opencode_instances"); err != nil {
+		return fmt.Errorf("migrate opencode_instances metadata (inspect table): %w", err)
+	} else if exists {
+		columns := []struct {
+			name string
+			ddl  string
+		}{
+			{"feature_id", "ALTER TABLE opencode_instances ADD COLUMN feature_id TEXT DEFAULT ''"},
+			{"priority", "ALTER TABLE opencode_instances ADD COLUMN priority TEXT DEFAULT ''"},
+			{"agent", "ALTER TABLE opencode_instances ADD COLUMN agent TEXT DEFAULT ''"},
+			{"model", "ALTER TABLE opencode_instances ADD COLUMN model TEXT DEFAULT ''"},
+		}
+		for _, column := range columns {
+			if err := ensureTableColumn(db, "opencode_instances", column.name, column.ddl); err != nil {
+				return fmt.Errorf("migrate opencode_instances metadata (add %s): %w", column.name, err)
+			}
+		}
+	}
+
 	if ver < 18 {
 		// v18: add explicit runner dispatch metadata for push scheduling.
 		var tblName string
@@ -832,6 +865,24 @@ func migrateSchema(db *sql.DB) error {
 		for _, stmt := range placementReasonIndexes {
 			if _, err := db.Exec(stmt); err != nil {
 				return fmt.Errorf("migrate v20 (task_placement_reasons indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 22 {
+		// v22: persist per-project pause state for tasks and automations.
+		if _, err := db.Exec(createProjectPauseStateTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v22 (project_pause_state table): %w", err)
+			}
+		}
+		pauseIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_project_pause_state_tasks ON project_pause_state(tasks_paused)",
+			"CREATE INDEX IF NOT EXISTS idx_project_pause_state_automations ON project_pause_state(automations_paused)",
+		}
+		for _, stmt := range pauseIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v22 (project_pause_state indexes): %w", err)
 			}
 		}
 	}
@@ -925,6 +976,20 @@ func ensureNoteEmbeddingsTable(db *sql.DB) error {
 	return nil
 }
 
+func ensureTableColumn(db *sql.DB, table, column, ddl string) error {
+	exists, err := tableColumnExists(db, table, column)
+	if err != nil {
+		return fmt.Errorf("inspect %s.%s: %w", table, column, err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := db.Exec(ddl); err != nil && !isDuplicateColumnError(err) {
+		return err
+	}
+	return nil
+}
+
 func tableExists(db *sql.DB, table string) (bool, error) {
 	var name string
 	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
@@ -1004,6 +1069,7 @@ func InitSchema(db *sql.DB) error {
 		createRunnersTable,
 		createOpencodeInstancesTable,
 		createProjectPlacementTable,
+		createProjectPauseStateTable,
 		createWebhooksTable,
 		createWebhookDeliveriesTable,
 		createNoteEmbeddingsMetaTable,

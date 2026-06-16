@@ -694,9 +694,9 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 	}
 }
 
-func TestSchemaVersion_IncludesRunnerDispatchMetadata(t *testing.T) {
-	if CurrentSchemaVersion != 21 {
-		t.Errorf("CurrentSchemaVersion = %d, want 21", CurrentSchemaVersion)
+func TestSchemaVersion_IncludesProjectPauseState(t *testing.T) {
+	if CurrentSchemaVersion != 22 {
+		t.Errorf("CurrentSchemaVersion = %d, want 22", CurrentSchemaVersion)
 	}
 }
 

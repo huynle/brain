@@ -4,7 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/storage"
 )
+
+func newStorageBackedRunnerService(t *testing.T) (*RunnerServiceImpl, *storage.StorageLayer) {
+	t.Helper()
+	store, err := storage.New(t.TempDir() + "/brain.db")
+	if err != nil {
+		t.Fatalf("new storage: %v", err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	return NewRunnerServiceWithStorage(store), store
+}
 
 func TestRunnerService_InitialStatus(t *testing.T) {
 	svc := NewRunnerService()
@@ -184,4 +196,64 @@ func TestRunnerService_ProjectAutomationResume_DoesNotResumeGlobal(t *testing.T)
 	if len(projects) != 0 {
 		t.Fatalf("automationPausedProjects = %#v, want empty", payload["automationPausedProjects"])
 	}
+}
+
+func TestRunnerService_ProjectPauseStatePersistsInStorage(t *testing.T) {
+	svc, store := newStorageBackedRunnerService(t)
+	ctx := context.Background()
+
+	if err := svc.Pause(ctx, "proj-a"); err != nil {
+		t.Fatalf("pause task project: %v", err)
+	}
+	if err := svc.PauseProjectAutomations(ctx, "proj-b"); err != nil {
+		t.Fatalf("pause automation project: %v", err)
+	}
+
+	reloaded := NewRunnerServiceWithStorage(store)
+	status, err := reloaded.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+
+	if !containsServiceString(status.PausedProjects, "proj-a") {
+		t.Fatalf("PausedProjects = %#v, want proj-a", status.PausedProjects)
+	}
+	if !containsServiceString(status.AutomationPausedProjects, "proj-b") {
+		t.Fatalf("AutomationPausedProjects = %#v, want proj-b", status.AutomationPausedProjects)
+	}
+}
+
+func TestRunnerService_ProjectTaskAndAutomationPauseAreIndependent(t *testing.T) {
+	svc, _ := newStorageBackedRunnerService(t)
+	ctx := context.Background()
+
+	if err := svc.Pause(ctx, "proj-a"); err != nil {
+		t.Fatalf("pause task project: %v", err)
+	}
+	if err := svc.PauseProjectAutomations(ctx, "proj-a"); err != nil {
+		t.Fatalf("pause automation project: %v", err)
+	}
+	if err := svc.Resume(ctx, "proj-a"); err != nil {
+		t.Fatalf("resume task project: %v", err)
+	}
+
+	status, err := svc.GetStatus(ctx)
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+	if containsServiceString(status.PausedProjects, "proj-a") {
+		t.Fatalf("task pause should be resumed, got %#v", status.PausedProjects)
+	}
+	if !containsServiceString(status.AutomationPausedProjects, "proj-a") {
+		t.Fatalf("automation pause should remain, got %#v", status.AutomationPausedProjects)
+	}
+}
+
+func containsServiceString(values []string, needle string) bool {
+	for _, value := range values {
+		if value == needle {
+			return true
+		}
+	}
+	return false
 }

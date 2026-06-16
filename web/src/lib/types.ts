@@ -193,6 +193,8 @@ export interface OpencodeInstance {
   kind: InstanceKind;
   project_id?: string;
   task_id?: string;
+  feature_id?: string;
+  priority?: string;
   title?: string;
   workdir?: string;
   port?: number;
@@ -200,6 +202,8 @@ export interface OpencodeInstance {
   session_ids?: string[];
   status: InstanceStatus;
   executor?: string;
+  agent?: string;
+  model?: string;
   started_at?: number; // unix ms
   last_seen?: number; // unix ms
   // Live bridge decorations (present when the runner bridge is connected)

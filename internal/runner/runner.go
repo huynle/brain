@@ -504,6 +504,34 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	}
 }
 
+func (tr *TaskRunner) serverPauseState(ctx context.Context) (map[string]bool, map[string]bool) {
+	tasksPaused := make(map[string]bool)
+	automationsPaused := make(map[string]bool)
+	if tr.client == nil {
+		return tasksPaused, automationsPaused
+	}
+	statusClient, ok := tr.client.(interface {
+		GetRunnerStatus(context.Context) (*types.RunnerStatusResponse, error)
+	})
+	if !ok {
+		return tasksPaused, automationsPaused
+	}
+	status, err := statusClient.GetRunnerStatus(ctx)
+	if err != nil || status == nil {
+		if err != nil {
+			tr.logger.Printf("get server pause state failed: %v", err)
+		}
+		return tasksPaused, automationsPaused
+	}
+	for _, projectID := range status.PausedProjects {
+		tasksPaused[projectID] = true
+	}
+	for _, projectID := range status.AutomationPausedProjects {
+		automationsPaused[projectID] = true
+	}
+	return tasksPaused, automationsPaused
+}
+
 func (tr *TaskRunner) dispatchLeaseExpired(expiresAt string, now time.Time) bool {
 	if strings.TrimSpace(expiresAt) == "" {
 		return false
@@ -619,8 +647,9 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 			tr.rejectDispatch(ctx, cmd, leaseID, "project_unsupported", "runner is not assigned to this project")
 			break
 		}
+		serverTaskPaused, _ := tr.serverPauseState(ctx)
 		tr.pauseMu.RLock()
-		paused := tr.allPaused || tr.pauseCache[cmd.ProjectID]
+		paused := tr.allPaused || tr.pauseCache[cmd.ProjectID] || serverTaskPaused[cmd.ProjectID]
 		tr.pauseMu.RUnlock()
 		if paused {
 			tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
@@ -789,7 +818,8 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		return
 	}
 
-	// 4. Check if all paused
+	// 4. Check if paused
+	serverTaskPaused, serverAutomationPaused := tr.serverPauseState(ctx)
 	tr.pauseMu.RLock()
 	allPaused := tr.allPaused
 	automationsPaused := tr.automationsPaused
@@ -817,9 +847,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		projEnabledIDs := tr.getEnabledFeatureIDsLocked()
 		tr.pauseMu.RUnlock()
 
-		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID]
+		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID] || serverAutomationPaused[projectID]
 
-		if paused || allPaused {
+		if paused || allPaused || serverTaskPaused[projectID] {
 			if !automationsPausedForProject {
 				task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
 					GeneratedByPrefix: "automation:",

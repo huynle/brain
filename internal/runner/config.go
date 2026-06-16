@@ -203,6 +203,11 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		LogStreaming:      getEnvBoolOrDefault("RUNNER_LOG_STREAMING", defaultLogStreaming(fileCfg.LogStreaming)),
 		Capabilities:      getEnvCSVOrDefault("RUNNER_CAPABILITIES", fileCfg.Capabilities),
 		DispatchPush:      getEnvBoolOrDefault("RUNNER_DISPATCH_PUSH", fileCfg.DispatchPush),
+		Labels:            getEnvStringMapOrDefault("RUNNER_LABELS", fileCfg.Labels),
+		WorkspaceRoots:    getEnvCSVOrDefault("RUNNER_WORKSPACE_ROOTS", fileCfg.WorkspaceRoots),
+		Resources:         getEnvInterfaceMapOrDefault("RUNNER_RESOURCES", fileCfg.Resources),
+		Capacity:          getEnvInterfaceMapOrDefault("RUNNER_CAPACITY", fileCfg.Capacity),
+		Draining:          getEnvBoolOrDefault("RUNNER_DRAINING", fileCfg.Draining),
 		Passive:           getEnvBoolOrDefault("RUNNER_PASSIVE", fileCfg.Passive),
 	}
 
@@ -408,6 +413,52 @@ func getEnvCSVOrDefault(key string, defaultValue []string) []string {
 		}
 	}
 	return result
+}
+
+func getEnvStringMapOrDefault(key string, defaultValue map[string]string) map[string]string {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultValue
+	}
+	result := make(map[string]string)
+	for _, part := range strings.Split(v, ",") {
+		k, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || strings.TrimSpace(k) == "" {
+			continue
+		}
+		result[strings.TrimSpace(k)] = strings.TrimSpace(val)
+	}
+	return result
+}
+
+func getEnvInterfaceMapOrDefault(key string, defaultValue map[string]interface{}) map[string]interface{} {
+	v := os.Getenv(key)
+	if v == "" {
+		return defaultValue
+	}
+	result := make(map[string]interface{})
+	for _, part := range strings.Split(v, ",") {
+		k, val, ok := strings.Cut(strings.TrimSpace(part), "=")
+		if !ok || strings.TrimSpace(k) == "" {
+			continue
+		}
+		result[strings.TrimSpace(k)] = parseEnvMapValue(strings.TrimSpace(val))
+	}
+	return result
+}
+
+func parseEnvMapValue(v string) interface{} {
+	lower := strings.ToLower(v)
+	if lower == "true" {
+		return true
+	}
+	if lower == "false" {
+		return false
+	}
+	if i, err := strconv.Atoi(v); err == nil {
+		return i
+	}
+	return v
 }
 
 // defaultExecutors returns the executor list, defaulting to ["opencode"] if empty.

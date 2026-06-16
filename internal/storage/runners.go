@@ -191,51 +191,30 @@ func (s *StorageLayer) DeleteRunner(ctx context.Context, runnerID string) (bool,
 func (s *StorageLayer) UpdateHeartbeat(ctx context.Context, runnerID string, runningTasks int, stats map[string]interface{}) error {
 	now := time.Now().UnixMilli()
 
-	// If stats are provided, encode them into the labels field alongside existing labels.
-	if stats != nil {
-		// Read current runner to merge stats into labels
-		runner, err := s.GetRunner(ctx, runnerID)
-		if err != nil {
-			return fmt.Errorf("update heartbeat get runner: %w", err)
-		}
-		if runner == nil {
-			return fmt.Errorf("runner %q not found", runnerID)
-		}
-
-		if runner.Labels == nil {
-			runner.Labels = make(map[string]string)
-		}
-		runner.Labels["_running_tasks"] = fmt.Sprintf("%d", runningTasks)
-		for k, v := range stats {
-			runner.Labels["_stat_"+k] = fmt.Sprintf("%v", v)
-		}
-
-		labelsJSON, err := json.Marshal(runner.Labels)
-		if err != nil {
-			return fmt.Errorf("marshal labels: %w", err)
-		}
-
-		result, err := s.db.ExecContext(ctx,
-			"UPDATE runners SET last_heartbeat = ?, labels = ? WHERE runner_id = ?",
-			now, string(labelsJSON), runnerID,
-		)
-		if err != nil {
-			return fmt.Errorf("update heartbeat with stats: %w", err)
-		}
-		n, err := result.RowsAffected()
-		if err != nil {
-			return fmt.Errorf("heartbeat rows affected: %w", err)
-		}
-		if n == 0 {
-			return fmt.Errorf("runner %q not found", runnerID)
-		}
-		return nil
+	runner, err := s.GetRunner(ctx, runnerID)
+	if err != nil {
+		return fmt.Errorf("update heartbeat get runner: %w", err)
+	}
+	if runner == nil {
+		return fmt.Errorf("runner %q not found", runnerID)
 	}
 
-	// Simple heartbeat update (no stats)
+	if runner.Labels == nil {
+		runner.Labels = make(map[string]string)
+	}
+	runner.Labels["_running_tasks"] = fmt.Sprintf("%d", runningTasks)
+	for k, v := range stats {
+		runner.Labels["_stat_"+k] = fmt.Sprintf("%v", v)
+	}
+
+	labelsJSON, err := json.Marshal(runner.Labels)
+	if err != nil {
+		return fmt.Errorf("marshal labels: %w", err)
+	}
+
 	result, err := s.db.ExecContext(ctx,
-		"UPDATE runners SET last_heartbeat = ? WHERE runner_id = ?",
-		now, runnerID,
+		"UPDATE runners SET last_heartbeat = ?, labels = ? WHERE runner_id = ?",
+		now, string(labelsJSON), runnerID,
 	)
 	if err != nil {
 		return fmt.Errorf("update heartbeat: %w", err)
@@ -254,7 +233,7 @@ func (s *StorageLayer) UpdateHeartbeat(ctx context.Context, runnerID string, run
 // a runner reports current push-dispatch state. Nil pointer fields are left
 // unchanged; nil slices/maps are treated as not reported to preserve older
 // heartbeat behavior.
-func (s *StorageLayer) UpdateRunnerDispatchMetadata(ctx context.Context, runnerID string, dispatchPush *bool, workspaceRoots []string, projects []string, resources map[string]interface{}, capacity map[string]interface{}, draining *bool) error {
+func (s *StorageLayer) UpdateRunnerDispatchMetadata(ctx context.Context, runnerID string, dispatchPush *bool, labels map[string]string, workspaceRoots []string, projects []string, resources map[string]interface{}, capacity map[string]interface{}, draining *bool) error {
 	runner, err := s.GetRunner(ctx, runnerID)
 	if err != nil {
 		return fmt.Errorf("update runner dispatch metadata get runner: %w", err)
@@ -264,6 +243,14 @@ func (s *StorageLayer) UpdateRunnerDispatchMetadata(ctx context.Context, runnerI
 	}
 	if dispatchPush != nil {
 		runner.DispatchPush = *dispatchPush
+	}
+	if labels != nil {
+		if runner.Labels == nil {
+			runner.Labels = make(map[string]string)
+		}
+		for key, value := range labels {
+			runner.Labels[key] = value
+		}
 	}
 	if workspaceRoots != nil {
 		runner.WorkspaceRoots = workspaceRoots

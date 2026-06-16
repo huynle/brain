@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -103,8 +104,8 @@ func (s *RunnerRegistryServiceImpl) Heartbeat(ctx context.Context, runnerID stri
 	if err := s.storage.UpdateHeartbeat(ctx, runnerID, req.RunningTasks, req.Stats); err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
 	}
-	if req.DispatchPush != nil || req.WorkspaceRoots != nil || req.Projects != nil || req.Resources != nil || req.Capacity != nil || req.Draining != nil {
-		if err := s.storage.UpdateRunnerDispatchMetadata(ctx, runnerID, req.DispatchPush, req.WorkspaceRoots, req.Projects, req.Resources, req.Capacity, req.Draining); err != nil {
+	if req.DispatchPush != nil || req.Labels != nil || req.WorkspaceRoots != nil || req.Projects != nil || req.Resources != nil || req.Capacity != nil || req.Draining != nil {
+		if err := s.storage.UpdateRunnerDispatchMetadata(ctx, runnerID, req.DispatchPush, req.Labels, req.WorkspaceRoots, req.Projects, req.Resources, req.Capacity, req.Draining); err != nil {
 			return fmt.Errorf("heartbeat dispatch metadata: %w", err)
 		}
 	}
@@ -489,8 +490,16 @@ const machineIDLabel = "_machine_id"
 // rowToRunnerInfo converts a storage RunnerRow to an API RunnerInfo.
 func rowToRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
 	machineID := row.MachineID
-	if machineID == "" && row.Labels != nil {
-		machineID = row.Labels[machineIDLabel]
+	activeTasks := 0
+	if row.Labels != nil {
+		if machineID == "" {
+			machineID = row.Labels[machineIDLabel]
+		}
+		if runningTasks := row.Labels["_running_tasks"]; runningTasks != "" {
+			if parsed, err := strconv.Atoi(runningTasks); err == nil && parsed >= 0 {
+				activeTasks = parsed
+			}
+		}
 	}
 	return &types.RunnerInfo{
 		RunnerID:       row.RunnerID,
@@ -506,6 +515,7 @@ func rowToRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
 		Capacity:       row.Capacity,
 		Draining:       row.Draining,
 		MaxParallel:    row.MaxParallel,
+		ActiveTasks:    activeTasks,
 		FeatureIDs:     row.FeatureIDs,
 		RegisteredAt:   time.UnixMilli(row.RegisteredAt).UTC().Format(time.RFC3339),
 		LastHeartbeat:  time.UnixMilli(row.LastHeartbeat).UTC().Format(time.RFC3339),

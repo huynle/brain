@@ -1339,6 +1339,88 @@ func TestTaskRunner_RegisterAndHeartbeatAdvertiseDispatchPush(t *testing.T) {
 	}
 }
 
+func TestTaskRunner_RegisterAndHeartbeatIncludeSchedulerMetadata(t *testing.T) {
+	client := newMockClient()
+	processMgr := newMockProcessMgr()
+	config := testRunnerConfig()
+	config.Labels = map[string]string{"pool": "fast"}
+	config.WorkspaceRoots = []string{"/work/explicit"}
+	config.Resources = map[string]interface{}{"gpu": 2, "arch": "arm64"}
+	config.Capacity = map[string]interface{}{"memory_gb": 64}
+	config.Draining = true
+	config.MaxParallel = 3
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a", "proj-b"},
+		Config:     config,
+		Mode:       ExecutionModeHeadless,
+		Executors:  map[string]TaskExecutor{"opencode": newMockExecutor()},
+		ProcessMgr: processMgr,
+		StateMgr:   newMockStateMgr(),
+		Client:     client,
+	})
+	if err := processMgr.Add("task-running", RunningTask{ID: "task-running", ProjectID: "proj-a"}, newMockProcess(1)); err != nil {
+		t.Fatalf("Add process failed: %v", err)
+	}
+
+	tr.registerWithAPI(context.Background())
+	tr.sendHeartbeat(context.Background())
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.registerCalls) != 1 {
+		t.Fatalf("register calls = %d, want 1", len(client.registerCalls))
+	}
+	reg := client.registerCalls[0]
+	if !reflect.DeepEqual(reg.Labels, config.Labels) || !reflect.DeepEqual(reg.WorkspaceRoots, config.WorkspaceRoots) || !reflect.DeepEqual(reg.Resources, config.Resources) || !reflect.DeepEqual(reg.Capacity, config.Capacity) {
+		t.Fatalf("registration metadata = labels %#v roots %#v resources %#v capacity %#v", reg.Labels, reg.WorkspaceRoots, reg.Resources, reg.Capacity)
+	}
+	if !reg.Draining || reg.MaxParallel != 3 || !reflect.DeepEqual(reg.Projects, []string{"proj-a", "proj-b"}) {
+		t.Fatalf("registration scheduling fields = draining %v max %d projects %#v", reg.Draining, reg.MaxParallel, reg.Projects)
+	}
+
+	if len(client.heartbeatCalls) != 1 {
+		t.Fatalf("heartbeat calls = %d, want 1", len(client.heartbeatCalls))
+	}
+	hb := client.heartbeatCalls[0].Request
+	if hb.RunningTasks != 1 {
+		t.Fatalf("heartbeat RunningTasks = %d, want 1", hb.RunningTasks)
+	}
+	if hb.Draining == nil || !*hb.Draining {
+		t.Fatalf("heartbeat Draining = %#v, want true", hb.Draining)
+	}
+	if !reflect.DeepEqual(hb.Labels, config.Labels) || !reflect.DeepEqual(hb.WorkspaceRoots, config.WorkspaceRoots) || !reflect.DeepEqual(hb.Resources, config.Resources) || !reflect.DeepEqual(hb.Capacity, config.Capacity) || !reflect.DeepEqual(hb.Projects, []string{"proj-a", "proj-b"}) {
+		t.Fatalf("heartbeat metadata = labels %#v roots %#v projects %#v resources %#v capacity %#v", hb.Labels, hb.WorkspaceRoots, hb.Projects, hb.Resources, hb.Capacity)
+	}
+}
+
+func TestTaskRunner_RegisterUsesAllowedWorkdirRootsForSchedulerMetadata(t *testing.T) {
+	client := newMockClient()
+	config := testRunnerConfig()
+	config.Control.AllowedWorkdirRoots = []string{"/work/fallback"}
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     config,
+		Mode:       ExecutionModeHeadless,
+		Executors:  map[string]TaskExecutor{"opencode": newMockExecutor()},
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+		Client:     client,
+	})
+
+	tr.registerWithAPI(context.Background())
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.registerCalls) != 1 {
+		t.Fatalf("register calls = %d, want 1", len(client.registerCalls))
+	}
+	if !reflect.DeepEqual(client.registerCalls[0].WorkspaceRoots, []string{"/work/fallback"}) {
+		t.Fatalf("WorkspaceRoots = %#v, want fallback roots", client.registerCalls[0].WorkspaceRoots)
+	}
+}
+
 func TestTaskRunner_Poll_HealthCheckFails_NoSpawn(t *testing.T) {
 	client := newMockClient()
 	client.healthResult = APIHealth{Status: "unhealthy"}

@@ -1172,6 +1172,7 @@ type RunnerHeartbeatRequest struct {
 	RunningTasks   int                    `json:"running_tasks"`
 	Stats          map[string]interface{} `json:"stats,omitempty"`
 	DispatchPush   *bool                  `json:"dispatch_push,omitempty"`
+	Labels         map[string]string      `json:"labels,omitempty"`
 	WorkspaceRoots []string               `json:"workspace_roots,omitempty"`
 	Projects       []string               `json:"projects,omitempty"`
 	Resources      map[string]interface{} `json:"resources,omitempty"`

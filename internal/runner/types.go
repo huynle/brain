@@ -89,6 +89,14 @@ type RunnerConfig struct {
 	// RUNNER_DISPATCH_PUSH env var.
 	DispatchPush bool `yaml:"dispatch_push" json:"dispatch_push"`
 
+	// Labels and resource metadata are advertised to the scheduler during
+	// registration and heartbeat so placement can target suitable runners.
+	Labels         map[string]string      `yaml:"labels" json:"labels"`
+	WorkspaceRoots []string               `yaml:"workspace_roots" json:"workspace_roots"`
+	Resources      map[string]interface{} `yaml:"resources" json:"resources"`
+	Capacity       map[string]interface{} `yaml:"capacity" json:"capacity"`
+	Draining       bool                   `yaml:"draining" json:"draining"`
+
 	// Passive prevents active /next polling. Passive runners only execute
 	// Brain-assigned dispatch leases. Set via RUNNER_PASSIVE env var.
 	Passive bool `yaml:"passive" json:"passive"`

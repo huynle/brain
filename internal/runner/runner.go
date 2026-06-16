@@ -1490,14 +1490,19 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 
 	dispatchPush := tr.dispatchPushEnabled()
 	req := types.RunnerRegistration{
-		RunnerID:     tr.runnerID,
-		MachineID:    tr.machineID,
-		Hostname:     hostname,
-		Executors:    tr.executorNames(),
-		Capabilities: tr.config.Capabilities,
-		Projects:     tr.projects,
-		MaxParallel:  tr.getMaxParallel(),
-		DispatchPush: dispatchPush,
+		RunnerID:       tr.runnerID,
+		MachineID:      tr.machineID,
+		Hostname:       hostname,
+		Labels:         tr.config.Labels,
+		Executors:      tr.executorNames(),
+		Capabilities:   tr.config.Capabilities,
+		Projects:       tr.projects,
+		MaxParallel:    tr.getMaxParallel(),
+		DispatchPush:   dispatchPush,
+		WorkspaceRoots: tr.schedulerWorkspaceRoots(),
+		Resources:      tr.config.Resources,
+		Capacity:       tr.config.Capacity,
+		Draining:       tr.config.Draining,
 	}
 
 	info, err := tr.client.RegisterRunner(ctx, req)
@@ -1513,6 +1518,13 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 	)
 }
 
+func (tr *TaskRunner) schedulerWorkspaceRoots() []string {
+	if len(tr.config.WorkspaceRoots) > 0 {
+		return tr.config.WorkspaceRoots
+	}
+	return tr.config.Control.AllowedWorkdirRoots
+}
+
 // sendHeartbeat sends a heartbeat to the Brain API with current runner stats.
 // Heartbeat failure is logged but does not stop the runner.
 func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
@@ -1523,9 +1535,16 @@ func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
 	tr.mu.RUnlock()
 
 	dispatchPush := tr.dispatchPushEnabled()
+	draining := tr.config.Draining
 	req := types.RunnerHeartbeatRequest{
-		RunningTasks: running,
-		DispatchPush: &dispatchPush,
+		RunningTasks:   running,
+		DispatchPush:   &dispatchPush,
+		Labels:         tr.config.Labels,
+		WorkspaceRoots: tr.schedulerWorkspaceRoots(),
+		Projects:       tr.projects,
+		Resources:      tr.config.Resources,
+		Capacity:       tr.config.Capacity,
+		Draining:       &draining,
 		Stats: map[string]interface{}{
 			"completed":    stats.Completed,
 			"failed":       stats.Failed,

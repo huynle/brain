@@ -533,6 +533,32 @@ func TestUpdateHeartbeat_Simple(t *testing.T) {
 	}
 }
 
+func TestUpdateHeartbeat_PersistsRunningTasksWithoutStats(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	r := makeRunner("runner-hb-count", "host-hb-count")
+	r.Labels = map[string]string{"env": "test"}
+	if err := s.UpsertRunner(ctx, r); err != nil {
+		t.Fatalf("UpsertRunner failed: %v", err)
+	}
+
+	if err := s.UpdateHeartbeat(ctx, "runner-hb-count", 3, nil); err != nil {
+		t.Fatalf("UpdateHeartbeat failed: %v", err)
+	}
+
+	got, err := s.GetRunner(ctx, "runner-hb-count")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if got.Labels["_running_tasks"] != "3" {
+		t.Errorf("_running_tasks = %q, want %q", got.Labels["_running_tasks"], "3")
+	}
+	if got.Labels["env"] != "test" {
+		t.Errorf("labels[env] = %q, want %q", got.Labels["env"], "test")
+	}
+}
+
 func TestUpdateHeartbeat_WithStats(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()

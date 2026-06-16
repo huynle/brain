@@ -284,6 +284,7 @@ func TestRunnerRegistry_Heartbeat_UpdatesDispatchRuntimeMetadata(t *testing.T) {
 	err = svc.Heartbeat(ctx, "runner-heartbeat-meta", types.RunnerHeartbeatRequest{
 		RunningTasks:   1,
 		DispatchPush:   &dispatchPush,
+		Labels:         map[string]string{"pool": "fast"},
 		WorkspaceRoots: []string{"/new/root", "/worktrees"},
 		Projects:       []string{"brain-api", "brain-docs"},
 		Resources:      map[string]interface{}{"os": "darwin", "arch": "arm64"},
@@ -300,6 +301,12 @@ func TestRunnerRegistry_Heartbeat_UpdatesDispatchRuntimeMetadata(t *testing.T) {
 	}
 	if !got.DispatchPush {
 		t.Fatal("DispatchPush = false, want true")
+	}
+	if got.ActiveTasks != 1 {
+		t.Fatalf("ActiveTasks = %d, want 1", got.ActiveTasks)
+	}
+	if got.Labels["pool"] != "fast" {
+		t.Fatalf("Labels = %#v, want heartbeat pool label", got.Labels)
 	}
 	assertStringSliceEqual(t, got.WorkspaceRoots, []string{"/new/root", "/worktrees"})
 	assertStringSliceEqual(t, got.Projects, []string{"brain-api", "brain-docs"})
@@ -394,6 +401,9 @@ func TestRunnerRegistry_Heartbeat_Success(t *testing.T) {
 	}
 	if info.Status != types.RunnerStatusOnline {
 		t.Errorf("expected status online after heartbeat, got %s", info.Status)
+	}
+	if info.ActiveTasks != 2 {
+		t.Errorf("expected active tasks 2 after heartbeat, got %d", info.ActiveTasks)
 	}
 }
 

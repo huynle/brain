@@ -3,6 +3,7 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -157,6 +158,35 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	}
 	if !cfg.AutoMonitors {
 		t.Error("AutoMonitors should be true when BRAIN_AUTO_MONITORS=true")
+	}
+}
+
+func TestLoadConfig_SchedulerMetadataEnvOverrides(t *testing.T) {
+	t.Setenv("RUNNER_LABELS", "pool=fast,region=west")
+	t.Setenv("RUNNER_WORKSPACE_ROOTS", "/work/a,/work/b")
+	t.Setenv("RUNNER_RESOURCES", "gpu=2,ssd=true,arch=arm64")
+	t.Setenv("RUNNER_CAPACITY", "memory_gb=64")
+	t.Setenv("RUNNER_DRAINING", "true")
+
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("LoadConfigFrom failed: %v", err)
+	}
+
+	if cfg.Labels["pool"] != "fast" || cfg.Labels["region"] != "west" {
+		t.Fatalf("Labels = %#v, want pool/region", cfg.Labels)
+	}
+	if !reflect.DeepEqual(cfg.WorkspaceRoots, []string{"/work/a", "/work/b"}) {
+		t.Fatalf("WorkspaceRoots = %#v", cfg.WorkspaceRoots)
+	}
+	if cfg.Resources["gpu"] != 2 || cfg.Resources["ssd"] != true || cfg.Resources["arch"] != "arm64" {
+		t.Fatalf("Resources = %#v, want parsed gpu/ssd/arch", cfg.Resources)
+	}
+	if cfg.Capacity["memory_gb"] != 64 {
+		t.Fatalf("Capacity = %#v, want memory_gb=64", cfg.Capacity)
+	}
+	if !cfg.Draining {
+		t.Fatal("Draining = false, want true")
 	}
 }
 

@@ -1051,6 +1051,19 @@ type ClaimResponse struct {
 	IsStale   *bool  `json:"isStale,omitempty"`
 }
 
+// DispatchResponse is the response for POST /tasks/:projectId/:taskId/dispatch.
+type DispatchResponse struct {
+	Success   bool   `json:"success"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	LeaseID   string `json:"leaseId,omitempty"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Message   string `json:"message,omitempty"`
+	ClaimedBy string `json:"claimedBy,omitempty"`
+	IsStale   *bool  `json:"isStale,omitempty"`
+}
+
 // ClaimStatusResponse is the response for GET /tasks/:projectId/:taskId/claim-status.
 type ClaimStatusResponse struct {
 	TaskID    string `json:"taskId"`

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/realtime"
@@ -40,6 +41,7 @@ type mockTaskService struct {
 	assignFeatureFunc    func(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
 	clearFeatureFunc     func(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
 	triggerTaskFunc      func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
+	dispatchTaskFunc     func(ctx context.Context, projectId, taskId, runnerID string) (*types.DispatchResponse, error)
 	getTaskFunc          func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
 }
 
@@ -190,7 +192,10 @@ func (m *mockTaskService) TriggerTask(ctx context.Context, projectId, taskId str
 	return nil, fmt.Errorf("triggerTaskFunc not set")
 }
 
-func (m *mockTaskService) DispatchTask(ctx context.Context, projectId, taskId, runnerID string) (*types.ClaimResponse, error) {
+func (m *mockTaskService) DispatchTask(ctx context.Context, projectId, taskId, runnerID string) (*types.DispatchResponse, error) {
+	if m.dispatchTaskFunc != nil {
+		return m.dispatchTaskFunc(ctx, projectId, taskId, runnerID)
+	}
 	return nil, fmt.Errorf("dispatchTask not implemented in mock")
 }
 
@@ -878,6 +883,94 @@ func TestHandleClaimTask(t *testing.T) {
 				tt.checkBody(t, resp)
 			}
 		})
+	}
+}
+
+func TestHandleDispatchTaskPublishesLeaseBearingCommand(t *testing.T) {
+	hub := realtime.NewHub()
+	ch, unsub := hub.Subscribe(realtime.RunnerTopic("runner-001"))
+	defer unsub()
+	taskMock := &mockTaskService{
+		dispatchTaskFunc: func(ctx context.Context, projectId, taskId, runnerID string) (*types.DispatchResponse, error) {
+			if projectId != "my-project" {
+				return nil, fmt.Errorf("projectId = %q, want my-project", projectId)
+			}
+			if taskId != "task1" {
+				return nil, fmt.Errorf("taskId = %q, want task1", taskId)
+			}
+			if runnerID != "runner-001" {
+				return nil, fmt.Errorf("runnerID = %q, want runner-001", runnerID)
+			}
+			return &types.DispatchResponse{
+				Success:   true,
+				TaskID:    taskId,
+				RunnerID:  runnerID,
+				LeaseID:   "lease-abc",
+				ExpiresAt: "2026-06-16T12:00:00Z",
+			}, nil
+		},
+	}
+	h := NewHandler(&mockBrainService{}, WithTaskService(taskMock), WithHub(hub))
+
+	req := httptest.NewRequest(http.MethodPost, "/tasks/my-project/task1/dispatch", jsonBody(t, map[string]any{"targetRunnerId": "runner-001"}))
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("projectId", "my-project")
+	rctx.URLParams.Add("taskId", "task1")
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+
+	h.HandleDispatchTask(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var body struct {
+		Success   bool   `json:"success"`
+		RunnerID  string `json:"runnerId"`
+		LeaseID   string `json:"leaseId"`
+		ExpiresAt string `json:"expiresAt"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !body.Success {
+		t.Fatal("success = false, want true")
+	}
+	if body.RunnerID != "runner-001" {
+		t.Errorf("runnerId = %q, want runner-001", body.RunnerID)
+	}
+	if body.LeaseID == "" {
+		t.Error("leaseId = empty, want non-empty lease id for runner-compatible dispatch")
+	}
+
+	var msg realtime.SSEMessage
+	select {
+	case msg = <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for runner command")
+	}
+	if msg.Event != "command" {
+		t.Fatalf("event = %q, want command", msg.Event)
+	}
+	data, ok := msg.Data.(map[string]interface{})
+	if !ok {
+		t.Fatalf("event data type = %T, want map[string]interface{}", msg.Data)
+	}
+	if data["command"] != "dispatch" {
+		t.Errorf("command = %v, want dispatch", data["command"])
+	}
+	payload, ok := data["payload"].(map[string]string)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]string", data["payload"])
+	}
+	if payload["projectId"] != "my-project" {
+		t.Errorf("payload projectId = %q, want my-project", payload["projectId"])
+	}
+	if payload["taskId"] != "task1" {
+		t.Errorf("payload taskId = %q, want task1", payload["taskId"])
+	}
+	if payload["leaseId"] == "" {
+		t.Error("payload leaseId = empty, want non-empty lease id for runner-compatible dispatch")
 	}
 }
 

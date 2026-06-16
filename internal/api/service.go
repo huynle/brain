@@ -200,8 +200,8 @@ type TaskService interface {
 	// ReleaseDispatch explicitly releases/finalizes a pushed dispatch lease.
 	ReleaseDispatch(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error)
 
-	// DispatchTask creates a pre-claim for direct dispatch to a target runner (60-second expiry).
-	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error)
+	// DispatchTask creates a short-lived dispatch lease for direct dispatch to a target runner.
+	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.DispatchResponse, error)
 
 	// GetClaimStatus returns the claim status of a task.
 	GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)

@@ -399,8 +399,8 @@ func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create pre-claim for target runner (60 second expiry for dispatch)
-	preclaimResp, err := h.tasks.DispatchTask(r.Context(), projectId, taskId, req.TargetRunnerID)
+	// Create dispatch lease and pre-claim for target runner (60 second expiry for dispatch)
+	dispatchResp, err := h.tasks.DispatchTask(r.Context(), projectId, taskId, req.TargetRunnerID)
 	if err != nil {
 		if errors.Is(err, ErrConflict) {
 			WriteJSON(w, http.StatusConflict, map[string]any{
@@ -413,7 +413,7 @@ func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !preclaimResp.Success {
+	if !dispatchResp.Success {
 		WriteJSON(w, http.StatusConflict, map[string]any{
 			"success": false,
 			"error":   "failed to create pre-claim for target runner",
@@ -426,14 +426,19 @@ func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
 		h.hub.PublishRunnerCommand(req.TargetRunnerID, "dispatch", map[string]string{
 			"taskId":    taskId,
 			"projectId": projectId,
+			"leaseId":   dispatchResp.LeaseID,
+			"lease":     dispatchResp.LeaseID,
+			"expiresAt": dispatchResp.ExpiresAt,
 		})
 	}
 
 	slog.Info("dispatch request", "project", projectId, "task_id", taskId, "target_runner", req.TargetRunnerID)
 
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"success":  true,
-		"runnerId": req.TargetRunnerID,
+		"success":   true,
+		"runnerId":  req.TargetRunnerID,
+		"leaseId":   dispatchResp.LeaseID,
+		"expiresAt": dispatchResp.ExpiresAt,
 	})
 }
 

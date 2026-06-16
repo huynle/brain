@@ -1034,6 +1034,56 @@ func TestClaimTask_Conflict(t *testing.T) {
 	}
 }
 
+func TestDispatchTaskCreatesLeaseAndBlocksOtherRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	resp, err := svc.DispatchTask(ctx, "proj", "task1", "runner-assigned")
+	if err != nil {
+		t.Fatalf("DispatchTask failed: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("DispatchTask response is nil")
+	}
+	if !resp.Success {
+		t.Fatalf("Success = false, want true: %+v", resp)
+	}
+	if resp.LeaseID == "" {
+		t.Fatal("LeaseID = empty, want dispatch lease id")
+	}
+	if resp.ExpiresAt == "" {
+		t.Fatal("ExpiresAt = empty, want lease expiry")
+	}
+
+	lease, err := store.GetDispatchLeaseRow(ctx, "proj", "task1")
+	if err != nil {
+		t.Fatalf("GetDispatchLeaseRow failed: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("dispatch lease was not persisted")
+	}
+	if lease.LeaseID != resp.LeaseID {
+		t.Errorf("persisted leaseID = %q, want response leaseID %q", lease.LeaseID, resp.LeaseID)
+	}
+	if lease.AssignedRunnerID != "runner-assigned" {
+		t.Errorf("AssignedRunnerID = %q, want runner-assigned", lease.AssignedRunnerID)
+	}
+
+	claimResp, err := svc.ClaimTask(ctx, "proj", "task1", "runner-other")
+	if err != api.ErrConflict {
+		t.Fatalf("other runner ClaimTask err = %v, want ErrConflict", err)
+	}
+	if claimResp == nil {
+		t.Fatal("expected conflict response")
+	}
+	if claimResp.Success {
+		t.Error("other runner claim Success = true, want false")
+	}
+	if claimResp.ClaimedBy != "runner-assigned" {
+		t.Errorf("other runner ClaimTask ClaimedBy = %q, want runner-assigned", claimResp.ClaimedBy)
+	}
+}
+
 func TestClaimTask_ConflictsWhenActiveDispatchLeaseOwnedByOtherRunner(t *testing.T) {
 	svc, store, _ := newTestTaskService(t)
 	ctx := context.Background()

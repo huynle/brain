@@ -696,11 +696,61 @@ func (s *TaskServiceImpl) GetClaimStatus(ctx context.Context, projectId, taskId 
 	}, nil
 }
 
-// DispatchTask creates a pre-claim for direct dispatch to a target runner.
-// Pre-claims have a shorter 60-second expiry to allow quick recovery if the runner doesn't respond.
-func (s *TaskServiceImpl) DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error) {
+// DispatchTask creates a lease-compatible direct dispatch for a target runner.
+// Dispatch pre-claims and leases have a shorter 60-second expiry to allow quick recovery if the runner doesn't respond.
+func (s *TaskServiceImpl) DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.DispatchResponse, error) {
 	const dispatchLeaseDuration = 60 * time.Second
-	return s.ClaimTaskWithDuration(ctx, projectId, taskId, targetRunnerId, dispatchLeaseDuration)
+	claimResp, err := s.ClaimTaskWithDuration(ctx, projectId, taskId, targetRunnerId, dispatchLeaseDuration)
+	if err != nil {
+		return dispatchResponseFromClaim(claimResp, taskId, targetRunnerId), err
+	}
+
+	now := time.Now()
+	lease, created, err := s.storage.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+		ProjectID:        projectId,
+		TaskID:           taskId,
+		AssignedRunnerID: targetRunnerId,
+		PushedAt:         now.UnixMilli(),
+		ExpiresAt:        now.Add(dispatchLeaseDuration).UnixMilli(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create dispatch lease: %w", err)
+	}
+	if !created {
+		stale := false
+		holder := ""
+		if lease != nil {
+			holder = lease.AssignedRunnerID
+		}
+		return &types.DispatchResponse{
+			Success:   false,
+			TaskID:    taskId,
+			RunnerID:  targetRunnerId,
+			Error:     "dispatch lease exists",
+			ClaimedBy: holder,
+			IsStale:   &stale,
+		}, api.ErrConflict
+	}
+
+	resp := dispatchResponseFromClaim(claimResp, taskId, targetRunnerId)
+	resp.LeaseID = lease.LeaseID
+	resp.ExpiresAt = time.UnixMilli(lease.ExpiresAt).UTC().Format(time.RFC3339)
+	return resp, nil
+}
+
+func dispatchResponseFromClaim(claimResp *types.ClaimResponse, taskId, runnerId string) *types.DispatchResponse {
+	resp := &types.DispatchResponse{Success: false, TaskID: taskId, RunnerID: runnerId}
+	if claimResp == nil {
+		return resp
+	}
+	resp.Success = claimResp.Success
+	resp.TaskID = claimResp.TaskID
+	resp.RunnerID = claimResp.RunnerID
+	resp.Error = claimResp.Error
+	resp.Message = claimResp.Message
+	resp.ClaimedBy = claimResp.ClaimedBy
+	resp.IsStale = claimResp.IsStale
+	return resp
 }
 
 // GetMultiTaskStatus returns status of multiple tasks.

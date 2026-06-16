@@ -253,7 +253,6 @@ export function ProjectSheet() {
       e.preventDefault();
       const row = rows[cursor];
       if (row?.kind === "project") pick(row.project);
-      else if (row?.kind === "feature") triggerFeature(row);
     } else if (e.altKey && (e.key === "p" || e.key === "P")) {
       e.preventDefault();
       const row = rows[cursor];
@@ -296,7 +295,7 @@ export function ProjectSheet() {
               data-cursor={i === cursor ? "1" : undefined}
               onClick={() => (isProject ? pick(project) : triggerFeature(row))}
               onMouseMove={() => setCursor(i)}
-              title={isProject ? "Enter switches project. P toggles tasks. A toggles automations." : "Enter or X triggers this feature's ready tasks. P/A control its project."}
+              title={isProject ? "Enter switches project. Alt+P toggles tasks. Alt+A toggles automations." : "Alt+X or Trigger tasks starts this feature's ready tasks. Alt+P/Alt+A control its project."}
             >
               <span
                 className="proj-dot"
@@ -339,11 +338,11 @@ export function ProjectSheet() {
                 {!isProject && (
                   <button
                     type="button"
-                    className="proj-action run"
+                    className="proj-action trigger"
                     disabled={busy === `feature:${project}:${row.feature}`}
                     onClick={(e) => { e.stopPropagation(); triggerFeature(row); }}
                   >
-                    run
+                    trigger tasks
                   </button>
                 )}
               </span>
@@ -361,7 +360,7 @@ export function ProjectSheet() {
           </div>
         )}
       </div>
-      <div className="proj-hints faint">Enter: open/run · Alt+P: tasks · Alt+A: automations · Alt+X: run feature</div>
+      <div className="proj-hints faint">Enter: switch project · Alt+P: pause/resume tasks · Alt+A: pause/resume automations · Alt+X: trigger highlighted feature tasks</div>
     </div>
   );
 

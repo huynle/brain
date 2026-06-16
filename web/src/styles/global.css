@@ -1513,5 +1513,5 @@ kbd {
   font-size: 10.5px; line-height: 1.35; white-space: nowrap;
 }
 .proj-action:hover { color: var(--fg); border-color: var(--cyan); }
-.proj-action.run { color: var(--green); }
+.proj-action.trigger { color: var(--green); }
 .proj-hints { font-size: 11px; padding: 0 2px; }

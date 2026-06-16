@@ -158,6 +158,9 @@ func (s *RunnerRegistryServiceImpl) ListRunners(ctx context.Context) (*types.Run
 	for i := range rows {
 		info := rowToRunnerInfo(&rows[i])
 		info.Status = computeRunnerStatus(rows[i].LastHeartbeat)
+		if info.Status != types.RunnerStatusOnline {
+			continue
+		}
 		if err := s.attachFeatureAssignments(ctx, info); err != nil {
 			return nil, err
 		}

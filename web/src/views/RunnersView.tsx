@@ -9,9 +9,7 @@ import {
   getRunners,
   listInstances,
   pauseAll,
-  pauseProject,
   resumeAll,
-  resumeProject,
   pauseAutomations,
   resumeAutomations,
   shutdownRunner,
@@ -49,14 +47,10 @@ export function RunnersView() {
   // Prefer the live SSE list when present; fall back to the polled query.
   const runners = liveRunners.length ? liveRunners : runnersQ.data ?? [];
   const status = statusQ.data;
-  const taskPaused =
-    activeProject === ALL_PROJECTS
-      ? !!status?.paused
-      : !!status?.pausedProjects?.includes(activeProject);
-  const automationPaused =
-    activeProject === ALL_PROJECTS
-      ? !!status?.automationsPaused
-      : !!status?.automationPausedProjects?.includes(activeProject);
+  const taskPaused = !!status?.paused;
+  const automationPaused = !!status?.automationsPaused;
+  const allProjectsSelected = activeProject === ALL_PROJECTS;
+  const allPaused = taskPaused && automationPaused;
 
   const scope = "runners";
   const cursor = useNav((s) => Math.min(s.cursor[scope] ?? 0, Math.max(0, runners.length - 1)));
@@ -71,13 +65,17 @@ export function RunnersView() {
           return true;
         case "p":
         case "P":
-          toggleTaskPause();
+          allProjectsSelected ? toggleAllPause() : toggleTaskPause();
+          return true;
+        case "a":
+        case "A":
+          toggleAutomationPause();
           return true;
         default:
           return false;
       }
     },
-    [runners, cursor, taskPaused, activeProject],
+    [runners, cursor, taskPaused, automationPaused, allProjectsSelected, allPaused],
   );
 
   useEffect(() => {
@@ -86,20 +84,25 @@ export function RunnersView() {
   }, [cursor]);
 
   function toggleTaskPause() {
-    if (activeProject === ALL_PROJECTS) {
-      void (taskPaused ? act("Resumed", resumeAll) : act("Paused", pauseAll));
-      return;
-    }
-    void (taskPaused
-      ? act(`Resumed ${activeProject}`, () => resumeProject(activeProject))
-      : act(`Paused ${activeProject}`, () => pauseProject(activeProject)));
+    void (taskPaused ? act("Runner pool resumed", resumeAll) : act("Runner pool paused", pauseAll));
   }
 
   function toggleAutomationPause() {
-    const scopedProject = activeProject === ALL_PROJECTS ? undefined : activeProject;
     void (automationPaused
-      ? act("Automations resumed", () => resumeAutomations(scopedProject))
-      : act("Automations paused", () => pauseAutomations(scopedProject)));
+      ? act("Automations resumed", () => resumeAutomations())
+      : act("Automations paused", () => pauseAutomations()));
+  }
+
+  function toggleAllPause() {
+    void (allPaused
+      ? act("All tasks and automations resumed", async () => {
+          await resumeAll();
+          await resumeAutomations();
+        })
+      : act("All tasks and automations paused", async () => {
+          await pauseAll();
+          await pauseAutomations();
+        }));
   }
 
   async function act(label: string, fn: () => Promise<unknown>) {
@@ -133,16 +136,21 @@ export function RunnersView() {
           }}
         >
           <span style={{ color: taskPaused ? "var(--red)" : "var(--green)" }}>
-            ● {activeProject === ALL_PROJECTS ? "pool" : activeProject} {taskPaused ? "paused" : "running"}
+            ● runner pool {taskPaused ? "paused" : "running"}
           </span>
           <span style={{ color: automationPaused ? "var(--red)" : "var(--green)" }}>
             ● automations {automationPaused ? "off" : "on"}
           </span>
           <div style={{ flex: 1 }} />
-          <button className="btn sm ghost" disabled={busy} onClick={toggleTaskPause}>
-            {taskPaused ? "▶ resume" : "⏸ pause"}
+          {allProjectsSelected && (
+            <button className="btn sm primary" disabled={busy} onClick={toggleAllPause} title="Shortcut: p">
+              {allPaused ? "▶ resume all" : "⏸ pause all"}
+            </button>
+          )}
+          <button className="btn sm ghost" disabled={busy} onClick={toggleTaskPause} title="Shortcut: p">
+            {taskPaused ? "resume tasks" : "pause tasks"}
           </button>
-          <button className="btn sm ghost" disabled={busy} onClick={toggleAutomationPause}>
+          <button className="btn sm ghost" disabled={busy} onClick={toggleAutomationPause} title="Shortcut: a">
             {automationPaused ? "resume autos" : "pause autos"}
           </button>
         </div>

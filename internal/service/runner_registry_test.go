@@ -1114,13 +1114,11 @@ func TestLifecycleManager_AlreadyOfflineNotReprocessed(t *testing.T) {
 	}
 }
 
-func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
+func TestRunnerRegistry_ListRunners_OmitsInactiveRunners(t *testing.T) {
 	svc, store := newTestRunnerRegistryService(t)
 	ctx := context.Background()
-
 	now := time.Now().UnixMilli()
 
-	// Fresh runner (online)
 	_ = store.UpsertRunner(ctx, &storage.RunnerRow{
 		RunnerID:      "runner-online",
 		Hostname:      "host-a",
@@ -1131,8 +1129,6 @@ func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
 		LastHeartbeat: now,
 		Status:        "online",
 	})
-
-	// 2-minute-old heartbeat (stale)
 	_ = store.UpsertRunner(ctx, &storage.RunnerRow{
 		RunnerID:      "runner-stale",
 		Hostname:      "host-b",
@@ -1143,8 +1139,6 @@ func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
 		LastHeartbeat: now - 120000,
 		Status:        "online",
 	})
-
-	// 10-minute-old heartbeat (offline)
 	_ = store.UpsertRunner(ctx, &storage.RunnerRow{
 		RunnerID:      "runner-offline",
 		Hostname:      "host-c",
@@ -1160,23 +1154,36 @@ func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRunners failed: %v", err)
 	}
-	if resp.Total != 3 {
-		t.Fatalf("expected 3 runners, got %d", resp.Total)
+	if resp.Total != 1 || len(resp.Runners) != 1 {
+		t.Fatalf("expected 1 active runner, got total=%d len=%d runners=%+v", resp.Total, len(resp.Runners), resp.Runners)
 	}
+	if resp.Runners[0].RunnerID != "runner-online" {
+		t.Fatalf("runner = %q, want runner-online", resp.Runners[0].RunnerID)
+	}
+}
 
-	statusMap := make(map[string]types.RunnerStatus)
-	for _, r := range resp.Runners {
-		statusMap[r.RunnerID] = r.Status
-	}
+func TestRunnerRegistry_GetRunner_ComputedStatus(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
 
-	if statusMap["runner-online"] != types.RunnerStatusOnline {
-		t.Errorf("expected runner-online to be online, got %s", statusMap["runner-online"])
+	_ = store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-stale",
+		Hostname:      "host-b",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 120000,
+		LastHeartbeat: now - 120000,
+		Status:        "online",
+	})
+
+	info, err := svc.GetRunner(ctx, "runner-stale")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
 	}
-	if statusMap["runner-stale"] != types.RunnerStatusStale {
-		t.Errorf("expected runner-stale to be stale, got %s", statusMap["runner-stale"])
-	}
-	if statusMap["runner-offline"] != types.RunnerStatusOffline {
-		t.Errorf("expected runner-offline to be offline, got %s", statusMap["runner-offline"])
+	if info.Status != types.RunnerStatusStale {
+		t.Errorf("expected runner-stale to be stale, got %s", info.Status)
 	}
 }
 

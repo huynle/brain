@@ -59,7 +59,7 @@ AI coding agents are powerful but stateless — they forget everything between s
 - **External editor integration** — press `e` to edit a task in `$EDITOR`
 - **Clipboard support** — press `y` to yank task info to system clipboard
 - **Focus mode** — press `x` to execute a single feature to completion
-- **Pause/resume** at project, feature, or individual task level
+- **Pause/resume toggles** for the active project scope; the `All` project tab toggles global execution, while a single project tab toggles only that project
 - **Live resource metrics** (CPU, memory) in the status bar
 - **Real-time SSE streaming** with automatic polling fallback
 - **Keyboard-driven** with vim-style navigation (`j/k/g/G`), Tab panel cycling, and `?` help overlay
@@ -589,7 +589,7 @@ The `--tui` flag enables an interactive terminal dashboard built with [Bubbletea
 | `y` | Yank task info to clipboard |
 | `w` | Toggle text wrap/truncation |
 | `x` | Focus mode (run feature to completion) |
-| `p` | Pause/resume (project, feature, or task) |
+| `p` | Pause/resume active scope; `All` toggles global execution, single-project tabs toggle only that project |
 | `o` | Open settings popup |
 | `O` | Open OpenCode session in tmux |
 | `s` | Shutdown selected runner (runners panel) |
@@ -719,6 +719,26 @@ brain-runner logs [-f]
 
 Automation entries are brain entries with `type: automation` and a `trigger` plus an `action` in frontmatter. Active automations are evaluated by the runner and create generated tasks when their trigger matches.
 
+Automation execution can be paused globally or by project. In the TUI and PWA,
+pause/resume controls are toggles scoped to the active project tab: selecting
+`All` toggles global automation pause, while selecting a single project toggles
+only that project's automation pause. Project-scoped automation pauses are
+reported in runner status as `automationPausedProjects`; global automation pause
+continues to use `automationsPaused`.
+
+Scoped automation control endpoints:
+
+| Endpoint | Scope |
+|----------|-------|
+| `POST /api/v1/tasks/runner/automations/pause` | Pause automations globally |
+| `POST /api/v1/tasks/runner/automations/resume` | Resume automations globally |
+| `POST /api/v1/tasks/runner/automations/pause/{projectId}` | Pause automations for one project |
+| `POST /api/v1/tasks/runner/automations/resume/{projectId}` | Resume automations for one project |
+
+Task execution pause/resume follows the same active-scope rule in the TUI and
+PWA: `All` toggles global task execution and a single-project tab toggles only
+that project via the existing project pause/resume endpoints.
+
 ### Supported trigger capabilities
 
 | Capability | Field | Description |
@@ -809,7 +829,9 @@ The PWA mirrors the TUI's keyboard model — press `?` for the full list. Highli
   Tasks⇄Schedules, `n` new — selection enables batch complete/edit/delete.
 - Brain: `/` search, `e` edit, `b`/`B`/`F`/`A` embed/re-embed; Automations:
   `Space` enable, `x` reconcile, `e` configure, `C` Automations⇄Dream.
-- `p`/`P` pause project/all, `S` settings, `w` wrap, `r` refresh.
+- `p`/`P` toggle pause/resume for the active scope (`All` toggles global;
+  single-project tabs toggle only that project), `S` settings, `w` wrap, `r`
+  refresh.
 
 ### Build & develop
 

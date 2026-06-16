@@ -10,7 +10,8 @@ import { ListDetail } from "../components/layout/ListDetail";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { EntryView } from "./brain/EntryView";
 import { relativeTime } from "../lib/format";
-import type { SearchStrategy } from "../lib/types";
+import type { BrainEntry, SearchResult, SearchStrategy } from "../lib/types";
+import { filterEntriesByHiddenTypes, toggleHiddenEntryType } from "./brain/entryFilters";
 
 const STRATEGIES: { value: SearchStrategy; label: string }[] = [
   { value: "semantic", label: "Semantic" },
@@ -52,6 +53,7 @@ export function BrainView() {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [editPath, setEditPath] = useState<{ path: string; title?: string } | null>(null);
   const [composing, setComposing] = useState(false);
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(() => new Set());
 
   const browseQ = useQuery({
     queryKey: ["entries", project],
@@ -77,12 +79,23 @@ export function BrainView() {
 
   const searching = query.trim() !== "";
 
-  const items = useMemo<{ path: string }[]>(
-    () =>
-      searching
-        ? (searchQ.data?.results ?? [])
-        : (browseQ.data?.entries ?? []),
+  const rawItems = useMemo<Array<BrainEntry | SearchResult>>(
+    () => (searching ? (searchQ.data?.results ?? []) : (browseQ.data?.entries ?? [])),
     [searching, searchQ.data, browseQ.data],
+  );
+
+  const entryTypes = useMemo(
+    () => Array.from(new Set(rawItems.map((item) => item.type))).sort(),
+    [rawItems],
+  );
+
+  useEffect(() => {
+    setHiddenTypes((prev) => new Set([...prev].filter((type) => entryTypes.includes(type))));
+  }, [entryTypes]);
+
+  const items = useMemo<Array<BrainEntry | SearchResult>>(
+    () => filterEntriesByHiddenTypes(rawItems, hiddenTypes),
+    [rawItems, hiddenTypes],
   );
 
   const scope = `brain:${project ?? "all"}`;
@@ -219,6 +232,51 @@ export function BrainView() {
         </button>
       </form>
 
+      {entryTypes.length > 0 && (
+        <div
+          className="search-meta"
+          style={{ gap: 8, flexWrap: "wrap" }}
+          aria-label="Brain entry type filters"
+        >
+          <span className="faint" style={{ fontSize: 11 }}>
+            Hide types:
+          </span>
+          {entryTypes.map((type) => {
+            const hidden = hiddenTypes.has(type);
+            return (
+              <button
+                key={type}
+                type="button"
+                className={`btn sm ${hidden ? "" : "primary"}`}
+                onClick={() => {
+                  setHiddenTypes((prev) => toggleHiddenEntryType(prev, type));
+                  setCursor(scope, 0);
+                }}
+                aria-pressed={!hidden}
+                title={hidden ? `Show ${type} entries` : `Hide ${type} entries`}
+              >
+                {hidden ? "⊘" : "✓"} {type}
+              </button>
+            );
+          })}
+          {hiddenTypes.size > 0 && (
+            <button
+              className="btn sm"
+              type="button"
+              onClick={() => {
+                setHiddenTypes(new Set());
+                setCursor(scope, 0);
+              }}
+            >
+              Show all
+            </button>
+          )}
+          <span className="faint" style={{ marginLeft: "auto", fontSize: 11 }}>
+            {items.length}/{rawItems.length} visible
+          </span>
+        </div>
+      )}
+
       {searching && !searchQ.isLoading && !searchQ.error && (
         <div className="search-meta">
           <Pill color="var(--purple)">{strategy}</Pill>
@@ -240,10 +298,14 @@ export function BrainView() {
             <Loading label="Searching…" />
           ) : searchQ.error ? (
             <ErrorState error={searchQ.error} onRetry={() => void searchQ.refetch()} />
-          ) : !searchQ.data?.results.length ? (
+          ) : rawItems.length === 0 ? (
             <EmptyState glyph="◇" title="No results" hint={`Nothing matched “${query}”.`} />
+          ) : items.length === 0 ? (
+            <EmptyState glyph="⊘" title="All matching entries are hidden" hint="Use the type filters above to show more entries." />
           ) : (
-            searchQ.data.results.map((r, i, arr) => (
+            items.map((item, i, arr) => {
+              const r = item as SearchResult;
+              return (
               <EntryRow
                 key={r.id}
                 title={r.title}
@@ -253,16 +315,21 @@ export function BrainView() {
                 last={i === arr.length - 1}
                 onClick={() => openEntry(r)}
               />
-            ))
+              );
+            })
           )
         ) : browseQ.isLoading ? (
           <Loading label="Loading entries…" />
         ) : browseQ.error ? (
           <ErrorState error={browseQ.error} onRetry={() => void browseQ.refetch()} />
-        ) : !browseQ.data?.entries.length ? (
+        ) : rawItems.length === 0 ? (
           <EmptyState glyph="◆" title="No entries" hint="This project's knowledge base is empty." />
+        ) : items.length === 0 ? (
+          <EmptyState glyph="⊘" title="All entries are hidden" hint="Use the type filters above to show more entries." />
         ) : (
-          browseQ.data.entries.map((e, i, arr) => (
+          items.map((item, i, arr) => {
+            const e = item as BrainEntry;
+            return (
             <EntryRow
               key={e.id}
               title={e.title}
@@ -272,7 +339,8 @@ export function BrainView() {
               last={i === arr.length - 1}
               onClick={() => openEntry(e)}
             />
-          ))
+            );
+          })
         )}
       </div>
 

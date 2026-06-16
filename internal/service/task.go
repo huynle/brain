@@ -118,7 +118,30 @@ func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*type
 	}
 	result := ResolveDependencies(entries)
 	s.applyTaskDefaults(result.Tasks)
+	if err := s.enrichDispatchDiagnostics(ctx, projectId, result.Tasks); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func (s *TaskServiceImpl) enrichDispatchDiagnostics(ctx context.Context, projectID string, tasks []types.ResolvedTask) error {
+	for i := range tasks {
+		task := &tasks[i]
+		lease, err := s.storage.GetDispatchLease(ctx, projectID, task.ID)
+		if err != nil {
+			return fmt.Errorf("get dispatch lease for %s: %w", task.ID, err)
+		}
+		reasons, err := s.storage.ListPlacementReasons(ctx, projectID, task.ID)
+		if err != nil {
+			return fmt.Errorf("list placement reasons for %s: %w", task.ID, err)
+		}
+		task.DispatchLease = lease
+		if len(reasons) > 0 {
+			task.PlacementReasons = reasons
+			task.LastPlacementReason = &task.PlacementReasons[len(task.PlacementReasons)-1]
+		}
+	}
+	return nil
 }
 
 // GetTask returns a single resolved task by ID for a project.

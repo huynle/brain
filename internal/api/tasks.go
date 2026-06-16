@@ -187,7 +187,10 @@ type TaskMetadataResponse struct {
 	Tags               []string                     `json:"tags"`
 	Sessions           map[string]types.SessionInfo `json:"sessions"`
 	Env                map[string]string            `json:"env"`
-	Extensions         []string                     `json:"extensions"`
+	Extensions          []string                     `json:"extensions"`
+	DispatchLease       *types.DispatchLease         `json:"dispatch_lease,omitempty"`
+	PlacementReasons    []types.PlacementReason      `json:"placement_reasons,omitempty"`
+	LastPlacementReason *types.PlacementReason       `json:"last_placement_reason,omitempty"`
 }
 
 // HandleGetTaskMetadata handles GET /tasks/{projectId}/{taskId}/metadata.
@@ -243,7 +246,10 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 		Created:            task.Created,
 		Sessions:           task.Sessions,
 		Env:                task.Env,
-		Extensions:         task.Extensions,
+		Extensions:          task.Extensions,
+		DispatchLease:       task.DispatchLease,
+		PlacementReasons:    task.PlacementReasons,
+		LastPlacementReason: task.LastPlacementReason,
 	}
 
 	WriteJSON(w, http.StatusOK, resp)

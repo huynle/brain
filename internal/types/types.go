@@ -983,6 +983,11 @@ type ResolvedTask struct {
 	WaitingOn       []string `json:"waiting_on"`
 	InCycle         bool     `json:"in_cycle"`
 	ResolvedWorkdir string   `json:"resolved_workdir"`
+
+	// Dispatch diagnostics expose scheduler push state and placement decisions.
+	DispatchLease       *DispatchLease    `json:"dispatch_lease,omitempty"`
+	PlacementReasons    []PlacementReason `json:"placement_reasons,omitempty"`
+	LastPlacementReason *PlacementReason  `json:"last_placement_reason,omitempty"`
 }
 
 // TaskStats holds aggregate task statistics.

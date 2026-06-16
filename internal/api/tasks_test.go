@@ -1710,6 +1710,15 @@ func TestHandleGetTaskMetadata_ReturnsExecutionFields(t *testing.T) {
 					Priority:            "high",
 					Created:             "2025-01-01T00:00:00Z",
 					UserOriginalRequest: "Please fix the auth bug",
+					DispatchLease: &types.DispatchLease{
+						AssignedRunnerID:  "runner-1",
+						AssignedMachineID: "machine-a",
+						State:             types.DispatchLeaseStatePushed,
+					},
+					LastPlacementReason: &types.PlacementReason{
+						Decision: "no_candidate",
+						Reason:   "runner at capacity",
+					},
 				}, nil
 			},
 			wantStatus: http.StatusOK,
@@ -1749,6 +1758,12 @@ func TestHandleGetTaskMetadata_ReturnsExecutionFields(t *testing.T) {
 				}
 				if body.OpenPRBeforeMerge == nil || *body.OpenPRBeforeMerge {
 					t.Error("expected open_pr_before_merge = false")
+				}
+				if body.DispatchLease == nil || body.DispatchLease.AssignedRunnerID != "runner-1" {
+					t.Errorf("dispatch_lease = %#v, want runner-1", body.DispatchLease)
+				}
+				if body.LastPlacementReason == nil || body.LastPlacementReason.Reason != "runner at capacity" {
+					t.Errorf("last_placement_reason = %#v, want runner at capacity", body.LastPlacementReason)
 				}
 
 				// Verify content and title are NOT in the response

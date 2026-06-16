@@ -236,6 +236,46 @@ func TestTaskDetail_WithTask_ShowsContentAfterFrontmatter(t *testing.T) {
 	}
 }
 
+func TestTaskDetail_WithDispatchDiagnostics_ShowsLeaseAndPlacementReason(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(100, 30)
+
+	task := &types.ResolvedTask{
+		ID:    "abc12def",
+		Title: "Pending task",
+		DispatchLease: &types.DispatchLease{
+			AssignedRunnerID:  "runner-1",
+			AssignedMachineID: "machine-a",
+			State:             types.DispatchLeaseStatePushed,
+			ExpiresAt:         123456,
+			LastError:         "dispatch lease expired",
+		},
+		LastPlacementReason: &types.PlacementReason{
+			Decision:  "no_candidate",
+			Reason:    "runner-a: runner at capacity",
+			RunnerID:  "runner-a",
+			MachineID: "machine-a",
+		},
+	}
+	td.SetTask(task)
+
+	view := stripANSI(td.View())
+	for _, want := range []string{
+		"Dispatch:",
+		"Lease: pushed",
+		"Runner: runner-1",
+		"Machine: machine-a",
+		"Expires: 123456",
+		"Last error: dispatch lease expired",
+		"Placement: no_candidate",
+		"Reason: runner-a: runner at capacity",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expected %q in view, got:\n%s", want, view)
+		}
+	}
+}
+
 // =============================================================================
 // TaskDetail - Dependencies
 // =============================================================================

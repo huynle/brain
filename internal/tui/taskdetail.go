@@ -355,6 +355,13 @@ func (td *TaskDetail) countContentLines() int {
 			count++
 		}
 	}
+	// Dispatch diagnostics
+	dispatchLines := td.renderDispatchLines(task)
+	if len(dispatchLines) > 0 {
+		count++ // blank line
+		count++ // header
+		count += len(dispatchLines)
+	}
 	// Dependencies
 	hasDeps := len(task.DependsOn) > 0
 	hasWaiting := len(task.WaitingOn) > 0
@@ -640,6 +647,14 @@ func (td *TaskDetail) renderTask() string {
 		}
 	}
 
+	// Dispatch diagnostics
+	dispatchLines := td.renderDispatchLines(task)
+	if len(dispatchLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Dispatch:"))
+		lines = append(lines, dispatchLines...)
+	}
+
 	// Dependencies
 	hasDeps := len(task.DependsOn) > 0
 	hasWaiting := len(task.WaitingOn) > 0
@@ -798,6 +813,40 @@ func (td *TaskDetail) renderTask() string {
 	result = append(result, headerLine)
 	result = append(result, lines...)
 	return strings.Join(result, "\n")
+}
+
+func (td *TaskDetail) renderDispatchLines(task *types.ResolvedTask) []string {
+	var lines []string
+	if task.DispatchLease != nil {
+		lease := task.DispatchLease
+		lines = append(lines, fmt.Sprintf("  Lease: %s", lipgloss.NewStyle().Foreground(ColorCyan).Render(lease.State)))
+		if lease.AssignedRunnerID != "" {
+			lines = append(lines, fmt.Sprintf("  Runner: %s", lease.AssignedRunnerID))
+		}
+		if lease.AssignedMachineID != "" {
+			lines = append(lines, fmt.Sprintf("  Machine: %s", lease.AssignedMachineID))
+		}
+		if lease.ExpiresAt != 0 {
+			lines = append(lines, fmt.Sprintf("  Expires: %d", lease.ExpiresAt))
+		}
+		if lease.LastError != "" {
+			lines = append(lines, fmt.Sprintf("  Last error: %s", lease.LastError))
+		}
+	}
+	if task.LastPlacementReason != nil {
+		reason := task.LastPlacementReason
+		lines = append(lines, fmt.Sprintf("  Placement: %s", reason.Decision))
+		if reason.Reason != "" {
+			lines = append(lines, fmt.Sprintf("  Reason: %s", reason.Reason))
+		}
+		if reason.RunnerID != "" {
+			lines = append(lines, fmt.Sprintf("  Placement runner: %s", reason.RunnerID))
+		}
+		if reason.MachineID != "" {
+			lines = append(lines, fmt.Sprintf("  Placement machine: %s", reason.MachineID))
+		}
+	}
+	return lines
 }
 
 // renderFrontmatter renders all metadata fields as key: value pairs.

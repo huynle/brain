@@ -36,6 +36,30 @@ func TestSchedulerDispatchesSoftAffinityPreferredRunner(t *testing.T) {
 	}
 }
 
+func TestSchedulerChoosesPreferredMachineBeforeLeastBusyRunner(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{{ID: "task-1", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"}}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "idle-other-machine", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 2, ActiveTasks: 0},
+		{RunnerID: "busy-preferred", MachineID: "machine-b", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 100, ActiveTasks: 80},
+		{RunnerID: "less-busy-preferred", MachineID: "machine-b", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 100, ActiveTasks: 60},
+	}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinitySoft, PreferredMachines: []string{"machine-b"}}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1", result.Dispatched)
+	}
+	if len(store.leases) != 1 || store.leases[0].AssignedRunnerID != "less-busy-preferred" {
+		t.Fatalf("lease assigned runner = %#v, want less-busy-preferred", store.leases)
+	}
+}
+
 func TestSchedulerRecordsNoCandidateForStrictAffinityWithoutChangingTaskStatus(t *testing.T) {
 	store := newFakeSchedulerStore()
 	store.tasks = []types.ResolvedTask{{ID: "task-1", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"}}

@@ -323,79 +323,125 @@ func (s *SchedulerService) shouldSkipTask(projectID string, task types.ResolvedT
 
 type schedulerCandidate struct {
 	runner types.RunnerInfo
-	score  int
+}
+
+type schedulerMachineCandidate struct {
+	machineID   string
+	runners     []schedulerCandidate
+	score       int
+	activeTasks int
 }
 
 func (s *SchedulerService) selectCandidate(task types.ResolvedTask, projectID string, runners []types.RunnerInfo, placement *types.ProjectPlacement) (*types.RunnerInfo, []string) {
-	candidates := make([]schedulerCandidate, 0, len(runners))
+	machines := make(map[string]*schedulerMachineCandidate)
 	reasons := make([]string, 0, len(runners))
 	for _, runner := range runners {
-		score, reason, ok := scoreRunner(task, projectID, runner, placement)
+		reason, ok := runnerEligibleForTask(task, projectID, runner, placement)
 		if !ok {
 			reasons = append(reasons, runner.RunnerID+": "+reason)
 			continue
 		}
-		candidates = append(candidates, schedulerCandidate{runner: runner, score: score})
+
+		machineID := runner.MachineID
+		if machineID == "" {
+			machineID = "runner:" + runner.RunnerID
+		}
+		candidate := machines[machineID]
+		if candidate == nil {
+			candidate = &schedulerMachineCandidate{machineID: machineID, score: scoreMachine(machineID, placement)}
+			machines[machineID] = candidate
+		}
+		candidate.runners = append(candidate.runners, schedulerCandidate{runner: runner})
+		candidate.activeTasks += runner.ActiveTasks
 	}
-	if len(candidates) == 0 {
+	if len(machines) == 0 {
 		return nil, reasons
 	}
-	sort.SliceStable(candidates, func(i, j int) bool {
-		if candidates[i].score != candidates[j].score {
-			return candidates[i].score > candidates[j].score
+
+	machineCandidates := make([]schedulerMachineCandidate, 0, len(machines))
+	for _, candidate := range machines {
+		machineCandidates = append(machineCandidates, *candidate)
+	}
+	sort.SliceStable(machineCandidates, func(i, j int) bool {
+		if machineCandidates[i].score != machineCandidates[j].score {
+			return machineCandidates[i].score > machineCandidates[j].score
 		}
-		if candidates[i].runner.ActiveTasks != candidates[j].runner.ActiveTasks {
-			return candidates[i].runner.ActiveTasks < candidates[j].runner.ActiveTasks
+		if machineCandidates[i].activeTasks != machineCandidates[j].activeTasks {
+			return machineCandidates[i].activeTasks < machineCandidates[j].activeTasks
 		}
-		return candidates[i].runner.RunnerID < candidates[j].runner.RunnerID
+		return machineCandidates[i].machineID < machineCandidates[j].machineID
 	})
-	return &candidates[0].runner, reasons
+
+	runnersOnMachine := machineCandidates[0].runners
+	sort.SliceStable(runnersOnMachine, func(i, j int) bool {
+		left := runnersOnMachine[i].runner
+		right := runnersOnMachine[j].runner
+		if left.ActiveTasks != right.ActiveTasks {
+			return left.ActiveTasks < right.ActiveTasks
+		}
+		leftRemaining := remainingCapacity(left)
+		rightRemaining := remainingCapacity(right)
+		if leftRemaining != rightRemaining {
+			return leftRemaining > rightRemaining
+		}
+		return left.RunnerID < right.RunnerID
+	})
+	return &runnersOnMachine[0].runner, reasons
 }
 
-func scoreRunner(task types.ResolvedTask, projectID string, runner types.RunnerInfo, placement *types.ProjectPlacement) (int, string, bool) {
+func runnerEligibleForTask(task types.ResolvedTask, projectID string, runner types.RunnerInfo, placement *types.ProjectPlacement) (string, bool) {
 	if runner.Status != types.RunnerStatusOnline {
-		return 0, "runner not online", false
+		return "runner not online", false
 	}
 	if !runner.DispatchPush {
-		return 0, "runner does not support push dispatch", false
+		return "runner does not support push dispatch", false
 	}
 	if runner.Draining {
-		return 0, "runner draining", false
+		return "runner draining", false
 	}
 	if !runnerAllowsProject(runner, projectID) {
-		return 0, "project not allowed", false
+		return "project not allowed", false
 	}
 	if task.Executor != "" && !stringSliceContains(runner.Executors, task.Executor) {
-		return 0, "executor not supported", false
+		return "executor not supported", false
 	}
 	if missing := missingStrings(task.RequiresCapability, runner.Capabilities); len(missing) > 0 {
-		return 0, "missing task capabilities: " + strings.Join(missing, ","), false
+		return "missing task capabilities: " + strings.Join(missing, ","), false
 	}
 	if missing := missingStrings(placement.RequiredCapabilities, runner.Capabilities); len(missing) > 0 {
-		return 0, "missing project capabilities: " + strings.Join(missing, ","), false
+		return "missing project capabilities: " + strings.Join(missing, ","), false
 	}
 	if missing := missingLabels(placement.RequiredLabels, runner.Labels); len(missing) > 0 {
-		return 0, "missing required labels", false
+		return "missing required labels", false
 	}
 	if placement.WorkspacePolicy == types.WorkspacePolicyWorktree && len(runner.WorkspaceRoots) == 0 {
-		return 0, "no workspace roots for worktree policy", false
+		return "no workspace roots for worktree policy", false
 	}
 	if runner.MaxParallel > 0 && runner.ActiveTasks >= runner.MaxParallel {
-		return 0, "runner at capacity", false
+		return "runner at capacity", false
 	}
 	if placement.Affinity == types.PlacementAffinityStrict && !machineAllowedByStrictAffinity(runner.MachineID, placement) {
-		return 0, "strict affinity mismatch", false
+		return "strict affinity mismatch", false
 	}
+	return "eligible", true
+}
 
+func scoreMachine(machineID string, placement *types.ProjectPlacement) int {
 	score := 100
-	if stringSliceContains(placement.PreferredMachines, runner.MachineID) {
+	if stringSliceContains(placement.PreferredMachines, machineID) {
 		score += 50
 	}
-	if len(placement.AllowedMachines) > 0 && stringSliceContains(placement.AllowedMachines, runner.MachineID) {
+	if len(placement.AllowedMachines) > 0 && stringSliceContains(placement.AllowedMachines, machineID) {
 		score += 25
 	}
-	score -= runner.ActiveTasks
-	return score, "eligible", true
+	return score
+}
+
+func remainingCapacity(runner types.RunnerInfo) int {
+	if runner.MaxParallel <= 0 {
+		return int(^uint(0) >> 1)
+	}
+	return runner.MaxParallel - runner.ActiveTasks
 }
 
 func runnerAllowsProject(runner types.RunnerInfo, projectID string) bool {

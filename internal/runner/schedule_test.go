@@ -594,6 +594,10 @@ func (m *schedMockClient) ReleaseTask(ctx context.Context, projectID, taskID, ru
 func (m *schedMockClient) AckDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string) (*types.DispatchAckResponse, error) {
 	return &types.DispatchAckResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID}, nil
 }
+func (m *schedMockClient) ReleaseDispatch(ctx context.Context, runnerID, projectID, taskID string) (*types.DispatchReleaseResponse, error) {
+	return &types.DispatchReleaseResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID}, nil
+}
+
 func (m *schedMockClient) RejectDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error) {
 	return &types.DispatchRejectResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID, Reason: reason}, nil
 }

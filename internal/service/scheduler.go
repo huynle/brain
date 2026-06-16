@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -268,12 +270,13 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 		placement = &types.ProjectPlacement{ProjectID: projectID, Affinity: types.PlacementAffinitySoft}
 	}
 
+	reservedSlots := make(map[string]int)
 	for _, task := range tasks {
 		if s.shouldSkipTask(projectID, task) {
 			result.Skipped++
 			continue
 		}
-		candidate, reasons := s.selectCandidate(task, projectID, runners, placement)
+		candidate, reasons := s.selectCandidate(task, projectID, runners, placement, reservedSlots)
 		if candidate == nil {
 			result.Skipped++
 			if err := s.recordNoCandidate(ctx, projectID, task.ID, reasons); err != nil {
@@ -306,6 +309,7 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 				"expiresAt": lease.ExpiresAt,
 			})
 		}
+		reservedSlots[candidate.RunnerID]++
 		result.Dispatched++
 	}
 	return result, nil
@@ -332,10 +336,11 @@ type schedulerMachineCandidate struct {
 	activeTasks int
 }
 
-func (s *SchedulerService) selectCandidate(task types.ResolvedTask, projectID string, runners []types.RunnerInfo, placement *types.ProjectPlacement) (*types.RunnerInfo, []string) {
+func (s *SchedulerService) selectCandidate(task types.ResolvedTask, projectID string, runners []types.RunnerInfo, placement *types.ProjectPlacement, reservedSlots map[string]int) (*types.RunnerInfo, []string) {
 	machines := make(map[string]*schedulerMachineCandidate)
 	reasons := make([]string, 0, len(runners))
 	for _, runner := range runners {
+		runner.ActiveTasks += reservedSlots[runner.RunnerID]
 		reason, ok := runnerEligibleForTask(task, projectID, runner, placement)
 		if !ok {
 			reasons = append(reasons, runner.RunnerID+": "+reason)
@@ -414,6 +419,9 @@ func runnerEligibleForTask(task types.ResolvedTask, projectID string, runner typ
 	if missing := missingLabels(placement.RequiredLabels, runner.Labels); len(missing) > 0 {
 		return "missing required labels", false
 	}
+	if missing := missingResources(placement.Resources, runner.Resources, runner.Capacity); len(missing) > 0 {
+		return "missing project resources: " + strings.Join(missing, ","), false
+	}
 	if placement.WorkspacePolicy == types.WorkspacePolicyWorktree && len(runner.WorkspaceRoots) == 0 {
 		return "no workspace roots for worktree policy", false
 	}
@@ -456,6 +464,63 @@ func machineAllowedByStrictAffinity(machineID string, placement *types.ProjectPl
 		return stringSliceContains(placement.PreferredMachines, machineID)
 	}
 	return true
+}
+
+func missingResources(required, resources, capacity map[string]interface{}) []string {
+	missing := make([]string, 0)
+	for key, want := range required {
+		if resourceRequirementMet(want, resources[key]) || resourceRequirementMet(want, capacity[key]) {
+			continue
+		}
+		missing = append(missing, key)
+	}
+	sort.Strings(missing)
+	return missing
+}
+
+func resourceRequirementMet(required, actual interface{}) bool {
+	if req, ok := numericValue(required); ok {
+		got, ok := numericValue(actual)
+		return ok && got >= req
+	}
+	return reflect.DeepEqual(actual, required)
+}
+
+func numericValue(value interface{}) (float64, bool) {
+	switch v := value.(type) {
+	case int:
+		return float64(v), true
+	case int8:
+		return float64(v), true
+	case int16:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case uint:
+		return float64(v), true
+	case uint8:
+		return float64(v), true
+	case uint16:
+		return float64(v), true
+	case uint32:
+		return float64(v), true
+	case uint64:
+		return float64(v), true
+	case float32:
+		return float64(v), true
+	case float64:
+		return v, true
+	case json.Number:
+		f, err := v.Float64()
+		return f, err == nil
+	case string:
+		f, err := strconv.ParseFloat(v, 64)
+		return f, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func missingStrings(required, actual []string) []string {

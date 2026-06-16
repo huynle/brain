@@ -117,6 +117,64 @@ func TestSchedulerFiltersCandidatesByExecutorCapabilityWorkspaceCapacityAndDrain
 	}
 }
 
+func TestSchedulerReservesRunnerCapacityWithinSinglePass(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"},
+		{ID: "task-2", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 1}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 1 || result.Skipped != 1 {
+		t.Fatalf("result = %#v, want 1 dispatched and 1 skipped", result)
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "task-1" {
+		t.Fatalf("leases = %#v, want only task-1 leased", store.leases)
+	}
+	if len(store.commands) != 1 || store.commands[0].runnerID != "runner" {
+		t.Fatalf("commands = %#v, want one dispatch to runner", store.commands)
+	}
+	if len(store.reasons) != 1 || store.reasons[0].TaskID != "task-2" {
+		t.Fatalf("reasons = %#v, want no-candidate reason for task-2", store.reasons)
+	}
+}
+
+func TestSchedulerFiltersCandidatesByProjectResources(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{{ID: "task-1", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"}}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "missing-numeric", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 2, Resources: map[string]interface{}{"gpu": 1, "arch": "arm64", "ssd": true}, Capacity: map[string]interface{}{"memory_gb": 16}},
+		{RunnerID: "missing-bool", MachineID: "machine-b", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 2, Resources: map[string]interface{}{"gpu": 2, "arch": "arm64", "ssd": false}, Capacity: map[string]interface{}{"memory_gb": 32}},
+		{RunnerID: "missing-string", MachineID: "machine-c", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 2, Resources: map[string]interface{}{"gpu": 2, "arch": "amd64", "ssd": true}, Capacity: map[string]interface{}{"memory_gb": 32}},
+		{RunnerID: "eligible", MachineID: "machine-d", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 2, Resources: map[string]interface{}{"gpu": 2, "arch": "arm64", "ssd": true}, Capacity: map[string]interface{}{"memory_gb": 32}},
+	}
+	store.placement = types.ProjectPlacement{
+		ProjectID: "proj",
+		Affinity:  types.PlacementAffinityNone,
+		Resources: map[string]any{"gpu": 2, "memory_gb": 32, "arch": "arm64", "ssd": true},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1", result.Dispatched)
+	}
+	if len(store.leases) != 1 || store.leases[0].AssignedRunnerID != "eligible" {
+		t.Fatalf("leases = %#v, want eligible runner", store.leases)
+	}
+}
+
 func TestSchedulerSkipsPausedProjectAndAutomationGeneratedTasks(t *testing.T) {
 	store := newFakeSchedulerStore()
 	store.paused = true

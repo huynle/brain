@@ -63,6 +63,9 @@ func TestDispatchLeaseOperations_AreAtomicAndPersistState(t *testing.T) {
 	if lease.State != DispatchLeaseStatePushed || lease.AssignedRunnerID != "runner-1" || lease.AssignedMachineID != "machine-1" {
 		t.Fatalf("created lease = %#v", lease)
 	}
+	if lease.LeaseID == "" {
+		t.Fatalf("created lease LeaseID is empty: %#v", lease)
+	}
 
 	_, created, err = s.CreateDispatchLease(ctx, DispatchLeaseCreate{
 		ProjectID:         "brain-api",
@@ -79,7 +82,7 @@ func TestDispatchLeaseOperations_AreAtomicAndPersistState(t *testing.T) {
 		t.Fatal("expected duplicate active lease not to be created")
 	}
 
-	acked, err := s.AckDispatchLease(ctx, "brain-api", "task-1", "runner-2", 1200)
+	acked, err := s.AckDispatchLease(ctx, "brain-api", "task-1", "runner-2", lease.LeaseID, 1200)
 	if err != nil {
 		t.Fatalf("AckDispatchLease wrong runner failed: %v", err)
 	}
@@ -87,7 +90,7 @@ func TestDispatchLeaseOperations_AreAtomicAndPersistState(t *testing.T) {
 		t.Fatal("expected ack by wrong runner to be rejected")
 	}
 
-	acked, err = s.AckDispatchLease(ctx, "brain-api", "task-1", "runner-1", 1300)
+	acked, err = s.AckDispatchLease(ctx, "brain-api", "task-1", "runner-1", lease.LeaseID, 1300)
 	if err != nil {
 		t.Fatalf("AckDispatchLease failed: %v", err)
 	}
@@ -103,7 +106,7 @@ func TestDispatchLeaseOperations_AreAtomicAndPersistState(t *testing.T) {
 		t.Fatalf("acked lease = %#v", got)
 	}
 
-	rejected, err := s.RejectDispatchLease(ctx, "brain-api", "task-1", "runner-1", 1400, "no capacity")
+	rejected, err := s.RejectDispatchLease(ctx, "brain-api", "task-1", "runner-1", lease.LeaseID, 1400, "no capacity")
 	if err != nil {
 		t.Fatalf("RejectDispatchLease on acked failed: %v", err)
 	}
@@ -139,10 +142,11 @@ func TestDispatchLeaseRejectAndExpire(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()
 
-	if _, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "task-2", AssignedRunnerID: "runner-1", AssignedMachineID: "machine-1", PushedAt: 1000, ExpiresAt: 1500}); err != nil || !created {
+	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "task-2", AssignedRunnerID: "runner-1", AssignedMachineID: "machine-1", PushedAt: 1000, ExpiresAt: 1500})
+	if err != nil || !created {
 		t.Fatalf("create reject target: created=%v err=%v", created, err)
 	}
-	rejected, err := s.RejectDispatchLease(ctx, "brain-api", "task-2", "runner-1", 1200, "agent unavailable")
+	rejected, err := s.RejectDispatchLease(ctx, "brain-api", "task-2", "runner-1", lease.LeaseID, 1200, "agent unavailable")
 	if err != nil {
 		t.Fatalf("RejectDispatchLease failed: %v", err)
 	}
@@ -191,7 +195,7 @@ func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()
 
-	_, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
 		ProjectID:         "brain-api",
 		TaskID:            "stale-task",
 		AssignedRunnerID:  "runner-old",
@@ -203,7 +207,7 @@ func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
 		t.Fatalf("CreateDispatchLease stale target: created=%v err=%v", created, err)
 	}
 
-	acked, err := s.AckDispatchLease(ctx, "brain-api", "stale-task", "runner-old", 1600)
+	acked, err := s.AckDispatchLease(ctx, "brain-api", "stale-task", "runner-old", lease.LeaseID, 1600)
 	if err != nil {
 		t.Fatalf("AckDispatchLease after expiry failed: %v", err)
 	}
@@ -211,7 +215,7 @@ func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
 		t.Fatal("expected ack after lease expiry to be ignored")
 	}
 
-	rejected, err := s.RejectDispatchLease(ctx, "brain-api", "stale-task", "runner-old", 1700, "stale command")
+	rejected, err := s.RejectDispatchLease(ctx, "brain-api", "stale-task", "runner-old", lease.LeaseID, 1700, "stale command")
 	if err != nil {
 		t.Fatalf("RejectDispatchLease after expiry failed: %v", err)
 	}
@@ -235,7 +239,7 @@ func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
 		t.Fatalf("expired lease = %#v, want old runner retained in expired state", old)
 	}
 
-	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+	lease, created, err = s.CreateDispatchLease(ctx, DispatchLeaseCreate{
 		ProjectID:         "brain-api",
 		TaskID:            "stale-task",
 		AssignedRunnerID:  "runner-new",
@@ -248,6 +252,85 @@ func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
 	}
 	if lease.State != DispatchLeaseStatePushed || lease.AssignedRunnerID != "runner-new" || lease.AssignedMachineID != "machine-new" || lease.PushedAt != 1900 || lease.ExpiresAt != 2500 {
 		t.Fatalf("redispatched lease = %#v", lease)
+	}
+}
+
+func TestDispatchLeaseAckRejectRequireMatchingLeaseID(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "lease-bound-task", AssignedRunnerID: "runner-1", AssignedMachineID: "machine-1", PushedAt: 1000, ExpiresAt: 2000})
+	if err != nil || !created {
+		t.Fatalf("CreateDispatchLease: created=%v err=%v", created, err)
+	}
+	if lease.LeaseID == "" {
+		t.Fatal("expected generated lease ID")
+	}
+	acked, err := s.AckDispatchLease(ctx, "brain-api", "lease-bound-task", "runner-1", "wrong-lease", 1100)
+	if err != nil {
+		t.Fatalf("AckDispatchLease wrong lease ID: %v", err)
+	}
+	if acked {
+		t.Fatal("expected ack with mismatched lease ID to be rejected")
+	}
+	rejected, err := s.RejectDispatchLease(ctx, "brain-api", "lease-bound-task", "runner-1", "wrong-lease", 1200, "stale")
+	if err != nil {
+		t.Fatalf("RejectDispatchLease wrong lease ID: %v", err)
+	}
+	if rejected {
+		t.Fatal("expected reject with mismatched lease ID to be rejected")
+	}
+	acked, err = s.AckDispatchLease(ctx, "brain-api", "lease-bound-task", "runner-1", lease.LeaseID, 1300)
+	if err != nil {
+		t.Fatalf("AckDispatchLease matching lease ID: %v", err)
+	}
+	if !acked {
+		t.Fatal("expected ack with matching lease ID to succeed")
+	}
+}
+
+func TestDispatchLeaseRedispatchUsesDifferentLeaseID(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	first, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "redispatch-task", AssignedRunnerID: "runner-old", AssignedMachineID: "machine-old", PushedAt: 1000, ExpiresAt: 1500})
+	if err != nil || !created {
+		t.Fatalf("CreateDispatchLease first: created=%v err=%v", created, err)
+	}
+	if first.LeaseID == "" {
+		t.Fatal("expected first lease ID")
+	}
+	if _, err := s.ExpireDispatchLeases(ctx, 1600); err != nil {
+		t.Fatalf("ExpireDispatchLeases: %v", err)
+	}
+	second, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "redispatch-task", AssignedRunnerID: "runner-new", AssignedMachineID: "machine-new", PushedAt: 1700, ExpiresAt: 2500})
+	if err != nil || !created {
+		t.Fatalf("CreateDispatchLease second: created=%v err=%v", created, err)
+	}
+	if second.LeaseID == "" {
+		t.Fatal("expected second lease ID")
+	}
+	if second.LeaseID == first.LeaseID {
+		t.Fatalf("redispatch reused lease ID %q", second.LeaseID)
+	}
+	acked, err := s.AckDispatchLease(ctx, "brain-api", "redispatch-task", "runner-new", first.LeaseID, 1800)
+	if err != nil {
+		t.Fatalf("AckDispatchLease stale lease ID: %v", err)
+	}
+	if acked {
+		t.Fatal("expected stale lease ID to be rejected after redispatch")
+	}
+	rejected, err := s.RejectDispatchLease(ctx, "brain-api", "redispatch-task", "runner-new", first.LeaseID, 1900, "stale")
+	if err != nil {
+		t.Fatalf("RejectDispatchLease stale lease ID: %v", err)
+	}
+	if rejected {
+		t.Fatal("expected stale lease ID reject to be ignored after redispatch")
+	}
+	acked, err = s.AckDispatchLease(ctx, "brain-api", "redispatch-task", "runner-new", second.LeaseID, 2000)
+	if err != nil {
+		t.Fatalf("AckDispatchLease fresh lease ID: %v", err)
+	}
+	if !acked {
+		t.Fatal("expected fresh lease ID to ack redispatched lease")
 	}
 }
 

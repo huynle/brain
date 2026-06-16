@@ -323,6 +323,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					if o.handler != nil && o.handler.tasks != nil {
 						r.Post("/runners/{runnerId}/dispatch/ack", o.handler.HandleAckDispatch)
 						r.Post("/runners/{runnerId}/dispatch/reject", o.handler.HandleRejectDispatch)
+						r.Post("/runners/{runnerId}/dispatch/release", o.handler.HandleReleaseDispatch)
 					} else {
 						r.Post("/runners/{runnerId}/dispatch/ack", notImplemented)
 						r.Post("/runners/{runnerId}/dispatch/reject", notImplemented)

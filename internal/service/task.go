@@ -577,7 +577,7 @@ func (s *TaskServiceImpl) ReleaseTask(ctx context.Context, projectId, taskId, ru
 // AckDispatch acknowledges that a runner received a pushed dispatch command.
 func (s *TaskServiceImpl) AckDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error) {
 	now := time.Now().UnixMilli()
-	ok, err := s.storage.AckDispatchLease(ctx, projectId, taskId, runnerId, now)
+	ok, err := s.storage.AckDispatchLease(ctx, projectId, taskId, runnerId, leaseId, now)
 	resp := &types.DispatchAckResponse{Success: ok, ProjectID: projectId, TaskID: taskId, RunnerID: runnerId, LeaseID: leaseId}
 	if err != nil {
 		return resp, fmt.Errorf("storage ack dispatch lease: %w", err)
@@ -596,13 +596,27 @@ func (s *TaskServiceImpl) RejectDispatch(ctx context.Context, projectId, taskId,
 	if err != nil {
 		return nil, fmt.Errorf("marshal dispatch rejection reason: %w", err)
 	}
-	ok, err := s.storage.RejectDispatchLease(ctx, projectId, taskId, runnerId, now, string(encodedReason))
+	ok, err := s.storage.RejectDispatchLease(ctx, projectId, taskId, runnerId, leaseId, now, string(encodedReason))
 	resp := &types.DispatchRejectResponse{Success: ok, ProjectID: projectId, TaskID: taskId, RunnerID: runnerId, LeaseID: leaseId, Reason: reason}
 	if err != nil {
 		return resp, fmt.Errorf("storage reject dispatch lease: %w", err)
 	}
 	if !ok {
 		resp.Error = "dispatch lease not found or not rejectable"
+		return resp, api.ErrNotFound
+	}
+	return resp, nil
+}
+
+// ReleaseDispatch explicitly releases/finalizes a dispatch lease owned by a runner.
+func (s *TaskServiceImpl) ReleaseDispatch(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error) {
+	ok, err := s.storage.ReleaseDispatchLease(ctx, projectId, taskId, runnerId)
+	resp := &types.DispatchReleaseResponse{Success: ok, ProjectID: projectId, TaskID: taskId, RunnerID: runnerId}
+	if err != nil {
+		return resp, fmt.Errorf("storage release dispatch lease: %w", err)
+	}
+	if !ok {
+		resp.Error = "dispatch lease not found"
 		return resp, api.ErrNotFound
 	}
 	return resp, nil

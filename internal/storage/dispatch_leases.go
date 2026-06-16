@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -18,6 +20,7 @@ const (
 type DispatchLeaseCreate struct {
 	ProjectID         string
 	TaskID            string
+	LeaseID           string
 	AssignedRunnerID  string
 	AssignedMachineID string
 	PushedAt          int64
@@ -27,6 +30,7 @@ type DispatchLeaseCreate struct {
 type DispatchLeaseRow struct {
 	ProjectID         string
 	TaskID            string
+	LeaseID           string
 	AssignedRunnerID  string
 	AssignedMachineID string
 	State             string
@@ -38,11 +42,19 @@ type DispatchLeaseRow struct {
 }
 
 func (s *StorageLayer) CreateDispatchLease(ctx context.Context, in DispatchLeaseCreate) (*DispatchLeaseRow, bool, error) {
+	if in.LeaseID == "" {
+		leaseID, err := generateDispatchLeaseID()
+		if err != nil {
+			return nil, false, err
+		}
+		in.LeaseID = leaseID
+	}
 	result, err := s.db.ExecContext(ctx, `
 		INSERT INTO task_dispatch_leases
-		  (project_id, task_id, assigned_runner_id, assigned_machine_id, state, pushed_at, acked_at, rejected_at, last_error, expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, 0, 0, '', ?)
+		  (project_id, task_id, lease_id, assigned_runner_id, assigned_machine_id, state, pushed_at, acked_at, rejected_at, last_error, expires_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0, '', ?)
 		ON CONFLICT(project_id, task_id) DO UPDATE SET
+		  lease_id = excluded.lease_id,
 		  assigned_runner_id = excluded.assigned_runner_id,
 		  assigned_machine_id = excluded.assigned_machine_id,
 		  state = excluded.state,
@@ -52,7 +64,7 @@ func (s *StorageLayer) CreateDispatchLease(ctx context.Context, in DispatchLease
 		  last_error = '',
 		  expires_at = excluded.expires_at
 		WHERE task_dispatch_leases.state IN (?, ?) OR task_dispatch_leases.expires_at < ?`,
-		in.ProjectID, in.TaskID, in.AssignedRunnerID, in.AssignedMachineID, DispatchLeaseStatePushed, in.PushedAt, in.ExpiresAt,
+		in.ProjectID, in.TaskID, in.LeaseID, in.AssignedRunnerID, in.AssignedMachineID, DispatchLeaseStatePushed, in.PushedAt, in.ExpiresAt,
 		DispatchLeaseStateRejected, DispatchLeaseStateExpired, in.PushedAt,
 	)
 	if err != nil {
@@ -72,10 +84,10 @@ func (s *StorageLayer) CreateDispatchLease(ctx context.Context, in DispatchLease
 func (s *StorageLayer) GetDispatchLeaseRow(ctx context.Context, projectID, taskID string) (*DispatchLeaseRow, error) {
 	var row DispatchLeaseRow
 	err := s.db.QueryRowContext(ctx, `
-		SELECT project_id, task_id, assigned_runner_id, assigned_machine_id, state,
+		SELECT project_id, task_id, lease_id, assigned_runner_id, assigned_machine_id, state,
 		       pushed_at, acked_at, rejected_at, last_error, expires_at
 		FROM task_dispatch_leases WHERE project_id = ? AND task_id = ?`, projectID, taskID).Scan(
-		&row.ProjectID, &row.TaskID, &row.AssignedRunnerID, &row.AssignedMachineID, &row.State,
+		&row.ProjectID, &row.TaskID, &row.LeaseID, &row.AssignedRunnerID, &row.AssignedMachineID, &row.State,
 		&row.PushedAt, &row.AckedAt, &row.RejectedAt, &row.LastError, &row.ExpiresAt,
 	)
 	if err == sql.ErrNoRows {
@@ -87,12 +99,20 @@ func (s *StorageLayer) GetDispatchLeaseRow(ctx context.Context, projectID, taskI
 	return &row, nil
 }
 
-func (s *StorageLayer) AckDispatchLease(ctx context.Context, projectID, taskID, runnerID string, ackedAt int64) (bool, error) {
+func generateDispatchLeaseID() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("generate dispatch lease id: %w", err)
+	}
+	return "dl_" + hex.EncodeToString(b[:]), nil
+}
+
+func (s *StorageLayer) AckDispatchLease(ctx context.Context, projectID, taskID, runnerID, leaseID string, ackedAt int64) (bool, error) {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE task_dispatch_leases
 		SET state = ?, acked_at = ?, last_error = ''
-		WHERE project_id = ? AND task_id = ? AND assigned_runner_id = ? AND state = ? AND expires_at >= ?`,
-		DispatchLeaseStateAcked, ackedAt, projectID, taskID, runnerID, DispatchLeaseStatePushed, ackedAt,
+		WHERE project_id = ? AND task_id = ? AND assigned_runner_id = ? AND lease_id = ? AND state = ? AND expires_at >= ?`,
+		DispatchLeaseStateAcked, ackedAt, projectID, taskID, runnerID, leaseID, DispatchLeaseStatePushed, ackedAt,
 	)
 	if err != nil {
 		return false, fmt.Errorf("ack dispatch lease: %w", err)
@@ -104,12 +124,12 @@ func (s *StorageLayer) AckDispatchLease(ctx context.Context, projectID, taskID, 
 	return rows > 0, nil
 }
 
-func (s *StorageLayer) RejectDispatchLease(ctx context.Context, projectID, taskID, runnerID string, rejectedAt int64, lastError string) (bool, error) {
+func (s *StorageLayer) RejectDispatchLease(ctx context.Context, projectID, taskID, runnerID, leaseID string, rejectedAt int64, lastError string) (bool, error) {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE task_dispatch_leases
 		SET state = ?, rejected_at = ?, last_error = ?
-		WHERE project_id = ? AND task_id = ? AND assigned_runner_id = ? AND state = ? AND expires_at >= ?`,
-		DispatchLeaseStateRejected, rejectedAt, lastError, projectID, taskID, runnerID, DispatchLeaseStatePushed, rejectedAt,
+		WHERE project_id = ? AND task_id = ? AND assigned_runner_id = ? AND lease_id = ? AND state = ? AND expires_at >= ?`,
+		DispatchLeaseStateRejected, rejectedAt, lastError, projectID, taskID, runnerID, leaseID, DispatchLeaseStatePushed, rejectedAt,
 	)
 	if err != nil {
 		return false, fmt.Errorf("reject dispatch lease: %w", err)
@@ -232,6 +252,8 @@ func (s *StorageLayer) ListPlacementReasons(ctx context.Context, projectID, task
 
 func dispatchLeaseFromRow(row *DispatchLeaseRow) *types.DispatchLease {
 	return &types.DispatchLease{
+		LeaseID:           row.LeaseID,
+		ID:                row.LeaseID,
 		ProjectID:         row.ProjectID,
 		TaskID:            row.TaskID,
 		AssignedRunnerID:  row.AssignedRunnerID,
@@ -266,7 +288,7 @@ func (s *StorageLayer) ListExpiredDispatchLeases(ctx context.Context, projectID 
 		limit = 100
 	}
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT project_id, task_id, assigned_runner_id, assigned_machine_id, state,
+		SELECT project_id, task_id, lease_id, assigned_runner_id, assigned_machine_id, state,
 		       pushed_at, acked_at, rejected_at, last_error, expires_at
 		FROM task_dispatch_leases
 		WHERE project_id = ? AND expires_at < ? AND state IN (?, ?)
@@ -280,7 +302,7 @@ func (s *StorageLayer) ListExpiredDispatchLeases(ctx context.Context, projectID 
 	var leases []DispatchLeaseRow
 	for rows.Next() {
 		var row DispatchLeaseRow
-		if err := rows.Scan(&row.ProjectID, &row.TaskID, &row.AssignedRunnerID, &row.AssignedMachineID, &row.State, &row.PushedAt, &row.AckedAt, &row.RejectedAt, &row.LastError, &row.ExpiresAt); err != nil {
+		if err := rows.Scan(&row.ProjectID, &row.TaskID, &row.LeaseID, &row.AssignedRunnerID, &row.AssignedMachineID, &row.State, &row.PushedAt, &row.AckedAt, &row.RejectedAt, &row.LastError, &row.ExpiresAt); err != nil {
 			return nil, fmt.Errorf("scan expired dispatch lease: %w", err)
 		}
 		leases = append(leases, row)

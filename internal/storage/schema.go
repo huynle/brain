@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 20
+const CurrentSchemaVersion = 21
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -161,6 +161,7 @@ const createTaskDispatchLeasesTable = `
 CREATE TABLE IF NOT EXISTS task_dispatch_leases (
   project_id TEXT NOT NULL,
   task_id TEXT NOT NULL,
+  lease_id TEXT NOT NULL DEFAULT '',
   assigned_runner_id TEXT NOT NULL,
   assigned_machine_id TEXT NOT NULL DEFAULT '',
   state TEXT NOT NULL,
@@ -831,6 +832,28 @@ func migrateSchema(db *sql.DB) error {
 		for _, stmt := range placementReasonIndexes {
 			if _, err := db.Exec(stmt); err != nil {
 				return fmt.Errorf("migrate v20 (task_placement_reasons indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 21 {
+		// v21: add stable lease IDs to dispatch leases for ack/reject validation.
+		if exists, err := tableExists(db, "task_dispatch_leases"); err != nil {
+			return fmt.Errorf("migrate v21 (inspect task_dispatch_leases): %w", err)
+		} else if exists {
+			hasLeaseID, err := tableColumnExists(db, "task_dispatch_leases", "lease_id")
+			if err != nil {
+				return fmt.Errorf("migrate v21 (inspect lease_id): %w", err)
+			}
+			if !hasLeaseID {
+				if _, err := db.Exec("ALTER TABLE task_dispatch_leases ADD COLUMN lease_id TEXT NOT NULL DEFAULT ''"); err != nil {
+					if !isDuplicateColumnError(err) {
+						return fmt.Errorf("migrate v21 (add lease_id): %w", err)
+					}
+				}
+				if _, err := db.Exec("UPDATE task_dispatch_leases SET lease_id = 'legacy-' || project_id || '-' || task_id WHERE lease_id = ''"); err != nil {
+					return fmt.Errorf("migrate v21 (backfill lease_id): %w", err)
+				}
 			}
 		}
 	}

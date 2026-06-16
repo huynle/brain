@@ -3,6 +3,7 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -84,6 +85,9 @@ type mockClient struct {
 
 	rejectErr   error
 	rejectCalls []dispatchRejectCall
+
+	releaseDispatchErr   error
+	releaseDispatchCalls []dispatchReleaseCall
 }
 
 type nextTaskCall struct {
@@ -139,6 +143,12 @@ type dispatchRejectCall struct {
 	TaskID    string
 	LeaseID   string
 	Reason    types.DispatchRejectReason
+}
+
+type dispatchReleaseCall struct {
+	RunnerID  string
+	ProjectID string
+	TaskID    string
 }
 
 func newMockClient() *mockClient {
@@ -227,6 +237,13 @@ func (m *mockClient) RejectDispatch(ctx context.Context, runnerID, projectID, ta
 	defer m.mu.Unlock()
 	m.rejectCalls = append(m.rejectCalls, dispatchRejectCall{RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID, Reason: reason})
 	return &types.DispatchRejectResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID, Reason: reason}, m.rejectErr
+}
+
+func (m *mockClient) ReleaseDispatch(ctx context.Context, runnerID, projectID, taskID string) (*types.DispatchReleaseResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.releaseDispatchCalls = append(m.releaseDispatchCalls, dispatchReleaseCall{RunnerID: runnerID, ProjectID: projectID, TaskID: taskID})
+	return &types.DispatchReleaseResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID}, m.releaseDispatchErr
 }
 
 func (m *mockClient) UpdateTaskStatus(ctx context.Context, taskPath, status string) error {
@@ -350,6 +367,14 @@ func (m *mockClient) getRejectCalls() []dispatchRejectCall {
 	defer m.mu.Unlock()
 	result := make([]dispatchRejectCall, len(m.rejectCalls))
 	copy(result, m.rejectCalls)
+	return result
+}
+
+func (m *mockClient) getReleaseDispatchCalls() []dispatchReleaseCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]dispatchReleaseCall, len(m.releaseDispatchCalls))
+	copy(result, m.releaseDispatchCalls)
 	return result
 }
 
@@ -1137,6 +1162,100 @@ func TestTaskRunner_PassiveDispatchCommandAcksAndSpawnsWithoutPollingNext(t *tes
 	}
 	if spawns[0].TaskID != "task1" {
 		t.Fatalf("spawned task ID = %q, want task1", spawns[0].TaskID)
+	}
+}
+
+func TestTaskRunner_DispatchSpawnFailureReleasesDispatchLease(t *testing.T) {
+	client := newMockClient()
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+	executor := newMockExecutor()
+	executor.spawnErr = errors.New("spawn failed")
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless, Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr})
+
+	tr.handleCommand(context.Background(), RunnerCommand{Type: CommandDispatch, ProjectID: "proj-a", TaskID: "task1", LeaseID: "lease-1"})
+
+	if got := len(client.getAckCalls()); got != 1 {
+		t.Fatalf("dispatch command should ack before spawn, got %d ack calls", got)
+	}
+	releases := client.getReleaseDispatchCalls()
+	if len(releases) != 1 {
+		t.Fatalf("spawn failure should release dispatch lease exactly once, got %d", len(releases))
+	}
+	if releases[0].ProjectID != "proj-a" || releases[0].TaskID != "task1" {
+		t.Fatalf("release dispatch call = %+v", releases[0])
+	}
+}
+
+func TestTaskRunner_TaskCompletionReleasesDispatchLease(t *testing.T) {
+	client := newMockClient()
+	processMgr := newMockProcessMgr()
+	tr := newTestRunner(client, newMockExecutor(), processMgr, newMockStateMgr())
+	task := RunningTask{ID: "task1", Path: "projects/proj-a/task/task1.md", ProjectID: "proj-a"}
+	if err := processMgr.Add("task1", task, newMockProcess(100)); err != nil {
+		t.Fatalf("add process: %v", err)
+	}
+	processMgr.completions["task1"] = CompletionCompleted
+
+	tr.checkRunningTasks(context.Background())
+
+	releases := client.getReleaseDispatchCalls()
+	if len(releases) != 1 {
+		t.Fatalf("task completion should release dispatch lease exactly once, got %d", len(releases))
+	}
+}
+
+func TestTaskRunner_SchedulerDispatchPayloadParsesAcksAndSpawns(t *testing.T) {
+	client := newMockClient()
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	payload := []byte(`{
+		"type":"dispatch",
+		"projectId":"proj-a",
+		"taskId":"task1",
+		"leaseId":"lease-123",
+		"lease":{"id":"lease-123","leaseId":"lease-123","lease_id":"lease-123","expires_at":4102444800000},
+		"expiresAt":4102444800000
+	}`)
+	var cmd RunnerCommand
+	if err := json.Unmarshal(payload, &cmd); err != nil {
+		t.Fatalf("unmarshal scheduler dispatch payload: %v", err)
+	}
+	if cmd.LeaseID != "lease-123" || cmd.ProjectID != "proj-a" || cmd.TaskID != "task1" {
+		t.Fatalf("parsed command = %#v", cmd)
+	}
+
+	tr.handleCommand(context.Background(), cmd)
+
+	acks := client.getAckCalls()
+	if len(acks) != 1 {
+		t.Fatalf("acks = %d, want 1", len(acks))
+	}
+	if acks[0].LeaseID != "lease-123" || acks[0].ProjectID != "proj-a" || acks[0].TaskID != "task1" {
+		t.Fatalf("ack call = %#v", acks[0])
+	}
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 || spawns[0].TaskID != "task1" {
+		t.Fatalf("spawns = %#v, want task1", spawns)
 	}
 }
 

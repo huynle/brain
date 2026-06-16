@@ -566,6 +566,25 @@ func (c *APIClient) RejectDispatch(ctx context.Context, runnerID, projectID, tas
 	return &result, nil
 }
 
+// ReleaseDispatch explicitly releases/finalizes a pushed dispatch lease.
+func (c *APIClient) ReleaseDispatch(ctx context.Context, runnerID, projectID, taskID string) (*types.DispatchReleaseResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/runners/%s/dispatch/release", runnerID)
+	body := map[string]string{"projectId": projectID, "taskId": taskID}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("release dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.DispatchReleaseResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode dispatch release response: %w", err)
+	}
+	return &result, nil
+}
+
 // RenewClaim extends the lease on a claimed task.
 // Returns nil on success, or an error if the claim doesn't exist, is expired,
 // or is owned by a different runner. The caller should treat any error as a

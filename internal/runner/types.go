@@ -526,6 +526,7 @@ func (c *RunnerCommand) UnmarshalJSON(data []byte) error {
 			var lease struct {
 				ID        string `json:"id"`
 				LeaseID   string `json:"leaseId"`
+				LeaseIDUS string `json:"lease_id"`
 				ExpiresAt int64  `json:"expires_at"`
 			}
 			if err := json.Unmarshal(raw.Lease, &lease); err != nil {
@@ -540,6 +541,11 @@ func (c *RunnerCommand) UnmarshalJSON(data []byte) error {
 				c.Lease = lease.LeaseID
 				if c.LeaseID == "" {
 					c.LeaseID = lease.LeaseID
+				}
+			} else if lease.LeaseIDUS != "" {
+				c.Lease = lease.LeaseIDUS
+				if c.LeaseID == "" {
+					c.LeaseID = lease.LeaseIDUS
 				}
 			}
 			if c.ExpiresAt == "" && lease.ExpiresAt > 0 {

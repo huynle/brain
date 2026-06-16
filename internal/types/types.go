@@ -159,6 +159,8 @@ const (
 
 // DispatchLease stores Brain-owned push dispatch state for a task assignment.
 type DispatchLease struct {
+	LeaseID           string `json:"leaseId"`
+	ID                string `json:"id,omitempty"`
 	ProjectID         string `json:"project_id"`
 	TaskID            string `json:"task_id"`
 	AssignedRunnerID  string `json:"assigned_runner_id"`
@@ -212,6 +214,15 @@ type DispatchRejectResponse struct {
 	RunnerID  string               `json:"runnerId"`
 	Reason    DispatchRejectReason `json:"reason"`
 	Error     string               `json:"error,omitempty"`
+}
+
+// DispatchReleaseResponse reports explicit release/finalization of a dispatch lease.
+type DispatchReleaseResponse struct {
+	Success   bool   `json:"success"`
+	ProjectID string `json:"projectId"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	Error     string `json:"error,omitempty"`
 }
 
 // PlacementReason stores scheduler placement decision details independently from

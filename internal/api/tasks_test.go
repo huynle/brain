@@ -30,6 +30,7 @@ type mockTaskService struct {
 	renewClaimFunc       func(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
 	ackDispatchFunc      func(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error)
 	rejectDispatchFunc   func(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
+	releaseDispatchFunc  func(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error)
 	getClaimStatusFunc   func(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
 	getMultiTaskStatusFn func(ctx context.Context, projectId string, req types.MultiTaskStatusRequest) (*types.MultiTaskStatusResponse, error)
 	getFeaturesFunc      func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
@@ -117,6 +118,13 @@ func (m *mockTaskService) RejectDispatch(ctx context.Context, projectId, taskId,
 		return m.rejectDispatchFunc(ctx, projectId, taskId, runnerId, leaseId, reason)
 	}
 	return nil, fmt.Errorf("rejectDispatchFunc not set")
+}
+
+func (m *mockTaskService) ReleaseDispatch(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error) {
+	if m.releaseDispatchFunc != nil {
+		return m.releaseDispatchFunc(ctx, projectId, taskId, runnerId)
+	}
+	return &types.DispatchReleaseResponse{Success: true, ProjectID: projectId, TaskID: taskId, RunnerID: runnerId}, nil
 }
 
 func (m *mockTaskService) GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error) {
@@ -273,6 +281,7 @@ func newTaskTestRouter(taskMock *mockTaskService, runnerMock *mockRunnerService)
 		r.Get("/", h.HandleListProjects)
 		r.Post("/runners/{runnerId}/dispatch/ack", h.HandleAckDispatch)
 		r.Post("/runners/{runnerId}/dispatch/reject", h.HandleRejectDispatch)
+		r.Post("/runners/{runnerId}/dispatch/release", h.HandleReleaseDispatch)
 
 		// Runner routes (must be before {projectId} wildcard)
 		r.Post("/runner/pause/{projectId}", h.HandlePauseProject)

@@ -17,16 +17,16 @@ func TestTaskServiceAckDispatchLeaseMarksAcked(t *testing.T) {
 	svc, store, brainDir := newTestTaskService(t)
 	createProjectDir(t, brainDir, "brain-api")
 
-	_, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "task-001", AssignedRunnerID: "runner-123", PushedAt: time.Now().UnixMilli(), ExpiresAt: time.Now().Add(time.Minute).UnixMilli()})
+	createdLease, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "task-001", AssignedRunnerID: "runner-123", PushedAt: time.Now().UnixMilli(), ExpiresAt: time.Now().Add(time.Minute).UnixMilli()})
 	if err != nil || !ok {
 		t.Fatalf("CreateDispatchLease ok=%v err=%v", ok, err)
 	}
 
-	resp, err := svc.AckDispatch(ctx, "brain-api", "task-001", "runner-123", "lease-abc")
+	resp, err := svc.AckDispatch(ctx, "brain-api", "task-001", "runner-123", createdLease.LeaseID)
 	if err != nil {
 		t.Fatalf("AckDispatch() error = %v", err)
 	}
-	if !resp.Success || resp.LeaseID != "lease-abc" || resp.ProjectID != "brain-api" || resp.TaskID != "task-001" || resp.RunnerID != "runner-123" {
+	if !resp.Success || resp.LeaseID != createdLease.LeaseID || resp.ProjectID != "brain-api" || resp.TaskID != "task-001" || resp.RunnerID != "runner-123" {
 		t.Fatalf("response = %+v", resp)
 	}
 	lease, err := store.GetDispatchLeaseRow(ctx, "brain-api", "task-001")
@@ -43,13 +43,13 @@ func TestTaskServiceRejectDispatchLeaseRecordsStructuredReason(t *testing.T) {
 	svc, store, brainDir := newTestTaskService(t)
 	createProjectDir(t, brainDir, "brain-api")
 
-	_, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "task-001", AssignedRunnerID: "runner-123", PushedAt: time.Now().UnixMilli(), ExpiresAt: time.Now().Add(time.Minute).UnixMilli()})
+	createdLease, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "task-001", AssignedRunnerID: "runner-123", PushedAt: time.Now().UnixMilli(), ExpiresAt: time.Now().Add(time.Minute).UnixMilli()})
 	if err != nil || !ok {
 		t.Fatalf("CreateDispatchLease ok=%v err=%v", ok, err)
 	}
 
 	reason := types.DispatchRejectReason{Code: "executor_unavailable", Message: "no pi executor", Details: map[string]string{"executor": "pi"}}
-	resp, err := svc.RejectDispatch(ctx, "brain-api", "task-001", "runner-123", "lease-abc", reason)
+	resp, err := svc.RejectDispatch(ctx, "brain-api", "task-001", "runner-123", createdLease.LeaseID, reason)
 	if err != nil {
 		t.Fatalf("RejectDispatch() error = %v", err)
 	}
@@ -79,12 +79,16 @@ func TestTaskServiceAckRejectMissingOrMismatchedLease(t *testing.T) {
 	if _, err := svc.AckDispatch(ctx, "brain-api", "missing", "runner-123", "lease-abc"); err != api.ErrNotFound {
 		t.Fatalf("AckDispatch missing err = %v, want ErrNotFound", err)
 	}
-	_, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "task-001", AssignedRunnerID: "runner-other", PushedAt: time.Now().UnixMilli(), ExpiresAt: time.Now().Add(time.Minute).UnixMilli()})
+	createdLease, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "task-001", AssignedRunnerID: "runner-other", PushedAt: time.Now().UnixMilli(), ExpiresAt: time.Now().Add(time.Minute).UnixMilli()})
 	if err != nil || !ok {
 		t.Fatalf("CreateDispatchLease ok=%v err=%v", ok, err)
 	}
-	_, err = svc.RejectDispatch(ctx, "brain-api", "task-001", "runner-123", "lease-abc", types.DispatchRejectReason{Code: "busy"})
-	if err != api.ErrConflict && !strings.Contains(err.Error(), "not found") {
-		t.Fatalf("RejectDispatch mismatched err = %v, want conflict or not found", err)
+	_, err = svc.RejectDispatch(ctx, "brain-api", "task-001", "runner-other", "wrong-lease", types.DispatchRejectReason{Code: "busy"})
+	if err != api.ErrNotFound && !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("RejectDispatch mismatched lease err = %v, want not found", err)
+	}
+	_, err = svc.RejectDispatch(ctx, "brain-api", "task-001", "runner-123", createdLease.LeaseID, types.DispatchRejectReason{Code: "busy"})
+	if err != api.ErrNotFound && !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("RejectDispatch mismatched runner err = %v, want not found", err)
 	}
 }

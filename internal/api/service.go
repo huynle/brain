@@ -197,6 +197,9 @@ type TaskService interface {
 	// RejectDispatch rejects a pushed dispatch lease with a structured reason.
 	RejectDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
 
+	// ReleaseDispatch explicitly releases/finalizes a pushed dispatch lease.
+	ReleaseDispatch(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error)
+
 	// DispatchTask creates a pre-claim for direct dispatch to a target runner (60-second expiry).
 	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error)
 

@@ -61,6 +61,7 @@ type Client interface {
 	ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error
 	AckDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string) (*types.DispatchAckResponse, error)
 	RejectDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
+	ReleaseDispatch(ctx context.Context, runnerID, projectID, taskID string) (*types.DispatchReleaseResponse, error)
 	UpdateTaskStatus(ctx context.Context, taskPath, status string) error
 	AppendToTask(ctx context.Context, taskPath, content string) error
 	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
@@ -539,6 +540,24 @@ func (tr *TaskRunner) ackDispatch(ctx context.Context, cmd RunnerCommand, leaseI
 	return err == nil && (resp == nil || resp.Success)
 }
 
+func (tr *TaskRunner) releaseDispatchLease(ctx context.Context, projectID, taskID string) {
+	if tr.client == nil || projectID == "" || taskID == "" {
+		return
+	}
+	if _, err := tr.client.ReleaseDispatch(ctx, tr.runnerID, projectID, taskID); err != nil {
+		tr.logger.Printf("release dispatch lease failed for %s/%s: %v", projectID, taskID, err)
+	}
+}
+
+func (tr *TaskRunner) releaseDispatchLeasesForRunningTasks(ctx context.Context) {
+	if tr.processMgr == nil {
+		return
+	}
+	for _, info := range tr.processMgr.GetAll() {
+		tr.releaseDispatchLease(ctx, info.Task.ProjectID, info.Task.ID)
+	}
+}
+
 // handleCommand processes a server-pushed command received via the runner SSE stream.
 func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 	slog.Info("handling runner command", "type", cmd.Type, "runner_id", tr.runnerID)
@@ -640,6 +659,7 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 			break
 		}
 		if err := tr.claimAndSpawnWithWorkdir(ctx, task, cmd.ProjectID, workdir); err != nil {
+			tr.releaseDispatchLease(ctx, cmd.ProjectID, cmd.TaskID)
 			tr.logger.Printf("claim and spawn dispatched task failed for %s/%s: %v", cmd.ProjectID, cmd.TaskID, err)
 		}
 
@@ -689,6 +709,9 @@ func (tr *TaskRunner) Stop() error {
 		tr.sseListener.Stop()
 		slog.Info("SSE listener stopped")
 	}
+
+	// Release/finalize dispatch leases before killing running tasks.
+	tr.releaseDispatchLeasesForRunningTasks(context.Background())
 
 	// Clean up tmux windows for all running tasks, then kill processes
 	if tr.processMgr != nil {
@@ -1620,6 +1643,9 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		FromStatus: "in_progress",
 		ToStatus:   apiStatus,
 	})
+
+	// Release/finalize any dispatch lease now that the task lifecycle is terminal.
+	tr.releaseDispatchLease(ctx, task.ProjectID, taskID)
 
 	// Update API status
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, apiStatus); err != nil {

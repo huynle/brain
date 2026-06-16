@@ -882,6 +882,96 @@ func TestGetNext_ReturnsHighestPriority(t *testing.T) {
 	}
 }
 
+func TestGetNext_SkipsActiveDispatchLeaseOwnedByOtherRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	insertTaskNote(t, store, "high1111", "High Task", "pending", "high", "proj", map[string]interface{}{})
+	insertTaskNote(t, store, "low11111", "Low Task", "pending", "low", "proj", map[string]interface{}{})
+	_, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+		ProjectID:        "proj",
+		TaskID:           "high1111",
+		AssignedRunnerID: "runner-assigned",
+		PushedAt:         now.UnixMilli(),
+		ExpiresAt:        now.Add(time.Minute).UnixMilli(),
+	})
+	if err != nil || !ok {
+		t.Fatalf("CreateDispatchLease ok=%v err=%v", ok, err)
+	}
+
+	next, err := svc.GetNext(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-other"})
+	if err != nil {
+		t.Fatalf("GetNext failed: %v", err)
+	}
+	if next == nil {
+		t.Fatal("expected non-nil task")
+	}
+	if next.ID != "low11111" {
+		t.Errorf("next.ID = %q, want %q", next.ID, "low11111")
+	}
+}
+
+func TestGetNext_AllowsActiveDispatchLeaseOwnedByRequestingRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	insertTaskNote(t, store, "high1111", "High Task", "pending", "high", "proj", map[string]interface{}{})
+	insertTaskNote(t, store, "low11111", "Low Task", "pending", "low", "proj", map[string]interface{}{})
+	_, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+		ProjectID:        "proj",
+		TaskID:           "high1111",
+		AssignedRunnerID: "runner-assigned",
+		PushedAt:         now.UnixMilli(),
+		ExpiresAt:        now.Add(time.Minute).UnixMilli(),
+	})
+	if err != nil || !ok {
+		t.Fatalf("CreateDispatchLease ok=%v err=%v", ok, err)
+	}
+
+	next, err := svc.GetNext(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-assigned"})
+	if err != nil {
+		t.Fatalf("GetNext failed: %v", err)
+	}
+	if next == nil {
+		t.Fatal("expected non-nil task")
+	}
+	if next.ID != "high1111" {
+		t.Errorf("next.ID = %q, want %q", next.ID, "high1111")
+	}
+}
+
+func TestGetNext_IgnoresExpiredDispatchLeaseForOtherRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	insertTaskNote(t, store, "high1111", "High Task", "pending", "high", "proj", map[string]interface{}{})
+	insertTaskNote(t, store, "low11111", "Low Task", "pending", "low", "proj", map[string]interface{}{})
+	_, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+		ProjectID:        "proj",
+		TaskID:           "high1111",
+		AssignedRunnerID: "runner-assigned",
+		PushedAt:         now.Add(-2 * time.Minute).UnixMilli(),
+		ExpiresAt:        now.Add(-time.Minute).UnixMilli(),
+	})
+	if err != nil || !ok {
+		t.Fatalf("CreateDispatchLease ok=%v err=%v", ok, err)
+	}
+
+	next, err := svc.GetNext(ctx, "proj", &api.TaskFilterOptions{RunnerID: "runner-other"})
+	if err != nil {
+		t.Fatalf("GetNext failed: %v", err)
+	}
+	if next == nil {
+		t.Fatal("expected non-nil task")
+	}
+	if next.ID != "high1111" {
+		t.Errorf("next.ID = %q, want %q", next.ID, "high1111")
+	}
+}
+
 func TestGetNext_NoTasks(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
 	ctx := context.Background()
@@ -941,6 +1031,112 @@ func TestClaimTask_Conflict(t *testing.T) {
 	}
 	if resp.ClaimedBy != "runner-1" {
 		t.Errorf("ClaimedBy = %q, want %q", resp.ClaimedBy, "runner-1")
+	}
+}
+
+func TestDispatchTaskCreatesLeaseAndBlocksOtherRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	resp, err := svc.DispatchTask(ctx, "proj", "task1", "runner-assigned")
+	if err != nil {
+		t.Fatalf("DispatchTask failed: %v", err)
+	}
+	if resp == nil {
+		t.Fatal("DispatchTask response is nil")
+	}
+	if !resp.Success {
+		t.Fatalf("Success = false, want true: %+v", resp)
+	}
+	if resp.LeaseID == "" {
+		t.Fatal("LeaseID = empty, want dispatch lease id")
+	}
+	if resp.ExpiresAt == "" {
+		t.Fatal("ExpiresAt = empty, want lease expiry")
+	}
+
+	lease, err := store.GetDispatchLeaseRow(ctx, "proj", "task1")
+	if err != nil {
+		t.Fatalf("GetDispatchLeaseRow failed: %v", err)
+	}
+	if lease == nil {
+		t.Fatal("dispatch lease was not persisted")
+	}
+	if lease.LeaseID != resp.LeaseID {
+		t.Errorf("persisted leaseID = %q, want response leaseID %q", lease.LeaseID, resp.LeaseID)
+	}
+	if lease.AssignedRunnerID != "runner-assigned" {
+		t.Errorf("AssignedRunnerID = %q, want runner-assigned", lease.AssignedRunnerID)
+	}
+
+	claimResp, err := svc.ClaimTask(ctx, "proj", "task1", "runner-other")
+	if err != api.ErrConflict {
+		t.Fatalf("other runner ClaimTask err = %v, want ErrConflict", err)
+	}
+	if claimResp == nil {
+		t.Fatal("expected conflict response")
+	}
+	if claimResp.Success {
+		t.Error("other runner claim Success = true, want false")
+	}
+	if claimResp.ClaimedBy != "runner-assigned" {
+		t.Errorf("other runner ClaimTask ClaimedBy = %q, want runner-assigned", claimResp.ClaimedBy)
+	}
+}
+
+func TestClaimTask_ConflictsWhenActiveDispatchLeaseOwnedByOtherRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	_, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+		ProjectID:        "proj",
+		TaskID:           "task1",
+		AssignedRunnerID: "runner-assigned",
+		PushedAt:         now.UnixMilli(),
+		ExpiresAt:        now.Add(time.Minute).UnixMilli(),
+	})
+	if err != nil || !ok {
+		t.Fatalf("CreateDispatchLease ok=%v err=%v", ok, err)
+	}
+
+	resp, err := svc.ClaimTask(ctx, "proj", "task1", "runner-other")
+	if err != api.ErrConflict {
+		t.Fatalf("expected ErrConflict, got %v", err)
+	}
+	if resp == nil {
+		t.Fatal("expected conflict response")
+	}
+	if resp.Success {
+		t.Error("expected success=false")
+	}
+	if resp.ClaimedBy != "runner-assigned" {
+		t.Errorf("ClaimedBy = %q, want %q", resp.ClaimedBy, "runner-assigned")
+	}
+}
+
+func TestClaimTask_AllowsActiveDispatchLeaseOwnedByRunner(t *testing.T) {
+	svc, store, _ := newTestTaskService(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	_, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+		ProjectID:        "proj",
+		TaskID:           "task1",
+		AssignedRunnerID: "runner-assigned",
+		PushedAt:         now.UnixMilli(),
+		ExpiresAt:        now.Add(time.Minute).UnixMilli(),
+	})
+	if err != nil || !ok {
+		t.Fatalf("CreateDispatchLease ok=%v err=%v", ok, err)
+	}
+
+	resp, err := svc.ClaimTask(ctx, "proj", "task1", "runner-assigned")
+	if err != nil {
+		t.Fatalf("ClaimTask failed: %v", err)
+	}
+	if !resp.Success {
+		t.Error("expected success=true")
 	}
 }
 

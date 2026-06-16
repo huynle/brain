@@ -154,40 +154,43 @@ func (h *Handler) HandleGetTask(w http.ResponseWriter, r *http.Request) {
 // TaskMetadataResponse contains only execution config fields for a task,
 // excluding content/title (which are returned by HandleGetTask).
 type TaskMetadataResponse struct {
-	Path               string                       `json:"path"`
-	Agent              string                       `json:"agent"`
-	Model              string                       `json:"model"`
-	ExecutionMode      string                       `json:"execution_mode"`
-	GitBranch          string                       `json:"git_branch"`
-	GitRemote          string                       `json:"git_remote"`
-	MergePolicy        string                       `json:"merge_policy"`
-	MergeStrategy      string                       `json:"merge_strategy"`
-	MergeTargetBranch  string                       `json:"merge_target_branch"`
-	RemoteBranchPolicy string                       `json:"remote_branch_policy"`
-	CompleteOnIdle     *bool                        `json:"complete_on_idle"`
-	OpenPRBeforeMerge  *bool                        `json:"open_pr_before_merge"`
-	TargetWorkdir      string                       `json:"target_workdir"`
-	ResolvedWorkdir    string                       `json:"resolved_workdir"`
-	DirectPrompt       string                       `json:"direct_prompt"`
-	Executor           string                       `json:"executor"`
-	FeatureID          string                       `json:"feature_id"`
-	FeaturePriority    string                       `json:"feature_priority"`
-	FeatureDependsOn   []string                     `json:"feature_depends_on"`
-	DependsOn          []string                     `json:"depends_on"`
-	ResolvedDeps       []string                     `json:"resolved_deps"`
-	UnresolvedDeps     []string                     `json:"unresolved_deps"`
-	BlockedBy          []string                     `json:"blocked_by"`
-	BlockedByReason    string                       `json:"blocked_by_reason"`
-	WaitingOn          []string                     `json:"waiting_on"`
-	InCycle            bool                         `json:"in_cycle"`
-	Status             string                       `json:"status"`
-	Priority           string                       `json:"priority"`
-	Classification     string                       `json:"classification"`
-	Created            string                       `json:"created"`
-	Tags               []string                     `json:"tags"`
-	Sessions           map[string]types.SessionInfo `json:"sessions"`
-	Env                map[string]string            `json:"env"`
-	Extensions         []string                     `json:"extensions"`
+	Path                string                       `json:"path"`
+	Agent               string                       `json:"agent"`
+	Model               string                       `json:"model"`
+	ExecutionMode       string                       `json:"execution_mode"`
+	GitBranch           string                       `json:"git_branch"`
+	GitRemote           string                       `json:"git_remote"`
+	MergePolicy         string                       `json:"merge_policy"`
+	MergeStrategy       string                       `json:"merge_strategy"`
+	MergeTargetBranch   string                       `json:"merge_target_branch"`
+	RemoteBranchPolicy  string                       `json:"remote_branch_policy"`
+	CompleteOnIdle      *bool                        `json:"complete_on_idle"`
+	OpenPRBeforeMerge   *bool                        `json:"open_pr_before_merge"`
+	TargetWorkdir       string                       `json:"target_workdir"`
+	ResolvedWorkdir     string                       `json:"resolved_workdir"`
+	DirectPrompt        string                       `json:"direct_prompt"`
+	Executor            string                       `json:"executor"`
+	FeatureID           string                       `json:"feature_id"`
+	FeaturePriority     string                       `json:"feature_priority"`
+	FeatureDependsOn    []string                     `json:"feature_depends_on"`
+	DependsOn           []string                     `json:"depends_on"`
+	ResolvedDeps        []string                     `json:"resolved_deps"`
+	UnresolvedDeps      []string                     `json:"unresolved_deps"`
+	BlockedBy           []string                     `json:"blocked_by"`
+	BlockedByReason     string                       `json:"blocked_by_reason"`
+	WaitingOn           []string                     `json:"waiting_on"`
+	InCycle             bool                         `json:"in_cycle"`
+	Status              string                       `json:"status"`
+	Priority            string                       `json:"priority"`
+	Classification      string                       `json:"classification"`
+	Created             string                       `json:"created"`
+	Tags                []string                     `json:"tags"`
+	Sessions            map[string]types.SessionInfo `json:"sessions"`
+	Env                 map[string]string            `json:"env"`
+	Extensions          []string                     `json:"extensions"`
+	DispatchLease       *types.DispatchLease         `json:"dispatch_lease,omitempty"`
+	PlacementReasons    []types.PlacementReason      `json:"placement_reasons,omitempty"`
+	LastPlacementReason *types.PlacementReason       `json:"last_placement_reason,omitempty"`
 }
 
 // HandleGetTaskMetadata handles GET /tasks/{projectId}/{taskId}/metadata.
@@ -211,39 +214,42 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 	}
 
 	resp := TaskMetadataResponse{
-		Path:               task.Path,
-		Agent:              task.Agent,
-		Model:              task.Model,
-		ExecutionMode:      task.ExecutionMode,
-		GitBranch:          task.GitBranch,
-		GitRemote:          task.GitRemote,
-		MergePolicy:        task.MergePolicy,
-		MergeStrategy:      task.MergeStrategy,
-		MergeTargetBranch:  task.MergeTargetBranch,
-		RemoteBranchPolicy: task.RemoteBranchPolicy,
-		CompleteOnIdle:     task.CompleteOnIdle,
-		OpenPRBeforeMerge:  task.OpenPRBeforeMerge,
-		TargetWorkdir:      task.TargetWorkdir,
-		ResolvedWorkdir:    task.ResolvedWorkdir,
-		DirectPrompt:       task.DirectPrompt,
-		Executor:           task.Executor,
-		FeatureID:          task.FeatureID,
-		FeaturePriority:    task.FeaturePriority,
-		FeatureDependsOn:   task.FeatureDependsOn,
-		DependsOn:          task.DependsOn,
-		ResolvedDeps:       task.ResolvedDeps,
-		UnresolvedDeps:     task.UnresolvedDeps,
-		BlockedBy:          task.BlockedBy,
-		BlockedByReason:    task.BlockedByReason,
-		WaitingOn:          task.WaitingOn,
-		InCycle:            task.InCycle,
-		Status:             task.Status,
-		Priority:           task.Priority,
-		Classification:     task.Classification,
-		Created:            task.Created,
-		Sessions:           task.Sessions,
-		Env:                task.Env,
-		Extensions:         task.Extensions,
+		Path:                task.Path,
+		Agent:               task.Agent,
+		Model:               task.Model,
+		ExecutionMode:       task.ExecutionMode,
+		GitBranch:           task.GitBranch,
+		GitRemote:           task.GitRemote,
+		MergePolicy:         task.MergePolicy,
+		MergeStrategy:       task.MergeStrategy,
+		MergeTargetBranch:   task.MergeTargetBranch,
+		RemoteBranchPolicy:  task.RemoteBranchPolicy,
+		CompleteOnIdle:      task.CompleteOnIdle,
+		OpenPRBeforeMerge:   task.OpenPRBeforeMerge,
+		TargetWorkdir:       task.TargetWorkdir,
+		ResolvedWorkdir:     task.ResolvedWorkdir,
+		DirectPrompt:        task.DirectPrompt,
+		Executor:            task.Executor,
+		FeatureID:           task.FeatureID,
+		FeaturePriority:     task.FeaturePriority,
+		FeatureDependsOn:    task.FeatureDependsOn,
+		DependsOn:           task.DependsOn,
+		ResolvedDeps:        task.ResolvedDeps,
+		UnresolvedDeps:      task.UnresolvedDeps,
+		BlockedBy:           task.BlockedBy,
+		BlockedByReason:     task.BlockedByReason,
+		WaitingOn:           task.WaitingOn,
+		InCycle:             task.InCycle,
+		Status:              task.Status,
+		Priority:            task.Priority,
+		Classification:      task.Classification,
+		Created:             task.Created,
+		Sessions:            task.Sessions,
+		Env:                 task.Env,
+		Extensions:          task.Extensions,
+		DispatchLease:       task.DispatchLease,
+		PlacementReasons:    task.PlacementReasons,
+		LastPlacementReason: task.LastPlacementReason,
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
@@ -393,8 +399,8 @@ func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Create pre-claim for target runner (60 second expiry for dispatch)
-	preclaimResp, err := h.tasks.DispatchTask(r.Context(), projectId, taskId, req.TargetRunnerID)
+	// Create dispatch lease and pre-claim for target runner (60 second expiry for dispatch)
+	dispatchResp, err := h.tasks.DispatchTask(r.Context(), projectId, taskId, req.TargetRunnerID)
 	if err != nil {
 		if errors.Is(err, ErrConflict) {
 			WriteJSON(w, http.StatusConflict, map[string]any{
@@ -407,7 +413,7 @@ func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if !preclaimResp.Success {
+	if !dispatchResp.Success {
 		WriteJSON(w, http.StatusConflict, map[string]any{
 			"success": false,
 			"error":   "failed to create pre-claim for target runner",
@@ -420,15 +426,132 @@ func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
 		h.hub.PublishRunnerCommand(req.TargetRunnerID, "dispatch", map[string]string{
 			"taskId":    taskId,
 			"projectId": projectId,
+			"leaseId":   dispatchResp.LeaseID,
+			"lease":     dispatchResp.LeaseID,
+			"expiresAt": dispatchResp.ExpiresAt,
 		})
 	}
 
 	slog.Info("dispatch request", "project", projectId, "task_id", taskId, "target_runner", req.TargetRunnerID)
 
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"success":  true,
-		"runnerId": req.TargetRunnerID,
+		"success":   true,
+		"runnerId":  req.TargetRunnerID,
+		"leaseId":   dispatchResp.LeaseID,
+		"expiresAt": dispatchResp.ExpiresAt,
 	})
+}
+
+func validateDispatchAckRequest(req types.DispatchAckRequest) []types.ValidationDetail {
+	var details []types.ValidationDetail
+	if strings.TrimSpace(req.LeaseID) == "" {
+		details = append(details, types.ValidationDetail{Field: "leaseId", Message: "leaseId is required"})
+	}
+	if strings.TrimSpace(req.ProjectID) == "" {
+		details = append(details, types.ValidationDetail{Field: "projectId", Message: "projectId is required"})
+	}
+	if strings.TrimSpace(req.TaskID) == "" {
+		details = append(details, types.ValidationDetail{Field: "taskId", Message: "taskId is required"})
+	}
+	return details
+}
+
+// HandleAckDispatch handles POST /tasks/runners/{runnerId}/dispatch/ack.
+func (h *Handler) HandleAckDispatch(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	var req types.DispatchAckRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	if details := validateDispatchAckRequest(req); len(details) > 0 {
+		WriteValidationError(w, details)
+		return
+	}
+	resp, err := h.tasks.AckDispatch(r.Context(), req.ProjectID, req.TaskID, runnerID, req.LeaseID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteJSON(w, http.StatusNotFound, resp)
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteJSON(w, http.StatusConflict, resp)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleRejectDispatch handles POST /tasks/runners/{runnerId}/dispatch/reject.
+func (h *Handler) HandleRejectDispatch(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	var req types.DispatchRejectRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	details := validateDispatchAckRequest(types.DispatchAckRequest{LeaseID: req.LeaseID, ProjectID: req.ProjectID, TaskID: req.TaskID})
+	if strings.TrimSpace(req.Reason.Code) == "" {
+		details = append(details, types.ValidationDetail{Field: "reason.code", Message: "reason.code is required"})
+	}
+	if len(details) > 0 {
+		WriteValidationError(w, details)
+		return
+	}
+	resp, err := h.tasks.RejectDispatch(r.Context(), req.ProjectID, req.TaskID, runnerID, req.LeaseID, req.Reason)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteJSON(w, http.StatusNotFound, resp)
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteJSON(w, http.StatusConflict, resp)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleReleaseDispatch handles POST /tasks/runners/{runnerId}/dispatch/release.
+func (h *Handler) HandleReleaseDispatch(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	var req struct {
+		ProjectID string `json:"projectId"`
+		TaskID    string `json:"taskId"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	var details []types.ValidationDetail
+	if strings.TrimSpace(req.ProjectID) == "" {
+		details = append(details, types.ValidationDetail{Field: "projectId", Message: "projectId is required"})
+	}
+	if strings.TrimSpace(req.TaskID) == "" {
+		details = append(details, types.ValidationDetail{Field: "taskId", Message: "taskId is required"})
+	}
+	if len(details) > 0 {
+		WriteValidationError(w, details)
+		return
+	}
+	resp, err := h.tasks.ReleaseDispatch(r.Context(), req.ProjectID, req.TaskID, runnerID)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteJSON(w, http.StatusNotFound, resp)
+			return
+		}
+		if errors.Is(err, ErrConflict) {
+			WriteJSON(w, http.StatusConflict, resp)
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 // HandleRenewClaim handles POST /tasks/{projectId}/{taskId}/renew.

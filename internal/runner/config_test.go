@@ -3,6 +3,7 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -160,6 +161,35 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_SchedulerMetadataEnvOverrides(t *testing.T) {
+	t.Setenv("RUNNER_LABELS", "pool=fast,region=west")
+	t.Setenv("RUNNER_WORKSPACE_ROOTS", "/work/a,/work/b")
+	t.Setenv("RUNNER_RESOURCES", "gpu=2,ssd=true,arch=arm64")
+	t.Setenv("RUNNER_CAPACITY", "memory_gb=64")
+	t.Setenv("RUNNER_DRAINING", "true")
+
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("LoadConfigFrom failed: %v", err)
+	}
+
+	if cfg.Labels["pool"] != "fast" || cfg.Labels["region"] != "west" {
+		t.Fatalf("Labels = %#v, want pool/region", cfg.Labels)
+	}
+	if !reflect.DeepEqual(cfg.WorkspaceRoots, []string{"/work/a", "/work/b"}) {
+		t.Fatalf("WorkspaceRoots = %#v", cfg.WorkspaceRoots)
+	}
+	if cfg.Resources["gpu"] != 2 || cfg.Resources["ssd"] != true || cfg.Resources["arch"] != "arm64" {
+		t.Fatalf("Resources = %#v, want parsed gpu/ssd/arch", cfg.Resources)
+	}
+	if cfg.Capacity["memory_gb"] != 64 {
+		t.Fatalf("Capacity = %#v, want memory_gb=64", cfg.Capacity)
+	}
+	if !cfg.Draining {
+		t.Fatal("Draining = false, want true")
+	}
+}
+
 // ---------------------------------------------------------------------------
 // LoadConfig — YAML file
 // ---------------------------------------------------------------------------
@@ -259,6 +289,46 @@ poll_interval: 45
 	}
 	if cfg.PollInterval != 45 {
 		t.Errorf("PollInterval = %d, want 45 from file", cfg.PollInterval)
+	}
+}
+
+func TestLoadConfig_PassiveDispatchPushEnvOverrides(t *testing.T) {
+	t.Setenv("RUNNER_PASSIVE", "true")
+	t.Setenv("RUNNER_DISPATCH_PUSH", "true")
+
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !cfg.Passive {
+		t.Fatal("Passive = false, want true from RUNNER_PASSIVE")
+	}
+	if !cfg.DispatchPush {
+		t.Fatal("DispatchPush = false, want true from RUNNER_DISPATCH_PUSH")
+	}
+}
+
+func TestLoadConfig_PassiveDispatchPushYAMLFile(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	yamlContent := `passive: true
+dispatch_push: true
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := LoadConfigFrom(configPath)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if !cfg.Passive {
+		t.Fatal("Passive = false, want true from YAML")
+	}
+	if !cfg.DispatchPush {
+		t.Fatal("DispatchPush = false, want true from YAML")
 	}
 }
 

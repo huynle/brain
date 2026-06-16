@@ -135,6 +135,23 @@ type AttachmentService interface {
 	Delete(ctx context.Context, projectID, attachmentID string) (bool, error)
 }
 
+// ProjectPlacementService defines project-level scheduling placement metadata operations.
+type ProjectPlacementService interface {
+	Get(ctx context.Context, projectID string) (*types.ProjectPlacement, error)
+	Put(ctx context.Context, projectID string, placement types.ProjectPlacement) (*types.ProjectPlacement, error)
+}
+
+// SchedulerService exposes scheduler lifecycle status for API visibility.
+type SchedulerService interface {
+	Status() types.SchedulerStatus
+}
+
+// SchedulerVisibilityService exposes persisted scheduler placement artifacts.
+type SchedulerVisibilityService interface {
+	GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error)
+	ListPlacementReasons(ctx context.Context, projectID, taskID string) ([]types.PlacementReason, error)
+}
+
 // TaskFilterOptions holds optional filters for task queries.
 type TaskFilterOptions struct {
 	FeatureIDs        []string
@@ -174,8 +191,17 @@ type TaskService interface {
 	// RenewClaim extends the claim's expiry. Returns ErrNotFound if not claimed or expired.
 	RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
 
-	// DispatchTask creates a pre-claim for direct dispatch to a target runner (60-second expiry).
-	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error)
+	// AckDispatch acknowledges a pushed dispatch lease for a runner.
+	AckDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error)
+
+	// RejectDispatch rejects a pushed dispatch lease with a structured reason.
+	RejectDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
+
+	// ReleaseDispatch explicitly releases/finalizes a pushed dispatch lease.
+	ReleaseDispatch(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error)
+
+	// DispatchTask creates a short-lived dispatch lease for direct dispatch to a target runner.
+	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.DispatchResponse, error)
 
 	// GetClaimStatus returns the claim status of a task.
 	GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)

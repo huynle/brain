@@ -284,8 +284,52 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				})
 			})
 
+			// ─── Scheduler ────────────────────────────────────────
+			r.Route("/scheduler", func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil && o.handler.scheduler != nil {
+					r.Get("/status", o.handler.HandleSchedulerStatus)
+				} else {
+					r.Get("/status", notImplemented)
+				}
+			})
+
+			// ─── Projects ──────────────────────────────────────────
+			r.Route("/projects/{projectId}/placement", func(r chi.Router) {
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.placement != nil {
+						r.Get("/", o.handler.HandleGetProjectPlacement)
+					} else {
+						r.Get("/", notImplemented)
+					}
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*"))
+					if o.handler != nil && o.handler.placement != nil {
+						r.Put("/", o.handler.HandlePutProjectPlacement)
+					} else {
+						r.Put("/", notImplemented)
+					}
+				})
+			})
+
 			// ─── Tasks ───────────────────────────────────────────
 			r.Route("/tasks", func(r chi.Router) {
+				// Runner-scoped dispatch protocol — runner:* scope.
+				// Keep before /{projectId} so "runners" is not parsed as a project ID.
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*"))
+					if o.handler != nil && o.handler.tasks != nil {
+						r.Post("/runners/{runnerId}/dispatch/ack", o.handler.HandleAckDispatch)
+						r.Post("/runners/{runnerId}/dispatch/reject", o.handler.HandleRejectDispatch)
+						r.Post("/runners/{runnerId}/dispatch/release", o.handler.HandleReleaseDispatch)
+					} else {
+						r.Post("/runners/{runnerId}/dispatch/ack", notImplemented)
+						r.Post("/runners/{runnerId}/dispatch/reject", notImplemented)
+					}
+				})
+
 				// Task read operations — read:* scope
 				r.Group(func(r chi.Router) {
 					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
@@ -371,6 +415,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Get("/{taskId}", notImplemented)
 							r.Get("/{taskId}/claim-status", notImplemented)
 							r.Get("/{taskId}/metadata", notImplemented)
+						}
+					})
+
+					// Scheduler visibility (read)
+					r.Group(func(r chi.Router) {
+						r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+						if o.handler != nil && o.handler.schedulerViews != nil {
+							r.Get("/{taskId}/dispatch-lease", o.handler.HandleGetDispatchLease)
+							r.Get("/{taskId}/placement-reasons", o.handler.HandleListPlacementReasons)
+						} else {
+							r.Get("/{taskId}/dispatch-lease", notImplemented)
+							r.Get("/{taskId}/placement-reasons", notImplemented)
 						}
 					})
 

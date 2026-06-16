@@ -283,6 +283,10 @@ func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string, opts *a
 		return nil, err
 	}
 	ready := GetReadyTasks(result)
+	ready, err = s.filterDispatchReservedTasks(ctx, projectId, ready, runnerIDFromOptions(opts))
+	if err != nil {
+		return nil, err
+	}
 	if opts != nil {
 		ready, err = s.applyTaskFilterOptions(ctx, projectId, ready, opts)
 		if err != nil {
@@ -359,6 +363,47 @@ func filterByGeneratedByPrefix(tasks []types.ResolvedTask, prefix string) []type
 	return filtered
 }
 
+func runnerIDFromOptions(opts *api.TaskFilterOptions) string {
+	if opts == nil {
+		return ""
+	}
+	return opts.RunnerID
+}
+
+func (s *TaskServiceImpl) filterDispatchReservedTasks(ctx context.Context, projectID string, tasks []types.ResolvedTask, runnerID string) ([]types.ResolvedTask, error) {
+	if len(tasks) == 0 {
+		return tasks, nil
+	}
+
+	now := time.Now().UnixMilli()
+	filtered := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		lease, err := s.storage.GetDispatchLeaseRow(ctx, projectID, task.ID)
+		if err != nil {
+			return nil, err
+		}
+		if activeDispatchLeaseForOtherRunner(lease, runnerID, now) {
+			continue
+		}
+		filtered = append(filtered, task)
+	}
+	return filtered, nil
+}
+
+func activeDispatchLeaseForOtherRunner(lease *storage.DispatchLeaseRow, runnerID string, now int64) bool {
+	if !isActiveDispatchLease(lease, now) {
+		return false
+	}
+	return runnerID == "" || lease.AssignedRunnerID != runnerID
+}
+
+func isActiveDispatchLease(lease *storage.DispatchLeaseRow, now int64) bool {
+	if lease == nil || lease.ExpiresAt < now {
+		return false
+	}
+	return lease.State == storage.DispatchLeaseStatePushed || lease.State == storage.DispatchLeaseStateAcked
+}
+
 func runnerHasRequiredCapabilities(task types.ResolvedTask, capabilities map[string]bool) bool {
 	for _, required := range task.RequiresCapability {
 		if !capabilities[required] {
@@ -380,6 +425,24 @@ func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, 
 	featureID, err := s.featureIDForTaskClaim(ctx, projectId, taskId)
 	if err != nil {
 		return nil, err
+	}
+
+	lease, err := s.storage.GetDispatchLeaseRow(ctx, projectId, taskId)
+	if err != nil {
+		return nil, err
+	}
+	if activeDispatchLeaseForOtherRunner(lease, runnerId, time.Now().UnixMilli()) {
+		slog.Warn("claim conflict with dispatch lease", "project", projectId, "task_id", taskId, "runner_id", runnerId, "assigned_runner", lease.AssignedRunnerID)
+		stale := false
+		return &types.ClaimResponse{
+			Success:   false,
+			TaskID:    taskId,
+			RunnerID:  runnerId,
+			Error:     "dispatch lease reserved",
+			Message:   fmt.Sprintf("task %s is reserved for runner %s", taskId, lease.AssignedRunnerID),
+			ClaimedBy: lease.AssignedRunnerID,
+			IsStale:   &stale,
+		}, api.ErrConflict
 	}
 
 	ok, existing, err := s.storage.ClaimTask(ctx, projectId, taskId, runnerId, leaseDuration)

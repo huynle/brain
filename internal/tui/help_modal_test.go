@@ -21,7 +21,7 @@ func TestHelpModal_View(t *testing.T) {
 				"Move selection up/down",
 				"Actions:",
 				"Pause/resume project",
-				"Pause/resume all projects",
+				"Pause/resume active project (all on All tab)",
 				"Multi-Select:",
 				"Views:",
 				"h/l",
@@ -189,8 +189,8 @@ func TestHelpModal_View_ContainsPauseShortcuts(t *testing.T) {
 	if !strings.Contains(view, "Pause/resume project") {
 		t.Errorf("View() missing 'Pause/resume project' shortcut\nGot:\n%s", view)
 	}
-	if !strings.Contains(view, "Pause/resume all projects") {
-		t.Errorf("View() missing 'Pause/resume all projects' shortcut\nGot:\n%s", view)
+	if !strings.Contains(view, "Pause/resume active project (all on All tab)") {
+		t.Errorf("View() missing 'Pause/resume active project (all on All tab)' shortcut\nGot:\n%s", view)
 	}
 }
 

@@ -205,6 +205,37 @@ func TestSchedulerSkipsPausedProjectAndAutomationGeneratedTasks(t *testing.T) {
 	}
 }
 
+func TestSchedulerSkipsAutomationGeneratedTasksOnlyForPausedAutomationProject(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.automationPausedProjects = map[string]bool{"proj-a": true}
+	store.tasksByProject = map[string][]types.ResolvedTask{
+		"proj-a": {{ID: "automation-a", ProjectID: "proj-a", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-a"}},
+		"proj-b": {{ID: "automation-b", ProjectID: "proj-b", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-b"}},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+	store.placement = types.ProjectPlacement{Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	resultA, err := svc.ScheduleProject(context.Background(), "proj-a")
+	if err != nil {
+		t.Fatalf("ScheduleProject proj-a failed: %v", err)
+	}
+	resultB, err := svc.ScheduleProject(context.Background(), "proj-b")
+	if err != nil {
+		t.Fatalf("ScheduleProject proj-b failed: %v", err)
+	}
+
+	if resultA.Dispatched != 0 || resultA.Skipped != 1 {
+		t.Fatalf("proj-a result = %#v, want automation skipped", resultA)
+	}
+	if resultB.Dispatched != 1 {
+		t.Fatalf("proj-b result = %#v, want automation dispatched", resultB)
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "automation-b" {
+		t.Fatalf("leases = %#v, want only automation-b", store.leases)
+	}
+}
+
 func TestSchedulerLifecycleTickExpiresLeasesSchedulesProjectsAndUpdatesStatus(t *testing.T) {
 	store := newFakeSchedulerStore()
 	store.projects = []string{"alpha", "beta"}
@@ -268,19 +299,20 @@ func waitForCondition(timeout time.Duration, fn func() bool) error {
 }
 
 type fakeSchedulerStore struct {
-	tasks             []types.ResolvedTask
-	tasksByProject    map[string][]types.ResolvedTask
-	projects          []string
-	scheduledProjects []string
-	expireCalls       int
-	expireAt          int64
-	runners           []types.RunnerInfo
-	placement         types.ProjectPlacement
-	paused            bool
-	automationPaused  bool
-	leases            []storage.DispatchLeaseCreate
-	reasons           []storage.PlacementReasonRow
-	commands          []fakeRunnerCommand
+	tasks                    []types.ResolvedTask
+	tasksByProject           map[string][]types.ResolvedTask
+	projects                 []string
+	scheduledProjects        []string
+	expireCalls              int
+	expireAt                 int64
+	runners                  []types.RunnerInfo
+	placement                types.ProjectPlacement
+	paused                   bool
+	automationPaused         bool
+	automationPausedProjects map[string]bool
+	leases                   []storage.DispatchLeaseCreate
+	reasons                  []storage.PlacementReasonRow
+	commands                 []fakeRunnerCommand
 }
 
 type fakeRunnerCommand struct {
@@ -340,6 +372,10 @@ func (f *fakeSchedulerStore) PublishRunnerCommand(runnerID string, command strin
 func (f *fakeSchedulerStore) IsPaused(projectID string) bool { return f.paused }
 
 func (f *fakeSchedulerStore) IsAutomationsPaused() bool { return f.automationPaused }
+
+func (f *fakeSchedulerStore) IsAutomationsPausedForProject(projectID string) bool {
+	return f.automationPaused || f.automationPausedProjects[projectID]
+}
 
 func (f *fakeSchedulerStore) ExpireDispatchLeases(ctx context.Context, now int64) (int64, error) {
 	f.expireCalls++

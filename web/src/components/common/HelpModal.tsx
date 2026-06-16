@@ -78,7 +78,7 @@ const VIEW_GROUPS: Record<string, Group> = {
     title: "Runners",
     rows: [
       { keys: ["s"], desc: "Shut down runner" },
-      { keys: ["p", "P"], desc: "Pause / pause all" },
+      { keys: ["p", "P"], desc: "Pause/resume active scope" },
     ],
   },
   logs: {

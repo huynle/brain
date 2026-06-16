@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -118,5 +119,69 @@ func TestRunnerService_IsPaused(t *testing.T) {
 	_ = svc.PauseAll(ctx)
 	if !svc.IsPaused("other-project") {
 		t.Error("expected all projects paused after PauseAll")
+	}
+}
+
+func TestRunnerService_ProjectAutomationPause_IsScoped(t *testing.T) {
+	s := NewRunnerService()
+
+	if err := s.PauseProjectAutomations(context.Background(), "proj-a"); err != nil {
+		t.Fatalf("pause project automations: %v", err)
+	}
+
+	status, err := s.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+
+	var payload map[string]interface{}
+	data, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal status: %v", err)
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	projects, ok := payload["automationPausedProjects"].([]interface{})
+	if !ok || len(projects) != 1 || projects[0] != "proj-a" {
+		t.Fatalf("automationPausedProjects = %#v, want [proj-a]", payload["automationPausedProjects"])
+	}
+	if status.AutomationsPaused {
+		t.Fatal("global automations pause should remain false when only one project is paused")
+	}
+}
+
+func TestRunnerService_ProjectAutomationResume_DoesNotResumeGlobal(t *testing.T) {
+	s := NewRunnerService()
+
+	if err := s.PauseAutomations(context.Background()); err != nil {
+		t.Fatalf("pause global automations: %v", err)
+	}
+	if err := s.PauseProjectAutomations(context.Background(), "proj-a"); err != nil {
+		t.Fatalf("pause project automations: %v", err)
+	}
+	if err := s.ResumeProjectAutomations(context.Background(), "proj-a"); err != nil {
+		t.Fatalf("resume project automations: %v", err)
+	}
+
+	status, err := s.GetStatus(context.Background())
+	if err != nil {
+		t.Fatalf("get status: %v", err)
+	}
+
+	if !status.AutomationsPaused {
+		t.Fatal("global automations pause should remain true after resuming one project")
+	}
+	var payload map[string]interface{}
+	data, err := json.Marshal(status)
+	if err != nil {
+		t.Fatalf("marshal status: %v", err)
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
+		t.Fatalf("unmarshal status: %v", err)
+	}
+	projects, _ := payload["automationPausedProjects"].([]interface{})
+	if len(projects) != 0 {
+		t.Fatalf("automationPausedProjects = %#v, want empty", payload["automationPausedProjects"])
 	}
 }

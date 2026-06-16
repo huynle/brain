@@ -1144,10 +1144,11 @@ type CheckoutFeatureResult struct {
 
 // RunnerStatusResponse is the response for GET /tasks/runner/status.
 type RunnerStatusResponse struct {
-	Running           bool     `json:"running"`
-	Paused            bool     `json:"paused"`
-	PausedProjects    []string `json:"pausedProjects"`
-	AutomationsPaused bool     `json:"automationsPaused"`
+	Running                  bool     `json:"running"`
+	Paused                   bool     `json:"paused"`
+	PausedProjects           []string `json:"pausedProjects"`
+	AutomationsPaused        bool     `json:"automationsPaused"`
+	AutomationPausedProjects []string `json:"automationPausedProjects"`
 }
 
 // =============================================================================
@@ -1208,6 +1209,8 @@ type OpencodeInstance struct {
 	Kind       string   `json:"kind"` // "task" | "adhoc"
 	ProjectID  string   `json:"project_id,omitempty"`
 	TaskID     string   `json:"task_id,omitempty"`
+	FeatureID  string   `json:"feature_id,omitempty"`
+	Priority   string   `json:"priority,omitempty"`
 	Title      string   `json:"title,omitempty"`
 	Workdir    string   `json:"workdir,omitempty"`
 	Port       int      `json:"port,omitempty"`
@@ -1215,6 +1218,8 @@ type OpencodeInstance struct {
 	SessionIDs []string `json:"session_ids,omitempty"`
 	Status     string   `json:"status"` // "starting" | "idle" | "busy" | "exited"
 	Executor   string   `json:"executor,omitempty"`
+	Agent      string   `json:"agent,omitempty"`
+	Model      string   `json:"model,omitempty"`
 	StartedAt  int64    `json:"started_at,omitempty"` // Unix milliseconds
 	LastSeen   int64    `json:"last_seen,omitempty"`  // Unix milliseconds
 

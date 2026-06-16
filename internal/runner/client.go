@@ -1617,6 +1617,36 @@ func (c *APIClient) ResumeAutomations(ctx context.Context) error {
 	return nil
 }
 
+// PauseProjectAutomations pauses automation-generated task execution for a specific project.
+func (c *APIClient) PauseProjectAutomations(ctx context.Context, projectID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/runner/automations/pause/%s", projectID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("pause project automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ResumeProjectAutomations resumes automation-generated task execution for a specific project.
+func (c *APIClient) ResumeProjectAutomations(ctx context.Context, projectID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/runner/automations/resume/%s", projectID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("resume project automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // ShutdownRunner requests graceful shutdown for a specific registered runner.
 func (c *APIClient) ShutdownRunner(ctx context.Context, runnerID string, reason string) error {
 	body, err := json.Marshal(map[string]string{"reason": reason})

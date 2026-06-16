@@ -262,7 +262,18 @@ export function AutomationsView() {
     }
   }
 
-  const automationsPaused = statusQ.data?.automationsPaused;
+  const automationsPaused =
+    activeProject === ALL_PROJECTS
+      ? !!statusQ.data?.automationsPaused
+      : !!statusQ.data?.automationPausedProjects?.includes(activeProject);
+
+  function toggleAutomationPause() {
+    const scopedProject = activeProject === ALL_PROJECTS ? undefined : activeProject;
+    void run(
+      automationsPaused ? "Automations resumed" : "Automations paused",
+      () => (automationsPaused ? resumeAutomations(scopedProject) : pauseAutomations(scopedProject)),
+    ).then(() => void qc.invalidateQueries({ queryKey: ["runner-status"] }));
+  }
 
   useViewKeyboard(
     (e) => {
@@ -297,10 +308,7 @@ export function AutomationsView() {
           if (cur?.kind === "auto") toggle(cur.row);
           return true;
         case "p":
-          void run(
-            automationsPaused ? "Automations resumed" : "Automations paused",
-            automationsPaused ? resumeAutomations : pauseAutomations,
-          ).then(() => void qc.invalidateQueries({ queryKey: ["runner-status"] }));
+          toggleAutomationPause();
           return true;
         case "r":
           refresh();
@@ -332,7 +340,11 @@ export function AutomationsView() {
   return (
     <ListDetail detailPath={selectedPath} logTarget={logTarget}>
       <div className="row" style={{ gap: 8, padding: "2px 2px 6px", alignItems: "center" }}>
-        {automationsPaused && <Pill color="var(--red)">automations paused</Pill>}
+        {automationsPaused && (
+          <Pill color="var(--red)">
+            {activeProject === ALL_PROJECTS ? "automations paused" : `automations paused: ${activeProject}`}
+          </Pill>
+        )}
         <div style={{ flex: 1 }} />
         <span className="faint" style={{ fontSize: 11.5 }}>
           x run · Spc toggle · Enter expand · e edit · o open/review · n new goal

@@ -234,10 +234,20 @@ export const pauseAll = () =>
   api("/api/v1/tasks/runner/pause", { method: "POST" });
 export const resumeAll = () =>
   api("/api/v1/tasks/runner/resume", { method: "POST" });
-export const pauseAutomations = () =>
-  api("/api/v1/tasks/runner/automations/pause", { method: "POST" });
-export const resumeAutomations = () =>
-  api("/api/v1/tasks/runner/automations/resume", { method: "POST" });
+export const pauseAutomations = (projectId?: string) =>
+  api(
+    projectId
+      ? `/api/v1/tasks/runner/automations/pause/${encodeURIComponent(projectId)}`
+      : "/api/v1/tasks/runner/automations/pause",
+    { method: "POST" },
+  );
+export const resumeAutomations = (projectId?: string) =>
+  api(
+    projectId
+      ? `/api/v1/tasks/runner/automations/resume/${encodeURIComponent(projectId)}`
+      : "/api/v1/tasks/runner/automations/resume",
+    { method: "POST" },
+  );
 
 export const shutdownRunner = (runnerId: string, reason = "manual") =>
   api(`/api/v1/runners/${encodeURIComponent(runnerId)}/shutdown`, {

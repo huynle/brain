@@ -254,6 +254,12 @@ type RunnerService interface {
 	// ResumeAutomations resumes automation-generated task execution.
 	ResumeAutomations(ctx context.Context) error
 
+	// PauseProjectAutomations pauses automation-generated task execution for a specific project.
+	PauseProjectAutomations(ctx context.Context, projectId string) error
+
+	// ResumeProjectAutomations resumes automation-generated task execution for a specific project.
+	ResumeProjectAutomations(ctx context.Context, projectId string) error
+
 	// GetStatus returns the current runner status.
 	GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error)
 }

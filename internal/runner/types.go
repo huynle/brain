@@ -273,6 +273,8 @@ type RunningTask struct {
 	Workdir         string    `json:"workdir"`
 	ExecutorType    string    `json:"executorType,omitempty"` // "opencode", "pi", or "script"
 	Executor        string    `json:"executor,omitempty"`
+	Agent           string    `json:"agent,omitempty"`
+	Model           string    `json:"model,omitempty"`
 	InstanceID      string    `json:"instanceId,omitempty"`
 	OpencodePort    int       `json:"opencodePort,omitempty"`
 	SessionID       string    `json:"sessionId,omitempty"`

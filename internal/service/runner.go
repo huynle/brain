@@ -15,16 +15,18 @@ var _ api.RunnerService = (*RunnerServiceImpl)(nil)
 // This is a stub implementation that tracks pause/resume state without
 // actually controlling task execution (that's the runner's job).
 type RunnerServiceImpl struct {
-	mu                sync.RWMutex
-	globalPaused      bool
-	automationsPaused bool
-	pausedProjects    map[string]bool
+	mu                       sync.RWMutex
+	globalPaused             bool
+	automationsPaused        bool
+	automationPausedProjects map[string]bool
+	pausedProjects           map[string]bool
 }
 
 // NewRunnerService creates a new RunnerServiceImpl.
 func NewRunnerService() *RunnerServiceImpl {
 	return &RunnerServiceImpl{
-		pausedProjects: make(map[string]bool),
+		pausedProjects:           make(map[string]bool),
+		automationPausedProjects: make(map[string]bool),
 	}
 }
 
@@ -89,12 +91,17 @@ func (s *RunnerServiceImpl) GetStatus(_ context.Context) (*types.RunnerStatusRes
 	for p := range s.pausedProjects {
 		pausedProjects = append(pausedProjects, p)
 	}
+	var automationPausedProjects []string
+	for p := range s.automationPausedProjects {
+		automationPausedProjects = append(automationPausedProjects, p)
+	}
 
 	return &types.RunnerStatusResponse{
-		Running:           true, // API server is always "running"
-		Paused:            paused,
-		PausedProjects:    pausedProjects,
-		AutomationsPaused: s.automationsPaused,
+		Running:                  true, // API server is always "running"
+		Paused:                   paused,
+		PausedProjects:           pausedProjects,
+		AutomationsPaused:        s.automationsPaused,
+		AutomationPausedProjects: automationPausedProjects,
 	}, nil
 }
 

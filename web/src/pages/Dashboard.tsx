@@ -101,7 +101,16 @@ export function Dashboard() {
       );
     },
     onPauseAll: () => {
-      void runPause(statusQ.data?.paused ? "Resumed all" : "Paused all", statusQ.data?.paused ? resumeAll : pauseAll);
+      const st = statusQ.data;
+      if (activeProject === ALL_PROJECTS) {
+        void runPause(st?.paused ? "Resumed all" : "Paused all", st?.paused ? resumeAll : pauseAll);
+        return;
+      }
+      const paused = st?.pausedProjects?.includes(activeProject);
+      void runPause(
+        paused ? `Resumed ${activeProject}` : `Paused ${activeProject}`,
+        () => (paused ? resumeProject(activeProject) : pauseProject(activeProject)),
+      );
     },
   });
 

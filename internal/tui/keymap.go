@@ -77,7 +77,7 @@ func DefaultKeyMap() KeyMap {
 		),
 		PauseAll: key.NewBinding(
 			key.WithKeys("P"),
-			key.WithHelp("P", "Pause All"),
+			key.WithHelp("P", "Pause Scope"),
 		),
 		PrevContentTab: key.NewBinding(
 			key.WithKeys("h", "["),

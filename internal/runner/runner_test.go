@@ -1592,6 +1592,34 @@ func TestTaskRunner_Poll_DoesNotRunAutomationTasksWhenAutomationsPausedAndProjec
 	}
 }
 
+func TestTaskRunner_Poll_ProjectAutomationPauseSkipsOnlyThatProject(t *testing.T) {
+	client := newMockClient()
+	pausedTask := testTask("task-paused", "proj-a")
+	pausedTask.GeneratedBy = "automation:auto-a"
+	runningTask := testTask("task-running", "proj-b")
+	runningTask.GeneratedBy = "automation:auto-b"
+	client.nextTask["proj-a"] = pausedTask
+	client.nextTask["proj-b"] = runningTask
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProjectAutomations("proj-a")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected exactly one spawn for unpaused project, got %d", len(spawns))
+	}
+	if spawns[0].TaskID != "task-running" {
+		t.Fatalf("spawned task = %s, want task-running", spawns[0].TaskID)
+	}
+}
+
 func TestTaskRunner_Poll_RespectsAutomationMaxConcurrent(t *testing.T) {
 	client := newMockClient()
 	task := testTask("task1", "proj-a")
@@ -2297,6 +2325,44 @@ func TestTaskRunner_CheckRunningTasks_CleansUpFiles(t *testing.T) {
 // =============================================================================
 // Pause / Resume Tests
 // =============================================================================
+
+func TestTaskRunner_ProjectAutomationPause_IsScopedToProject(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.PauseProjectAutomations("proj-a")
+
+	if !tr.IsAutomationsPausedForProject("proj-a") {
+		t.Fatal("proj-a automations should be paused")
+	}
+	if tr.IsAutomationsPausedForProject("proj-b") {
+		t.Fatal("proj-b automations should not inherit proj-a automation pause")
+	}
+}
+
+func TestTaskRunner_GlobalAutomationPause_AppliesToAllProjects(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.PauseAutomations()
+
+	if !tr.IsAutomationsPausedForProject("proj-a") {
+		t.Fatal("proj-a automations should be paused when global automations are paused")
+	}
+	if !tr.IsAutomationsPausedForProject("proj-b") {
+		t.Fatal("proj-b automations should be paused when global automations are paused")
+	}
+}
+
+func TestTaskRunner_ProjectAutomationResume_DoesNotResumeGlobalPause(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.PauseAutomations()
+	tr.PauseProjectAutomations("proj-a")
+	tr.ResumeProjectAutomations("proj-a")
+
+	if !tr.IsAutomationsPausedForProject("proj-a") {
+		t.Fatal("proj-a automations should remain paused by global automation pause")
+	}
+}
 
 func TestTaskRunner_PauseProject(t *testing.T) {
 	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())

@@ -74,7 +74,7 @@ interface GlobalKeyboardOpts {
   allLabel: string; // the ALL_PROJECTS sentinel
   onRefresh: () => void;
   onPauseToggle: () => void; // p — pause/resume active project (or all on the All tab)
-  onPauseAll: () => void; // P — pause all projects
+  onPauseAll: () => void; // P — pause/resume active project (all only on All tab)
 }
 
 export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {

@@ -203,11 +203,12 @@ type TaskRunner struct {
 	lastClaimDate   string // YYYY-MM-DD of last claim, for first_task_today detection
 
 	// Pause state (protected by pauseMu)
-	pauseMu           sync.RWMutex
-	pauseCache        map[string]bool
-	allPaused         bool
-	automationsPaused bool
-	enabledFeatures   map[string]bool // features toggled on via TUI "x" key
+	pauseMu                  sync.RWMutex
+	pauseCache               map[string]bool
+	allPaused                bool
+	automationsPaused        bool
+	automationPausedProjects map[string]bool
+	enabledFeatures          map[string]bool // features toggled on via TUI "x" key
 
 	// Event handlers (protected by eventMu)
 	eventMu  sync.RWMutex
@@ -291,25 +292,26 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 	}
 
 	tr := &TaskRunner{
-		runnerID:         runnerID,
-		machineID:        machineID,
-		projects:         projects,
-		config:           opts.Config,
-		mode:             mode,
-		logger:           logger,
-		client:           opts.Client,
-		executor:         defaultExecutor,
-		executors:        nil,
-		executorRegistry: executorRegistry,
-		processMgr:       opts.ProcessMgr,
-		stateMgr:         opts.StateMgr,
-		status:           RunnerStatusIdle,
-		pauseCache:       make(map[string]bool),
-		enabledFeatures:  make(map[string]bool),
-		logStreamers:     make(map[string]*LogStreamer),
-		wakeCh:           make(chan struct{}, 1),
-		commandCh:        make(chan RunnerCommand, 16),
-		done:             make(chan struct{}),
+		runnerID:                 runnerID,
+		machineID:                machineID,
+		projects:                 projects,
+		config:                   opts.Config,
+		mode:                     mode,
+		logger:                   logger,
+		client:                   opts.Client,
+		executor:                 defaultExecutor,
+		executors:                nil,
+		executorRegistry:         executorRegistry,
+		processMgr:               opts.ProcessMgr,
+		stateMgr:                 opts.StateMgr,
+		status:                   RunnerStatusIdle,
+		pauseCache:               make(map[string]bool),
+		automationPausedProjects: make(map[string]bool),
+		enabledFeatures:          make(map[string]bool),
+		logStreamers:             make(map[string]*LogStreamer),
+		wakeCh:                   make(chan struct{}, 1),
+		commandCh:                make(chan RunnerCommand, 16),
+		done:                     make(chan struct{}),
 	}
 	if executorRegistry != nil {
 		tr.executors = executorRegistry.executors
@@ -791,6 +793,10 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 	tr.pauseMu.RLock()
 	allPaused := tr.allPaused
 	automationsPaused := tr.automationsPaused
+	automationPausedProjects := make(map[string]bool, len(tr.automationPausedProjects))
+	for projectID, paused := range tr.automationPausedProjects {
+		automationPausedProjects[projectID] = paused
+	}
 	tr.pauseMu.RUnlock()
 
 	// 5. Fill available slots
@@ -811,8 +817,10 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		projEnabledIDs := tr.getEnabledFeatureIDsLocked()
 		tr.pauseMu.RUnlock()
 
+		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID]
+
 		if paused || allPaused {
-			if !automationsPaused {
+			if !automationsPausedForProject {
 				task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
 					GeneratedByPrefix: "automation:",
 					Executors:         tr.executorNames(),
@@ -880,7 +888,7 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			continue
 		}
 		if isAutomationGeneratedTask(task) {
-			if automationsPaused {
+			if automationsPausedForProject {
 				continue
 			}
 			if ok, err := tr.canStartAutomationTask(ctx, task); err != nil {
@@ -1210,6 +1218,8 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		Workdir:        spawnResult.Workdir,
 		ExecutorType:   executorType,
 		Executor:       executorType,
+		Agent:          task.Agent,
+		Model:          task.Model,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
 		FeatureID:      task.FeatureID,

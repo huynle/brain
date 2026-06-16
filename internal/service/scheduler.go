@@ -56,6 +56,10 @@ type schedulerPauseChecker interface {
 	IsAutomationsPaused() bool
 }
 
+type schedulerProjectAutomationPauseChecker interface {
+	IsAutomationsPausedForProject(projectID string) bool
+}
+
 // SchedulerService owns Brain push dispatch placement decisions.
 type SchedulerService struct {
 	tasks     schedulerTaskService
@@ -322,7 +326,13 @@ func (s *SchedulerService) shouldSkipTask(projectID string, task types.ResolvedT
 	if s.pauses.IsPaused(projectID) {
 		return true
 	}
-	return s.pauses.IsAutomationsPaused() && strings.HasPrefix(task.GeneratedBy, "automation:")
+	if !strings.HasPrefix(task.GeneratedBy, "automation:") {
+		return false
+	}
+	if scoped, ok := s.pauses.(schedulerProjectAutomationPauseChecker); ok {
+		return scoped.IsAutomationsPausedForProject(projectID)
+	}
+	return s.pauses.IsAutomationsPaused()
 }
 
 type schedulerCandidate struct {

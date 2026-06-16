@@ -1,13 +1,13 @@
 ---
-name: project-planning
-description: "Use when creating implementation plans for features - discovers project docs (PRD/architecture), captures user intent, checks design against architecture, proposes doc updates, and saves plan to brain"
+name: brain-project-planning
+description: "Use when creating Brain-backed implementation plans for features - discovers project docs (PRD/architecture), captures user intent, checks design against architecture, proposes doc updates, and saves plan to brain"
 ---
 
 # Project-Aware Planning
 
 Create implementation plans that are grounded in existing project documentation (PRD, architecture) and maintain documentation as the source of truth.
 
-**Announce at start:** "I'm using the project-planning skill to create a plan grounded in your project's PRD and architecture."
+**Announce at start:** "I'm using the brain-project-planning skill to create a plan grounded in your project's PRD and architecture."
 
 ## Phase Overview
 

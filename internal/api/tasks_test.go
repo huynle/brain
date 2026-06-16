@@ -211,13 +211,15 @@ func (m *mockTaskService) GetTask(ctx context.Context, projectId, taskId string)
 // =============================================================================
 
 type mockRunnerService struct {
-	pauseFunc             func(ctx context.Context, projectId string) error
-	resumeFunc            func(ctx context.Context, projectId string) error
-	pauseAllFunc          func(ctx context.Context) error
-	resumeAllFunc         func(ctx context.Context) error
-	pauseAutomationsFunc  func(ctx context.Context) error
-	resumeAutomationsFunc func(ctx context.Context) error
-	getStatusFunc         func(ctx context.Context) (*types.RunnerStatusResponse, error)
+	pauseFunc                    func(ctx context.Context, projectId string) error
+	resumeFunc                   func(ctx context.Context, projectId string) error
+	pauseAllFunc                 func(ctx context.Context) error
+	resumeAllFunc                func(ctx context.Context) error
+	pauseAutomationsFunc         func(ctx context.Context) error
+	resumeAutomationsFunc        func(ctx context.Context) error
+	pauseProjectAutomationsFunc  func(ctx context.Context, projectId string) error
+	resumeProjectAutomationsFunc func(ctx context.Context, projectId string) error
+	getStatusFunc                func(ctx context.Context) (*types.RunnerStatusResponse, error)
 }
 
 func (m *mockRunnerService) Pause(ctx context.Context, projectId string) error {
@@ -262,6 +264,20 @@ func (m *mockRunnerService) ResumeAutomations(ctx context.Context) error {
 	return fmt.Errorf("resumeAutomationsFunc not set")
 }
 
+func (m *mockRunnerService) PauseProjectAutomations(ctx context.Context, projectId string) error {
+	if m.pauseProjectAutomationsFunc != nil {
+		return m.pauseProjectAutomationsFunc(ctx, projectId)
+	}
+	return fmt.Errorf("pauseProjectAutomationsFunc not set")
+}
+
+func (m *mockRunnerService) ResumeProjectAutomations(ctx context.Context, projectId string) error {
+	if m.resumeProjectAutomationsFunc != nil {
+		return m.resumeProjectAutomationsFunc(ctx, projectId)
+	}
+	return fmt.Errorf("resumeProjectAutomationsFunc not set")
+}
+
 func (m *mockRunnerService) GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error) {
 	if m.getStatusFunc != nil {
 		return m.getStatusFunc(ctx)
@@ -293,6 +309,8 @@ func newTaskTestRouter(taskMock *mockTaskService, runnerMock *mockRunnerService)
 		r.Post("/runner/resume/{projectId}", h.HandleResumeProject)
 		r.Post("/runner/pause", h.HandlePauseAll)
 		r.Post("/runner/resume", h.HandleResumeAll)
+		r.Post("/runner/automations/pause/{projectId}", h.HandlePauseProjectAutomations)
+		r.Post("/runner/automations/resume/{projectId}", h.HandleResumeProjectAutomations)
 		r.Get("/runner/status", h.HandleRunnerStatus)
 
 		r.Route("/{projectId}", func(r chi.Router) {
@@ -1595,6 +1613,64 @@ func TestHandleResumeAll(t *testing.T) {
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+}
+
+func TestHandlePauseProjectAutomations(t *testing.T) {
+	called := false
+	runnerMock := &mockRunnerService{
+		pauseProjectAutomationsFunc: func(ctx context.Context, projectId string) error {
+			called = true
+			if projectId != "my-project" {
+				return fmt.Errorf("unexpected projectId: %s", projectId)
+			}
+			return nil
+		},
+	}
+	router := newTaskTestRouter(&mockTaskService{}, runnerMock)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/runner/automations/pause/my-project", "application/json", nil)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if !called {
+		t.Fatal("expected PauseProjectAutomations to be called")
+	}
+}
+
+func TestHandleResumeProjectAutomations(t *testing.T) {
+	called := false
+	runnerMock := &mockRunnerService{
+		resumeProjectAutomationsFunc: func(ctx context.Context, projectId string) error {
+			called = true
+			if projectId != "my-project" {
+				return fmt.Errorf("unexpected projectId: %s", projectId)
+			}
+			return nil
+		},
+	}
+	router := newTaskTestRouter(&mockTaskService{}, runnerMock)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/runner/automations/resume/my-project", "application/json", nil)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if !called {
+		t.Fatal("expected ResumeProjectAutomations to be called")
 	}
 }
 

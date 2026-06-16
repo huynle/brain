@@ -33,7 +33,7 @@ export function StatusBar() {
   const paused =
     activeProject === ALL_PROJECTS
       ? statusQ.data?.paused
-      : statusQ.data?.pausedProjects?.includes(activeProject) || statusQ.data?.paused;
+      : statusQ.data?.pausedProjects?.includes(activeProject);
 
   const healthQ = useQuery({ queryKey: ["health"], queryFn: getHealth, staleTime: 30_000 });
   const embedding = healthQ.data?.embedding as

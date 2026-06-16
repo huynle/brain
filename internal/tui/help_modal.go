@@ -87,7 +87,7 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("p", "Pause/resume project"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("P", "Pause/resume all projects"))
+	b.WriteString(formatShortcut("P", "Pause/resume active project (all on All tab)"))
 	b.WriteString("\n")
 
 	// Multi-select shortcuts

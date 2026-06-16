@@ -314,6 +314,7 @@ export interface RunnerStatusResponse {
   paused: boolean;
   pausedProjects: string[];
   automationsPaused: boolean;
+  automationPausedProjects: string[];
 }
 
 // ─── Brain entries ───────────────────────────────────────────────

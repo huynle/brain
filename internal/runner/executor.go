@@ -34,14 +34,15 @@ type SpawnOptions struct {
 
 // SpawnResult holds the result of spawning a task process.
 type SpawnResult struct {
-	PID          int
-	Proc         Process
-	PaneID       string
-	WindowName   string
-	PromptFile   string
-	OpencodePort int
-	SessionID    string
-	Workdir      string
+	PID                int
+	Proc               Process
+	PaneID             string
+	WindowName         string
+	PromptFile         string
+	OpencodePort       int
+	SessionID          string
+	ExistingSessionIDs map[string]struct{}
+	Workdir            string
 }
 
 // CommandFactory creates exec.Cmd instances. Injected for testability.
@@ -452,7 +453,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0)
 	}
 
-	port, serveProc, err := e.startHeadlessServer(workdir, projectID, task.ID)
+	port, existingSessionIDs, serveProc, err := e.startHeadlessServer(workdir, projectID, task.ID)
 	if err != nil {
 		slog.Warn("headless server unavailable, running task non-attachable",
 			"task_id", task.ID, "error", err)
@@ -465,6 +466,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 		_ = serveProc.Kill(syscall.SIGTERM)
 		return nil, err
 	}
+	res.ExistingSessionIDs = existingSessionIDs
 	e.trackServeProc(task.ID, serveProc)
 
 	// Tie the server's lifetime to the driver process: when the run process
@@ -552,11 +554,11 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 // startHeadlessServer spawns `opencode serve --port 0` and waits for it to
 // bind a healthy HTTP port. Returns the port and the server process, or an
 // error if it never becomes ready (caller falls back to in-process run).
-func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string) (int, Process, error) {
+func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string) (int, map[string]struct{}, Process, error) {
 	serveLog := filepath.Join(e.config.StateDir, fmt.Sprintf("serve_%s_%s.log", projectID, taskID))
 	logFile, err := os.Create(serveLog)
 	if err != nil {
-		return 0, nil, fmt.Errorf("create serve log: %w", err)
+		return 0, nil, nil, fmt.Errorf("create serve log: %w", err)
 	}
 
 	cmd := e.CommandFactory(e.config.Opencode.Bin, "serve", "--port", "0")
@@ -566,7 +568,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string
 
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
-		return 0, nil, fmt.Errorf("start opencode serve: %w", err)
+		return 0, nil, nil, fmt.Errorf("start opencode serve: %w", err)
 	}
 	proc := NewOsProcess(cmd)
 	go func() {
@@ -577,15 +579,16 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string
 	// Poll for the listening port, then confirm the HTTP server is ready.
 	for attempt := 0; attempt < 15; attempt++ {
 		if proc.Exited() {
-			return 0, nil, fmt.Errorf("opencode serve exited during startup (code %d)", proc.ExitCode())
+			return 0, nil, nil, fmt.Errorf("opencode serve exited during startup (code %d)", proc.ExitCode())
 		}
 		if port, derr := DiscoverPort(proc.Pid()); derr == nil && port > 0 && instanceHealthy(port) {
-			return port, proc, nil
+			baseline, _ := listSessionIDs(port)
+			return port, baseline, proc, nil
 		}
 		time.Sleep(1 * time.Second)
 	}
 	_ = proc.Kill(syscall.SIGTERM)
-	return 0, nil, fmt.Errorf("opencode serve did not bind a port in time")
+	return 0, nil, nil, fmt.Errorf("opencode serve did not bind a port in time")
 }
 
 // =============================================================================

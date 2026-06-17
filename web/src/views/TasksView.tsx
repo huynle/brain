@@ -13,6 +13,7 @@ import { Panel } from "../components/layout/Panel";
 import { ConfirmDialog } from "../components/common/Modal";
 import { deleteEntry, setTaskStatus, triggerTask } from "../lib/api";
 import {
+  cleanLogContent,
   clockTime,
   isActive,
   logLevelColor,
@@ -30,6 +31,9 @@ const ComposeModal = lazy(() =>
 // CodeMirror is heavy — load the editor only when the user edits.
 const EntryEditModal = lazy(() =>
   import("./brain/EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
+);
+const EntryRawViewModal = lazy(() =>
+  import("./brain/EntryRawViewModal").then((m) => ({ default: m.EntryRawViewModal })),
 );
 
 const TERMINAL = ["completed", "cancelled", "archived", "superseded"];
@@ -92,6 +96,7 @@ export function TasksView() {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
 
   const [editMeta, setEditMeta] = useState<Task | null>(null);
+  const [viewContent, setViewContent] = useState<Task | null>(null);
   const [editContent, setEditContent] = useState<Task | null>(null);
   const [batchMeta, setBatchMeta] = useState<Task[] | null>(null);
   const [confirmDel, setConfirmDel] = useState<Task[] | null>(null);
@@ -212,7 +217,7 @@ export function TasksView() {
         case "Enter":
           if (row?.kind === "header")
             setCollapsed((c) => ({ ...c, [row.feature]: !c[row.feature] }));
-          else if (cur) { setFocus("detail"); }
+          else if (cur) setViewContent(cur);
           return true;
         case " ":
           if (row?.kind === "header")
@@ -336,7 +341,7 @@ export function TasksView() {
                   nav.setCursor(scope, i);
                   if (isMobile) openInspect({ path: t.path, taskId: t.id, projectId: t.projectId, title: t.title });
                 }}
-                onDoubleClick={() => setFocus("detail")}
+                onDoubleClick={() => setViewContent(t)}
               >
                 <span className="connector">{row.lead}</span>
                 {selCount > 0 && (
@@ -398,7 +403,7 @@ export function TasksView() {
                   <div key={r.seq} className="logline">
                     <span className="lt">{clockTime(r.line.timestamp)}</span>
                     <span className="ll" style={{ color: logLevelColor(r.line.level) }}>{r.line.level}</span>
-                    <span className="lc">{r.line.content}</span>
+                    <span className="lc">{cleanLogContent(r.line.content)}</span>
                   </div>
                 ))
               )}
@@ -408,6 +413,15 @@ export function TasksView() {
       )}
 
       {editMeta && <MetadataModal task={editMeta} onClose={() => setEditMeta(null)} />}
+      {viewContent && (
+        <Suspense fallback={null}>
+          <EntryRawViewModal
+            path={viewContent.path}
+            title={viewContent.title || viewContent.id}
+            onClose={() => setViewContent(null)}
+          />
+        </Suspense>
+      )}
       {batchMeta && <BatchMetadataModal tasks={batchMeta} onClose={() => setBatchMeta(null)} onDone={() => nav.clearSelect()} />}
       {editContent && (
         <Suspense fallback={null}>

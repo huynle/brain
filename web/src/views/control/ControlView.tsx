@@ -268,44 +268,107 @@ function RailRunner({
         </div>
       )}
       {instances.map((inst) => (
-        <div
+        <InstanceRailItem
           key={inst.instance_id}
-          className={`ctl-inst ${selected === inst.instance_id ? "on" : ""}`}
-          onClick={() => onPick(inst)}
-        >
-          <span style={{ color: instanceDot(inst.status) }} title={inst.status}>
-            ▣
-          </span>
-          <span
-            className="ctl-kind"
-            style={{ color: inst.kind === "adhoc" ? "var(--teal)" : "var(--blue)" }}
-          >
-            {inst.kind}
-          </span>
-          <span className="truncate" style={{ flex: 1 }}>
-            {inst.title || inst.task_id || inst.instance_id}
-          </span>
-          {(inst.pending_permissions ?? 0) > 0 && (
-            <span style={{ color: "var(--red)", fontSize: 11.5 }}>
-              {inst.pending_permissions}⚠
-            </span>
-          )}
-          {inst.kind === "adhoc" && (
-            <span
-              title="Kill instance"
-              style={{ color: "var(--red)", cursor: "pointer" }}
-              onClick={(e) => {
-                e.stopPropagation();
-                onKill(inst);
-              }}
-            >
-              ✕
-            </span>
-          )}
-        </div>
+          instance={inst}
+          selected={selected === inst.instance_id}
+          onPick={onPick}
+          onKill={onKill}
+        />
       ))}
     </div>
   );
+}
+
+function InstanceRailItem({
+  instance,
+  selected,
+  onPick,
+  onKill,
+}: {
+  instance: OpencodeInstance;
+  selected: boolean;
+  onPick: (inst: OpencodeInstance) => void;
+  onKill: (inst: OpencodeInstance) => void;
+}) {
+  const meta = compactInstanceMetadata(instance);
+  return (
+    <div className={`ctl-inst ${selected ? "on" : ""}`} onClick={() => onPick(instance)}>
+      <div className="ctl-inst-top">
+        <span style={{ color: instanceDot(instance.status) }} title={instance.status}>
+          ▣
+        </span>
+        <span
+          className="ctl-kind"
+          style={{ color: instance.kind === "adhoc" ? "var(--teal)" : "var(--blue)" }}
+        >
+          {instance.kind}
+        </span>
+        <span className="truncate" style={{ flex: 1 }}>
+          {instance.title || instance.task_id || instance.instance_id}
+        </span>
+        {(instance.pending_permissions ?? 0) > 0 && (
+          <span style={{ color: "var(--red)", fontSize: 11.5 }}>
+            {instance.pending_permissions}⚠
+          </span>
+        )}
+        {instance.kind === "adhoc" && (
+          <span
+            title="Kill instance"
+            style={{ color: "var(--red)", cursor: "pointer" }}
+            onClick={(e) => {
+              e.stopPropagation();
+              onKill(instance);
+            }}
+          >
+            ✕
+          </span>
+        )}
+      </div>
+      {meta.length > 0 && (
+        <div className="ctl-inst-meta">
+          {meta.map((m) => (
+            <span key={m.label} className="ctl-meta-chip" title={m.title ?? `${m.label}: ${m.value}`}>
+              <span className="ctl-meta-label">{m.label}</span>
+              <span className="truncate">{m.value}</span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function compactInstanceMetadata(instance: OpencodeInstance) {
+  const items: Array<{ label: string; value: string; title?: string }> = [];
+  const add = (label: string, value?: string | number | null, title?: string) => {
+    if (value === undefined || value === null || value === "") return;
+    items.push({ label, value: String(value), title });
+  };
+
+  add("project", instance.project_id);
+  add("feature", instance.feature_id);
+  add("task", instance.task_id);
+  add("priority", instance.priority);
+  add("exec", instance.executor);
+  add("agent", instance.agent);
+  add("model", compactModelName(instance.model), instance.model);
+  add("workdir", compactPath(instance.workdir), instance.workdir);
+  if ((instance.session_ids?.length ?? 0) > 0) add("sessions", instance.session_ids!.length);
+  return items;
+}
+
+function compactModelName(model?: string) {
+  if (!model) return "";
+  const name = model.split("/").pop() ?? model;
+  return name.replace(/^claude-/, "");
+}
+
+function compactPath(path?: string) {
+  if (!path) return "";
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length <= 2) return path;
+  return `…/${parts.slice(-2).join("/")}`;
 }
 
 function InstancePane({
@@ -367,6 +430,16 @@ function InstancePane({
         <span className="faint truncate" style={{ fontSize: 11.5 }}>
           {instance.workdir}
         </span>
+        <div className="ctl-pane-meta">
+          {compactInstanceMetadata(instance)
+            .slice(0, 7)
+            .map((m) => (
+              <span key={m.label} className="ctl-meta-chip" title={m.title ?? `${m.label}: ${m.value}`}>
+                <span className="ctl-meta-label">{m.label}</span>
+                <span className="truncate">{m.value}</span>
+              </span>
+            ))}
+        </div>
         <span style={{ flex: 1 }} />
         <select
           value={sessionId ?? ""}
@@ -398,6 +471,7 @@ function InstancePane({
           runnerId={rid}
           instanceId={iid}
           sessionId={sessionId}
+          defaultAgent={instance.agent}
           sessionLabel={
             sessions.find((s) => s.id === sessionId)
               ? sessionName(sessions.find((s) => s.id === sessionId)!)

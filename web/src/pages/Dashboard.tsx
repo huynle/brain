@@ -53,13 +53,10 @@ export function Dashboard() {
 
   useEffect(() => {
     if (!projects) return;
-    // Always stream the active scope too — even a project with no tasks (or the
-    // "all" scope on a fresh brain) streams a `connected` event, so the view
-    // resolves instead of hanging on "connecting to task stream…". sync() is
-    // incremental, so switching projects only opens/closes the diff.
-    const wanted = new Set(projects);
-    wanted.add(activeProject);
-    streams.sync([...wanted]);
+    // Keep per-project views lightweight. Opening one EventSource per project
+    // can saturate the browser's per-origin connection pool and starve normal
+    // fetches (for example the Automations tab) until streams close.
+    streams.sync(activeProject === ALL_PROJECTS ? projects : [activeProject]);
   }, [projects, activeProject]);
 
   // Tear down all streams only on unmount.
@@ -104,7 +101,16 @@ export function Dashboard() {
       );
     },
     onPauseAll: () => {
-      void runPause(statusQ.data?.paused ? "Resumed all" : "Paused all", statusQ.data?.paused ? resumeAll : pauseAll);
+      const st = statusQ.data;
+      if (activeProject === ALL_PROJECTS) {
+        void runPause(st?.paused ? "Resumed all" : "Paused all", st?.paused ? resumeAll : pauseAll);
+        return;
+      }
+      const paused = st?.pausedProjects?.includes(activeProject);
+      void runPause(
+        paused ? `Resumed ${activeProject}` : `Paused ${activeProject}`,
+        () => (paused ? resumeProject(activeProject) : pauseProject(activeProject)),
+      );
     },
   });
 

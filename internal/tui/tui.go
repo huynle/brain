@@ -112,10 +112,11 @@ type Model struct {
 	selectedTasks map[string]bool
 
 	// Pause/resume state
-	pausedProjects    map[string]bool
-	allPaused         bool
-	automationsPaused bool
-	runnerController  RunnerController // direct reference to embedded runner (nil if standalone)
+	pausedProjects           map[string]bool
+	automationPausedProjects map[string]bool
+	allPaused                bool
+	automationsPaused        bool
+	runnerController         RunnerController // direct reference to embedded runner (nil if standalone)
 
 	// Resource metrics
 	metricsCollector *MetricsCollector
@@ -331,38 +332,39 @@ func NewModel(cfg Config) Model {
 	}
 
 	m := Model{
-		config:                 cfg,
-		keymap:                 KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
-		statusBar:              NewStatusBar(cfg.Project),
-		helpBar:                NewHelpBar(),
-		taskTree:               NewTaskTree(),
-		taskDetail:             NewTaskDetail(),
-		logViewer:              NewLogViewer(DefaultMaxLogEntries),
-		scheduleList:           NewScheduleList(),
-		scheduleDetail:         NewScheduleDetail(),
-		modalManager:           NewModalManager(),
-		settings:               settings,
-		activePanel:            PanelTasks,
-		sseClient:              NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
-		ctx:                    context.Background(),
-		selectedTasks:          make(map[string]bool),
-		pausedProjects:         make(map[string]bool),
-		runnerController:       cfg.Runner,
-		tasksByProject:         make(map[string][]types.ResolvedTask),
-		sseClients:             make(map[string]*SSEClient),
-		metricsCollector:       NewMetricsCollector(),
-		seenFeatureIDs:         make(map[string]bool),
-		monitorClient:          NewMonitorClient(cfg.APIURL, cfg.APIToken),
-		enabledFeatures:        make(map[string]bool),
-		activeAutomationSubTab: AutomationSubTabAutomations,
-		automationList:         NewAutomationList(),
-		goalAuditByEntry:       make(map[string][]types.GoalReconcileAudit),
-		goalDetailRaw:          make(map[string]string),
-		dreamViewer:            NewDreamViewer(),
-		entryTree:              NewEntryTree(),
-		runnerPanel:            NewRunnerPanel(),
-		taskPanelHeight:        settings.TaskPanelHeight,
-		bottomTopPanelHeight:   settings.BottomTopPanelHeight,
+		config:                   cfg,
+		keymap:                   KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
+		statusBar:                NewStatusBar(cfg.Project),
+		helpBar:                  NewHelpBar(),
+		taskTree:                 NewTaskTree(),
+		taskDetail:               NewTaskDetail(),
+		logViewer:                NewLogViewer(DefaultMaxLogEntries),
+		scheduleList:             NewScheduleList(),
+		scheduleDetail:           NewScheduleDetail(),
+		modalManager:             NewModalManager(),
+		settings:                 settings,
+		activePanel:              PanelTasks,
+		sseClient:                NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
+		ctx:                      context.Background(),
+		selectedTasks:            make(map[string]bool),
+		pausedProjects:           make(map[string]bool),
+		automationPausedProjects: make(map[string]bool),
+		runnerController:         cfg.Runner,
+		tasksByProject:           make(map[string][]types.ResolvedTask),
+		sseClients:               make(map[string]*SSEClient),
+		metricsCollector:         NewMetricsCollector(),
+		seenFeatureIDs:           make(map[string]bool),
+		monitorClient:            NewMonitorClient(cfg.APIURL, cfg.APIToken),
+		enabledFeatures:          make(map[string]bool),
+		activeAutomationSubTab:   AutomationSubTabAutomations,
+		automationList:           NewAutomationList(),
+		goalAuditByEntry:         make(map[string][]types.GoalReconcileAudit),
+		goalDetailRaw:            make(map[string]string),
+		dreamViewer:              NewDreamViewer(),
+		entryTree:                NewEntryTree(),
+		runnerPanel:              NewRunnerPanel(),
+		taskPanelHeight:          settings.TaskPanelHeight,
+		bottomTopPanelHeight:     settings.BottomTopPanelHeight,
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -1179,15 +1181,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case automationsPauseToggledMsg:
-		if msg.err != nil {
-			m.automationsPaused = !msg.paused
-			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation pause: %v", msg.err))
-		} else if msg.paused {
-			m.setStatusMessage("success", "Automations paused")
-			m.addLog("info", "Automations paused")
+		if msg.projectID == "" {
+			if msg.err != nil {
+				m.automationsPaused = !msg.paused
+				m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation pause: %v", msg.err))
+			} else if msg.paused {
+				m.setStatusMessage("success", "Automations paused")
+				m.addLog("info", "Automations paused")
+			} else {
+				m.setStatusMessage("success", "Automations resumed")
+				m.addLog("info", "Automations resumed")
+			}
 		} else {
-			m.setStatusMessage("success", "Automations resumed")
-			m.addLog("info", "Automations resumed")
+			if msg.err != nil {
+				m.automationPausedProjects[msg.projectID] = !msg.paused
+				m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation pause for %s: %v", msg.projectID, msg.err))
+			} else if msg.paused {
+				m.setStatusMessage("success", fmt.Sprintf("Automations paused for %s", msg.projectID))
+				m.addLog("info", fmt.Sprintf("Automations paused for %s", msg.projectID))
+			} else {
+				m.setStatusMessage("success", fmt.Sprintf("Automations resumed for %s", msg.projectID))
+				m.addLog("info", fmt.Sprintf("Automations resumed for %s", msg.projectID))
+			}
 		}
 		m.syncHelpBarPauseState()
 		return m, nil
@@ -1199,6 +1214,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.runnerController != nil {
 				m.allPaused = m.runnerController.IsAllPaused()
 				m.automationsPaused = m.runnerController.IsAutomationsPaused()
+				m.automationPausedProjects = make(map[string]bool)
+				for _, proj := range m.config.Projects {
+					if m.runnerController.IsAutomationsPausedForProject(proj) && !m.runnerController.IsAutomationsPaused() {
+						m.automationPausedProjects[proj] = true
+					}
+				}
 				// Per-project pause state from the embedded runner
 				m.pausedProjects = make(map[string]bool)
 				for _, proj := range m.config.Projects {
@@ -1209,6 +1230,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.allPaused = msg.paused
 				m.automationsPaused = msg.automationsPaused
+				m.automationPausedProjects = make(map[string]bool)
+				for _, id := range msg.automationPausedProjects {
+					m.automationPausedProjects[id] = true
+				}
 				m.pausedProjects = make(map[string]bool)
 				for _, id := range msg.pausedProjects {
 					m.pausedProjects[id] = true
@@ -1666,15 +1691,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					return m, m.runSelectedAutomationRow()
 				case "p":
-					currentlyPaused := m.automationsPaused
-					m.automationsPaused = !currentlyPaused
-					if currentlyPaused {
-						m.setStatusMessage("info", "Resuming automations...")
-					} else {
-						m.setStatusMessage("info", "Pausing automations...")
-					}
-					m.syncHelpBarPauseState()
-					return m, pauseAutomationsCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+					cmd := m.toggleAutomationPauseForActiveScope()
+					return m, cmd
 				case "q":
 					m.sseClient.Stop()
 					return m, tea.Quit
@@ -2316,15 +2334,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "p":
 			if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
-				currentlyPaused := m.automationsPaused
-				m.automationsPaused = !currentlyPaused
-				if currentlyPaused {
-					m.setStatusMessage("info", "Resuming automations...")
-				} else {
-					m.setStatusMessage("info", "Pausing automations...")
-				}
-				m.syncHelpBarPauseState()
-				return m, pauseAutomationsCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+				cmd := m.toggleAutomationPauseForActiveScope()
+				return m, cmd
 			}
 			// Pause/resume active project.
 			// In single-project mode, if allPaused is true (startup default),
@@ -2377,15 +2388,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "P":
-			// Pause/resume all projects
-			m.allPaused = !m.allPaused
-			if m.allPaused {
-				m.setStatusMessage("info", "Pausing all projects...")
-			} else {
-				m.setStatusMessage("info", "Resuming all projects...")
-			}
-			m.syncHelpBarPauseState()
-			return m, pauseAllCmd(m.apiRunnerConfig(), !m.allPaused, m.runnerController)
+			cmd := m.toggleTaskPauseForActiveScope()
+			return m, cmd
 		}
 
 	case tea.KeyUp:
@@ -4089,6 +4093,60 @@ func (m Model) editSelectedBrainEntry() (tea.Model, tea.Cmd) {
 	})
 }
 
+func (m *Model) toggleTaskPauseForActiveScope() tea.Cmd {
+	projectID := m.activeProjectID
+	if projectID == "all" {
+		currentlyPaused := m.allPaused
+		m.allPaused = !currentlyPaused
+		if m.allPaused {
+			m.setStatusMessage("info", "Pausing all projects...")
+		} else {
+			m.setStatusMessage("info", "Resuming all projects...")
+		}
+		m.syncHelpBarPauseState()
+		return pauseAllCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+	}
+	if projectID == "" {
+		projectID = m.config.Project
+	}
+	currentlyPaused := m.pausedProjects[projectID]
+	m.pausedProjects[projectID] = !currentlyPaused
+	if currentlyPaused {
+		m.setStatusMessage("info", fmt.Sprintf("Resuming project %s...", projectID))
+	} else {
+		m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
+	}
+	m.syncHelpBarPauseState()
+	return pauseProjectCmd(m.apiRunnerConfig(), projectID, currentlyPaused, m.runnerController)
+}
+
+func (m *Model) toggleAutomationPauseForActiveScope() tea.Cmd {
+	projectID := m.activeProjectID
+	if projectID == "all" {
+		currentlyPaused := m.automationsPaused
+		m.automationsPaused = !currentlyPaused
+		if currentlyPaused {
+			m.setStatusMessage("info", "Resuming automations...")
+		} else {
+			m.setStatusMessage("info", "Pausing automations...")
+		}
+		m.syncHelpBarPauseState()
+		return pauseAutomationsCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+	}
+	if projectID == "" {
+		projectID = m.config.Project
+	}
+	currentlyPaused := m.automationPausedProjects[projectID]
+	m.automationPausedProjects[projectID] = !currentlyPaused
+	if currentlyPaused {
+		m.setStatusMessage("info", fmt.Sprintf("Resuming automations for %s...", projectID))
+	} else {
+		m.setStatusMessage("info", fmt.Sprintf("Pausing automations for %s...", projectID))
+	}
+	m.syncHelpBarPauseState()
+	return pauseProjectAutomationsCmd(m.apiRunnerConfig(), projectID, currentlyPaused, m.runnerController)
+}
+
 // syncHelpBarSessionState updates the help bar's HasTaskSessions field based on current selection.
 func (m *Model) syncHelpBarSessionState() {
 	selectedTask := m.taskTree.SelectedTask()
@@ -4100,7 +4158,11 @@ func (m *Model) syncHelpBarPauseState() {
 	m.helpBar.AllPaused = m.allPaused
 	// Determine active project ID for pause check
 	projectID := m.activeProjectID
-	if projectID == "" || projectID == "all" {
+	if projectID == "all" {
+		m.helpBar.IsPaused = m.allPaused
+		return
+	}
+	if projectID == "" {
 		projectID = m.config.Project
 	}
 	m.helpBar.IsPaused = m.pausedProjects[projectID]
@@ -4189,7 +4251,15 @@ func (m Model) renderBaseView() string {
 
 	// Wire pause state to status bar
 	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
-		m.statusBar.IsPaused = m.automationsPaused
+		projectID := m.activeProjectID
+		if projectID == "all" {
+			m.statusBar.IsPaused = m.automationsPaused
+		} else {
+			if projectID == "" {
+				projectID = m.config.Project
+			}
+			m.statusBar.IsPaused = m.automationPausedProjects[projectID]
+		}
 	} else {
 		projectID := m.activeProjectID
 		if projectID == "" || projectID == "all" {
@@ -5734,15 +5804,17 @@ type pauseAllToggledMsg struct {
 }
 
 type automationsPauseToggledMsg struct {
-	paused bool
-	err    error
+	projectID string
+	paused    bool
+	err       error
 }
 
 type runnerStatusMsg struct {
-	paused            bool
-	pausedProjects    []string
-	automationsPaused bool
-	err               error
+	paused                   bool
+	pausedProjects           []string
+	automationsPaused        bool
+	automationPausedProjects []string
+	err                      error
 }
 
 type apiHealthMsg struct {
@@ -6344,6 +6416,29 @@ func pauseAutomationsCmd(cfg runner.RunnerConfig, currentlyPaused bool, rc Runne
 	}
 }
 
+// pauseProjectAutomationsCmd toggles pause/resume for automation-generated tasks in one project.
+func pauseProjectAutomationsCmd(cfg runner.RunnerConfig, projectID string, currentlyPaused bool, rc RunnerController) tea.Cmd {
+	return func() tea.Msg {
+		if rc != nil {
+			if currentlyPaused {
+				rc.ResumeProjectAutomations(projectID)
+			} else {
+				rc.PauseProjectAutomations(projectID)
+			}
+			return automationsPauseToggledMsg{projectID: projectID, paused: !currentlyPaused, err: nil}
+		}
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		var err error
+		if currentlyPaused {
+			err = apiClient.ResumeProjectAutomations(ctx, projectID)
+		} else {
+			err = apiClient.PauseProjectAutomations(ctx, projectID)
+		}
+		return automationsPauseToggledMsg{projectID: projectID, paused: !currentlyPaused, err: err}
+	}
+}
+
 // fetchRunnerStatusCmd fetches the current runner status (pause state).
 func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 	return func() tea.Msg {
@@ -6354,7 +6449,7 @@ func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 		if err != nil {
 			return runnerStatusMsg{err: err}
 		}
-		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects, automationsPaused: status.AutomationsPaused}
+		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects, automationsPaused: status.AutomationsPaused, automationPausedProjects: status.AutomationPausedProjects}
 	}
 }
 

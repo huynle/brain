@@ -15,6 +15,8 @@ type InstanceRow struct {
 	Kind       string   `json:"kind"`
 	ProjectID  string   `json:"project_id"`
 	TaskID     string   `json:"task_id"`
+	FeatureID  string   `json:"feature_id"`
+	Priority   string   `json:"priority"`
 	Title      string   `json:"title"`
 	Workdir    string   `json:"workdir"`
 	Port       int      `json:"port"`
@@ -22,12 +24,14 @@ type InstanceRow struct {
 	SessionIDs []string `json:"session_ids"`
 	Status     string   `json:"status"`
 	Executor   string   `json:"executor"`
+	Agent      string   `json:"agent"`
+	Model      string   `json:"model"`
 	StartedAt  int64    `json:"started_at"` // Unix milliseconds
 	LastSeen   int64    `json:"last_seen"`  // Unix milliseconds
 }
 
 const instanceColumns = `instance_id, runner_id, hostname, kind, project_id, task_id,
-       title, workdir, port, pid, session_ids, status, executor, started_at, last_seen`
+       feature_id, priority, title, workdir, port, pid, session_ids, status, executor, agent, model, started_at, last_seen`
 
 // UpsertInstance inserts or replaces an OpenCode instance record.
 func (s *StorageLayer) UpsertInstance(ctx context.Context, inst *InstanceRow) error {
@@ -38,15 +42,17 @@ func (s *StorageLayer) UpsertInstance(ctx context.Context, inst *InstanceRow) er
 
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO opencode_instances
-			(instance_id, runner_id, hostname, kind, project_id, task_id,
-			 title, workdir, port, pid, session_ids, status, executor, started_at, last_seen)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			(instance_id, runner_id, hostname, kind, project_id, task_id, feature_id, priority,
+			 title, workdir, port, pid, session_ids, status, executor, agent, model, started_at, last_seen)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (instance_id) DO UPDATE SET
 			runner_id   = excluded.runner_id,
 			hostname    = excluded.hostname,
 			kind        = excluded.kind,
 			project_id  = excluded.project_id,
 			task_id     = excluded.task_id,
+			feature_id  = excluded.feature_id,
+			priority    = excluded.priority,
 			title       = excluded.title,
 			workdir     = excluded.workdir,
 			port        = excluded.port,
@@ -54,11 +60,13 @@ func (s *StorageLayer) UpsertInstance(ctx context.Context, inst *InstanceRow) er
 			session_ids = excluded.session_ids,
 			status      = excluded.status,
 			executor    = excluded.executor,
+			agent       = excluded.agent,
+			model       = excluded.model,
 			started_at  = excluded.started_at,
 			last_seen   = excluded.last_seen`,
-		inst.InstanceID, inst.RunnerID, inst.Hostname, inst.Kind, inst.ProjectID, inst.TaskID,
+		inst.InstanceID, inst.RunnerID, inst.Hostname, inst.Kind, inst.ProjectID, inst.TaskID, inst.FeatureID, inst.Priority,
 		inst.Title, inst.Workdir, inst.Port, inst.PID, sessionsJSON, inst.Status, inst.Executor,
-		inst.StartedAt, inst.LastSeen,
+		inst.Agent, inst.Model, inst.StartedAt, inst.LastSeen,
 	)
 	if err != nil {
 		return fmt.Errorf("upsert instance: %w", err)
@@ -165,12 +173,12 @@ func (s *StorageLayer) ReplaceInstancesForRunner(ctx context.Context, runnerID s
 		}
 		if _, err := tx.ExecContext(ctx, `
 			INSERT OR REPLACE INTO opencode_instances
-				(instance_id, runner_id, hostname, kind, project_id, task_id,
-				 title, workdir, port, pid, session_ids, status, executor, started_at, last_seen)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			inst.InstanceID, runnerID, inst.Hostname, inst.Kind, inst.ProjectID, inst.TaskID,
+				(instance_id, runner_id, hostname, kind, project_id, task_id, feature_id, priority,
+				 title, workdir, port, pid, session_ids, status, executor, agent, model, started_at, last_seen)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			inst.InstanceID, runnerID, inst.Hostname, inst.Kind, inst.ProjectID, inst.TaskID, inst.FeatureID, inst.Priority,
 			inst.Title, inst.Workdir, inst.Port, inst.PID, sessionsJSON, inst.Status, inst.Executor,
-			inst.StartedAt, inst.LastSeen,
+			inst.Agent, inst.Model, inst.StartedAt, inst.LastSeen,
 		); err != nil {
 			return fmt.Errorf("replace instances insert: %w", err)
 		}
@@ -206,8 +214,8 @@ func scanInstance(row rowScanner) (*InstanceRow, error) {
 	var inst InstanceRow
 	var sessionsJSON string
 	if err := row.Scan(&inst.InstanceID, &inst.RunnerID, &inst.Hostname, &inst.Kind,
-		&inst.ProjectID, &inst.TaskID, &inst.Title, &inst.Workdir, &inst.Port, &inst.PID,
-		&sessionsJSON, &inst.Status, &inst.Executor, &inst.StartedAt, &inst.LastSeen); err != nil {
+		&inst.ProjectID, &inst.TaskID, &inst.FeatureID, &inst.Priority, &inst.Title, &inst.Workdir, &inst.Port, &inst.PID,
+		&sessionsJSON, &inst.Status, &inst.Executor, &inst.Agent, &inst.Model, &inst.StartedAt, &inst.LastSeen); err != nil {
 		return nil, err
 	}
 	if err := json.Unmarshal([]byte(sessionsJSON), &inst.SessionIDs); err != nil {

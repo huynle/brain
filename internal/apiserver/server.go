@@ -216,20 +216,26 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		service.WithAttachmentDerivedChangeHook(brainSvc),
 	)
 	taskSvc := service.NewTaskService(&cfg, store)
-	runnerSvc := service.NewRunnerService()
+	runnerSvc := service.NewRunnerServiceWithStorage(store)
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)
 	clientContextSvc := service.NewClientContextService(store)
+	placementSvc := service.NewProjectPlacementService(store)
 	monitorSvc := service.NewMonitorService(brainSvc)
 	webhookSvc := service.NewWebhookService(store)
+
+	// ─── Realtime Hub ───────────────────────────────────────────────
+	hub := realtime.NewHub()
 
 	// ─── Background Claim Cleanup ──────────────────────────────────
 	taskSvc.StartClaimCleanup(ctx, service.DefaultClaimCleanupInterval)
 
 	// ─── Runner Lifecycle Management ───────────────────────────────
+	runnerRegistrySvc.SetHub(hub)
 	runnerRegistrySvc.StartLifecycleManager(ctx, service.DefaultLifecycleInterval)
 
-	// ─── Realtime Hub ───────────────────────────────────────────────
-	hub := realtime.NewHub()
+	// ─── Scheduler Lifecycle ────────────────────────────────────────
+	schedulerSvc := service.NewSchedulerService(taskSvc, runnerSvc, runnerRegistrySvc, placementSvc, store, hub)
+	schedulerSvc.Start(ctx, service.DefaultSchedulerInterval)
 
 	// ─── Event Hub & Services ──────────────────────────────────────
 	eventHub := realtime.NewEventHub()
@@ -260,9 +266,6 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	triggerDispatcher := realtime.NewTriggerDispatcher(eventHub, triggerSvc)
 	go triggerDispatcher.Start(ctx)
 
-	// Wire hub into runner registry for lifecycle sweep SSE events
-	runnerRegistrySvc.SetHub(hub)
-
 	// ─── Runner Bridge Hub (remote control) ────────────────────────
 	bridgeHub := bridge.NewHub(hub)
 
@@ -280,6 +283,9 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithRunnerService(runnerSvc),
 		api.WithRunnerRegistryService(runnerRegistrySvc),
 		api.WithClientContextService(clientContextSvc),
+		api.WithProjectPlacementService(placementSvc),
+		api.WithSchedulerService(schedulerSvc),
+		api.WithSchedulerVisibilityService(store),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),

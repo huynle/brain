@@ -36,7 +36,7 @@ func TestSchemaCreation_TablesExist(t *testing.T) {
 
 	tables := []string{"notes", "links", "tags", "entry_meta", "generated_tasks", "schema_version", "api_tokens",
 		"oauth_clients", "oauth_auth_codes", "oauth_access_tokens", "oauth_refresh_tokens",
-		"task_claims", "runners", "webhooks", "webhook_deliveries", "feature_assignments",
+		"task_claims", "task_dispatch_leases", "task_placement_reasons", "runners", "webhooks", "webhook_deliveries", "feature_assignments",
 		"note_embeddings", "note_embeddings_meta", "attachments", "entry_attachments"}
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
@@ -694,9 +694,9 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 	}
 }
 
-func TestSchemaVersion_IncludesOpencodeInstances(t *testing.T) {
-	if CurrentSchemaVersion != 16 {
-		t.Errorf("CurrentSchemaVersion = %d, want 16", CurrentSchemaVersion)
+func TestSchemaVersion_IncludesProjectPauseState(t *testing.T) {
+	if CurrentSchemaVersion != 22 {
+		t.Errorf("CurrentSchemaVersion = %d, want 22", CurrentSchemaVersion)
 	}
 }
 
@@ -976,6 +976,91 @@ func TestRunnersTable_MigrationFromV10AddsCapabilities(t *testing.T) {
 	}
 	if capabilities != "[]" {
 		t.Fatalf("legacy capabilities = %q, want []", capabilities)
+	}
+}
+
+func TestRunnersTable_FreshDB_DispatchMetadataColumns(t *testing.T) {
+	s := newTestStorage(t)
+
+	wantDefaults := map[string]string{
+		"machine_id":      "''",
+		"dispatch_push":   "0",
+		"workspace_roots": "'[]'",
+		"projects":        "'[]'",
+		"resources":       "'{}'",
+		"capacity":        "'{}'",
+		"draining":        "0",
+	}
+	for column, wantDefault := range wantDefaults {
+		var defaultValue sql.NullString
+		err := s.DB().QueryRow(`SELECT dflt_value FROM pragma_table_info('runners') WHERE name = ?`, column).Scan(&defaultValue)
+		if err != nil {
+			t.Fatalf("%s column not found in fresh runners table: %v", column, err)
+		}
+		if !defaultValue.Valid || defaultValue.String != wantDefault {
+			t.Fatalf("%s default = %q (valid=%v), want %s", column, defaultValue.String, defaultValue.Valid, wantDefault)
+		}
+	}
+
+	_, err := s.DB().Exec(`INSERT INTO runners (runner_id, hostname, machine_id, dispatch_push, workspace_roots, projects, resources, capacity, draining, max_parallel, registered_at, last_heartbeat)
+		VALUES ('runner-dispatch', 'host-dispatch', 'machine-explicit', 1, '["/work/brain"]', '["brain-api"]', '{"os":"darwin"}', '{"max_parallel":4}', 1, 4, 1000, 2000)`)
+	if err != nil {
+		t.Fatalf("insert runner with dispatch metadata failed: %v", err)
+	}
+
+	var machineID, workspaceRoots, projects, resources, capacity string
+	var dispatchPush, draining int
+	err = s.DB().QueryRow(`SELECT machine_id, dispatch_push, workspace_roots, projects, resources, capacity, draining FROM runners WHERE runner_id = 'runner-dispatch'`).
+		Scan(&machineID, &dispatchPush, &workspaceRoots, &projects, &resources, &capacity, &draining)
+	if err != nil {
+		t.Fatalf("select dispatch metadata failed: %v", err)
+	}
+	if machineID != "machine-explicit" || dispatchPush != 1 || workspaceRoots != `["/work/brain"]` || projects != `["brain-api"]` || resources != `{"os":"darwin"}` || capacity != `{"max_parallel":4}` || draining != 1 {
+		t.Fatalf("unexpected dispatch metadata: machine=%q push=%d roots=%q projects=%q resources=%q capacity=%q draining=%d", machineID, dispatchPush, workspaceRoots, projects, resources, capacity, draining)
+	}
+}
+
+func TestRunnersTable_MigrationFromV17AddsDispatchMetadata(t *testing.T) {
+	db := openMemoryDB(t)
+	defer db.Close()
+
+	if _, err := db.Exec(createSchemaVersionTable); err != nil {
+		t.Fatalf("create schema_version table: %v", err)
+	}
+	if _, err := db.Exec("INSERT INTO schema_version (version) VALUES (17)"); err != nil {
+		t.Fatalf("insert v17: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE runners (
+		runner_id TEXT PRIMARY KEY,
+		hostname TEXT NOT NULL,
+		labels TEXT DEFAULT '{}',
+		executors TEXT DEFAULT '[]',
+		capabilities TEXT DEFAULT '[]',
+		max_parallel INTEGER NOT NULL DEFAULT 1,
+		feature_ids TEXT DEFAULT '',
+		registered_at INTEGER NOT NULL,
+		last_heartbeat INTEGER NOT NULL,
+		status TEXT NOT NULL DEFAULT 'online'
+	)`); err != nil {
+		t.Fatalf("create v17 runners table: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO runners (runner_id, hostname, labels, executors, capabilities, max_parallel, registered_at, last_heartbeat)
+		VALUES ('legacy-runner', 'legacy-host', '{"_machine_id":"legacy-machine"}', '["opencode"]', '["docker"]', 1, 1000, 2000)`); err != nil {
+		t.Fatalf("insert legacy runner: %v", err)
+	}
+
+	if err := migrateSchema(db); err != nil {
+		t.Fatalf("migrateSchema failed: %v", err)
+	}
+
+	var machineID, workspaceRoots, projects, resources, capacity string
+	var dispatchPush, draining int
+	if err := db.QueryRow(`SELECT machine_id, dispatch_push, workspace_roots, projects, resources, capacity, draining FROM runners WHERE runner_id = 'legacy-runner'`).
+		Scan(&machineID, &dispatchPush, &workspaceRoots, &projects, &resources, &capacity, &draining); err != nil {
+		t.Fatalf("select migrated dispatch metadata failed: %v", err)
+	}
+	if machineID != "" || dispatchPush != 0 || workspaceRoots != "[]" || projects != "[]" || resources != "{}" || capacity != "{}" || draining != 0 {
+		t.Fatalf("migrated metadata = machine=%q push=%d roots=%q projects=%q resources=%q capacity=%q draining=%d; want defaults", machineID, dispatchPush, workspaceRoots, projects, resources, capacity, draining)
 	}
 }
 

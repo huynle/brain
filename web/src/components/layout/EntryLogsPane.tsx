@@ -5,7 +5,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { getTaskLogs } from "../../lib/api";
-import { clockTime, logLevelColor } from "../../lib/format";
+import { cleanLogContent, clockTime, logLevelColor } from "../../lib/format";
 
 export function EntryLogsPane({
   taskId,
@@ -38,7 +38,7 @@ export function EntryLogsPane({
         <div key={i} className="logline">
           <span className="lt">{clockTime(l.timestamp)}</span>
           <span className="ll" style={{ color: logLevelColor(l.level) }}>{l.level}</span>
-          <span className="lc">{l.content}</span>
+          <span className="lc">{cleanLogContent(l.content)}</span>
         </div>
       ))}
     </>

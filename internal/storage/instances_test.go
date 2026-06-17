@@ -13,6 +13,8 @@ func testInstance(id, runnerID string) *InstanceRow {
 		Kind:       "task",
 		ProjectID:  "proj",
 		TaskID:     "task-1",
+		FeatureID:  "feature-alpha",
+		Priority:   "high",
 		Title:      "Test task",
 		Workdir:    "/tmp/work",
 		Port:       4096,
@@ -20,6 +22,8 @@ func testInstance(id, runnerID string) *InstanceRow {
 		SessionIDs: []string{"ses_abc"},
 		Status:     "busy",
 		Executor:   "opencode",
+		Agent:      "tdd-dev",
+		Model:      "anthropic/claude-sonnet-4",
 		StartedAt:  1000,
 		LastSeen:   2000,
 	}
@@ -46,6 +50,12 @@ func TestInstances_UpsertAndGet(t *testing.T) {
 	}
 	if len(got.SessionIDs) != 1 || got.SessionIDs[0] != "ses_abc" {
 		t.Errorf("unexpected session ids: %v", got.SessionIDs)
+	}
+	if got.FeatureID != "feature-alpha" || got.Priority != "high" {
+		t.Errorf("unexpected task metadata: feature=%q priority=%q", got.FeatureID, got.Priority)
+	}
+	if got.Agent != "tdd-dev" || got.Model != "anthropic/claude-sonnet-4" {
+		t.Errorf("unexpected executor metadata: agent=%q model=%q", got.Agent, got.Model)
 	}
 
 	// Upsert again with changed status — should replace, not duplicate.

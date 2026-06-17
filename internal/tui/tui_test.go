@@ -770,11 +770,12 @@ func TestAutomationTabXRunsSelectedAutomation(t *testing.T) {
 	}
 }
 
-func TestAutomationTabPTogglesAutomationPause(t *testing.T) {
-	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+func TestAutomationTabPTogglesAutomationPauseForAllScope(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api", Projects: []string{"brain-api", "other"}})
 	m.activeContentTab = ContentTabAutomation
 	m.activeAutomationSubTab = AutomationSubTabAutomations
 	m.activePanel = PanelTasks
+	m.activeProjectID = "all"
 	m.allPaused = true
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
@@ -783,10 +784,27 @@ func TestAutomationTabPTogglesAutomationPause(t *testing.T) {
 		t.Fatal("expected p in Automations tab to toggle automation pause")
 	}
 	if !model.automationsPaused {
-		t.Fatal("expected automationsPaused to be true after p")
+		t.Fatal("expected global automationsPaused to be true after p on all scope")
 	}
 	if !model.allPaused {
 		t.Fatal("automation pause toggle should not change normal task allPaused state")
+	}
+}
+
+func TestAutomationTabPTogglesOnlyActiveProjectAutomationPause(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "proj-a", Projects: []string{"proj-a", "proj-b"}})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.activeProjectID = "proj-b"
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	model := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected p in Automations tab to toggle automation pause")
+	}
+	if model.automationsPaused {
+		t.Fatal("single-project automation pause toggle must not change global automationsPaused state")
 	}
 }
 
@@ -3110,6 +3128,32 @@ func TestNewModel_InitializesPauseState(t *testing.T) {
 	}
 }
 
+func TestSyncHelpBarPauseState_AllProjectUsesGlobalPause(t *testing.T) {
+	m := NewModel(Config{Project: "proj-a", Projects: []string{"proj-a", "proj-b"}})
+	m.activeProjectID = "all"
+	m.allPaused = true
+	m.pausedProjects = map[string]bool{}
+
+	m.syncHelpBarPauseState()
+
+	if !m.helpBar.IsPaused {
+		t.Fatal("expected all project active scope to read global pause state")
+	}
+}
+
+func TestSyncHelpBarPauseState_SingleProjectIgnoresGlobalPause(t *testing.T) {
+	m := NewModel(Config{Project: "proj-a", Projects: []string{"proj-a", "proj-b"}})
+	m.activeProjectID = "proj-b"
+	m.allPaused = true
+	m.pausedProjects = map[string]bool{"proj-a": true}
+
+	m.syncHelpBarPauseState()
+
+	if m.helpBar.IsPaused {
+		t.Fatal("expected single active project to read only its project pause state, not global pause")
+	}
+}
+
 func TestPauseToggledMsg_Fields(t *testing.T) {
 	// Verify the message type can be constructed and used
 	msg := pauseToggledMsg{
@@ -3273,12 +3317,61 @@ func TestUpdate_PKey_UsesActiveProjectID(t *testing.T) {
 	}
 }
 
+func TestUpdate_ShiftPKey_SingleActiveProjectTogglesOnlyThatProject(t *testing.T) {
+	cfg := Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "default-project",
+		Projects: []string{"proj-a", "proj-b"},
+	}
+	m := NewModel(cfg)
+	m.activeProjectID = "proj-b"
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected non-nil command")
+	}
+	if model.allPaused {
+		t.Fatal("single active project Shift+P must not change allPaused")
+	}
+	if !model.pausedProjects["proj-b"] {
+		t.Fatal("expected active project proj-b to be paused")
+	}
+	if model.pausedProjects["proj-a"] {
+		t.Fatal("expected inactive project proj-a to remain unchanged")
+	}
+}
+
+func TestUpdate_ShiftPKey_AllActiveProjectTogglesGlobal(t *testing.T) {
+	cfg := Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "default-project",
+		Projects: []string{"proj-a", "proj-b"},
+	}
+	m := NewModel(cfg)
+	m.activeProjectID = "all"
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected non-nil command")
+	}
+	if !model.allPaused {
+		t.Fatal("all active project Shift+P should toggle global allPaused")
+	}
+}
+
 func TestUpdate_ShiftPKey_PausesAll(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",
 		Project: "test-project",
 	}
 	m := NewModel(cfg)
+	m.activeProjectID = "all"
 
 	// Press 'P' (shift+p) to pause all
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}
@@ -3310,6 +3403,7 @@ func TestUpdate_ShiftPKey_ResumesAll(t *testing.T) {
 		Project: "test-project",
 	}
 	m := NewModel(cfg)
+	m.activeProjectID = "all"
 	m.allPaused = true
 
 	// Press 'P' to resume all
@@ -3644,7 +3738,7 @@ func TestSyncHelpBarPauseState_MultiProject_ActiveProjectPaused(t *testing.T) {
 	}
 }
 
-func TestSyncHelpBarPauseState_MultiProject_AllTab_FallsBackToConfigProject(t *testing.T) {
+func TestSyncHelpBarPauseState_MultiProject_AllTab_UsesGlobalPauseState(t *testing.T) {
 	cfg := Config{
 		APIURL:   "http://localhost:3333",
 		Project:  "default-project",
@@ -3656,8 +3750,15 @@ func TestSyncHelpBarPauseState_MultiProject_AllTab_FallsBackToConfigProject(t *t
 
 	m.syncHelpBarPauseState()
 
+	if m.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to ignore config-project pause when 'all' tab is active")
+	}
+
+	m.allPaused = true
+	m.syncHelpBarPauseState()
+
 	if !m.helpBar.IsPaused {
-		t.Error("expected helpBar.IsPaused to be true when 'all' tab and config project is paused")
+		t.Error("expected helpBar.IsPaused to follow global pause when 'all' tab is active")
 	}
 }
 
@@ -3685,6 +3786,7 @@ func TestUpdate_ShiftPKey_SyncsHelpBarAllPaused(t *testing.T) {
 		Project: "test-project",
 	}
 	m := NewModel(cfg)
+	m.activeProjectID = "all"
 
 	// Press 'P' to pause all
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}

@@ -102,6 +102,13 @@ export function relativeTime(iso?: string): string {
   return fmt(Math.floor(mo / 12), "y");
 }
 
+export function cleanLogContent(content?: string): string {
+  if (!content) return "";
+  return content
+    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\[(?:\d{1,3};)*\d{1,3}[A-Za-z]/g, "");
+}
+
 export function clockTime(iso?: string): string {
   if (!iso) return "";
   const d = new Date(iso);

@@ -3,10 +3,14 @@ package runner
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -78,6 +82,17 @@ type mockClient struct {
 
 	deregisterErr   error
 	deregisterCalls []string
+
+	ackErr   error
+	ackCalls []dispatchAckCall
+
+	rejectErr   error
+	rejectCalls []dispatchRejectCall
+
+	releaseDispatchErr   error
+	releaseDispatchCalls []dispatchReleaseCall
+
+	runnerStatus *types.RunnerStatusResponse
 }
 
 type nextTaskCall struct {
@@ -118,6 +133,27 @@ type appendCall struct {
 type heartbeatCall struct {
 	RunnerID string
 	Request  types.RunnerHeartbeatRequest
+}
+
+type dispatchAckCall struct {
+	RunnerID  string
+	ProjectID string
+	TaskID    string
+	LeaseID   string
+}
+
+type dispatchRejectCall struct {
+	RunnerID  string
+	ProjectID string
+	TaskID    string
+	LeaseID   string
+	Reason    types.DispatchRejectReason
+}
+
+type dispatchReleaseCall struct {
+	RunnerID  string
+	ProjectID string
+	TaskID    string
 }
 
 func newMockClient() *mockClient {
@@ -192,6 +228,36 @@ func (m *mockClient) ReleaseTask(ctx context.Context, projectID, taskID, runnerI
 	defer m.mu.Unlock()
 	m.releaseCalls = append(m.releaseCalls, releaseCall{projectID, taskID, runnerID})
 	return m.releaseErr
+}
+
+func (m *mockClient) AckDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string) (*types.DispatchAckResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ackCalls = append(m.ackCalls, dispatchAckCall{RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID})
+	return &types.DispatchAckResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID}, m.ackErr
+}
+
+func (m *mockClient) RejectDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.rejectCalls = append(m.rejectCalls, dispatchRejectCall{RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID, Reason: reason})
+	return &types.DispatchRejectResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID, LeaseID: leaseID, Reason: reason}, m.rejectErr
+}
+
+func (m *mockClient) ReleaseDispatch(ctx context.Context, runnerID, projectID, taskID string) (*types.DispatchReleaseResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.releaseDispatchCalls = append(m.releaseDispatchCalls, dispatchReleaseCall{RunnerID: runnerID, ProjectID: projectID, TaskID: taskID})
+	return &types.DispatchReleaseResponse{Success: true, RunnerID: runnerID, ProjectID: projectID, TaskID: taskID}, m.releaseDispatchErr
+}
+
+func (m *mockClient) GetRunnerStatus(ctx context.Context) (*types.RunnerStatusResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.runnerStatus == nil {
+		return &types.RunnerStatusResponse{Running: true}, nil
+	}
+	return m.runnerStatus, nil
 }
 
 func (m *mockClient) UpdateTaskStatus(ctx context.Context, taskPath, status string) error {
@@ -302,6 +368,30 @@ func (m *mockClient) getReleaseCalls() []releaseCall {
 	return result
 }
 
+func (m *mockClient) getAckCalls() []dispatchAckCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]dispatchAckCall, len(m.ackCalls))
+	copy(result, m.ackCalls)
+	return result
+}
+
+func (m *mockClient) getRejectCalls() []dispatchRejectCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]dispatchRejectCall, len(m.rejectCalls))
+	copy(result, m.rejectCalls)
+	return result
+}
+
+func (m *mockClient) getReleaseDispatchCalls() []dispatchReleaseCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]dispatchReleaseCall, len(m.releaseDispatchCalls))
+	copy(result, m.releaseDispatchCalls)
+	return result
+}
+
 // =============================================================================
 // Mock Executor
 // =============================================================================
@@ -311,6 +401,7 @@ type mockExecutor struct {
 
 	buildPromptResult string
 	resolveWorkdir    string
+	resolveWorkdirErr error
 	spawnResult       *SpawnResult
 	spawnErr          error
 	spawnCalls        []spawnCall
@@ -347,6 +438,9 @@ func (m *mockExecutor) BuildPrompt(task *types.ResolvedTask, isResume bool) stri
 func (m *mockExecutor) ResolveWorkdir(task *types.ResolvedTask) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.resolveWorkdirErr != nil {
+		return "", m.resolveWorkdirErr
+	}
 	return m.resolveWorkdir, nil
 }
 
@@ -952,6 +1046,395 @@ func TestTaskRunner_Start_SavesPid(t *testing.T) {
 // Poll Tests
 // =============================================================================
 
+func TestTaskRunner_Poll_DispatchPushCapabilityDoesNotPollNextOrSpawn(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tr.poll(context.Background())
+
+	if got := len(client.getNextTaskCalls()); got != 0 {
+		t.Fatalf("dispatch-push runner should not call GetNextTask, got %d calls", got)
+	}
+	if got := len(executor.getSpawnCalls()); got != 0 {
+		t.Fatalf("dispatch-push runner should not spawn poll-discovered tasks, got %d spawns", got)
+	}
+}
+
+func TestTaskRunner_Poll_DispatchPushConfigDoesNotPollNext(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.DispatchPush = true
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tr.poll(context.Background())
+
+	if got := len(client.getNextTaskCalls()); got != 0 {
+		t.Fatalf("dispatch-push runner should not call GetNextTask, got %d calls", got)
+	}
+	if got := len(executor.getSpawnCalls()); got != 0 {
+		t.Fatalf("dispatch-push runner should not spawn poll-discovered tasks, got %d spawns", got)
+	}
+}
+
+func TestTaskRunner_Poll_PassiveConfigDoesNotPollNext(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Passive = true
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tr.poll(context.Background())
+
+	if got := len(client.getNextTaskCalls()); got != 0 {
+		t.Fatalf("passive runner should not call GetNextTask, got %d calls", got)
+	}
+	if got := len(executor.getSpawnCalls()); got != 0 {
+		t.Fatalf("passive runner should not spawn poll-discovered tasks, got %d spawns", got)
+	}
+}
+
+func TestTaskRunner_PassiveDispatchCommandAcksAndSpawnsWithoutPollingNext(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("other-task", "proj-a")
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type:      CommandDispatch,
+		ProjectID: "proj-a",
+		TaskID:    "task1",
+		LeaseID:   "lease-1",
+	})
+
+	if got := len(client.getNextTaskCalls()); got != 0 {
+		t.Fatalf("dispatch command should not call GetNextTask, got %d calls", got)
+	}
+	if got := len(client.getAckCalls()); got != 1 {
+		t.Fatalf("dispatch command should ack exactly once, got %d", got)
+	}
+	spawns := executor.getSpawnCalls()
+	if got := len(spawns); got != 1 {
+		t.Fatalf("dispatch command should spawn assigned lease task exactly once, got %d", got)
+	}
+	if spawns[0].TaskID != "task1" {
+		t.Fatalf("spawned task ID = %q, want task1", spawns[0].TaskID)
+	}
+}
+
+func TestTaskRunner_DispatchSpawnFailureReleasesDispatchLease(t *testing.T) {
+	client := newMockClient()
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+	executor := newMockExecutor()
+	executor.spawnErr = errors.New("spawn failed")
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless, Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr})
+
+	tr.handleCommand(context.Background(), RunnerCommand{Type: CommandDispatch, ProjectID: "proj-a", TaskID: "task1", LeaseID: "lease-1"})
+
+	if got := len(client.getAckCalls()); got != 1 {
+		t.Fatalf("dispatch command should ack before spawn, got %d ack calls", got)
+	}
+	releases := client.getReleaseDispatchCalls()
+	if len(releases) != 1 {
+		t.Fatalf("spawn failure should release dispatch lease exactly once, got %d", len(releases))
+	}
+	if releases[0].ProjectID != "proj-a" || releases[0].TaskID != "task1" {
+		t.Fatalf("release dispatch call = %+v", releases[0])
+	}
+}
+
+func TestTaskRunner_TaskCompletionReleasesDispatchLease(t *testing.T) {
+	client := newMockClient()
+	processMgr := newMockProcessMgr()
+	tr := newTestRunner(client, newMockExecutor(), processMgr, newMockStateMgr())
+	task := RunningTask{ID: "task1", Path: "projects/proj-a/task/task1.md", ProjectID: "proj-a"}
+	if err := processMgr.Add("task1", task, newMockProcess(100)); err != nil {
+		t.Fatalf("add process: %v", err)
+	}
+	processMgr.completions["task1"] = CompletionCompleted
+
+	tr.checkRunningTasks(context.Background())
+
+	releases := client.getReleaseDispatchCalls()
+	if len(releases) != 1 {
+		t.Fatalf("task completion should release dispatch lease exactly once, got %d", len(releases))
+	}
+}
+
+func TestTaskRunner_SchedulerDispatchPayloadParsesAcksAndSpawns(t *testing.T) {
+	client := newMockClient()
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	payload := []byte(`{
+		"type":"dispatch",
+		"projectId":"proj-a",
+		"taskId":"task1",
+		"leaseId":"lease-123",
+		"lease":{"id":"lease-123","leaseId":"lease-123","lease_id":"lease-123","expires_at":4102444800000},
+		"expiresAt":4102444800000
+	}`)
+	var cmd RunnerCommand
+	if err := json.Unmarshal(payload, &cmd); err != nil {
+		t.Fatalf("unmarshal scheduler dispatch payload: %v", err)
+	}
+	if cmd.LeaseID != "lease-123" || cmd.ProjectID != "proj-a" || cmd.TaskID != "task1" {
+		t.Fatalf("parsed command = %#v", cmd)
+	}
+
+	tr.handleCommand(context.Background(), cmd)
+
+	acks := client.getAckCalls()
+	if len(acks) != 1 {
+		t.Fatalf("acks = %d, want 1", len(acks))
+	}
+	if acks[0].LeaseID != "lease-123" || acks[0].ProjectID != "proj-a" || acks[0].TaskID != "task1" {
+		t.Fatalf("ack call = %#v", acks[0])
+	}
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 || spawns[0].TaskID != "task1" {
+		t.Fatalf("spawns = %#v, want task1", spawns)
+	}
+}
+
+func TestTaskRunner_Poll_MixedLegacyAndPassiveBehavior(t *testing.T) {
+	activeClient := newMockClient()
+	activeClient.nextTask["proj-a"] = testTask("active-task", "proj-a")
+	passiveClient := newMockClient()
+	passiveClient.nextTask["proj-a"] = testTask("poll-task", "proj-a")
+	passiveClient.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("dispatch-task", "proj-a")}
+
+	activeExecutor := newMockExecutor()
+	passiveExecutor := newMockExecutor()
+
+	active := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     testRunnerConfig(),
+		Mode:       ExecutionModeHeadless,
+		Client:     activeClient,
+		Executor:   activeExecutor,
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+	})
+
+	passiveCfg := testRunnerConfig()
+	passiveCfg.Capabilities = []string{"dispatch_push"}
+	passive := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     passiveCfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     passiveClient,
+		Executor:   passiveExecutor,
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+	})
+
+	active.poll(context.Background())
+	passive.poll(context.Background())
+	passive.handleCommand(context.Background(), RunnerCommand{Type: CommandDispatch, ProjectID: "proj-a", TaskID: "dispatch-task", LeaseID: "lease-1"})
+
+	if got := len(activeClient.getNextTaskCalls()); got == 0 {
+		t.Fatal("legacy active runner should poll GetNextTask")
+	}
+	if got := len(activeExecutor.getSpawnCalls()); got != 1 {
+		t.Fatalf("legacy active runner should spawn polled task once, got %d", got)
+	}
+	if got := len(passiveClient.getNextTaskCalls()); got != 0 {
+		t.Fatalf("passive runner should not poll GetNextTask, got %d calls", got)
+	}
+	spawns := passiveExecutor.getSpawnCalls()
+	if got := len(spawns); got != 1 {
+		t.Fatalf("passive runner should spawn dispatch lease task once, got %d", got)
+	}
+	if spawns[0].TaskID != "dispatch-task" {
+		t.Fatalf("passive runner spawned %q, want dispatch-task", spawns[0].TaskID)
+	}
+}
+
+func TestTaskRunner_RegisterAndHeartbeatAdvertiseDispatchPush(t *testing.T) {
+	client := newMockClient()
+	tr := newTestRunner(client, newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+	tr.config.Capabilities = []string{"dispatch_push"}
+
+	tr.registerWithAPI(context.Background())
+	tr.sendHeartbeat(context.Background())
+
+	if got := len(client.registerCalls); got != 1 {
+		t.Fatalf("register calls = %d, want 1", got)
+	}
+	if !client.registerCalls[0].DispatchPush {
+		t.Fatal("registration DispatchPush = false, want true")
+	}
+	if got := len(client.heartbeatCalls); got != 1 {
+		t.Fatalf("heartbeat calls = %d, want 1", got)
+	}
+	hb := client.heartbeatCalls[0].Request.DispatchPush
+	if hb == nil {
+		t.Fatal("heartbeat DispatchPush pointer is nil, want true")
+	}
+	if !*hb {
+		t.Fatal("heartbeat DispatchPush = false, want true")
+	}
+}
+
+func TestTaskRunner_RegisterAndHeartbeatIncludeSchedulerMetadata(t *testing.T) {
+	client := newMockClient()
+	processMgr := newMockProcessMgr()
+	config := testRunnerConfig()
+	config.Labels = map[string]string{"pool": "fast"}
+	config.WorkspaceRoots = []string{"/work/explicit"}
+	config.Resources = map[string]interface{}{"gpu": 2, "arch": "arm64"}
+	config.Capacity = map[string]interface{}{"memory_gb": 64}
+	config.Draining = true
+	config.MaxParallel = 3
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a", "proj-b"},
+		Config:     config,
+		Mode:       ExecutionModeHeadless,
+		Executors:  map[string]TaskExecutor{"opencode": newMockExecutor()},
+		ProcessMgr: processMgr,
+		StateMgr:   newMockStateMgr(),
+		Client:     client,
+	})
+	if err := processMgr.Add("task-running", RunningTask{ID: "task-running", ProjectID: "proj-a"}, newMockProcess(1)); err != nil {
+		t.Fatalf("Add process failed: %v", err)
+	}
+
+	tr.registerWithAPI(context.Background())
+	tr.sendHeartbeat(context.Background())
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.registerCalls) != 1 {
+		t.Fatalf("register calls = %d, want 1", len(client.registerCalls))
+	}
+	reg := client.registerCalls[0]
+	if !reflect.DeepEqual(reg.Labels, config.Labels) || !reflect.DeepEqual(reg.WorkspaceRoots, config.WorkspaceRoots) || !reflect.DeepEqual(reg.Resources, config.Resources) || !reflect.DeepEqual(reg.Capacity, config.Capacity) {
+		t.Fatalf("registration metadata = labels %#v roots %#v resources %#v capacity %#v", reg.Labels, reg.WorkspaceRoots, reg.Resources, reg.Capacity)
+	}
+	if !reg.Draining || reg.MaxParallel != 3 || !reflect.DeepEqual(reg.Projects, []string{"proj-a", "proj-b"}) {
+		t.Fatalf("registration scheduling fields = draining %v max %d projects %#v", reg.Draining, reg.MaxParallel, reg.Projects)
+	}
+
+	if len(client.heartbeatCalls) != 1 {
+		t.Fatalf("heartbeat calls = %d, want 1", len(client.heartbeatCalls))
+	}
+	hb := client.heartbeatCalls[0].Request
+	if hb.RunningTasks != 1 {
+		t.Fatalf("heartbeat RunningTasks = %d, want 1", hb.RunningTasks)
+	}
+	if hb.Draining == nil || !*hb.Draining {
+		t.Fatalf("heartbeat Draining = %#v, want true", hb.Draining)
+	}
+	if !reflect.DeepEqual(hb.Labels, config.Labels) || !reflect.DeepEqual(hb.WorkspaceRoots, config.WorkspaceRoots) || !reflect.DeepEqual(hb.Resources, config.Resources) || !reflect.DeepEqual(hb.Capacity, config.Capacity) || !reflect.DeepEqual(hb.Projects, []string{"proj-a", "proj-b"}) {
+		t.Fatalf("heartbeat metadata = labels %#v roots %#v projects %#v resources %#v capacity %#v", hb.Labels, hb.WorkspaceRoots, hb.Projects, hb.Resources, hb.Capacity)
+	}
+}
+
+func TestTaskRunner_RegisterUsesAllowedWorkdirRootsForSchedulerMetadata(t *testing.T) {
+	client := newMockClient()
+	config := testRunnerConfig()
+	config.Control.AllowedWorkdirRoots = []string{"/work/fallback"}
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     config,
+		Mode:       ExecutionModeHeadless,
+		Executors:  map[string]TaskExecutor{"opencode": newMockExecutor()},
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+		Client:     client,
+	})
+
+	tr.registerWithAPI(context.Background())
+
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if len(client.registerCalls) != 1 {
+		t.Fatalf("register calls = %d, want 1", len(client.registerCalls))
+	}
+	if !reflect.DeepEqual(client.registerCalls[0].WorkspaceRoots, []string{"/work/fallback"}) {
+		t.Fatalf("WorkspaceRoots = %#v, want fallback roots", client.registerCalls[0].WorkspaceRoots)
+	}
+}
+
 func TestTaskRunner_Poll_HealthCheckFails_NoSpawn(t *testing.T) {
 	client := newMockClient()
 	client.healthResult = APIHealth{Status: "unhealthy"}
@@ -1050,6 +1533,73 @@ func TestTaskRunner_Poll_SkipsPausedProjects(t *testing.T) {
 	}
 }
 
+func TestTaskRunner_Poll_UsesServerOwnedProjectPauseState(t *testing.T) {
+	client := newMockClient()
+	client.nextTask["proj-a"] = testTask("task1", "proj-a")
+	client.runnerStatus = &types.RunnerStatusResponse{Running: true, PausedProjects: []string{"proj-a"}}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.poll(context.Background())
+
+	if len(executor.getSpawnCalls()) > 0 {
+		t.Fatal("server-owned task pause should prevent normal task spawn")
+	}
+}
+
+func TestDiscoverSessionID_IgnoresExistingSessions(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/session" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		switch calls {
+		case 1:
+			_, _ = w.Write([]byte(`[
+				{"id":"ses_old","time":{"updated":9000}}
+			]`))
+		default:
+			_, _ = w.Write([]byte(`[
+				{"id":"ses_old","time":{"updated":9000}},
+				{"id":"ses_task","time":{"updated":1000}}
+			]`))
+		}
+	}))
+	defer server.Close()
+
+	port := serverPortFromURL(t, server.URL)
+	baseline, err := listSessionIDs(port)
+	if err != nil {
+		t.Fatalf("listSessionIDs failed: %v", err)
+	}
+
+	sessionID, err := discoverSessionID(port, baseline)
+	if err != nil {
+		t.Fatalf("discoverSessionID failed: %v", err)
+	}
+	if sessionID != "ses_task" {
+		t.Fatalf("sessionID = %q, want ses_task", sessionID)
+	}
+}
+
+func serverPortFromURL(t *testing.T, rawURL string) int {
+	t.Helper()
+	idx := strings.LastIndex(rawURL, ":")
+	if idx < 0 {
+		t.Fatalf("server URL has no port: %s", rawURL)
+	}
+	port, err := strconv.Atoi(rawURL[idx+1:])
+	if err != nil {
+		t.Fatalf("parse server port from %q: %v", rawURL, err)
+	}
+	return port
+}
+
 func TestTaskRunner_Poll_RunsAutomationTasksWhenProjectPausedAndAutomationsUnpaused(t *testing.T) {
 	client := newMockClient()
 	task := testTask("task1", "proj-a")
@@ -1120,6 +1670,34 @@ func TestTaskRunner_Poll_DoesNotRunAutomationTasksWhenAutomationsPausedAndProjec
 
 	if len(executor.getSpawnCalls()) > 0 {
 		t.Fatalf("automation-paused runner should not spawn automation task, got %d spawns", len(executor.getSpawnCalls()))
+	}
+}
+
+func TestTaskRunner_Poll_ProjectAutomationPauseSkipsOnlyThatProject(t *testing.T) {
+	client := newMockClient()
+	pausedTask := testTask("task-paused", "proj-a")
+	pausedTask.GeneratedBy = "automation:auto-a"
+	runningTask := testTask("task-running", "proj-b")
+	runningTask.GeneratedBy = "automation:auto-b"
+	client.nextTask["proj-a"] = pausedTask
+	client.nextTask["proj-b"] = runningTask
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+	tr.PauseProjectAutomations("proj-a")
+
+	ctx := context.Background()
+	tr.poll(ctx)
+
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("expected exactly one spawn for unpaused project, got %d", len(spawns))
+	}
+	if spawns[0].TaskID != "task-running" {
+		t.Fatalf("spawned task = %s, want task-running", spawns[0].TaskID)
 	}
 }
 
@@ -1828,6 +2406,44 @@ func TestTaskRunner_CheckRunningTasks_CleansUpFiles(t *testing.T) {
 // =============================================================================
 // Pause / Resume Tests
 // =============================================================================
+
+func TestTaskRunner_ProjectAutomationPause_IsScopedToProject(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.PauseProjectAutomations("proj-a")
+
+	if !tr.IsAutomationsPausedForProject("proj-a") {
+		t.Fatal("proj-a automations should be paused")
+	}
+	if tr.IsAutomationsPausedForProject("proj-b") {
+		t.Fatal("proj-b automations should not inherit proj-a automation pause")
+	}
+}
+
+func TestTaskRunner_GlobalAutomationPause_AppliesToAllProjects(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.PauseAutomations()
+
+	if !tr.IsAutomationsPausedForProject("proj-a") {
+		t.Fatal("proj-a automations should be paused when global automations are paused")
+	}
+	if !tr.IsAutomationsPausedForProject("proj-b") {
+		t.Fatal("proj-b automations should be paused when global automations are paused")
+	}
+}
+
+func TestTaskRunner_ProjectAutomationResume_DoesNotResumeGlobalPause(t *testing.T) {
+	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())
+
+	tr.PauseAutomations()
+	tr.PauseProjectAutomations("proj-a")
+	tr.ResumeProjectAutomations("proj-a")
+
+	if !tr.IsAutomationsPausedForProject("proj-a") {
+		t.Fatal("proj-a automations should remain paused by global automation pause")
+	}
+}
 
 func TestTaskRunner_PauseProject(t *testing.T) {
 	tr := newTestRunner(newMockClient(), newMockExecutor(), newMockProcessMgr(), newMockStateMgr())

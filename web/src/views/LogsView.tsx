@@ -44,7 +44,8 @@ export function LogsView() {
   const logFilter = useUI((s) => s.logFilter);
   const setLogFilter = useUI((s) => s.setLogFilter);
   const [follow, setFollow] = useState(true);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const filterRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const reqQ = useQuery({
@@ -71,16 +72,30 @@ export function LogsView() {
     if (follow) bottomRef.current?.scrollIntoView({ block: "end" });
   }, [filtered, follow]);
 
+  function scrollEl() {
+    return rootRef.current?.parentElement;
+  }
+
   function onScroll() {
-    const el = scrollRef.current;
+    const el = scrollEl();
     if (!el) return;
     setFollow(el.scrollHeight - el.scrollTop - el.clientHeight < 60);
   }
 
+  useEffect(() => {
+    const el = scrollEl();
+    if (!el) return;
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
+
   useViewKeyboard(
     (e) => {
-      const el = scrollRef.current;
+      const el = scrollEl();
       switch (e.key) {
+        case "/":
+          filterRef.current?.focus();
+          return true;
         case "j":
         case "ArrowDown":
           if (el) el.scrollTop += 60;
@@ -114,12 +129,19 @@ export function LogsView() {
   );
 
   return (
-    <div>
+    <div ref={rootRef} className="logs-view">
       <div className="search-bar">
         <input
+          ref={filterRef}
           placeholder="Filter requests (path, method, actor, status)…"
           value={logFilter}
           onChange={(e) => setLogFilter(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              setLogFilter("");
+              e.currentTarget.blur();
+            }
+          }}
         />
         <span className="faint" style={{ fontSize: 11.5, whiteSpace: "nowrap" }}>
           {filtered.length} req{reqQ.error ? " · offline" : ""}
@@ -144,8 +166,6 @@ export function LogsView() {
         />
       ) : (
         <div
-          ref={scrollRef}
-          onScroll={onScroll}
           style={{ padding: "0.4rem 0.6rem", fontFamily: "var(--mono)", fontSize: 12.5, lineHeight: 1.5 }}
         >
           {filtered.map((r) => (

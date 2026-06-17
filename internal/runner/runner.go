@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +60,9 @@ type Client interface {
 	ClaimTask(ctx context.Context, projectID, taskID, runnerID string) (ClaimResult, error)
 	RenewClaim(ctx context.Context, projectID, taskID, runnerID string) error
 	ReleaseTask(ctx context.Context, projectID, taskID, runnerID string) error
+	AckDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string) (*types.DispatchAckResponse, error)
+	RejectDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
+	ReleaseDispatch(ctx context.Context, runnerID, projectID, taskID string) (*types.DispatchReleaseResponse, error)
 	UpdateTaskStatus(ctx context.Context, taskPath, status string) error
 	AppendToTask(ctx context.Context, taskPath, content string) error
 	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
@@ -177,9 +182,9 @@ type TaskRunner struct {
 	runnerID  string
 	machineID string
 	projects  []string
-	config   RunnerConfig
-	mode     ExecutionMode
-	logger   *log.Logger
+	config    RunnerConfig
+	mode      ExecutionMode
+	logger    *log.Logger
 
 	client           Client
 	executor         TaskExecutor
@@ -199,11 +204,12 @@ type TaskRunner struct {
 	lastClaimDate   string // YYYY-MM-DD of last claim, for first_task_today detection
 
 	// Pause state (protected by pauseMu)
-	pauseMu           sync.RWMutex
-	pauseCache        map[string]bool
-	allPaused         bool
-	automationsPaused bool
-	enabledFeatures   map[string]bool // features toggled on via TUI "x" key
+	pauseMu                  sync.RWMutex
+	pauseCache               map[string]bool
+	allPaused                bool
+	automationsPaused        bool
+	automationPausedProjects map[string]bool
+	enabledFeatures          map[string]bool // features toggled on via TUI "x" key
 
 	// Event handlers (protected by eventMu)
 	eventMu  sync.RWMutex
@@ -287,25 +293,26 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 	}
 
 	tr := &TaskRunner{
-		runnerID:         runnerID,
-		machineID:        machineID,
-		projects:         projects,
-		config:           opts.Config,
-		mode:             mode,
-		logger:           logger,
-		client:           opts.Client,
-		executor:         defaultExecutor,
-		executors:        nil,
-		executorRegistry: executorRegistry,
-		processMgr:       opts.ProcessMgr,
-		stateMgr:         opts.StateMgr,
-		status:           RunnerStatusIdle,
-		pauseCache:       make(map[string]bool),
-		enabledFeatures:  make(map[string]bool),
-		logStreamers:     make(map[string]*LogStreamer),
-		wakeCh:           make(chan struct{}, 1),
-		commandCh:        make(chan RunnerCommand, 16),
-		done:             make(chan struct{}),
+		runnerID:                 runnerID,
+		machineID:                machineID,
+		projects:                 projects,
+		config:                   opts.Config,
+		mode:                     mode,
+		logger:                   logger,
+		client:                   opts.Client,
+		executor:                 defaultExecutor,
+		executors:                nil,
+		executorRegistry:         executorRegistry,
+		processMgr:               opts.ProcessMgr,
+		stateMgr:                 opts.StateMgr,
+		status:                   RunnerStatusIdle,
+		pauseCache:               make(map[string]bool),
+		automationPausedProjects: make(map[string]bool),
+		enabledFeatures:          make(map[string]bool),
+		logStreamers:             make(map[string]*LogStreamer),
+		wakeCh:                   make(chan struct{}, 1),
+		commandCh:                make(chan RunnerCommand, 16),
+		done:                     make(chan struct{}),
 	}
 	if executorRegistry != nil {
 		tr.executors = executorRegistry.executors
@@ -498,6 +505,90 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	}
 }
 
+func (tr *TaskRunner) serverPauseState(ctx context.Context) (map[string]bool, map[string]bool) {
+	tasksPaused := make(map[string]bool)
+	automationsPaused := make(map[string]bool)
+	if tr.client == nil {
+		return tasksPaused, automationsPaused
+	}
+	statusClient, ok := tr.client.(interface {
+		GetRunnerStatus(context.Context) (*types.RunnerStatusResponse, error)
+	})
+	if !ok {
+		return tasksPaused, automationsPaused
+	}
+	status, err := statusClient.GetRunnerStatus(ctx)
+	if err != nil || status == nil {
+		if err != nil {
+			tr.logger.Printf("get server pause state failed: %v", err)
+		}
+		return tasksPaused, automationsPaused
+	}
+	for _, projectID := range status.PausedProjects {
+		tasksPaused[projectID] = true
+	}
+	for _, projectID := range status.AutomationPausedProjects {
+		automationsPaused[projectID] = true
+	}
+	return tasksPaused, automationsPaused
+}
+
+func (tr *TaskRunner) dispatchLeaseExpired(expiresAt string, now time.Time) bool {
+	if strings.TrimSpace(expiresAt) == "" {
+		return false
+	}
+	if t, err := time.Parse(time.RFC3339, expiresAt); err == nil {
+		return !t.After(now)
+	}
+	n, err := strconv.ParseInt(expiresAt, 10, 64)
+	if err != nil {
+		return false
+	}
+	if n > 1_000_000_000_000 {
+		return n <= now.UnixMilli()
+	}
+	return n <= now.Unix()
+}
+
+func (tr *TaskRunner) supportsProject(projectID string) bool {
+	for _, p := range tr.projects {
+		if p == projectID || p == "all" {
+			return true
+		}
+	}
+	return false
+}
+
+func (tr *TaskRunner) rejectDispatch(ctx context.Context, cmd RunnerCommand, leaseID, code, message string) {
+	_, _ = tr.client.RejectDispatch(ctx, tr.runnerID, cmd.ProjectID, cmd.TaskID, leaseID, types.DispatchRejectReason{
+		Code:    code,
+		Message: message,
+	})
+}
+
+func (tr *TaskRunner) ackDispatch(ctx context.Context, cmd RunnerCommand, leaseID string) bool {
+	resp, err := tr.client.AckDispatch(ctx, tr.runnerID, cmd.ProjectID, cmd.TaskID, leaseID)
+	return err == nil && (resp == nil || resp.Success)
+}
+
+func (tr *TaskRunner) releaseDispatchLease(ctx context.Context, projectID, taskID string) {
+	if tr.client == nil || projectID == "" || taskID == "" {
+		return
+	}
+	if _, err := tr.client.ReleaseDispatch(ctx, tr.runnerID, projectID, taskID); err != nil {
+		tr.logger.Printf("release dispatch lease failed for %s/%s: %v", projectID, taskID, err)
+	}
+}
+
+func (tr *TaskRunner) releaseDispatchLeasesForRunningTasks(ctx context.Context) {
+	if tr.processMgr == nil {
+		return
+	}
+	for _, info := range tr.processMgr.GetAll() {
+		tr.releaseDispatchLease(ctx, info.Task.ProjectID, info.Task.ID)
+	}
+}
+
 // handleCommand processes a server-pushed command received via the runner SSE stream.
 func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 	slog.Info("handling runner command", "type", cmd.Type, "runner_id", tr.runnerID)
@@ -537,10 +628,71 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 
 	case CommandDispatch:
 		slog.Info("dispatch command received", "task_id", cmd.TaskID, "project_id", cmd.ProjectID)
-		// Trigger immediate wake for targeted task pickup
-		select {
-		case tr.wakeCh <- struct{}{}:
-		default:
+		leaseID := cmd.LeaseID
+		if leaseID == "" {
+			leaseID = cmd.Lease
+		}
+		if leaseID == "" || cmd.ProjectID == "" || cmd.TaskID == "" {
+			tr.rejectDispatch(ctx, cmd, leaseID, "missing_fields", "dispatch command missing required leaseId, projectId, or taskId")
+			break
+		}
+		if ctx.Err() != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "runner_shutting_down", ctx.Err().Error())
+			break
+		}
+		if tr.dispatchLeaseExpired(cmd.ExpiresAt, time.Now()) {
+			tr.rejectDispatch(ctx, cmd, leaseID, "lease_expired", "dispatch lease has expired")
+			break
+		}
+		if !tr.supportsProject(cmd.ProjectID) {
+			tr.rejectDispatch(ctx, cmd, leaseID, "project_unsupported", "runner is not assigned to this project")
+			break
+		}
+		serverTaskPaused, _ := tr.serverPauseState(ctx)
+		tr.pauseMu.RLock()
+		paused := tr.allPaused || tr.pauseCache[cmd.ProjectID] || serverTaskPaused[cmd.ProjectID]
+		tr.pauseMu.RUnlock()
+		if paused {
+			tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
+			break
+		}
+		if tr.processMgr.RunningCount() >= tr.getMaxParallel() {
+			tr.rejectDispatch(ctx, cmd, leaseID, "capacity_unavailable", "runner has no available execution slots")
+			break
+		}
+
+		tasks, err := tr.client.GetReadyTasks(ctx, cmd.ProjectID, tr.buildFetchOptions())
+		if err != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "task_lookup_failed", err.Error())
+			break
+		}
+		var task *types.ResolvedTask
+		for i := range tasks {
+			if tasks[i].ID == cmd.TaskID {
+				task = &tasks[i]
+				break
+			}
+		}
+		if task == nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "task_not_found", "target task is not ready for this runner")
+			break
+		}
+		taskExecutor, _, err := tr.resolveExecutor(task)
+		if err != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "executor_unsupported", err.Error())
+			break
+		}
+		workdir, err := taskExecutor.ResolveWorkdir(task)
+		if err != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "workdir_unavailable", err.Error())
+			break
+		}
+		if !tr.ackDispatch(ctx, cmd, leaseID) {
+			break
+		}
+		if err := tr.claimAndSpawnWithWorkdir(ctx, task, cmd.ProjectID, workdir); err != nil {
+			tr.releaseDispatchLease(ctx, cmd.ProjectID, cmd.TaskID)
+			tr.logger.Printf("claim and spawn dispatched task failed for %s/%s: %v", cmd.ProjectID, cmd.TaskID, err)
 		}
 
 	case CommandFeatureToggle:
@@ -589,6 +741,9 @@ func (tr *TaskRunner) Stop() error {
 		tr.sseListener.Stop()
 		slog.Info("SSE listener stopped")
 	}
+
+	// Release/finalize dispatch leases before killing running tasks.
+	tr.releaseDispatchLeasesForRunningTasks(context.Background())
 
 	// Clean up tmux windows for all running tasks, then kill processes
 	if tr.processMgr != nil {
@@ -647,6 +802,15 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 	// 2.6. Check scheduled tasks (cron triggers)
 	tr.checkScheduledTasks(ctx, time.Now().UTC())
 
+	// Passive dispatch-capable runners wait for Brain-assigned dispatch leases
+	// instead of actively polling /next for work. Lifecycle maintenance above
+	// still runs on every poll tick.
+	if tr.dispatchPushEnabled() {
+		tr.saveState()
+		tr.emitPollComplete()
+		return
+	}
+
 	// 3. Check capacity
 	running := tr.processMgr.RunningCount()
 	maxParallel := tr.getMaxParallel()
@@ -655,10 +819,15 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		return
 	}
 
-	// 4. Check if all paused
+	// 4. Check if paused
+	serverTaskPaused, serverAutomationPaused := tr.serverPauseState(ctx)
 	tr.pauseMu.RLock()
 	allPaused := tr.allPaused
 	automationsPaused := tr.automationsPaused
+	automationPausedProjects := make(map[string]bool, len(tr.automationPausedProjects))
+	for projectID, paused := range tr.automationPausedProjects {
+		automationPausedProjects[projectID] = paused
+	}
 	tr.pauseMu.RUnlock()
 
 	// 5. Fill available slots
@@ -679,8 +848,10 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		projEnabledIDs := tr.getEnabledFeatureIDsLocked()
 		tr.pauseMu.RUnlock()
 
-		if paused || allPaused {
-			if !automationsPaused {
+		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID] || serverAutomationPaused[projectID]
+
+		if paused || allPaused || serverTaskPaused[projectID] {
+			if !automationsPausedForProject {
 				task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
 					GeneratedByPrefix: "automation:",
 					Executors:         tr.executorNames(),
@@ -748,7 +919,7 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			continue
 		}
 		if isAutomationGeneratedTask(task) {
-			if automationsPaused {
+			if automationsPausedForProject {
 				continue
 			}
 			if ok, err := tr.canStartAutomationTask(ctx, task); err != nil {
@@ -884,6 +1055,10 @@ func (tr *TaskRunner) cleanupTaskArtifacts(task RunningTask) {
 
 // claimAndSpawn claims a task and spawns a process for it.
 func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTask, projectID string) error {
+	return tr.claimAndSpawnWithWorkdir(ctx, task, projectID, "")
+}
+
+func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.ResolvedTask, projectID, resolvedWorkdir string) error {
 	// Claim the task
 	result, err := tr.client.ClaimTask(ctx, projectID, task.ID, tr.runnerID)
 	if err != nil {
@@ -997,8 +1172,11 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		return fmt.Errorf("resolve executor: %w", err)
 	}
 
-	// Resolve workdir (may create git worktree)
-	workdir, err := taskExecutor.ResolveWorkdir(task)
+	// Resolve workdir (may create git worktree) unless dispatch validation already resolved it.
+	workdir := resolvedWorkdir
+	if workdir == "" {
+		workdir, err = taskExecutor.ResolveWorkdir(task)
+	}
 	if err != nil {
 		// Worktree creation failed - mark task as blocked
 		tr.emitEvent(RunnerEvent{
@@ -1071,6 +1249,8 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 		Workdir:        spawnResult.Workdir,
 		ExecutorType:   executorType,
 		Executor:       executorType,
+		Agent:          task.Agent,
+		Model:          task.Model,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
 		FeatureID:      task.FeatureID,
@@ -1121,7 +1301,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 			Task: runningTask,
 			Proc: NewPidProcess(runningTask.PID),
 		}, runnerHostname()))
-		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort)
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort, spawnResult.ExistingSessionIDs)
 	}
 
 	return nil
@@ -1134,7 +1314,7 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 // knownPort, when > 0, is the already-resolved server port (headless
 // serve+attach reports it at spawn time, and the run --attach process binds
 // no port of its own); discovery via the PID is skipped in that case.
-func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort int) {
+func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort int, excludeSessionIDs map[string]struct{}) {
 	port := knownPort
 	if port <= 0 {
 		if pid <= 0 {
@@ -1174,7 +1354,7 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 	var sessionID string
 	var err error
 	for attempt := 0; attempt < 5; attempt++ {
-		sessionID, err = discoverSessionID(port)
+		sessionID, err = discoverSessionID(port, excludeSessionIDs)
 		if err == nil && sessionID != "" {
 			break
 		}
@@ -1288,49 +1468,76 @@ func discoverChildPort(parentPID int) (int, error) {
 	return 0, fmt.Errorf("no listening port found in process tree of PID %d", parentPID)
 }
 
-// discoverSessionID queries an opencode HTTP server for the active session ID.
-// The /session endpoint returns an array of sessions; we take the most recent.
-func discoverSessionID(port int) (string, error) {
+type opencodeSession struct {
+	ID   string `json:"id"`
+	Time struct {
+		Updated int64 `json:"updated"`
+	} `json:"time"`
+}
+
+func fetchSessions(port int) ([]opencodeSession, error) {
 	url := fmt.Sprintf("http://localhost:%d/session", port)
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", fmt.Errorf("GET %s: %w", url, err)
+		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read session response: %w", err)
 	}
 
-	// /session returns an array of sessions
-	var sessions []struct {
-		ID   string `json:"id"`
-		Time struct {
-			Updated int64 `json:"updated"`
-		} `json:"time"`
+	var sessions []opencodeSession
+	if err := json.Unmarshal(body, &sessions); err == nil {
+		return sessions, nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
-		// Try single-object response as fallback
-		var single struct {
-			ID string `json:"id"`
-		}
-		if err2 := json.Unmarshal([]byte(err.Error()), &single); err2 != nil {
-			return "", fmt.Errorf("decode session response: %w", err)
-		}
-		return single.ID, nil
+	var single opencodeSession
+	if err := json.Unmarshal(body, &single); err != nil {
+		return nil, fmt.Errorf("decode session response: %w", err)
 	}
+	return []opencodeSession{single}, nil
+}
 
-	if len(sessions) == 0 {
+// discoverSessionID queries an opencode HTTP server for the task session ID.
+// When exclude is set, pre-existing sessions from before task spawn are ignored.
+func listSessionIDs(port int) (map[string]struct{}, error) {
+	sessions, err := fetchSessions(port)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]struct{}, len(sessions))
+	for _, s := range sessions {
+		if s.ID != "" {
+			ids[s.ID] = struct{}{}
+		}
+	}
+	return ids, nil
+}
+
+func discoverSessionID(port int, exclude map[string]struct{}) (string, error) {
+	sessions, err := fetchSessions(port)
+	if err != nil {
+		return "", err
+	}
+	var latest *opencodeSession
+	for i := range sessions {
+		if sessions[i].ID == "" {
+			continue
+		}
+		if _, ok := exclude[sessions[i].ID]; ok {
+			continue
+		}
+		if latest == nil || sessions[i].Time.Updated > latest.Time.Updated {
+			latest = &sessions[i]
+		}
+	}
+	if latest == nil {
 		return "", nil
-	}
-
-	// Return the most recently updated session
-	latest := sessions[0]
-	for _, s := range sessions[1:] {
-		if s.Time.Updated > latest.Time.Updated {
-			latest = s
-		}
 	}
 	return latest.ID, nil
 }
@@ -1349,13 +1556,21 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 		hostname = "unknown"
 	}
 
+	dispatchPush := tr.dispatchPushEnabled()
 	req := types.RunnerRegistration{
-		RunnerID:     tr.runnerID,
-		MachineID:    tr.machineID,
-		Hostname:     hostname,
-		Executors:    tr.executorNames(),
-		Capabilities: tr.config.Capabilities,
-		MaxParallel:  tr.getMaxParallel(),
+		RunnerID:       tr.runnerID,
+		MachineID:      tr.machineID,
+		Hostname:       hostname,
+		Labels:         tr.config.Labels,
+		Executors:      tr.executorNames(),
+		Capabilities:   tr.config.Capabilities,
+		Projects:       tr.projects,
+		MaxParallel:    tr.getMaxParallel(),
+		DispatchPush:   dispatchPush,
+		WorkspaceRoots: tr.schedulerWorkspaceRoots(),
+		Resources:      tr.config.Resources,
+		Capacity:       tr.config.Capacity,
+		Draining:       tr.config.Draining,
 	}
 
 	info, err := tr.client.RegisterRunner(ctx, req)
@@ -1371,6 +1586,13 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 	)
 }
 
+func (tr *TaskRunner) schedulerWorkspaceRoots() []string {
+	if len(tr.config.WorkspaceRoots) > 0 {
+		return tr.config.WorkspaceRoots
+	}
+	return tr.config.Control.AllowedWorkdirRoots
+}
+
 // sendHeartbeat sends a heartbeat to the Brain API with current runner stats.
 // Heartbeat failure is logged but does not stop the runner.
 func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
@@ -1380,8 +1602,17 @@ func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
 	stats := tr.stats
 	tr.mu.RUnlock()
 
+	dispatchPush := tr.dispatchPushEnabled()
+	draining := tr.config.Draining
 	req := types.RunnerHeartbeatRequest{
-		RunningTasks: running,
+		RunningTasks:   running,
+		DispatchPush:   &dispatchPush,
+		Labels:         tr.config.Labels,
+		WorkspaceRoots: tr.schedulerWorkspaceRoots(),
+		Projects:       tr.projects,
+		Resources:      tr.config.Resources,
+		Capacity:       tr.config.Capacity,
+		Draining:       &draining,
 		Stats: map[string]interface{}{
 			"completed":    stats.Completed,
 			"failed":       stats.Failed,
@@ -1499,6 +1730,9 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		FromStatus: "in_progress",
 		ToStatus:   apiStatus,
 	})
+
+	// Release/finalize any dispatch lease now that the task lifecycle is terminal.
+	tr.releaseDispatchLease(ctx, task.ProjectID, taskID)
 
 	// Update API status
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, apiStatus); err != nil {
@@ -2120,6 +2354,18 @@ func (tr *TaskRunner) stopLogStreamer(taskID string) {
 // matchesCapabilities checks whether this runner has all capabilities required
 // by the given task. Tasks without RequiresCapability are claimable by any runner
 // (backward compatible). Returns true if the runner can handle the task.
+func (tr *TaskRunner) dispatchPushEnabled() bool {
+	if tr.config.Passive || tr.config.DispatchPush {
+		return true
+	}
+	for _, capability := range tr.config.Capabilities {
+		if capability == "dispatch_push" {
+			return true
+		}
+	}
+	return false
+}
+
 func (tr *TaskRunner) matchesCapabilities(task *types.ResolvedTask) bool {
 	if len(task.RequiresCapability) == 0 {
 		return true // untagged tasks are claimable by any runner

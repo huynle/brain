@@ -62,6 +62,10 @@ export default defineConfig({
           /^\/health/,
           /^\/\.well-known/,
         ],
+        // updateSW() sends SKIP_WAITING, but the open PWA tab will not reload
+        // until the activated worker controls it. Claim clients immediately so
+        // Workbox's controlling event fires after the user clicks Reload.
+        clientsClaim: true,
         // Don't precache source maps; cache the app shell + assets.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
         // API responses are real-time; never serve them from the SW cache.

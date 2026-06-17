@@ -66,8 +66,10 @@ export interface Task {
   workdir?: string;
   git_branch?: string;
   execution_mode?: string;
+  merge_target_branch?: string;
   merge_policy?: string;
   merge_strategy?: string;
+  open_pr_before_merge?: boolean;
 
   feature_id?: string;
   feature_priority?: string;
@@ -77,6 +79,9 @@ export interface Task {
   schedule_enabled?: boolean;
   next_run?: string;
   run_once_at?: string;
+  starts_at?: string;
+  expires_at?: string;
+  timezone?: string;
 
   user_original_request?: string;
   direct_prompt?: string;
@@ -193,6 +198,8 @@ export interface OpencodeInstance {
   kind: InstanceKind;
   project_id?: string;
   task_id?: string;
+  feature_id?: string;
+  priority?: string;
   title?: string;
   workdir?: string;
   port?: number;
@@ -200,6 +207,8 @@ export interface OpencodeInstance {
   session_ids?: string[];
   status: InstanceStatus;
   executor?: string;
+  agent?: string;
+  model?: string;
   started_at?: number; // unix ms
   last_seen?: number; // unix ms
   // Live bridge decorations (present when the runner bridge is connected)
@@ -246,6 +255,7 @@ export interface OcMessageInfo {
   id: string;
   sessionID?: string;
   role: "user" | "assistant" | string;
+  agent?: string;
   time?: { created?: number; completed?: number };
   error?: unknown;
   [k: string]: unknown;
@@ -314,6 +324,7 @@ export interface RunnerStatusResponse {
   paused: boolean;
   pausedProjects: string[];
   automationsPaused: boolean;
+  automationPausedProjects: string[];
 }
 
 // ─── Brain entries ───────────────────────────────────────────────

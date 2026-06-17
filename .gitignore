@@ -25,3 +25,6 @@ internal/webui/dist/*
 
 # stray go build output at repo root
 /brain
+
+# Local build artifact
+/bin/brain

@@ -528,6 +528,63 @@ func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID s
 	return ClaimResult{Success: true, TaskID: taskID}, nil
 }
 
+// AckDispatch acknowledges receipt of a pushed dispatch command.
+func (c *APIClient) AckDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string) (*types.DispatchAckResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/runners/%s/dispatch/ack", runnerID)
+	body := types.DispatchAckRequest{LeaseID: leaseID, ProjectID: projectID, TaskID: taskID}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("ack dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.DispatchAckResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode dispatch ack response: %w", err)
+	}
+	return &result, nil
+}
+
+// RejectDispatch rejects a pushed dispatch command with a structured reason.
+func (c *APIClient) RejectDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/runners/%s/dispatch/reject", runnerID)
+	body := types.DispatchRejectRequest{LeaseID: leaseID, ProjectID: projectID, TaskID: taskID, Reason: reason}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("reject dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.DispatchRejectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode dispatch reject response: %w", err)
+	}
+	return &result, nil
+}
+
+// ReleaseDispatch explicitly releases/finalizes a pushed dispatch lease.
+func (c *APIClient) ReleaseDispatch(ctx context.Context, runnerID, projectID, taskID string) (*types.DispatchReleaseResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/runners/%s/dispatch/release", runnerID)
+	body := map[string]string{"projectId": projectID, "taskId": taskID}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("release dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.DispatchReleaseResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode dispatch release response: %w", err)
+	}
+	return &result, nil
+}
+
 // RenewClaim extends the lease on a claimed task.
 // Returns nil on success, or an error if the claim doesn't exist, is expired,
 // or is owned by a different runner. The caller should treat any error as a
@@ -1551,6 +1608,36 @@ func (c *APIClient) ResumeAutomations(ctx context.Context) error {
 	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/automations/resume", nil)
 	if err != nil {
 		return fmt.Errorf("resume automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// PauseProjectAutomations pauses automation-generated task execution for a specific project.
+func (c *APIClient) PauseProjectAutomations(ctx context.Context, projectID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/runner/automations/pause/%s", projectID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("pause project automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ResumeProjectAutomations resumes automation-generated task execution for a specific project.
+func (c *APIClient) ResumeProjectAutomations(ctx context.Context, projectID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/runner/automations/resume/%s", projectID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("resume project automations: %w", err)
 	}
 	defer resp.Body.Close()
 

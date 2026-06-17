@@ -176,6 +176,12 @@ export const updateEntry = (path: string, patch: Record<string, unknown>) =>
     body: patch,
   });
 
+export const moveEntry = (path: string, project: string) =>
+  api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}/move`, {
+    method: "POST",
+    body: { project },
+  });
+
 // Full-file (frontmatter + body) get/update — mirrors the TUI's $EDITOR flow so
 // the PWA can edit the entire entry, not just metadata or the body.
 export const getEntryRaw = (path: string) =>
@@ -234,10 +240,20 @@ export const pauseAll = () =>
   api("/api/v1/tasks/runner/pause", { method: "POST" });
 export const resumeAll = () =>
   api("/api/v1/tasks/runner/resume", { method: "POST" });
-export const pauseAutomations = () =>
-  api("/api/v1/tasks/runner/automations/pause", { method: "POST" });
-export const resumeAutomations = () =>
-  api("/api/v1/tasks/runner/automations/resume", { method: "POST" });
+export const pauseAutomations = (projectId?: string) =>
+  api(
+    projectId
+      ? `/api/v1/tasks/runner/automations/pause/${encodeURIComponent(projectId)}`
+      : "/api/v1/tasks/runner/automations/pause",
+    { method: "POST" },
+  );
+export const resumeAutomations = (projectId?: string) =>
+  api(
+    projectId
+      ? `/api/v1/tasks/runner/automations/resume/${encodeURIComponent(projectId)}`
+      : "/api/v1/tasks/runner/automations/resume",
+    { method: "POST" },
+  );
 
 export const shutdownRunner = (runnerId: string, reason = "manual") =>
   api(`/api/v1/runners/${encodeURIComponent(runnerId)}/shutdown`, {
@@ -377,15 +393,15 @@ export async function listAutomationData(project?: string): Promise<{
   runs: BrainEntry[];
 }> {
   const [scoped, global, tasks, runs] = await Promise.all([
-    listEntries({ type: "automation", ...(project ? { project } : {}) }).then(
+    listEntries({ type: "automation", limit: 500, ...(project ? { project } : {}) }).then(
       (r) => r.entries || [],
     ),
     // Built-in automations are global; always include them.
-    listEntries({ type: "automation", global: "true" }).then((r) => r.entries || []),
-    listEntries({ type: "task", ...(project ? { project } : {}) }).then(
+    listEntries({ type: "automation", global: "true", limit: 500 }).then((r) => r.entries || []),
+    listEntries({ type: "task", limit: 1000, ...(project ? { project } : {}) }).then(
       (r) => r.entries || [],
     ),
-    listEntries({ type: "automation_run", ...(project ? { project } : {}) })
+    listEntries({ type: "automation_run", limit: 500, ...(project ? { project } : {}) })
       .then((r) => r.entries || [])
       .catch(() => [] as BrainEntry[]),
   ]);

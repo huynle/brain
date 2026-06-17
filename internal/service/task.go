@@ -118,7 +118,30 @@ func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*type
 	}
 	result := ResolveDependencies(entries)
 	s.applyTaskDefaults(result.Tasks)
+	if err := s.enrichDispatchDiagnostics(ctx, projectId, result.Tasks); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+func (s *TaskServiceImpl) enrichDispatchDiagnostics(ctx context.Context, projectID string, tasks []types.ResolvedTask) error {
+	for i := range tasks {
+		task := &tasks[i]
+		lease, err := s.storage.GetDispatchLease(ctx, projectID, task.ID)
+		if err != nil {
+			return fmt.Errorf("get dispatch lease for %s: %w", task.ID, err)
+		}
+		reasons, err := s.storage.ListPlacementReasons(ctx, projectID, task.ID)
+		if err != nil {
+			return fmt.Errorf("list placement reasons for %s: %w", task.ID, err)
+		}
+		task.DispatchLease = lease
+		if len(reasons) > 0 {
+			task.PlacementReasons = reasons
+			task.LastPlacementReason = &task.PlacementReasons[len(task.PlacementReasons)-1]
+		}
+	}
+	return nil
 }
 
 // GetTask returns a single resolved task by ID for a project.
@@ -283,6 +306,10 @@ func (s *TaskServiceImpl) GetNext(ctx context.Context, projectId string, opts *a
 		return nil, err
 	}
 	ready := GetReadyTasks(result)
+	ready, err = s.filterDispatchReservedTasks(ctx, projectId, ready, runnerIDFromOptions(opts))
+	if err != nil {
+		return nil, err
+	}
 	if opts != nil {
 		ready, err = s.applyTaskFilterOptions(ctx, projectId, ready, opts)
 		if err != nil {
@@ -359,6 +386,47 @@ func filterByGeneratedByPrefix(tasks []types.ResolvedTask, prefix string) []type
 	return filtered
 }
 
+func runnerIDFromOptions(opts *api.TaskFilterOptions) string {
+	if opts == nil {
+		return ""
+	}
+	return opts.RunnerID
+}
+
+func (s *TaskServiceImpl) filterDispatchReservedTasks(ctx context.Context, projectID string, tasks []types.ResolvedTask, runnerID string) ([]types.ResolvedTask, error) {
+	if len(tasks) == 0 {
+		return tasks, nil
+	}
+
+	now := time.Now().UnixMilli()
+	filtered := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		lease, err := s.storage.GetDispatchLeaseRow(ctx, projectID, task.ID)
+		if err != nil {
+			return nil, err
+		}
+		if activeDispatchLeaseForOtherRunner(lease, runnerID, now) {
+			continue
+		}
+		filtered = append(filtered, task)
+	}
+	return filtered, nil
+}
+
+func activeDispatchLeaseForOtherRunner(lease *storage.DispatchLeaseRow, runnerID string, now int64) bool {
+	if !isActiveDispatchLease(lease, now) {
+		return false
+	}
+	return runnerID == "" || lease.AssignedRunnerID != runnerID
+}
+
+func isActiveDispatchLease(lease *storage.DispatchLeaseRow, now int64) bool {
+	if lease == nil || lease.ExpiresAt < now {
+		return false
+	}
+	return lease.State == storage.DispatchLeaseStatePushed || lease.State == storage.DispatchLeaseStateAcked
+}
+
 func runnerHasRequiredCapabilities(task types.ResolvedTask, capabilities map[string]bool) bool {
 	for _, required := range task.RequiresCapability {
 		if !capabilities[required] {
@@ -380,6 +448,24 @@ func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, 
 	featureID, err := s.featureIDForTaskClaim(ctx, projectId, taskId)
 	if err != nil {
 		return nil, err
+	}
+
+	lease, err := s.storage.GetDispatchLeaseRow(ctx, projectId, taskId)
+	if err != nil {
+		return nil, err
+	}
+	if activeDispatchLeaseForOtherRunner(lease, runnerId, time.Now().UnixMilli()) {
+		slog.Warn("claim conflict with dispatch lease", "project", projectId, "task_id", taskId, "runner_id", runnerId, "assigned_runner", lease.AssignedRunnerID)
+		stale := false
+		return &types.ClaimResponse{
+			Success:   false,
+			TaskID:    taskId,
+			RunnerID:  runnerId,
+			Error:     "dispatch lease reserved",
+			Message:   fmt.Sprintf("task %s is reserved for runner %s", taskId, lease.AssignedRunnerID),
+			ClaimedBy: lease.AssignedRunnerID,
+			IsStale:   &stale,
+		}, api.ErrConflict
 	}
 
 	ok, existing, err := s.storage.ClaimTask(ctx, projectId, taskId, runnerId, leaseDuration)
@@ -488,6 +574,54 @@ func (s *TaskServiceImpl) ReleaseTask(ctx context.Context, projectId, taskId, ru
 	return nil
 }
 
+// AckDispatch acknowledges that a runner received a pushed dispatch command.
+func (s *TaskServiceImpl) AckDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error) {
+	now := time.Now().UnixMilli()
+	ok, err := s.storage.AckDispatchLease(ctx, projectId, taskId, runnerId, leaseId, now)
+	resp := &types.DispatchAckResponse{Success: ok, ProjectID: projectId, TaskID: taskId, RunnerID: runnerId, LeaseID: leaseId}
+	if err != nil {
+		return resp, fmt.Errorf("storage ack dispatch lease: %w", err)
+	}
+	if !ok {
+		resp.Error = "dispatch lease not found or not ackable"
+		return resp, api.ErrNotFound
+	}
+	return resp, nil
+}
+
+// RejectDispatch records a structured rejection reason for a pushed dispatch lease.
+func (s *TaskServiceImpl) RejectDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error) {
+	now := time.Now().UnixMilli()
+	encodedReason, err := json.Marshal(reason)
+	if err != nil {
+		return nil, fmt.Errorf("marshal dispatch rejection reason: %w", err)
+	}
+	ok, err := s.storage.RejectDispatchLease(ctx, projectId, taskId, runnerId, leaseId, now, string(encodedReason))
+	resp := &types.DispatchRejectResponse{Success: ok, ProjectID: projectId, TaskID: taskId, RunnerID: runnerId, LeaseID: leaseId, Reason: reason}
+	if err != nil {
+		return resp, fmt.Errorf("storage reject dispatch lease: %w", err)
+	}
+	if !ok {
+		resp.Error = "dispatch lease not found or not rejectable"
+		return resp, api.ErrNotFound
+	}
+	return resp, nil
+}
+
+// ReleaseDispatch explicitly releases/finalizes a dispatch lease owned by a runner.
+func (s *TaskServiceImpl) ReleaseDispatch(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error) {
+	ok, err := s.storage.ReleaseDispatchLease(ctx, projectId, taskId, runnerId)
+	resp := &types.DispatchReleaseResponse{Success: ok, ProjectID: projectId, TaskID: taskId, RunnerID: runnerId}
+	if err != nil {
+		return resp, fmt.Errorf("storage release dispatch lease: %w", err)
+	}
+	if !ok {
+		resp.Error = "dispatch lease not found"
+		return resp, api.ErrNotFound
+	}
+	return resp, nil
+}
+
 // RenewClaim extends the claim's expiry by DefaultLeaseDuration.
 // Returns ErrNotFound if the claim doesn't exist, is expired, or is owned by a different runner.
 func (s *TaskServiceImpl) RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error) {
@@ -562,11 +696,61 @@ func (s *TaskServiceImpl) GetClaimStatus(ctx context.Context, projectId, taskId 
 	}, nil
 }
 
-// DispatchTask creates a pre-claim for direct dispatch to a target runner.
-// Pre-claims have a shorter 60-second expiry to allow quick recovery if the runner doesn't respond.
-func (s *TaskServiceImpl) DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error) {
+// DispatchTask creates a lease-compatible direct dispatch for a target runner.
+// Dispatch pre-claims and leases have a shorter 60-second expiry to allow quick recovery if the runner doesn't respond.
+func (s *TaskServiceImpl) DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.DispatchResponse, error) {
 	const dispatchLeaseDuration = 60 * time.Second
-	return s.ClaimTaskWithDuration(ctx, projectId, taskId, targetRunnerId, dispatchLeaseDuration)
+	claimResp, err := s.ClaimTaskWithDuration(ctx, projectId, taskId, targetRunnerId, dispatchLeaseDuration)
+	if err != nil {
+		return dispatchResponseFromClaim(claimResp, taskId, targetRunnerId), err
+	}
+
+	now := time.Now()
+	lease, created, err := s.storage.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+		ProjectID:        projectId,
+		TaskID:           taskId,
+		AssignedRunnerID: targetRunnerId,
+		PushedAt:         now.UnixMilli(),
+		ExpiresAt:        now.Add(dispatchLeaseDuration).UnixMilli(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create dispatch lease: %w", err)
+	}
+	if !created {
+		stale := false
+		holder := ""
+		if lease != nil {
+			holder = lease.AssignedRunnerID
+		}
+		return &types.DispatchResponse{
+			Success:   false,
+			TaskID:    taskId,
+			RunnerID:  targetRunnerId,
+			Error:     "dispatch lease exists",
+			ClaimedBy: holder,
+			IsStale:   &stale,
+		}, api.ErrConflict
+	}
+
+	resp := dispatchResponseFromClaim(claimResp, taskId, targetRunnerId)
+	resp.LeaseID = lease.LeaseID
+	resp.ExpiresAt = time.UnixMilli(lease.ExpiresAt).UTC().Format(time.RFC3339)
+	return resp, nil
+}
+
+func dispatchResponseFromClaim(claimResp *types.ClaimResponse, taskId, runnerId string) *types.DispatchResponse {
+	resp := &types.DispatchResponse{Success: false, TaskID: taskId, RunnerID: runnerId}
+	if claimResp == nil {
+		return resp
+	}
+	resp.Success = claimResp.Success
+	resp.TaskID = claimResp.TaskID
+	resp.RunnerID = claimResp.RunnerID
+	resp.Error = claimResp.Error
+	resp.Message = claimResp.Message
+	resp.ClaimedBy = claimResp.ClaimedBy
+	resp.IsStale = claimResp.IsStale
+	return resp
 }
 
 // GetMultiTaskStatus returns status of multiple tasks.

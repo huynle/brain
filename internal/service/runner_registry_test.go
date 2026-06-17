@@ -177,6 +177,150 @@ func assertStringSliceEqual(t *testing.T, got, want []string) {
 	}
 }
 
+func TestRunnerRegistry_Register_PersistsDispatchMetadataAndProjects(t *testing.T) {
+	svc, _ := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	info, err := svc.Register(ctx, types.RunnerRegistration{
+		RunnerID:       "runner-dispatch",
+		MachineID:      "machine-explicit",
+		Hostname:       "host-dispatch",
+		Executors:      []string{"opencode", "pi"},
+		Capabilities:   []string{"docker"},
+		DispatchPush:   true,
+		WorkspaceRoots: []string{"/work/brain", "/tmp/worktrees"},
+		Projects:       []string{"brain-api", "brain-docs"},
+		Resources: map[string]interface{}{
+			"os":   "darwin",
+			"arch": "arm64",
+		},
+		Capacity: map[string]interface{}{
+			"max_parallel": float64(4),
+		},
+		Draining:    true,
+		MaxParallel: 4,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+	assertRunnerInfoDispatchMetadata(t, info)
+
+	got, err := svc.GetRunner(ctx, "runner-dispatch")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	assertRunnerInfoDispatchMetadata(t, got)
+
+	listed, err := svc.ListRunners(ctx)
+	if err != nil {
+		t.Fatalf("ListRunners failed: %v", err)
+	}
+	if listed.Total != 1 {
+		t.Fatalf("Total = %d, want 1", listed.Total)
+	}
+	assertRunnerInfoDispatchMetadata(t, &listed.Runners[0])
+}
+
+func TestRowToRunnerInfo_MachineIDFallsBackToLegacyLabel(t *testing.T) {
+	now := time.Now().UnixMilli()
+	info := rowToRunnerInfo(&storage.RunnerRow{
+		RunnerID:      "runner-legacy",
+		Hostname:      "host-legacy",
+		Labels:        map[string]string{"_machine_id": "machine-legacy"},
+		Executors:     []string{"opencode"},
+		MaxParallel:   1,
+		RegisteredAt:  now,
+		LastHeartbeat: now,
+		Status:        string(types.RunnerStatusOnline),
+	})
+
+	if info.MachineID != "machine-legacy" {
+		t.Fatalf("MachineID = %q, want legacy label fallback", info.MachineID)
+	}
+}
+
+func assertRunnerInfoDispatchMetadata(t *testing.T, info *types.RunnerInfo) {
+	t.Helper()
+	if info.MachineID != "machine-explicit" {
+		t.Fatalf("MachineID = %q, want machine-explicit", info.MachineID)
+	}
+	if !info.DispatchPush {
+		t.Fatal("DispatchPush = false, want true")
+	}
+	assertStringSliceEqual(t, info.WorkspaceRoots, []string{"/work/brain", "/tmp/worktrees"})
+	assertStringSliceEqual(t, info.Projects, []string{"brain-api", "brain-docs"})
+	if info.Resources["os"] != "darwin" || info.Resources["arch"] != "arm64" {
+		t.Fatalf("Resources = %#v, want os/arch", info.Resources)
+	}
+	if info.Capacity["max_parallel"] != float64(4) {
+		t.Fatalf("Capacity = %#v, want max_parallel", info.Capacity)
+	}
+	if !info.Draining {
+		t.Fatal("Draining = false, want true")
+	}
+}
+
+func TestRunnerRegistry_Heartbeat_UpdatesDispatchRuntimeMetadata(t *testing.T) {
+	svc, _ := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+
+	_, err := svc.Register(ctx, types.RunnerRegistration{
+		RunnerID:       "runner-heartbeat-meta",
+		MachineID:      "machine-heartbeat",
+		Hostname:       "host-heartbeat",
+		Executors:      []string{"opencode"},
+		WorkspaceRoots: []string{"/old/root"},
+		Projects:       []string{"old-project"},
+		Resources:      map[string]interface{}{"os": "darwin"},
+		Capacity:       map[string]interface{}{"available": float64(1)},
+		MaxParallel:    2,
+	})
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	draining := true
+	dispatchPush := true
+	err = svc.Heartbeat(ctx, "runner-heartbeat-meta", types.RunnerHeartbeatRequest{
+		RunningTasks:   1,
+		DispatchPush:   &dispatchPush,
+		Labels:         map[string]string{"pool": "fast"},
+		WorkspaceRoots: []string{"/new/root", "/worktrees"},
+		Projects:       []string{"brain-api", "brain-docs"},
+		Resources:      map[string]interface{}{"os": "darwin", "arch": "arm64"},
+		Capacity:       map[string]interface{}{"available": float64(3), "max_parallel": float64(4)},
+		Draining:       &draining,
+	})
+	if err != nil {
+		t.Fatalf("Heartbeat failed: %v", err)
+	}
+
+	got, err := svc.GetRunner(ctx, "runner-heartbeat-meta")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
+	}
+	if !got.DispatchPush {
+		t.Fatal("DispatchPush = false, want true")
+	}
+	if got.ActiveTasks != 1 {
+		t.Fatalf("ActiveTasks = %d, want 1", got.ActiveTasks)
+	}
+	if got.Labels["pool"] != "fast" {
+		t.Fatalf("Labels = %#v, want heartbeat pool label", got.Labels)
+	}
+	assertStringSliceEqual(t, got.WorkspaceRoots, []string{"/new/root", "/worktrees"})
+	assertStringSliceEqual(t, got.Projects, []string{"brain-api", "brain-docs"})
+	if got.Resources["arch"] != "arm64" {
+		t.Fatalf("Resources = %#v, want updated arch", got.Resources)
+	}
+	if got.Capacity["available"] != float64(3) || got.Capacity["max_parallel"] != float64(4) {
+		t.Fatalf("Capacity = %#v, want heartbeat values", got.Capacity)
+	}
+	if !got.Draining {
+		t.Fatal("Draining = false, want true")
+	}
+}
+
 func TestRunnerRegistry_Register_ReRegister(t *testing.T) {
 	svc, _ := newTestRunnerRegistryService(t)
 	ctx := context.Background()
@@ -257,6 +401,9 @@ func TestRunnerRegistry_Heartbeat_Success(t *testing.T) {
 	}
 	if info.Status != types.RunnerStatusOnline {
 		t.Errorf("expected status online after heartbeat, got %s", info.Status)
+	}
+	if info.ActiveTasks != 2 {
+		t.Errorf("expected active tasks 2 after heartbeat, got %d", info.ActiveTasks)
 	}
 }
 
@@ -967,13 +1114,11 @@ func TestLifecycleManager_AlreadyOfflineNotReprocessed(t *testing.T) {
 	}
 }
 
-func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
+func TestRunnerRegistry_ListRunners_OmitsInactiveRunners(t *testing.T) {
 	svc, store := newTestRunnerRegistryService(t)
 	ctx := context.Background()
-
 	now := time.Now().UnixMilli()
 
-	// Fresh runner (online)
 	_ = store.UpsertRunner(ctx, &storage.RunnerRow{
 		RunnerID:      "runner-online",
 		Hostname:      "host-a",
@@ -984,8 +1129,6 @@ func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
 		LastHeartbeat: now,
 		Status:        "online",
 	})
-
-	// 2-minute-old heartbeat (stale)
 	_ = store.UpsertRunner(ctx, &storage.RunnerRow{
 		RunnerID:      "runner-stale",
 		Hostname:      "host-b",
@@ -996,8 +1139,6 @@ func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
 		LastHeartbeat: now - 120000,
 		Status:        "online",
 	})
-
-	// 10-minute-old heartbeat (offline)
 	_ = store.UpsertRunner(ctx, &storage.RunnerRow{
 		RunnerID:      "runner-offline",
 		Hostname:      "host-c",
@@ -1013,23 +1154,36 @@ func TestRunnerRegistry_ListRunners_ComputedStatus(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListRunners failed: %v", err)
 	}
-	if resp.Total != 3 {
-		t.Fatalf("expected 3 runners, got %d", resp.Total)
+	if resp.Total != 1 || len(resp.Runners) != 1 {
+		t.Fatalf("expected 1 active runner, got total=%d len=%d runners=%+v", resp.Total, len(resp.Runners), resp.Runners)
 	}
+	if resp.Runners[0].RunnerID != "runner-online" {
+		t.Fatalf("runner = %q, want runner-online", resp.Runners[0].RunnerID)
+	}
+}
 
-	statusMap := make(map[string]types.RunnerStatus)
-	for _, r := range resp.Runners {
-		statusMap[r.RunnerID] = r.Status
-	}
+func TestRunnerRegistry_GetRunner_ComputedStatus(t *testing.T) {
+	svc, store := newTestRunnerRegistryService(t)
+	ctx := context.Background()
+	now := time.Now().UnixMilli()
 
-	if statusMap["runner-online"] != types.RunnerStatusOnline {
-		t.Errorf("expected runner-online to be online, got %s", statusMap["runner-online"])
+	_ = store.UpsertRunner(ctx, &storage.RunnerRow{
+		RunnerID:      "runner-stale",
+		Hostname:      "host-b",
+		Labels:        map[string]string{},
+		Executors:     []string{},
+		MaxParallel:   1,
+		RegisteredAt:  now - 120000,
+		LastHeartbeat: now - 120000,
+		Status:        "online",
+	})
+
+	info, err := svc.GetRunner(ctx, "runner-stale")
+	if err != nil {
+		t.Fatalf("GetRunner failed: %v", err)
 	}
-	if statusMap["runner-stale"] != types.RunnerStatusStale {
-		t.Errorf("expected runner-stale to be stale, got %s", statusMap["runner-stale"])
-	}
-	if statusMap["runner-offline"] != types.RunnerStatusOffline {
-		t.Errorf("expected runner-offline to be offline, got %s", statusMap["runner-offline"])
+	if info.Status != types.RunnerStatusStale {
+		t.Errorf("expected runner-stale to be stale, got %s", info.Status)
 	}
 }
 

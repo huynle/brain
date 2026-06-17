@@ -829,9 +829,9 @@ Then recall using ID:
 
 ## Skill Loading
 
-For detailed workflow guidance, load the project-planning skill:
+For detailed workflow guidance, load the brain-project-planning skill:
 ```
-skill(name: "project-planning")
+skill(name: "brain-project-planning")
 ```
 
 ## Phase Status Check

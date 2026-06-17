@@ -19,6 +19,9 @@ type Handler struct {
 	events         EventService
 	webhooks       WebhookService
 	goalService    GoalService
+	placement      ProjectPlacementService
+	scheduler      SchedulerService
+	schedulerViews SchedulerVisibilityService
 	bridge         BridgeService
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
@@ -135,5 +138,26 @@ func WithHub(hub *realtime.Hub) HandlerOption {
 func WithTaskDefaults(td config.TaskDefaultsConfig) HandlerOption {
 	return func(h *Handler) {
 		h.taskDefaults = td
+	}
+}
+
+// WithProjectPlacementService sets the project placement service on the Handler.
+func WithProjectPlacementService(ps ProjectPlacementService) HandlerOption {
+	return func(h *Handler) {
+		h.placement = ps
+	}
+}
+
+// WithSchedulerService sets the scheduler service on the Handler.
+func WithSchedulerService(s SchedulerService) HandlerOption {
+	return func(h *Handler) {
+		h.scheduler = s
+	}
+}
+
+// WithSchedulerVisibilityService sets the scheduler visibility service on the Handler.
+func WithSchedulerVisibilityService(s SchedulerVisibilityService) HandlerOption {
+	return func(h *Handler) {
+		h.schedulerViews = s
 	}
 }

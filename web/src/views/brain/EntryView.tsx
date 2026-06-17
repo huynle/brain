@@ -38,6 +38,7 @@ export function EntryView({
       <Modal
         title="Entry"
         onClose={onClose}
+        onEdit={q.data ? () => setEditing(true) : undefined}
         footer={
           q.data ? (
             <button

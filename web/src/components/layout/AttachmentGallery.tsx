@@ -55,7 +55,7 @@ export function AttachmentGallery({ attachments }: { attachments?: AttachmentRef
           {images.map((a, index) => {
             const label = attachmentDisplayLabel(a);
             const url = attachmentDisplayUrl(a, { token });
-            const failed = failedImages.has(a.id);
+            const failed = failedImages.has(a.id) || !url;
             return (
               <button
                 key={a.id}

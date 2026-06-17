@@ -15,7 +15,7 @@ USAGE:
 
 CORE COMMANDS:
   api                            Run API server in foreground
-  api start                      Start server as daemon
+  api start                      Start API server (optionally with --runner)
   api stop                       Stop daemonized server
   api restart                    Restart daemonized server
   api status                     Show server process status
@@ -212,7 +212,7 @@ EXAMPLES:
   brain api status
 `
 
-const apiStartHelp = `brain api start - Start daemonized API server
+const apiStartHelp = `brain api start - Start API server lifecycle
 
 USAGE:
   brain api start [flags]
@@ -220,17 +220,34 @@ USAGE:
 FLAGS:
   --pid-file <path>              PID file path override
   --log-file <path>              Log file path override
+  -d, --daemon                   Run as a background daemon
+  --port <n>                     Server port override
+  --host <host>                  Server bind host override
+  --runner                       Start an embedded headless task runner
+  --runner-project <project|all> Embedded runner project (default: all)
+  --max-parallel <n>             Embedded runner max parallel tasks
+  -i, --include <pattern>        Include project glob for --runner-project all
+  -e, --exclude <pattern>        Exclude project glob for --runner-project all
+  --executor <name>              Embedded runner executor override
   --dry-run                      Show what would start, do not execute
   -h, --help                     Show this help
 
 NOTES:
-  - Port/host are loaded from config, not from start flags.
-  - Daemon mode launches: brain api --daemon ...
+  - Without --runner, existing API-only behavior is unchanged.
+  - With --runner, the API and runner share one process lifecycle.
+  - If the API binds to 0.0.0.0, ::, [::], or an empty host, the embedded
+    runner connects to localhost instead of the bind wildcard.
+  - The runner URL uses http unless server TLS is enabled, then https.
+  - Hosted/domain deployments should set runner.brain_api_url or BRAIN_API_URL
+    explicitly when the runner must connect through the public domain.
 
 EXAMPLES:
   brain api start
-  brain api start --log-file ~/.local/state/brain-api/brain-api.log
-  brain api start --dry-run
+  brain api start --runner
+  brain api start --runner --runner-project personal-productivity
+  brain api start --runner --daemon
+  brain api start --host 0.0.0.0 --port 3333 --runner
+  brain api start --dry-run --runner
 `
 
 const apiStopHelp = `brain api stop - Stop daemonized API server

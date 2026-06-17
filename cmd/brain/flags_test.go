@@ -545,3 +545,47 @@ func TestParseAutomationGoalFlags(t *testing.T) {
 		assert.Empty(t, flags.Project)
 	})
 }
+
+func TestParseLifecycleFlagsWithEmbeddedRunner(t *testing.T) {
+	args := []string{
+		"--runner",
+		"--runner-project", "personal-productivity",
+		"--max-parallel", "4",
+		"--include", "prod-*",
+		"-i", "brain-*",
+		"--exclude", "test-*",
+		"-e", "legacy-*",
+		"--executor", "pi",
+	}
+	flags, err := ParseLifecycleFlags(args)
+	require.NoError(t, err)
+
+	assert.True(t, flags.Runner)
+	assert.Equal(t, "personal-productivity", flags.RunnerProject)
+	assert.Equal(t, 4, flags.MaxParallel)
+	assert.Equal(t, []string{"prod-*", "brain-*"}, flags.Include)
+	assert.Equal(t, []string{"test-*", "legacy-*"}, flags.Exclude)
+	assert.Equal(t, "pi", flags.Executor)
+}
+
+func TestParseAPIFlagsWithEmbeddedRunner(t *testing.T) {
+	args := []string{
+		"--daemon",
+		"--runner",
+		"--runner-project", "all",
+		"--max-parallel", "6",
+		"--include", "prod-*",
+		"--exclude", "sandbox-*",
+		"--executor", "opencode",
+	}
+	flags, err := ParseAPIFlags(args)
+	require.NoError(t, err)
+
+	assert.True(t, flags.Daemon)
+	assert.True(t, flags.Runner)
+	assert.Equal(t, "all", flags.RunnerProject)
+	assert.Equal(t, 6, flags.MaxParallel)
+	assert.Equal(t, []string{"prod-*"}, flags.Include)
+	assert.Equal(t, []string{"sandbox-*"}, flags.Exclude)
+	assert.Equal(t, "opencode", flags.Executor)
+}

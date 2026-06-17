@@ -1948,6 +1948,63 @@ func TestLoadCopiesTaskDefaultsFromUnifiedConfig(t *testing.T) {
 	}
 }
 
+func TestFeatureCheckoutConfigYAMLParsing(t *testing.T) {
+	var cfg UnifiedConfig
+	if err := yaml.Unmarshal([]byte(`server:
+  feature_checkout:
+    enabled: false
+`), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if cfg.Server.FeatureCheckout.Enabled {
+		t.Fatal("FeatureCheckout.Enabled = true, want false")
+	}
+}
+
+func TestDefaultConfigEnablesFeatureCheckout(t *testing.T) {
+	cfg := defaultConfig()
+	if !cfg.Server.FeatureCheckout.Enabled {
+		t.Fatal("default feature checkout enabled = false, want true")
+	}
+}
+
+func TestLoadCopiesFeatureCheckoutFromUnifiedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	for _, key := range []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "BRAIN_FEATURE_CHECKOUT_ENABLED"} {
+		os.Unsetenv(key)
+	}
+
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	configYAML := `server:
+  feature_checkout:
+    enabled: false
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := Load()
+	if cfg.FeatureCheckout.Enabled {
+		t.Fatal("Load() FeatureCheckout.Enabled = true, want false")
+	}
+}
+
+func TestLoadFeatureCheckoutEnvOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	t.Setenv("BRAIN_FEATURE_CHECKOUT_ENABLED", "false")
+
+	cfg := Load()
+	if cfg.FeatureCheckout.Enabled {
+		t.Fatal("BRAIN_FEATURE_CHECKOUT_ENABLED=false should disable feature checkout")
+	}
+}
+
 // boolPtr is a helper to create *bool values for test expectations.
 func boolPtr(b bool) *bool {
 	return &b

@@ -1489,6 +1489,58 @@ kbd {
 .tui.mobile .tree-row .suffix { font-size: 12px; }
 .tui.mobile .tree-header { padding-top: 4px; padding-bottom: 4px; line-height: 1.3; }
 
+
+/* Automations tab: compact rows become readable two-line cards on phones. */
+.tui.mobile .auto-row {
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1px 5px !important;
+  padding: 7px 6px;
+  line-height: 1.25;
+  white-space: normal;
+}
+.tui.mobile .auto-row .connector {
+  width: 1em !important;
+}
+.tui.mobile .auto-row .glyph {
+  width: 1.15em;
+}
+.tui.mobile .auto-row .auto-source {
+  min-width: 0 !important;
+  max-width: 72px;
+  margin-left: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tui.mobile .auto-row .auto-title {
+  flex: 1 1 42%;
+  min-width: 118px;
+}
+.tui.mobile .auto-row .auto-enabled,
+.tui.mobile .auto-row .auto-action {
+  margin-left: 4px;
+  flex: 0 0 auto;
+}
+.tui.mobile .auto-row .auto-trigger,
+.tui.mobile .auto-row .auto-run,
+.tui.mobile .auto-row .auto-progress {
+  flex: 1 0 calc(100% - 32px);
+  margin-left: 2.35em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tui.mobile .auto-row .auto-progress {
+  color: var(--fg-dim);
+}
+.tui.mobile .auto-row.cursor .auto-trigger,
+.tui.mobile .auto-row.cursor .auto-run,
+.tui.mobile .auto-row.cursor .auto-progress {
+  color: var(--bg);
+  opacity: 0.78;
+}
+
 /* On touch, tapping a row shouldn't select its text or trigger the OS
    "Look Up"/dictionary callout. Disable selection on tappable chrome only —
    content areas (detail pane, editor) keep normal text selection. */

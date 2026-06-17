@@ -589,6 +589,7 @@ function InstancePane({
           instanceId={iid}
           sessionId={sessionId}
           defaultAgent={instance.agent}
+          defaultModel={instance.model}
           sessionLabel={
             sessions.find((s) => s.id === sessionId)
               ? sessionName(sessions.find((s) => s.id === sessionId)!)

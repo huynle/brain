@@ -112,22 +112,28 @@ type AttachmentConfig struct {
 }
 
 type ServerConfig struct {
-	Port         int                `yaml:"port"`
-	Host         string             `yaml:"host"`
-	BrainDir     string             `yaml:"brain_dir"`
-	EnableAuth   bool               `yaml:"enable_auth"`
-	CORSOrigin   string             `yaml:"cors_origin"`
-	LogLevel     string             `yaml:"log_level"`
-	OAuthPIN     string             `yaml:"oauth_pin"`
-	TLSCert      string             `yaml:"tls_cert"`
-	TLSKey       string             `yaml:"tls_key"`
-	PIDFile      string             `yaml:"pid_file"`
-	LogFile      string             `yaml:"log_file"`
-	TaskDefaults TaskDefaultsConfig `yaml:"task_defaults"`
-	Embedding    EmbeddingConfig    `yaml:"embedding"`
-	Attachments  AttachmentConfig   `yaml:"attachments"`
+	Port            int                   `yaml:"port"`
+	Host            string                `yaml:"host"`
+	BrainDir        string                `yaml:"brain_dir"`
+	EnableAuth      bool                  `yaml:"enable_auth"`
+	CORSOrigin      string                `yaml:"cors_origin"`
+	LogLevel        string                `yaml:"log_level"`
+	OAuthPIN        string                `yaml:"oauth_pin"`
+	TLSCert         string                `yaml:"tls_cert"`
+	TLSKey          string                `yaml:"tls_key"`
+	PIDFile         string                `yaml:"pid_file"`
+	LogFile         string                `yaml:"log_file"`
+	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
+	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
+	Embedding       EmbeddingConfig       `yaml:"embedding"`
+	Attachments     AttachmentConfig      `yaml:"attachments"`
 
 	AttachmentExtraction AttachmentExtractionConfig `yaml:"attachment_extraction"`
+}
+
+// FeatureCheckoutConfig controls built-in feature completion checkout automation.
+type FeatureCheckoutConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // RunnerConfig holds task runner configuration.
@@ -209,14 +215,15 @@ func defaultConfig() UnifiedConfig {
 
 	return UnifiedConfig{
 		Server: ServerConfig{
-			Port:       3333,
-			Host:       "localhost",
-			BrainDir:   brainDir,
-			LogLevel:   "info",
-			PIDFile:    filepath.Join(stateHome, "brain-api", "brain-api.pid"),
-			LogFile:    filepath.Join(stateHome, "brain-api", "brain-api.log"),
-			EnableAuth: false,
-			CORSOrigin: "*",
+			Port:            3333,
+			Host:            "localhost",
+			BrainDir:        brainDir,
+			LogLevel:        "info",
+			PIDFile:         filepath.Join(stateHome, "brain-api", "brain-api.pid"),
+			LogFile:         filepath.Join(stateHome, "brain-api", "brain-api.log"),
+			EnableAuth:      false,
+			CORSOrigin:      "*",
+			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
 			Embedding: EmbeddingConfig{
 				Enabled:   false,
 				Provider:  "openrouter",

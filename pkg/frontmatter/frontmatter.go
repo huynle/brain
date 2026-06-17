@@ -113,6 +113,8 @@ type AutomationAction struct {
 	Command            string `yaml:"command,omitempty" json:"command,omitempty"`
 	Agent              string `yaml:"agent,omitempty" json:"agent,omitempty"`
 	Model              string `yaml:"model,omitempty" json:"model,omitempty"`
+	Executor           string `yaml:"executor,omitempty" json:"executor,omitempty"`
+	TargetWorkdir      string `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
 	ExecutionMode      string `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
 	SessionMode        string `yaml:"session_mode,omitempty" json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool  `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`

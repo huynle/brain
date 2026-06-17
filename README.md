@@ -66,13 +66,22 @@ AI coding agents are powerful but stateless — they forget everything between s
 - **Text wrap toggle** — press `w` to toggle truncation vs wrapping in the task tree
 - **Log panel** with togglable visibility and real-time streaming
 
-### MCP Server (35 tools)
+### MCP Server (93 tools)
 - **Embedded Streamable HTTP transport** — no separate process, served on the same port as the REST API
 - **OAuth 2.1 with PKCE** for secure remote client authentication
 - **HTTPS/TLS support** for Claude web connector integration
 - **Plugin targets** for Claude Code and OpenCode with full tool parity
-- Tools span: entry CRUD, search, graph traversal, task management, scheduled task triggers, section extraction, verification, and link generation
-
+- **Tool categories:**
+  - **Brain tools (32)**: Entry CRUD, search, graph traversal, attachments, verification
+  - **Task tools (14)**: Task queue management, dependency resolution, status tracking
+  - **Feature tools (6)**: Feature orchestration, checkout, assignment
+  - **Runner tools (5)**: Read-only runner visibility and monitoring
+  - **Observability tools (7)**: Read-only observability for system inspection
+  - **Control tools (9)**: Explicit side-effecting runner control operations
+  - **Project tools (3)**: Project context and placement management
+  - **Planning tools (9)**: Planning phase gates, document discovery, architecture checks
+  - **Webhook tools (8)**: Webhook management and event handling
+- **Architecture**: MCP tools route through the REST API client layer, not directly to services
 ### Multi-Project Mode
 - **Shared execution pool** across all projects with a single `--max-parallel` limit
 - **Project tabs** with per-project stats and an "All" aggregate view
@@ -299,7 +308,7 @@ ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem ./bin/brain
 
 **Note:** Local HTTPS works for browser access but NOT for Claude's custom connector (see above).
 
-### Available Tools (35)
+### Available Tools (63)
 
 #### Core Entry Tools
 | Tool | Description |
@@ -328,6 +337,16 @@ ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem ./bin/brain
 | Tool | Description |
 |------|-------------|
 | `brain_task_trigger` | Manually trigger a scheduled task run |
+
+#### Goal Automation Tools
+| Tool | Description |
+|------|-------------|
+| `brain_goal_create` | Create a goal automation that reconciles until an objective is satisfied |
+| `brain_goal_list` | List active goal automations by project or feature |
+| `brain_goal_update` | Update goal title, content, status, config, or action fields |
+| `brain_goal_run` | Manually reconcile a goal now |
+| `brain_goal_progress` | Show linked task progress for a goal |
+| `brain_goal_audit` | Show reconcile audit history for a goal |
 
 #### Graph Traversal Tools
 | Tool | Description |

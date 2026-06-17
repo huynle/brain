@@ -526,7 +526,7 @@ function AutomationRowView({
 }) {
   return (
     <div
-      className={`tree-row ${cursored ? "cursor" : ""}`}
+      className={`tree-row auto-row ${cursored ? "cursor" : ""}`}
       data-cursor={cursored ? "1" : undefined}
       style={{ gap: 4 }}
       onClick={() => (isGoalConfigurable ? onConfigure() : hasChildren ? onExpand() : undefined)}
@@ -553,18 +553,18 @@ function AutomationRowView({
       >
         {row.enabled ? "◉" : "○"}
       </span>
-      <span className="suffix faint" style={{ minWidth: 64, flexShrink: 0 }}>
+      <span className="suffix faint auto-source" style={{ minWidth: 64, flexShrink: 0 }}>
         {row.scope === "built-in" ? "built-in" : row.source}
       </span>
-      <span className={`title truncate ${row.enabled ? "" : "faint"}`}>
+      <span className={`title truncate auto-title ${row.enabled ? "" : "faint"}`}>
         {row.title}
         {row.isGoal && <span style={{ color: "var(--purple)" }}> [goal]</span>}
       </span>
-      <span className="suffix" style={{ color: row.enabled ? "var(--green)" : "var(--fg-faint)" }}>
+      <span className="suffix auto-enabled" style={{ color: row.enabled ? "var(--green)" : "var(--fg-faint)" }}>
         [{row.enabled ? "enabled" : "disabled"}]
       </span>
       {progress && progress.total > 0 && (
-        <span className="suffix" title={`${progress.completed}/${progress.total} complete`}>
+        <span className="suffix auto-progress" title={`${progress.completed}/${progress.total} complete`}>
           <span style={{ color: progress.completed === progress.total ? "var(--green)" : "var(--yellow)" }}>
             {bar(progress.completed, progress.total)}
           </span>{" "}
@@ -574,16 +574,16 @@ function AutomationRowView({
           </span>
         </span>
       )}
-      <span className="suffix faint truncate">{triggerLabel(row)}</span>
+      <span className="suffix faint truncate auto-trigger">{triggerLabel(row)}</span>
       {row.runSummary && (
-        <span className="suffix" style={{ color: "var(--yellow)" }}>
+        <span className="suffix auto-run" style={{ color: "var(--yellow)" }}>
           run: {row.runSummary}
           {row.runTaskID && <span className="faint"> #{row.runTaskID}</span>}
         </span>
       )}
       {row.source === "automation" && (
         <span
-          className="suffix"
+          className="suffix auto-action"
           style={{ cursor: "pointer", color: "var(--green)" }}
           title="Execute now (x)"
           onClick={(e) => { e.stopPropagation(); onExecute(); }}
@@ -593,7 +593,7 @@ function AutomationRowView({
       )}
       {isGoalConfigurable && (
         <span
-          className="suffix"
+          className="suffix auto-action"
           style={{ cursor: "pointer", color: "var(--blue)" }}
           title="Reconcile"
           onClick={(e) => { e.stopPropagation(); onReconcile(); }}

@@ -303,7 +303,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		}
 	}
 
-	prompt := renderAutomationProjectTemplate(automation.Action.DirectPrompt, project)
+	prompt := renderAutomationTemplate(automation.Action.DirectPrompt, project, evt)
 	agent := firstNonEmpty(automation.Agent, automation.Action.Agent)
 	model := firstNonEmpty(automation.Model, automation.Action.Model)
 	executor := firstNonEmpty(automation.Executor, automation.Action.Executor)
@@ -329,10 +329,14 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	}
 
 	if automation.Action.Type == "script" {
-		command := renderAutomationProjectTemplate(automation.Action.Command, project)
+		command := renderAutomationTemplate(automation.Action.Command, project, evt)
 		req.Executor = "script"
 		req.Content = command
 		req.DirectPrompt = command
+	}
+
+	if evt.FeatureID != "" {
+		req.FeatureID = evt.FeatureID
 	}
 
 	taskResp, err := s.brain.Save(ctx, req)
@@ -368,6 +372,10 @@ func automationCompleteOnIdle(value *bool) *bool {
 }
 
 func renderAutomationProjectTemplate(input, project string) string {
+	return renderAutomationTemplate(input, project, types.Event{})
+}
+
+func renderAutomationTemplate(input, project string, evt types.Event) string {
 	if input == "" {
 		return ""
 	}
@@ -376,11 +384,19 @@ func renderAutomationProjectTemplate(input, project string) string {
 		return input
 	}
 	data := struct {
-		Project   string
-		ProjectID string
+		Project    string
+		ProjectID  string
+		FeatureID  string
+		TaskID     string
+		FromStatus string
+		ToStatus   string
 	}{
-		Project:   project,
-		ProjectID: project,
+		Project:    project,
+		ProjectID:  project,
+		FeatureID:  evt.FeatureID,
+		TaskID:     evt.TaskID,
+		FromStatus: evt.FromStatus,
+		ToStatus:   evt.ToStatus,
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

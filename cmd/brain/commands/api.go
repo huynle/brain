@@ -31,14 +31,15 @@ type UnifiedConfig struct {
 			CertPath string
 			KeyPath  string
 		}
-		PIDFile       string
-		LogFile       string
-		LogMaxSize    int // MB
-		LogMaxBackups int
-		LogMaxAge     int // days
-		TaskDefaults  config.TaskDefaultsConfig
-		Embedding     config.EmbeddingConfig
-		Attachments   config.AttachmentConfig
+		PIDFile         string
+		LogFile         string
+		LogMaxSize      int // MB
+		LogMaxBackups   int
+		LogMaxAge       int // days
+		TaskDefaults    config.TaskDefaultsConfig
+		FeatureCheckout config.FeatureCheckoutConfig
+		Embedding       config.EmbeddingConfig
+		Attachments     config.AttachmentConfig
 
 		AttachmentExtraction config.AttachmentExtractionConfig
 	}
@@ -53,13 +54,19 @@ type UnifiedConfig struct {
 
 // APIFlags holds API server command flags.
 type APIFlags struct {
-	Port    int
-	Host    string
-	Daemon  bool
-	LogFile string
-	TLS     bool
-	TLSCert string
-	TLSKey  string
+	Port          int
+	Host          string
+	Daemon        bool
+	LogFile       string
+	TLS           bool
+	TLSCert       string
+	TLSKey        string
+	Runner        bool
+	RunnerProject string
+	MaxParallel   int
+	Include       []string
+	Exclude       []string
+	Executor      string
 }
 
 // APICommand implements the Command interface for the api command.
@@ -77,16 +84,17 @@ func (c *APICommand) Type() string {
 func (c *APICommand) Execute() error {
 	// Build options from config + flags
 	opts := apiserver.ServerOptions{
-		Port:         c.Config.Server.Port,
-		Host:         c.Config.Server.Host,
-		BrainDir:     c.Config.Server.BrainDir,
-		EnableAuth:   c.Config.Server.EnableAuth,
-		LogLevel:     c.Config.Server.LogLevel,
-		CORSOrigin:   c.Config.Server.CORSOrigin,
-		OAuthPIN:     c.Config.Server.OAuthPIN,
-		TaskDefaults: c.Config.Server.TaskDefaults,
-		Embedding:    c.Config.Server.Embedding,
-		Attachments:  c.Config.Server.Attachments,
+		Port:            c.Config.Server.Port,
+		Host:            c.Config.Server.Host,
+		BrainDir:        c.Config.Server.BrainDir,
+		EnableAuth:      c.Config.Server.EnableAuth,
+		LogLevel:        c.Config.Server.LogLevel,
+		CORSOrigin:      c.Config.Server.CORSOrigin,
+		OAuthPIN:        c.Config.Server.OAuthPIN,
+		TaskDefaults:    c.Config.Server.TaskDefaults,
+		FeatureCheckout: c.Config.Server.FeatureCheckout,
+		Embedding:       c.Config.Server.Embedding,
+		Attachments:     c.Config.Server.Attachments,
 
 		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
 	}
@@ -118,18 +126,18 @@ func (c *APICommand) Execute() error {
 			logFile = defaultLogFile()
 		}
 
-		return daemonizeServer(ctx, opts, pidFile, logFile, c.Config)
+		return daemonizeServer(ctx, opts, pidFile, logFile, c.Config, lifecycleFlagsFromAPIFlags(c.Flags))
 	}
 
 	// Otherwise run in foreground
 	fmt.Printf("Starting Brain API server on %s:%d\n", opts.Host, opts.Port)
-	return apiserver.RunServer(ctx, opts)
+	return runServerWithOptionalRunner(ctx, c.Config, opts, lifecycleFlagsFromAPIFlags(c.Flags))
 }
 
 // daemonizeServer handles daemon mode for the server with SIGHUP log rotation.
 // In daemon mode, we write the PID file when the server starts and setup signal handlers.
 // The StartCommand is responsible for the actual fork/detach via lifecycle.Daemonize.
-func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile, logFile string, cfg *UnifiedConfig) error {
+func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile, logFile string, cfg *UnifiedConfig, flags LifecycleFlags) error {
 	// Check if already running (skip if the PID file contains our own PID,
 	// which happens when the parent wrote it before we started)
 	if pid, err := lifecycle.ReadPID(pidFile); err == nil {
@@ -186,5 +194,5 @@ func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile,
 	fmt.Printf("PID file: %s\n", pidFile)
 
 	// Run server
-	return apiserver.RunServer(ctx, opts)
+	return runServerWithOptionalRunner(ctx, cfg, opts, flags)
 }

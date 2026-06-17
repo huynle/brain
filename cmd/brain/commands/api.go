@@ -42,6 +42,7 @@ type UnifiedConfig struct {
 		Attachments     config.AttachmentConfig
 
 		AttachmentExtraction config.AttachmentExtractionConfig
+		Assistant            config.AssistantConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -97,6 +98,7 @@ func (c *APICommand) Execute() error {
 		Attachments:     c.Config.Server.Attachments,
 
 		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
+		Assistant:            c.Config.Server.Assistant,
 	}
 
 	// Flags override config

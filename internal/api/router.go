@@ -253,6 +253,28 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Assistant ───────────────────────────────────────
+			r.Route("/assistant", func(r chi.Router) {
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.assistant != nil {
+						r.Get("/status", o.handler.HandleAssistantStatus)
+					} else {
+						r.Get("/status", notImplemented)
+					}
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*"))
+					if o.handler != nil && o.handler.assistant != nil {
+						r.Post("/chat", o.handler.HandleAssistantChat)
+						r.Post("/goal-draft", o.handler.HandleAssistantGoalDraft)
+					} else {
+						r.Post("/chat", notImplemented)
+						r.Post("/goal-draft", notImplemented)
+					}
+				})
+			})
+
 			// ─── Goals ───────────────────────────────────────────
 			r.Route("/goals", func(r chi.Router) {
 				// Goal read operations — read:* scope

@@ -1658,3 +1658,90 @@ kbd {
 .proj-action:hover { color: var(--fg); border-color: var(--cyan); }
 .proj-action.trigger { color: var(--green); }
 .proj-hints { font-size: 11px; padding: 0 2px; }
+
+
+/* ─── Built-in Brain Assistant ─────────────────────────────────── */
+.sb-assistant {
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--purple) 12%, var(--bg-2));
+  color: var(--fg);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sb-assistant:hover { border-color: var(--purple); color: var(--purple); }
+.assistant-shell {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  pointer-events: none;
+}
+.assistant-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
+}
+.assistant-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: min(460px, 100vw);
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.35);
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+}
+.assistant-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-2);
+}
+.assistant-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px;
+}
+.assistant-empty {
+  border: 1px dashed var(--border);
+  color: var(--fg-muted);
+  padding: 14px;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+.assistant-msg {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--bg-2);
+}
+.assistant-msg.user {
+  border-color: color-mix(in srgb, var(--blue) 45%, var(--border));
+}
+.assistant-msg.assistant {
+  border-color: color-mix(in srgb, var(--purple) 35%, var(--border));
+}
+.assistant-actions { margin-top: 8px; }
+.assistant-composer { background: var(--bg); }
+.assistant-strip {
+  border: 1px solid color-mix(in srgb, var(--purple) 35%, var(--border));
+  background: color-mix(in srgb, var(--purple) 6%, transparent);
+  border-radius: 6px;
+  padding: 8px;
+}
+
+@media (max-width: 720px) {
+  .assistant-drawer { width: 100vw; }
+  .assistant-backdrop { display: none; }
+}

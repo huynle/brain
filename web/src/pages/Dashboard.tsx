@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../hooks/useProjects";
 import {
@@ -31,6 +31,7 @@ import { RunnersView } from "../views/RunnersView";
 import { ControlView } from "../views/control/ControlView";
 import { LogsView } from "../views/LogsView";
 import { SettingsSheet } from "../views/SettingsSheet";
+import { AssistantDrawer } from "../views/AssistantDrawer";
 
 export function Dashboard() {
   const view = useUI((s) => s.view);
@@ -38,6 +39,7 @@ export function Dashboard() {
   const isMobile = useIsMobile();
   const activeProject = useUI((s) => s.activeProject);
   const settingsOpen = useUI((s) => s.settingsOpen);
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
   const token = useAuth((s) => s.token);
   const helpOpen = useNav((s) => s.helpOpen);
@@ -123,7 +125,7 @@ export function Dashboard() {
 
   return (
     <div className={`tui ${isMobile ? "mobile" : ""}`}>
-      <StatusBar />
+      <StatusBar onAssistant={() => setAssistantOpen(true)} />
       {!isMobile && <ContentTabs />}
       <div className="tui-main" {...swipeProps}>
         {/* Top-level views render without a panel title — the active content
@@ -149,12 +151,13 @@ export function Dashboard() {
           </Panel>
         )}
       </div>
-      {isMobile ? <MobileNav /> : <HelpBar />}
+      {isMobile ? <MobileNav onAssistant={() => setAssistantOpen(true)} /> : <HelpBar />}
       {/* Searchable project picker — available on desktop and mobile. */}
       <ProjectSheet />
       {isMobile && <MobileInspectSheet />}
       {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
+      <AssistantDrawer open={assistantOpen} onClose={() => setAssistantOpen(false)} />
     </div>
   );
 }

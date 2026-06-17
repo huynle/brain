@@ -86,6 +86,16 @@ type EmbeddingConfig struct {
 	TimeoutMs int    `yaml:"timeout_ms"`
 }
 
+// AssistantConfig holds server-side LLM configuration for the built-in PWA assistant.
+type AssistantConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	BaseURL   string `yaml:"base_url"`
+	APIKeyEnv string `yaml:"api_key_env"`
+	Model     string `yaml:"model"`
+	TimeoutMs int    `yaml:"timeout_ms"`
+}
+
 // AttachmentExtractionConfig holds multimodal model-role configuration for
 // deriving searchable text from media attachments. Zero text limits mean unset.
 type AttachmentExtractionConfig struct {
@@ -129,6 +139,7 @@ type ServerConfig struct {
 	Attachments     AttachmentConfig      `yaml:"attachments"`
 
 	AttachmentExtraction AttachmentExtractionConfig `yaml:"attachment_extraction"`
+	Assistant            AssistantConfig            `yaml:"assistant"`
 }
 
 // FeatureCheckoutConfig controls built-in feature completion checkout automation.
@@ -250,6 +261,14 @@ func defaultConfig() UnifiedConfig {
 				MaxSizeBytes:        10 * 1024 * 1024,
 				SupportedMIMETypes:  []string{"image/*", "application/pdf"},
 				MaxDerivedTextChars: 0,
+			},
+			Assistant: AssistantConfig{
+				Enabled:   false,
+				Provider:  "openrouter",
+				BaseURL:   "https://openrouter.ai/api/v1",
+				APIKeyEnv: "OPENROUTER_API_KEY",
+				Model:     "anthropic/claude-sonnet-4",
+				TimeoutMs: 120000,
 			},
 		},
 		Runner: RunnerConfig{

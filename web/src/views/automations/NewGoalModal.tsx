@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Modal } from "../../components/common/Modal";
 import { ALL_STATUSES } from "../../lib/types";
-import { createGoal } from "../../lib/api";
+import { assistantChat, assistantGoalDraft, createGoal } from "../../lib/api";
 import { useUI, ALL_PROJECTS } from "../../store/ui";
 
 const TRIGGER_SOURCES = ["task", "feature", "both"];
@@ -65,11 +65,80 @@ export function NewGoalModal({
   const [complete, setComplete] = useState<string[]>([]);
   const [blocked, setBlocked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantBusy, setAssistantBusy] = useState(false);
 
   const canSave = title.trim() !== "" && project.trim() !== "";
 
   function toggle(list: string[], set: (v: string[]) => void, s: string) {
     set(list.includes(s) ? list.filter((x) => x !== s) : [...list, s]);
+  }
+
+
+  async function draftWithAssistant() {
+    const prompt = assistantPrompt.trim();
+    if (!prompt) return;
+    setAssistantBusy(true);
+    try {
+      const res = await assistantGoalDraft({
+        project: project.trim() || undefined,
+        message: prompt,
+        current: {
+          project,
+          feature_id: feature,
+          title,
+          criteria,
+          validation,
+          workdir,
+          trigger_source: triggerSource,
+          agent,
+          model,
+          complete_statuses: complete,
+          blocked_statuses: blocked,
+        },
+        context: { view: "new_goal" },
+      });
+      const d = res.draft;
+      if (d.project) setProject(d.project);
+      if (d.feature_id) setFeature(d.feature_id);
+      if (d.title) setTitle(d.title);
+      if (d.criteria) setCriteria(d.criteria);
+      if (d.validation) setValidation(d.validation);
+      if (d.workdir) setWorkdir(d.workdir);
+      if (d.trigger_source) setTriggerSource(d.trigger_source);
+      if (d.agent) setAgent(d.agent);
+      if (d.model) setModel(d.model);
+      if (d.complete_statuses) setComplete(d.complete_statuses);
+      if (d.blocked_statuses) setBlocked(d.blocked_statuses);
+      toast(res.reply || "Drafted goal", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Assistant draft failed", "error");
+    } finally {
+      setAssistantBusy(false);
+    }
+  }
+
+  async function createWithAssistant() {
+    const prompt = assistantPrompt.trim();
+    if (!prompt) return;
+    setAssistantBusy(true);
+    try {
+      const res = await assistantChat({
+        project: project.trim() || undefined,
+        message: prompt,
+        context: { view: "new_goal" },
+      });
+      const ok = res.executed_actions.some((a) => a.type === "create_goal" && a.status === "completed");
+      toast(res.reply || (ok ? "Goal created" : "Assistant responded"), ok ? "success" : "info");
+      if (ok) {
+        onCreated?.();
+        onClose();
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Assistant create failed", "error");
+    } finally {
+      setAssistantBusy(false);
+    }
   }
 
   async function save() {
@@ -126,6 +195,23 @@ export function NewGoalModal({
         </>
       }
     >
+      <div className="assistant-strip field">
+        <label>Ask assistant</label>
+        <textarea
+          rows={2}
+          placeholder="Describe the goal. Explicit create requests can be created directly."
+          value={assistantPrompt}
+          onChange={(e) => setAssistantPrompt(e.target.value)}
+        />
+        <div className="btn-row">
+          <button className="btn sm" disabled={assistantBusy || !assistantPrompt.trim()} onClick={() => void draftWithAssistant()}>
+            {assistantBusy ? "Working..." : "Draft goal"}
+          </button>
+          <button className="btn sm primary" disabled={assistantBusy || !assistantPrompt.trim()} onClick={() => void createWithAssistant()}>
+            Create directly
+          </button>
+        </div>
+      </div>
       <div className="field">
         <label>Objective (title)</label>
         <textarea

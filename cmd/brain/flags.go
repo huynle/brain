@@ -275,6 +275,7 @@ type UnifiedConfig struct {
 		Attachments     uconfig.AttachmentConfig
 
 		AttachmentExtraction uconfig.AttachmentExtractionConfig
+		Assistant            uconfig.AssistantConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {

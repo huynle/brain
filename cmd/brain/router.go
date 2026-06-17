@@ -592,6 +592,7 @@ func defaultConfig() *UnifiedConfig {
 		cfg.Server.Embedding = ucfg.Server.Embedding
 		cfg.Server.Attachments = ucfg.Server.Attachments
 		cfg.Server.AttachmentExtraction = ucfg.Server.AttachmentExtraction
+		cfg.Server.Assistant = ucfg.Server.Assistant
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -679,6 +680,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.Embedding = cfg.Server.Embedding
 	cmdCfg.Server.Attachments = cfg.Server.Attachments
 	cmdCfg.Server.AttachmentExtraction = cfg.Server.AttachmentExtraction
+	cmdCfg.Server.Assistant = cfg.Server.Assistant
 	// Runner — assign the full config directly, no lossy field-by-field copying
 	cmdCfg.Runner = cfg.Runner
 

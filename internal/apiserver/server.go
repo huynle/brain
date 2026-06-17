@@ -41,6 +41,7 @@ type ServerOptions struct {
 	Attachments     config.AttachmentConfig
 
 	AttachmentExtraction config.AttachmentExtractionConfig
+	Assistant            config.AssistantConfig
 }
 
 const defaultAttachmentMaxUploadSizeBytes int64 = 100 * 1024 * 1024
@@ -187,6 +188,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		Attachments:     normalizeAttachmentConfig(opts.BrainDir, opts.Attachments),
 
 		AttachmentExtraction: opts.AttachmentExtraction,
+		Assistant:            opts.Assistant,
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
@@ -269,6 +271,16 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// in-process reconcile for goal automations when their linked task/feature
 	// lifecycle events fire.
 	goalSvc := service.NewGoalService(brainSvc, taskSvc, store)
+	assistantSvc := api.NewAssistantService(api.AssistantServiceOptions{
+		Enabled:   cfg.Assistant.Enabled,
+		Provider:  cfg.Assistant.Provider,
+		BaseURL:   cfg.Assistant.BaseURL,
+		APIKeyEnv: cfg.Assistant.APIKeyEnv,
+		Model:     cfg.Assistant.Model,
+		Timeout:   time.Duration(cfg.Assistant.TimeoutMs) * time.Millisecond,
+		Brain:     brainSvc,
+		Goals:     goalSvc,
+	})
 	go goalSvc.Start(ctx, eventHub)
 
 	// ─── Webhook Dispatcher ────────────────────────────────────────
@@ -310,6 +322,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithEventService(eventSvc),
 		api.WithWebhookService(webhookSvc),
 		api.WithGoalService(goalSvc),
+		api.WithAssistantService(assistantSvc),
 		api.WithBridgeService(bridgeHub),
 		api.WithLogBuffer(logBuf),
 		api.WithTaskDefaults(cfg.TaskDefaults),

@@ -10,7 +10,7 @@ function shortName(id: string): string {
   return id.split(/[/\\]/).pop() || id;
 }
 
-export function StatusBar() {
+export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
   const activeProject = useUI((s) => s.activeProject);
   const setProjectSheetOpen = useUI((s) => s.setProjectSheetOpen);
   const runners = useLive((s) => s.runners);
@@ -125,6 +125,7 @@ export function StatusBar() {
               : `automation status for ${activeProject}`
           }
         />
+        <button className="sb-assistant" onClick={onAssistant} title="Open Brain Assistant">assistant</button>
         <span title={connected ? "brain connected" : "brain offline"}>
           <span style={{ color: brainColor }}>●</span> brain{" "}
         </span>

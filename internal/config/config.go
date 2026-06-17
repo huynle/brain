@@ -44,6 +44,7 @@ type Config struct {
 	Attachments     AttachmentConfig
 
 	AttachmentExtraction AttachmentExtractionConfig
+	Assistant            AssistantConfig
 
 	// Rate limiting (0 = disabled)
 	RateLimitPerMinute int // Per-IP requests per minute (default: 100)
@@ -110,6 +111,7 @@ func Load() Config {
 		cfg.Embedding = s.Embedding
 		cfg.Attachments = s.Attachments
 		cfg.AttachmentExtraction = s.AttachmentExtraction
+		cfg.Assistant = s.Assistant
 	}
 
 	// Layer 3: Environment variable overrides (highest priority)

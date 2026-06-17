@@ -12,12 +12,16 @@ const TABS: { view: View; label: string; glyph: string }[] = [
   { view: "runners", label: "Runners", glyph: "⚙" },
 ];
 
-export function MobileNav() {
+export function MobileNav({ onAssistant }: { onAssistant?: () => void }) {
   const view = useUI((s) => s.view);
   const setView = useUI((s) => s.setView);
 
   return (
     <nav className="mnav" role="tablist">
+      <button className="mnav-tab" aria-label="Assistant" onClick={onAssistant}>
+        <span className="mnav-glyph">✦</span>
+        <span className="mnav-label">Ask</span>
+      </button>
       {TABS.map((t) => (
         <button
           key={t.view}

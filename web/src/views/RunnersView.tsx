@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useLive } from "../lib/sse";
 import { ALL_PROJECTS, useUI } from "../store/ui";
 import { useNav } from "../store/nav";
@@ -21,6 +21,7 @@ import type { OpencodeInstance, RunnerInfo } from "../lib/types";
 
 export function RunnersView() {
   const toast = useUI((s) => s.toast);
+  const openInControl = useUI((s) => s.openInControl);
   const activeProject = useUI((s) => s.activeProject);
   const qc = useQueryClient();
   const liveRunners = useLive((s) => s.runners);
@@ -49,6 +50,29 @@ export function RunnersView() {
 
   // Prefer the live SSE list when present; fall back to the polled query.
   const runners = liveRunners.length ? liveRunners : runnersQ.data ?? [];
+  const instances = instancesQ.data ?? [];
+  const rows = useMemo(() => {
+    const out: Array<
+      | { kind: "runner"; runner: RunnerInfo; instances: OpencodeInstance[] }
+      | { kind: "instance"; runner: RunnerInfo; instance: OpencodeInstance }
+    > = [];
+    for (const runner of runners) {
+      const runnerInstances = instances.filter((inst) => inst.runner_id === runner.runner_id);
+      out.push({ kind: "runner", runner, instances: runnerInstances });
+      for (const instance of runnerInstances) out.push({ kind: "instance", runner, instance });
+    }
+    return out;
+  }, [runners, instances]);
+  const rowIndexByKey = useMemo(() => {
+    const indexes = new Map<string, number>();
+    rows.forEach((row, i) => {
+      indexes.set(
+        row.kind === "runner" ? `runner:${row.runner.runner_id}` : `instance:${row.instance.instance_id}`,
+        i,
+      );
+    });
+    return indexes;
+  }, [rows]);
   const status = statusQ.data;
   const taskPaused = !!status?.paused;
   const automationPaused = !!status?.automationsPaused;
@@ -56,15 +80,45 @@ export function RunnersView() {
   const allPaused = taskPaused && automationPaused;
 
   const scope = "runners";
-  const cursor = useNav((s) => Math.min(s.cursor[scope] ?? 0, Math.max(0, runners.length - 1)));
+  const cursor = useNav((s) => Math.min(s.cursor[scope] ?? 0, Math.max(0, rows.length - 1)));
+
+  function openInstance(inst: OpencodeInstance) {
+    openInControl({
+      mode: "live",
+      runnerId: inst.runner_id,
+      instanceId: inst.instance_id,
+      sessionId: inst.session_ids?.[0],
+      taskTitle: inst.title || inst.task_id,
+    });
+  }
+
+  function openRow(row: (typeof rows)[number] | undefined) {
+    if (!row) return;
+    if (row.kind === "instance") {
+      openInstance(row.instance);
+      return;
+    }
+    const first = row.instances[0];
+    if (!first) {
+      toast("Runner has no instances", "info");
+      return;
+    }
+    const idx = rowIndexByKey.get(`instance:${first.instance_id}`);
+    if (idx !== undefined) useNav.getState().setCursor(scope, idx);
+    openInstance(first);
+  }
 
   useViewKeyboard(
     (e) => {
-      if (handleListNavKey(e, scope, runners.length)) return true;
-      const cur = runners[cursor];
+      if (handleListNavKey(e, scope, rows.length)) return true;
+      const cur = rows[cursor];
       switch (e.key) {
+        case "Enter":
+        case "o":
+          openRow(cur);
+          return true;
         case "s":
-          if (cur) setConfirmKill(cur);
+          if (cur?.kind === "runner") setConfirmKill(cur.runner);
           return true;
         case "p":
         case "P":
@@ -78,7 +132,7 @@ export function RunnersView() {
           return false;
       }
     },
-    [runners, cursor, taskPaused, automationPaused, allProjectsSelected, allPaused],
+    [rows, cursor, taskPaused, automationPaused, allProjectsSelected, allPaused, rowIndexByKey],
   );
 
   useEffect(() => {
@@ -170,11 +224,13 @@ export function RunnersView() {
           <RunnerRow
             key={r.runner_id}
             runner={r}
-            instances={(instancesQ.data ?? []).filter(
-              (inst) => inst.runner_id === r.runner_id,
-            )}
-            cursored={i === cursor}
+            instances={instances.filter((inst) => inst.runner_id === r.runner_id)}
+            cursored={rowIndexByKey.get(`runner:${r.runner_id}`) === cursor}
             last={i === runners.length - 1}
+            cursor={cursor}
+            rowIndexByKey={rowIndexByKey}
+            onCursor={(idx) => useNav.getState().setCursor(scope, idx)}
+            onOpen={openInstance}
             onKill={() => setConfirmKill(r)}
           />
         ))
@@ -210,12 +266,20 @@ function RunnerRow({
   instances,
   cursored,
   last,
+  cursor,
+  rowIndexByKey,
+  onCursor,
+  onOpen,
   onKill,
 }: {
   runner: RunnerInfo;
   instances: OpencodeInstance[];
   cursored?: boolean;
   last?: boolean;
+  cursor: number;
+  rowIndexByKey: Map<string, number>;
+  onCursor: (idx: number) => void;
+  onOpen: (inst: OpencodeInstance) => void;
   onKill: () => void;
 }) {
   const statusColor =
@@ -230,6 +294,10 @@ function RunnerRow({
         className={`tree-row ${cursored ? "cursor" : ""}`}
         data-cursor={cursored ? "1" : undefined}
         style={{ gap: 4 }}
+        onClick={() => {
+          const idx = rowIndexByKey.get(`runner:${runner.runner_id}`);
+          if (idx !== undefined) onCursor(idx);
+        }}
       >
         <span className="connector">{last ? "└─ " : "├─ "}</span>
         <span className="glyph" style={{ color: cursored ? undefined : statusColor }}>
@@ -261,6 +329,12 @@ function RunnerRow({
           instance={inst}
           parentLast={!!last}
           last={j === instances.length - 1}
+          cursored={rowIndexByKey.get(`instance:${inst.instance_id}`) === cursor}
+          onCursor={() => {
+            const idx = rowIndexByKey.get(`instance:${inst.instance_id}`);
+            if (idx !== undefined) onCursor(idx);
+          }}
+          onOpen={() => onOpen(inst)}
         />
       ))}
     </>
@@ -284,14 +358,26 @@ function InstanceRow({
   instance,
   parentLast,
   last,
+  cursored,
+  onCursor,
+  onOpen,
 }: {
   instance: OpencodeInstance;
   parentLast: boolean;
   last: boolean;
+  cursored?: boolean;
+  onCursor: () => void;
+  onOpen: () => void;
 }) {
   const sessions = instance.session_ids?.length ?? 0;
   return (
-    <div className="tree-row" style={{ gap: 4 }}>
+    <div
+      className={`tree-row ${cursored ? "cursor" : ""}`}
+      data-cursor={cursored ? "1" : undefined}
+      style={{ gap: 4 }}
+      onClick={onCursor}
+      onDoubleClick={onOpen}
+    >
       <span className="connector">
         {parentLast ? "   " : "│  "}
         {last ? "└─ " : "├─ "}

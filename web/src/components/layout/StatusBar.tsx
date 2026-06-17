@@ -30,10 +30,14 @@ export function StatusBar() {
     queryFn: getRunnerStatus,
     staleTime: 8_000,
   });
-  const paused =
+  const taskPaused =
     activeProject === ALL_PROJECTS
       ? statusQ.data?.paused
       : statusQ.data?.pausedProjects?.includes(activeProject);
+  const automationsPaused =
+    activeProject === ALL_PROJECTS
+      ? statusQ.data?.automationsPaused
+      : statusQ.data?.automationPausedProjects?.includes(activeProject);
 
   const healthQ = useQuery({ queryKey: ["health"], queryFn: getHealth, staleTime: 30_000 });
   const embedding = healthQ.data?.embedding as
@@ -65,10 +69,6 @@ export function StatusBar() {
         {activeFeatures > 0 ? (
           <span style={{ color: "var(--purple)", fontWeight: 700, marginRight: 12 }}>
             ▶{activeFeatures}
-          </span>
-        ) : paused ? (
-          <span style={{ color: "var(--fg-faint)", marginRight: 12 }} title="paused">
-            ⏸
           </span>
         ) : null}
         <span className="sb-stats">
@@ -103,6 +103,28 @@ export function StatusBar() {
           )}
         </span>
         <span className="sb-spacer" />
+        <StatusChip
+          label="tasks"
+          paused={taskPaused}
+          runningText="run"
+          pausedText="paused"
+          title={
+            activeProject === ALL_PROJECTS
+              ? "task runner pool status"
+              : `task runner status for ${activeProject}`
+          }
+        />
+        <StatusChip
+          label="autos"
+          paused={automationsPaused}
+          runningText="on"
+          pausedText="off"
+          title={
+            activeProject === ALL_PROJECTS
+              ? "automation runner status"
+              : `automation status for ${activeProject}`
+          }
+        />
         <span title={connected ? "brain connected" : "brain offline"}>
           <span style={{ color: brainColor }}>●</span> brain{" "}
         </span>
@@ -111,6 +133,30 @@ export function StatusBar() {
         </span>
       </div>
     </div>
+  );
+}
+
+function StatusChip({
+  label,
+  paused,
+  runningText,
+  pausedText,
+  title,
+}: {
+  label: string;
+  paused: boolean | undefined;
+  runningText: string;
+  pausedText: string;
+  title: string;
+}) {
+  const known = paused !== undefined;
+  const color = !known ? "var(--fg-faint)" : paused ? "var(--red)" : "var(--green)";
+  const state = !known ? "…" : paused ? pausedText : runningText;
+  return (
+    <span className={`sb-state ${paused ? "paused" : "running"}`} title={title}>
+      <span style={{ color }}>●</span> {label}:{" "}
+      <b style={{ color }}>{state}</b>
+    </span>
   );
 }
 

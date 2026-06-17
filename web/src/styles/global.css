@@ -747,6 +747,17 @@ kbd {
   z-index: 6;
   font-size: 13px;
 }
+.selbar-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--bg));
+  color: var(--fg);
+  font-size: 12px;
+}
 
 /* ─── Editor ─────────────────────────────────────────────── */
 
@@ -945,6 +956,26 @@ kbd {
 .tui-statusrow .sb-spacer { flex: 1; }
 .sb-seg { color: var(--fg-dim); }
 .sb-seg b { color: var(--fg); font-weight: 700; }
+.sb-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 10px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  line-height: 1.45;
+  white-space: nowrap;
+}
+.sb-state.paused {
+  border-color: color-mix(in srgb, var(--red) 45%, var(--border));
+  background: color-mix(in srgb, var(--red) 10%, transparent);
+}
+.sb-state.running {
+  border-color: color-mix(in srgb, var(--green) 35%, var(--border));
+}
 
 /* ─── Content tab bar ─────────────────────────────────────── */
 .tui-tabbar {

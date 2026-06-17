@@ -99,6 +99,7 @@ export interface Task {
 
   generated?: boolean;
   generated_kind?: string;
+  generated_by?: string;
 
   // dependency resolution metadata
   resolved_deps?: string[];

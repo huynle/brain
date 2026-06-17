@@ -15,8 +15,10 @@ import {
   resumeAutomations,
   runGoal,
   updateEntry,
+  deleteEntry,
 } from "../lib/api";
 import { Pill } from "../components/common/Badge";
+import { ConfirmDialog } from "../components/common/Modal";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { ListDetail } from "../components/layout/ListDetail";
 import { GoalConfigModal } from "./automations/GoalConfigModal";
@@ -58,6 +60,8 @@ type DisplayEntry =
   | { kind: "auto"; row: AutomationRow }
   | { kind: "task"; task: BrainEntry; parent: AutomationRow };
 
+const runTaskKey = (task: BrainEntry) => `automation-task:${task.id}`;
+
 export function AutomationsView() {
   // Scope to the active project (built-ins are always included); the "all" tab
   // shows every project's automations.
@@ -70,12 +74,15 @@ export function AutomationsView() {
   const openInspect = useUI((s) => s.openInspect);
   const isMobile = useIsMobile();
   const qc = useQueryClient();
+  const nav = useNav();
+  const selected = useNav((s) => s.selected);
 
   const [editing, setEditing] = useState<GoalSummary | null>(null);
   const [editEntry, setEditEntry] = useState<{ path: string; title?: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [, setBusy] = useState(false);
+  const [confirmDel, setConfirmDel] = useState<BrainEntry[] | null>(null);
+  const [busy, setBusy] = useState(false);
 
   const dataQ = useQuery({
     queryKey: ["automation-data", project ?? "all"],
@@ -146,6 +153,15 @@ export function AutomationsView() {
   const cursor = useNav((s) =>
     Math.min(s.cursor[scope] ?? 0, Math.max(0, display.length - 1)),
   );
+  const runTaskList = useMemo(
+    () => display.filter((entry): entry is Extract<DisplayEntry, { kind: "task" }> => entry.kind === "task").map((entry) => entry.task),
+    [display],
+  );
+  const selectedRunTasks = useMemo(
+    () => runTaskList.filter((task) => selected[runTaskKey(task)]),
+    [runTaskList, selected],
+  );
+  const selectedRunTaskCount = selectedRunTasks.length;
 
   // Map a task id → its live OpenCode instance (for "open in Control").
   const instanceByTaskId = useMemo(() => {
@@ -173,6 +189,16 @@ export function AutomationsView() {
     void qc.invalidateQueries({ queryKey: ["goals"] });
     void qc.invalidateQueries({ queryKey: ["instances"] });
   }
+
+  async function deleteRunTasks(ts: BrainEntry[]) {
+    await run(`Deleted ${ts.length}`, () => Promise.all(ts.map((task) => deleteEntry(task.path))));
+    nav.clearSelect();
+    setConfirmDel(null);
+    refresh();
+  }
+
+  const deleteTargets = (cur?: DisplayEntry): BrainEntry[] =>
+    selectedRunTasks.length ? selectedRunTasks : cur?.kind === "task" ? [cur.task] : [];
 
   function execute(row: AutomationRow) {
     if (row.source !== "automation") {
@@ -308,8 +334,21 @@ export function AutomationsView() {
           else if (cur?.kind === "task") setEditEntry({ path: cur.task.path, title: cur.task.title });
           return true;
         case " ":
-          if (cur?.kind === "auto") toggle(cur.row);
+          if (cur?.kind === "task") nav.toggleSelect(runTaskKey(cur.task));
+          else if (cur?.kind === "auto") toggle(cur.row);
           return true;
+        case "A":
+          nav.selectMany(runTaskList.map(runTaskKey));
+          return true;
+        case "D":
+          nav.clearSelect();
+          return true;
+        case "d":
+        case "Backspace": {
+          const ts = deleteTargets(cur);
+          if (ts.length) setConfirmDel(ts);
+          return true;
+        }
         case "p":
           toggleAutomationPause();
           return true;
@@ -323,7 +362,7 @@ export function AutomationsView() {
           return false;
       }
     },
-    [display, cursor, tasks, automationsPaused, instanceByTaskId, goalByEntryId],
+    [display, cursor, tasks, automationsPaused, instanceByTaskId, goalByEntryId, runTaskList, selectedRunTasks],
   );
 
   useEffect(() => {
@@ -348,9 +387,20 @@ export function AutomationsView() {
             {activeProject === ALL_PROJECTS ? "automations paused" : `automations paused: ${activeProject}`}
           </Pill>
         )}
+        {selectedRunTaskCount > 0 && (
+          <span className="selbar-inline">
+            {selectedRunTaskCount} selected
+            <button className="btn sm ghost" onClick={() => nav.clearSelect()}>
+              clear
+            </button>
+            <button className="btn sm danger" onClick={() => setConfirmDel(selectedRunTasks)}>
+              delete
+            </button>
+          </span>
+        )}
         <div style={{ flex: 1 }} />
         <span className="faint" style={{ fontSize: 11.5 }}>
-          x run · Spc toggle · Enter expand · e edit · o open/review · n new goal
+          x run · Spc select/toggle · d delete · Enter expand · e edit · o open/review · n new goal
         </span>
         <button className="btn sm primary" onClick={() => setCreating(true)} title="New goal (n)">
           + New goal
@@ -395,6 +445,9 @@ export function AutomationsView() {
                 task={entry.task}
                 cursored={i === cursor}
                 live={instanceByTaskId.has(entry.task.id)}
+                selected={!!selected[runTaskKey(entry.task)]}
+                selecting={selectedRunTaskCount > 0}
+                onSelect={() => nav.toggleSelect(runTaskKey(entry.task))}
                 onOpen={() => void openTaskInControl(entry.task)}
               />
             ),
@@ -417,6 +470,21 @@ export function AutomationsView() {
         <NewGoalModal
           onClose={() => setCreating(false)}
           onCreated={() => void qc.invalidateQueries({ queryKey: ["goals"] })}
+        />
+      )}
+      {confirmDel && (
+        <ConfirmDialog
+          title={confirmDel.length > 1 ? `Delete ${confirmDel.length} automation tasks?` : "Delete automation task?"}
+          danger
+          confirmLabel="Delete"
+          busy={busy}
+          message={
+            confirmDel.length > 1
+              ? <>This permanently deletes {confirmDel.length} generated automation tasks.</>
+              : <>This permanently deletes <strong>{confirmDel[0].title}</strong>.</>
+          }
+          onClose={() => setConfirmDel(null)}
+          onConfirm={() => void deleteRunTasks(confirmDel)}
         />
       )}
     </ListDetail>
@@ -541,11 +609,17 @@ function RunTaskRow({
   task,
   cursored,
   live,
+  selected,
+  selecting,
+  onSelect,
   onOpen,
 }: {
   task: BrainEntry;
   cursored: boolean;
   live: boolean;
+  selected: boolean;
+  selecting: boolean;
+  onSelect: () => void;
   onOpen: () => void;
 }) {
   const statusColor =
@@ -558,13 +632,21 @@ function RunTaskRow({
           : "var(--fg-faint)";
   return (
     <div
-      className={`tree-row ${cursored ? "cursor" : ""}`}
+      className={`tree-row ${cursored ? "cursor" : ""} ${selected ? "kbd-cursor" : ""}`}
       data-cursor={cursored ? "1" : undefined}
       style={{ gap: 4 }}
-      onClick={onOpen}
+      onClick={selecting ? onSelect : onOpen}
       title={live ? "Open live session in Control (o)" : "Review session in Control (o)"}
     >
       <span className="connector">{"   ├─ "}</span>
+      {selecting && (
+        <span
+          className="checkbox"
+          onClick={(e) => { e.stopPropagation(); onSelect(); }}
+        >
+          {selected ? "[x] " : "[ ] "}
+        </span>
+      )}
       <span className="glyph" style={{ color: statusColor }} title={task.status}>
         ●
       </span>

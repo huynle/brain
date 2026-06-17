@@ -28,6 +28,7 @@ func RunMCPServer(ctx context.Context, opts MCPOptions, stdin io.Reader, stdout 
 	// Register all tool groups
 	mcp.RegisterBrainTools(server, client)
 	mcp.RegisterTaskTools(server, client)
+	mcp.RegisterFeatureTools(server, client)
 	mcp.RegisterRunnerTools(server, client)
 	mcp.RegisterPlanningTools(server, client)
 	mcp.RegisterWebhookTools(server, client)

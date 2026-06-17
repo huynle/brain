@@ -45,6 +45,7 @@ func NewHTTPHandler(apiClient *APIClient) *HTTPHandler {
 			s := NewServer()
 			RegisterBrainTools(s, client)
 			RegisterTaskTools(s, client)
+			RegisterFeatureTools(s, client)
 			RegisterRunnerTools(s, client)
 			RegisterPlanningTools(s, client)
 			RegisterWebhookTools(s, client)

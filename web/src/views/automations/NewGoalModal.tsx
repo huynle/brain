@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Modal } from "../../components/common/Modal";
 import { ALL_STATUSES } from "../../lib/types";
-import { assistantChat, assistantGoalDraft, createGoal } from "../../lib/api";
+import { assistantChat, assistantGoalDraft, createGoal, type AssistantChatResponse } from "../../lib/api";
 import { useUI, ALL_PROJECTS } from "../../store/ui";
 
 const TRIGGER_SOURCES = ["task", "feature", "both"];
@@ -15,6 +15,13 @@ function slugId(title: string): string {
       .slice(0, 40) || "goal";
   const rand = Math.floor(Math.random() * 0xffff).toString(16).padStart(4, "0");
   return `${slug}-${rand}`;
+}
+
+
+function createdSomething(res: AssistantChatResponse): boolean {
+  return res.executed_actions.some((a) =>
+    ["create_goal", "create_automation", "create_task", "create_entry"].includes(a.type) && a.status === "completed",
+  );
 }
 
 function StatusChips({
@@ -42,7 +49,7 @@ function StatusChips({
   );
 }
 
-export function NewGoalModal({
+export function NewAutomationModal({
   onClose,
   onCreated,
 }: {
@@ -96,7 +103,7 @@ export function NewGoalModal({
           complete_statuses: complete,
           blocked_statuses: blocked,
         },
-        context: { view: "new_goal" },
+        context: { view: "new_automation" },
       });
       const d = res.draft;
       if (d.project) setProject(d.project);
@@ -126,10 +133,10 @@ export function NewGoalModal({
       const res = await assistantChat({
         project: project.trim() || undefined,
         message: prompt,
-        context: { view: "new_goal" },
+        context: { view: "new_automation" },
       });
-      const ok = res.executed_actions.some((a) => a.type === "create_goal" && a.status === "completed");
-      toast(res.reply || (ok ? "Goal created" : "Assistant responded"), ok ? "success" : "info");
+      const ok = createdSomething(res);
+      toast(res.reply || (ok ? "Created" : "Assistant responded"), ok ? "success" : "info");
       if (ok) {
         onCreated?.();
         onClose();
@@ -177,7 +184,7 @@ export function NewGoalModal({
 
   return (
     <Modal
-      title="New goal"
+      title="New automation"
       onClose={onClose}
       footer={
         <>
@@ -190,30 +197,30 @@ export function NewGoalModal({
             onClick={() => void save()}
             disabled={busy || !canSave}
           >
-            {busy ? "Creating…" : "Create goal"}
+            {busy ? "Creating…" : "Create goal manually"}
           </button>
         </>
       }
     >
       <div className="assistant-strip field">
-        <label>Ask assistant</label>
+        <label>Ask assistant to create an automation, goal, task, or entry</label>
         <textarea
           rows={2}
-          placeholder="Describe the goal. Explicit create requests can be created directly."
+          placeholder="Example: Create a goal for finishing the PWA assistant, or make a daily automation to inspect blocked tasks."
           value={assistantPrompt}
           onChange={(e) => setAssistantPrompt(e.target.value)}
         />
         <div className="btn-row">
           <button className="btn sm" disabled={assistantBusy || !assistantPrompt.trim()} onClick={() => void draftWithAssistant()}>
-            {assistantBusy ? "Working..." : "Draft goal"}
+            {assistantBusy ? "Working..." : "Draft goal fields"}
           </button>
           <button className="btn sm primary" disabled={assistantBusy || !assistantPrompt.trim()} onClick={() => void createWithAssistant()}>
-            Create directly
+            Create with assistant
           </button>
         </div>
       </div>
       <div className="field">
-        <label>Objective (title)</label>
+        <label>Manual goal objective (title)</label>
         <textarea
           rows={2}
           autoFocus

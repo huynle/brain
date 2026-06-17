@@ -22,7 +22,7 @@ import { ConfirmDialog } from "../components/common/Modal";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { ListDetail } from "../components/layout/ListDetail";
 import { GoalConfigModal } from "./automations/GoalConfigModal";
-import { NewGoalModal } from "./automations/NewGoalModal";
+import { NewAutomationModal } from "./automations/NewGoalModal";
 import {
   type AutomationRow,
   childRunTasks,
@@ -400,10 +400,10 @@ export function AutomationsView() {
         )}
         <div style={{ flex: 1 }} />
         <span className="faint" style={{ fontSize: 11.5 }}>
-          x run · Spc select/toggle · d delete · Enter expand · e edit · o open/review · n new goal
+          x run · Spc select/toggle · d delete · Enter expand · e edit · o open/review · n new automation
         </span>
-        <button className="btn sm primary" onClick={() => setCreating(true)} title="New goal (n)">
-          + New goal
+        <button className="btn sm primary" onClick={() => setCreating(true)} title="New automation (n)">
+          + New automation
         </button>
       </div>
 
@@ -415,7 +415,7 @@ export function AutomationsView() {
         <EmptyState
           glyph="⟳"
           title="No automations"
-          hint="Built-in automations, scheduled tasks, and goals appear here. Press n to create a goal."
+          hint="Built-in automations, scheduled tasks, and goals appear here. Press n to create a new automation."
         />
       ) : (
         <div>
@@ -467,9 +467,9 @@ export function AutomationsView() {
         </Suspense>
       )}
       {creating && (
-        <NewGoalModal
+        <NewAutomationModal
           onClose={() => setCreating(false)}
-          onCreated={() => void qc.invalidateQueries({ queryKey: ["goals"] })}
+          onCreated={() => { void qc.invalidateQueries({ queryKey: ["goals"] }); refresh(); }}
         />
       )}
       {confirmDel && (

@@ -60,7 +60,7 @@ const VIEW_GROUPS: Record<string, Group> = {
       { keys: ["A", "D"], desc: "Select all run tasks / clear selection" },
       { keys: ["d", "⌫"], desc: "Delete selected run tasks" },
       { keys: ["e"], desc: "Edit (goal config / file)" },
-      { keys: ["n"], desc: "New goal" },
+      { keys: ["n"], desc: "New automation" },
       { keys: ["p"], desc: "Pause automations" },
       { keys: ["T"], desc: "Toggle detail pane" },
       { keys: ["z"], desc: "Toggle logs pane" },

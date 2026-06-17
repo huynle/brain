@@ -24,8 +24,8 @@ func TestRegisterBrainTools_Count(t *testing.T) {
 
 	// Count registered tools
 	count := len(s.tools)
-	if count != 30 {
-		t.Errorf("expected 30 brain tools registered, got %d", count)
+	if count != 32 {
+		t.Errorf("expected 32 brain tools registered, got %d", count)
 	}
 }
 
@@ -62,6 +62,8 @@ func TestRegisterBrainTools_Names(t *testing.T) {
 		"brain_attachment_detach",
 		"brain_attachment_list",
 		"brain_attachment_get",
+		"brain_attachment_delete",
+		"brain_attachment_backfill",
 		"brain_attachment_extract",
 		"brain_attachment_text",
 		"brain_attachment_download",
@@ -992,9 +994,16 @@ func TestAttachmentToolSchemas(t *testing.T) {
 		{"brain_attachment_detach", []string{"project_id", "entry_id", "attachment_id"}},
 		{"brain_attachment_list", []string{"project_id"}},
 		{"brain_attachment_get", []string{"project_id", "attachment_id"}},
+		{"brain_attachment_delete", []string{"project_id", "attachment_id"}},
+		{"brain_attachment_backfill", []string{"project_id"}},
 		{"brain_attachment_extract", []string{"project_id", "attachment_id"}},
 		{"brain_attachment_text", []string{"project_id", "attachment_id"}},
 		{"brain_attachment_download", []string{"project_id", "attachment_id", "output_path"}},
+	}
+
+	listTool := s.tools["brain_attachment_list"].tool
+	if _, ok := listTool.InputSchema.Properties["entry_id"]; !ok {
+		t.Fatalf("brain_attachment_list schema missing optional entry_id property")
 	}
 
 	for _, tt := range tests {
@@ -1096,9 +1105,34 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments":
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{"attachments": []map[string]any{{"id": "att_123", "filename": "source.pdf", "content_type": "application/pdf", "size": 42}}, "total": 1})
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/entries/entry-123/attachments":
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"path": "projects/test/report/abc.md", "entry_id": "entry-123", "attachments": []map[string]any{{"id": "att_entry", "filename": "entry.pdf", "role": "inline", "caption": "Entry attachment"}}})
 		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/attachments/att_123":
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(map[string]any{"id": "att_123", "filename": "source.pdf", "content_type": "application/pdf", "size": 42, "derived": []map[string]any{{"id": "drv_1", "kind": "text"}}})
+		case r.Method == http.MethodDelete && r.URL.Path == "/api/v1/attachments/att_123":
+			if got := r.URL.Query().Get("project_id"); got != "test-project" {
+				t.Fatalf("delete project_id = %q, want test-project", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{"deleted": true})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/attachments/backfill/extraction":
+			if got := r.URL.Query().Get("project_id"); got != "test-project" {
+				t.Fatalf("backfill project_id = %q, want test-project", got)
+			}
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode backfill body: %v", err)
+			}
+			if body["dry_run"] != true || body["force"] != true || body["batch_size"].(float64) != 5 || body["rate_limit_delay_ms"].(float64) != 25 {
+				t.Fatalf("backfill body = %#v", body)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(types.AttachmentExtractionBackfillResponse{
+				Total: 3, Candidates: 2, Processed: 1, Skipped: 1, Failed: 1, DryRun: true,
+				Attachments: []types.AttachmentExtractionBackfillItem{{AttachmentID: "att_ready", Filename: "ready.pdf", Status: types.AttachmentExtractionStatusReady}, {AttachmentID: "att_failed", Filename: "failed.pdf", Status: types.AttachmentExtractionStatusFailed, Error: "extract failed"}},
+			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/attachments/att_123/extract":
 			if got := r.URL.Query().Get("project_id"); got != "test-project" {
 				t.Fatalf("extract project_id = %q, want test-project", got)
@@ -1145,7 +1179,10 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 		{"brain_attachment_attach", map[string]any{"project_id": "test-project", "entry_id": "entry-123", "attachment_id": "att_123", "role": "source", "caption": "PDF source"}, "Attached"},
 		{"brain_attachment_detach", map[string]any{"project_id": "test-project", "entry_id": "entry-123", "attachment_id": "att_123", "role": "source"}, "Detached"},
 		{"brain_attachment_list", map[string]any{"project_id": "test-project"}, "source.pdf"},
+		{"brain_attachment_list", map[string]any{"project_id": "test-project", "entry_id": "entry-123"}, "Entry: entry-123"},
 		{"brain_attachment_get", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "drv_1"},
+		{"brain_attachment_delete", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "Deleted attachment att_123"},
+		{"brain_attachment_backfill", map[string]any{"project_id": "test-project", "dry_run": true, "force": true, "batch_size": float64(5), "rate_limit_delay_ms": float64(25)}, "Failed: 1"},
 		{"brain_attachment_extract", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "Status: ready"},
 		{"brain_attachment_text", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "extracted text"},
 		{"brain_attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123", "output_path": outputPath}, "Downloaded"},
@@ -1166,6 +1203,13 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 					}
 				}
 			}
+			if call.tool == "brain_attachment_backfill" {
+				for _, want := range []string{"Project: test-project", "Total: 3", "Candidates: 2", "Processed: 1", "Skipped: 1", "Dry run: true", "att_ready", "Status: ready", "att_failed", "Error: extract failed"} {
+					if !strings.Contains(result, want) {
+						t.Fatalf("backfill result missing %q:\n%s", want, result)
+					}
+				}
+			}
 		})
 	}
 
@@ -1173,7 +1217,10 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 		"POST /api/v1/entries/entry-123/attachments?project_id=test-project",
 		"DELETE /api/v1/entries/entry-123/attachments/att_123?project_id=test-project&role=source",
 		"GET /api/v1/attachments?project_id=test-project",
+		"GET /api/v1/entries/entry-123/attachments?project_id=test-project",
 		"GET /api/v1/attachments/att_123?project_id=test-project",
+		"DELETE /api/v1/attachments/att_123?project_id=test-project",
+		"POST /api/v1/attachments/backfill/extraction?project_id=test-project",
 		"POST /api/v1/attachments/att_123/extract?project_id=test-project",
 		"GET /api/v1/attachments/att_123/text?project_id=test-project",
 		"GET /api/v1/attachments/att_123/content?project_id=test-project",
@@ -1210,6 +1257,8 @@ func TestBrainAttachmentTools_ValidateRequiredIDsBeforeRequest(t *testing.T) {
 		{"brain_attachment_detach", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, entry_id, and attachment_id"},
 		{"brain_attachment_list", map[string]any{}, "project_id"},
 		{"brain_attachment_get", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
+		{"brain_attachment_delete", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
+		{"brain_attachment_backfill", map[string]any{}, "project_id"},
 		{"brain_attachment_extract", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
 		{"brain_attachment_text", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
 		{"brain_attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, attachment_id, and output_path"},

@@ -80,18 +80,21 @@ export function AutomationsView() {
   const dataQ = useQuery({
     queryKey: ["automation-data", project ?? "all"],
     queryFn: () => listAutomationData(project),
-    refetchInterval: 8_000,
+    refetchInterval: 15_000,
+    staleTime: 15_000,
   });
-  const goalsQ = useQuery({ queryKey: ["goals"], queryFn: listGoals });
+  const goalsQ = useQuery({ queryKey: ["goals"], queryFn: listGoals, staleTime: 30_000 });
   const statusQ = useQuery({
     queryKey: ["runner-status"],
     queryFn: getRunnerStatus,
     refetchInterval: 10_000,
+    staleTime: 10_000,
   });
   const instancesQ = useQuery({
     queryKey: ["instances"],
     queryFn: listInstances,
-    refetchInterval: 5_000,
+    refetchInterval: 10_000,
+    staleTime: 10_000,
   });
 
   const automations = dataQ.data?.automations ?? [];

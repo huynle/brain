@@ -393,15 +393,15 @@ export async function listAutomationData(project?: string): Promise<{
   runs: BrainEntry[];
 }> {
   const [scoped, global, tasks, runs] = await Promise.all([
-    listEntries({ type: "automation", ...(project ? { project } : {}) }).then(
+    listEntries({ type: "automation", limit: 500, ...(project ? { project } : {}) }).then(
       (r) => r.entries || [],
     ),
     // Built-in automations are global; always include them.
-    listEntries({ type: "automation", global: "true" }).then((r) => r.entries || []),
-    listEntries({ type: "task", ...(project ? { project } : {}) }).then(
+    listEntries({ type: "automation", global: "true", limit: 500 }).then((r) => r.entries || []),
+    listEntries({ type: "task", limit: 1000, ...(project ? { project } : {}) }).then(
       (r) => r.entries || [],
     ),
-    listEntries({ type: "automation_run", ...(project ? { project } : {}) })
+    listEntries({ type: "automation_run", limit: 500, ...(project ? { project } : {}) })
       .then((r) => r.entries || [])
       .catch(() => [] as BrainEntry[]),
   ]);

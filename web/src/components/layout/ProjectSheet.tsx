@@ -233,6 +233,33 @@ export function ProjectSheet() {
     );
   }
 
+  function toggleAllTasksAndAutomations() {
+    const tasksPaused = isTaskPaused(ALL_PROJECTS, statusQ.data);
+    const autosPaused = areAutomationsPaused(ALL_PROJECTS, statusQ.data);
+    const resume = tasksPaused && autosPaused;
+    void act(
+      "all:tasks-autos",
+      resume ? "Resumed all tasks and automations" : "Paused all tasks and automations",
+      async () => {
+        if (resume) {
+          await resumeAll();
+          await resumeAutomations();
+        } else {
+          await pauseAll();
+          await pauseAutomations();
+        }
+      },
+    );
+  }
+
+  function toggleAllTasks() {
+    toggleTasks(ALL_PROJECTS);
+  }
+
+  function toggleAllAutomations() {
+    toggleAutomations(ALL_PROJECTS);
+  }
+
   function triggerFeature(row: FeatureRow) {
     if (!row.ready.length) return;
     void act(
@@ -253,15 +280,18 @@ export function ProjectSheet() {
       e.preventDefault();
       const row = rows[cursor];
       if (row?.kind === "project") pick(row.project);
-    } else if (e.altKey && (e.key === "p" || e.key === "P")) {
+    } else if (e.key === "P") {
+      e.preventDefault();
+      toggleAllTasksAndAutomations();
+    } else if (e.key === "T") {
       e.preventDefault();
       const row = rows[cursor];
       if (row) toggleTasks(row.project);
-    } else if (e.altKey && (e.key === "a" || e.key === "A")) {
+    } else if (e.key === "A") {
       e.preventDefault();
       const row = rows[cursor];
       if (row) toggleAutomations(row.project);
-    } else if (e.altKey && (e.key === "x" || e.key === "X")) {
+    } else if (e.key === "X") {
       e.preventDefault();
       const row = rows[cursor];
       if (row?.kind === "feature") triggerFeature(row);
@@ -271,8 +301,41 @@ export function ProjectSheet() {
     }
   }
 
+  const allTasksPaused = isTaskPaused(ALL_PROJECTS, statusQ.data);
+  const allAutomationsPaused = areAutomationsPaused(ALL_PROJECTS, statusQ.data);
+  const everythingPaused = allTasksPaused && allAutomationsPaused;
+
   const body = (
     <div className="proj-picker">
+      <div className="proj-global-controls" aria-label="All project runner controls">
+        <button
+          type="button"
+          className="btn sm primary"
+          disabled={busy === "all:tasks-autos"}
+          onClick={toggleAllTasksAndAutomations}
+          title="Shortcut: P"
+        >
+          {everythingPaused ? "resume all" : "pause all"}
+        </button>
+        <button
+          type="button"
+          className="btn sm"
+          disabled={busy === `tasks:${ALL_PROJECTS}`}
+          onClick={toggleAllTasks}
+          title="Shortcut: T on All projects"
+        >
+          {allTasksPaused ? "resume all tasks" : "pause all tasks"}
+        </button>
+        <button
+          type="button"
+          className="btn sm"
+          disabled={busy === `autos:${ALL_PROJECTS}`}
+          onClick={toggleAllAutomations}
+          title="Shortcut: A on All projects"
+        >
+          {allAutomationsPaused ? "resume all autos" : "pause all autos"}
+        </button>
+      </div>
       <input
         className="proj-search"
         autoFocus
@@ -287,6 +350,8 @@ export function ProjectSheet() {
           const taskPaused = isTaskPaused(project, statusQ.data);
           const automationPaused = areAutomationsPaused(project, statusQ.data);
           const isProject = row.kind === "project";
+          const isAllProjects = project === ALL_PROJECTS;
+          const allPaused = taskPaused && automationPaused;
           const label = isProject ? shortName(project) : row.label;
           return (
             <div
@@ -295,7 +360,7 @@ export function ProjectSheet() {
               data-cursor={i === cursor ? "1" : undefined}
               onClick={() => (isProject ? pick(project) : triggerFeature(row))}
               onMouseMove={() => setCursor(i)}
-              title={isProject ? "Enter switches project. Alt+P toggles tasks. Alt+A toggles automations." : "Alt+X or Trigger tasks starts this feature's ready tasks. Alt+P/Alt+A control its project."}
+              title={isProject ? "Enter switches project. T toggles tasks. A toggles automations." : "X or Trigger tasks starts this feature's ready tasks. T/A control its project."}
             >
               <span
                 className="proj-dot"
@@ -317,6 +382,17 @@ export function ProjectSheet() {
               </span>
               {!isProject && <span className="proj-meta">{row.total} ready</span>}
               <span className="proj-actions" aria-label={`controls for ${label}`}>
+                {isProject && isAllProjects && (
+                  <button
+                    type="button"
+                    className="proj-action trigger"
+                    disabled={busy === "all:tasks-autos"}
+                    title={allPaused ? "Resume all tasks and automations" : "Pause all tasks and automations"}
+                    onClick={(e) => { e.stopPropagation(); toggleAllTasksAndAutomations(); }}
+                  >
+                    {allPaused ? "resume all" : "pause all"}
+                  </button>
+                )}
                 <button
                   type="button"
                   className="proj-action"
@@ -324,7 +400,9 @@ export function ProjectSheet() {
                   title={taskPaused ? "Resume project tasks" : "Pause project tasks"}
                   onClick={(e) => { e.stopPropagation(); toggleTasks(project); }}
                 >
-                  {taskPaused ? "resume tasks" : "pause tasks"}
+                  {taskPaused
+                    ? isAllProjects ? "resume all tasks" : "resume tasks"
+                    : isAllProjects ? "pause all tasks" : "pause tasks"}
                 </button>
                 <button
                   type="button"
@@ -333,7 +411,9 @@ export function ProjectSheet() {
                   title={automationPaused ? "Resume project automations" : "Pause project automations"}
                   onClick={(e) => { e.stopPropagation(); toggleAutomations(project); }}
                 >
-                  {automationPaused ? "resume autos" : "pause autos"}
+                  {automationPaused
+                    ? isAllProjects ? "resume all autos" : "resume autos"
+                    : isAllProjects ? "pause all autos" : "pause autos"}
                 </button>
                 {!isProject && (
                   <button
@@ -360,7 +440,7 @@ export function ProjectSheet() {
           </div>
         )}
       </div>
-      <div className="proj-hints faint">Enter: switch project · Alt+P: pause/resume tasks · Alt+A: pause/resume automations · Alt+X: trigger highlighted feature tasks</div>
+      <div className="proj-hints faint">Enter: switch project · T: pause/resume highlighted tasks · A: pause/resume highlighted automations · P: pause/resume all tasks + automations · X: trigger highlighted feature tasks</div>
     </div>
   );
 

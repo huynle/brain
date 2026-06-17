@@ -24,8 +24,9 @@ const VIEW_GROUPS: Record<string, Group> = {
       { keys: ["x"], desc: "Run / execute" },
       { keys: ["X"], desc: "Cancel (in-progress)" },
       { keys: ["d", "⌫"], desc: "Delete" },
+      { keys: ["Enter"], desc: "View entry file" },
       { keys: ["s"], desc: "Edit metadata" },
-      { keys: ["e"], desc: "Edit content" },
+      { keys: ["e"], desc: "Edit full file" },
       { keys: ["/"], desc: "Filter" },
       { keys: ["C"], desc: "Tasks ⇄ Schedules" },
       { keys: ["n"], desc: "New task" },
@@ -121,6 +122,19 @@ const LISTS: Group = {
   ],
 };
 
+const POPUPS: Group = {
+  id: "popups",
+  title: "Popups / sheets",
+  rows: [
+    { keys: ["j", "k", "↑", "↓"], desc: "Scroll" },
+    { keys: ["g", "G"], desc: "Top / bottom" },
+    { keys: ["Ctrl-D", "Ctrl-U"], desc: "Page down / up" },
+    { keys: ["m"], desc: "Expand / restore" },
+    { keys: ["e"], desc: "Edit when available" },
+    { keys: ["q", "Esc"], desc: "Close" },
+  ],
+};
+
 const VIEW_LABEL: Record<string, string> = {
   tasks: "Tasks",
   brain: "Brain",
@@ -136,7 +150,7 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
 
   // Current tab first (highlighted), then Global + Lists, then the other tabs.
   const others = Object.values(VIEW_GROUPS).filter((g) => g.id !== view);
-  const ordered: Group[] = [...(current ? [current] : []), GLOBAL, LISTS, ...others];
+  const ordered: Group[] = [...(current ? [current] : []), GLOBAL, LISTS, POPUPS, ...others];
 
   return (
     <Modal title={`Keyboard shortcuts — ${VIEW_LABEL[view] ?? ""}`} onClose={onClose}>

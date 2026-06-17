@@ -255,6 +255,7 @@ export interface OcMessageInfo {
   id: string;
   sessionID?: string;
   role: "user" | "assistant" | string;
+  agent?: string;
   time?: { created?: number; completed?: number };
   error?: unknown;
   [k: string]: unknown;

@@ -1,4 +1,5 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
+import { isEditableTarget } from "../../lib/keyboard";
 
 export function Modal({
   title,
@@ -6,6 +7,7 @@ export function Modal({
   children,
   footer,
   className,
+  onEdit,
 }: {
   title: string;
   onClose: () => void;
@@ -13,10 +15,79 @@ export function Modal({
   footer?: React.ReactNode;
   /** Extra class on the dialog, e.g. "sheet-wide" for a larger editor modal. */
   className?: string;
+  /** Optional action wired to the modal-level edit shortcut (`e`). */
+  onEdit?: () => void;
 }) {
+  const backdropRef = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [expanded, setExpanded] = useState(false);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      const modals = Array.from(document.querySelectorAll(".modal-backdrop"));
+      if (modals[modals.length - 1] !== backdropRef.current) return;
+
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (isEditableTarget(e.target) || e.metaKey || e.altKey) return;
+
+      if (e.key === "q") {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+
+      if (e.key === "m") {
+        e.preventDefault();
+        setExpanded((v) => !v);
+        return;
+      }
+
+      if (e.key === "e" && onEdit) {
+        e.preventDefault();
+        onEdit();
+        return;
+      }
+
+      const body = bodyRef.current;
+      if (!body) return;
+
+      const line = 48;
+      const page = Math.max(line, body.clientHeight * 0.75);
+      let top: number | null = null;
+
+      switch (e.key) {
+        case "j":
+        case "ArrowDown":
+          top = body.scrollTop + line;
+          break;
+        case "k":
+        case "ArrowUp":
+          top = body.scrollTop - line;
+          break;
+        case "d":
+          if (e.ctrlKey) top = body.scrollTop + page;
+          break;
+        case "u":
+          if (e.ctrlKey) top = body.scrollTop - page;
+          break;
+        case "g":
+          top = 0;
+          break;
+        case "G":
+          top = body.scrollHeight;
+          break;
+        default:
+          return;
+      }
+
+      if (top === null) return;
+      e.preventDefault();
+      body.scrollTo({ top });
     };
     window.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
@@ -24,23 +95,36 @@ export function Modal({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [onClose]);
+  }, [onClose, onEdit]);
+
+  const sheetClass = ["sheet", className, expanded ? "sheet-expanded" : ""]
+    .filter(Boolean)
+    .join(" ");
 
   return (
     <div
+      ref={backdropRef}
       className="modal-backdrop"
       onMouseDown={(e) => {
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={`sheet${className ? ` ${className}` : ""}`} role="dialog" aria-modal="true" aria-label={title}>
+      <div className={sheetClass} role="dialog" aria-modal="true" aria-label={title}>
         <div className="sheet-header">
           <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="close">
+          <button
+            className="icon-btn"
+            onClick={() => setExpanded((v) => !v)}
+            aria-label={expanded ? "restore window" : "expand window"}
+            title={expanded ? "Restore (m)" : "Expand (m)"}
+          >
+            {expanded ? "▢" : "□"}
+          </button>
+          <button className="icon-btn" onClick={onClose} aria-label="close" title="Close (q)">
             ✕
           </button>
         </div>
-        <div className="sheet-body">{children}</div>
+        <div ref={bodyRef} className="sheet-body">{children}</div>
         {footer && <div className="sheet-footer">{footer}</div>}
       </div>
     </div>

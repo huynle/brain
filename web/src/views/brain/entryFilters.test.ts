@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import { filterEntriesByHiddenTypes, toggleHiddenEntryType } from "./entryFilters";
+import { deserializeHiddenEntryTypes, filterEntriesByHiddenTypes, serializeHiddenEntryTypes, toggleHiddenEntryType } from "./entryFilters";
 function entry(id: string, type: string) {
   return { id, type };
 }
@@ -25,4 +25,16 @@ test("toggleHiddenEntryType toggles a type without mutating the original set", (
   assert.deepEqual([...toggleHiddenEntryType(hidden, "task")], []);
   assert.deepEqual([...toggleHiddenEntryType(hidden, "automation")].sort(), ["automation", "task"]);
   assert.deepEqual([...hidden], ["task"]);
+});
+
+
+test("serializeHiddenEntryTypes sorts hidden types for stable storage", () => {
+  const encoded = serializeHiddenEntryTypes(new Set(["summary", "plan"]));
+
+  assert.equal(encoded, '["plan","summary"]');
+});
+
+test("deserializeHiddenEntryTypes ignores invalid cached values", () => {
+  assert.deepEqual([...deserializeHiddenEntryTypes('not-json')], []);
+  assert.deepEqual([...deserializeHiddenEntryTypes('["plan", 42, "summary"]')], ["plan", "summary"]);
 });

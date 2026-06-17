@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"net/http"
@@ -1300,7 +1301,7 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 			Task: runningTask,
 			Proc: NewPidProcess(runningTask.PID),
 		}, runnerHostname()))
-		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort)
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort, spawnResult.ExistingSessionIDs)
 	}
 
 	return nil
@@ -1313,7 +1314,7 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 // knownPort, when > 0, is the already-resolved server port (headless
 // serve+attach reports it at spawn time, and the run --attach process binds
 // no port of its own); discovery via the PID is skipped in that case.
-func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort int) {
+func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort int, excludeSessionIDs map[string]struct{}) {
 	port := knownPort
 	if port <= 0 {
 		if pid <= 0 {
@@ -1353,7 +1354,7 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 	var sessionID string
 	var err error
 	for attempt := 0; attempt < 5; attempt++ {
-		sessionID, err = discoverSessionID(port)
+		sessionID, err = discoverSessionID(port, excludeSessionIDs)
 		if err == nil && sessionID != "" {
 			break
 		}
@@ -1467,49 +1468,76 @@ func discoverChildPort(parentPID int) (int, error) {
 	return 0, fmt.Errorf("no listening port found in process tree of PID %d", parentPID)
 }
 
-// discoverSessionID queries an opencode HTTP server for the active session ID.
-// The /session endpoint returns an array of sessions; we take the most recent.
-func discoverSessionID(port int) (string, error) {
+type opencodeSession struct {
+	ID   string `json:"id"`
+	Time struct {
+		Updated int64 `json:"updated"`
+	} `json:"time"`
+}
+
+func fetchSessions(port int) ([]opencodeSession, error) {
 	url := fmt.Sprintf("http://localhost:%d/session", port)
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		return "", fmt.Errorf("GET %s: %w", url, err)
+		return nil, fmt.Errorf("GET %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+		return nil, fmt.Errorf("GET %s: status %d", url, resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read session response: %w", err)
 	}
 
-	// /session returns an array of sessions
-	var sessions []struct {
-		ID   string `json:"id"`
-		Time struct {
-			Updated int64 `json:"updated"`
-		} `json:"time"`
+	var sessions []opencodeSession
+	if err := json.Unmarshal(body, &sessions); err == nil {
+		return sessions, nil
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&sessions); err != nil {
-		// Try single-object response as fallback
-		var single struct {
-			ID string `json:"id"`
-		}
-		if err2 := json.Unmarshal([]byte(err.Error()), &single); err2 != nil {
-			return "", fmt.Errorf("decode session response: %w", err)
-		}
-		return single.ID, nil
+	var single opencodeSession
+	if err := json.Unmarshal(body, &single); err != nil {
+		return nil, fmt.Errorf("decode session response: %w", err)
 	}
+	return []opencodeSession{single}, nil
+}
 
-	if len(sessions) == 0 {
+// discoverSessionID queries an opencode HTTP server for the task session ID.
+// When exclude is set, pre-existing sessions from before task spawn are ignored.
+func listSessionIDs(port int) (map[string]struct{}, error) {
+	sessions, err := fetchSessions(port)
+	if err != nil {
+		return nil, err
+	}
+	ids := make(map[string]struct{}, len(sessions))
+	for _, s := range sessions {
+		if s.ID != "" {
+			ids[s.ID] = struct{}{}
+		}
+	}
+	return ids, nil
+}
+
+func discoverSessionID(port int, exclude map[string]struct{}) (string, error) {
+	sessions, err := fetchSessions(port)
+	if err != nil {
+		return "", err
+	}
+	var latest *opencodeSession
+	for i := range sessions {
+		if sessions[i].ID == "" {
+			continue
+		}
+		if _, ok := exclude[sessions[i].ID]; ok {
+			continue
+		}
+		if latest == nil || sessions[i].Time.Updated > latest.Time.Updated {
+			latest = &sessions[i]
+		}
+	}
+	if latest == nil {
 		return "", nil
-	}
-
-	// Return the most recently updated session
-	latest := sessions[0]
-	for _, s := range sessions[1:] {
-		if s.Time.Updated > latest.Time.Updated {
-			latest = s
-		}
 	}
 	return latest.ID, nil
 }

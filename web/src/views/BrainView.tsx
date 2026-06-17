@@ -11,7 +11,12 @@ import { useIsMobile } from "../hooks/useIsMobile";
 import { EntryView } from "./brain/EntryView";
 import { relativeTime } from "../lib/format";
 import type { BrainEntry, SearchResult, SearchStrategy } from "../lib/types";
-import { filterEntriesByHiddenTypes, toggleHiddenEntryType } from "./brain/entryFilters";
+import {
+  deserializeHiddenEntryTypes,
+  filterEntriesByHiddenTypes,
+  serializeHiddenEntryTypes,
+  toggleHiddenEntryType,
+} from "./brain/entryFilters";
 
 const STRATEGIES: { value: SearchStrategy; label: string }[] = [
   { value: "semantic", label: "Semantic" },
@@ -29,6 +34,25 @@ const ComposeModal = lazy(() =>
 const EntryEditModal = lazy(() =>
   import("./brain/EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
 );
+
+const HIDDEN_TYPES_KEY = "brain.brain_view.hidden_types";
+const BROWSE_LIMIT = 1000;
+
+function loadHiddenTypes(): Set<string> {
+  try {
+    return deserializeHiddenEntryTypes(localStorage.getItem(HIDDEN_TYPES_KEY));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenTypes(hiddenTypes: ReadonlySet<string>) {
+  try {
+    localStorage.setItem(HIDDEN_TYPES_KEY, serializeHiddenEntryTypes(hiddenTypes));
+  } catch {
+    // Ignore private-mode/quota errors; filters still work for this session.
+  }
+}
 
 export function BrainView() {
   const activeProject = useUI((s) => s.activeProject);
@@ -53,11 +77,11 @@ export function BrainView() {
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [editPath, setEditPath] = useState<{ path: string; title?: string } | null>(null);
   const [composing, setComposing] = useState(false);
-  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(() => new Set());
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(loadHiddenTypes);
 
   const browseQ = useQuery({
     queryKey: ["entries", project],
-    queryFn: () => listEntries({ project, limit: 200 }),
+    queryFn: () => listEntries({ project, limit: BROWSE_LIMIT }),
     enabled: query.trim() === "",
   });
 
@@ -90,7 +114,11 @@ export function BrainView() {
   );
 
   useEffect(() => {
-    setHiddenTypes((prev) => new Set([...prev].filter((type) => entryTypes.includes(type))));
+    setHiddenTypes((prev) => {
+      const next = new Set([...prev].filter((type) => entryTypes.includes(type)));
+      if (next.size !== prev.size) saveHiddenTypes(next);
+      return next;
+    });
   }, [entryTypes]);
 
   const items = useMemo<Array<BrainEntry | SearchResult>>(
@@ -249,7 +277,11 @@ export function BrainView() {
                 type="button"
                 className={`btn sm ${hidden ? "" : "primary"}`}
                 onClick={() => {
-                  setHiddenTypes((prev) => toggleHiddenEntryType(prev, type));
+                  setHiddenTypes((prev) => {
+                    const next = toggleHiddenEntryType(prev, type);
+                    saveHiddenTypes(next);
+                    return next;
+                  });
                   setCursor(scope, 0);
                 }}
                 aria-pressed={!hidden}
@@ -264,7 +296,9 @@ export function BrainView() {
               className="btn sm"
               type="button"
               onClick={() => {
-                setHiddenTypes(new Set());
+                const next = new Set<string>();
+                saveHiddenTypes(next);
+                setHiddenTypes(next);
                 setCursor(scope, 0);
               }}
             >
@@ -272,7 +306,7 @@ export function BrainView() {
             </button>
           )}
           <span className="faint" style={{ marginLeft: "auto", fontSize: 11 }}>
-            {items.length}/{rawItems.length} visible
+            {items.length}/{rawItems.length} visible{browseQ.data?.total && browseQ.data.total > rawItems.length ? ` of ${browseQ.data.total}` : ""}
           </span>
         </div>
       )}

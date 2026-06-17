@@ -7,7 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1545,6 +1548,56 @@ func TestTaskRunner_Poll_UsesServerOwnedProjectPauseState(t *testing.T) {
 	if len(executor.getSpawnCalls()) > 0 {
 		t.Fatal("server-owned task pause should prevent normal task spawn")
 	}
+}
+
+func TestDiscoverSessionID_IgnoresExistingSessions(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/session" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		calls++
+		w.Header().Set("Content-Type", "application/json")
+		switch calls {
+		case 1:
+			_, _ = w.Write([]byte(`[
+				{"id":"ses_old","time":{"updated":9000}}
+			]`))
+		default:
+			_, _ = w.Write([]byte(`[
+				{"id":"ses_old","time":{"updated":9000}},
+				{"id":"ses_task","time":{"updated":1000}}
+			]`))
+		}
+	}))
+	defer server.Close()
+
+	port := serverPortFromURL(t, server.URL)
+	baseline, err := listSessionIDs(port)
+	if err != nil {
+		t.Fatalf("listSessionIDs failed: %v", err)
+	}
+
+	sessionID, err := discoverSessionID(port, baseline)
+	if err != nil {
+		t.Fatalf("discoverSessionID failed: %v", err)
+	}
+	if sessionID != "ses_task" {
+		t.Fatalf("sessionID = %q, want ses_task", sessionID)
+	}
+}
+
+func serverPortFromURL(t *testing.T, rawURL string) int {
+	t.Helper()
+	idx := strings.LastIndex(rawURL, ":")
+	if idx < 0 {
+		t.Fatalf("server URL has no port: %s", rawURL)
+	}
+	port, err := strconv.Atoi(rawURL[idx+1:])
+	if err != nil {
+		t.Fatalf("parse server port from %q: %v", rawURL, err)
+	}
+	return port
 }
 
 func TestTaskRunner_Poll_RunsAutomationTasksWhenProjectPausedAndAutomationsUnpaused(t *testing.T) {

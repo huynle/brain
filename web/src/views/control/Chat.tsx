@@ -27,11 +27,13 @@ export function Chat({
   runnerId,
   instanceId,
   sessionId,
+  defaultAgent,
   sessionLabel,
 }: {
   runnerId: string;
   instanceId: string;
   sessionId: string;
+  defaultAgent?: string;
   sessionLabel?: string;
 }) {
   const key = chatKey(runnerId, instanceId);
@@ -44,12 +46,16 @@ export function Chat({
   const setBusy = useChat((s) => s.setBusy);
 
   const [text, setText] = useState("");
-  const [agent, setAgent] = useState("");
+  const [agent, setAgent] = useState(defaultAgent ?? "");
   const [model, setModel] = useState(""); // "providerID/modelID"
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setAgent(defaultAgent ?? "");
+  }, [defaultAgent, sessionId]);
 
   // Attach the event stream first, then hydrate (dedupe by message id).
   useEffect(() => {
@@ -362,6 +368,7 @@ function flattenProviders(
 
 export function MessageRow({ message }: { message: OcMessage }) {
   const role = message.info.role;
+  const label = role === "user" ? "you" : message.info.agent || "assistant";
   const visible = message.parts.filter(
     (p) =>
       p.type === "text" ||
@@ -372,7 +379,7 @@ export function MessageRow({ message }: { message: OcMessage }) {
   if (visible.length === 0) return null;
   return (
     <div className={`ctl-msg ${role === "user" ? "user" : "assistant"}`}>
-      <div className="ctl-msg-role faint">{role === "user" ? "you" : "assistant"}</div>
+      <div className="ctl-msg-role faint">{label}</div>
       {visible.map((p) => (
         <PartView key={p.id} part={p} />
       ))}

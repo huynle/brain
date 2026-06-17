@@ -29,16 +29,19 @@ export function RunnersView() {
     queryKey: ["runners"],
     queryFn: getRunners,
     refetchInterval: 10_000,
+    staleTime: 10_000,
   });
   const statusQ = useQuery({
     queryKey: ["runner-status"],
     queryFn: getRunnerStatus,
     refetchInterval: 8_000,
+    staleTime: 8_000,
   });
   const instancesQ = useQuery({
     queryKey: ["instances"],
     queryFn: listInstances,
     refetchInterval: 10_000,
+    staleTime: 10_000,
   });
 
   const [confirmKill, setConfirmKill] = useState<RunnerInfo | null>(null);

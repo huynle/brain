@@ -1,8 +1,8 @@
 {
   "projectId": "test-project",
   "status": "stopped",
-  "startedAt": "2026-06-17T12:53:37.329339-06:00",
-  "updatedAt": "2026-06-17T12:53:37.450271-06:00",
+  "startedAt": "2026-06-17T15:01:37.783107-06:00",
+  "updatedAt": "2026-06-17T15:01:37.88643-06:00",
   "runningTasks": null,
   "stats": {
     "completed": 0,

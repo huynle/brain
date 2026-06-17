@@ -28,7 +28,6 @@ import { TasksView } from "../views/TasksView";
 import { BrainView } from "../views/BrainView";
 import { AutomationsView } from "../views/AutomationsView";
 import { RunnersView } from "../views/RunnersView";
-import { ControlView } from "../views/control/ControlView";
 import { LogsView } from "../views/LogsView";
 import { SettingsSheet } from "../views/SettingsSheet";
 import { AssistantDrawer } from "../views/AssistantDrawer";
@@ -119,9 +118,8 @@ export function Dashboard() {
   if (isLoading) return <Loading label="Loading projects…" />;
   if (error) return <ErrorState error={error} onRetry={() => void refetch()} />;
 
-  // On touch devices, swipe left/right cycles content tabs. Disabled on the
-  // Control tab, which uses horizontal swipe for session back-navigation.
-  const swipeProps = isMobile && view !== "control" ? swipe : {};
+  // On touch devices, swipe left/right cycles content tabs.
+  const swipeProps = isMobile ? swipe : {};
 
   return (
     <div className={`tui ${isMobile ? "mobile" : ""}`}>
@@ -138,11 +136,6 @@ export function Dashboard() {
         {view === "runners" && (
           <Panel focused style={{ flex: 1 }}>
             <RunnersView />
-          </Panel>
-        )}
-        {view === "control" && (
-          <Panel focused style={{ flex: 1 }}>
-            <ControlView />
           </Panel>
         )}
         {view === "logs" && (

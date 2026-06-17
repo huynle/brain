@@ -402,6 +402,46 @@ func TestOpenCodeTarget_Install_ForceIsIdempotentAcrossRuns(t *testing.T) {
 	}
 }
 
+func TestOpenCodeTarget_Install_ForceRemovesRetiredBrainGeneratedSkills(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ".config", "opencode")
+	target := &OpenCodeTarget{configPath: configPath}
+
+	retiredSkill := filepath.Join(configPath, "skill", "brain-dream-context", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(retiredSkill), 0755); err != nil {
+		t.Fatalf("failed to create retired skill dir: %v", err)
+	}
+	if err := os.WriteFile(retiredSkill, []byte("---\nname: brain-dream-context\ndescription: old\n---\n\n<!--\nAUTO-GENERATED FILE - DO NOT EDIT DIRECTLY\n\nThis file was installed by: brain install opencode\n-->\n"), 0644); err != nil {
+		t.Fatalf("failed to create retired skill: %v", err)
+	}
+
+	userSkill := filepath.Join(configPath, "skill", "brain-user-skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(userSkill), 0755); err != nil {
+		t.Fatalf("failed to create user skill dir: %v", err)
+	}
+	if err := os.WriteFile(userSkill, []byte("---\nname: brain-user-skill\ndescription: keep me\n---\n"), 0644); err != nil {
+		t.Fatalf("failed to create user skill: %v", err)
+	}
+
+	var installErr error
+	output := capturePluginOutput(t, func() {
+		installErr = target.Install(InstallOptions{Force: true})
+	})
+	if installErr != nil {
+		t.Fatalf("Install() with Force failed: %v", installErr)
+	}
+
+	if _, err := os.Stat(retiredSkill); !os.IsNotExist(err) {
+		t.Fatalf("force install should remove retired generated skill, stat err: %v", err)
+	}
+	if _, err := os.Stat(userSkill); err != nil {
+		t.Fatalf("force install should leave user-created skills untouched: %v", err)
+	}
+	if !strings.Contains(output, "Removed retired: skill/brain-dream-context/SKILL.md") {
+		t.Fatalf("force install should report retired skill removal, output:\n%s", output)
+	}
+}
+
 func TestOpenCodeTarget_Install_WithoutForceSkipsExistingFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, ".config", "opencode")

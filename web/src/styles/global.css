@@ -1190,6 +1190,104 @@ kbd {
 .logline .ll { text-transform: uppercase; font-size: 10px; }
 .logline .lc { white-space: pre-wrap; overflow-wrap: anywhere; min-width: 0; }
 
+
+/* ─── Combined runners / control console ───────────────────────── */
+
+.runner-console {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.runner-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 6px 8px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.runner-summary,
+.runner-actions,
+.runner-chipline,
+.session-modal-head,
+.session-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.runner-summary {
+  flex: 1;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+}
+.runner-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 8px 4px;
+}
+.runner-card,
+.runner-task-card {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 8px;
+  padding: 8px 10px;
+  background: color-mix(in srgb, var(--bg) 92%, var(--bg-2));
+  cursor: pointer;
+}
+.runner-card.cursor,
+.runner-task-card.cursor {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.runner-card-main,
+.runner-task-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.runner-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.runner-chipline {
+  margin-top: 7px;
+  padding-left: 20px;
+}
+.runner-power {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  color: var(--red);
+}
+.session-sheet {
+  width: min(1120px, calc(100vw - 28px));
+  height: min(820px, calc(100vh - 28px));
+}
+.session-sheet .sheet-body {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.session-modal-head {
+  padding: 0 0 8px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+.session-picker {
+  padding: 4px 0 8px;
+}
+.session-picker select {
+  max-width: min(560px, 100%);
+}
+
 /* ─── Remote control view ───────────────────────────────────────── */
 
 .ctl-layout {

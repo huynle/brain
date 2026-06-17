@@ -175,6 +175,9 @@ func TestEnsureBuiltInFeatureCheckoutAutomationCreatesAutomation(t *testing.T) {
 	if !strings.Contains(automation.Action.DirectPrompt, "{{.FeatureID}}") {
 		t.Fatalf("action prompt should template feature id, got: %s", automation.Action.DirectPrompt)
 	}
+	if !strings.Contains(automation.Action.DirectPrompt, "Brain-native merge request") {
+		t.Fatalf("action prompt should request a Brain-native merge request, got: %s", automation.Action.DirectPrompt)
+	}
 }
 
 func TestEnsureBuiltInFeatureCheckoutAutomationDisabledDoesNothing(t *testing.T) {

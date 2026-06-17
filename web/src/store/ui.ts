@@ -1,6 +1,6 @@
 import { create } from "zustand";
 
-export type View = "tasks" | "brain" | "automations" | "runners" | "control" | "logs";
+export type View = "tasks" | "brain" | "automations" | "runners" | "logs";
 
 export const ALL_PROJECTS = "__all__";
 
@@ -14,7 +14,6 @@ export interface Toast {
 // (global tabs first, then project-scoped).
 export const VIEW_ORDER: View[] = [
   "runners",
-  "control",
   "logs",
   "brain",
   "tasks",
@@ -143,7 +142,7 @@ export const useUI = create<UIState>((set, get) => ({
   // lives in the Logs pane under Tasks, so drill-downs open that instead.
   showLogsFor: (taskId) => set({ view: "tasks", logsVisible: true, logFilter: taskId }),
   setLogFilter: (f) => set({ logFilter: f }),
-  openInControl: (target) => set({ controlTarget: target, view: "control" }),
+  openInControl: (target) => set({ controlTarget: target, view: "runners" }),
   consumeControlTarget: () => {
     const t = get().controlTarget;
     if (t) set({ controlTarget: null });

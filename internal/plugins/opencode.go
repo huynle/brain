@@ -55,12 +55,28 @@ var componentDir = map[string]string{
 	"agent":   "agent",
 }
 
+var retiredOpenCodeFiles = []string{
+	"skill/brain-dream-context/SKILL.md",
+	"skill/brain-planning/SKILL.md",
+	"skill/project-planning/SKILL.md",
+	"skill/writing-plans/SKILL.md",
+}
+
 // Install performs the installation of all brain components for OpenCode.
 func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 	// List all embedded files recursively
 	files, err := assets.ListPluginFilesRecursive("opencode")
 	if err != nil {
 		return fmt.Errorf("failed to list plugin files: %w", err)
+	}
+
+	removed := 0
+	if opts.Force {
+		var err error
+		removed, err = t.removeRetiredFiles(opts.DryRun)
+		if err != nil {
+			return err
+		}
 	}
 
 	installed := 0
@@ -148,12 +164,46 @@ func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 	}
 
 	if opts.DryRun {
-		fmt.Printf("\n  [DRY RUN] Would install %d files, update %d files, leave %d identical files untouched\n", installed, updated, identical)
+		fmt.Printf("\n  [DRY RUN] Would install %d files, update %d files, remove %d retired files, leave %d identical files untouched\n", installed, updated, removed, identical)
 	} else {
-		fmt.Printf("\n  %d files installed, %d updated, %d identical left untouched in %s\n", installed, updated, identical, t.configPath)
+		fmt.Printf("\n  %d files installed, %d updated, %d retired removed, %d identical left untouched in %s\n", installed, updated, removed, identical, t.configPath)
 	}
 
 	return nil
+}
+
+func (t *OpenCodeTarget) removeRetiredFiles(dryRun bool) (int, error) {
+	removed := 0
+	for _, relPath := range retiredOpenCodeFiles {
+		destPath := t.resolveDestPath(relPath)
+		if destPath == "" {
+			continue
+		}
+
+		content, err := os.ReadFile(destPath)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return removed, fmt.Errorf("failed to read retired %s: %w", relPath, err)
+		}
+		if !bytes.Contains(content, []byte("AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY")) || !bytes.Contains(content, []byte("brain install opencode")) {
+			continue
+		}
+
+		if dryRun {
+			fmt.Printf("  [DRY RUN] Would remove retired: %s\n", relPath)
+			removed++
+			continue
+		}
+		if err := os.Remove(destPath); err != nil {
+			return removed, fmt.Errorf("failed to remove retired %s: %w", relPath, err)
+		}
+		_ = os.Remove(filepath.Dir(destPath))
+		fmt.Printf("  Removed retired: %s\n", relPath)
+		removed++
+	}
+	return removed, nil
 }
 
 // resolveDestPath maps an embedded asset path to its destination in the opencode config.

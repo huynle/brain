@@ -7,9 +7,8 @@ const TABS: { view: View; label: string; glyph: string }[] = [
   { view: "brain", label: "Brain", glyph: "◆" },
   { view: "tasks", label: "Tasks", glyph: "☰" },
   { view: "automations", label: "Auto", glyph: "⟳" },
-  { view: "control", label: "Control", glyph: "⌁" },
+  { view: "runners", label: "Run", glyph: "⚙" },
   { view: "logs", label: "Logs", glyph: "▤" },
-  { view: "runners", label: "Runners", glyph: "⚙" },
 ];
 
 export function MobileNav({ onAssistant }: { onAssistant?: () => void }) {

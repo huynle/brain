@@ -266,7 +266,7 @@ brain_save(
 )
 ```
 
-3. **Execute merge intent policy** (after validation preconditions):
+3. **Create Brain-native merge request** (after validation preconditions):
 
 ### Hard Preconditions
 
@@ -293,18 +293,14 @@ Then apply policy:
   - Include target branch, strategy, and branch/worktree details in the task content
 
 - `auto_pr`:
-  - Create or open a PR from execution branch to `merge_target_branch`
-  - Merge via configured strategy (default squash) after checks are green
-  - Push resulting target branch update immediately
-  - Apply `remote_branch_policy` after merge+push confirmation
-  - Clean up execution worktree/branch after successful merge
+  - Create a Brain-native merge request entry (`type: "merge_request"`) from execution branch to `merge_target_branch`.
+  - Do not assume GitHub/GitLab. The merge request lives in Brain and carries source branch, target branch, merge strategy, cleanup policy, and checkout evidence.
+  - Leave the merge request in `pending` for deterministic merge execution.
 
 - `auto_merge`:
-  - If `open_pr_before_merge=true`, run the same PR flow as `auto_pr`
-  - Otherwise perform direct merge with configured strategy (default squash)
-  - Push resulting target branch update immediately
-  - Apply `remote_branch_policy` after merge+push confirmation
-  - Clean up execution worktree/branch after successful merge
+  - Create a Brain-native merge request entry (`type: "merge_request"`) from execution branch to `merge_target_branch`.
+  - Set merge policy metadata to `auto_merge` so the merge executor can merge without an additional approval task when enabled.
+  - If `open_pr_before_merge=true`, keep the entry pending for review before merge execution.
 
 ### Remote Branch Policy (post-merge)
 
@@ -317,16 +313,47 @@ When `remote_branch_policy=delete`, delete the remote execution branch with thes
 
 When `remote_branch_policy=keep`, skip remote branch deletion and report that the branch was intentionally retained.
 
-### Audit Output (required)
+### Brain Merge Request Output (required)
 
-Append a `## Merge Result` section to the checkout task with:
-- merge target branch
-- merge policy and strategy used
-- whether PR flow was used
-- push result
-- remote branch deletion outcome
-- cleanup result
-- final commit/merge reference (hash/PR URL when available)
+Create a Brain entry with:
+
+```
+brain_save(
+  type: "merge_request",
+  title: "Merge request: <source_branch> -> <merge_target_branch>",
+  content: """
+## Brain Merge Request
+
+- feature_id: <feature_id>
+- source_branch: <execution_branch_or_feature_id>
+- target_branch: <merge_target_branch>
+- merge_policy: <merge_policy>
+- merge_strategy: <merge_strategy>
+- remote_branch_policy: <remote_branch_policy>
+- target_workdir: <target_workdir>
+
+## Checkout Coverage
+
+<coverage report>
+""",
+  status: "pending",
+  project: "<project>",
+  feature_id: "<feature_id>",
+  git_branch: "<execution_branch_or_feature_id>",
+  merge_target_branch: "<merge_target_branch>",
+  merge_policy: "<merge_policy>",
+  merge_strategy: "<merge_strategy>",
+  remote_branch_policy: "<remote_branch_policy>",
+  target_workdir: "<target_workdir>",
+  generated: true,
+  generated_kind: "other",
+  generated_key: "merge-request:<project>:<feature_id>:<source_branch>:<merge_target_branch>",
+  generated_by: "brain:merge-request",
+  tags: ["merge-request", "<feature_id>"]
+)
+```
+
+Append a `## Merge Request` section to the checkout task with the created merge request ID/path and merge intent.
 
 4. **Complete checkout task:**
 
@@ -334,7 +361,7 @@ Append a `## Merge Result` section to the checkout task with:
 brain_update(
   path: "<task-path>",
   status: "completed",
-  append: "## Result\n\nFeature approved. All <N> criteria covered. <N> tasks validated. Merge policy executed and audited in `## Merge Result`."
+  append: "## Result\n\nFeature approved. All <N> criteria covered. <N> tasks validated. Brain merge request created and recorded in `## Merge Request`."
 )
 ```
 

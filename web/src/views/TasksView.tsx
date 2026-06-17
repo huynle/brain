@@ -11,7 +11,7 @@ import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
 import { Panel } from "../components/layout/Panel";
 import { ConfirmDialog } from "../components/common/Modal";
-import { deleteEntry, setTaskStatus, triggerTask } from "../lib/api";
+import { deleteEntry, listInstances, setTaskStatus, triggerTask } from "../lib/api";
 import {
   cleanLogContent,
   clockTime,
@@ -87,6 +87,7 @@ export function TasksView() {
   const toggleDetail = useUI((s) => s.toggleDetail);
   const toggleLogs = useUI((s) => s.toggleLogs);
   const openInspect = useUI((s) => s.openInspect);
+  const openInControl = useUI((s) => s.openInControl);
   const isMobile = useIsMobile();
 
   const { tasks, connected } = useLiveTasks(activeProject);
@@ -206,6 +207,29 @@ export function TasksView() {
   const targets = (cur?: Task | null): Task[] =>
     selectedTasks.length ? selectedTasks : cur ? [cur] : [];
 
+  async function openTaskSession(task: Task) {
+    if (!isActive(task.status)) {
+      setViewContent(task);
+      return;
+    }
+    try {
+      const instances = await listInstances();
+      const inst = instances.find((i) => i.task_id === task.id && (!task.projectId || i.project_id === task.projectId));
+      if (!inst) {
+        toast("No live session found for this task", "info");
+        return;
+      }
+      openInControl({
+        mode: "live",
+        runnerId: inst.runner_id,
+        instanceId: inst.instance_id,
+        taskTitle: task.title || task.id,
+      });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not open session", "error");
+    }
+  }
+
   useViewKeyboard(
     (e) => {
       // panel-level keys
@@ -239,7 +263,7 @@ export function TasksView() {
         case "Enter":
           if (row?.kind === "header")
             setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
-          else if (cur) setViewContent(cur);
+          else if (cur) void openTaskSession(cur);
           return true;
         case " ":
           if (row?.kind === "header")
@@ -286,7 +310,7 @@ export function TasksView() {
         default: return false;
       }
     },
-    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys],
+    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, openInControl, toast],
   );
 
   async function doDelete(ts: Task[]) {
@@ -380,7 +404,7 @@ export function TasksView() {
                   nav.setCursor(scope, i);
                   if (isMobile) openInspect({ path: t.path, taskId: t.id, projectId: t.projectId, title: t.title });
                 }}
-                onDoubleClick={() => setViewContent(t)}
+                onDoubleClick={() => void openTaskSession(t)}
               >
                 <span className="connector">{row.lead}</span>
                 {selCount > 0 && (

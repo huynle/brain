@@ -3,10 +3,10 @@ import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Modal } from "../../components/common/Modal";
+import { AttachmentGallery } from "../../components/layout/AttachmentGallery";
 import { Pill } from "../../components/common/Badge";
 import { Loading, ErrorState } from "../../components/common/states";
 import { getEntry } from "../../lib/api";
-import { useAuth } from "../../lib/auth";
 import { relativeTime } from "../../lib/format";
 
 // The CodeMirror editor is heavy; load it only when the user edits.
@@ -22,16 +22,10 @@ export function EntryView({
   onClose: () => void;
 }) {
   const [editing, setEditing] = useState(false);
-  const token = useAuth((s) => s.token);
   const q = useQuery({
     queryKey: ["entry", path],
     queryFn: () => getEntry(path),
   });
-
-  const attachmentUrl = (id: string) => {
-    const base = `/api/v1/attachments/${encodeURIComponent(id)}/content`;
-    return token ? `${base}?token=${encodeURIComponent(token)}` : base;
-  };
 
   return (
     <>
@@ -87,26 +81,7 @@ export function EntryView({
                 ))}
               </div>
             )}
-            {q.data.attachments && q.data.attachments.length > 0 && (
-              <div className="field">
-                <label>Attachments</label>
-                <div className="col" style={{ gap: "0.35rem" }}>
-                  {q.data.attachments.map((a) => (
-                    <a
-                      key={a.id}
-                      className="btn sm"
-                      href={attachmentUrl(a.id)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      style={{ justifyContent: "flex-start", gap: "0.5rem" }}
-                    >
-                      📎 {a.filename || a.path || a.id}
-                      {a.type && <span className="faint">· {a.type}</span>}
-                    </a>
-                  ))}
-                </div>
-              </div>
-            )}
+            <AttachmentGallery attachments={q.data.attachments} />
             <div className="markdown">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
                 {q.data.content || "_(empty)_"}

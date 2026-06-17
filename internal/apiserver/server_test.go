@@ -359,3 +359,38 @@ func assertPersistedSkippedDerivedText(t *testing.T, dbPath, attachmentID, wantE
 		t.Fatalf("persisted error = %q, want to contain %q", derived.Error, wantErrText)
 	}
 }
+
+func TestMCPRouteCORSAllowsSessionHeader(t *testing.T) {
+	tempDir := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	handler, _, cleanup, err := buildHTTPHandler(ctx, ServerOptions{
+		Host:     "127.0.0.1",
+		Port:     0,
+		BrainDir: filepath.Join(tempDir, "brain"),
+		LogLevel: "error",
+	})
+	if err != nil {
+		t.Fatalf("buildHTTPHandler failed: %v", err)
+	}
+	defer cleanup()
+
+	req := httptest.NewRequest(http.MethodOptions, "/mcp", nil)
+	req.Header.Set("Origin", "https://example.test")
+	req.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	req.Header.Set("Access-Control-Request-Headers", "Mcp-Session-Id")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d; body = %s", rec.Code, http.StatusNoContent, rec.Body.String())
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); !strings.Contains(got, "Mcp-Session-Id") {
+		t.Fatalf("Access-Control-Allow-Headers = %q, want Mcp-Session-Id", got)
+	}
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "Mcp-Session-Id") {
+		t.Fatalf("Access-Control-Expose-Headers = %q, want Mcp-Session-Id", got)
+	}
+}

@@ -1,22 +1,6 @@
+import { attachmentDisplayLabel, attachmentDisplayUrl, isImageAttachment } from "../../lib/attachments";
 import { useAuth } from "../../lib/auth";
 import type { AttachmentReference } from "../../lib/types";
-
-function isImageAttachment(a: AttachmentReference): boolean {
-  const contentType = a.content_type || a.type || "";
-  if (contentType.startsWith("image/")) return true;
-
-  const name = (a.filename || a.path || "").toLowerCase();
-  return /\.(avif|gif|jpe?g|png|webp|svg)$/.test(name);
-}
-
-function attachmentUrl(id: string, token?: string | null): string {
-  const base = `/api/v1/attachments/${encodeURIComponent(id)}/content`;
-  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
-}
-
-function attachmentLabel(a: AttachmentReference): string {
-  return a.filename || a.path || a.id;
-}
 
 export function AttachmentGallery({ attachments }: { attachments?: AttachmentReference[] }) {
   const token = useAuth((s) => s.token);
@@ -39,14 +23,14 @@ export function AttachmentGallery({ attachments }: { attachments?: AttachmentRef
           {images.map((a) => (
             <a
               key={a.id}
-              href={attachmentUrl(a.id, token)}
+              href={attachmentDisplayUrl(a, { token })}
               target="_blank"
               rel="noopener noreferrer"
               style={{ color: "inherit", textDecoration: "none" }}
             >
               <img
-                src={attachmentUrl(a.id, token)}
-                alt={a.caption || attachmentLabel(a)}
+                src={attachmentDisplayUrl(a, { token })}
+                alt={attachmentDisplayLabel(a)}
                 style={{
                   aspectRatio: "4 / 3",
                   border: "1px solid var(--border)",
@@ -56,7 +40,7 @@ export function AttachmentGallery({ attachments }: { attachments?: AttachmentRef
                 }}
               />
               <div className="mono faint" style={{ fontSize: 11.5, marginTop: "0.25rem" }}>
-                {attachmentLabel(a)}
+                {attachmentDisplayLabel(a)}
               </div>
             </a>
           ))}
@@ -68,12 +52,12 @@ export function AttachmentGallery({ attachments }: { attachments?: AttachmentRef
             <a
               key={a.id}
               className="btn sm"
-              href={attachmentUrl(a.id, token)}
+              href={attachmentDisplayUrl(a, { token })}
               target="_blank"
               rel="noopener noreferrer"
               style={{ justifyContent: "flex-start", gap: "0.5rem" }}
             >
-              Attachment: {attachmentLabel(a)}
+              Attachment: {attachmentDisplayLabel(a)}
               {(a.content_type || a.type) && <span className="faint">- {a.content_type || a.type}</span>}
             </a>
           ))}

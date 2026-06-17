@@ -1,8 +1,11 @@
+import React from "react";
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AttachmentGallery } from "./AttachmentGallery";
 import type { AttachmentReference } from "../../lib/types";
+
+(globalThis as typeof globalThis & { React: typeof React }).React = React;
 
 test("renders image attachments lazily and file attachments with metadata", () => {
   const attachments: AttachmentReference[] = [

@@ -449,7 +449,9 @@ export async function executeAutomation(
 }
 
 export const getEntry = (path: string) =>
-  api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`);
+  api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+    query: { include: "attachments" },
+  });
 
 export const search = (req: SearchRequest) =>
   api<SearchResponse>("/api/v1/search", { method: "POST", body: req });

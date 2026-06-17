@@ -46,9 +46,39 @@ export interface AttachmentReference {
   type?: string;
   path?: string;
   filename?: string;
+  content_type?: string;
+  size?: number;
+  sha256?: string;
+  metadata?: Record<string, string>;
+  download_url?: string;
+  text_url?: string;
+  role?: string;
+  caption?: string;
+  derived?: AttachmentDerived[];
+  derived_text?: AttachmentDerivedText;
   provider?: string;
   model?: string;
-  [k: string]: unknown;
+}
+
+export interface AttachmentDerived {
+  id: string;
+  kind: string;
+  content_type?: string;
+  size?: number;
+  storage_key?: string;
+  created?: string;
+}
+
+export interface AttachmentDerivedText {
+  id?: string;
+  kind?: string;
+  status: "pending" | "ready" | "failed" | "skipped" | string;
+  content_type?: string;
+  text?: string;
+  error?: string;
+  metadata?: Record<string, string>;
+  created?: string;
+  modified?: string;
 }
 
 /** ResolvedTask — the task object returned by the tasks endpoints + SSE. */

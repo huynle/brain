@@ -61,6 +61,7 @@ export interface Task {
   parent_id?: string;
   depends_on?: string[];
   created?: string;
+  modified?: string;
   projectId?: string;
 
   workdir?: string;

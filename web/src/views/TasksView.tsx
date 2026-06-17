@@ -5,7 +5,7 @@ import { useLive } from "../lib/sse";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useLiveTasks } from "../hooks/useLiveTasks";
-import { filterTasks, groupByFeature, UNGROUPED } from "./tasks/grouping";
+import { filterTasks, groupByFeature, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
 import { buildTaskTree } from "./tasks/tree";
 import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
@@ -37,6 +37,13 @@ const EntryRawViewModal = lazy(() =>
 );
 
 const TERMINAL = ["completed", "cancelled", "archived", "superseded"];
+const FEATURE_SORT_LABELS: Record<FeatureSortMode, string> = {
+  completed: "done",
+  created: "new",
+  name: "name",
+  status: "status",
+  priority: "prio",
+};
 const taskKey = (t: Task) => `${t.projectId}:${t.id}`;
 
 function glyph(t: Task): { ch: string; color: string } {
@@ -93,7 +100,9 @@ export function TasksView() {
   const [mode, setMode] = useState<"tasks" | "schedules">("tasks");
   const [query, setQuery] = useState("");
   const [showDone, setShowDone] = useState(false);
+  const [featureSort, setFeatureSort] = useState<FeatureSortMode>("completed");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapseDefault, setCollapseDefault] = useState(activeProject === ALL_PROJECTS);
 
   const [editMeta, setEditMeta] = useState<Task | null>(null);
   const [viewContent, setViewContent] = useState<Task | null>(null);
@@ -108,18 +117,21 @@ export function TasksView() {
   const detailBodyRef = useRef<HTMLDivElement>(null);
   const logBodyRef = useRef<HTMLDivElement>(null);
 
-  const { rows, taskList } = useMemo(() => {
+  const { rows, taskList, featureKeys } = useMemo(() => {
     let list = filterTasks(tasks, query);
     if (mode === "schedules") list = list.filter((t) => t.schedule || t.run_once_at);
     else if (!showDone) list = list.filter((t) => !TERMINAL.includes(t.status));
-    const groups = groupByFeature(list);
+    const groups = groupByFeature(list, activeProject === ALL_PROJECTS ? featureSort : "name");
     const r: Row[] = [];
     const flat: Task[] = [];
+    const keys: string[] = [];
     for (const g of groups) {
       const showHeader = g.feature !== UNGROUPED || groups.length > 1;
-      if (showHeader)
+      if (showHeader) {
+        keys.push(g.feature);
         r.push({ kind: "header", feature: g.feature, label: g.label, count: g.tasks.length });
-      if (!collapsed[g.feature]) {
+      }
+      if (!(collapsed[g.feature] ?? collapseDefault)) {
         if (mode === "schedules") {
           g.tasks.forEach((t) => {
             r.push({ kind: "task", task: t, lead: "", inCycle: false });
@@ -134,8 +146,13 @@ export function TasksView() {
         }
       }
     }
-    return { rows: r, taskList: flat };
-  }, [tasks, query, showDone, collapsed, mode]);
+    return { rows: r, taskList: flat, featureKeys: keys };
+  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort]);
+
+  useEffect(() => {
+    setCollapsed({});
+    setCollapseDefault(activeProject === ALL_PROJECTS);
+  }, [activeProject]);
 
   useEffect(() => {
     if (cursor > rows.length - 1) nav.setCursor(scope, Math.max(0, rows.length - 1));
@@ -149,6 +166,11 @@ export function TasksView() {
 
   const cursorRow = rows[cursor];
   const detailTask = cursorRow?.kind === "task" ? cursorRow.task : null;
+
+  const setAllFeatureCollapsed = (value: boolean) => {
+    setCollapseDefault(value);
+    setCollapsed(Object.fromEntries(featureKeys.map((key) => [key, value])));
+  };
 
   const selectedTasks = useMemo(
     () => taskList.filter((t) => selected[taskKey(t)]),
@@ -216,14 +238,16 @@ export function TasksView() {
       switch (e.key) {
         case "Enter":
           if (row?.kind === "header")
-            setCollapsed((c) => ({ ...c, [row.feature]: !c[row.feature] }));
+            setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
           else if (cur) setViewContent(cur);
           return true;
         case " ":
           if (row?.kind === "header")
-            setCollapsed((c) => ({ ...c, [row.feature]: !c[row.feature] }));
+            setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
           else if (cur) nav.toggleSelect(taskKey(cur));
           return true;
+        case "{": setAllFeatureCollapsed(true); return true;
+        case "}": setAllFeatureCollapsed(false); return true;
         case "A": nav.selectMany(taskList.map(taskKey)); return true;
         case "D": nav.clearSelect(); return true;
         case "c": {
@@ -262,7 +286,7 @@ export function TasksView() {
         default: return false;
       }
     },
-    [rows, cursor, scope, taskList, selectedTasks, focus, detailVisible, logsVisible, mode],
+    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys],
   );
 
   async function doDelete(ts: Task[]) {
@@ -299,6 +323,21 @@ export function TasksView() {
               {showDone ? "all" : "active"}
             </button>
           )}
+          {activeProject === ALL_PROJECTS && mode === "tasks" && (
+            <select
+              className="btn sm"
+              aria-label="Feature sort"
+              title="Sort features"
+              value={featureSort}
+              onChange={(e) => setFeatureSort(e.target.value as FeatureSortMode)}
+            >
+              {Object.entries(FEATURE_SORT_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          )}
+          <button className="btn sm" onClick={() => setAllFeatureCollapsed(true)} title="Collapse all features ({)">{"{"}</button>
+          <button className="btn sm" onClick={() => setAllFeatureCollapsed(false)} title="Expand all features (})">{"}"}</button>
           <button className="btn sm primary" onClick={() => setComposing(true)}>+</button>
         </div>
 
@@ -321,9 +360,9 @@ export function TasksView() {
                   key={`h:${row.feature}`}
                   className={`tree-header ${isCur ? "cursor" : ""}`}
                   data-cursor={isCur ? "1" : undefined}
-                  onClick={() => setCollapsed((c) => ({ ...c, [row.feature]: !c[row.feature] }))}
+                  onClick={() => setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }))}
                 >
-                  <span className="htri">{collapsed[row.feature] ? "▸" : "▾"}</span>
+                  <span className="htri">{(collapsed[row.feature] ?? collapseDefault) ? "▸" : "▾"}</span>
                   {row.label}
                   <span className="hcount">({row.count})</span>
                 </div>

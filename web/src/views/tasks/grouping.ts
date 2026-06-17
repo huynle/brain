@@ -20,6 +20,8 @@ const PRIORITY_ORDER: Record<string, number> = {
 
 export const UNGROUPED = "__ungrouped__";
 
+export type FeatureSortMode = "completed" | "created" | "name" | "status" | "priority";
+
 export interface TaskGroup {
   feature: string;
   label: string;
@@ -49,7 +51,62 @@ export function filterTasks(tasks: Task[], q: string): Task[] {
   );
 }
 
-export function groupByFeature(tasks: Task[]): TaskGroup[] {
+function timeValue(value?: string): number {
+  if (!value) return 0;
+  const n = Date.parse(value);
+  return Number.isNaN(n) ? 0 : n;
+}
+
+function newestTaskTime(tasks: Task[], terminalOnly: boolean): number {
+  let newest = 0;
+  for (const task of tasks) {
+    if (terminalOnly && task.status !== "completed" && task.status !== "validated") continue;
+    newest = Math.max(newest, timeValue(task.modified), timeValue(task.created));
+  }
+  return newest;
+}
+
+function bestStatus(tasks: Task[]): number {
+  return Math.min(...tasks.map((task) => STATUS_ORDER[task.status] ?? 50));
+}
+
+function bestPriority(tasks: Task[]): number {
+  return Math.min(...tasks.map((task) => PRIORITY_ORDER[task.priority] ?? 3));
+}
+
+function compareGroups(a: TaskGroup, b: TaskGroup, sortMode: FeatureSortMode): number {
+  if (a.feature === UNGROUPED) return 1;
+  if (b.feature === UNGROUPED) return -1;
+
+  switch (sortMode) {
+    case "created": {
+      const diff = newestTaskTime(b.tasks, false) - newestTaskTime(a.tasks, false);
+      if (diff !== 0) return diff;
+      break;
+    }
+    case "name":
+      break;
+    case "priority": {
+      const diff = bestPriority(a.tasks) - bestPriority(b.tasks);
+      if (diff !== 0) return diff;
+      break;
+    }
+    case "status": {
+      const diff = bestStatus(a.tasks) - bestStatus(b.tasks);
+      if (diff !== 0) return diff;
+      break;
+    }
+    case "completed":
+    default: {
+      const diff = newestTaskTime(b.tasks, true) - newestTaskTime(a.tasks, true);
+      if (diff !== 0) return diff;
+      break;
+    }
+  }
+  return a.label.localeCompare(b.label);
+}
+
+export function groupByFeature(tasks: Task[], sortMode: FeatureSortMode = "completed"): TaskGroup[] {
   const map = new Map<string, Task[]>();
   for (const t of tasks) {
     const key = t.feature_id || UNGROUPED;
@@ -66,11 +123,6 @@ export function groupByFeature(tasks: Task[]): TaskGroup[] {
       tasks: arr,
     });
   }
-  // Ungrouped last; otherwise alphabetical by feature.
-  groups.sort((a, b) => {
-    if (a.feature === UNGROUPED) return 1;
-    if (b.feature === UNGROUPED) return -1;
-    return a.label.localeCompare(b.label);
-  });
+  groups.sort((a, b) => compareGroups(a, b, sortMode));
   return groups;
 }

@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -519,6 +520,83 @@ func TestBrainSchedulerStatus(t *testing.T) {
 	}
 	if !contains(result, "42") {
 		t.Errorf("expected total ticks in result")
+	}
+}
+
+// TestHTTPHandlerRegistersObservabilityTools verifies that observability tools
+// are registered and accessible via the HTTP handler.
+func TestHTTPHandlerRegistersObservabilityTools(t *testing.T) {
+	// Mock Brain API server
+	apiSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Just return valid response for any endpoint
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(map[string]any{"status": "ok"})
+	}))
+	defer apiSrv.Close()
+
+	// Create HTTP handler
+	client := NewAPIClient(apiSrv.URL)
+	handler := NewHTTPHandler(client)
+
+	// Send a tools/list request to verify observability tools are registered
+	reqBody := JSONRPCRequest{
+		JSONRPC: "2.0",
+		ID:      json.RawMessage(`1`),
+		Method:  "tools/list",
+	}
+	body, _ := json.Marshal(reqBody)
+
+	req := httptest.NewRequest("POST", "/mcp", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	var resp JSONRPCResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("failed to parse response: %v", err)
+	}
+
+	if resp.Error != nil {
+		t.Fatalf("unexpected error: %v", resp.Error)
+	}
+
+	// Parse result as tools list
+	resultBytes, _ := json.Marshal(resp.Result)
+	var result struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if err := json.Unmarshal(resultBytes, &result); err != nil {
+		t.Fatalf("failed to parse tools list: %v", err)
+	}
+
+	// Verify all 7 observability tools are present
+	expectedTools := []string{
+		"brain_task_logs",
+		"brain_task_dispatch_lease",
+		"brain_task_placement_reasons",
+		"brain_events_recent",
+		"brain_automation_runs",
+		"brain_automation_run_get",
+		"brain_scheduler_status",
+	}
+
+	toolNames := make(map[string]bool)
+	for _, tool := range result.Tools {
+		toolNames[tool.Name] = true
+	}
+
+	for _, expected := range expectedTools {
+		if !toolNames[expected] {
+			t.Errorf("expected tool %s not found in HTTP handler", expected)
+		}
 	}
 }
 

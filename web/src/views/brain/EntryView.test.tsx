@@ -51,3 +51,77 @@ test("renders entry attachments with the shared gallery and preserves markdown",
   assert.match(html, /<h2>Notes<\/h2>/);
   assert.match(html, /<li>Markdown remains intact<\/li>/);
 });
+
+
+test("resolves inline brain attachment image references to authenticated display URLs", () => {
+  const path = "projects/brain-api/report/inline-image.md";
+  const entry: BrainEntry = {
+    id: "entry-inline-image",
+    path,
+    title: "Entry with inline image",
+    type: "report",
+    status: "active",
+    content: "Inline image: ![System diagram](brain-attachment://img-1)",
+    project_id: "brain-api",
+    attachments: [
+      {
+        id: "img-1",
+        filename: "diagram.png",
+        content_type: "image/png",
+        download_url: "/files/diagram.png?project_id=brain-api",
+      },
+    ],
+  };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  queryClient.setQueryData(["entry", path], entry);
+
+  const html = renderToStaticMarkup(
+    <QueryClientProvider client={queryClient}>
+      <EntryView path={path} onClose={() => undefined} />
+    </QueryClientProvider>,
+  );
+
+  assert.match(html, /class="entry-inline-attachment-image-link"/);
+  assert.match(html, /href="\/files\/diagram\.png\?project_id=brain-api"/);
+  assert.match(html, /src="\/files\/diagram\.png\?project_id=brain-api"/);
+  assert.match(html, /alt="System diagram"/);
+  assert.match(html, /loading="lazy"/);
+  assert.doesNotMatch(html, /src="brain-attachment:\/\/img-1"/);
+});
+
+test("renders unresolved inline brain attachment images as graceful fallback text", () => {
+  const path = "projects/brain-api/report/missing-inline-image.md";
+  const entry: BrainEntry = {
+    id: "entry-missing-inline-image",
+    path,
+    title: "Entry with missing inline image",
+    type: "report",
+    status: "active",
+    content: "Missing image: ![Missing diagram](brain-attachment://missing)",
+    project_id: "brain-api",
+    attachments: [
+      {
+        id: "img-1",
+        filename: "diagram.png",
+        content_type: "image/png",
+        download_url: "/files/diagram.png",
+      },
+    ],
+  };
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  queryClient.setQueryData(["entry", path], entry);
+
+  const html = renderToStaticMarkup(
+    <QueryClientProvider client={queryClient}>
+      <EntryView path={path} onClose={() => undefined} />
+    </QueryClientProvider>,
+  );
+
+  assert.match(html, /class="entry-inline-attachment-missing"/);
+  assert.match(html, /Image unavailable: Missing diagram/);
+  assert.doesNotMatch(html, /src="brain-attachment:\/\/missing"/);
+});

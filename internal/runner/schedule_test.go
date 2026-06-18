@@ -634,6 +634,10 @@ func (m *schedMockClient) GetEntry(ctx context.Context, entryPath string) (*type
 	}
 	return &types.BrainEntry{Path: entryPath}, nil
 }
+func (m *schedMockClient) ListEntries(ctx context.Context, params map[string]string) (*types.ListEntriesResponse, error) {
+	// No-op for schedule tests; orphan reaper isn't exercised here.
+	return &types.ListEntriesResponse{}, nil
+}
 func (m *schedMockClient) UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error {
 	m.mu2.Lock()
 	defer m.mu2.Unlock()

@@ -31,6 +31,7 @@ const (
 	FrameInstanceEvent = "instance_event" // runner → api: always-on control event
 	FrameSpawn         = "spawn"          // api → runner: spawn ad-hoc instance
 	FrameKill          = "kill"           // api → runner: kill ad-hoc instance
+	FrameAbortTask     = "abort_task"     // api → runner: abort task instance and reset pending
 	FrameHistory       = "history"        // api → runner: fetch a session transcript (no live instance needed)
 )
 
@@ -59,6 +60,7 @@ type Frame struct {
 
 	// history
 	SessionID string `json:"session_id,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
 
 	// req / res / streams / kill
 	InstanceID string          `json:"instance_id,omitempty"`

@@ -377,6 +377,9 @@ type BridgeService interface {
 	// KillInstance asks a runner to terminate an ad-hoc instance.
 	KillInstance(ctx context.Context, runnerID, instanceID string) error
 
+	// AbortTask asks a runner to terminate a task-owned instance and reset it to pending.
+	AbortTask(ctx context.Context, runnerID, taskID string) error
+
 	// FetchHistory returns the transcript of a session by ID from a runner,
 	// served from a live instance if one hosts it, otherwise read from
 	// OpenCode's on-disk storage. Returns raw JSON (array of {info, parts}).

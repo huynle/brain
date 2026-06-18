@@ -20,12 +20,42 @@ export function Modal({
 }) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const focusables = getFocusableElements(dialog);
+    const preferred = dialog?.querySelector<HTMLElement>('[data-autofocus="true"]');
+    const target = preferred || focusables[0] || dialog;
+    target?.focus({ preventScroll: true });
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const modals = Array.from(document.querySelectorAll(".modal-backdrop"));
       if (modals[modals.length - 1] !== backdropRef.current) return;
+
+      if (e.key === "Tab") {
+        const focusables = getFocusableElements(dialogRef.current);
+        if (focusables.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+          return;
+        }
+        if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+          return;
+        }
+        return;
+      }
 
       if (e.key === "Escape") {
         e.preventDefault();
@@ -109,7 +139,7 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={sheetClass} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={dialogRef} className={sheetClass} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
         <div className="sheet-header">
           <h2>{title}</h2>
           <button
@@ -129,6 +159,15 @@ export function Modal({
       </div>
     </div>
   );
+}
+
+function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => el.offsetParent !== null && !el.hasAttribute("disabled") && el.tabIndex !== -1);
 }
 
 export function ConfirmDialog({
@@ -162,6 +201,7 @@ export function ConfirmDialog({
             style={{ marginLeft: "auto" }}
             onClick={onConfirm}
             disabled={busy}
+            data-autofocus="true"
           >
             {busy ? "Working…" : confirmLabel}
           </button>

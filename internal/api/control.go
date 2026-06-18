@@ -380,6 +380,21 @@ func (h *Handler) HandleControlSpawn(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// HandleControlAbortTask handles POST /control/runners/{runnerId}/tasks/{taskId}/abort.
+func (h *Handler) HandleControlAbortTask(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	taskID := chi.URLParam(r, "taskId")
+	if taskID == "" {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "task id is required")
+		return
+	}
+	if err := h.bridge.AbortTask(r.Context(), runnerID, taskID); err != nil {
+		writeBridgeError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
+}
+
 // HandleControlKill handles DELETE /control/runners/{runnerId}/instances/{instanceId}
 // — terminates an ad-hoc instance. Task instances are refused: they are
 // owned by the task lifecycle.

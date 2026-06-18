@@ -5,10 +5,10 @@ import { ALL_PROJECTS, useUI } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import {
+  controlAbortTask,
   controlKillInstance,
   controlListSessions,
   controlSpawnInstance,
-  getTask,
   getRunnerStatus,
   getRunners,
   listInstances,
@@ -16,7 +16,6 @@ import {
   pauseAutomations,
   resumeAll,
   resumeAutomations,
-  setTaskStatus,
   shutdownRunner,
 } from "../lib/api";
 import { Modal, ConfirmDialog } from "../components/common/Modal";
@@ -152,9 +151,7 @@ export function RunnersView() {
           return true;
         case "s":
           if (cur?.kind === "runner") setConfirmRunnerKill(cur.runner);
-          else if (cur?.kind === "instance") setConfirmInstanceKill(cur.instance);
           return true;
-        case "k":
         case "K":
           if (cur?.kind === "instance") setConfirmInstanceKill(cur.instance);
           return true;
@@ -217,10 +214,7 @@ export function RunnersView() {
         setConfirmInstanceKill(null);
         return;
       }
-      await act("Task cancelled", async () => {
-        const task = await getTask(inst.project_id!, inst.task_id!);
-        await setTaskStatus(task, "cancelled");
-      });
+      await act("Task aborted; task reset to pending", () => controlAbortTask(inst.runner_id, inst.task_id!));
     } else {
       await act("Instance killed", () => controlKillInstance(inst.runner_id, inst.instance_id));
     }
@@ -357,11 +351,11 @@ export function RunnersView() {
         <ConfirmDialog
           title="Kill instance?"
           danger
-          confirmLabel={confirmInstanceKill.kind === "task" ? "Cancel task" : "Kill"}
+          confirmLabel={confirmInstanceKill.kind === "task" ? "Abort task" : "Kill"}
           busy={busy}
           message={
             <>
-              {confirmInstanceKill.kind === "task" ? "Cancel task" : "Terminate ad-hoc instance"}{" "}
+              {confirmInstanceKill.kind === "task" ? "Abort task and reset to pending" : "Terminate ad-hoc instance"}{" "}
               <strong className="mono">{confirmInstanceKill.task_id || confirmInstanceKill.instance_id}</strong>
               {confirmInstanceKill.workdir ? <> in {confirmInstanceKill.workdir}</> : null}?
             </>
@@ -434,7 +428,7 @@ function ExecutingTaskCard({
         <strong className="truncate">{instance.title || instance.task_id || instance.instance_id}</strong>
         <span className="faint">{instance.status}</span>
         <button className="btn sm ghost" onClick={(e) => { e.stopPropagation(); onOpen(); }}>session</button>
-        <button className="btn sm danger" onClick={(e) => { e.stopPropagation(); onKill(); }}>{instance.kind === "task" ? "cancel" : "kill"}</button>
+        <button className="btn sm danger" onClick={(e) => { e.stopPropagation(); onKill(); }}>{instance.kind === "task" ? "abort" : "kill"}</button>
       </div>
       <div className="runner-chipline">
         <Chip label="project" value={instance.project_id} />

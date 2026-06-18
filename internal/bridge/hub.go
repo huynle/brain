@@ -221,6 +221,26 @@ func (h *Hub) KillInstance(ctx context.Context, runnerID, instanceID string) err
 	return nil
 }
 
+// AbortTask asks a runner to terminate a task-owned instance and reset the task to pending.
+func (h *Hub) AbortTask(ctx context.Context, runnerID, taskID string) error {
+	conn := h.conn(runnerID)
+	if conn == nil {
+		return ErrRunnerNotConnected
+	}
+	res, err := conn.roundTrip(ctx, Frame{
+		Type:      FrameAbortTask,
+		TaskID:    taskID,
+		TimeoutMs: DefaultTimeoutMs,
+	})
+	if err != nil {
+		return err
+	}
+	if res.Error != "" {
+		return errors.New(res.Error)
+	}
+	return nil
+}
+
 // AcquireStream enables full event forwarding for an instance (refcounted).
 // The returned release function must be called when the subscriber detaches;
 // the last release closes the upstream full stream. Control events keep

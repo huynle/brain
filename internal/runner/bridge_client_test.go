@@ -198,6 +198,46 @@ func TestBridge_EndToEnd(t *testing.T) {
 	}
 }
 
+func TestBridgeClientAbortTask_KillsProcessAndResetsPending(t *testing.T) {
+	client := newMockClient()
+	processMgr := newMockProcessMgr()
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     testRunnerConfig(),
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executors:  map[string]TaskExecutor{"opencode": newMockExecutor()},
+		ProcessMgr: processMgr,
+		StateMgr:   newMockStateMgr(),
+	})
+	bc := NewBridgeClient(tr)
+	bc.ctx = context.Background()
+
+	proc := newMockProcess(100)
+	task := testRunningTask("task1")
+	task.InstanceID = "inst-task1"
+	if err := processMgr.Add("task1", task, proc); err != nil {
+		t.Fatalf("add running task: %v", err)
+	}
+	if err := bc.abortTask("task1"); err != nil {
+		t.Fatalf("abortTask returned error: %v", err)
+	}
+
+	processMgr.mu.Lock()
+	killCalls := append([]string(nil), processMgr.killCalls...)
+	processMgr.mu.Unlock()
+	if len(killCalls) != 1 || killCalls[0] != "task1" {
+		t.Fatalf("kill calls = %v, want [task1]", killCalls)
+	}
+	if processMgr.Get("task1") != nil {
+		t.Fatal("task should be removed from process manager")
+	}
+	updates := client.getUpdateStatusCalls()
+	if len(updates) != 1 || updates[0].Status != "pending" {
+		t.Fatalf("status updates = %+v, want one pending update", updates)
+	}
+}
+
 func TestBridge_DoWithoutConnection(t *testing.T) {
 	hub := bridge.NewHub(realtime.NewHub())
 	_, _, err := hub.Do(context.Background(), "runner_offline", "inst_x", "GET", "/session", nil)

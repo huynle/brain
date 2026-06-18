@@ -447,6 +447,12 @@ export const controlSpawnInstance = (runnerId: string, spec: SpawnInstanceSpec) 
 export const controlKillInstance = (runnerId: string, instanceId: string) =>
   api<{ success: boolean }>(controlBase(runnerId, instanceId), { method: "DELETE" });
 
+export const controlAbortTask = (runnerId: string, taskId: string) =>
+  api<{ success: boolean }>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/tasks/${encodeURIComponent(taskId)}/abort`,
+    { method: "POST" },
+  );
+
 /** EventSource URL for an instance's live event stream (?token= auth). */
 export function controlEventsUrl(runnerId: string, instanceId: string): string {
   const base = `${controlBase(runnerId, instanceId)}/events`;

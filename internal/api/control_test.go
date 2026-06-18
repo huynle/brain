@@ -27,6 +27,8 @@ type mockBridgeService struct {
 	pending    []json.RawMessage
 	historyOut []byte
 	historyErr error
+	abortCalls []string
+	abortErr   error
 }
 
 func (m *mockBridgeService) DecorateInstances(instances []types.OpencodeInstance) {}
@@ -67,6 +69,13 @@ func (m *mockBridgeService) KillInstance(ctx context.Context, runnerID, instance
 	return m.killErr
 }
 
+func (m *mockBridgeService) AbortTask(ctx context.Context, runnerID, taskID string) error {
+	m.mu.Lock()
+	m.abortCalls = append(m.abortCalls, runnerID+":"+taskID)
+	m.mu.Unlock()
+	return m.abortErr
+}
+
 func (m *mockBridgeService) FetchHistory(ctx context.Context, runnerID, sessionID string) ([]byte, error) {
 	if m.historyErr != nil {
 		return nil, m.historyErr
@@ -98,6 +107,7 @@ func newControlTestRouter(mock *mockBridgeService, registry *mockRunnerRegistryS
 	}
 	h := NewHandler(&mockBrainService{}, opts...)
 	r := chi.NewRouter()
+	r.Post("/control/runners/{runnerId}/tasks/{taskId}/abort", h.HandleControlAbortTask)
 	r.Route("/control/runners/{runnerId}/instances", func(r chi.Router) {
 		r.Post("/", h.HandleControlSpawn)
 		r.Route("/{instanceId}", func(r chi.Router) {
@@ -112,6 +122,24 @@ func newControlTestRouter(mock *mockBridgeService, registry *mockRunnerRegistryS
 		})
 	})
 	return r
+}
+
+func TestHandleControlAbortTask(t *testing.T) {
+	mock := &mockBridgeService{}
+	router := newControlTestRouter(mock, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/control/runners/runner-1/tasks/task-1/abort", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("abort task status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	mock.mu.Lock()
+	defer mock.mu.Unlock()
+	if len(mock.abortCalls) != 1 || mock.abortCalls[0] != "runner-1:task-1" {
+		t.Fatalf("abort calls = %v, want [runner-1:task-1]", mock.abortCalls)
+	}
 }
 
 func TestControlProxy_SessionsAndMessages(t *testing.T) {

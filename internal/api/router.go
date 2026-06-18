@@ -626,6 +626,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					// holds its on-disk storage.
 					r.Get("/runners/{runnerId}/sessions/{sessionId}/history",
 						o.handler.HandleControlSessionHistory)
+					r.Post("/runners/{runnerId}/tasks/{taskId}/abort", o.handler.HandleControlAbortTask)
 					r.Route("/runners/{runnerId}/instances", func(r chi.Router) {
 						r.Post("/", o.handler.HandleControlSpawn)
 						r.Route("/{instanceId}", func(r chi.Router) {

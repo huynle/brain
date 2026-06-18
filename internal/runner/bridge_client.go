@@ -187,6 +187,8 @@ func (bc *BridgeClient) handleFrame(f bridge.Frame) {
 		go bc.handleSpawn(f)
 	case bridge.FrameKill:
 		go bc.handleKill(f)
+	case bridge.FrameAbortTask:
+		go bc.handleAbortTask(f)
 	case bridge.FrameHistory:
 		go bc.handleHistory(f)
 	default:
@@ -640,6 +642,44 @@ func (bc *BridgeClient) killAdhoc(instanceID string) error {
 // ---------------------------------------------------------------------------
 // Session history (hybrid: live instance proxy, else on-disk read)
 // ---------------------------------------------------------------------------
+
+func (bc *BridgeClient) handleAbortTask(f bridge.Frame) {
+	err := bc.abortTask(f.TaskID)
+	res := bridge.Frame{Type: bridge.FrameRes, ID: f.ID, Status: http.StatusOK}
+	if err != nil {
+		res.Error = err.Error()
+		res.Status = 0
+	}
+	bc.sendFrame(res)
+}
+
+func (bc *BridgeClient) abortTask(taskID string) error {
+	if taskID == "" {
+		return errors.New("task id is required")
+	}
+	info := bc.runner.processMgr.Get(taskID)
+	if info == nil {
+		return fmt.Errorf("task %q is not running", taskID)
+	}
+	bc.runner.processMgr.Kill(bc.ctx, taskID)
+	bc.runner.processMgr.Remove(taskID)
+	bc.runner.removeInstance(info.Task.InstanceID)
+	if err := bc.runner.client.UpdateTaskStatus(bc.ctx, info.Task.Path, "pending"); err != nil {
+		return fmt.Errorf("reset task status: %w", err)
+	}
+	bc.runner.cleanupTaskTmux(info.Task)
+	bc.runner.releaseDispatchLease(bc.ctx, info.Task.ProjectID, taskID)
+	bc.runner.emitEvent(RunnerEvent{
+		Type:      EventTaskReleased,
+		TaskID:    taskID,
+		ProjectID: info.Task.ProjectID,
+		TaskPath:  info.Task.Path,
+		FeatureID: info.Task.FeatureID,
+		Reason:    "aborted by control",
+	})
+	slog.Info("bridge client: aborted task instance", "task_id", taskID, "instance_id", info.Task.InstanceID)
+	return nil
+}
 
 func (bc *BridgeClient) handleHistory(f bridge.Frame) {
 	body, err := bc.fetchSessionHistory(f.SessionID)

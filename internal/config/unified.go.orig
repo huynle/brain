@@ -235,13 +235,6 @@ func defaultConfig() UnifiedConfig {
 			EnableAuth:      false,
 			CORSOrigin:      "*",
 			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
-			TaskDefaults: TaskDefaultsConfig{
-				ExecutionMode:      "worktree",
-				MergePolicy:        "auto_merge",
-				MergeStrategy:      "squash",
-				MergeTargetBranch:  "main",
-				RemoteBranchPolicy: "delete",
-			},
 			Embedding: EmbeddingConfig{
 				Enabled:   false,
 				Provider:  "openrouter",

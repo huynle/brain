@@ -54,6 +54,8 @@ export function MetadataModal({
   const [status, setStatus] = useState(task.status);
   const [priority, setPriority] = useState(task.priority || "medium");
   const [feature, setFeature] = useState(task.feature_id || "");
+  const [featurePriority, setFeaturePriority] = useState(task.feature_priority || "");
+  const [featureDependsOn, setFeatureDependsOn] = useState((task.feature_depends_on || []).join(", "));
   const [moveProject, setMoveProject] = useState("");
   const [agent, setAgent] = useState(task.agent || "");
   const [model, setModel] = useState(task.model || "");
@@ -81,6 +83,9 @@ export function MetadataModal({
     if (status !== task.status) patch.status = status;
     if (priority !== task.priority) patch.priority = priority;
     setChangedText(patch, "feature_id", feature, task.feature_id);
+    setChangedText(patch, "feature_priority", featurePriority, task.feature_priority);
+    const featureDeps = csv(featureDependsOn);
+    if (featureDeps.join(",") !== (task.feature_depends_on || []).join(",")) patch.feature_depends_on = featureDeps;
     setChangedText(patch, "agent", agent, task.agent);
     setChangedText(patch, "model", model, task.model);
     setChangedText(patch, "execution_mode", executionMode, task.execution_mode);
@@ -167,6 +172,19 @@ export function MetadataModal({
           <div className="field">
             <label>Feature ID</label>
             <input value={feature} onChange={(e) => setFeature(e.target.value)} />
+          </div>
+          <div className="field">
+            <label>Feature Priority</label>
+            <select value={featurePriority} onChange={(e) => setFeaturePriority(e.target.value)}>
+              <option value=""></option>
+              {PRIORITIES.map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label>Feature Dependencies</label>
+            <input value={featureDependsOn} onChange={(e) => setFeatureDependsOn(e.target.value)} placeholder="comma-separated feature ids" />
           </div>
           <div className="field">
             <label>Move to Project</label>

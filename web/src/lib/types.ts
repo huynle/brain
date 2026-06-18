@@ -105,6 +105,11 @@ export interface Task {
   feature_id?: string;
   feature_priority?: string;
   feature_depends_on?: string[];
+  feature_schedule?: string;
+  feature_starts_at?: string;
+  feature_expires_at?: string;
+  feature_run_once_at?: string;
+  feature_timezone?: string;
 
   schedule?: string;
   schedule_enabled?: boolean;

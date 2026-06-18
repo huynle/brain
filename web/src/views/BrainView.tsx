@@ -73,6 +73,7 @@ export function BrainView() {
   }
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [strategy, setStrategy] = useState<SearchStrategy>("semantic");
   const [openPath, setOpenPath] = useState<string | null>(null);
   const [editPath, setEditPath] = useState<{ path: string; title?: string } | null>(null);
@@ -113,13 +114,6 @@ export function BrainView() {
     [rawItems],
   );
 
-  useEffect(() => {
-    setHiddenTypes((prev) => {
-      const next = new Set([...prev].filter((type) => entryTypes.includes(type)));
-      if (next.size !== prev.size) saveHiddenTypes(next);
-      return next;
-    });
-  }, [entryTypes]);
 
   const items = useMemo<Array<BrainEntry | SearchResult>>(
     () => filterEntriesByHiddenTypes(rawItems, hiddenTypes),
@@ -151,7 +145,7 @@ export function BrainView() {
           if (cur) setEditPath({ path: cur.path, title: (cur as { title?: string }).title });
           return true;
         case "/":
-          searchRef.current?.focus();
+          setSearchOpen(true);
           return true;
         case "n":
           setComposing(true);
@@ -174,6 +168,10 @@ export function BrainView() {
     },
     [items, cursor, scope, project],
   );
+
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
 
   useEffect(() => {
     const el = document.querySelector<HTMLElement>('[data-cursor="1"]');
@@ -205,20 +203,26 @@ export function BrainView() {
   return (
     <ListDetail detailPath={selectedPath} logTarget={logTarget}>
       <form
-        className="search-bar"
+        className="search-layer"
+        style={{ display: searchOpen ? undefined : "none" }}
+        onMouseDown={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}
+
         onSubmit={(e) => {
           e.preventDefault();
           setQuery(input);
           setCursor(scope, 0);
         }}
       >
+        <div className="search-popup">
+          <span className="search-prompt">/</span>
         <input
           ref={searchRef}
           placeholder="Search the brain…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Escape") e.currentTarget.blur();
+            if (e.key === "Escape") setSearchOpen(false);
+            if (e.key === "Enter") setSearchOpen(false);
           }}
         />
         <select
@@ -253,11 +257,12 @@ export function BrainView() {
         <button
           className="btn sm"
           type="button"
-          onClick={() => setComposing(true)}
+          onClick={() => { setSearchOpen(false); setComposing(true); }}
           title="New entry"
         >
           +
         </button>
+        </div>
       </form>
 
       {entryTypes.length > 0 && (

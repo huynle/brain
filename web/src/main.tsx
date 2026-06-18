@@ -21,8 +21,14 @@ const updateSW = registerSW({
     }, 30_000);
   },
   onNeedRefresh() {
-    useUI.getState().setUpdateApply(() => {
-      void updateSW(true);
+    useUI.getState().setUpdateApply(async () => {
+      const fallback = window.setTimeout(() => window.location.reload(), 1500);
+      try {
+        await updateSW(true);
+      } finally {
+        window.clearTimeout(fallback);
+        window.location.reload();
+      }
     });
   },
 });

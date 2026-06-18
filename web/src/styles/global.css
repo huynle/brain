@@ -1991,3 +1991,111 @@ kbd {
   .assistant-drawer { width: 100vw; }
   .assistant-backdrop { display: none; }
 }
+
+.command-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  background: rgba(0, 0, 0, 0.62);
+  backdrop-filter: blur(2px);
+}
+
+.command-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 6rem;
+  z-index: 71;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: min(720px, calc(100vw - 1.5rem));
+  padding: 0.75rem 0.85rem;
+  border: 3px solid #8fb4ff;
+  border-radius: 0.95rem;
+  background: #eef4ff;
+  color: #07111f;
+  box-shadow:
+    0 0 0 4px rgba(11, 14, 20, 0.92),
+    0 24px 70px rgba(0, 0, 0, 0.72),
+    0 0 52px rgba(143, 180, 255, 0.68);
+  transform: translateX(-50%);
+}
+
+.command-prompt {
+  color: #005a43;
+  font-weight: 900;
+  text-shadow: none;
+}
+
+.command-bar input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: #07111f;
+  font: inherit;
+  font-weight: 700;
+  outline: none;
+}
+
+.command-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.command-suggestions button {
+  border: 1px solid #7a9fe8;
+  border-radius: 999px;
+  background: #d9e7ff;
+  color: #07111f;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0.2rem 0.55rem;
+}
+
+.command-suggestions button:hover {
+  border-color: #1e5cff;
+  background: #c3d9ff;
+  color: #07111f;
+}
+
+.search-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 68;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding: 0 0 6rem;
+  background: rgba(0, 0, 0, 0.38);
+}
+
+.search-popup {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: min(820px, calc(100vw - 1.5rem));
+  padding: 0.65rem 0.75rem;
+  border: 2px solid var(--cyan);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--bg-1) 96%, black);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.64), 0 0 36px rgba(125, 207, 255, 0.22);
+}
+
+.search-prompt {
+  color: var(--cyan);
+  font-weight: 900;
+}
+
+.search-popup input {
+  flex: 1;
+  min-width: 0;
+}
+
+.search-popup select,
+.search-popup button {
+  width: auto;
+  flex: 0 0 auto;
+}

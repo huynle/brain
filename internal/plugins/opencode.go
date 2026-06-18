@@ -53,13 +53,19 @@ var componentDir = map[string]string{
 	"skill":   "skill",
 	"command": "command",
 	"agent":   "agent",
+	"tool":    "tool",
 }
 
 var retiredOpenCodeFiles = []string{
+	"plugin/brain-planning.ts",
 	"skill/brain-dream-context/SKILL.md",
 	"skill/brain-planning/SKILL.md",
 	"skill/project-planning/SKILL.md",
 	"skill/writing-plans/SKILL.md",
+	"command/checkout-plan.md",
+	"command/execute-plan.md",
+	"command/validate-plan.md",
+	"tool/plan-checkout/index.ts",
 }
 
 // Install performs the installation of all brain components for OpenCode.
@@ -211,12 +217,12 @@ func (t *OpenCodeTarget) removeRetiredFiles(dryRun bool) (int, error) {
 func (t *OpenCodeTarget) resolveDestPath(relPath string) string {
 	parts := strings.SplitN(relPath, string(os.PathSeparator), 2)
 
-	// Top-level files (e.g., brain.ts, brain-planning.ts) -> plugin/
+	// Top-level files (e.g., brain.ts) -> plugin/
 	if len(parts) == 1 {
 		return filepath.Join(t.configPath, "plugin", relPath)
 	}
 
-	// Subdirectory files (e.g., skill/brain-planning/SKILL.md -> skill/brain-planning/SKILL.md)
+	// Subdirectory files (e.g., skill/brain-memory/SKILL.md -> skill/brain-memory/SKILL.md)
 	prefix := parts[0]
 	if _, ok := componentDir[prefix]; ok {
 		return filepath.Join(t.configPath, relPath)

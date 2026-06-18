@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
@@ -24,8 +24,12 @@ import { ListDetail } from "../components/layout/ListDetail";
 import { GoalConfigModal } from "./automations/GoalConfigModal";
 import { NewAutomationModal } from "./automations/NewGoalModal";
 import {
+  AUTOMATION_RUN_TASK_PAGE_SIZE,
+  type AutomationDisplayEntry,
   type AutomationRow,
+  automationShowMoreKey,
   childRunTasks,
+  flattenAutomationDisplay,
   normalizeAutomationRows,
   triggerLabel,
 } from "./automations/rows";
@@ -54,12 +58,6 @@ interface GoalProgress {
   blocked: number;
 }
 
-// A flattened display entry: an automation row, or one of its run-task children
-// (shown when the automation is expanded).
-type DisplayEntry =
-  | { kind: "auto"; row: AutomationRow }
-  | { kind: "task"; task: BrainEntry; parent: AutomationRow };
-
 const runTaskKey = (task: BrainEntry) => `automation-task:${task.id}`;
 
 export function AutomationsView() {
@@ -81,8 +79,12 @@ export function AutomationsView() {
   const [editEntry, setEditEntry] = useState<{ path: string; title?: string } | null>(null);
   const [creating, setCreating] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [visibleRunTaskLimits, setVisibleRunTaskLimits] = useState<Record<string, number>>({});
   const [confirmDel, setConfirmDel] = useState<BrainEntry[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
 
   const dataQ = useQuery({
     queryKey: ["automation-data", project ?? "all"],
@@ -135,26 +137,35 @@ export function AutomationsView() {
     return m;
   }, [tasks, goalsQ.data]);
 
-  // Flatten automations + their expanded children into one navigable list.
-  const display = useMemo<DisplayEntry[]>(() => {
-    const out: DisplayEntry[] = [];
-    for (const row of rows) {
-      out.push({ kind: "auto", row });
-      if (expandedId === row.id) {
-        for (const task of childRunTasks(row.id, tasks)) {
-          out.push({ kind: "task", task, parent: row });
-        }
-      }
-    }
-    return out;
-  }, [rows, expandedId, tasks]);
+  const filterText = query.trim().toLowerCase();
+  const filteredRows = useMemo(() => {
+    if (!filterText) return rows;
+    return rows.filter((row) =>
+      [row.title, row.id, row.source, row.scope, row.status, row.triggerKind, row.triggerDetail, row.runSummary, row.featureId]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(filterText)),
+    );
+  }, [rows, filterText]);
+  const filteredTasks = useMemo(() => {
+    if (!filterText) return tasks;
+    return tasks.filter((task) =>
+      [task.title, task.id, task.status, task.project_id, task.feature_id]
+        .filter(Boolean)
+        .some((value) => String(value).toLowerCase().includes(filterText)),
+    );
+  }, [tasks, filterText]);
+
+  const display = useMemo<AutomationDisplayEntry[]>(
+    () => flattenAutomationDisplay(filteredRows, filteredTasks, expandedId, visibleRunTaskLimits),
+    [filteredRows, filteredTasks, expandedId, visibleRunTaskLimits],
+  );
 
   const scope = "automations";
   const cursor = useNav((s) =>
     Math.min(s.cursor[scope] ?? 0, Math.max(0, display.length - 1)),
   );
   const runTaskList = useMemo(
-    () => display.filter((entry): entry is Extract<DisplayEntry, { kind: "task" }> => entry.kind === "task").map((entry) => entry.task),
+    () => display.filter((entry): entry is Extract<AutomationDisplayEntry, { kind: "task" }> => entry.kind === "task").map((entry) => entry.task),
     [display],
   );
   const selectedRunTasks = useMemo(
@@ -197,7 +208,7 @@ export function AutomationsView() {
     refresh();
   }
 
-  const deleteTargets = (cur?: DisplayEntry): BrainEntry[] =>
+  const deleteTargets = (cur?: AutomationDisplayEntry): BrainEntry[] =>
     selectedRunTasks.length ? selectedRunTasks : cur?.kind === "task" ? [cur.task] : [];
 
   function execute(row: AutomationRow) {
@@ -244,7 +255,25 @@ export function AutomationsView() {
   }
 
   function toggleExpand(row: AutomationRow) {
-    setExpandedId((id) => (id === row.id ? null : row.id));
+    setExpandedId((id) => {
+      if (id === row.id) {
+        setVisibleRunTaskLimits((limits) => {
+          const next = { ...limits };
+          delete next[row.id];
+          return next;
+        });
+        return null;
+      }
+      setVisibleRunTaskLimits((limits) => ({ ...limits, [row.id]: AUTOMATION_RUN_TASK_PAGE_SIZE }));
+      return row.id;
+    });
+  }
+
+  function showNextRunTaskPage(row: AutomationRow) {
+    setVisibleRunTaskLimits((limits) => ({
+      ...limits,
+      [row.id]: (limits[row.id] ?? AUTOMATION_RUN_TASK_PAGE_SIZE) + AUTOMATION_RUN_TASK_PAGE_SIZE,
+    }));
   }
 
   // Open a run-task's OpenCode session in the Control tab. A live instance is
@@ -321,6 +350,7 @@ export function AutomationsView() {
           return true;
         case "Enter":
           if (cur?.kind === "task") void openTaskInControl(cur.task);
+          else if (cur?.kind === "show-more") showNextRunTaskPage(cur.parent);
           else if (cur?.kind === "auto") {
             if (childRunTasks(cur.row.id, tasks).length > 0) toggleExpand(cur.row);
             else configure(cur.row);
@@ -335,6 +365,7 @@ export function AutomationsView() {
           return true;
         case " ":
           if (cur?.kind === "task") nav.toggleSelect(runTaskKey(cur.task));
+          else if (cur?.kind === "show-more") showNextRunTaskPage(cur.parent);
           else if (cur?.kind === "auto") toggle(cur.row);
           return true;
         case "A":
@@ -358,12 +389,19 @@ export function AutomationsView() {
         case "n":
           setCreating(true);
           return true;
+        case "/":
+          setSearchOpen(true);
+          return true;
         default:
           return false;
       }
     },
     [display, cursor, tasks, automationsPaused, instanceByTaskId, goalByEntryId, runTaskList, selectedRunTasks],
   );
+
+  useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
 
   useEffect(() => {
     const el = document.querySelector<HTMLElement>('[data-cursor="1"]');
@@ -373,7 +411,7 @@ export function AutomationsView() {
   const loading = dataQ.isLoading && !dataQ.data;
 
   const cur = display[cursor];
-  const selectedPath = cur ? (cur.kind === "auto" ? cur.row.path : cur.task.path) : null;
+  const selectedPath = cur?.kind === "auto" ? cur.row.path : cur?.kind === "task" ? cur.task.path : null;
   const logTarget =
     cur?.kind === "task"
       ? { taskId: cur.task.id, projectId: cur.task.project_id }
@@ -381,6 +419,35 @@ export function AutomationsView() {
 
   return (
     <ListDetail detailPath={selectedPath} logTarget={logTarget}>
+      {searchOpen && (
+        <div className="search-layer" onMouseDown={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}>
+          <div className="search-popup">
+            <span className="search-prompt">/</span>
+            <input
+              ref={searchRef}
+              placeholder="filter automations"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setSearchOpen(false);
+                if (e.key === "Enter") setSearchOpen(false);
+              }}
+            />
+            <button className="btn sm" type="button" onClick={() => { setQuery(""); searchRef.current?.focus(); }} disabled={!query}>
+              Clear
+            </button>
+            <button className="btn sm" type="button" onClick={refresh}>
+              Refresh
+            </button>
+            <button className={`btn sm `} type="button" onClick={toggleAutomationPause}>
+              {automationsPaused ? "resume" : "pause"}
+            </button>
+            <button className="btn sm primary" type="button" onClick={() => { setSearchOpen(false); setCreating(true); }}>
+              + New
+            </button>
+          </div>
+        </div>
+      )}
       <div className="row" style={{ gap: 8, padding: "2px 2px 6px", alignItems: "center" }}>
         {automationsPaused && (
           <Pill color="var(--red)">
@@ -399,9 +466,6 @@ export function AutomationsView() {
           </span>
         )}
         <div style={{ flex: 1 }} />
-        <span className="faint" style={{ fontSize: 11.5 }}>
-          x run · Spc select/toggle · d delete · Enter expand · e edit · o open/review · n new automation
-        </span>
         <button className="btn sm primary" onClick={() => setCreating(true)} title="New automation (n)">
           + New automation
         </button>
@@ -411,35 +475,50 @@ export function AutomationsView() {
         <Loading label="Loading automations…" />
       ) : dataQ.error ? (
         <ErrorState error={dataQ.error} onRetry={() => void dataQ.refetch()} />
-      ) : !rows.length ? (
+      ) : !display.length ? (
         <EmptyState
           glyph="⟳"
           title="No automations"
-          hint="Built-in automations, scheduled tasks, and goals appear here. Press n to create a new automation."
+          hint={query ? `Nothing matched “”.` : "Built-in automations, scheduled tasks, and goals appear here. Press n to create a new automation."}
         />
       ) : (
         <div>
-          {display.map((entry, i) =>
-            entry.kind === "auto" ? (
-              <AutomationRowView
-                key={"a:" + entry.row.id}
-                row={entry.row}
-                cursored={i === cursor}
-                hasChildren={childRunTasks(entry.row.id, tasks).length > 0}
-                expanded={expandedId === entry.row.id}
-                isGoalConfigurable={!!goalByEntryId.get(entry.row.id)}
-                progress={
-                  entry.row.isGoal
-                    ? progressByFeature.get(goalByEntryId.get(entry.row.id)?.feature_id ?? "")
-                    : undefined
-                }
-                onToggle={() => toggle(entry.row)}
-                onExecute={() => execute(entry.row)}
-                onReconcile={() => reconcile(entry.row)}
-                onConfigure={() => configure(entry.row)}
-                onExpand={() => toggleExpand(entry.row)}
-              />
-            ) : (
+          {display.map((entry, i) => {
+            if (entry.kind === "auto") {
+              return (
+                <AutomationRowView
+                  key={"a:" + entry.row.id}
+                  row={entry.row}
+                  cursored={i === cursor}
+                  hasChildren={childRunTasks(entry.row.id, filteredTasks).length > 0}
+                  expanded={expandedId === entry.row.id}
+                  isGoalConfigurable={!!goalByEntryId.get(entry.row.id)}
+                  progress={
+                    entry.row.isGoal
+                      ? progressByFeature.get(goalByEntryId.get(entry.row.id)?.feature_id ?? "")
+                      : undefined
+                  }
+                  onToggle={() => toggle(entry.row)}
+                  onExecute={() => execute(entry.row)}
+                  onReconcile={() => reconcile(entry.row)}
+                  onConfigure={() => configure(entry.row)}
+                  onExpand={() => toggleExpand(entry.row)}
+                />
+              );
+            }
+            if (entry.kind === "show-more") {
+              return (
+                <ShowMoreRunTasksRow
+                  key={automationShowMoreKey(entry.parent.id)}
+                  cursored={i === cursor}
+                  shown={entry.shown}
+                  total={entry.total}
+                  remaining={entry.remaining}
+                  onShowMore={() => showNextRunTaskPage(entry.parent)}
+                />
+              );
+            }
+            return (
               <RunTaskRow
                 key={"t:" + entry.task.id}
                 task={entry.task}
@@ -450,8 +529,8 @@ export function AutomationsView() {
                 onSelect={() => nav.toggleSelect(runTaskKey(entry.task))}
                 onOpen={() => void openTaskInControl(entry.task)}
               />
-            ),
-          )}
+            );
+          })}
         </div>
       )}
 
@@ -602,6 +681,47 @@ function AutomationRowView({
         </span>
       )}
     </div>
+  );
+}
+
+function ShowMoreRunTasksRow({
+  cursored,
+  shown,
+  total,
+  remaining,
+  onShowMore,
+}: {
+  cursored: boolean;
+  shown: number;
+  total: number;
+  remaining: number;
+  onShowMore: () => void;
+}) {
+  const nextCount = Math.min(AUTOMATION_RUN_TASK_PAGE_SIZE, remaining);
+  return (
+    <button
+      type="button"
+      className={`tree-row ${cursored ? "cursor" : ""}`}
+      data-cursor={cursored ? "1" : undefined}
+      style={{
+        gap: 4,
+        width: "100%",
+        border: 0,
+        background: "transparent",
+        color: "var(--cyan, var(--teal))",
+        font: "inherit",
+        textAlign: "left",
+        cursor: "pointer",
+        fontStyle: "italic",
+      }}
+      onClick={onShowMore}
+      title="Show the next page of generated automation tasks"
+    >
+      <span className="connector">{"   └─ "}</span>
+      <span className="glyph">▾</span>
+      <span className="title truncate">Show {nextCount} more</span>
+      <span className="suffix faint">({shown}/{total} shown)</span>
+    </button>
   );
 }
 

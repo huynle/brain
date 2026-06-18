@@ -4,6 +4,13 @@
 
 import { GOAL_GENERATED_BY, type BrainEntry } from "../../lib/types";
 
+export const AUTOMATION_RUN_TASK_PAGE_SIZE = 10;
+
+export type AutomationDisplayEntry =
+  | { kind: "auto"; row: AutomationRow }
+  | { kind: "task"; task: BrainEntry; parent: AutomationRow }
+  | { kind: "show-more"; parent: AutomationRow; shown: number; total: number; remaining: number };
+
 export interface AutomationRow {
   id: string;
   path: string;
@@ -191,4 +198,38 @@ export function childRunTasks(rowID: string, tasks: BrainEntry[]): BrainEntry[] 
   return tasks
     .filter((t) => t.generated_by === generatedBy)
     .sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? "") || b.id.localeCompare(a.id));
+}
+
+export function automationShowMoreKey(parentID: string): string {
+  return `automation-show-more:${parentID}`;
+}
+
+export function flattenAutomationDisplay(
+  rows: AutomationRow[],
+  tasks: BrainEntry[],
+  expandedID: string | null,
+  visibleRunTaskLimits: Record<string, number>,
+): AutomationDisplayEntry[] {
+  const out: AutomationDisplayEntry[] = [];
+  for (const row of rows) {
+    out.push({ kind: "auto", row });
+    if (expandedID !== row.id) continue;
+
+    const children = childRunTasks(row.id, tasks);
+    const limit = visibleRunTaskLimits[row.id] ?? AUTOMATION_RUN_TASK_PAGE_SIZE;
+    const shown = Math.min(limit, children.length);
+    for (const task of children.slice(0, shown)) {
+      out.push({ kind: "task", task, parent: row });
+    }
+    if (shown < children.length) {
+      out.push({
+        kind: "show-more",
+        parent: row,
+        shown,
+        total: children.length,
+        remaining: children.length - shown,
+      });
+    }
+  }
+  return out;
 }

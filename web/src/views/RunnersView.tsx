@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useLive } from "../lib/sse";
 import { ALL_PROJECTS, useUI } from "../store/ui";
 import { useNav } from "../store/nav";
@@ -24,7 +24,7 @@ import { relativeTime } from "../lib/format";
 import { sessionName } from "../lib/types";
 import type { ControlTarget } from "../store/ui";
 import type { OpencodeInstance, RunnerInfo } from "../lib/types";
-import { Chat } from "./control/Chat";
+import { Chat, type ChatHandle } from "./control/Chat";
 import { HistoryPane } from "./control/HistoryPane";
 import { latestInstanceSessionId, sortSessionsByExecutedTime } from "./control/sessionUtils";
 
@@ -448,6 +448,7 @@ function ExecutingTaskCard({
 
 function SessionModal({ instance, onClose }: { instance: OpencodeInstance; onClose: () => void }) {
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const chatRef = useRef<ChatHandle | null>(null);
   const sessionsQ = useQuery({
     queryKey: ["control-sessions", instance.runner_id, instance.instance_id],
     queryFn: () => controlListSessions(instance.runner_id, instance.instance_id),
@@ -461,12 +462,42 @@ function SessionModal({ instance, onClose }: { instance: OpencodeInstance; onClo
   }, [instance, sessions, sessionId]);
 
   const selected = sessions.find((session) => session.id === sessionId);
+
+  function moveSession(delta: 1 | -1) {
+    if (sessions.length === 0) return;
+    const current = Math.max(0, sessions.findIndex((session) => session.id === sessionId));
+    const next = (current + delta + sessions.length) % sessions.length;
+    setSessionId(sessions[next].id);
+  }
+
+  function handleModalKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement | null;
+    const tag = target?.tagName.toLowerCase();
+    const isTextInput = tag === "input" || tag === "textarea" || target?.isContentEditable;
+    if (isTextInput) return;
+    if (e.key === "j" || e.key === "ArrowDown") {
+      e.preventDefault();
+      moveSession(1);
+      return;
+    }
+    if (e.key === "k" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveSession(-1);
+      return;
+    }
+    if (e.key === "i") {
+      e.preventDefault();
+      chatRef.current?.focusPrompt();
+    }
+  }
+
   return (
     <Modal
       title={instance.title || instance.task_id || instance.instance_id}
       className="sheet-wide session-sheet"
       onClose={onClose}
     >
+      <div onKeyDown={handleModalKeyDown} tabIndex={-1}>
       <div className="session-modal-head">
         <span style={{ color: instanceStatusColor(instance.status) }}>▣ {instance.status}</span>
         <Chip label="project" value={instance.project_id} />
@@ -496,6 +527,7 @@ function SessionModal({ instance, onClose }: { instance: OpencodeInstance; onClo
       )}
       {sessionId ? (
         <Chat
+          ref={chatRef}
           runnerId={instance.runner_id}
           instanceId={instance.instance_id}
           sessionId={sessionId}
@@ -506,6 +538,7 @@ function SessionModal({ instance, onClose }: { instance: OpencodeInstance; onClo
       ) : (
         <EmptyState glyph="◌" title="No session selected" hint={sessionsQ.isLoading ? "Loading sessions…" : "No session is recorded for this instance yet."} />
       )}
+      </div>
     </Modal>
   );
 }

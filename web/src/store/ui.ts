@@ -65,8 +65,8 @@ interface UIState {
   _tid: number;
   // Set when a new service-worker build is waiting; calling it applies the
   // update and reloads. Null when no update is pending.
-  updateApply: (() => void) | null;
-  setUpdateApply: (fn: (() => void) | null) => void;
+  updateApply: (() => Promise<void> | void) | null;
+  setUpdateApply: (fn: (() => Promise<void> | void) | null) => void;
   setView: (v: View) => void;
   cycleView: (dir: 1 | -1) => void;
   setActiveProject: (p: string) => void;

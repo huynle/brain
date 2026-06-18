@@ -9,6 +9,7 @@ import { filterTasks, groupByFeature, UNGROUPED, type FeatureSortMode } from "./
 import { buildTaskTree } from "./tasks/tree";
 import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
+import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
 import { Panel } from "../components/layout/Panel";
 import { ConfirmDialog } from "../components/common/Modal";
 import { deleteEntry, listInstances, setTaskStatus, triggerTask } from "../lib/api";
@@ -100,6 +101,7 @@ export function TasksView() {
 
   const [mode, setMode] = useState<"tasks" | "schedules">("tasks");
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [showDone, setShowDone] = useState(false);
   const [featureSort, setFeatureSort] = useState<FeatureSortMode>("completed");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
@@ -109,6 +111,7 @@ export function TasksView() {
   const [viewContent, setViewContent] = useState<Task | null>(null);
   const [editContent, setEditContent] = useState<Task | null>(null);
   const [batchMeta, setBatchMeta] = useState<Task[] | null>(null);
+  const [featureMeta, setFeatureMeta] = useState<{ feature: string; tasks: Task[] } | null>(null);
   const [confirmDel, setConfirmDel] = useState<Task[] | null>(null);
   const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -118,7 +121,7 @@ export function TasksView() {
   const detailBodyRef = useRef<HTMLDivElement>(null);
   const logBodyRef = useRef<HTMLDivElement>(null);
 
-  const { rows, taskList, featureKeys } = useMemo(() => {
+  const { rows, taskList, featureKeys, tasksByFeature } = useMemo(() => {
     let list = filterTasks(tasks, query);
     if (mode === "schedules") list = list.filter((t) => t.schedule || t.run_once_at);
     else if (!showDone) list = list.filter((t) => !TERMINAL.includes(t.status));
@@ -126,7 +129,9 @@ export function TasksView() {
     const r: Row[] = [];
     const flat: Task[] = [];
     const keys: string[] = [];
+    const byFeature = new Map<string, Task[]>();
     for (const g of groups) {
+      byFeature.set(g.feature, g.tasks);
       const showHeader = g.feature !== UNGROUPED || groups.length > 1;
       if (showHeader) {
         keys.push(g.feature);
@@ -147,13 +152,17 @@ export function TasksView() {
         }
       }
     }
-    return { rows: r, taskList: flat, featureKeys: keys };
+    return { rows: r, taskList: flat, featureKeys: keys, tasksByFeature: byFeature };
   }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort]);
 
   useEffect(() => {
     setCollapsed({});
     setCollapseDefault(activeProject === ALL_PROJECTS);
   }, [activeProject]);
+
+  useEffect(() => {
+    if (searchOpen) filterRef.current?.focus();
+  }, [searchOpen]);
 
   useEffect(() => {
     if (cursor > rows.length - 1) nav.setCursor(scope, Math.max(0, rows.length - 1));
@@ -295,6 +304,12 @@ export function TasksView() {
           return true;
         }
         case "s": {
+          if (row?.kind === "header") {
+            const ts = tasksByFeature.get(row.feature) ?? [];
+            if (row.feature === UNGROUPED) toast("Ungrouped tasks do not have feature settings", "info");
+            else if (ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
+            return true;
+          }
           const ts = targets(cur);
           if (ts.length > 1) setBatchMeta(ts);
           else if (cur) setEditMeta(cur);
@@ -304,13 +319,13 @@ export function TasksView() {
         case "y":
           if (cur) { void navigator.clipboard?.writeText(cur.title || cur.id); toast("Copied title"); }
           return true;
-        case "/": filterRef.current?.focus(); return true;
+        case "/": setSearchOpen(true); return true;
         case "C": setMode((m) => (m === "tasks" ? "schedules" : "tasks")); nav.setCursor(scope, 0); return true;
         case "n": setComposing(true); return true;
         default: return false;
       }
     },
-    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, openInControl, toast],
+    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast],
   );
 
   async function doDelete(ts: Task[]) {
@@ -331,13 +346,15 @@ export function TasksView() {
         bodyRef={treeBodyRef}
         style={{ flex: 1 }}
       >
-        <div className="search-bar" style={{ padding: "2px 0 4px", position: "static", background: "transparent" }}>
+        <div className="search-layer" style={{ display: searchOpen ? undefined : "none" }} onMouseDown={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}>
+          <div className="search-popup">
+          <span className="search-prompt">/</span>
           <input
             ref={filterRef}
             placeholder="filter… (/)"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Escape") { setQuery(""); e.currentTarget.blur(); } }}
+            onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false); if (e.key === "Enter") setSearchOpen(false); }}
           />
           <button className="btn sm" onClick={() => setMode((m) => (m === "tasks" ? "schedules" : "tasks"))}>
             {mode === "schedules" ? "sched" : "tasks"}
@@ -362,7 +379,8 @@ export function TasksView() {
           )}
           <button className="btn sm" onClick={() => setAllFeatureCollapsed(true)} title="Collapse all features ({)">{"{"}</button>
           <button className="btn sm" onClick={() => setAllFeatureCollapsed(false)} title="Expand all features (})">{"}"}</button>
-          <button className="btn sm primary" onClick={() => setComposing(true)}>+</button>
+          <button className="btn sm primary" onClick={() => { setSearchOpen(false); setComposing(true); }}>+</button>
+          </div>
         </div>
 
         {rows.length === 0 ? (
@@ -385,6 +403,11 @@ export function TasksView() {
                   className={`tree-header ${isCur ? "cursor" : ""}`}
                   data-cursor={isCur ? "1" : undefined}
                   onClick={() => setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }))}
+                  onDoubleClick={() => {
+                    const ts = tasksByFeature.get(row.feature) ?? [];
+                    if (row.feature !== UNGROUPED && ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
+                  }}
+                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "s opens feature settings · Enter/Space toggles collapse"}
                 >
                   <span className="htri">{(collapsed[row.feature] ?? collapseDefault) ? "▸" : "▾"}</span>
                   {row.label}
@@ -486,6 +509,15 @@ export function TasksView() {
         </Suspense>
       )}
       {batchMeta && <BatchMetadataModal tasks={batchMeta} onClose={() => setBatchMeta(null)} onDone={() => nav.clearSelect()} />}
+      {featureMeta && (
+        <FeatureMetadataModal
+          feature={featureMeta.feature}
+          project={activeProject}
+          tasks={featureMeta.tasks}
+          onClose={() => setFeatureMeta(null)}
+          onDone={() => nav.clearSelect()}
+        />
+      )}
       {editContent && (
         <Suspense fallback={null}>
           <EntryEditModal

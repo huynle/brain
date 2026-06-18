@@ -2,7 +2,7 @@
 // streaming assistant messages, collapsed tool cards, permission banners
 // with allow/always/deny, abort, and a composer with agent/model selection.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -23,21 +23,25 @@ import {
   fileToAttachment,
 } from "./images";
 
-export function Chat({
-  runnerId,
-  instanceId,
-  sessionId,
-  defaultAgent,
-  defaultModel,
-  sessionLabel,
-}: {
+export interface ChatHandle {
+  focusPrompt: () => void;
+}
+
+export const Chat = forwardRef<ChatHandle, {
   runnerId: string;
   instanceId: string;
   sessionId: string;
   defaultAgent?: string;
   defaultModel?: string;
   sessionLabel?: string;
-}) {
+}>(function Chat({
+  runnerId,
+  instanceId,
+  sessionId,
+  defaultAgent,
+  defaultModel,
+  sessionLabel,
+}, ref) {
   const key = chatKey(runnerId, instanceId);
   const toast = useUI((s) => s.toast);
   const chat = useChat((s) => s.chats[key]);
@@ -54,6 +58,11 @@ export function Chat({
   const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focusPrompt: () => promptRef.current?.focus(),
+  }), []);
 
   useEffect(() => {
     setAgent(defaultAgent ?? "");
@@ -300,6 +309,7 @@ export function Chat({
           </div>
         )}
         <textarea
+          ref={promptRef}
           value={text}
           placeholder={
             dragOver
@@ -360,7 +370,7 @@ export function Chat({
       </div>
     </div>
   );
-}
+});
 
 function compactModelLabel(model: string) {
   const name = model.split("/").pop() ?? model;

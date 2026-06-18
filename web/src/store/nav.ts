@@ -8,6 +8,7 @@ interface NavState {
   cursor: Record<string, number>; // scope -> index
   selected: Record<string, true>; // composite key -> selected
   helpOpen: boolean;
+  commandOpen: boolean;
 
   getCursor: (scope: string) => number;
   setCursor: (scope: string, n: number) => void;
@@ -21,6 +22,7 @@ interface NavState {
   selectedCount: () => number;
 
   setHelpOpen: (open: boolean) => void;
+  setCommandOpen: (open: boolean) => void;
 }
 
 function clamp(n: number, max: number) {
@@ -32,6 +34,7 @@ export const useNav = create<NavState>((set, get) => ({
   cursor: {},
   selected: {},
   helpOpen: false,
+  commandOpen: false,
 
   getCursor: (scope) => get().cursor[scope] ?? 0,
   setCursor: (scope, n) =>
@@ -61,4 +64,5 @@ export const useNav = create<NavState>((set, get) => ({
   selectedCount: () => Object.keys(get().selected).length,
 
   setHelpOpen: (open) => set({ helpOpen: open }),
+  setCommandOpen: (open) => set({ commandOpen: open }),
 }));

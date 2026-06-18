@@ -37,6 +37,13 @@ type AutomationListRow struct {
 	GoalTotal int
 }
 
+const (
+	// automationRunTaskPageSize is the number of child run tasks initially visible
+	// when an automation is expanded. The "show more" pseudo-row allows revealing
+	// additional pages of this size until all tasks are visible.
+	automationRunTaskPageSize = 10
+)
+
 // AutomationList displays automation entries and cron/run-once task entries.
 type AutomationList struct {
 	SelectedID string
@@ -50,11 +57,18 @@ type AutomationList struct {
 	loading           bool
 	errMsg            string
 	scrollOffset      int
+
+	// visibleRunTaskLimits tracks how many child run tasks to show for each
+	// expanded automation (keyed by automation ID). Incremented by page size
+	// when the user selects "show more".
+	visibleRunTaskLimits map[string]int
 }
 
 // NewAutomationList creates an empty AutomationList component.
 func NewAutomationList() AutomationList {
-	return AutomationList{}
+	return AutomationList{
+		visibleRunTaskLimits: make(map[string]int),
+	}
 }
 
 // SetLoading toggles the loading state and clears stale errors when loading.
@@ -172,20 +186,43 @@ func (al *AutomationList) Update(msg tea.Msg) {
 // MoveDown moves the cursor down one row.
 func (al *AutomationList) MoveDown() {
 	if al.expandedID == al.SelectedID {
-		runs := al.runTasksForSelectedRow()
-		if len(runs) > 0 {
+		visibleRuns := al.visibleRunTasksForSelectedRow()
+		hasMore := al.hasMoreRunTasksToShow()
+		
+		if len(visibleRuns) > 0 || hasMore {
+			// Starting from parent row, move to first visible run task
 			if al.selectedRunTaskID == "" {
-				al.selectedRunTaskID = runs[0].ID
+				if len(visibleRuns) > 0 {
+					al.selectedRunTaskID = visibleRuns[0].ID
+				} else if hasMore {
+					al.selectedRunTaskID = al.showMoreID()
+				}
 				return
 			}
-			for i, task := range runs {
-				if task.ID == al.selectedRunTaskID && i < len(runs)-1 {
-					al.selectedRunTaskID = runs[i+1].ID
+			
+			// Move through visible run tasks
+			for i, task := range visibleRuns {
+				if task.ID == al.selectedRunTaskID {
+					if i < len(visibleRuns)-1 {
+						al.selectedRunTaskID = visibleRuns[i+1].ID
+					} else if hasMore {
+						// Move from last visible task to "show more" pseudo-row
+						al.selectedRunTaskID = al.showMoreID()
+					}
 					return
 				}
 			}
+			
+			// Already on "show more" pseudo-row, move to next parent row
+			if al.selectedRunTaskID == al.showMoreID() {
+				// Fall through to move to next parent row below
+			} else {
+				return
+			}
 		}
 	}
+	
+	// Move to next parent row
 	if al.Cursor < len(al.rows)-1 {
 		al.Cursor++
 		al.SelectedID = al.rows[al.Cursor].ID
@@ -196,11 +233,23 @@ func (al *AutomationList) MoveDown() {
 // MoveUp moves the cursor up one row.
 func (al *AutomationList) MoveUp() {
 	if al.expandedID == al.SelectedID && al.selectedRunTaskID != "" {
-		runs := al.runTasksForSelectedRow()
-		for i, task := range runs {
+		visibleRuns := al.visibleRunTasksForSelectedRow()
+		
+		// If on "show more" pseudo-row, move to last visible task
+		if al.selectedRunTaskID == al.showMoreID() {
+			if len(visibleRuns) > 0 {
+				al.selectedRunTaskID = visibleRuns[len(visibleRuns)-1].ID
+			} else {
+				al.selectedRunTaskID = ""
+			}
+			return
+		}
+		
+		// Move up through visible run tasks
+		for i, task := range visibleRuns {
 			if task.ID == al.selectedRunTaskID {
 				if i > 0 {
-					al.selectedRunTaskID = runs[i-1].ID
+					al.selectedRunTaskID = visibleRuns[i-1].ID
 				} else {
 					al.selectedRunTaskID = ""
 				}
@@ -210,6 +259,8 @@ func (al *AutomationList) MoveUp() {
 		al.selectedRunTaskID = ""
 		return
 	}
+	
+	// Move to previous parent row
 	if al.Cursor > 0 {
 		al.Cursor--
 		al.SelectedID = al.rows[al.Cursor].ID
@@ -253,6 +304,14 @@ func (al *AutomationList) ToggleExpandedSelected() {
 	if al.SelectedID == "" {
 		return
 	}
+	
+	// If "show more" pseudo-row is selected, expand to reveal the next page
+	// (only check when we're actually expanded and have a non-empty show-more ID)
+	if al.expandedID != "" && al.selectedRunTaskID == al.showMoreID() {
+		al.expandNextPage()
+		return
+	}
+	
 	if al.selectedRunTaskID != "" {
 		return
 	}
@@ -262,9 +321,13 @@ func (al *AutomationList) ToggleExpandedSelected() {
 	if al.expandedID == al.SelectedID {
 		al.expandedID = ""
 		al.selectedRunTaskID = ""
+		// Reset visible limit when collapsing
+		delete(al.visibleRunTaskLimits, al.SelectedID)
 		return
 	}
 	al.expandedID = al.SelectedID
+	// Initialize visible limit to first page
+	al.visibleRunTaskLimits[al.SelectedID] = automationRunTaskPageSize
 	runs := al.runTasksForSelectedRow()
 	if len(runs) > 0 {
 		al.selectedRunTaskID = runs[0].ID
@@ -273,8 +336,42 @@ func (al *AutomationList) ToggleExpandedSelected() {
 	}
 }
 
+// expandNextPage increases the visible task limit by one page size and moves
+// selection to the first newly revealed task, or keeps it on "show more" if
+// more pages remain.
+func (al *AutomationList) expandNextPage() {
+	if al.expandedID == "" || al.SelectedID != al.expandedID {
+		return
+	}
+	
+	currentLimit := al.visibleRunTaskLimits[al.expandedID]
+	allTasks := al.runTasksForSelectedRow()
+	newLimit := currentLimit + automationRunTaskPageSize
+	if newLimit > len(allTasks) {
+		newLimit = len(allTasks)
+	}
+	al.visibleRunTaskLimits[al.expandedID] = newLimit
+	
+	// Move selection to first newly revealed task
+	if currentLimit < len(allTasks) {
+		al.selectedRunTaskID = allTasks[currentLimit].ID
+	}
+}
+
+// showMoreID returns the sentinel ID for the "show more" pseudo-row.
+func (al *AutomationList) showMoreID() string {
+	if al.expandedID == "" {
+		return ""
+	}
+	return "__show_more__:" + al.expandedID
+}
+
 func (al *AutomationList) SelectedRunTask() (types.BrainEntry, bool) {
 	if al.expandedID != al.SelectedID || al.selectedRunTaskID == "" {
+		return types.BrainEntry{}, false
+	}
+	// "show more" pseudo-row is not a real task
+	if al.selectedRunTaskID == al.showMoreID() {
 		return types.BrainEntry{}, false
 	}
 	for _, task := range al.runTasksForSelectedRow() {
@@ -367,8 +464,24 @@ func (al *AutomationList) View(width, height int) string {
 	for i := start; i < end; i++ {
 		lines = append(lines, al.renderRow(al.rows[i], i == al.Cursor, al.rowHasRunTasks(al.rows[i]), al.expandedID == al.rows[i].ID, width))
 		if al.expandedID == al.rows[i].ID {
-			for _, task := range al.runTasksForRow(al.rows[i]) {
+			// Render visible run tasks
+			allTasks := al.runTasksForRow(al.rows[i])
+			limit := al.visibleRunTaskLimits[al.expandedID]
+			if limit == 0 {
+				limit = len(allTasks)
+			}
+			visibleTasks := allTasks
+			if limit < len(allTasks) {
+				visibleTasks = allTasks[:limit]
+			}
+			
+			for _, task := range visibleTasks {
 				lines = append(lines, al.renderRunTaskRow(task, width))
+			}
+			
+			// Render "show more" pseudo-row if more tasks exist
+			if limit < len(allTasks) {
+				lines = append(lines, al.renderShowMoreRow(limit, len(allTasks), width))
 			}
 		}
 	}
@@ -382,6 +495,28 @@ func (al *AutomationList) runTasksForSelectedRow() []types.BrainEntry {
 		return nil
 	}
 	return al.runTasksForRow(*row)
+}
+
+// visibleRunTasksForSelectedRow returns only the visible slice of run tasks
+// for the currently selected (and expanded) automation, respecting the page limit.
+func (al *AutomationList) visibleRunTasksForSelectedRow() []types.BrainEntry {
+	allTasks := al.runTasksForSelectedRow()
+	limit := al.visibleRunTaskLimits[al.expandedID]
+	if limit == 0 || limit > len(allTasks) {
+		return allTasks
+	}
+	return allTasks[:limit]
+}
+
+// hasMoreRunTasksToShow returns true if the expanded automation has more run
+// tasks beyond the current visible limit.
+func (al *AutomationList) hasMoreRunTasksToShow() bool {
+	if al.expandedID == "" {
+		return false
+	}
+	allTasks := al.runTasksForSelectedRow()
+	limit := al.visibleRunTaskLimits[al.expandedID]
+	return limit > 0 && limit < len(allTasks)
 }
 
 func (al *AutomationList) rowHasRunTasks(row AutomationListRow) bool {
@@ -431,6 +566,29 @@ func (al *AutomationList) renderRunTaskRow(task types.BrainEntry, width int) str
 		line = truncateTitle(line, width)
 	}
 	return line
+}
+
+// renderShowMoreRow renders the "show N more" pseudo-row that allows the user
+// to reveal the next page of run tasks.
+func (al *AutomationList) renderShowMoreRow(shown, total int, width int) string {
+	marker := "  "
+	if al.selectedRunTaskID == al.showMoreID() {
+		marker = "▸ "
+	}
+	remaining := total - shown
+	line := fmt.Sprintf("  %sShow %d more (%d/%d shown)", marker, min(automationRunTaskPageSize, remaining), shown, total)
+	lineStyle := lipgloss.NewStyle().Foreground(ColorCyan).Italic(true)
+	if width > 0 && lipgloss.Width(line) > width {
+		line = truncateTitle(line, width)
+	}
+	return lineStyle.Render(line)
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
 }
 
 func (al *AutomationList) runTaskSessionID(task types.BrainEntry) string {

@@ -5,6 +5,7 @@ import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import { useIsMobile } from "../hooks/useIsMobile";
 import {
+  createEntry,
   executeAutomation,
   getEntry,
   getRunnerStatus,
@@ -222,14 +223,60 @@ export function AutomationsView() {
     });
   }
 
+  async function toggleBuiltInAutomation(row: AutomationRow, status: string) {
+    if (!project) throw new Error("Select a project before toggling built-in automations");
+    const key = automationTemplateKey(row);
+    const existing = automations.find(
+      (entry) => automationTemplateKey(entry) === key && automationEntryScope(entry) === "project",
+    );
+    if (existing) {
+      await updateEntry(existing.path || existing.id, { status });
+      return;
+    }
+
+    const template = await getEntry(row.path || row.id);
+    await createEntry({
+      type: "automation",
+      title: template.title,
+      content: template.content,
+      tags: template.tags,
+      status,
+      priority: template.priority,
+      project,
+      trigger: template.trigger,
+      action: template.action,
+      agent: template.agent,
+      model: template.model,
+      executor: template.executor,
+      execution_mode: template.execution_mode,
+      complete_on_idle: template.complete_on_idle,
+      target_workdir: template.target_workdir,
+      generated_by: template.generated_by,
+    });
+  }
+
   function toggle(row: AutomationRow) {
-    const patch =
-      row.source === "automation"
-        ? { status: row.enabled ? "archived" : "active" }
-        : { schedule_enabled: !row.enabled };
-    void run(row.enabled ? "Disabled" : "Enabled", () =>
-      updateEntry(row.path || row.id, patch),
-    ).then(refresh);
+    const nextStatus = row.enabled ? "archived" : "active";
+    void run(row.enabled ? "Disabled" : "Enabled", () => {
+      if (row.source === "automation") {
+        if (row.scope === "built-in") return toggleBuiltInAutomation(row, nextStatus);
+        return updateEntry(row.path || row.id, { status: nextStatus });
+      }
+      return updateEntry(row.path || row.id, { schedule_enabled: !row.enabled });
+    }).then(refresh);
+  }
+
+
+  function automationEntryScope(entry: BrainEntry): string {
+    if (entry.path?.startsWith("global/")) return "built-in";
+    if (entry.project_id || entry.path?.startsWith("projects/")) return "project";
+    return "unknown";
+  }
+
+  function automationTemplateKey(entry: Pick<BrainEntry, "id" | "path" | "title" | "generated_by"> | AutomationRow): string {
+    if ("generated_by" in entry && entry.generated_by) return `generated:${entry.generated_by}`;
+    if (entry.title) return `title:${entry.title.trim().toLowerCase()}`;
+    return entry.path || entry.id;
   }
 
   function reconcile(row: AutomationRow) {

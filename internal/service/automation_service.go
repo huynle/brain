@@ -200,6 +200,9 @@ func automationMatchesEvent(automation types.BrainEntry, evt types.Event) bool {
 }
 
 func automationMatchesNamedEvent(automation types.BrainEntry, evt types.Event) bool {
+	if !globalAutomationMatchesProjectEvent(automation, evt) {
+		return false
+	}
 	if !automation.Trigger.MatchesEvent(evt.Type) {
 		return false
 	}
@@ -212,6 +215,9 @@ func automationMatchesNamedEvent(automation types.BrainEntry, evt types.Event) b
 }
 
 func automationMatchesWebhook(automation types.BrainEntry, evt types.Event) bool {
+	if !globalAutomationMatchesProjectEvent(automation, evt) {
+		return false
+	}
 	if evt.Type != "webhook.received" {
 		return false
 	}
@@ -232,6 +238,9 @@ func normalizeWebhookPath(path string) string {
 }
 
 func automationMatchesSession(automation types.BrainEntry, evt types.Event) bool {
+	if !globalAutomationMatchesProjectEvent(automation, evt) {
+		return false
+	}
 	if evt.Type != types.EventRunnerSessionDiscovered {
 		return false
 	}
@@ -241,6 +250,16 @@ func automationMatchesSession(automation types.BrainEntry, evt types.Event) bool
 		}
 	}
 	return matchAutomationFilters(automation.Trigger.Filter, evt)
+}
+
+func globalAutomationMatchesProjectEvent(automation types.BrainEntry, evt types.Event) bool {
+	if automation.ProjectID != "" || evt.ProjectID == "" {
+		return true
+	}
+	if automation.Trigger == nil {
+		return false
+	}
+	return automation.Trigger.Filter["project"] == "*" || automation.Trigger.Filter["project_id"] == "*"
 }
 
 func matchAutomationFilters(filters map[string]string, evt types.Event) bool {

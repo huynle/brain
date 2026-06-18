@@ -5288,7 +5288,7 @@ func (m *Model) toggleSelectedAutomationRow() tea.Cmd {
 	if row == nil {
 		return nil
 	}
-	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row)
+	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row, m.activeAutomationProject())
 }
 
 func (m *Model) runSelectedAutomationRow() tea.Cmd {
@@ -5898,7 +5898,7 @@ func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 			if err != nil {
 				return AutomationDataMsg{Error: fmt.Errorf("fetch global automation entries: %w", err)}
 			}
-			automations.Entries = appendUniqueAutomationEntries(globalAutomations.Entries, automations.Entries)
+			automations.Entries = appendUniqueAutomationEntries(projectDisabledAutomationTemplates(globalAutomations.Entries), automations.Entries)
 		}
 		tasks, err := apiClient.ListEntries(ctx, taskParams)
 		if err != nil {
@@ -5939,28 +5939,57 @@ func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 	}
 }
 
+func projectDisabledAutomationTemplates(entries []types.BrainEntry) []types.BrainEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	templates := make([]types.BrainEntry, len(entries))
+	copy(templates, entries)
+	for i := range templates {
+		if templates[i].ProjectID == "" && strings.HasPrefix(templates[i].Path, "global/") {
+			templates[i].Status = "archived"
+		}
+	}
+	return templates
+}
+
 func appendUniqueAutomationEntries(first, second []types.BrainEntry) []types.BrainEntry {
 	entries := make([]types.BrainEntry, 0, len(first)+len(second))
-	seen := make(map[string]struct{}, len(first)+len(second))
+	indexByKey := make(map[string]int, len(first)+len(second))
 	for _, group := range [][]types.BrainEntry{first, second} {
 		for _, entry := range group {
-			key := entry.Path
+			key := automationTemplateKey(entry)
 			if key == "" {
-				key = entry.ID
+				entries = append(entries, entry)
+				continue
 			}
-			if key != "" {
-				if _, ok := seen[key]; ok {
-					continue
+			if idx, ok := indexByKey[key]; ok {
+				if entry.ProjectID != "" || strings.HasPrefix(entry.Path, "projects/") {
+					entries[idx] = entry
 				}
-				seen[key] = struct{}{}
+				continue
 			}
+			indexByKey[key] = len(entries)
 			entries = append(entries, entry)
 		}
 	}
 	return entries
 }
 
-func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd {
+func automationTemplateKey(entry types.BrainEntry) string {
+	if entry.GeneratedBy != "" {
+		return "generated:" + entry.GeneratedBy
+	}
+	if entry.Title != "" {
+		return "title:" + strings.ToLower(strings.TrimSpace(entry.Title))
+	}
+	if entry.Path != "" {
+		return "path:" + entry.Path
+	}
+	return entry.ID
+}
+
+func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeProject string) tea.Cmd {
 	return func() tea.Msg {
 		path := row.Path
 		if path == "" {
@@ -5970,12 +5999,63 @@ func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.
 			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("automation row has no path or id")}
 		}
 
+		apiClient := runner.NewAPIClient(cfg)
 		updates := map[string]interface{}{}
 		switch row.Source {
 		case "automation":
 			newStatus := "active"
 			if row.Enabled || row.Status == "active" {
 				newStatus = "archived"
+			}
+			if row.Scope == "global" || row.Scope == "built-in" || strings.HasPrefix(path, "global/") {
+				if activeProject == "" || activeProject == "all" {
+					return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("built-in automation toggle requires an active project")}
+				}
+				existing, err := apiClient.ListEntries(context.Background(), map[string]string{"type": "automation", "project": activeProject})
+				if err != nil {
+					return AutomationToggleMsg{RowID: row.ID, Error: err}
+				}
+				rowEntry := types.BrainEntry{ID: row.ID, Path: row.Path, Title: row.Title, Status: row.Status}
+				rowKey := automationTemplateKey(rowEntry)
+				for _, entry := range existing.Entries {
+					if automationTemplateKey(entry) == rowKey {
+						_, err := apiClient.UpdateEntry(context.Background(), entry.Path, map[string]interface{}{"status": newStatus})
+						return AutomationToggleMsg{RowID: row.ID, Error: err}
+					}
+				}
+				template, err := apiClient.GetEntry(context.Background(), path)
+				if err != nil {
+					return AutomationToggleMsg{RowID: row.ID, Error: err}
+				}
+				generated := true
+				_, err = apiClient.CreateEntry(context.Background(), types.CreateEntryRequest{
+					Type:               "automation",
+					Title:              template.Title,
+					Content:            template.Content,
+					Tags:               template.Tags,
+					Status:             newStatus,
+					Priority:           template.Priority,
+					Project:            activeProject,
+					Trigger:            template.Trigger,
+					Action:             template.Action,
+					Retry:              template.Retry,
+					DirectPrompt:       template.DirectPrompt,
+					Agent:              template.Agent,
+					Model:              template.Model,
+					Executor:           template.Executor,
+					ExecutionMode:      template.ExecutionMode,
+					SessionMode:        template.SessionMode,
+					CompleteOnIdle:     template.CompleteOnIdle,
+					TargetWorkdir:      template.TargetWorkdir,
+					MergeTargetBranch:  template.MergeTargetBranch,
+					MergePolicy:        template.MergePolicy,
+					MergeStrategy:      template.MergeStrategy,
+					RemoteBranchPolicy: template.RemoteBranchPolicy,
+					OpenPRBeforeMerge:  template.OpenPRBeforeMerge,
+					Generated:          &generated,
+					GeneratedBy:        template.GeneratedBy,
+				})
+				return AutomationToggleMsg{RowID: row.ID, Error: err}
 			}
 			updates["status"] = newStatus
 		case "task":
@@ -5984,7 +6064,6 @@ func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.
 			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("unknown automation row source %q", row.Source)}
 		}
 
-		apiClient := runner.NewAPIClient(cfg)
 		_, err := apiClient.UpdateEntry(context.Background(), path, updates)
 		return AutomationToggleMsg{RowID: row.ID, Error: err}
 	}

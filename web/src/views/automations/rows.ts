@@ -127,14 +127,16 @@ function triggerOf(entry: BrainEntry): { kind: string; detail: string } {
 function rowFromAutomation(entry: BrainEntry, runs: Map<string, RunSummary>): AutomationRow {
   const trig = triggerOf(entry);
   const summary = runs.get(entry.id);
+  const scope = entryScope(entry);
+  const status = scope === "built-in" ? "archived" : entry.status;
   return {
     id: entry.id,
     path: entry.path,
     title: entry.title,
     source: "automation",
-    scope: entryScope(entry),
-    status: entry.status,
-    enabled: entry.status === "active",
+    scope,
+    status,
+    enabled: status === "active",
     isGoal: entry.generated_by === GOAL_GENERATED_BY,
     featureId: entry.feature_id ?? "",
     triggerKind: trig.kind,
@@ -165,6 +167,13 @@ function rowFromScheduledTask(task: BrainEntry): AutomationRow {
   };
 }
 
+
+function automationTemplateKey(entry: BrainEntry): string {
+  if (entry.generated_by) return `generated:${entry.generated_by}`;
+  if (entry.title) return `title:${entry.title.trim().toLowerCase()}`;
+  return entry.path || entry.id;
+}
+
 // triggerLabel renders the "event:…" / "cron:…" string the TUI shows.
 export function triggerLabel(row: AutomationRow): string {
   if (!row.triggerKind) return "manual";
@@ -179,7 +188,13 @@ export function normalizeAutomationRows(
   runs: BrainEntry[],
 ): AutomationRow[] {
   const summaries = buildRunSummaries(tasks, runs);
-  const rows: AutomationRow[] = automations.map((e) => rowFromAutomation(e, summaries));
+  const byTemplate = new Map<string, BrainEntry>();
+  for (const entry of automations) {
+    const key = automationTemplateKey(entry);
+    const existing = byTemplate.get(key);
+    if (!existing || entryScope(entry) === "project") byTemplate.set(key, entry);
+  }
+  const rows: AutomationRow[] = [...byTemplate.values()].map((e) => rowFromAutomation(e, summaries));
 
   for (const task of tasks) {
     if (task.schedule || task.run_once_at) rows.push(rowFromScheduledTask(task));

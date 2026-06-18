@@ -127,6 +127,55 @@ func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *t
 	}
 }
 
+func TestAutomationService_GlobalAutomationWithoutWildcardDoesNotMatchProjectEvents(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	global := true
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Global template automation",
+		Content: "Stores built-in automation content globally without enabling it everywhere.",
+		Status:  "active",
+		Global:  &global,
+		Trigger: &types.TriggerConfig{
+			Type:  "event",
+			Event: types.EventTaskCompleted,
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Inspect completed task.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save global automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-global-template-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "project-a",
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "project-a",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 0 {
+		t.Fatalf("expected no generated tasks for project event, got %d", len(resp.Entries))
+	}
+}
+
 func TestEnsureBuiltInFeatureCheckoutAutomationCreatesAutomation(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()
@@ -213,6 +262,37 @@ func TestBuiltInFeatureCheckoutAutomationCreatesFeatureCheckoutTask(t *testing.T
 		OpenPRBeforeMerge:  &openPR,
 	}); err != nil {
 		t.Fatalf("EnsureBuiltInFeatureCheckoutAutomation failed: %v", err)
+	}
+
+	templates, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Status: "active", Limit: 10})
+	if err != nil {
+		t.Fatalf("List built-in automation templates failed: %v", err)
+	}
+	if len(templates.Entries) != 1 {
+		t.Fatalf("expected one built-in automation template, got %d", len(templates.Entries))
+	}
+	template := templates.Entries[0]
+	generated := true
+	_, err = brain.Save(ctx, types.CreateEntryRequest{
+		Type:               "automation",
+		Title:              template.Title,
+		Content:            template.Content,
+		Status:             "active",
+		Project:            "brain",
+		Trigger:            template.Trigger,
+		Action:             template.Action,
+		ExecutionMode:      template.ExecutionMode,
+		TargetWorkdir:      template.TargetWorkdir,
+		MergeTargetBranch:  template.MergeTargetBranch,
+		MergePolicy:        template.MergePolicy,
+		MergeStrategy:      template.MergeStrategy,
+		RemoteBranchPolicy: template.RemoteBranchPolicy,
+		OpenPRBeforeMerge:  template.OpenPRBeforeMerge,
+		Generated:          &generated,
+		GeneratedBy:        template.GeneratedBy,
+	})
+	if err != nil {
+		t.Fatalf("Save project-scoped built-in automation failed: %v", err)
 	}
 
 	automation := NewAutomationService(brain)

@@ -8,6 +8,7 @@ export function Modal({
   footer,
   className,
   onEdit,
+  storageKey,
 }: {
   title: string;
   onClose: () => void;
@@ -17,11 +18,14 @@ export function Modal({
   className?: string;
   /** Optional action wired to the modal-level edit shortcut (`e`). */
   onEdit?: () => void;
+  /** Stable preference key for remembering modal size on this browser. */
+  storageKey?: string;
 }) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(false);
+  const modalStorageKey = storageKey ?? modalPreferenceKey(title, className);
+  const [expanded, setExpanded] = useState(() => readExpandedPreference(modalStorageKey));
 
   useEffect(() => {
     const dialog = dialogRef.current;
@@ -73,7 +77,7 @@ export function Modal({
 
       if (e.key === "m") {
         e.preventDefault();
-        setExpanded((v) => !v);
+        toggleExpanded();
         return;
       }
 
@@ -125,7 +129,15 @@ export function Modal({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [onClose, onEdit]);
+  }, [modalStorageKey, onClose, onEdit]);
+
+  function toggleExpanded() {
+    setExpanded((v) => {
+      const next = !v;
+      writeExpandedPreference(modalStorageKey, next);
+      return next;
+    });
+  }
 
   const sheetClass = ["sheet", className, expanded ? "sheet-expanded" : ""]
     .filter(Boolean)
@@ -144,7 +156,7 @@ export function Modal({
           <h2>{title}</h2>
           <button
             className="icon-btn"
-            onClick={() => setExpanded((v) => !v)}
+            onClick={toggleExpanded}
             aria-label={expanded ? "restore window" : "expand window"}
             title={expanded ? "Restore (m)" : "Expand (m)"}
           >
@@ -159,6 +171,30 @@ export function Modal({
       </div>
     </div>
   );
+}
+
+const MODAL_SIZE_PREF_PREFIX = "brain.modal.expanded.";
+
+function modalPreferenceKey(title: string, className?: string): string {
+  const stableTitle = title.replace(/ · .*/, "");
+  const stableClass = className?.trim().split(/\s+/).sort().join(".") || "default";
+  return stableClass + "." + stableTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function readExpandedPreference(key: string): boolean {
+  try {
+    return localStorage.getItem(MODAL_SIZE_PREF_PREFIX + key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeExpandedPreference(key: string, expanded: boolean) {
+  try {
+    localStorage.setItem(MODAL_SIZE_PREF_PREFIX + key, expanded ? "1" : "0");
+  } catch {
+    // Storage can be unavailable in private/restricted contexts; the modal still works.
+  }
 }
 
 function getFocusableElements(root: HTMLElement | null): HTMLElement[] {

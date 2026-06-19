@@ -293,6 +293,8 @@ func CommonBuildPrompt(task *types.ResolvedTask, isResume bool) string {
 		return task.DirectPrompt
 	}
 
+	taskContent := formatTaskContentForPrompt(task.Content)
+
 	if isResume {
 		return fmt.Sprintf(`Load the brain-runner-queue skill and RESUME the interrupted task at brain path: %s
 
@@ -308,7 +310,7 @@ Use brain_recall to read the task details, then:
 7. Capture commit hash (`+"`git rev-parse HEAD`"+`)
 8. Mark as completed with summary and include commit hash (note that this was a resumed task)
 
-Start now.`, task.Path)
+Start now.%s`, task.Path, taskContent)
 	}
 
 	return fmt.Sprintf(`Load the brain-runner-queue skill and process the task at brain path: %s
@@ -322,7 +324,14 @@ Use brain_recall to read the task details, then follow the brain-runner-queue sk
 6. Capture commit hash (`+"`git rev-parse HEAD`"+`)
 7. Mark as completed with summary and include commit hash
 
-Start now.`, task.Path)
+Start now.%s`, task.Path, taskContent)
+}
+
+func formatTaskContentForPrompt(content string) string {
+	if content == "" {
+		return ""
+	}
+	return fmt.Sprintf("\n\nTask content from Brain API:\n\n```markdown\n%s\n```", content)
 }
 
 // =============================================================================

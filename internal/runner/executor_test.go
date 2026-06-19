@@ -90,6 +90,26 @@ func TestExecutor_BuildPrompt_NewTask(t *testing.T) {
 	}
 }
 
+func TestExecutor_BuildPrompt_IncludesTaskContentWithFrontmatter(t *testing.T) {
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Content = "---\ntitle: Frontmatter passthrough test\nstatus: pending\n---\n\n# Frontmatter passthrough test\n\nTask content here."
+
+	prompt := e.BuildPrompt(task, false)
+
+	if !strings.Contains(prompt, "Task content from Brain API:") {
+		t.Fatal("prompt should include task content section")
+	}
+	if !strings.Contains(prompt, "title: Frontmatter passthrough test") {
+		t.Error("prompt should preserve frontmatter fields")
+	}
+	if !strings.Contains(prompt, "Task content here.") {
+		t.Error("prompt should preserve task body")
+	}
+}
+
 func TestExecutor_BuildPrompt_ResumeTask(t *testing.T) {
 	cfg := testExecutorConfig()
 	e := NewExecutor(cfg)

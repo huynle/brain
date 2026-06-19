@@ -68,6 +68,7 @@ type Client interface {
 	UpdateEntry(ctx context.Context, entryPath string, updates map[string]interface{}) (*types.BrainEntry, error)
 	UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error
 	GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error)
+	ListEntries(ctx context.Context, params map[string]string) (*types.ListEntriesResponse, error)
 	RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error)
 	SendHeartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error
 	DeregisterRunner(ctx context.Context, runnerID string) error
@@ -395,6 +396,12 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 
 	// Register with the Brain API (non-fatal on failure for backward compat)
 	tr.registerWithAPI(ctx)
+
+	// Reap orphaned in_progress tasks left behind by a previous runner crash.
+	// Runs after registerWithAPI so we have a stable runnerID, but before the
+	// poll loop so orphans don't distort automation max_concurrent counting.
+	// Non-fatal on failure — logs and continues.
+	tr.reapOrphanedTasks(ctx)
 
 	tr.emitEvent(RunnerEvent{
 		Type:     EventRunnerStarted,
@@ -1584,6 +1591,149 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 		"hostname", hostname,
 		"status", info.Status,
 	)
+}
+
+// reapOrphanedTasks scans this runner's projects for tasks stuck in
+// `in_progress` from a previous runner crash and marks them `blocked` with
+// an explanatory note.
+//
+// Why: when the runner is killed mid-execution (crash, host sleep, SIGKILL),
+// child processes die but task frontmatter retains `status: in_progress`.
+// Without recovery these zombies live forever, and crucially they continue
+// counting toward `countRunnableGeneratedTasks` in automation_service.go,
+// silently consuming automation `max_concurrent` slots and (more often)
+// just cluttering the TUI with stale work.
+//
+// Safety model: ownership is gated through the existing claim system.
+// We attempt to claim each orphan; if the claim succeeds, no live runner
+// owns it (lease expired or never existed) and we may safely mark it
+// blocked. If the claim conflicts, another live runner owns the task and
+// we leave it alone — the lease cleanup goroutine in
+// service/task.go:StartClaimCleanup will handle it when that runner's
+// lease expires.
+//
+// Failures are logged but never fatal; the runner proceeds normally.
+func (tr *TaskRunner) reapOrphanedTasks(ctx context.Context) {
+	if tr.client == nil || len(tr.projects) == 0 {
+		return
+	}
+
+	// Bound this so a slow API can't delay startup forever.
+	reapCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	totalReaped := 0
+	for _, projectID := range tr.projects {
+		if reapCtx.Err() != nil {
+			slog.Warn("orphan reaper aborted", "error", reapCtx.Err(), "reaped", totalReaped)
+			return
+		}
+		reaped := tr.reapOrphanedTasksForProject(reapCtx, projectID)
+		totalReaped += reaped
+	}
+
+	if totalReaped > 0 {
+		slog.Info("orphan reaper: marked stale in_progress tasks blocked",
+			"runner_id", tr.runnerID,
+			"count", totalReaped,
+			"projects", len(tr.projects),
+		)
+	}
+}
+
+// reapOrphanedTasksForProject reaps orphans for a single project. Returns
+// the number of tasks marked blocked. All errors are logged at debug level
+// and skipped — orphan reaping is best-effort.
+func (tr *TaskRunner) reapOrphanedTasksForProject(ctx context.Context, projectID string) int {
+	resp, err := tr.client.ListEntries(ctx, map[string]string{
+		"project": projectID,
+		"type":    "task",
+		"status":  "in_progress",
+		"limit":   "500",
+	})
+	if err != nil {
+		slog.Debug("orphan reaper: list failed", "project", projectID, "error", err)
+		return 0
+	}
+	if resp == nil || len(resp.Entries) == 0 {
+		return 0
+	}
+
+	reaped := 0
+	for i := range resp.Entries {
+		entry := &resp.Entries[i]
+		if ctx.Err() != nil {
+			return reaped
+		}
+		if entry.Status != "in_progress" || entry.Type != "task" {
+			continue // Defensive: respect the filter even if the API ignores it.
+		}
+		if tr.tryReapOrphan(ctx, projectID, entry) {
+			reaped++
+		}
+	}
+	return reaped
+}
+
+// tryReapOrphan attempts to reap a single orphan task. Returns true if the
+// task was successfully marked blocked.
+func (tr *TaskRunner) tryReapOrphan(ctx context.Context, projectID string, entry *types.BrainEntry) bool {
+	taskID := entry.ID
+	taskPath := entry.Path
+	if taskID == "" || taskPath == "" {
+		return false
+	}
+
+	// Probe ownership via the claim system. If another live runner holds an
+	// unexpired claim, ClaimTask returns conflict and we leave the task alone.
+	result, err := tr.client.ClaimTask(ctx, projectID, taskID, tr.runnerID)
+	if err != nil {
+		slog.Debug("orphan reaper: claim probe failed",
+			"project", projectID, "task_id", taskID, "error", err)
+		return false
+	}
+	if !result.Success {
+		// Live owner — lease cleanup goroutine will handle this if the owner
+		// is actually dead. Not our problem.
+		slog.Debug("orphan reaper: task still claimed by live runner, skipping",
+			"project", projectID, "task_id", taskID, "claimed_by", result.ClaimedBy)
+		return false
+	}
+
+	// We now hold the claim. Double-check the task is still in_progress —
+	// the agent may have completed between list and claim.
+	current, err := tr.client.GetEntry(ctx, taskPath)
+	if err == nil && current != nil && current.Status != "in_progress" {
+		// Race: someone else terminalized it. Release and move on.
+		_ = tr.client.ReleaseTask(ctx, projectID, taskID, tr.runnerID)
+		return false
+	}
+
+	note := "\n\n---\n*Marked blocked by runner orphan reaper: task was left in `in_progress` after a previous runner exited without finalizing it. The original child process is no longer running.*\n"
+	if appendErr := tr.client.AppendToTask(ctx, taskPath, note); appendErr != nil {
+		slog.Debug("orphan reaper: append note failed",
+			"project", projectID, "task_id", taskID, "error", appendErr)
+		// Continue — the status update is the important part.
+	}
+
+	if statusErr := tr.client.UpdateTaskStatus(ctx, taskPath, "blocked"); statusErr != nil {
+		slog.Warn("orphan reaper: status update failed",
+			"project", projectID, "task_id", taskID, "error", statusErr)
+		// Best-effort release of the claim we just took so we don't leave a
+		// dangling lease behind.
+		_ = tr.client.ReleaseTask(ctx, projectID, taskID, tr.runnerID)
+		return false
+	}
+
+	if releaseErr := tr.client.ReleaseTask(ctx, projectID, taskID, tr.runnerID); releaseErr != nil {
+		slog.Debug("orphan reaper: release failed (lease will expire)",
+			"project", projectID, "task_id", taskID, "error", releaseErr)
+		// Lease will expire on its own — not fatal.
+	}
+
+	slog.Info("orphan reaper: marked stale in_progress task blocked",
+		"project", projectID, "task_id", taskID, "title", entry.Title)
+	return true
 }
 
 func (tr *TaskRunner) schedulerWorkspaceRoots() []string {

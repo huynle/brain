@@ -7,6 +7,7 @@ import { useUI } from "../../store/ui";
 export function UpdateBanner() {
   const updateApply = useUI((s) => s.updateApply);
   const setUpdateApply = useUI((s) => s.setUpdateApply);
+  const toast = useUI((s) => s.toast);
   const [applying, setApplying] = useState(false);
 
   if (!updateApply) return null;
@@ -17,9 +18,14 @@ export function UpdateBanner() {
       <button
         className="btn sm primary"
         disabled={applying}
-        onClick={() => {
+        onClick={async () => {
           setApplying(true);
-          updateApply();
+          try {
+            await updateApply();
+          } catch (e) {
+            setApplying(false);
+            toast(e instanceof Error ? e.message : "Update failed; refresh the page to try again", "error");
+          }
         }}
       >
         {applying ? "Updating…" : "Reload"}

@@ -74,6 +74,9 @@ type mockClient struct {
 	getEntryResult map[string]*types.BrainEntry
 	getEntryErr    error
 
+	listEntriesFunc func(params map[string]string) (*types.ListEntriesResponse, error)
+	listEntriesErr  error
+
 	registerErr   error
 	registerCalls []types.RunnerRegistration
 
@@ -302,6 +305,19 @@ func (m *mockClient) GetEntry(ctx context.Context, entryPath string) (*types.Bra
 		}
 	}
 	return &types.BrainEntry{Path: entryPath}, nil
+}
+
+func (m *mockClient) ListEntries(ctx context.Context, params map[string]string) (*types.ListEntriesResponse, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.listEntriesErr != nil {
+		return nil, m.listEntriesErr
+	}
+	if m.listEntriesFunc != nil {
+		return m.listEntriesFunc(params)
+	}
+	// Default: empty result so the orphan reaper is a no-op in existing tests.
+	return &types.ListEntriesResponse{}, nil
 }
 
 func (m *mockClient) RegisterRunner(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
@@ -4252,5 +4268,250 @@ func TestResumeTask_UsesExecutorDispatch(t *testing.T) {
 	ocSpawns := execOpencode.getSpawnCalls()
 	if len(ocSpawns) != 0 {
 		t.Errorf("expected 0 spawn calls to opencode executor, got %d", len(ocSpawns))
+	}
+}
+
+// =============================================================================
+// Orphan Reaper Tests
+// =============================================================================
+
+// TestReapOrphanedTasks_NoProjects exercises the early-return path when the
+// runner has no projects to scan. Reaper must be a no-op.
+func TestReapOrphanedTasks_NoProjects(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   nil, // no projects
+		Config:     testRunnerConfig(),
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	tr.reapOrphanedTasks(context.Background())
+
+	if len(client.getUpdateStatusCalls()) > 0 {
+		t.Error("reaper must not call UpdateTaskStatus when no projects configured")
+	}
+	if len(client.getClaimCalls()) > 0 {
+		t.Error("reaper must not claim when no projects configured")
+	}
+}
+
+// TestReapOrphanedTasks_NoOrphans verifies the reaper is a no-op when
+// ListEntries returns an empty slice.
+func TestReapOrphanedTasks_NoOrphans(t *testing.T) {
+	client := newMockClient()
+	client.listEntriesFunc = func(params map[string]string) (*types.ListEntriesResponse, error) {
+		// Sanity: the reaper queries with type=task and status=in_progress.
+		if params["status"] != "in_progress" {
+			t.Errorf("expected status=in_progress filter, got %v", params)
+		}
+		if params["type"] != "task" {
+			t.Errorf("expected type=task filter, got %v", params)
+		}
+		return &types.ListEntriesResponse{}, nil
+	}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	tr.reapOrphanedTasks(context.Background())
+
+	if len(client.getUpdateStatusCalls()) > 0 {
+		t.Error("reaper must not produce status updates when no orphans exist")
+	}
+}
+
+// TestReapOrphanedTasks_MarksClaimableOrphanBlocked is the core happy path:
+// an in_progress task with no live owner is claimed, marked blocked, then
+// released.
+func TestReapOrphanedTasks_MarksClaimableOrphanBlocked(t *testing.T) {
+	orphan := types.BrainEntry{
+		ID:     "orphan1",
+		Path:   "projects/proj-a/task/orphan1.md",
+		Type:   "task",
+		Status: "in_progress",
+		Title:  "Automation: dkkz9pr1",
+	}
+
+	client := newMockClient()
+	client.listEntriesFunc = func(params map[string]string) (*types.ListEntriesResponse, error) {
+		if params["project"] == "proj-a" {
+			return &types.ListEntriesResponse{Entries: []types.BrainEntry{orphan}}, nil
+		}
+		return &types.ListEntriesResponse{}, nil
+	}
+	// Claim succeeds — no live runner owns this task.
+	client.claimResult = ClaimResult{Success: true, TaskID: orphan.ID}
+	// GetEntry is called after claim to confirm the task is still in_progress.
+	client.getEntryResult = map[string]*types.BrainEntry{
+		orphan.Path: {Path: orphan.Path, Status: "in_progress"},
+	}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	tr.reapOrphanedTasks(context.Background())
+
+	// Status updates: must include a "blocked" for the orphan.
+	updates := client.getUpdateStatusCalls()
+	foundBlocked := false
+	for _, u := range updates {
+		if u.TaskPath == orphan.Path && u.Status == "blocked" {
+			foundBlocked = true
+		}
+	}
+	if !foundBlocked {
+		t.Errorf("expected orphan task to be marked blocked, got updates: %+v", updates)
+	}
+
+	// An explanatory note must be appended.
+	appends := client.appendCalls
+	foundNote := false
+	for _, a := range appends {
+		if a.TaskPath == orphan.Path && len(a.Content) > 0 {
+			foundNote = true
+		}
+	}
+	if !foundNote {
+		t.Errorf("expected reaper to append a note to %s, got: %+v", orphan.Path, appends)
+	}
+
+	// Claim must be released so the lease doesn't dangle.
+	releases := client.getReleaseCalls()
+	foundRelease := false
+	for _, r := range releases {
+		if r.TaskID == orphan.ID && r.RunnerID == tr.runnerID {
+			foundRelease = true
+		}
+	}
+	if !foundRelease {
+		t.Errorf("expected reaper to release claim for %s, got: %+v", orphan.ID, releases)
+	}
+}
+
+// TestReapOrphanedTasks_SkipsTaskOwnedByLiveRunner verifies the reaper
+// respects the claim system: if another runner holds an unexpired claim,
+// the orphan is left alone for the lease cleanup goroutine to handle.
+func TestReapOrphanedTasks_SkipsTaskOwnedByLiveRunner(t *testing.T) {
+	orphan := types.BrainEntry{
+		ID:     "owned-task",
+		Path:   "projects/proj-a/task/owned-task.md",
+		Type:   "task",
+		Status: "in_progress",
+		Title:  "Owned by another runner",
+	}
+
+	client := newMockClient()
+	client.listEntriesFunc = func(params map[string]string) (*types.ListEntriesResponse, error) {
+		if params["project"] == "proj-a" {
+			return &types.ListEntriesResponse{Entries: []types.BrainEntry{orphan}}, nil
+		}
+		return &types.ListEntriesResponse{}, nil
+	}
+	// Claim conflict — task is held by another live runner.
+	client.claimResult = ClaimResult{Success: false, TaskID: orphan.ID, ClaimedBy: "runner-other", Message: "Task already claimed"}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	tr.reapOrphanedTasks(context.Background())
+
+	// Must not touch a task someone else owns.
+	updates := client.getUpdateStatusCalls()
+	for _, u := range updates {
+		if u.TaskPath == orphan.Path {
+			t.Errorf("reaper must not update status for live-owned task, got: %+v", u)
+		}
+	}
+	// Must not append to it either.
+	for _, a := range client.appendCalls {
+		if a.TaskPath == orphan.Path {
+			t.Errorf("reaper must not append to live-owned task, got: %+v", a)
+		}
+	}
+}
+
+// TestReapOrphanedTasks_RaceWithCompletion handles the race where the agent
+// completes the task between ListEntries and ClaimTask. The reaper must
+// detect this via re-fetch and back off (release the claim, no status
+// update).
+func TestReapOrphanedTasks_RaceWithCompletion(t *testing.T) {
+	orphan := types.BrainEntry{
+		ID:     "race-task",
+		Path:   "projects/proj-a/task/race-task.md",
+		Type:   "task",
+		Status: "in_progress",
+		Title:  "Completed mid-reap",
+	}
+
+	client := newMockClient()
+	client.listEntriesFunc = func(params map[string]string) (*types.ListEntriesResponse, error) {
+		if params["project"] == "proj-a" {
+			return &types.ListEntriesResponse{Entries: []types.BrainEntry{orphan}}, nil
+		}
+		return &types.ListEntriesResponse{}, nil
+	}
+	client.claimResult = ClaimResult{Success: true, TaskID: orphan.ID}
+	// Re-fetch shows the task already completed.
+	client.getEntryResult = map[string]*types.BrainEntry{
+		orphan.Path: {Path: orphan.Path, Status: "completed"},
+	}
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	tr.reapOrphanedTasks(context.Background())
+
+	// Must not stomp the completed status with blocked.
+	updates := client.getUpdateStatusCalls()
+	for _, u := range updates {
+		if u.TaskPath == orphan.Path {
+			t.Errorf("reaper must not update status when task already terminalized, got: %+v", u)
+		}
+	}
+	// Claim must still be released.
+	releases := client.getReleaseCalls()
+	foundRelease := false
+	for _, r := range releases {
+		if r.TaskID == orphan.ID {
+			foundRelease = true
+		}
+	}
+	if !foundRelease {
+		t.Error("reaper must release the claim even when backing off due to race")
+	}
+}
+
+// TestReapOrphanedTasks_ListFailureDoesNotPanic verifies graceful
+// degradation when ListEntries errors. The runner must continue starting up.
+func TestReapOrphanedTasks_ListFailureDoesNotPanic(t *testing.T) {
+	client := newMockClient()
+	client.listEntriesErr = fmt.Errorf("network unreachable")
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Must not panic, must not produce updates.
+	tr.reapOrphanedTasks(context.Background())
+
+	if len(client.getUpdateStatusCalls()) > 0 {
+		t.Errorf("reaper must not produce updates when list fails, got: %+v", client.getUpdateStatusCalls())
 	}
 }

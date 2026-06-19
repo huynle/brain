@@ -44,6 +44,7 @@ export function LogsView() {
   const logFilter = useUI((s) => s.logFilter);
   const setLogFilter = useUI((s) => s.setLogFilter);
   const [follow, setFollow] = useState(true);
+  const [searchOpen, setSearchOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const filterRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -67,6 +68,10 @@ export function LogsView() {
         String(r.status).includes(q),
     );
   }, [requests, logFilter]);
+
+  useEffect(() => {
+    if (searchOpen) filterRef.current?.focus();
+  }, [searchOpen]);
 
   useEffect(() => {
     if (follow) bottomRef.current?.scrollIntoView({ block: "end" });
@@ -94,7 +99,7 @@ export function LogsView() {
       const el = scrollEl();
       switch (e.key) {
         case "/":
-          filterRef.current?.focus();
+          setSearchOpen(true);
           return true;
         case "j":
         case "ArrowDown":
@@ -130,19 +135,23 @@ export function LogsView() {
 
   return (
     <div ref={rootRef} className="logs-view">
-      <div className="search-bar">
+      {searchOpen && (
+        <div className="search-layer" onMouseDown={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}>
+          <div className="search-popup">
+            <span className="search-prompt">/</span>
         <input
           ref={filterRef}
           placeholder="Filter requests (path, method, actor, status)…"
           value={logFilter}
           onChange={(e) => setLogFilter(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              setLogFilter("");
-              e.currentTarget.blur();
-            }
+            if (e.key === "Escape") setSearchOpen(false);
+            if (e.key === "Enter") setSearchOpen(false);
           }}
         />
+        <button className="btn sm" type="button" onClick={() => { setLogFilter(""); filterRef.current?.focus(); }} disabled={!logFilter}>
+          Clear
+        </button>
         <span className="faint" style={{ fontSize: 11.5, whiteSpace: "nowrap" }}>
           {filtered.length} req{reqQ.error ? " · offline" : ""}
         </span>
@@ -156,13 +165,15 @@ export function LogsView() {
         >
           {follow ? "Live" : "Follow"}
         </button>
-      </div>
+          </div>
+        </div>
+      )}
 
       {filtered.length === 0 ? (
         <EmptyState
           glyph="▤"
-          title="No requests yet"
-          hint="Every request to the Brain server (runners, clients, browser) appears here in real time."
+          title={logFilter ? "No matching requests" : "No requests yet"}
+          hint={logFilter ? `Nothing matched “”.` : "Every request to the Brain server (runners, clients, browser) appears here in real time."}
         />
       ) : (
         <div

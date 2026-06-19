@@ -1,29 +1,44 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { useLive } from "../lib/sse";
 import { ALL_PROJECTS, useUI } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import {
+  controlAbortTask,
+  controlKillInstance,
+  controlListSessions,
+  controlSpawnInstance,
   getRunnerStatus,
   getRunners,
   listInstances,
   pauseAll,
-  resumeAll,
   pauseAutomations,
+  resumeAll,
   resumeAutomations,
   shutdownRunner,
 } from "../lib/api";
-import { ConfirmDialog } from "../components/common/Modal";
-import { EmptyState, ErrorState, Loading } from "../components/common/states";
+import { Modal, ConfirmDialog } from "../components/common/Modal";
+import { EmptyState, ErrorState, Loading, Spinner } from "../components/common/states";
 import { relativeTime } from "../lib/format";
+import { sessionName } from "../lib/types";
+import type { ControlTarget } from "../store/ui";
 import type { OpencodeInstance, RunnerInfo } from "../lib/types";
+import { Chat, type ChatHandle } from "./control/Chat";
+import { HistoryPane } from "./control/HistoryPane";
+import { latestInstanceSessionId, sortSessionsByExecutedTime } from "./control/sessionUtils";
+
+type RunnerRow = { kind: "runner"; runner: RunnerInfo; instances: OpencodeInstance[] };
+type InstanceRow = { kind: "instance"; runner: RunnerInfo; instance: OpencodeInstance };
+type Row = RunnerRow | InstanceRow;
 
 export function RunnersView() {
   const toast = useUI((s) => s.toast);
+  const consumeControlTarget = useUI((s) => s.consumeControlTarget);
   const activeProject = useUI((s) => s.activeProject);
   const qc = useQueryClient();
   const liveRunners = useLive((s) => s.runners);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const runnersQ = useQuery({
     queryKey: ["runners"],
@@ -40,31 +55,105 @@ export function RunnersView() {
   const instancesQ = useQuery({
     queryKey: ["instances"],
     queryFn: listInstances,
-    refetchInterval: 10_000,
-    staleTime: 10_000,
+    refetchInterval: 3_000,
   });
 
-  const [confirmKill, setConfirmKill] = useState<RunnerInfo | null>(null);
+  const [spawnOpen, setSpawnOpen] = useState(false);
+  const [confirmRunnerKill, setConfirmRunnerKill] = useState<RunnerInfo | null>(null);
+  const [confirmInstanceKill, setConfirmInstanceKill] = useState<OpencodeInstance | null>(null);
+  const [sessionTarget, setSessionTarget] = useState<OpencodeInstance | null>(null);
+  const [historyTarget, setHistoryTarget] = useState<ControlTarget | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // Prefer the live SSE list when present; fall back to the polled query.
   const runners = liveRunners.length ? liveRunners : runnersQ.data ?? [];
+  const instances = instancesQ.data ?? [];
+  const rows = useMemo<Row[]>(() => {
+    const out: Row[] = [];
+    for (const runner of runners) {
+      const runnerInstances = instances
+        .filter((inst) => inst.runner_id === runner.runner_id)
+        .sort((a, b) => (b.started_at ?? b.last_seen ?? 0) - (a.started_at ?? a.last_seen ?? 0));
+      out.push({ kind: "runner", runner, instances: runnerInstances });
+      for (const instance of runnerInstances) out.push({ kind: "instance", runner, instance });
+    }
+    return out;
+  }, [runners, instances]);
+
+  const rowIndexByKey = useMemo(() => {
+    const indexes = new Map<string, number>();
+    rows.forEach((row, i) => {
+      indexes.set(row.kind === "runner" ? `runner:${row.runner.runner_id}` : `instance:${row.instance.instance_id}`, i);
+    });
+    return indexes;
+  }, [rows]);
+
+  const scope = "runners";
+  const cursor = useNav((s) => Math.min(s.cursor[scope] ?? 0, Math.max(0, rows.length - 1)));
   const status = statusQ.data;
   const taskPaused = !!status?.paused;
   const automationPaused = !!status?.automationsPaused;
   const allProjectsSelected = activeProject === ALL_PROJECTS;
   const allPaused = taskPaused && automationPaused;
+  const activeInstances = instances.filter((inst) => inst.kind === "task" || inst.status === "busy" || inst.status === "starting");
+  const onlineRunners = runners.filter((runner) => runner.status === "online").length;
 
-  const scope = "runners";
-  const cursor = useNav((s) => Math.min(s.cursor[scope] ?? 0, Math.max(0, runners.length - 1)));
+  useEffect(() => {
+    const target = consumeControlTarget();
+    if (!target) return;
+    if (target.mode === "history") {
+      setHistoryTarget(target);
+      setSessionTarget(null);
+      return;
+    }
+    const instance = instances.find((inst) => inst.instance_id === target.instanceId);
+    if (instance) {
+      setSessionTarget(instance);
+      setHistoryTarget(null);
+      return;
+    }
+    if (target.instanceId) toast("Instance is not online yet", "info");
+  }, [consumeControlTarget, instances, toast]);
+
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>('[data-cursor="1"]')?.scrollIntoView({ block: "nearest" });
+  }, [cursor]);
+
+  function openRow(row: Row | undefined) {
+    if (!row) return;
+    if (row.kind === "instance") {
+      setSessionTarget(row.instance);
+      setHistoryTarget(null);
+      return;
+    }
+    const first = row.instances[0];
+    if (!first) {
+      toast("Runner has no active tasks or instances", "info");
+      return;
+    }
+    const idx = rowIndexByKey.get(`instance:${first.instance_id}`);
+    if (idx !== undefined) useNav.getState().setCursor(scope, idx);
+    setSessionTarget(first);
+    setHistoryTarget(null);
+  }
 
   useViewKeyboard(
     (e) => {
-      if (handleListNavKey(e, scope, runners.length)) return true;
-      const cur = runners[cursor];
+      if (handleListNavKey(e, scope, rows.length)) return true;
+      const cur = rows[cursor];
       switch (e.key) {
+        case "Enter":
+        case "o":
+          openRow(cur);
+          return true;
+        case "n":
+        case "+":
+          setSpawnOpen(true);
+          return true;
         case "s":
-          if (cur) setConfirmKill(cur);
+          if (cur?.kind === "runner") setConfirmRunnerKill(cur.runner);
+          return true;
+        case "K":
+          if (cur?.kind === "instance") setConfirmInstanceKill(cur.instance);
           return true;
         case "p":
         case "P":
@@ -78,13 +167,8 @@ export function RunnersView() {
           return false;
       }
     },
-    [runners, cursor, taskPaused, automationPaused, allProjectsSelected, allPaused],
+    [rows, cursor, taskPaused, automationPaused, allProjectsSelected, allPaused, rowIndexByKey],
   );
-
-  useEffect(() => {
-    const el = document.querySelector<HTMLElement>('[data-cursor="1"]');
-    el?.scrollIntoView({ block: "nearest" });
-  }, [cursor]);
 
   function toggleTaskPause() {
     void (taskPaused ? act("Runner pool resumed", resumeAll) : act("Runner pool paused", pauseAll));
@@ -114,10 +198,41 @@ export function RunnersView() {
       await fn();
       toast(label, "success");
       void qc.invalidateQueries({ queryKey: ["runner-status"] });
+      void qc.invalidateQueries({ queryKey: ["instances"] });
+      void qc.invalidateQueries({ queryKey: ["runners"] });
     } catch (e) {
       toast(e instanceof Error ? e.message : "Action failed", "error");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function killInstance(inst: OpencodeInstance) {
+    if (inst.kind === "task") {
+      if (!inst.project_id || !inst.task_id) {
+        toast("Task instance is missing project or task id", "error");
+        setConfirmInstanceKill(null);
+        return;
+      }
+      await act("Task aborted; task reset to pending", () => controlAbortTask(inst.runner_id, inst.task_id!));
+    } else {
+      await act("Instance killed", () => controlKillInstance(inst.runner_id, inst.instance_id));
+    }
+    if (sessionTarget?.instance_id === inst.instance_id) setSessionTarget(null);
+    setConfirmInstanceKill(null);
+  }
+
+  async function resumeHistory(runnerId: string) {
+    const target = historyTarget;
+    if (!target || !target.workdir) return;
+    try {
+      const res = await controlSpawnInstance(runnerId, { workdir: target.workdir, title: target.taskTitle });
+      setHistoryTarget(null);
+      setSessionTarget(res.instance);
+      void qc.invalidateQueries({ queryKey: ["instances"] });
+      toast("Session resumed", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Resume failed", "error");
     }
   }
 
@@ -126,28 +241,19 @@ export function RunnersView() {
     return <ErrorState error={runnersQ.error} onRetry={() => void runnersQ.refetch()} />;
 
   return (
-    <div>
-      {status && (
-        <div
-          className="row wrap"
-          style={{
-            gap: 8,
-            padding: "2px 2px 6px",
-            marginBottom: 4,
-            borderBottom: "1px solid var(--border)",
-            fontSize: 12.5,
-          }}
-        >
-          <span style={{ color: taskPaused ? "var(--red)" : "var(--green)" }}>
-            ● runner pool {taskPaused ? "paused" : "running"}
-          </span>
-          <span style={{ color: automationPaused ? "var(--red)" : "var(--green)" }}>
-            ● automations {automationPaused ? "off" : "on"}
-          </span>
-          <div style={{ flex: 1 }} />
+    <div className="runner-console">
+      <div className="runner-toolbar">
+        <div className="runner-summary">
+          <span style={{ color: onlineRunners > 0 ? "var(--green)" : "var(--red)" }}>● {onlineRunners} online</span>
+          <span>{runners.length} runners</span>
+          <span>{activeInstances.length} executing</span>
+          <span style={{ color: taskPaused ? "var(--red)" : "var(--green)" }}>tasks {taskPaused ? "paused" : "running"}</span>
+          <span style={{ color: automationPaused ? "var(--red)" : "var(--green)" }}>autos {automationPaused ? "off" : "on"}</span>
+        </div>
+        <div className="runner-actions">
           {allProjectsSelected && (
             <button className="btn sm primary" disabled={busy} onClick={toggleAllPause} title="Shortcut: p">
-              {allPaused ? "▶ resume all" : "⏸ pause all"}
+              {allPaused ? "resume all" : "pause all"}
             </button>
           )}
           <button className="btn sm ghost" disabled={busy} onClick={toggleTaskPause} title="Shortcut: p">
@@ -156,31 +262,74 @@ export function RunnersView() {
           <button className="btn sm ghost" disabled={busy} onClick={toggleAutomationPause} title="Shortcut: a">
             {automationPaused ? "resume autos" : "pause autos"}
           </button>
+          <button className="btn sm" onClick={() => setSpawnOpen(true)} title="Shortcut: n">
+            + instance
+          </button>
         </div>
-      )}
+      </div>
 
-      {runners.length === 0 ? (
-        <EmptyState
-          glyph="⚙"
-          title="No runners online"
-          hint="Start one with: brain run start <project> --headless"
+      <div className="runner-list" ref={listRef}>
+        {runners.length === 0 ? (
+          <EmptyState glyph="⚙" title="No runners online" hint="Start one with: brain start <project>" />
+        ) : (
+          rows.map((row, i) => row.kind === "runner" ? (
+            <RunnerCard
+              key={`r:${row.runner.runner_id}`}
+              runner={row.runner}
+              instances={row.instances}
+              cursored={i === cursor}
+              onCursor={() => useNav.getState().setCursor(scope, i)}
+              onKill={() => setConfirmRunnerKill(row.runner)}
+            />
+          ) : (
+            <ExecutingTaskCard
+              key={`i:${row.instance.instance_id}`}
+              instance={row.instance}
+              runner={row.runner}
+              cursored={i === cursor}
+              onOpen={() => {
+                useNav.getState().setCursor(scope, i);
+                setSessionTarget(row.instance);
+                setHistoryTarget(null);
+              }}
+              onKill={() => setConfirmInstanceKill(row.instance)}
+            />
+          ))
+        )}
+      </div>
+
+      {sessionTarget && (
+        <SessionModal
+          instance={sessionTarget}
+          onClose={() => setSessionTarget(null)}
         />
-      ) : (
-        runners.map((r, i) => (
-          <RunnerRow
-            key={r.runner_id}
-            runner={r}
-            instances={(instancesQ.data ?? []).filter(
-              (inst) => inst.runner_id === r.runner_id,
-            )}
-            cursored={i === cursor}
-            last={i === runners.length - 1}
-            onKill={() => setConfirmKill(r)}
-          />
-        ))
       )}
 
-      {confirmKill && (
+      {historyTarget && (
+        <Modal title={historyTarget.taskTitle || "Session history"} className="sheet-wide session-sheet" onClose={() => setHistoryTarget(null)}>
+          <HistoryPane
+            target={historyTarget}
+            runners={runners}
+            onBack={() => setHistoryTarget(null)}
+            onResume={resumeHistory}
+          />
+        </Modal>
+      )}
+
+      {spawnOpen && (
+        <SpawnModal
+          runners={runners}
+          onClose={() => setSpawnOpen(false)}
+          onSpawned={(inst) => {
+            setSpawnOpen(false);
+            void qc.invalidateQueries({ queryKey: ["instances"] });
+            setSessionTarget(inst);
+            toast("Instance spawned", "success");
+          }}
+        />
+      )}
+
+      {confirmRunnerKill && (
         <ConfirmDialog
           title="Shut down runner?"
           danger
@@ -188,82 +337,219 @@ export function RunnersView() {
           busy={busy}
           message={
             <>
-              Request graceful shutdown of{" "}
-              <strong className="mono">{confirmKill.runner_id}</strong> on{" "}
-              {confirmKill.hostname}.
+              Request graceful shutdown of <strong className="mono">{confirmRunnerKill.runner_id}</strong> on {confirmRunnerKill.hostname}.
             </>
           }
-          onClose={() => setConfirmKill(null)}
+          onClose={() => setConfirmRunnerKill(null)}
           onConfirm={() =>
-            void act("Shutdown requested", () =>
-              shutdownRunner(confirmKill.runner_id),
-            ).then(() => setConfirmKill(null))
+            void act("Shutdown requested", () => shutdownRunner(confirmRunnerKill.runner_id)).then(() => setConfirmRunnerKill(null))
           }
+        />
+      )}
+
+      {confirmInstanceKill && (
+        <ConfirmDialog
+          title="Kill instance?"
+          danger
+          confirmLabel={confirmInstanceKill.kind === "task" ? "Abort task" : "Kill"}
+          busy={busy}
+          message={
+            <>
+              {confirmInstanceKill.kind === "task" ? "Abort task and reset to pending" : "Terminate ad-hoc instance"}{" "}
+              <strong className="mono">{confirmInstanceKill.task_id || confirmInstanceKill.instance_id}</strong>
+              {confirmInstanceKill.workdir ? <> in {confirmInstanceKill.workdir}</> : null}?
+            </>
+          }
+          onClose={() => setConfirmInstanceKill(null)}
+          onConfirm={() => void killInstance(confirmInstanceKill)}
         />
       )}
     </div>
   );
 }
 
-function RunnerRow({
+function RunnerCard({
   runner,
   instances,
   cursored,
-  last,
+  onCursor,
   onKill,
 }: {
   runner: RunnerInfo;
   instances: OpencodeInstance[];
-  cursored?: boolean;
-  last?: boolean;
+  cursored: boolean;
+  onCursor: () => void;
   onKill: () => void;
 }) {
-  const statusColor =
-    runner.status === "online"
-      ? "var(--green)"
-      : runner.status === "stale"
-        ? "var(--yellow)"
-        : "var(--red)";
+  const color = runner.status === "online" ? "var(--green)" : runner.status === "stale" ? "var(--yellow)" : "var(--red)";
   return (
-    <>
-      <div
-        className={`tree-row ${cursored ? "cursor" : ""}`}
-        data-cursor={cursored ? "1" : undefined}
-        style={{ gap: 4 }}
-      >
-        <span className="connector">{last ? "└─ " : "├─ "}</span>
-        <span className="glyph" style={{ color: cursored ? undefined : statusColor }}>
-          ●
-        </span>
-        <span className="title truncate">{runner.runner_id}</span>
-        <span className="suffix faint">{runner.hostname}</span>
-        <span className="suffix" style={{ color: "var(--blue)" }}>
-          {runner.active_tasks ?? 0}/{runner.max_parallel}
-        </span>
-        {runner.executors && runner.executors.length > 0 && (
-          <span className="suffix" style={{ color: "var(--teal)" }}>
-            {runner.executors.join(",")}
-          </span>
-        )}
-        <span className="suffix faint">hb {relativeTime(runner.last_heartbeat)}</span>
-        <span
-          className="suffix"
-          style={{ cursor: "pointer", color: "var(--red)" }}
-          title="Shut down (s)"
-          onClick={(e) => { e.stopPropagation(); onKill(); }}
-        >
-          ⏻
-        </span>
+    <div className={`runner-card ${cursored ? "cursor" : ""}`} data-cursor={cursored ? "1" : undefined} onClick={onCursor}>
+      <div className="runner-card-main">
+        <span className="glyph" style={{ color }}>●</span>
+        <div className="runner-title">
+          <strong className="mono truncate">{runner.runner_id}</strong>
+          <span className="faint truncate">{runner.hostname}</span>
+        </div>
       </div>
-      {instances.map((inst, j) => (
-        <InstanceRow
-          key={inst.instance_id}
-          instance={inst}
-          parentLast={!!last}
-          last={j === instances.length - 1}
+      <div className="runner-chipline">
+        <span className="ctl-meta-chip"><span className="ctl-meta-label">slots</span>{runner.active_tasks ?? 0}/{runner.max_parallel}</span>
+        {runner.executors?.length ? <span className="ctl-meta-chip"><span className="ctl-meta-label">exec</span>{runner.executors.join(",")}</span> : null}
+        <span className="ctl-meta-chip"><span className="ctl-meta-label">tasks</span>{instances.length}</span>
+        <span className="ctl-meta-chip"><span className="ctl-meta-label">hb</span>{relativeTime(runner.last_heartbeat)}</span>
+      </div>
+      <button className="icon-btn runner-power" title="Shut down runner (s)" onClick={(e) => { e.stopPropagation(); onKill(); }}>⏻</button>
+    </div>
+  );
+}
+
+function ExecutingTaskCard({
+  instance,
+  runner,
+  cursored,
+  onOpen,
+  onKill,
+}: {
+  instance: OpencodeInstance;
+  runner: RunnerInfo;
+  cursored: boolean;
+  onOpen: () => void;
+  onKill: () => void;
+}) {
+  const sessions = instance.session_ids?.length ?? 0;
+  return (
+    <div
+      className={`runner-task-card ${cursored ? "cursor" : ""}`}
+      data-cursor={cursored ? "1" : undefined}
+      onClick={onOpen}
+    >
+      <div className="runner-task-head">
+        <span style={{ color: instanceStatusColor(instance.status) }}>▣</span>
+        <span className="ctl-kind" style={{ color: instance.kind === "adhoc" ? "var(--purple)" : "var(--blue)" }}>{instance.kind}</span>
+        <strong className="truncate">{instance.title || instance.task_id || instance.instance_id}</strong>
+        <span className="faint">{instance.status}</span>
+        <button className="btn sm ghost" onClick={(e) => { e.stopPropagation(); onOpen(); }}>session</button>
+        <button className="btn sm danger" onClick={(e) => { e.stopPropagation(); onKill(); }}>{instance.kind === "task" ? "abort" : "kill"}</button>
+      </div>
+      <div className="runner-chipline">
+        <Chip label="project" value={instance.project_id} />
+        <Chip label="feature" value={instance.feature_id} />
+        <Chip label="task" value={instance.task_id} />
+        <Chip label="runner" value={runner.runner_id} />
+        <Chip label="agent" value={instance.agent} />
+        <Chip label="model" value={compactModelName(instance.model)} title={instance.model} />
+        <Chip label="exec" value={instance.executor} />
+        <Chip label="workdir" value={compactPath(instance.workdir)} title={instance.workdir} />
+        {sessions > 0 && <Chip label="sessions" value={sessions} />}
+        {(instance.pending_permissions ?? 0) > 0 && <Chip label="perm" value={`${instance.pending_permissions} pending`} tone="danger" />}
+      </div>
+    </div>
+  );
+}
+
+function SessionModal({ instance, onClose }: { instance: OpencodeInstance; onClose: () => void }) {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const chatRef = useRef<ChatHandle | null>(null);
+  const sessionsQ = useQuery({
+    queryKey: ["control-sessions", instance.runner_id, instance.instance_id],
+    queryFn: () => controlListSessions(instance.runner_id, instance.instance_id),
+    refetchInterval: sessionId ? false : 3_000,
+    retry: 1,
+  });
+  const sessions = useMemo(() => sortSessionsByExecutedTime(sessionsQ.data ?? []), [sessionsQ.data]);
+
+  useEffect(() => {
+    if (!sessionId) setSessionId(latestInstanceSessionId(instance, sessions));
+  }, [instance, sessions, sessionId]);
+
+  const selected = sessions.find((session) => session.id === sessionId);
+
+  function moveSession(delta: 1 | -1) {
+    if (sessions.length === 0) return;
+    const current = Math.max(0, sessions.findIndex((session) => session.id === sessionId));
+    const next = (current + delta + sessions.length) % sessions.length;
+    setSessionId(sessions[next].id);
+  }
+
+  function handleModalKeyDown(e: KeyboardEvent<HTMLDivElement>) {
+    const target = e.target as HTMLElement | null;
+    const tag = target?.tagName.toLowerCase();
+    const isTextInput = tag === "input" || tag === "textarea" || target?.isContentEditable;
+    if (isTextInput) return;
+    if (e.key === "j" || e.key === "ArrowDown") {
+      e.preventDefault();
+      moveSession(1);
+      return;
+    }
+    if (e.key === "k" || e.key === "ArrowUp") {
+      e.preventDefault();
+      moveSession(-1);
+      return;
+    }
+    if (e.key === "i") {
+      e.preventDefault();
+      chatRef.current?.focusPrompt();
+    }
+  }
+
+  return (
+    <Modal
+      title={instance.title || instance.task_id || instance.instance_id}
+      className="sheet-wide session-sheet"
+      onClose={onClose}
+    >
+      <div onKeyDown={handleModalKeyDown} tabIndex={-1}>
+      <div className="session-modal-head">
+        <span style={{ color: instanceStatusColor(instance.status) }}>▣ {instance.status}</span>
+        <Chip label="project" value={instance.project_id} />
+        <Chip label="feature" value={instance.feature_id} />
+        <Chip label="task" value={instance.task_id} />
+        <Chip label="agent" value={instance.agent} />
+        <Chip label="model" value={compactModelName(instance.model)} title={instance.model} />
+        <Chip label="workdir" value={compactPath(instance.workdir)} title={instance.workdir} />
+      </div>
+      {sessions.length > 1 && (
+        <div className="session-picker">
+          <span className="faint">sessions sorted by executed time</span>
+          <select value={sessionId ?? ""} onChange={(e) => setSessionId(e.target.value || null)}>
+            <option value="">select session…</option>
+            {sessions.map((session) => (
+              <option key={session.id} value={session.id}>
+                {sessionName(session)} · {session.time?.updated ? new Date(session.time.updated).toLocaleString() : "unknown"}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+      {sessionsQ.error && !sessions.length && (
+        <div className="faint" style={{ padding: 12, color: "var(--red)" }}>
+          Cannot reach instance: {String((sessionsQ.error as Error).message)}
+        </div>
+      )}
+      {sessionId ? (
+        <Chat
+          ref={chatRef}
+          runnerId={instance.runner_id}
+          instanceId={instance.instance_id}
+          sessionId={sessionId}
+          defaultAgent={instance.agent}
+          defaultModel={instance.model}
+          sessionLabel={selected ? sessionName(selected) : undefined}
         />
-      ))}
-    </>
+      ) : (
+        <EmptyState glyph="◌" title="No session selected" hint={sessionsQ.isLoading ? "Loading sessions…" : "No session is recorded for this instance yet."} />
+      )}
+      </div>
+    </Modal>
+  );
+}
+
+function Chip({ label, value, title, tone }: { label: string; value?: string | number | null; title?: string; tone?: "danger" }) {
+  if (value === undefined || value === null || value === "") return null;
+  return (
+    <span className="ctl-meta-chip" title={title ?? `${label}: ${value}`} style={tone === "danger" ? { borderColor: "var(--red)", color: "var(--red)" } : undefined}>
+      <span className="ctl-meta-label">{label}</span>
+      <span className="truncate">{value}</span>
+    </span>
   );
 }
 
@@ -280,57 +566,77 @@ function instanceStatusColor(status: OpencodeInstance["status"]): string {
   }
 }
 
-function InstanceRow({
-  instance,
-  parentLast,
-  last,
+function compactModelName(model?: string) {
+  if (!model) return "";
+  const name = model.split("/").pop() ?? model;
+  return name.replace(/^claude-/, "");
+}
+
+function compactPath(path?: string) {
+  if (!path) return "";
+  const parts = path.split("/").filter(Boolean);
+  if (parts.length <= 2) return path;
+  return `…/${parts.slice(-2).join("/")}`;
+}
+
+function SpawnModal({
+  runners,
+  onClose,
+  onSpawned,
 }: {
-  instance: OpencodeInstance;
-  parentLast: boolean;
-  last: boolean;
+  runners: RunnerInfo[];
+  onClose: () => void;
+  onSpawned: (inst: OpencodeInstance) => void;
 }) {
-  const sessions = instance.session_ids?.length ?? 0;
+  const online = runners.filter((r) => r.status === "online");
+  const [runnerId, setRunnerId] = useState(online[0]?.runner_id ?? "");
+  const [workdir, setWorkdir] = useState("");
+  const [title, setTitle] = useState("");
+  const [busy, setBusyState] = useState(false);
+  const [error, setError] = useState("");
+
+  async function spawn() {
+    if (!runnerId || !workdir) return;
+    setBusyState(true);
+    setError("");
+    try {
+      const res = await controlSpawnInstance(runnerId, { workdir, title: title || undefined });
+      onSpawned(res.instance);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Spawn failed");
+      setBusyState(false);
+    }
+  }
+
   return (
-    <div className="tree-row" style={{ gap: 4 }}>
-      <span className="connector">
-        {parentLast ? "   " : "│  "}
-        {last ? "└─ " : "├─ "}
-      </span>
-      <span
-        className="glyph"
-        style={{ color: instanceStatusColor(instance.status) }}
-        title={instance.status}
-      >
-        ▣
-      </span>
-      <span
-        className="suffix"
-        style={{
-          color: instance.kind === "adhoc" ? "var(--purple, var(--teal))" : "var(--teal)",
-        }}
-      >
-        {instance.kind}
-      </span>
-      <span className="title truncate">
-        {instance.title || instance.task_id || instance.instance_id}
-      </span>
-      {instance.workdir && (
-        <span className="suffix faint truncate" title={instance.workdir}>
-          {instance.workdir.replace(/^.*\//, "…/")}
-        </span>
-      )}
-      <span className="suffix faint">{instance.status}</span>
-      {instance.port ? <span className="suffix faint">:{instance.port}</span> : null}
-      {sessions > 0 && (
-        <span className="suffix" style={{ color: "var(--blue)" }}>
-          {sessions} ses
-        </span>
-      )}
-      {(instance.pending_permissions ?? 0) > 0 && (
-        <span className="suffix" style={{ color: "var(--red)" }}>
-          {instance.pending_permissions} ⚠ perm
-        </span>
-      )}
-    </div>
+    <Modal
+      title="New OpenCode instance"
+      onClose={onClose}
+      footer={
+        <>
+          <button className="btn ghost" onClick={onClose} disabled={busy}>Cancel</button>
+          <button className="btn" onClick={() => void spawn()} disabled={busy || !runnerId || !workdir}>{busy ? <Spinner /> : "Spawn"}</button>
+        </>
+      }
+    >
+      <div className="form-col" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        <label>
+          <div className="faint" style={{ fontSize: 12 }}>Runner</div>
+          <select value={runnerId} onChange={(e) => setRunnerId(e.target.value)} style={{ width: "100%" }}>
+            {online.length === 0 && <option value="">no online runners</option>}
+            {online.map((r) => <option key={r.runner_id} value={r.runner_id}>{r.runner_id} ({r.hostname})</option>)}
+          </select>
+        </label>
+        <label>
+          <div className="faint" style={{ fontSize: 12 }}>Working directory (absolute path on the runner)</div>
+          <input type="text" value={workdir} placeholder="/home/user/projects/my-repo" onChange={(e) => setWorkdir(e.target.value)} style={{ width: "100%" }} />
+        </label>
+        <label>
+          <div className="faint" style={{ fontSize: 12 }}>Title (optional)</div>
+          <input type="text" value={title} placeholder="quick fix session" onChange={(e) => setTitle(e.target.value)} style={{ width: "100%" }} />
+        </label>
+        {error && <div style={{ color: "var(--red)", fontSize: 12.5 }}>{error}</div>}
+      </div>
+    </Modal>
   );
 }

@@ -11,6 +11,37 @@ const EMPTY_STATS: TaskStats = {
   not_pending: 0,
 };
 
+function isAutomationGeneratedTask(task: Task): boolean {
+  return task.generated_by?.startsWith("automation:") ?? false;
+}
+
+function statsForVisibleTasks(tasks: Task[]): TaskStats {
+  const stats: TaskStats = { ...EMPTY_STATS };
+  for (const task of tasks) {
+    stats.total++;
+    switch (task.status) {
+      case "pending":
+        stats.ready++;
+        break;
+      case "blocked":
+        stats.blocked++;
+        break;
+      case "active":
+      case "in_progress":
+        stats.not_pending++;
+        break;
+      default:
+        stats.not_pending++;
+        break;
+    }
+    if ((task.waiting_on?.length ?? 0) > 0 || (task.blocked_by?.length ?? 0) > 0) {
+      stats.ready = Math.max(0, stats.ready - 1);
+      stats.waiting++;
+    }
+  }
+  return stats;
+}
+
 export interface AggregatedTasks {
   tasks: Task[];
   stats: TaskStats;
@@ -37,16 +68,16 @@ export function useLiveTasks(activeProject: string): AggregatedTasks {
     for (const id of ids) {
       const p = projects[id];
       if (!p) continue;
-      for (const t of p.tasks) {
-        tasks.push(t.projectId ? t : { ...t, projectId: id });
-      }
-      if (p.stats) {
-        stats.total += p.stats.total;
-        stats.ready += p.stats.ready;
-        stats.waiting += p.stats.waiting;
-        stats.blocked += p.stats.blocked;
-        stats.not_pending += p.stats.not_pending;
-      }
+      const visibleTasks = p.tasks
+        .filter((t) => !isAutomationGeneratedTask(t))
+        .map((t) => (t.projectId ? t : { ...t, projectId: id }));
+      tasks.push(...visibleTasks);
+      const visibleStats = statsForVisibleTasks(visibleTasks);
+      stats.total += visibleStats.total;
+      stats.ready += visibleStats.ready;
+      stats.waiting += visibleStats.waiting;
+      stats.blocked += visibleStats.blocked;
+      stats.not_pending += visibleStats.not_pending;
       if (p.connected) connected = true;
       if (p.error) anyError = p.error;
     }

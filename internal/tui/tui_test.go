@@ -700,6 +700,126 @@ func TestDeleteAutomationRowCmdDeletesEntry(t *testing.T) {
 	}
 }
 
+func TestToggleAutomationRowCmdCreatesProjectCopyForBuiltInAutomation(t *testing.T) {
+	var patchedGlobal bool
+	var createdProject string
+	var createdStatus string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/entries":
+			if r.URL.Query().Get("type") != "automation" || r.URL.Query().Get("project") != "brain-api" {
+				t.Fatalf("unexpected list query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{
+				ID:      "builtin-auto",
+				Path:    "global/automation/builtin-auto.md",
+				Title:   "Built-in Blocked Task Inspector",
+				Type:    "automation",
+				Status:  "active",
+				Content: "Global template content",
+				Trigger: &types.TriggerConfig{Type: "event", Event: types.EventTaskCompleted},
+				Action:  &types.AutomationAction{Type: "prompt", DirectPrompt: "Inspect {{.ProjectID}}"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			var req types.CreateEntryRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode create body: %v", err)
+			}
+			createdProject = req.Project
+			createdStatus = req.Status
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "project-copy", Path: "projects/brain-api/automation/project-copy.md"})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			patchedGlobal = true
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{ID: "builtin-auto", Path: "global/automation/builtin-auto.md"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	msg := toggleAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:      "builtin-auto",
+		Path:    "global/automation/builtin-auto.md",
+		Title:   "Built-in Blocked Task Inspector",
+		Source:  "automation",
+		Scope:   "built-in",
+		Enabled: false,
+	}, "brain-api")().(AutomationToggleMsg)
+
+	if msg.Error != nil {
+		t.Fatalf("toggle built-in automation failed: %v", msg.Error)
+	}
+	if patchedGlobal {
+		t.Fatal("expected project-local copy, got global PATCH")
+	}
+	if createdProject != "brain-api" {
+		t.Fatalf("created project = %q, want brain-api", createdProject)
+	}
+	if createdStatus != "active" {
+		t.Fatalf("created status = %q, want active", createdStatus)
+	}
+}
+
+func TestToggleAutomationRowCmdUpdatesExistingProjectCopyForBuiltInAutomation(t *testing.T) {
+	var createCount int
+	var patchedPath string
+	var patchedStatus string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/entries":
+			if r.URL.Query().Get("type") != "automation" || r.URL.Query().Get("project") != "brain-api" {
+				t.Fatalf("unexpected list query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "project-copy", Path: "projects/brain-api/automation/project-copy.md", Title: "Built-in Blocked Task Inspector", Type: "automation", Status: "active", ProjectID: "brain-api"}}})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			patchedPath = strings.TrimPrefix(r.URL.Path, "/api/v1/entries/")
+			var updates map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+				t.Fatalf("decode patch body: %v", err)
+			}
+			patchedStatus = updates["status"]
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{ID: "project-copy", Path: "projects/brain-api/automation/project-copy.md", Status: patchedStatus})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			createCount++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "duplicate", Path: "projects/brain-api/automation/duplicate.md"})
+		default:
+			t.Fatalf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer srv.Close()
+
+	msg := toggleAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:      "global-auto",
+		Path:    "global/automation/blocked.md",
+		Title:   "Built-in Blocked Task Inspector",
+		Source:  "automation",
+		Scope:   "built-in",
+		Enabled: true,
+		Status:  "active",
+	}, "brain-api")().(AutomationToggleMsg)
+
+	if msg.Error != nil {
+		t.Fatalf("toggle built-in automation failed: %v", msg.Error)
+	}
+	if createCount != 0 {
+		t.Fatalf("expected existing project copy update, got %d creates", createCount)
+	}
+	if patchedPath != "projects/brain-api/automation/project-copy.md" {
+		t.Fatalf("patched path = %q, want project copy", patchedPath)
+	}
+	if patchedStatus != "archived" {
+		t.Fatalf("patched status = %q, want archived", patchedStatus)
+	}
+}
+
 func TestAutomationDeleteResultClosesConfirmModal(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.activeContentTab = ContentTabAutomation
@@ -1068,6 +1188,69 @@ func TestFetchAutomationDataIncludesGlobalAutomationsForProject(t *testing.T) {
 	}
 	if data.Automations[0].ID != "global-auto" || data.Automations[1].ID != "project-auto" {
 		t.Fatalf("automation order/ids = %#v", data.Automations)
+	}
+}
+
+func TestFetchAutomationDataTreatsGlobalAutomationAsDisabledTemplate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/entries" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("type") == "automation" && r.URL.Query().Get("global") == "true" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "global-auto", Path: "global/automation/blocked.md", Title: "Blocked Task Inspector", Type: "automation", Status: "active"}}})
+			return
+		}
+		json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+	}))
+	defer srv.Close()
+
+	msg := fetchAutomationDataCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, "brain-api")()
+	data, ok := msg.(AutomationDataMsg)
+	if !ok {
+		t.Fatalf("message type = %T, want AutomationDataMsg", msg)
+	}
+	if data.Error != nil {
+		t.Fatalf("fetchAutomationDataCmd returned error: %v", data.Error)
+	}
+	if len(data.Automations) != 1 {
+		t.Fatalf("automations = %#v, want global template", data.Automations)
+	}
+	if data.Automations[0].Status != "archived" {
+		t.Fatalf("global template status = %q, want archived display state", data.Automations[0].Status)
+	}
+}
+
+func TestFetchAutomationDataPrefersProjectAutomationOverGlobalTemplate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/entries" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		if r.URL.Query().Get("type") == "automation" && r.URL.Query().Get("global") == "true" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "global-auto", Path: "global/automation/blocked.md", Title: "Blocked Task Inspector", Type: "automation", Status: "active"}}})
+			return
+		}
+		if r.URL.Query().Get("type") == "automation" && r.URL.Query().Get("project") == "brain-api" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "project-auto", Path: "projects/brain-api/automation/blocked.md", Title: "Blocked Task Inspector", Type: "automation", Status: "archived", ProjectID: "brain-api"}}})
+			return
+		}
+		json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+	}))
+	defer srv.Close()
+
+	msg := fetchAutomationDataCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, "brain-api")()
+	data, ok := msg.(AutomationDataMsg)
+	if !ok {
+		t.Fatalf("message type = %T, want AutomationDataMsg", msg)
+	}
+	if data.Error != nil {
+		t.Fatalf("fetchAutomationDataCmd returned error: %v", data.Error)
+	}
+	if len(data.Automations) != 1 {
+		t.Fatalf("automations = %#v, want only project copy", data.Automations)
+	}
+	if data.Automations[0].ID != "project-auto" || data.Automations[0].Status != "archived" {
+		t.Fatalf("automation = %#v, want archived project copy", data.Automations[0])
 	}
 }
 

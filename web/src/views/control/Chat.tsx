@@ -2,7 +2,7 @@
 // streaming assistant messages, collapsed tool cards, permission banners
 // with allow/always/deny, abort, and a composer with agent/model selection.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -23,19 +23,25 @@ import {
   fileToAttachment,
 } from "./images";
 
-export function Chat({
-  runnerId,
-  instanceId,
-  sessionId,
-  defaultAgent,
-  sessionLabel,
-}: {
+export interface ChatHandle {
+  focusPrompt: () => void;
+}
+
+export const Chat = forwardRef<ChatHandle, {
   runnerId: string;
   instanceId: string;
   sessionId: string;
   defaultAgent?: string;
+  defaultModel?: string;
   sessionLabel?: string;
-}) {
+}>(function Chat({
+  runnerId,
+  instanceId,
+  sessionId,
+  defaultAgent,
+  defaultModel,
+  sessionLabel,
+}, ref) {
   const key = chatKey(runnerId, instanceId);
   const toast = useUI((s) => s.toast);
   const chat = useChat((s) => s.chats[key]);
@@ -52,6 +58,11 @@ export function Chat({
   const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const promptRef = useRef<HTMLTextAreaElement>(null);
+
+  useImperativeHandle(ref, () => ({
+    focusPrompt: () => promptRef.current?.focus(),
+  }), []);
 
   useEffect(() => {
     setAgent(defaultAgent ?? "");
@@ -78,6 +89,7 @@ export function Chat({
   });
 
   const modelOptions = useMemo(() => flattenProviders(providersQ.data), [providersQ.data]);
+  const defaultModelLabel = defaultModel ? compactModelLabel(defaultModel) : "default";
 
   const messages = useMemo(() => {
     if (!chat) return [];
@@ -191,6 +203,16 @@ export function Chat({
         ) : (
           <span className="mono faint truncate">{sessionId}</span>
         )}
+        {defaultModel && (
+          <span
+            className="ctl-meta-chip"
+            title={`Model: ${defaultModel}`}
+            style={{ maxWidth: 260 }}
+          >
+            <span className="ctl-meta-label">model</span>
+            <span className="truncate">{compactModelLabel(defaultModel)}</span>
+          </span>
+        )}
         <span style={{ flex: 1 }} />
         {chat?.connected ? (
           <span style={{ color: "var(--green)", fontSize: 12 }}>● live</span>
@@ -287,6 +309,7 @@ export function Chat({
           </div>
         )}
         <textarea
+          ref={promptRef}
           value={text}
           placeholder={
             dragOver
@@ -328,7 +351,7 @@ export function Chat({
             ))}
           </select>
           <select value={model} onChange={(e) => setModel(e.target.value)} title="Model">
-            <option value="">model: default</option>
+            <option value="">model: {defaultModelLabel}</option>
             {modelOptions.map((m) => (
               <option key={m.value} value={m.value}>
                 {m.label}
@@ -347,6 +370,11 @@ export function Chat({
       </div>
     </div>
   );
+});
+
+function compactModelLabel(model: string) {
+  const name = model.split("/").pop() ?? model;
+  return name.replace(/^claude-/, "");
 }
 
 function flattenProviders(

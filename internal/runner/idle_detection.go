@@ -79,13 +79,44 @@ func (tr *TaskRunner) checkIdleStatus(ctx context.Context) {
 
 		task := info.Task
 
-		// Branch on executor type
-		if task.ExecutorType == "pi" {
+		// Branch on executor type.
+		//
+		// "pi" and "script" both use process-exit semantics: a running process
+		// is always considered busy and completion is detected via process
+		// exit in checkRunningTasks/CheckCompletion. They have no HTTP API to
+		// poll, so calling checkOpencodeIdleStatus on them would always
+		// observe "unavailable" (best case) or — worse — connect to whatever
+		// happens to be listening on a guessed port and misinterpret the
+		// response. The bug this prevents: script-executor automation tasks
+		// (e.g. cron-triggered shell commands) being marked "blocked" by the
+		// runner because the OpenCode HTTP poll never finds a session.
+		switch task.ExecutorType {
+		case "pi":
 			tr.checkPiIdleStatus(ctx, info, threshold)
-		} else {
+		case "script":
+			tr.checkScriptIdleStatus(ctx, info, threshold)
+		default:
 			tr.checkOpencodeIdleStatus(ctx, task, threshold)
 		}
 	}
+}
+
+// checkScriptIdleStatus handles idle detection for script executor tasks.
+// Script processes don't expose an HTTP endpoint. A running script process
+// is always considered "busy" (the command is still executing).
+// Completion is detected via process exit in checkRunningTasks/CheckCompletion.
+//
+// This function is intentionally a no-op for running script processes.
+// GetAllRunning() already filters out exited processes, so process-exit
+// completion is handled by the checkRunningTasks path instead.
+func (tr *TaskRunner) checkScriptIdleStatus(ctx context.Context, info ProcessInfo, threshold time.Duration) {
+	// Script processes are always "busy" while running — no HTTP idle
+	// detection. Process exit/completion is handled by checkRunningTasks →
+	// CheckCompletion. Parameters are unused but kept for symmetry with
+	// checkPiIdleStatus.
+	_ = ctx
+	_ = info
+	_ = threshold
 }
 
 // checkOpencodeIdleStatus handles idle detection for OpenCode tasks via HTTP polling.

@@ -2,7 +2,7 @@
 // Desktop: rail + chat side by side. Mobile: single column, the rail
 // collapses behind a back button once an instance is selected.
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   controlCreateSession,
@@ -15,6 +15,8 @@ import {
 import { Modal, ConfirmDialog } from "../../components/common/Modal";
 import { EmptyState, ErrorState, Loading, Spinner } from "../../components/common/states";
 import { useUI } from "../../store/ui";
+import { useNav } from "../../store/nav";
+import { handleListNavKey, useViewKeyboard } from "../../lib/keyboard";
 import type { ControlTarget } from "../../store/ui";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { useSwipe } from "../../hooks/useSwipe";
@@ -28,6 +30,10 @@ interface Selection {
   instanceId: string;
 }
 
+type ControlRow =
+  | { kind: "runner"; runner: RunnerInfo; instances: OpencodeInstance[] }
+  | { kind: "instance"; runner: RunnerInfo; instance: OpencodeInstance };
+
 export function ControlView() {
   const toast = useUI((s) => s.toast);
   const consumeControlTarget = useUI((s) => s.consumeControlTarget);
@@ -37,6 +43,7 @@ export function ControlView() {
   const [historyTarget, setHistoryTarget] = useState<ControlTarget | null>(null);
   const [spawnOpen, setSpawnOpen] = useState(false);
   const [confirmKill, setConfirmKill] = useState<OpencodeInstance | null>(null);
+  const railRef = useRef<HTMLDivElement | null>(null);
 
   const runnersQ = useQuery({ queryKey: ["runners"], queryFn: getRunners, refetchInterval: 15_000 });
   const instancesQ = useQuery({
@@ -49,6 +56,27 @@ export function ControlView() {
 
   const runners = runnersQ.data ?? [];
   const instances = instancesQ.data ?? [];
+  const rows = useMemo<ControlRow[]>(() => {
+    const out: ControlRow[] = [];
+    for (const runner of runners) {
+      const runnerInstances = instances.filter((inst) => inst.runner_id === runner.runner_id);
+      out.push({ kind: "runner", runner, instances: runnerInstances });
+      for (const instance of runnerInstances) out.push({ kind: "instance", runner, instance });
+    }
+    return out;
+  }, [runners, instances]);
+  const rowIndexByKey = useMemo(() => {
+    const indexes = new Map<string, number>();
+    rows.forEach((row, i) => {
+      indexes.set(
+        row.kind === "runner" ? `runner:${row.runner.runner_id}` : `instance:${row.instance.instance_id}`,
+        i,
+      );
+    });
+    return indexes;
+  }, [rows]);
+  const scope = "control";
+  const cursor = useNav((s) => Math.min(s.cursor[scope] ?? 0, Math.max(0, rows.length - 1)));
 
   // Honor an "open in Control" request from another view (e.g. Automations "o"):
   // select the requested instance and session once it's known to the registry.
@@ -90,6 +118,7 @@ export function ControlView() {
     () => instances.find((i) => i.instance_id === selected?.instanceId) ?? null,
     [instances, selected],
   );
+  const chatOpen = !!selected || !!historyTarget;
 
   function pick(inst: OpencodeInstance) {
     setSelected({ runnerId: inst.runner_id, instanceId: inst.instance_id });
@@ -105,6 +134,60 @@ export function ControlView() {
     setSessionId(null);
   }
   const backSwipe = useSwipe({ onRight: goBack, edgeOnly: 44 });
+
+  function openRow(row: ControlRow | undefined) {
+    if (!row) return;
+    if (row.kind === "instance") {
+      pick(row.instance);
+      return;
+    }
+    const first = row.instances[0];
+    if (!first) {
+      toast("Runner has no instances", "info");
+      return;
+    }
+    const idx = rowIndexByKey.get(`instance:${first.instance_id}`);
+    if (idx !== undefined) useNav.getState().setCursor(scope, idx);
+    pick(first);
+  }
+
+  useViewKeyboard(
+    (e) => {
+      if (handleListNavKey(e, scope, rows.length)) return true;
+      const cur = rows[cursor];
+      switch (e.key) {
+        case "Enter":
+          openRow(cur);
+          return true;
+        case "n":
+        case "+":
+          setSpawnOpen(true);
+          return true;
+        case "x":
+        case "s":
+          if (cur?.kind !== "instance") return true;
+          if (cur.instance.kind !== "adhoc") {
+            toast("Only ad-hoc instances can be killed", "info");
+            return true;
+          }
+          setConfirmKill(cur.instance);
+          return true;
+        case "Escape":
+        case "Backspace":
+          if (!chatOpen) return false;
+          goBack();
+          return true;
+        default:
+          return false;
+      }
+    },
+    [rows, cursor, chatOpen, rowIndexByKey],
+  );
+
+  useEffect(() => {
+    const el = railRef.current?.querySelector<HTMLElement>('[data-cursor="1"]');
+    el?.scrollIntoView({ block: "nearest" });
+  }, [cursor]);
 
   async function kill(inst: OpencodeInstance) {
     try {
@@ -124,11 +207,9 @@ export function ControlView() {
   if (runnersQ.error && !runners.length)
     return <ErrorState error={runnersQ.error} onRetry={() => void runnersQ.refetch()} />;
 
-  const chatOpen = !!selected || !!historyTarget;
-
   return (
     <div className={`ctl-layout ${chatOpen ? "chat-open" : ""}`}>
-      <div className="ctl-rail">
+      <div className="ctl-rail" ref={railRef}>
         <div className="row" style={{ padding: "4px 6px", gap: 6 }}>
           <strong style={{ fontSize: 12.5 }}>Runners</strong>
           <span style={{ flex: 1 }} />
@@ -151,6 +232,9 @@ export function ControlView() {
             runner={r}
             instances={instances.filter((i) => i.runner_id === r.runner_id)}
             selected={selected?.instanceId ?? null}
+            cursor={cursor}
+            rowIndexByKey={rowIndexByKey}
+            onCursor={(idx) => useNav.getState().setCursor(scope, idx)}
             onPick={pick}
             onKill={(inst) => setConfirmKill(inst)}
           />
@@ -241,19 +325,34 @@ function RailRunner({
   runner,
   instances,
   selected,
+  cursor,
+  rowIndexByKey,
+  onCursor,
   onPick,
   onKill,
 }: {
   runner: RunnerInfo;
   instances: OpencodeInstance[];
   selected: string | null;
+  cursor: number;
+  rowIndexByKey: Map<string, number>;
+  onCursor: (idx: number) => void;
   onPick: (inst: OpencodeInstance) => void;
   onKill: (inst: OpencodeInstance) => void;
 }) {
   const online = runner.status === "online";
+  const runnerIndex = rowIndexByKey.get(`runner:${runner.runner_id}`);
+  const runnerCursored = runnerIndex === cursor;
   return (
     <div className="ctl-runner">
-      <div className="row" style={{ gap: 6, padding: "4px 6px" }}>
+      <div
+        className={`row ctl-runner-head ${runnerCursored ? "cursor" : ""}`}
+        data-cursor={runnerCursored ? "1" : undefined}
+        style={{ gap: 6, padding: "4px 6px" }}
+        onClick={() => {
+          if (runnerIndex !== undefined) onCursor(runnerIndex);
+        }}
+      >
         <span style={{ color: online ? "var(--green)" : "var(--red)" }}>●</span>
         <span className="mono truncate" style={{ fontSize: 12.5 }}>
           {runner.runner_id}
@@ -267,15 +366,22 @@ function RailRunner({
           no instances
         </div>
       )}
-      {instances.map((inst) => (
-        <InstanceRailItem
-          key={inst.instance_id}
-          instance={inst}
-          selected={selected === inst.instance_id}
-          onPick={onPick}
-          onKill={onKill}
-        />
-      ))}
+      {instances.map((inst) => {
+        const index = rowIndexByKey.get(`instance:${inst.instance_id}`);
+        return (
+          <InstanceRailItem
+            key={inst.instance_id}
+            instance={inst}
+            selected={selected === inst.instance_id}
+            cursored={index === cursor}
+            onCursor={() => {
+              if (index !== undefined) onCursor(index);
+            }}
+            onPick={onPick}
+            onKill={onKill}
+          />
+        );
+      })}
     </div>
   );
 }
@@ -283,17 +389,28 @@ function RailRunner({
 function InstanceRailItem({
   instance,
   selected,
+  cursored,
+  onCursor,
   onPick,
   onKill,
 }: {
   instance: OpencodeInstance;
   selected: boolean;
+  cursored?: boolean;
+  onCursor: () => void;
   onPick: (inst: OpencodeInstance) => void;
   onKill: (inst: OpencodeInstance) => void;
 }) {
   const meta = compactInstanceMetadata(instance);
   return (
-    <div className={`ctl-inst ${selected ? "on" : ""}`} onClick={() => onPick(instance)}>
+    <div
+      className={`ctl-inst ${selected ? "on" : ""} ${cursored ? "cursor" : ""}`}
+      data-cursor={cursored ? "1" : undefined}
+      onClick={() => {
+        onCursor();
+        onPick(instance);
+      }}
+    >
       <div className="ctl-inst-top">
         <span style={{ color: instanceDot(instance.status) }} title={instance.status}>
           ▣
@@ -472,6 +589,7 @@ function InstancePane({
           instanceId={iid}
           sessionId={sessionId}
           defaultAgent={instance.agent}
+          defaultModel={instance.model}
           sessionLabel={
             sessions.find((s) => s.id === sessionId)
               ? sessionName(sessions.find((s) => s.id === sessionId)!)

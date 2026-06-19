@@ -8,6 +8,7 @@ export function Modal({
   footer,
   className,
   onEdit,
+  storageKey,
 }: {
   title: string;
   onClose: () => void;
@@ -17,15 +18,48 @@ export function Modal({
   className?: string;
   /** Optional action wired to the modal-level edit shortcut (`e`). */
   onEdit?: () => void;
+  /** Stable preference key for remembering modal size on this browser. */
+  storageKey?: string;
 }) {
   const backdropRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
-  const [expanded, setExpanded] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const modalStorageKey = storageKey ?? modalPreferenceKey(title, className);
+  const [expanded, setExpanded] = useState(() => readExpandedPreference(modalStorageKey));
+
+  useEffect(() => {
+    const dialog = dialogRef.current;
+    const focusables = getFocusableElements(dialog);
+    const preferred = dialog?.querySelector<HTMLElement>('[data-autofocus="true"]');
+    const target = preferred || focusables[0] || dialog;
+    target?.focus({ preventScroll: true });
+  }, []);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const modals = Array.from(document.querySelectorAll(".modal-backdrop"));
       if (modals[modals.length - 1] !== backdropRef.current) return;
+
+      if (e.key === "Tab") {
+        const focusables = getFocusableElements(dialogRef.current);
+        if (focusables.length === 0) {
+          e.preventDefault();
+          return;
+        }
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+          return;
+        }
+        if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+          return;
+        }
+        return;
+      }
 
       if (e.key === "Escape") {
         e.preventDefault();
@@ -43,7 +77,7 @@ export function Modal({
 
       if (e.key === "m") {
         e.preventDefault();
-        setExpanded((v) => !v);
+        toggleExpanded();
         return;
       }
 
@@ -95,7 +129,15 @@ export function Modal({
       window.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
     };
-  }, [onClose, onEdit]);
+  }, [modalStorageKey, onClose, onEdit]);
+
+  function toggleExpanded() {
+    setExpanded((v) => {
+      const next = !v;
+      writeExpandedPreference(modalStorageKey, next);
+      return next;
+    });
+  }
 
   const sheetClass = ["sheet", className, expanded ? "sheet-expanded" : ""]
     .filter(Boolean)
@@ -109,12 +151,12 @@ export function Modal({
         if (e.target === e.currentTarget) onClose();
       }}
     >
-      <div className={sheetClass} role="dialog" aria-modal="true" aria-label={title}>
+      <div ref={dialogRef} className={sheetClass} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
         <div className="sheet-header">
           <h2>{title}</h2>
           <button
             className="icon-btn"
-            onClick={() => setExpanded((v) => !v)}
+            onClick={toggleExpanded}
             aria-label={expanded ? "restore window" : "expand window"}
             title={expanded ? "Restore (m)" : "Expand (m)"}
           >
@@ -129,6 +171,39 @@ export function Modal({
       </div>
     </div>
   );
+}
+
+const MODAL_SIZE_PREF_PREFIX = "brain.modal.expanded.";
+
+function modalPreferenceKey(title: string, className?: string): string {
+  const stableTitle = title.replace(/ · .*/, "");
+  const stableClass = className?.trim().split(/\s+/).sort().join(".") || "default";
+  return stableClass + "." + stableTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+}
+
+function readExpandedPreference(key: string): boolean {
+  try {
+    return localStorage.getItem(MODAL_SIZE_PREF_PREFIX + key) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function writeExpandedPreference(key: string, expanded: boolean) {
+  try {
+    localStorage.setItem(MODAL_SIZE_PREF_PREFIX + key, expanded ? "1" : "0");
+  } catch {
+    // Storage can be unavailable in private/restricted contexts; the modal still works.
+  }
+}
+
+function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
+  if (!root) return [];
+  return Array.from(
+    root.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ),
+  ).filter((el) => el.offsetParent !== null && !el.hasAttribute("disabled") && el.tabIndex !== -1);
 }
 
 export function ConfirmDialog({
@@ -162,6 +237,7 @@ export function ConfirmDialog({
             style={{ marginLeft: "auto" }}
             onClick={onConfirm}
             disabled={busy}
+            data-autofocus="true"
           >
             {busy ? "Working…" : confirmLabel}
           </button>

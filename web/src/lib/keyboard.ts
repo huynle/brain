@@ -122,6 +122,9 @@ export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
       const tabs = [opts.allLabel, ...opts.projects];
 
       switch (e.key) {
+        case ":":
+          nav.setCommandOpen(true);
+          break;
         case "?":
           nav.setHelpOpen(true);
           break;

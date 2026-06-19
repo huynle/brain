@@ -4,6 +4,13 @@
 
 import { GOAL_GENERATED_BY, type BrainEntry } from "../../lib/types";
 
+export const AUTOMATION_RUN_TASK_PAGE_SIZE = 10;
+
+export type AutomationDisplayEntry =
+  | { kind: "auto"; row: AutomationRow }
+  | { kind: "task"; task: BrainEntry; parent: AutomationRow }
+  | { kind: "show-more"; parent: AutomationRow; shown: number; total: number; remaining: number };
+
 export interface AutomationRow {
   id: string;
   path: string;
@@ -120,14 +127,16 @@ function triggerOf(entry: BrainEntry): { kind: string; detail: string } {
 function rowFromAutomation(entry: BrainEntry, runs: Map<string, RunSummary>): AutomationRow {
   const trig = triggerOf(entry);
   const summary = runs.get(entry.id);
+  const scope = entryScope(entry);
+  const status = scope === "built-in" ? "archived" : entry.status;
   return {
     id: entry.id,
     path: entry.path,
     title: entry.title,
     source: "automation",
-    scope: entryScope(entry),
-    status: entry.status,
-    enabled: entry.status === "active",
+    scope,
+    status,
+    enabled: status === "active",
     isGoal: entry.generated_by === GOAL_GENERATED_BY,
     featureId: entry.feature_id ?? "",
     triggerKind: trig.kind,
@@ -158,6 +167,13 @@ function rowFromScheduledTask(task: BrainEntry): AutomationRow {
   };
 }
 
+
+function automationTemplateKey(entry: BrainEntry): string {
+  if (entry.generated_by) return `generated:${entry.generated_by}`;
+  if (entry.title) return `title:${entry.title.trim().toLowerCase()}`;
+  return entry.path || entry.id;
+}
+
 // triggerLabel renders the "event:…" / "cron:…" string the TUI shows.
 export function triggerLabel(row: AutomationRow): string {
   if (!row.triggerKind) return "manual";
@@ -172,7 +188,13 @@ export function normalizeAutomationRows(
   runs: BrainEntry[],
 ): AutomationRow[] {
   const summaries = buildRunSummaries(tasks, runs);
-  const rows: AutomationRow[] = automations.map((e) => rowFromAutomation(e, summaries));
+  const byTemplate = new Map<string, BrainEntry>();
+  for (const entry of automations) {
+    const key = automationTemplateKey(entry);
+    const existing = byTemplate.get(key);
+    if (!existing || entryScope(entry) === "project") byTemplate.set(key, entry);
+  }
+  const rows: AutomationRow[] = [...byTemplate.values()].map((e) => rowFromAutomation(e, summaries));
 
   for (const task of tasks) {
     if (task.schedule || task.run_once_at) rows.push(rowFromScheduledTask(task));
@@ -191,4 +213,38 @@ export function childRunTasks(rowID: string, tasks: BrainEntry[]): BrainEntry[] 
   return tasks
     .filter((t) => t.generated_by === generatedBy)
     .sort((a, b) => (b.modified ?? "").localeCompare(a.modified ?? "") || b.id.localeCompare(a.id));
+}
+
+export function automationShowMoreKey(parentID: string): string {
+  return `automation-show-more:${parentID}`;
+}
+
+export function flattenAutomationDisplay(
+  rows: AutomationRow[],
+  tasks: BrainEntry[],
+  expandedID: string | null,
+  visibleRunTaskLimits: Record<string, number>,
+): AutomationDisplayEntry[] {
+  const out: AutomationDisplayEntry[] = [];
+  for (const row of rows) {
+    out.push({ kind: "auto", row });
+    if (expandedID !== row.id) continue;
+
+    const children = childRunTasks(row.id, tasks);
+    const limit = visibleRunTaskLimits[row.id] ?? AUTOMATION_RUN_TASK_PAGE_SIZE;
+    const shown = Math.min(limit, children.length);
+    for (const task of children.slice(0, shown)) {
+      out.push({ kind: "task", task, parent: row });
+    }
+    if (shown < children.length) {
+      out.push({
+        kind: "show-more",
+        parent: row,
+        shown,
+        total: children.length,
+        remaining: children.length - shown,
+      });
+    }
+  }
+  return out;
 }

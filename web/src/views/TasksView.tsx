@@ -5,13 +5,14 @@ import { useLive } from "../lib/sse";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useLiveTasks } from "../hooks/useLiveTasks";
-import { filterTasks, groupByFeature, UNGROUPED } from "./tasks/grouping";
+import { filterTasks, groupByFeature, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
 import { buildTaskTree } from "./tasks/tree";
 import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
+import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
 import { Panel } from "../components/layout/Panel";
 import { ConfirmDialog } from "../components/common/Modal";
-import { deleteEntry, setTaskStatus, triggerTask } from "../lib/api";
+import { deleteEntry, listInstances, setTaskStatus, triggerTask } from "../lib/api";
 import {
   cleanLogContent,
   clockTime,
@@ -37,6 +38,13 @@ const EntryRawViewModal = lazy(() =>
 );
 
 const TERMINAL = ["completed", "cancelled", "archived", "superseded"];
+const FEATURE_SORT_LABELS: Record<FeatureSortMode, string> = {
+  completed: "done",
+  created: "new",
+  name: "name",
+  status: "status",
+  priority: "prio",
+};
 const taskKey = (t: Task) => `${t.projectId}:${t.id}`;
 
 function glyph(t: Task): { ch: string; color: string } {
@@ -80,6 +88,7 @@ export function TasksView() {
   const toggleDetail = useUI((s) => s.toggleDetail);
   const toggleLogs = useUI((s) => s.toggleLogs);
   const openInspect = useUI((s) => s.openInspect);
+  const openInControl = useUI((s) => s.openInControl);
   const isMobile = useIsMobile();
 
   const { tasks, connected } = useLiveTasks(activeProject);
@@ -92,13 +101,17 @@ export function TasksView() {
 
   const [mode, setMode] = useState<"tasks" | "schedules">("tasks");
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [showDone, setShowDone] = useState(false);
+  const [featureSort, setFeatureSort] = useState<FeatureSortMode>("completed");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [collapseDefault, setCollapseDefault] = useState(activeProject === ALL_PROJECTS);
 
   const [editMeta, setEditMeta] = useState<Task | null>(null);
   const [viewContent, setViewContent] = useState<Task | null>(null);
   const [editContent, setEditContent] = useState<Task | null>(null);
   const [batchMeta, setBatchMeta] = useState<Task[] | null>(null);
+  const [featureMeta, setFeatureMeta] = useState<{ feature: string; tasks: Task[] } | null>(null);
   const [confirmDel, setConfirmDel] = useState<Task[] | null>(null);
   const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -108,18 +121,23 @@ export function TasksView() {
   const detailBodyRef = useRef<HTMLDivElement>(null);
   const logBodyRef = useRef<HTMLDivElement>(null);
 
-  const { rows, taskList } = useMemo(() => {
+  const { rows, taskList, featureKeys, tasksByFeature } = useMemo(() => {
     let list = filterTasks(tasks, query);
     if (mode === "schedules") list = list.filter((t) => t.schedule || t.run_once_at);
     else if (!showDone) list = list.filter((t) => !TERMINAL.includes(t.status));
-    const groups = groupByFeature(list);
+    const groups = groupByFeature(list, activeProject === ALL_PROJECTS ? featureSort : "name");
     const r: Row[] = [];
     const flat: Task[] = [];
+    const keys: string[] = [];
+    const byFeature = new Map<string, Task[]>();
     for (const g of groups) {
+      byFeature.set(g.feature, g.tasks);
       const showHeader = g.feature !== UNGROUPED || groups.length > 1;
-      if (showHeader)
+      if (showHeader) {
+        keys.push(g.feature);
         r.push({ kind: "header", feature: g.feature, label: g.label, count: g.tasks.length });
-      if (!collapsed[g.feature]) {
+      }
+      if (!(collapsed[g.feature] ?? collapseDefault)) {
         if (mode === "schedules") {
           g.tasks.forEach((t) => {
             r.push({ kind: "task", task: t, lead: "", inCycle: false });
@@ -134,8 +152,17 @@ export function TasksView() {
         }
       }
     }
-    return { rows: r, taskList: flat };
-  }, [tasks, query, showDone, collapsed, mode]);
+    return { rows: r, taskList: flat, featureKeys: keys, tasksByFeature: byFeature };
+  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort]);
+
+  useEffect(() => {
+    setCollapsed({});
+    setCollapseDefault(activeProject === ALL_PROJECTS);
+  }, [activeProject]);
+
+  useEffect(() => {
+    if (searchOpen) filterRef.current?.focus();
+  }, [searchOpen]);
 
   useEffect(() => {
     if (cursor > rows.length - 1) nav.setCursor(scope, Math.max(0, rows.length - 1));
@@ -149,6 +176,11 @@ export function TasksView() {
 
   const cursorRow = rows[cursor];
   const detailTask = cursorRow?.kind === "task" ? cursorRow.task : null;
+
+  const setAllFeatureCollapsed = (value: boolean) => {
+    setCollapseDefault(value);
+    setCollapsed(Object.fromEntries(featureKeys.map((key) => [key, value])));
+  };
 
   const selectedTasks = useMemo(
     () => taskList.filter((t) => selected[taskKey(t)]),
@@ -184,6 +216,29 @@ export function TasksView() {
   const targets = (cur?: Task | null): Task[] =>
     selectedTasks.length ? selectedTasks : cur ? [cur] : [];
 
+  async function openTaskSession(task: Task) {
+    if (!isActive(task.status)) {
+      setViewContent(task);
+      return;
+    }
+    try {
+      const instances = await listInstances();
+      const inst = instances.find((i) => i.task_id === task.id && (!task.projectId || i.project_id === task.projectId));
+      if (!inst) {
+        toast("No live session found for this task", "info");
+        return;
+      }
+      openInControl({
+        mode: "live",
+        runnerId: inst.runner_id,
+        instanceId: inst.instance_id,
+        taskTitle: task.title || task.id,
+      });
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Could not open session", "error");
+    }
+  }
+
   useViewKeyboard(
     (e) => {
       // panel-level keys
@@ -216,14 +271,16 @@ export function TasksView() {
       switch (e.key) {
         case "Enter":
           if (row?.kind === "header")
-            setCollapsed((c) => ({ ...c, [row.feature]: !c[row.feature] }));
-          else if (cur) setViewContent(cur);
+            setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
+          else if (cur) void openTaskSession(cur);
           return true;
         case " ":
           if (row?.kind === "header")
-            setCollapsed((c) => ({ ...c, [row.feature]: !c[row.feature] }));
+            setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
           else if (cur) nav.toggleSelect(taskKey(cur));
           return true;
+        case "{": setAllFeatureCollapsed(true); return true;
+        case "}": setAllFeatureCollapsed(false); return true;
         case "A": nav.selectMany(taskList.map(taskKey)); return true;
         case "D": nav.clearSelect(); return true;
         case "c": {
@@ -247,6 +304,12 @@ export function TasksView() {
           return true;
         }
         case "s": {
+          if (row?.kind === "header") {
+            const ts = tasksByFeature.get(row.feature) ?? [];
+            if (row.feature === UNGROUPED) toast("Ungrouped tasks do not have feature settings", "info");
+            else if (ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
+            return true;
+          }
           const ts = targets(cur);
           if (ts.length > 1) setBatchMeta(ts);
           else if (cur) setEditMeta(cur);
@@ -256,13 +319,13 @@ export function TasksView() {
         case "y":
           if (cur) { void navigator.clipboard?.writeText(cur.title || cur.id); toast("Copied title"); }
           return true;
-        case "/": filterRef.current?.focus(); return true;
+        case "/": setSearchOpen(true); return true;
         case "C": setMode((m) => (m === "tasks" ? "schedules" : "tasks")); nav.setCursor(scope, 0); return true;
         case "n": setComposing(true); return true;
         default: return false;
       }
     },
-    [rows, cursor, scope, taskList, selectedTasks, focus, detailVisible, logsVisible, mode],
+    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast],
   );
 
   async function doDelete(ts: Task[]) {
@@ -283,13 +346,15 @@ export function TasksView() {
         bodyRef={treeBodyRef}
         style={{ flex: 1 }}
       >
-        <div className="search-bar" style={{ padding: "2px 0 4px", position: "static", background: "transparent" }}>
+        <div className="search-layer" style={{ display: searchOpen ? undefined : "none" }} onMouseDown={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}>
+          <div className="search-popup">
+          <span className="search-prompt">/</span>
           <input
             ref={filterRef}
             placeholder="filter… (/)"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Escape") { setQuery(""); e.currentTarget.blur(); } }}
+            onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false); if (e.key === "Enter") setSearchOpen(false); }}
           />
           <button className="btn sm" onClick={() => setMode((m) => (m === "tasks" ? "schedules" : "tasks"))}>
             {mode === "schedules" ? "sched" : "tasks"}
@@ -299,7 +364,23 @@ export function TasksView() {
               {showDone ? "all" : "active"}
             </button>
           )}
-          <button className="btn sm primary" onClick={() => setComposing(true)}>+</button>
+          {activeProject === ALL_PROJECTS && mode === "tasks" && (
+            <select
+              className="btn sm"
+              aria-label="Feature sort"
+              title="Sort features"
+              value={featureSort}
+              onChange={(e) => setFeatureSort(e.target.value as FeatureSortMode)}
+            >
+              {Object.entries(FEATURE_SORT_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          )}
+          <button className="btn sm" onClick={() => setAllFeatureCollapsed(true)} title="Collapse all features ({)">{"{"}</button>
+          <button className="btn sm" onClick={() => setAllFeatureCollapsed(false)} title="Expand all features (})">{"}"}</button>
+          <button className="btn sm primary" onClick={() => { setSearchOpen(false); setComposing(true); }}>+</button>
+          </div>
         </div>
 
         {rows.length === 0 ? (
@@ -321,9 +402,14 @@ export function TasksView() {
                   key={`h:${row.feature}`}
                   className={`tree-header ${isCur ? "cursor" : ""}`}
                   data-cursor={isCur ? "1" : undefined}
-                  onClick={() => setCollapsed((c) => ({ ...c, [row.feature]: !c[row.feature] }))}
+                  onClick={() => setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }))}
+                  onDoubleClick={() => {
+                    const ts = tasksByFeature.get(row.feature) ?? [];
+                    if (row.feature !== UNGROUPED && ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
+                  }}
+                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "s opens feature settings · Enter/Space toggles collapse"}
                 >
-                  <span className="htri">{collapsed[row.feature] ? "▸" : "▾"}</span>
+                  <span className="htri">{(collapsed[row.feature] ?? collapseDefault) ? "▸" : "▾"}</span>
                   {row.label}
                   <span className="hcount">({row.count})</span>
                 </div>
@@ -341,7 +427,7 @@ export function TasksView() {
                   nav.setCursor(scope, i);
                   if (isMobile) openInspect({ path: t.path, taskId: t.id, projectId: t.projectId, title: t.title });
                 }}
-                onDoubleClick={() => setViewContent(t)}
+                onDoubleClick={() => void openTaskSession(t)}
               >
                 <span className="connector">{row.lead}</span>
                 {selCount > 0 && (
@@ -423,6 +509,15 @@ export function TasksView() {
         </Suspense>
       )}
       {batchMeta && <BatchMetadataModal tasks={batchMeta} onClose={() => setBatchMeta(null)} onDone={() => nav.clearSelect()} />}
+      {featureMeta && (
+        <FeatureMetadataModal
+          feature={featureMeta.feature}
+          project={activeProject}
+          tasks={featureMeta.tasks}
+          onClose={() => setFeatureMeta(null)}
+          onDone={() => nav.clearSelect()}
+        />
+      )}
       {editContent && (
         <Suspense fallback={null}>
           <EntryEditModal

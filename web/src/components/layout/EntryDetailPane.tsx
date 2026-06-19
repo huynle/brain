@@ -5,6 +5,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { getEntry } from "../../lib/api";
+import { AttachmentGallery } from "./AttachmentGallery";
 import { relativeTime } from "../../lib/format";
 import type { BrainEntry } from "../../lib/types";
 
@@ -73,6 +74,7 @@ export function EntryDetailPane({ path }: { path: string | null }) {
           <pre className="detail-pre">{body}</pre>
         </div>
       )}
+      <AttachmentGallery attachments={e.attachments} />
     </div>
   );
 }

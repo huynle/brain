@@ -212,6 +212,86 @@ export const triggerTask = (projectId: string, taskId: string) =>
     { method: "POST" },
   );
 
+
+// ─── Built-in Assistant ──────────────────────────────────────────
+
+export interface AssistantStatusResponse {
+  available: boolean;
+  mode: "direct_llm" | "manual" | string;
+  provider?: string;
+  model?: string;
+  capabilities: string[];
+  reason?: string;
+}
+
+export interface AssistantAction {
+  type: string;
+  explicit: boolean;
+  payload: Record<string, unknown>;
+}
+
+export interface AssistantChatResponse {
+  reply: string;
+  executed_actions: { type: string; status: string; result?: unknown; error?: string }[];
+  proposed_actions: AssistantAction[];
+}
+
+export interface AssistantGoalDraft {
+  project?: string;
+  feature_id?: string;
+  title?: string;
+  criteria?: string;
+  validation?: string;
+  workdir?: string;
+  trigger_source?: string;
+  agent?: string;
+  model?: string;
+  complete_statuses?: string[];
+  blocked_statuses?: string[];
+}
+
+export const assistantStatus = () =>
+  api<AssistantStatusResponse>("/api/v1/assistant/status");
+
+export const assistantChat = (body: {
+  project?: string;
+  message: string;
+  attachments?: string[];
+  context?: Record<string, string>;
+}) => api<AssistantChatResponse>("/api/v1/assistant/chat", { method: "POST", body });
+
+export const assistantGoalDraft = (body: {
+  project?: string;
+  message: string;
+  current?: AssistantGoalDraft;
+  attachments?: string[];
+  context?: Record<string, string>;
+}) =>
+  api<{ reply: string; draft: AssistantGoalDraft }>("/api/v1/assistant/goal-draft", {
+    method: "POST",
+    body,
+  });
+
+export async function uploadAttachment(projectId: string, file: Blob, filename: string, metadata?: Record<string, unknown>) {
+  const form = new FormData();
+  form.set("project_id", projectId);
+  form.set("file", file, filename);
+  if (metadata) form.set("metadata", JSON.stringify(metadata));
+  const token = useAuth.getState().token;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(buildUrl("/api/v1/attachments"), {
+    method: "POST",
+    headers,
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ApiError(res.status, text || res.statusText, text);
+  }
+  return (await res.json()) as { attachment: { id: string; filename: string; content_type: string } };
+}
+
 // ─── Runner control ──────────────────────────────────────────────
 
 export const getRunners = () =>
@@ -367,6 +447,12 @@ export const controlSpawnInstance = (runnerId: string, spec: SpawnInstanceSpec) 
 export const controlKillInstance = (runnerId: string, instanceId: string) =>
   api<{ success: boolean }>(controlBase(runnerId, instanceId), { method: "DELETE" });
 
+export const controlAbortTask = (runnerId: string, taskId: string) =>
+  api<{ success: boolean }>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/tasks/${encodeURIComponent(taskId)}/abort`,
+    { method: "POST" },
+  );
+
 /** EventSource URL for an instance's live event stream (?token= auth). */
 export function controlEventsUrl(runnerId: string, instanceId: string): string {
   const base = `${controlBase(runnerId, instanceId)}/events`;
@@ -449,7 +535,9 @@ export async function executeAutomation(
 }
 
 export const getEntry = (path: string) =>
-  api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`);
+  api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+    query: { include: "attachments" },
+  });
 
 export const search = (req: SearchRequest) =>
   api<SearchResponse>("/api/v1/search", { method: "POST", body: req });

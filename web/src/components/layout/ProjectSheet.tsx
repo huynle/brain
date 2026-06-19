@@ -114,7 +114,9 @@ export function ProjectSheet() {
   const liveProjects = useLive((s) => s.projects);
   const [q, setQ] = useState("");
   const [cursor, setCursor] = useState(0);
+  const [selectionMode, setSelectionMode] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const all = useMemo(
@@ -174,7 +176,14 @@ export function ProjectSheet() {
   // Highlight the best match (top of the sorted list) whenever the query changes.
   useEffect(() => {
     setCursor(0);
+    setSelectionMode(false);
   }, [q]);
+
+  // The desktop modal and mobile bottom sheet mount their wrappers around this
+  // input, so do not rely on browser autoFocus alone.
+  useEffect(() => {
+    if (open) inputRef.current?.focus({ preventScroll: true });
+  }, [open]);
 
   // Keep the highlighted row scrolled into view.
   useEffect(() => {
@@ -189,6 +198,7 @@ export function ProjectSheet() {
     setOpen(false);
     setQ("");
     setCursor(0);
+    setSelectionMode(false);
   }
   function pick(p?: string) {
     if (!p) return;
@@ -270,7 +280,13 @@ export function ProjectSheet() {
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
-    if (e.key === "ArrowDown") {
+    if (selectionMode && (e.key === "j" || e.key === "ArrowDown")) {
+      e.preventDefault();
+      setCursor((c) => Math.min(c + 1, rows.length - 1));
+    } else if (selectionMode && (e.key === "k" || e.key === "ArrowUp")) {
+      e.preventDefault();
+      setCursor((c) => Math.max(c - 1, 0));
+    } else if (e.key === "ArrowDown") {
       e.preventDefault();
       setCursor((c) => Math.min(c + 1, rows.length - 1));
     } else if (e.key === "ArrowUp") {
@@ -278,6 +294,10 @@ export function ProjectSheet() {
       setCursor((c) => Math.max(c - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
+      if (!selectionMode) {
+        setSelectionMode(true);
+        return;
+      }
       const row = rows[cursor];
       if (row?.kind === "project") pick(row.project);
     } else if (e.key === "P") {
@@ -298,6 +318,8 @@ export function ProjectSheet() {
     } else if (e.key === "Escape") {
       e.preventDefault();
       close();
+    } else if (selectionMode && e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+      setSelectionMode(false);
     }
   }
 
@@ -337,8 +359,10 @@ export function ProjectSheet() {
         </button>
       </div>
       <input
+        ref={inputRef}
         className="proj-search"
         autoFocus
+        data-autofocus="true"
         placeholder="Search projects…"
         value={q}
         onChange={(e) => setQ(e.target.value)}
@@ -440,7 +464,7 @@ export function ProjectSheet() {
           </div>
         )}
       </div>
-      <div className="proj-hints faint">Enter: switch project · T: pause/resume highlighted tasks · A: pause/resume highlighted automations · P: pause/resume all tasks + automations · X: trigger highlighted feature tasks</div>
+      <div className="proj-hints faint">Enter: navigate results / choose highlighted project · j/k: move after Enter · T: pause/resume highlighted tasks · A: pause/resume highlighted automations · P: pause/resume all tasks + automations · X: trigger highlighted feature tasks</div>
     </div>
   );
 

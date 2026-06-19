@@ -548,6 +548,7 @@ func defaultConfig() *UnifiedConfig {
 	cfg.Server.Port = 3333
 	cfg.Server.Host = "localhost"
 	cfg.Server.BrainDir = brainDir
+	cfg.Server.FeatureCheckout.Enabled = true
 	cfg.Server.LogLevel = "info"
 	cfg.Server.PIDFile = filepath.Join(stateHome, "brain-api", "brain-api.pid")
 	cfg.Server.LogFile = filepath.Join(stateHome, "brain-api", "brain-api.log")
@@ -587,9 +588,11 @@ func defaultConfig() *UnifiedConfig {
 		}
 		// Thread task defaults from unified config
 		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
+		cfg.Server.FeatureCheckout = ucfg.Server.FeatureCheckout
 		cfg.Server.Embedding = ucfg.Server.Embedding
 		cfg.Server.Attachments = ucfg.Server.Attachments
 		cfg.Server.AttachmentExtraction = ucfg.Server.AttachmentExtraction
+		cfg.Server.Assistant = ucfg.Server.Assistant
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -621,6 +624,10 @@ func defaultConfig() *UnifiedConfig {
 	}
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.Server.OAuthPIN = v
+	}
+	if v := os.Getenv("BRAIN_FEATURE_CHECKOUT_ENABLED"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.Server.FeatureCheckout.Enabled = lower == "true" || lower == "1" || lower == "yes"
 	}
 	// Task defaults env var overrides
 	if v := os.Getenv("BRAIN_DEFAULT_AGENT"); v != "" {
@@ -669,9 +676,11 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
 	cmdCfg.Server.TaskDefaults = cfg.Server.TaskDefaults
+	cmdCfg.Server.FeatureCheckout = cfg.Server.FeatureCheckout
 	cmdCfg.Server.Embedding = cfg.Server.Embedding
 	cmdCfg.Server.Attachments = cfg.Server.Attachments
 	cmdCfg.Server.AttachmentExtraction = cfg.Server.AttachmentExtraction
+	cmdCfg.Server.Assistant = cfg.Server.Assistant
 	// Runner — assign the full config directly, no lossy field-by-field copying
 	cmdCfg.Runner = cfg.Runner
 
@@ -687,13 +696,19 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 // convertToCommandsAPIFlags converts main.APIFlags to commands.APIFlags.
 func convertToCommandsAPIFlags(flags *APIFlags) *commands.APIFlags {
 	return &commands.APIFlags{
-		Port:    flags.Port,
-		Host:    flags.Host,
-		Daemon:  flags.Daemon,
-		LogFile: flags.LogFile,
-		TLS:     flags.TLS,
-		TLSCert: flags.TLSCert,
-		TLSKey:  flags.TLSKey,
+		Port:          flags.Port,
+		Host:          flags.Host,
+		Daemon:        flags.Daemon,
+		LogFile:       flags.LogFile,
+		TLS:           flags.TLS,
+		TLSCert:       flags.TLSCert,
+		TLSKey:        flags.TLSKey,
+		Runner:        flags.Runner,
+		RunnerProject: flags.RunnerProject,
+		MaxParallel:   flags.MaxParallel,
+		Include:       flags.Include,
+		Exclude:       flags.Exclude,
+		Executor:      flags.Executor,
 	}
 }
 

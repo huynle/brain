@@ -19,13 +19,19 @@ type GlobalFlags struct {
 
 // APIFlags for api command
 type APIFlags struct {
-	Port    int
-	Host    string
-	Daemon  bool
-	LogFile string
-	TLS     bool
-	TLSCert string
-	TLSKey  string
+	Port          int
+	Host          string
+	Daemon        bool
+	LogFile       string
+	TLS           bool
+	TLSCert       string
+	TLSKey        string
+	Runner        bool
+	RunnerProject string
+	MaxParallel   int
+	Include       []string
+	Exclude       []string
+	Executor      string
 }
 
 // RunnerFlags for runner commands
@@ -104,6 +110,26 @@ func ParseAPIFlags(args []string) (*APIFlags, error) {
 	fs.BoolVar(&flags.TLS, "tls", false, "Enable TLS")
 	fs.StringVar(&flags.TLSCert, "tls-cert", "", "TLS certificate path")
 	fs.StringVar(&flags.TLSKey, "tls-key", "", "TLS key path")
+	fs.BoolVar(&flags.Runner, "runner", false, "Run embedded task runner")
+	fs.StringVar(&flags.RunnerProject, "runner-project", "", "Embedded runner project")
+	fs.IntVar(&flags.MaxParallel, "max-parallel", 0, "Embedded runner max parallel tasks")
+	fs.StringVar(&flags.Executor, "executor", "", "Embedded runner executor")
+	fs.Func("include", "Embedded runner include project pattern", func(s string) error {
+		flags.Include = append(flags.Include, s)
+		return nil
+	})
+	fs.Func("i", "Embedded runner include project pattern (short)", func(s string) error {
+		flags.Include = append(flags.Include, s)
+		return nil
+	})
+	fs.Func("exclude", "Embedded runner exclude project pattern", func(s string) error {
+		flags.Exclude = append(flags.Exclude, s)
+		return nil
+	})
+	fs.Func("e", "Embedded runner exclude project pattern (short)", func(s string) error {
+		flags.Exclude = append(flags.Exclude, s)
+		return nil
+	})
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
@@ -241,13 +267,15 @@ type UnifiedConfig struct {
 			CertPath string
 			KeyPath  string
 		}
-		PIDFile      string
-		LogFile      string
-		TaskDefaults uconfig.TaskDefaultsConfig
-		Embedding    uconfig.EmbeddingConfig
-		Attachments  uconfig.AttachmentConfig
+		PIDFile         string
+		LogFile         string
+		TaskDefaults    uconfig.TaskDefaultsConfig
+		FeatureCheckout uconfig.FeatureCheckoutConfig
+		Embedding       uconfig.EmbeddingConfig
+		Attachments     uconfig.AttachmentConfig
 
 		AttachmentExtraction uconfig.AttachmentExtractionConfig
+		Assistant            uconfig.AssistantConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -321,14 +349,20 @@ func ApplyFlagsToConfig(cfg *UnifiedConfig, globalFlags *GlobalFlags, cmdFlags i
 
 // LifecycleFlags holds flags for lifecycle commands (start, stop, restart).
 type LifecycleFlags struct {
-	PIDFile string
-	LogFile string
-	Timeout int
-	Force   bool
-	DryRun  bool
-	Daemon  bool
-	Port    int
-	Host    string
+	PIDFile       string
+	LogFile       string
+	Timeout       int
+	Force         bool
+	DryRun        bool
+	Daemon        bool
+	Port          int
+	Host          string
+	Runner        bool
+	RunnerProject string
+	MaxParallel   int
+	Include       []string
+	Exclude       []string
+	Executor      string
 }
 
 // ParseLifecycleFlags parses lifecycle command flags from args.
@@ -377,6 +411,36 @@ func ParseLifecycleFlags(args []string) (*LifecycleFlags, error) {
 				flags.Host = args[i+1]
 				i++
 			}
+		case "--runner":
+			flags.Runner = true
+		case "--runner-project":
+			if i+1 < len(args) {
+				flags.RunnerProject = args[i+1]
+				i++
+			}
+		case "--max-parallel":
+			if i+1 < len(args) {
+				maxParallel := 0
+				if _, err := fmt.Sscanf(args[i+1], "%d", &maxParallel); err == nil {
+					flags.MaxParallel = maxParallel
+				}
+				i++
+			}
+		case "--include", "-i":
+			if i+1 < len(args) {
+				flags.Include = append(flags.Include, args[i+1])
+				i++
+			}
+		case "--exclude", "-e":
+			if i+1 < len(args) {
+				flags.Exclude = append(flags.Exclude, args[i+1])
+				i++
+			}
+		case "--executor":
+			if i+1 < len(args) {
+				flags.Executor = args[i+1]
+				i++
+			}
 		}
 	}
 
@@ -386,14 +450,20 @@ func ParseLifecycleFlags(args []string) (*LifecycleFlags, error) {
 // convertToCommandsLifecycleFlags converts main.LifecycleFlags to commands.LifecycleFlags.
 func convertToCommandsLifecycleFlags(flags *LifecycleFlags) *commands.LifecycleFlags {
 	return &commands.LifecycleFlags{
-		PIDFile: flags.PIDFile,
-		LogFile: flags.LogFile,
-		Timeout: flags.Timeout,
-		Force:   flags.Force,
-		DryRun:  flags.DryRun,
-		Daemon:  flags.Daemon,
-		Port:    flags.Port,
-		Host:    flags.Host,
+		PIDFile:       flags.PIDFile,
+		LogFile:       flags.LogFile,
+		Timeout:       flags.Timeout,
+		Force:         flags.Force,
+		DryRun:        flags.DryRun,
+		Daemon:        flags.Daemon,
+		Port:          flags.Port,
+		Host:          flags.Host,
+		Runner:        flags.Runner,
+		RunnerProject: flags.RunnerProject,
+		MaxParallel:   flags.MaxParallel,
+		Include:       flags.Include,
+		Exclude:       flags.Exclude,
+		Executor:      flags.Executor,
 	}
 }
 

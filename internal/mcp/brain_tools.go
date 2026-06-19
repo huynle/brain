@@ -39,6 +39,8 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainAttachmentDetach(s, client)
 	registerBrainAttachmentList(s, client)
 	registerBrainAttachmentGet(s, client)
+	registerBrainAttachmentDelete(s, client)
+	registerBrainAttachmentBackfill(s, client)
 	registerBrainAttachmentExtract(s, client)
 	registerBrainAttachmentText(s, client)
 	registerBrainAttachmentDownload(s, client)
@@ -386,15 +388,24 @@ func registerBrainAttachmentDetach(s *Server, client *APIClient) {
 func registerBrainAttachmentList(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "brain_attachment_list",
-		Description: "List attachments available in a project, including metadata and derived artifacts.",
+		Description: "List attachments available in a project, or attachments linked to a specific entry when entry_id is provided.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id": {Type: "string", Description: "Project whose attachments should be listed"},
+			"entry_id":   {Type: "string", Description: "Optional entry ID or path for entry-scoped attachment references"},
 		}, Required: []string{"project_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		projectID := StringArg(args, "project_id", "")
 		if projectID == "" {
 			return "Please provide project_id", nil
 		}
+		if entryID := StringArg(args, "entry_id", ""); entryID != "" {
+			var resp types.AttachEntryAttachmentResponse
+			if err := client.Request(ctx, "GET", "/entries/"+entryID+"/attachments", nil, map[string]string{"project_id": projectID}, &resp); err != nil {
+				return "", err
+			}
+			return formatEntryAttachmentList(projectID, entryID, resp), nil
+		}
+
 		var resp types.ListAttachmentsResponse
 		if err := client.Request(ctx, "GET", "/attachments", nil, map[string]string{"project_id": projectID}, &resp); err != nil {
 			return "", err
@@ -402,7 +413,7 @@ func registerBrainAttachmentList(s *Server, client *APIClient) {
 		if len(resp.Attachments) == 0 {
 			return fmt.Sprintf("No attachments found for project %s", projectID), nil
 		}
-		lines := []string{fmt.Sprintf("Attachments (%d)", resp.Total), ""}
+		lines := []string{fmt.Sprintf("Attachments (%d)", resp.Total), "", fmt.Sprintf("Project: %s", projectID), ""}
 		for _, attachment := range resp.Attachments {
 			lines = append(lines, formatAttachment(attachment), "")
 		}
@@ -429,6 +440,61 @@ func registerBrainAttachmentGet(s *Server, client *APIClient) {
 			return "", err
 		}
 		return formatAttachment(resp), nil
+	})
+}
+
+func registerBrainAttachmentDelete(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_attachment_delete",
+		Description: "Delete an attachment from a project when it is not referenced by entries.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"attachment_id": {Type: "string", Description: "Attachment ID to delete"},
+		}, Required: []string{"project_id", "attachment_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		attachmentID := StringArg(args, "attachment_id", "")
+		if projectID == "" || attachmentID == "" {
+			return "Please provide project_id and attachment_id", nil
+		}
+
+		var resp struct {
+			Deleted bool `json:"deleted"`
+		}
+		if err := client.Request(ctx, "DELETE", "/attachments/"+url.PathEscape(attachmentID), nil, map[string]string{"project_id": projectID}, &resp); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Deleted attachment %s\n\nProject: %s\nAttachment: %s\nStatus: deleted=%t", attachmentID, projectID, attachmentID, resp.Deleted), nil
+	})
+}
+
+func registerBrainAttachmentBackfill(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "brain_attachment_backfill",
+		Description: "Run project-level attachment text extraction backfill and return counts for considered attachments.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project_id":          {Type: "string", Description: "Project whose attachments should be backfilled"},
+			"dry_run":             {Type: "boolean", Description: "Report candidates without extracting text"},
+			"force":               {Type: "boolean", Description: "Re-extract attachments that already have derived text"},
+			"batch_size":          {Type: "number", Description: "Maximum attachments to process in one run"},
+			"rate_limit_delay_ms": {Type: "number", Description: "Delay between extraction requests in milliseconds"},
+		}, Required: []string{"project_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := StringArg(args, "project_id", "")
+		if projectID == "" {
+			return "Please provide project_id", nil
+		}
+		req := types.AttachmentExtractionBackfillRequest{
+			DryRun:           BoolArg(args, "dry_run", false),
+			Force:            BoolArg(args, "force", false),
+			BatchSize:        IntArg(args, "batch_size", 0),
+			RateLimitDelayMs: IntArg(args, "rate_limit_delay_ms", 0),
+		}
+		var resp types.AttachmentExtractionBackfillResponse
+		if err := client.Request(ctx, "POST", "/attachments/backfill/extraction", req, map[string]string{"project_id": projectID}, &resp); err != nil {
+			return "", err
+		}
+		return formatAttachmentBackfill(projectID, resp), nil
 	})
 }
 
@@ -525,6 +591,68 @@ func stringMapArg(args map[string]any, key string) map[string]string {
 		return nil
 	}
 	return result
+}
+
+func formatEntryAttachmentList(projectID, requestedEntryID string, resp types.AttachEntryAttachmentResponse) string {
+	entryID := resp.EntryID
+	if entryID == "" {
+		entryID = requestedEntryID
+	}
+	lines := []string{
+		fmt.Sprintf("## Entry Attachments (%d)", len(resp.Attachments)),
+		"",
+		fmt.Sprintf("Project: %s", projectID),
+		fmt.Sprintf("Entry: %s", entryID),
+	}
+	if resp.Path != "" {
+		lines = append(lines, "Path: "+resp.Path)
+	}
+	if len(resp.Attachments) == 0 {
+		lines = append(lines, "", "No attachments found for entry.")
+		return strings.TrimSpace(strings.Join(lines, "\n"))
+	}
+	lines = append(lines, "")
+	for _, attachment := range resp.Attachments {
+		lines = append(lines, formatAttachmentReference(attachment))
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
+}
+
+func formatAttachmentBackfill(projectID string, resp types.AttachmentExtractionBackfillResponse) string {
+	lines := []string{
+		"## Attachment Extraction Backfill",
+		"",
+		fmt.Sprintf("Project: %s", projectID),
+		fmt.Sprintf("Total: %d", resp.Total),
+		fmt.Sprintf("Candidates: %d", resp.Candidates),
+		fmt.Sprintf("Processed: %d", resp.Processed),
+		fmt.Sprintf("Skipped: %d", resp.Skipped),
+		fmt.Sprintf("Failed: %d", resp.Failed),
+		fmt.Sprintf("Dry run: %t", resp.DryRun),
+	}
+	if len(resp.Attachments) > 0 {
+		lines = append(lines, "", "Attachments:")
+		for _, item := range resp.Attachments {
+			line := fmt.Sprintf("- `%s`", item.AttachmentID)
+			if item.Filename != "" {
+				line += " — " + item.Filename
+			}
+			if item.Status != "" {
+				line += " — Status: " + item.Status
+			}
+			if item.Skipped {
+				line += " — skipped"
+			}
+			if item.Reason != "" {
+				line += " — Reason: " + item.Reason
+			}
+			if item.Error != "" {
+				line += " — Error: " + item.Error
+			}
+			lines = append(lines, line)
+		}
+	}
+	return strings.TrimSpace(strings.Join(lines, "\n"))
 }
 
 func formatAttachmentReferences(attachments []types.AttachmentReference) string {

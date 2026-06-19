@@ -28,18 +28,20 @@ import (
 
 // ServerOptions holds configuration for running the Brain API server.
 type ServerOptions struct {
-	Host         string
-	Port         int
-	BrainDir     string
-	EnableAuth   bool
-	LogLevel     string
-	CORSOrigin   string
-	OAuthPIN     string
-	TaskDefaults config.TaskDefaultsConfig
-	Embedding    config.EmbeddingConfig
-	Attachments  config.AttachmentConfig
+	Host            string
+	Port            int
+	BrainDir        string
+	EnableAuth      bool
+	LogLevel        string
+	CORSOrigin      string
+	OAuthPIN        string
+	TaskDefaults    config.TaskDefaultsConfig
+	FeatureCheckout config.FeatureCheckoutConfig
+	Embedding       config.EmbeddingConfig
+	Attachments     config.AttachmentConfig
 
 	AttachmentExtraction config.AttachmentExtractionConfig
+	Assistant            config.AssistantConfig
 }
 
 const defaultAttachmentMaxUploadSizeBytes int64 = 100 * 1024 * 1024
@@ -174,17 +176,19 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		corsOrigin = "*" // Match standalone brain-api default
 	}
 	cfg := config.Config{
-		BrainDir:     opts.BrainDir,
-		Host:         opts.Host,
-		Port:         opts.Port,
-		EnableAuth:   opts.EnableAuth,
-		CORSOrigin:   corsOrigin,
-		OAuthPIN:     opts.OAuthPIN,
-		TaskDefaults: opts.TaskDefaults,
-		Embedding:    opts.Embedding,
-		Attachments:  normalizeAttachmentConfig(opts.BrainDir, opts.Attachments),
+		BrainDir:        opts.BrainDir,
+		Host:            opts.Host,
+		Port:            opts.Port,
+		EnableAuth:      opts.EnableAuth,
+		CORSOrigin:      corsOrigin,
+		OAuthPIN:        opts.OAuthPIN,
+		TaskDefaults:    opts.TaskDefaults,
+		FeatureCheckout: opts.FeatureCheckout,
+		Embedding:       opts.Embedding,
+		Attachments:     normalizeAttachmentConfig(opts.BrainDir, opts.Attachments),
 
 		AttachmentExtraction: opts.AttachmentExtraction,
+		Assistant:            opts.Assistant,
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
@@ -200,6 +204,22 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	}
 
 	brainSvc := service.NewBrainService(&cfg, store, idx, nil, embeddingClient)
+	if err := service.EnsureBuiltInFeatureCheckoutAutomation(ctx, brainSvc, service.BuiltInFeatureCheckoutConfig{
+		Enabled:            cfg.FeatureCheckout.Enabled,
+		Agent:              cfg.TaskDefaults.Agent,
+		Model:              cfg.TaskDefaults.Model,
+		Executor:           cfg.TaskDefaults.Executor,
+		ExecutionMode:      cfg.TaskDefaults.ExecutionMode,
+		TargetWorkdir:      cfg.TaskDefaults.TargetWorkdir,
+		MergeTargetBranch:  cfg.TaskDefaults.MergeTargetBranch,
+		MergePolicy:        cfg.TaskDefaults.MergePolicy,
+		MergeStrategy:      cfg.TaskDefaults.MergeStrategy,
+		RemoteBranchPolicy: cfg.TaskDefaults.RemoteBranchPolicy,
+		OpenPRBeforeMerge:  cfg.TaskDefaults.OpenPRBeforeMerge,
+	}); err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature checkout automation: %w", err)
+	}
 	blobStore, err := blobstore.NewFilesystemStore(cfg.Attachments.StorageRoot, cfg.Attachments.MaxUploadSizeBytes)
 	if err != nil {
 		cleanup()
@@ -251,6 +271,16 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// in-process reconcile for goal automations when their linked task/feature
 	// lifecycle events fire.
 	goalSvc := service.NewGoalService(brainSvc, taskSvc, store)
+	assistantSvc := api.NewAssistantService(api.AssistantServiceOptions{
+		Enabled:   cfg.Assistant.Enabled,
+		Provider:  cfg.Assistant.Provider,
+		BaseURL:   cfg.Assistant.BaseURL,
+		APIKeyEnv: cfg.Assistant.APIKeyEnv,
+		Model:     cfg.Assistant.Model,
+		Timeout:   time.Duration(cfg.Assistant.TimeoutMs) * time.Millisecond,
+		Brain:     brainSvc,
+		Goals:     goalSvc,
+	})
 	go goalSvc.Start(ctx, eventHub)
 
 	// ─── Webhook Dispatcher ────────────────────────────────────────
@@ -292,6 +322,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithEventService(eventSvc),
 		api.WithWebhookService(webhookSvc),
 		api.WithGoalService(goalSvc),
+		api.WithAssistantService(assistantSvc),
 		api.WithBridgeService(bridgeHub),
 		api.WithLogBuffer(logBuf),
 		api.WithTaskDefaults(cfg.TaskDefaults),

@@ -5,27 +5,209 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/huynle/brain-api/internal/apiserver"
 	"github.com/huynle/brain-api/internal/lifecycle"
+	"github.com/huynle/brain-api/internal/runner"
+	"github.com/huynle/brain-api/internal/runnercli"
 )
+
+var runAPIServer = apiserver.RunServer
+var runEmbeddedTaskRunner = runnercli.RunTaskRunner
+var waitForEmbeddedRunnerAPI = waitForAPIHealth
+var resolveEmbeddedRunnerProjects = resolveProjectList
+
+func runServerWithOptionalRunner(ctx context.Context, cfg *UnifiedConfig, opts apiserver.ServerOptions, flags LifecycleFlags) error {
+	if !flags.Runner {
+		return runAPIServer(ctx, opts)
+	}
+
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	serverErrCh := make(chan error, 1)
+	go func() {
+		serverErrCh <- runAPIServer(ctx, opts)
+	}()
+
+	project, runnerCfg := embeddedRunnerConfig(cfg, opts, embeddedRunnerFlags{
+		RunnerProject: flags.RunnerProject,
+		MaxParallel:   flags.MaxParallel,
+		Include:       flags.Include,
+		Exclude:       flags.Exclude,
+		Executor:      flags.Executor,
+	})
+
+	if err := waitForEmbeddedRunnerAPI(ctx, runnerCfg.BrainAPIURL); err != nil {
+		cancel()
+		return err
+	}
+
+	projects, err := resolveEmbeddedRunnerProjects(project, runnerCfg)
+	if err != nil {
+		cancel()
+		return err
+	}
+
+	runnerErrCh := make(chan error, 1)
+	go func() {
+		runnerErrCh <- runEmbeddedTaskRunner(ctx, runnercli.RunnerOptions{
+			Projects:    projects,
+			Config:      runnerCfg,
+			Mode:        "headless",
+			StartPaused: false,
+			KeyBindings: cfg.TUI.KeyBindings,
+		})
+	}()
+
+	select {
+	case err := <-runnerErrCh:
+		cancel()
+		if serverErr := <-serverErrCh; serverErr != nil && err == nil {
+			return serverErr
+		}
+		return err
+	case err := <-serverErrCh:
+		cancel()
+		if err != nil {
+			return err
+		}
+		return <-runnerErrCh
+	case <-ctx.Done():
+		cancel()
+		return ctx.Err()
+	}
+}
+
+func waitForAPIHealth(ctx context.Context, apiURL string) error {
+	healthURL := strings.TrimRight(apiURL, "/") + "/health"
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	deadline := time.NewTimer(15 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
+		if err != nil {
+			return err
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			resp.Body.Close()
+			if resp.StatusCode >= 200 && resp.StatusCode < 500 {
+				return nil
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-deadline.C:
+			return fmt.Errorf("timed out waiting for Brain API at %s", healthURL)
+		case <-ticker.C:
+		}
+	}
+}
+
+func lifecycleFlagsFromAPIFlags(flags *APIFlags) LifecycleFlags {
+	if flags == nil {
+		return LifecycleFlags{}
+	}
+	return LifecycleFlags{
+		Port:          flags.Port,
+		Host:          flags.Host,
+		Daemon:        flags.Daemon,
+		Runner:        flags.Runner,
+		RunnerProject: flags.RunnerProject,
+		MaxParallel:   flags.MaxParallel,
+		Include:       flags.Include,
+		Exclude:       flags.Exclude,
+		Executor:      flags.Executor,
+	}
+}
+
+type embeddedRunnerFlags struct {
+	RunnerProject string
+	MaxParallel   int
+	Include       []string
+	Exclude       []string
+	Executor      string
+}
+
+func embeddedRunnerConfig(cfg *UnifiedConfig, opts apiserver.ServerOptions, flags embeddedRunnerFlags) (string, runner.RunnerConfig) {
+	project := flags.RunnerProject
+	if project == "" {
+		project = "all"
+	}
+	runnerCfg := cfg.Runner
+	runnerCfg.BrainAPIURL = embeddedRunnerAPIURL(cfg, opts)
+	if flags.MaxParallel != 0 {
+		runnerCfg.MaxParallel = flags.MaxParallel
+	}
+	if flags.Executor != "" {
+		runnerCfg.DefaultExecutor = flags.Executor
+	}
+	if len(flags.Include) > 0 {
+		runnerCfg.IncludeProjects = append(runnerCfg.IncludeProjects, flags.Include...)
+	}
+	if len(flags.Exclude) > 0 {
+		runnerCfg.ExcludeProjects = append(runnerCfg.ExcludeProjects, flags.Exclude...)
+	}
+	return project, runnerCfg
+}
+
+func embeddedRunnerAPIURL(cfg *UnifiedConfig, opts apiserver.ServerOptions) string {
+	if cfg != nil && cfg.Runner.BrainAPIURL != "" && !isDefaultLocalAPIURL(cfg.Runner.BrainAPIURL) {
+		return cfg.Runner.BrainAPIURL
+	}
+
+	host := opts.Host
+	if host == "" || host == "0.0.0.0" || host == "::" || host == "[::]" {
+		host = "localhost"
+	}
+
+	scheme := "http"
+	if cfg != nil && cfg.Server.TLS.Enabled {
+		scheme = "https"
+	}
+
+	return fmt.Sprintf("%s://%s:%d", scheme, host, opts.Port)
+}
+
+func isDefaultLocalAPIURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return false
+	}
+	return u.Scheme == "http" && u.Hostname() == "localhost" && u.Port() == "3333"
+}
 
 // LifecycleFlags holds common flags for lifecycle commands.
 type LifecycleFlags struct {
-	PIDFile string
-	LogFile string
-	Timeout int    // Timeout in seconds for stop operations
-	Force   bool   // Force kill if graceful shutdown fails
-	DryRun  bool   // Dry-run mode (don't actually execute)
-	Daemon  bool   // Run as background daemon
-	Port    int    // Server port override
-	Host    string // Server host override
+	PIDFile       string
+	LogFile       string
+	Timeout       int      // Timeout in seconds for stop operations
+	Force         bool     // Force kill if graceful shutdown fails
+	DryRun        bool     // Dry-run mode (don't actually execute)
+	Daemon        bool     // Run as background daemon
+	Port          int      // Server port override
+	Host          string   // Server host override
+	Runner        bool     // Run embedded task runner with API server
+	RunnerProject string   // Embedded runner project scope
+	MaxParallel   int      // Embedded runner max parallel tasks
+	Include       []string // Embedded runner include project patterns
+	Exclude       []string // Embedded runner exclude project patterns
+	Executor      string   // Embedded runner executor override
 }
 
 // defaultPIDFile returns the default PID file path, respecting XDG_STATE_HOME.
@@ -95,6 +277,14 @@ func (c *StartCommand) Execute() error {
 			mode = "daemon"
 		}
 		fmt.Printf("[DRY-RUN] Would start server in %s mode (pid_file=%s, log_file=%s)\n", mode, pidFile, logFile)
+		if c.Flags.Runner {
+			project := c.Flags.RunnerProject
+			if project == "" {
+				project = "all"
+			}
+			opts := apiserver.ServerOptions{Port: c.Config.Server.Port, Host: c.Config.Server.Host}
+			fmt.Printf("[DRY-RUN] Would start embedded runner (project=%s, api_url=%s)\n", project, embeddedRunnerAPIURL(c.Config, opts))
+		}
 		return nil
 	}
 
@@ -107,6 +297,35 @@ func (c *StartCommand) Execute() error {
 	return c.startForeground(pidFile)
 }
 
+func (c *StartCommand) daemonArgs(logFile string) []string {
+	args := []string{"api", "--daemon", "--log-file", logFile}
+	if c.Config.Server.Port != 0 {
+		args = append(args, "--port", fmt.Sprintf("%d", c.Config.Server.Port))
+	}
+	if c.Config.Server.Host != "" {
+		args = append(args, "--host", c.Config.Server.Host)
+	}
+	if c.Flags.Runner {
+		args = append(args, "--runner")
+		if c.Flags.RunnerProject != "" {
+			args = append(args, "--runner-project", c.Flags.RunnerProject)
+		}
+		if c.Flags.MaxParallel != 0 {
+			args = append(args, "--max-parallel", fmt.Sprintf("%d", c.Flags.MaxParallel))
+		}
+		for _, include := range c.Flags.Include {
+			args = append(args, "--include", include)
+		}
+		for _, exclude := range c.Flags.Exclude {
+			args = append(args, "--exclude", exclude)
+		}
+		if c.Flags.Executor != "" {
+			args = append(args, "--executor", c.Flags.Executor)
+		}
+	}
+	return args
+}
+
 // startDaemon forks a detached child process running the API server.
 func (c *StartCommand) startDaemon(pidFile, logFile string) error {
 	// Get path to brain binary
@@ -116,13 +335,7 @@ func (c *StartCommand) startDaemon(pidFile, logFile string) error {
 	}
 
 	// Build daemon arguments
-	args := []string{"api", "--daemon", "--log-file", logFile}
-	if c.Config.Server.Port != 0 {
-		args = append(args, "--port", fmt.Sprintf("%d", c.Config.Server.Port))
-	}
-	if c.Config.Server.Host != "" {
-		args = append(args, "--host", c.Config.Server.Host)
-	}
+	args := c.daemonArgs(logFile)
 
 	// Daemonize
 	opts := lifecycle.DaemonOptions{
@@ -155,6 +368,7 @@ func (c *StartCommand) startForeground(pidFile string) error {
 		Attachments:  c.Config.Server.Attachments,
 
 		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
+		Assistant:            c.Config.Server.Assistant,
 	}
 
 	// Create context with signal handling for graceful shutdown
@@ -169,8 +383,18 @@ func (c *StartCommand) startForeground(pidFile string) error {
 	}
 
 	fmt.Printf("Starting Brain API server on %s:%d\n", opts.Host, opts.Port)
+	if c.Flags.Runner {
+		project, runnerCfg := embeddedRunnerConfig(c.Config, opts, embeddedRunnerFlags{
+			RunnerProject: c.Flags.RunnerProject,
+			MaxParallel:   c.Flags.MaxParallel,
+			Include:       c.Flags.Include,
+			Exclude:       c.Flags.Exclude,
+			Executor:      c.Flags.Executor,
+		})
+		fmt.Printf("Starting embedded runner for project %s using %s\n", project, runnerCfg.BrainAPIURL)
+	}
 	fmt.Println("Press Ctrl+C to stop")
-	return apiserver.RunServer(ctx, opts)
+	return runServerWithOptionalRunner(ctx, c.Config, opts, *c.Flags)
 }
 
 // StopCommand stops a running server.

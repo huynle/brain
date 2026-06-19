@@ -7,17 +7,20 @@ const TABS: { view: View; label: string; glyph: string }[] = [
   { view: "brain", label: "Brain", glyph: "◆" },
   { view: "tasks", label: "Tasks", glyph: "☰" },
   { view: "automations", label: "Auto", glyph: "⟳" },
-  { view: "control", label: "Control", glyph: "⌁" },
+  { view: "runners", label: "Run", glyph: "⚙" },
   { view: "logs", label: "Logs", glyph: "▤" },
-  { view: "runners", label: "Runners", glyph: "⚙" },
 ];
 
-export function MobileNav() {
+export function MobileNav({ onAssistant }: { onAssistant?: () => void }) {
   const view = useUI((s) => s.view);
   const setView = useUI((s) => s.setView);
 
   return (
     <nav className="mnav" role="tablist">
+      <button className="mnav-tab" aria-label="Assistant" onClick={onAssistant}>
+        <span className="mnav-glyph">✦</span>
+        <span className="mnav-label">Ask</span>
+      </button>
       {TABS.map((t) => (
         <button
           key={t.view}

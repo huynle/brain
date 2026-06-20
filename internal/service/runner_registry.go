@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -55,6 +56,11 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 	if labels == nil {
 		labels = make(map[string]string)
 	}
+	// Keep writing the legacy label for older rows/readers while also storing
+	// machine_id as a first-class column for scheduling.
+	if req.MachineID != "" {
+		labels[machineIDLabel] = req.MachineID
+	}
 
 	executors := req.Executors
 	if executors == nil {
@@ -66,15 +72,22 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 	}
 
 	row := &storage.RunnerRow{
-		RunnerID:      req.RunnerID,
-		Hostname:      req.Hostname,
-		Labels:        labels,
-		Executors:     executors,
-		Capabilities:  capabilities,
-		MaxParallel:   maxParallel,
-		RegisteredAt:  now,
-		LastHeartbeat: now,
-		Status:        string(types.RunnerStatusOnline),
+		RunnerID:       req.RunnerID,
+		MachineID:      req.MachineID,
+		Hostname:       req.Hostname,
+		Labels:         labels,
+		Executors:      executors,
+		Capabilities:   capabilities,
+		DispatchPush:   req.DispatchPush,
+		WorkspaceRoots: req.WorkspaceRoots,
+		Projects:       req.Projects,
+		Resources:      req.Resources,
+		Capacity:       req.Capacity,
+		Draining:       req.Draining,
+		MaxParallel:    maxParallel,
+		RegisteredAt:   now,
+		LastHeartbeat:  now,
+		Status:         string(types.RunnerStatusOnline),
 	}
 
 	if err := s.storage.UpsertRunner(ctx, row); err != nil {
@@ -85,9 +98,25 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 }
 
 // Heartbeat updates a runner's heartbeat timestamp and running task count.
+// When the request carries an instance list, the runner's instance registry
+// rows are reconciled to exactly that set (self-healing for missed reports).
 func (s *RunnerRegistryServiceImpl) Heartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
 	if err := s.storage.UpdateHeartbeat(ctx, runnerID, req.RunningTasks, req.Stats); err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
+	}
+	if req.DispatchPush != nil || req.Labels != nil || req.WorkspaceRoots != nil || req.Projects != nil || req.Resources != nil || req.Capacity != nil || req.Draining != nil {
+		if err := s.storage.UpdateRunnerDispatchMetadata(ctx, runnerID, req.DispatchPush, req.Labels, req.WorkspaceRoots, req.Projects, req.Resources, req.Capacity, req.Draining); err != nil {
+			return fmt.Errorf("heartbeat dispatch metadata: %w", err)
+		}
+	}
+	if req.Instances != nil {
+		rows := make([]storage.InstanceRow, 0, len(req.Instances))
+		for i := range req.Instances {
+			rows = append(rows, instanceToRow(runnerID, &req.Instances[i]))
+		}
+		if err := s.storage.ReplaceInstancesForRunner(ctx, runnerID, rows); err != nil {
+			return fmt.Errorf("heartbeat instance reconcile: %w", err)
+		}
 	}
 	return nil
 }
@@ -101,6 +130,9 @@ func (s *RunnerRegistryServiceImpl) Deregister(ctx context.Context, runnerID str
 	}
 	if _, err := s.storage.ClearFeatureAssignmentsByRunner(ctx, runnerID); err != nil {
 		return fmt.Errorf("clear feature assignments on deregister: %w", err)
+	}
+	if _, err := s.storage.DeleteInstancesByRunner(ctx, runnerID); err != nil {
+		return fmt.Errorf("delete instances on deregister: %w", err)
 	}
 
 	// Delete the runner record
@@ -126,6 +158,9 @@ func (s *RunnerRegistryServiceImpl) ListRunners(ctx context.Context) (*types.Run
 	for i := range rows {
 		info := rowToRunnerInfo(&rows[i])
 		info.Status = computeRunnerStatus(rows[i].LastHeartbeat)
+		if info.Status != types.RunnerStatusOnline {
+			continue
+		}
 		if err := s.attachFeatureAssignments(ctx, info); err != nil {
 			return nil, err
 		}
@@ -171,6 +206,134 @@ func (s *RunnerRegistryServiceImpl) UpdateAffinity(ctx context.Context, runnerID
 		return fmt.Errorf("update affinity: %w", err)
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// Instance Registry
+// ---------------------------------------------------------------------------
+
+// UpsertInstance records or updates an OpenCode instance reported by a runner.
+func (s *RunnerRegistryServiceImpl) UpsertInstance(ctx context.Context, runnerID string, inst types.OpencodeInstance) error {
+	row := instanceToRow(runnerID, &inst)
+	if err := s.storage.UpsertInstance(ctx, &row); err != nil {
+		return fmt.Errorf("upsert instance: %w", err)
+	}
+	return nil
+}
+
+// DeleteInstance removes an instance record reported by a runner.
+func (s *RunnerRegistryServiceImpl) DeleteInstance(ctx context.Context, runnerID, instanceID string) error {
+	deleted, err := s.storage.DeleteInstance(ctx, runnerID, instanceID)
+	if err != nil {
+		return fmt.Errorf("delete instance: %w", err)
+	}
+	if !deleted {
+		return api.ErrNotFound
+	}
+	return nil
+}
+
+// GetInstance returns a single instance scoped to a runner.
+func (s *RunnerRegistryServiceImpl) GetInstance(ctx context.Context, runnerID, instanceID string) (*types.OpencodeInstance, error) {
+	row, err := s.storage.GetInstance(ctx, instanceID)
+	if err != nil {
+		return nil, fmt.Errorf("get instance: %w", err)
+	}
+	if row == nil || row.RunnerID != runnerID {
+		return nil, api.ErrNotFound
+	}
+	inst := rowToInstance(row)
+	return &inst, nil
+}
+
+// ListInstances returns all instances reported by one runner.
+func (s *RunnerRegistryServiceImpl) ListInstances(ctx context.Context, runnerID string) (*types.InstanceListResponse, error) {
+	rows, err := s.storage.ListInstancesByRunner(ctx, runnerID)
+	if err != nil {
+		return nil, fmt.Errorf("list instances: %w", err)
+	}
+	return instanceListResponse(rows), nil
+}
+
+// ListAllInstances returns every instance across all runners.
+func (s *RunnerRegistryServiceImpl) ListAllInstances(ctx context.Context) (*types.InstanceListResponse, error) {
+	rows, err := s.storage.ListAllInstances(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list all instances: %w", err)
+	}
+	return instanceListResponse(rows), nil
+}
+
+func instanceListResponse(rows []storage.InstanceRow) *types.InstanceListResponse {
+	instances := make([]types.OpencodeInstance, 0, len(rows))
+	for i := range rows {
+		instances = append(instances, rowToInstance(&rows[i]))
+	}
+	return &types.InstanceListResponse{Instances: instances, Total: len(instances)}
+}
+
+func instanceToRow(runnerID string, inst *types.OpencodeInstance) storage.InstanceRow {
+	lastSeen := inst.LastSeen
+	if lastSeen == 0 {
+		lastSeen = time.Now().UnixMilli()
+	}
+	kind := inst.Kind
+	if kind == "" {
+		kind = types.InstanceKindTask
+	}
+	status := inst.Status
+	if status == "" {
+		status = types.InstanceStatusStarting
+	}
+	executor := inst.Executor
+	if executor == "" {
+		executor = "opencode"
+	}
+	return storage.InstanceRow{
+		InstanceID: inst.InstanceID,
+		RunnerID:   runnerID,
+		Hostname:   inst.Hostname,
+		Kind:       kind,
+		ProjectID:  inst.ProjectID,
+		TaskID:     inst.TaskID,
+		FeatureID:  inst.FeatureID,
+		Priority:   inst.Priority,
+		Title:      inst.Title,
+		Workdir:    inst.Workdir,
+		Port:       inst.Port,
+		PID:        inst.PID,
+		SessionIDs: inst.SessionIDs,
+		Status:     status,
+		Executor:   executor,
+		Agent:      inst.Agent,
+		Model:      inst.Model,
+		StartedAt:  inst.StartedAt,
+		LastSeen:   lastSeen,
+	}
+}
+
+func rowToInstance(row *storage.InstanceRow) types.OpencodeInstance {
+	return types.OpencodeInstance{
+		InstanceID: row.InstanceID,
+		RunnerID:   row.RunnerID,
+		Hostname:   row.Hostname,
+		Kind:       row.Kind,
+		ProjectID:  row.ProjectID,
+		TaskID:     row.TaskID,
+		FeatureID:  row.FeatureID,
+		Priority:   row.Priority,
+		Title:      row.Title,
+		Workdir:    row.Workdir,
+		Port:       row.Port,
+		PID:        row.PID,
+		SessionIDs: row.SessionIDs,
+		Status:     row.Status,
+		Executor:   row.Executor,
+		Agent:      row.Agent,
+		Model:      row.Model,
+		StartedAt:  row.StartedAt,
+		LastSeen:   row.LastSeen,
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -242,6 +405,11 @@ func (s *RunnerRegistryServiceImpl) RunLifecycleSweep(ctx context.Context) {
 			featuresReleased, err := s.storage.ClearFeatureAssignmentsByRunner(ctx, row.RunnerID)
 			if err != nil {
 				slog.Error("lifecycle sweep: clear feature assignments failed",
+					"runner_id", row.RunnerID, "error", err)
+				continue
+			}
+			if _, err := s.storage.DeleteInstancesByRunner(ctx, row.RunnerID); err != nil {
+				slog.Error("lifecycle sweep: delete instances failed",
 					"runner_id", row.RunnerID, "error", err)
 				continue
 			}
@@ -326,19 +494,43 @@ func computeRunnerStatus(lastHeartbeatMs int64) types.RunnerStatus {
 	return types.RunnerStatusOffline
 }
 
+// machineIDLabel is the legacy labels key under which the machine id was stored
+// before runners had a first-class machine_id column.
+const machineIDLabel = "_machine_id"
+
 // rowToRunnerInfo converts a storage RunnerRow to an API RunnerInfo.
 func rowToRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
+	machineID := row.MachineID
+	activeTasks := 0
+	if row.Labels != nil {
+		if machineID == "" {
+			machineID = row.Labels[machineIDLabel]
+		}
+		if runningTasks := row.Labels["_running_tasks"]; runningTasks != "" {
+			if parsed, err := strconv.Atoi(runningTasks); err == nil && parsed >= 0 {
+				activeTasks = parsed
+			}
+		}
+	}
 	return &types.RunnerInfo{
-		RunnerID:      row.RunnerID,
-		Hostname:      row.Hostname,
-		Labels:        row.Labels,
-		Executors:     row.Executors,
-		Capabilities:  row.Capabilities,
-		MaxParallel:   row.MaxParallel,
-		FeatureIDs:    row.FeatureIDs,
-		RegisteredAt:  time.UnixMilli(row.RegisteredAt).UTC().Format(time.RFC3339),
-		LastHeartbeat: time.UnixMilli(row.LastHeartbeat).UTC().Format(time.RFC3339),
-		Status:        types.RunnerStatus(row.Status),
+		RunnerID:       row.RunnerID,
+		MachineID:      machineID,
+		Hostname:       row.Hostname,
+		Labels:         row.Labels,
+		Executors:      row.Executors,
+		Projects:       row.Projects,
+		Capabilities:   row.Capabilities,
+		DispatchPush:   row.DispatchPush,
+		WorkspaceRoots: row.WorkspaceRoots,
+		Resources:      row.Resources,
+		Capacity:       row.Capacity,
+		Draining:       row.Draining,
+		MaxParallel:    row.MaxParallel,
+		ActiveTasks:    activeTasks,
+		FeatureIDs:     row.FeatureIDs,
+		RegisteredAt:   time.UnixMilli(row.RegisteredAt).UTC().Format(time.RFC3339),
+		LastHeartbeat:  time.UnixMilli(row.LastHeartbeat).UTC().Format(time.RFC3339),
+		Status:         types.RunnerStatus(row.Status),
 	}
 }
 

@@ -3,6 +3,7 @@ import { Route, Routes } from "react-router-dom";
 import { useAuth } from "./lib/auth";
 import { Loading } from "./components/common/states";
 import { Toasts } from "./components/common/Toasts";
+import { UpdateBanner } from "./components/common/UpdateBanner";
 import { Login } from "./pages/Login";
 import { AuthCallback } from "./pages/AuthCallback";
 import { Dashboard } from "./pages/Dashboard";
@@ -22,6 +23,7 @@ export function App() {
         <Route path="*" element={<Gate status={status} />} />
       </Routes>
       <Toasts />
+      <UpdateBanner />
     </>
   );
 }

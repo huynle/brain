@@ -87,7 +87,7 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("p", "Pause/resume project"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("P", "Pause/resume all projects"))
+	b.WriteString(formatShortcut("P", "Pause/resume active project (all on All tab)"))
 	b.WriteString("\n")
 
 	// Multi-select shortcuts
@@ -105,13 +105,9 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("T", "Toggle task detail"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("H/L", "Switch Tasks/Dream tab"))
+	b.WriteString(formatShortcut("h/l  [/]", "Switch content tab (Tasks/Brain/Automation/…)"))
 	b.WriteString("\n")
-	logsShortcut := "l"
-	if m.isMultiProject {
-		logsShortcut = "z"
-	}
-	b.WriteString(formatShortcut(logsShortcut, "Toggle logs"))
+	b.WriteString(formatShortcut("z", "Toggle logs panel"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("w", "Toggle text wrap/truncate"))
 	b.WriteString("\n")
@@ -124,9 +120,7 @@ func (m *HelpModal) View() string {
 	if m.isMultiProject {
 		b.WriteString(categoryStyle.Render("Projects (Multi-Project Mode):"))
 		b.WriteString("\n")
-		b.WriteString(formatShortcut("h/l", "Previous/next project"))
-		b.WriteString("\n")
-		b.WriteString(formatShortcut("[/]", "Previous/next project"))
+		b.WriteString(formatShortcut("H/L", "Previous/next project (shift)"))
 		b.WriteString("\n")
 		b.WriteString(formatShortcut("1-9", "Jump to project tab"))
 		b.WriteString("\n")
@@ -202,9 +196,9 @@ func (m *HelpModal) Height() int {
 	// content lines + category headers (6) + footer (2)
 	baseLines := 5 + 10 + 3 + viewLines + automationLines + 2 + 6 + 2
 
-	// Add 3 more lines if multi-project mode (Projects section)
+	// Add 2 more lines if multi-project mode (Projects section: H/L + 1-9)
 	if m.isMultiProject {
-		return baseLines + 3 + 1 // +1 for category header
+		return baseLines + 2 + 1 // +1 for category header
 	}
 
 	return baseLines

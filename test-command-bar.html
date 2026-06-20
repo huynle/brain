@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Command Bar Test</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      background: #0b0e14;
+      color: #d4d4d4;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      padding: 2rem;
+      min-height: 100vh;
+    }
+    
+    .info {
+      max-width: 600px;
+      margin: 0 auto 3rem;
+      padding: 1.5rem;
+      background: #1a1d24;
+      border-radius: 8px;
+      border: 1px solid #2a2d34;
+    }
+    
+    .info h1 { margin-bottom: 1rem; color: #fff; }
+    .info p { margin-bottom: 0.5rem; line-height: 1.6; }
+    .info code { 
+      background: #0b0e14;
+      padding: 2px 6px;
+      border-radius: 3px;
+      color: #4ac694;
+      font-family: monospace;
+    }
+    
+    .command-bar {
+      position: fixed;
+      left: 50%;
+      bottom: 2.75rem;
+      z-index: 70;
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      width: min(680px, calc(100vw - 1.5rem));
+      padding: 0.55rem 0.65rem;
+      border: 1px solid #3a3d44;
+      border-radius: 0.85rem;
+      background: rgba(26, 29, 36, 0.94);
+      box-shadow: 0 18px 48px rgba(0, 0, 0, 0.34);
+      transform: translateX(-50%);
+    }
+    
+    .command-prompt {
+      color: #4ac694;
+      font-weight: 800;
+    }
+    
+    .command-bar input {
+      flex: 1;
+      min-width: 0;
+      border: 0;
+      background: transparent;
+      color: #d4d4d4;
+      font: inherit;
+      outline: none;
+    }
+    
+    .command-suggestions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+    
+    .command-suggestions button {
+      border: 1px solid #2a2d34;
+      border-radius: 999px;
+      background: #1a1d24;
+      color: #888;
+      cursor: pointer;
+      font: inherit;
+      padding: 0.15rem 0.45rem;
+    }
+    
+    .command-suggestions button:hover {
+      border-color: #4a9eff;
+      color: #d4d4d4;
+    }
+    
+    .result {
+      max-width: 600px;
+      margin: 2rem auto;
+      padding: 1rem;
+      background: #1a1d24;
+      border-radius: 6px;
+      border-left: 3px solid #4ac694;
+    }
+  </style>
+</head>
+<body>
+  <div class="info">
+    <h1>Command Bar Test</h1>
+    <p>Press <code>:</code> (colon) to open the command bar.</p>
+    <p>Try typing: <code>tasks</code>, <code>brain</code>, <code>auto</code>, <code>runners</code>, <code>logs</code>, <code>projects</code></p>
+    <p>Press <code>Enter</code> to execute, <code>Escape</code> to close.</p>
+  </div>
+  
+  <div id="result"></div>
+  <div id="command-bar-root"></div>
+  
+  <script type="module">
+    // Command resolver (from web/src/lib/commands.ts)
+    const COMMANDS = [
+      { primary: "tasks", aliases: ["task", "ta"], view: "tasks" },
+      { primary: "brain", aliases: ["entries", "notes", "br"], view: "brain" },
+      { primary: "automations", aliases: ["auto", "autos", "au"], view: "automations" },
+      { primary: "runners", aliases: ["runner", "instances", "ru"], view: "runners" },
+      { primary: "logs", aliases: ["log", "lo"], view: "logs" },
+      { primary: "projects", aliases: ["proj", "po"], view: null, action: "projectPicker" }
+    ];
+    
+    function resolveCommand(input) {
+      const query = input.replace(/^:/, "").trim().toLowerCase();
+      if (!query) return { type: "unknown", suggestions: [] };
+      
+      const matched = COMMANDS.find(cmd =>
+        cmd.primary === query || cmd.aliases.includes(query)
+      );
+      
+      if (matched) {
+        return matched.view 
+          ? { type: "view", view: matched.view }
+          : { type: matched.action || "unknown" };
+      }
+      
+      const suggestions = COMMANDS
+        .filter(cmd => cmd.primary.startsWith(query) || cmd.aliases.some(a => a.startsWith(query)))
+        .flatMap(cmd => [cmd.primary, ...cmd.aliases])
+        .filter(name => name.length > query.length || name === query)
+        .slice(0, 3);
+      
+      return { type: "unknown", suggestions };
+    }
+    
+    function commandSuggestions(input) {
+      const query = input.replace(/^:/, "").trim().toLowerCase();
+      if (!query) return COMMANDS.map(c => c.primary);
+      
+      const matched = COMMANDS.find(cmd =>
+        cmd.primary.startsWith(query) || cmd.aliases.some(a => a.startsWith(query))
+      );
+      
+      return matched 
+        ? [matched.primary, ...matched.aliases].filter((name) => name.length > query.length || name === matched.primary).slice(0, 3)
+        : [];
+    }
+    
+    // Command Bar Component
+    let commandBarOpen = false;
+    
+    function createCommandBar() {
+      const root = document.getElementById('command-bar-root');
+      
+      const bar = document.createElement('div');
+      bar.className = 'command-bar';
+      bar.setAttribute('role', 'dialog');
+      bar.setAttribute('aria-label', 'Command');
+      
+      const prompt = document.createElement('span');
+      prompt.className = 'command-prompt';
+      prompt.textContent = ':';
+      
+      const input = document.createElement('input');
+      input.value = '';
+      input.placeholder = 'tasks, brain, automations, runners, logs, projects';
+      
+      const suggestionsContainer = document.createElement('div');
+      suggestionsContainer.className = 'command-suggestions';
+      
+      function updateSuggestions() {
+        const suggestions = commandSuggestions(':' + input.value).slice(0, 6);
+        suggestionsContainer.innerHTML = '';
+        
+        suggestions.forEach(suggestion => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = ':' + suggestion;
+          btn.addEventListener('click', () => {
+            input.value = suggestion;
+            updateSuggestions();
+          });
+          suggestionsContainer.appendChild(btn);
+        });
+      }
+      
+      function submit() {
+        const result = resolveCommand(':' + input.value);
+        const resultDiv = document.getElementById('result');
+        
+        if (result.type === 'view') {
+          resultDiv.innerHTML = `<div class="result">✓ Would navigate to: <strong>${result.view}</strong></div>`;
+        } else if (result.type === 'projectPicker') {
+          resultDiv.innerHTML = `<div class="result">✓ Would open: <strong>Project Picker</strong></div>`;
+        } else {
+          const msg = result.suggestions.length 
+            ? `Try :${result.suggestions[0]}`
+            : `Unknown command :${input.value}`;
+          resultDiv.innerHTML = `<div class="result">⚠ ${msg}</div>`;
+        }
+        
+        closeCommandBar();
+      }
+      
+      function closeCommandBar() {
+        root.innerHTML = '';
+        commandBarOpen = false;
+      }
+      
+      input.addEventListener('input', updateSuggestions);
+      input.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeCommandBar();
+        if (e.key === 'Enter') submit();
+      });
+      
+      bar.appendChild(prompt);
+      bar.appendChild(input);
+      bar.appendChild(suggestionsContainer);
+      root.appendChild(bar);
+      
+      updateSuggestions();
+      setTimeout(() => input.focus(), 0);
+    }
+    
+    // Global keyboard handler
+    document.addEventListener('keydown', (e) => {
+      if (e.key === ':' && !commandBarOpen) {
+        e.preventDefault();
+        commandBarOpen = true;
+        createCommandBar();
+      }
+    });
+  </script>
+</body>
+</html>

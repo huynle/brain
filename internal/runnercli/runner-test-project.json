@@ -1,8 +1,8 @@
 {
   "projectId": "test-project",
   "status": "stopped",
-  "startedAt": "2026-06-11T16:55:20.202961-06:00",
-  "updatedAt": "2026-06-11T16:55:20.306659-06:00",
+  "startedAt": "2026-06-18T14:26:05.67632-06:00",
+  "updatedAt": "2026-06-18T14:26:05.782409-06:00",
   "runningTasks": null,
   "stats": {
     "completed": 0,
@@ -79,6 +79,17 @@
     "hook_timeout": 0,
     "heartbeat_interval": 0,
     "log_streaming": false,
-    "capabilities": null
+    "capabilities": null,
+    "dispatch_push": false,
+    "labels": null,
+    "workspace_roots": null,
+    "resources": null,
+    "capacity": null,
+    "draining": false,
+    "passive": false,
+    "control": {
+      "disabled": false,
+      "allowed_workdir_roots": null
+    }
   }
 }

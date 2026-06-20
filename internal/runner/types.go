@@ -2,7 +2,11 @@
 // from the Brain API using OpenCode.
 package runner
 
-import "time"
+import (
+	"encoding/json"
+	"strconv"
+	"time"
+)
 
 // =============================================================================
 // Configuration Types
@@ -79,6 +83,38 @@ type RunnerConfig struct {
 	// Untagged tasks are claimable by any runner (backward compatible).
 	// Set via config file or RUNNER_CAPABILITIES env var (comma-separated).
 	Capabilities []string `yaml:"capabilities" json:"capabilities"`
+
+	// DispatchPush advertises that this runner accepts Brain-assigned dispatch
+	// leases instead of relying on active /next polling. Set via
+	// RUNNER_DISPATCH_PUSH env var.
+	DispatchPush bool `yaml:"dispatch_push" json:"dispatch_push"`
+
+	// Labels and resource metadata are advertised to the scheduler during
+	// registration and heartbeat so placement can target suitable runners.
+	Labels         map[string]string      `yaml:"labels" json:"labels"`
+	WorkspaceRoots []string               `yaml:"workspace_roots" json:"workspace_roots"`
+	Resources      map[string]interface{} `yaml:"resources" json:"resources"`
+	Capacity       map[string]interface{} `yaml:"capacity" json:"capacity"`
+	Draining       bool                   `yaml:"draining" json:"draining"`
+
+	// Passive prevents active /next polling. Passive runners only execute
+	// Brain-assigned dispatch leases. Set via RUNNER_PASSIVE env var.
+	Passive bool `yaml:"passive" json:"passive"`
+
+	// Control holds remote-control bridge settings (WebSocket tunnel to the
+	// Brain API for proxied OpenCode access and ad-hoc spawning).
+	Control ControlConfig `yaml:"control" json:"control"`
+}
+
+// ControlConfig holds remote-control bridge settings.
+type ControlConfig struct {
+	// Disabled turns off the bridge connection. The bridge is enabled by
+	// default whenever a Brain API URL is configured.
+	Disabled bool `yaml:"disabled" json:"disabled"`
+
+	// AllowedWorkdirRoots restricts where ad-hoc OpenCode instances may be
+	// spawned. Defaults to the user's home directory when empty.
+	AllowedWorkdirRoots []string `yaml:"allowed_workdir_roots" json:"allowed_workdir_roots"`
 }
 
 // OpencodeConfig holds configuration for the OpenCode executor.
@@ -237,6 +273,9 @@ type RunningTask struct {
 	Workdir         string    `json:"workdir"`
 	ExecutorType    string    `json:"executorType,omitempty"` // "opencode", "pi", or "script"
 	Executor        string    `json:"executor,omitempty"`
+	Agent           string    `json:"agent,omitempty"`
+	Model           string    `json:"model,omitempty"`
+	InstanceID      string    `json:"instanceId,omitempty"`
 	OpencodePort    int       `json:"opencodePort,omitempty"`
 	SessionID       string    `json:"sessionId,omitempty"`
 	IdleSince       string    `json:"idleSince,omitempty"` // ISO timestamp
@@ -441,6 +480,9 @@ const (
 
 	// CommandShutdown signals the runner to initiate graceful shutdown.
 	CommandShutdown RunnerCommandType = "shutdown"
+
+	// CommandFeatureToggle signals the runner to enable/disable a feature.
+	CommandFeatureToggle RunnerCommandType = "feature_toggle"
 )
 
 // RunnerCommand represents a server-pushed command received via the runner SSE stream.
@@ -458,7 +500,80 @@ type RunnerCommand struct {
 	// Populated for dispatch commands.
 	TaskID    string `json:"taskId,omitempty"`
 	ProjectID string `json:"projectId,omitempty"`
+	LeaseID   string `json:"leaseId,omitempty"`
+	Lease     string `json:"-"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
 
 	// Populated for shutdown commands.
 	Reason string `json:"reason,omitempty"`
+
+	// Populated for feature_toggle commands.
+	ToggleFeatureID string `json:"featureId,omitempty"`
+	Enabled         *bool  `json:"enabled,omitempty"`
+}
+
+// UnmarshalJSON preserves compatibility with scheduler dispatch payloads that
+// may provide either leaseId directly or a lease object with an id field.
+func (c *RunnerCommand) UnmarshalJSON(data []byte) error {
+	type alias RunnerCommand
+	var raw struct {
+		*alias
+		Lease     json.RawMessage `json:"lease"`
+		ExpiresAt json.RawMessage `json:"expiresAt"`
+	}
+	raw.alias = (*alias)(c)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Lease) > 0 && string(raw.Lease) != "null" {
+		var leaseID string
+		if err := json.Unmarshal(raw.Lease, &leaseID); err == nil {
+			c.Lease = leaseID
+			if c.LeaseID == "" {
+				c.LeaseID = leaseID
+			}
+		} else {
+			var lease struct {
+				ID        string `json:"id"`
+				LeaseID   string `json:"leaseId"`
+				LeaseIDUS string `json:"lease_id"`
+				ExpiresAt int64  `json:"expires_at"`
+			}
+			if err := json.Unmarshal(raw.Lease, &lease); err != nil {
+				return err
+			}
+			if lease.ID != "" {
+				c.Lease = lease.ID
+				if c.LeaseID == "" {
+					c.LeaseID = lease.ID
+				}
+			} else if lease.LeaseID != "" {
+				c.Lease = lease.LeaseID
+				if c.LeaseID == "" {
+					c.LeaseID = lease.LeaseID
+				}
+			} else if lease.LeaseIDUS != "" {
+				c.Lease = lease.LeaseIDUS
+				if c.LeaseID == "" {
+					c.LeaseID = lease.LeaseIDUS
+				}
+			}
+			if c.ExpiresAt == "" && lease.ExpiresAt > 0 {
+				c.ExpiresAt = strconv.FormatInt(lease.ExpiresAt, 10)
+			}
+		}
+	}
+	if len(raw.ExpiresAt) > 0 && string(raw.ExpiresAt) != "null" {
+		var expires string
+		if err := json.Unmarshal(raw.ExpiresAt, &expires); err == nil {
+			c.ExpiresAt = expires
+		} else {
+			var expiresNum int64
+			if err := json.Unmarshal(raw.ExpiresAt, &expiresNum); err != nil {
+				return err
+			}
+			c.ExpiresAt = strconv.FormatInt(expiresNum, 10)
+		}
+	}
+	return nil
 }

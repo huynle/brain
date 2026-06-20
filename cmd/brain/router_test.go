@@ -10,6 +10,72 @@ import (
 	"github.com/huynle/brain-api/cmd/brain/commands"
 )
 
+func TestRoute_APIStartEmbeddedRunnerFlags(t *testing.T) {
+	cmd, err := route([]string{
+		"api", "start",
+		"--runner",
+		"--runner-project", "personal-productivity",
+		"--port", "4444",
+		"--host", "0.0.0.0",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	start, ok := cmd.(*commands.StartCommand)
+	if !ok {
+		t.Fatalf("expected *commands.StartCommand, got %T", cmd)
+	}
+	if !start.Flags.Runner {
+		t.Fatal("expected embedded runner flag to be true")
+	}
+	if start.Flags.RunnerProject != "personal-productivity" {
+		t.Fatalf("RunnerProject = %q, want personal-productivity", start.Flags.RunnerProject)
+	}
+	if start.Flags.Port != 4444 || start.Flags.Host != "0.0.0.0" {
+		t.Fatalf("Port/Host = %d/%q, want 4444/0.0.0.0", start.Flags.Port, start.Flags.Host)
+	}
+	if start.Config.Server.Port != 4444 || start.Config.Server.Host != "0.0.0.0" {
+		t.Fatalf("Config Port/Host = %d/%q, want 4444/0.0.0.0", start.Config.Server.Port, start.Config.Server.Host)
+	}
+}
+
+func TestRoute_APIDaemonEmbeddedRunnerFlags(t *testing.T) {
+	cmd, err := route([]string{
+		"api",
+		"--daemon",
+		"--runner",
+		"--runner-project", "all",
+		"--max-parallel", "3",
+		"--include", "prod-*",
+		"--exclude", "test-*",
+		"--executor", "pi",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	api, ok := cmd.(*commands.APICommand)
+	if !ok {
+		t.Fatalf("expected *commands.APICommand, got %T", cmd)
+	}
+	if !api.Flags.Runner {
+		t.Fatal("expected daemon child embedded runner flag to be true")
+	}
+	if api.Flags.RunnerProject != "all" {
+		t.Fatalf("RunnerProject = %q, want all", api.Flags.RunnerProject)
+	}
+	if api.Flags.MaxParallel != 3 || api.Flags.Executor != "pi" {
+		t.Fatalf("MaxParallel/Executor = %d/%q, want 3/pi", api.Flags.MaxParallel, api.Flags.Executor)
+	}
+	if len(api.Flags.Include) != 1 || api.Flags.Include[0] != "prod-*" {
+		t.Fatalf("Include = %v, want [prod-*]", api.Flags.Include)
+	}
+	if len(api.Flags.Exclude) != 1 || api.Flags.Exclude[0] != "test-*" {
+		t.Fatalf("Exclude = %v, want [test-*]", api.Flags.Exclude)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Test: Zero args routes to help
 // ---------------------------------------------------------------------------
@@ -57,7 +123,7 @@ func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 
 	// Commands that return a different Type() than their name
 	aliasExpected := map[string]string{
-		"runner": "run",
+		"runner": "help",       // "brain runner" alone → help; "brain runner start" → runner daemon
 		"start":  "runner_tui", // "brain start" → runner TUI for all projects
 	}
 

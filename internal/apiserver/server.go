@@ -11,7 +11,9 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/auth"
 	"github.com/huynle/brain-api/internal/blobstore"
+	"github.com/huynle/brain-api/internal/bridge"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/logbuffer"
@@ -26,18 +28,21 @@ import (
 
 // ServerOptions holds configuration for running the Brain API server.
 type ServerOptions struct {
-	Host         string
-	Port         int
-	BrainDir     string
-	EnableAuth   bool
-	LogLevel     string
-	CORSOrigin   string
-	OAuthPIN     string
-	TaskDefaults config.TaskDefaultsConfig
-	Embedding    config.EmbeddingConfig
-	Attachments  config.AttachmentConfig
+	Host            string
+	Port            int
+	BrainDir        string
+	EnableAuth      bool
+	LogLevel        string
+	CORSOrigin      string
+	OAuthPIN        string
+	JWTSecret       string
+	TaskDefaults    config.TaskDefaultsConfig
+	FeatureCheckout config.FeatureCheckoutConfig
+	Embedding       config.EmbeddingConfig
+	Attachments     config.AttachmentConfig
 
 	AttachmentExtraction config.AttachmentExtractionConfig
+	Assistant            config.AssistantConfig
 }
 
 const defaultAttachmentMaxUploadSizeBytes int64 = 100 * 1024 * 1024
@@ -172,17 +177,20 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		corsOrigin = "*" // Match standalone brain-api default
 	}
 	cfg := config.Config{
-		BrainDir:     opts.BrainDir,
-		Host:         opts.Host,
-		Port:         opts.Port,
-		EnableAuth:   opts.EnableAuth,
-		CORSOrigin:   corsOrigin,
-		OAuthPIN:     opts.OAuthPIN,
-		TaskDefaults: opts.TaskDefaults,
-		Embedding:    opts.Embedding,
-		Attachments:  normalizeAttachmentConfig(opts.BrainDir, opts.Attachments),
+		BrainDir:        opts.BrainDir,
+		Host:            opts.Host,
+		Port:            opts.Port,
+		EnableAuth:      opts.EnableAuth,
+		CORSOrigin:      corsOrigin,
+		OAuthPIN:        opts.OAuthPIN,
+		JWTSecret:       opts.JWTSecret,
+		TaskDefaults:    opts.TaskDefaults,
+		FeatureCheckout: opts.FeatureCheckout,
+		Embedding:       opts.Embedding,
+		Attachments:     normalizeAttachmentConfig(opts.BrainDir, opts.Attachments),
 
 		AttachmentExtraction: opts.AttachmentExtraction,
+		Assistant:            opts.Assistant,
 	}
 
 	// ─── Services ───────────────────────────────────────────────────
@@ -198,6 +206,22 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	}
 
 	brainSvc := service.NewBrainService(&cfg, store, idx, nil, embeddingClient)
+	if err := service.EnsureBuiltInFeatureCheckoutAutomation(ctx, brainSvc, service.BuiltInFeatureCheckoutConfig{
+		Enabled:            cfg.FeatureCheckout.Enabled,
+		Agent:              cfg.TaskDefaults.Agent,
+		Model:              cfg.TaskDefaults.Model,
+		Executor:           cfg.TaskDefaults.Executor,
+		ExecutionMode:      cfg.TaskDefaults.ExecutionMode,
+		TargetWorkdir:      cfg.TaskDefaults.TargetWorkdir,
+		MergeTargetBranch:  cfg.TaskDefaults.MergeTargetBranch,
+		MergePolicy:        cfg.TaskDefaults.MergePolicy,
+		MergeStrategy:      cfg.TaskDefaults.MergeStrategy,
+		RemoteBranchPolicy: cfg.TaskDefaults.RemoteBranchPolicy,
+		OpenPRBeforeMerge:  cfg.TaskDefaults.OpenPRBeforeMerge,
+	}); err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature checkout automation: %w", err)
+	}
 	blobStore, err := blobstore.NewFilesystemStore(cfg.Attachments.StorageRoot, cfg.Attachments.MaxUploadSizeBytes)
 	if err != nil {
 		cleanup()
@@ -214,20 +238,26 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		service.WithAttachmentDerivedChangeHook(brainSvc),
 	)
 	taskSvc := service.NewTaskService(&cfg, store)
-	runnerSvc := service.NewRunnerService()
+	runnerSvc := service.NewRunnerServiceWithStorage(store)
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)
 	clientContextSvc := service.NewClientContextService(store)
+	placementSvc := service.NewProjectPlacementService(store)
 	monitorSvc := service.NewMonitorService(brainSvc)
 	webhookSvc := service.NewWebhookService(store)
+
+	// ─── Realtime Hub ───────────────────────────────────────────────
+	hub := realtime.NewHub()
 
 	// ─── Background Claim Cleanup ──────────────────────────────────
 	taskSvc.StartClaimCleanup(ctx, service.DefaultClaimCleanupInterval)
 
 	// ─── Runner Lifecycle Management ───────────────────────────────
+	runnerRegistrySvc.SetHub(hub)
 	runnerRegistrySvc.StartLifecycleManager(ctx, service.DefaultLifecycleInterval)
 
-	// ─── Realtime Hub ───────────────────────────────────────────────
-	hub := realtime.NewHub()
+	// ─── Scheduler Lifecycle ────────────────────────────────────────
+	schedulerSvc := service.NewSchedulerService(taskSvc, runnerSvc, runnerRegistrySvc, placementSvc, store, hub)
+	schedulerSvc.Start(ctx, service.DefaultSchedulerInterval)
 
 	// ─── Event Hub & Services ──────────────────────────────────────
 	eventHub := realtime.NewEventHub()
@@ -243,6 +273,16 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// in-process reconcile for goal automations when their linked task/feature
 	// lifecycle events fire.
 	goalSvc := service.NewGoalService(brainSvc, taskSvc, store)
+	assistantSvc := api.NewAssistantService(api.AssistantServiceOptions{
+		Enabled:   cfg.Assistant.Enabled,
+		Provider:  cfg.Assistant.Provider,
+		BaseURL:   cfg.Assistant.BaseURL,
+		APIKeyEnv: cfg.Assistant.APIKeyEnv,
+		Model:     cfg.Assistant.Model,
+		Timeout:   time.Duration(cfg.Assistant.TimeoutMs) * time.Millisecond,
+		Brain:     brainSvc,
+		Goals:     goalSvc,
+	})
 	go goalSvc.Start(ctx, eventHub)
 
 	// ─── Webhook Dispatcher ────────────────────────────────────────
@@ -258,13 +298,16 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	triggerDispatcher := realtime.NewTriggerDispatcher(eventHub, triggerSvc)
 	go triggerDispatcher.Start(ctx)
 
-	// Wire hub into runner registry for lifecycle sweep SSE events
-	runnerRegistrySvc.SetHub(hub)
+	// ─── Runner Bridge Hub (remote control) ────────────────────────
+	bridgeHub := bridge.NewHub(hub)
 
 	// ─── Log Buffer ─────────────────────────────────────────────────
 	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
 
 	// ─── API Handler & Router ───────────────────────────────────────
+	// Shared operator credential verifier (password login + OAuth consent).
+	credVerifier := auth.NewVerifierFromEnv()
+
 	handler := api.NewHandler(
 		brainSvc,
 		api.WithAttachmentService(attachmentSvc),
@@ -272,14 +315,21 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithRunnerService(runnerSvc),
 		api.WithRunnerRegistryService(runnerRegistrySvc),
 		api.WithClientContextService(clientContextSvc),
+		api.WithProjectPlacementService(placementSvc),
+		api.WithSchedulerService(schedulerSvc),
+		api.WithSchedulerVisibilityService(store),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
 		api.WithEventService(eventSvc),
 		api.WithWebhookService(webhookSvc),
 		api.WithGoalService(goalSvc),
+		api.WithAssistantService(assistantSvc),
+		api.WithBridgeService(bridgeHub),
 		api.WithLogBuffer(logBuf),
 		api.WithTaskDefaults(cfg.TaskDefaults),
+		api.WithCredentialVerifier(credVerifier),
+		api.WithPasswordTokenStore(store),
 	)
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
@@ -312,8 +362,14 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	router := api.NewRouter(cfg, routerOpts...)
 
 	// ─── OAuth ─────────────────────────────────────────────────────
-	oauthStore := oauth.NewStore()
-	oauthHandler := oauth.NewHandler(oauthStore, oauth.WithAccessTokenStore(store))
+	// Persist OAuth flow state (clients, auth codes, refresh tokens) in SQLite
+	// so registered clients survive restarts — otherwise every restart yields
+	// "unknown client_id" for the Claude connector and the PWA.
+	oauthStore := oauth.NewPersistentStore(store)
+	oauthHandler := oauth.NewHandler(oauthStore,
+		oauth.WithAccessTokenStore(store),
+		oauth.WithCredentialVerifier(credVerifier),
+	)
 	oauth.RegisterRoutes(router, oauthHandler)
 
 	// ─── MCP Streamable HTTP Transport ──────────────────────────────
@@ -324,7 +380,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		OAuthValidator: store,
 	}
 	router.Route("/mcp", func(r chi.Router) {
-		r.Use(api.Auth(opts.EnableAuth, authValidator))
+		r.Use(api.Auth(opts.EnableAuth, authValidator, opts.JWTSecret))
 		r.Post("/", mcpHTTP.ServeHTTP)
 		r.Get("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
@@ -334,7 +390,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// webui.Handler below) owns browser navigations to "/", while MCP clients
 	// use POST/DELETE at the root. Clients that need a GET stream use /mcp.
 	router.Group(func(r chi.Router) {
-		r.Use(api.Auth(opts.EnableAuth, authValidator))
+		r.Use(api.Auth(opts.EnableAuth, authValidator, opts.JWTSecret))
 		r.Post("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})

@@ -26,6 +26,12 @@ type SessionInfo struct {
 	Timestamp string `yaml:"timestamp" json:"timestamp"`
 	CronID    string `yaml:"cron_id,omitempty" json:"cron_id,omitempty"`
 	RunID     string `yaml:"run_id,omitempty" json:"run_id,omitempty"`
+	// Where the session lives, recorded at discovery so remote control can
+	// re-open/resume it after the task's live instance is gone.
+	RunnerID  string `yaml:"runner_id,omitempty" json:"runner_id,omitempty"`
+	MachineID string `yaml:"machine_id,omitempty" json:"machine_id,omitempty"`
+	Hostname  string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	Workdir   string `yaml:"workdir,omitempty" json:"workdir,omitempty"`
 }
 
 // TriggerConfig defines when a hook should fire based on an event.
@@ -107,6 +113,8 @@ type AutomationAction struct {
 	Command            string `yaml:"command,omitempty" json:"command,omitempty"`
 	Agent              string `yaml:"agent,omitempty" json:"agent,omitempty"`
 	Model              string `yaml:"model,omitempty" json:"model,omitempty"`
+	Executor           string `yaml:"executor,omitempty" json:"executor,omitempty"`
+	TargetWorkdir      string `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
 	ExecutionMode      string `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
 	SessionMode        string `yaml:"session_mode,omitempty" json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool  `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`

@@ -66,6 +66,12 @@ const (
 	EventEntryCreated = "entry.created"
 	EventEntryUpdated = "entry.updated"
 	EventEntryDeleted = "entry.deleted"
+
+	// Remote-control audit events.
+	EventControlPromptSent          = "control.prompt_sent"
+	EventControlPermissionResponded = "control.permission_responded"
+	EventControlInstanceSpawned     = "control.instance_spawned"
+	EventControlInstanceKilled      = "control.instance_killed"
 )
 
 // AllEventTypes enumerates all valid event type strings.
@@ -80,6 +86,8 @@ var AllEventTypes = []string{
 	EventFeatureStarted, EventFeatureCompleted, EventFeatureBlocked, EventFeatureProgress,
 	EventFeatureEnabled, EventFeatureDisabled,
 	EventEntryCreated, EventEntryUpdated, EventEntryDeleted,
+	EventControlPromptSent, EventControlPermissionResponded,
+	EventControlInstanceSpawned, EventControlInstanceKilled,
 }
 
 // eventTypeSet is a lookup set for O(1) event type validation.

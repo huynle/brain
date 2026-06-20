@@ -1,15 +1,21 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
@@ -294,6 +300,122 @@ func TestAuthMiddleware(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func makeTestJWT(t *testing.T, secret string, exp time.Time) string {
+	t.Helper()
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"HS256","typ":"JWT"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"sub":"test-subject","exp":%d}`, exp.Unix())))
+	signingInput := header + "." + payload
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signingInput))
+	signature := base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+	return signingInput + "." + signature
+}
+
+func TestAuthMiddleware_JWTBearerTokens(t *testing.T) {
+	secret := "test-jwt-secret"
+	validJWT := makeTestJWT(t, secret, time.Now().Add(time.Hour))
+	expiredJWT := makeTestJWT(t, secret, time.Now().Add(-time.Hour))
+
+	tests := []struct {
+		name       string
+		header     string
+		jwtSecret  string
+		validator  TokenValidator
+		wantStatus int
+		wantType   string
+	}{
+		{
+			name:       "valid JWT bearer token passes through",
+			header:     "Bearer " + validJWT,
+			jwtSecret:  secret,
+			validator:  &revokedValidator{},
+			wantStatus: http.StatusOK,
+			wantType:   "jwt",
+		},
+		{
+			name:       "JWT with invalid signature returns 401",
+			header:     "Bearer " + validJWT,
+			jwtSecret:  "different-secret",
+			validator:  &testValidator{validToken: validJWT},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "expired JWT returns 401",
+			header:     "Bearer " + expiredJWT,
+			jwtSecret:  secret,
+			validator:  &testValidator{validToken: expiredJWT},
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "opaque API token still passes when JWT secret configured",
+			header:     "Bearer valid-api-token",
+			jwtSecret:  secret,
+			validator:  &testValidator{validToken: "valid-api-token"},
+			wantStatus: http.StatusOK,
+			wantType:   "api_token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedResult *AuthResult
+			handler := contextCapturingHandler(&capturedResult)
+			wrapped := Auth(true, tt.validator, tt.jwtSecret)(handler)
+
+			req := httptest.NewRequest("GET", "/test", nil)
+			req.Header.Set("Authorization", tt.header)
+			rec := httptest.NewRecorder()
+
+			wrapped.ServeHTTP(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tt.wantStatus)
+			}
+			if tt.wantType != "" {
+				if capturedResult == nil {
+					t.Fatal("expected AuthResult in context, got nil")
+				}
+				if capturedResult.Type != tt.wantType {
+					t.Errorf("auth type = %q, want %q", capturedResult.Type, tt.wantType)
+				}
+			}
+		})
+	}
+}
+
+func TestRouter_ProtectedRoutesAcceptConfiguredJWT(t *testing.T) {
+	secret := "router-jwt-secret"
+	jwt := makeTestJWT(t, secret, time.Now().Add(time.Hour))
+	cfg := config.Config{
+		BrainDir:   "/tmp/test-brain",
+		Port:       3000,
+		Host:       "0.0.0.0",
+		EnableAuth: true,
+		JWTSecret:  secret,
+		CORSOrigin: "*",
+		LogLevel:   "info",
+	}
+
+	router := NewRouter(cfg, WithTokenValidator(&revokedValidator{}))
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodGet, srv.URL+"/api/v1/stats", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /api/v1/stats failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("status = %d, want %d (JWT should pass auth to route handler)", resp.StatusCode, http.StatusNotImplemented)
 	}
 }
 
@@ -885,11 +1007,74 @@ func TestRequireScope(t *testing.T) {
 			wantStatus: http.StatusForbidden,
 		},
 		{
-			name:       "oauth token always passes scope check",
+			name:       "oauth mcp scope passes legacy routes",
+			allowed:    []string{"admin:*"},
+			tokenScope: "mcp",
+			authType:   "oauth",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "oauth mcp scope does NOT grant control",
+			allowed:    []string{ScopeControl},
+			tokenScope: "mcp",
+			authType:   "oauth",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "oauth control scope grants control routes",
+			allowed:    []string{ScopeControl},
+			tokenScope: "mcp control",
+			authType:   "oauth",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "oauth admin wildcard grants everything",
+			allowed:    []string{ScopeControl},
+			tokenScope: "admin:*",
+			authType:   "oauth",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "api token admin wildcard grants control",
+			allowed:    []string{ScopeControl},
+			tokenScope: "admin:*",
+			authType:   "api_token",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "api token runner scope does NOT grant control",
+			allowed:    []string{ScopeControl},
+			tokenScope: "runner:*",
+			authType:   "api_token",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "oauth unrelated scopes no longer bypass checks",
 			allowed:    []string{"admin:*"},
 			tokenScope: "read write",
 			authType:   "oauth",
+			wantStatus: http.StatusForbidden,
+		},
+		{
+			name:       "oauth verbatim scope match passes",
+			allowed:    []string{"admin:*", "read:*"},
+			tokenScope: "read:*",
+			authType:   "oauth",
 			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "oauth empty scope maps to legacy mcp grant",
+			allowed:    []string{"admin:*"},
+			tokenScope: "",
+			authType:   "oauth",
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:       "oauth empty scope does NOT grant control",
+			allowed:    []string{ScopeControl},
+			tokenScope: "",
+			authType:   "oauth",
+			wantStatus: http.StatusForbidden,
 		},
 		{
 			name:       "no auth result passes through (let auth middleware handle)",
@@ -1143,4 +1328,40 @@ func TestSecureHeaders_HSTS(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStatusWriter_Hijack verifies the Logger middleware's statusWriter
+// exposes http.Hijacker, which the runner WebSocket bridge requires. Without
+// it, the bridge upgrade fails with "does not implement http.Hijacker" and
+// the entire remote-control tunnel is dead behind the Logger middleware.
+func TestStatusWriter_Hijack(t *testing.T) {
+	// A ResponseWriter that supports hijacking.
+	hijackable := &hijackableRecorder{ResponseRecorder: httptest.NewRecorder()}
+	sw := &statusWriter{ResponseWriter: hijackable, status: http.StatusOK}
+
+	if _, ok := interface{}(sw).(http.Hijacker); !ok {
+		t.Fatal("statusWriter does not implement http.Hijacker")
+	}
+	if _, _, err := sw.Hijack(); err != nil {
+		t.Errorf("Hijack() through statusWriter failed: %v", err)
+	}
+	if !hijackable.hijacked {
+		t.Error("Hijack() did not delegate to the underlying ResponseWriter")
+	}
+
+	// A non-hijackable writer should yield a clear error, not a panic.
+	plain := &statusWriter{ResponseWriter: httptest.NewRecorder(), status: http.StatusOK}
+	if _, _, err := plain.Hijack(); err == nil {
+		t.Error("expected error hijacking a non-hijackable ResponseWriter")
+	}
+}
+
+type hijackableRecorder struct {
+	*httptest.ResponseRecorder
+	hijacked bool
+}
+
+func (h *hijackableRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h.hijacked = true
+	return nil, nil, nil
 }

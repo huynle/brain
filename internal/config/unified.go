@@ -86,6 +86,16 @@ type EmbeddingConfig struct {
 	TimeoutMs int    `yaml:"timeout_ms"`
 }
 
+// AssistantConfig holds server-side LLM configuration for the built-in PWA assistant.
+type AssistantConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	BaseURL   string `yaml:"base_url"`
+	APIKeyEnv string `yaml:"api_key_env"`
+	Model     string `yaml:"model"`
+	TimeoutMs int    `yaml:"timeout_ms"`
+}
+
 // AttachmentExtractionConfig holds multimodal model-role configuration for
 // deriving searchable text from media attachments. Zero text limits mean unset.
 type AttachmentExtractionConfig struct {
@@ -112,22 +122,30 @@ type AttachmentConfig struct {
 }
 
 type ServerConfig struct {
-	Port         int                `yaml:"port"`
-	Host         string             `yaml:"host"`
-	BrainDir     string             `yaml:"brain_dir"`
-	EnableAuth   bool               `yaml:"enable_auth"`
-	CORSOrigin   string             `yaml:"cors_origin"`
-	LogLevel     string             `yaml:"log_level"`
-	OAuthPIN     string             `yaml:"oauth_pin"`
-	TLSCert      string             `yaml:"tls_cert"`
-	TLSKey       string             `yaml:"tls_key"`
-	PIDFile      string             `yaml:"pid_file"`
-	LogFile      string             `yaml:"log_file"`
-	TaskDefaults TaskDefaultsConfig `yaml:"task_defaults"`
-	Embedding    EmbeddingConfig    `yaml:"embedding"`
-	Attachments  AttachmentConfig   `yaml:"attachments"`
+	Port            int                   `yaml:"port"`
+	Host            string                `yaml:"host"`
+	BrainDir        string                `yaml:"brain_dir"`
+	EnableAuth      bool                  `yaml:"enable_auth"`
+	CORSOrigin      string                `yaml:"cors_origin"`
+	LogLevel        string                `yaml:"log_level"`
+	OAuthPIN        string                `yaml:"oauth_pin"`
+	JWTSecret       string                `yaml:"jwt_secret"`
+	TLSCert         string                `yaml:"tls_cert"`
+	TLSKey          string                `yaml:"tls_key"`
+	PIDFile         string                `yaml:"pid_file"`
+	LogFile         string                `yaml:"log_file"`
+	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
+	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
+	Embedding       EmbeddingConfig       `yaml:"embedding"`
+	Attachments     AttachmentConfig      `yaml:"attachments"`
 
 	AttachmentExtraction AttachmentExtractionConfig `yaml:"attachment_extraction"`
+	Assistant            AssistantConfig            `yaml:"assistant"`
+}
+
+// FeatureCheckoutConfig controls built-in feature completion checkout automation.
+type FeatureCheckoutConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // RunnerConfig holds task runner configuration.
@@ -209,14 +227,22 @@ func defaultConfig() UnifiedConfig {
 
 	return UnifiedConfig{
 		Server: ServerConfig{
-			Port:       3333,
-			Host:       "localhost",
-			BrainDir:   brainDir,
-			LogLevel:   "info",
-			PIDFile:    filepath.Join(stateHome, "brain-api", "brain-api.pid"),
-			LogFile:    filepath.Join(stateHome, "brain-api", "brain-api.log"),
-			EnableAuth: false,
-			CORSOrigin: "*",
+			Port:            3333,
+			Host:            "localhost",
+			BrainDir:        brainDir,
+			LogLevel:        "info",
+			PIDFile:         filepath.Join(stateHome, "brain-api", "brain-api.pid"),
+			LogFile:         filepath.Join(stateHome, "brain-api", "brain-api.log"),
+			EnableAuth:      false,
+			CORSOrigin:      "*",
+			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
+			TaskDefaults: TaskDefaultsConfig{
+				ExecutionMode:      "worktree",
+				MergePolicy:        "auto_merge",
+				MergeStrategy:      "squash",
+				MergeTargetBranch:  "main",
+				RemoteBranchPolicy: "delete",
+			},
 			Embedding: EmbeddingConfig{
 				Enabled:   false,
 				Provider:  "openrouter",
@@ -243,6 +269,14 @@ func defaultConfig() UnifiedConfig {
 				MaxSizeBytes:        10 * 1024 * 1024,
 				SupportedMIMETypes:  []string{"image/*", "application/pdf"},
 				MaxDerivedTextChars: 0,
+			},
+			Assistant: AssistantConfig{
+				Enabled:   false,
+				Provider:  "openrouter",
+				BaseURL:   "https://openrouter.ai/api/v1",
+				APIKeyEnv: "OPENROUTER_API_KEY",
+				Model:     "anthropic/claude-sonnet-4",
+				TimeoutMs: 120000,
 			},
 		},
 		Runner: RunnerConfig{

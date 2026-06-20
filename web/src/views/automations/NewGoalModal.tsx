@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Modal } from "../../components/common/Modal";
 import { ALL_STATUSES } from "../../lib/types";
-import { createGoal } from "../../lib/api";
+import { assistantChat, assistantGoalDraft, createGoal, type AssistantChatResponse } from "../../lib/api";
 import { useUI, ALL_PROJECTS } from "../../store/ui";
 
 const TRIGGER_SOURCES = ["task", "feature", "both"];
@@ -15,6 +15,13 @@ function slugId(title: string): string {
       .slice(0, 40) || "goal";
   const rand = Math.floor(Math.random() * 0xffff).toString(16).padStart(4, "0");
   return `${slug}-${rand}`;
+}
+
+
+function createdSomething(res: AssistantChatResponse): boolean {
+  return res.executed_actions.some((a) =>
+    ["create_goal", "create_automation", "create_task", "create_entry"].includes(a.type) && a.status === "completed",
+  );
 }
 
 function StatusChips({
@@ -42,7 +49,7 @@ function StatusChips({
   );
 }
 
-export function NewGoalModal({
+export function NewAutomationModal({
   onClose,
   onCreated,
 }: {
@@ -65,11 +72,80 @@ export function NewGoalModal({
   const [complete, setComplete] = useState<string[]>([]);
   const [blocked, setBlocked] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [assistantPrompt, setAssistantPrompt] = useState("");
+  const [assistantBusy, setAssistantBusy] = useState(false);
 
   const canSave = title.trim() !== "" && project.trim() !== "";
 
   function toggle(list: string[], set: (v: string[]) => void, s: string) {
     set(list.includes(s) ? list.filter((x) => x !== s) : [...list, s]);
+  }
+
+
+  async function draftWithAssistant() {
+    const prompt = assistantPrompt.trim();
+    if (!prompt) return;
+    setAssistantBusy(true);
+    try {
+      const res = await assistantGoalDraft({
+        project: project.trim() || undefined,
+        message: prompt,
+        current: {
+          project,
+          feature_id: feature,
+          title,
+          criteria,
+          validation,
+          workdir,
+          trigger_source: triggerSource,
+          agent,
+          model,
+          complete_statuses: complete,
+          blocked_statuses: blocked,
+        },
+        context: { view: "new_automation" },
+      });
+      const d = res.draft;
+      if (d.project) setProject(d.project);
+      if (d.feature_id) setFeature(d.feature_id);
+      if (d.title) setTitle(d.title);
+      if (d.criteria) setCriteria(d.criteria);
+      if (d.validation) setValidation(d.validation);
+      if (d.workdir) setWorkdir(d.workdir);
+      if (d.trigger_source) setTriggerSource(d.trigger_source);
+      if (d.agent) setAgent(d.agent);
+      if (d.model) setModel(d.model);
+      if (d.complete_statuses) setComplete(d.complete_statuses);
+      if (d.blocked_statuses) setBlocked(d.blocked_statuses);
+      toast(res.reply || "Drafted goal", "success");
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Assistant draft failed", "error");
+    } finally {
+      setAssistantBusy(false);
+    }
+  }
+
+  async function createWithAssistant() {
+    const prompt = assistantPrompt.trim();
+    if (!prompt) return;
+    setAssistantBusy(true);
+    try {
+      const res = await assistantChat({
+        project: project.trim() || undefined,
+        message: prompt,
+        context: { view: "new_automation" },
+      });
+      const ok = createdSomething(res);
+      toast(res.reply || (ok ? "Created" : "Assistant responded"), ok ? "success" : "info");
+      if (ok) {
+        onCreated?.();
+        onClose();
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Assistant create failed", "error");
+    } finally {
+      setAssistantBusy(false);
+    }
   }
 
   async function save() {
@@ -108,7 +184,7 @@ export function NewGoalModal({
 
   return (
     <Modal
-      title="New goal"
+      title="New automation"
       onClose={onClose}
       footer={
         <>
@@ -121,13 +197,30 @@ export function NewGoalModal({
             onClick={() => void save()}
             disabled={busy || !canSave}
           >
-            {busy ? "Creating…" : "Create goal"}
+            {busy ? "Creating…" : "Create goal manually"}
           </button>
         </>
       }
     >
+      <div className="assistant-strip field">
+        <label>Ask assistant to create an automation, goal, task, or entry</label>
+        <textarea
+          rows={2}
+          placeholder="Example: Create a goal for finishing the PWA assistant, or make a daily automation to inspect blocked tasks."
+          value={assistantPrompt}
+          onChange={(e) => setAssistantPrompt(e.target.value)}
+        />
+        <div className="btn-row">
+          <button className="btn sm" disabled={assistantBusy || !assistantPrompt.trim()} onClick={() => void draftWithAssistant()}>
+            {assistantBusy ? "Working..." : "Draft goal fields"}
+          </button>
+          <button className="btn sm primary" disabled={assistantBusy || !assistantPrompt.trim()} onClick={() => void createWithAssistant()}>
+            Create with assistant
+          </button>
+        </div>
+      </div>
       <div className="field">
-        <label>Objective (title)</label>
+        <label>Manual goal objective (title)</label>
         <textarea
           rows={2}
           autoFocus

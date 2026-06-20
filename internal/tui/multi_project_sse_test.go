@@ -471,8 +471,8 @@ func TestTabSwitch_AllTab_SetsAggregateStats(t *testing.T) {
 	m.projectTabs.ActiveIndex = 1
 	m.activeProjectID = "proj1"
 
-	// Switch to "all" tab (press 'h' to go back)
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}
+	// Switch to "all" tab (press 'H' shift to go back)
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
@@ -512,8 +512,8 @@ func TestTabSwitch_ProjectTab_SetsProjectStats(t *testing.T) {
 	m.projectTabs.ActiveIndex = 0
 	m.activeProjectID = "all"
 
-	// Switch to proj1 tab (press 'l')
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
+	// Switch to proj1 tab (press 'L' shift)
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 

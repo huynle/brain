@@ -47,9 +47,27 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			r.Post("/tokens/bootstrap", o.handler.HandleBootstrapToken)
 		}
 
+		// Password login — unauthenticated (credentials/refresh token ARE the
+		// auth). The handlers themselves 404 when password login is not enabled.
+		if o.handler != nil {
+			r.Post("/auth/login", o.handler.HandleAuthLogin)
+			r.Post("/auth/refresh", o.handler.HandleAuthRefresh)
+			r.Post("/auth/logout", o.handler.HandleAuthLogout)
+		}
+
 		// All routes below require auth when enabled
 		r.Group(func(r chi.Router) {
-			r.Use(Auth(cfg.EnableAuth, o.validator))
+			r.Use(Auth(cfg.EnableAuth, o.validator, cfg.JWTSecret))
+			// Record each authenticated request (with its actor) for the
+			// global server-request log shown in the Logs tab. Installed after
+			// Auth so the actor is present in context.
+			r.Use(RequestRecorder)
+
+			// ─── Server request log (read:* scope) ─────────────────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				r.Get("/server/requests/recent", o.handler.HandleRecentRequests)
+			})
 
 			// ─── Attachments ───────────────────────────────────────
 			r.Route("/attachments", func(r chi.Router) {
@@ -235,6 +253,28 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Assistant ───────────────────────────────────────
+			r.Route("/assistant", func(r chi.Router) {
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.assistant != nil {
+						r.Get("/status", o.handler.HandleAssistantStatus)
+					} else {
+						r.Get("/status", notImplemented)
+					}
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*"))
+					if o.handler != nil && o.handler.assistant != nil {
+						r.Post("/chat", o.handler.HandleAssistantChat)
+						r.Post("/goal-draft", o.handler.HandleAssistantGoalDraft)
+					} else {
+						r.Post("/chat", notImplemented)
+						r.Post("/goal-draft", notImplemented)
+					}
+				})
+			})
+
 			// ─── Goals ───────────────────────────────────────────
 			r.Route("/goals", func(r chi.Router) {
 				// Goal read operations — read:* scope
@@ -266,8 +306,52 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				})
 			})
 
+			// ─── Scheduler ────────────────────────────────────────
+			r.Route("/scheduler", func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil && o.handler.scheduler != nil {
+					r.Get("/status", o.handler.HandleSchedulerStatus)
+				} else {
+					r.Get("/status", notImplemented)
+				}
+			})
+
+			// ─── Projects ──────────────────────────────────────────
+			r.Route("/projects/{projectId}/placement", func(r chi.Router) {
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.placement != nil {
+						r.Get("/", o.handler.HandleGetProjectPlacement)
+					} else {
+						r.Get("/", notImplemented)
+					}
+				})
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*"))
+					if o.handler != nil && o.handler.placement != nil {
+						r.Put("/", o.handler.HandlePutProjectPlacement)
+					} else {
+						r.Put("/", notImplemented)
+					}
+				})
+			})
+
 			// ─── Tasks ───────────────────────────────────────────
 			r.Route("/tasks", func(r chi.Router) {
+				// Runner-scoped dispatch protocol — runner:* scope.
+				// Keep before /{projectId} so "runners" is not parsed as a project ID.
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*"))
+					if o.handler != nil && o.handler.tasks != nil {
+						r.Post("/runners/{runnerId}/dispatch/ack", o.handler.HandleAckDispatch)
+						r.Post("/runners/{runnerId}/dispatch/reject", o.handler.HandleRejectDispatch)
+						r.Post("/runners/{runnerId}/dispatch/release", o.handler.HandleReleaseDispatch)
+					} else {
+						r.Post("/runners/{runnerId}/dispatch/ack", notImplemented)
+						r.Post("/runners/{runnerId}/dispatch/reject", notImplemented)
+					}
+				})
+
 				// Task read operations — read:* scope
 				r.Group(func(r chi.Router) {
 					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
@@ -286,6 +370,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Post("/runner/resume/{projectId}", o.handler.HandleResumeProject)
 						r.Post("/runner/pause", o.handler.HandlePauseAll)
 						r.Post("/runner/resume", o.handler.HandleResumeAll)
+						r.Post("/runner/automations/pause/{projectId}", o.handler.HandlePauseProjectAutomations)
+						r.Post("/runner/automations/resume/{projectId}", o.handler.HandleResumeProjectAutomations)
 						r.Post("/runner/automations/pause", o.handler.HandlePauseAutomations)
 						r.Post("/runner/automations/resume", o.handler.HandleResumeAutomations)
 					} else {
@@ -293,6 +379,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Post("/runner/resume/{projectId}", notImplemented)
 						r.Post("/runner/pause", notImplemented)
 						r.Post("/runner/resume", notImplemented)
+						r.Post("/runner/automations/pause/{projectId}", notImplemented)
+						r.Post("/runner/automations/resume/{projectId}", notImplemented)
 						r.Post("/runner/automations/pause", notImplemented)
 						r.Post("/runner/automations/resume", notImplemented)
 					}
@@ -353,6 +441,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Get("/{taskId}", notImplemented)
 							r.Get("/{taskId}/claim-status", notImplemented)
 							r.Get("/{taskId}/metadata", notImplemented)
+						}
+					})
+
+					// Scheduler visibility (read)
+					r.Group(func(r chi.Router) {
+						r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+						if o.handler != nil && o.handler.schedulerViews != nil {
+							r.Get("/{taskId}/dispatch-lease", o.handler.HandleGetDispatchLease)
+							r.Get("/{taskId}/placement-reasons", o.handler.HandleListPlacementReasons)
+						} else {
+							r.Get("/{taskId}/dispatch-lease", notImplemented)
+							r.Get("/{taskId}/placement-reasons", notImplemented)
 						}
 					})
 
@@ -467,6 +567,9 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Put("/{runnerId}/shutdown", o.handler.HandleShutdownRunner)
 						r.Patch("/{runnerId}/config", o.handler.HandleUpdateRunnerConfig)
 						r.Post("/{runnerId}/features/{featureId}/toggle", o.handler.HandleToggleRunnerFeature)
+						r.Put("/{runnerId}/instances/{instanceId}", o.handler.HandleUpsertInstance)
+						r.Delete("/{runnerId}/instances/{instanceId}", o.handler.HandleDeleteInstance)
+						r.Get("/{runnerId}/bridge", o.handler.HandleRunnerBridge)
 					} else {
 						r.Post("/register", notImplemented)
 						r.Post("/{runnerId}/heartbeat", notImplemented)
@@ -487,12 +590,63 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Get("/", o.handler.HandleListRunners)
 						r.Get("/{runnerId}", o.handler.HandleGetRunner)
 						r.Get("/{runnerId}/stream", o.handler.HandleRunnerStream)
+						r.Get("/{runnerId}/instances", o.handler.HandleListRunnerInstances)
 					} else {
 						r.Get("/", notImplemented)
 						r.Get("/{runnerId}", notImplemented)
 						r.Get("/{runnerId}/stream", notImplemented)
+						r.Get("/{runnerId}/instances", notImplemented)
 					}
 				})
+			})
+
+			// ─── OpenCode Instances (cross-runner overview) ──────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+				if o.handler != nil && o.handler.runnerRegistry != nil {
+					r.Get("/instances", o.handler.HandleListAllInstances)
+				} else {
+					r.Get("/instances", notImplemented)
+				}
+			})
+
+			// ─── Remote Control (control:* scope) ────────────────
+			// Browser-facing surface for attaching to and spawning OpenCode
+			// instances. control:* is code execution on runner machines —
+			// never grant it implicitly (see oauthScopeSatisfies).
+			// NOTE: control routes require ONLY control:* — admin:* passes via
+			// RequireScope's wildcard early-return. Listing admin:* here would
+			// let the legacy OAuth "mcp" grant (which satisfies any non-control
+			// scope) leak into remote control.
+			r.Route("/control", func(r chi.Router) {
+				r.Use(RequireScope(ScopeControl))
+				if o.handler != nil && o.handler.bridge != nil {
+					// Session history is instance-independent: a completed
+					// session is served by ID from any connected runner that
+					// holds its on-disk storage.
+					r.Get("/runners/{runnerId}/sessions/{sessionId}/history",
+						o.handler.HandleControlSessionHistory)
+					r.Post("/runners/{runnerId}/tasks/{taskId}/abort", o.handler.HandleControlAbortTask)
+					r.Route("/runners/{runnerId}/instances", func(r chi.Router) {
+						r.Post("/", o.handler.HandleControlSpawn)
+						r.Route("/{instanceId}", func(r chi.Router) {
+							r.Delete("/", o.handler.HandleControlKill)
+							r.Get("/sessions", o.handler.HandleControlListSessions)
+							r.Post("/sessions", o.handler.HandleControlCreateSession)
+							r.Get("/sessions/status", o.handler.HandleControlSessionStatus)
+							r.Get("/sessions/{sessionId}/messages", o.handler.HandleControlListMessages)
+							r.Post("/sessions/{sessionId}/prompt", o.handler.HandleControlPrompt)
+							r.Post("/sessions/{sessionId}/abort", o.handler.HandleControlAbort)
+							r.Post("/sessions/{sessionId}/permissions/{permissionId}", o.handler.HandleControlPermission)
+							r.Get("/permissions", o.handler.HandleControlPendingPermissions)
+							r.Get("/events", o.handler.HandleControlEvents)
+							r.Get("/agents", o.handler.HandleControlAgents)
+							r.Get("/providers", o.handler.HandleControlProviders)
+						})
+					})
+				} else {
+					r.HandleFunc("/*", notImplemented)
+				}
 			})
 
 			// ─── Monitors ────────────────────────────────────────

@@ -1334,7 +1334,7 @@ func TestTaskDefaultsYAMLFullParsing(t *testing.T) {
 	}
 }
 
-// TestTaskDefaultsConfig_EmptySection verifies empty/missing task_defaults preserves nil/zero defaults.
+// TestTaskDefaultsConfig_EmptySection verifies missing task_defaults uses configured defaults.
 func TestTaskDefaultsConfig_EmptySection(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)
@@ -1366,17 +1366,17 @@ func TestTaskDefaultsConfig_EmptySection(t *testing.T) {
 	if td.Model != "" {
 		t.Errorf("TaskDefaults.Model = %q, want empty", td.Model)
 	}
-	if td.ExecutionMode != "" {
-		t.Errorf("TaskDefaults.ExecutionMode = %q, want empty", td.ExecutionMode)
+	if td.ExecutionMode != "worktree" {
+		t.Errorf("TaskDefaults.ExecutionMode = %q, want worktree", td.ExecutionMode)
 	}
 	if td.CompleteOnIdle != nil {
 		t.Errorf("TaskDefaults.CompleteOnIdle = %v, want nil", td.CompleteOnIdle)
 	}
-	if td.MergePolicy != "" {
-		t.Errorf("TaskDefaults.MergePolicy = %q, want empty", td.MergePolicy)
+	if td.MergePolicy != "auto_merge" {
+		t.Errorf("TaskDefaults.MergePolicy = %q, want auto_merge", td.MergePolicy)
 	}
-	if td.MergeStrategy != "" {
-		t.Errorf("TaskDefaults.MergeStrategy = %q, want empty", td.MergeStrategy)
+	if td.MergeStrategy != "squash" {
+		t.Errorf("TaskDefaults.MergeStrategy = %q, want squash", td.MergeStrategy)
 	}
 	if td.OpenPRBeforeMerge != nil {
 		t.Errorf("TaskDefaults.OpenPRBeforeMerge = %v, want nil", td.OpenPRBeforeMerge)
@@ -1670,9 +1670,9 @@ func TestTaskDefaultsBoolPointerSemantics(t *testing.T) {
 	}
 }
 
-// TestDefaultConfigIncludesEmptyTaskDefaults verifies that defaultConfig()
-// returns a config with zero-valued TaskDefaultsConfig.
-func TestDefaultConfigIncludesEmptyTaskDefaults(t *testing.T) {
+// TestDefaultConfigIncludesFeatureWorktreeTaskDefaults verifies that defaultConfig()
+// defaults feature execution to isolated worktrees with automatic merge intent.
+func TestDefaultConfigIncludesFeatureWorktreeTaskDefaults(t *testing.T) {
 	cfg := defaultConfig()
 	td := cfg.Server.TaskDefaults
 
@@ -1682,23 +1682,23 @@ func TestDefaultConfigIncludesEmptyTaskDefaults(t *testing.T) {
 	if td.Model != "" {
 		t.Errorf("defaultConfig() TaskDefaults.Model = %q, want empty", td.Model)
 	}
-	if td.ExecutionMode != "" {
-		t.Errorf("defaultConfig() TaskDefaults.ExecutionMode = %q, want empty", td.ExecutionMode)
+	if td.ExecutionMode != "worktree" {
+		t.Errorf("defaultConfig() TaskDefaults.ExecutionMode = %q, want worktree", td.ExecutionMode)
 	}
 	if td.CompleteOnIdle != nil {
 		t.Errorf("defaultConfig() TaskDefaults.CompleteOnIdle = %v, want nil", td.CompleteOnIdle)
 	}
-	if td.MergePolicy != "" {
-		t.Errorf("defaultConfig() TaskDefaults.MergePolicy = %q, want empty", td.MergePolicy)
+	if td.MergePolicy != "auto_merge" {
+		t.Errorf("defaultConfig() TaskDefaults.MergePolicy = %q, want auto_merge", td.MergePolicy)
 	}
-	if td.MergeStrategy != "" {
-		t.Errorf("defaultConfig() TaskDefaults.MergeStrategy = %q, want empty", td.MergeStrategy)
+	if td.MergeStrategy != "squash" {
+		t.Errorf("defaultConfig() TaskDefaults.MergeStrategy = %q, want squash", td.MergeStrategy)
 	}
-	if td.MergeTargetBranch != "" {
-		t.Errorf("defaultConfig() TaskDefaults.MergeTargetBranch = %q, want empty", td.MergeTargetBranch)
+	if td.MergeTargetBranch != "main" {
+		t.Errorf("defaultConfig() TaskDefaults.MergeTargetBranch = %q, want main", td.MergeTargetBranch)
 	}
-	if td.RemoteBranchPolicy != "" {
-		t.Errorf("defaultConfig() TaskDefaults.RemoteBranchPolicy = %q, want empty", td.RemoteBranchPolicy)
+	if td.RemoteBranchPolicy != "delete" {
+		t.Errorf("defaultConfig() TaskDefaults.RemoteBranchPolicy = %q, want delete", td.RemoteBranchPolicy)
 	}
 	if td.OpenPRBeforeMerge != nil {
 		t.Errorf("defaultConfig() TaskDefaults.OpenPRBeforeMerge = %v, want nil", td.OpenPRBeforeMerge)
@@ -1939,12 +1939,69 @@ func TestLoadCopiesTaskDefaultsFromUnifiedConfig(t *testing.T) {
 	if cfg.TaskDefaults.MergePolicy != "prompt_only" {
 		t.Errorf("Load() TaskDefaults.MergePolicy = %q, want %q", cfg.TaskDefaults.MergePolicy, "prompt_only")
 	}
-	// Unset fields should be zero-valued
-	if cfg.TaskDefaults.MergeStrategy != "" {
-		t.Errorf("Load() TaskDefaults.MergeStrategy = %q, want empty", cfg.TaskDefaults.MergeStrategy)
+	// Unset fields inherit default config values.
+	if cfg.TaskDefaults.MergeStrategy != "squash" {
+		t.Errorf("Load() TaskDefaults.MergeStrategy = %q, want squash", cfg.TaskDefaults.MergeStrategy)
 	}
 	if cfg.TaskDefaults.OpenPRBeforeMerge != nil {
 		t.Errorf("Load() TaskDefaults.OpenPRBeforeMerge = %v, want nil", cfg.TaskDefaults.OpenPRBeforeMerge)
+	}
+}
+
+func TestFeatureCheckoutConfigYAMLParsing(t *testing.T) {
+	var cfg UnifiedConfig
+	if err := yaml.Unmarshal([]byte(`server:
+  feature_checkout:
+    enabled: false
+`), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if cfg.Server.FeatureCheckout.Enabled {
+		t.Fatal("FeatureCheckout.Enabled = true, want false")
+	}
+}
+
+func TestDefaultConfigEnablesFeatureCheckout(t *testing.T) {
+	cfg := defaultConfig()
+	if !cfg.Server.FeatureCheckout.Enabled {
+		t.Fatal("default feature checkout enabled = false, want true")
+	}
+}
+
+func TestLoadCopiesFeatureCheckoutFromUnifiedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	for _, key := range []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "BRAIN_FEATURE_CHECKOUT_ENABLED"} {
+		os.Unsetenv(key)
+	}
+
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	configYAML := `server:
+  feature_checkout:
+    enabled: false
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := Load()
+	if cfg.FeatureCheckout.Enabled {
+		t.Fatal("Load() FeatureCheckout.Enabled = true, want false")
+	}
+}
+
+func TestLoadFeatureCheckoutEnvOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	t.Setenv("BRAIN_FEATURE_CHECKOUT_ENABLED", "false")
+
+	cfg := Load()
+	if cfg.FeatureCheckout.Enabled {
+		t.Fatal("BRAIN_FEATURE_CHECKOUT_ENABLED=false should disable feature checkout")
 	}
 }
 

@@ -528,6 +528,63 @@ func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID s
 	return ClaimResult{Success: true, TaskID: taskID}, nil
 }
 
+// AckDispatch acknowledges receipt of a pushed dispatch command.
+func (c *APIClient) AckDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string) (*types.DispatchAckResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/runners/%s/dispatch/ack", runnerID)
+	body := types.DispatchAckRequest{LeaseID: leaseID, ProjectID: projectID, TaskID: taskID}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("ack dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.DispatchAckResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode dispatch ack response: %w", err)
+	}
+	return &result, nil
+}
+
+// RejectDispatch rejects a pushed dispatch command with a structured reason.
+func (c *APIClient) RejectDispatch(ctx context.Context, runnerID, projectID, taskID, leaseID string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/runners/%s/dispatch/reject", runnerID)
+	body := types.DispatchRejectRequest{LeaseID: leaseID, ProjectID: projectID, TaskID: taskID, Reason: reason}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("reject dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.DispatchRejectResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode dispatch reject response: %w", err)
+	}
+	return &result, nil
+}
+
+// ReleaseDispatch explicitly releases/finalizes a pushed dispatch lease.
+func (c *APIClient) ReleaseDispatch(ctx context.Context, runnerID, projectID, taskID string) (*types.DispatchReleaseResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/runners/%s/dispatch/release", runnerID)
+	body := map[string]string{"projectId": projectID, "taskId": taskID}
+	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
+	if err != nil {
+		return nil, fmt.Errorf("release dispatch: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+	var result types.DispatchReleaseResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode dispatch release response: %w", err)
+	}
+	return &result, nil
+}
+
 // RenewClaim extends the lease on a claimed task.
 // Returns nil on success, or an error if the claim doesn't exist, is expired,
 // or is owned by a different runner. The caller should treat any error as a
@@ -1243,6 +1300,37 @@ func (c *APIClient) SendHeartbeat(ctx context.Context, runnerID string, req type
 	return nil
 }
 
+// UpsertInstance reports an OpenCode instance to the Brain API instance registry.
+func (c *APIClient) UpsertInstance(ctx context.Context, runnerID string, inst types.OpencodeInstance) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/instances/%s", runnerID, inst.InstanceID)
+	resp, err := c.doJSONRequest(ctx, http.MethodPut, path, inst)
+	if err != nil {
+		return fmt.Errorf("upsert instance: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// DeleteInstance removes an OpenCode instance from the Brain API instance registry.
+func (c *APIClient) DeleteInstance(ctx context.Context, runnerID, instanceID string) error {
+	path := fmt.Sprintf("/api/v1/runners/%s/instances/%s", runnerID, instanceID)
+	resp, err := c.doJSONRequest(ctx, http.MethodDelete, path, nil)
+	if err != nil {
+		return fmt.Errorf("delete instance: %w", err)
+	}
+	defer resp.Body.Close()
+
+	// 404 is acceptable — the heartbeat reconcile may have already removed it.
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNotFound {
+		return c.readError(resp)
+	}
+	return nil
+}
+
 // DeregisterRunner removes this runner from the Brain API server.
 func (c *APIClient) DeregisterRunner(ctx context.Context, runnerID string) error {
 	path := fmt.Sprintf("/api/v1/runners/%s/deregister", runnerID)
@@ -1273,6 +1361,27 @@ func (c *APIClient) ListRunners(ctx context.Context) (*types.RunnerListResponse,
 	var result types.RunnerListResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return nil, fmt.Errorf("decode runners response: %w", err)
+	}
+	return &result, nil
+}
+
+// GetServerRequests fetches the recent server-request log (all HTTP traffic in
+// and out of the Brain server, annotated with the authenticated actor).
+func (c *APIClient) GetServerRequests(ctx context.Context, limit int) (*types.ServerRequestListResponse, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet,
+		fmt.Sprintf("/api/v1/server/requests/recent?limit=%d", limit), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get server requests: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.ServerRequestListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode server requests response: %w", err)
 	}
 	return &result, nil
 }
@@ -1356,6 +1465,28 @@ func (c *APIClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerI
 		return c.readError(resp)
 	}
 	return nil
+}
+
+// GetTaskLogs fetches the persisted log lines for a task (historical + current),
+// newest-bounded by limit. Used by the TUI logs pane to show stored output for
+// completed tasks, not just the live SSE stream.
+func (c *APIClient) GetTaskLogs(ctx context.Context, projectID, taskID string, limit int) (*types.LogQueryResponse, error) {
+	path := fmt.Sprintf("/api/v1/tasks/%s/%s/logs?limit=%d", projectID, taskID, limit)
+	resp, err := c.doRequest(ctx, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, fmt.Errorf("get task logs: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var result types.LogQueryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decode task logs response: %w", err)
+	}
+	return &result, nil
 }
 
 // =============================================================================
@@ -1477,6 +1608,36 @@ func (c *APIClient) ResumeAutomations(ctx context.Context) error {
 	resp, err := c.doRequest(ctx, http.MethodPost, "/api/v1/tasks/runner/automations/resume", nil)
 	if err != nil {
 		return fmt.Errorf("resume automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// PauseProjectAutomations pauses automation-generated task execution for a specific project.
+func (c *APIClient) PauseProjectAutomations(ctx context.Context, projectID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/runner/automations/pause/%s", projectID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("pause project automations: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return c.readError(resp)
+	}
+	return nil
+}
+
+// ResumeProjectAutomations resumes automation-generated task execution for a specific project.
+func (c *APIClient) ResumeProjectAutomations(ctx context.Context, projectID string) error {
+	path := fmt.Sprintf("/api/v1/tasks/runner/automations/resume/%s", projectID)
+	resp, err := c.doRequest(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return fmt.Errorf("resume project automations: %w", err)
 	}
 	defer resp.Body.Close()
 

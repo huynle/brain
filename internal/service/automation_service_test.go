@@ -85,6 +85,9 @@ func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *t
 	if task.GeneratedKey == "" {
 		t.Error("expected generated_key for once_per dedup")
 	}
+	if task.FeatureID != "feature-a" {
+		t.Errorf("generated task feature_id = %q, want feature-a", task.FeatureID)
+	}
 
 	runResp, err := brain.List(ctx, types.ListEntriesRequest{
 		Type:    "automation_run",
@@ -121,6 +124,208 @@ func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *t
 	}
 	if !strings.Contains(rawTask, "automation_run_id: "+run.ID) {
 		t.Errorf("generated task frontmatter missing automation_run_id %q:\n%s", run.ID, rawTask)
+	}
+}
+
+func TestAutomationService_GlobalAutomationWithoutWildcardDoesNotMatchProjectEvents(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	global := true
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Global template automation",
+		Content: "Stores built-in automation content globally without enabling it everywhere.",
+		Status:  "active",
+		Global:  &global,
+		Trigger: &types.TriggerConfig{
+			Type:  "event",
+			Event: types.EventTaskCompleted,
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Inspect completed task.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save global automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-global-template-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "project-a",
+		TaskID:    "source-task",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "project-a",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 0 {
+		t.Fatalf("expected no generated tasks for project event, got %d", len(resp.Entries))
+	}
+}
+
+func TestEnsureBuiltInFeatureCheckoutAutomationCreatesAutomation(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	openPR := true
+
+	err := EnsureBuiltInFeatureCheckoutAutomation(ctx, brain, BuiltInFeatureCheckoutConfig{
+		Enabled:            true,
+		Agent:              "tdd-dev",
+		Executor:           "pi",
+		ExecutionMode:      "worktree",
+		TargetWorkdir:      "/repo/brain",
+		MergeTargetBranch:  "main",
+		MergePolicy:        "auto_pr",
+		MergeStrategy:      "squash",
+		RemoteBranchPolicy: "delete",
+		OpenPRBeforeMerge:  &openPR,
+	})
+	if err != nil {
+		t.Fatalf("EnsureBuiltInFeatureCheckoutAutomation failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Status: "active", Limit: 10})
+	if err != nil {
+		t.Fatalf("List automations failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one built-in automation, got %d", len(resp.Entries))
+	}
+
+	automation := resp.Entries[0]
+	if automation.GeneratedBy != BuiltInFeatureCheckoutGeneratedBy {
+		t.Fatalf("generated_by = %q, want %q", automation.GeneratedBy, BuiltInFeatureCheckoutGeneratedBy)
+	}
+	if automation.Trigger == nil || automation.Trigger.Event != types.EventFeatureCompleted || automation.Trigger.OncePer != "feature_id" {
+		t.Fatalf("trigger = %+v, want feature.completed once_per feature_id", automation.Trigger)
+	}
+	if automation.Action == nil {
+		t.Fatal("expected action")
+	}
+	if automation.Action.Agent != "tdd-dev" || automation.Action.Executor != "pi" {
+		t.Fatalf("action agent/executor = %q/%q, want tdd-dev/pi", automation.Action.Agent, automation.Action.Executor)
+	}
+	if automation.Action.ExecutionMode != "worktree" || automation.Action.TargetWorkdir != "/repo/brain" {
+		t.Fatalf("action execution = %q workdir %q, want worktree /repo/brain", automation.Action.ExecutionMode, automation.Action.TargetWorkdir)
+	}
+	if !strings.Contains(automation.Action.DirectPrompt, "{{.FeatureID}}") {
+		t.Fatalf("action prompt should template feature id, got: %s", automation.Action.DirectPrompt)
+	}
+	if !strings.Contains(automation.Action.DirectPrompt, "Brain-native merge request") {
+		t.Fatalf("action prompt should request a Brain-native merge request, got: %s", automation.Action.DirectPrompt)
+	}
+}
+
+func TestEnsureBuiltInFeatureCheckoutAutomationDisabledDoesNothing(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	if err := EnsureBuiltInFeatureCheckoutAutomation(ctx, brain, BuiltInFeatureCheckoutConfig{}); err != nil {
+		t.Fatalf("EnsureBuiltInFeatureCheckoutAutomation disabled failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 10})
+	if err != nil {
+		t.Fatalf("List automations failed: %v", err)
+	}
+	if len(resp.Entries) != 0 {
+		t.Fatalf("expected no automation when disabled, got %d", len(resp.Entries))
+	}
+}
+
+func TestBuiltInFeatureCheckoutAutomationCreatesFeatureCheckoutTask(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	openPR := true
+
+	if err := EnsureBuiltInFeatureCheckoutAutomation(ctx, brain, BuiltInFeatureCheckoutConfig{
+		Enabled:            true,
+		ExecutionMode:      "worktree",
+		TargetWorkdir:      "/repo/brain",
+		MergeTargetBranch:  "main",
+		MergePolicy:        "auto_pr",
+		MergeStrategy:      "squash",
+		RemoteBranchPolicy: "delete",
+		OpenPRBeforeMerge:  &openPR,
+	}); err != nil {
+		t.Fatalf("EnsureBuiltInFeatureCheckoutAutomation failed: %v", err)
+	}
+
+	templates, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Status: "active", Limit: 10})
+	if err != nil {
+		t.Fatalf("List built-in automation templates failed: %v", err)
+	}
+	if len(templates.Entries) != 1 {
+		t.Fatalf("expected one built-in automation template, got %d", len(templates.Entries))
+	}
+	template := templates.Entries[0]
+	generated := true
+	_, err = brain.Save(ctx, types.CreateEntryRequest{
+		Type:               "automation",
+		Title:              template.Title,
+		Content:            template.Content,
+		Status:             "active",
+		Project:            "brain",
+		Trigger:            template.Trigger,
+		Action:             template.Action,
+		ExecutionMode:      template.ExecutionMode,
+		TargetWorkdir:      template.TargetWorkdir,
+		MergeTargetBranch:  template.MergeTargetBranch,
+		MergePolicy:        template.MergePolicy,
+		MergeStrategy:      template.MergeStrategy,
+		RemoteBranchPolicy: template.RemoteBranchPolicy,
+		OpenPRBeforeMerge:  template.OpenPRBeforeMerge,
+		Generated:          &generated,
+		GeneratedBy:        template.GeneratedBy,
+	})
+	if err != nil {
+		t.Fatalf("Save project-scoped built-in automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	if err := automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-feature-complete",
+		Type:      types.EventFeatureCompleted,
+		Source:    types.EventSourceAPI,
+		ProjectID: "brain",
+		FeatureID: "feature-default-worktree",
+	}); err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: "brain", Limit: 10})
+	if err != nil {
+		t.Fatalf("List generated tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated checkout task, got %d", len(resp.Entries))
+	}
+
+	task := resp.Entries[0]
+	if task.FeatureID != "feature-default-worktree" {
+		t.Fatalf("checkout task feature_id = %q, want feature-default-worktree", task.FeatureID)
+	}
+	if task.ExecutionMode != "worktree" || task.TargetWorkdir != "/repo/brain" {
+		t.Fatalf("checkout task execution = %q workdir %q, want worktree /repo/brain", task.ExecutionMode, task.TargetWorkdir)
+	}
+	if !strings.Contains(task.DirectPrompt, "feature-default-worktree") {
+		t.Fatalf("checkout task prompt missing feature id: %s", task.DirectPrompt)
+	}
+	if task.GeneratedKey == "" {
+		t.Fatal("expected generated_key for feature checkout automation dedup")
 	}
 }
 
@@ -1548,13 +1753,13 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	now := time.Date(2026, 4, 29, 13, 5, 0, 0, time.UTC)
 
 	_, err := brain.Save(ctx, types.CreateEntryRequest{
-		Type:    "automation",
-		Title:   "Cron follow-up",
-		Content: "Creates a generated task on a cron schedule.",
-		Status:  "active",
-		Project: "automation-cron-entry-test",
-		Agent:   "build",
-		Model:   "test-model",
+		Type:     "automation",
+		Title:    "Cron follow-up",
+		Content:  "Creates a generated task on a cron schedule.",
+		Status:   "active",
+		Project:  "automation-cron-entry-test",
+		Agent:    "build",
+		Model:    "test-model",
 		Executor: "pi",
 		Trigger: &types.TriggerConfig{
 			Type:     "cron",

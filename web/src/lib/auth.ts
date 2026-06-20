@@ -1,13 +1,14 @@
-// OAuth 2.1 (authorization code + PKCE) client for the brain-api server, plus a
-// zustand store holding auth state. The server renders its own consent page
-// with a PIN field, so "login" is a full-page redirect to /authorize; the user
-// enters the OAUTH_PIN there and is redirected back to /auth/callback.
+// Auth client + zustand store for the brain-api server. Three login modes:
 //
-// The server's OAuth client/refresh-token store is in-memory, so after a server
-// restart a stored refresh token (or client registration) may be rejected. We
-// handle that by clearing state and re-running the flow.
+//   - password: POST /api/v1/auth/login with username/password → access+refresh
+//     tokens; refreshed via /api/v1/auth/refresh.
+//   - oauth: authorization-code + PKCE. "login" is a full-page redirect to the
+//     server's /authorize consent page (which now asks for username/password),
+//     then back to /auth/callback. Used by browser + connectors.
+//   - manual: paste a long-lived API token.
 //
-// Alternatively, a user can paste a long-lived API token (manual mode).
+// We always register a fresh OAuth client on each oauth login (registerClient)
+// so a stale cached client_id can't wedge the flow with "unknown client_id".
 
 import { create } from "zustand";
 import { OAUTH, redirectUri } from "./config";
@@ -19,8 +20,10 @@ const LS = {
   expiresAt: "brain.expires_at",
   clientId: "brain.client_id",
   clientSecret: "brain.client_secret",
-  mode: "brain.auth_mode", // "oauth" | "manual"
+  mode: "brain.auth_mode", // "oauth" | "manual" | "password"
 };
+
+type AuthMode = "oauth" | "manual" | "password";
 const SS = {
   verifier: "brain.pkce_verifier",
   state: "brain.oauth_state",
@@ -36,10 +39,11 @@ export type AuthStatus =
 interface AuthState {
   status: AuthStatus;
   token: string | null;
-  mode: "oauth" | "manual" | null;
+  mode: AuthMode | null;
   error: string | null;
   init: () => Promise<void>;
   beginLogin: () => Promise<void>;
+  loginPassword: (username: string, password: string) => Promise<void>;
   handleCallback: (code: string, state: string) => Promise<string>;
   setManualToken: (token: string) => void;
   logout: () => void;
@@ -59,15 +63,33 @@ function storedToken(): { token: string | null; expiresAt: number } {
   };
 }
 
-function saveTokens(t: {
-  access_token: string;
-  refresh_token?: string;
-  expires_in: number;
-}) {
+function saveTokens(
+  t: {
+    access_token: string;
+    refresh_token?: string;
+    expires_in: number;
+  },
+  mode: AuthMode = "oauth",
+) {
   localStorage.setItem(LS.accessToken, t.access_token);
   if (t.refresh_token) localStorage.setItem(LS.refreshToken, t.refresh_token);
   localStorage.setItem(LS.expiresAt, String(now() + (t.expires_in || 3600)));
-  localStorage.setItem(LS.mode, "oauth");
+  localStorage.setItem(LS.mode, mode);
+}
+
+// Refresh a password-mode session via the dedicated /api/v1/auth/refresh endpoint.
+async function exchangePasswordRefresh(): Promise<boolean> {
+  const refresh = localStorage.getItem(LS.refreshToken);
+  if (!refresh) return false;
+  const res = await fetch("/api/v1/auth/refresh", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: refresh }),
+  });
+  if (!res.ok) return false;
+  const data = await res.json();
+  saveTokens(data, "password");
+  return true;
 }
 
 function clearTokens() {
@@ -77,12 +99,12 @@ function clearTokens() {
   localStorage.removeItem(LS.mode);
 }
 
+// registerClient always performs a fresh dynamic client registration. We do NOT
+// reuse a cached client_id: if the server lost it (e.g. a restart before flow
+// state was persisted), reusing a stale id produces an "unknown client_id" error
+// on the /authorize redirect that the SPA can't catch. Registering fresh on each
+// login self-heals that. Registration is a cheap POST.
 async function registerClient(): Promise<{ id: string; secret: string }> {
-  const existingId = localStorage.getItem(LS.clientId);
-  const existingSecret = localStorage.getItem(LS.clientSecret);
-  if (existingId) {
-    return { id: existingId, secret: existingSecret || "" };
-  }
   const res = await fetch(OAUTH.registerEndpoint, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -142,7 +164,7 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   async init() {
-    const mode = localStorage.getItem(LS.mode) as "oauth" | "manual" | null;
+    const mode = localStorage.getItem(LS.mode) as AuthMode | null;
     const { token, expiresAt } = storedToken();
 
     if (token) {
@@ -151,12 +173,14 @@ export const useAuth = create<AuthState>((set, get) => ({
         set({ status: "authenticated", token, mode });
         return;
       }
-      // OAuth access token expired/expiring — try silent refresh.
-      if (await exchangeRefresh()) {
+      // Access token expired/expiring — try a silent refresh for the mode.
+      const refreshed =
+        mode === "password" ? await exchangePasswordRefresh() : await exchangeRefresh();
+      if (refreshed) {
         set({
           status: "authenticated",
           token: localStorage.getItem(LS.accessToken),
-          mode: "oauth",
+          mode: mode ?? "oauth",
         });
         return;
       }
@@ -208,6 +232,35 @@ export const useAuth = create<AuthState>((set, get) => ({
     }
   },
 
+  async loginPassword(username, password) {
+    set({ error: null });
+    const res = await fetch("/api/v1/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    if (!res.ok) {
+      let msg = "Login failed";
+      if (res.status === 401) msg = "Invalid username or password";
+      else if (res.status === 429) msg = "Too many attempts — try again later";
+      else if (res.status === 404) msg = "Password login is not enabled on this server";
+      else {
+        const txt = await res.text().catch(() => "");
+        if (txt) msg = txt.slice(0, 200);
+      }
+      set({ error: msg });
+      throw new Error(msg);
+    }
+    const data = await res.json();
+    saveTokens(data, "password");
+    set({
+      status: "authenticated",
+      token: data.access_token,
+      mode: "password",
+      error: null,
+    });
+  },
+
   async handleCallback(code, state) {
     const expectedState = sessionStorage.getItem(SS.state);
     const verifier = sessionStorage.getItem(SS.verifier);
@@ -257,6 +310,17 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   logout() {
+    // Best-effort revoke for password sessions; fire-and-forget.
+    if (get().mode === "password") {
+      const refresh = localStorage.getItem(LS.refreshToken);
+      if (refresh) {
+        void fetch("/api/v1/auth/logout", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ refresh_token: refresh }),
+        }).catch(() => {});
+      }
+    }
     clearTokens();
     clearClient();
     set({ status: "needs-login", token: null, mode: null });
@@ -265,6 +329,10 @@ export const useAuth = create<AuthState>((set, get) => ({
   async onUnauthorized() {
     const mode = get().mode;
     if (mode === "oauth" && (await exchangeRefresh())) {
+      set({ token: localStorage.getItem(LS.accessToken) });
+      return true;
+    }
+    if (mode === "password" && (await exchangePasswordRefresh())) {
       set({ token: localStorage.getItem(LS.accessToken) });
       return true;
     }

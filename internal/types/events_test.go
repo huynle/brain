@@ -121,6 +121,10 @@ func TestEventTypeConstants(t *testing.T) {
 		"feature.started", "feature.completed", "feature.blocked", "feature.progress",
 		"feature.enabled", "feature.disabled",
 		"entry.created", "entry.updated", "entry.deleted",
+		// Remote-control audit events must be valid so EventService.Ingest
+		// accepts them (otherwise control.* audit silently no-ops).
+		"control.prompt_sent", "control.permission_responded",
+		"control.instance_spawned", "control.instance_killed",
 	}
 
 	for _, et := range expectedTypes {

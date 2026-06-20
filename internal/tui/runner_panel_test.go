@@ -314,3 +314,75 @@ func TestNextPanelWithRunners(t *testing.T) {
 		})
 	}
 }
+
+func TestRunnerPanel_ViewShowsDispatchAndCapacity(t *testing.T) {
+	rp := NewRunnerPanel()
+	rp.SetRunners([]types.RunnerInfo{
+		{
+			RunnerID:     "runner-push",
+			Hostname:     "host1",
+			Status:       types.RunnerStatusOnline,
+			DispatchPush: true,
+			ActiveTasks:  2,
+			MaxParallel:  4,
+			Executors:    []string{"opencode"},
+		},
+		{
+			RunnerID:    "runner-drain",
+			Hostname:    "host2",
+			Status:      types.RunnerStatusOnline,
+			Draining:    true,
+			ActiveTasks: 1,
+			MaxParallel: 1,
+			Executors:   []string{"pi"},
+		},
+	})
+
+	view := rp.View(120, 20)
+
+	for _, want := range []string{"Tasks", "Dispatch", "2/4", "push", "1/1", "poll,drain"} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected %q in view:\n%s", want, view)
+		}
+	}
+}
+
+func TestRunnerPanel_ViewDetailShowsDispatchPlacementFields(t *testing.T) {
+	rp := NewRunnerPanel()
+	rp.SetRunners([]types.RunnerInfo{
+		{
+			RunnerID:       "runner-1",
+			MachineID:      "machine-a",
+			Hostname:       "host1",
+			Status:         types.RunnerStatusOnline,
+			DispatchPush:   true,
+			Draining:       true,
+			ActiveTasks:    2,
+			MaxParallel:    4,
+			Projects:       []string{"brain-api"},
+			Capabilities:   []string{"gpu", "worktree"},
+			WorkspaceRoots: []string{"/work/brain"},
+			Resources:      map[string]interface{}{"cpu": "4"},
+			Capacity:       map[string]interface{}{"slots": 4},
+			Executors:      []string{"opencode"},
+		},
+	})
+
+	detail := rp.ViewDetail(120, 40)
+
+	for _, want := range []string{
+		"Machine:       machine-a",
+		"Tasks:         2/4",
+		"Dispatch:      push",
+		"Draining:      yes",
+		"Projects:      brain-api",
+		"Capabilities:  gpu, worktree",
+		"Workspaces:    /work/brain",
+		"Resources:     cpu=4",
+		"Capacity:      slots=4",
+	} {
+		if !strings.Contains(detail, want) {
+			t.Fatalf("expected %q in detail:\n%s", want, detail)
+		}
+	}
+}

@@ -136,7 +136,7 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 	// Discover opencode session metadata in background. Pi tasks don't expose
 	// an HTTP session endpoint, so skip discovery for them.
 	if executorType != "pi" {
-		go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort, spawnResult.ExistingSessionIDs)
 	}
 
 	return nil

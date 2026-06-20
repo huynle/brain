@@ -41,7 +41,14 @@ export default defineConfig({
   plugins: [
     react(),
     VitePWA({
-      registerType: "autoUpdate",
+      // "prompt" holds a new build in the SW "waiting" state and fires
+      // onNeedRefresh, so we can show an "Update available — Reload" banner
+      // instead of silently swapping the build under the open tab.
+      registerType: "prompt",
+      // We register the SW ourselves in main.tsx so we can poll for updates
+      // on long-open tabs (otherwise an open tab keeps serving the cached
+      // build until the user manually reloads).
+      injectRegister: false,
       // The OAuth flow does full-page redirects to server-rendered routes; the
       // SW must let these through to the network rather than serving the shell.
       workbox: {
@@ -55,6 +62,10 @@ export default defineConfig({
           /^\/health/,
           /^\/\.well-known/,
         ],
+        // updateSW() sends SKIP_WAITING, but the open PWA tab will not reload
+        // until the activated worker controls it. Claim clients immediately so
+        // Workbox's controlling event fires after the user clicks Reload.
+        clientsClaim: true,
         // Don't precache source maps; cache the app shell + assets.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
         // API responses are real-time; never serve them from the SW cache.

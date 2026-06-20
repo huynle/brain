@@ -154,8 +154,8 @@ func TestView_ContentTabs_GlobalBeforeProjectWithoutGroupLabels(t *testing.T) {
 	if strings.Index(view, "Runners") > strings.Index(view, "Tasks") {
 		t.Fatalf("expected global tabs to render before project tabs, got:\n%s", view)
 	}
-	if strings.Index(view, "Tasks") > strings.Index(view, "Brain") || strings.Index(view, "Brain") > strings.Index(view, "Automations") {
-		t.Fatalf("expected Brain tab between Tasks and Automations, got:\n%s", view)
+	if strings.Index(view, "Brain") > strings.Index(view, "Tasks") || strings.Index(view, "Tasks") > strings.Index(view, "Automations") {
+		t.Fatalf("expected project tabs in order Brain, Tasks, Automations, got:\n%s", view)
 	}
 }
 
@@ -164,34 +164,35 @@ func TestUpdate_ContentTabCyclesThroughLogs(t *testing.T) {
 	m.dreamViewer.SetContent("dream content")
 	m.dreamViewer.SetDreamConfig(DreamConfigInfo{Project: "brain-api"})
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
-	m = updated.(Model)
-	if m.activeContentTab != ContentTabBrain {
-		t.Fatalf("after first L, got %v", m.activeContentTab)
-	}
-
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	// Tab order is [Runners, Logs, Brain, Tasks, Automation]; default tab is Tasks.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
 	if m.activeContentTab != ContentTabAutomation {
-		t.Fatalf("after second L, got %v", m.activeContentTab)
+		t.Fatalf("after first l, got %v", m.activeContentTab)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
 	if m.activeContentTab != ContentTabRunners {
-		t.Fatalf("after third L, got %v", m.activeContentTab)
+		t.Fatalf("after second l, got %v", m.activeContentTab)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
 	if m.activeContentTab != ContentTabLogs {
-		t.Fatalf("after fourth L, got %v", m.activeContentTab)
+		t.Fatalf("after third l, got %v", m.activeContentTab)
 	}
 
-	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	m = updated.(Model)
+	if m.activeContentTab != ContentTabBrain {
+		t.Fatalf("after fourth l, got %v", m.activeContentTab)
+	}
+
+	updated, _ = m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
 	m = updated.(Model)
 	if m.activeContentTab != ContentTabTasks {
-		t.Fatalf("after fifth L, got %v", m.activeContentTab)
+		t.Fatalf("after fifth l, got %v", m.activeContentTab)
 	}
 }
 
@@ -699,6 +700,126 @@ func TestDeleteAutomationRowCmdDeletesEntry(t *testing.T) {
 	}
 }
 
+func TestToggleAutomationRowCmdCreatesProjectCopyForBuiltInAutomation(t *testing.T) {
+	var patchedGlobal bool
+	var createdProject string
+	var createdStatus string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/entries":
+			if r.URL.Query().Get("type") != "automation" || r.URL.Query().Get("project") != "brain-api" {
+				t.Fatalf("unexpected list query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{
+				ID:      "builtin-auto",
+				Path:    "global/automation/builtin-auto.md",
+				Title:   "Built-in Blocked Task Inspector",
+				Type:    "automation",
+				Status:  "active",
+				Content: "Global template content",
+				Trigger: &types.TriggerConfig{Type: "event", Event: types.EventTaskCompleted},
+				Action:  &types.AutomationAction{Type: "prompt", DirectPrompt: "Inspect {{.ProjectID}}"},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			var req types.CreateEntryRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				t.Fatalf("decode create body: %v", err)
+			}
+			createdProject = req.Project
+			createdStatus = req.Status
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "project-copy", Path: "projects/brain-api/automation/project-copy.md"})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			patchedGlobal = true
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{ID: "builtin-auto", Path: "global/automation/builtin-auto.md"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	msg := toggleAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:      "builtin-auto",
+		Path:    "global/automation/builtin-auto.md",
+		Title:   "Built-in Blocked Task Inspector",
+		Source:  "automation",
+		Scope:   "built-in",
+		Enabled: false,
+	}, "brain-api")().(AutomationToggleMsg)
+
+	if msg.Error != nil {
+		t.Fatalf("toggle built-in automation failed: %v", msg.Error)
+	}
+	if patchedGlobal {
+		t.Fatal("expected project-local copy, got global PATCH")
+	}
+	if createdProject != "brain-api" {
+		t.Fatalf("created project = %q, want brain-api", createdProject)
+	}
+	if createdStatus != "active" {
+		t.Fatalf("created status = %q, want active", createdStatus)
+	}
+}
+
+func TestToggleAutomationRowCmdUpdatesExistingProjectCopyForBuiltInAutomation(t *testing.T) {
+	var createCount int
+	var patchedPath string
+	var patchedStatus string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v1/entries":
+			if r.URL.Query().Get("type") != "automation" || r.URL.Query().Get("project") != "brain-api" {
+				t.Fatalf("unexpected list query: %s", r.URL.RawQuery)
+			}
+			_ = json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "project-copy", Path: "projects/brain-api/automation/project-copy.md", Title: "Built-in Blocked Task Inspector", Type: "automation", Status: "active", ProjectID: "brain-api"}}})
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			patchedPath = strings.TrimPrefix(r.URL.Path, "/api/v1/entries/")
+			var updates map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&updates); err != nil {
+				t.Fatalf("decode patch body: %v", err)
+			}
+			patchedStatus = updates["status"]
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{ID: "project-copy", Path: "projects/brain-api/automation/project-copy.md", Status: patchedStatus})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			createCount++
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "duplicate", Path: "projects/brain-api/automation/duplicate.md"})
+		default:
+			t.Fatalf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+	}))
+	defer srv.Close()
+
+	msg := toggleAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:      "global-auto",
+		Path:    "global/automation/blocked.md",
+		Title:   "Built-in Blocked Task Inspector",
+		Source:  "automation",
+		Scope:   "built-in",
+		Enabled: true,
+		Status:  "active",
+	}, "brain-api")().(AutomationToggleMsg)
+
+	if msg.Error != nil {
+		t.Fatalf("toggle built-in automation failed: %v", msg.Error)
+	}
+	if createCount != 0 {
+		t.Fatalf("expected existing project copy update, got %d creates", createCount)
+	}
+	if patchedPath != "projects/brain-api/automation/project-copy.md" {
+		t.Fatalf("patched path = %q, want project copy", patchedPath)
+	}
+	if patchedStatus != "archived" {
+		t.Fatalf("patched status = %q, want archived", patchedStatus)
+	}
+}
+
 func TestAutomationDeleteResultClosesConfirmModal(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.activeContentTab = ContentTabAutomation
@@ -769,11 +890,12 @@ func TestAutomationTabXRunsSelectedAutomation(t *testing.T) {
 	}
 }
 
-func TestAutomationTabPTogglesAutomationPause(t *testing.T) {
-	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
+func TestAutomationTabPTogglesAutomationPauseForAllScope(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api", Projects: []string{"brain-api", "other"}})
 	m.activeContentTab = ContentTabAutomation
 	m.activeAutomationSubTab = AutomationSubTabAutomations
 	m.activePanel = PanelTasks
+	m.activeProjectID = "all"
 	m.allPaused = true
 
 	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
@@ -782,10 +904,27 @@ func TestAutomationTabPTogglesAutomationPause(t *testing.T) {
 		t.Fatal("expected p in Automations tab to toggle automation pause")
 	}
 	if !model.automationsPaused {
-		t.Fatal("expected automationsPaused to be true after p")
+		t.Fatal("expected global automationsPaused to be true after p on all scope")
 	}
 	if !model.allPaused {
 		t.Fatal("automation pause toggle should not change normal task allPaused state")
+	}
+}
+
+func TestAutomationTabPTogglesOnlyActiveProjectAutomationPause(t *testing.T) {
+	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "proj-a", Projects: []string{"proj-a", "proj-b"}})
+	m.activeContentTab = ContentTabAutomation
+	m.activeAutomationSubTab = AutomationSubTabAutomations
+	m.activePanel = PanelTasks
+	m.activeProjectID = "proj-b"
+
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'p'}})
+	model := updated.(Model)
+	if cmd == nil {
+		t.Fatal("expected p in Automations tab to toggle automation pause")
+	}
+	if model.automationsPaused {
+		t.Fatal("single-project automation pause toggle must not change global automationsPaused state")
 	}
 }
 
@@ -1052,6 +1191,69 @@ func TestFetchAutomationDataIncludesGlobalAutomationsForProject(t *testing.T) {
 	}
 }
 
+func TestFetchAutomationDataTreatsGlobalAutomationAsDisabledTemplate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/entries" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("type") == "automation" && r.URL.Query().Get("global") == "true" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "global-auto", Path: "global/automation/blocked.md", Title: "Blocked Task Inspector", Type: "automation", Status: "active"}}})
+			return
+		}
+		json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+	}))
+	defer srv.Close()
+
+	msg := fetchAutomationDataCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, "brain-api")()
+	data, ok := msg.(AutomationDataMsg)
+	if !ok {
+		t.Fatalf("message type = %T, want AutomationDataMsg", msg)
+	}
+	if data.Error != nil {
+		t.Fatalf("fetchAutomationDataCmd returned error: %v", data.Error)
+	}
+	if len(data.Automations) != 1 {
+		t.Fatalf("automations = %#v, want global template", data.Automations)
+	}
+	if data.Automations[0].Status != "archived" {
+		t.Fatalf("global template status = %q, want archived display state", data.Automations[0].Status)
+	}
+}
+
+func TestFetchAutomationDataPrefersProjectAutomationOverGlobalTemplate(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/entries" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		if r.URL.Query().Get("type") == "automation" && r.URL.Query().Get("global") == "true" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "global-auto", Path: "global/automation/blocked.md", Title: "Blocked Task Inspector", Type: "automation", Status: "active"}}})
+			return
+		}
+		if r.URL.Query().Get("type") == "automation" && r.URL.Query().Get("project") == "brain-api" {
+			json.NewEncoder(w).Encode(types.ListEntriesResponse{Entries: []types.BrainEntry{{ID: "project-auto", Path: "projects/brain-api/automation/blocked.md", Title: "Blocked Task Inspector", Type: "automation", Status: "archived", ProjectID: "brain-api"}}})
+			return
+		}
+		json.NewEncoder(w).Encode(types.ListEntriesResponse{})
+	}))
+	defer srv.Close()
+
+	msg := fetchAutomationDataCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, "brain-api")()
+	data, ok := msg.(AutomationDataMsg)
+	if !ok {
+		t.Fatalf("message type = %T, want AutomationDataMsg", msg)
+	}
+	if data.Error != nil {
+		t.Fatalf("fetchAutomationDataCmd returned error: %v", data.Error)
+	}
+	if len(data.Automations) != 1 {
+		t.Fatalf("automations = %#v, want only project copy", data.Automations)
+	}
+	if data.Automations[0].ID != "project-auto" || data.Automations[0].Status != "archived" {
+		t.Fatalf("automation = %#v, want archived project copy", data.Automations[0])
+	}
+}
+
 func TestBrainTabSlashSearchAndEscClearsResults(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.activeContentTab = ContentTabBrain
@@ -1248,118 +1450,9 @@ func TestBrainSearchResultsUseSearchTitleAndResultCount(t *testing.T) {
 	}
 }
 
-func TestMouseClickProjectTabSwitchesActiveProject(t *testing.T) {
-	m := NewModel(Config{
-		APIURL:   "http://localhost:3333",
-		Project:  "all",
-		Projects: []string{"alpha", "beta"},
-	})
-	m.width = 100
-	m.height = 30
-	m.tasksByProject["alpha"] = []types.ResolvedTask{{ID: "a1", Title: "Alpha task"}}
-	m.tasksByProject["beta"] = []types.ResolvedTask{{ID: "b1", Title: "Beta task"}}
-
-	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
-	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 12, Y: mainContentStartY - 2})
-	model := updated.(Model)
-
-	if cmd != nil {
-		t.Fatalf("expected project tab click to be local-only, got command")
-	}
-	if model.activeProjectID != "alpha" {
-		t.Fatalf("expected active project alpha, got %q", model.activeProjectID)
-	}
-	if model.projectTabs.ActiveProject() != "alpha" {
-		t.Fatalf("expected project tab active project alpha, got %q", model.projectTabs.ActiveProject())
-	}
-	if len(model.tasks) != 1 || model.tasks[0].ID != "a1" {
-		t.Fatalf("expected alpha tasks after project tab click, got %#v", model.tasks)
-	}
-}
-
-func TestMouseClickProjectTabAcceptsAdjacentReportedRow(t *testing.T) {
-	m := NewModel(Config{
-		APIURL:   "http://localhost:3333",
-		Project:  "all",
-		Projects: []string{"alpha", "beta"},
-	})
-	m.width = 100
-	m.height = 30
-	m.tasksByProject["alpha"] = []types.ResolvedTask{{ID: "a1", Title: "Alpha task"}}
-	m.tasksByProject["beta"] = []types.ResolvedTask{{ID: "b1", Title: "Beta task"}}
-
-	statusBarHeight := lipgloss.Height(m.statusBar.View(m.width))
-	x := projectTabCenterXForTest(m.projectTabs, 2, m.width)
-	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: statusBarHeight + 1})
-	model := updated.(Model)
-
-	if cmd != nil {
-		t.Fatalf("expected project tab click to be local-only, got command")
-	}
-	if model.activeProjectID != "beta" {
-		t.Fatalf("expected adjacent-row click on beta tab to activate beta, got %q", model.activeProjectID)
-	}
-	if len(model.tasks) != 1 || model.tasks[0].ID != "b1" {
-		t.Fatalf("expected beta tasks after project tab click, got %#v", model.tasks)
-	}
-}
-
-func TestMouseClickAllProjectTabOpensProjectPicker(t *testing.T) {
-	m := NewModel(Config{
-		APIURL:   "http://localhost:3333",
-		Project:  "all",
-		Projects: []string{"alpha", "beta", "gamma"},
-	})
-	m.width = 100
-	m.height = 30
-	m.activeProjectID = "beta"
-	m.projectTabs.SetActiveProject("beta")
-
-	statusBarHeight := lipgloss.Height(m.statusBar.View(m.width))
-	x := projectTabCenterXForTest(m.projectTabs, 0, m.width)
-	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: statusBarHeight})
-	model := updated.(Model)
-
-	if cmd != nil {
-		t.Fatalf("expected opening project picker to be local-only, got command")
-	}
-	if !model.modalManager.IsOpen() {
-		t.Fatal("expected All project tab click to open project picker modal")
-	}
-	if _, ok := model.modalManager.activeModal.(*ProjectPickerModal); !ok {
-		t.Fatalf("expected ProjectPickerModal, got %T", model.modalManager.activeModal)
-	}
-	if model.activeProjectID != "beta" {
-		t.Fatalf("expected opening picker not to change active project, got %q", model.activeProjectID)
-	}
-}
-
-func TestMouseClickAllProjectTabAcceptsAdjacentReportedRow(t *testing.T) {
-	m := NewModel(Config{
-		APIURL:   "http://localhost:3333",
-		Project:  "all",
-		Projects: []string{"alpha", "beta", "gamma"},
-	})
-	m.width = 100
-	m.height = 30
-	m.activeProjectID = "beta"
-	m.projectTabs.SetActiveProject("beta")
-
-	statusBarHeight := lipgloss.Height(m.statusBar.View(m.width))
-	x := projectTabCenterXForTest(m.projectTabs, 0, m.width)
-	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: statusBarHeight + 1})
-	model := updated.(Model)
-
-	if cmd != nil {
-		t.Fatalf("expected opening project picker to be local-only, got command")
-	}
-	if !model.modalManager.IsOpen() {
-		t.Fatal("expected adjacent-row All project tab click to open project picker modal")
-	}
-	if _, ok := model.modalManager.activeModal.(*ProjectPickerModal); !ok {
-		t.Fatalf("expected ProjectPickerModal, got %T", model.modalManager.activeModal)
-	}
-}
+// NOTE: project-tab mouse-click tests were removed — the project-tab row is no
+// longer rendered. Projects are switched with H/L (see TestUpdate_HKey_PrevTab /
+// TestUpdate_LKey_NextTab) and shown in the status bar.
 
 func TestProjectPickerModal_MouseSelectsProject(t *testing.T) {
 	modal := NewProjectPickerModal([]string{"alpha", "beta", "gamma"}, "alpha")
@@ -2627,7 +2720,7 @@ func TestUpdate_LKey_DoesNotToggleLogVisibility(t *testing.T) {
 	}
 }
 
-func TestUpdate_ZKey_DoesNotToggleLogVisibilityByDefault(t *testing.T) {
+func TestUpdate_ZKey_TogglesLogVisibility(t *testing.T) {
 	m := NewModel(Config{
 		APIURL:   "http://localhost:3333",
 		Project:  "all",
@@ -2640,8 +2733,14 @@ func TestUpdate_ZKey_DoesNotToggleLogVisibilityByDefault(t *testing.T) {
 
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
 	model := updated.(Model)
-	if model.logsVisible {
-		t.Fatal("expected logsVisible to remain false after z press")
+	if !model.logsVisible {
+		t.Fatal("expected z to toggle logsVisible on")
+	}
+
+	updated2, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'z'}})
+	model2 := updated2.(Model)
+	if model2.logsVisible {
+		t.Fatal("expected z to toggle logsVisible back off")
 	}
 }
 
@@ -2652,13 +2751,14 @@ func TestUpdate_LKeyStillNavigatesProjectsInMultiProjectMode(t *testing.T) {
 		Projects: []string{"alpha", "beta"},
 	})
 
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// H/L (shift) navigate projects in multi-project mode.
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	model := updated.(Model)
 	if model.logsVisible {
-		t.Fatal("expected l not to toggle logs in multi-project mode")
+		t.Fatal("expected L not to toggle logs in multi-project mode")
 	}
 	if model.activeProjectID != "alpha" {
-		t.Fatalf("expected l to navigate to alpha project, got %q", model.activeProjectID)
+		t.Fatalf("expected L to navigate to alpha project, got %q", model.activeProjectID)
 	}
 }
 
@@ -2671,10 +2771,11 @@ func TestUpdate_ProjectSwitchFetchesBrainEntriesWhenBrainTabActive(t *testing.T)
 	m.activeContentTab = ContentTabBrain
 	m.entryTree.SetEntries([]types.BrainEntry{{ID: "old", Path: "projects/old/idea/old.md", Title: "Old"}})
 
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}})
+	// 'L' (shift) switches project even while the Brain content tab is active.
+	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}})
 	model := updated.(Model)
 	if model.activeProjectID != "alpha" {
-		t.Fatalf("expected l to navigate to alpha project, got %q", model.activeProjectID)
+		t.Fatalf("expected L to navigate to alpha project, got %q", model.activeProjectID)
 	}
 	if cmd == nil {
 		t.Fatal("expected project switch on Brain tab to fetch entries for active project")
@@ -3210,6 +3311,32 @@ func TestNewModel_InitializesPauseState(t *testing.T) {
 	}
 }
 
+func TestSyncHelpBarPauseState_AllProjectUsesGlobalPause(t *testing.T) {
+	m := NewModel(Config{Project: "proj-a", Projects: []string{"proj-a", "proj-b"}})
+	m.activeProjectID = "all"
+	m.allPaused = true
+	m.pausedProjects = map[string]bool{}
+
+	m.syncHelpBarPauseState()
+
+	if !m.helpBar.IsPaused {
+		t.Fatal("expected all project active scope to read global pause state")
+	}
+}
+
+func TestSyncHelpBarPauseState_SingleProjectIgnoresGlobalPause(t *testing.T) {
+	m := NewModel(Config{Project: "proj-a", Projects: []string{"proj-a", "proj-b"}})
+	m.activeProjectID = "proj-b"
+	m.allPaused = true
+	m.pausedProjects = map[string]bool{"proj-a": true}
+
+	m.syncHelpBarPauseState()
+
+	if m.helpBar.IsPaused {
+		t.Fatal("expected single active project to read only its project pause state, not global pause")
+	}
+}
+
 func TestPauseToggledMsg_Fields(t *testing.T) {
 	// Verify the message type can be constructed and used
 	msg := pauseToggledMsg{
@@ -3373,12 +3500,61 @@ func TestUpdate_PKey_UsesActiveProjectID(t *testing.T) {
 	}
 }
 
+func TestUpdate_ShiftPKey_SingleActiveProjectTogglesOnlyThatProject(t *testing.T) {
+	cfg := Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "default-project",
+		Projects: []string{"proj-a", "proj-b"},
+	}
+	m := NewModel(cfg)
+	m.activeProjectID = "proj-b"
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected non-nil command")
+	}
+	if model.allPaused {
+		t.Fatal("single active project Shift+P must not change allPaused")
+	}
+	if !model.pausedProjects["proj-b"] {
+		t.Fatal("expected active project proj-b to be paused")
+	}
+	if model.pausedProjects["proj-a"] {
+		t.Fatal("expected inactive project proj-a to remain unchanged")
+	}
+}
+
+func TestUpdate_ShiftPKey_AllActiveProjectTogglesGlobal(t *testing.T) {
+	cfg := Config{
+		APIURL:   "http://localhost:3333",
+		Project:  "default-project",
+		Projects: []string{"proj-a", "proj-b"},
+	}
+	m := NewModel(cfg)
+	m.activeProjectID = "all"
+
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}
+	updated, cmd := m.Update(msg)
+	model := updated.(Model)
+
+	if cmd == nil {
+		t.Fatal("expected non-nil command")
+	}
+	if !model.allPaused {
+		t.Fatal("all active project Shift+P should toggle global allPaused")
+	}
+}
+
 func TestUpdate_ShiftPKey_PausesAll(t *testing.T) {
 	cfg := Config{
 		APIURL:  "http://localhost:3333",
 		Project: "test-project",
 	}
 	m := NewModel(cfg)
+	m.activeProjectID = "all"
 
 	// Press 'P' (shift+p) to pause all
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}
@@ -3410,6 +3586,7 @@ func TestUpdate_ShiftPKey_ResumesAll(t *testing.T) {
 		Project: "test-project",
 	}
 	m := NewModel(cfg)
+	m.activeProjectID = "all"
 	m.allPaused = true
 
 	// Press 'P' to resume all
@@ -3744,7 +3921,7 @@ func TestSyncHelpBarPauseState_MultiProject_ActiveProjectPaused(t *testing.T) {
 	}
 }
 
-func TestSyncHelpBarPauseState_MultiProject_AllTab_FallsBackToConfigProject(t *testing.T) {
+func TestSyncHelpBarPauseState_MultiProject_AllTab_UsesGlobalPauseState(t *testing.T) {
 	cfg := Config{
 		APIURL:   "http://localhost:3333",
 		Project:  "default-project",
@@ -3756,8 +3933,15 @@ func TestSyncHelpBarPauseState_MultiProject_AllTab_FallsBackToConfigProject(t *t
 
 	m.syncHelpBarPauseState()
 
+	if m.helpBar.IsPaused {
+		t.Error("expected helpBar.IsPaused to ignore config-project pause when 'all' tab is active")
+	}
+
+	m.allPaused = true
+	m.syncHelpBarPauseState()
+
 	if !m.helpBar.IsPaused {
-		t.Error("expected helpBar.IsPaused to be true when 'all' tab and config project is paused")
+		t.Error("expected helpBar.IsPaused to follow global pause when 'all' tab is active")
 	}
 }
 
@@ -3785,6 +3969,7 @@ func TestUpdate_ShiftPKey_SyncsHelpBarAllPaused(t *testing.T) {
 		Project: "test-project",
 	}
 	m := NewModel(cfg)
+	m.activeProjectID = "all"
 
 	// Press 'P' to pause all
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'P'}}

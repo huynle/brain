@@ -22,3 +22,9 @@ internal/webui/dist/*
 
 # Local preview/dev launch config (not for the repo)
 .claude/launch.json
+
+# stray go build output at repo root
+/brain
+
+# Local build artifact
+/bin/brain

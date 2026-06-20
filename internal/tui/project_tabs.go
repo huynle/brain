@@ -141,10 +141,11 @@ var InactiveTabStyle = lipgloss.NewStyle().
 
 // View renders the tab bar as a single-line string.
 func (p ProjectTabs) View(width int) string {
-	if len(p.Projects) <= 1 {
-		return "" // Don't render tabs for single project
-	}
-	return p.render(width, true)
+	// The project-tab row is intentionally not rendered: projects are switched
+	// with H/L (shift) and the active project is shown in the status bar. This
+	// keeps every content tab visually clean (matching the Automations view).
+	// ProjectTabs still tracks active index + per-project stats for H/L nav.
+	return ""
 }
 
 // TabIndexAt returns the tab index at a rendered x coordinate, or -1 if none.

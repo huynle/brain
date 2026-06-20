@@ -809,6 +809,10 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 				Timestamp: v.Timestamp,
 				CronID:    v.CronID,
 				RunID:     v.RunID,
+				RunnerID:  v.RunnerID,
+				MachineID: v.MachineID,
+				Hostname:  v.Hostname,
+				Workdir:   v.Workdir,
 			}
 		}
 	}

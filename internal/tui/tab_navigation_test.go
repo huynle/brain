@@ -12,7 +12,7 @@ import (
 // Phase 3: Tab Navigation Tests
 // ============================================================================
 
-// TestUpdate_HKey_PrevTab verifies 'h' navigates to previous tab in multi-project mode.
+// TestUpdate_HKey_PrevTab verifies 'H' (shift) navigates to previous project tab.
 func TestUpdate_HKey_PrevTab(t *testing.T) {
 	cfg := Config{
 		APIURL:   "http://localhost:3333",
@@ -25,18 +25,18 @@ func TestUpdate_HKey_PrevTab(t *testing.T) {
 	// Start on tab index 1 (proj1)
 	m.projectTabs.ActiveIndex = 1
 
-	// Press 'h'
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'h'}}
+	// Press 'H' (shift) — project navigation
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'H'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
 	// Should move to tab 0 (All)
 	if model.projectTabs.ActiveIndex != 0 {
-		t.Errorf("Expected tab index 0 after 'h', got %d", model.projectTabs.ActiveIndex)
+		t.Errorf("Expected tab index 0 after 'H', got %d", model.projectTabs.ActiveIndex)
 	}
 }
 
-// TestUpdate_LKey_NextTab verifies 'l' navigates to next tab in multi-project mode.
+// TestUpdate_LKey_NextTab verifies 'L' (shift) navigates to next project tab.
 func TestUpdate_LKey_NextTab(t *testing.T) {
 	cfg := Config{
 		APIURL:   "http://localhost:3333",
@@ -49,19 +49,20 @@ func TestUpdate_LKey_NextTab(t *testing.T) {
 	// Start on tab index 0 (All)
 	m.projectTabs.ActiveIndex = 0
 
-	// Press 'l'
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
+	// Press 'L' (shift) — project navigation
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
 	// Should move to tab 1 (proj1)
 	if model.projectTabs.ActiveIndex != 1 {
-		t.Errorf("Expected tab index 1 after 'l', got %d", model.projectTabs.ActiveIndex)
+		t.Errorf("Expected tab index 1 after 'L', got %d", model.projectTabs.ActiveIndex)
 	}
 }
 
-// TestUpdate_LeftBracket_PrevTab verifies '[' navigates to previous tab.
-func TestUpdate_LeftBracket_PrevTab(t *testing.T) {
+// TestUpdate_LeftBracket_NoProjectChange verifies '[' switches content tabs, not
+// projects (project index is unchanged by bracket keys under the new mapping).
+func TestUpdate_LeftBracket_NoProjectChange(t *testing.T) {
 	cfg := Config{
 		APIURL:   "http://localhost:3333",
 		Projects: []string{"proj1", "proj2"},
@@ -69,19 +70,20 @@ func TestUpdate_LeftBracket_PrevTab(t *testing.T) {
 	m := NewModel(cfg)
 	m.projectTabs.ActiveIndex = 1
 
-	// Press '['
+	// Press '[' — content-tab navigation, must not move the project tab
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'['}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
-	// Should move to tab 0
-	if model.projectTabs.ActiveIndex != 0 {
-		t.Errorf("Expected tab index 0 after '[', got %d", model.projectTabs.ActiveIndex)
+	// Project tab unchanged
+	if model.projectTabs.ActiveIndex != 1 {
+		t.Errorf("Expected project tab index unchanged (1) after '[', got %d", model.projectTabs.ActiveIndex)
 	}
 }
 
-// TestUpdate_RightBracket_NextTab verifies ']' navigates to next tab.
-func TestUpdate_RightBracket_NextTab(t *testing.T) {
+// TestUpdate_RightBracket_NoProjectChange verifies ']' switches content tabs,
+// not projects (project index is unchanged by bracket keys).
+func TestUpdate_RightBracket_NoProjectChange(t *testing.T) {
 	cfg := Config{
 		APIURL:   "http://localhost:3333",
 		Projects: []string{"proj1", "proj2"},
@@ -89,14 +91,14 @@ func TestUpdate_RightBracket_NextTab(t *testing.T) {
 	m := NewModel(cfg)
 	m.projectTabs.ActiveIndex = 0
 
-	// Press ']'
+	// Press ']' — content-tab navigation, must not move the project tab
 	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{']'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
-	// Should move to tab 1
-	if model.projectTabs.ActiveIndex != 1 {
-		t.Errorf("Expected tab index 1 after ']', got %d", model.projectTabs.ActiveIndex)
+	// Project tab unchanged
+	if model.projectTabs.ActiveIndex != 0 {
+		t.Errorf("Expected project tab index unchanged (0) after ']', got %d", model.projectTabs.ActiveIndex)
 	}
 }
 
@@ -157,8 +159,8 @@ func TestUpdate_TabNavigation_SyncsTasks(t *testing.T) {
 		t.Fatalf("Expected 3 tasks in 'all' view, got %d", len(m.tasks))
 	}
 
-	// Press 'l' to switch to proj1
-	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
+	// Press 'L' (shift) to switch to proj1
+	msg := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}}
 	updated, _ := m.Update(msg)
 	model := updated.(Model)
 
@@ -167,8 +169,8 @@ func TestUpdate_TabNavigation_SyncsTasks(t *testing.T) {
 		t.Errorf("Expected 1 task for proj1, got %d", len(model.tasks))
 	}
 
-	// Press 'l' again to switch to proj2
-	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'l'}}
+	// Press 'L' again to switch to proj2
+	msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'L'}}
 	updated, _ = model.Update(msg)
 	model = updated.(Model)
 
@@ -194,8 +196,9 @@ func TestUpdate_TabNavigation_SingleProjectMode(t *testing.T) {
 	// No panic = success (tab navigation ignored in single-project mode)
 }
 
-// TestView_ShowsProjectTabs_MultiProject verifies tabs are rendered in multi-project mode.
-func TestView_ShowsProjectTabs_MultiProject(t *testing.T) {
+// TestProjectTabs_ViewNotRendered verifies the project-tab row is intentionally
+// not rendered — projects are switched with H/L and shown in the status bar.
+func TestProjectTabs_ViewNotRendered(t *testing.T) {
 	cfg := Config{
 		APIURL:   "http://localhost:3333",
 		Projects: []string{"proj1", "proj2"},
@@ -203,25 +206,11 @@ func TestView_ShowsProjectTabs_MultiProject(t *testing.T) {
 	m := NewModel(cfg)
 	m.width = 120
 	m.height = 40
-
-	// Add some tasks to create stats
-	m.tasksByProject["proj1"] = []types.ResolvedTask{
-		{ID: "t1", Title: "Task 1", Classification: "ready"},
-	}
-
-	// Update ProjectTabs stats
 	m.projectTabs.UpdateStats("proj1", TaskStats{Ready: 1})
 
-	view := m.View()
-
-	// Should contain "All" tab
-	if !strings.Contains(view, "All") {
-		t.Error("Expected view to contain 'All' tab in multi-project mode")
-	}
-
-	// Should contain project names
-	if !strings.Contains(view, "proj1") || !strings.Contains(view, "proj2") {
-		t.Error("Expected view to contain project names in multi-project mode")
+	// The ProjectTabs.View() renders nothing regardless of project count.
+	if got := m.projectTabs.View(m.width); got != "" {
+		t.Errorf("expected ProjectTabs.View to render nothing, got %q", got)
 	}
 }
 

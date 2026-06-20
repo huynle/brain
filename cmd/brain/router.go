@@ -81,6 +81,7 @@ var builtinCommands = map[string]bool{
 	"uninstall":     true,
 	"plugin-status": true,
 	"token":         true,
+	"auth":          true,
 	"dream":         true,
 	"save":          true,
 	"get":           true,
@@ -213,6 +214,8 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parseMCPCommand(cmdArgs)
 	case "token":
 		return parseTokenCommand(cmdArgs)
+	case "auth":
+		return parseAuthCommand(cmdArgs)
 	case "dream":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "dream"}, nil
@@ -284,15 +287,20 @@ func parseBuiltinCommand(args []string) (Command, error) {
 			return &HelpCommand{command: "embeddings"}, nil
 		}
 		return parseEmbeddingsCommand(cmdArgs)
-	case "run", "runner":
+	case "runner":
+		// "brain runner <start|stop|status>" — background daemonized runner.
+		if len(cmdArgs) == 0 || isHelpArg(cmdArgs[0]) {
+			return &HelpCommand{command: "runner"}, nil
+		}
+		return parseRunnerCommand(cmdArgs)
+	case "run":
 		if len(cmdArgs) == 0 {
 			return &stubCommand{cmdType: "run"}, nil
 		}
 		if isHelpArg(cmdArgs[0]) {
 			return &HelpCommand{command: "run"}, nil
 		}
-		// Handle "brain run <subcommand>" and "brain runner <subcommand>" patterns
-		// "runner" is a backwards-compat alias for "run" (from old Node.js CLI)
+		// Granular "brain run <subcommand>" (start/stop/status/list/…).
 		return parseRunCommand(cmdArgs)
 	case "help":
 		// "brain help server" / "brain help server start" → show contextual help
@@ -401,6 +409,17 @@ func parseTokenCommand(args []string) (Command, error) {
 	}, nil
 }
 
+// parseAuthCommand creates an AuthCommand from args (e.g. `brain auth hash`).
+func parseAuthCommand(args []string) (Command, error) {
+	if len(args) == 0 || isHelpArg(args[0]) {
+		return &HelpCommand{command: "auth"}, nil
+	}
+	return &commands.AuthCommand{
+		Subcommand: args[0],
+		Args:       args[1:],
+	}, nil
+}
+
 // parseRunCommand creates a RunCommand from args.
 func parseRunCommand(args []string) (Command, error) {
 	if len(args) == 0 {
@@ -438,6 +457,45 @@ func parseRunCommand(args []string) (Command, error) {
 	}
 
 	return &commands.RunCommand{
+		Subcommand: subcommand,
+		Project:    project,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsRunnerFlags(flags),
+	}, nil
+}
+
+// parseRunnerCommand creates a RunnerDaemonCommand from
+// `brain runner <start|stop|status> [project] [flags]`.
+func parseRunnerCommand(args []string) (Command, error) {
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "runner"}, nil
+	}
+	subArgs := args[1:]
+	if wantsHelp(subArgs) {
+		return &HelpCommand{command: "runner " + subcommand}, nil
+	}
+
+	// Find the first positional (project) regardless of flag order; default "all".
+	project := "all"
+	var flagArgs []string
+	found := false
+	for _, a := range subArgs {
+		if !isFlag(a) && !found {
+			project = a
+			found = true
+		} else {
+			flagArgs = append(flagArgs, a)
+		}
+	}
+
+	flags, err := ParseRunnerFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := defaultConfig()
+	return &commands.RunnerDaemonCommand{
 		Subcommand: subcommand,
 		Project:    project,
 		Config:     convertToCommandsConfig(cfg),
@@ -490,6 +548,7 @@ func defaultConfig() *UnifiedConfig {
 	cfg.Server.Port = 3333
 	cfg.Server.Host = "localhost"
 	cfg.Server.BrainDir = brainDir
+	cfg.Server.FeatureCheckout.Enabled = true
 	cfg.Server.LogLevel = "info"
 	cfg.Server.PIDFile = filepath.Join(stateHome, "brain-api", "brain-api.pid")
 	cfg.Server.LogFile = filepath.Join(stateHome, "brain-api", "brain-api.log")
@@ -527,11 +586,16 @@ func defaultConfig() *UnifiedConfig {
 		if ucfg.Server.OAuthPIN != "" {
 			cfg.Server.OAuthPIN = ucfg.Server.OAuthPIN
 		}
+		if ucfg.Server.JWTSecret != "" {
+			cfg.Server.JWTSecret = ucfg.Server.JWTSecret
+		}
 		// Thread task defaults from unified config
 		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
+		cfg.Server.FeatureCheckout = ucfg.Server.FeatureCheckout
 		cfg.Server.Embedding = ucfg.Server.Embedding
 		cfg.Server.Attachments = ucfg.Server.Attachments
 		cfg.Server.AttachmentExtraction = ucfg.Server.AttachmentExtraction
+		cfg.Server.Assistant = ucfg.Server.Assistant
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -563,6 +627,16 @@ func defaultConfig() *UnifiedConfig {
 	}
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.Server.OAuthPIN = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.Server.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_JWT_SECRET"); v != "" {
+		cfg.Server.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_FEATURE_CHECKOUT_ENABLED"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.Server.FeatureCheckout.Enabled = lower == "true" || lower == "1" || lower == "yes"
 	}
 	// Task defaults env var overrides
 	if v := os.Getenv("BRAIN_DEFAULT_AGENT"); v != "" {
@@ -605,15 +679,18 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.LogLevel = cfg.Server.LogLevel
 	cmdCfg.Server.CORSOrigin = cfg.Server.CORSOrigin
 	cmdCfg.Server.OAuthPIN = cfg.Server.OAuthPIN
+	cmdCfg.Server.JWTSecret = cfg.Server.JWTSecret
 	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
 	cmdCfg.Server.LogFile = cfg.Server.LogFile
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
 	cmdCfg.Server.TaskDefaults = cfg.Server.TaskDefaults
+	cmdCfg.Server.FeatureCheckout = cfg.Server.FeatureCheckout
 	cmdCfg.Server.Embedding = cfg.Server.Embedding
 	cmdCfg.Server.Attachments = cfg.Server.Attachments
 	cmdCfg.Server.AttachmentExtraction = cfg.Server.AttachmentExtraction
+	cmdCfg.Server.Assistant = cfg.Server.Assistant
 	// Runner — assign the full config directly, no lossy field-by-field copying
 	cmdCfg.Runner = cfg.Runner
 
@@ -629,13 +706,19 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 // convertToCommandsAPIFlags converts main.APIFlags to commands.APIFlags.
 func convertToCommandsAPIFlags(flags *APIFlags) *commands.APIFlags {
 	return &commands.APIFlags{
-		Port:    flags.Port,
-		Host:    flags.Host,
-		Daemon:  flags.Daemon,
-		LogFile: flags.LogFile,
-		TLS:     flags.TLS,
-		TLSCert: flags.TLSCert,
-		TLSKey:  flags.TLSKey,
+		Port:          flags.Port,
+		Host:          flags.Host,
+		Daemon:        flags.Daemon,
+		LogFile:       flags.LogFile,
+		TLS:           flags.TLS,
+		TLSCert:       flags.TLSCert,
+		TLSKey:        flags.TLSKey,
+		Runner:        flags.Runner,
+		RunnerProject: flags.RunnerProject,
+		MaxParallel:   flags.MaxParallel,
+		Include:       flags.Include,
+		Exclude:       flags.Exclude,
+		Executor:      flags.Executor,
 	}
 }
 
@@ -647,6 +730,7 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Headless:     flags.Headless,
 		Dashboard:    flags.Dashboard,
 		Monitor:      flags.Monitor,
+		Runner:       flags.Runner,
 		MaxParallel:  flags.MaxParallel,
 		PollInterval: flags.PollInterval,
 		Workdir:      flags.Workdir,

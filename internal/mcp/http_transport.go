@@ -7,7 +7,7 @@
 // The transport supports:
 //   - POST /mcp: JSON-RPC request → JSON response (application/json)
 //   - GET /mcp: Returns 405 (server-initiated SSE not supported)
-//   - DELETE /mcp: Returns 405 (session termination not supported)
+//   - DELETE /mcp: Terminates an existing session
 //   - Mcp-Session-Id header for session tracking
 package mcp
 
@@ -45,6 +45,11 @@ func NewHTTPHandler(apiClient *APIClient) *HTTPHandler {
 			s := NewServer()
 			RegisterBrainTools(s, client)
 			RegisterTaskTools(s, client)
+			RegisterFeatureTools(s, client)
+			RegisterRunnerTools(s, client)
+			RegisterObservabilityTools(s, client)
+			RegisterProjectTools(s, client)
+			RegisterControlTools(s, client)
 			RegisterPlanningTools(s, client)
 			RegisterWebhookTools(s, client)
 			return s
@@ -59,12 +64,12 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodPost:
 		h.handlePost(w, r)
 	case http.MethodGet:
-		// GET is for server-initiated SSE streams. We don't support this.
+		w.Header().Set("Allow", "GET, POST, DELETE")
 		http.Error(w, "SSE streaming not supported", http.StatusMethodNotAllowed)
 	case http.MethodDelete:
-		// DELETE is for session termination. We don't support this.
-		http.Error(w, "Session termination not supported", http.StatusMethodNotAllowed)
+		h.handleDelete(w, r)
 	default:
+		w.Header().Set("Allow", "GET, POST, DELETE")
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}
 }
@@ -134,6 +139,29 @@ func (h *HTTPHandler) handlePost(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		slog.Error("mcp http: failed to write response", "error", err)
 	}
+}
+
+// handleDelete terminates an MCP HTTP session.
+func (h *HTTPHandler) handleDelete(w http.ResponseWriter, r *http.Request) {
+	sessionID := r.Header.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		http.Error(w, "Missing Mcp-Session-Id", http.StatusBadRequest)
+		return
+	}
+
+	h.mu.Lock()
+	_, ok := h.sessions[sessionID]
+	if ok {
+		delete(h.sessions, sessionID)
+	}
+	h.mu.Unlock()
+
+	if !ok {
+		http.Error(w, "Unknown Mcp-Session-Id", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // writeJSONRPCError writes a JSON-RPC error response.

@@ -241,6 +241,18 @@ func (pm *ProcessManager) UpdatePort(taskID string, port int) {
 	info.Task.OpencodePort = port
 }
 
+// UpdateSessionID updates the SessionID on a tracked task.
+func (pm *ProcessManager) UpdateSessionID(taskID string, sessionID string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	info, exists := pm.processes[taskID]
+	if !exists {
+		return
+	}
+	info.Task.SessionID = sessionID
+}
+
 // UpdateIdleSince updates the IdleSince timestamp on a tracked task.
 func (pm *ProcessManager) UpdateIdleSince(taskID string, idleSince string) {
 	pm.mu.Lock()

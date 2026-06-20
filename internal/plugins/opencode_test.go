@@ -121,10 +121,10 @@ func TestOpenCodeTarget_Install_CopiesPluginFiles(t *testing.T) {
 		t.Fatalf("Install() failed: %v", err)
 	}
 
-	// Check that brain.ts and brain-planning.ts were installed
+	// Check that brain.ts was installed
 	pluginDir := filepath.Join(configPath, "plugin")
 
-	expectedFiles := []string{"brain.ts", "brain-planning.ts"}
+	expectedFiles := []string{"brain.ts"}
 	for _, filename := range expectedFiles {
 		filePath := filepath.Join(pluginDir, filename)
 		if _, err := os.Stat(filePath); os.IsNotExist(err) {
@@ -207,6 +207,15 @@ func TestOpenCodeTarget_Install_SkillStartsWithFrontmatter(t *testing.T) {
 	content, err := os.ReadFile(filePath)
 	if err != nil {
 		t.Fatalf("Failed to read installed skill file: %v", err)
+	}
+
+	memorySkillPath := filepath.Join(configPath, "skill", "brain-memory", "SKILL.md")
+	memoryContent, err := os.ReadFile(memorySkillPath)
+	if err != nil {
+		t.Fatalf("Failed to read installed memory skill file: %v", err)
+	}
+	if !strings.Contains(string(memoryContent), "name: brain-memory") {
+		t.Fatal("installed memory skill should contain brain-memory frontmatter")
 	}
 
 	contentStr := string(content)
@@ -402,6 +411,67 @@ func TestOpenCodeTarget_Install_ForceIsIdempotentAcrossRuns(t *testing.T) {
 	}
 }
 
+func TestOpenCodeTarget_Install_ForceRemovesRetiredBrainGeneratedSkills(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, ".config", "opencode")
+	target := &OpenCodeTarget{configPath: configPath}
+
+	retiredSkill := filepath.Join(configPath, "skill", "brain-dream-context", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(retiredSkill), 0755); err != nil {
+		t.Fatalf("failed to create retired skill dir: %v", err)
+	}
+	if err := os.WriteFile(retiredSkill, []byte("---\nname: brain-dream-context\ndescription: old\n---\n\n<!--\nAUTO-GENERATED FILE - DO NOT EDIT DIRECTLY\n\nThis file was installed by: brain install opencode\n-->\n"), 0644); err != nil {
+		t.Fatalf("failed to create retired skill: %v", err)
+	}
+
+	retiredPlugin := filepath.Join(configPath, "plugin", "brain-planning.ts")
+	retiredCommand := filepath.Join(configPath, "command", "execute-plan.md")
+	retiredTool := filepath.Join(configPath, "tool", "plan-checkout", "index.ts")
+	for _, file := range []string{retiredPlugin, retiredCommand, retiredTool} {
+		if err := os.MkdirAll(filepath.Dir(file), 0755); err != nil {
+			t.Fatalf("failed to create retired file dir: %v", err)
+		}
+		if err := os.WriteFile(file, []byte("<!--\nAUTO-GENERATED FILE - DO NOT EDIT DIRECTLY\n\nThis file was installed by: brain install opencode\n-->\n"), 0644); err != nil {
+			t.Fatalf("failed to create retired file: %v", err)
+		}
+	}
+
+	userSkill := filepath.Join(configPath, "skill", "brain-user-skill", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(userSkill), 0755); err != nil {
+		t.Fatalf("failed to create user skill dir: %v", err)
+	}
+	if err := os.WriteFile(userSkill, []byte("---\nname: brain-user-skill\ndescription: keep me\n---\n"), 0644); err != nil {
+		t.Fatalf("failed to create user skill: %v", err)
+	}
+
+	var installErr error
+	output := capturePluginOutput(t, func() {
+		installErr = target.Install(InstallOptions{Force: true})
+	})
+	if installErr != nil {
+		t.Fatalf("Install() with Force failed: %v", installErr)
+	}
+
+	for _, file := range []string{retiredSkill, retiredPlugin, retiredCommand, retiredTool} {
+		if _, err := os.Stat(file); !os.IsNotExist(err) {
+			t.Fatalf("force install should remove retired generated file %s, stat err: %v", file, err)
+		}
+	}
+	if _, err := os.Stat(userSkill); err != nil {
+		t.Fatalf("force install should leave user-created skills untouched: %v", err)
+	}
+	for _, want := range []string{
+		"Removed retired: skill/brain-dream-context/SKILL.md",
+		"Removed retired: plugin/brain-planning.ts",
+		"Removed retired: command/execute-plan.md",
+		"Removed retired: tool/plan-checkout/index.ts",
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("force install should report retired file removal %q, output:\n%s", want, output)
+		}
+	}
+}
+
 func TestOpenCodeTarget_Install_WithoutForceSkipsExistingFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := filepath.Join(tmpDir, ".config", "opencode")
@@ -448,7 +518,7 @@ func TestOpenCodeTarget_Uninstall_RemovesPluginFiles(t *testing.T) {
 		t.Fatalf("Failed to create plugin dir: %v", err)
 	}
 
-	testFiles := []string{"brain.ts", "brain-planning.ts"}
+	testFiles := []string{"brain.ts"}
 	for _, filename := range testFiles {
 		filePath := filepath.Join(pluginDir, filename)
 		if err := os.WriteFile(filePath, []byte("test"), 0644); err != nil {

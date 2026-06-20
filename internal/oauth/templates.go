@@ -34,6 +34,8 @@ type ConsentData struct {
 	CodeChallengeMethod string
 	Scopes              []ScopeInfo
 	PINRequired         bool
+	PasswordRequired    bool
+	Username            string
 	Error               string
 }
 
@@ -42,6 +44,7 @@ var knownScopes = map[string]string{
 	"mcp":       "Full access to the MCP server",
 	"mcp:read":  "Read-only access to brain entries and tasks",
 	"mcp:write": "Write access to brain entries and tasks",
+	"control":   "Remote control of runners: attach to and spawn OpenCode instances (code execution on runner machines)",
 }
 
 // DescribeScopes returns ScopeInfo for each scope string.

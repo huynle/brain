@@ -85,6 +85,15 @@ type Model struct {
 	detailVisible bool
 	logsVisible   bool
 
+	// Global server-request log (Logs tab); refreshed while that tab is active.
+	serverRequests []types.ServerRequestRecord
+
+	// Persisted logs for the task the logs pane is scoped to (Brain/Automations
+	// and filtered Tasks). Fetched from the API so completed tasks show their
+	// stored output, not just the live SSE buffer.
+	scopedTaskLogs  []types.LogLine
+	scopedTaskLogID string
+
 	// Filter state (3-mode state machine: Off → Typing → Locked)
 	filterState FilterMode // Current filter mode
 	filterQuery string     // Current filter text
@@ -103,10 +112,11 @@ type Model struct {
 	selectedTasks map[string]bool
 
 	// Pause/resume state
-	pausedProjects    map[string]bool
-	allPaused         bool
-	automationsPaused bool
-	runnerController  RunnerController // direct reference to embedded runner (nil if standalone)
+	pausedProjects           map[string]bool
+	automationPausedProjects map[string]bool
+	allPaused                bool
+	automationsPaused        bool
+	runnerController         RunnerController // direct reference to embedded runner (nil if standalone)
 
 	// Resource metrics
 	metricsCollector *MetricsCollector
@@ -167,7 +177,7 @@ type Model struct {
 }
 
 func visibleContentTabs() []ContentTab {
-	return []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabTasks, ContentTabBrain, ContentTabAutomation}
+	return []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabBrain, ContentTabTasks, ContentTabAutomation}
 }
 
 func nextContentTab(current ContentTab) ContentTab {
@@ -219,9 +229,9 @@ func (m Model) renderContentTabBar() string {
 		"   ",
 		dividerStyle.Render("│"),
 		" ",
-		tab(ContentTabTasks),
-		" ",
 		tab(ContentTabBrain),
+		" ",
+		tab(ContentTabTasks),
 		" ",
 		tab(ContentTabAutomation),
 	)
@@ -250,8 +260,8 @@ func (m Model) contentTabAtX(x int) (ContentTab, bool) {
 		tab   ContentTab
 		label string
 	}{
-		{ContentTabTasks, "Tasks"},
 		{ContentTabBrain, "Brain"},
+		{ContentTabTasks, "Tasks"},
 		{ContentTabAutomation, "Automations"},
 	} {
 		start := len(plain)
@@ -322,38 +332,39 @@ func NewModel(cfg Config) Model {
 	}
 
 	m := Model{
-		config:                 cfg,
-		keymap:                 KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
-		statusBar:              NewStatusBar(cfg.Project),
-		helpBar:                NewHelpBar(),
-		taskTree:               NewTaskTree(),
-		taskDetail:             NewTaskDetail(),
-		logViewer:              NewLogViewer(DefaultMaxLogEntries),
-		scheduleList:           NewScheduleList(),
-		scheduleDetail:         NewScheduleDetail(),
-		modalManager:           NewModalManager(),
-		settings:               settings,
-		activePanel:            PanelTasks,
-		sseClient:              NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
-		ctx:                    context.Background(),
-		selectedTasks:          make(map[string]bool),
-		pausedProjects:         make(map[string]bool),
-		runnerController:       cfg.Runner,
-		tasksByProject:         make(map[string][]types.ResolvedTask),
-		sseClients:             make(map[string]*SSEClient),
-		metricsCollector:       NewMetricsCollector(),
-		seenFeatureIDs:         make(map[string]bool),
-		monitorClient:          NewMonitorClient(cfg.APIURL, cfg.APIToken),
-		enabledFeatures:        make(map[string]bool),
-		activeAutomationSubTab: AutomationSubTabAutomations,
-		automationList:         NewAutomationList(),
-		goalAuditByEntry:       make(map[string][]types.GoalReconcileAudit),
-		goalDetailRaw:          make(map[string]string),
-		dreamViewer:            NewDreamViewer(),
-		entryTree:              NewEntryTree(),
-		runnerPanel:            NewRunnerPanel(),
-		taskPanelHeight:        settings.TaskPanelHeight,
-		bottomTopPanelHeight:   settings.BottomTopPanelHeight,
+		config:                   cfg,
+		keymap:                   KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
+		statusBar:                NewStatusBar(cfg.Project),
+		helpBar:                  NewHelpBar(),
+		taskTree:                 NewTaskTree(),
+		taskDetail:               NewTaskDetail(),
+		logViewer:                NewLogViewer(DefaultMaxLogEntries),
+		scheduleList:             NewScheduleList(),
+		scheduleDetail:           NewScheduleDetail(),
+		modalManager:             NewModalManager(),
+		settings:                 settings,
+		activePanel:              PanelTasks,
+		sseClient:                NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
+		ctx:                      context.Background(),
+		selectedTasks:            make(map[string]bool),
+		pausedProjects:           make(map[string]bool),
+		automationPausedProjects: make(map[string]bool),
+		runnerController:         cfg.Runner,
+		tasksByProject:           make(map[string][]types.ResolvedTask),
+		sseClients:               make(map[string]*SSEClient),
+		metricsCollector:         NewMetricsCollector(),
+		seenFeatureIDs:           make(map[string]bool),
+		monitorClient:            NewMonitorClient(cfg.APIURL, cfg.APIToken),
+		enabledFeatures:          make(map[string]bool),
+		activeAutomationSubTab:   AutomationSubTabAutomations,
+		automationList:           NewAutomationList(),
+		goalAuditByEntry:         make(map[string][]types.GoalReconcileAudit),
+		goalDetailRaw:            make(map[string]string),
+		dreamViewer:              NewDreamViewer(),
+		entryTree:                NewEntryTree(),
+		runnerPanel:              NewRunnerPanel(),
+		taskPanelHeight:          settings.TaskPanelHeight,
+		bottomTopPanelHeight:     settings.BottomTopPanelHeight,
 	}
 
 	// Wire TextWrap setting to sub-models
@@ -609,7 +620,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig()), fetchAPIHealthCmd(m.apiRunnerConfig())}
 		// Always fetch runners for status bar metrics (data goes to both panel and status bar)
 		cmds = append(cmds, fetchRunnerListCmd(m.apiRunnerConfig()))
+		// Refresh the global server-request log while the Logs tab is active.
+		if m.activeContentTab == ContentTabLogs {
+			cmds = append(cmds, fetchServerRequestsCmd(m.apiRunnerConfig()))
+		}
+		// Refresh the scoped task's persisted logs while the logs pane is open.
+		if c := m.maybeFetchScopedLogs(); c != nil {
+			cmds = append(cmds, c)
+		}
 		return m, tea.Batch(cmds...)
+
+	case serverRequestsMsg:
+		if msg.err == nil {
+			m.serverRequests = msg.requests
+		}
+		return m, nil
+
+	case taskLogsLoadedMsg:
+		if msg.err == nil {
+			m.scopedTaskLogID = msg.taskID
+			m.scopedTaskLogs = msg.lines
+		}
+		return m, nil
 
 	case RunnerListMsg:
 		if msg.Err == nil {
@@ -1149,15 +1181,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case automationsPauseToggledMsg:
-		if msg.err != nil {
-			m.automationsPaused = !msg.paused
-			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation pause: %v", msg.err))
-		} else if msg.paused {
-			m.setStatusMessage("success", "Automations paused")
-			m.addLog("info", "Automations paused")
+		if msg.projectID == "" {
+			if msg.err != nil {
+				m.automationsPaused = !msg.paused
+				m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation pause: %v", msg.err))
+			} else if msg.paused {
+				m.setStatusMessage("success", "Automations paused")
+				m.addLog("info", "Automations paused")
+			} else {
+				m.setStatusMessage("success", "Automations resumed")
+				m.addLog("info", "Automations resumed")
+			}
 		} else {
-			m.setStatusMessage("success", "Automations resumed")
-			m.addLog("info", "Automations resumed")
+			if msg.err != nil {
+				m.automationPausedProjects[msg.projectID] = !msg.paused
+				m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation pause for %s: %v", msg.projectID, msg.err))
+			} else if msg.paused {
+				m.setStatusMessage("success", fmt.Sprintf("Automations paused for %s", msg.projectID))
+				m.addLog("info", fmt.Sprintf("Automations paused for %s", msg.projectID))
+			} else {
+				m.setStatusMessage("success", fmt.Sprintf("Automations resumed for %s", msg.projectID))
+				m.addLog("info", fmt.Sprintf("Automations resumed for %s", msg.projectID))
+			}
 		}
 		m.syncHelpBarPauseState()
 		return m, nil
@@ -1169,6 +1214,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.runnerController != nil {
 				m.allPaused = m.runnerController.IsAllPaused()
 				m.automationsPaused = m.runnerController.IsAutomationsPaused()
+				m.automationPausedProjects = make(map[string]bool)
+				for _, proj := range m.config.Projects {
+					if m.runnerController.IsAutomationsPausedForProject(proj) && !m.runnerController.IsAutomationsPaused() {
+						m.automationPausedProjects[proj] = true
+					}
+				}
 				// Per-project pause state from the embedded runner
 				m.pausedProjects = make(map[string]bool)
 				for _, proj := range m.config.Projects {
@@ -1179,6 +1230,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.allPaused = msg.paused
 				m.automationsPaused = msg.automationsPaused
+				m.automationPausedProjects = make(map[string]bool)
+				for _, id := range msg.automationPausedProjects {
+					m.automationPausedProjects[id] = true
+				}
 				m.pausedProjects = make(map[string]bool)
 				for _, id := range msg.pausedProjects {
 					m.pausedProjects[id] = true
@@ -1332,13 +1387,18 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Configurable keybindings (checked via key.Matches before hardcoded switch).
-	// In multi-project mode, plain 'l' still means next project tab; 'z' toggles logs.
+	// h/l navigate content tabs; H/L (shift) switch projects in multi-project
+	// mode. The guard keeps a custom logs binding from shadowing project nav.
 	if key.Matches(msg, m.keymap.ToggleLogs) && !(m.config.IsMultiProject() && key.Matches(msg, m.keymap.NextTab)) {
 		m.logsVisible = !m.logsVisible
 		if !m.logsVisible && m.activePanel == PanelLogs {
 			m.activePanel = PanelTasks
 		}
 		m.syncPanelSizes()
+		if m.logsVisible {
+			// Load the scoped task's persisted logs immediately.
+			return m, m.maybeFetchScopedLogs()
+		}
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.ToggleDetail) {
@@ -1372,7 +1432,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelLogs
 			m.helpBar.ActivePanel = m.activePanel
 			m.syncPanelSizes()
-			return m, nil
+			return m, fetchServerRequestsCmd(m.apiRunnerConfig())
 		}
 		if m.activeContentTab == ContentTabBrain {
 			m.activePanel = PanelTasks
@@ -1403,7 +1463,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelLogs
 			m.helpBar.ActivePanel = m.activePanel
 			m.syncPanelSizes()
-			return m, nil
+			return m, fetchServerRequestsCmd(m.apiRunnerConfig())
 		}
 		if m.activeContentTab == ContentTabBrain {
 			m.activePanel = PanelTasks
@@ -1547,13 +1607,14 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
-		// Multi-project tab navigation
+		// Multi-project tab navigation: H/L (shift) switch projects, leaving
+		// h/l for content-tab navigation (handled above via the keymap).
 		if m.config.IsMultiProject() {
 			switch string(msg.Runes) {
-			case "h", "[":
+			case "H":
 				m.projectTabs.PrevTab()
 				return m.selectProject(m.projectTabs.ActiveProject())
-			case "l", "]":
+			case "L":
 				m.projectTabs.NextTab()
 				return m.selectProject(m.projectTabs.ActiveProject())
 			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
@@ -1630,15 +1691,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					return m, m.runSelectedAutomationRow()
 				case "p":
-					currentlyPaused := m.automationsPaused
-					m.automationsPaused = !currentlyPaused
-					if currentlyPaused {
-						m.setStatusMessage("info", "Resuming automations...")
-					} else {
-						m.setStatusMessage("info", "Pausing automations...")
-					}
-					m.syncHelpBarPauseState()
-					return m, pauseAutomationsCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+					cmd := m.toggleAutomationPauseForActiveScope()
+					return m, cmd
 				case "q":
 					m.sseClient.Stop()
 					return m, tea.Quit
@@ -2280,15 +2334,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case "p":
 			if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
-				currentlyPaused := m.automationsPaused
-				m.automationsPaused = !currentlyPaused
-				if currentlyPaused {
-					m.setStatusMessage("info", "Resuming automations...")
-				} else {
-					m.setStatusMessage("info", "Pausing automations...")
-				}
-				m.syncHelpBarPauseState()
-				return m, pauseAutomationsCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+				cmd := m.toggleAutomationPauseForActiveScope()
+				return m, cmd
 			}
 			// Pause/resume active project.
 			// In single-project mode, if allPaused is true (startup default),
@@ -2341,15 +2388,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "P":
-			// Pause/resume all projects
-			m.allPaused = !m.allPaused
-			if m.allPaused {
-				m.setStatusMessage("info", "Pausing all projects...")
-			} else {
-				m.setStatusMessage("info", "Resuming all projects...")
-			}
-			m.syncHelpBarPauseState()
-			return m, pauseAllCmd(m.apiRunnerConfig(), !m.allPaused, m.runnerController)
+			cmd := m.toggleTaskPauseForActiveScope()
+			return m, cmd
 		}
 
 	case tea.KeyUp:
@@ -2787,7 +2827,7 @@ func (m Model) handleContentTabClick(x int) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelLogs
 			m.helpBar.ActivePanel = m.activePanel
 			m.syncPanelSizes()
-			return m, nil
+			return m, fetchServerRequestsCmd(m.apiRunnerConfig())
 		}
 		if m.activeContentTab == ContentTabBrain {
 			m.activePanel = PanelTasks
@@ -4053,6 +4093,60 @@ func (m Model) editSelectedBrainEntry() (tea.Model, tea.Cmd) {
 	})
 }
 
+func (m *Model) toggleTaskPauseForActiveScope() tea.Cmd {
+	projectID := m.activeProjectID
+	if projectID == "all" {
+		currentlyPaused := m.allPaused
+		m.allPaused = !currentlyPaused
+		if m.allPaused {
+			m.setStatusMessage("info", "Pausing all projects...")
+		} else {
+			m.setStatusMessage("info", "Resuming all projects...")
+		}
+		m.syncHelpBarPauseState()
+		return pauseAllCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+	}
+	if projectID == "" {
+		projectID = m.config.Project
+	}
+	currentlyPaused := m.pausedProjects[projectID]
+	m.pausedProjects[projectID] = !currentlyPaused
+	if currentlyPaused {
+		m.setStatusMessage("info", fmt.Sprintf("Resuming project %s...", projectID))
+	} else {
+		m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
+	}
+	m.syncHelpBarPauseState()
+	return pauseProjectCmd(m.apiRunnerConfig(), projectID, currentlyPaused, m.runnerController)
+}
+
+func (m *Model) toggleAutomationPauseForActiveScope() tea.Cmd {
+	projectID := m.activeProjectID
+	if projectID == "all" {
+		currentlyPaused := m.automationsPaused
+		m.automationsPaused = !currentlyPaused
+		if currentlyPaused {
+			m.setStatusMessage("info", "Resuming automations...")
+		} else {
+			m.setStatusMessage("info", "Pausing automations...")
+		}
+		m.syncHelpBarPauseState()
+		return pauseAutomationsCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+	}
+	if projectID == "" {
+		projectID = m.config.Project
+	}
+	currentlyPaused := m.automationPausedProjects[projectID]
+	m.automationPausedProjects[projectID] = !currentlyPaused
+	if currentlyPaused {
+		m.setStatusMessage("info", fmt.Sprintf("Resuming automations for %s...", projectID))
+	} else {
+		m.setStatusMessage("info", fmt.Sprintf("Pausing automations for %s...", projectID))
+	}
+	m.syncHelpBarPauseState()
+	return pauseProjectAutomationsCmd(m.apiRunnerConfig(), projectID, currentlyPaused, m.runnerController)
+}
+
 // syncHelpBarSessionState updates the help bar's HasTaskSessions field based on current selection.
 func (m *Model) syncHelpBarSessionState() {
 	selectedTask := m.taskTree.SelectedTask()
@@ -4064,7 +4158,11 @@ func (m *Model) syncHelpBarPauseState() {
 	m.helpBar.AllPaused = m.allPaused
 	// Determine active project ID for pause check
 	projectID := m.activeProjectID
-	if projectID == "" || projectID == "all" {
+	if projectID == "all" {
+		m.helpBar.IsPaused = m.allPaused
+		return
+	}
+	if projectID == "" {
 		projectID = m.config.Project
 	}
 	m.helpBar.IsPaused = m.pausedProjects[projectID]
@@ -4153,7 +4251,15 @@ func (m Model) renderBaseView() string {
 
 	// Wire pause state to status bar
 	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
-		m.statusBar.IsPaused = m.automationsPaused
+		projectID := m.activeProjectID
+		if projectID == "all" {
+			m.statusBar.IsPaused = m.automationsPaused
+		} else {
+			if projectID == "" {
+				projectID = m.config.Project
+			}
+			m.statusBar.IsPaused = m.automationPausedProjects[projectID]
+		}
 	} else {
 		projectID := m.activeProjectID
 		if projectID == "" || projectID == "all" {
@@ -4343,12 +4449,14 @@ func (m Model) renderBaseView() string {
 			Render(runnerView)
 		mainContent = runnerPanel
 	} else if m.activeContentTab == ContentTabLogs {
-		// Logs tab: global full-height log stream.
-		mainContent = m.renderLogPanel(m.width, mainHeight)
+		// Logs tab: global server-request log (all HTTP traffic in/out of the
+		// Brain server, by actor). Per-task output lives in the Logs pane (z).
+		mainContent = m.renderServerRequestsPanel(m.width, mainHeight)
 	} else if m.activeContentTab == ContentTabBrain {
 		// Brain tab: project entry tree for understanding stored memory.
+		brainBottom := m.detailVisible || m.logsVisible
 		entryOuterHeight := mainHeight
-		if m.detailVisible {
+		if brainBottom {
 			entryOuterHeight = topHeight
 		}
 		entryHeight := entryOuterHeight - 2
@@ -4369,7 +4477,7 @@ func (m Model) renderBaseView() string {
 			Height(entryHeight).
 			MaxHeight(entryOuterHeight).
 			Render(entryView)
-		if m.detailVisible {
+		if brainBottom {
 			bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 			mainContent = lipgloss.JoinVertical(lipgloss.Left, entryPanel, bottomPanel)
 		} else {
@@ -4377,8 +4485,9 @@ func (m Model) renderBaseView() string {
 		}
 	} else if m.activeContentTab == ContentTabAutomation {
 		// Automation tab: full-width automation list or Dream subtab.
+		autoBottom := (m.detailVisible || m.logsVisible) && m.activeAutomationSubTab == AutomationSubTabAutomations
 		contentOuterHeight := mainHeight
-		if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		if autoBottom {
 			contentOuterHeight = topHeight
 		}
 		contentHeight := contentOuterHeight - 2
@@ -4400,7 +4509,7 @@ func (m Model) renderBaseView() string {
 			Height(contentHeight).
 			MaxHeight(contentOuterHeight).
 			Render(content)
-		if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		if autoBottom {
 			bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 			mainContent = lipgloss.JoinVertical(lipgloss.Left, automationPanel, bottomPanel)
 		} else {
@@ -4517,6 +4626,166 @@ func (m Model) renderDetailPanel(width, height int) string {
 		Render(content)
 }
 
+// automationLogTaskID returns the task id whose logs the Automations logs pane
+// should show: the highlighted run-task within an expanded row, else the
+// selected automation's latest run task.
+func (m Model) automationLogTaskID() string {
+	if id := m.automationList.SelectedRunTaskID(); id != "" {
+		return id
+	}
+	if row := m.automationList.SelectedRow(); row != nil {
+		return row.RunTaskID
+	}
+	return ""
+}
+
+// scopedLogTarget returns the (projectID, taskID) whose persisted logs the logs
+// pane should display for the active tab, or ("","") when the pane isn't scoped
+// to a specific task.
+func (m Model) scopedLogTarget() (string, string) {
+	switch m.activeContentTab {
+	case ContentTabBrain:
+		if e := m.entryTree.SelectedEntry(); e != nil && e.Type == "task" {
+			return e.ProjectID, e.ID
+		}
+	case ContentTabAutomation:
+		if taskID := m.automationLogTaskID(); taskID != "" {
+			if t := m.automationList.RunTaskByID(taskID); t != nil {
+				return t.ProjectID, t.ID
+			}
+			return m.activeAutomationProject(), taskID
+		}
+	case ContentTabTasks:
+		if m.filterLogsByTask {
+			if t := m.taskTree.SelectedTask(); t != nil {
+				return t.ProjectID, t.ID
+			}
+		}
+	}
+	return "", ""
+}
+
+// taskLogsLoadedMsg carries persisted logs for a scoped task.
+type taskLogsLoadedMsg struct {
+	taskID string
+	lines  []types.LogLine
+	err    error
+}
+
+// fetchTaskLogsCmd fetches a task's persisted logs for the scoped logs pane.
+func fetchTaskLogsCmd(cfg runner.RunnerConfig, projectID, taskID string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		resp, err := apiClient.GetTaskLogs(context.Background(), projectID, taskID, 500)
+		if err != nil {
+			return taskLogsLoadedMsg{taskID: taskID, err: err}
+		}
+		return taskLogsLoadedMsg{taskID: taskID, lines: resp.Lines}
+	}
+}
+
+// maybeFetchScopedLogs returns a command to refresh the scoped task's persisted
+// logs when the logs pane is visible and scoped to a task.
+func (m Model) maybeFetchScopedLogs() tea.Cmd {
+	if !m.logsVisible {
+		return nil
+	}
+	projectID, taskID := m.scopedLogTarget()
+	if taskID == "" || projectID == "" {
+		return nil
+	}
+	return fetchTaskLogsCmd(m.apiRunnerConfig(), projectID, taskID)
+}
+
+// renderServerRequestsPanel renders the global server-request log (Logs tab):
+// every HTTP request the Brain server handled, with actor, method, status, and
+// duration. Newest at the bottom.
+func (m Model) renderServerRequestsPanel(width, height int) string {
+	style := InactiveBorder
+	if m.activePanel == PanelLogs {
+		style = ActiveBorder
+	}
+	innerWidth := width - 4
+	innerHeight := height - 2
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+
+	var b strings.Builder
+	reqs := m.serverRequests
+	if len(reqs) == 0 {
+		b.WriteString(DimStyle.Render("No requests yet — traffic from runners, clients, and browsers appears here."))
+	} else {
+		// Show the newest rows that fit.
+		start := 0
+		if len(reqs) > innerHeight {
+			start = len(reqs) - innerHeight
+		}
+		for i := start; i < len(reqs); i++ {
+			b.WriteString(formatServerRequestLine(reqs[i], innerWidth))
+			if i < len(reqs)-1 {
+				b.WriteString("\n")
+			}
+		}
+	}
+
+	content := truncateToHeight(b.String(), innerHeight)
+	return style.
+		Width(width - 2).
+		Height(innerHeight).
+		MaxHeight(height).
+		Render(content)
+}
+
+// formatServerRequestLine renders one server-request row: time, actor, method,
+// status, duration, path.
+func formatServerRequestLine(r types.ServerRequestRecord, width int) string {
+	ts := time.UnixMilli(r.Time).Format("15:04:05")
+	actor := r.ActorName
+	if actor == "" {
+		if r.ActorType != "" && r.ActorType != "anonymous" {
+			actor = r.ActorType
+		} else {
+			actor = "anon"
+		}
+	}
+	if len(actor) > 14 {
+		actor = actor[:14]
+	}
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(serverStatusColor(r.Status)))
+	// Only the variable-length path is truncated (plain text, ANSI-safe); the
+	// fixed-width styled prefix is ~45 visible columns.
+	pathWidth := width - 45
+	if pathWidth < 5 {
+		pathWidth = 5
+	}
+	path := truncateMsg(r.Path, pathWidth)
+	return fmt.Sprintf("%s  %-14s %-6s %s %5dms  %s",
+		DimStyle.Render(ts),
+		actor,
+		r.Method,
+		statusStyle.Render(fmt.Sprintf("%3d", r.Status)),
+		r.DurationMs,
+		path,
+	)
+}
+
+func serverStatusColor(status int) string {
+	switch {
+	case status >= 500:
+		return "9" // red
+	case status >= 400:
+		return "11" // yellow
+	case status >= 300:
+		return "14" // cyan
+	default:
+		return "10" // green
+	}
+}
+
 // renderLogPanel renders the log viewer panel with border.
 // height is the total outer height including borders.
 func (m Model) renderLogPanel(width, height int) string {
@@ -4535,35 +4804,71 @@ func (m Model) renderLogPanel(width, height int) string {
 		innerHeight = 1
 	}
 
-	// Temporarily set size for rendering
-	lv := m.logViewer
-	lv.SetSize(innerWidth, innerHeight)
-
-	// Wire log filtering by selected task
-	if m.filterLogsByTask {
-		selectedTask := m.taskTree.SelectedTask()
-		if selectedTask != nil {
-			lv.IsFiltering = true
-			lv.FilterTaskID = selectedTask.ID
-		} else {
-			lv.IsFiltering = false
-			lv.FilterTaskID = ""
-		}
-	} else {
-		lv.IsFiltering = false
-		lv.FilterTaskID = ""
+	render := func(content string) string {
+		return style.
+			Width(width - 2).
+			Height(innerHeight).
+			MaxHeight(height).
+			Render(truncateToHeight(content, innerHeight))
 	}
 
-	content := lv.View()
+	// When the pane is scoped to a specific task (Brain/Automations, or a
+	// filtered Tasks view), render that task's PERSISTED logs (historical +
+	// current) fetched from the API — so completed tasks show their stored
+	// output, matching the PWA. Otherwise fall back to the live SSE stream.
+	_, scopedTaskID := m.scopedLogTarget()
+	if scopedTaskID != "" {
+		if m.scopedTaskLogID != scopedTaskID {
+			return render(DimStyle.Render("Loading logs…"))
+		}
+		if len(m.scopedTaskLogs) == 0 {
+			return render(DimStyle.Render("No logs for this task."))
+		}
+		return render(renderTaskLogLines(m.scopedTaskLogs, innerWidth, innerHeight))
+	}
+	// Scoped tab but nothing selected (e.g. a non-task Brain entry).
+	if m.activeContentTab == ContentTabBrain || m.activeContentTab == ContentTabAutomation {
+		return render(DimStyle.Render("No logs — highlight a task to see its output."))
+	}
 
-	// Truncate content to fit within allocated height
-	content = truncateToHeight(content, innerHeight)
+	// Live SSE stream (Tasks tab, all output).
+	lv := m.logViewer
+	lv.SetSize(innerWidth, innerHeight)
+	lv.IsFiltering = false
+	lv.FilterTaskID = ""
+	return render(lv.View())
+}
 
-	return style.
-		Width(width - 2).
-		Height(innerHeight).
-		MaxHeight(height).
-		Render(content)
+// renderTaskLogLines formats persisted task log lines, newest that fit, with a
+// dim timestamp and level prefix; only the content is truncated (ANSI-safe).
+func renderTaskLogLines(lines []types.LogLine, width, height int) string {
+	start := 0
+	if len(lines) > height {
+		start = len(lines) - height
+	}
+	contentWidth := width - 15
+	if contentWidth < 5 {
+		contentWidth = 5
+	}
+	var b strings.Builder
+	for i := start; i < len(lines); i++ {
+		l := lines[i]
+		ts := l.Timestamp
+		if t, err := time.Parse(time.RFC3339, l.Timestamp); err == nil {
+			ts = t.Format("15:04:05")
+		} else if len(ts) > 8 {
+			ts = ts[:8]
+		}
+		level := strings.ToUpper(l.Level)
+		if len(level) > 5 {
+			level = level[:5]
+		}
+		b.WriteString(fmt.Sprintf("%s %-5s %s", DimStyle.Render(ts), level, truncateMsg(l.Content, contentWidth)))
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }
 
 // =============================================================================
@@ -4983,7 +5288,7 @@ func (m *Model) toggleSelectedAutomationRow() tea.Cmd {
 	if row == nil {
 		return nil
 	}
-	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row)
+	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row, m.activeAutomationProject())
 }
 
 func (m *Model) runSelectedAutomationRow() tea.Cmd {
@@ -5499,15 +5804,17 @@ type pauseAllToggledMsg struct {
 }
 
 type automationsPauseToggledMsg struct {
-	paused bool
-	err    error
+	projectID string
+	paused    bool
+	err       error
 }
 
 type runnerStatusMsg struct {
-	paused            bool
-	pausedProjects    []string
-	automationsPaused bool
-	err               error
+	paused                   bool
+	pausedProjects           []string
+	automationsPaused        bool
+	automationPausedProjects []string
+	err                      error
 }
 
 type apiHealthMsg struct {
@@ -5591,7 +5898,7 @@ func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 			if err != nil {
 				return AutomationDataMsg{Error: fmt.Errorf("fetch global automation entries: %w", err)}
 			}
-			automations.Entries = appendUniqueAutomationEntries(globalAutomations.Entries, automations.Entries)
+			automations.Entries = appendUniqueAutomationEntries(projectDisabledAutomationTemplates(globalAutomations.Entries), automations.Entries)
 		}
 		tasks, err := apiClient.ListEntries(ctx, taskParams)
 		if err != nil {
@@ -5632,28 +5939,57 @@ func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 	}
 }
 
+func projectDisabledAutomationTemplates(entries []types.BrainEntry) []types.BrainEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	templates := make([]types.BrainEntry, len(entries))
+	copy(templates, entries)
+	for i := range templates {
+		if templates[i].ProjectID == "" && strings.HasPrefix(templates[i].Path, "global/") {
+			templates[i].Status = "archived"
+		}
+	}
+	return templates
+}
+
 func appendUniqueAutomationEntries(first, second []types.BrainEntry) []types.BrainEntry {
 	entries := make([]types.BrainEntry, 0, len(first)+len(second))
-	seen := make(map[string]struct{}, len(first)+len(second))
+	indexByKey := make(map[string]int, len(first)+len(second))
 	for _, group := range [][]types.BrainEntry{first, second} {
 		for _, entry := range group {
-			key := entry.Path
+			key := automationTemplateKey(entry)
 			if key == "" {
-				key = entry.ID
+				entries = append(entries, entry)
+				continue
 			}
-			if key != "" {
-				if _, ok := seen[key]; ok {
-					continue
+			if idx, ok := indexByKey[key]; ok {
+				if entry.ProjectID != "" || strings.HasPrefix(entry.Path, "projects/") {
+					entries[idx] = entry
 				}
-				seen[key] = struct{}{}
+				continue
 			}
+			indexByKey[key] = len(entries)
 			entries = append(entries, entry)
 		}
 	}
 	return entries
 }
 
-func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd {
+func automationTemplateKey(entry types.BrainEntry) string {
+	if entry.GeneratedBy != "" {
+		return "generated:" + entry.GeneratedBy
+	}
+	if entry.Title != "" {
+		return "title:" + strings.ToLower(strings.TrimSpace(entry.Title))
+	}
+	if entry.Path != "" {
+		return "path:" + entry.Path
+	}
+	return entry.ID
+}
+
+func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeProject string) tea.Cmd {
 	return func() tea.Msg {
 		path := row.Path
 		if path == "" {
@@ -5663,12 +5999,63 @@ func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.
 			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("automation row has no path or id")}
 		}
 
+		apiClient := runner.NewAPIClient(cfg)
 		updates := map[string]interface{}{}
 		switch row.Source {
 		case "automation":
 			newStatus := "active"
 			if row.Enabled || row.Status == "active" {
 				newStatus = "archived"
+			}
+			if row.Scope == "global" || row.Scope == "built-in" || strings.HasPrefix(path, "global/") {
+				if activeProject == "" || activeProject == "all" {
+					return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("built-in automation toggle requires an active project")}
+				}
+				existing, err := apiClient.ListEntries(context.Background(), map[string]string{"type": "automation", "project": activeProject})
+				if err != nil {
+					return AutomationToggleMsg{RowID: row.ID, Error: err}
+				}
+				rowEntry := types.BrainEntry{ID: row.ID, Path: row.Path, Title: row.Title, Status: row.Status}
+				rowKey := automationTemplateKey(rowEntry)
+				for _, entry := range existing.Entries {
+					if automationTemplateKey(entry) == rowKey {
+						_, err := apiClient.UpdateEntry(context.Background(), entry.Path, map[string]interface{}{"status": newStatus})
+						return AutomationToggleMsg{RowID: row.ID, Error: err}
+					}
+				}
+				template, err := apiClient.GetEntry(context.Background(), path)
+				if err != nil {
+					return AutomationToggleMsg{RowID: row.ID, Error: err}
+				}
+				generated := true
+				_, err = apiClient.CreateEntry(context.Background(), types.CreateEntryRequest{
+					Type:               "automation",
+					Title:              template.Title,
+					Content:            template.Content,
+					Tags:               template.Tags,
+					Status:             newStatus,
+					Priority:           template.Priority,
+					Project:            activeProject,
+					Trigger:            template.Trigger,
+					Action:             template.Action,
+					Retry:              template.Retry,
+					DirectPrompt:       template.DirectPrompt,
+					Agent:              template.Agent,
+					Model:              template.Model,
+					Executor:           template.Executor,
+					ExecutionMode:      template.ExecutionMode,
+					SessionMode:        template.SessionMode,
+					CompleteOnIdle:     template.CompleteOnIdle,
+					TargetWorkdir:      template.TargetWorkdir,
+					MergeTargetBranch:  template.MergeTargetBranch,
+					MergePolicy:        template.MergePolicy,
+					MergeStrategy:      template.MergeStrategy,
+					RemoteBranchPolicy: template.RemoteBranchPolicy,
+					OpenPRBeforeMerge:  template.OpenPRBeforeMerge,
+					Generated:          &generated,
+					GeneratedBy:        template.GeneratedBy,
+				})
+				return AutomationToggleMsg{RowID: row.ID, Error: err}
 			}
 			updates["status"] = newStatus
 		case "task":
@@ -5677,7 +6064,6 @@ func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.
 			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("unknown automation row source %q", row.Source)}
 		}
 
-		apiClient := runner.NewAPIClient(cfg)
 		_, err := apiClient.UpdateEntry(context.Background(), path, updates)
 		return AutomationToggleMsg{RowID: row.ID, Error: err}
 	}
@@ -6109,6 +6495,29 @@ func pauseAutomationsCmd(cfg runner.RunnerConfig, currentlyPaused bool, rc Runne
 	}
 }
 
+// pauseProjectAutomationsCmd toggles pause/resume for automation-generated tasks in one project.
+func pauseProjectAutomationsCmd(cfg runner.RunnerConfig, projectID string, currentlyPaused bool, rc RunnerController) tea.Cmd {
+	return func() tea.Msg {
+		if rc != nil {
+			if currentlyPaused {
+				rc.ResumeProjectAutomations(projectID)
+			} else {
+				rc.PauseProjectAutomations(projectID)
+			}
+			return automationsPauseToggledMsg{projectID: projectID, paused: !currentlyPaused, err: nil}
+		}
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		var err error
+		if currentlyPaused {
+			err = apiClient.ResumeProjectAutomations(ctx, projectID)
+		} else {
+			err = apiClient.PauseProjectAutomations(ctx, projectID)
+		}
+		return automationsPauseToggledMsg{projectID: projectID, paused: !currentlyPaused, err: err}
+	}
+}
+
 // fetchRunnerStatusCmd fetches the current runner status (pause state).
 func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 	return func() tea.Msg {
@@ -6119,7 +6528,25 @@ func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 		if err != nil {
 			return runnerStatusMsg{err: err}
 		}
-		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects, automationsPaused: status.AutomationsPaused}
+		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects, automationsPaused: status.AutomationsPaused, automationPausedProjects: status.AutomationPausedProjects}
+	}
+}
+
+// serverRequestsMsg carries the global server-request log.
+type serverRequestsMsg struct {
+	requests []types.ServerRequestRecord
+	err      error
+}
+
+// fetchServerRequestsCmd fetches the recent server-request log for the Logs tab.
+func fetchServerRequestsCmd(cfg runner.RunnerConfig) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		resp, err := apiClient.GetServerRequests(context.Background(), 800)
+		if err != nil {
+			return serverRequestsMsg{err: err}
+		}
+		return serverRequestsMsg{requests: resp.Requests}
 	}
 }
 

@@ -28,6 +28,12 @@ type mockRunnerRegistryService struct {
 	getRunnerFunc      func(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
 	updateConfigFunc   func(ctx context.Context, runnerID string, maxParallel int) error
 	updateAffinityFunc func(ctx context.Context, runnerID string, featureIDs []string) error
+
+	upsertInstanceFunc   func(ctx context.Context, runnerID string, inst types.OpencodeInstance) error
+	deleteInstanceFunc   func(ctx context.Context, runnerID, instanceID string) error
+	getInstanceFunc      func(ctx context.Context, runnerID, instanceID string) (*types.OpencodeInstance, error)
+	listInstancesFunc    func(ctx context.Context, runnerID string) (*types.InstanceListResponse, error)
+	listAllInstancesFunc func(ctx context.Context) (*types.InstanceListResponse, error)
 }
 
 func (m *mockRunnerRegistryService) Register(ctx context.Context, req types.RunnerRegistration) (*types.RunnerInfo, error) {
@@ -84,6 +90,41 @@ func (m *mockRunnerRegistryService) UpdateAffinity(ctx context.Context, runnerID
 	return nil
 }
 
+func (m *mockRunnerRegistryService) UpsertInstance(ctx context.Context, runnerID string, inst types.OpencodeInstance) error {
+	if m.upsertInstanceFunc != nil {
+		return m.upsertInstanceFunc(ctx, runnerID, inst)
+	}
+	return nil
+}
+
+func (m *mockRunnerRegistryService) DeleteInstance(ctx context.Context, runnerID, instanceID string) error {
+	if m.deleteInstanceFunc != nil {
+		return m.deleteInstanceFunc(ctx, runnerID, instanceID)
+	}
+	return nil
+}
+
+func (m *mockRunnerRegistryService) GetInstance(ctx context.Context, runnerID, instanceID string) (*types.OpencodeInstance, error) {
+	if m.getInstanceFunc != nil {
+		return m.getInstanceFunc(ctx, runnerID, instanceID)
+	}
+	return nil, ErrNotFound
+}
+
+func (m *mockRunnerRegistryService) ListInstances(ctx context.Context, runnerID string) (*types.InstanceListResponse, error) {
+	if m.listInstancesFunc != nil {
+		return m.listInstancesFunc(ctx, runnerID)
+	}
+	return &types.InstanceListResponse{Instances: []types.OpencodeInstance{}}, nil
+}
+
+func (m *mockRunnerRegistryService) ListAllInstances(ctx context.Context) (*types.InstanceListResponse, error) {
+	if m.listAllInstancesFunc != nil {
+		return m.listAllInstancesFunc(ctx)
+	}
+	return &types.InstanceListResponse{Instances: []types.OpencodeInstance{}}, nil
+}
+
 // =============================================================================
 // Test Helpers
 // =============================================================================
@@ -101,7 +142,11 @@ func newRunnerTestRouter(mock *mockRunnerRegistryService) *chi.Mux {
 		r.Put("/{runnerId}/resume", h.HandleResumeRunner)
 		r.Patch("/{runnerId}/config", h.HandleUpdateRunnerConfig)
 		r.Post("/{runnerId}/features/{featureId}/toggle", h.HandleToggleRunnerFeature)
+		r.Get("/{runnerId}/instances", h.HandleListRunnerInstances)
+		r.Put("/{runnerId}/instances/{instanceId}", h.HandleUpsertInstance)
+		r.Delete("/{runnerId}/instances/{instanceId}", h.HandleDeleteInstance)
 	})
+	r.Get("/instances", h.HandleListAllInstances)
 	return r
 }
 

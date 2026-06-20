@@ -33,6 +33,12 @@ export interface SessionInfo {
   timestamp: string;
   cron_id?: string;
   run_id?: string;
+  // Where the session lives — recorded at discovery so it can be re-opened
+  // after the task's live instance is gone.
+  runner_id?: string;
+  machine_id?: string;
+  hostname?: string;
+  workdir?: string;
 }
 
 export interface AttachmentReference {
@@ -40,9 +46,39 @@ export interface AttachmentReference {
   type?: string;
   path?: string;
   filename?: string;
+  content_type?: string;
+  size?: number;
+  sha256?: string;
+  metadata?: Record<string, string>;
+  download_url?: string;
+  text_url?: string;
+  role?: string;
+  caption?: string;
+  derived?: AttachmentDerived[];
+  derived_text?: AttachmentDerivedText;
   provider?: string;
   model?: string;
-  [k: string]: unknown;
+}
+
+export interface AttachmentDerived {
+  id: string;
+  kind: string;
+  content_type?: string;
+  size?: number;
+  storage_key?: string;
+  created?: string;
+}
+
+export interface AttachmentDerivedText {
+  id?: string;
+  kind?: string;
+  status: "pending" | "ready" | "failed" | "skipped" | string;
+  content_type?: string;
+  text?: string;
+  error?: string;
+  metadata?: Record<string, string>;
+  created?: string;
+  modified?: string;
 }
 
 /** ResolvedTask — the task object returned by the tasks endpoints + SSE. */
@@ -55,22 +91,33 @@ export interface Task {
   parent_id?: string;
   depends_on?: string[];
   created?: string;
+  modified?: string;
   projectId?: string;
 
   workdir?: string;
   git_branch?: string;
   execution_mode?: string;
+  merge_target_branch?: string;
   merge_policy?: string;
   merge_strategy?: string;
+  open_pr_before_merge?: boolean;
 
   feature_id?: string;
   feature_priority?: string;
   feature_depends_on?: string[];
+  feature_schedule?: string;
+  feature_starts_at?: string;
+  feature_expires_at?: string;
+  feature_run_once_at?: string;
+  feature_timezone?: string;
 
   schedule?: string;
   schedule_enabled?: boolean;
   next_run?: string;
   run_once_at?: string;
+  starts_at?: string;
+  expires_at?: string;
+  timezone?: string;
 
   user_original_request?: string;
   direct_prompt?: string;
@@ -88,6 +135,7 @@ export interface Task {
 
   generated?: boolean;
   generated_kind?: string;
+  generated_by?: string;
 
   // dependency resolution metadata
   resolved_deps?: string[];
@@ -125,6 +173,19 @@ export interface LogLine {
   content: string;
 }
 
+// A single HTTP request handled by the Brain server, for the global Logs tab.
+export interface ServerRequest {
+  seq: number;
+  time: number; // unix ms
+  method: string;
+  path: string;
+  status: number;
+  duration_ms: number;
+  actor_type: string; // "api_token" | "oauth" | "anonymous"
+  actor_name: string;
+  request_id?: string;
+}
+
 export interface LogQueryResponse {
   lines: LogLine[];
   total: number;
@@ -146,6 +207,8 @@ export interface RunnerInfo {
   last_heartbeat: string;
   status: "online" | "stale" | "offline";
   version?: string;
+  machine_id?: string;
+  bridge_connected?: boolean;
 }
 
 export interface FeatureAssignment {
@@ -160,11 +223,145 @@ export interface RunnerListResponse {
   total: number;
 }
 
+// ─── OpenCode instances (remote control) ─────────────────────────
+
+export type InstanceKind = "task" | "adhoc";
+export type InstanceStatus = "starting" | "idle" | "busy" | "exited";
+
+export interface OpencodeInstance {
+  instance_id: string;
+  runner_id: string;
+  hostname?: string;
+  kind: InstanceKind;
+  project_id?: string;
+  task_id?: string;
+  feature_id?: string;
+  priority?: string;
+  title?: string;
+  workdir?: string;
+  port?: number;
+  pid?: number;
+  session_ids?: string[];
+  status: InstanceStatus;
+  executor?: string;
+  agent?: string;
+  model?: string;
+  started_at?: number; // unix ms
+  last_seen?: number; // unix ms
+  // Live bridge decorations (present when the runner bridge is connected)
+  pending_permissions?: number;
+  bridge_connected?: boolean;
+}
+
+export interface InstanceListResponse {
+  instances: OpencodeInstance[];
+  total: number;
+}
+
+export interface SpawnInstanceSpec {
+  workdir: string;
+  agent?: string;
+  model?: string;
+  title?: string;
+}
+
+// ─── Remote control: OpenCode session/message shapes ─────────────
+// Mirrors the subset of OpenCode's API the chat UI renders. Extra fields
+// flow through untouched.
+
+export interface OcSession {
+  id: string;
+  title?: string;
+  slug?: string; // OpenCode's memorable auto-generated name (e.g. "hidden-engine")
+  version?: string;
+  time?: { created?: number; updated?: number };
+  [k: string]: unknown;
+}
+
+// sessionName returns OpenCode's friendly session name: the slug, falling back
+// to a meaningful title, then the raw id. OpenCode leaves `title` as the
+// default "New session - <timestamp>" until/unless it summarizes, so the slug
+// is the human-readable name shown in the OpenCode TUI.
+export function sessionName(s: OcSession): string {
+  if (s.slug) return s.slug;
+  if (s.title && !/^New session - /.test(s.title)) return s.title;
+  return s.id;
+}
+
+export interface OcMessageInfo {
+  id: string;
+  sessionID?: string;
+  role: "user" | "assistant" | string;
+  agent?: string;
+  time?: { created?: number; completed?: number };
+  error?: unknown;
+  [k: string]: unknown;
+}
+
+export interface OcPart {
+  id: string;
+  messageID?: string;
+  sessionID?: string;
+  type: string; // "text" | "reasoning" | "tool" | "step-start" | "step-finish" | ...
+  text?: string;
+  tool?: string;
+  callID?: string;
+  state?: {
+    status?: string; // "pending" | "running" | "completed" | "error"
+    title?: string;
+    input?: unknown;
+    output?: string;
+    error?: string;
+    [k: string]: unknown;
+  };
+  [k: string]: unknown;
+}
+
+export interface OcMessage {
+  info: OcMessageInfo;
+  parts: OcPart[];
+}
+
+export interface OcPermission {
+  id: string;
+  sessionID?: string;
+  messageID?: string;
+  title?: string;
+  type?: string;
+  pattern?: string;
+  metadata?: Record<string, unknown>;
+  [k: string]: unknown;
+}
+
+export interface OcEvent {
+  type: string;
+  properties?: Record<string, unknown> & {
+    info?: Record<string, unknown>;
+    part?: OcPart;
+    sessionID?: string;
+  };
+}
+
+export interface OcAgent {
+  name: string;
+  description?: string;
+  mode?: string;
+  [k: string]: unknown;
+}
+
+export interface OcProvider {
+  id: string;
+  name?: string;
+  models?: Record<string, { id?: string; name?: string }>;
+  [k: string]: unknown;
+}
+
 export interface RunnerStatusResponse {
   running: boolean;
   paused: boolean;
   pausedProjects: string[];
   automationsPaused: boolean;
+  automationPausedProjects: string[];
 }
 
 // ─── Brain entries ───────────────────────────────────────────────
@@ -187,7 +384,25 @@ export interface BrainEntry {
   modified?: string;
   agent?: string;
   model?: string;
+  // Automation / scheduling fields (present on type=automation and type=task).
+  generated_by?: string;
+  automation_run_id?: string;
+  trigger?: TriggerConfig;
+  schedule?: string;
+  schedule_enabled?: boolean;
+  run_once_at?: string;
+  // Present on a GET of a single automation entry (used to execute it) and on
+  // task entries (sessions discovered by the runner).
+  action?: AutomationAction;
+  executor?: string;
+  execution_mode?: string;
+  target_workdir?: string;
+  complete_on_idle?: boolean;
+  sessions?: Record<string, SessionInfo>;
 }
+
+// GoalGeneratedBy marks an automation entry as a goal automation.
+export const GOAL_GENERATED_BY = "brain-goal";
 
 export interface ListEntriesResponse {
   entries: BrainEntry[];
@@ -248,7 +463,10 @@ export interface AutomationAction {
 }
 
 export interface TriggerConfig {
+  type?: string; // "event" | "cron" | "webhook" | "session"
   event?: string;
+  schedule?: string;
+  webhook?: string;
   filter?: Record<string, unknown>;
   cooldown?: string;
   max_concurrent?: number;

@@ -31,23 +31,6 @@ func TestGetPluginFile_OpenCodeBrain(t *testing.T) {
 	}
 }
 
-// Test GetPluginFile can read opencode/brain-planning.ts
-func TestGetPluginFile_OpenCodeBrainPlanning(t *testing.T) {
-	content, err := GetPluginFile("opencode", "brain-planning.ts")
-	if err != nil {
-		t.Fatalf("GetPluginFile(opencode, brain-planning.ts) failed: %v", err)
-	}
-	if len(content) == 0 {
-		t.Error("GetPluginFile(opencode, brain-planning.ts) returned empty content")
-	}
-
-	// Check for expected content markers
-	text := string(content)
-	if !strings.Contains(text, "BrainPlanningPlugin") {
-		t.Error("brain-planning.ts missing expected BrainPlanningPlugin export")
-	}
-}
-
 // Test GetPluginFile returns error for missing file
 func TestGetPluginFile_NotFound(t *testing.T) {
 	_, err := GetPluginFile("opencode", "nonexistent.ts")
@@ -71,11 +54,10 @@ func TestListPluginFiles_OpenCode(t *testing.T) {
 		t.Fatalf("ListPluginFiles(opencode) failed: %v", err)
 	}
 
-	// Expected files
+	// Expected top-level files. Nested command/skill/agent assets are covered by recursive installer tests.
 	expectedFiles := map[string]bool{
-		"brain.ts":          true,
-		"brain-planning.ts": true,
-		"README.md":         true,
+		"brain.ts":  true,
+		"README.md": true,
 	}
 
 	if len(files) != len(expectedFiles) {

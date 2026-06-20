@@ -31,18 +31,21 @@ var (
 
 // Config holds all Brain API configuration.
 type Config struct {
-	BrainDir     string
-	Port         int
-	Host         string
-	EnableAuth   bool
-	CORSOrigin   string
-	LogLevel     string
-	OAuthPIN     string // Optional PIN for consent page protection
-	TaskDefaults TaskDefaultsConfig
-	Embedding    EmbeddingConfig
-	Attachments  AttachmentConfig
+	BrainDir        string
+	Port            int
+	Host            string
+	EnableAuth      bool
+	CORSOrigin      string
+	LogLevel        string
+	OAuthPIN        string // Optional PIN for consent page protection
+	JWTSecret       string // Optional HMAC secret for HS256 JWT bearer tokens
+	TaskDefaults    TaskDefaultsConfig
+	FeatureCheckout FeatureCheckoutConfig
+	Embedding       EmbeddingConfig
+	Attachments     AttachmentConfig
 
 	AttachmentExtraction AttachmentExtractionConfig
+	Assistant            AssistantConfig
 
 	// Rate limiting (0 = disabled)
 	RateLimitPerMinute int // Per-IP requests per minute (default: 100)
@@ -76,6 +79,7 @@ func Load() Config {
 		CORSOrigin: "*",
 		LogLevel:   "info",
 		OAuthPIN:   "",
+		JWTSecret:  "",
 	}
 
 	// Layer 2: Config file overrides
@@ -103,11 +107,16 @@ func Load() Config {
 		if s.OAuthPIN != "" {
 			cfg.OAuthPIN = s.OAuthPIN
 		}
+		if s.JWTSecret != "" {
+			cfg.JWTSecret = s.JWTSecret
+		}
 		// Thread task defaults from unified config
 		cfg.TaskDefaults = s.TaskDefaults
+		cfg.FeatureCheckout = s.FeatureCheckout
 		cfg.Embedding = s.Embedding
 		cfg.Attachments = s.Attachments
 		cfg.AttachmentExtraction = s.AttachmentExtraction
+		cfg.Assistant = s.Assistant
 	}
 
 	// Layer 3: Environment variable overrides (highest priority)
@@ -134,6 +143,16 @@ func Load() Config {
 	}
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.OAuthPIN = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_JWT_SECRET"); v != "" {
+		cfg.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_FEATURE_CHECKOUT_ENABLED"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.FeatureCheckout.Enabled = lower == "true" || lower == "1" || lower == "yes"
 	}
 	// Rate limiting env var overrides
 	if v := os.Getenv("RATE_LIMIT_PER_MINUTE"); v != "" {

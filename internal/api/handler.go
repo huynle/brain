@@ -19,9 +19,17 @@ type Handler struct {
 	events         EventService
 	webhooks       WebhookService
 	goalService    GoalService
+	assistant      *AssistantService
+	placement      ProjectPlacementService
+	scheduler      SchedulerService
+	schedulerViews SchedulerVisibilityService
+	bridge         BridgeService
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
 	taskDefaults   config.TaskDefaultsConfig
+	credentials    CredentialVerifier
+	passwordTokens PasswordTokenStore
+	loginThrottle  *loginThrottle
 }
 
 // HandlerOption configures a Handler.
@@ -29,11 +37,25 @@ type HandlerOption func(*Handler)
 
 // NewHandler creates a Handler with the given BrainService and optional services.
 func NewHandler(brain BrainService, opts ...HandlerOption) *Handler {
-	h := &Handler{brain: brain}
+	h := &Handler{brain: brain, loginThrottle: newLoginThrottle()}
 	for _, opt := range opts {
 		opt(h)
 	}
 	return h
+}
+
+// WithCredentialVerifier enables the password login flow with the given verifier.
+func WithCredentialVerifier(v CredentialVerifier) HandlerOption {
+	return func(h *Handler) {
+		h.credentials = v
+	}
+}
+
+// WithPasswordTokenStore sets the store used to issue/rotate password-login tokens.
+func WithPasswordTokenStore(s PasswordTokenStore) HandlerOption {
+	return func(h *Handler) {
+		h.passwordTokens = s
+	}
 }
 
 // WithTaskService sets the TaskService on the Handler.
@@ -99,6 +121,20 @@ func WithGoalService(gs GoalService) HandlerOption {
 	}
 }
 
+// WithAssistantService sets the built-in assistant service on the Handler.
+func WithAssistantService(as *AssistantService) HandlerOption {
+	return func(h *Handler) {
+		h.assistant = as
+	}
+}
+
+// WithBridgeService sets the runner BridgeService on the Handler.
+func WithBridgeService(b BridgeService) HandlerOption {
+	return func(h *Handler) {
+		h.bridge = b
+	}
+}
+
 // WithHub sets the realtime Hub on the Handler.
 func WithHub(hub *realtime.Hub) HandlerOption {
 	return func(h *Handler) {
@@ -110,5 +146,26 @@ func WithHub(hub *realtime.Hub) HandlerOption {
 func WithTaskDefaults(td config.TaskDefaultsConfig) HandlerOption {
 	return func(h *Handler) {
 		h.taskDefaults = td
+	}
+}
+
+// WithProjectPlacementService sets the project placement service on the Handler.
+func WithProjectPlacementService(ps ProjectPlacementService) HandlerOption {
+	return func(h *Handler) {
+		h.placement = ps
+	}
+}
+
+// WithSchedulerService sets the scheduler service on the Handler.
+func WithSchedulerService(s SchedulerService) HandlerOption {
+	return func(h *Handler) {
+		h.scheduler = s
+	}
+}
+
+// WithSchedulerVisibilityService sets the scheduler visibility service on the Handler.
+func WithSchedulerVisibilityService(s SchedulerVisibilityService) HandlerOption {
+	return func(h *Handler) {
+		h.schedulerViews = s
 	}
 }

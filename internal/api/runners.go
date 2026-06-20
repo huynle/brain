@@ -14,6 +14,16 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+// decorateInstances merges live bridge state (pending permission counts,
+// connection-derived status) into instance records before they are returned.
+// No-op when the bridge hub is not wired.
+func (h *Handler) decorateInstances(instances []types.OpencodeInstance) {
+	if h.bridge == nil {
+		return
+	}
+	h.bridge.DecorateInstances(instances)
+}
+
 // HandleRegisterRunner handles POST /runners/register — register a new runner.
 func (h *Handler) HandleRegisterRunner(w http.ResponseWriter, r *http.Request) {
 	var req types.RunnerRegistration
@@ -139,6 +149,14 @@ func (h *Handler) HandleListRunners(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
+	}
+	// Decorate with live bridge connectivity so callers can tell which runners
+	// can actually serve remote-control requests right now (distinct from the
+	// heartbeat-derived online/stale status).
+	if h.bridge != nil {
+		for i := range resp.Runners {
+			resp.Runners[i].BridgeConnected = h.bridge.Connected(resp.Runners[i].RunnerID)
+		}
 	}
 	WriteJSON(w, http.StatusOK, resp)
 }
@@ -320,7 +338,7 @@ func (h *Handler) HandleUpdateRunnerConfig(w http.ResponseWriter, r *http.Reques
 
 	// Push config change to runner via SSE command channel
 	if h.hub != nil {
-		h.hub.PublishRunnerCommand(runnerID, "config_update", map[string]interface{}{
+		h.hub.PublishRunnerCommand(runnerID, "config_updated", map[string]interface{}{
 			"maxParallel": req.MaxParallel,
 		})
 	}
@@ -421,6 +439,86 @@ func (h *Handler) HandleShutdownRunner(w http.ResponseWriter, r *http.Request) {
 		"action":   "shutdown",
 		"success":  true,
 	})
+}
+
+// HandleRunnerBridge handles GET /runners/{runnerId}/bridge — upgrades to the
+// runner's WebSocket bridge connection (runner-scoped auth).
+func (h *Handler) HandleRunnerBridge(w http.ResponseWriter, r *http.Request) {
+	if h.bridge == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "bridge not available")
+		return
+	}
+	runnerID := chi.URLParam(r, "runnerId")
+	h.bridge.ServeBridge(w, r, runnerID)
+}
+
+// HandleUpsertInstance handles PUT /runners/{runnerId}/instances/{instanceId}
+// — runner-scoped upsert of an OpenCode instance record.
+func (h *Handler) HandleUpsertInstance(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	instanceID := chi.URLParam(r, "instanceId")
+
+	var inst types.OpencodeInstance
+	if err := json.NewDecoder(r.Body).Decode(&inst); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	inst.InstanceID = instanceID
+	inst.RunnerID = runnerID
+
+	if err := h.runnerRegistry.UpsertInstance(r.Context(), runnerID, inst); err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"success":  true,
+		"instance": inst,
+	})
+}
+
+// HandleDeleteInstance handles DELETE /runners/{runnerId}/instances/{instanceId}
+// — runner-scoped removal of an OpenCode instance record.
+func (h *Handler) HandleDeleteInstance(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	instanceID := chi.URLParam(r, "instanceId")
+
+	if err := h.runnerRegistry.DeleteInstance(r.Context(), runnerID, instanceID); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "instance not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
+}
+
+// HandleListRunnerInstances handles GET /runners/{runnerId}/instances — list
+// OpenCode instances reported by one runner.
+func (h *Handler) HandleListRunnerInstances(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+
+	resp, err := h.runnerRegistry.ListInstances(r.Context(), runnerID)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	h.decorateInstances(resp.Instances)
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleListAllInstances handles GET /instances — list OpenCode instances
+// across all runners (PWA overview).
+func (h *Handler) HandleListAllInstances(w http.ResponseWriter, r *http.Request) {
+	resp, err := h.runnerRegistry.ListAllInstances(r.Context())
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	h.decorateInstances(resp.Instances)
+	WriteJSON(w, http.StatusOK, resp)
 }
 
 // HandleToggleRunnerFeature handles POST /runners/{runnerId}/features/{featureId}/toggle

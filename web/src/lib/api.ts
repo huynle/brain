@@ -11,7 +11,15 @@ import type {
   GoalListResponse,
   GoalProgressResponse,
   Health,
+  InstanceListResponse,
   ListEntriesResponse,
+  OcAgent,
+  OcMessage,
+  OcPermission,
+  OcProvider,
+  OcSession,
+  OpencodeInstance,
+  SpawnInstanceSpec,
   ProjectListResponse,
   RunnerListResponse,
   RunnerStatusResponse,
@@ -35,6 +43,8 @@ export class ApiError extends Error {
 interface FetchOpts {
   method?: string;
   body?: unknown;
+  rawBody?: string; // send this string verbatim (no JSON encoding)
+  headers?: Record<string, string>; // extra request headers (e.g. Accept)
   query?: Record<string, string | number | boolean | undefined>;
   signal?: AbortSignal;
   raw?: boolean; // return Response instead of parsed JSON
@@ -55,10 +65,13 @@ function buildUrl(path: string, query?: FetchOpts["query"]): string {
 
 async function doFetch(path: string, opts: FetchOpts): Promise<Response> {
   const auth = useAuth.getState();
-  const headers: Record<string, string> = { ...auth.authHeader() };
+  const headers: Record<string, string> = { ...auth.authHeader(), ...opts.headers };
   let body: BodyInit | undefined;
-  if (opts.body !== undefined) {
-    headers["Content-Type"] = "application/json";
+  if (opts.rawBody !== undefined) {
+    // Caller supplies the Content-Type via opts.headers (e.g. full-file edits).
+    body = opts.rawBody;
+  } else if (opts.body !== undefined) {
+    if (!headers["Content-Type"]) headers["Content-Type"] = "application/json";
     body = JSON.stringify(opts.body);
   }
   return fetch(buildUrl(path, opts.query), {
@@ -163,6 +176,27 @@ export const updateEntry = (path: string, patch: Record<string, unknown>) =>
     body: patch,
   });
 
+export const moveEntry = (path: string, project: string) =>
+  api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}/move`, {
+    method: "POST",
+    body: { project },
+  });
+
+// Full-file (frontmatter + body) get/update — mirrors the TUI's $EDITOR flow so
+// the PWA can edit the entire entry, not just metadata or the body.
+export const getEntryRaw = (path: string) =>
+  api<Response>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+    headers: { Accept: "text/x-brain-full" },
+    raw: true,
+  }).then((r) => r.text());
+
+export const updateEntryRaw = (path: string, content: string) =>
+  api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "text/x-brain-full" },
+    rawBody: content,
+  });
+
 export const deleteEntry = (path: string) =>
   api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
     method: "DELETE",
@@ -178,10 +212,98 @@ export const triggerTask = (projectId: string, taskId: string) =>
     { method: "POST" },
   );
 
+
+// ─── Built-in Assistant ──────────────────────────────────────────
+
+export interface AssistantStatusResponse {
+  available: boolean;
+  mode: "direct_llm" | "manual" | string;
+  provider?: string;
+  model?: string;
+  capabilities: string[];
+  reason?: string;
+}
+
+export interface AssistantAction {
+  type: string;
+  explicit: boolean;
+  payload: Record<string, unknown>;
+}
+
+export interface AssistantChatResponse {
+  reply: string;
+  executed_actions: { type: string; status: string; result?: unknown; error?: string }[];
+  proposed_actions: AssistantAction[];
+}
+
+export interface AssistantGoalDraft {
+  project?: string;
+  feature_id?: string;
+  title?: string;
+  criteria?: string;
+  validation?: string;
+  workdir?: string;
+  trigger_source?: string;
+  agent?: string;
+  model?: string;
+  complete_statuses?: string[];
+  blocked_statuses?: string[];
+}
+
+export const assistantStatus = () =>
+  api<AssistantStatusResponse>("/api/v1/assistant/status");
+
+export const assistantChat = (body: {
+  project?: string;
+  message: string;
+  attachments?: string[];
+  context?: Record<string, string>;
+}) => api<AssistantChatResponse>("/api/v1/assistant/chat", { method: "POST", body });
+
+export const assistantGoalDraft = (body: {
+  project?: string;
+  message: string;
+  current?: AssistantGoalDraft;
+  attachments?: string[];
+  context?: Record<string, string>;
+}) =>
+  api<{ reply: string; draft: AssistantGoalDraft }>("/api/v1/assistant/goal-draft", {
+    method: "POST",
+    body,
+  });
+
+export async function uploadAttachment(projectId: string, file: Blob, filename: string, metadata?: Record<string, unknown>) {
+  const form = new FormData();
+  form.set("project_id", projectId);
+  form.set("file", file, filename);
+  if (metadata) form.set("metadata", JSON.stringify(metadata));
+  const token = useAuth.getState().token;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(buildUrl("/api/v1/attachments"), {
+    method: "POST",
+    headers,
+    body: form,
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new ApiError(res.status, text || res.statusText, text);
+  }
+  return (await res.json()) as { attachment: { id: string; filename: string; content_type: string } };
+}
+
 // ─── Runner control ──────────────────────────────────────────────
 
 export const getRunners = () =>
   api<RunnerListResponse>("/api/v1/runners").then((r) => r.runners || []);
+
+// getServerRequests fetches the global server-request log (all HTTP traffic in
+// and out of the Brain server, annotated with the authenticated actor).
+export const getServerRequests = (since = 0, limit = 500) =>
+  api<{ requests: import("./types").ServerRequest[]; total: number }>(
+    "/api/v1/server/requests/recent",
+    { query: { since, limit } },
+  ).then((r) => r.requests || []);
 
 export const getRunnerStatus = () =>
   api<RunnerStatusResponse>("/api/v1/tasks/runner/status");
@@ -198,10 +320,20 @@ export const pauseAll = () =>
   api("/api/v1/tasks/runner/pause", { method: "POST" });
 export const resumeAll = () =>
   api("/api/v1/tasks/runner/resume", { method: "POST" });
-export const pauseAutomations = () =>
-  api("/api/v1/tasks/runner/automations/pause", { method: "POST" });
-export const resumeAutomations = () =>
-  api("/api/v1/tasks/runner/automations/resume", { method: "POST" });
+export const pauseAutomations = (projectId?: string) =>
+  api(
+    projectId
+      ? `/api/v1/tasks/runner/automations/pause/${encodeURIComponent(projectId)}`
+      : "/api/v1/tasks/runner/automations/pause",
+    { method: "POST" },
+  );
+export const resumeAutomations = (projectId?: string) =>
+  api(
+    projectId
+      ? `/api/v1/tasks/runner/automations/resume/${encodeURIComponent(projectId)}`
+      : "/api/v1/tasks/runner/automations/resume",
+    { method: "POST" },
+  );
 
 export const shutdownRunner = (runnerId: string, reason = "manual") =>
   api(`/api/v1/runners/${encodeURIComponent(runnerId)}/shutdown`, {
@@ -209,16 +341,203 @@ export const shutdownRunner = (runnerId: string, reason = "manual") =>
     body: { reason },
   });
 
+// ─── OpenCode instances (remote control) ─────────────────────────
+
+export const listInstances = () =>
+  api<InstanceListResponse>("/api/v1/instances").then((r) => r.instances || []);
+
+export const listRunnerInstances = (runnerId: string) =>
+  api<InstanceListResponse>(
+    `/api/v1/runners/${encodeURIComponent(runnerId)}/instances`,
+  ).then((r) => r.instances || []);
+
+// ─── Remote control plane ────────────────────────────────────────
+
+const controlBase = (runnerId: string, instanceId: string) =>
+  `/api/v1/control/runners/${encodeURIComponent(runnerId)}/instances/${encodeURIComponent(instanceId)}`;
+
+export const controlListSessions = (runnerId: string, instanceId: string) =>
+  api<OcSession[]>(`${controlBase(runnerId, instanceId)}/sessions`);
+
+export const controlCreateSession = (runnerId: string, instanceId: string, title?: string) =>
+  api<OcSession>(`${controlBase(runnerId, instanceId)}/sessions`, {
+    method: "POST",
+    body: title ? { title } : {},
+  });
+
+export const controlListMessages = (
+  runnerId: string,
+  instanceId: string,
+  sessionId: string,
+  limit = 50,
+) =>
+  api<OcMessage[]>(
+    `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/messages`,
+    { query: { limit: String(limit) } },
+  );
+
+export interface ControlFilePart {
+  mime: string;
+  url: string; // data: URL (base64) or file:// path on the runner
+  filename?: string;
+}
+
+export const controlPrompt = (
+  runnerId: string,
+  instanceId: string,
+  sessionId: string,
+  body: {
+    text: string;
+    agent?: string;
+    model?: { providerID: string; modelID: string };
+    files?: ControlFilePart[];
+  },
+) =>
+  api<unknown>(
+    `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/prompt`,
+    { method: "POST", body },
+  );
+
+export const controlAbort = (runnerId: string, instanceId: string, sessionId: string) =>
+  api<unknown>(
+    `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/abort`,
+    { method: "POST" },
+  );
+
+export const controlRespondPermission = (
+  runnerId: string,
+  instanceId: string,
+  sessionId: string,
+  permissionId: string,
+  response: "once" | "always" | "reject",
+) =>
+  api<unknown>(
+    `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/permissions/${encodeURIComponent(permissionId)}`,
+    { method: "POST", body: { response } },
+  );
+
+export const controlPendingPermissions = (runnerId: string, instanceId: string) =>
+  api<{ permissions: OcPermission[]; total: number }>(
+    `${controlBase(runnerId, instanceId)}/permissions`,
+  );
+
+export const controlAgents = (runnerId: string, instanceId: string) =>
+  api<OcAgent[]>(`${controlBase(runnerId, instanceId)}/agents`);
+
+export const controlProviders = (runnerId: string, instanceId: string) =>
+  api<{ providers?: OcProvider[] } | OcProvider[]>(
+    `${controlBase(runnerId, instanceId)}/providers`,
+  );
+
+// controlSessionHistory fetches the transcript of a session by ID without a
+// live instance — the runner serves it from a running instance if one hosts
+// the session, otherwise from OpenCode's on-disk storage. Used to review a
+// completed task's session in the Control tab.
+export const controlSessionHistory = (runnerId: string, sessionId: string) =>
+  api<OcMessage[]>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/sessions/${encodeURIComponent(sessionId)}/history`,
+  );
+
+export const controlSpawnInstance = (runnerId: string, spec: SpawnInstanceSpec) =>
+  api<{ success: boolean; instance: OpencodeInstance }>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/instances`,
+    { method: "POST", body: spec },
+  );
+
+export const controlKillInstance = (runnerId: string, instanceId: string) =>
+  api<{ success: boolean }>(controlBase(runnerId, instanceId), { method: "DELETE" });
+
+export const controlAbortTask = (runnerId: string, taskId: string) =>
+  api<{ success: boolean }>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/tasks/${encodeURIComponent(taskId)}/abort`,
+    { method: "POST" },
+  );
+
+/** EventSource URL for an instance's live event stream (?token= auth). */
+export function controlEventsUrl(runnerId: string, instanceId: string): string {
+  const base = `${controlBase(runnerId, instanceId)}/events`;
+  const token = useAuth.getState().token;
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+}
+
 // ─── Brain entries / search ──────────────────────────────────────
 
 export const listEntries = (query?: {
   project?: string;
   type?: string;
   limit?: number;
+  global?: string;
 }) => api<ListEntriesResponse>("/api/v1/entries", { query });
 
+// ─── Automations (mirrors the TUI Automations tab) ───────────────
+// Fetches all automation entries (project-scoped + global/built-in), the
+// scheduled/generated task entries, and automation_run records so the PWA can
+// render the same unified list the TUI does.
+export async function listAutomationData(project?: string): Promise<{
+  automations: BrainEntry[];
+  tasks: BrainEntry[];
+  runs: BrainEntry[];
+}> {
+  const [scoped, global, tasks, runs] = await Promise.all([
+    listEntries({ type: "automation", limit: 500, ...(project ? { project } : {}) }).then(
+      (r) => r.entries || [],
+    ),
+    // Built-in automations are global; always include them.
+    listEntries({ type: "automation", global: "true", limit: 500 }).then((r) => r.entries || []),
+    listEntries({ type: "task", limit: 1000, ...(project ? { project } : {}) }).then(
+      (r) => r.entries || [],
+    ),
+    listEntries({ type: "automation_run", limit: 500, ...(project ? { project } : {}) })
+      .then((r) => r.entries || [])
+      .catch(() => [] as BrainEntry[]),
+  ]);
+  // Merge scoped + global automation entries, de-duped by id.
+  const byId = new Map<string, BrainEntry>();
+  for (const e of [...global, ...scoped]) byId.set(e.id, e);
+  return { automations: [...byId.values()], tasks, runs };
+}
+
+// executeAutomation triggers a manual run of an automation entry: it reads the
+// entry's action and creates a generated task (generated_by automation:<id>),
+// mirroring the TUI's runAutomationRowCmd. The runner then picks it up and the
+// task appears under the automation via its generated_by linkage.
+export async function executeAutomation(
+  path: string,
+  fallbackProject: string,
+): Promise<CreateEntryResponse> {
+  const entry = await getEntry(path);
+  const action = entry.action;
+  if (!action) throw new Error("automation has no action");
+  const project = entry.project_id || fallbackProject;
+  if (!project || project === "all") throw new Error("automation has no project");
+  const prompt =
+    (action.type === "script" ? (action.command as string) : (action.direct_prompt as string)) || "";
+  if (!prompt) throw new Error("automation action has no prompt or command");
+
+  const now = Date.now();
+  const body: Record<string, unknown> = {
+    type: "task",
+    title: `Automation: ${entry.id}`,
+    content: prompt,
+    status: "pending",
+    project,
+    generated_by: `automation:${entry.id}`,
+    generated_key: `automation:manual:${entry.id}:${now}`,
+    direct_prompt: prompt,
+    agent: entry.agent || action.agent,
+    model: entry.model || action.model,
+    executor: action.type === "script" ? "script" : entry.executor || action.executor,
+    execution_mode: entry.execution_mode || (action.execution_mode as string),
+    complete_on_idle: (action.complete_on_idle as boolean) ?? true,
+    target_workdir: entry.target_workdir || (action.target_workdir as string),
+  };
+  return api<CreateEntryResponse>("/api/v1/entries", { method: "POST", body });
+}
+
 export const getEntry = (path: string) =>
-  api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`);
+  api<BrainEntry>(`/api/v1/entries/${encodeEntryPath(path)}`, {
+    query: { include: "attachments" },
+  });
 
 export const search = (req: SearchRequest) =>
   api<SearchResponse>("/api/v1/search", { method: "POST", body: req });

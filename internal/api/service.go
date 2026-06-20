@@ -2,8 +2,10 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -133,6 +135,23 @@ type AttachmentService interface {
 	Delete(ctx context.Context, projectID, attachmentID string) (bool, error)
 }
 
+// ProjectPlacementService defines project-level scheduling placement metadata operations.
+type ProjectPlacementService interface {
+	Get(ctx context.Context, projectID string) (*types.ProjectPlacement, error)
+	Put(ctx context.Context, projectID string, placement types.ProjectPlacement) (*types.ProjectPlacement, error)
+}
+
+// SchedulerService exposes scheduler lifecycle status for API visibility.
+type SchedulerService interface {
+	Status() types.SchedulerStatus
+}
+
+// SchedulerVisibilityService exposes persisted scheduler placement artifacts.
+type SchedulerVisibilityService interface {
+	GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error)
+	ListPlacementReasons(ctx context.Context, projectID, taskID string) ([]types.PlacementReason, error)
+}
+
 // TaskFilterOptions holds optional filters for task queries.
 type TaskFilterOptions struct {
 	FeatureIDs        []string
@@ -172,8 +191,17 @@ type TaskService interface {
 	// RenewClaim extends the claim's expiry. Returns ErrNotFound if not claimed or expired.
 	RenewClaim(ctx context.Context, projectId, taskId, runnerId string) (*types.RenewClaimResponse, error)
 
-	// DispatchTask creates a pre-claim for direct dispatch to a target runner (60-second expiry).
-	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.ClaimResponse, error)
+	// AckDispatch acknowledges a pushed dispatch lease for a runner.
+	AckDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string) (*types.DispatchAckResponse, error)
+
+	// RejectDispatch rejects a pushed dispatch lease with a structured reason.
+	RejectDispatch(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
+
+	// ReleaseDispatch explicitly releases/finalizes a pushed dispatch lease.
+	ReleaseDispatch(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error)
+
+	// DispatchTask creates a short-lived dispatch lease for direct dispatch to a target runner.
+	DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.DispatchResponse, error)
 
 	// GetClaimStatus returns the claim status of a task.
 	GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
@@ -225,6 +253,12 @@ type RunnerService interface {
 
 	// ResumeAutomations resumes automation-generated task execution.
 	ResumeAutomations(ctx context.Context) error
+
+	// PauseProjectAutomations pauses automation-generated task execution for a specific project.
+	PauseProjectAutomations(ctx context.Context, projectId string) error
+
+	// ResumeProjectAutomations resumes automation-generated task execution for a specific project.
+	ResumeProjectAutomations(ctx context.Context, projectId string) error
 
 	// GetStatus returns the current runner status.
 	GetStatus(ctx context.Context) (*types.RunnerStatusResponse, error)
@@ -302,6 +336,61 @@ type RunnerRegistryService interface {
 
 	// UpdateAffinity updates a runner's feature affinity.
 	UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error
+
+	// UpsertInstance records or updates an OpenCode instance reported by a runner.
+	UpsertInstance(ctx context.Context, runnerID string, inst types.OpencodeInstance) error
+
+	// DeleteInstance removes an instance record reported by a runner.
+	DeleteInstance(ctx context.Context, runnerID, instanceID string) error
+
+	// GetInstance returns a single instance scoped to a runner.
+	GetInstance(ctx context.Context, runnerID, instanceID string) (*types.OpencodeInstance, error)
+
+	// ListInstances returns all instances reported by one runner.
+	ListInstances(ctx context.Context, runnerID string) (*types.InstanceListResponse, error)
+
+	// ListAllInstances returns every instance across all runners.
+	ListAllInstances(ctx context.Context) (*types.InstanceListResponse, error)
+}
+
+// BridgeService is the runner-bridge surface used by API handlers. The
+// concrete implementation lives in internal/bridge; this interface avoids an
+// api->bridge import cycle.
+type BridgeService interface {
+	// DecorateInstances merges live bridge state (pending permission counts,
+	// connection-derived status) into instance records.
+	DecorateInstances(instances []types.OpencodeInstance)
+
+	// ServeBridge upgrades the request to a WebSocket and serves a runner's
+	// bridge connection until it drops.
+	ServeBridge(w http.ResponseWriter, r *http.Request, runnerID string)
+
+	// Connected reports whether a runner has a live bridge connection.
+	Connected(runnerID string) bool
+
+	// Do proxies one HTTP request to an instance on a connected runner.
+	Do(ctx context.Context, runnerID, instanceID, method, path string, body []byte) (int, []byte, error)
+
+	// SpawnInstance asks a runner to spawn a fresh ad-hoc OpenCode instance.
+	SpawnInstance(ctx context.Context, runnerID string, spec types.SpawnInstanceSpec) (*types.OpencodeInstance, error)
+
+	// KillInstance asks a runner to terminate an ad-hoc instance.
+	KillInstance(ctx context.Context, runnerID, instanceID string) error
+
+	// AbortTask asks a runner to terminate a task-owned instance and reset it to pending.
+	AbortTask(ctx context.Context, runnerID, taskID string) error
+
+	// FetchHistory returns the transcript of a session by ID from a runner,
+	// served from a live instance if one hosts it, otherwise read from
+	// OpenCode's on-disk storage. Returns raw JSON (array of {info, parts}).
+	FetchHistory(ctx context.Context, runnerID, sessionID string) ([]byte, error)
+
+	// AcquireStream enables full event forwarding for an instance
+	// (refcounted); the release function must be called on detach.
+	AcquireStream(runnerID, instanceID string) (func(), error)
+
+	// PendingPermissions returns raw permission events awaiting a response.
+	PendingPermissions(runnerID, instanceID string) []json.RawMessage
 }
 
 // ClientContextService resolves Brain client workspace context into project context.

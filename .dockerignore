@@ -8,3 +8,7 @@ dist
 .DS_Store
 .worktrees
 .github
+
+# Local runtime data dir (never part of the build context)
+.brain
+.brain/

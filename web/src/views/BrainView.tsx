@@ -6,9 +6,17 @@ import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import { embedBackfill, listEntries, search } from "../lib/api";
 import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
+import { ListDetail } from "../components/layout/ListDetail";
+import { useIsMobile } from "../hooks/useIsMobile";
 import { EntryView } from "./brain/EntryView";
 import { relativeTime } from "../lib/format";
-import type { SearchStrategy } from "../lib/types";
+import type { BrainEntry, SearchResult, SearchStrategy } from "../lib/types";
+import {
+  deserializeHiddenEntryTypes,
+  filterEntriesByHiddenTypes,
+  serializeHiddenEntryTypes,
+  toggleHiddenEntryType,
+} from "./brain/entryFilters";
 
 const STRATEGIES: { value: SearchStrategy; label: string }[] = [
   { value: "semantic", label: "Semantic" },
@@ -22,9 +30,37 @@ const ComposeModal = lazy(() =>
   })),
 );
 
+// CodeMirror is heavy — load the editor only when the user edits.
+const EntryEditModal = lazy(() =>
+  import("./brain/EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
+);
+
+const HIDDEN_TYPES_KEY = "brain.brain_view.hidden_types";
+const BROWSE_LIMIT = 1000;
+
+function loadHiddenTypes(): Set<string> {
+  try {
+    return deserializeHiddenEntryTypes(localStorage.getItem(HIDDEN_TYPES_KEY));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenTypes(hiddenTypes: ReadonlySet<string>) {
+  try {
+    localStorage.setItem(HIDDEN_TYPES_KEY, serializeHiddenEntryTypes(hiddenTypes));
+  } catch {
+    // Ignore private-mode/quota errors; filters still work for this session.
+  }
+}
+
 export function BrainView() {
   const activeProject = useUI((s) => s.activeProject);
   const toast = useUI((s) => s.toast);
+  const toggleDetail = useUI((s) => s.toggleDetail);
+  const toggleLogs = useUI((s) => s.toggleLogs);
+  const openInspect = useUI((s) => s.openInspect);
+  const isMobile = useIsMobile();
   const project = activeProject === ALL_PROJECTS ? undefined : activeProject;
   const qc = useQueryClient();
 
@@ -37,13 +73,16 @@ export function BrainView() {
   }
   const [input, setInput] = useState("");
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [strategy, setStrategy] = useState<SearchStrategy>("semantic");
   const [openPath, setOpenPath] = useState<string | null>(null);
+  const [editPath, setEditPath] = useState<{ path: string; title?: string } | null>(null);
   const [composing, setComposing] = useState(false);
+  const [hiddenTypes, setHiddenTypes] = useState<Set<string>>(loadHiddenTypes);
 
   const browseQ = useQuery({
     queryKey: ["entries", project],
-    queryFn: () => listEntries({ project, limit: 200 }),
+    queryFn: () => listEntries({ project, limit: BROWSE_LIMIT }),
     enabled: query.trim() === "",
   });
 
@@ -65,12 +104,20 @@ export function BrainView() {
 
   const searching = query.trim() !== "";
 
-  const items = useMemo<{ path: string }[]>(
-    () =>
-      searching
-        ? (searchQ.data?.results ?? [])
-        : (browseQ.data?.entries ?? []),
+  const rawItems = useMemo<Array<BrainEntry | SearchResult>>(
+    () => (searching ? (searchQ.data?.results ?? []) : (browseQ.data?.entries ?? [])),
     [searching, searchQ.data, browseQ.data],
+  );
+
+  const entryTypes = useMemo(
+    () => Array.from(new Set(rawItems.map((item) => item.type))).sort(),
+    [rawItems],
+  );
+
+
+  const items = useMemo<Array<BrainEntry | SearchResult>>(
+    () => filterEntriesByHiddenTypes(rawItems, hiddenTypes),
+    [rawItems, hiddenTypes],
   );
 
   const scope = `brain:${project ?? "all"}`;
@@ -85,12 +132,20 @@ export function BrainView() {
       if (handleListNavKey(e, scope, items.length)) return true;
       const cur = items[cursor];
       switch (e.key) {
+        case "T":
+          toggleDetail();
+          return true;
+        case "z":
+          toggleLogs();
+          return true;
         case "Enter":
-        case "e":
           if (cur) setOpenPath(cur.path);
           return true;
+        case "e":
+          if (cur) setEditPath({ path: cur.path, title: (cur as { title?: string }).title });
+          return true;
         case "/":
-          searchRef.current?.focus();
+          setSearchOpen(true);
           return true;
         case "n":
           setComposing(true);
@@ -115,27 +170,59 @@ export function BrainView() {
   );
 
   useEffect(() => {
+    if (searchOpen) searchRef.current?.focus();
+  }, [searchOpen]);
+
+  useEffect(() => {
     const el = document.querySelector<HTMLElement>('[data-cursor="1"]');
     el?.scrollIntoView({ block: "nearest" });
   }, [cursor]);
 
+  // Row tap: on mobile open the Detail/Logs sheet; on desktop open the entry
+  // editor (the existing behavior).
+  function openEntry(item: { path: string; id?: string; type?: string; project_id?: string; title?: string }) {
+    if (isMobile) {
+      openInspect({
+        path: item.path,
+        title: item.title,
+        taskId: item.type === "task" ? item.id : undefined,
+        projectId: item.project_id,
+      });
+    } else {
+      setOpenPath(item.path);
+    }
+  }
+
+  const selItem = items[cursor] as { path: string; id?: string; type?: string; project_id?: string } | undefined;
+  const selectedPath = selItem?.path ?? null;
+  const logTarget =
+    selItem?.type === "task" && selItem.id
+      ? { taskId: selItem.id, projectId: selItem.project_id }
+      : null;
+
   return (
-    <div>
+    <ListDetail detailPath={selectedPath} logTarget={logTarget}>
       <form
-        className="search-bar"
+        className="search-layer"
+        style={{ display: searchOpen ? undefined : "none" }}
+        onMouseDown={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}
+
         onSubmit={(e) => {
           e.preventDefault();
           setQuery(input);
           setCursor(scope, 0);
         }}
       >
+        <div className="search-popup">
+          <span className="search-prompt">/</span>
         <input
           ref={searchRef}
           placeholder="Search the brain…"
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Escape") e.currentTarget.blur();
+            if (e.key === "Escape") setSearchOpen(false);
+            if (e.key === "Enter") setSearchOpen(false);
           }}
         />
         <select
@@ -170,12 +257,64 @@ export function BrainView() {
         <button
           className="btn sm"
           type="button"
-          onClick={() => setComposing(true)}
+          onClick={() => { setSearchOpen(false); setComposing(true); }}
           title="New entry"
         >
           +
         </button>
+        </div>
       </form>
+
+      {entryTypes.length > 0 && (
+        <div
+          className="search-meta"
+          style={{ gap: 8, flexWrap: "wrap" }}
+          aria-label="Brain entry type filters"
+        >
+          <span className="faint" style={{ fontSize: 11 }}>
+            Hide types:
+          </span>
+          {entryTypes.map((type) => {
+            const hidden = hiddenTypes.has(type);
+            return (
+              <button
+                key={type}
+                type="button"
+                className={`btn sm ${hidden ? "" : "primary"}`}
+                onClick={() => {
+                  setHiddenTypes((prev) => {
+                    const next = toggleHiddenEntryType(prev, type);
+                    saveHiddenTypes(next);
+                    return next;
+                  });
+                  setCursor(scope, 0);
+                }}
+                aria-pressed={!hidden}
+                title={hidden ? `Show ${type} entries` : `Hide ${type} entries`}
+              >
+                {hidden ? "⊘" : "✓"} {type}
+              </button>
+            );
+          })}
+          {hiddenTypes.size > 0 && (
+            <button
+              className="btn sm"
+              type="button"
+              onClick={() => {
+                const next = new Set<string>();
+                saveHiddenTypes(next);
+                setHiddenTypes(next);
+                setCursor(scope, 0);
+              }}
+            >
+              Show all
+            </button>
+          )}
+          <span className="faint" style={{ marginLeft: "auto", fontSize: 11 }}>
+            {items.length}/{rawItems.length} visible{browseQ.data?.total && browseQ.data.total > rawItems.length ? ` of ${browseQ.data.total}` : ""}
+          </span>
+        </div>
+      )}
 
       {searching && !searchQ.isLoading && !searchQ.error && (
         <div className="search-meta">
@@ -198,10 +337,14 @@ export function BrainView() {
             <Loading label="Searching…" />
           ) : searchQ.error ? (
             <ErrorState error={searchQ.error} onRetry={() => void searchQ.refetch()} />
-          ) : !searchQ.data?.results.length ? (
+          ) : rawItems.length === 0 ? (
             <EmptyState glyph="◇" title="No results" hint={`Nothing matched “${query}”.`} />
+          ) : items.length === 0 ? (
+            <EmptyState glyph="⊘" title="All matching entries are hidden" hint="Use the type filters above to show more entries." />
           ) : (
-            searchQ.data.results.map((r, i, arr) => (
+            items.map((item, i, arr) => {
+              const r = item as SearchResult;
+              return (
               <EntryRow
                 key={r.id}
                 title={r.title}
@@ -209,18 +352,23 @@ export function BrainView() {
                 meta={r.snippet}
                 cursored={i === cursor}
                 last={i === arr.length - 1}
-                onClick={() => setOpenPath(r.path)}
+                onClick={() => openEntry(r)}
               />
-            ))
+              );
+            })
           )
         ) : browseQ.isLoading ? (
           <Loading label="Loading entries…" />
         ) : browseQ.error ? (
           <ErrorState error={browseQ.error} onRetry={() => void browseQ.refetch()} />
-        ) : !browseQ.data?.entries.length ? (
+        ) : rawItems.length === 0 ? (
           <EmptyState glyph="◆" title="No entries" hint="This project's knowledge base is empty." />
+        ) : items.length === 0 ? (
+          <EmptyState glyph="⊘" title="All entries are hidden" hint="Use the type filters above to show more entries." />
         ) : (
-          browseQ.data.entries.map((e, i, arr) => (
+          items.map((item, i, arr) => {
+            const e = item as BrainEntry;
+            return (
             <EntryRow
               key={e.id}
               title={e.title}
@@ -228,14 +376,30 @@ export function BrainView() {
               meta={e.modified ? relativeTime(e.modified) : e.path}
               cursored={i === cursor}
               last={i === arr.length - 1}
-              onClick={() => setOpenPath(e.path)}
+              onClick={() => openEntry(e)}
             />
-          ))
+            );
+          })
         )}
       </div>
 
       {openPath && (
         <EntryView path={openPath} onClose={() => setOpenPath(null)} />
+      )}
+      {editPath && (
+        <Suspense fallback={null}>
+          <EntryEditModal
+            path={editPath.path}
+            title={editPath.title}
+            onClose={() => setEditPath(null)}
+            onSaved={() => {
+              void qc.invalidateQueries({ queryKey: ["entries"] });
+              void qc.invalidateQueries({ queryKey: ["search"] });
+              void qc.invalidateQueries({ queryKey: ["entry", editPath.path] });
+              void qc.invalidateQueries({ queryKey: ["entry-detail", editPath.path] });
+            }}
+          />
+        </Suspense>
       )}
       {composing && (
         <Suspense fallback={null}>
@@ -249,7 +413,7 @@ export function BrainView() {
           />
         </Suspense>
       )}
-    </div>
+    </ListDetail>
   );
 }
 

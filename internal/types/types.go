@@ -28,6 +28,7 @@ var EntryTypes = []string{
 	"dream",
 	"automation",
 	"automation_run",
+	"merge_request",
 }
 
 // entryTypeSet is a lookup set for O(1) validation.
@@ -118,6 +119,128 @@ var MergeStrategies = []string{"squash", "merge", "rebase"}
 var RemoteBranchPolicies = []string{"keep", "delete"}
 var ExecutionModes = []string{"worktree", "current_branch"}
 var Executors = []string{"opencode", "pi", "script"}
+
+// =============================================================================
+// Project Placement
+// =============================================================================
+
+const (
+	PlacementAffinityStrict = "strict"
+	PlacementAffinitySoft   = "soft"
+	PlacementAffinityNone   = "none"
+)
+
+const (
+	WorkspacePolicyWorktree      = "worktree"
+	WorkspacePolicyCurrentBranch = "current_branch"
+)
+
+// ProjectPlacement stores Brain-owned scheduling placement policy for a project.
+type ProjectPlacement struct {
+	ProjectID            string            `json:"project_id"`
+	Affinity             string            `json:"affinity"`
+	PreferredMachines    []string          `json:"preferred_machines,omitempty"`
+	AllowedMachines      []string          `json:"allowed_machines,omitempty"`
+	WorkspacePolicy      string            `json:"workspace_policy,omitempty"`
+	RequiredLabels       map[string]string `json:"required_labels,omitempty"`
+	RequiredCapabilities []string          `json:"required_capabilities,omitempty"`
+	Resources            map[string]any    `json:"resources,omitempty"`
+}
+
+// =============================================================================
+// Dispatch Leases and Placement Reasons
+// =============================================================================
+
+const (
+	DispatchLeaseStatePushed   = "pushed"
+	DispatchLeaseStateAcked    = "acked"
+	DispatchLeaseStateRejected = "rejected"
+	DispatchLeaseStateExpired  = "expired"
+)
+
+// DispatchLease stores Brain-owned push dispatch state for a task assignment.
+type DispatchLease struct {
+	LeaseID           string `json:"leaseId"`
+	ID                string `json:"id,omitempty"`
+	ProjectID         string `json:"project_id"`
+	TaskID            string `json:"task_id"`
+	AssignedRunnerID  string `json:"assigned_runner_id"`
+	AssignedMachineID string `json:"assigned_machine_id"`
+	State             string `json:"state"`
+	PushedAt          int64  `json:"pushed_at"`
+	AckedAt           int64  `json:"acked_at,omitempty"`
+	RejectedAt        int64  `json:"rejected_at,omitempty"`
+	LastError         string `json:"last_error,omitempty"`
+	ExpiresAt         int64  `json:"expires_at"`
+}
+
+// DispatchAckRequest acknowledges receipt of a pushed dispatch command.
+type DispatchAckRequest struct {
+	LeaseID   string `json:"leaseId"`
+	ProjectID string `json:"projectId"`
+	TaskID    string `json:"taskId"`
+}
+
+// DispatchAckResponse reports the persisted ack state for a dispatch lease.
+type DispatchAckResponse struct {
+	Success   bool   `json:"success"`
+	LeaseID   string `json:"leaseId"`
+	ProjectID string `json:"projectId"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	Error     string `json:"error,omitempty"`
+}
+
+// DispatchRejectReason is a structured rejection reason from a runner.
+type DispatchRejectReason struct {
+	Code    string            `json:"code"`
+	Message string            `json:"message,omitempty"`
+	Details map[string]string `json:"details,omitempty"`
+}
+
+// DispatchRejectRequest rejects a pushed dispatch command.
+type DispatchRejectRequest struct {
+	LeaseID   string               `json:"leaseId"`
+	ProjectID string               `json:"projectId"`
+	TaskID    string               `json:"taskId"`
+	Reason    DispatchRejectReason `json:"reason"`
+}
+
+// DispatchRejectResponse reports the persisted reject state for a dispatch lease.
+type DispatchRejectResponse struct {
+	Success   bool                 `json:"success"`
+	LeaseID   string               `json:"leaseId"`
+	ProjectID string               `json:"projectId"`
+	TaskID    string               `json:"taskId"`
+	RunnerID  string               `json:"runnerId"`
+	Reason    DispatchRejectReason `json:"reason"`
+	Error     string               `json:"error,omitempty"`
+}
+
+// DispatchReleaseResponse reports explicit release/finalization of a dispatch lease.
+type DispatchReleaseResponse struct {
+	Success   bool   `json:"success"`
+	ProjectID string `json:"projectId"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	Error     string `json:"error,omitempty"`
+}
+
+// PlacementReason stores scheduler placement decision details independently from
+// task content/status so dispatch decisions remain queryable after task edits.
+type PlacementReason struct {
+	ID             int64  `json:"id,omitempty"`
+	ProjectID      string `json:"project_id"`
+	TaskID         string `json:"task_id"`
+	RunnerID       string `json:"runner_id,omitempty"`
+	MachineID      string `json:"machine_id,omitempty"`
+	Decision       string `json:"decision"`
+	Reason         string `json:"reason,omitempty"`
+	RequiredLabels string `json:"required_labels,omitempty"`
+	RunnerLabels   string `json:"runner_labels,omitempty"`
+	MissingLabels  string `json:"missing_labels,omitempty"`
+	CreatedAt      int64  `json:"created_at"`
+}
 
 // =============================================================================
 // Domain Structs
@@ -220,11 +343,17 @@ type BrainEntry struct {
 	Backlinks []BacklinkEntry `json:"backlinks,omitempty"`
 }
 
-// SessionInfo tracks session metadata.
+// SessionInfo tracks session metadata. The runner/machine/host/workdir fields
+// record where an OpenCode session lives so remote control can re-open or
+// resume it after the task's live instance is gone.
 type SessionInfo struct {
 	Timestamp string `json:"timestamp"`
 	CronID    string `json:"cron_id,omitempty"`
 	RunID     string `json:"run_id,omitempty"`
+	RunnerID  string `json:"runner_id,omitempty"`
+	MachineID string `json:"machine_id,omitempty"`
+	Hostname  string `json:"hostname,omitempty"`
+	Workdir   string `json:"workdir,omitempty"`
 }
 
 // CronRun tracks a single cron execution.
@@ -866,6 +995,11 @@ type ResolvedTask struct {
 	WaitingOn       []string `json:"waiting_on"`
 	InCycle         bool     `json:"in_cycle"`
 	ResolvedWorkdir string   `json:"resolved_workdir"`
+
+	// Dispatch diagnostics expose scheduler push state and placement decisions.
+	DispatchLease       *DispatchLease    `json:"dispatch_lease,omitempty"`
+	PlacementReasons    []PlacementReason `json:"placement_reasons,omitempty"`
+	LastPlacementReason *PlacementReason  `json:"last_placement_reason,omitempty"`
 }
 
 // TaskStats holds aggregate task statistics.
@@ -912,6 +1046,19 @@ type ClaimResponse struct {
 	TaskID    string `json:"taskId"`
 	RunnerID  string `json:"runnerId"`
 	ClaimedAt string `json:"claimedAt,omitempty"`
+	Error     string `json:"error,omitempty"`
+	Message   string `json:"message,omitempty"`
+	ClaimedBy string `json:"claimedBy,omitempty"`
+	IsStale   *bool  `json:"isStale,omitempty"`
+}
+
+// DispatchResponse is the response for POST /tasks/:projectId/:taskId/dispatch.
+type DispatchResponse struct {
+	Success   bool   `json:"success"`
+	TaskID    string `json:"taskId"`
+	RunnerID  string `json:"runnerId"`
+	LeaseID   string `json:"leaseId,omitempty"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
 	Error     string `json:"error,omitempty"`
 	Message   string `json:"message,omitempty"`
 	ClaimedBy string `json:"claimedBy,omitempty"`
@@ -998,10 +1145,11 @@ type CheckoutFeatureResult struct {
 
 // RunnerStatusResponse is the response for GET /tasks/runner/status.
 type RunnerStatusResponse struct {
-	Running           bool     `json:"running"`
-	Paused            bool     `json:"paused"`
-	PausedProjects    []string `json:"pausedProjects"`
-	AutomationsPaused bool     `json:"automationsPaused"`
+	Running                  bool     `json:"running"`
+	Paused                   bool     `json:"paused"`
+	PausedProjects           []string `json:"pausedProjects"`
+	AutomationsPaused        bool     `json:"automationsPaused"`
+	AutomationPausedProjects []string `json:"automationPausedProjects"`
 }
 
 // =============================================================================
@@ -1019,28 +1167,112 @@ const (
 
 // RunnerRegistration is the request body for POST /runners (register).
 type RunnerRegistration struct {
-	RunnerID     string            `json:"runner_id"`
-	Hostname     string            `json:"hostname"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	Executors    []string          `json:"executors,omitempty"`
-	Capabilities []string          `json:"capabilities,omitempty"`
-	MaxParallel  int               `json:"max_parallel,omitempty"`
+	RunnerID       string                 `json:"runner_id"`
+	MachineID      string                 `json:"machine_id,omitempty"`
+	Hostname       string                 `json:"hostname"`
+	Labels         map[string]string      `json:"labels,omitempty"`
+	Executors      []string               `json:"executors,omitempty"`
+	Capabilities   []string               `json:"capabilities,omitempty"`
+	DispatchPush   bool                   `json:"dispatch_push,omitempty"`
+	WorkspaceRoots []string               `json:"workspace_roots,omitempty"`
+	Projects       []string               `json:"projects,omitempty"`
+	Resources      map[string]interface{} `json:"resources,omitempty"`
+	Capacity       map[string]interface{} `json:"capacity,omitempty"`
+	Draining       bool                   `json:"draining,omitempty"`
+	MaxParallel    int                    `json:"max_parallel,omitempty"`
 }
 
 // RunnerHeartbeatRequest is the request body for POST /runners/:id/heartbeat.
 type RunnerHeartbeatRequest struct {
-	RunningTasks int                    `json:"running_tasks"`
-	Stats        map[string]interface{} `json:"stats,omitempty"`
+	RunningTasks   int                    `json:"running_tasks"`
+	Stats          map[string]interface{} `json:"stats,omitempty"`
+	DispatchPush   *bool                  `json:"dispatch_push,omitempty"`
+	Labels         map[string]string      `json:"labels,omitempty"`
+	WorkspaceRoots []string               `json:"workspace_roots,omitempty"`
+	Projects       []string               `json:"projects,omitempty"`
+	Resources      map[string]interface{} `json:"resources,omitempty"`
+	Capacity       map[string]interface{} `json:"capacity,omitempty"`
+	Draining       *bool                  `json:"draining,omitempty"`
+
+	// Instances is a full reconcile list of OpenCode instances managed by this
+	// runner. nil means the runner does not report instances (older runners);
+	// an empty list means the runner has no instances.
+	Instances []OpencodeInstance `json:"instances"`
+}
+
+// OpencodeInstance describes an OpenCode HTTP server instance managed by a
+// runner. The port is informational only — the API never dials it directly;
+// all access goes through the runner's bridge connection.
+type OpencodeInstance struct {
+	InstanceID string   `json:"instance_id"`
+	RunnerID   string   `json:"runner_id"`
+	Hostname   string   `json:"hostname,omitempty"`
+	Kind       string   `json:"kind"` // "task" | "adhoc"
+	ProjectID  string   `json:"project_id,omitempty"`
+	TaskID     string   `json:"task_id,omitempty"`
+	FeatureID  string   `json:"feature_id,omitempty"`
+	Priority   string   `json:"priority,omitempty"`
+	Title      string   `json:"title,omitempty"`
+	Workdir    string   `json:"workdir,omitempty"`
+	Port       int      `json:"port,omitempty"`
+	PID        int      `json:"pid,omitempty"`
+	SessionIDs []string `json:"session_ids,omitempty"`
+	Status     string   `json:"status"` // "starting" | "idle" | "busy" | "exited"
+	Executor   string   `json:"executor,omitempty"`
+	Agent      string   `json:"agent,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	StartedAt  int64    `json:"started_at,omitempty"` // Unix milliseconds
+	LastSeen   int64    `json:"last_seen,omitempty"`  // Unix milliseconds
+
+	// Live decorations merged from the bridge hub on read paths; not persisted.
+	PendingPermissions int  `json:"pending_permissions,omitempty"`
+	BridgeConnected    bool `json:"bridge_connected,omitempty"`
+}
+
+// Instance kinds.
+const (
+	InstanceKindTask  = "task"
+	InstanceKindAdhoc = "adhoc"
+)
+
+// Instance statuses.
+const (
+	InstanceStatusStarting = "starting"
+	InstanceStatusIdle     = "idle"
+	InstanceStatusBusy     = "busy"
+	InstanceStatusExited   = "exited"
+)
+
+// InstanceListResponse is the response for instance list endpoints.
+type InstanceListResponse struct {
+	Instances []OpencodeInstance `json:"instances"`
+	Total     int                `json:"total"`
+}
+
+// SpawnInstanceSpec describes an ad-hoc OpenCode instance to spawn on a
+// runner. The workdir must be absolute and under the runner's allowed roots.
+type SpawnInstanceSpec struct {
+	Workdir string `json:"workdir"`
+	Agent   string `json:"agent,omitempty"`
+	Model   string `json:"model,omitempty"`
+	Title   string `json:"title,omitempty"`
 }
 
 // RunnerInfo is the API-level runner representation with computed status.
 type RunnerInfo struct {
 	RunnerID           string                      `json:"runner_id"`
+	MachineID          string                      `json:"machine_id,omitempty"`
 	Hostname           string                      `json:"hostname"`
+	BridgeConnected    bool                        `json:"bridge_connected,omitempty"`
 	Labels             map[string]string           `json:"labels,omitempty"`
 	Executors          []string                    `json:"executors,omitempty"`
 	Projects           []string                    `json:"projects,omitempty"`
 	Capabilities       []string                    `json:"capabilities,omitempty"`
+	DispatchPush       bool                        `json:"dispatch_push,omitempty"`
+	WorkspaceRoots     []string                    `json:"workspace_roots,omitempty"`
+	Resources          map[string]interface{}      `json:"resources,omitempty"`
+	Capacity           map[string]interface{}      `json:"capacity,omitempty"`
+	Draining           bool                        `json:"draining,omitempty"`
 	MaxParallel        int                         `json:"max_parallel"`
 	ActiveTasks        int                         `json:"active_tasks,omitempty"`
 	FeatureIDs         string                      `json:"feature_ids,omitempty"`
@@ -1055,6 +1287,53 @@ type RunnerInfo struct {
 type RunnerListResponse struct {
 	Runners []RunnerInfo `json:"runners"`
 	Total   int          `json:"total"`
+}
+
+// SchedulerResult summarizes one scheduler pass for a project.
+type SchedulerResult struct {
+	ProjectID  string `json:"project_id"`
+	Considered int    `json:"considered"`
+	Dispatched int    `json:"dispatched"`
+	Skipped    int    `json:"skipped"`
+}
+
+// SchedulerStatus is lightweight scheduler loop state suitable for API exposure.
+type SchedulerStatus struct {
+	Started            bool                       `json:"started"`
+	Running            bool                       `json:"running"`
+	Interval           string                     `json:"interval"`
+	LastTickAt         string                     `json:"last_tick_at,omitempty"`
+	LastSuccessAt      string                     `json:"last_success_at,omitempty"`
+	LastError          string                     `json:"last_error,omitempty"`
+	TotalTicks         int64                      `json:"total_ticks"`
+	LastProjectResults map[string]SchedulerResult `json:"last_project_results,omitempty"`
+	LastExpiredLeases  int64                      `json:"last_expired_leases"`
+}
+
+// PlacementReasonListResponse is the response for task placement diagnostics.
+type PlacementReasonListResponse struct {
+	Reasons []PlacementReason `json:"reasons"`
+	Total   int               `json:"total"`
+}
+
+// ServerRequestRecord is one HTTP request handled by the Brain server, for the
+// global server-request log (GET /server/requests/recent).
+type ServerRequestRecord struct {
+	Seq        int64  `json:"seq"`
+	Time       int64  `json:"time"` // unix milliseconds
+	Method     string `json:"method"`
+	Path       string `json:"path"`
+	Status     int    `json:"status"`
+	DurationMs int64  `json:"duration_ms"`
+	ActorType  string `json:"actor_type"`
+	ActorName  string `json:"actor_name"`
+	RequestID  string `json:"request_id,omitempty"`
+}
+
+// ServerRequestListResponse is the response for GET /server/requests/recent.
+type ServerRequestListResponse struct {
+	Requests []ServerRequestRecord `json:"requests"`
+	Total    int                   `json:"total"`
 }
 
 type BrainClientInfo struct {

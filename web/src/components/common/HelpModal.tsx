@@ -1,39 +1,21 @@
 import { Modal } from "./Modal";
+import { useUI, type View } from "../../store/ui";
 
 interface Row {
   keys: string[];
   desc: string;
 }
 interface Group {
+  id: string;
   title: string;
   rows: Row[];
 }
 
-const GROUPS: Group[] = [
-  {
-    title: "Global",
-    rows: [
-      { keys: ["H", "L"], desc: "Previous / next tab" },
-      { keys: ["h", "l", "[", "]"], desc: "Previous / next project" },
-      { keys: ["1–9"], desc: "Jump to project tab" },
-      { keys: ["R"], desc: "Jump to Runners" },
-      { keys: ["S"], desc: "Settings" },
-      { keys: ["w"], desc: "Toggle text wrap" },
-      { keys: ["p", "P"], desc: "Pause project / all" },
-      { keys: ["r"], desc: "Refresh / reconnect" },
-      { keys: ["?"], desc: "Toggle this help" },
-      { keys: ["Esc"], desc: "Clear selection / close" },
-    ],
-  },
-  {
-    title: "Lists (Tasks · Brain · Automations · Runners)",
-    rows: [
-      { keys: ["j", "k"], desc: "Move cursor" },
-      { keys: ["g", "G"], desc: "Top / bottom" },
-      { keys: ["Enter"], desc: "Open / expand" },
-    ],
-  },
-  {
+// Per-view groups shown first (highlighted) when that tab is active, so the
+// help adapts to wherever you are. Global + Lists always follow.
+const VIEW_GROUPS: Record<string, Group> = {
+  tasks: {
+    id: "tasks",
     title: "Tasks",
     rows: [
       { keys: ["Space"], desc: "Select / collapse group" },
@@ -42,59 +24,152 @@ const GROUPS: Group[] = [
       { keys: ["x"], desc: "Run / execute" },
       { keys: ["X"], desc: "Cancel (in-progress)" },
       { keys: ["d", "⌫"], desc: "Delete" },
+      { keys: ["Enter"], desc: "View entry file" },
       { keys: ["s"], desc: "Edit metadata" },
-      { keys: ["e"], desc: "Edit content" },
-      { keys: ["y"], desc: "Yank title" },
+      { keys: ["e"], desc: "Edit full file" },
       { keys: ["/"], desc: "Filter" },
       { keys: ["C"], desc: "Tasks ⇄ Schedules" },
       { keys: ["n"], desc: "New task" },
+      { keys: ["T"], desc: "Toggle detail pane" },
+      { keys: ["z"], desc: "Toggle logs pane" },
+      { keys: ["Tab"], desc: "Cycle panel focus" },
     ],
   },
-  {
+  brain: {
+    id: "brain",
     title: "Brain",
     rows: [
-      { keys: ["/"], desc: "Search" },
+      { keys: ["Enter"], desc: "Open entry" },
       { keys: ["e"], desc: "Edit entry" },
+      { keys: ["/"], desc: "Search" },
       { keys: ["n"], desc: "New entry" },
       { keys: ["b", "B"], desc: "Embed project / all" },
       { keys: ["F", "A"], desc: "Re-embed project / all" },
+      { keys: ["T"], desc: "Toggle detail pane" },
+      { keys: ["z"], desc: "Toggle logs pane" },
     ],
   },
-  {
+  automations: {
+    id: "automations",
     title: "Automations",
     rows: [
-      { keys: ["n"], desc: "New goal" },
-      { keys: ["Space"], desc: "Enable / disable" },
-      { keys: ["x"], desc: "Run / reconcile" },
-      { keys: ["e"], desc: "Configure goal" },
+      { keys: ["x"], desc: "Run automation" },
+      { keys: ["Enter"], desc: "Expand / configure" },
+      { keys: ["o"], desc: "Open / review session" },
+      { keys: ["Space"], desc: "Select run task / toggle automation" },
+      { keys: ["A", "D"], desc: "Select all run tasks / clear selection" },
+      { keys: ["d", "⌫"], desc: "Delete selected run tasks" },
+      { keys: ["e"], desc: "Edit (goal config / file)" },
+      { keys: ["n"], desc: "New automation" },
       { keys: ["p"], desc: "Pause automations" },
-      { keys: ["C"], desc: "Automations ⇄ Dream" },
+      { keys: ["T"], desc: "Toggle detail pane" },
+      { keys: ["z"], desc: "Toggle logs pane" },
     ],
   },
-  {
-    title: "Dream",
+  control: {
+    id: "control",
+    title: "Control",
     rows: [
-      { keys: ["/"], desc: "Search" },
-      { keys: ["n", "N"], desc: "Next / previous match" },
+      { keys: ["j", "k", "g", "G"], desc: "Move through runner rail" },
+      { keys: ["Enter"], desc: "Attach / open instance" },
+      { keys: ["n", "+"], desc: "New instance" },
+      { keys: ["x", "s"], desc: "Kill ad-hoc instance" },
+      { keys: ["Esc", "⌫"], desc: "Back from chat/history to rail" },
+      { keys: ["▶"], desc: "Resume reviewed session" },
+      { keys: ["◼"], desc: "Stop / interrupt" },
     ],
   },
-  {
-    title: "Runners · Logs",
+  runners: {
+    id: "runners",
+    title: "Runners",
     rows: [
-      { keys: ["s"], desc: "Shut down runner" },
-      { keys: ["p", "P"], desc: "Pause / pause all" },
-      { keys: ["f"], desc: "Follow logs" },
+      { keys: ["j", "k", "g", "G"], desc: "Move through runners and instances" },
+      { keys: ["Enter", "o"], desc: "Open instance in Control" },
+      { keys: ["s"], desc: "Shut down cursored runner" },
+      { keys: ["p", "P"], desc: "Pause/resume active scope" },
+      { keys: ["a", "A"], desc: "Pause/resume automations" },
     ],
   },
-];
+  logs: {
+    id: "logs",
+    title: "Logs (server requests)",
+    rows: [
+      { keys: ["j", "k"], desc: "Scroll" },
+      { keys: ["g", "G"], desc: "Top / bottom" },
+      { keys: ["/"], desc: "Filter" },
+      { keys: ["f"], desc: "Follow / live tail" },
+    ],
+  },
+};
+
+const GLOBAL: Group = {
+  id: "global",
+  title: "Global",
+  rows: [
+    { keys: ["h", "l", "[", "]"], desc: "Previous / next tab" },
+    { keys: [":"], desc: "Command: jump to tasks, brain, automations, runners, logs, projects" },
+    { keys: ["⌘K", "Ctrl+K"], desc: "Quick-switch project (fuzzy search)" },
+    { keys: ["H", "L"], desc: "Previous / next project" },
+    { keys: ["1–9"], desc: "Jump to project tab" },
+    { keys: ["R"], desc: "Jump to Runners" },
+    { keys: ["S"], desc: "Settings" },
+    { keys: ["w"], desc: "Toggle text wrap" },
+    { keys: ["p", "P"], desc: "Pause project / all" },
+    { keys: ["r"], desc: "Refresh / reconnect" },
+    { keys: ["?"], desc: "Toggle this help" },
+    { keys: ["Esc"], desc: "Clear selection / close" },
+  ],
+};
+
+const LISTS: Group = {
+  id: "lists",
+  title: "Lists (all tabs)",
+  rows: [
+    { keys: ["j", "k"], desc: "Move cursor" },
+    { keys: ["g", "G"], desc: "Top / bottom" },
+    { keys: ["Enter"], desc: "Open / expand" },
+  ],
+};
+
+const POPUPS: Group = {
+  id: "popups",
+  title: "Popups / sheets",
+  rows: [
+    { keys: ["j", "k", "↑", "↓"], desc: "Scroll" },
+    { keys: ["g", "G"], desc: "Top / bottom" },
+    { keys: ["Ctrl-D", "Ctrl-U"], desc: "Page down / up" },
+    { keys: ["m"], desc: "Expand / restore" },
+    { keys: ["e"], desc: "Edit when available" },
+    { keys: ["q", "Esc"], desc: "Close" },
+  ],
+};
+
+const VIEW_LABEL: Record<string, string> = {
+  tasks: "Tasks",
+  brain: "Brain",
+  automations: "Automations",
+  control: "Control",
+  runners: "Runners",
+  logs: "Logs",
+};
 
 export function HelpModal({ onClose }: { onClose: () => void }) {
+  const view = useUI((s) => s.view) as View;
+  const current = VIEW_GROUPS[view];
+
+  // Current tab first (highlighted), then Global + Lists, then the other tabs.
+  const others = Object.values(VIEW_GROUPS).filter((g) => g.id !== view);
+  const ordered: Group[] = [...(current ? [current] : []), GLOBAL, LISTS, POPUPS, ...others];
+
   return (
-    <Modal title="Keyboard shortcuts" onClose={onClose}>
+    <Modal title={`Keyboard shortcuts — ${VIEW_LABEL[view] ?? ""}`} onClose={onClose}>
       <div className="help-grid">
-        {GROUPS.map((g) => (
-          <div key={g.title} className="help-group">
-            <h3>{g.title}</h3>
+        {ordered.map((g) => (
+          <div key={g.id} className={`help-group ${g.id === view ? "help-current" : ""}`}>
+            <h3>
+              {g.title}
+              {g.id === view && <span className="faint" style={{ fontWeight: 400 }}> · current tab</span>}
+            </h3>
             {g.rows.map((r, i) => (
               <div key={i} className="help-row">
                 <span className="help-keys">

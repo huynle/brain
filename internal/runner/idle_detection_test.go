@@ -1352,6 +1352,117 @@ func TestCheckIdleStatus_PiTask_NoExecutorType_FallsBackToOpencode(t *testing.T)
 	}
 }
 
+// TestCheckIdleStatus_ScriptTask_RunningProcess_NoAction verifies that running
+// script-executor tasks (e.g. cron-triggered shell commands like `mm --random`)
+// are NOT marked blocked by idle detection. Script processes don't expose an
+// HTTP API; their completion is detected via process exit. Before this fix,
+// script tasks fell through to checkOpencodeIdleStatus which polled a port
+// that didn't exist, observed "unavailable", and eventually marked the task
+// blocked once their idle threshold elapsed — flooding the TUI with stale
+// "Automation: <id>" tasks.
+func TestCheckIdleStatus_ScriptTask_RunningProcess_NoAction(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.IdleDetectionThreshold = 100 // Very short — would trip OpenCode polling fast
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(300)
+	// Simulate the exact shape of a cron automation script task:
+	// IdleSince already in the past, no port, ExecutorType=script.
+	task := RunningTask{
+		ID:             "script-task1",
+		Path:           "projects/proj-a/task/script-task1.md",
+		Title:          "Automation: dkkz9pr1",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            300,
+		StartedAt:      time.Now().Add(-10 * time.Second),
+		ExecutorType:   "script",
+		CompleteOnIdle: true,
+		OpencodePort:   0,
+		IdleSince:      time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+	}
+	processMgr.Add("script-task1", task, proc)
+
+	ctx := context.Background()
+	tr.checkIdleStatus(ctx)
+
+	// Critical: script tasks must NOT be touched by idle detection.
+	// Specifically, they must NEVER be marked blocked.
+	updates := client.getUpdateStatusCalls()
+	for _, u := range updates {
+		if u.Status == "blocked" {
+			t.Errorf("script task must not be marked blocked by idle detection, got: %+v", u)
+		}
+		if u.Status == "completed" {
+			t.Errorf("script task must not be marked completed by idle detection (process exit handles that), got: %+v", u)
+		}
+	}
+	if len(updates) > 0 {
+		t.Errorf("script task should produce zero status updates from idle detection, got: %+v", updates)
+	}
+}
+
+func TestCheckIdleStatus_ScriptTask_NoOpencodePolling(t *testing.T) {
+	// Defensive: even if a script task somehow has an OpencodePort set,
+	// idle detection must skip it. (Defense in depth — the current code
+	// dispatches by ExecutorType, but this guards against future regressions.)
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.IdleDetectionThreshold = 100
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     client,
+		Executor:   executor,
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	proc := newMockProcess(301)
+	task := RunningTask{
+		ID:             "script-task2",
+		Path:           "projects/proj-a/task/script-task2.md",
+		Title:          "Script with phantom port",
+		Priority:       "medium",
+		ProjectID:      "proj-a",
+		PID:            301,
+		StartedAt:      time.Now(),
+		ExecutorType:   "script",
+		CompleteOnIdle: false,
+		OpencodePort:   12345, // Garbage — must be ignored.
+		IdleSince:      time.Now().Add(-1 * time.Hour).Format(time.RFC3339),
+	}
+	processMgr.Add("script-task2", task, proc)
+
+	ctx := context.Background()
+	tr.checkIdleStatus(ctx)
+
+	updates := client.getUpdateStatusCalls()
+	if len(updates) > 0 {
+		t.Errorf("script task with phantom port must not produce status updates, got: %+v", updates)
+	}
+}
+
 // =============================================================================
 // RuntimeDefaultModel in claimAndSpawn / resumeTask Tests
 // =============================================================================

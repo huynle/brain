@@ -74,18 +74,37 @@ func (s *apiStub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func TestHandler_DelegatesAPIPaths(t *testing.T) {
-	stub := &apiStub{}
-	h := Handler(stub)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/tasks", nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-
-	if !stub.called {
-		t.Fatal("expected API stub to be called for /api path")
+	// Every sensitive prefix must be delegated to the API even as a plain GET —
+	// never served the SPA shell (index.html). This is the guard that prevents a
+	// misrouted request (or a stale service worker doing a navigation-style GET
+	// to an API path) from receiving HTML instead of JSON. Includes unknown
+	// routes, which must still 404 as JSON from the API rather than fall through
+	// to the SPA.
+	paths := []string{
+		"/api/v1/tasks",
+		"/api/v1/entries",
+		"/api/v1/this-route-does-not-exist",
+		"/mcp",
+		"/authorize",
+		"/token",
+		"/register",
+		"/health",
+		"/.well-known/oauth-authorization-server",
+		"/oauth/anything",
 	}
-	if rec.Code != http.StatusTeapot {
-		t.Errorf("expected delegation (418), got %d", rec.Code)
+	for _, p := range paths {
+		stub := &apiStub{}
+		h := Handler(stub)
+		req := httptest.NewRequest(http.MethodGet, p, nil)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+
+		if !stub.called {
+			t.Errorf("GET %q: expected delegation to API, but the SPA handled it (would serve index.html)", p)
+		}
+		if rec.Code != http.StatusTeapot {
+			t.Errorf("GET %q: expected 418 from API stub, got %d", p, rec.Code)
+		}
 	}
 }
 

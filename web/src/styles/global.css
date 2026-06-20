@@ -1980,6 +1980,11 @@ kbd {
 }
 .assistant-actions { margin-top: 8px; }
 .assistant-composer { background: var(--bg); }
+.assistant-model-custom {
+  max-width: 170px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
 .assistant-strip {
   border: 1px solid color-mix(in srgb, var(--purple) 35%, var(--border));
   background: color-mix(in srgb, var(--purple) 6%, transparent);

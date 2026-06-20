@@ -15,9 +15,13 @@ import (
 type stubAssistantPlanner struct {
 	resp AssistantPlanResponse
 	err  error
+	req  *AssistantPlanRequest
 }
 
 func (s stubAssistantPlanner) Plan(ctx context.Context, req AssistantPlanRequest) (AssistantPlanResponse, error) {
+	if s.req != nil {
+		*s.req = req
+	}
 	return s.resp, s.err
 }
 
@@ -91,6 +95,61 @@ func TestHandleAssistantChat_ExplicitCreateTaskExecutesImmediately(t *testing.T)
 	}
 	if len(got.ProposedActions) != 0 {
 		t.Fatalf("proposed_actions = %#v, want none for explicit create", got.ProposedActions)
+	}
+}
+
+func TestHandleAssistantChat_PassesModelOverrideToPlanner(t *testing.T) {
+	var gotReq AssistantPlanRequest
+	svc := NewAssistantService(AssistantServiceOptions{
+		Enabled: true,
+		Planner: stubAssistantPlanner{
+			req:  &gotReq,
+			resp: AssistantPlanResponse{Reply: "Using selected model."},
+		},
+	})
+	router := newAssistantTestRouter(svc)
+
+	body := []byte(`{"project":"brain-api","message":"Use the selected model.","model":"openai/gpt-4o-mini"}`)
+	req := httptest.NewRequest(http.MethodPost, "/assistant/chat", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if gotReq.Model != "openai/gpt-4o-mini" {
+		t.Fatalf("planner model = %q, want %q", gotReq.Model, "openai/gpt-4o-mini")
+	}
+}
+
+func TestOpenRouterAssistantPlanner_UsesRequestModelOverride(t *testing.T) {
+	t.Setenv("BRAIN_TEST_OPENROUTER_KEY", "test-key")
+	var gotModel string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/chat/completions" {
+			t.Fatalf("path = %q, want /chat/completions", r.URL.Path)
+		}
+		if auth := r.Header.Get("Authorization"); auth != "Bearer test-key" {
+			t.Fatalf("authorization = %q, want bearer test key", auth)
+		}
+		var payload struct {
+			Model string `json:"model"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		gotModel = payload.Model
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{\"reply\":\"ok\",\"actions\":[]}"}}]}`))
+	}))
+	defer srv.Close()
+
+	planner := NewOpenRouterAssistantPlanner("openrouter", srv.URL, "BRAIN_TEST_OPENROUTER_KEY", "anthropic/claude-sonnet-4", 0)
+	if _, err := planner.Plan(context.Background(), AssistantPlanRequest{Message: "hello", Model: "openai/gpt-4o-mini"}); err != nil {
+		t.Fatalf("Plan() error = %v", err)
+	}
+	if gotModel != "openai/gpt-4o-mini" {
+		t.Fatalf("request model = %q, want %q", gotModel, "openai/gpt-4o-mini")
 	}
 }
 

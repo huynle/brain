@@ -8,7 +8,7 @@ import (
 
 func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	// Clear env vars that might affect config
-	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN"}
+	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "JWT_SECRET", "BRAIN_JWT_SECRET"}
 	for _, key := range envVars {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
@@ -57,6 +57,9 @@ func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "info")
 	}
+	if cfg.JWTSecret != "" {
+		t.Errorf("JWTSecret = %q, want empty", cfg.JWTSecret)
+	}
 }
 
 func TestLoadEnvVarsOverrideAll(t *testing.T) {
@@ -68,6 +71,7 @@ func TestLoadEnvVarsOverrideAll(t *testing.T) {
 	t.Setenv("CORS_ORIGIN", "https://example.com")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("OAUTH_PIN", "test-pin-123")
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
 
 	cfg := Load()
 
@@ -91,6 +95,20 @@ func TestLoadEnvVarsOverrideAll(t *testing.T) {
 	}
 	if cfg.OAuthPIN != "test-pin-123" {
 		t.Errorf("OAuthPIN = %q, want %q", cfg.OAuthPIN, "test-pin-123")
+	}
+	if cfg.JWTSecret != "test-jwt-secret" {
+		t.Errorf("JWTSecret = %q, want %q", cfg.JWTSecret, "test-jwt-secret")
+	}
+}
+
+func TestLoadBrainJWTSecretOverridesJWTSecret(t *testing.T) {
+	t.Setenv("JWT_SECRET", "base-secret")
+	t.Setenv("BRAIN_JWT_SECRET", "brain-secret")
+
+	cfg := Load()
+
+	if cfg.JWTSecret != "brain-secret" {
+		t.Errorf("JWTSecret = %q, want %q", cfg.JWTSecret, "brain-secret")
 	}
 }
 

@@ -586,6 +586,9 @@ func defaultConfig() *UnifiedConfig {
 		if ucfg.Server.OAuthPIN != "" {
 			cfg.Server.OAuthPIN = ucfg.Server.OAuthPIN
 		}
+		if ucfg.Server.JWTSecret != "" {
+			cfg.Server.JWTSecret = ucfg.Server.JWTSecret
+		}
 		// Thread task defaults from unified config
 		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
 		cfg.Server.FeatureCheckout = ucfg.Server.FeatureCheckout
@@ -624,6 +627,12 @@ func defaultConfig() *UnifiedConfig {
 	}
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.Server.OAuthPIN = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.Server.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_JWT_SECRET"); v != "" {
+		cfg.Server.JWTSecret = v
 	}
 	if v := os.Getenv("BRAIN_FEATURE_CHECKOUT_ENABLED"); v != "" {
 		lower := strings.ToLower(v)
@@ -670,6 +679,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.LogLevel = cfg.Server.LogLevel
 	cmdCfg.Server.CORSOrigin = cfg.Server.CORSOrigin
 	cmdCfg.Server.OAuthPIN = cfg.Server.OAuthPIN
+	cmdCfg.Server.JWTSecret = cfg.Server.JWTSecret
 	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
 	cmdCfg.Server.LogFile = cfg.Server.LogFile
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled

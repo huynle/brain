@@ -26,6 +26,7 @@ type UnifiedConfig struct {
 		LogLevel   string
 		CORSOrigin string
 		OAuthPIN   string
+		JWTSecret  string
 		TLS        struct {
 			Enabled  bool
 			CertPath string
@@ -92,6 +93,7 @@ func (c *APICommand) Execute() error {
 		LogLevel:        c.Config.Server.LogLevel,
 		CORSOrigin:      c.Config.Server.CORSOrigin,
 		OAuthPIN:        c.Config.Server.OAuthPIN,
+		JWTSecret:       c.Config.Server.JWTSecret,
 		TaskDefaults:    c.Config.Server.TaskDefaults,
 		FeatureCheckout: c.Config.Server.FeatureCheckout,
 		Embedding:       c.Config.Server.Embedding,

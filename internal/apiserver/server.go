@@ -35,6 +35,7 @@ type ServerOptions struct {
 	LogLevel        string
 	CORSOrigin      string
 	OAuthPIN        string
+	JWTSecret       string
 	TaskDefaults    config.TaskDefaultsConfig
 	FeatureCheckout config.FeatureCheckoutConfig
 	Embedding       config.EmbeddingConfig
@@ -182,6 +183,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		EnableAuth:      opts.EnableAuth,
 		CORSOrigin:      corsOrigin,
 		OAuthPIN:        opts.OAuthPIN,
+		JWTSecret:       opts.JWTSecret,
 		TaskDefaults:    opts.TaskDefaults,
 		FeatureCheckout: opts.FeatureCheckout,
 		Embedding:       opts.Embedding,
@@ -378,7 +380,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		OAuthValidator: store,
 	}
 	router.Route("/mcp", func(r chi.Router) {
-		r.Use(api.Auth(opts.EnableAuth, authValidator))
+		r.Use(api.Auth(opts.EnableAuth, authValidator, opts.JWTSecret))
 		r.Post("/", mcpHTTP.ServeHTTP)
 		r.Get("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
@@ -388,7 +390,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// webui.Handler below) owns browser navigations to "/", while MCP clients
 	// use POST/DELETE at the root. Clients that need a GET stream use /mcp.
 	router.Group(func(r chi.Router) {
-		r.Use(api.Auth(opts.EnableAuth, authValidator))
+		r.Use(api.Auth(opts.EnableAuth, authValidator, opts.JWTSecret))
 		r.Post("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})

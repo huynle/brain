@@ -129,6 +129,7 @@ type ServerConfig struct {
 	CORSOrigin      string                `yaml:"cors_origin"`
 	LogLevel        string                `yaml:"log_level"`
 	OAuthPIN        string                `yaml:"oauth_pin"`
+	JWTSecret       string                `yaml:"jwt_secret"`
 	TLSCert         string                `yaml:"tls_cert"`
 	TLSKey          string                `yaml:"tls_key"`
 	PIDFile         string                `yaml:"pid_file"`

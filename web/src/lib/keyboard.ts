@@ -96,12 +96,33 @@ export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
         return;
       }
 
-      // Quick project switcher: Cmd/Ctrl+K opens the searchable picker from
+      // Quick project switcher: Cmd/Ctrl+; opens the searchable picker from
       // anywhere (even while typing in a field). Handled before the modifier and
       // editable-target guards below.
-      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      if ((e.metaKey || e.ctrlKey) && e.key === ";") {
         e.preventDefault();
         uiApi().setProjectSheetOpen(true);
+        return;
+      }
+
+      // Cmd/Ctrl+. toggles the Brain Assistant from anywhere — including while
+      // typing in another field — so it functions as a global command center.
+      // Behavior is viewport-aware: on a wide desktop it toggles the persistent
+      // sidebar; on narrow desktop / mobile it toggles the overlay drawer.
+      if ((e.metaKey || e.ctrlKey) && (e.key === ".")) {
+        e.preventDefault();
+        const ui = uiApi();
+        // Use a window width check rather than importing the hook here — this
+        // listener runs outside React's render cycle. Threshold mirrors the
+        // "wide" tier in useViewport.
+        const wide = window.innerWidth >= 1100;
+        if (wide) {
+          ui.setAssistantSidebar(!ui.assistantSidebar);
+          if (!ui.assistantSidebar) window.setTimeout(ui.focusAssistantPrompt, 0);
+        } else {
+          ui.setAssistantOpen(!ui.assistantOpen);
+          if (!ui.assistantOpen) window.setTimeout(ui.focusAssistantPrompt, 0);
+        }
         return;
       }
 

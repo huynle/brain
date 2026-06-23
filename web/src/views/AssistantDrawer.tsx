@@ -1,214 +1,139 @@
 import { useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import { useQuery } from "@tanstack/react-query";
-import {
-  assistantChat,
-  assistantStatus,
-  uploadAttachment,
-  type AssistantChatResponse,
-} from "../lib/api";
-import { ALL_PROJECTS, useUI } from "../store/ui";
-import { attachmentsFromDataTransfer, type Attachment } from "./control/images";
-import { Spinner } from "../components/common/states";
+import { useUI } from "../store/ui";
+import { useViewport } from "../hooks/useViewport";
+import { AssistantPanel } from "./AssistantPanel";
 
-interface Message {
-  role: "user" | "assistant";
-  text: string;
-  result?: AssistantChatResponse;
-}
+// Threshold (px) for the bottom-sheet drag-to-dismiss gesture. The user must
+// drag the handle down at least this far for the sheet to close on release.
+const SHEET_DISMISS_PX = 90;
 
-const ASSISTANT_MODELS = [
-  "anthropic/claude-sonnet-4",
-  "anthropic/claude-opus-4",
-  "openai/gpt-4o-mini",
-  "openai/gpt-4o",
-  "google/gemini-2.5-flash",
-  "google/gemini-2.5-pro",
-] as const;
+// Overlay host for the Brain Assistant. Rendered as a slide-up bottom sheet on
+// mobile and as a right-side drawer on narrow desktop viewports (where the
+// persistent sidebar would crowd the main content). On wide viewports this
+// component still renders if the user explicitly opens the overlay (e.g. with
+// Cmd/Ctrl+. while the sidebar is collapsed) so there's always a way to reach
+// the assistant. The persistent sidebar is the AssistantSidebar component.
+export function AssistantDrawer() {
+  const tier = useViewport();
+  const open = useUI((s) => s.assistantOpen);
+  const setOpen = useUI((s) => s.setAssistantOpen);
+  const isMobile = tier === "mobile";
 
-const CUSTOM_MODEL = "__custom__";
+  const [dragY, setDragY] = useState(0);
+  const dragStartY = useRef<number | null>(null);
 
-export function AssistantDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const activeProject = useUI((s) => s.activeProject);
-  const project = activeProject === ALL_PROJECTS ? "" : activeProject;
-  const toast = useUI((s) => s.toast);
-  const [text, setText] = useState("");
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [selectedModel, setSelectedModel] = useState("");
-  const [customModel, setCustomModel] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [dragOver, setDragOver] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  function onClose() {
+    setOpen(false);
+  }
 
-  const model = selectedModel === CUSTOM_MODEL ? customModel.trim() : selectedModel;
-
-  const statusQ = useQuery({
-    queryKey: ["assistant-status"],
-    queryFn: assistantStatus,
-    enabled: open,
-    staleTime: 30_000,
-    retry: false,
-  });
-
+  // Reset the drag offset whenever the sheet (re-)opens.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, busy, open]);
+    if (open) setDragY(0);
+  }, [open]);
+
+  // Android/Chrome back-button integration: while open, push a history entry so
+  // the user's natural "back" gesture closes the assistant instead of leaving
+  // the page. We mark the entry so popstate only acts on our own state.
+  useEffect(() => {
+    if (!open) return;
+    const marker = { __brainAssistant: true } as const;
+    try {
+      window.history.pushState(marker, "");
+    } catch {
+      /* private mode / sandboxed iframe — back-button integration just no-ops */
+    }
+    function onPop() {
+      // Any popstate while we're open means the user navigated back: close.
+      setOpen(false);
+    }
+    window.addEventListener("popstate", onPop);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      // If we're unmounting while still "open" (e.g. parent forced close) and
+      // our marker is still on top of the history stack, pop it so we don't
+      // leave dead entries that swallow a future back press.
+      if (
+        window.history.state &&
+        (window.history.state as { __brainAssistant?: boolean }).__brainAssistant
+      ) {
+        try {
+          window.history.back();
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+  }, [open, setOpen]);
 
   if (!open) return null;
 
-  async function send() {
-    const prompt = text.trim();
-    if (!prompt && attachments.length === 0) return;
-    if (!project && attachments.length > 0) {
-      toast("Select a project before sending attachments", "error");
+  // Drag-to-dismiss handlers for the mobile bottom sheet's drag handle.
+  // Only downward drag is honored — upward drag clamps to 0 so the sheet can't
+  // be pushed past its anchored top edge. On release, if the user dragged past
+  // SHEET_DISMISS_PX we close; otherwise we snap back to 0.
+  function onHandleTouchStart(e: React.TouchEvent) {
+    if (e.touches.length !== 1) {
+      dragStartY.current = null;
       return;
     }
-    const files = attachments;
-    setText("");
-    setAttachments([]);
-    setMessages((m) => [...m, { role: "user", text: prompt || `[${files.length} image${files.length === 1 ? "" : "s"}]` }]);
-    setBusy(true);
-    try {
-      const uploaded: string[] = [];
-      for (const f of files) {
-        const blob = await (await fetch(f.dataUrl)).blob();
-        const res = await uploadAttachment(project, blob, f.filename, { source: "assistant" });
-        uploaded.push(res.attachment.id);
-      }
-      const res = await assistantChat({
-        project: project || undefined,
-        message: prompt,
-        model: model || undefined,
-        attachments: uploaded,
-        context: { view: "assistant" },
-      });
-      setMessages((m) => [...m, { role: "assistant", text: res.reply, result: res }]);
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "Assistant failed", "error");
-      setMessages((m) => [...m, { role: "assistant", text: "Assistant request failed." }]);
-    } finally {
-      setBusy(false);
+    dragStartY.current = e.touches[0].clientY;
+  }
+  function onHandleTouchMove(e: React.TouchEvent) {
+    const start = dragStartY.current;
+    if (start == null) return;
+    const dy = e.touches[0].clientY - start;
+    setDragY(dy > 0 ? dy : 0);
+  }
+  function onHandleTouchEnd() {
+    const dy = dragY;
+    dragStartY.current = null;
+    if (dy >= SHEET_DISMISS_PX) {
+      setOpen(false);
+      return;
     }
+    setDragY(0);
   }
 
-  async function addImages(dt: DataTransfer | null) {
-    const imgs = await attachmentsFromDataTransfer(dt);
-    if (imgs.length) setAttachments((a) => [...a, ...imgs]);
-  }
+  const surfaceClass = isMobile ? "assistant-sheet" : "assistant-drawer";
+  const surfaceStyle =
+    isMobile && dragY > 0 ? { transform: `translateY(${dragY}px)` } : undefined;
 
   return (
-    <div className="assistant-shell" role="dialog" aria-label="Brain Assistant">
+    <div
+      className={`assistant-shell ${isMobile ? "mobile" : ""}`}
+      role="dialog"
+      aria-label="Brain Assistant"
+      aria-modal="true"
+    >
       <div className="assistant-backdrop" onClick={onClose} />
-      <aside className="assistant-drawer">
-        <header className="assistant-head">
-          <div>
-            <strong>Brain Assistant</strong>
-            <div className="faint">
-              {statusQ.data?.available
-                ? `${statusQ.data.mode}${statusQ.data.model ? ` · ${statusQ.data.model}` : ""}`
-                : statusQ.data?.reason || "checking assistant..."}
-            </div>
+      <aside className={surfaceClass} style={surfaceStyle}>
+        {isMobile && (
+          <div
+            className="assistant-grabber"
+            role="button"
+            aria-label="Drag down to close assistant"
+            onTouchStart={onHandleTouchStart}
+            onTouchMove={onHandleTouchMove}
+            onTouchEnd={onHandleTouchEnd}
+            onTouchCancel={onHandleTouchEnd}
+          >
+            <span className="assistant-grabber-bar" />
           </div>
-          <button className="icon-btn" onClick={onClose} title="Close assistant">×</button>
-        </header>
-
-        <div className="assistant-scroll" ref={scrollRef}>
-          {messages.length === 0 && (
-            <div className="assistant-empty">
-              Ask Brain to create tasks, goals, automations, or entries. Explicit create requests run immediately.
-            </div>
-          )}
-          {messages.map((m, i) => (
-            <div key={i} className={`assistant-msg ${m.role}`}>
-              <div className="ctl-msg-role">{m.role === "user" ? "you" : "assistant"}</div>
-              <div className="ctl-part-text"><ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown></div>
-              {m.result?.executed_actions?.length ? (
-                <div className="assistant-actions">
-                  {m.result.executed_actions.map((a, idx) => (
-                    <div key={idx} className="ctl-tool">
-                      <div className="ctl-tool-head">executed · {a.type} · {a.status}</div>
-                      {a.error ? <pre className="ctl-tool-out">{a.error}</pre> : null}
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              {m.result?.proposed_actions?.length ? (
-                <div className="assistant-actions">
-                  {m.result.proposed_actions.map((a, idx) => (
-                    <div key={idx} className="ctl-tool">
-                      <div className="ctl-tool-head">proposed · {a.type}</div>
-                      <pre className="ctl-tool-out">{JSON.stringify(a.payload, null, 2)}</pre>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ))}
-          {busy && <div className="assistant-msg assistant"><Spinner /> Thinking...</div>}
-        </div>
-
-        <div
-          className={`assistant-composer ctl-composer ${dragOver ? "dragover" : ""}`}
-          onPaste={(e) => void addImages(e.clipboardData)}
-          onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-          onDragLeave={() => setDragOver(false)}
-          onDrop={(e) => { e.preventDefault(); setDragOver(false); void addImages(e.dataTransfer); }}
-        >
-          {attachments.length > 0 && (
-            <div className="ctl-attach-row">
-              {attachments.map((a) => (
-                <div className="ctl-attach" key={a.id} title={a.filename}>
-                  <img src={a.dataUrl} alt={a.filename} />
-                  <button className="ctl-attach-x" onClick={() => setAttachments((xs) => xs.filter((x) => x.id !== a.id))}>×</button>
-                </div>
-              ))}
-            </div>
-          )}
-          <textarea
-            rows={3}
-            value={text}
-            placeholder="Create a task, goal, automation, or brain entry..."
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
-          <div className="btn-row">
-            <span className="faint">project: {project || "select one"}</span>
-            <select
-              aria-label="Assistant model"
-              value={selectedModel}
-              onChange={(e) => setSelectedModel(e.target.value)}
-              disabled={busy}
-              title="OpenRouter model"
+        )}
+        <AssistantPanel
+          active
+          className="assistant-panel-overlay"
+          headerActions={
+            <button
+              className="icon-btn"
+              onClick={onClose}
+              title="Close assistant"
+              aria-label="Close"
             >
-              <option value="">default · {statusQ.data?.model || "configured model"}</option>
-              {ASSISTANT_MODELS.map((m) => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-              <option value={CUSTOM_MODEL}>custom...</option>
-            </select>
-            {selectedModel === CUSTOM_MODEL && (
-              <input
-                aria-label="Custom OpenRouter model"
-                className="assistant-model-custom"
-                value={customModel}
-                onChange={(e) => setCustomModel(e.target.value)}
-                placeholder="provider/model-id"
-                disabled={busy}
-              />
-            )}
-            <button className="btn primary sm" disabled={busy || !statusQ.data?.available} onClick={() => void send()}>
-              {busy ? "Sending..." : "Send"}
+              ×
             </button>
-          </div>
-        </div>
+          }
+        />
       </aside>
     </div>
   );

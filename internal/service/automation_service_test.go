@@ -1806,6 +1806,58 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	}
 }
 
+func TestAutomationService_CheckScheduledCreatesScriptTaskWithDeterministicWorkdir(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 29, 13, 5, 0, 0, time.UTC)
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Cron script",
+		Content: "Runs a script on a cron schedule.",
+		Status:  "active",
+		Project: "automation-cron-script-workdir-test",
+		Trigger: &types.TriggerConfig{
+			Type:     "cron",
+			Schedule: "* * * * *",
+		},
+		Action: &types.AutomationAction{
+			Type:    "script",
+			Command: "mm --random",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	if err := automation.CheckScheduled(ctx, now); err != nil {
+		t.Fatalf("CheckScheduled failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-cron-script-workdir-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated cron task, got %d", len(resp.Entries))
+	}
+	task := resp.Entries[0]
+	if task.Executor != "script" {
+		t.Fatalf("generated script task executor = %q, want script", task.Executor)
+	}
+	if task.ExecutionMode != "current_branch" {
+		t.Fatalf("generated script task execution_mode = %q, want current_branch", task.ExecutionMode)
+	}
+	if task.TargetWorkdir != "/tmp" {
+		t.Fatalf("generated script task target_workdir = %q, want /tmp", task.TargetWorkdir)
+	}
+}
+
 func TestAutomationService_CheckScheduledSkipsWhenAutomationsPaused(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()

@@ -93,7 +93,7 @@ function areAutomationsPaused(project: string, status?: RunnerStatus): boolean {
 }
 
 // Searchable project picker. Opened by the status-bar project name or the
-// Cmd/Ctrl+K shortcut. Type to fuzzy-filter; the closest match is highlighted,
+// Cmd/Ctrl+; shortcut. Type to fuzzy-filter; the closest match is highlighted,
 // ↑/↓ moves the selection, Enter accepts, Esc closes. Bottom sheet on mobile,
 // centered modal on desktop.
 export function ProjectSheet() {

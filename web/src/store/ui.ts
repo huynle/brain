@@ -55,6 +55,10 @@ interface UIState {
   logFilter: string; // task id filter applied when opening the logs view
   controlTarget: ControlTarget | null; // pending Control attach request
   settingsOpen: boolean;
+  assistantOpen: boolean; // overlay: mobile bottom sheet / narrow-viewport drawer
+  assistantSidebar: boolean; // desktop persistent right sidebar (when wide enough)
+  assistantWidth: number; // sidebar width in px (drag-to-resize)
+  assistantFocusSeq: number; // increments when the prompt should receive focus
   wrap: boolean; // text-wrap toggle (w)
   detailVisible: boolean; // T
   logsVisible: boolean; // z
@@ -75,6 +79,10 @@ interface UIState {
   openInControl: (target: ControlTarget) => void;
   consumeControlTarget: () => ControlTarget | null;
   setSettingsOpen: (open: boolean) => void;
+  setAssistantOpen: (open: boolean) => void;
+  setAssistantSidebar: (visible: boolean) => void;
+  setAssistantWidth: (px: number) => void;
+  focusAssistantPrompt: () => void;
   toggleWrap: () => void;
   toggleDetail: () => void;
   toggleLogs: () => void;
@@ -98,12 +106,48 @@ function loadActiveProject(): string {
   }
 }
 
+// Persist the assistant sidebar's visibility and width so a reload returns to
+// the same layout. Defaults: visible at 380px on first load.
+const ASSISTANT_SIDEBAR_KEY = "brain.assistant_sidebar"; // "1" | "0"
+const ASSISTANT_WIDTH_KEY = "brain.assistant_width"; // integer string, px
+const ASSISTANT_WIDTH_DEFAULT = 380;
+const ASSISTANT_WIDTH_MIN = 280;
+const ASSISTANT_WIDTH_MAX = 720;
+function loadAssistantSidebar(): boolean {
+  try {
+    const v = localStorage.getItem(ASSISTANT_SIDEBAR_KEY);
+    return v === null ? true : v === "1";
+  } catch {
+    return true;
+  }
+}
+function loadAssistantWidth(): number {
+  try {
+    const raw = localStorage.getItem(ASSISTANT_WIDTH_KEY);
+    if (!raw) return ASSISTANT_WIDTH_DEFAULT;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return ASSISTANT_WIDTH_DEFAULT;
+    return Math.min(ASSISTANT_WIDTH_MAX, Math.max(ASSISTANT_WIDTH_MIN, n));
+  } catch {
+    return ASSISTANT_WIDTH_DEFAULT;
+  }
+}
+export const ASSISTANT_WIDTH_BOUNDS = {
+  min: ASSISTANT_WIDTH_MIN,
+  max: ASSISTANT_WIDTH_MAX,
+  default: ASSISTANT_WIDTH_DEFAULT,
+};
+
 export const useUI = create<UIState>((set, get) => ({
   view: "tasks",
   activeProject: loadActiveProject(),
   logFilter: "",
   controlTarget: null,
   settingsOpen: false,
+  assistantOpen: false,
+  assistantSidebar: loadAssistantSidebar(),
+  assistantWidth: loadAssistantWidth(),
+  assistantFocusSeq: 0,
   wrap: false,
   detailVisible: true,
   logsVisible: true,
@@ -149,6 +193,25 @@ export const useUI = create<UIState>((set, get) => ({
     return t;
   },
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setAssistantOpen: (open) => set({ assistantOpen: open }),
+  setAssistantSidebar: (visible) => {
+    try {
+      localStorage.setItem(ASSISTANT_SIDEBAR_KEY, visible ? "1" : "0");
+    } catch {
+      /* ignore storage errors (private mode, quota) */
+    }
+    set({ assistantSidebar: visible });
+  },
+  setAssistantWidth: (px) => {
+    const clamped = Math.min(ASSISTANT_WIDTH_MAX, Math.max(ASSISTANT_WIDTH_MIN, Math.round(px)));
+    try {
+      localStorage.setItem(ASSISTANT_WIDTH_KEY, String(clamped));
+    } catch {
+      /* ignore */
+    }
+    set({ assistantWidth: clamped });
+  },
+  focusAssistantPrompt: () => set((s) => ({ assistantFocusSeq: s.assistantFocusSeq + 1 })),
   setProjectSheetOpen: (open) => set({ projectSheetOpen: open }),
   openInspect: (t) => set({ inspect: t }),
   closeInspect: () => set({ inspect: null }),

@@ -352,6 +352,12 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		req.Executor = "script"
 		req.Content = command
 		req.DirectPrompt = command
+		if req.ExecutionMode == "" {
+			req.ExecutionMode = "current_branch"
+		}
+		if req.TargetWorkdir == "" {
+			req.TargetWorkdir = "/tmp"
+		}
 	}
 
 	if evt.FeatureID != "" {

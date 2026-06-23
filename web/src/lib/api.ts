@@ -261,6 +261,52 @@ export const assistantChat = (body: {
   context?: Record<string, string>;
 }) => api<AssistantChatResponse>("/api/v1/assistant/chat", { method: "POST", body });
 
+export interface AssistantStreamEvent {
+  type: "delta" | "done" | "error" | string;
+  delta?: string;
+  reply?: string;
+  executed_actions?: AssistantChatResponse["executed_actions"];
+  proposed_actions?: AssistantChatResponse["proposed_actions"];
+  error?: string;
+}
+
+export async function assistantChatStream(
+  body: {
+    project?: string;
+    message: string;
+    model?: string;
+    attachments?: string[];
+    context?: Record<string, string>;
+  },
+  onEvent: (event: AssistantStreamEvent) => void,
+): Promise<void> {
+  const res = await api<Response>("/api/v1/assistant/chat/stream", {
+    method: "POST",
+    body,
+    raw: true,
+    headers: { Accept: "application/x-ndjson" },
+  });
+  if (!res.body) throw new ApiError(0, "Streaming response body is unavailable");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    pending += decoder.decode(value, { stream: true });
+    const lines = pending.split("\n");
+    pending = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      onEvent(JSON.parse(trimmed) as AssistantStreamEvent);
+    }
+  }
+  pending += decoder.decode();
+  const trimmed = pending.trim();
+  if (trimmed) onEvent(JSON.parse(trimmed) as AssistantStreamEvent);
+}
+
 export const assistantGoalDraft = (body: {
   project?: string;
   message: string;

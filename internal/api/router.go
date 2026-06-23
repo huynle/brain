@@ -267,9 +267,11 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Use(RequireScope("admin:*"))
 					if o.handler != nil && o.handler.assistant != nil {
 						r.Post("/chat", o.handler.HandleAssistantChat)
+						r.Post("/chat/stream", o.handler.HandleAssistantChatStream)
 						r.Post("/goal-draft", o.handler.HandleAssistantGoalDraft)
 					} else {
 						r.Post("/chat", notImplemented)
+						r.Post("/chat/stream", notImplemented)
 						r.Post("/goal-draft", notImplemented)
 					}
 				})

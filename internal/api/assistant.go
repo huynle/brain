@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -17,6 +18,11 @@ const assistantModeDirectLLM = "direct_llm"
 
 type AssistantPlanner interface {
 	Plan(ctx context.Context, req AssistantPlanRequest) (AssistantPlanResponse, error)
+}
+
+type AssistantStreamingPlanner interface {
+	AssistantPlanner
+	StreamPlan(ctx context.Context, req AssistantPlanRequest, onDelta func(string) error) (AssistantPlanResponse, error)
 }
 
 type AssistantServiceOptions struct {
@@ -91,6 +97,15 @@ type AssistantChatResponse struct {
 	ProposedActions []AssistantAction         `json:"proposed_actions"`
 }
 
+type AssistantStreamEvent struct {
+	Type            string                    `json:"type"`
+	Delta           string                    `json:"delta,omitempty"`
+	Reply           string                    `json:"reply,omitempty"`
+	ExecutedActions []AssistantExecutedAction `json:"executed_actions,omitempty"`
+	ProposedActions []AssistantAction         `json:"proposed_actions,omitempty"`
+	Error           string                    `json:"error,omitempty"`
+}
+
 type AssistantGoalDraftRequest struct {
 	Project     string             `json:"project,omitempty"`
 	Message     string             `json:"message"`
@@ -159,16 +174,47 @@ func (s *AssistantService) Chat(ctx context.Context, req AssistantChatRequest) (
 	if err != nil {
 		return AssistantChatResponse{}, err
 	}
+	return s.responseFromPlan(ctx, req.Project, plan), nil
+}
+
+func (s *AssistantService) ChatStream(ctx context.Context, req AssistantChatRequest, emit func(AssistantStreamEvent) error) error {
+	if s == nil || !s.enabled || s.planner == nil {
+		return fmt.Errorf("assistant is not configured")
+	}
+	planReq := AssistantPlanRequest{Project: req.Project, Message: req.Message, Model: req.Model, Attachments: req.Attachments, Context: req.Context}
+	var plan AssistantPlanResponse
+	var err error
+	if streamer, ok := s.planner.(AssistantStreamingPlanner); ok {
+		plan, err = streamer.StreamPlan(ctx, planReq, func(delta string) error {
+			if delta == "" {
+				return nil
+			}
+			return emit(AssistantStreamEvent{Type: "delta", Delta: delta})
+		})
+	} else {
+		plan, err = s.planner.Plan(ctx, planReq)
+		if err == nil && plan.Reply != "" {
+			err = emit(AssistantStreamEvent{Type: "delta", Delta: plan.Reply})
+		}
+	}
+	if err != nil {
+		return err
+	}
+	resp := s.responseFromPlan(ctx, req.Project, plan)
+	return emit(AssistantStreamEvent{Type: "done", Reply: resp.Reply, ExecutedActions: resp.ExecutedActions, ProposedActions: resp.ProposedActions})
+}
+
+func (s *AssistantService) responseFromPlan(ctx context.Context, project string, plan AssistantPlanResponse) AssistantChatResponse {
 	resp := AssistantChatResponse{Reply: plan.Reply}
 	for _, action := range plan.Actions {
 		if shouldExecuteAssistantAction(action) {
-			executed := s.executeAction(ctx, req.Project, action)
+			executed := s.executeAction(ctx, project, action)
 			resp.ExecutedActions = append(resp.ExecutedActions, executed)
 			continue
 		}
 		resp.ProposedActions = append(resp.ProposedActions, action)
 	}
-	return resp, nil
+	return resp
 }
 
 func (s *AssistantService) GoalDraft(ctx context.Context, req AssistantGoalDraftRequest) (AssistantGoalDraftResponse, error) {
@@ -470,6 +516,148 @@ func (p *OpenRouterAssistantPlanner) Plan(ctx context.Context, req AssistantPlan
 	return plan, nil
 }
 
+func (p *OpenRouterAssistantPlanner) StreamPlan(ctx context.Context, req AssistantPlanRequest, onDelta func(string) error) (AssistantPlanResponse, error) {
+	if p.apiKey == "" {
+		return AssistantPlanResponse{}, fmt.Errorf("assistant API key is not configured")
+	}
+	model := firstNonEmptyString(req.Model, p.model)
+	payload := map[string]any{
+		"model":           model,
+		"stream":          true,
+		"response_format": map[string]string{"type": "json_object"},
+		"messages": []map[string]string{
+			{"role": "system", "content": assistantSystemPrompt()},
+			{"role": "user", "content": mustJSON(req)},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.baseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return AssistantPlanResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return AssistantPlanResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return AssistantPlanResponse{}, fmt.Errorf("assistant provider returned %s", resp.Status)
+	}
+
+	var content strings.Builder
+	lastReply := ""
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) == 0 || chunk.Choices[0].Delta.Content == "" {
+			continue
+		}
+		content.WriteString(chunk.Choices[0].Delta.Content)
+		reply := extractAssistantReplyPrefix(content.String())
+		if strings.HasPrefix(reply, lastReply) && len(reply) > len(lastReply) {
+			if err := onDelta(reply[len(lastReply):]); err != nil {
+				return AssistantPlanResponse{}, err
+			}
+			lastReply = reply
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return AssistantPlanResponse{}, err
+	}
+	var plan AssistantPlanResponse
+	if err := json.Unmarshal([]byte(content.String()), &plan); err != nil {
+		return AssistantPlanResponse{}, fmt.Errorf("decode assistant plan: %w", err)
+	}
+	if lastReply == "" && plan.Reply != "" {
+		if err := onDelta(plan.Reply); err != nil {
+			return AssistantPlanResponse{}, err
+		}
+	}
+	return plan, nil
+}
+
+func extractAssistantReplyPrefix(input string) string {
+	idx := strings.Index(input, `"reply"`)
+	if idx < 0 {
+		return ""
+	}
+	rest := input[idx+len(`"reply"`):]
+	colon := strings.Index(rest, ":")
+	if colon < 0 {
+		return ""
+	}
+	rest = strings.TrimLeft(rest[colon+1:], " \t\r\n")
+	if !strings.HasPrefix(rest, `"`) {
+		return ""
+	}
+	var out strings.Builder
+	for i := 1; i < len(rest); i++ {
+		ch := rest[i]
+		if ch == '"' {
+			return out.String()
+		}
+		if ch != '\\' {
+			out.WriteByte(ch)
+			continue
+		}
+		i++
+		if i >= len(rest) {
+			return out.String()
+		}
+		switch rest[i] {
+		case '"', '\\', '/':
+			out.WriteByte(rest[i])
+		case 'b':
+			out.WriteByte('\b')
+		case 'f':
+			out.WriteByte('\f')
+		case 'n':
+			out.WriteByte('\n')
+		case 'r':
+			out.WriteByte('\r')
+		case 't':
+			out.WriteByte('\t')
+		case 'u':
+			// Avoid emitting malformed partial unicode escapes. The final full JSON
+			// parse handles these exactly; streaming just waits for more bytes.
+			if i+4 >= len(rest) {
+				return out.String()
+			}
+			var decoded string
+			if err := json.Unmarshal([]byte(`"\u`+rest[i+1:i+5]+`"`), &decoded); err == nil {
+				out.WriteString(decoded)
+			}
+			i += 4
+		default:
+			out.WriteByte(rest[i])
+		}
+	}
+	return out.String()
+}
+
 func assistantSystemPrompt() string {
 	return `You are Brain's built-in assistant. Return only JSON matching {"reply":"...","actions":[{"type":"create_task|create_goal|create_entry|create_automation","explicit":true|false,"payload":{...}}]}.
 Choose the action type from the user's intent:
@@ -509,6 +697,38 @@ func (h *Handler) HandleAssistantChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleAssistantChatStream(w http.ResponseWriter, r *http.Request) {
+	if h.assistant == nil {
+		WriteError(w, http.StatusServiceUnavailable, "Service Unavailable", "assistant is not configured")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", "streaming unsupported")
+		return
+	}
+	var req AssistantChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	enc := json.NewEncoder(w)
+	err := h.assistant.ChatStream(r.Context(), req, func(event AssistantStreamEvent) error {
+		if err := enc.Encode(event); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	})
+	if err != nil {
+		_ = enc.Encode(AssistantStreamEvent{Type: "error", Error: err.Error()})
+		flusher.Flush()
+	}
 }
 
 func (h *Handler) HandleAssistantGoalDraft(w http.ResponseWriter, r *http.Request) {

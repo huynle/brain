@@ -53,6 +53,7 @@ type AssistantStatusResponse struct {
 type AssistantChatRequest struct {
 	Project     string            `json:"project,omitempty"`
 	Message     string            `json:"message"`
+	Model       string            `json:"model,omitempty"`
 	Attachments []string          `json:"attachments,omitempty"`
 	Context     map[string]string `json:"context,omitempty"`
 }
@@ -60,6 +61,7 @@ type AssistantChatRequest struct {
 type AssistantPlanRequest struct {
 	Project     string            `json:"project,omitempty"`
 	Message     string            `json:"message"`
+	Model       string            `json:"model,omitempty"`
 	Attachments []string          `json:"attachments,omitempty"`
 	Context     map[string]string `json:"context,omitempty"`
 	Mode        string            `json:"mode,omitempty"`
@@ -153,7 +155,7 @@ func (s *AssistantService) Chat(ctx context.Context, req AssistantChatRequest) (
 	if s == nil || !s.enabled || s.planner == nil {
 		return AssistantChatResponse{}, fmt.Errorf("assistant is not configured")
 	}
-	plan, err := s.planner.Plan(ctx, AssistantPlanRequest{Project: req.Project, Message: req.Message, Attachments: req.Attachments, Context: req.Context})
+	plan, err := s.planner.Plan(ctx, AssistantPlanRequest{Project: req.Project, Message: req.Message, Model: req.Model, Attachments: req.Attachments, Context: req.Context})
 	if err != nil {
 		return AssistantChatResponse{}, err
 	}
@@ -424,8 +426,9 @@ func (p *OpenRouterAssistantPlanner) Plan(ctx context.Context, req AssistantPlan
 	if p.apiKey == "" {
 		return AssistantPlanResponse{}, fmt.Errorf("assistant API key is not configured")
 	}
+	model := firstNonEmptyString(req.Model, p.model)
 	payload := map[string]any{
-		"model":           p.model,
+		"model":           model,
 		"response_format": map[string]string{"type": "json_object"},
 		"messages": []map[string]string{
 			{"role": "system", "content": assistantSystemPrompt()},

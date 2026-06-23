@@ -18,6 +18,17 @@ interface Message {
   result?: AssistantChatResponse;
 }
 
+const ASSISTANT_MODELS = [
+  "anthropic/claude-sonnet-4",
+  "anthropic/claude-opus-4",
+  "openai/gpt-4o-mini",
+  "openai/gpt-4o",
+  "google/gemini-2.5-flash",
+  "google/gemini-2.5-pro",
+] as const;
+
+const CUSTOM_MODEL = "__custom__";
+
 export function AssistantDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
   const activeProject = useUI((s) => s.activeProject);
   const project = activeProject === ALL_PROJECTS ? "" : activeProject;
@@ -25,9 +36,13 @@ export function AssistantDrawer({ open, onClose }: { open: boolean; onClose: () 
   const [text, setText] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [selectedModel, setSelectedModel] = useState("");
+  const [customModel, setCustomModel] = useState("");
   const [busy, setBusy] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+
+  const model = selectedModel === CUSTOM_MODEL ? customModel.trim() : selectedModel;
 
   const statusQ = useQuery({
     queryKey: ["assistant-status"],
@@ -66,6 +81,7 @@ export function AssistantDrawer({ open, onClose }: { open: boolean; onClose: () 
       const res = await assistantChat({
         project: project || undefined,
         message: prompt,
+        model: model || undefined,
         attachments: uploaded,
         context: { view: "assistant" },
       });
@@ -165,6 +181,29 @@ export function AssistantDrawer({ open, onClose }: { open: boolean; onClose: () 
           />
           <div className="btn-row">
             <span className="faint">project: {project || "select one"}</span>
+            <select
+              aria-label="Assistant model"
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              disabled={busy}
+              title="OpenRouter model"
+            >
+              <option value="">default · {statusQ.data?.model || "configured model"}</option>
+              {ASSISTANT_MODELS.map((m) => (
+                <option key={m} value={m}>{m}</option>
+              ))}
+              <option value={CUSTOM_MODEL}>custom...</option>
+            </select>
+            {selectedModel === CUSTOM_MODEL && (
+              <input
+                aria-label="Custom OpenRouter model"
+                className="assistant-model-custom"
+                value={customModel}
+                onChange={(e) => setCustomModel(e.target.value)}
+                placeholder="provider/model-id"
+                disabled={busy}
+              />
+            )}
             <button className="btn primary sm" disabled={busy || !statusQ.data?.available} onClick={() => void send()}>
               {busy ? "Sending..." : "Send"}
             </button>

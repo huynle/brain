@@ -256,6 +256,7 @@ export const assistantStatus = () =>
 export const assistantChat = (body: {
   project?: string;
   message: string;
+  model?: string;
   attachments?: string[];
   context?: Record<string, string>;
 }) => api<AssistantChatResponse>("/api/v1/assistant/chat", { method: "POST", body });

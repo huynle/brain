@@ -7,11 +7,18 @@ This directory contains plugin files that are embedded into the brain CLI binary
 ```
 plugins/
 ├── opencode/
-│   ├── brain.ts           # Main brain API client plugin
 │   ├── brain-planning.ts  # Planning enforcement plugin
-│   └── README.md          # OpenCode plugin documentation (placeholder)
+│   ├── agent/             # Brain-aware OpenCode agents
+│   ├── command/           # Brain slash commands
+│   ├── skill/             # Brain skills
+│   └── README.md          # OpenCode plugin documentation
 └── README.md              # This file
 ```
+
+> **Note:** The previous `brain.ts` API client plugin has been removed.
+> Brain tools are now exposed through the MCP stdio server (`brain mcp`)
+> configured directly in OpenCode's MCP settings. See the project README
+> for the OpenCode MCP config snippet.
 
 ## Plugin Format
 

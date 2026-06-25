@@ -206,11 +206,136 @@ export const deleteEntry = (path: string) =>
 export const setTaskStatus = (task: Task, status: string) =>
   updateEntry(task.path, { status });
 
+export interface TriggerResponse {
+  success: boolean;
+  taskId: string;
+  triggered: boolean;
+  runId?: string;
+  nextRun?: string;
+  reason?: string;
+}
+
 export const triggerTask = (projectId: string, taskId: string) =>
-  api<unknown>(
+  api<TriggerResponse>(
     `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/trigger`,
     { method: "POST" },
   );
+
+// /run is the user-explicit "execute this task now" endpoint. Unlike /trigger
+// (which only flips status to pending and waits for the runner to poll),
+// /run picks an eligible runner and pushes a dispatch command immediately.
+// This matches the TUI's "x" key behaviour from the runner-controller path.
+export interface RunTaskResponse {
+  dispatched: boolean;
+  taskId: string;
+  projectId: string;
+  runnerId?: string;
+  leaseId?: string;
+  expiresAt?: string;
+  reason?: string;
+  detail?: string;
+}
+
+export const runTask = (projectId: string, taskId: string, force = false) =>
+  api<RunTaskResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/run`,
+    {
+      method: "POST",
+      body: { force },
+    },
+  );
+
+// runOrTriggerTask prefers /run (push dispatch to a runner) and silently
+// falls back to /trigger when the server hasn't been upgraded — letting the
+// PWA work against older brain-api builds. The fallback path returns a
+// shape compatible with TriggerResponse so callers can keep using
+// summarizeTriggerResults.
+export async function runOrTriggerTask(
+  projectId: string,
+  taskId: string,
+  force = false,
+): Promise<TriggerResponse> {
+  try {
+    const r = await runTask(projectId, taskId, force);
+    return runResponseToTrigger(r);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 501) {
+      return triggerTask(projectId, taskId);
+    }
+    throw err;
+  }
+}
+
+function runResponseToTrigger(r: RunTaskResponse): TriggerResponse {
+  if (r.dispatched) {
+    const detail = r.runnerId ? `dispatched to ${r.runnerId}` : "dispatched";
+    return {
+      success: true,
+      taskId: r.taskId,
+      triggered: true,
+      reason: detail,
+    };
+  }
+  // Map machine-readable reasons to user-facing copy. The shape matches
+  // TriggerResponse so summarizeTriggerResults handles it transparently.
+  return {
+    success: true,
+    taskId: r.taskId,
+    triggered: false,
+    reason: humanizeRunReason(r.reason, r.detail),
+  };
+}
+
+function humanizeRunReason(reason?: string, detail?: string): string {
+  switch (reason) {
+    case "no_online_runner":
+      return "no runners are online";
+    case "no_eligible_runner":
+      return detail ? `no eligible runner (${detail})` : "no eligible runner for this task";
+    case "all_runners_at_capacity":
+      return "all runners are at capacity";
+    case "task_not_ready":
+      return "task is not ready (check dependencies)";
+    case "already_leased":
+      return "task already dispatched to a runner";
+    case "scheduler_not_configured":
+      return "scheduler not configured on server";
+    case "":
+    case undefined:
+      return "no eligible tasks to trigger";
+    default:
+      return detail ? `${reason}: ${detail}` : reason;
+  }
+}
+
+// Summarize one-or-many TriggerResponse(s) into a user-friendly toast string
+// and severity. The backend distinguishes between "actually triggered" and
+// "no-op with reason" (e.g. task already pending), and we surface both.
+export function summarizeTriggerResults(
+  results: TriggerResponse[],
+): { message: string; kind: "info" | "success" } {
+  const triggered = results.filter((r) => r.triggered);
+  const skipped = results.filter((r) => !r.triggered);
+
+  if (triggered.length && !skipped.length) {
+    return {
+      message: triggered.length === 1 ? "Triggered" : `Triggered ${triggered.length}`,
+      kind: "success",
+    };
+  }
+  if (triggered.length && skipped.length) {
+    return {
+      message: `Triggered ${triggered.length}, skipped ${skipped.length}`,
+      kind: "success",
+    };
+  }
+  // All skipped — show the reason from the first one (or a generic message).
+  const reason = skipped[0]?.reason || "no eligible tasks to trigger";
+  return {
+    message: skipped.length === 1 ? `Not triggered: ${reason}` : `Skipped ${skipped.length}: ${reason}`,
+    kind: "info",
+  };
+}
 
 
 // ─── Built-in Assistant ──────────────────────────────────────────

@@ -382,3 +382,160 @@ func (f *fakeSchedulerStore) ExpireDispatchLeases(ctx context.Context, now int64
 	f.expireAt = now
 	return 3, nil
 }
+
+// =============================================================================
+// RunTaskNow tests — manual ad-hoc dispatch from a UI ("x" key in PWA / TUI).
+// =============================================================================
+
+func TestRunTaskNow_DispatchesToEligibleRunner(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{{
+		ID: "task-1", ProjectID: "proj", Status: "pending",
+		Classification: "ready", Executor: "opencode",
+	}}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 2,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "task-1", false)
+	if err != nil {
+		t.Fatalf("RunTaskNow failed: %v", err)
+	}
+	if !resp.Dispatched {
+		t.Fatalf("Dispatched = false; reason=%q runnerId=%q", resp.Reason, resp.RunnerID)
+	}
+	if resp.RunnerID != "runner-a" {
+		t.Fatalf("RunnerID = %q, want runner-a", resp.RunnerID)
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "task-1" {
+		t.Fatalf("expected one lease for task-1, got %#v", store.leases)
+	}
+	if len(store.commands) != 1 || store.commands[0].command != "dispatch" || store.commands[0].runnerID != "runner-a" {
+		t.Fatalf("expected dispatch command to runner-a, got %#v", store.commands)
+	}
+}
+
+func TestRunTaskNow_NoOnlineRunnerReturnsReason(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{{
+		ID: "task-1", ProjectID: "proj", Status: "pending",
+		Classification: "ready", Executor: "opencode",
+	}}
+	// No runners registered.
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "task-1", false)
+	if err != nil {
+		t.Fatalf("RunTaskNow returned error: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatal("Dispatched = true, want false (no runners)")
+	}
+	if resp.Reason == "" {
+		t.Fatal("Reason should be set when no runner available")
+	}
+	if len(store.leases) != 0 {
+		t.Fatalf("no lease should be created when no runner; got %#v", store.leases)
+	}
+	if len(store.commands) != 0 {
+		t.Fatalf("no command should be published when no runner; got %#v", store.commands)
+	}
+}
+
+func TestRunTaskNow_TaskNotFoundReturnsReason(t *testing.T) {
+	store := newFakeSchedulerStore()
+	// proj has no ready tasks at all.
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 2,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "missing-task", false)
+	if err != nil {
+		t.Fatalf("RunTaskNow returned error: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatal("Dispatched = true, want false (task missing)")
+	}
+	if resp.Reason == "" {
+		t.Fatal("Reason should be set when task not found")
+	}
+}
+
+func TestRunTaskNow_PausedProjectIsBypassedWhenForce(t *testing.T) {
+	// User answer: auto-bypass pause silently. RunTaskNow always passes
+	// force=true through to the runner, so the runner side accepts dispatch
+	// even when the project is paused. This test pins down that contract.
+	store := newFakeSchedulerStore()
+	store.paused = true
+	store.tasks = []types.ResolvedTask{{
+		ID: "task-1", ProjectID: "proj", Status: "pending",
+		Classification: "ready", Executor: "opencode",
+	}}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 2,
+		},
+	}
+
+	svc := NewSchedulerService(store, store, store)
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "task-1", true)
+	if err != nil {
+		t.Fatalf("RunTaskNow failed: %v", err)
+	}
+	if !resp.Dispatched {
+		t.Fatalf("Dispatched = false on paused project with force=true; reason=%q", resp.Reason)
+	}
+	if len(store.commands) != 1 {
+		t.Fatalf("expected dispatch command when force-running paused project, got %#v", store.commands)
+	}
+	cmd := store.commands[0]
+	payload, ok := cmd.payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", cmd.payload)
+	}
+	if payload["force"] != true {
+		t.Fatalf("dispatch payload force = %v, want true (so paused runner accepts)", payload["force"])
+	}
+}
+
+func TestRunTaskNow_AllRunnersAtCapacityReturnsReason(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{{
+		ID: "task-1", ProjectID: "proj", Status: "pending",
+		Classification: "ready", Executor: "opencode",
+	}}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 1, ActiveTasks: 1,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "task-1", false)
+	if err != nil {
+		t.Fatalf("RunTaskNow returned error: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatal("Dispatched = true, want false (all runners at capacity)")
+	}
+	if resp.Reason == "" {
+		t.Fatal("Reason should be set when no eligible runner")
+	}
+	if len(store.commands) != 0 {
+		t.Fatalf("no command should be published, got %#v", store.commands)
+	}
+}

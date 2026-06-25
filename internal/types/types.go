@@ -1065,6 +1065,34 @@ type DispatchResponse struct {
 	IsStale   *bool  `json:"isStale,omitempty"`
 }
 
+// RunTaskRequest is the request body for POST /tasks/:projectId/:taskId/run.
+//
+// Run is the user-explicit "execute this task now" path used by the PWA "x"
+// shortcut. It mirrors the TUI's runner-controller dispatch: pick an eligible
+// runner automatically, create a dispatch lease, and push a dispatch command
+// over the realtime hub. When Force is true, the dispatch is accepted even
+// for paused projects (the user explicitly chose this task).
+type RunTaskRequest struct {
+	Force bool `json:"force,omitempty"`
+}
+
+// RunTaskResponse is the response for POST /tasks/:projectId/:taskId/run.
+//
+// Dispatched indicates whether a runner was assigned and the dispatch command
+// was published. When false, Reason carries a short machine-readable token
+// (e.g. "no_online_runner", "task_not_ready", "all_runners_at_capacity")
+// the UI can branch on.
+type RunTaskResponse struct {
+	Dispatched bool   `json:"dispatched"`
+	TaskID     string `json:"taskId"`
+	ProjectID  string `json:"projectId"`
+	RunnerID   string `json:"runnerId,omitempty"`
+	LeaseID    string `json:"leaseId,omitempty"`
+	ExpiresAt  string `json:"expiresAt,omitempty"`
+	Reason     string `json:"reason,omitempty"`
+	Detail     string `json:"detail,omitempty"`
+}
+
 // ClaimStatusResponse is the response for GET /tasks/:projectId/:taskId/claim-status.
 type ClaimStatusResponse struct {
 	TaskID    string `json:"taskId"`

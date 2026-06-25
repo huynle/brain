@@ -12,7 +12,7 @@ import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
 import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
 import { Panel } from "../components/layout/Panel";
 import { ConfirmDialog } from "../components/common/Modal";
-import { deleteEntry, listInstances, setTaskStatus, triggerTask } from "../lib/api";
+import { deleteEntry, listInstances, runOrTriggerTask, setTaskStatus, summarizeTriggerResults } from "../lib/api";
 import {
   cleanLogContent,
   clockTime,
@@ -216,6 +216,25 @@ export function TasksView() {
   const targets = (cur?: Task | null): Task[] =>
     selectedTasks.length ? selectedTasks : cur ? [cur] : [];
 
+  // Run one or more tasks. Prefers /run (push dispatch to a runner) and
+  // falls back to /trigger automatically when the server doesn't support
+  // /run yet. summarizeTriggerResults still shapes the toast — runOrTrigger
+  // returns a TriggerResponse-compatible value.
+  async function triggerMany(tasks: Task[]) {
+    const eligible = tasks.filter((t) => t.projectId);
+    if (!eligible.length) return;
+    setBusy(true);
+    try {
+      const results = await Promise.all(eligible.map((t) => runOrTriggerTask(t.projectId!, t.id)));
+      const { message, kind } = summarizeTriggerResults(results);
+      toast(message, kind);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Run failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function openTaskSession(task: Task) {
     if (!isActive(task.status)) {
       setViewContent(task);
@@ -291,8 +310,8 @@ export function TasksView() {
         case "x":
           if (row?.kind === "header") {
             const ready = taskList.filter((t) => (t.feature_id || UNGROUPED) === row.feature && ["pending", "active"].includes(t.status));
-            if (ready.length) void run(`Triggered ${ready.length}`, () => Promise.all(ready.map((t) => triggerTask(t.projectId!, t.id))));
-          } else if (cur?.projectId) void run("Triggered", () => triggerTask(cur.projectId!, cur.id));
+            if (ready.length) void triggerMany(ready);
+          } else if (cur?.projectId) void triggerMany([cur]);
           return true;
         case "X":
           if (cur && isActive(cur.status)) void run("Cancelled", () => setTaskStatus(cur, "cancelled"));

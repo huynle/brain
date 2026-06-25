@@ -23,6 +23,7 @@ type Handler struct {
 	placement      ProjectPlacementService
 	scheduler      SchedulerService
 	schedulerViews SchedulerVisibilityService
+	runTask        RunTaskService
 	bridge         BridgeService
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
@@ -167,5 +168,14 @@ func WithSchedulerService(s SchedulerService) HandlerOption {
 func WithSchedulerVisibilityService(s SchedulerVisibilityService) HandlerOption {
 	return func(h *Handler) {
 		h.schedulerViews = s
+	}
+}
+
+// WithRunTaskService sets the RunTaskService used by HandleRunTask. When
+// unset, /tasks/{project}/{task}/run returns 501 Not Implemented so clients
+// fall back to /trigger.
+func WithRunTaskService(s RunTaskService) HandlerOption {
+	return func(h *Handler) {
+		h.runTask = s
 	}
 }

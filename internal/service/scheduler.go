@@ -335,6 +335,114 @@ func (s *SchedulerService) shouldSkipTask(projectID string, task types.ResolvedT
 	return s.pauses.IsAutomationsPaused()
 }
 
+// RunTaskNow is the user-explicit "run this task now" entry point used by the
+// PWA "x" shortcut and the TUI's runner-controller fallback.
+//
+// Unlike ScheduleProject (which iterates every ready task on every tick), this
+// targets a single task: load the project's ready set, find the requested
+// task, pick an eligible runner via the same selectCandidate logic, create a
+// dispatch lease, and publish a dispatch command. It bypasses
+// shouldSkipTask's pause check because the user explicitly asked for this run
+// — pause is meant to halt automatic scheduling, not block manual overrides.
+//
+// When force is true, the dispatch payload includes "force": true so the
+// runner side accepts the dispatch even when the project is paused there.
+//
+// The response always sets Dispatched and (on failure) Reason; errors are
+// returned only for unexpected infrastructure problems.
+func (s *SchedulerService) RunTaskNow(ctx context.Context, projectID, taskID string, force bool) (*types.RunTaskResponse, error) {
+	resp := &types.RunTaskResponse{ProjectID: projectID, TaskID: taskID}
+
+	if s.runners == nil || s.placement == nil || s.leases == nil {
+		resp.Reason = "scheduler_not_configured"
+		resp.Detail = "scheduler is missing dependencies required for dispatch"
+		return resp, nil
+	}
+
+	tasks, err := s.tasks.GetReady(ctx, projectID, nil)
+	if err != nil {
+		return nil, fmt.Errorf("load ready tasks: %w", err)
+	}
+	var task *types.ResolvedTask
+	for i := range tasks {
+		if tasks[i].ID == taskID {
+			task = &tasks[i]
+			break
+		}
+	}
+	if task == nil {
+		resp.Reason = "task_not_ready"
+		resp.Detail = "task is not in the ready set for this project"
+		return resp, nil
+	}
+
+	runners, err := s.runners.ListRunners(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list runners: %w", err)
+	}
+	if len(runners) == 0 {
+		resp.Reason = "no_online_runner"
+		resp.Detail = "no runners are registered"
+		return resp, nil
+	}
+
+	placement, err := s.placement.Get(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("get project placement: %w", err)
+	}
+	if placement == nil {
+		placement = &types.ProjectPlacement{ProjectID: projectID, Affinity: types.PlacementAffinitySoft}
+	}
+
+	candidate, reasons := s.selectCandidate(*task, projectID, runners, placement, nil)
+	if candidate == nil {
+		resp.Reason = "no_eligible_runner"
+		if len(reasons) > 0 {
+			resp.Detail = strings.Join(reasons, "; ")
+		}
+		return resp, nil
+	}
+
+	now := s.nowUnixMS()
+	lease, created, err := s.leases.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+		ProjectID:         projectID,
+		TaskID:            task.ID,
+		AssignedRunnerID:  candidate.RunnerID,
+		AssignedMachineID: candidate.MachineID,
+		PushedAt:          now,
+		ExpiresAt:         now + s.leaseTTL.Milliseconds(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("create dispatch lease: %w", err)
+	}
+	if !created {
+		resp.Reason = "already_leased"
+		resp.Detail = "task already has an active dispatch lease"
+		return resp, nil
+	}
+
+	if s.publisher != nil {
+		payload := map[string]any{
+			"taskId":    task.ID,
+			"projectId": projectID,
+			"lease":     lease,
+			"expiresAt": lease.ExpiresAt,
+		}
+		if force {
+			payload["force"] = true
+		}
+		s.publisher.PublishRunnerCommand(candidate.RunnerID, "dispatch", payload)
+	}
+
+	resp.Dispatched = true
+	resp.RunnerID = candidate.RunnerID
+	resp.LeaseID = lease.LeaseID
+	if lease.ExpiresAt > 0 {
+		resp.ExpiresAt = time.UnixMilli(lease.ExpiresAt).UTC().Format(time.RFC3339)
+	}
+	return resp, nil
+}
+
 type schedulerCandidate struct {
 	runner types.RunnerInfo
 }

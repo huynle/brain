@@ -146,6 +146,19 @@ type SchedulerService interface {
 	Status() types.SchedulerStatus
 }
 
+// RunTaskService implements the user-explicit "run this task now" path used
+// by the PWA "x" shortcut. Implementations pick an eligible runner, create a
+// dispatch lease, and publish a dispatch command via the realtime hub.
+//
+// Kept narrow on purpose: the existing SchedulerService interface only
+// exposes Status() and adding methods to it would require updating every
+// mock and test. A separate interface lets the SchedulerService
+// implementation satisfy both without forcing other implementations to
+// stub RunTaskNow.
+type RunTaskService interface {
+	RunTaskNow(ctx context.Context, projectID, taskID string, force bool) (*types.RunTaskResponse, error)
+}
+
 // SchedulerVisibilityService exposes persisted scheduler placement artifacts.
 type SchedulerVisibilityService interface {
 	GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error)

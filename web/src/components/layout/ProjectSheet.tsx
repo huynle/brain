@@ -11,7 +11,8 @@ import {
   resumeAll,
   resumeAutomations,
   resumeProject,
-  triggerTask,
+  runOrTriggerTask,
+  summarizeTriggerResults,
 } from "../../lib/api";
 import { useLive } from "../../lib/sse";
 import type { Task } from "../../lib/types";
@@ -185,6 +186,16 @@ export function ProjectSheet() {
     if (open) inputRef.current?.focus({ preventScroll: true });
   }, [open]);
 
+  // Refetch the project list whenever the picker opens so newly created
+  // projects (e.g. from a fresh Brain entry created in another window) appear
+  // immediately. Without this, the list is held by React Query for staleTime
+  // and the user sees a stale snapshot.
+  useEffect(() => {
+    if (open) {
+      qc.invalidateQueries({ queryKey: ["projects"] });
+    }
+  }, [open, qc]);
+
   // Keep the highlighted row scrolled into view.
   useEffect(() => {
     listRef.current
@@ -272,11 +283,22 @@ export function ProjectSheet() {
 
   function triggerFeature(row: FeatureRow) {
     if (!row.ready.length) return;
-    void act(
-      `feature:${row.project}:${row.feature}`,
-      `Triggered ${row.ready.length} ${row.label}`,
-      () => Promise.all(row.ready.map((t) => triggerTask(t.projectId || row.project, t.id))),
-    );
+    const key = `feature:${row.project}:${row.feature}`;
+    setBusy(key);
+    void (async () => {
+      try {
+        const results = await Promise.all(
+          row.ready.map((t) => runOrTriggerTask(t.projectId || row.project, t.id)),
+        );
+        const { message, kind } = summarizeTriggerResults(results);
+        toast(message, kind);
+        void qc.invalidateQueries({ queryKey: ["runner-status"] });
+      } catch (e) {
+        toast(e instanceof Error ? e.message : "Run failed", "error");
+      } finally {
+        setBusy(null);
+      }
+    })();
   }
 
   function onKeyDown(e: React.KeyboardEvent) {

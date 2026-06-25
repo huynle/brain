@@ -96,6 +96,12 @@ type mockClient struct {
 	releaseDispatchCalls []dispatchReleaseCall
 
 	runnerStatus *types.RunnerStatusResponse
+
+	// healthBlockCh, when set, makes CheckHealth block on the channel until
+	// it is closed or a value is sent. Used to simulate a wedged HTTP call
+	// inside poll() so tests can prove that other goroutines (dispatch
+	// command consumer, heartbeat, claim renewal) keep making progress.
+	healthBlockCh chan struct{}
 }
 
 type nextTaskCall struct {
@@ -170,8 +176,20 @@ func newMockClient() *mockClient {
 
 func (m *mockClient) CheckHealth(ctx context.Context) (APIHealth, error) {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.healthResult, m.healthErr
+	blockCh := m.healthBlockCh
+	result := m.healthResult
+	err := m.healthErr
+	m.mu.Unlock()
+
+	if blockCh != nil {
+		// Block until the channel is closed or context cancelled.
+		select {
+		case <-blockCh:
+		case <-ctx.Done():
+			return APIHealth{}, ctx.Err()
+		}
+	}
+	return result, err
 }
 
 func (m *mockClient) ListProjects(ctx context.Context) ([]string, error) {
@@ -4633,5 +4651,96 @@ func TestTaskRunner_Dispatch_ForceStillRespectsCapacity(t *testing.T) {
 	}
 	if len(executor.getSpawnCalls()) != 0 {
 		t.Fatalf("force=true must not spawn over capacity")
+	}
+}
+
+// TestTaskRunner_DispatchConsumerNotBlockedByWedgedPoll proves the
+// architectural fix for the goroutine-dump bug observed in production
+// (2026-06-25): when poll() hangs inside a synchronous HTTP call, dispatch
+// commands pushed via SSE must still be consumed because runner.go's main
+// loop used a single goroutine that interleaved `ticker.C → poll(ctx)`
+// with `commandCh → handleCommand`. A blocked poll() therefore wedged
+// commandCh consumption, causing every dispatch lease to time out
+// untouched ("dispatch command dropped (channel full)" 195× in 4.5 min).
+//
+// This test wedges CheckHealth (the first call in poll), pushes a dispatch
+// command into commandCh, and asserts the command is processed within a
+// short deadline. Under the broken single-goroutine architecture the test
+// times out; under the fix (separate consumer goroutine) it passes.
+func TestTaskRunner_DispatchConsumerNotBlockedByWedgedPoll(t *testing.T) {
+	client := newMockClient()
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+	// Block CheckHealth so poll() can never return. This simulates the
+	// production bug where checkScheduledTasks → GetAllTasks → HTTP
+	// request hangs indefinitely.
+	client.healthBlockCh = make(chan struct{})
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
+		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startDone := make(chan error, 1)
+	go func() { startDone <- tr.Start(ctx) }()
+
+	// Wait until the runner has registered (proves Start() is running and
+	// the wedged initial poll() has begun).
+	deadline := time.After(2 * time.Second)
+	for {
+		client.mu.Lock()
+		registered := len(client.registerCalls) > 0
+		client.mu.Unlock()
+		if registered {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatal("runner did not register before deadline")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+
+	// Push a dispatch command. Under the broken architecture, the main
+	// select goroutine is parked inside the initial tr.poll(ctx) (which
+	// blocked on CheckHealth) and cannot consume commandCh.
+	tr.commandCh <- RunnerCommand{
+		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "task1", LeaseID: "lease-1",
+	}
+
+	// Assert the dispatch was processed (spawn invoked) within 2 seconds.
+	// 2s is generous; the fix makes this near-instant. The old code
+	// would never satisfy it.
+	processed := false
+	for i := 0; i < 200; i++ {
+		if len(executor.getSpawnCalls()) >= 1 {
+			processed = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	// Unblock health so the runner can shut down cleanly regardless of
+	// pass/fail (avoids leaving Start() goroutines parked on panic).
+	close(client.healthBlockCh)
+	cancel()
+	select {
+	case <-startDone:
+	case <-time.After(2 * time.Second):
+		t.Log("warning: Start() did not return within 2s after cancel")
+	}
+
+	if !processed {
+		t.Fatalf("dispatch command was not processed while poll() was wedged: "+
+			"spawn calls=%d, reject calls=%d, ack calls=%d. "+
+			"Expected the command consumer to run on its own goroutine.",
+			len(executor.getSpawnCalls()),
+			len(client.getRejectCalls()),
+			len(client.getAckCalls()))
 	}
 }

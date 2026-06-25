@@ -489,6 +489,31 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		}
 	}()
 
+	// Start command consumer goroutine. Dispatched commands MUST be
+	// processed independently of poll() because poll() makes synchronous
+	// HTTP calls that can block for tens of seconds when the API is slow
+	// (e.g. a SQLite WAL stall or a CPU-bound JSON encode on the server
+	// side). Multiplexing poll and commandCh on the same goroutine caused
+	// the production wedge documented in brain plan ehwvfq8e and the
+	// 2026-06-25 goroutine-dump analysis: a blocked poll() would prevent
+	// commandCh from being drained, the SSE listener's 16-slot buffer
+	// would fill in seconds, and every subsequent dispatch lease would
+	// time out untouched ("dispatch command dropped (channel full)").
+	//
+	// Keeping this goroutine narrow (only commandCh + ctx.Done) makes
+	// dispatch consumption durable against any future slowness in the
+	// maintenance path.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case cmd := <-tr.commandCh:
+				tr.handleCommand(ctx, cmd)
+			}
+		}
+	}()
+
 	// Run initial poll immediately
 	tr.poll(ctx)
 
@@ -506,8 +531,6 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.poll(ctx)
 		case <-tr.wakeCh:
 			tr.poll(ctx)
-		case cmd := <-tr.commandCh:
-			tr.handleCommand(ctx, cmd)
 		}
 	}
 }

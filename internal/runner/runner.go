@@ -531,6 +531,20 @@ func (tr *TaskRunner) serverPauseState(ctx context.Context) (map[string]bool, ma
 		}
 		return tasksPaused, automationsPaused
 	}
+	// Global server pause flags propagate to every observed project. We
+	// signal "globally paused" by marking the sentinel "" key in each
+	// returned map; callers that already check tr.allPaused or
+	// tr.pauseCache[projectID] should also consult the sentinel via
+	// serverPausedGlobally(). Previously this function only read the
+	// per-project arrays, so a global "pause tasks" from the PWA never made
+	// it to the dispatch SSE path and dispatches would queue silently when
+	// the runner was idle.
+	if status.Paused {
+		tasksPaused[""] = true
+	}
+	if status.AutomationsPaused {
+		automationsPaused[""] = true
+	}
 	for _, projectID := range status.PausedProjects {
 		tasksPaused[projectID] = true
 	}
@@ -538,6 +552,13 @@ func (tr *TaskRunner) serverPauseState(ctx context.Context) (map[string]bool, ma
 		automationsPaused[projectID] = true
 	}
 	return tasksPaused, automationsPaused
+}
+
+// serverPausedFor returns true when the server has either paused all tasks
+// or paused this specific project. Pairs with serverPauseState's sentinel
+// "" key for global state.
+func serverPausedFor(serverPaused map[string]bool, projectID string) bool {
+	return serverPaused[""] || serverPaused[projectID]
 }
 
 func (tr *TaskRunner) dispatchLeaseExpired(expiresAt string, now time.Time) bool {
@@ -567,10 +588,34 @@ func (tr *TaskRunner) supportsProject(projectID string) bool {
 }
 
 func (tr *TaskRunner) rejectDispatch(ctx context.Context, cmd RunnerCommand, leaseID, code, message string) {
-	_, _ = tr.client.RejectDispatch(ctx, tr.runnerID, cmd.ProjectID, cmd.TaskID, leaseID, types.DispatchRejectReason{
+	// Always log the rejection so operators can diagnose why a dispatch
+	// fell on the floor — previously the HTTP error was discarded, making
+	// "lease stuck in pushed" mysteries impossible to track down.
+	slog.Warn("rejecting dispatch",
+		"code", code,
+		"message", message,
+		"task_id", cmd.TaskID,
+		"project_id", cmd.ProjectID,
+		"lease_id", leaseID,
+		"force", cmd.Force,
+		"runner_id", tr.runnerID,
+	)
+	if _, err := tr.client.RejectDispatch(ctx, tr.runnerID, cmd.ProjectID, cmd.TaskID, leaseID, types.DispatchRejectReason{
 		Code:    code,
 		Message: message,
-	})
+	}); err != nil {
+		// A failed reject leaves the lease in `pushed` until its TTL
+		// expires — surface that explicitly so it shows up in runner logs
+		// instead of being silently swallowed.
+		slog.Error("failed to report dispatch rejection to brain-api",
+			"error", err,
+			"code", code,
+			"task_id", cmd.TaskID,
+			"project_id", cmd.ProjectID,
+			"lease_id", leaseID,
+			"runner_id", tr.runnerID,
+		)
+	}
 }
 
 func (tr *TaskRunner) ackDispatch(ctx context.Context, cmd RunnerCommand, leaseID string) bool {
@@ -634,7 +679,13 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 		slog.Info("runner resumed via SSE command")
 
 	case CommandDispatch:
-		slog.Info("dispatch command received", "task_id", cmd.TaskID, "project_id", cmd.ProjectID)
+		slog.Info("dispatch command received",
+			"task_id", cmd.TaskID,
+			"project_id", cmd.ProjectID,
+			"lease_id", cmd.LeaseID,
+			"force", cmd.Force,
+			"runner_id", tr.runnerID,
+		)
 		leaseID := cmd.LeaseID
 		if leaseID == "" {
 			leaseID = cmd.Lease
@@ -655,13 +706,27 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 			tr.rejectDispatch(ctx, cmd, leaseID, "project_unsupported", "runner is not assigned to this project")
 			break
 		}
+		// Pause gating: when the user explicitly forced this run via /run
+		// (cmd.Force=true), bypass the pause check to honor the contract
+		// documented on SchedulerService.RunTaskNow. Capacity is still
+		// enforced — a forced dispatch can't magically create execution
+		// slots, and overrunning max_parallel would corrupt accounting.
 		serverTaskPaused, _ := tr.serverPauseState(ctx)
 		tr.pauseMu.RLock()
-		paused := tr.allPaused || tr.pauseCache[cmd.ProjectID] || serverTaskPaused[cmd.ProjectID]
+		paused := tr.allPaused || tr.pauseCache[cmd.ProjectID] || serverPausedFor(serverTaskPaused, cmd.ProjectID)
 		tr.pauseMu.RUnlock()
 		if paused {
-			tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
-			break
+			if cmd.Force {
+				slog.Info("force-dispatch bypassing pause",
+					"task_id", cmd.TaskID,
+					"project_id", cmd.ProjectID,
+					"all_paused", tr.allPaused,
+					"project_paused", tr.pauseCache[cmd.ProjectID] || serverPausedFor(serverTaskPaused, cmd.ProjectID),
+				)
+			} else {
+				tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
+				break
+			}
 		}
 		if tr.processMgr.RunningCount() >= tr.getMaxParallel() {
 			tr.rejectDispatch(ctx, cmd, leaseID, "capacity_unavailable", "runner has no available execution slots")
@@ -695,8 +760,18 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 			break
 		}
 		if !tr.ackDispatch(ctx, cmd, leaseID) {
+			slog.Warn("dispatch ack failed; aborting spawn",
+				"task_id", cmd.TaskID,
+				"project_id", cmd.ProjectID,
+				"lease_id", leaseID,
+			)
 			break
 		}
+		slog.Info("dispatch acked; spawning task",
+			"task_id", cmd.TaskID,
+			"project_id", cmd.ProjectID,
+			"lease_id", leaseID,
+		)
 		if err := tr.claimAndSpawnWithWorkdir(ctx, task, cmd.ProjectID, workdir); err != nil {
 			tr.releaseDispatchLease(ctx, cmd.ProjectID, cmd.TaskID)
 			tr.logger.Printf("claim and spawn dispatched task failed for %s/%s: %v", cmd.ProjectID, cmd.TaskID, err)
@@ -855,9 +930,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		projEnabledIDs := tr.getEnabledFeatureIDsLocked()
 		tr.pauseMu.RUnlock()
 
-		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID] || serverAutomationPaused[projectID]
+		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID] || serverPausedFor(serverAutomationPaused, projectID)
 
-		if paused || allPaused || serverTaskPaused[projectID] {
+		if paused || allPaused || serverPausedFor(serverTaskPaused, projectID) {
 			if !automationsPausedForProject {
 				task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
 					GeneratedByPrefix: "automation:",
@@ -2501,9 +2576,17 @@ func (tr *TaskRunner) stopLogStreamer(taskID string) {
 // Capability Filtering
 // =============================================================================
 
-// matchesCapabilities checks whether this runner has all capabilities required
-// by the given task. Tasks without RequiresCapability are claimable by any runner
-// (backward compatible). Returns true if the runner can handle the task.
+// dispatchPushEnabled reports whether the runner should treat itself as
+// push-dispatch capable. In production this is always true because
+// LoadConfigFrom rejects dispatch_push: false at config load time. The
+// function preserves the original three-way check (config field, legacy
+// Passive shim, "dispatch_push" capability advertisement) so existing
+// tests can still construct runners that exercise the (otherwise
+// unreachable) poll-fetch code path.
+//
+// Deprecated: production callers should treat push dispatch as always-on.
+// The function will be removed once the poll-fetch branch is deleted (see
+// brain plan ehwvfq8e Tier 2).
 func (tr *TaskRunner) dispatchPushEnabled() bool {
 	if tr.config.Passive || tr.config.DispatchPush {
 		return true
@@ -2516,6 +2599,9 @@ func (tr *TaskRunner) dispatchPushEnabled() bool {
 	return false
 }
 
+// matchesCapabilities checks whether this runner has all capabilities required
+// by the given task. Tasks without RequiresCapability are claimable by any runner
+// (backward compatible). Returns true if the runner can handle the task.
 func (tr *TaskRunner) matchesCapabilities(task *types.ResolvedTask) bool {
 	if len(task.RequiresCapability) == 0 {
 		return true // untagged tasks are claimable by any runner

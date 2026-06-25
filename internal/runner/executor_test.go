@@ -51,8 +51,23 @@ func TestExecutor_BuildPrompt_DirectPrompt(t *testing.T) {
 	task.DirectPrompt = "Do this specific thing verbatim"
 
 	prompt := e.BuildPrompt(task, false)
-	if prompt != "Do this specific thing verbatim" {
-		t.Errorf("BuildPrompt with direct_prompt = %q, want %q", prompt, "Do this specific thing verbatim")
+
+	// direct_prompt must be present verbatim somewhere in the output
+	if !strings.Contains(prompt, "Do this specific thing verbatim") {
+		t.Errorf("BuildPrompt should preserve direct_prompt verbatim, got %q", prompt)
+	}
+	// task identity header must pin the agent to this task
+	if !strings.Contains(prompt, task.ID) {
+		t.Errorf("BuildPrompt should contain task ID %q, got %q", task.ID, prompt)
+	}
+	if !strings.Contains(prompt, task.Path) {
+		t.Errorf("BuildPrompt should contain brain path %q, got %q", task.Path, prompt)
+	}
+	if !strings.Contains(prompt, "Task Assignment") {
+		t.Errorf("BuildPrompt should contain 'Task Assignment' header, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Do NOT call brain_task_next") {
+		t.Errorf("BuildPrompt should instruct the agent not to call brain_task_next, got %q", prompt)
 	}
 }
 
@@ -63,10 +78,17 @@ func TestExecutor_BuildPrompt_DirectPrompt_IgnoresResume(t *testing.T) {
 	task := testResolvedTask("abc123")
 	task.DirectPrompt = "Do this specific thing"
 
-	// Even with isResume=true, direct_prompt should be used verbatim
+	// Even with isResume=true, direct_prompt should be preserved verbatim
+	// alongside the task assignment header.
 	prompt := e.BuildPrompt(task, true)
-	if prompt != "Do this specific thing" {
-		t.Errorf("BuildPrompt with direct_prompt and isResume = %q, want %q", prompt, "Do this specific thing")
+	if !strings.Contains(prompt, "Do this specific thing") {
+		t.Errorf("BuildPrompt should preserve direct_prompt on resume, got %q", prompt)
+	}
+	if !strings.Contains(prompt, task.ID) {
+		t.Errorf("BuildPrompt should contain task ID on resume, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Resume:     true") {
+		t.Errorf("BuildPrompt should mark Resume=true, got %q", prompt)
 	}
 }
 
@@ -1351,6 +1373,91 @@ opencode 1234 user   12u  IPv4 0x1234 0t0  TCP 127.0.0.1:3000 (LISTEN)
 	}
 	if port != 3000 {
 		t.Errorf("ParseLsofOutput = %d, want 3000", port)
+	}
+}
+
+// =============================================================================
+// ParseLsofListeners Tests
+// =============================================================================
+
+func TestParseLsofListeners_TwoOpencodeServers(t *testing.T) {
+	// What `lsof -a -i -P -n -c opencode -sTCP:LISTEN` produces on a host
+	// with two TUIs running on different ports.
+	output := `COMMAND    PID    USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+opencode 17646 e367212   10u  IPv4 0x3e05bca366471696      0t0  TCP 127.0.0.1:4096 (LISTEN)
+opencode 46938 e367212   10u  IPv4 0xa7dad7e1f519110a      0t0  TCP 127.0.0.1:4778 (LISTEN)
+`
+	got := ParseLsofListeners(output)
+	want := []OpencodeListener{
+		{PID: 17646, Port: 4096},
+		{PID: 46938, Port: 4778},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ParseLsofListeners returned %d listeners, want %d (got=%+v)", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("listener[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+func TestParseLsofListeners_SkipsNonListenLines(t *testing.T) {
+	// ESTABLISHED and header lines must be ignored.
+	output := `COMMAND    PID    USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+opencode 17646 e367212   10u  IPv4 0x3e05bca366471696      0t0  TCP 127.0.0.1:4096 (LISTEN)
+opencode 17646 e367212   13u  IPv4 0x5678                  0t0  TCP 127.0.0.1:4096->127.0.0.1:50001 (ESTABLISHED)
+`
+	got := ParseLsofListeners(output)
+	if len(got) != 1 || got[0] != (OpencodeListener{PID: 17646, Port: 4096}) {
+		t.Errorf("ParseLsofListeners = %+v, want exactly one (17646,4096)", got)
+	}
+}
+
+func TestParseLsofListeners_EmptyOutput(t *testing.T) {
+	if got := ParseLsofListeners(""); got != nil {
+		t.Errorf("ParseLsofListeners(\"\") = %+v, want nil", got)
+	}
+}
+
+func TestParseLsofListeners_HeaderOnly(t *testing.T) {
+	// lsof prints a header even when nothing matches; some versions print
+	// nothing at all. Both must yield an empty result without errors.
+	output := "COMMAND    PID    USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n"
+	if got := ParseLsofListeners(output); got != nil {
+		t.Errorf("ParseLsofListeners(header only) = %+v, want nil", got)
+	}
+}
+
+func TestParseLsofListeners_IPv6AndStarBind(t *testing.T) {
+	output := `COMMAND  PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+opencode 1001 user   10u  IPv6 0x1234      0t0  TCP [::]:9000 (LISTEN)
+opencode 1002 user   11u  IPv4 0x5678      0t0  TCP *:9001 (LISTEN)
+`
+	got := ParseLsofListeners(output)
+	want := []OpencodeListener{
+		{PID: 1001, Port: 9000},
+		{PID: 1002, Port: 9001},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ParseLsofListeners returned %d, want %d (got=%+v)", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("listener[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+func TestParseLsofListeners_GarbledLineSkipped(t *testing.T) {
+	// A truncated line shouldn't crash or emit a bogus listener.
+	output := `COMMAND  PID USER NAME
+not-a-real-line (LISTEN)
+opencode 1234 user 12u IPv4 0x0 0t0 TCP 127.0.0.1:7777 (LISTEN)
+`
+	got := ParseLsofListeners(output)
+	if len(got) != 1 || got[0] != (OpencodeListener{PID: 1234, Port: 7777}) {
+		t.Errorf("ParseLsofListeners = %+v, want one (1234,7777)", got)
 	}
 }
 

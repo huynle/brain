@@ -1088,6 +1088,7 @@ type RunTaskResponse struct {
 	ProjectID  string `json:"projectId"`
 	RunnerID   string `json:"runnerId,omitempty"`
 	LeaseID    string `json:"leaseId,omitempty"`
+	LeaseState string `json:"leaseState,omitempty"`
 	ExpiresAt  string `json:"expiresAt,omitempty"`
 	Reason     string `json:"reason,omitempty"`
 	Detail     string `json:"detail,omitempty"`

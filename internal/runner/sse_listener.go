@@ -286,7 +286,20 @@ func (l *SSEListener) handleCommandEvent(event sse.Event, runnerID string) {
 	case commandCh <- cmd:
 		slog.Debug("runner command sent", "type", cmd.Type, "runner_id", runnerID)
 	default:
-		slog.Warn("runner command dropped (channel full)", "type", cmd.Type, "runner_id", runnerID)
+		// Channel full = the runner is severely backlogged. Promote this
+		// from debug to error so it's noticeable; for dispatch commands
+		// also include the task/lease IDs so operators can correlate to
+		// the stuck `pushed` lease on the Brain side.
+		if cmd.Type == CommandDispatch {
+			slog.Error("dispatch command dropped (channel full); lease will remain pushed until TTL expires",
+				"task_id", cmd.TaskID,
+				"project_id", cmd.ProjectID,
+				"lease_id", cmd.LeaseID,
+				"runner_id", runnerID,
+			)
+		} else {
+			slog.Warn("runner command dropped (channel full)", "type", cmd.Type, "runner_id", runnerID)
+		}
 	}
 }
 

@@ -285,16 +285,27 @@ func gitAuthArgs(token string, args ...string) []string {
 // =============================================================================
 
 // CommonBuildPrompt builds the standard prompt string for a task.
-// If the task has a direct_prompt, it is used verbatim.
-// Otherwise, a standard prompt referencing the brain-runner-queue skill is generated.
+//
+// Every prompt — whether the task supplies a direct_prompt or not — begins
+// with a small "Task Assignment" header that pins the agent to a specific
+// brain task. Without this, an agent receiving a generic direct_prompt like
+// "Implement only this task" has no way to know which task to read and may
+// fall back to brain_task_next or aimless searching.
+//
+// When direct_prompt is set, it is appended verbatim after the header so the
+// user's exact instruction is preserved. Otherwise, the standard
+// brain-runner-queue workflow prompt is used.
 func CommonBuildPrompt(task *types.ResolvedTask, isResume bool) string {
-	// If direct_prompt is set, use it verbatim (bypasses brain-runner-queue skill workflow)
+	header := buildTaskAssignmentHeader(task, isResume)
+
+	// If direct_prompt is set, prepend the identity header and use the
+	// user's instruction verbatim afterwards.
 	if task.DirectPrompt != "" {
-		return task.DirectPrompt
+		return header + "\n\n" + task.DirectPrompt
 	}
 
 	if isResume {
-		return fmt.Sprintf(`Load the brain-runner-queue skill and RESUME the interrupted task at brain path: %s
+		return header + "\n\n" + fmt.Sprintf(`Load the brain-runner-queue skill and RESUME the interrupted task at brain path: %s
 
 IMPORTANT: This task was previously in_progress but was interrupted.
 
@@ -311,7 +322,7 @@ Use brain_recall to read the task details, then:
 Start now.`, task.Path)
 	}
 
-	return fmt.Sprintf(`Load the brain-runner-queue skill and process the task at brain path: %s
+	return header + "\n\n" + fmt.Sprintf(`Load the brain-runner-queue skill and process the task at brain path: %s
 
 Use brain_recall to read the task details, then follow the brain-runner-queue skill workflow:
 1. Mark the task as in_progress
@@ -323,6 +334,52 @@ Use brain_recall to read the task details, then follow the brain-runner-queue sk
 7. Mark as completed with summary and include commit hash
 
 Start now.`, task.Path)
+}
+
+// buildTaskAssignmentHeader produces a fixed-format header that pins the agent
+// to a specific brain task. It is prepended to every executor prompt so the
+// agent never has to guess which task to read.
+//
+// Format:
+//
+//	## Task Assignment
+//	You are assigned to a specific Brain task. Do NOT call brain_task_next.
+//	Do NOT search for other work. Read and process ONLY the task below.
+//
+//	- Task ID:    <id>
+//	- Brain path: <path>
+//	- Project:    <projectID>
+//	- Feature:    <featureID>            (omitted if empty)
+//	- Title:      <title>                (omitted if empty)
+//	- Resume:     true                   (only on resume)
+//
+//	Use `brain_recall` with the path above (or `brain_task_get` with the ID)
+//	to load the full task body before doing anything else.
+func buildTaskAssignmentHeader(task *types.ResolvedTask, isResume bool) string {
+	var b strings.Builder
+	b.WriteString("## Task Assignment\n")
+	b.WriteString("You are assigned to a specific Brain task. Do NOT call brain_task_next. ")
+	b.WriteString("Do NOT search for other work. Read and process ONLY the task below.\n\n")
+
+	fmt.Fprintf(&b, "- Task ID:    %s\n", task.ID)
+	fmt.Fprintf(&b, "- Brain path: %s\n", task.Path)
+	if task.ProjectID != "" {
+		fmt.Fprintf(&b, "- Project:    %s\n", task.ProjectID)
+	}
+	if task.FeatureID != "" {
+		fmt.Fprintf(&b, "- Feature:    %s\n", task.FeatureID)
+	}
+	if task.Title != "" {
+		fmt.Fprintf(&b, "- Title:      %s\n", task.Title)
+	}
+	if isResume {
+		b.WriteString("- Resume:     true\n")
+	}
+
+	b.WriteString("\nUse `brain_recall` with the path above (or `brain_task_get` with the Task ID) ")
+	b.WriteString("to load the full task body before doing anything else.")
+
+	return b.String()
 }
 
 // =============================================================================

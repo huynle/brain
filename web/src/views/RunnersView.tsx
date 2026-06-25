@@ -67,6 +67,31 @@ export function RunnersView() {
 
   const runners = liveRunners.length ? liveRunners : runnersQ.data ?? [];
   const instances = instancesQ.data ?? [];
+
+  // Aggregate active dispatch leases across every project the user is
+  // currently subscribed to. A lease in state "pushed" means Brain sent a
+  // dispatch command to the runner but the runner hasn't ack'd yet — so the
+  // runner's SLOTS/TASKS counters still read zero even though work is queued
+  // for it. Surface that as a separate chip so users aren't surprised by an
+  // "idle" runner that's actually about to spin up. We include "acked" too
+  // for the brief window between ack and the executor instance becoming
+  // visible.
+  const liveProjects = useLive((s) => s.projects);
+  const pendingByRunner = useMemo(() => {
+    const counts = new Map<string, number>();
+    const now = Date.now();
+    for (const project of Object.values(liveProjects)) {
+      for (const task of project.tasks) {
+        const lease = task.dispatch_lease;
+        if (!lease) continue;
+        if (lease.state !== "pushed" && lease.state !== "acked") continue;
+        if (lease.expires_at && lease.expires_at < now) continue;
+        counts.set(lease.assigned_runner_id, (counts.get(lease.assigned_runner_id) ?? 0) + 1);
+      }
+    }
+    return counts;
+  }, [liveProjects]);
+
   const rows = useMemo<Row[]>(() => {
     const out: Row[] = [];
     for (const runner of runners) {
@@ -277,6 +302,7 @@ export function RunnersView() {
               key={`r:${row.runner.runner_id}`}
               runner={row.runner}
               instances={row.instances}
+              pendingDispatches={pendingByRunner.get(row.runner.runner_id) ?? 0}
               cursored={i === cursor}
               onCursor={() => useNav.getState().setCursor(scope, i)}
               onKill={() => setConfirmRunnerKill(row.runner)}
@@ -371,12 +397,14 @@ export function RunnersView() {
 function RunnerCard({
   runner,
   instances,
+  pendingDispatches,
   cursored,
   onCursor,
   onKill,
 }: {
   runner: RunnerInfo;
   instances: OpencodeInstance[];
+  pendingDispatches: number;
   cursored: boolean;
   onCursor: () => void;
   onKill: () => void;
@@ -395,6 +423,15 @@ function RunnerCard({
         <span className="ctl-meta-chip"><span className="ctl-meta-label">slots</span>{runner.active_tasks ?? 0}/{runner.max_parallel}</span>
         {runner.executors?.length ? <span className="ctl-meta-chip"><span className="ctl-meta-label">exec</span>{runner.executors.join(",")}</span> : null}
         <span className="ctl-meta-chip"><span className="ctl-meta-label">tasks</span>{instances.length}</span>
+        {pendingDispatches > 0 && (
+          <span
+            className="ctl-meta-chip"
+            style={{ color: "var(--yellow)" }}
+            title={`${pendingDispatches} task(s) dispatched to this runner but not yet executing (lease pushed/acked, instance not yet visible)`}
+          >
+            <span className="ctl-meta-label">pending</span>{pendingDispatches}
+          </span>
+        )}
         <span className="ctl-meta-chip"><span className="ctl-meta-label">hb</span>{relativeTime(runner.last_heartbeat)}</span>
       </div>
       <button className="icon-btn runner-power" title="Shut down runner (s)" onClick={(e) => { e.stopPropagation(); onKill(); }}>⏻</button>

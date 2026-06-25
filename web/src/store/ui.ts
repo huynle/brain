@@ -8,6 +8,14 @@ export interface Toast {
   id: number;
   kind: "info" | "success" | "error";
   message: string;
+  // Optional inline action. When set, the toast renders a button that
+  // triggers `action.onClick`. Used to surface recovery flows (e.g. "Force"
+  // when a task is blocked by an existing dispatch lease) without forcing
+  // the user into a separate modal.
+  action?: {
+    label: string;
+    onClick: () => void | Promise<void>;
+  };
 }
 
 // Content-tab order for H/L cycling — matches the TUI tab bar order
@@ -91,7 +99,11 @@ interface UIState {
   setProjectSheetOpen: (open: boolean) => void;
   openInspect: (t: InspectTarget) => void;
   closeInspect: () => void;
-  toast: (message: string, kind?: Toast["kind"]) => void;
+  toast: (
+    message: string,
+    kind?: Toast["kind"],
+    options?: { action?: Toast["action"]; durationMs?: number },
+  ) => void;
   dismissToast: (id: number) => void;
 }
 
@@ -218,10 +230,13 @@ export const useUI = create<UIState>((set, get) => ({
   toggleWrap: () => set((s) => ({ wrap: !s.wrap })),
   updateApply: null,
   setUpdateApply: (fn) => set({ updateApply: fn }),
-  toast: (message, kind = "info") => {
+  toast: (message, kind = "info", options) => {
     const id = get()._tid + 1;
-    set((s) => ({ _tid: id, toasts: [...s.toasts, { id, kind, message }] }));
-    window.setTimeout(() => get().dismissToast(id), kind === "error" ? 6000 : 3500);
+    set((s) => ({ _tid: id, toasts: [...s.toasts, { id, kind, message, action: options?.action }] }));
+    // Toasts with an action stay around longer so the user has time to
+    // notice and click them. Errors also linger by default.
+    const defaultDuration = options?.action ? 8000 : kind === "error" ? 6000 : 3500;
+    window.setTimeout(() => get().dismissToast(id), options?.durationMs ?? defaultDuration);
   },
   dismissToast: (id) =>
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),

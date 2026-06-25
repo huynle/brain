@@ -459,6 +459,16 @@ a {
   font-size: 13.5px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   animation: toast-in 0.18s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.toast-message {
+  flex: 1;
+  min-width: 0;
+}
+.toast-action {
+  flex-shrink: 0;
 }
 .toast.error {
   border-color: color-mix(in srgb, var(--red) 50%, var(--border));

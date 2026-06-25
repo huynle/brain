@@ -1201,8 +1201,14 @@ func sortStrings(s []string) {
 	}
 }
 
-// TriggerTask manually triggers a scheduled task. It validates the schedule,
-// creates a run record, computes next_run, and resets the task to pending.
+// TriggerTask manually triggers a task. Behavior depends on whether the task
+// has a cron schedule:
+//
+//   - Scheduled tasks: validates the schedule, creates a run record, computes
+//     next_run, and resets the task to pending.
+//   - Non-scheduled (ad-hoc) tasks: resets the task to pending so the runner
+//     picks it up on its next poll. No-op (with reason) if the task is already
+//     pending or in_progress.
 func (s *TaskServiceImpl) TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error) {
 	// 1. Find the task
 	tasks, err := s.getAllTasks(ctx, projectId)
@@ -1221,12 +1227,9 @@ func (s *TaskServiceImpl) TriggerTask(ctx context.Context, projectId, taskId str
 		return nil, fmt.Errorf("task not found: %s/%s", projectId, taskId)
 	}
 
-	// 2. Validate schedule exists
+	// 2. Non-scheduled (ad-hoc) tasks: reset to pending for the runner.
 	if task.Schedule == "" {
-		return &types.TriggerResponse{
-			Success: true, TaskID: taskId, Triggered: false,
-			Reason: "task has no schedule",
-		}, nil
+		return s.triggerAdHocTask(ctx, task)
 	}
 
 	// 3. Validate schedule_enabled
@@ -1306,6 +1309,40 @@ func (s *TaskServiceImpl) TriggerTask(ctx context.Context, projectId, taskId str
 		Triggered: true,
 		RunID:     runID,
 		NextRun:   nextRun.Format(time.RFC3339),
+	}, nil
+}
+
+// triggerAdHocTask handles manual trigger for tasks without a cron schedule.
+// It resets eligible tasks to "pending" so the runner picks them up on the next
+// poll. Tasks already pending or actively running are reported as a no-op with
+// a descriptive reason.
+func (s *TaskServiceImpl) triggerAdHocTask(ctx context.Context, task *types.BrainEntry) (*types.TriggerResponse, error) {
+	switch task.Status {
+	case "pending":
+		return &types.TriggerResponse{
+			Success: true, TaskID: task.ID, Triggered: false,
+			Reason: "task is already pending",
+		}, nil
+	case "in_progress", "active":
+		return &types.TriggerResponse{
+			Success: true, TaskID: task.ID, Triggered: false,
+			Reason: fmt.Sprintf("task is already %s", task.Status),
+		}, nil
+	}
+
+	// Reset to pending so the runner picks it up. This covers blocked,
+	// completed, cancelled, failed, draft, validated, and any other status.
+	if _, err := s.storage.MergeMetadata(ctx, task.Path, map[string]interface{}{
+		"status": "pending",
+	}); err != nil {
+		return nil, fmt.Errorf("failed to reset task to pending: %w", err)
+	}
+
+	return &types.TriggerResponse{
+		Success:   true,
+		TaskID:    task.ID,
+		Triggered: true,
+		Reason:    fmt.Sprintf("reset task from %q to pending", task.Status),
 	}, nil
 }
 

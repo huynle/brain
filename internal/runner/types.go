@@ -503,6 +503,13 @@ type RunnerCommand struct {
 	LeaseID   string `json:"leaseId,omitempty"`
 	Lease     string `json:"-"`
 	ExpiresAt string `json:"expiresAt,omitempty"`
+	// Force=true on a dispatch command tells the runner to bypass its local
+	// pause/capacity gates. Set by the scheduler when the user explicitly
+	// requested a run via /run?force=true (e.g. the PWA's "Force" toast
+	// action). Capacity is still respected when there is genuinely no slot —
+	// but pause is treated as an override hint, matching the documented
+	// contract in SchedulerService.RunTaskNow.
+	Force bool `json:"force,omitempty"`
 
 	// Populated for shutdown commands.
 	Reason string `json:"reason,omitempty"`

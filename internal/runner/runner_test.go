@@ -4521,3 +4521,117 @@ func TestReapOrphanedTasks_ListFailureDoesNotPanic(t *testing.T) {
 		t.Errorf("reaper must not produce updates when list fails, got: %+v", client.getUpdateStatusCalls())
 	}
 }
+
+// TestTaskRunner_Dispatch_RespectsGlobalServerPause confirms the fix for the
+// "lease stuck in pushed when tasks: paused globally" symptom. Previously
+// serverPauseState() only read PausedProjects, so a global pause from the
+// PWA never propagated to the dispatch SSE handler — the runner would
+// happily try to spawn and the user would see no progress because the spawn
+// path itself blocks on other gates. Now the runner rejects with
+// runner_paused as soon as it sees Paused=true on the server status.
+func TestTaskRunner_Dispatch_RespectsGlobalServerPause(t *testing.T) {
+	client := newMockClient()
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+	client.runnerStatus = &types.RunnerStatusResponse{Running: true, Paused: true}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
+		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "task1", LeaseID: "lease-1",
+	})
+
+	rejects := client.getRejectCalls()
+	if len(rejects) != 1 {
+		t.Fatalf("expected exactly one reject when globally paused, got %d", len(rejects))
+	}
+	if rejects[0].Reason.Code != "runner_paused" {
+		t.Fatalf("reject code = %q, want runner_paused", rejects[0].Reason.Code)
+	}
+	if len(executor.getSpawnCalls()) != 0 {
+		t.Fatalf("must not spawn when globally paused; got %d spawns", len(executor.getSpawnCalls()))
+	}
+}
+
+// TestTaskRunner_Dispatch_ForceBypassesPause confirms force=true on a
+// dispatch command lets the runner spawn even when the server has paused
+// task scheduling. This pairs with the PWA's "Force" toast action.
+func TestTaskRunner_Dispatch_ForceBypassesPause(t *testing.T) {
+	client := newMockClient()
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+	client.runnerStatus = &types.RunnerStatusResponse{Running: true, Paused: true}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
+		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "task1", LeaseID: "lease-1",
+		Force: true,
+	})
+
+	if got := len(client.getRejectCalls()); got != 0 {
+		t.Fatalf("force=true must not reject when paused, got %d rejects: %+v", got, client.getRejectCalls())
+	}
+	if got := len(client.getAckCalls()); got != 1 {
+		t.Fatalf("force=true must ack the dispatch, got %d acks", got)
+	}
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("force=true must spawn exactly once when paused, got %d", len(spawns))
+	}
+	if spawns[0].TaskID != "task1" {
+		t.Fatalf("spawned task = %q, want task1", spawns[0].TaskID)
+	}
+}
+
+// TestTaskRunner_Dispatch_ForceStillRespectsCapacity confirms force=true
+// does NOT override capacity limits. Overrunning max_parallel would corrupt
+// slot accounting; the PWA's Force action is an override of "user
+// intent" (pause), not of "physical resource" (slots).
+func TestTaskRunner_Dispatch_ForceStillRespectsCapacity(t *testing.T) {
+	client := newMockClient()
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	// Saturate slots: register one running process so RunningCount=1, and
+	// set MaxParallel=1 so no slot is available.
+	if err := processMgr.Add("blocking-task", RunningTask{ID: "blocking-task", ProjectID: "proj-a"}, newMockProcess(1)); err != nil {
+		t.Fatalf("seed running process: %v", err)
+	}
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	cfg.MaxParallel = 1
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
+		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "task1", LeaseID: "lease-1",
+		Force: true,
+	})
+
+	rejects := client.getRejectCalls()
+	if len(rejects) != 1 {
+		t.Fatalf("expected one reject due to capacity, got %d", len(rejects))
+	}
+	if rejects[0].Reason.Code != "capacity_unavailable" {
+		t.Fatalf("reject code = %q, want capacity_unavailable", rejects[0].Reason.Code)
+	}
+	if len(executor.getSpawnCalls()) != 0 {
+		t.Fatalf("force=true must not spawn over capacity")
+	}
+}

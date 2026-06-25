@@ -220,14 +220,39 @@ export function TasksView() {
   // falls back to /trigger automatically when the server doesn't support
   // /run yet. summarizeTriggerResults still shapes the toast — runOrTrigger
   // returns a TriggerResponse-compatible value.
-  async function triggerMany(tasks: Task[]) {
+  //
+  // When force=true, this bypasses any existing dispatch lease — used as the
+  // recovery action for stuck/orphaned leases (e.g. a runner that crashed
+  // silently). Single-task force flows can also surface a follow-up toast
+  // action so users don't have to reissue from a different UI.
+  async function triggerMany(tasks: Task[], force = false) {
     const eligible = tasks.filter((t) => t.projectId);
     if (!eligible.length) return;
     setBusy(true);
     try {
-      const results = await Promise.all(eligible.map((t) => runOrTriggerTask(t.projectId!, t.id)));
+      const results = await Promise.all(
+        eligible.map((t) => runOrTriggerTask(t.projectId!, t.id, force)),
+      );
       const { message, kind } = summarizeTriggerResults(results);
-      toast(message, kind);
+      // If exactly one task came back blocked by an existing lease, offer a
+      // "Force" action so the user can release+redispatch in one click.
+      // Multi-task force is intentionally not auto-offered — batch flows are
+      // riskier and the user should be deliberate.
+      const blocked = results.find((r) => !r.triggered && r.reasonCode === "already_leased" && r.projectId);
+      const isSingleBlocked = !force && results.length === 1 && !!blocked;
+      if (isSingleBlocked && blocked) {
+        toast(message, kind, {
+          action: {
+            label: "Force",
+            onClick: () => triggerMany(
+              eligible.filter((t) => t.id === blocked.taskId),
+              true,
+            ),
+          },
+        });
+      } else {
+        toast(message, kind);
+      }
     } catch (e) {
       toast(e instanceof Error ? e.message : "Run failed", "error");
     } finally {

@@ -408,20 +408,30 @@ func renderAutomationTemplate(input, project string, evt types.Event) string {
 	if err != nil {
 		return input
 	}
+	// EventProjectID surfaces the source project of the triggering event,
+	// which can differ from Project/ProjectID for cross-project automations
+	// (those using filter.project: "*"). Project/ProjectID always reflect
+	// the project that owns the automation entry and the generated task.
 	data := struct {
-		Project    string
-		ProjectID  string
-		FeatureID  string
-		TaskID     string
-		FromStatus string
-		ToStatus   string
+		Project        string
+		ProjectID      string
+		EventProjectID string
+		FeatureID      string
+		TaskID         string
+		TaskPath       string
+		TaskTitle      string
+		FromStatus     string
+		ToStatus       string
 	}{
-		Project:    project,
-		ProjectID:  project,
-		FeatureID:  evt.FeatureID,
-		TaskID:     evt.TaskID,
-		FromStatus: evt.FromStatus,
-		ToStatus:   evt.ToStatus,
+		Project:        project,
+		ProjectID:      project,
+		EventProjectID: evt.ProjectID,
+		FeatureID:      evt.FeatureID,
+		TaskID:         evt.TaskID,
+		TaskPath:       evt.TaskPath,
+		TaskTitle:      evt.TaskTitle,
+		FromStatus:     evt.FromStatus,
+		ToStatus:       evt.ToStatus,
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

@@ -384,6 +384,76 @@ func TestAutomationService_HandleEventInterpolatesProjectInPrompt(t *testing.T) 
 	}
 }
 
+// TestAutomationService_HandleEventInterpolatesEventFieldsInPrompt verifies that
+// event-derived template fields (TaskID, EventProjectID, TaskPath, TaskTitle,
+// FromStatus, ToStatus) reach the generated task's prompt. This is the contract
+// the Blocked Task Inspector and similar event-driven automations rely on to
+// know exactly which task triggered them, instead of guessing via cwd-based
+// project resolution.
+func TestAutomationService_HandleEventInterpolatesEventFieldsInPrompt(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Cross-project blocked inspector",
+		Content: "Inspects blocked tasks across projects.",
+		Status:  "active",
+		Project: "automation-template-event-test",
+		Trigger: &types.TriggerConfig{
+			Type:  "event",
+			Event: types.EventTaskStatusChanged,
+			Filter: map[string]string{
+				"project":   "*",
+				"to_status": "blocked",
+			},
+		},
+		Action: &types.AutomationAction{
+			Type: "prompt",
+			DirectPrompt: "Inspect task {{.TaskID}} (path={{.TaskPath}}, title={{.TaskTitle}}) " +
+				"in project {{.EventProjectID}}; transitioned {{.FromStatus}}->{{.ToStatus}}. " +
+				"Generated task lives in {{.ProjectID}}.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	err = automation.HandleEvent(ctx, types.Event{
+		ID:         "evt-template-event-1",
+		Type:       types.EventTaskStatusChanged,
+		Source:     types.EventSourceRunner,
+		ProjectID:  "some-other-project",
+		TaskID:     "blocked-task-id",
+		TaskPath:   "projects/some-other-project/task/blocked-task-id.md",
+		TaskTitle:  "The original work",
+		FromStatus: "in_progress",
+		ToStatus:   "blocked",
+	})
+	if err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-template-event-test",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected one generated task, got %d", len(resp.Entries))
+	}
+	want := "Inspect task blocked-task-id (path=projects/some-other-project/task/blocked-task-id.md, " +
+		"title=The original work) in project some-other-project; " +
+		"transitioned in_progress->blocked. Generated task lives in automation-template-event-test."
+	if got := resp.Entries[0].DirectPrompt; got != want {
+		t.Fatalf("generated task direct_prompt = %q\nwant %q", got, want)
+	}
+}
+
 func TestAutomationService_HandleEventDefaultsGeneratedTaskCompleteOnIdle(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()

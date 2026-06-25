@@ -40,6 +40,8 @@ type schedulerPlacementService interface {
 
 type schedulerLeaseStore interface {
 	CreateDispatchLease(ctx context.Context, in storage.DispatchLeaseCreate) (*storage.DispatchLeaseRow, bool, error)
+	GetDispatchLeaseRow(ctx context.Context, projectID, taskID string) (*storage.DispatchLeaseRow, error)
+	ReleaseDispatchLease(ctx context.Context, projectID, taskID, runnerID string) (bool, error)
 	RecordPlacementReason(ctx context.Context, row *storage.PlacementReasonRow) error
 }
 
@@ -416,9 +418,51 @@ func (s *SchedulerService) RunTaskNow(ctx context.Context, projectID, taskID str
 		return nil, fmt.Errorf("create dispatch lease: %w", err)
 	}
 	if !created {
-		resp.Reason = "already_leased"
-		resp.Detail = "task already has an active dispatch lease"
-		return resp, nil
+		// Look up the existing lease so the caller can see which runner owns
+		// it and (when force=true) so we can release+redispatch it.
+		existing, lookupErr := s.leases.GetDispatchLeaseRow(ctx, projectID, task.ID)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("lookup existing dispatch lease: %w", lookupErr)
+		}
+		if !force {
+			resp.Reason = "already_leased"
+			resp.Detail = "task already has an active dispatch lease"
+			if existing != nil {
+				resp.RunnerID = existing.AssignedRunnerID
+				resp.LeaseID = existing.LeaseID
+				resp.LeaseState = existing.State
+				if existing.ExpiresAt > 0 {
+					resp.ExpiresAt = time.UnixMilli(existing.ExpiresAt).UTC().Format(time.RFC3339)
+				}
+			}
+			return resp, nil
+		}
+		// force=true: drop the stale lease and try once more. We intentionally
+		// keep this inline (rather than recursing) so we can attribute the
+		// release to whichever runner owned the lease.
+		if existing != nil {
+			if _, relErr := s.leases.ReleaseDispatchLease(ctx, projectID, task.ID, existing.AssignedRunnerID); relErr != nil {
+				return nil, fmt.Errorf("release stale dispatch lease: %w", relErr)
+			}
+		}
+		lease, created, err = s.leases.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+			ProjectID:         projectID,
+			TaskID:            task.ID,
+			AssignedRunnerID:  candidate.RunnerID,
+			AssignedMachineID: candidate.MachineID,
+			PushedAt:          now,
+			ExpiresAt:         now + s.leaseTTL.Milliseconds(),
+		})
+		if err != nil {
+			return nil, fmt.Errorf("recreate dispatch lease after force release: %w", err)
+		}
+		if !created {
+			// Still couldn't create — surface a clear error rather than
+			// silently no-op'ing the force.
+			resp.Reason = "already_leased"
+			resp.Detail = "task lease could not be reclaimed even with force"
+			return resp, nil
+		}
 	}
 
 	if s.publisher != nil {

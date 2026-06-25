@@ -313,6 +313,10 @@ type fakeSchedulerStore struct {
 	leases                   []storage.DispatchLeaseCreate
 	reasons                  []storage.PlacementReasonRow
 	commands                 []fakeRunnerCommand
+	// activeLeases simulates the persisted state for already_leased / force
+	// scenarios. Keyed by "projectID/taskID".
+	activeLeases  map[string]*storage.DispatchLeaseRow
+	releasedKeys  []string
 }
 
 type fakeRunnerCommand struct {
@@ -348,16 +352,49 @@ func (f *fakeSchedulerStore) Get(ctx context.Context, projectID string) (*types.
 }
 
 func (f *fakeSchedulerStore) CreateDispatchLease(ctx context.Context, in storage.DispatchLeaseCreate) (*storage.DispatchLeaseRow, bool, error) {
+	key := in.ProjectID + "/" + in.TaskID
+	if f.activeLeases != nil {
+		if existing := f.activeLeases[key]; existing != nil {
+			return existing, false, nil
+		}
+	}
 	f.leases = append(f.leases, in)
-	return &storage.DispatchLeaseRow{
+	row := &storage.DispatchLeaseRow{
 		ProjectID:         in.ProjectID,
 		TaskID:            in.TaskID,
+		LeaseID:           in.LeaseID,
 		AssignedRunnerID:  in.AssignedRunnerID,
 		AssignedMachineID: in.AssignedMachineID,
 		State:             storage.DispatchLeaseStatePushed,
 		PushedAt:          in.PushedAt,
 		ExpiresAt:         in.ExpiresAt,
-	}, true, nil
+	}
+	if f.activeLeases == nil {
+		f.activeLeases = map[string]*storage.DispatchLeaseRow{}
+	}
+	f.activeLeases[key] = row
+	return row, true, nil
+}
+
+func (f *fakeSchedulerStore) GetDispatchLeaseRow(ctx context.Context, projectID, taskID string) (*storage.DispatchLeaseRow, error) {
+	if f.activeLeases == nil {
+		return nil, nil
+	}
+	return f.activeLeases[projectID+"/"+taskID], nil
+}
+
+func (f *fakeSchedulerStore) ReleaseDispatchLease(ctx context.Context, projectID, taskID, runnerID string) (bool, error) {
+	key := projectID + "/" + taskID
+	if f.activeLeases == nil {
+		return false, nil
+	}
+	existing, ok := f.activeLeases[key]
+	if !ok || existing.AssignedRunnerID != runnerID {
+		return false, nil
+	}
+	delete(f.activeLeases, key)
+	f.releasedKeys = append(f.releasedKeys, key)
+	return true, nil
 }
 
 func (f *fakeSchedulerStore) RecordPlacementReason(ctx context.Context, row *storage.PlacementReasonRow) error {
@@ -537,5 +574,121 @@ func TestRunTaskNow_AllRunnersAtCapacityReturnsReason(t *testing.T) {
 	}
 	if len(store.commands) != 0 {
 		t.Fatalf("no command should be published, got %#v", store.commands)
+	}
+}
+
+func TestRunTaskNow_AlreadyLeasedSurfacesRunnerAndState(t *testing.T) {
+	// When an active dispatch lease blocks a manual run, the response must
+	// tell the caller which runner currently owns the task and what state
+	// the lease is in. The PWA toast surfaces this so users don't have to
+	// dig through logs to figure out why "x" was a no-op.
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{{
+		ID: "task-1", ProjectID: "proj", Status: "pending",
+		Classification: "ready", Executor: "opencode",
+	}}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 2,
+		},
+	}
+	// Pre-seed an existing lease assigned to a different runner so we can
+	// confirm the response surfaces the actual owner, not the new candidate.
+	store.activeLeases = map[string]*storage.DispatchLeaseRow{
+		"proj/task-1": {
+			ProjectID:        "proj",
+			TaskID:           "task-1",
+			LeaseID:          "lease-existing",
+			AssignedRunnerID: "runner-existing",
+			State:            storage.DispatchLeaseStatePushed,
+			PushedAt:         1000,
+			ExpiresAt:        2000,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "task-1", false)
+	if err != nil {
+		t.Fatalf("RunTaskNow returned error: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatal("Dispatched = true, want false (already leased)")
+	}
+	if resp.Reason != "already_leased" {
+		t.Fatalf("Reason = %q, want already_leased", resp.Reason)
+	}
+	if resp.RunnerID != "runner-existing" {
+		t.Fatalf("RunnerID = %q, want runner-existing (the lease owner)", resp.RunnerID)
+	}
+	if resp.LeaseID != "lease-existing" {
+		t.Fatalf("LeaseID = %q, want lease-existing", resp.LeaseID)
+	}
+	if resp.LeaseState != storage.DispatchLeaseStatePushed {
+		t.Fatalf("LeaseState = %q, want %q", resp.LeaseState, storage.DispatchLeaseStatePushed)
+	}
+	if resp.ExpiresAt == "" {
+		t.Fatal("ExpiresAt should be populated when an active lease exists")
+	}
+	if len(store.commands) != 0 {
+		t.Fatalf("no dispatch command should be published when blocked, got %#v", store.commands)
+	}
+}
+
+func TestRunTaskNow_ForceReleasesStaleLeaseAndRedispatches(t *testing.T) {
+	// force=true is the recovery path for a stuck/orphaned lease (e.g. the
+	// owning runner crashed silently). It must release the existing lease
+	// AND publish a fresh dispatch command — otherwise the user is stuck
+	// waiting for the TTL to expire.
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{{
+		ID: "task-1", ProjectID: "proj", Status: "pending",
+		Classification: "ready", Executor: "opencode",
+	}}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 2,
+		},
+	}
+	store.activeLeases = map[string]*storage.DispatchLeaseRow{
+		"proj/task-1": {
+			ProjectID:        "proj",
+			TaskID:           "task-1",
+			LeaseID:          "lease-stale",
+			AssignedRunnerID: "runner-stale",
+			State:            storage.DispatchLeaseStatePushed,
+			PushedAt:         1000,
+			ExpiresAt:        2000,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "task-1", true)
+	if err != nil {
+		t.Fatalf("RunTaskNow(force=true) failed: %v", err)
+	}
+	if !resp.Dispatched {
+		t.Fatalf("Dispatched = false with force=true; reason=%q detail=%q", resp.Reason, resp.Detail)
+	}
+	if resp.RunnerID != "runner-a" {
+		t.Fatalf("RunnerID = %q, want runner-a (the new dispatch target)", resp.RunnerID)
+	}
+	if len(store.releasedKeys) != 1 || store.releasedKeys[0] != "proj/task-1" {
+		t.Fatalf("expected one release of proj/task-1, got %#v", store.releasedKeys)
+	}
+	if len(store.commands) != 1 || store.commands[0].command != "dispatch" || store.commands[0].runnerID != "runner-a" {
+		t.Fatalf("expected fresh dispatch command to runner-a, got %#v", store.commands)
+	}
+	// Force should still propagate to the runner payload so a paused
+	// runner accepts the dispatch.
+	payload, ok := store.commands[0].payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", store.commands[0].payload)
+	}
+	if payload["force"] != true {
+		t.Fatalf("dispatch payload force = %v, want true", payload["force"])
 	}
 }

@@ -7,6 +7,7 @@ import { API_V1 } from "./config";
 import { useAuth } from "./auth";
 import type {
   BrainEntry,
+  DispatchLease,
   GoalAuditResponse,
   GoalListResponse,
   GoalProgressResponse,
@@ -213,6 +214,19 @@ export interface TriggerResponse {
   runId?: string;
   nextRun?: string;
   reason?: string;
+  // Machine-readable reason from /run (e.g. "already_leased"). Surface in
+  // toasts so callers can offer recovery actions (Force redispatch).
+  reasonCode?: string;
+  projectId?: string;
+  // Lease metadata populated when reasonCode === "already_leased". The PWA
+  // surfaces this on the toast and on the task detail pane so users can see
+  // which runner is holding the task without digging through logs.
+  lease?: {
+    runnerId?: string;
+    leaseId?: string;
+    state?: string;
+    expiresAt?: string;
+  };
 }
 
 export const triggerTask = (projectId: string, taskId: string) =>
@@ -231,6 +245,7 @@ export interface RunTaskResponse {
   projectId: string;
   runnerId?: string;
   leaseId?: string;
+  leaseState?: string;
   expiresAt?: string;
   reason?: string;
   detail?: string;
@@ -242,6 +257,37 @@ export const runTask = (projectId: string, taskId: string, force = false) =>
     {
       method: "POST",
       body: { force },
+    },
+  );
+
+// Fetch the current dispatch lease for a task. Returns 404 when none is
+// active — callers should treat that as "not currently dispatched" rather
+// than an error. Used by the task detail pane to show which runner is
+// holding a task without waiting for the next task-list refresh.
+export async function getDispatchLease(
+  projectId: string,
+  taskId: string,
+): Promise<DispatchLease | null> {
+  try {
+    return await api<DispatchLease>(
+      `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/dispatch-lease`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+// Force-release a dispatch lease owned by a specific runner. Used as the
+// recovery action when a runner went silent without clearing its lease.
+// Pairs with runTask(force=true) on the server, but explicit release is
+// useful when the user just wants to clear the lease without redispatching.
+export const releaseDispatchLease = (runnerId: string, projectId: string, taskId: string) =>
+  api<{ success: boolean; taskId?: string; runnerId?: string }>(
+    `/api/v1/tasks/runners/${encodeURIComponent(runnerId)}/dispatch/release`,
+    {
+      method: "POST",
+      body: { projectId, taskId },
     },
   );
 
@@ -257,7 +303,7 @@ export async function runOrTriggerTask(
 ): Promise<TriggerResponse> {
   try {
     const r = await runTask(projectId, taskId, force);
-    return runResponseToTrigger(r);
+    return runResponseToTrigger(r, projectId);
   } catch (err) {
     if (err instanceof ApiError && err.status === 501) {
       return triggerTask(projectId, taskId);
@@ -266,27 +312,60 @@ export async function runOrTriggerTask(
   }
 }
 
-function runResponseToTrigger(r: RunTaskResponse): TriggerResponse {
+function runResponseToTrigger(r: RunTaskResponse, projectId: string): TriggerResponse {
   if (r.dispatched) {
     const detail = r.runnerId ? `dispatched to ${r.runnerId}` : "dispatched";
     return {
       success: true,
       taskId: r.taskId,
+      projectId,
       triggered: true,
       reason: detail,
+      reasonCode: "dispatched",
     };
   }
   // Map machine-readable reasons to user-facing copy. The shape matches
   // TriggerResponse so summarizeTriggerResults handles it transparently.
+  const lease =
+    r.reason === "already_leased" && (r.runnerId || r.leaseState)
+      ? {
+          runnerId: r.runnerId,
+          leaseId: r.leaseId,
+          state: r.leaseState,
+          expiresAt: r.expiresAt,
+        }
+      : undefined;
   return {
     success: true,
     taskId: r.taskId,
+    projectId,
     triggered: false,
-    reason: humanizeRunReason(r.reason, r.detail),
+    reason: humanizeRunReason(r),
+    reasonCode: r.reason,
+    lease,
   };
 }
 
-function humanizeRunReason(reason?: string, detail?: string): string {
+// Format an absolute ISO timestamp as a coarse "in 3m" / "5s ago" string so
+// toast messages and detail panes can show lease freshness without dragging
+// in date-fns. Keeps the output deliberately short (chip-sized).
+function relativeFromNow(iso?: string): string | undefined {
+  if (!iso) return undefined;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return undefined;
+  const deltaSec = Math.round((t - Date.now()) / 1000);
+  const abs = Math.abs(deltaSec);
+  const fmt =
+    abs < 60 ? `${abs}s` :
+    abs < 3600 ? `${Math.round(abs / 60)}m` :
+    abs < 86400 ? `${Math.round(abs / 3600)}h` :
+    `${Math.round(abs / 86400)}d`;
+  return deltaSec >= 0 ? `in ${fmt}` : `${fmt} ago`;
+}
+
+function humanizeRunReason(r: RunTaskResponse): string {
+  const reason = r.reason;
+  const detail = r.detail;
   switch (reason) {
     case "no_online_runner":
       return "no runners are online";
@@ -296,8 +375,16 @@ function humanizeRunReason(reason?: string, detail?: string): string {
       return "all runners are at capacity";
     case "task_not_ready":
       return "task is not ready (check dependencies)";
-    case "already_leased":
-      return "task already dispatched to a runner";
+    case "already_leased": {
+      // Surface the actual lease owner + state so users can tell at a
+      // glance whether to wait, abort, or force-redispatch.
+      if (!r.runnerId) return "task already dispatched to a runner";
+      const parts: string[] = [r.runnerId];
+      if (r.leaseState) parts.push(r.leaseState);
+      const rel = relativeFromNow(r.expiresAt);
+      if (rel) parts.push(`expires ${rel}`);
+      return `already dispatched to ${parts[0]} (${parts.slice(1).join(", ")})`;
+    }
     case "scheduler_not_configured":
       return "scheduler not configured on server";
     case "":

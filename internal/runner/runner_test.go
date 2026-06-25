@@ -1290,6 +1290,12 @@ func TestTaskRunner_SchedulerDispatchPayloadParsesAcksAndSpawns(t *testing.T) {
 }
 
 func TestTaskRunner_Poll_MixedLegacyAndPassiveBehavior(t *testing.T) {
+	// Tests the (test-only) coexistence of poll-fetch and push-dispatch
+	// behavior in the runner. In production, LoadConfigFrom rejects
+	// dispatch_push: false so the "active" branch this test exercises is
+	// unreachable — see brain plan ehwvfq8e (Tier 2) for the planned
+	// removal of poll-fetch code. The test is preserved as documentation
+	// of the legacy behavior until that cleanup lands.
 	activeClient := newMockClient()
 	activeClient.nextTask["proj-a"] = testTask("active-task", "proj-a")
 	passiveClient := newMockClient()

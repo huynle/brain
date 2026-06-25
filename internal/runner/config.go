@@ -83,12 +83,14 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	// Start with file config (if any)
 	var fileCfg RunnerConfig
 	fileHasRequireHTTPS := false
+	fileHasDispatchPush := false
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return RunnerConfig{}, fmt.Errorf("read config file: %w", err)
 		}
 		fileHasRequireHTTPS = yamlKeyPresent(data, "require_https") || yamlKeyPresent(data, "runner.require_https")
+		fileHasDispatchPush = yamlKeyPresent(data, "dispatch_push") || yamlKeyPresent(data, "runner.dispatch_push")
 		// Try unified config format first (runner fields nested under "runner:" key)
 		var wrapper struct {
 			Runner RunnerConfig `yaml:"runner"`
@@ -202,13 +204,23 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		HeartbeatInterval: getEnvIntOrDefault("RUNNER_HEARTBEAT_INTERVAL", firstNonZero(fileCfg.HeartbeatInterval, 30)),
 		LogStreaming:      getEnvBoolOrDefault("RUNNER_LOG_STREAMING", defaultLogStreaming(fileCfg.LogStreaming)),
 		Capabilities:      getEnvCSVOrDefault("RUNNER_CAPABILITIES", fileCfg.Capabilities),
-		DispatchPush:      getEnvBoolOrDefault("RUNNER_DISPATCH_PUSH", fileCfg.DispatchPush),
+		DispatchPush:      getEnvBoolOrDefault("RUNNER_DISPATCH_PUSH", defaultDispatchPush(fileCfg.DispatchPush, fileHasDispatchPush)),
 		Labels:            getEnvStringMapOrDefault("RUNNER_LABELS", fileCfg.Labels),
 		WorkspaceRoots:    getEnvCSVOrDefault("RUNNER_WORKSPACE_ROOTS", fileCfg.WorkspaceRoots),
 		Resources:         getEnvInterfaceMapOrDefault("RUNNER_RESOURCES", fileCfg.Resources),
 		Capacity:          getEnvInterfaceMapOrDefault("RUNNER_CAPACITY", fileCfg.Capacity),
 		Draining:          getEnvBoolOrDefault("RUNNER_DRAINING", fileCfg.Draining),
 		Passive:           getEnvBoolOrDefault("RUNNER_PASSIVE", fileCfg.Passive),
+	}
+
+	// Push dispatch is the only fully-supported task delivery mode. The
+	// poll-only path (dispatch_push: false) is deprecated: the scheduler,
+	// the /run endpoint (PWA "x" shortcut), and the TUI's manual-execute
+	// path all require runners to advertise push capability. Reject the
+	// misconfig here with a pointer to the fix rather than failing later
+	// with confusing "no eligible runner" errors.
+	if !cfg.DispatchPush {
+		return RunnerConfig{}, fmt.Errorf("dispatch_push: false is no longer supported; remove the line from your config (default is true) or set RUNNER_DISPATCH_PUSH=true. See: https://opencode.ai/docs (runners section)")
 	}
 
 	if err := ValidateConfig(cfg); err != nil {
@@ -336,6 +348,20 @@ func yamlKeyPresent(data []byte, dottedKey string) bool {
 }
 
 func defaultRequireHTTPS(configured bool, configuredInFile bool) bool {
+	if configuredInFile {
+		return configured
+	}
+	return true
+}
+
+// defaultDispatchPush returns the dispatch_push setting, defaulting to true
+// when not explicitly configured. Push dispatch is required for the
+// scheduler and the PWA "x" / RunTaskNow path; defaulting to true means
+// fresh runners are immediately eligible without manual env-var nudging.
+//
+// Users who want poll-only behavior set dispatch_push: false explicitly in
+// YAML or RUNNER_DISPATCH_PUSH=false in env.
+func defaultDispatchPush(configured bool, configuredInFile bool) bool {
 	if configuredInFile {
 		return configured
 	}

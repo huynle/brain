@@ -260,6 +260,77 @@ export const runTask = (projectId: string, taskId: string, force = false) =>
     },
   );
 
+// /features/{featureId}/run is the user-explicit "execute this whole feature
+// now" endpoint. The server dispatches every ready task in the feature up to
+// current runner capacity and queues the rest for a feature-scoped cascade
+// that auto-dispatches as in-flight tasks complete — even when the project
+// is paused. Mirrors runTask but operates on a whole feature in one click.
+export interface RunFeatureResponse {
+  dispatched: boolean;
+  projectId: string;
+  featureId: string;
+  results?: RunTaskResponse[];
+  queued?: string[];
+  dispatchedCount: number;
+  skippedCount: number;
+  reason?: string;
+  detail?: string;
+  cascadeActive?: boolean;
+}
+
+export const runFeature = (projectId: string, featureId: string, force = false) =>
+  api<RunFeatureResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/run`,
+    {
+      method: "POST",
+      body: { force },
+    },
+  );
+
+// Format a RunFeatureResponse into a toast message. Mirrors
+// summarizeTriggerResults' shape so callers can drop this straight into the
+// toast notification system.
+export function summarizeRunFeatureResult(
+  r: RunFeatureResponse,
+): { message: string; kind: "info" | "success" } {
+  if (r.dispatched && r.dispatchedCount > 0 && (r.queued?.length ?? 0) === 0) {
+    return {
+      message:
+        r.dispatchedCount === 1
+          ? "Dispatched 1 task"
+          : `Dispatched ${r.dispatchedCount} tasks`,
+      kind: "success",
+    };
+  }
+  if (r.dispatched && (r.queued?.length ?? 0) > 0) {
+    return {
+      message: `Dispatched ${r.dispatchedCount}, queued ${r.queued?.length ?? 0} (auto-dispatch as slots free)`,
+      kind: "success",
+    };
+  }
+  // Nothing dispatched — surface the reason.
+  const reasonText = humanizeRunFeatureReason(r);
+  return { message: `Not triggered: ${reasonText}`, kind: "info" };
+}
+
+function humanizeRunFeatureReason(r: RunFeatureResponse): string {
+  switch (r.reason) {
+    case "feature_not_found":
+      return "feature not found";
+    case "no_ready_tasks":
+      return "no ready tasks in this feature (check dependencies)";
+    case "feature_in_progress":
+      return "every ready task is already in flight";
+    case "scheduler_not_configured":
+      return "scheduler not configured on server";
+    case "":
+    case undefined:
+      return "nothing to dispatch";
+    default:
+      return r.detail ? `${r.reason}: ${r.detail}` : r.reason;
+  }
+}
+
 // Fetch the current dispatch lease for a task. Returns 404 when none is
 // active — callers should treat that as "not currently dispatched" rather
 // than an error. Used by the task detail pane to show which runner is

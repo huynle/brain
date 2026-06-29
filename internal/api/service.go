@@ -159,6 +159,14 @@ type RunTaskService interface {
 	RunTaskNow(ctx context.Context, projectID, taskID string, force bool) (*types.RunTaskResponse, error)
 }
 
+// RunFeatureService is the optional capability that backs POST
+// /tasks/{projectId}/features/{featureId}/run. Surfaced as its own interface
+// (mirroring RunTaskService) so implementations are free to wire one without
+// the other. In production both are satisfied by *service.SchedulerService.
+type RunFeatureService interface {
+	RunFeatureNow(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error)
+}
+
 // SchedulerVisibilityService exposes persisted scheduler placement artifacts.
 type SchedulerVisibilityService interface {
 	GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error)

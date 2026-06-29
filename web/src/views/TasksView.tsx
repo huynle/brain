@@ -14,7 +14,7 @@ import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
 import { Panel } from "../components/layout/Panel";
 import { PaneSplitterRow, PaneSplitterColumn } from "../components/layout/PaneSplitters";
 import { ConfirmDialog } from "../components/common/Modal";
-import { deleteEntry, listInstances, runOrTriggerTask, setTaskStatus, summarizeTriggerResults } from "../lib/api";
+import { deleteEntry, listInstances, runFeature, runOrTriggerTask, setTaskStatus, summarizeRunFeatureResult, summarizeTriggerResults } from "../lib/api";
 import {
   cleanLogContent,
   clockTime,
@@ -270,6 +270,37 @@ export function TasksView() {
     }
   }
 
+  // runFeatureNow dispatches every ready task in a feature in one server call.
+  // Unlike triggerMany (which fires N independent /run requests racing for the
+  // same runner slots), this lets the scheduler reserve slots cohesively and
+  // queue leftovers for the feature-cascade so the rest fire as slots free —
+  // even while the project is paused. Falls back silently to triggerMany on
+  // older servers that return 501 Not Implemented.
+  async function runFeatureNow(projectId: string, featureId: string, force = false) {
+    setBusy(true);
+    try {
+      const result = await runFeature(projectId, featureId, force);
+      const { message, kind } = summarizeRunFeatureResult(result);
+      toast(message, kind);
+    } catch (e) {
+      // 501 fallback: server doesn't support /features/{id}/run yet. Use the
+      // per-task path so the user still gets work dispatched.
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("501") || msg.toLowerCase().includes("not implemented")) {
+        const ready = taskList.filter(
+          (t) => (t.feature_id || UNGROUPED) === featureId && ["pending", "active"].includes(t.status),
+        );
+        if (ready.length) {
+          await triggerMany(ready, force);
+          return;
+        }
+      }
+      toast(msg || "Run feature failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function openTaskSession(task: Task) {
     if (!isActive(task.status)) {
       setViewContent(task);
@@ -340,8 +371,17 @@ export function TasksView() {
         }
         case "x":
           if (row?.kind === "header") {
-            const ready = taskList.filter((t) => (t.feature_id || UNGROUPED) === row.feature && ["pending", "active"].includes(t.status));
-            if (ready.length) void triggerMany(ready);
+            // Whole-feature dispatch: hand the server a single call so it
+            // can plan capacity, queue leftovers, and start a cascade for
+            // drain-while-paused. UNGROUPED rows fall back to the per-task
+            // path because they don't share a feature_id.
+            if (row.feature === UNGROUPED) {
+              const ready = taskList.filter((t) => !t.feature_id && ["pending", "active"].includes(t.status));
+              if (ready.length) void triggerMany(ready);
+            } else {
+              const sample = taskList.find((t) => t.feature_id === row.feature && t.projectId);
+              if (sample?.projectId) void runFeatureNow(sample.projectId, row.feature);
+            }
           } else if (cur?.projectId) void triggerMany([cur]);
           return true;
         case "X":
@@ -446,6 +486,9 @@ export function TasksView() {
           rows.map((row, i) => {
             const isCur = i === cursor;
             if (row.kind === "header") {
+              const featureSample = row.feature !== UNGROUPED
+                ? taskList.find((t) => t.feature_id === row.feature && t.projectId)
+                : undefined;
               return (
                 <div
                   key={`h:${row.feature}`}
@@ -456,11 +499,25 @@ export function TasksView() {
                     const ts = tasksByFeature.get(row.feature) ?? [];
                     if (row.feature !== UNGROUPED && ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
                   }}
-                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "s opens feature settings · Enter/Space toggles collapse"}
+                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "s opens feature settings · x runs feature · Enter/Space toggles collapse"}
                 >
                   <span className="htri">{(collapsed[row.feature] ?? collapseDefault) ? "▸" : "▾"}</span>
                   {row.label}
                   <span className="hcount">({row.count})</span>
+                  {featureSample?.projectId && (
+                    <button
+                      type="button"
+                      className="feature-run"
+                      title="Run this feature (dispatch every ready task; queues leftovers as slots free, even if project is paused)"
+                      aria-label={`Run feature ${row.feature}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void runFeatureNow(featureSample.projectId!, row.feature);
+                      }}
+                    >
+                      ▶
+                    </button>
+                  )}
                 </div>
               );
             }

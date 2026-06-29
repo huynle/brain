@@ -692,3 +692,203 @@ func TestRunTaskNow_ForceReleasesStaleLeaseAndRedispatches(t *testing.T) {
 		t.Fatalf("dispatch payload force = %v, want true", payload["force"])
 	}
 }
+
+// =============================================================================
+// RunFeatureNow tests
+// =============================================================================
+
+// fakeCascade is a featureCascadeRegistrar that records Register calls so
+// tests can assert cascade wiring without spinning up the real subscriber.
+type fakeCascade struct {
+	registered []struct{ projectID, featureID string }
+	active     map[string]bool
+}
+
+func newFakeCascade() *fakeCascade {
+	return &fakeCascade{active: make(map[string]bool)}
+}
+
+func (f *fakeCascade) Register(projectID, featureID string) {
+	f.registered = append(f.registered, struct{ projectID, featureID string }{projectID, featureID})
+	f.active[projectID+"/"+featureID] = true
+}
+
+func (f *fakeCascade) IsActive(projectID, featureID string) bool {
+	return f.active[projectID+"/"+featureID]
+}
+
+func TestRunFeatureNow_DispatchesAllReadyTasks(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode", Priority: "high"},
+		{ID: "task-2", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode", Priority: "low"},
+	}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 5,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if !resp.Dispatched {
+		t.Fatalf("Dispatched = false; reason=%q", resp.Reason)
+	}
+	if resp.DispatchedCount != 2 {
+		t.Fatalf("DispatchedCount = %d, want 2", resp.DispatchedCount)
+	}
+	if len(resp.Results) != 2 {
+		t.Fatalf("Results len = %d, want 2", len(resp.Results))
+	}
+	// High-priority task first.
+	if resp.Results[0].TaskID != "task-1" {
+		t.Fatalf("Results[0].TaskID = %q, want task-1 (priority high goes first)", resp.Results[0].TaskID)
+	}
+	if len(store.leases) != 2 {
+		t.Fatalf("expected 2 leases, got %d", len(store.leases))
+	}
+}
+
+func TestRunFeatureNow_EmptyFeatureIDReturnsReason(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 1},
+	}
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow returned error: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatal("Dispatched = true, want false (empty featureID)")
+	}
+	if resp.Reason != "feature_not_found" {
+		t.Fatalf("Reason = %q, want feature_not_found", resp.Reason)
+	}
+}
+
+func TestRunFeatureNow_NoReadyTasksReturnsReason(t *testing.T) {
+	store := newFakeSchedulerStore()
+	// No tasks at all.
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 1},
+	}
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow returned error: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatal("Dispatched = true, want false (no tasks)")
+	}
+	if resp.Reason != "no_ready_tasks" {
+		t.Fatalf("Reason = %q, want no_ready_tasks", resp.Reason)
+	}
+}
+
+func TestRunFeatureNow_PausedProjectIsBypassed(t *testing.T) {
+	// Pinning the contract: pause must not block manual feature dispatch,
+	// mirroring RunTaskNow's existing behaviour.
+	store := newFakeSchedulerStore()
+	store.paused = true
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 1},
+	}
+
+	svc := NewSchedulerService(store, store, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", true)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if !resp.Dispatched {
+		t.Fatalf("Dispatched = false on paused project; reason=%q", resp.Reason)
+	}
+	if len(store.commands) != 1 {
+		t.Fatalf("expected one dispatch command on paused project, got %#v", store.commands)
+	}
+	payload, ok := store.commands[0].payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", store.commands[0].payload)
+	}
+	if payload["force"] != true {
+		t.Fatalf("dispatch payload force = %v, want true so paused runner accepts", payload["force"])
+	}
+}
+
+func TestRunFeatureNow_CapacityHitQueuesLeftovers(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+		{ID: "task-2", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+		{ID: "task-3", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	// Single runner with one free slot — only one task should dispatch.
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 1, ActiveTasks: 0,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	cascade := newFakeCascade()
+	svc.SetFeatureCascade(cascade)
+
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.DispatchedCount < 1 {
+		t.Fatalf("expected at least 1 dispatched, got %d", resp.DispatchedCount)
+	}
+	if len(resp.Queued) == 0 {
+		t.Fatal("expected queued tasks when capacity is exhausted")
+	}
+	if !resp.CascadeActive {
+		t.Fatal("CascadeActive = false; want true when leftovers were queued")
+	}
+	if len(cascade.registered) != 1 {
+		t.Fatalf("cascade.Register call count = %d, want 1", len(cascade.registered))
+	}
+	if cascade.registered[0].projectID != "proj" || cascade.registered[0].featureID != "feat" {
+		t.Fatalf("cascade registered %+v, want proj/feat", cascade.registered[0])
+	}
+}
+
+func TestRunFeatureNow_HonorsForceFlagOnPerTaskCalls(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 1},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", true)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if !resp.Dispatched {
+		t.Fatalf("Dispatched = false; reason=%q", resp.Reason)
+	}
+	if len(store.commands) != 1 {
+		t.Fatalf("expected one dispatch command, got %d", len(store.commands))
+	}
+	payload, ok := store.commands[0].payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", store.commands[0].payload)
+	}
+	if payload["force"] != true {
+		t.Fatalf("dispatch payload force = %v, want true (propagated from RunFeatureNow)", payload["force"])
+	}
+}

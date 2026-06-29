@@ -262,6 +262,15 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	eventSvc := service.NewEventService(eventHub)
 	eventSvc.SetFeatureTaskLister(taskSvc)
 	eventSvc.SetFeatureAssignmentCleaner(store)
+
+	// ─── Feature Cascade ───────────────────────────────────────────
+	// Manual "Run feature now" workflow needs the cascade to drain queued
+	// tasks as in-flight ones complete — even while the project is paused.
+	// Wire here so SchedulerService can register cascades from RunFeatureNow
+	// and the cascade can call back via the FeatureRunner interface.
+	featureCascade := service.NewFeatureCascadeService(eventHub, schedulerSvc)
+	schedulerSvc.SetFeatureCascade(featureCascade)
+	featureCascade.Start(ctx)
 	automationSvc := service.NewAutomationService(brainSvc)
 	automationSvc.SetPauseChecker(runnerSvc)
 	go automationSvc.Start(ctx, eventHub)
@@ -317,6 +326,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithSchedulerService(schedulerSvc),
 		api.WithSchedulerVisibilityService(store),
 		api.WithRunTaskService(schedulerSvc),
+		api.WithRunFeatureService(schedulerSvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),

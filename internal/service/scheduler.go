@@ -75,8 +75,29 @@ type SchedulerService struct {
 	leaseTTL  time.Duration
 	nowUnixMS func() int64
 
+	// cascade is the optional feature-cascade tracker. When set, RunFeatureNow
+	// will register the feature for cascade dispatch when there are queued
+	// tasks. Wired after construction via SetFeatureCascade to avoid a
+	// circular dependency (cascade needs a FeatureRunner = *SchedulerService).
+	cascade featureCascadeRegistrar
+
 	mu     sync.RWMutex
 	status schedulerStatusSnapshot
+}
+
+// featureCascadeRegistrar is the slice of FeatureCascadeService that
+// SchedulerService needs. Kept as an interface so tests can inject a fake
+// without pulling in the full cascade service.
+type featureCascadeRegistrar interface {
+	Register(projectID, featureID string)
+	IsActive(projectID, featureID string) bool
+}
+
+// SetFeatureCascade wires the feature-cascade tracker. Pass nil to disable
+// cascade behaviour (RunFeatureNow then dispatches what fits and stops; the
+// user must re-trigger to drain leftovers).
+func (s *SchedulerService) SetFeatureCascade(c featureCascadeRegistrar) {
+	s.cascade = c
 }
 
 type SchedulerResult = types.SchedulerResult

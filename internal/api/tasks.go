@@ -840,6 +840,48 @@ func (h *Handler) HandleRunTask(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleRunFeature handles POST /tasks/{projectId}/features/{featureId}/run.
+//
+// User-explicit "run this whole feature now" path. The scheduler dispatches
+// every ready task in the feature up to current runner capacity and queues
+// the rest for a feature-scoped cascade that auto-dispatches as in-flight
+// tasks complete — even when the project is paused.
+//
+// Behaviour:
+//   - 200 with Dispatched=true and a per-task Results array on success.
+//   - 200 with Dispatched=false and Reason ("feature_not_found",
+//     "no_ready_tasks", "feature_in_progress", "scheduler_not_configured")
+//     when nothing dispatched.
+//   - 400 on malformed JSON body.
+//   - 501 Not Implemented when the run-feature service is not wired so PWA
+//     can fall back gracefully.
+//   - 500 only on unexpected infrastructure failures.
+func (h *Handler) HandleRunFeature(w http.ResponseWriter, r *http.Request) {
+	if h.runFeature == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "run-feature service is not configured")
+		return
+	}
+
+	projectId := chi.URLParam(r, "projectId")
+	featureId := chi.URLParam(r, "featureId")
+
+	var req types.RunFeatureRequest
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+			return
+		}
+	}
+
+	resp, err := h.runFeature.RunFeatureNow(r.Context(), projectId, featureId, req.Force)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandlePauseProject handles POST /tasks/runner/pause/{projectId}.
 func (h *Handler) HandlePauseProject(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")

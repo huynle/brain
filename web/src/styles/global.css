@@ -1196,6 +1196,37 @@ kbd {
 .tree-header .htri { color: var(--purple); }
 .tree-header .hcount { color: var(--fg-faint); font-weight: 400; }
 
+/* Compact, low-emphasis play glyph that appears on the feature header.
+   Discreet by default (faded, small, no border) and lights up on hover so
+   it doesn't compete with the feature title or count for attention. */
+.tree-header .feature-run {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0 4px;
+  margin-left: 4px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--fg-faint);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.tree-header:hover .feature-run,
+.tree-header.cursor .feature-run {
+  opacity: 1;
+}
+.tree-header .feature-run:hover {
+  color: var(--green, var(--accent));
+  opacity: 1;
+}
+.tree-header .feature-run:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
+
 /* detail panel rows */
 .detail-field { display: flex; gap: 8px; padding: 0; line-height: 1.5; }
 .detail-field .dl { color: var(--fg-faint); flex: 0 0 auto; min-width: 90px; }

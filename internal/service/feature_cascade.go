@@ -1,0 +1,182 @@
+package service
+
+import (
+	"context"
+	"log/slog"
+	"sync"
+
+	"github.com/huynle/brain-api/internal/realtime"
+	"github.com/huynle/brain-api/internal/types"
+)
+
+// FeatureRunner is the narrow interface FeatureCascadeService needs from the
+// scheduler. It's satisfied by *SchedulerService and trivial to fake in tests.
+type FeatureRunner interface {
+	RunFeatureNow(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error)
+}
+
+// featureCascadeKey uniquely identifies a feature-cascade marker.
+type featureCascadeKey struct {
+	projectID string
+	featureID string
+}
+
+// FeatureCascadeService tracks which features the user has manually triggered
+// via RunFeatureNow and, when each in-flight task in those features completes,
+// asks the scheduler to dispatch the next ready task in the same feature.
+//
+// This is how "dispatch what fits, queue the rest" behaves end-to-end even
+// while the project is paused: pause halts the normal scheduler tick, but the
+// cascade keeps feeding queued tasks one-by-one as slots free.
+//
+// State is in-memory only. A server restart clears all cascade markers; users
+// would need to re-trigger the feature. This is intentional for v1 — the
+// alternative (a persistence table + cleanup logic) is significant complexity
+// for a transient signal.
+type FeatureCascadeService struct {
+	hub    *realtime.EventHub
+	runner FeatureRunner
+
+	mu       sync.RWMutex
+	cascades map[featureCascadeKey]struct{}
+
+	// running indicates Start() is active. Guards against double-start.
+	running bool
+}
+
+// NewFeatureCascadeService constructs a cascade service. The hub may be nil
+// (e.g. in tests that only exercise Register/IsActive); in that case Start
+// will be a no-op.
+func NewFeatureCascadeService(hub *realtime.EventHub, runner FeatureRunner) *FeatureCascadeService {
+	return &FeatureCascadeService{
+		hub:      hub,
+		runner:   runner,
+		cascades: make(map[featureCascadeKey]struct{}),
+	}
+}
+
+// Register marks a feature as in manual-cascade mode. Idempotent.
+func (s *FeatureCascadeService) Register(projectID, featureID string) {
+	if projectID == "" || featureID == "" {
+		return
+	}
+	s.mu.Lock()
+	s.cascades[featureCascadeKey{projectID: projectID, featureID: featureID}] = struct{}{}
+	s.mu.Unlock()
+}
+
+// Unregister clears the cascade marker for a feature. Safe to call when
+// not registered.
+func (s *FeatureCascadeService) Unregister(projectID, featureID string) {
+	s.mu.Lock()
+	delete(s.cascades, featureCascadeKey{projectID: projectID, featureID: featureID})
+	s.mu.Unlock()
+}
+
+// IsActive returns whether a feature is currently being cascaded.
+func (s *FeatureCascadeService) IsActive(projectID, featureID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.cascades[featureCascadeKey{projectID: projectID, featureID: featureID}]
+	return ok
+}
+
+// Start subscribes to the event hub and runs the cascade loop until ctx
+// is canceled. Safe to call once; subsequent calls are no-ops.
+func (s *FeatureCascadeService) Start(ctx context.Context) {
+	if s.hub == nil || s.runner == nil {
+		slog.Info("feature cascade not started: hub or runner missing")
+		return
+	}
+	s.mu.Lock()
+	if s.running {
+		s.mu.Unlock()
+		return
+	}
+	s.running = true
+	s.mu.Unlock()
+
+	// We want every task lifecycle terminal event. Filter by type patterns
+	// so the channel doesn't get every event in the system.
+	ch, unsub := s.hub.Subscribe(realtime.EventFilter{
+		TypePatterns: []string{
+			types.EventTaskCompleted,
+			types.EventTaskFailed,
+			types.EventTaskCancelled,
+		},
+	})
+
+	go func() {
+		defer func() {
+			unsub()
+			s.mu.Lock()
+			s.running = false
+			s.mu.Unlock()
+			slog.Info("feature cascade stopped")
+		}()
+		slog.Info("feature cascade started")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case evt, ok := <-ch:
+				if !ok {
+					return
+				}
+				s.handleEvent(ctx, evt)
+			}
+		}
+	}()
+}
+
+// handleEvent fires the next dispatch pass for a feature when one of its
+// tasks reaches a terminal state. Lookup is O(1) on the cascade map.
+//
+// Three exit paths:
+//  1. Event has no feature_id or the feature isn't registered: ignore.
+//  2. RunFeatureNow dispatches at least one new task or has queued tasks:
+//     leave the cascade active.
+//  3. RunFeatureNow reports no_ready_tasks: feature has drained (either
+//     fully completed or remaining tasks are blocked); unregister to stop
+//     reacting to subsequent events for this feature.
+func (s *FeatureCascadeService) handleEvent(ctx context.Context, evt types.Event) {
+	if evt.ProjectID == "" || evt.FeatureID == "" {
+		return
+	}
+	if !s.IsActive(evt.ProjectID, evt.FeatureID) {
+		return
+	}
+
+	resp, err := s.runner.RunFeatureNow(ctx, evt.ProjectID, evt.FeatureID, true)
+	if err != nil {
+		slog.Warn("feature cascade dispatch failed",
+			"project_id", evt.ProjectID,
+			"feature_id", evt.FeatureID,
+			"trigger_event", evt.Type,
+			"trigger_task", evt.TaskID,
+			"error", err,
+		)
+		return
+	}
+	if resp == nil {
+		return
+	}
+
+	slog.Info("feature cascade tick",
+		"project_id", evt.ProjectID,
+		"feature_id", evt.FeatureID,
+		"trigger_event", evt.Type,
+		"trigger_task", evt.TaskID,
+		"dispatched", resp.DispatchedCount,
+		"queued", len(resp.Queued),
+		"reason", resp.Reason,
+	)
+
+	// Drain detection: when the feature has no ready tasks left, the
+	// cascade has nothing more to do. "feature_in_progress" still means
+	// work is in flight — keep the cascade alive so the next completion
+	// can re-evaluate.
+	if resp.Reason == "no_ready_tasks" {
+		s.Unregister(evt.ProjectID, evt.FeatureID)
+	}
+}

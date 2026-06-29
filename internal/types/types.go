@@ -1094,6 +1094,38 @@ type RunTaskResponse struct {
 	Detail     string `json:"detail,omitempty"`
 }
 
+// RunFeatureRequest is the request body for POST /tasks/:projectId/features/:featureId/run.
+//
+// This is the user-explicit "execute this entire feature now" path. The server
+// iterates every ready task in the feature and dispatches as many as runner
+// capacity allows; leftover ready tasks are marked for a feature-scoped manual
+// cascade so they auto-dispatch as task.completed events fire — even when the
+// project is paused. Pause is unconditionally bypassed (mirrors RunTaskRequest).
+type RunFeatureRequest struct {
+	Force bool `json:"force,omitempty"`
+}
+
+// RunFeatureResponse is the response for POST /tasks/:projectId/features/:featureId/run.
+//
+// Dispatched indicates whether at least one task was dispatched in this call.
+// Results contains one RunTaskResponse per ready task attempted, in the order
+// they were considered. Queued lists task IDs the server is holding for the
+// manual cascade (they did not dispatch this call but will fire as slots free).
+// Reason carries a feature-level token when nothing could be done (e.g.
+// "feature_not_found", "no_ready_tasks", "feature_in_progress").
+type RunFeatureResponse struct {
+	Dispatched      bool              `json:"dispatched"`
+	ProjectID       string            `json:"projectId"`
+	FeatureID       string            `json:"featureId"`
+	Results         []RunTaskResponse `json:"results,omitempty"`
+	Queued          []string          `json:"queued,omitempty"`
+	DispatchedCount int               `json:"dispatchedCount"`
+	SkippedCount    int               `json:"skippedCount"`
+	Reason          string            `json:"reason,omitempty"`
+	Detail          string            `json:"detail,omitempty"`
+	CascadeActive   bool              `json:"cascadeActive,omitempty"`
+}
+
 // ClaimStatusResponse is the response for GET /tasks/:projectId/:taskId/claim-status.
 type ClaimStatusResponse struct {
 	TaskID    string `json:"taskId"`

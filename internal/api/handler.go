@@ -24,6 +24,7 @@ type Handler struct {
 	scheduler      SchedulerService
 	schedulerViews SchedulerVisibilityService
 	runTask        RunTaskService
+	runFeature     RunFeatureService
 	bridge         BridgeService
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
@@ -177,5 +178,15 @@ func WithSchedulerVisibilityService(s SchedulerVisibilityService) HandlerOption 
 func WithRunTaskService(s RunTaskService) HandlerOption {
 	return func(h *Handler) {
 		h.runTask = s
+	}
+}
+
+// WithRunFeatureService sets the RunFeatureService used by HandleRunFeature.
+// When unset, /tasks/{project}/features/{feature}/run returns 501 Not
+// Implemented so clients can show a clear "feature not supported" message
+// instead of a confusing dispatch failure.
+func WithRunFeatureService(s RunFeatureService) HandlerOption {
+	return func(h *Handler) {
+		h.runFeature = s
 	}
 }

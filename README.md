@@ -261,6 +261,40 @@ Or add to `.mcp.json`:
 }
 ```
 
+### Connecting OpenCode
+
+OpenCode launches MCP servers as local subprocesses over stdio. Add the
+following to your OpenCode config (e.g. `~/.config/opencode/opencode.json`)
+under `mcp`:
+
+```json
+{
+  "mcp": {
+    "brain": {
+      "type": "local",
+      "command": ["brain", "mcp"],
+      "enabled": true,
+      "environment": {
+        "BRAIN_API_URL": "http://localhost:3333"
+      }
+    }
+  }
+}
+```
+
+The `brain mcp` subcommand reads `api_url` and `api_token` from
+`~/.config/brain/config.yaml` (env vars override). No bearer token is
+required for local brain servers; remote/protected deployments should set
+`runner.api_token` in the config file or `BRAIN_API_TOKEN` in the
+environment.
+
+> **Migrating from the old `brain.ts` plugin:** earlier brain releases
+> shipped a TypeScript plugin installed at `~/.config/opencode/plugin/brain.ts`.
+> That plugin has been removed. Re-running `brain install opencode` will no
+> longer create it; delete any existing `~/.config/opencode/plugin/brain.ts`
+> and add the MCP config above. The companion `brain-planning.ts` plugin
+> and the brain skills/agents/commands continue to install as before.
+
 ### Connecting Claude Web UI (Custom Connector)
 
 Claude's web UI "Add Custom Connector" feature requires HTTPS with a **publicly trusted certificate**. Self-signed certificates (including mkcert) won't work because validation requests come from Anthropic's backend servers, not your browser.

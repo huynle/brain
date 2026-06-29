@@ -3,18 +3,43 @@ package mcp
 import (
 	"os"
 	"os/exec"
+	"os/user"
+	"runtime"
 	"strings"
+
+	"github.com/huynle/brain-api/internal/identity"
 )
 
 // ExecutionContext holds the detected project context for MCP tool calls.
+//
+// Project fields (ProjectID/Workdir/GitRemote/GitBranch) describe where the
+// MCP server was launched. Identity fields (ClientID/HostID/Hostname/OS/
+// Arch/Username/HomeDir) describe who/where is calling, and are used by
+// Phase 2 (task stamping) and Phase 3 (affinity routing) to align
+// MCP-created tasks with the runner that will execute them. HostID is
+// intentionally derived from the same machine-id file the runner uses, so
+// affinity matching across processes works.
 type ExecutionContext struct {
+	// Project context (where the MCP server was launched).
 	ProjectID string // Short project name (last path segment)
 	Workdir   string // Home-relative path to main repo
 	GitRemote string // Git remote URL (origin)
 	GitBranch string // Current git branch
+
+	// Identity context (who/where is calling). Populated once per process.
+	ClientID string // MCP per-install client id (e.g. mcp-<uuid>)
+	HostID   string // Stable machine id shared with the runner
+	Hostname string // os.Hostname()
+	OS       string // runtime.GOOS
+	Arch     string // runtime.GOARCH
+	Username string // current user's username (best-effort)
+	HomeDir  string // current user's home directory (best-effort)
 }
 
-// GetExecutionContext detects the project context from the given directory.
+// GetExecutionContext detects the project context from the given directory
+// and resolves the calling process's identity (client id, host id, host
+// metadata). Identity resolution is best-effort: any failure degrades to a
+// safe default rather than blocking startup.
 func GetExecutionContext(directory string) ExecutionContext {
 	home, _ := os.UserHomeDir()
 	mainRepoPath := directory
@@ -42,11 +67,34 @@ func GetExecutionContext(directory string) ExecutionContext {
 
 	workdir := makeHomeRelative(mainRepoPath, home)
 
+	hostname, _ := os.Hostname()
+
+	var username, homeDir string
+	if u, err := user.Current(); err == nil && u != nil {
+		username = u.Username
+		homeDir = u.HomeDir
+	}
+	if homeDir == "" {
+		// user.Current can fail in static builds / minimal containers; fall
+		// back to os.UserHomeDir which honors $HOME.
+		if h, err := os.UserHomeDir(); err == nil {
+			homeDir = h
+		}
+	}
+
 	return ExecutionContext{
 		ProjectID: resolveProjectName(workdir),
 		Workdir:   workdir,
 		GitRemote: gitRemote,
 		GitBranch: gitBranch,
+
+		ClientID: LoadOrCreateMCPClientID(),
+		HostID:   identity.ResolveMachineID(),
+		Hostname: hostname,
+		OS:       runtime.GOOS,
+		Arch:     runtime.GOARCH,
+		Username: username,
+		HomeDir:  homeDir,
 	}
 }
 

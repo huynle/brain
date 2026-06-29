@@ -57,6 +57,7 @@ var componentDir = map[string]string{
 }
 
 var retiredOpenCodeFiles = []string{
+	"plugin/brain.ts",
 	"plugin/brain-planning.ts",
 	"skill/brain-dream-context/SKILL.md",
 	"skill/brain-planning/SKILL.md",
@@ -217,7 +218,7 @@ func (t *OpenCodeTarget) removeRetiredFiles(dryRun bool) (int, error) {
 func (t *OpenCodeTarget) resolveDestPath(relPath string) string {
 	parts := strings.SplitN(relPath, string(os.PathSeparator), 2)
 
-	// Top-level files (e.g., brain.ts) -> plugin/
+	// Top-level files (e.g., a future *.ts plugin) -> plugin/
 	if len(parts) == 1 {
 		return filepath.Join(t.configPath, "plugin", relPath)
 	}

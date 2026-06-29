@@ -22,6 +22,7 @@ import { Pill } from "../components/common/Badge";
 import { ConfirmDialog } from "../components/common/Modal";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { ListDetail } from "../components/layout/ListDetail";
+import { deriveAutomationsPaused } from "../components/layout/StatusBar";
 import { GoalConfigModal } from "./automations/GoalConfigModal";
 import { NewAutomationModal } from "./automations/NewGoalModal";
 import {
@@ -367,10 +368,7 @@ export function AutomationsView() {
     }
   }
 
-  const automationsPaused =
-    activeProject === ALL_PROJECTS
-      ? !!statusQ.data?.automationsPaused
-      : !!statusQ.data?.automationPausedProjects?.includes(activeProject);
+  const automationsPaused = !!deriveAutomationsPaused(statusQ.data, activeProject);
 
   function toggleAutomationPause() {
     const scopedProject = activeProject === ALL_PROJECTS ? undefined : activeProject;

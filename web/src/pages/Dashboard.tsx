@@ -17,7 +17,7 @@ import { useGlobalKeyboard } from "../lib/keyboard";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useViewport } from "../hooks/useViewport";
 import { useSwipe } from "../hooks/useSwipe";
-import { StatusBar } from "../components/layout/StatusBar";
+import { StatusBar, deriveTaskPaused } from "../components/layout/StatusBar";
 import { ContentTabs } from "../components/layout/ContentTabs";
 import { HelpBar } from "../components/layout/HelpBar";
 import { MobileNav } from "../components/layout/MobileNav";
@@ -118,7 +118,7 @@ export function Dashboard() {
         void runPause(st?.paused ? "Resumed all" : "Paused all", st?.paused ? resumeAll : pauseAll);
         return;
       }
-      const paused = st?.pausedProjects?.includes(activeProject);
+      const paused = deriveTaskPaused(st, activeProject);
       void runPause(
         paused ? `Resumed ${activeProject}` : `Paused ${activeProject}`,
         () => (paused ? resumeProject(activeProject) : pauseProject(activeProject)),
@@ -130,7 +130,7 @@ export function Dashboard() {
         void runPause(st?.paused ? "Resumed all" : "Paused all", st?.paused ? resumeAll : pauseAll);
         return;
       }
-      const paused = st?.pausedProjects?.includes(activeProject);
+      const paused = deriveTaskPaused(st, activeProject);
       void runPause(
         paused ? `Resumed ${activeProject}` : `Paused ${activeProject}`,
         () => (paused ? resumeProject(activeProject) : pauseProject(activeProject)),

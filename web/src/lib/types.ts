@@ -391,9 +391,11 @@ export interface OcProvider {
 export interface RunnerStatusResponse {
   running: boolean;
   paused: boolean;
-  pausedProjects: string[];
+  // Go's encoding/json emits nil slices as JSON `null`, not `[]`. Reflect
+  // that in the type so callers must defend against null.
+  pausedProjects: string[] | null;
   automationsPaused: boolean;
-  automationPausedProjects: string[];
+  automationPausedProjects: string[] | null;
 }
 
 // ─── Brain entries ───────────────────────────────────────────────

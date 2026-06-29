@@ -734,22 +734,28 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 		// documented on SchedulerService.RunTaskNow. Capacity is still
 		// enforced — a forced dispatch can't magically create execution
 		// slots, and overrunning max_parallel would corrupt accounting.
-		serverTaskPaused, _ := tr.serverPauseState(ctx)
+		//
+		// When NOT forced and tasks are paused, we still need to allow
+		// automation-generated tasks through if automations aren't paused
+		// for this project — mirroring the poll loop's carve-out at
+		// runner.go:956–984. The poll path pulls "automation:" tasks even
+		// when paused; the dispatch path historically rejected everything
+		// as runner_paused, so the PWA's "tasks: paused, autos: on" mode
+		// quietly stopped delivering automation work whenever dispatch
+		// push was enabled. We can't decide here yet because we don't
+		// have the task's GeneratedBy until after GetReadyTasks below.
+		serverTaskPaused, serverAutomationPaused := tr.serverPauseState(ctx)
 		tr.pauseMu.RLock()
 		paused := tr.allPaused || tr.pauseCache[cmd.ProjectID] || serverPausedFor(serverTaskPaused, cmd.ProjectID)
+		automationsPausedForProject := tr.automationsPaused || tr.automationPausedProjects[cmd.ProjectID] || serverPausedFor(serverAutomationPaused, cmd.ProjectID)
 		tr.pauseMu.RUnlock()
-		if paused {
-			if cmd.Force {
-				slog.Info("force-dispatch bypassing pause",
-					"task_id", cmd.TaskID,
-					"project_id", cmd.ProjectID,
-					"all_paused", tr.allPaused,
-					"project_paused", tr.pauseCache[cmd.ProjectID] || serverPausedFor(serverTaskPaused, cmd.ProjectID),
-				)
-			} else {
-				tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
-				break
-			}
+		if paused && cmd.Force {
+			slog.Info("force-dispatch bypassing pause",
+				"task_id", cmd.TaskID,
+				"project_id", cmd.ProjectID,
+				"all_paused", tr.allPaused,
+				"project_paused", tr.pauseCache[cmd.ProjectID] || serverPausedFor(serverTaskPaused, cmd.ProjectID),
+			)
 		}
 		if tr.processMgr.RunningCount() >= tr.getMaxParallel() {
 			tr.rejectDispatch(ctx, cmd, leaseID, "capacity_unavailable", "runner has no available execution slots")
@@ -771,6 +777,21 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 		if task == nil {
 			tr.rejectDispatch(ctx, cmd, leaseID, "task_not_found", "target task is not ready for this runner")
 			break
+		}
+		// Now we know the task's GeneratedBy; finalize the pause decision.
+		// Automation-generated tasks may proceed when only tasks (not
+		// automations) are paused for this project. Everything else gets
+		// the unconditional runner_paused rejection.
+		if paused && !cmd.Force {
+			if !(isAutomationGeneratedTask(task) && !automationsPausedForProject) {
+				tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
+				break
+			}
+			slog.Info("automation dispatch bypassing pause",
+				"task_id", cmd.TaskID,
+				"project_id", cmd.ProjectID,
+				"generated_by", task.GeneratedBy,
+			)
 		}
 		taskExecutor, _, err := tr.resolveExecutor(task)
 		if err != nil {

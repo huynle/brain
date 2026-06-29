@@ -4654,6 +4654,205 @@ func TestTaskRunner_Dispatch_ForceStillRespectsCapacity(t *testing.T) {
 	}
 }
 
+// TestTaskRunner_Dispatch_AutomationBypassesGlobalServerPause confirms the
+// SSE dispatch path mirrors the poll path's behavior: when tasks are paused
+// (globally or per-project) but automations remain enabled for the project,
+// automation-generated dispatches MUST still be acked and spawned. The
+// poll loop (runner.go:956–984) already implements this carve-out by
+// pulling `GeneratedByPrefix: "automation:"` tasks even when paused; the
+// push handler historically rejected everything as runner_paused, so the
+// "tasks: paused, autos: on" UX in the PWA quietly stopped delivering
+// automation work whenever dispatch-push was enabled.
+func TestTaskRunner_Dispatch_AutomationBypassesGlobalServerPause(t *testing.T) {
+	client := newMockClient()
+	task := testTask("auto-task", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+	// Globally task-paused on the server, but automations are NOT paused.
+	client.runnerStatus = &types.RunnerStatusResponse{Running: true, Paused: true}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
+		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "auto-task", LeaseID: "lease-1",
+	})
+
+	if got := len(client.getRejectCalls()); got != 0 {
+		t.Fatalf("automation dispatch must not be rejected when only tasks (not automations) are paused, got %d rejects: %+v", got, client.getRejectCalls())
+	}
+	if got := len(client.getAckCalls()); got != 1 {
+		t.Fatalf("automation dispatch must be acked when automations are enabled, got %d acks", got)
+	}
+	spawns := executor.getSpawnCalls()
+	if len(spawns) != 1 {
+		t.Fatalf("automation dispatch must spawn exactly once, got %d spawns", len(spawns))
+	}
+	if spawns[0].TaskID != "auto-task" {
+		t.Fatalf("spawned task = %q, want auto-task", spawns[0].TaskID)
+	}
+}
+
+// TestTaskRunner_Dispatch_AutomationStillRejectedWhenAutomationsAlsoPaused
+// guards the bypass: it must NOT fire when automations are paused too.
+// "Tasks paused, autos on" is the legitimate carve-out. "Tasks paused,
+// autos paused" must still reject everything — otherwise users can't
+// fully halt a project.
+func TestTaskRunner_Dispatch_AutomationStillRejectedWhenAutomationsAlsoPaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("auto-task", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+	// Both tasks AND automations paused globally.
+	client.runnerStatus = &types.RunnerStatusResponse{
+		Running: true, Paused: true, AutomationsPaused: true,
+	}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
+		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "auto-task", LeaseID: "lease-1",
+	})
+
+	rejects := client.getRejectCalls()
+	if len(rejects) != 1 {
+		t.Fatalf("expected one reject when automations also paused, got %d", len(rejects))
+	}
+	if rejects[0].Reason.Code != "runner_paused" {
+		t.Fatalf("reject code = %q, want runner_paused", rejects[0].Reason.Code)
+	}
+	if len(executor.getSpawnCalls()) != 0 {
+		t.Fatalf("must not spawn when automations also paused; got %d spawns", len(executor.getSpawnCalls()))
+	}
+}
+
+// TestTaskRunner_Dispatch_AutomationBypassesPerProjectServerPause exercises
+// the realistic operator path: rather than globally pausing the runner,
+// the user adds personal-productivity to PausedProjects via the PWA while
+// leaving automations on. The dispatch path must honor "autos: on" by
+// letting automation tasks flow even though that specific project is in
+// the server's PausedProjects list.
+func TestTaskRunner_Dispatch_AutomationBypassesPerProjectServerPause(t *testing.T) {
+	client := newMockClient()
+	task := testTask("auto-task", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+	// Per-project task pause (not global), automations stay on.
+	client.runnerStatus = &types.RunnerStatusResponse{
+		Running: true, PausedProjects: []string{"proj-a"},
+	}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
+		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "auto-task", LeaseID: "lease-1",
+	})
+
+	if got := len(client.getRejectCalls()); got != 0 {
+		t.Fatalf("automation dispatch must not be rejected when only this project's tasks (not automations) are paused, got %d rejects: %+v", got, client.getRejectCalls())
+	}
+	if got := len(executor.getSpawnCalls()); got != 1 {
+		t.Fatalf("automation dispatch must spawn exactly once, got %d", got)
+	}
+}
+
+// TestTaskRunner_Dispatch_AutomationStillRejectedWhenAutomationsPerProjectPaused
+// guards the per-project automation pause: even if tasks are paused for
+// proj-a and automations are NOT globally paused, having proj-a in the
+// server's AutomationPausedProjects list must keep automation dispatches
+// rejected for that project.
+func TestTaskRunner_Dispatch_AutomationStillRejectedWhenAutomationsPerProjectPaused(t *testing.T) {
+	client := newMockClient()
+	task := testTask("auto-task", "proj-a")
+	task.GeneratedBy = "automation:auto1234"
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
+	client.runnerStatus = &types.RunnerStatusResponse{
+		Running:                  true,
+		PausedProjects:           []string{"proj-a"},
+		AutomationPausedProjects: []string{"proj-a"},
+	}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
+		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "auto-task", LeaseID: "lease-1",
+	})
+
+	rejects := client.getRejectCalls()
+	if len(rejects) != 1 {
+		t.Fatalf("expected one reject when this project's automations also paused, got %d", len(rejects))
+	}
+	if rejects[0].Reason.Code != "runner_paused" {
+		t.Fatalf("reject code = %q, want runner_paused", rejects[0].Reason.Code)
+	}
+	if len(executor.getSpawnCalls()) != 0 {
+		t.Fatalf("must not spawn when this project's automations are paused; got %d spawns", len(executor.getSpawnCalls()))
+	}
+}
+
+// TestTaskRunner_Dispatch_AutomationDoesNotBypassNonAutomationTask guards
+// the gate from the other direction: a non-automation task (e.g. a
+// manually-queued or feature-graph task) must still be rejected when the
+// project is task-paused, regardless of the automation pause state. Only
+// `generated_by` starting with "automation:" earns the carve-out.
+func TestTaskRunner_Dispatch_AutomationDoesNotBypassNonAutomationTask(t *testing.T) {
+	client := newMockClient()
+	// Note: no GeneratedBy set — this is a regular task.
+	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("regular-task", "proj-a")}
+	client.runnerStatus = &types.RunnerStatusResponse{Running: true, Paused: true}
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+	cfg := testRunnerConfig()
+	cfg.Capabilities = []string{"dispatch_push"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
+		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
+	})
+
+	tr.handleCommand(context.Background(), RunnerCommand{
+		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "regular-task", LeaseID: "lease-1",
+	})
+
+	rejects := client.getRejectCalls()
+	if len(rejects) != 1 {
+		t.Fatalf("expected one reject for non-automation task under pause, got %d", len(rejects))
+	}
+	if rejects[0].Reason.Code != "runner_paused" {
+		t.Fatalf("reject code = %q, want runner_paused", rejects[0].Reason.Code)
+	}
+	if len(executor.getSpawnCalls()) != 0 {
+		t.Fatalf("must not spawn non-automation task when paused; got %d spawns", len(executor.getSpawnCalls()))
+	}
+}
+
 // TestTaskRunner_DispatchConsumerNotBlockedByWedgedPoll proves the
 // architectural fix for the goroutine-dump bug observed in production
 // (2026-06-25): when poll() hangs inside a synchronous HTTP call, dispatch

@@ -12,6 +12,7 @@ import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
 import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
 import { Panel } from "../components/layout/Panel";
+import { PaneSplitterRow, PaneSplitterColumn } from "../components/layout/PaneSplitters";
 import { ConfirmDialog } from "../components/common/Modal";
 import { deleteEntry, listInstances, runOrTriggerTask, setTaskStatus, summarizeTriggerResults } from "../lib/api";
 import {
@@ -84,6 +85,8 @@ export function TasksView() {
   const focus = useUI((s) => s.focus);
   const detailVisible = useUI((s) => s.detailVisible);
   const logsVisible = useUI((s) => s.logsVisible);
+  const bottomHeight = useUI((s) => s.bottomHeight);
+  const detailLogsRatio = useUI((s) => s.detailLogsRatio);
   const toggleDetail = useUI((s) => s.toggleDetail);
   const toggleLogs = useUI((s) => s.toggleLogs);
   const openInspect = useUI((s) => s.openInspect);
@@ -117,6 +120,10 @@ export function TasksView() {
 
   const filterRef = useRef<HTMLInputElement>(null);
   const treeBodyRef = useRef<HTMLDivElement>(null);
+  // The bottom row container ref is used by the column splitter to translate
+  // cursor X into a detail/logs ratio (we need a stable rect, not the
+  // splitter's own — that moves as the user drags).
+  const bottomRowRef = useRef<HTMLDivElement>(null);
 
   // Pane focus + vim-style scroll wiring (Tab/Shift-Tab + j/k/gg/G/Ctrl-D/U
   // inside the focused detail or logs pane). The hook owns the detail and
@@ -499,41 +506,51 @@ export function TasksView() {
       </Panel>
 
       {(detailVisible || logsVisible) && (
-        <div className="tui-bottom" style={{ height: "34vh" }}>
-          {detailVisible && (
-            <Panel
-              title="Detail"
-              {...paneNav.detailPaneProps}
-              style={{ flex: 1 }}
-            >
-              {detailTask ? (
-                <DetailBody task={detailTask} onEditMeta={() => setEditMeta(detailTask)} onEditContent={() => setEditContent(detailTask)} />
-              ) : (
-                <span className="faint">No task selected.</span>
-              )}
-            </Panel>
-          )}
-          {logsVisible && (
-            <Panel
-              title="Logs"
-              meta={detailTask ? detailTask.id : undefined}
-              {...paneNav.logsPaneProps}
-              style={{ flex: 1 }}
-            >
-              {panelLogs.length === 0 ? (
-                <span className="faint">No logs yet.</span>
-              ) : (
-                panelLogs.map((r) => (
-                  <div key={r.seq} className="logline">
-                    <span className="lt">{clockTime(r.line.timestamp)}</span>
-                    <span className="ll" style={{ color: logLevelColor(r.line.level) }}>{r.line.level}</span>
-                    <span className="lc">{cleanLogContent(r.line.content)}</span>
-                  </div>
-                ))
-              )}
-            </Panel>
-          )}
-        </div>
+        <>
+          <PaneSplitterRow />
+          <div
+            ref={bottomRowRef}
+            className="tui-bottom"
+            style={{ height: `${bottomHeight}px` }}
+          >
+            {detailVisible && (
+              <Panel
+                title="Detail"
+                {...paneNav.detailPaneProps}
+                style={{ flex: logsVisible ? detailLogsRatio : 1 }}
+              >
+                {detailTask ? (
+                  <DetailBody task={detailTask} onEditMeta={() => setEditMeta(detailTask)} onEditContent={() => setEditContent(detailTask)} />
+                ) : (
+                  <span className="faint">No task selected.</span>
+                )}
+              </Panel>
+            )}
+            {detailVisible && logsVisible && (
+              <PaneSplitterColumn containerRef={bottomRowRef} />
+            )}
+            {logsVisible && (
+              <Panel
+                title="Logs"
+                meta={detailTask ? detailTask.id : undefined}
+                {...paneNav.logsPaneProps}
+                style={{ flex: detailVisible ? 1 - detailLogsRatio : 1 }}
+              >
+                {panelLogs.length === 0 ? (
+                  <span className="faint">No logs yet.</span>
+                ) : (
+                  panelLogs.map((r) => (
+                    <div key={r.seq} className="logline">
+                      <span className="lt">{clockTime(r.line.timestamp)}</span>
+                      <span className="ll" style={{ color: logLevelColor(r.line.level) }}>{r.line.level}</span>
+                      <span className="lc">{cleanLogContent(r.line.content)}</span>
+                    </div>
+                  ))
+                )}
+              </Panel>
+            )}
+          </div>
+        </>
       )}
 
       {editMeta && <MetadataModal task={editMeta} onClose={() => setEditMeta(null)} />}

@@ -157,6 +157,9 @@ const PANES: Group = {
     { keys: ["g", "g"], desc: "Jump to top (vim 'gg', ~500ms)" },
     { keys: ["G"], desc: "Jump to bottom" },
     { keys: ["Ctrl-D", "Ctrl-U"], desc: "Half-page down / up" },
+    { keys: ["Alt-J", "Alt-K"], desc: "Grow / shrink bottom-row height" },
+    { keys: ["Alt-L", "Alt-H"], desc: "Grow / shrink detail vs logs width" },
+    { keys: ["double-click separator"], desc: "Reset that split to default" },
   ],
 };
 

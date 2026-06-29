@@ -11,11 +11,13 @@
 // with the inner view's handler. Making paneNav an explicit prop keeps the
 // wiring testable and obvious.
 
+import { useRef } from "react";
 import { useUI } from "../../store/ui";
 import type { PaneNavigation } from "../../lib/usePaneNavigation";
 import { Panel } from "./Panel";
 import { EntryDetailPane } from "./EntryDetailPane";
 import { EntryLogsPane } from "./EntryLogsPane";
+import { PaneSplitterRow, PaneSplitterColumn } from "./PaneSplitters";
 
 export interface LogTarget {
   taskId?: string;
@@ -37,6 +39,13 @@ export function ListDetail({
 }) {
   const detailVisible = useUI((s) => s.detailVisible);
   const logsVisible = useUI((s) => s.logsVisible);
+  const bottomHeight = useUI((s) => s.bottomHeight);
+  const detailLogsRatio = useUI((s) => s.detailLogsRatio);
+
+  // Container ref for the column splitter — its drag math needs the
+  // bottom-row bounding rect (the splitter element itself moves during
+  // drag, breaking incremental measurements).
+  const bottomRowRef = useRef<HTMLDivElement>(null);
 
   return (
     <>
@@ -44,23 +53,37 @@ export function ListDetail({
         {children}
       </Panel>
       {(detailVisible || logsVisible) && (
-        <div className="tui-bottom" style={{ height: "34vh" }}>
-          {detailVisible && (
-            <Panel title="Detail" {...paneNav.detailPaneProps} style={{ flex: 1 }}>
-              <EntryDetailPane path={detailPath} />
-            </Panel>
-          )}
-          {logsVisible && (
-            <Panel
-              title="Logs"
-              meta={logTarget?.taskId}
-              {...paneNav.logsPaneProps}
-              style={{ flex: 1 }}
-            >
-              <EntryLogsPane taskId={logTarget?.taskId} projectId={logTarget?.projectId} />
-            </Panel>
-          )}
-        </div>
+        <>
+          <PaneSplitterRow />
+          <div
+            ref={bottomRowRef}
+            className="tui-bottom"
+            style={{ height: `${bottomHeight}px` }}
+          >
+            {detailVisible && (
+              <Panel
+                title="Detail"
+                {...paneNav.detailPaneProps}
+                style={{ flex: logsVisible ? detailLogsRatio : 1 }}
+              >
+                <EntryDetailPane path={detailPath} />
+              </Panel>
+            )}
+            {detailVisible && logsVisible && (
+              <PaneSplitterColumn containerRef={bottomRowRef} />
+            )}
+            {logsVisible && (
+              <Panel
+                title="Logs"
+                meta={logTarget?.taskId}
+                {...paneNav.logsPaneProps}
+                style={{ flex: detailVisible ? 1 - detailLogsRatio : 1 }}
+              >
+                <EntryLogsPane taskId={logTarget?.taskId} projectId={logTarget?.projectId} />
+              </Panel>
+            )}
+          </div>
+        </>
       )}
     </>
   );

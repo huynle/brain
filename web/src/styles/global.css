@@ -1781,6 +1781,7 @@ kbd {
 
 /* Desktop split Detail/Logs panes are replaced by the inspect sheet on mobile. */
 .tui.mobile .tui-bottom { display: none !important; }
+.tui.mobile .pane-splitter { display: none !important; }
 
 /* Compact-but-tappable list rows. */
 .tui.mobile .tree-row { padding-top: 4px; padding-bottom: 4px; line-height: 1.35; }
@@ -2213,6 +2214,71 @@ body.resizing-assistant {
 }
 body.resizing-assistant * {
   user-select: none !important;
+}
+
+/* ── Pane splitters (Tasks/Brain/Automations Detail+Logs row) ───────────
+   Two variants:
+     .pane-splitter-row  4px-tall horizontal bar; drag changes bottom-row height
+     .pane-splitter-col  4px-wide vertical bar; drag changes detail/logs ratio
+   Shape and hover glow mirror the assistant splitter. */
+.pane-splitter {
+  position: relative;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+}
+.pane-splitter::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 1px;
+  transition: background 0.12s ease;
+}
+.pane-splitter:hover::before {
+  background: color-mix(in srgb, var(--purple) 55%, var(--border));
+}
+.pane-splitter-row {
+  flex: 0 0 4px;
+  height: 4px;
+  align-self: stretch;
+  cursor: row-resize;
+}
+.pane-splitter-row::before {
+  margin: 1px 0;
+}
+.pane-splitter-col {
+  flex: 0 0 4px;
+  width: 4px;
+  align-self: stretch;
+  cursor: col-resize;
+}
+.pane-splitter-col::before {
+  margin: 0 1px;
+}
+body.resizing-pane {
+  cursor: row-resize !important;
+  user-select: none;
+}
+body.resizing-pane * {
+  user-select: none !important;
+}
+body.resizing-pane-col {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.resizing-pane-col * {
+  user-select: none !important;
+}
+
+/* Below 720px width, .tui-bottom switches to flex-direction: column —
+   detail and logs stack vertically. The column splitter's drag math
+   (cursor X → ratio of container width) doesn't translate to a vertical
+   stack, and a 4px-wide bar between stacked rows would look out of place.
+   Simplest fix: hide the col splitter at narrow widths. The row splitter
+   between the list and the bottom row still works fine. */
+@media (max-width: 720px) {
+  .pane-splitter-col { display: none; }
 }
 
 /* ── Brain Assistant: shared panel body (used by sidebar + overlay) ── */

@@ -4,12 +4,70 @@
 // machine that takes setTimeout/clearTimeout via DI so it's testable without
 // real timers.
 
-export type Panel = "tasks" | "detail" | "logs";
+// ─── pane-size bounds & clamps ──────────────────────────────────────────────
+
+export const BOTTOM_HEIGHT_BOUNDS = {
+  // Pixel floor for the bottom row (detail + logs together). Tighter than a
+  // viewport ratio because the user can drag too far up otherwise; 80px
+  // keeps at least one row of content visible.
+  min: 80,
+  // Ceiling expressed as a fraction of viewport height. 0.8 keeps the
+  // tasks pane visible above. Resolved at clamp time using the current
+  // window.innerHeight (or an explicit viewportH override for tests).
+  maxRatio: 0.8,
+  // Used when no viewport is available (tests, SSR) AND no override.
+  staticFallbackMax: 800,
+  // Initial value if storage is empty / corrupt. 320 ~ 30% of a 1080p
+  // window, comfortable for most logs/detail content.
+  default: 320,
+};
+
+export const DETAIL_LOGS_RATIO_BOUNDS = {
+  min: 0.2,
+  max: 0.8,
+  default: 0.5,
+};
+
+// Keyboard-resize step sizes (Alt+J/K for height, Alt+H/L for ratio).
+export const RESIZE_STEP = {
+  heightPx: 24,
+  ratio: 0.05,
+};
+
+// clampBottomHeight clamps a candidate height (in pixels) to the configured
+// min and a viewport-derived max. NaN/non-finite values fall back to the
+// default. Pass `viewportH` to override the live window measurement (tests,
+// SSR). Result is rounded to an integer.
+export function clampBottomHeight(px: number, viewportH?: number): number {
+  if (Number.isNaN(px)) return BOTTOM_HEIGHT_BOUNDS.default;
+  const vh =
+    typeof viewportH === "number"
+      ? viewportH
+      : typeof window !== "undefined"
+        ? window.innerHeight
+        : 0;
+  const maxFromViewport =
+    vh > 0
+      ? Math.floor(vh * BOTTOM_HEIGHT_BOUNDS.maxRatio)
+      : BOTTOM_HEIGHT_BOUNDS.staticFallbackMax;
+  if (px === -Infinity) return BOTTOM_HEIGHT_BOUNDS.min;
+  if (px === Infinity) return maxFromViewport;
+  return Math.min(maxFromViewport, Math.max(BOTTOM_HEIGHT_BOUNDS.min, Math.round(px)));
+}
+
+// clampDetailLogsRatio clamps a fraction (0..1) representing the share of
+// the detail pane in the bottom row. NaN falls back to the default 0.5.
+export function clampDetailLogsRatio(r: number): number {
+  if (Number.isNaN(r)) return DETAIL_LOGS_RATIO_BOUNDS.default;
+  return Math.min(DETAIL_LOGS_RATIO_BOUNDS.max, Math.max(DETAIL_LOGS_RATIO_BOUNDS.min, r));
+}
 
 export interface PaneVisibility {
   detailVisible: boolean;
   logsVisible: boolean;
 }
+
+export type Panel = "tasks" | "detail" | "logs";
 
 // nextFocus returns the panel that should receive focus when cycling from
 // `current` by `dir` (+1 forward / -1 backward). Hidden panes are skipped.

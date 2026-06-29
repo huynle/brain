@@ -4,6 +4,10 @@ import {
   nextFocus,
   scrollStep,
   makeGgSequence,
+  clampBottomHeight,
+  clampDetailLogsRatio,
+  BOTTOM_HEIGHT_BOUNDS,
+  DETAIL_LOGS_RATIO_BOUNDS,
   type Panel,
 } from "./paneNav";
 
@@ -242,3 +246,54 @@ function makeFakeClock() {
 // Force the Panel type to be exported correctly (compile-time assertion)
 const _p: Panel = "tasks";
 void _p;
+
+// ─── pane-size clamp helpers ────────────────────────────────────────────────
+
+test("clampBottomHeight: in-bounds value returned as-is", () => {
+  assert.equal(clampBottomHeight(400), 400);
+});
+
+test("clampBottomHeight: below min snaps to min", () => {
+  assert.equal(clampBottomHeight(10), BOTTOM_HEIGHT_BOUNDS.min);
+  assert.equal(clampBottomHeight(BOTTOM_HEIGHT_BOUNDS.min - 1), BOTTOM_HEIGHT_BOUNDS.min);
+});
+
+test("clampBottomHeight: above max snaps to max-derived-from-viewport", () => {
+  // Max is 0.8 * viewport height. The function takes optional viewportH for
+  // testability; default uses window.innerHeight in the browser.
+  const viewport = 1000;
+  const maxAt1000 = Math.floor(viewport * BOTTOM_HEIGHT_BOUNDS.maxRatio);
+  assert.equal(clampBottomHeight(99999, viewport), maxAt1000);
+});
+
+test("clampBottomHeight: rounds non-integer input", () => {
+  assert.equal(clampBottomHeight(320.7), 321);
+});
+
+test("clampBottomHeight: handles NaN/non-finite by falling back to default", () => {
+  assert.equal(clampBottomHeight(Number.NaN), BOTTOM_HEIGHT_BOUNDS.default);
+  assert.equal(
+    clampBottomHeight(Infinity, 1000),
+    Math.floor(1000 * BOTTOM_HEIGHT_BOUNDS.maxRatio),
+  );
+  assert.equal(clampBottomHeight(-Infinity), BOTTOM_HEIGHT_BOUNDS.min);
+});
+
+test("clampDetailLogsRatio: in-bounds value returned as-is", () => {
+  assert.equal(clampDetailLogsRatio(0.5), 0.5);
+  assert.equal(clampDetailLogsRatio(0.33), 0.33);
+});
+
+test("clampDetailLogsRatio: below min snaps to min (20%)", () => {
+  assert.equal(clampDetailLogsRatio(0.05), DETAIL_LOGS_RATIO_BOUNDS.min);
+  assert.equal(clampDetailLogsRatio(0), DETAIL_LOGS_RATIO_BOUNDS.min);
+});
+
+test("clampDetailLogsRatio: above max snaps to max (80%)", () => {
+  assert.equal(clampDetailLogsRatio(0.95), DETAIL_LOGS_RATIO_BOUNDS.max);
+  assert.equal(clampDetailLogsRatio(1.5), DETAIL_LOGS_RATIO_BOUNDS.max);
+});
+
+test("clampDetailLogsRatio: handles NaN by returning default 0.5", () => {
+  assert.equal(clampDetailLogsRatio(Number.NaN), DETAIL_LOGS_RATIO_BOUNDS.default);
+});

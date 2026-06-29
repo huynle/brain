@@ -130,12 +130,13 @@ export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
       if (isEditableTarget(e.target)) return;
       if (anyModalOpen()) return;
 
-      // Allow view handlers to claim Ctrl-modified keys (e.g. vim Ctrl-D /
-      // Ctrl-U for half-page scroll inside a focused pane). The handler
-      // must explicitly return true to consume them; otherwise we fall
-      // through to the modifier bail-out below so chord shortcuts the
-      // browser owns (Ctrl-F, Ctrl-W, Ctrl-T, etc.) still reach it.
-      if ((e.ctrlKey || e.metaKey) && !e.altKey && activeHandler) {
+      // Allow view handlers to claim Ctrl- or Alt-modified keys (e.g. vim
+      // Ctrl-D / Ctrl-U for half-page scroll inside a focused pane, or
+      // Alt+H/J/K/L for pane resize). The handler must explicitly return
+      // true to consume them; otherwise we fall through to the modifier
+      // bail-out below so chord shortcuts the browser owns (Ctrl-F,
+      // Ctrl-W, Ctrl-T, Alt+Left, etc.) still reach it.
+      if ((e.ctrlKey || e.metaKey || e.altKey) && activeHandler) {
         if (activeHandler(e)) {
           e.preventDefault();
           return;

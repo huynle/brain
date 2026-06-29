@@ -16,6 +16,7 @@ import { useUI } from "../store/ui";
 import {
   makeGgSequence,
   scrollStep,
+  RESIZE_STEP,
   type ScrollAction,
 } from "./paneNav";
 
@@ -63,6 +64,12 @@ export function usePaneNavigation(): PaneNavigation {
   const focus = useUI((s) => s.focus);
   const setFocus = useUI((s) => s.setFocus);
   const cycleFocus = useUI((s) => s.cycleFocus);
+  // Pane-size mutators for Alt+H/J/K/L keyboard resize. Reading the latest
+  // values here is fine because the setters clamp internally; we only need
+  // to add/subtract a step. Using getState() inside handleKey avoids stale
+  // closure issues without re-creating the handler on every render.
+  const setBottomHeight = useUI((s) => s.setBottomHeight);
+  const setDetailLogsRatio = useUI((s) => s.setDetailLogsRatio);
 
   const detailBodyRef = useRef<HTMLDivElement>(null);
   const logsBodyRef = useRef<HTMLDivElement>(null);
@@ -103,6 +110,33 @@ export function usePaneNavigation(): PaneNavigation {
     if (e.key === "Tab") {
       cycleFocus(e.shiftKey ? -1 : 1);
       return true;
+    }
+
+    // Alt+H/J/K/L: keyboard pane resize. Available regardless of focus,
+    // because resizing the bottom row is a layout action, not a content
+    // action. We read live store values via getState() to compute the
+    // next size, then let the setter clamp.
+    if (e.altKey && !e.ctrlKey && !e.metaKey) {
+      const ui = useUI.getState();
+      if (e.key === "j" || e.key === "J") {
+        setBottomHeight(ui.bottomHeight + RESIZE_STEP.heightPx);
+        return true;
+      }
+      if (e.key === "k" || e.key === "K") {
+        setBottomHeight(ui.bottomHeight - RESIZE_STEP.heightPx);
+        return true;
+      }
+      if (e.key === "l" || e.key === "L") {
+        // Right means Detail gets more, Logs less.
+        setDetailLogsRatio(ui.detailLogsRatio + RESIZE_STEP.ratio);
+        return true;
+      }
+      if (e.key === "h" || e.key === "H") {
+        setDetailLogsRatio(ui.detailLogsRatio - RESIZE_STEP.ratio);
+        return true;
+      }
+      // Other Alt-modified keys are not ours — let them fall through.
+      return false;
     }
 
     // Scroll keys only apply when a content pane is focused.

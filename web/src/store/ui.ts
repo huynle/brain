@@ -1,5 +1,12 @@
 import { create } from "zustand";
-import { nextFocus, type Panel } from "../lib/paneNav";
+import {
+  clampBottomHeight,
+  clampDetailLogsRatio,
+  nextFocus,
+  type Panel,
+  BOTTOM_HEIGHT_BOUNDS,
+  DETAIL_LOGS_RATIO_BOUNDS,
+} from "../lib/paneNav";
 
 // Re-export so existing consumers (`import { Panel } from "../../store/ui"`)
 // keep working without churn.
@@ -74,6 +81,11 @@ interface UIState {
   detailVisible: boolean; // T
   logsVisible: boolean; // z
   focus: Panel; // focused panel within the Tasks view
+  // Drag-resizable size of the bottom row (Detail + Logs together), in px.
+  bottomHeight: number;
+  // Share of the bottom row taken by the Detail pane (0.2 .. 0.8).
+  // Logs takes the complement.
+  detailLogsRatio: number;
   projectSheetOpen: boolean; // mobile: project picker bottom sheet
   inspect: InspectTarget | null; // mobile: Detail/Logs bottom sheet target
   toasts: Toast[];
@@ -99,6 +111,9 @@ interface UIState {
   toggleLogs: () => void;
   cycleFocus: (dir?: 1 | -1) => void;
   setFocus: (p: Panel) => void;
+  setBottomHeight: (px: number) => void;
+  setDetailLogsRatio: (r: number) => void;
+  resetPaneSizes: () => void;
   setProjectSheetOpen: (open: boolean) => void;
   openInspect: (t: InspectTarget) => void;
   closeInspect: () => void;
@@ -153,6 +168,32 @@ export const ASSISTANT_WIDTH_BOUNDS = {
   default: ASSISTANT_WIDTH_DEFAULT,
 };
 
+// Persist the bottom-row pane sizes so a reload returns to the same split.
+const BOTTOM_HEIGHT_KEY = "brain.pane.bottom_height"; // integer px
+const DETAIL_LOGS_RATIO_KEY = "brain.pane.detail_logs_ratio"; // 0..1 float
+
+function loadBottomHeight(): number {
+  try {
+    const raw = localStorage.getItem(BOTTOM_HEIGHT_KEY);
+    if (!raw) return BOTTOM_HEIGHT_BOUNDS.default;
+    const n = Number.parseInt(raw, 10);
+    return clampBottomHeight(n);
+  } catch {
+    return BOTTOM_HEIGHT_BOUNDS.default;
+  }
+}
+
+function loadDetailLogsRatio(): number {
+  try {
+    const raw = localStorage.getItem(DETAIL_LOGS_RATIO_KEY);
+    if (!raw) return DETAIL_LOGS_RATIO_BOUNDS.default;
+    const n = Number.parseFloat(raw);
+    return clampDetailLogsRatio(n);
+  } catch {
+    return DETAIL_LOGS_RATIO_BOUNDS.default;
+  }
+}
+
 export const useUI = create<UIState>((set, get) => ({
   view: "tasks",
   activeProject: loadActiveProject(),
@@ -167,6 +208,8 @@ export const useUI = create<UIState>((set, get) => ({
   detailVisible: true,
   logsVisible: true,
   focus: "tasks",
+  bottomHeight: loadBottomHeight(),
+  detailLogsRatio: loadDetailLogsRatio(),
   projectSheetOpen: false,
   inspect: null,
   toasts: [],
@@ -189,6 +232,36 @@ export const useUI = create<UIState>((set, get) => ({
         dir,
       ),
     })),
+  setBottomHeight: (px) => {
+    const clamped = clampBottomHeight(px);
+    try {
+      localStorage.setItem(BOTTOM_HEIGHT_KEY, String(clamped));
+    } catch {
+      /* ignore storage errors (private mode, quota) */
+    }
+    set({ bottomHeight: clamped });
+  },
+  setDetailLogsRatio: (r) => {
+    const clamped = clampDetailLogsRatio(r);
+    try {
+      localStorage.setItem(DETAIL_LOGS_RATIO_KEY, clamped.toFixed(3));
+    } catch {
+      /* ignore */
+    }
+    set({ detailLogsRatio: clamped });
+  },
+  resetPaneSizes: () => {
+    try {
+      localStorage.removeItem(BOTTOM_HEIGHT_KEY);
+      localStorage.removeItem(DETAIL_LOGS_RATIO_KEY);
+    } catch {
+      /* ignore */
+    }
+    set({
+      bottomHeight: BOTTOM_HEIGHT_BOUNDS.default,
+      detailLogsRatio: DETAIL_LOGS_RATIO_BOUNDS.default,
+    });
+  },
   setActiveProject: (p) => {
     try {
       localStorage.setItem(ACTIVE_PROJECT_KEY, p);

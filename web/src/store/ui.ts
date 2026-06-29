@@ -1,4 +1,9 @@
 import { create } from "zustand";
+import { nextFocus, type Panel } from "../lib/paneNav";
+
+// Re-export so existing consumers (`import { Panel } from "../../store/ui"`)
+// keep working without churn.
+export type { Panel };
 
 export type View = "tasks" | "brain" | "automations" | "runners" | "logs";
 
@@ -27,8 +32,6 @@ export const VIEW_ORDER: View[] = [
   "tasks",
   "automations",
 ];
-
-export type Panel = "tasks" | "detail" | "logs";
 
 // A mobile "inspect" request: open the Detail/Logs bottom sheet for one entry.
 // Carries enough to drive EntryDetailPane (path) and EntryLogsPane (task id +
@@ -94,7 +97,7 @@ interface UIState {
   toggleWrap: () => void;
   toggleDetail: () => void;
   toggleLogs: () => void;
-  cycleFocus: () => void;
+  cycleFocus: (dir?: 1 | -1) => void;
   setFocus: (p: Panel) => void;
   setProjectSheetOpen: (open: boolean) => void;
   openInspect: (t: InspectTarget) => void;
@@ -178,14 +181,14 @@ export const useUI = create<UIState>((set, get) => ({
   toggleDetail: () => set((s) => ({ detailVisible: !s.detailVisible })),
   toggleLogs: () => set((s) => ({ logsVisible: !s.logsVisible })),
   setFocus: (p) => set({ focus: p }),
-  cycleFocus: () =>
-    set((s) => {
-      const panels: Panel[] = ["tasks"];
-      if (s.detailVisible) panels.push("detail");
-      if (s.logsVisible) panels.push("logs");
-      const i = panels.indexOf(s.focus);
-      return { focus: panels[(i + 1) % panels.length] };
-    }),
+  cycleFocus: (dir = 1) =>
+    set((s) => ({
+      focus: nextFocus(
+        s.focus,
+        { detailVisible: s.detailVisible, logsVisible: s.logsVisible },
+        dir,
+      ),
+    })),
   setActiveProject: (p) => {
     try {
       localStorage.setItem(ACTIVE_PROJECT_KEY, p);

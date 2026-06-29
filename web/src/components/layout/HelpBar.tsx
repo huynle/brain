@@ -31,6 +31,7 @@ const HINTS: Record<string, Hint[]> = {
     ["n", "New"],
     ["T", "Detail"],
     ["z", "Logs"],
+    ["Tab", "Focus"],
     ["h/l", "Tabs"],
     [":", "Cmd"],
     ["H/L", "Proj"],
@@ -47,6 +48,7 @@ const HINTS: Record<string, Hint[]> = {
     ["n", "New"],
     ["T", "Detail"],
     ["z", "Logs"],
+    ["Tab", "Focus"],
     ["p", "Pause"],
     ["h/l", "Tabs"],
     [":", "Cmd"],
@@ -96,14 +98,16 @@ export function HelpBar() {
   const selected = useNav((s) => Object.keys(s.selected).length);
 
   const hints = HINTS[view] ?? HINTS.tasks;
-  const focusName =
-    view === "tasks"
-      ? focus === "detail"
-        ? "Details"
-        : focus === "logs"
-          ? "Logs"
-          : "Tasks"
-      : FOCUS_LABEL[view];
+  // Views that have a detail/logs pane resolve the focus label per-pane;
+  // others just show the view name.
+  const viewsWithPanes = new Set(["tasks", "brain", "automations"]);
+  const focusName = viewsWithPanes.has(view)
+    ? focus === "detail"
+      ? "Details"
+      : focus === "logs"
+        ? "Logs"
+        : FOCUS_LABEL[view]
+    : FOCUS_LABEL[view];
 
   return (
     <div className="tui-helpbar">

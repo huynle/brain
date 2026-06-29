@@ -3,6 +3,7 @@ import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useLive } from "../lib/sse";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useLiveTasks } from "../hooks/useLiveTasks";
 import { filterTasks, groupByFeature, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
@@ -81,8 +82,6 @@ export function TasksView() {
   const wrap = useUI((s) => s.wrap);
   const toast = useUI((s) => s.toast);
   const focus = useUI((s) => s.focus);
-  const setFocus = useUI((s) => s.setFocus);
-  const cycleFocus = useUI((s) => s.cycleFocus);
   const detailVisible = useUI((s) => s.detailVisible);
   const logsVisible = useUI((s) => s.logsVisible);
   const toggleDetail = useUI((s) => s.toggleDetail);
@@ -118,8 +117,12 @@ export function TasksView() {
 
   const filterRef = useRef<HTMLInputElement>(null);
   const treeBodyRef = useRef<HTMLDivElement>(null);
-  const detailBodyRef = useRef<HTMLDivElement>(null);
-  const logBodyRef = useRef<HTMLDivElement>(null);
+
+  // Pane focus + vim-style scroll wiring (Tab/Shift-Tab + j/k/gg/G/Ctrl-D/U
+  // inside the focused detail or logs pane). The hook owns the detail and
+  // logs body refs so it can drive scrollTop.
+  const paneNav = usePaneNavigation();
+  const logBodyRef = paneNav.logsPaneProps.bodyRef;
 
   const { rows, taskList, featureKeys, tasksByFeature } = useMemo(() => {
     let list = filterTasks(tasks, query);
@@ -285,11 +288,11 @@ export function TasksView() {
 
   useViewKeyboard(
     (e) => {
-      // panel-level keys
-      if (e.key === "Tab") {
-        cycleFocus();
-        return true;
-      }
+      // Tab/Shift-Tab + vim-style scroll inside detail/logs panes.
+      if (paneNav.handleKey(e)) return true;
+
+      // View-owned panel toggles. (paneNav handles Tab; T and z are still
+      // view-scoped because they mutate visibility, not focus.)
       if (e.key === "T") {
         toggleDetail();
         return true;
@@ -298,14 +301,10 @@ export function TasksView() {
         toggleLogs();
         return true;
       }
-      // detail / logs focus → scroll those bodies
+      // When detail/logs are focused, paneNav already handled or rejected
+      // j/k/g/G/Ctrl-D/Ctrl-U above. If we got here, the key is unhandled
+      // for that focus — don't fall into list nav.
       if (focus === "detail" || focus === "logs") {
-        const el = focus === "detail" ? detailBodyRef.current : logBodyRef.current;
-        if (!el) return false;
-        if (e.key === "j" || e.key === "ArrowDown") { el.scrollTop += 40; return true; }
-        if (e.key === "k" || e.key === "ArrowUp") { el.scrollTop -= 40; return true; }
-        if (e.key === "g") { el.scrollTop = 0; return true; }
-        if (e.key === "G") { el.scrollTop = el.scrollHeight; return true; }
         return false;
       }
       // tasks focus
@@ -385,8 +384,7 @@ export function TasksView() {
       <Panel
         title={mode === "schedules" ? "Schedules" : "Tasks"}
         meta={query ? `filter "${query}" · ${taskList.length}` : `${taskList.length}`}
-        focused={focus === "tasks"}
-        onFocus={() => setFocus("tasks")}
+        {...paneNav.tasksPaneProps}
         bodyRef={treeBodyRef}
         style={{ flex: 1 }}
       >
@@ -505,9 +503,7 @@ export function TasksView() {
           {detailVisible && (
             <Panel
               title="Detail"
-              focused={focus === "detail"}
-              onFocus={() => setFocus("detail")}
-              bodyRef={detailBodyRef}
+              {...paneNav.detailPaneProps}
               style={{ flex: 1 }}
             >
               {detailTask ? (
@@ -521,9 +517,7 @@ export function TasksView() {
             <Panel
               title="Logs"
               meta={detailTask ? detailTask.id : undefined}
-              focused={focus === "logs"}
-              onFocus={() => setFocus("logs")}
-              bodyRef={logBodyRef}
+              {...paneNav.logsPaneProps}
               style={{ flex: 1 }}
             >
               {panelLogs.length === 0 ? (

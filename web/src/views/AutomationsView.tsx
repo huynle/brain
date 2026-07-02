@@ -37,6 +37,7 @@ import {
   triggerLabel,
 } from "./automations/rows";
 import type { BrainEntry, GoalSummary, OpencodeInstance, SessionInfo } from "../lib/types";
+import { relativeTime } from "../lib/format";
 
 // CodeMirror is heavy — load the editor only when the user edits.
 const EntryEditModal = lazy(() =>
@@ -829,6 +830,14 @@ function RunTaskRow({
       <span className="suffix faint mono">{task.id}</span>
       <span className="suffix faint">[{task.status || "unknown"}]</span>
       <span className="title truncate">{task.title}</span>
+      {(task.modified || task.created) && (
+        <span
+          className="suffix faint mono"
+          title={new Date(task.modified ?? task.created ?? "").toLocaleString()}
+        >
+          {relativeTime(task.modified ?? task.created)}
+        </span>
+      )}
       <span
         className="suffix"
         style={{ color: live ? "var(--cyan, var(--teal))" : "var(--blue)" }}

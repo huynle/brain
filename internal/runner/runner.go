@@ -1483,8 +1483,12 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		FeatureID:      task.FeatureID,
 		GeneratedBy:    task.GeneratedBy,
 	}
+	// Every executor gets an InstanceID so the Runners tab can surface a
+	// "currently running" row for it (issue: script/pi tasks were invisible
+	// in the PWA while executing). OpencodePort is only known up front for
+	// the OpenCode headless-serve+attach path; other executors report 0.
+	runningTask.InstanceID = generateInstanceID()
 	if executorType == "opencode" {
-		runningTask.InstanceID = generateInstanceID()
 		// Headless serve+attach reports its attachable port up front; TUI/
 		// dashboard discover it from the tmux child via discoverAndSaveSession.
 		runningTask.OpencodePort = spawnResult.OpencodePort

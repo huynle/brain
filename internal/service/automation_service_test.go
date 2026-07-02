@@ -11,11 +11,27 @@ import (
 )
 
 type fakeAutomationPauseChecker struct {
-	paused bool
+	paused          bool
+	pausedProjects  map[string]bool
+	scopedRequested bool
 }
 
-func (f fakeAutomationPauseChecker) IsAutomationsPaused() bool {
+func (f *fakeAutomationPauseChecker) IsAutomationsPaused() bool {
 	return f.paused
+}
+
+// IsAutomationsPausedForProject implements the optional
+// automationProjectPauseChecker interface so we can exercise the per-project
+// pause pathway in the automation service.
+func (f *fakeAutomationPauseChecker) IsAutomationsPausedForProject(projectID string) bool {
+	f.scopedRequested = true
+	if f.paused {
+		return true
+	}
+	if f.pausedProjects == nil {
+		return false
+	}
+	return f.pausedProjects[projectID]
 }
 
 func TestAutomationService_HandleEventCreatesTaskForMatchingEventAutomation(t *testing.T) {
@@ -860,7 +876,7 @@ func TestAutomationService_HandleEventSkipsWhenAutomationsPaused(t *testing.T) {
 	}
 
 	automation := NewAutomationService(brain)
-	automation.SetPauseChecker(fakeAutomationPauseChecker{paused: true})
+	automation.SetPauseChecker(&fakeAutomationPauseChecker{paused: true})
 	if err := automation.HandleEvent(ctx, types.Event{
 		ID:        "evt-paused-1",
 		Type:      types.EventTaskCompleted,
@@ -1953,7 +1969,7 @@ func TestAutomationService_CheckScheduledSkipsWhenAutomationsPaused(t *testing.T
 	}
 
 	automation := NewAutomationService(brain)
-	automation.SetPauseChecker(fakeAutomationPauseChecker{paused: true})
+	automation.SetPauseChecker(&fakeAutomationPauseChecker{paused: true})
 	if err := automation.CheckScheduled(ctx, now); err != nil {
 		t.Fatalf("CheckScheduled failed: %v", err)
 	}
@@ -1964,6 +1980,140 @@ func TestAutomationService_CheckScheduledSkipsWhenAutomationsPaused(t *testing.T
 	}
 	if len(resp.Entries) != 0 {
 		t.Fatalf("expected no generated cron tasks while project paused, got %d", len(resp.Entries))
+	}
+}
+
+func TestAutomationService_CheckScheduledSkipsWhenProjectAutomationsPaused(t *testing.T) {
+	// Regression: setting "autos: off" on a single project must stop that
+	// project's cron-triggered automations without requiring a global pause.
+	// See internal/service/automation_service.go: isAutomationPaused.
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	now := time.Date(2026, 4, 29, 13, 5, 0, 0, time.UTC)
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Paused project cron automation",
+		Content: "Should not create tasks while this project is paused.",
+		Status:  "active",
+		Project: "personal-productivity",
+		Trigger: &types.TriggerConfig{
+			Type:     "cron",
+			Schedule: "* * * * *",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "This should not be generated.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	// A second, unpaused project's automation must still fire — this is the
+	// regression bug: previously per-project state was entirely ignored.
+	_, err = brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Unrelated cron automation",
+		Content: "Should still create tasks — different project.",
+		Status:  "active",
+		Project: "other-project",
+		Trigger: &types.TriggerConfig{
+			Type:     "cron",
+			Schedule: "* * * * *",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Create the other-project summary.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save unrelated automation failed: %v", err)
+	}
+
+	checker := &fakeAutomationPauseChecker{
+		pausedProjects: map[string]bool{"personal-productivity": true},
+	}
+	automation := NewAutomationService(brain)
+	automation.SetPauseChecker(checker)
+
+	if err := automation.CheckScheduled(ctx, now); err != nil {
+		t.Fatalf("CheckScheduled failed: %v", err)
+	}
+
+	if !checker.scopedRequested {
+		t.Fatal("expected AutomationService to call IsAutomationsPausedForProject")
+	}
+
+	pausedTasks, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: "personal-productivity", Limit: 10})
+	if err != nil {
+		t.Fatalf("List paused-project tasks failed: %v", err)
+	}
+	if len(pausedTasks.Entries) != 0 {
+		t.Fatalf("expected 0 generated tasks for paused project, got %d", len(pausedTasks.Entries))
+	}
+
+	// Unrelated project must have received its cron-generated task.
+	otherTasks, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: "other-project", Limit: 10})
+	if err != nil {
+		t.Fatalf("List other-project tasks failed: %v", err)
+	}
+	if len(otherTasks.Entries) == 0 {
+		t.Fatalf("expected other-project to still generate cron tasks, got 0")
+	}
+}
+
+func TestAutomationService_HandleEventSkipsWhenProjectAutomationsPaused(t *testing.T) {
+	// Regression: per-project "autos: off" must also stop event-triggered
+	// automations for that project, without stopping unrelated projects.
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Paused project event automation",
+		Content: "Should not run while personal-productivity autos are off.",
+		Status:  "active",
+		Project: "personal-productivity",
+		Trigger: &types.TriggerConfig{
+			Type:  "event",
+			Event: types.EventTaskCompleted,
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "This should not be generated.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	checker := &fakeAutomationPauseChecker{
+		pausedProjects: map[string]bool{"personal-productivity": true},
+	}
+	automation := NewAutomationService(brain)
+	automation.SetPauseChecker(checker)
+
+	if err := automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-paused-project-1",
+		Type:      types.EventTaskCompleted,
+		Source:    types.EventSourceRunner,
+		ProjectID: "personal-productivity",
+		TaskID:    "source-task",
+	}); err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	if !checker.scopedRequested {
+		t.Fatal("expected AutomationService to call IsAutomationsPausedForProject")
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "task", Project: "personal-productivity", Limit: 10})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 0 {
+		t.Fatalf("expected no generated tasks while project autos paused, got %d", len(resp.Entries))
 	}
 }
 

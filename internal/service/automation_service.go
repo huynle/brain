@@ -23,6 +23,13 @@ type automationPauseChecker interface {
 	IsAutomationsPaused() bool
 }
 
+// automationProjectPauseChecker is an optional extension implemented by
+// pause checkers that support per-project scoping. When present, the
+// automation service consults it before falling back to the global check.
+type automationProjectPauseChecker interface {
+	IsAutomationsPausedForProject(projectID string) bool
+}
+
 // NewAutomationService creates an automation evaluator backed by brain entries.
 func NewAutomationService(brain *BrainServiceImpl) *AutomationService {
 	return &AutomationService{brain: brain}
@@ -179,6 +186,23 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 func (s *AutomationService) isAutomationPaused(automation types.BrainEntry, evt types.Event) bool {
 	if s == nil || s.pauseChecker == nil {
 		return false
+	}
+	// Prefer per-project pause state: users setting "autos: off" on a single
+	// project must not have that decision overridden by the global check.
+	projectID := automation.ProjectID
+	if projectID == "" {
+		projectID = evt.ProjectID
+	}
+	if projectID != "" {
+		if scoped, ok := s.pauseChecker.(automationProjectPauseChecker); ok {
+			if scoped.IsAutomationsPausedForProject(projectID) {
+				return true
+			}
+			// scoped checker already folds global state into its per-project
+			// answer (see RunnerServiceImpl.IsAutomationsPausedForProject),
+			// so a false result means "not paused" and no further check needed.
+			return false
+		}
 	}
 	return s.pauseChecker.IsAutomationsPaused()
 }

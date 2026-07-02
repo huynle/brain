@@ -23,7 +23,7 @@ import { EmptyState, ErrorState, Loading, Spinner } from "../components/common/s
 import { relativeTime } from "../lib/format";
 import { sessionName } from "../lib/types";
 import type { ControlTarget } from "../store/ui";
-import type { OpencodeInstance, RunnerInfo } from "../lib/types";
+import type { OpencodeInstance, RunnerInfo, Task } from "../lib/types";
 import { Chat, type ChatHandle } from "./control/Chat";
 import { HistoryPane } from "./control/HistoryPane";
 import { latestInstanceSessionId, sortSessionsByExecutedTime } from "./control/sessionUtils";
@@ -31,6 +31,28 @@ import { latestInstanceSessionId, sortSessionsByExecutedTime } from "./control/s
 type RunnerRow = { kind: "runner"; runner: RunnerInfo; instances: OpencodeInstance[] };
 type InstanceRow = { kind: "instance"; runner: RunnerInfo; instance: OpencodeInstance };
 type Row = RunnerRow | InstanceRow;
+
+/** Pending dispatch info: a task whose lease has been pushed/acked to a runner
+ * but the runner hasn't reported the executor instance yet. Surfaced via the
+ * PENDING chip + modal so users can see *which* tasks are queued and why.
+ *
+ * `healthy = true` means the last placement decision agrees with the lease
+ * (accepted / no reason recorded yet — genuine in-flight dispatch). `healthy
+ * = false` means the placement decision contradicts the lease (no_candidate,
+ * rejected) — the lease row is stale and the server-side cleanup hasn't
+ * caught up yet. We surface both, but only healthy ones count toward the
+ * "pending" total that fronts the runner card.
+ */
+type PendingDispatch = {
+  task: Task;
+  projectId: string;
+  leaseState: string;
+  pushedAt: number;
+  ackedAt?: number;
+  expiresAt: number;
+  lastError?: string;
+  healthy: boolean;
+};
 
 export function RunnersView() {
   const toast = useUI((s) => s.toast);
@@ -63,6 +85,7 @@ export function RunnersView() {
   const [confirmInstanceKill, setConfirmInstanceKill] = useState<OpencodeInstance | null>(null);
   const [sessionTarget, setSessionTarget] = useState<OpencodeInstance | null>(null);
   const [historyTarget, setHistoryTarget] = useState<ControlTarget | null>(null);
+  const [pendingTarget, setPendingTarget] = useState<{ runner: RunnerInfo; pending: PendingDispatch[] } | null>(null);
   const [busy, setBusy] = useState(false);
 
   const runners = liveRunners.length ? liveRunners : runnersQ.data ?? [];
@@ -78,7 +101,7 @@ export function RunnersView() {
   // visible.
   const liveProjects = useLive((s) => s.projects);
   const pendingByRunner = useMemo(() => {
-    const counts = new Map<string, number>();
+    const byRunner = new Map<string, PendingDispatch[]>();
     const now = Date.now();
     for (const project of Object.values(liveProjects)) {
       for (const task of project.tasks) {
@@ -86,10 +109,37 @@ export function RunnersView() {
         if (!lease) continue;
         if (lease.state !== "pushed" && lease.state !== "acked") continue;
         if (lease.expires_at && lease.expires_at < now) continue;
-        counts.set(lease.assigned_runner_id, (counts.get(lease.assigned_runner_id) ?? 0) + 1);
+        // A lease is "healthy" (a real in-flight dispatch) only when the most
+        // recent placement decision agrees with it. If the scheduler later
+        // decided the task has no candidate, or the runner rejected it, the
+        // lease row is stale — server cleanup should be dropping it, but until
+        // it does we surface it under a "stuck" bucket instead of counting it
+        // as pending against the runner.
+        const decision = task.last_placement_reason?.decision;
+        const healthy = !decision || decision === "accepted";
+        const list = byRunner.get(lease.assigned_runner_id) ?? [];
+        list.push({
+          task,
+          projectId: lease.project_id,
+          leaseState: lease.state,
+          pushedAt: lease.pushed_at,
+          ackedAt: lease.acked_at,
+          expiresAt: lease.expires_at,
+          lastError: lease.last_error,
+          healthy,
+        });
+        byRunner.set(lease.assigned_runner_id, list);
       }
     }
-    return counts;
+    // Stable ordering: healthy first, then by oldest pushed. Users care more
+    // about active dispatches than about stale rows.
+    for (const list of byRunner.values()) {
+      list.sort((a, b) => {
+        if (a.healthy !== b.healthy) return a.healthy ? -1 : 1;
+        return a.pushedAt - b.pushedAt;
+      });
+    }
+    return byRunner;
   }, [liveProjects]);
 
   const rows = useMemo<Row[]>(() => {
@@ -142,6 +192,24 @@ export function RunnersView() {
   useEffect(() => {
     listRef.current?.querySelector<HTMLElement>('[data-cursor="1"]')?.scrollIntoView({ block: "nearest" });
   }, [cursor]);
+
+  // Keep the pending-dispatch modal in sync with the live lease map. If every
+  // pending lease for the target runner resolves (instance shows up, lease
+  // expires, or it gets rejected), close the modal so the user isn't staring
+  // at stale data.
+  useEffect(() => {
+    if (!pendingTarget) return;
+    const fresh = pendingByRunner.get(pendingTarget.runner.runner_id) ?? [];
+    if (fresh.length === 0) {
+      setPendingTarget(null);
+      return;
+    }
+    // Update if the contents actually changed (by task id + state + pushed_at).
+    const key = (list: PendingDispatch[]) => list.map((p) => `${p.task.id}:${p.leaseState}:${p.pushedAt}`).join("|");
+    if (key(fresh) !== key(pendingTarget.pending)) {
+      setPendingTarget({ runner: pendingTarget.runner, pending: fresh });
+    }
+  }, [pendingByRunner, pendingTarget]);
 
   function openRow(row: Row | undefined) {
     if (!row) return;
@@ -302,10 +370,11 @@ export function RunnersView() {
               key={`r:${row.runner.runner_id}`}
               runner={row.runner}
               instances={row.instances}
-              pendingDispatches={pendingByRunner.get(row.runner.runner_id) ?? 0}
+              pendingDispatches={pendingByRunner.get(row.runner.runner_id) ?? []}
               cursored={i === cursor}
               onCursor={() => useNav.getState().setCursor(scope, i)}
               onKill={() => setConfirmRunnerKill(row.runner)}
+              onShowPending={(pending) => setPendingTarget({ runner: row.runner, pending })}
             />
           ) : (
             <ExecutingTaskCard
@@ -340,6 +409,14 @@ export function RunnersView() {
             onResume={resumeHistory}
           />
         </Modal>
+      )}
+
+      {pendingTarget && (
+        <PendingDispatchModal
+          runner={pendingTarget.runner}
+          pending={pendingTarget.pending}
+          onClose={() => setPendingTarget(null)}
+        />
       )}
 
       {spawnOpen && (
@@ -401,15 +478,19 @@ function RunnerCard({
   cursored,
   onCursor,
   onKill,
+  onShowPending,
 }: {
   runner: RunnerInfo;
   instances: OpencodeInstance[];
-  pendingDispatches: number;
+  pendingDispatches: PendingDispatch[];
   cursored: boolean;
   onCursor: () => void;
   onKill: () => void;
+  onShowPending: (pending: PendingDispatch[]) => void;
 }) {
   const color = runner.status === "online" ? "var(--green)" : runner.status === "stale" ? "var(--yellow)" : "var(--red)";
+  const healthyPending = pendingDispatches.filter((p) => p.healthy);
+  const stuckPending = pendingDispatches.filter((p) => !p.healthy);
   return (
     <div className={`runner-card ${cursored ? "cursor" : ""}`} data-cursor={cursored ? "1" : undefined} onClick={onCursor}>
       <div className="runner-card-main">
@@ -422,21 +503,183 @@ function RunnerCard({
       <div className="runner-chipline">
         <span className="ctl-meta-chip"><span className="ctl-meta-label">slots</span>{runner.active_tasks ?? 0}/{runner.max_parallel}</span>
         {runner.executors?.length ? <span className="ctl-meta-chip"><span className="ctl-meta-label">exec</span>{runner.executors.join(",")}</span> : null}
-        <span className="ctl-meta-chip"><span className="ctl-meta-label">tasks</span>{instances.length}</span>
-        {pendingDispatches > 0 && (
+        {instances.length > 0 ? (
           <span
             className="ctl-meta-chip"
-            style={{ color: "var(--yellow)" }}
-            title={`${pendingDispatches} task(s) dispatched to this runner but not yet executing (lease pushed/acked, instance not yet visible)`}
+            style={{ color: "var(--green)" }}
+            title={`${instances.length} task(s) currently executing on this runner — expand to see details below`}
           >
-            <span className="ctl-meta-label">pending</span>{pendingDispatches}
+            <span className="ctl-meta-label">running</span>{instances.length}
           </span>
+        ) : (
+          <span className="ctl-meta-chip"><span className="ctl-meta-label">tasks</span>0</span>
+        )}
+        {healthyPending.length > 0 && (
+          <button
+            type="button"
+            className="ctl-meta-chip"
+            style={{ color: "var(--yellow)", cursor: "pointer", border: "none", background: "transparent", padding: 0, font: "inherit" }}
+            title={`Click to see the ${healthyPending.length} task(s) dispatched but not yet executing on this runner`}
+            onClick={(e) => { e.stopPropagation(); onShowPending(pendingDispatches); }}
+          >
+            <span className="ctl-meta-label">pending</span>{healthyPending.length}
+          </button>
+        )}
+        {stuckPending.length > 0 && (
+          <button
+            type="button"
+            className="ctl-meta-chip"
+            style={{ color: "var(--red)", cursor: "pointer", border: "none", background: "transparent", padding: 0, font: "inherit" }}
+            title={`Click to see ${stuckPending.length} stale lease(s) against this runner. The scheduler no longer considers this runner a candidate for these tasks, but the lease row hasn't been cleaned up.`}
+            onClick={(e) => { e.stopPropagation(); onShowPending(pendingDispatches); }}
+          >
+            <span className="ctl-meta-label">stuck</span>{stuckPending.length}
+          </button>
         )}
         <span className="ctl-meta-chip"><span className="ctl-meta-label">hb</span>{relativeTime(runner.last_heartbeat)}</span>
       </div>
       <button className="icon-btn runner-power" title="Shut down runner (s)" onClick={(e) => { e.stopPropagation(); onKill(); }}>⏻</button>
     </div>
   );
+}
+
+/** Pending dispatch transparency: shows each task whose lease has been pushed
+ * to this runner but hasn't started executing yet. Renders task id, project,
+ * lease state (pushed/acked), how long it's been waiting, time until expiry,
+ * the most recent placement decision, and any reported error. */
+function PendingDispatchModal({
+  runner,
+  pending,
+  onClose,
+}: {
+  runner: RunnerInfo;
+  pending: PendingDispatch[];
+  onClose: () => void;
+}) {
+  const now = Date.now();
+  const healthy = pending.filter((p) => p.healthy);
+  const stale = pending.filter((p) => !p.healthy);
+  return (
+    <Modal title={`Pending dispatches — ${runner.runner_id}`} onClose={onClose} className="sheet-wide">
+      <div style={{ padding: "0.5rem 0 1rem", color: "var(--text-dim)", fontSize: "0.9em" }}>
+        Tasks with a live dispatch lease against <span className="mono">{runner.runner_id}</span> ({runner.hostname}).
+        A lease is <em>pushed</em> when Brain hands the task off and <em>acked</em> once the runner confirms receipt.
+        The runner's SLOTS / TASKS counters won't reflect them until the executor instance comes online.
+        {stale.length > 0 && (
+          <span>
+            {" "}
+            <strong style={{ color: "var(--red)" }}>{stale.length} row(s) are stale</strong>
+            {" "}— the scheduler's most recent placement decision contradicts the lease
+            (typically <span className="mono">no_candidate</span> or <span className="mono">rejected</span>).
+            These should clear on the next scheduler pass. If they persist, the runner's project subscription
+            may not match the task's project.
+          </span>
+        )}
+      </div>
+      {healthy.length > 0 && <PendingTable rows={healthy} label="In-flight" tone="healthy" now={now} />}
+      {stale.length > 0 && <PendingTable rows={stale} label="Stale — placement contradicts lease" tone="stale" now={now} />}
+    </Modal>
+  );
+}
+
+function PendingTable({
+  rows,
+  label,
+  tone,
+  now,
+}: {
+  rows: PendingDispatch[];
+  label: string;
+  tone: "healthy" | "stale";
+  now: number;
+}) {
+  return (
+    <div style={{ marginBottom: "1rem" }}>
+      <div style={{
+        fontSize: "0.8em",
+        textTransform: "uppercase",
+        letterSpacing: "0.05em",
+        color: tone === "stale" ? "var(--red)" : "var(--text-dim)",
+        padding: "0.3rem 0",
+        borderBottom: "1px solid var(--border)",
+      }}>
+        {label} · {rows.length}
+      </div>
+      <div style={{ overflow: "auto" }}>
+        <table className="data-table" style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.9em" }}>
+          <thead>
+            <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
+              <th style={{ padding: "0.4rem 0.6rem" }}>Task</th>
+              <th style={{ padding: "0.4rem 0.6rem" }}>Project</th>
+              <th style={{ padding: "0.4rem 0.6rem" }}>State</th>
+              <th style={{ padding: "0.4rem 0.6rem" }}>Waiting</th>
+              <th style={{ padding: "0.4rem 0.6rem" }}>Expires</th>
+              <th style={{ padding: "0.4rem 0.6rem" }}>Latest placement decision</th>
+              <th style={{ padding: "0.4rem 0.6rem" }}>Error</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((p) => {
+              const reason = p.task.last_placement_reason;
+              const stateColor =
+                p.leaseState === "acked" ? "var(--green)" :
+                p.leaseState === "pushed" ? "var(--yellow)" :
+                "var(--text-dim)";
+              const expiresIn = p.expiresAt - now;
+              const expiresColor = expiresIn < 30_000 ? "var(--red)" : expiresIn < 120_000 ? "var(--yellow)" : "var(--text-dim)";
+              const decisionColor =
+                reason?.decision === "accepted" ? "var(--green)" :
+                reason?.decision === "no_candidate" || reason?.decision === "rejected" ? "var(--red)" :
+                "var(--yellow)";
+              return (
+                <tr key={`${p.projectId}:${p.task.id}`} style={{ borderBottom: "1px solid var(--border-faint, var(--border))" }}>
+                  <td style={{ padding: "0.4rem 0.6rem" }}>
+                    <div className="mono" style={{ fontSize: "0.85em" }}>{p.task.id}</div>
+                    <div className="faint truncate" style={{ maxWidth: "32ch" }}>{p.task.title}</div>
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem" }} className="mono">{p.projectId}</td>
+                  <td style={{ padding: "0.4rem 0.6rem", color: stateColor }}>{p.leaseState}</td>
+                  <td style={{ padding: "0.4rem 0.6rem" }} title={new Date(p.pushedAt).toISOString()}>
+                    {formatDuration(now - p.pushedAt)}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", color: expiresColor }} title={new Date(p.expiresAt).toISOString()}>
+                    {formatDuration(expiresIn)}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem" }}>
+                    {reason ? (
+                      <div>
+                        <div style={{ color: decisionColor }}>{reason.decision ?? "—"}</div>
+                        <div className="faint" style={{ fontSize: "0.85em" }}>{reason.reason ?? ""}</div>
+                      </div>
+                    ) : <span className="faint">—</span>}
+                  </td>
+                  <td style={{ padding: "0.4rem 0.6rem", color: p.lastError ? "var(--red)" : undefined }}>
+                    {p.lastError ?? <span className="faint">—</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+/** Format a millisecond duration as a short relative string. Used for the
+ * "expires in" column where negative values mean the lease should have
+ * already expired (and will be cleaned up on the next scheduler tick). */
+function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms)) return "—";
+  const abs = Math.abs(ms);
+  const sign = ms < 0 ? "-" : "";
+  if (abs < 1000) return `${sign}${abs}ms`;
+  const sec = Math.floor(abs / 1000);
+  if (sec < 60) return `${sign}${sec}s`;
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${sign}${min}m${sec % 60 ? ` ${sec % 60}s` : ""}`;
+  const hr = Math.floor(min / 60);
+  return `${sign}${hr}h${min % 60 ? ` ${min % 60}m` : ""}`;
 }
 
 function ExecutingTaskCard({

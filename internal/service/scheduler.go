@@ -347,20 +347,33 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 	return result, nil
 }
 
+// shouldSkipTask decides whether a task should be skipped by the scheduler
+// based on the two independent pause switches:
+//
+//   - tasks_paused (per project): applies to user-authored / non-automation
+//     tasks only. Does NOT affect automation-generated tasks.
+//   - automations_paused (per project): applies to automation-generated
+//     tasks only. Independent of tasks_paused.
+//
+// This mirrors the runner-side carve-out in handleCommand and the poll loop.
+// The two switches must remain fully independent — pausing manual task
+// execution should not silently halt automation work, and pausing autos
+// should not affect manual tasks. See unit tests in scheduler_test.go
+// (TestSchedulerService_PauseIndependence*).
 func (s *SchedulerService) shouldSkipTask(projectID string, task types.ResolvedTask) bool {
 	if s.pauses == nil {
 		return false
 	}
-	if s.pauses.IsPaused(projectID) {
-		return true
+	isAutomation := strings.HasPrefix(task.GeneratedBy, "automation:")
+	if isAutomation {
+		// Automation tasks respect ONLY the autos-paused switch.
+		if scoped, ok := s.pauses.(schedulerProjectAutomationPauseChecker); ok {
+			return scoped.IsAutomationsPausedForProject(projectID)
+		}
+		return s.pauses.IsAutomationsPaused()
 	}
-	if !strings.HasPrefix(task.GeneratedBy, "automation:") {
-		return false
-	}
-	if scoped, ok := s.pauses.(schedulerProjectAutomationPauseChecker); ok {
-		return scoped.IsAutomationsPausedForProject(projectID)
-	}
-	return s.pauses.IsAutomationsPaused()
+	// Non-automation (manual/user) tasks respect ONLY the tasks-paused switch.
+	return s.pauses.IsPaused(projectID)
 }
 
 // RunTaskNow is the user-explicit "run this task now" entry point used by the

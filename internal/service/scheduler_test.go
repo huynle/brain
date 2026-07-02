@@ -236,6 +236,167 @@ func TestSchedulerSkipsAutomationGeneratedTasksOnlyForPausedAutomationProject(t 
 	}
 }
 
+// TestSchedulerService_PauseIndependence_TasksPausedAutosOn is the primary
+// regression test for the design intent: "tasks: paused" and "autos: on"
+// are independent switches. Tasks-paused MUST NOT block automation-generated
+// task dispatch when autos are on.
+//
+// This mirrors the PWA scenario: user pauses task execution on
+// personal-productivity to stop manual work, but expects cron automations
+// (e.g. "Keep Teams active") to keep firing because autos are still on.
+// Previously shouldSkipTask would reject all tasks under tasks-paused,
+// including automation-generated ones — this test locks in the fix.
+func TestSchedulerService_PauseIndependence_TasksPausedAutosOn(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.paused = true             // tasks: paused
+	store.automationPaused = false  // autos: on
+	store.tasks = []types.ResolvedTask{
+		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
+		{ID: "automation", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-1"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	// The manual task must be skipped (tasks paused), the automation task
+	// must be dispatched (autos on, and it does not care about tasks-paused).
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1 (automation task through, manual skipped); result=%#v", result.Dispatched, result)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("Skipped = %d, want 1 (manual task); result=%#v", result.Skipped, result)
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "automation" {
+		t.Fatalf("leases = %#v, want only automation dispatched", store.leases)
+	}
+}
+
+// TestSchedulerService_PauseIndependence_TasksOnAutosPaused is the mirror
+// case: autos paused, tasks on. Manual tasks should still dispatch;
+// automation tasks should be skipped.
+func TestSchedulerService_PauseIndependence_TasksOnAutosPaused(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.paused = false           // tasks: on
+	store.automationPaused = true  // autos: off (global)
+	store.tasks = []types.ResolvedTask{
+		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
+		{ID: "automation", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-1"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1 (manual through, automation skipped); result=%#v", result.Dispatched, result)
+	}
+	if result.Skipped != 1 {
+		t.Fatalf("Skipped = %d, want 1 (automation task); result=%#v", result.Skipped, result)
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "manual" {
+		t.Fatalf("leases = %#v, want only manual dispatched", store.leases)
+	}
+}
+
+// TestSchedulerService_PauseIndependence_TasksOnAutosPaused_PerProject
+// covers the per-project variant of the above: only project-scoped autos
+// pause via IsAutomationsPausedForProject. Manual tasks still dispatch.
+func TestSchedulerService_PauseIndependence_TasksOnAutosPaused_PerProject(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.paused = false
+	store.automationPaused = false
+	store.automationPausedProjects = map[string]bool{"proj": true} // autos: off per-project
+	store.tasks = []types.ResolvedTask{
+		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
+		{ID: "automation", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-1"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 1 || result.Skipped != 1 {
+		t.Fatalf("result = %#v, want 1 dispatched (manual) + 1 skipped (automation)", result)
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "manual" {
+		t.Fatalf("leases = %#v, want only manual dispatched", store.leases)
+	}
+}
+
+// TestSchedulerService_PauseIndependence_BothOn: both switches on ⇒ both
+// tasks dispatched. Basic sanity that no pause state is being silently
+// applied.
+func TestSchedulerService_PauseIndependence_BothOn(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.paused = false
+	store.automationPaused = false
+	store.tasks = []types.ResolvedTask{
+		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
+		{ID: "automation", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-1"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 4}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 2 {
+		t.Fatalf("Dispatched = %d, want 2 (both through); result=%#v", result.Dispatched, result)
+	}
+	if result.Skipped != 0 {
+		t.Fatalf("Skipped = %d, want 0; result=%#v", result.Skipped, result)
+	}
+	if len(store.leases) != 2 {
+		t.Fatalf("leases = %d, want 2 (manual + automation)", len(store.leases))
+	}
+}
+
+// TestSchedulerService_PauseIndependence_BothPaused: both switches paused ⇒
+// no tasks dispatched. Confirms neither switch's carve-out leaks through.
+func TestSchedulerService_PauseIndependence_BothPaused(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.paused = true
+	store.automationPaused = true
+	store.tasks = []types.ResolvedTask{
+		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
+		{ID: "automation", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-1"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 0 {
+		t.Fatalf("Dispatched = %d, want 0 (both paused); result=%#v", result.Dispatched, result)
+	}
+	if result.Skipped != 2 {
+		t.Fatalf("Skipped = %d, want 2; result=%#v", result.Skipped, result)
+	}
+	if len(store.leases) != 0 {
+		t.Fatalf("leases = %#v, want none", store.leases)
+	}
+}
+
 func TestSchedulerLifecycleTickExpiresLeasesSchedulesProjectsAndUpdatesStatus(t *testing.T) {
 	store := newFakeSchedulerStore()
 	store.projects = []string{"alpha", "beta"}

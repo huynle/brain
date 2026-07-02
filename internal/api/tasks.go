@@ -889,6 +889,7 @@ func (h *Handler) HandlePauseProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, projectId, "tasks", true)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -899,6 +900,7 @@ func (h *Handler) HandleResumeProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, projectId, "tasks", false)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -908,6 +910,7 @@ func (h *Handler) HandlePauseAll(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, "", "tasks", true)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -917,6 +920,7 @@ func (h *Handler) HandleResumeAll(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, "", "tasks", false)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -926,6 +930,7 @@ func (h *Handler) HandlePauseAutomations(w http.ResponseWriter, r *http.Request)
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, "", "automations", true)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -935,6 +940,7 @@ func (h *Handler) HandleResumeAutomations(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, "", "automations", false)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 

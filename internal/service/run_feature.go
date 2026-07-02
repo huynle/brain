@@ -155,6 +155,10 @@ func (s *SchedulerService) RunFeatureNow(ctx context.Context, projectID, feature
 				"projectId": projectID,
 				"lease":     lease,
 				"expiresAt": lease.ExpiresAt,
+				// Inline the resolved task so the runner can process
+				// this dispatch without an HTTP round-trip back to
+				// GetReadyTasks.
+				"task": task,
 			}
 			if force {
 				payload["force"] = true

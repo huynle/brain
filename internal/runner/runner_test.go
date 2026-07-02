@@ -4550,7 +4550,6 @@ func TestReapOrphanedTasks_ListFailureDoesNotPanic(t *testing.T) {
 func TestTaskRunner_Dispatch_RespectsGlobalServerPause(t *testing.T) {
 	client := newMockClient()
 	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("task1", "proj-a")}
-	client.runnerStatus = &types.RunnerStatusResponse{Running: true, Paused: true}
 	executor := newMockExecutor()
 	processMgr := newMockProcessMgr()
 	stateMgr := newMockStateMgr()
@@ -4560,6 +4559,10 @@ func TestTaskRunner_Dispatch_RespectsGlobalServerPause(t *testing.T) {
 		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
 		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
 	})
+	// Runner pause state is authoritative for the dispatch gate. In
+	// production it's synced from the server via SSE
+	// CommandPause/CommandResume; here we set it directly.
+	tr.PauseAll()
 
 	tr.handleCommand(context.Background(), RunnerCommand{
 		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "task1", LeaseID: "lease-1",
@@ -4709,10 +4712,6 @@ func TestTaskRunner_Dispatch_AutomationStillRejectedWhenAutomationsAlsoPaused(t 
 	task := testTask("auto-task", "proj-a")
 	task.GeneratedBy = "automation:auto1234"
 	client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
-	// Both tasks AND automations paused globally.
-	client.runnerStatus = &types.RunnerStatusResponse{
-		Running: true, Paused: true, AutomationsPaused: true,
-	}
 	executor := newMockExecutor()
 	processMgr := newMockProcessMgr()
 	stateMgr := newMockStateMgr()
@@ -4722,6 +4721,11 @@ func TestTaskRunner_Dispatch_AutomationStillRejectedWhenAutomationsAlsoPaused(t 
 		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
 		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
 	})
+	// Both tasks AND automations paused globally. Runner-local state is
+	// authoritative; in production it's synced via SSE
+	// CommandPause/CommandResume.
+	tr.PauseAll()
+	tr.PauseAutomations()
 
 	tr.handleCommand(context.Background(), RunnerCommand{
 		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "auto-task", LeaseID: "lease-1",
@@ -4786,11 +4790,6 @@ func TestTaskRunner_Dispatch_AutomationStillRejectedWhenAutomationsPerProjectPau
 	task := testTask("auto-task", "proj-a")
 	task.GeneratedBy = "automation:auto1234"
 	client.readyTasks["proj-a"] = []types.ResolvedTask{*task}
-	client.runnerStatus = &types.RunnerStatusResponse{
-		Running:                  true,
-		PausedProjects:           []string{"proj-a"},
-		AutomationPausedProjects: []string{"proj-a"},
-	}
 	executor := newMockExecutor()
 	processMgr := newMockProcessMgr()
 	stateMgr := newMockStateMgr()
@@ -4800,6 +4799,10 @@ func TestTaskRunner_Dispatch_AutomationStillRejectedWhenAutomationsPerProjectPau
 		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
 		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
 	})
+	// proj-a is task-paused AND automation-paused per-project. Runner
+	// state is authoritative; in production it's SSE-synced.
+	tr.PauseProject("proj-a")
+	tr.PauseProjectAutomations("proj-a")
 
 	tr.handleCommand(context.Background(), RunnerCommand{
 		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "auto-task", LeaseID: "lease-1",
@@ -4826,7 +4829,6 @@ func TestTaskRunner_Dispatch_AutomationDoesNotBypassNonAutomationTask(t *testing
 	client := newMockClient()
 	// Note: no GeneratedBy set — this is a regular task.
 	client.readyTasks["proj-a"] = []types.ResolvedTask{*testTask("regular-task", "proj-a")}
-	client.runnerStatus = &types.RunnerStatusResponse{Running: true, Paused: true}
 	executor := newMockExecutor()
 	processMgr := newMockProcessMgr()
 	stateMgr := newMockStateMgr()
@@ -4836,6 +4838,9 @@ func TestTaskRunner_Dispatch_AutomationDoesNotBypassNonAutomationTask(t *testing
 		Projects: []string{"proj-a"}, Config: cfg, Mode: ExecutionModeHeadless,
 		Client: client, Executor: executor, ProcessMgr: processMgr, StateMgr: stateMgr,
 	})
+	// Runner is globally task-paused. Runner-local state is
+	// authoritative; in production it's SSE-synced.
+	tr.PauseAll()
 
 	tr.handleCommand(context.Background(), RunnerCommand{
 		Type: CommandDispatch, ProjectID: "proj-a", TaskID: "regular-task", LeaseID: "lease-1",

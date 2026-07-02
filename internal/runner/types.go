@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"strconv"
 	"time"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // =============================================================================
@@ -503,6 +505,15 @@ type RunnerCommand struct {
 	LeaseID   string `json:"leaseId,omitempty"`
 	Lease     string `json:"-"`
 	ExpiresAt string `json:"expiresAt,omitempty"`
+
+	// Task is the fully-resolved task inlined into the dispatch payload
+	// by the scheduler. When present, the runner can skip its historical
+	// GetReadyTasks HTTP round-trip in handleDispatchCommand, which was
+	// a common source of task_lookup_failed rejections under API load.
+	// May be nil for backwards compatibility with older API servers —
+	// the runner falls back to fetching in that case. See
+	// SchedulerService.ScheduleProject.
+	Task *types.ResolvedTask `json:"task,omitempty"`
 	// Force=true on a dispatch command tells the runner to bypass its local
 	// pause/capacity gates. Set by the scheduler when the user explicitly
 	// requested a run via /run?force=true (e.g. the PWA's "Force" toast
@@ -510,6 +521,16 @@ type RunnerCommand struct {
 	// but pause is treated as an override hint, matching the documented
 	// contract in SchedulerService.RunTaskNow.
 	Force bool `json:"force,omitempty"`
+
+	// Populated for pause/resume commands. Empty ProjectID means the
+	// command applies globally (matches legacy runner-scoped pause);
+	// non-empty ProjectID targets that specific project. Scope
+	// distinguishes tasks vs automations for the pause/resume gate:
+	//   "" or "all" → both tasks and automations
+	//   "tasks"     → only the task-pause dial (dispatch gate)
+	//   "automations" → only the automation-pause dial (carve-out)
+	// See runner.go pause/resume handler.
+	Scope string `json:"scope,omitempty"`
 
 	// Populated for shutdown commands.
 	Reason string `json:"reason,omitempty"`

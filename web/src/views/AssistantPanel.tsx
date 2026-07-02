@@ -6,9 +6,10 @@ import {
   assistantChatStream,
   assistantStatus,
   uploadAttachment,
+  type AssistantHistoryMessage,
 } from "../lib/api";
 import { ALL_PROJECTS, useUI } from "../store/ui";
-import { useAssistant, type AssistantToolRecord } from "../store/assistant";
+import { useAssistant, type AssistantToolRecord, type AssistantMessage } from "../store/assistant";
 import { fileToAttachment, isImageType, type Attachment } from "./control/images";
 
 interface Props {
@@ -83,6 +84,10 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
       return;
     }
     const files = attachments;
+    // Snapshot the transcript BEFORE the new user turn is appended so we can
+    // serialize it as history for the server. The current turn is sent as
+    // the `message` field, not repeated inside history.
+    const historySnapshot = buildHistory(useAssistant.getState().messages);
     setText("");
     setAttachments([]);
     append({
@@ -105,6 +110,7 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
           message: prompt,
           model: model || undefined,
           attachments: uploaded,
+          history: historySnapshot,
           // Always feed in current PWA context so the planner defaults its
           // create_task / create_goal / create_automation / create_entry actions
           // to the active project the user is looking at.
@@ -416,4 +422,62 @@ function tryFormatJson(input: string): string {
   } catch {
     return input;
   }
+}
+
+// buildHistory converts the in-memory transcript into the compact history
+// payload the server replays into the model. See the AssistantHistoryMessage
+// type in lib/api.ts for the wire shape.
+//
+// For each assistant turn we emit:
+//   1. one role="assistant" entry carrying the reply text plus any tool_calls
+//      that resolved successfully (proposed calls are omitted — the user
+//      hadn't confirmed them yet, so they never really "ran").
+//   2. one role="tool" entry per successful tool_call, WITHOUT the result
+//      payload. The server substitutes a placeholder body when it forwards
+//      to the model, so the model remembers what it invoked and how it
+//      resolved without having to re-transmit the raw data.
+function buildHistory(messages: AssistantMessage[]): AssistantHistoryMessage[] {
+  const out: AssistantHistoryMessage[] = [];
+  for (const m of messages) {
+    if (m.role === "user") {
+      // Skip empty placeholders so the server doesn't see phantom turns.
+      if (!m.text) continue;
+      out.push({ role: "user", content: m.text });
+      continue;
+    }
+    // assistant turn
+    const usable = (m.toolCalls || []).filter(
+      (rec): rec is AssistantToolRecord & { result: NonNullable<AssistantToolRecord["result"]> } =>
+        !!rec.result && rec.result.status !== "proposed",
+    );
+    // Only emit an assistant turn if there's something to reference — either
+    // reply text, tool calls, or both. An empty assistant slot (from a
+    // streaming placeholder that never resolved) is dropped.
+    if (!m.text && usable.length === 0) continue;
+    out.push({
+      role: "assistant",
+      content: m.text || "",
+      tool_calls: usable.length
+        ? usable.map((rec) => ({
+            id: rec.call.id,
+            name: rec.call.name,
+            arguments:
+              typeof rec.call.args === "string"
+                ? rec.call.args
+                : rec.call.args
+                  ? JSON.stringify(rec.call.args)
+                  : "{}",
+          }))
+        : undefined,
+    });
+    for (const rec of usable) {
+      out.push({
+        role: "tool",
+        tool_call_id: rec.call.id,
+        name: rec.call.name,
+        status: rec.result.status,
+      });
+    }
+  }
+  return out;
 }

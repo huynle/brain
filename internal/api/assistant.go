@@ -72,6 +72,40 @@ type AssistantChatRequest struct {
 	Model       string            `json:"model,omitempty"`
 	Attachments []string          `json:"attachments,omitempty"`
 	Context     map[string]string `json:"context,omitempty"`
+	// History is the prior conversation the PWA replays back to the server so
+	// the agent loop has memory across HTTP turns. Order is oldest-first. See
+	// AssistantHistoryMessage for shape.
+	History []AssistantHistoryMessage `json:"history,omitempty"`
+}
+
+// AssistantHistoryMessage models one prior turn as replayed by the client.
+// Roles:
+//   - "user":       text-only prompt the user sent previously.
+//   - "assistant":  the model's reply. May carry ToolCalls describing tools it
+//     invoked during that turn; each ToolCall is paired with an entry of
+//     role="tool" later in the history whose ToolCallID matches.
+//   - "tool":       a placeholder for a prior tool result. To save tokens we
+//     do NOT resend the full tool result payload — the ToolCallID/Name lets
+//     the model recall it invoked the tool; if it needs the actual data
+//     again, it can re-run the (idempotent, cheap) read tool.
+type AssistantHistoryMessage struct {
+	Role       string                    `json:"role"`
+	Content    string                    `json:"content,omitempty"`
+	ToolCalls  []AssistantHistoryToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string                    `json:"tool_call_id,omitempty"`
+	Name       string                    `json:"name,omitempty"`
+	// Status carries the tool result status (completed/failed/proposed) so
+	// the model knows how a prior call resolved even though the payload is
+	// stripped.
+	Status string `json:"status,omitempty"`
+}
+
+// AssistantHistoryToolCall is the compact form the client sends. Arguments
+// stay as a JSON string (same shape the OpenRouter API uses natively).
+type AssistantHistoryToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 type AssistantPlanRequest struct {
@@ -685,6 +719,8 @@ func assistantSystemPrompt() string {
 Behavior:
 - If the user asks a factual/state question (e.g. "what automations do we have?", "why is task X stuck?"), CALL the relevant read tool first, then answer based on the result. Do not guess or invent state.
 - If the user asks you to create/update something and it is safe (non-destructive), call the write tool directly. Report what happened in plain language.
+- Prior turns are replayed to you as normal messages. Prior tool result payloads are stripped to save tokens — you can see WHICH tools you called and WHETHER they succeeded, but not the raw data. If a follow-up question relies on that data, re-invoke the tool.
+- Short affirmative user replies like "yes", "yes please", "do it", "go ahead" refer to whatever you most recently proposed or asked confirmation about in the previous assistant turn. Use the prior turn context; do NOT respond that you have no context.
 - For destructive tools (delete_*, bulk_*, move_*, runner pause/resume, feature assign/clear), do NOT auto-execute. Describe what you would do and ask for confirmation. When the user then explicitly confirms, retry the same tool call with argument _explicit=true.
 - The active project comes from the user's request context (see the JSON user message). Prefer that project unless the user names a different one.
 - Keep replies short and direct. When tool results are lists, summarize with counts and the most relevant items; do not dump raw JSON. When a task is stuck, cite the fields that explain why (classification, blocked_by, waiting_on, in_cycle, resolved_workdir, next_run, schedule_enabled, dispatch_lease).

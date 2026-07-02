@@ -236,3 +236,109 @@ func TestRunAgentLoop_TurnCapEnforced(t *testing.T) {
 		t.Fatalf("chat calls = %d, want 3 (turn cap)", len(scripted.seen))
 	}
 }
+
+// ─── replayHistory unit tests ─────────────────────────────────────────
+
+func TestReplayHistory_DropsUnpairedToolCalls(t *testing.T) {
+	// Assistant turn declares two tool_calls but only one has a matching
+	// role="tool" reply. The unpaired call must be stripped, otherwise
+	// OpenRouter rejects the request.
+	history := []AssistantHistoryMessage{
+		{Role: "user", Content: "check automations"},
+		{Role: "assistant", Content: "looking", ToolCalls: []AssistantHistoryToolCall{
+			{ID: "c1", Name: "list_automations", Arguments: "{}"},
+			{ID: "orphan", Name: "list_tasks", Arguments: "{}"},
+		}},
+		{Role: "tool", ToolCallID: "c1", Name: "list_automations", Status: "completed"},
+	}
+	msgs := replayHistory(history)
+	// Expected: user, assistant (with c1 only), tool for c1.
+	if len(msgs) != 3 {
+		t.Fatalf("msgs = %d, want 3: %+v", len(msgs), msgs)
+	}
+	if msgs[0].Role != "user" || msgs[0].Content != "check automations" {
+		t.Fatalf("msgs[0] = %+v", msgs[0])
+	}
+	if msgs[1].Role != "assistant" {
+		t.Fatalf("msgs[1] role = %q", msgs[1].Role)
+	}
+	if len(msgs[1].ToolCalls) != 1 || msgs[1].ToolCalls[0].ID != "c1" {
+		t.Fatalf("assistant tool_calls = %+v, want just c1", msgs[1].ToolCalls)
+	}
+	if msgs[2].Role != "tool" || msgs[2].ToolCallID != "c1" {
+		t.Fatalf("msgs[2] = %+v", msgs[2])
+	}
+	// The stripped tool body must include a note so the model knows the
+	// payload was omitted.
+	if !strings.Contains(msgs[2].Content, "omitted") {
+		t.Fatalf("tool content = %q, want stripped-payload note", msgs[2].Content)
+	}
+}
+
+func TestReplayHistory_EmptyReturnsNil(t *testing.T) {
+	if replayHistory(nil) != nil {
+		t.Fatalf("nil history should return nil, got non-nil")
+	}
+	if replayHistory([]AssistantHistoryMessage{}) != nil {
+		t.Fatalf("empty history should return nil, got non-nil")
+	}
+}
+
+// End-to-end: server must forward the caller's history into the OpenRouter
+// messages array, ahead of the new user turn.
+func TestRunAgentLoop_ForwardsHistory(t *testing.T) {
+	turn := makeSSE(
+		`{"choices":[{"delta":{"content":"applied 1-5 to the cron."}}]}`,
+	)
+	scripted := newScriptedOpenRouter([]string{turn})
+	server := httptest.NewServer(scripted.handler(t))
+	defer server.Close()
+	t.Setenv("BRAIN_TEST_OPENROUTER_KEY", "test-key")
+
+	planner := NewOpenRouterAssistantPlanner("openrouter", server.URL, "BRAIN_TEST_OPENROUTER_KEY", "test-model", 0)
+	svc := NewAssistantService(AssistantServiceOptions{Enabled: true, Planner: planner, Brain: &mockBrainService{}, MaxToolTurns: 3})
+
+	history := []AssistantHistoryMessage{
+		{Role: "user", Content: "did you set it to Mon-Fri only?"},
+		{Role: "assistant", Content: "no, it's every day. Want me to update it to */5 * * * 1-5?"},
+	}
+	_, err := svc.runAgentLoop(context.Background(), AssistantChatRequest{
+		Project: "prod", Message: "yes please", History: history,
+	}, nil)
+	if err != nil {
+		t.Fatalf("runAgentLoop err = %v", err)
+	}
+	if len(scripted.seen) != 1 {
+		t.Fatalf("chat calls = %d, want 1", len(scripted.seen))
+	}
+	var payload struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	if err := json.Unmarshal(scripted.seen[0], &payload); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	// Expected order: system, user(hist), assistant(hist), user(new).
+	if len(payload.Messages) != 4 {
+		t.Fatalf("messages = %d, want 4: %+v", len(payload.Messages), payload.Messages)
+	}
+	if payload.Messages[0].Role != "system" {
+		t.Fatalf("msg[0] role = %q, want system", payload.Messages[0].Role)
+	}
+	if payload.Messages[1].Role != "user" || !strings.Contains(payload.Messages[1].Content, "Mon-Fri") {
+		t.Fatalf("msg[1] = %+v, want user history", payload.Messages[1])
+	}
+	if payload.Messages[2].Role != "assistant" || !strings.Contains(payload.Messages[2].Content, "every day") {
+		t.Fatalf("msg[2] = %+v, want assistant history", payload.Messages[2])
+	}
+	if payload.Messages[3].Role != "user" || !strings.Contains(payload.Messages[3].Content, "yes please") {
+		t.Fatalf("msg[3] = %+v, want current user turn", payload.Messages[3])
+	}
+	// Sanity: the current user turn is the JSON-encoded request; make sure
+	// the history field itself isn't echoed back into the message body.
+	if strings.Contains(payload.Messages[3].Content, "\"history\"") {
+		t.Fatalf("current user content leaked history field: %q", payload.Messages[3].Content)
+	}
+}

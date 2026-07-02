@@ -554,6 +554,19 @@ export interface AssistantGoalDraft {
   blocked_statuses?: string[];
 }
 
+// AssistantHistoryMessage is the compact shape the PWA replays to the server
+// so the agent loop has memory across HTTP turns. Tool result payloads are
+// intentionally omitted — role="tool" entries carry only the tool_call_id +
+// name + status. The server substitutes a placeholder body when replaying.
+export interface AssistantHistoryMessage {
+  role: "user" | "assistant" | "tool";
+  content?: string;
+  tool_calls?: { id: string; name: string; arguments?: string }[];
+  tool_call_id?: string;
+  name?: string;
+  status?: string;
+}
+
 export const assistantStatus = () =>
   api<AssistantStatusResponse>("/api/v1/assistant/status");
 
@@ -563,6 +576,7 @@ export const assistantChat = (body: {
   model?: string;
   attachments?: string[];
   context?: Record<string, string>;
+  history?: AssistantHistoryMessage[];
 }) => api<AssistantChatResponse>("/api/v1/assistant/chat", { method: "POST", body });
 
 export interface AssistantStreamEvent {
@@ -583,6 +597,7 @@ export async function assistantChatStream(
     model?: string;
     attachments?: string[];
     context?: Record<string, string>;
+    history?: AssistantHistoryMessage[];
   },
   onEvent: (event: AssistantStreamEvent) => void,
 ): Promise<void> {

@@ -99,8 +99,9 @@ func (s *AssistantService) runAgentLoop(
 
 	msgs := []chatMessage{
 		{Role: "system", Content: assistantSystemPrompt()},
-		{Role: "user", Content: buildUserContent(req)},
 	}
+	msgs = append(msgs, replayHistory(req.History)...)
+	msgs = append(msgs, chatMessage{Role: "user", Content: buildUserContent(req)})
 
 	result := agentLoopResult{}
 	for turn := 0; turn < s.maxToolTurns; turn++ {
@@ -250,7 +251,91 @@ func (s *AssistantService) executeToolCall(
 // request including project, attachments, and PWA context. This mirrors the
 // legacy planner behavior.
 func buildUserContent(req AssistantChatRequest) string {
-	return mustJSON(req)
+	// The history field is stripped from the JSON view so the model doesn't
+	// see it twice (once as messages, once as data). Everything else stays.
+	trimmed := req
+	trimmed.History = nil
+	return mustJSON(trimmed)
+}
+
+// replayHistory converts the client-provided history into the ordered
+// chatMessage slice the OpenRouter API expects. Tool result payloads are
+// stripped: the client only sends the tool_call_id + name + status, and we
+// substitute a placeholder body. If the model needs the actual data again it
+// can re-invoke the read tool.
+//
+// Invariants preserved:
+//   - Every assistant message with ToolCalls is followed (later in the slice,
+//     though not necessarily immediately) by role="tool" messages whose
+//     ToolCallID references each call. The OpenRouter API rejects tool_calls
+//     that never get a matching tool response — so if the client's history is
+//     malformed (an assistant turn with tool_calls but no matching tool
+//     entries), we drop the tool_calls to keep the model conversation legal.
+func replayHistory(history []AssistantHistoryMessage) []chatMessage {
+	if len(history) == 0 {
+		return nil
+	}
+	// First pass: collect the set of tool_call IDs that have matching tool
+	// responses. Tool calls without responses would cause OpenRouter to error.
+	answered := map[string]bool{}
+	for _, h := range history {
+		if h.Role == "tool" && h.ToolCallID != "" {
+			answered[h.ToolCallID] = true
+		}
+	}
+	out := make([]chatMessage, 0, len(history))
+	for _, h := range history {
+		switch h.Role {
+		case "user":
+			// Send prior user turns as plain text (no JSON wrap; those were
+			// already-consumed prompts).
+			out = append(out, chatMessage{Role: "user", Content: h.Content})
+		case "assistant":
+			m := chatMessage{Role: "assistant", Content: h.Content}
+			for _, tc := range h.ToolCalls {
+				if !answered[tc.ID] {
+					// Drop unpaired tool_calls to avoid a "tool_call without
+					// tool response" error from OpenRouter. The assistant
+					// message text is still preserved.
+					continue
+				}
+				m.ToolCalls = append(m.ToolCalls, toolCall{
+					ID:   tc.ID,
+					Type: "function",
+					Function: toolCallFunction{
+						Name:      tc.Name,
+						Arguments: firstNonEmptyString(tc.Arguments, "{}"),
+					},
+				})
+			}
+			out = append(out, m)
+		case "tool":
+			if h.ToolCallID == "" {
+				continue
+			}
+			status := h.Status
+			if status == "" {
+				status = "completed"
+			}
+			// Stripped payload: keep just enough breadcrumbs that the model
+			// remembers it invoked the tool and how it resolved.
+			stub := map[string]any{
+				"status": status,
+				"note":   "prior tool result payload omitted to save tokens; re-invoke the tool if the data is needed again",
+			}
+			body, _ := json.Marshal(stub)
+			out = append(out, chatMessage{
+				Role:       "tool",
+				ToolCallID: h.ToolCallID,
+				Name:       h.Name,
+				Content:    string(body),
+			})
+		default:
+			// Ignore unknown roles rather than fail — history is
+			// client-controlled and may see forward-compat entries.
+		}
+	}
+	return out
 }
 
 // encodeToolResponse renders a tool result (or error) as JSON for the tool

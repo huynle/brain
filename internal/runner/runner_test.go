@@ -537,8 +537,13 @@ func newMockProcessMgr() *mockProcessMgr {
 func (m *mockProcessMgr) Add(taskID string, task RunningTask, proc Process) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, exists := m.processes[taskID]; exists {
-		return fmt.Errorf("task %s already tracked", taskID)
+	if existing, exists := m.processes[taskID]; exists {
+		if existing.Proc != nil {
+			return fmt.Errorf("task %s already tracked", taskID)
+		}
+		existing.Task = task
+		existing.Proc = proc
+		return nil
 	}
 	m.processes[taskID] = &ProcessInfo{Task: task, Proc: proc}
 	return nil
@@ -573,6 +578,9 @@ func (m *mockProcessMgr) GetAllRunning() []ProcessInfo {
 	defer m.mu.Unlock()
 	var result []ProcessInfo
 	for _, info := range m.processes {
+		if info.Proc == nil {
+			continue
+		}
 		if !info.Proc.Exited() {
 			result = append(result, *info)
 		}
@@ -591,11 +599,38 @@ func (m *mockProcessMgr) RunningCount() int {
 	defer m.mu.Unlock()
 	count := 0
 	for _, info := range m.processes {
+		if info.Proc == nil {
+			count++
+			continue
+		}
 		if !info.Proc.Exited() {
 			count++
 		}
 	}
 	return count
+}
+
+func (m *mockProcessMgr) ReserveSlot(taskID string, maxParallel int) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.processes[taskID]; exists {
+		return true
+	}
+	if maxParallel > 0 && len(m.processes) >= maxParallel {
+		return false
+	}
+	m.processes[taskID] = &ProcessInfo{}
+	return true
+}
+
+func (m *mockProcessMgr) ReleaseReservation(taskID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	info, exists := m.processes[taskID]
+	if !exists || (info != nil && info.Proc != nil) {
+		return
+	}
+	delete(m.processes, taskID)
 }
 
 func (m *mockProcessMgr) CheckCompletion(taskID string, checkTaskFile bool) CompletionStatus {

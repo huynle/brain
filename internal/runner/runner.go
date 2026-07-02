@@ -100,6 +100,18 @@ type TaskProcessManager interface {
 	UpdatePort(taskID string, port int)
 	UpdateSessionID(taskID string, sessionID string)
 	UpdateIdleSince(taskID string, idleSince string)
+
+	// ReserveSlot atomically holds an execution slot for a task if
+	// capacity is available. Returns true when the slot is granted or
+	// the task is already tracked (idempotent). Callers must call
+	// ReleaseReservation (or Add, which upgrades) to free the slot.
+	// Closes a race between the RunningCount check and the actual
+	// spawn where multiple dispatch workers could overspend capacity.
+	ReserveSlot(taskID string, maxParallel int) bool
+	// ReleaseReservation frees an unspawned slot reservation. No-op
+	// when the task has already been Add'd as a live process or no
+	// reservation exists.
+	ReleaseReservation(taskID string)
 }
 
 // TaskStateManager abstracts the StateManager for testability.
@@ -703,10 +715,14 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 			"project_paused", tr.pauseCache[cmd.ProjectID],
 		)
 	}
-	if tr.processMgr.RunningCount() >= tr.getMaxParallel() {
+	if !tr.processMgr.ReserveSlot(cmd.TaskID, tr.getMaxParallel()) {
 		tr.rejectDispatch(ctx, cmd, leaseID, "capacity_unavailable", "runner has no available execution slots")
 		return
 	}
+	// From here on, any rejection must release the reservation.
+	// rejectDispatch calls ReleaseReservation internally so this
+	// happens automatically. The reservation is upgraded to a live
+	// process by ProcessManager.Add inside claimAndSpawn on success.
 
 	// Prefer the task inlined in the dispatch payload — the scheduler
 	// has the fully-resolved ResolvedTask when it creates the lease, so
@@ -773,12 +789,22 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 		"lease_id", leaseID,
 	)
 	if err := tr.claimAndSpawnWithWorkdir(ctx, task, cmd.ProjectID, workdir); err != nil {
+		// Spawn failed after the ack: release both the API-side lease
+		// and the local capacity reservation so the runner can accept
+		// new work in this slot.
+		tr.processMgr.ReleaseReservation(cmd.TaskID)
 		tr.releaseDispatchLease(ctx, cmd.ProjectID, cmd.TaskID)
 		tr.logger.Printf("claim and spawn dispatched task failed for %s/%s: %v", cmd.ProjectID, cmd.TaskID, err)
 	}
 }
 
 func (tr *TaskRunner) rejectDispatch(ctx context.Context, cmd RunnerCommand, leaseID, code, message string) {
+	// If the dispatch had reached the reserve-slot step, free that
+	// slot so subsequent dispatches see accurate capacity. Safe no-op
+	// when no reservation exists (rejections before ReserveSlot).
+	if cmd.TaskID != "" {
+		tr.processMgr.ReleaseReservation(cmd.TaskID)
+	}
 	// Always log the rejection so operators can diagnose why a dispatch
 	// fell on the floor — previously the HTTP error was discarded, making
 	// "lease stuck in pushed" mysteries impossible to track down.

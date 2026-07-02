@@ -98,6 +98,10 @@ func (s *StorageLayer) GetOrphans(ctx context.Context, opts *OrphanOptions) ([]*
 		query += ` AND type = ?`
 		params = append(params, opts.Type)
 	}
+	if opts != nil && opts.Path != "" {
+		query += ` AND path LIKE ?`
+		params = append(params, opts.Path+"%")
+	}
 
 	limit := defaultOrphanLimit
 	if opts != nil && opts.Limit > 0 {

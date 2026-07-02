@@ -70,13 +70,19 @@ type BrainService interface {
 	GetSection(ctx context.Context, path string, title string, includeSubsections bool) (*types.SectionContentResponse, error)
 
 	// GetStats returns brain statistics.
-	GetStats(ctx context.Context, global bool) (*types.StatsResponse, error)
+	// When project is set, stats are scoped to that project (path prefix
+	// projects/<project>/); the `global` flag is ignored in that case.
+	// When project is empty and global=true, stats cover global entries only.
+	// When both are empty/false, stats span all entries.
+	GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error)
 
 	// GetOrphans returns entries with no incoming links.
-	GetOrphans(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error)
+	// When project is set, results are scoped to entries under projects/<project>/.
+	GetOrphans(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error)
 
 	// GetStale returns entries not verified in N days.
-	GetStale(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
+	// When project is set, results are scoped to entries under projects/<project>/.
+	GetStale(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error)
 
 	// Verify marks an entry as verified.
 	Verify(ctx context.Context, path string) (*types.VerifyResponse, error)

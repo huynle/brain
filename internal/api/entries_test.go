@@ -35,9 +35,9 @@ type mockBrainService struct {
 	getRelatedFunc     func(ctx context.Context, path string, limit int) ([]types.BrainEntry, error)
 	getSectionsFunc    func(ctx context.Context, path string) (*types.SectionsResponse, error)
 	getSectionFunc     func(ctx context.Context, path string, title string, includeSubsections bool) (*types.SectionContentResponse, error)
-	getStatsFunc       func(ctx context.Context, global bool) (*types.StatsResponse, error)
-	getOrphansFunc     func(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error)
-	getStaleFunc       func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
+	getStatsFunc       func(ctx context.Context, global bool, project string) (*types.StatsResponse, error)
+	getOrphansFunc     func(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error)
+	getStaleFunc       func(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error)
 	verifyFunc         func(ctx context.Context, path string) (*types.VerifyResponse, error)
 	generateLinkFunc   func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
 	bulkUpdateFunc     func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
@@ -175,23 +175,23 @@ func (m *mockBrainService) GetSection(ctx context.Context, path string, title st
 	return nil, fmt.Errorf("getSectionFunc not set")
 }
 
-func (m *mockBrainService) GetStats(ctx context.Context, global bool) (*types.StatsResponse, error) {
+func (m *mockBrainService) GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
 	if m.getStatsFunc != nil {
-		return m.getStatsFunc(ctx, global)
+		return m.getStatsFunc(ctx, global, project)
 	}
 	return nil, fmt.Errorf("getStatsFunc not set")
 }
 
-func (m *mockBrainService) GetOrphans(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error) {
+func (m *mockBrainService) GetOrphans(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if m.getOrphansFunc != nil {
-		return m.getOrphansFunc(ctx, entryType, limit)
+		return m.getOrphansFunc(ctx, entryType, limit, project)
 	}
 	return nil, fmt.Errorf("getOrphansFunc not set")
 }
 
-func (m *mockBrainService) GetStale(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error) {
+func (m *mockBrainService) GetStale(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if m.getStaleFunc != nil {
-		return m.getStaleFunc(ctx, days, entryType, limit)
+		return m.getStaleFunc(ctx, days, entryType, limit, project)
 	}
 	return nil, fmt.Errorf("getStaleFunc not set")
 }

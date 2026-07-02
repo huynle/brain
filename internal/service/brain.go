@@ -2125,8 +2125,9 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 	}
 
 	opts := &storage.SearchOptions{
-		Limit: limit,
-		Type:  req.Type,
+		Limit:     limit,
+		Type:      req.Type,
+		ProjectID: req.Project,
 	}
 
 	rows, err := s.storage.SearchNotes(ctx, req.Query, opts)
@@ -2417,12 +2418,22 @@ func (s *BrainServiceImpl) GetSection(ctx context.Context, path string, title st
 // =============================================================================
 
 // GetStats returns aggregate statistics.
-// When global=true, returns only global entries stats.
-// When global=false, returns total stats across all entries.
-func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool) (*types.StatsResponse, error) {
-	// Primary stats based on the global flag
+//
+// Filter precedence (highest wins):
+//  1. project != ""  → primary stats are scoped to entries under
+//     projects/<project>/. `global` is ignored in that case.
+//  2. global == true → primary stats include only entries under global/.
+//  3. neither       → primary stats span all entries.
+//
+// The response always includes overall GlobalEntries and ProjectEntries
+// counts so callers can compare a scoped result against the totals.
+func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
+	// Primary stats based on the filter precedence above.
 	var primaryOpts *storage.StatsOptions
-	if global {
+	switch {
+	case project != "":
+		primaryOpts = &storage.StatsOptions{Path: "projects/" + project + "/"}
+	case global:
 		primaryOpts = &storage.StatsOptions{Path: "global/"}
 	}
 
@@ -2457,14 +2468,18 @@ func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool) (*types.St
 }
 
 // GetOrphans returns entries with no incoming links.
-func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error) {
+func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	noteRows, err := s.storage.GetOrphans(ctx, &storage.OrphanOptions{
+	opts := &storage.OrphanOptions{
 		Type:  entryType,
 		Limit: limit,
-	})
+	}
+	if project != "" {
+		opts.Path = "projects/" + project + "/"
+	}
+	noteRows, err := s.storage.GetOrphans(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("get orphans: %w", err)
 	}
@@ -2472,17 +2487,22 @@ func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, lim
 }
 
 // GetStale returns entries not verified in N days.
-func (s *BrainServiceImpl) GetStale(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error) {
+// When project is set, results are scoped to entries under projects/<project>/.
+func (s *BrainServiceImpl) GetStale(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if days <= 0 {
 		days = 30
 	}
 	if limit <= 0 {
 		limit = 50
 	}
-	noteRows, err := s.storage.GetStaleEntries(ctx, days, &storage.StaleOptions{
+	opts := &storage.StaleOptions{
 		Type:  entryType,
 		Limit: limit,
-	})
+	}
+	if project != "" {
+		opts.Path = "projects/" + project + "/"
+	}
+	noteRows, err := s.storage.GetStaleEntries(ctx, days, opts)
 	if err != nil {
 		return nil, fmt.Errorf("get stale entries: %w", err)
 	}

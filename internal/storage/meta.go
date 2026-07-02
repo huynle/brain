@@ -71,6 +71,10 @@ func (s *StorageLayer) GetStaleEntries(ctx context.Context, days int, opts *Stal
 		query += ` AND n.type = ?`
 		params = append(params, opts.Type)
 	}
+	if opts != nil && opts.Path != "" {
+		query += ` AND n.path LIKE ?`
+		params = append(params, opts.Path+"%")
+	}
 
 	limit := defaultStaleLimit
 	if opts != nil && opts.Limit > 0 {

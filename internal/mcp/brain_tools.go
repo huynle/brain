@@ -216,6 +216,7 @@ func registerBrainRecall(s *Server, client *APIClient) {
 			Properties: map[string]Property{
 				"path":    {Type: "string", Description: "Path or ID to the note"},
 				"title":   {Type: "string", Description: "Title to search for (exact match)"},
+				"project": {Type: "string", Description: "When resolving by title, restrict the match to this project ID (e.g., 'orion-ai'). Ignored when 'path' is provided."},
 				"include": {Type: "array", Items: &Property{Type: "string"}, Description: "Optional related data to include, e.g. ['attachments', 'attachment_text']. Passed to the API as a comma-separated include query."},
 			},
 		},
@@ -229,13 +230,20 @@ func registerBrainRecall(s *Server, client *APIClient) {
 				return "Please provide a path or title", nil
 			}
 
+			searchBody := map[string]any{"query": title, "limit": 5}
+			// If a project was specified, scope the title lookup so two
+			// projects with a same-titled note don't collide.
+			if project := StringArg(args, "project", ""); project != "" {
+				searchBody["project"] = project
+			}
+
 			var searchResp struct {
 				Results []struct {
 					Path  string `json:"path"`
 					Title string `json:"title"`
 				} `json:"results"`
 			}
-			if err := client.Request(ctx, "POST", "/search", map[string]any{"query": title, "limit": 5}, nil, &searchResp); err != nil {
+			if err := client.Request(ctx, "POST", "/search", searchBody, nil, &searchResp); err != nil {
 				return "", err
 			}
 
@@ -821,6 +829,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 			Type: "object",
 			Properties: map[string]Property{
 				"query":      {Type: "string", Description: "Search query"},
+				"project":    {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to search across all projects."},
 				"type":       {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 				"status":     {Type: "string", Enum: types.EntryStatuses, Description: "Filter by status"},
 				"feature_id": {Type: "string", Description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"},
@@ -877,6 +886,7 @@ Filename filtering supports:
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
+				"project":    {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to list across all projects."},
 				"type":       {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 				"status":     {Type: "string", Enum: types.EntryStatuses, Description: "Filter by status"},
 				"feature_id": {Type: "string", Description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"},
@@ -890,6 +900,9 @@ Filename filtering supports:
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		// Convert tags array to comma-separated string for GET query params
 		params := make(map[string]string)
+		if v := StringArg(args, "project", ""); v != "" {
+			params["project"] = v
+		}
 		if v := StringArg(args, "type", ""); v != "" {
 			params["type"] = v
 		}
@@ -954,6 +967,7 @@ func registerBrainInject(s *Server, client *APIClient) {
 			Type: "object",
 			Properties: map[string]Property{
 				"query":      {Type: "string", Description: "What context are you looking for?"},
+				"project":    {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to search across all projects."},
 				"maxEntries": {Type: "number", Description: "Maximum entries to include (default: 5)"},
 				"type":       {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 			},
@@ -1379,6 +1393,7 @@ Examples:
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
+				"project": {Type: "string", Description: "Convenience shortcut for filter.project: restrict updates to entries in this project (e.g., 'orion-ai'). Only used in filter mode; explicit-entries mode ignores this. If filter already has a project field, that value wins."},
 				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string). Use with 'updates'."},
 				"updates": {Type: "object", Description: "Updates to apply to matched entries. Fields: status (string), priority (string), tags (string[]), append (string), note (string). Use with 'filter'."},
 				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: { status?, priority?, tags?, append?, note? } }"},
@@ -1389,6 +1404,22 @@ Examples:
 		// Validate: must have either (filter + updates) or entries, not both, not neither
 		filter := sanitizeObjectArg(args["filter"])
 		updates := sanitizeUpdateValue(args["updates"])
+
+		// Merge the top-level `project` convenience shortcut into filter.project.
+		// The nested value wins if the caller set both, so we don't clobber
+		// intentional filter{}-only usage. This lets LLMs discover project
+		// scoping without needing to know the nested filter shape.
+		if topProject := StringArg(args, "project", ""); topProject != "" {
+			filterMap, _ := filter.(map[string]any)
+			if filterMap == nil {
+				filterMap = make(map[string]any)
+			}
+			if _, alreadySet := filterMap["project"]; !alreadySet {
+				filterMap["project"] = topProject
+			}
+			filter = filterMap
+		}
+
 		hasFilter := hasFields(filter)
 		hasUpdates := hasFields(updates)
 		_, hasEntries := args["entries"]
@@ -1556,13 +1587,17 @@ func registerBrainStats(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"global": {Type: "boolean", Description: "Show only global entries stats"},
+				"global":  {Type: "boolean", Description: "Show only global entries stats"},
+				"project": {Type: "string", Description: "Scope stats to a project (e.g., 'orion-ai'). Takes precedence over 'global' when both are set."},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		params := make(map[string]string)
 		if v, ok := args["global"].(bool); ok {
 			params["global"] = fmt.Sprintf("%t", v)
+		}
+		if v := StringArg(args, "project", ""); v != "" {
+			params["project"] = v
 		}
 
 		var resp struct {
@@ -1760,8 +1795,9 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"path":  {Type: "string", Description: "Path to the plan entry"},
-				"title": {Type: "string", Description: "Title to search for"},
+				"path":    {Type: "string", Description: "Path to the plan entry"},
+				"title":   {Type: "string", Description: "Title to search for"},
+				"project": {Type: "string", Description: "When resolving by title, restrict the match to this project ID. Ignored when 'path' is provided."},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -1773,13 +1809,18 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 				return "Please provide either a path or title", nil
 			}
 
+			searchBody := map[string]any{"query": title, "limit": 5}
+			if project := StringArg(args, "project", ""); project != "" {
+				searchBody["project"] = project
+			}
+
 			var searchResp struct {
 				Results []struct {
 					Path  string `json:"path"`
 					Title string `json:"title"`
 				} `json:"results"`
 			}
-			if err := client.Request(ctx, "POST", "/search", map[string]any{"query": title, "limit": 5}, nil, &searchResp); err != nil {
+			if err := client.Request(ctx, "POST", "/search", searchBody, nil, &searchResp); err != nil {
 				return "", err
 			}
 
@@ -1879,9 +1920,10 @@ func registerBrainStale(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"days":  {Type: "number", Description: "Days threshold (default: 30)"},
-				"type":  {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
-				"limit": {Type: "number", Description: "Maximum results (default: 20)"},
+				"days":    {Type: "number", Description: "Days threshold (default: 30)"},
+				"type":    {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
+				"limit":   {Type: "number", Description: "Maximum results (default: 20)"},
+				"project": {Type: "string", Description: "Restrict to entries under a specific project (e.g., 'orion-ai'). Omit for cross-project results."},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -1892,6 +1934,9 @@ func registerBrainStale(s *Server, client *APIClient) {
 		}
 		if v := StringArg(args, "type", ""); v != "" {
 			params["type"] = v
+		}
+		if v := StringArg(args, "project", ""); v != "" {
+			params["project"] = v
 		}
 
 		var resp struct {
@@ -1946,8 +1991,9 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"type":  {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
-				"limit": {Type: "number", Description: "Maximum results (default: 20)"},
+				"type":    {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
+				"limit":   {Type: "number", Description: "Maximum results (default: 20)"},
+				"project": {Type: "string", Description: "Restrict to entries under a specific project (e.g., 'orion-ai'). Omit for cross-project results."},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -1956,6 +2002,9 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 		}
 		if v := StringArg(args, "type", ""); v != "" {
 			params["type"] = v
+		}
+		if v := StringArg(args, "project", ""); v != "" {
+			params["project"] = v
 		}
 
 		var resp struct {

@@ -1958,3 +1958,454 @@ func TestMatchesAutomationEvent(t *testing.T) {
 		}
 	}
 }
+
+// =============================================================================
+// Project-scoping regression tests
+//
+// Background: users asking an LLM for entries in a specific project were
+// getting cross-project results because MCP tool schemas didn't advertise
+// a `project` parameter, even when the underlying API supported it. These
+// tests lock in that (a) each affected tool's schema exposes `project`,
+// and (b) the handler forwards it to the API.
+// =============================================================================
+
+// projectSchemaFixtures maps each tool that should accept a `project` filter
+// to a short human-readable note. Kept in one place so future additions
+// (P1/P3 fixes) can extend coverage in a single edit.
+var projectSchemaFixtures = []struct {
+	tool string
+	note string
+}{
+	{"brain_list", "P0 — reported bug: list must be scopable by project"},
+	{"brain_search", "P0 — sibling of brain_list; API already accepts SearchRequest.Project"},
+	{"brain_recall", "P3 — title fallback must not silently return wrong-project matches"},
+	{"brain_plan_sections", "P3 — same title-fallback risk as brain_recall"},
+	{"brain_bulk_update", "P2 — top-level project shortcut merges into filter.project"},
+	{"brain_inject", "P1 — service now honors Project in InjectRequest via SearchOptions.ProjectID"},
+	{"brain_stats", "P1 — service+API+storage all extended to accept project"},
+	{"brain_stale", "P1 — service+API+storage all extended to accept project"},
+	{"brain_orphans", "P1 — service+API+storage all extended to accept project"},
+}
+
+func TestBrainTools_ProjectParameter_InSchema(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:3333")
+	RegisterBrainTools(s, client)
+
+	for _, fx := range projectSchemaFixtures {
+		fx := fx
+		t.Run(fx.tool, func(t *testing.T) {
+			rt, ok := s.tools[fx.tool]
+			if !ok {
+				t.Fatalf("%s not registered (%s)", fx.tool, fx.note)
+			}
+			prop, ok := rt.tool.InputSchema.Properties["project"]
+			if !ok {
+				t.Fatalf("%s schema missing 'project' property (%s)", fx.tool, fx.note)
+			}
+			if prop.Type != "string" {
+				t.Errorf("%s.project.type = %q, want %q", fx.tool, prop.Type, "string")
+			}
+			if prop.Description == "" {
+				t.Errorf("%s.project has empty description; LLMs need guidance", fx.tool)
+			}
+		})
+	}
+}
+
+// TestBrainList_Handler_ForwardsProject verifies that when `project` is
+// passed to the brain_list tool, it reaches the API as a query parameter.
+// This is the exact bug that had the LLM fall back to raw curl.
+func TestBrainList_Handler_ForwardsProject(t *testing.T) {
+	var gotProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "GET" || r.URL.Path != "/api/v1/entries" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		gotProject = r.URL.Query().Get("project")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"entries": []map[string]any{
+				{"id": "abc", "path": "projects/orion-ai/summary/abc.md", "title": "Orion Summary", "type": "summary", "status": "active"},
+			},
+			"total": 1,
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_list"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"project": "orion-ai",
+		"limit":   float64(1),
+		"sortBy":  "modified",
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if gotProject != "orion-ai" {
+		t.Errorf("brain_list did not forward project param: got %q, want %q", gotProject, "orion-ai")
+	}
+}
+
+// TestBrainList_Handler_OmitsProjectWhenAbsent guards against a regression
+// where the handler starts sending an empty `project=` (which the API
+// treats as "match empty string" in some paths).
+func TestBrainList_Handler_OmitsProjectWhenAbsent(t *testing.T) {
+	var sawProjectKey bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, sawProjectKey = r.URL.Query()["project"]
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "total": 0})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_list"].handler
+	if _, err := handler(context.Background(), map[string]any{"limit": float64(1)}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if sawProjectKey {
+		t.Error("brain_list sent a 'project' query param when the arg was absent; should be omitted entirely")
+	}
+}
+
+// TestBrainSearch_Handler_ForwardsProject verifies that brain_search
+// (which sends its args map verbatim as the POST body) delivers `project`
+// to /api/v1/search. This is the analog of TestBrainList_Handler_ForwardsProject.
+func TestBrainSearch_Handler_ForwardsProject(t *testing.T) {
+	var bodyProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/search" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		bodyProject, _ = body["project"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"results": []any{}, "total": 0})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_search"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"query":   "hello",
+		"project": "orion-ai",
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if bodyProject != "orion-ai" {
+		t.Errorf("brain_search did not forward project in POST body: got %q, want %q", bodyProject, "orion-ai")
+	}
+}
+
+// TestBrainRecall_TitleFallback_ForwardsProject verifies that when
+// brain_recall is called with `title` + `project`, the intermediate
+// /search request includes the project filter, so a same-titled note
+// in a different project cannot silently be returned.
+func TestBrainRecall_TitleFallback_ForwardsProject(t *testing.T) {
+	var searchBodyProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/search":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode search body: %v", err)
+			}
+			searchBodyProject, _ = body["project"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{
+					{"path": "projects/orion-ai/summary/abc.md", "title": "Overview"},
+				},
+			})
+		case "/api/v1/entries/projects/orion-ai/summary/abc.md":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"path":    "projects/orion-ai/summary/abc.md",
+				"title":   "Overview",
+				"type":    "summary",
+				"status":  "active",
+				"content": "body",
+			})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_recall"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"title":   "Overview",
+		"project": "orion-ai",
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if searchBodyProject != "orion-ai" {
+		t.Errorf("brain_recall title-fallback did not forward project: got %q, want %q", searchBodyProject, "orion-ai")
+	}
+}
+
+// TestBrainPlanSections_TitleFallback_ForwardsProject is the analog of
+// TestBrainRecall_TitleFallback_ForwardsProject for brain_plan_sections.
+func TestBrainPlanSections_TitleFallback_ForwardsProject(t *testing.T) {
+	var searchBodyProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/search":
+			var body map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode search body: %v", err)
+			}
+			searchBodyProject, _ = body["project"].(string)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"results": []map[string]any{
+					{"path": "projects/orion-ai/plan/auth.md", "title": "Auth Plan"},
+				},
+			})
+		case "/api/v1/entries/projects/orion-ai/plan/auth.md/sections":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"sections": []map[string]any{{"title": "Overview", "level": 2, "line": 1}},
+				"total":    1,
+			})
+		case "/api/v1/entries/projects/orion-ai/plan/auth.md":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"title": "Auth Plan",
+				"type":  "plan",
+			})
+		default:
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_plan_sections"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"title":   "Auth Plan",
+		"project": "orion-ai",
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if searchBodyProject != "orion-ai" {
+		t.Errorf("brain_plan_sections title-fallback did not forward project: got %q, want %q", searchBodyProject, "orion-ai")
+	}
+}
+
+// TestBrainBulkUpdate_TopLevelProject_MergedIntoFilter verifies the P2
+// discoverability improvement: a top-level `project` field is copied into
+// filter.project (which the API already recognizes), so LLMs don't need
+// to know the nested filter shape.
+func TestBrainBulkUpdate_TopLevelProject_MergedIntoFilter(t *testing.T) {
+	var filterProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/entries/bulk-update" {
+			t.Errorf("unexpected: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		if f, ok := body["filter"].(map[string]any); ok {
+			filterProject, _ = f["project"].(string)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"updated": 0, "failed": 0, "total": 0, "dry_run": true})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_bulk_update"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"project": "orion-ai",
+		"filter":  map[string]any{"status": "draft"},
+		"updates": map[string]any{"status": "pending"},
+		"dry_run": true,
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if filterProject != "orion-ai" {
+		t.Errorf("top-level project did not merge into filter.project: got %q, want %q", filterProject, "orion-ai")
+	}
+}
+
+// TestBrainBulkUpdate_ExplicitFilterProject_WinsOverTopLevel verifies the
+// non-clobbering rule: if the caller sets filter.project explicitly, that
+// wins over any top-level shortcut.
+func TestBrainBulkUpdate_ExplicitFilterProject_WinsOverTopLevel(t *testing.T) {
+	var filterProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if f, ok := body["filter"].(map[string]any); ok {
+			filterProject, _ = f["project"].(string)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"updated": 0, "total": 0, "dry_run": true})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_bulk_update"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"project": "top-level",
+		"filter":  map[string]any{"project": "nested-wins", "status": "draft"},
+		"updates": map[string]any{"status": "pending"},
+		"dry_run": true,
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if filterProject != "nested-wins" {
+		t.Errorf("explicit filter.project should win: got %q, want %q", filterProject, "nested-wins")
+	}
+}
+
+// TestBrainInject_Handler_ForwardsProject verifies P1.a: brain_inject
+// passes `project` in its POST body, which the extended types.InjectRequest
+// now supports and the service applies as a SearchOptions.ProjectID filter.
+func TestBrainInject_Handler_ForwardsProject(t *testing.T) {
+	var bodyProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/inject" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		bodyProject, _ = body["project"].(string)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"context": "", "entries": []any{}})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_inject"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"query":   "auth flow",
+		"project": "orion-ai",
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if bodyProject != "orion-ai" {
+		t.Errorf("brain_inject did not forward project: got %q, want %q", bodyProject, "orion-ai")
+	}
+}
+
+// TestBrainStats_Handler_ForwardsProject verifies P1.b: brain_stats
+// includes `project` as a query parameter, which the API handler now reads
+// and the service uses as a path-prefix filter.
+func TestBrainStats_Handler_ForwardsProject(t *testing.T) {
+	var gotProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/stats" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		gotProject = r.URL.Query().Get("project")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"totalEntries": 5, "globalEntries": 0, "projectEntries": 5,
+			"byType": map[string]int{"summary": 3, "plan": 2},
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_stats"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"project": "orion-ai",
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if gotProject != "orion-ai" {
+		t.Errorf("brain_stats did not forward project: got %q, want %q", gotProject, "orion-ai")
+	}
+}
+
+// TestBrainStale_Handler_ForwardsProject verifies P1.c.
+func TestBrainStale_Handler_ForwardsProject(t *testing.T) {
+	var gotProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/stale" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		gotProject = r.URL.Query().Get("project")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "total": 0})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_stale"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"project": "orion-ai",
+		"days":    float64(14),
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if gotProject != "orion-ai" {
+		t.Errorf("brain_stale did not forward project: got %q, want %q", gotProject, "orion-ai")
+	}
+}
+
+// TestBrainOrphans_Handler_ForwardsProject verifies P1.d.
+func TestBrainOrphans_Handler_ForwardsProject(t *testing.T) {
+	var gotProject string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/orphans" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		gotProject = r.URL.Query().Get("project")
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "total": 0})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	client := NewAPIClient(srv.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["brain_orphans"].handler
+	if _, err := handler(context.Background(), map[string]any{
+		"project": "orion-ai",
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if gotProject != "orion-ai" {
+		t.Errorf("brain_orphans did not forward project: got %q, want %q", gotProject, "orion-ai")
+	}
+}

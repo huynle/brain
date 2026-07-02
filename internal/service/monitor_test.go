@@ -268,13 +268,13 @@ func (m *mockBrainForMonitor) GetSections(context.Context, string) (*types.Secti
 func (m *mockBrainForMonitor) GetSection(context.Context, string, string, bool) (*types.SectionContentResponse, error) {
 	return nil, nil
 }
-func (m *mockBrainForMonitor) GetStats(context.Context, bool) (*types.StatsResponse, error) {
+func (m *mockBrainForMonitor) GetStats(context.Context, bool, string) (*types.StatsResponse, error) {
 	return nil, nil
 }
-func (m *mockBrainForMonitor) GetOrphans(context.Context, string, int) ([]types.BrainEntry, error) {
+func (m *mockBrainForMonitor) GetOrphans(context.Context, string, int, string) ([]types.BrainEntry, error) {
 	return nil, nil
 }
-func (m *mockBrainForMonitor) GetStale(context.Context, int, string, int) ([]types.BrainEntry, error) {
+func (m *mockBrainForMonitor) GetStale(context.Context, int, string, int, string) ([]types.BrainEntry, error) {
 	return nil, nil
 }
 func (m *mockBrainForMonitor) Verify(context.Context, string) (*types.VerifyResponse, error) {

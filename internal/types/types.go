@@ -850,6 +850,7 @@ type SearchResponse struct {
 type InjectRequest struct {
 	Query      string `json:"query"`
 	Type       string `json:"type,omitempty"`
+	Project    string `json:"project,omitempty"`
 	MaxEntries *int   `json:"maxEntries,omitempty"`
 }
 

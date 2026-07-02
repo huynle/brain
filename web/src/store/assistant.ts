@@ -1,10 +1,24 @@
 import { create } from "zustand";
-import type { AssistantChatResponse } from "../lib/api";
+import type {
+  AssistantChatResponse,
+  AssistantToolCall,
+  AssistantToolResult,
+} from "../lib/api";
+
+// AssistantToolRecord pairs a tool_call event with its eventual tool_result so
+// the PWA can render one row per invocation without having to reconcile
+// separate arrays. Populated by AssistantPanel.send() as events stream in.
+export interface AssistantToolRecord {
+  call: AssistantToolCall;
+  result?: AssistantToolResult;
+}
 
 export interface AssistantMessage {
   role: "user" | "assistant";
   text: string;
   result?: AssistantChatResponse;
+  // Tool calls recorded during this assistant turn, in stream order.
+  toolCalls?: AssistantToolRecord[];
   // Wall-clock when the message was created, used to age out old entries when
   // we rehydrate from localStorage.
   ts: number;
@@ -53,6 +67,8 @@ interface AssistantState {
   busy: boolean;
   append: (msg: Omit<AssistantMessage, "ts">) => void;
   updateLastAssistant: (text: string, result?: AssistantChatResponse) => void;
+  recordToolCall: (call: AssistantToolCall) => void;
+  recordToolResult: (result: AssistantToolResult) => void;
   clear: () => void;
   setBusy: (busy: boolean) => void;
 }
@@ -75,6 +91,26 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     const next: AssistantMessage[] = last?.role === "assistant"
       ? [...messages.slice(0, -1), { ...last, text, result }]
       : [...messages, { role: "assistant", text, result, ts: Date.now() }];
+    persist(next);
+    set({ messages: next });
+  },
+  recordToolCall: (call) => {
+    const messages = get().messages;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    const toolCalls = [...(last.toolCalls || []), { call }];
+    const next = [...messages.slice(0, -1), { ...last, toolCalls }];
+    persist(next);
+    set({ messages: next });
+  },
+  recordToolResult: (result) => {
+    const messages = get().messages;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant" || !last.toolCalls) return;
+    const toolCalls = last.toolCalls.map((rec) =>
+      rec.call.id === result.id ? { ...rec, result } : rec,
+    );
+    const next = [...messages.slice(0, -1), { ...last, toolCalls }];
     persist(next);
     set({ messages: next });
   },

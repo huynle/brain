@@ -2567,3 +2567,100 @@ body.resizing-pane-col * {
   width: auto;
   flex: 0 0 auto;
 }
+
+/* ── Brain Assistant: tool-call chips ─────────────────────────── */
+.assistant-tool-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 8px;
+}
+.assistant-tool-chip {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-2) 80%, black);
+  overflow: hidden;
+  font-family: var(--mono, monospace);
+  font-size: 0.85em;
+}
+.assistant-tool-chip.tier-read { border-color: color-mix(in srgb, var(--border) 60%, var(--cyan)); }
+.assistant-tool-chip.tier-write { border-color: color-mix(in srgb, var(--border) 60%, var(--blue)); }
+.assistant-tool-chip.tier-destructive { border-color: color-mix(in srgb, var(--border) 55%, var(--red, #ff6b6b)); }
+.assistant-tool-chip.status-failed { background: color-mix(in srgb, var(--bg-2) 60%, var(--red, #ff6b6b) 8%); }
+.assistant-tool-chip.status-proposed { background: color-mix(in srgb, var(--bg-2) 60%, var(--yellow, #d4b458) 8%); }
+
+.assistant-tool-chip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.assistant-tool-chip-head:hover {
+  background: color-mix(in srgb, var(--bg-2) 60%, white 4%);
+}
+.assistant-tool-chip-glyph {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-1) 60%, var(--border));
+  color: var(--fg-muted);
+  font-weight: 700;
+}
+.assistant-tool-chip.status-completed .assistant-tool-chip-glyph { color: var(--green, #7fd77c); }
+.assistant-tool-chip.status-failed .assistant-tool-chip-glyph { color: var(--red, #ff6b6b); }
+.assistant-tool-chip.status-proposed .assistant-tool-chip-glyph { color: var(--yellow, #d4b458); }
+
+.assistant-tool-chip-name {
+  font-weight: 700;
+  color: var(--fg);
+}
+.assistant-tool-chip-tier {
+  font-size: 0.75em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-1) 80%, var(--border));
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.assistant-tool-chip-err {
+  color: var(--red, #ff6b6b);
+  font-size: 0.85em;
+  margin-left: auto;
+}
+.assistant-tool-chip-body {
+  padding: 4px 10px 10px;
+  border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+}
+.assistant-tool-chip-label {
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+  margin: 6px 0 2px;
+}
+.assistant-tool-chip-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--bg-1) 90%, black);
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 0.85em;
+}
+.assistant-tool-chip-note {
+  margin-top: 6px;
+  color: var(--yellow, #d4b458);
+  font-size: 0.85em;
+}

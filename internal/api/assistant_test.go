@@ -49,8 +49,8 @@ func TestHandleAssistantStatus(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !got.Available || got.Mode != "direct_llm" || got.Provider != "openrouter" || got.Model != "anthropic/claude" {
-		t.Fatalf("status response = %#v, want direct_llm openrouter anthropic/claude", got)
+	if !got.Available || got.Mode != "agentic" || got.Provider != "openrouter" || got.Model != "anthropic/claude" {
+		t.Fatalf("status response = %#v, want agentic openrouter anthropic/claude", got)
 	}
 }
 

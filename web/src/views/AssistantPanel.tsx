@@ -8,7 +8,7 @@ import {
   uploadAttachment,
 } from "../lib/api";
 import { ALL_PROJECTS, useUI } from "../store/ui";
-import { useAssistant } from "../store/assistant";
+import { useAssistant, type AssistantToolRecord } from "../store/assistant";
 import { fileToAttachment, isImageType, type Attachment } from "./control/images";
 
 interface Props {
@@ -39,6 +39,8 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
   const messages = useAssistant((s) => s.messages);
   const append = useAssistant((s) => s.append);
   const updateLastAssistant = useAssistant((s) => s.updateLastAssistant);
+  const recordToolCall = useAssistant((s) => s.recordToolCall);
+  const recordToolResult = useAssistant((s) => s.recordToolResult);
   const clear = useAssistant((s) => s.clear);
   const busy = useAssistant((s) => s.busy);
   const setBusy = useAssistant((s) => s.setBusy);
@@ -116,6 +118,14 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
           if (event.type === "delta" && event.delta) {
             streamedReply += event.delta;
             updateLastAssistant(streamedReply);
+            return;
+          }
+          if (event.type === "tool_call" && event.tool_call) {
+            recordToolCall(event.tool_call);
+            return;
+          }
+          if (event.type === "tool_result" && event.tool_result) {
+            recordToolResult(event.tool_result);
             return;
           }
           if (event.type === "done") {
@@ -224,6 +234,9 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
         {messages.map((m, i) => (
           <div key={i} className={`assistant-msg ${m.role}`}>
             <div className="ctl-msg-role">{m.role === "user" ? "you" : "assistant"}</div>
+            {m.toolCalls && m.toolCalls.length > 0 ? (
+              <ToolCallChips records={m.toolCalls} />
+            ) : null}
             <div className="ctl-part-text">
               {m.text ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
@@ -326,4 +339,81 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
       </div>
     </div>
   );
+}
+
+// ToolCallChips renders one collapsible row per tool the assistant called
+// during the current turn. Reads render collapsed by default; writes and
+// destructive proposals render open so the user can see what happened
+// without clicking. Each chip shows tool name, tier badge, and status glyph;
+// expanded, it dumps the decoded args + result JSON for inspection.
+function ToolCallChips({ records }: { records: AssistantToolRecord[] }) {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  return (
+    <div className="assistant-tool-chips">
+      {records.map((rec) => {
+        const id = rec.call.id;
+        const tier = rec.call.tier;
+        const status = rec.result?.status || (rec.result ? "completed" : "running");
+        const isOpen = open[id] ?? (tier !== "read");
+        const glyph =
+          status === "completed" ? "✓" :
+          status === "failed" ? "✗" :
+          status === "proposed" ? "?" :
+          "…";
+        const argsText = typeof rec.call.args === "string"
+          ? rec.call.args
+          : rec.call.args
+            ? JSON.stringify(rec.call.args, null, 2)
+            : "";
+        return (
+          <div key={id} className={`assistant-tool-chip tier-${tier} status-${status} ${isOpen ? "open" : ""}`}>
+            <button
+              type="button"
+              className="assistant-tool-chip-head"
+              onClick={() => setOpen((o) => ({ ...o, [id]: !isOpen }))}
+              aria-expanded={isOpen}
+            >
+              <span className="assistant-tool-chip-glyph">{glyph}</span>
+              <span className="assistant-tool-chip-name">{rec.call.name}</span>
+              <span className="assistant-tool-chip-tier">{tier}</span>
+              {rec.result?.error ? (
+                <span className="assistant-tool-chip-err">{rec.result.error}</span>
+              ) : null}
+            </button>
+            {isOpen ? (
+              <div className="assistant-tool-chip-body">
+                {argsText ? (
+                  <div>
+                    <div className="assistant-tool-chip-label">args</div>
+                    <pre className="assistant-tool-chip-pre">{tryFormatJson(argsText)}</pre>
+                  </div>
+                ) : null}
+                {rec.result?.result !== undefined ? (
+                  <div>
+                    <div className="assistant-tool-chip-label">result</div>
+                    <pre className="assistant-tool-chip-pre">
+                      {JSON.stringify(rec.result.result, null, 2)}
+                    </pre>
+                  </div>
+                ) : null}
+                {rec.result?.proposed ? (
+                  <div className="assistant-tool-chip-note">
+                    Proposed — waiting for user confirmation before executing.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function tryFormatJson(input: string): string {
+  try {
+    return JSON.stringify(JSON.parse(input), null, 2);
+  } catch {
+    return input;
+  }
 }

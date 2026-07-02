@@ -500,7 +500,7 @@ export function summarizeTriggerResults(
 
 export interface AssistantStatusResponse {
   available: boolean;
-  mode: "direct_llm" | "manual" | string;
+  mode: "agentic" | "direct_llm" | "manual" | string;
   provider?: string;
   model?: string;
   capabilities: string[];
@@ -517,6 +517,27 @@ export interface AssistantChatResponse {
   reply: string;
   executed_actions: { type: string; status: string; result?: unknown; error?: string }[];
   proposed_actions: AssistantAction[];
+}
+
+// AssistantToolCall / AssistantToolResult are streamed for each tool the
+// server-side agent loop invokes. The PWA renders these as collapsible chips
+// above the assistant's final natural-language reply.
+export interface AssistantToolCall {
+  id: string;
+  name: string;
+  // Arguments are JSON-encoded (as sent to the model) so the UI can decode
+  // and pretty-print them when a chip is expanded.
+  args?: string | Record<string, unknown>;
+  tier: "read" | "write" | "destructive" | string;
+}
+
+export interface AssistantToolResult {
+  id: string;
+  name: string;
+  status: "completed" | "failed" | "proposed" | string;
+  result?: unknown;
+  error?: string;
+  proposed?: boolean;
 }
 
 export interface AssistantGoalDraft {
@@ -545,11 +566,13 @@ export const assistantChat = (body: {
 }) => api<AssistantChatResponse>("/api/v1/assistant/chat", { method: "POST", body });
 
 export interface AssistantStreamEvent {
-  type: "delta" | "done" | "error" | string;
+  type: "delta" | "tool_call" | "tool_result" | "done" | "error" | string;
   delta?: string;
   reply?: string;
   executed_actions?: AssistantChatResponse["executed_actions"];
   proposed_actions?: AssistantChatResponse["proposed_actions"];
+  tool_call?: AssistantToolCall;
+  tool_result?: AssistantToolResult;
   error?: string;
 }
 

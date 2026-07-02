@@ -289,6 +289,10 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		Timeout:   time.Duration(cfg.Assistant.TimeoutMs) * time.Millisecond,
 		Brain:     brainSvc,
 		Goals:     goalSvc,
+		Tasks:     taskSvc,
+		Runner:    runnerSvc,
+		Runners:   runnerRegistrySvc,
+		Events:    eventSvc,
 	})
 	go goalSvc.Start(ctx, eventHub)
 

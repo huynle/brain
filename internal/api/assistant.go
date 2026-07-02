@@ -14,8 +14,6 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-const assistantModeDirectLLM = "direct_llm"
-
 type AssistantPlanner interface {
 	Plan(ctx context.Context, req AssistantPlanRequest) (AssistantPlanResponse, error)
 }
@@ -35,16 +33,28 @@ type AssistantServiceOptions struct {
 	Planner   AssistantPlanner
 	Brain     BrainService
 	Goals     GoalService
+	Tasks     TaskService
+	Runner    RunnerService
+	Runners   RunnerRegistryService
+	Events    EventService
+	// MaxToolTurns caps how many tool-call iterations the agent loop will run
+	// in a single Chat/ChatStream request. Zero uses a sensible default (6).
+	MaxToolTurns int
 }
 
 type AssistantService struct {
-	enabled  bool
-	provider string
-	baseURL  string
-	model    string
-	planner  AssistantPlanner
-	brain    BrainService
-	goals    GoalService
+	enabled      bool
+	provider     string
+	baseURL      string
+	model        string
+	planner      AssistantPlanner
+	brain        BrainService
+	goals        GoalService
+	tasks        TaskService
+	runner       RunnerService
+	runners      RunnerRegistryService
+	events       EventService
+	maxToolTurns int
 }
 
 type AssistantStatusResponse struct {
@@ -103,6 +113,8 @@ type AssistantStreamEvent struct {
 	Reply           string                    `json:"reply,omitempty"`
 	ExecutedActions []AssistantExecutedAction `json:"executed_actions,omitempty"`
 	ProposedActions []AssistantAction         `json:"proposed_actions,omitempty"`
+	ToolCall        *ToolCallEvent            `json:"tool_call,omitempty"`
+	ToolResult      *ToolResultEvent          `json:"tool_result,omitempty"`
 	Error           string                    `json:"error,omitempty"`
 }
 
@@ -138,22 +150,40 @@ func NewAssistantService(opts AssistantServiceOptions) *AssistantService {
 	if planner == nil && opts.Enabled {
 		planner = NewOpenRouterAssistantPlanner(opts.Provider, opts.BaseURL, opts.APIKeyEnv, opts.Model, opts.Timeout)
 	}
+	maxTurns := opts.MaxToolTurns
+	if maxTurns <= 0 {
+		maxTurns = 6
+	}
 	return &AssistantService{
-		enabled:  opts.Enabled,
-		provider: firstNonEmptyString(opts.Provider, "openrouter"),
-		baseURL:  firstNonEmptyString(opts.BaseURL, "https://openrouter.ai/api/v1"),
-		model:    opts.Model,
-		planner:  planner,
-		brain:    opts.Brain,
-		goals:    opts.Goals,
+		enabled:      opts.Enabled,
+		provider:     firstNonEmptyString(opts.Provider, "openrouter"),
+		baseURL:      firstNonEmptyString(opts.BaseURL, "https://openrouter.ai/api/v1"),
+		model:        opts.Model,
+		planner:      planner,
+		brain:        opts.Brain,
+		goals:        opts.Goals,
+		tasks:        opts.Tasks,
+		runner:       opts.Runner,
+		runners:      opts.Runners,
+		events:       opts.Events,
+		maxToolTurns: maxTurns,
 	}
 }
 
+const assistantModeAgentic = "agentic"
+const assistantModeDirectLLM = "direct_llm" // retained for legacy planner status
+
 func (s *AssistantService) Status() AssistantStatusResponse {
+	toolNames := []string{}
+	for _, t := range ListToolDefinitions() {
+		toolNames = append(toolNames, t.Name)
+	}
+	// Legacy capability aliases still exposed for older PWA builds.
+	caps := append([]string{"chat", "attachments"}, toolNames...)
 	resp := AssistantStatusResponse{
 		Available:    s != nil && s.enabled && s.planner != nil,
-		Mode:         assistantModeDirectLLM,
-		Capabilities: []string{"chat", "create_goal", "create_task", "create_automation", "create_entry", "attachments"},
+		Mode:         assistantModeAgentic,
+		Capabilities: caps,
 	}
 	if s != nil {
 		resp.Provider = s.provider
@@ -170,38 +200,29 @@ func (s *AssistantService) Chat(ctx context.Context, req AssistantChatRequest) (
 	if s == nil || !s.enabled || s.planner == nil {
 		return AssistantChatResponse{}, fmt.Errorf("assistant is not configured")
 	}
-	plan, err := s.planner.Plan(ctx, AssistantPlanRequest{Project: req.Project, Message: req.Message, Model: req.Model, Attachments: req.Attachments, Context: req.Context})
+	res, err := s.runAgentLoop(ctx, req, nil)
 	if err != nil {
 		return AssistantChatResponse{}, err
 	}
-	return s.responseFromPlan(ctx, req.Project, plan), nil
+	return AssistantChatResponse{
+		Reply:           res.Reply,
+		ExecutedActions: res.Executed,
+		ProposedActions: res.Proposed,
+	}, nil
 }
 
 func (s *AssistantService) ChatStream(ctx context.Context, req AssistantChatRequest, emit func(AssistantStreamEvent) error) error {
 	if s == nil || !s.enabled || s.planner == nil {
 		return fmt.Errorf("assistant is not configured")
 	}
-	planReq := AssistantPlanRequest{Project: req.Project, Message: req.Message, Model: req.Model, Attachments: req.Attachments, Context: req.Context}
-	var plan AssistantPlanResponse
-	var err error
-	if streamer, ok := s.planner.(AssistantStreamingPlanner); ok {
-		plan, err = streamer.StreamPlan(ctx, planReq, func(delta string) error {
-			if delta == "" {
-				return nil
-			}
-			return emit(AssistantStreamEvent{Type: "delta", Delta: delta})
-		})
-	} else {
-		plan, err = s.planner.Plan(ctx, planReq)
-		if err == nil && plan.Reply != "" {
-			err = emit(AssistantStreamEvent{Type: "delta", Delta: plan.Reply})
-		}
-	}
+	res, err := s.runAgentLoop(ctx, req, emit)
 	if err != nil {
 		return err
 	}
-	resp := s.responseFromPlan(ctx, req.Project, plan)
-	return emit(AssistantStreamEvent{Type: "done", Reply: resp.Reply, ExecutedActions: resp.ExecutedActions, ProposedActions: resp.ProposedActions})
+	return emit(AssistantStreamEvent{
+		Type: "done", Reply: res.Reply,
+		ExecutedActions: res.Executed, ProposedActions: res.Proposed,
+	})
 }
 
 func (s *AssistantService) responseFromPlan(ctx context.Context, project string, plan AssistantPlanResponse) AssistantChatResponse {
@@ -659,13 +680,22 @@ func extractAssistantReplyPrefix(input string) string {
 }
 
 func assistantSystemPrompt() string {
-	return `You are Brain's built-in assistant. Return only JSON matching {"reply":"...","actions":[{"type":"create_task|create_goal|create_entry|create_automation","explicit":true|false,"payload":{...}}]}.
-Choose the action type from the user's intent:
-- create_goal: an outcome-oriented goal with success criteria that may generate follow-up work until complete.
-- create_automation: a durable cron/event/webhook automation that should run later or repeatedly.
-- create_task: one concrete unit of work for the task queue.
-- create_entry: a note, report, plan, summary, or memory entry.
-For create_automation payloads include title, content, project, trigger, and action when the user describes timing/event behavior. For create_goal payloads include title, criteria, validation, feature_id, workdir, agent, and model when known. Mark explicit true only when the user directly asks to create/save/make/add a Brain object now. For ambiguous planning or drafting, explicit must be false. If the user JSON includes attachment IDs and the action creates a task, entry, or automation, include those IDs in payload.attachments.`
+	return `You are Brain's built-in assistant. You can both read and write the user's Brain via function/tool calls.
+
+Behavior:
+- If the user asks a factual/state question (e.g. "what automations do we have?", "why is task X stuck?"), CALL the relevant read tool first, then answer based on the result. Do not guess or invent state.
+- If the user asks you to create/update something and it is safe (non-destructive), call the write tool directly. Report what happened in plain language.
+- For destructive tools (delete_*, bulk_*, move_*, runner pause/resume, feature assign/clear), do NOT auto-execute. Describe what you would do and ask for confirmation. When the user then explicitly confirms, retry the same tool call with argument _explicit=true.
+- The active project comes from the user's request context (see the JSON user message). Prefer that project unless the user names a different one.
+- Keep replies short and direct. When tool results are lists, summarize with counts and the most relevant items; do not dump raw JSON. When a task is stuck, cite the fields that explain why (classification, blocked_by, waiting_on, in_cycle, resolved_workdir, next_run, schedule_enabled, dispatch_lease).
+- If a tool returns an error, tell the user what went wrong and propose the next step. Do not silently retry the same call.
+
+Tool categories:
+- Reads: list_entries, get_entry, search_brain, list_tasks, get_task, get_task_metadata, list_features, get_feature, list_automations, list_goals, goal_progress, list_runners, runner_status, get_stats, get_backlinks, get_outlinks, get_related, get_sections, get_section, recent_events.
+- Writes (auto-execute): create_task, create_entry, create_automation, create_goal, update_entry, update_task, update_automation, verify_entry, link_entry, run_goal, trigger_task, checkout_feature.
+- Destructive (require _explicit=true after user confirmation): delete_entry, bulk_update, move_entry, pause_project, resume_project, pause_automations, resume_automations, assign_feature, clear_feature_assignment.
+
+Never fabricate tool results. If you don't have a tool for something, say so.`
 }
 
 func mustJSON(v any) string {

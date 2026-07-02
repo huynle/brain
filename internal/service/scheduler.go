@@ -334,6 +334,11 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 				"projectId": projectID,
 				"lease":     lease,
 				"expiresAt": lease.ExpiresAt,
+				// Inline the resolved task so the runner can process
+				// this dispatch without an HTTP round-trip back to
+				// GetReadyTasks. Legacy runners that don't understand
+				// "task" simply ignore the extra field.
+				"task": task,
 			})
 		}
 		reservedSlots[candidate.RunnerID]++
@@ -492,6 +497,9 @@ func (s *SchedulerService) RunTaskNow(ctx context.Context, projectID, taskID str
 			"projectId": projectID,
 			"lease":     lease,
 			"expiresAt": lease.ExpiresAt,
+			// Inline the resolved task so the runner can process this
+			// dispatch without an HTTP round-trip back to GetReadyTasks.
+			"task": task,
 		}
 		if force {
 			payload["force"] = true

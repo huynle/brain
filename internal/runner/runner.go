@@ -684,18 +684,23 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 	// as runner_paused, so the PWA's "tasks: paused, autos: on" mode
 	// quietly stopped delivering automation work whenever dispatch
 	// push was enabled. We can't decide here yet because we don't
-	// have the task's GeneratedBy until after GetReadyTasks below.
-	serverTaskPaused, serverAutomationPaused := tr.serverPauseState(ctx)
+	// have the task's GeneratedBy until we've resolved the task.
+	//
+	// Pause state comes from the runner's local cache only. The cache
+	// is kept in sync via SSE CommandPause/CommandResume — no HTTP
+	// round-trip per dispatch, which used to burn ~200ms per dispatch
+	// against a slow API and caused task_lookup_failed rejections in
+	// production. See fix/inline-dispatch-task.
 	tr.pauseMu.RLock()
-	paused := tr.allPaused || tr.pauseCache[cmd.ProjectID] || serverPausedFor(serverTaskPaused, cmd.ProjectID)
-	automationsPausedForProject := tr.automationsPaused || tr.automationPausedProjects[cmd.ProjectID] || serverPausedFor(serverAutomationPaused, cmd.ProjectID)
+	paused := tr.allPaused || tr.pauseCache[cmd.ProjectID]
+	automationsPausedForProject := tr.automationsPaused || tr.automationPausedProjects[cmd.ProjectID]
 	tr.pauseMu.RUnlock()
 	if paused && cmd.Force {
 		slog.Info("force-dispatch bypassing pause",
 			"task_id", cmd.TaskID,
 			"project_id", cmd.ProjectID,
 			"all_paused", tr.allPaused,
-			"project_paused", tr.pauseCache[cmd.ProjectID] || serverPausedFor(serverTaskPaused, cmd.ProjectID),
+			"project_paused", tr.pauseCache[cmd.ProjectID],
 		)
 	}
 	if tr.processMgr.RunningCount() >= tr.getMaxParallel() {
@@ -703,21 +708,31 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 		return
 	}
 
-	tasks, err := tr.client.GetReadyTasks(ctx, cmd.ProjectID, tr.buildFetchOptions())
-	if err != nil {
-		tr.rejectDispatch(ctx, cmd, leaseID, "task_lookup_failed", err.Error())
-		return
-	}
+	// Prefer the task inlined in the dispatch payload — the scheduler
+	// has the fully-resolved ResolvedTask when it creates the lease, so
+	// there's no need to fetch it again. Fall back to GetReadyTasks
+	// only when the payload doesn't carry the task (older API server).
 	var task *types.ResolvedTask
-	for i := range tasks {
-		if tasks[i].ID == cmd.TaskID {
-			task = &tasks[i]
-			break
+	if cmd.Task != nil && cmd.Task.ID == cmd.TaskID {
+		task = cmd.Task
+	} else {
+		tasks, err := tr.client.GetReadyTasks(ctx, cmd.ProjectID, tr.buildFetchOptions())
+		if err != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "task_lookup_failed", err.Error())
+			return
 		}
-	}
-	if task == nil {
-		tr.rejectDispatch(ctx, cmd, leaseID, "task_not_found", "target task is not ready for this runner")
-		return
+		for i := range tasks {
+			if tasks[i].ID == cmd.TaskID {
+				task = &tasks[i]
+				break
+			}
+		}
+		if task == nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "task_not_found", "target task is not ready for this runner")
+			return
+		}
+		slog.Debug("dispatch used legacy fetch path (task not inlined in payload)",
+			"task_id", cmd.TaskID, "project_id", cmd.ProjectID)
 	}
 	// Now we know the task's GeneratedBy; finalize the pause decision.
 	// Automation-generated tasks may proceed when only tasks (not
@@ -847,12 +862,10 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 		}
 
 	case CommandPause:
-		tr.PauseAll()
-		slog.Info("runner paused via SSE command")
+		tr.applyPauseCommand(cmd, true)
 
 	case CommandResume:
-		tr.ResumeAll()
-		slog.Info("runner resumed via SSE command")
+		tr.applyPauseCommand(cmd, false)
 
 	case CommandDispatch:
 		// Route through the dispatch worker pool when it's running so
@@ -2344,6 +2357,79 @@ func (tr *TaskRunner) cleanupTaskTmux(task RunningTask) {
 // =============================================================================
 // Pause / Resume
 // =============================================================================
+
+// applyPauseCommand routes an SSE pause/resume command to the
+// appropriate runner-local state mutator based on the command's
+// ProjectID and Scope. This is the single source of truth for how the
+// PWA's per-project + per-scope pause dials translate into runner
+// state.
+//
+// ProjectID:
+//   ""     → global (all projects)
+//   "foo"  → project foo only
+//
+// Scope:
+//   "" or "all"     → both tasks and automations
+//   "tasks"         → task-pause gate only (dispatch gate)
+//   "automations"   → automation-pause gate only (carve-out)
+//
+// pause=true applies the pause; pause=false applies the resume.
+func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
+	projectID := cmd.ProjectID
+	scope := cmd.Scope
+	tasksScope := scope == "" || scope == "all" || scope == "tasks"
+	automationsScope := scope == "" || scope == "all" || scope == "automations"
+
+	verb := "paused"
+	if !pause {
+		verb = "resumed"
+	}
+
+	switch {
+	case projectID == "" && tasksScope && automationsScope:
+		if pause {
+			tr.PauseAll()
+			tr.PauseAutomations()
+		} else {
+			tr.ResumeAll()
+			tr.ResumeAutomations()
+		}
+	case projectID == "" && tasksScope:
+		if pause {
+			tr.PauseAll()
+		} else {
+			tr.ResumeAll()
+		}
+	case projectID == "" && automationsScope:
+		if pause {
+			tr.PauseAutomations()
+		} else {
+			tr.ResumeAutomations()
+		}
+	case projectID != "" && tasksScope && automationsScope:
+		if pause {
+			tr.PauseProject(projectID)
+			tr.PauseProjectAutomations(projectID)
+		} else {
+			tr.ResumeProject(projectID)
+			tr.ResumeProjectAutomations(projectID)
+		}
+	case projectID != "" && tasksScope:
+		if pause {
+			tr.PauseProject(projectID)
+		} else {
+			tr.ResumeProject(projectID)
+		}
+	case projectID != "" && automationsScope:
+		if pause {
+			tr.PauseProjectAutomations(projectID)
+		} else {
+			tr.ResumeProjectAutomations(projectID)
+		}
+	}
+	slog.Info("runner "+verb+" via SSE command",
+		"project_id", projectID, "scope", scope)
+}
 
 // PauseProject pauses task processing for a specific project.
 func (tr *TaskRunner) PauseProject(projectID string) {

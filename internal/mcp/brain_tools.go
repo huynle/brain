@@ -52,7 +52,7 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 
 func registerBrainSave(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_save",
+		Name: "save",
 		Description: `Save content to the brain for future reference. Use this to persist:
 - summaries: Session summaries, key decisions made
 - reports: Analysis reports, code reviews, investigations
@@ -209,7 +209,7 @@ Feature orchestration:
 
 func registerBrainRecall(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_recall",
+		Name:        "recall",
 		Description: "Retrieve a specific entry from the brain by path, ID, or title.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -301,7 +301,7 @@ func registerBrainRecall(s *Server, client *APIClient) {
 
 func registerBrainAttachmentUpload(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_attachment_upload",
+		Name: "attachment_upload",
 		Description: `Upload a local file as a first-class Brain attachment.
 
 Use this for pasted-image or local-PDF workflows: save the file locally, upload it with this tool, then attach the returned attachment_id to an entry with brain_attachment_attach.`,
@@ -329,7 +329,7 @@ Use this for pasted-image or local-PDF workflows: save the file locally, upload 
 
 func registerBrainAttachmentAttach(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_attach",
+		Name:        "attachment_attach",
 		Description: "Attach an existing Brain attachment to an entry with optional role and caption metadata.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the entry and attachment"},
@@ -365,7 +365,7 @@ func registerBrainAttachmentAttach(s *Server, client *APIClient) {
 
 func registerBrainAttachmentDetach(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_detach",
+		Name:        "attachment_detach",
 		Description: "Detach an attachment from an entry. Provide role when detaching a role-specific reference.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the entry and attachment"},
@@ -395,7 +395,7 @@ func registerBrainAttachmentDetach(s *Server, client *APIClient) {
 
 func registerBrainAttachmentList(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_list",
+		Name:        "attachment_list",
 		Description: "List attachments available in a project, or attachments linked to a specific entry when entry_id is provided.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id": {Type: "string", Description: "Project whose attachments should be listed"},
@@ -431,7 +431,7 @@ func registerBrainAttachmentList(s *Server, client *APIClient) {
 
 func registerBrainAttachmentGet(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_get",
+		Name:        "attachment_get",
 		Description: "Get attachment metadata, download/text URLs, and derived artifact references.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -453,7 +453,7 @@ func registerBrainAttachmentGet(s *Server, client *APIClient) {
 
 func registerBrainAttachmentDelete(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_delete",
+		Name:        "attachment_delete",
 		Description: "Delete an attachment from a project when it is not referenced by entries.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -478,7 +478,7 @@ func registerBrainAttachmentDelete(s *Server, client *APIClient) {
 
 func registerBrainAttachmentBackfill(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_backfill",
+		Name:        "attachment_backfill",
 		Description: "Run project-level attachment text extraction backfill and return counts for considered attachments.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":          {Type: "string", Description: "Project whose attachments should be backfilled"},
@@ -508,7 +508,7 @@ func registerBrainAttachmentBackfill(s *Server, client *APIClient) {
 
 func registerBrainAttachmentExtract(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_extract",
+		Name:        "attachment_extract",
 		Description: "Trigger server-side media-to-text extraction for an attachment and return extraction status, provider/model, reason, and derived text metadata.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -531,7 +531,7 @@ func registerBrainAttachmentExtract(s *Server, client *APIClient) {
 
 func registerBrainAttachmentText(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_text",
+		Name:        "attachment_text",
 		Description: "Retrieve extracted plain text for an attachment, useful for local PDF/image OCR workflows after upload.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -556,7 +556,7 @@ func registerBrainAttachmentText(s *Server, client *APIClient) {
 
 func registerBrainAttachmentDownload(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_download",
+		Name:        "attachment_download",
 		Description: "Download raw attachment bytes to a local output path. Use this when an agent needs the exact original image, PDF, or media file for later processing.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -823,7 +823,7 @@ func formatAttachmentExtractionResult(result types.AttachmentExtractionResult) s
 
 func registerBrainSearch(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_search",
+		Name:        "search",
 		Description: "Search the brain using full-text search.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -877,7 +877,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 
 func registerBrainList(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_list",
+		Name: "list",
 		Description: `List entries in the brain with optional filtering by type, status, and filename.
 
 Filename filtering supports:
@@ -961,7 +961,7 @@ Filename filtering supports:
 
 func registerBrainInject(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_inject",
+		Name:        "inject",
 		Description: "Search the brain and return relevant context for a task.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1000,7 +1000,7 @@ func registerBrainInject(s *Server, client *APIClient) {
 
 func registerBrainUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_update",
+		Name: "update",
 		Description: `Update an existing brain entry's status, title, dependencies, trigger configuration, or append content.
 
 Use cases:
@@ -1373,7 +1373,7 @@ func sanitizeBulkUpdateEntry(value any) any {
 
 func registerBrainBulkUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_bulk_update",
+		Name: "bulk_update",
 		Description: `Update multiple brain entries in a single request.
 
 Two modes (mutually exclusive):
@@ -1498,7 +1498,7 @@ Examples:
 
 func registerBrainDelete(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_delete",
+		Name:        "delete",
 		Description: "Delete a specific entry from the brain by path. Use with caution.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1532,7 +1532,7 @@ func registerBrainDelete(s *Server, client *APIClient) {
 
 func registerBrainMove(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_move",
+		Name: "move",
 		Description: `Move a brain entry to a different project.
 
 IMPORTANT LIMITATIONS:
@@ -1582,7 +1582,7 @@ Example: brain_move({ path: "projects/old/task/abc12def.md", project: "new-proje
 
 func registerBrainStats(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_stats",
+		Name:        "stats",
 		Description: "Get statistics about the brain storage.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1643,7 +1643,7 @@ func registerBrainStats(s *Server, client *APIClient) {
 
 func registerBrainCheckConnection(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_check_connection",
+		Name: "check_connection",
 		Description: `Check if the Brain API server is running and accessible.
 
 Use this tool FIRST if you're unsure whether brain tools will work.
@@ -1694,7 +1694,7 @@ All brain tools (save, recall, search, inject, etc.) are available.`, client.bas
 
 func registerBrainLink(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_link",
+		Name:        "link",
 		Description: "Generate a markdown link to a brain entry. Use this when referencing other brain entries to ensure proper link resolution with mkdnflow.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1736,7 +1736,7 @@ func registerBrainLink(s *Server, client *APIClient) {
 
 func registerBrainSection(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_section",
+		Name: "section",
 		Description: `Retrieve a specific section's FULL CONTENT from a brain plan by section title.
 
 Use this when you need the detailed implementation spec for your assigned task.
@@ -1790,7 +1790,7 @@ This is more precise than brain_inject (which uses fuzzy search) - it extracts t
 
 func registerBrainPlanSections(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_plan_sections",
+		Name:        "plan_sections",
 		Description: "Extract section headers from a plan entry for orchestration mapping.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1886,7 +1886,7 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 
 func registerBrainVerify(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_verify",
+		Name:        "verify",
 		Description: "Mark an entry as verified (still accurate). Updates the last_verified timestamp.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1915,7 +1915,7 @@ func registerBrainVerify(s *Server, client *APIClient) {
 
 func registerBrainStale(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_stale",
+		Name:        "stale",
 		Description: "Find entries that may need verification (not verified in N days).",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1986,7 +1986,7 @@ func registerBrainStale(s *Server, client *APIClient) {
 
 func registerBrainOrphans(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_orphans",
+		Name:        "orphans",
 		Description: "Find entries with no incoming links (orphans). Useful for knowledge graph health.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -2057,7 +2057,7 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 
 func registerBrainBacklinks(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_backlinks",
+		Name:        "backlinks",
 		Description: "Find entries that link TO a given entry (backlinks).",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -2107,7 +2107,7 @@ func registerBrainBacklinks(s *Server, client *APIClient) {
 
 func registerBrainOutlinks(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_outlinks",
+		Name:        "outlinks",
 		Description: "Find entries that a given entry links TO (outlinks).",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -2157,7 +2157,7 @@ func registerBrainOutlinks(s *Server, client *APIClient) {
 
 func registerBrainRelated(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_related",
+		Name:        "related",
 		Description: "Find entries that share linked notes with a given entry.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -2211,7 +2211,7 @@ func registerBrainRelated(s *Server, client *APIClient) {
 
 func registerBrainAutomationList(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_automation_list",
+		Name:        "automation_list",
 		Description: "List active automations with their trigger type, status, and last-fired info. Automations are event-driven behaviors stored as brain entries that replace hardcoded monitors.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -2294,7 +2294,7 @@ func registerBrainAutomationList(s *Server, client *APIClient) {
 
 func registerBrainAutomationTest(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_automation_test",
+		Name:        "automation_test",
 		Description: "Dry-run an event against active automations to see which would match. No tasks are created -- this is a simulation for debugging automation triggers.",
 		InputSchema: InputSchema{
 			Type: "object",

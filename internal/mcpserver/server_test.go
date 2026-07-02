@@ -122,7 +122,7 @@ func TestRunMCPServer_ToolsListIncludesProjectTools(t *testing.T) {
 	for _, tool := range resp.Result.Tools {
 		names[tool.Name] = true
 	}
-	for _, want := range []string{"brain_context_resolve", "brain_project_placement_get", "brain_project_placement_put"} {
+	for _, want := range []string{"context_resolve", "project_placement_get", "project_placement_put"} {
 		if !names[want] {
 			t.Fatalf("tools/list response missing %q", want)
 		}

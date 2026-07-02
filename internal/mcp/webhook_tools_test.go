@@ -30,14 +30,14 @@ func TestRegisterWebhookTools_Names(t *testing.T) {
 	RegisterWebhookTools(s, client)
 
 	expectedTools := []string{
-		"brain_webhook_create",
-		"brain_webhook_list",
-		"brain_webhook_get",
-		"brain_webhook_update",
-		"brain_webhook_test",
-		"brain_webhook_deliveries",
-		"brain_webhook_delete",
-		"brain_webhook_toggle",
+		"webhook_create",
+		"webhook_list",
+		"webhook_get",
+		"webhook_update",
+		"webhook_test",
+		"webhook_deliveries",
+		"webhook_delete",
+		"webhook_toggle",
 	}
 
 	for _, name := range expectedTools {
@@ -83,7 +83,7 @@ func TestBrainWebhookCreate_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	tool := s.tools["brain_webhook_create"].tool
+	tool := s.tools["webhook_create"].tool
 
 	// Required fields
 	requiredSet := map[string]bool{}
@@ -111,7 +111,7 @@ func TestBrainWebhookList_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	tool := s.tools["brain_webhook_list"].tool
+	tool := s.tools["webhook_list"].tool
 
 	// No required fields
 	if len(tool.InputSchema.Required) != 0 {
@@ -128,7 +128,7 @@ func TestBrainWebhookDelete_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	tool := s.tools["brain_webhook_delete"].tool
+	tool := s.tools["webhook_delete"].tool
 
 	requiredSet := map[string]bool{}
 	for _, r := range tool.InputSchema.Required {
@@ -144,7 +144,7 @@ func TestBrainWebhookToggle_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	tool := s.tools["brain_webhook_toggle"].tool
+	tool := s.tools["webhook_toggle"].tool
 
 	requiredSet := map[string]bool{}
 	for _, r := range tool.InputSchema.Required {
@@ -163,7 +163,7 @@ func TestBrainWebhookGet_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	tool := s.tools["brain_webhook_get"].tool
+	tool := s.tools["webhook_get"].tool
 
 	requiredSet := map[string]bool{}
 	for _, r := range tool.InputSchema.Required {
@@ -179,7 +179,7 @@ func TestBrainWebhookUpdate_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	tool := s.tools["brain_webhook_update"].tool
+	tool := s.tools["webhook_update"].tool
 
 	requiredSet := map[string]bool{}
 	for _, r := range tool.InputSchema.Required {
@@ -202,7 +202,7 @@ func TestBrainWebhookTest_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	tool := s.tools["brain_webhook_test"].tool
+	tool := s.tools["webhook_test"].tool
 
 	requiredSet := map[string]bool{}
 	for _, r := range tool.InputSchema.Required {
@@ -218,7 +218,7 @@ func TestBrainWebhookDeliveries_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	tool := s.tools["brain_webhook_deliveries"].tool
+	tool := s.tools["webhook_deliveries"].tool
 
 	requiredSet := map[string]bool{}
 	for _, r := range tool.InputSchema.Required {
@@ -266,7 +266,7 @@ func TestBrainWebhookCreate_Success(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_create"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_create"].handler(context.Background(), map[string]any{
 		"name":   "test-hook",
 		"url":    "https://example.com/hook",
 		"events": []any{"task.completed"},
@@ -288,7 +288,7 @@ func TestBrainWebhookCreate_MissingURL(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_create"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_create"].handler(context.Background(), map[string]any{
 		"events": []any{"task.completed"},
 	})
 
@@ -305,7 +305,7 @@ func TestBrainWebhookCreate_MissingEvents(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_create"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_create"].handler(context.Background(), map[string]any{
 		"url": "https://example.com/hook",
 	})
 
@@ -322,7 +322,7 @@ func TestBrainWebhookCreate_InvalidURL(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_create"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_create"].handler(context.Background(), map[string]any{
 		"url":    "not-a-url",
 		"events": []any{"task.completed"},
 	})
@@ -366,7 +366,7 @@ func TestBrainWebhookCreate_WithFilter(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_create"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_create"].handler(context.Background(), map[string]any{
 		"name":   "filtered-hook",
 		"url":    "https://example.com/hook",
 		"events": []any{"task.completed"},
@@ -395,7 +395,7 @@ func TestBrainWebhookCreate_Conflict(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_create"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_create"].handler(context.Background(), map[string]any{
 		"url":    "https://example.com/hook",
 		"events": []any{"task.completed"},
 	})
@@ -447,7 +447,7 @@ func TestBrainWebhookList_Success(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_list"].handler(context.Background(), map[string]any{})
+	result, err := s.tools["webhook_list"].handler(context.Background(), map[string]any{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -478,7 +478,7 @@ func TestBrainWebhookList_Empty(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_list"].handler(context.Background(), map[string]any{})
+	result, err := s.tools["webhook_list"].handler(context.Background(), map[string]any{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -504,7 +504,7 @@ func TestBrainWebhookList_EnabledOnly(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	_, err := s.tools["brain_webhook_list"].handler(context.Background(), map[string]any{
+	_, err := s.tools["webhook_list"].handler(context.Background(), map[string]any{
 		"enabled_only": true,
 	})
 
@@ -533,7 +533,7 @@ func TestBrainWebhookDelete_Success(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_delete"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_delete"].handler(context.Background(), map[string]any{
 		"id": "wh_abc123",
 	})
 
@@ -550,7 +550,7 @@ func TestBrainWebhookDelete_MissingID(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_delete"].handler(context.Background(), map[string]any{})
+	result, err := s.tools["webhook_delete"].handler(context.Background(), map[string]any{})
 
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -574,7 +574,7 @@ func TestBrainWebhookDelete_NotFound(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_delete"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_delete"].handler(context.Background(), map[string]any{
 		"id": "wh_missing",
 	})
 
@@ -619,7 +619,7 @@ func TestBrainWebhookToggle_Disable(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_toggle"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_toggle"].handler(context.Background(), map[string]any{
 		"id":      "wh_abc123",
 		"enabled": false,
 	})
@@ -657,7 +657,7 @@ func TestBrainWebhookToggle_Enable(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_toggle"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_toggle"].handler(context.Background(), map[string]any{
 		"id":      "wh_abc123",
 		"enabled": true,
 	})
@@ -675,7 +675,7 @@ func TestBrainWebhookToggle_MissingID(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_toggle"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_toggle"].handler(context.Background(), map[string]any{
 		"enabled": true,
 	})
 
@@ -701,7 +701,7 @@ func TestBrainWebhookToggle_NotFound(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_toggle"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_toggle"].handler(context.Background(), map[string]any{
 		"id":      "wh_missing",
 		"enabled": true,
 	})
@@ -741,7 +741,7 @@ func TestBrainWebhookGet_Success(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_get"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_get"].handler(context.Background(), map[string]any{
 		"id": "wh_abc123",
 	})
 
@@ -808,7 +808,7 @@ func TestBrainWebhookUpdate_Success(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_update"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_update"].handler(context.Background(), map[string]any{
 		"id":      "wh_abc123",
 		"name":    "renamed-hook",
 		"url":     "https://example.com/renamed",
@@ -833,7 +833,7 @@ func TestBrainWebhookUpdate_NoFields(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_update"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_update"].handler(context.Background(), map[string]any{
 		"id": "wh_abc123",
 	})
 
@@ -873,7 +873,7 @@ func TestBrainWebhookTest_Success(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_test"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_test"].handler(context.Background(), map[string]any{
 		"id": "wh_abc123",
 	})
 
@@ -930,7 +930,7 @@ func TestBrainWebhookDeliveries_Success(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_deliveries"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_deliveries"].handler(context.Background(), map[string]any{
 		"id":    "wh_abc123",
 		"limit": float64(2),
 	})
@@ -957,7 +957,7 @@ func TestBrainWebhookDeliveries_Empty(t *testing.T) {
 	client := NewAPIClient(ts.URL)
 	RegisterWebhookTools(s, client)
 
-	result, err := s.tools["brain_webhook_deliveries"].handler(context.Background(), map[string]any{
+	result, err := s.tools["webhook_deliveries"].handler(context.Background(), map[string]any{
 		"id": "wh_abc123",
 	})
 
@@ -983,14 +983,14 @@ func TestWebhookToolsNoCollision(t *testing.T) {
 
 	// Verify webhook tools are all present and didn't collide
 	webhookTools := []string{
-		"brain_webhook_create",
-		"brain_webhook_list",
-		"brain_webhook_get",
-		"brain_webhook_update",
-		"brain_webhook_test",
-		"brain_webhook_deliveries",
-		"brain_webhook_delete",
-		"brain_webhook_toggle",
+		"webhook_create",
+		"webhook_list",
+		"webhook_get",
+		"webhook_update",
+		"webhook_test",
+		"webhook_deliveries",
+		"webhook_delete",
+		"webhook_toggle",
 	}
 
 	for _, name := range webhookTools {

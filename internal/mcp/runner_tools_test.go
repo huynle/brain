@@ -16,11 +16,11 @@ func TestRegisterRunnerTools_CountNamesHandlersDescriptions(t *testing.T) {
 	RegisterRunnerTools(s, client)
 
 	expected := []string{
-		"brain_runner_status",
-		"brain_runners",
-		"brain_runner_get",
-		"brain_runner_instances",
-		"brain_runner_instances_all",
+		"runner_status",
+		"runners",
+		"runner_get",
+		"runner_instances",
+		"runner_instances_all",
 	}
 	if len(s.tools) != len(expected) {
 		t.Fatalf("expected %d runner tools registered, got %d", len(expected), len(s.tools))
@@ -52,11 +52,11 @@ func TestRunnerToolSchemas(t *testing.T) {
 		required []string
 		props    []string
 	}{
-		{"brain_runner_status", nil, []string{}},
-		{"brain_runners", nil, []string{"status", "executor", "project", "limit"}},
-		{"brain_runner_get", []string{"runnerId"}, []string{"runnerId"}},
-		{"brain_runner_instances", []string{"runnerId"}, []string{"runnerId", "status", "kind", "project"}},
-		{"brain_runner_instances_all", nil, []string{"runnerId", "status", "kind", "project"}},
+		{"runner_status", nil, []string{}},
+		{"runners", nil, []string{"status", "executor", "project", "limit"}},
+		{"runner_get", []string{"runnerId"}, []string{"runnerId"}},
+		{"runner_instances", []string{"runnerId"}, []string{"runnerId", "status", "kind", "project"}},
+		{"runner_instances_all", nil, []string{"runnerId", "status", "kind", "project"}},
 	}
 
 	for _, tt := range tests {
@@ -122,7 +122,7 @@ func TestRunnerTools_RequestPathsNoBodiesAndFormatting(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterRunnerTools(s, client)
 
-	status, err := s.tools["brain_runner_status"].handler(context.Background(), map[string]any{})
+	status, err := s.tools["runner_status"].handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("status handler error: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestRunnerTools_RequestPathsNoBodiesAndFormatting(t *testing.T) {
 		}
 	}
 
-	runners, err := s.tools["brain_runners"].handler(context.Background(), map[string]any{})
+	runners, err := s.tools["runners"].handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("runners handler error: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestRunnerTools_RequestPathsNoBodiesAndFormatting(t *testing.T) {
 		}
 	}
 
-	runner, err := s.tools["brain_runner_get"].handler(context.Background(), map[string]any{"runnerId": "runner-1"})
+	runner, err := s.tools["runner_get"].handler(context.Background(), map[string]any{"runnerId": "runner-1"})
 	if err != nil {
 		t.Fatalf("runner get handler error: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestRunnerTools_RequestPathsNoBodiesAndFormatting(t *testing.T) {
 		}
 	}
 
-	runnerInstances, err := s.tools["brain_runner_instances"].handler(context.Background(), map[string]any{"runnerId": "runner-1"})
+	runnerInstances, err := s.tools["runner_instances"].handler(context.Background(), map[string]any{"runnerId": "runner-1"})
 	if err != nil {
 		t.Fatalf("runner instances handler error: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestRunnerTools_RequestPathsNoBodiesAndFormatting(t *testing.T) {
 		}
 	}
 
-	allInstances, err := s.tools["brain_runner_instances_all"].handler(context.Background(), map[string]any{})
+	allInstances, err := s.tools["runner_instances_all"].handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("all instances handler error: %v", err)
 	}
@@ -199,8 +199,8 @@ func TestRunnerTools_ValidationErrors(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"brain_runner_get", map[string]any{}, "runnerId"},
-		{"brain_runner_instances", map[string]any{}, "runnerId"},
+		{"runner_get", map[string]any{}, "runnerId"},
+		{"runner_instances", map[string]any{}, "runnerId"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {

@@ -16,15 +16,15 @@ func TestRegisterControlTools_CountNamesHandlersDescriptions(t *testing.T) {
 	RegisterControlTools(s, client)
 
 	expected := []string{
-		"brain_runner_pause_project",
-		"brain_runner_resume_project",
-		"brain_runner_pause_all",
-		"brain_runner_resume_all",
-		"brain_control_send_prompt",
-		"brain_control_abort_session",
-		"brain_control_permission",
-		"brain_control_spawn_instance",
-		"brain_control_kill_instance",
+		"runner_pause_project",
+		"runner_resume_project",
+		"runner_pause_all",
+		"runner_resume_all",
+		"control_send_prompt",
+		"control_abort_session",
+		"control_permission",
+		"control_spawn_instance",
+		"control_kill_instance",
 	}
 	if len(s.tools) != len(expected) {
 		t.Fatalf("expected %d control tools registered, got %d", len(expected), len(s.tools))
@@ -62,15 +62,15 @@ func TestControlToolSchemas(t *testing.T) {
 		required []string
 		props    []string
 	}{
-		{"brain_runner_pause_project", []string{"projectId"}, []string{"projectId"}},
-		{"brain_runner_resume_project", []string{"projectId"}, []string{"projectId"}},
-		{"brain_runner_pause_all", []string{"confirm"}, []string{"confirm"}},
-		{"brain_runner_resume_all", []string{"confirm"}, []string{"confirm"}},
-		{"brain_control_send_prompt", []string{"runnerId", "instanceId", "sessionId", "text"}, []string{"runnerId", "instanceId", "sessionId", "text", "agent", "providerID", "modelID"}},
-		{"brain_control_abort_session", []string{"runnerId", "instanceId", "sessionId"}, []string{"runnerId", "instanceId", "sessionId"}},
-		{"brain_control_permission", []string{"runnerId", "instanceId", "sessionId", "permissionId", "response"}, []string{"runnerId", "instanceId", "sessionId", "permissionId", "response", "remember"}},
-		{"brain_control_spawn_instance", []string{"runnerId", "workdir"}, []string{"runnerId", "workdir", "agent", "model", "title"}},
-		{"brain_control_kill_instance", []string{"runnerId", "instanceId", "confirm"}, []string{"runnerId", "instanceId", "confirm"}},
+		{"runner_pause_project", []string{"projectId"}, []string{"projectId"}},
+		{"runner_resume_project", []string{"projectId"}, []string{"projectId"}},
+		{"runner_pause_all", []string{"confirm"}, []string{"confirm"}},
+		{"runner_resume_all", []string{"confirm"}, []string{"confirm"}},
+		{"control_send_prompt", []string{"runnerId", "instanceId", "sessionId", "text"}, []string{"runnerId", "instanceId", "sessionId", "text", "agent", "providerID", "modelID"}},
+		{"control_abort_session", []string{"runnerId", "instanceId", "sessionId"}, []string{"runnerId", "instanceId", "sessionId"}},
+		{"control_permission", []string{"runnerId", "instanceId", "sessionId", "permissionId", "response"}, []string{"runnerId", "instanceId", "sessionId", "permissionId", "response", "remember"}},
+		{"control_spawn_instance", []string{"runnerId", "workdir"}, []string{"runnerId", "workdir", "agent", "model", "title"}},
+		{"control_kill_instance", []string{"runnerId", "instanceId", "confirm"}, []string{"runnerId", "instanceId", "confirm"}},
 	}
 
 	for _, tt := range tests {
@@ -143,15 +143,15 @@ func TestControlTools_RequestMethodsPathsBodiesAndFormatting(t *testing.T) {
 		args map[string]any
 		want []string
 	}{
-		{"brain_runner_pause_project", map[string]any{"projectId": "brain"}, []string{"Paused runner execution for project brain"}},
-		{"brain_runner_resume_project", map[string]any{"projectId": "brain"}, []string{"Resumed runner execution for project brain"}},
-		{"brain_runner_pause_all", map[string]any{"confirm": true}, []string{"Paused runner execution for all projects"}},
-		{"brain_runner_resume_all", map[string]any{"confirm": true}, []string{"Resumed runner execution for all projects"}},
-		{"brain_control_send_prompt", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "text": "continue", "agent": "dev", "providerID": "anthropic", "modelID": "claude"}, []string{"Sent prompt to session ses-1", "runner-1", "inst-1"}},
-		{"brain_control_abort_session", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1"}, []string{"Abort requested for session ses-1", "runner-1", "inst-1"}},
-		{"brain_control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "allow", "remember": "once"}, []string{"Responded allow to permission perm-1", "session ses-1"}},
-		{"brain_control_spawn_instance", map[string]any{"runnerId": "runner-1", "workdir": "/tmp/brain", "agent": "dev", "model": "anthropic/claude", "title": "Scratch"}, []string{"Spawned control instance on runner runner-1", "inst-new", "/tmp/brain"}},
-		{"brain_control_kill_instance", map[string]any{"runnerId": "runner-1", "instanceId": "inst-new", "confirm": true}, []string{"Killed control instance inst-new", "runner-1"}},
+		{"runner_pause_project", map[string]any{"projectId": "brain"}, []string{"Paused runner execution for project brain"}},
+		{"runner_resume_project", map[string]any{"projectId": "brain"}, []string{"Resumed runner execution for project brain"}},
+		{"runner_pause_all", map[string]any{"confirm": true}, []string{"Paused runner execution for all projects"}},
+		{"runner_resume_all", map[string]any{"confirm": true}, []string{"Resumed runner execution for all projects"}},
+		{"control_send_prompt", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "text": "continue", "agent": "dev", "providerID": "anthropic", "modelID": "claude"}, []string{"Sent prompt to session ses-1", "runner-1", "inst-1"}},
+		{"control_abort_session", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1"}, []string{"Abort requested for session ses-1", "runner-1", "inst-1"}},
+		{"control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "allow", "remember": "once"}, []string{"Responded allow to permission perm-1", "session ses-1"}},
+		{"control_spawn_instance", map[string]any{"runnerId": "runner-1", "workdir": "/tmp/brain", "agent": "dev", "model": "anthropic/claude", "title": "Scratch"}, []string{"Spawned control instance on runner runner-1", "inst-new", "/tmp/brain"}},
+		{"control_kill_instance", map[string]any{"runnerId": "runner-1", "instanceId": "inst-new", "confirm": true}, []string{"Killed control instance inst-new", "runner-1"}},
 	}
 	for _, call := range calls {
 		t.Run(call.tool, func(t *testing.T) {
@@ -205,16 +205,16 @@ func TestControlTools_ValidationAndConfirmation(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"brain_runner_pause_project", map[string]any{}, "projectId is required"},
-		{"brain_runner_resume_project", map[string]any{}, "projectId is required"},
-		{"brain_runner_pause_all", map[string]any{}, "confirm=true is required"},
-		{"brain_runner_resume_all", map[string]any{"confirm": false}, "confirm=true is required"},
-		{"brain_control_send_prompt", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1"}, "text is required"},
-		{"brain_control_abort_session", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1"}, "sessionId is required"},
-		{"brain_control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "maybe"}, "response must be allow or deny"},
-		{"brain_control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "allow", "remember": "forever"}, "remember must be once or always"},
-		{"brain_control_spawn_instance", map[string]any{"runnerId": "runner-1", "workdir": "relative/path"}, "workdir must be an absolute path"},
-		{"brain_control_kill_instance", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1"}, "confirm=true is required"},
+		{"runner_pause_project", map[string]any{}, "projectId is required"},
+		{"runner_resume_project", map[string]any{}, "projectId is required"},
+		{"runner_pause_all", map[string]any{}, "confirm=true is required"},
+		{"runner_resume_all", map[string]any{"confirm": false}, "confirm=true is required"},
+		{"control_send_prompt", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1"}, "text is required"},
+		{"control_abort_session", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1"}, "sessionId is required"},
+		{"control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "maybe"}, "response must be allow or deny"},
+		{"control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "allow", "remember": "forever"}, "remember must be once or always"},
+		{"control_spawn_instance", map[string]any{"runnerId": "runner-1", "workdir": "relative/path"}, "workdir must be an absolute path"},
+		{"control_kill_instance", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1"}, "confirm=true is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {

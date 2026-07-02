@@ -23,7 +23,7 @@ action:
 
     ## Non-Negotiable Source Rules
 
-    - **Use Brain as the only source of truth.** Only use content returned by `brain_search`, `brain_list`, `brain_recall`, and `brain_tasks` for project {{.Project}}.
+    - **Use Brain as the only source of truth.** Only use content returned by `search`, `list`, `recall`, and `tasks` for project {{.Project}}.
     - **Do not inspect the filesystem, git history, web pages, browser tabs, terminals, codebase files, screenshots, or prior chat context.** This automation is a Brain-only synthesis job.
     - **Do not ask the user for guidance.** If required Brain data is missing or insufficient, log the exact skip reason on your own task and exit.
     - **Do not infer facts from project names.** If Brain entries do not state something, leave it out or list it as an open question sourced from the entries.
@@ -37,25 +37,25 @@ action:
 
     Before synthesizing, check whether Brain has enough project knowledge to work with. Do not require modified timestamps; the automation trigger already enforces cooldown and max-concurrent behavior.
 
-    1. **Find existing dream:** Call brain_search({ query: "Project Dream", type: "dream", project: "{{.Project}}" }) to look for an existing dream entry for this project.
-    2. **Count source entries:** Call brain_list for decision, pattern, learning, summary, plan, exploration, and idea entries in project "{{.Project}}". Also call brain_tasks for pending, in_progress, and blocked tasks.
-    3. **Skip only when Brain is empty:** If fewer than 3 total non-dream source entries/tasks are found, call brain_update({ path: "<your-own-task-path>", append: "Skipped: fewer than 3 Brain source entries/tasks found for project {{.Project}} at <timestamp>" }) and exit.
+    1. **Find existing dream:** Call search({ query: "Project Dream", type: "dream", project: "{{.Project}}" }) to look for an existing dream entry for this project.
+    2. **Count source entries:** Call list for decision, pattern, learning, summary, plan, exploration, and idea entries in project "{{.Project}}". Also call tasks for pending, in_progress, and blocked tasks.
+    3. **Skip only when Brain is empty:** If fewer than 3 total non-dream source entries/tasks are found, call update({ path: "<your-own-task-path>", append: "Skipped: fewer than 3 Brain source entries/tasks found for project {{.Project}} at <timestamp>" }) and exit.
     4. **Do not skip because timestamps are missing.** Brain list/search output may omit timestamps; that is expected and must not block consolidation.
 
     ## Phase 2: Read All Project Knowledge
 
-    Gather every piece of knowledge by type from Brain. For each call below, then call brain_recall({ path: "<path>" }) on every returned entry to get full content. Do not use any other source.
+    Gather every piece of knowledge by type from Brain. For each call below, then call recall({ path: "<path>" }) on every returned entry to get full content. Do not use any other source.
 
-    - brain_list({ type: "decision", project: "{{.Project}}" }) — architectural decisions
-    - brain_list({ type: "pattern", project: "{{.Project}}" }) — reusable patterns
-    - brain_list({ type: "learning", project: "{{.Project}}" }) — learnings and best practices
-    - brain_list({ type: "summary", project: "{{.Project}}" }) — session summaries
-    - brain_list({ type: "plan", status: "active", project: "{{.Project}}" }) — active plans
-    - brain_list({ type: "exploration", project: "{{.Project}}" }) — research and investigations
-    - brain_list({ type: "idea", project: "{{.Project}}" }) — future ideas
-    - brain_tasks({ status: "pending", project: "{{.Project}}" }) — pending tasks
-    - brain_tasks({ status: "in_progress", project: "{{.Project}}" }) — in-progress tasks
-    - brain_tasks({ status: "blocked", project: "{{.Project}}" }) — blocked tasks
+    - list({ type: "decision", project: "{{.Project}}" }) — architectural decisions
+    - list({ type: "pattern", project: "{{.Project}}" }) — reusable patterns
+    - list({ type: "learning", project: "{{.Project}}" }) — learnings and best practices
+    - list({ type: "summary", project: "{{.Project}}" }) — session summaries
+    - list({ type: "plan", status: "active", project: "{{.Project}}" }) — active plans
+    - list({ type: "exploration", project: "{{.Project}}" }) — research and investigations
+    - list({ type: "idea", project: "{{.Project}}" }) — future ideas
+    - tasks({ status: "pending", project: "{{.Project}}" }) — pending tasks
+    - tasks({ status: "in_progress", project: "{{.Project}}" }) — in-progress tasks
+    - tasks({ status: "blocked", project: "{{.Project}}" }) — blocked tasks
 
     ## Phase 3: Synthesize Dream Document
 
@@ -92,9 +92,9 @@ action:
 
     ## Phase 4: Save/Update Dream Entry
 
-    1. Search for an existing dream entry for this project using brain_search({ query: "Project Dream", type: "dream", project: "{{.Project}}" }).
-    2. If an existing dream is found, archive it with brain_update({ path: "<existing-dream-path>", status: "archived", note: "Superseded by new Dream Consolidation run" }).
-    3. Save the new dream: brain_save({ type: "dream", title: "Project Dream: {{.Project}}", content: "<synthesized-document>", tags: ["dream", "consolidation", "auto-generated", "brain-only"], project: "{{.Project}}" }).
+    1. Search for an existing dream entry for this project using search({ query: "Project Dream", type: "dream", project: "{{.Project}}" }).
+    2. If an existing dream is found, archive it with update({ path: "<existing-dream-path>", status: "archived", note: "Superseded by new Dream Consolidation run" }).
+    3. Save the new dream: save({ type: "dream", title: "Project Dream: {{.Project}}", content: "<synthesized-document>", tags: ["dream", "consolidation", "auto-generated", "brain-only"], project: "{{.Project}}" }).
 
     ## Safety Rules
 

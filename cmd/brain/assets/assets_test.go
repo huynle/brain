@@ -178,7 +178,7 @@ func TestBlockedTaskInspectorAutomationAssetTriggersOnBlockedStatusChange(t *tes
 		"to_status: blocked",
 		"project: \"*\"",
 		"once_per: task_id",
-		"brain_task_get",
+		"task_get",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("automation asset missing %q", want)

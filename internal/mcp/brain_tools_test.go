@@ -35,38 +35,38 @@ func TestRegisterBrainTools_Names(t *testing.T) {
 	RegisterBrainTools(s, client)
 
 	expectedTools := []string{
-		"brain_save",
-		"brain_recall",
-		"brain_search",
-		"brain_list",
-		"brain_inject",
-		"brain_update",
-		"brain_bulk_update",
-		"brain_delete",
-		"brain_move",
-		"brain_stats",
-		"brain_check_connection",
-		"brain_link",
-		"brain_section",
-		"brain_plan_sections",
-		"brain_verify",
-		"brain_stale",
-		"brain_orphans",
-		"brain_backlinks",
-		"brain_outlinks",
-		"brain_related",
-		"brain_automation_list",
-		"brain_automation_test",
-		"brain_attachment_upload",
-		"brain_attachment_attach",
-		"brain_attachment_detach",
-		"brain_attachment_list",
-		"brain_attachment_get",
-		"brain_attachment_delete",
-		"brain_attachment_backfill",
-		"brain_attachment_extract",
-		"brain_attachment_text",
-		"brain_attachment_download",
+		"save",
+		"recall",
+		"search",
+		"list",
+		"inject",
+		"update",
+		"bulk_update",
+		"delete",
+		"move",
+		"stats",
+		"check_connection",
+		"link",
+		"section",
+		"plan_sections",
+		"verify",
+		"stale",
+		"orphans",
+		"backlinks",
+		"outlinks",
+		"related",
+		"automation_list",
+		"automation_test",
+		"attachment_upload",
+		"attachment_attach",
+		"attachment_detach",
+		"attachment_list",
+		"attachment_get",
+		"attachment_delete",
+		"attachment_backfill",
+		"attachment_extract",
+		"attachment_text",
+		"attachment_download",
 	}
 
 	for _, name := range expectedTools {
@@ -82,7 +82,7 @@ func TestRegisterBrainTools_Schemas(t *testing.T) {
 	RegisterBrainTools(s, client)
 
 	// Verify brain_save has required fields
-	saveTool := s.tools["brain_save"].tool
+	saveTool := s.tools["save"].tool
 	if len(saveTool.InputSchema.Required) != 3 {
 		t.Errorf("brain_save required fields = %d, want 3", len(saveTool.InputSchema.Required))
 	}
@@ -109,37 +109,37 @@ func TestRegisterBrainTools_Schemas(t *testing.T) {
 	}
 
 	// Verify brain_search has required query
-	searchTool := s.tools["brain_search"].tool
+	searchTool := s.tools["search"].tool
 	if len(searchTool.InputSchema.Required) != 1 || searchTool.InputSchema.Required[0] != "query" {
 		t.Errorf("brain_search required = %v, want [query]", searchTool.InputSchema.Required)
 	}
 
 	// Verify brain_delete has required path and confirm
-	deleteTool := s.tools["brain_delete"].tool
+	deleteTool := s.tools["delete"].tool
 	if len(deleteTool.InputSchema.Required) != 2 {
 		t.Errorf("brain_delete required fields = %d, want 2", len(deleteTool.InputSchema.Required))
 	}
 
 	// Verify brain_update has required path
-	updateTool := s.tools["brain_update"].tool
+	updateTool := s.tools["update"].tool
 	if len(updateTool.InputSchema.Required) != 1 || updateTool.InputSchema.Required[0] != "path" {
 		t.Errorf("brain_update required = %v, want [path]", updateTool.InputSchema.Required)
 	}
 
 	// Verify brain_move has required path and project
-	moveTool := s.tools["brain_move"].tool
+	moveTool := s.tools["move"].tool
 	if len(moveTool.InputSchema.Required) != 2 {
 		t.Errorf("brain_move required fields = %d, want 2", len(moveTool.InputSchema.Required))
 	}
 
 	// Verify brain_list has no required fields
-	listTool := s.tools["brain_list"].tool
+	listTool := s.tools["list"].tool
 	if len(listTool.InputSchema.Required) != 0 {
 		t.Errorf("brain_list required = %v, want []", listTool.InputSchema.Required)
 	}
 
 	// Verify brain_check_connection has no properties
-	checkTool := s.tools["brain_check_connection"].tool
+	checkTool := s.tools["check_connection"].tool
 	if len(checkTool.InputSchema.Properties) != 0 {
 		t.Errorf("brain_check_connection properties = %d, want 0", len(checkTool.InputSchema.Properties))
 	}
@@ -179,7 +179,7 @@ func TestBrainSave_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_save"].handler
+	handler := s.tools["save"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"type":    "summary",
 		"title":   "Test Entry",
@@ -219,7 +219,7 @@ func TestBrainRecall_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_recall"].handler
+	handler := s.tools["recall"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"path": "projects/test/summary/abc12345.md",
 	})
@@ -254,7 +254,7 @@ func TestBrainSearch_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_search"].handler
+	handler := s.tools["search"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"query": "test",
 	})
@@ -281,7 +281,7 @@ func TestBrainCheckConnection_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_check_connection"].handler
+	handler := s.tools["check_connection"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -297,7 +297,7 @@ func TestBrainCheckConnection_Unavailable(t *testing.T) {
 	client := NewAPIClient("http://localhost:1") // Will fail to connect
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_check_connection"].handler
+	handler := s.tools["check_connection"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -331,7 +331,7 @@ func TestBrainList_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_list"].handler
+	handler := s.tools["list"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"type": "task",
 	})
@@ -367,7 +367,7 @@ func TestBrainUpdate_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_update"].handler
+	handler := s.tools["update"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"path":   "projects/test/task/abc.md",
 		"status": "completed",
@@ -416,7 +416,7 @@ func TestBrainUpdate_HandlerOmitsEmptyOptionalStringDefaults(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_update"].handler
+	handler := s.tools["update"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"path":       "projects/test/task/abc.md",
 		"status":     "draft",
@@ -457,7 +457,7 @@ func TestBrainUpdate_HandlerOmitsOpenCodeOptionalDefaults(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_update"].handler
+	handler := s.tools["update"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"path":                 "projects/test/task/abc.md",
 		"status":               "pending",
@@ -545,7 +545,7 @@ func TestBrainBulkUpdate_HandlerOmitsOpenCodeOptionalDefaultsInEntryUpdates(t *t
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_bulk_update"].handler
+	handler := s.tools["bulk_update"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"entries": []any{
 			map[string]any{
@@ -611,7 +611,7 @@ func TestBrainBulkUpdate_HandlerTreatsEmptyFilterAsAbsentForExplicitEntries(t *t
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_bulk_update"].handler
+	handler := s.tools["bulk_update"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"filter": map[string]any{},
 		"entries": []any{
@@ -645,7 +645,7 @@ func TestBrainDelete_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_delete"].handler
+	handler := s.tools["delete"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"path":    "projects/test/task/abc.md",
 		"confirm": true,
@@ -664,7 +664,7 @@ func TestBrainDelete_NoConfirm(t *testing.T) {
 	client := NewAPIClient("http://localhost:1")
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_delete"].handler
+	handler := s.tools["delete"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"path":    "projects/test/task/abc.md",
 		"confirm": false,
@@ -694,7 +694,7 @@ func TestBrainStats_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_stats"].handler
+	handler := s.tools["stats"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -724,7 +724,7 @@ func TestBrainBacklinks_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_backlinks"].handler
+	handler := s.tools["backlinks"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"path": "projects/test/plan/abc.md",
 	})
@@ -754,7 +754,7 @@ func TestBrainVerify_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_verify"].handler
+	handler := s.tools["verify"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"path": "test/path",
 	})
@@ -791,7 +791,7 @@ func TestBrainSave_TaskEnrichment(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_save"].handler
+	handler := s.tools["save"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"type":    "task",
 		"title":   "Test Task",
@@ -836,7 +836,7 @@ func TestBrainSave_NonTaskNoEnrichment(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_save"].handler
+	handler := s.tools["save"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"type":    "summary",
 		"title":   "Test Summary",
@@ -893,7 +893,7 @@ func TestBrainRecall_TitleFallback(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_recall"].handler
+	handler := s.tools["recall"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"title": "My Plan",
 	})
@@ -914,7 +914,7 @@ func TestBrainRecall_NoPathOrTitle(t *testing.T) {
 	client := NewAPIClient("http://localhost:1")
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_recall"].handler
+	handler := s.tools["recall"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -965,7 +965,7 @@ func TestBrainRecall_IncludeQueryAndAttachmentFormatting(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	result, err := s.tools["brain_recall"].handler(context.Background(), map[string]any{
+	result, err := s.tools["recall"].handler(context.Background(), map[string]any{
 		"path":    "projects/test/report/abc.md",
 		"include": []any{"attachments", "attachment_text"},
 	})
@@ -989,19 +989,19 @@ func TestAttachmentToolSchemas(t *testing.T) {
 		tool     string
 		required []string
 	}{
-		{"brain_attachment_upload", []string{"project_id", "file_path"}},
-		{"brain_attachment_attach", []string{"project_id", "entry_id", "attachment_id"}},
-		{"brain_attachment_detach", []string{"project_id", "entry_id", "attachment_id"}},
-		{"brain_attachment_list", []string{"project_id"}},
-		{"brain_attachment_get", []string{"project_id", "attachment_id"}},
-		{"brain_attachment_delete", []string{"project_id", "attachment_id"}},
-		{"brain_attachment_backfill", []string{"project_id"}},
-		{"brain_attachment_extract", []string{"project_id", "attachment_id"}},
-		{"brain_attachment_text", []string{"project_id", "attachment_id"}},
-		{"brain_attachment_download", []string{"project_id", "attachment_id", "output_path"}},
+		{"attachment_upload", []string{"project_id", "file_path"}},
+		{"attachment_attach", []string{"project_id", "entry_id", "attachment_id"}},
+		{"attachment_detach", []string{"project_id", "entry_id", "attachment_id"}},
+		{"attachment_list", []string{"project_id"}},
+		{"attachment_get", []string{"project_id", "attachment_id"}},
+		{"attachment_delete", []string{"project_id", "attachment_id"}},
+		{"attachment_backfill", []string{"project_id"}},
+		{"attachment_extract", []string{"project_id", "attachment_id"}},
+		{"attachment_text", []string{"project_id", "attachment_id"}},
+		{"attachment_download", []string{"project_id", "attachment_id", "output_path"}},
 	}
 
-	listTool := s.tools["brain_attachment_list"].tool
+	listTool := s.tools["attachment_list"].tool
 	if _, ok := listTool.InputSchema.Properties["entry_id"]; !ok {
 		t.Fatalf("brain_attachment_list schema missing optional entry_id property")
 	}
@@ -1064,7 +1064,7 @@ func TestBrainAttachmentUpload_HandlerUsesMultipartHelper(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	result, err := s.tools["brain_attachment_upload"].handler(context.Background(), map[string]any{
+	result, err := s.tools["attachment_upload"].handler(context.Background(), map[string]any{
 		"project_id": "test-project",
 		"file_path":  filePath,
 		"metadata":   map[string]any{"kind": "fixture"},
@@ -1072,7 +1072,7 @@ func TestBrainAttachmentUpload_HandlerUsesMultipartHelper(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	if !strings.Contains(result, "att_123") || !strings.Contains(result, "brain_attachment_attach") {
+	if !strings.Contains(result, "att_123") || !strings.Contains(result, "attachment_attach") {
 		t.Errorf("result should contain uploaded ID and attach hint, got: %s", result)
 	}
 }
@@ -1176,16 +1176,16 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 		args map[string]any
 		want string
 	}{
-		{"brain_attachment_attach", map[string]any{"project_id": "test-project", "entry_id": "entry-123", "attachment_id": "att_123", "role": "source", "caption": "PDF source"}, "Attached"},
-		{"brain_attachment_detach", map[string]any{"project_id": "test-project", "entry_id": "entry-123", "attachment_id": "att_123", "role": "source"}, "Detached"},
-		{"brain_attachment_list", map[string]any{"project_id": "test-project"}, "source.pdf"},
-		{"brain_attachment_list", map[string]any{"project_id": "test-project", "entry_id": "entry-123"}, "Entry: entry-123"},
-		{"brain_attachment_get", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "drv_1"},
-		{"brain_attachment_delete", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "Deleted attachment att_123"},
-		{"brain_attachment_backfill", map[string]any{"project_id": "test-project", "dry_run": true, "force": true, "batch_size": float64(5), "rate_limit_delay_ms": float64(25)}, "Failed: 1"},
-		{"brain_attachment_extract", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "Status: ready"},
-		{"brain_attachment_text", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "extracted text"},
-		{"brain_attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123", "output_path": outputPath}, "Downloaded"},
+		{"attachment_attach", map[string]any{"project_id": "test-project", "entry_id": "entry-123", "attachment_id": "att_123", "role": "source", "caption": "PDF source"}, "Attached"},
+		{"attachment_detach", map[string]any{"project_id": "test-project", "entry_id": "entry-123", "attachment_id": "att_123", "role": "source"}, "Detached"},
+		{"attachment_list", map[string]any{"project_id": "test-project"}, "source.pdf"},
+		{"attachment_list", map[string]any{"project_id": "test-project", "entry_id": "entry-123"}, "Entry: entry-123"},
+		{"attachment_get", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "drv_1"},
+		{"attachment_delete", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "Deleted attachment att_123"},
+		{"attachment_backfill", map[string]any{"project_id": "test-project", "dry_run": true, "force": true, "batch_size": float64(5), "rate_limit_delay_ms": float64(25)}, "Failed: 1"},
+		{"attachment_extract", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "Status: ready"},
+		{"attachment_text", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "extracted text"},
+		{"attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123", "output_path": outputPath}, "Downloaded"},
 	}
 	for _, call := range calls {
 		t.Run(call.tool, func(t *testing.T) {
@@ -1196,14 +1196,14 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 			if !strings.Contains(result, call.want) {
 				t.Fatalf("result = %q, want substring %q", result, call.want)
 			}
-			if call.tool == "brain_attachment_extract" {
+			if call.tool == "attachment_extract" {
 				for _, want := range []string{"Provider: openrouter", "Model: google/gemini-2.5-flash", "extracted_chars: 14", "elapsed_ms: 1234", "Linked entries", "projects/test/report/abc.md", "Text: 14 chars"} {
 					if !strings.Contains(result, want) {
 						t.Fatalf("extract result missing %q:\n%s", want, result)
 					}
 				}
 			}
-			if call.tool == "brain_attachment_backfill" {
+			if call.tool == "attachment_backfill" {
 				for _, want := range []string{"Project: test-project", "Total: 3", "Candidates: 2", "Processed: 1", "Skipped: 1", "Dry run: true", "att_ready", "Status: ready", "att_failed", "Error: extract failed"} {
 					if !strings.Contains(result, want) {
 						t.Fatalf("backfill result missing %q:\n%s", want, result)
@@ -1252,16 +1252,16 @@ func TestBrainAttachmentTools_ValidateRequiredIDsBeforeRequest(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"brain_attachment_upload", map[string]any{"project_id": "test-project"}, "project_id and file_path"},
-		{"brain_attachment_attach", map[string]any{"project_id": "test-project", "entry_id": "entry-123"}, "project_id, entry_id, and attachment_id"},
-		{"brain_attachment_detach", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, entry_id, and attachment_id"},
-		{"brain_attachment_list", map[string]any{}, "project_id"},
-		{"brain_attachment_get", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
-		{"brain_attachment_delete", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
-		{"brain_attachment_backfill", map[string]any{}, "project_id"},
-		{"brain_attachment_extract", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
-		{"brain_attachment_text", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
-		{"brain_attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, attachment_id, and output_path"},
+		{"attachment_upload", map[string]any{"project_id": "test-project"}, "project_id and file_path"},
+		{"attachment_attach", map[string]any{"project_id": "test-project", "entry_id": "entry-123"}, "project_id, entry_id, and attachment_id"},
+		{"attachment_detach", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, entry_id, and attachment_id"},
+		{"attachment_list", map[string]any{}, "project_id"},
+		{"attachment_get", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
+		{"attachment_delete", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
+		{"attachment_backfill", map[string]any{}, "project_id"},
+		{"attachment_extract", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
+		{"attachment_text", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
+		{"attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, attachment_id, and output_path"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -1298,7 +1298,7 @@ func TestBrainSave_SchemaProperties(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterBrainTools(s, client)
 
-	saveTool := s.tools["brain_save"].tool
+	saveTool := s.tools["save"].tool
 	expectedProps := []string{
 		"type", "title", "content", "tags", "status", "priority",
 		"global", "project", "depends_on", "user_original_request",
@@ -1329,7 +1329,7 @@ func TestBrainUpdate_SchemaProperties(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterBrainTools(s, client)
 
-	updateTool := s.tools["brain_update"].tool
+	updateTool := s.tools["update"].tool
 	expectedProps := []string{
 		"path", "status", "title", "append", "note", "depends_on", "tags",
 		"priority", "target_workdir", "git_branch", "merge_target_branch",
@@ -1395,7 +1395,7 @@ func TestBrainSave_ForwardsFeatureCompletionTrigger(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	_, err := s.tools["brain_save"].handler(context.Background(), map[string]any{
+	_, err := s.tools["save"].handler(context.Background(), map[string]any{
 		"type":    "task",
 		"title":   "Post task",
 		"content": "Triggered after feature completion",
@@ -1474,7 +1474,7 @@ func TestBrainSave_ForwardsAutomationTriggerActionAndRetry(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	_, err := s.tools["brain_save"].handler(context.Background(), map[string]any{
+	_, err := s.tools["save"].handler(context.Background(), map[string]any{
 		"type":    "automation",
 		"title":   "Session automation",
 		"content": "Runs when a session is discovered",
@@ -1518,7 +1518,7 @@ func TestBrainMove_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_move"].handler
+	handler := s.tools["move"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"path":    "projects/old/task/abc.md",
 		"project": "new-project",
@@ -1537,7 +1537,7 @@ func TestBrainMove_MissingArgs(t *testing.T) {
 	client := NewAPIClient("http://localhost:1")
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_move"].handler
+	handler := s.tools["move"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -1565,7 +1565,7 @@ func TestBrainLink_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_link"].handler
+	handler := s.tools["link"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"path": "projects/test/summary/abc.md",
 	})
@@ -1596,7 +1596,7 @@ func TestBrainInject_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_inject"].handler
+	handler := s.tools["inject"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"query": "test context",
 	})
@@ -1635,7 +1635,7 @@ func TestBrainSave_APIError(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_save"].handler
+	handler := s.tools["save"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"type":    "summary",
 		"title":   "",
@@ -1659,7 +1659,7 @@ func TestBrainAutomationList_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterBrainTools(s, client)
 
-	tool := s.tools["brain_automation_list"].tool
+	tool := s.tools["automation_list"].tool
 
 	// No required fields (all optional)
 	if len(tool.InputSchema.Required) != 0 {
@@ -1701,7 +1701,7 @@ func TestBrainAutomationList_Handler_Empty(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_automation_list"].handler
+	handler := s.tools["automation_list"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -1754,7 +1754,7 @@ func TestBrainAutomationList_Handler_WithEntries(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_automation_list"].handler
+	handler := s.tools["automation_list"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -1793,7 +1793,7 @@ func TestBrainAutomationList_Handler_WithProjectFilter(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_automation_list"].handler
+	handler := s.tools["automation_list"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"project": "my-project",
 	})
@@ -1815,7 +1815,7 @@ func TestBrainAutomationTest_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterBrainTools(s, client)
 
-	tool := s.tools["brain_automation_test"].tool
+	tool := s.tools["automation_test"].tool
 
 	// Required: event
 	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "event" {
@@ -1854,7 +1854,7 @@ func TestBrainAutomationTest_Handler_NoMatch(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_automation_test"].handler
+	handler := s.tools["automation_test"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"event": "task.completed",
 	})
@@ -1909,7 +1909,7 @@ func TestBrainAutomationTest_Handler_WithMatch(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_automation_test"].handler
+	handler := s.tools["automation_test"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"event": "task.completed",
 	})
@@ -1976,15 +1976,15 @@ var projectSchemaFixtures = []struct {
 	tool string
 	note string
 }{
-	{"brain_list", "P0 — reported bug: list must be scopable by project"},
-	{"brain_search", "P0 — sibling of brain_list; API already accepts SearchRequest.Project"},
-	{"brain_recall", "P3 — title fallback must not silently return wrong-project matches"},
-	{"brain_plan_sections", "P3 — same title-fallback risk as brain_recall"},
-	{"brain_bulk_update", "P2 — top-level project shortcut merges into filter.project"},
-	{"brain_inject", "P1 — service now honors Project in InjectRequest via SearchOptions.ProjectID"},
-	{"brain_stats", "P1 — service+API+storage all extended to accept project"},
-	{"brain_stale", "P1 — service+API+storage all extended to accept project"},
-	{"brain_orphans", "P1 — service+API+storage all extended to accept project"},
+	{"list", "P0 — reported bug: list must be scopable by project"},
+	{"search", "P0 — sibling of brain_list; API already accepts SearchRequest.Project"},
+	{"recall", "P3 — title fallback must not silently return wrong-project matches"},
+	{"plan_sections", "P3 — same title-fallback risk as brain_recall"},
+	{"bulk_update", "P2 — top-level project shortcut merges into filter.project"},
+	{"inject", "P1 — service now honors Project in InjectRequest via SearchOptions.ProjectID"},
+	{"stats", "P1 — service+API+storage all extended to accept project"},
+	{"stale", "P1 — service+API+storage all extended to accept project"},
+	{"orphans", "P1 — service+API+storage all extended to accept project"},
 }
 
 func TestBrainTools_ProjectParameter_InSchema(t *testing.T) {
@@ -2037,7 +2037,7 @@ func TestBrainList_Handler_ForwardsProject(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_list"].handler
+	handler := s.tools["list"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"project": "orion-ai",
 		"limit":   float64(1),
@@ -2067,7 +2067,7 @@ func TestBrainList_Handler_OmitsProjectWhenAbsent(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_list"].handler
+	handler := s.tools["list"].handler
 	if _, err := handler(context.Background(), map[string]any{"limit": float64(1)}); err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -2099,7 +2099,7 @@ func TestBrainSearch_Handler_ForwardsProject(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_search"].handler
+	handler := s.tools["search"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"query":   "hello",
 		"project": "orion-ai",
@@ -2149,7 +2149,7 @@ func TestBrainRecall_TitleFallback_ForwardsProject(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_recall"].handler
+	handler := s.tools["recall"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"title":   "Overview",
 		"project": "orion-ai",
@@ -2199,7 +2199,7 @@ func TestBrainPlanSections_TitleFallback_ForwardsProject(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_plan_sections"].handler
+	handler := s.tools["plan_sections"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"title":   "Auth Plan",
 		"project": "orion-ai",
@@ -2237,7 +2237,7 @@ func TestBrainBulkUpdate_TopLevelProject_MergedIntoFilter(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_bulk_update"].handler
+	handler := s.tools["bulk_update"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"project": "orion-ai",
 		"filter":  map[string]any{"status": "draft"},
@@ -2271,7 +2271,7 @@ func TestBrainBulkUpdate_ExplicitFilterProject_WinsOverTopLevel(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_bulk_update"].handler
+	handler := s.tools["bulk_update"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"project": "top-level",
 		"filter":  map[string]any{"project": "nested-wins", "status": "draft"},
@@ -2308,7 +2308,7 @@ func TestBrainInject_Handler_ForwardsProject(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_inject"].handler
+	handler := s.tools["inject"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"query":   "auth flow",
 		"project": "orion-ai",
@@ -2342,7 +2342,7 @@ func TestBrainStats_Handler_ForwardsProject(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_stats"].handler
+	handler := s.tools["stats"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"project": "orion-ai",
 	}); err != nil {
@@ -2370,7 +2370,7 @@ func TestBrainStale_Handler_ForwardsProject(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_stale"].handler
+	handler := s.tools["stale"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"project": "orion-ai",
 		"days":    float64(14),
@@ -2399,7 +2399,7 @@ func TestBrainOrphans_Handler_ForwardsProject(t *testing.T) {
 	client := NewAPIClient(srv.URL)
 	RegisterBrainTools(s, client)
 
-	handler := s.tools["brain_orphans"].handler
+	handler := s.tools["orphans"].handler
 	if _, err := handler(context.Background(), map[string]any{
 		"project": "orion-ai",
 	}); err != nil {

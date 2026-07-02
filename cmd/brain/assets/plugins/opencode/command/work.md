@@ -34,9 +34,9 @@ Manual task processing - when you want direct control instead of the brain-runne
 ### Default: Show Queue Status
 
 ```
-brain_list(type: "task", status: "pending", sortBy: "priority")
-brain_list(type: "task", status: "in_progress")
-brain_list(type: "task", status: "blocked")
+list(type: "task", status: "pending", sortBy: "priority")
+list(type: "task", status: "in_progress")
+list(type: "task", status: "blocked")
 ```
 
 Display:
@@ -58,7 +58,7 @@ Commands:
 ### List All Tasks
 
 ```
-brain_list(type: "task", status: "pending", sortBy: "priority")
+list(type: "task", status: "pending", sortBy: "priority")
 ```
 
 Display sorted by priority (high first):
@@ -76,23 +76,23 @@ PENDING TASKS
 
 1. Find next ready task:
    ```
-   brain_list(type: "task", status: "pending", sortBy: "priority", limit: 1)
+   list(type: "task", status: "pending", sortBy: "priority", limit: 1)
    ```
 
 2. Load the brain-runner-queue skill for processing guidance
 
 3. Follow the per-task workflow from the skill:
-   - Claim task: `brain_update(path: "...", status: "in_progress")`
+   - Claim task: `update(path: "...", status: "in_progress")`
    - Triage complexity (Route A/B/C)
    - Execute appropriate workflow
    - Commit changes and capture hash: `git rev-parse HEAD`
-   - Complete: `brain_update(path: "...", status: "completed")` with commit hash in summary
+   - Complete: `update(path: "...", status: "completed")` with commit hash in summary
 
 ### Process Specific Task
 
 Same as "next" but with explicit task ID:
 ```
-brain_recall(path: "<task-id>")
+recall(path: "<task-id>")
 ```
 
 Then follow the per-task workflow.
@@ -100,7 +100,7 @@ Then follow the per-task workflow.
 ### Complete Task
 
 ```
-brain_update(path: "<task-id>", status: "completed", append: "## Completion\nMarked complete manually.")
+update(path: "<task-id>", status: "completed", append: "## Completion\nMarked complete manually.")
 ```
 
 Report:
@@ -111,7 +111,7 @@ Completed: "Fix login crash" (abc12def)
 ### Block Task
 
 ```
-brain_update(path: "<task-id>", status: "blocked", note: "<reason>")
+update(path: "<task-id>", status: "blocked", note: "<reason>")
 ```
 
 Report:
@@ -150,11 +150,11 @@ When processing tasks (`/work next` or `/work <id>`), this command loads the `br
 
 # Mark task complete without processing
 /work complete abc12def
-# -> brain_update(path: "abc12def", status: "completed")
+# -> update(path: "abc12def", status: "completed")
 
 # Block a task
 /work block abc12def "Waiting on API design"
-# -> brain_update(path: "abc12def", status: "blocked", note: "...")
+# -> update(path: "abc12def", status: "blocked", note: "...")
 ```
 
 ## When to Use /work vs /do

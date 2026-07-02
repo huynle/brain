@@ -162,7 +162,7 @@ func TestHTTPHandlerToolsListIncludesProjectTools(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("tools/list status = %d, want %d; body = %s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	for _, want := range []string{"brain_context_resolve", "brain_project_placement_get", "brain_project_placement_put"} {
+	for _, want := range []string{"context_resolve", "project_placement_get", "project_placement_put"} {
 		if !strings.Contains(rec.Body.String(), want) {
 			t.Fatalf("tools/list response missing %q: %s", want, rec.Body.String())
 		}

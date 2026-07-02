@@ -30,7 +30,7 @@ func controlDescription(action string) string {
 
 func registerBrainRunnerPauseProject(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_runner_pause_project",
+		Name:        "runner_pause_project",
 		Description: controlDescription("Pause task execution for one project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"projectId": {Type: "string", Description: "Project ID whose runner task execution will be paused"},
@@ -50,7 +50,7 @@ func registerBrainRunnerPauseProject(s *Server, client *APIClient) {
 
 func registerBrainRunnerResumeProject(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_runner_resume_project",
+		Name:        "runner_resume_project",
 		Description: controlDescription("Resume task execution for one project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"projectId": {Type: "string", Description: "Project ID whose runner task execution will be resumed"},
@@ -70,7 +70,7 @@ func registerBrainRunnerResumeProject(s *Server, client *APIClient) {
 
 func registerBrainRunnerPauseAll(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_runner_pause_all",
+		Name:        "runner_pause_all",
 		Description: controlDescription("Pause task execution for all projects; requires confirm=true."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"confirm": {Type: "boolean", Description: "Must be true to pause all runner task execution"},
@@ -89,7 +89,7 @@ func registerBrainRunnerPauseAll(s *Server, client *APIClient) {
 
 func registerBrainRunnerResumeAll(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_runner_resume_all",
+		Name:        "runner_resume_all",
 		Description: controlDescription("Resume task execution for all projects; requires confirm=true."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"confirm": {Type: "boolean", Description: "Must be true to resume all runner task execution"},
@@ -108,7 +108,7 @@ func registerBrainRunnerResumeAll(s *Server, client *APIClient) {
 
 func registerBrainControlSendPrompt(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_control_send_prompt",
+		Name:        "control_send_prompt",
 		Description: controlDescription("Send a prompt to a remote runner session."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"runnerId":   {Type: "string", Description: "Runner ID"},
@@ -148,7 +148,7 @@ func registerBrainControlSendPrompt(s *Server, client *APIClient) {
 
 func registerBrainControlAbortSession(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_control_abort_session",
+		Name:        "control_abort_session",
 		Description: controlDescription("Abort a remote runner session."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"runnerId":   {Type: "string", Description: "Runner ID"},
@@ -171,7 +171,7 @@ func registerBrainControlAbortSession(s *Server, client *APIClient) {
 
 func registerBrainControlPermission(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_control_permission",
+		Name:        "control_permission",
 		Description: controlDescription("Respond to a remote session permission prompt."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"runnerId":     {Type: "string", Description: "Runner ID"},
@@ -210,7 +210,7 @@ func registerBrainControlPermission(s *Server, client *APIClient) {
 
 func registerBrainControlSpawnInstance(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_control_spawn_instance",
+		Name:        "control_spawn_instance",
 		Description: controlDescription("Spawn a new ad-hoc remote control instance on a runner."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"runnerId": {Type: "string", Description: "Runner ID"},
@@ -248,7 +248,7 @@ func registerBrainControlSpawnInstance(s *Server, client *APIClient) {
 
 func registerBrainControlKillInstance(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_control_kill_instance",
+		Name:        "control_kill_instance",
 		Description: controlDescription("Kill an ad-hoc remote control instance; requires confirm=true."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"runnerId":   {Type: "string", Description: "Runner ID"},

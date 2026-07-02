@@ -24,7 +24,7 @@ func RegisterObservabilityTools(s *Server, client *APIClient) {
 
 func registerBrainTaskLogs(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_task_logs",
+		Name:        "task_logs",
 		Description: "Get task execution logs. Returns log entries from a running or completed task.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -62,7 +62,7 @@ func registerBrainTaskLogs(s *Server, client *APIClient) {
 
 func registerBrainTaskDispatchLease(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_task_dispatch_lease",
+		Name:        "task_dispatch_lease",
 		Description: "Get task dispatch/claim information. Shows which runner claimed the task and lease state.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -95,7 +95,7 @@ func registerBrainTaskDispatchLease(s *Server, client *APIClient) {
 
 func registerBrainTaskPlacementReasons(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_task_placement_reasons",
+		Name:        "task_placement_reasons",
 		Description: "Get task placement decision history. Shows why runners accepted or rejected this task.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -128,7 +128,7 @@ func registerBrainTaskPlacementReasons(s *Server, client *APIClient) {
 
 func registerBrainEventsRecent(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_events_recent",
+		Name:        "events_recent",
 		Description: "Get recent system events. Returns task lifecycle, runner, and automation events.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -172,7 +172,7 @@ func registerBrainEventsRecent(s *Server, client *APIClient) {
 
 func registerBrainAutomationRuns(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_automation_runs",
+		Name:        "automation_runs",
 		Description: "List automation run history. Shows executed automation instances with status and timestamps.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -209,7 +209,7 @@ func registerBrainAutomationRuns(s *Server, client *APIClient) {
 
 func registerBrainAutomationRunGet(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_automation_run_get",
+		Name:        "automation_run_get",
 		Description: "Get detailed automation run information. Shows full run history, trigger details, and outcome.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -235,7 +235,7 @@ func registerBrainAutomationRunGet(s *Server, client *APIClient) {
 
 func registerBrainSchedulerStatus(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_scheduler_status",
+		Name:        "scheduler_status",
 		Description: "Get scheduler state and statistics. Shows scheduling interval, tick counts, and last results.",
 		InputSchema: InputSchema{
 			Type:       "object",

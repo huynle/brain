@@ -131,7 +131,14 @@ func (s *TaskServiceImpl) enrichDispatchDiagnostics(ctx context.Context, project
 		if err != nil {
 			return fmt.Errorf("get dispatch lease for %s: %w", task.ID, err)
 		}
-		reasons, err := s.storage.ListPlacementReasons(ctx, projectID, task.ID)
+		// Cap per-task placement history at PlacementReasonRetention to
+		// keep this hot-path bounded. The GetReady endpoint used to
+		// take 5+ seconds when the DB had 75k+ decisions per task; the
+		// PWA only needs the newest handful to show the "latest
+		// placement decision" hint anyway. The unbounded history is
+		// still available via the /placement-reasons diagnostic
+		// endpoint for deep debugging.
+		reasons, err := s.storage.ListPlacementReasonsLimit(ctx, projectID, task.ID, storage.PlacementReasonRetention)
 		if err != nil {
 			return fmt.Errorf("list placement reasons for %s: %w", task.ID, err)
 		}

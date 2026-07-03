@@ -42,6 +42,8 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
   const updateLastAssistant = useAssistant((s) => s.updateLastAssistant);
   const recordToolCall = useAssistant((s) => s.recordToolCall);
   const recordToolResult = useAssistant((s) => s.recordToolResult);
+  const setLastAssistantStatus = useAssistant((s) => s.setLastAssistantStatus);
+  const markLastAssistantCancelled = useAssistant((s) => s.markLastAssistantCancelled);
   const clear = useAssistant((s) => s.clear);
   const busy = useAssistant((s) => s.busy);
   const setBusy = useAssistant((s) => s.setBusy);
@@ -51,6 +53,24 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
   const [dragOver, setDragOver] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // Abort handle for the currently in-flight assistant request. Set inside
+  // send() and cleared once the request settles; used by cancel() to abort
+  // the fetch (which in turn causes the server to see r.Context() cancel).
+  const abortRef = useRef<AbortController | null>(null);
+  // Timestamp of the last Escape keypress, used to detect a double-Esc
+  // (two presses within 500ms) as the cancellation shortcut.
+  const lastEscRef = useRef<number>(0);
+
+  // cancel aborts the in-flight assistant request and marks the streaming
+  // message as cancelled. Safe to call when nothing is in flight (no-op).
+  function cancel() {
+    const controller = abortRef.current;
+    if (!controller) return;
+    controller.abort();
+    abortRef.current = null;
+    markLastAssistantCancelled();
+    setBusy(false);
+  }
 
   // Use whatever the server has configured. No client-side override.
   const model = "";
@@ -76,7 +96,34 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
     window.setTimeout(() => textareaRef.current?.focus(), 0);
   }, [active, focusSeq]);
 
+  // Double-Escape cancels an in-flight assistant request. We track the last
+  // Esc timestamp on a ref; two presses within 500ms trigger cancel(). The
+  // listener is scoped to the whole document so it works whether the focus
+  // is on the textarea, a chip, or elsewhere in the panel.
+  useEffect(() => {
+    if (!active || !busy) {
+      lastEscRef.current = 0;
+      return;
+    }
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      const now = Date.now();
+      if (now - lastEscRef.current < 500) {
+        e.preventDefault();
+        e.stopPropagation();
+        cancel();
+        lastEscRef.current = 0;
+      } else {
+        lastEscRef.current = now;
+      }
+    }
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => document.removeEventListener("keydown", onKeyDown, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [active, busy]);
+
   async function send() {
+    if (busy) return;
     const prompt = text.trim();
     if (!prompt && attachments.length === 0) return;
     if (!project && attachments.length > 0) {
@@ -95,6 +142,8 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
       text: prompt || `[${files.length} attachment${files.length === 1 ? "" : "s"}]`,
     });
     setBusy(true);
+    const controller = new AbortController();
+    abortRef.current = controller;
     try {
       const uploaded: string[] = [];
       for (const f of files) {
@@ -103,6 +152,7 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
         uploaded.push(res.attachment.id);
       }
       append({ role: "assistant", text: "" });
+      setLastAssistantStatus("thinking…");
       let streamedReply = "";
       await assistantChatStream(
         {
@@ -128,10 +178,12 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
           }
           if (event.type === "tool_call" && event.tool_call) {
             recordToolCall(event.tool_call);
+            setLastAssistantStatus(statusForToolCall(event.tool_call));
             return;
           }
           if (event.type === "tool_result" && event.tool_result) {
             recordToolResult(event.tool_result);
+            setLastAssistantStatus(statusForToolResult(event.tool_result));
             return;
           }
           if (event.type === "done") {
@@ -147,11 +199,22 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
             throw new Error(event.error || "Assistant stream failed");
           }
         },
+        controller.signal,
       );
     } catch (e) {
+      // AbortError comes from the user hitting Stop / double-Esc. That's not
+      // a failure — cancel() has already updated the message state.
+      if (controller.signal.aborted) {
+        return;
+      }
       toast(e instanceof Error ? e.message : "Assistant failed", "error");
       append({ role: "assistant", text: "Assistant request failed." });
     } finally {
+      // Only clear the abort ref if it still points to our controller. If
+      // cancel() already swapped it to null, leave it alone.
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
       setBusy(false);
     }
   }
@@ -246,9 +309,14 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
             <div className="ctl-part-text">
               {m.text ? (
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
-              ) : (
+              ) : m.runtimeStatus ? (
+                <span className="assistant-stream-placeholder">{m.runtimeStatus}</span>
+              ) : m.role === "assistant" && !m.cancelled ? (
                 <span className="assistant-stream-placeholder">streaming…</span>
-              )}
+              ) : null}
+              {m.cancelled ? (
+                <span className="assistant-cancelled-badge">cancelled</span>
+              ) : null}
             </div>
             {m.result?.executed_actions?.length ? (
               <div className="assistant-actions">
@@ -334,13 +402,23 @@ export function AssistantPanel({ active, headerActions, className }: Props) {
           <span className="faint" title="Configured by the server">
             model: {statusQ.data?.model || "not configured"}
           </span>
-          <button
-            className="btn primary sm"
-            disabled={busy || !statusQ.data?.available}
-            onClick={() => void send()}
-          >
-            {busy ? "Sending..." : "Send"}
-          </button>
+          {busy ? (
+            <button
+              className="btn danger sm assistant-stop-btn"
+              onClick={() => cancel()}
+              title="Cancel this request (or press Esc twice)"
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              className="btn primary sm"
+              disabled={!statusQ.data?.available}
+              onClick={() => void send()}
+            >
+              Send
+            </button>
+          )}
         </div>
       </div>
     </div>
@@ -422,6 +500,40 @@ function tryFormatJson(input: string): string {
   } catch {
     return input;
   }
+}
+
+// statusForToolCall renders a short, live-status label describing the tool
+// the assistant just decided to invoke. Reads say "reading X\u2026", writes say
+// "running X\u2026", destructive proposals show a "confirming X\u2026" flavor.
+function statusForToolCall(call: { name: string; tier: string }): string {
+  switch (call.tier) {
+    case "read":
+      return `reading ${call.name}\u2026`;
+    case "write":
+      return `running ${call.name}\u2026`;
+    case "destructive":
+      return `awaiting confirmation for ${call.name}`;
+    default:
+      return `calling ${call.name}\u2026`;
+  }
+}
+
+// statusForToolResult produces the transient status shown between a
+// tool_result arriving and the next event (text delta or another tool call).
+// For completed tools, "processed X". For failures, expose the error briefly.
+// Proposals stay in the "awaiting" state until the user acts.
+function statusForToolResult(result: {
+  name: string;
+  status: string;
+  error?: string;
+}): string {
+  if (result.status === "failed") {
+    return `${result.name} failed${result.error ? ": " + result.error : ""}`;
+  }
+  if (result.status === "proposed") {
+    return `${result.name} needs confirmation`;
+  }
+  return `processed ${result.name}\u2026`;
 }
 
 // buildHistory converts the in-memory transcript into the compact history

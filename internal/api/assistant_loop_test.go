@@ -342,3 +342,30 @@ func TestRunAgentLoop_ForwardsHistory(t *testing.T) {
 		t.Fatalf("current user content leaked history field: %q", payload.Messages[3].Content)
 	}
 }
+
+// Cancellation: if the caller's context is already cancelled when the loop
+// starts, the very first ctx.Err() check should return before we make a
+// single OpenRouter call. This proves the client-abort path stops server
+// work cleanly.
+func TestRunAgentLoop_RespectsCancelledContext(t *testing.T) {
+	scripted := newScriptedOpenRouter(nil) // no turns available
+	server := httptest.NewServer(scripted.handler(t))
+	defer server.Close()
+	t.Setenv("BRAIN_TEST_OPENROUTER_KEY", "test-key")
+
+	planner := NewOpenRouterAssistantPlanner("openrouter", server.URL, "BRAIN_TEST_OPENROUTER_KEY", "test-model", 0)
+	svc := NewAssistantService(AssistantServiceOptions{Enabled: true, Planner: planner, Brain: &mockBrainService{}, MaxToolTurns: 6})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := svc.runAgentLoop(ctx, AssistantChatRequest{Project: "prod", Message: "hi"}, nil)
+	if err == nil {
+		t.Fatal("expected cancellation error, got nil")
+	}
+	if !strings.Contains(err.Error(), "canceled") && !strings.Contains(err.Error(), "context canceled") {
+		t.Fatalf("err = %v, want context cancellation", err)
+	}
+	if len(scripted.seen) != 0 {
+		t.Fatalf("scripted server got %d calls, want 0 (loop should have bailed)", len(scripted.seen))
+	}
+}

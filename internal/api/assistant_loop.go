@@ -105,6 +105,11 @@ func (s *AssistantService) runAgentLoop(
 
 	result := agentLoopResult{}
 	for turn := 0; turn < s.maxToolTurns; turn++ {
+		// Bail early if the client disconnected between turns. Otherwise
+		// we'd waste a tool round-trip or LLM call on a dead request.
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
 		choice, err := planner.callChat(ctx, model, msgs, schemas, emit)
 		if err != nil {
 			return result, err
@@ -119,6 +124,11 @@ func (s *AssistantService) runAgentLoop(
 				ToolCalls: choice.ToolCalls,
 			})
 			for _, tc := range choice.ToolCalls {
+				// Check cancellation between each tool so a long sequence
+				// can be interrupted without executing the tail.
+				if err := ctx.Err(); err != nil {
+					return result, err
+				}
 				def, known := index[tc.Function.Name]
 				if !known {
 					msgs = append(msgs, chatMessage{

@@ -19,6 +19,15 @@ export interface AssistantMessage {
   result?: AssistantChatResponse;
   // Tool calls recorded during this assistant turn, in stream order.
   toolCalls?: AssistantToolRecord[];
+  // Live status shown while the message is streaming. Cleared once real
+  // text begins arriving (or the turn ends). Examples: "thinking\u2026",
+  // "calling list_automations\u2026", "waiting on confirmation for
+  // delete_entry".
+  runtimeStatus?: string;
+  // True when the user aborted this turn mid-stream. Preserves any partial
+  // text; the UI renders a "(cancelled)" badge and stops the streaming
+  // status.
+  cancelled?: boolean;
   // Wall-clock when the message was created, used to age out old entries when
   // we rehydrate from localStorage.
   ts: number;
@@ -69,6 +78,11 @@ interface AssistantState {
   updateLastAssistant: (text: string, result?: AssistantChatResponse) => void;
   recordToolCall: (call: AssistantToolCall) => void;
   recordToolResult: (result: AssistantToolResult) => void;
+  // Live status for the streaming assistant message. Pass undefined to clear.
+  setLastAssistantStatus: (status: string | undefined) => void;
+  // Mark the streaming assistant message as cancelled by the user. Preserves
+  // whatever partial text has arrived so far.
+  markLastAssistantCancelled: () => void;
   clear: () => void;
   setBusy: (busy: boolean) => void;
 }
@@ -89,7 +103,7 @@ export const useAssistant = create<AssistantState>((set, get) => ({
     const messages = get().messages;
     const last = messages[messages.length - 1];
     const next: AssistantMessage[] = last?.role === "assistant"
-      ? [...messages.slice(0, -1), { ...last, text, result }]
+      ? [...messages.slice(0, -1), { ...last, text, result, runtimeStatus: undefined }]
       : [...messages, { role: "assistant", text, result, ts: Date.now() }];
     persist(next);
     set({ messages: next });
@@ -111,6 +125,28 @@ export const useAssistant = create<AssistantState>((set, get) => ({
       rec.call.id === result.id ? { ...rec, result } : rec,
     );
     const next = [...messages.slice(0, -1), { ...last, toolCalls }];
+    persist(next);
+    set({ messages: next });
+  },
+  setLastAssistantStatus: (status) => {
+    const messages = get().messages;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    // Once real text has arrived we never fall back to a status line, so
+    // setting a non-empty status while text is present is a no-op.
+    if (last.text && status) return;
+    const next = [...messages.slice(0, -1), { ...last, runtimeStatus: status }];
+    // Don't persist runtime status to localStorage \u2014 it's transient UI state.
+    set({ messages: next });
+  },
+  markLastAssistantCancelled: () => {
+    const messages = get().messages;
+    const last = messages[messages.length - 1];
+    if (!last || last.role !== "assistant") return;
+    const next = [
+      ...messages.slice(0, -1),
+      { ...last, cancelled: true, runtimeStatus: undefined },
+    ];
     persist(next);
     set({ messages: next });
   },

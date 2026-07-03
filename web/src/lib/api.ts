@@ -600,12 +600,14 @@ export async function assistantChatStream(
     history?: AssistantHistoryMessage[];
   },
   onEvent: (event: AssistantStreamEvent) => void,
+  signal?: AbortSignal,
 ): Promise<void> {
   const res = await api<Response>("/api/v1/assistant/chat/stream", {
     method: "POST",
     body,
     raw: true,
     headers: { Accept: "application/x-ndjson" },
+    signal,
   });
   if (!res.body) throw new ApiError(0, "Streaming response body is unavailable");
   const reader = res.body.getReader();

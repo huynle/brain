@@ -185,6 +185,13 @@ export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
             void applyPause(qc, { kind: "autos", project: pauseProjectArg, pause: !automationsPaused }, toast)
           }
         />
+        <button
+          className="sb-assistant sb-cmd"
+          onClick={() => useNav.getState().setCommandOpen(true)}
+          title="Command (:) — views, projects, done/ready/merge-ready, pause/resume"
+        >
+          :cmd
+        </button>
         <button className="sb-assistant" onClick={onAssistant} title="Open Brain Assistant">assistant</button>
         <span title={connected ? "brain connected" : "brain offline"}>
           <span style={{ color: brainColor }}>●</span> brain{" "}

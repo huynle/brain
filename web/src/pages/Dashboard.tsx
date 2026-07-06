@@ -16,6 +16,7 @@ import { StatusBar, deriveTaskPaused } from "../components/layout/StatusBar";
 import { ContentTabs } from "../components/layout/ContentTabs";
 import { HelpBar } from "../components/layout/HelpBar";
 import { MobileNav } from "../components/layout/MobileNav";
+import { MobileContextStrip } from "../components/layout/MobileContextStrip";
 import { ProjectSheet } from "../components/layout/ProjectSheet";
 import { MobileInspectSheet } from "../components/layout/MobileInspectSheet";
 import { Panel } from "../components/layout/Panel";
@@ -138,6 +139,7 @@ export function Dashboard() {
     <div className={`tui ${isMobile ? "mobile" : ""}`}>
       <StatusBar onAssistant={toggleAssistant} />
       {!isMobile && <ContentTabs />}
+      {isMobile && <MobileContextStrip />}
       <div className="tui-body">
         <div className="tui-main" {...swipeProps}>
           {/* Top-level views render without a panel title — the active content

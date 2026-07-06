@@ -565,6 +565,49 @@ export function TasksView() {
           </div>
         </div>
 
+        {isMobile && (
+          <div className="tasks-toolbar">
+            <div className="seg">
+              {([["tasks", "Active"], ["done", "Done"], ["schedules", "Sched"]] as const).map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={mode === m ? "on" : ""}
+                  onClick={() => {
+                    setTasksMode(m);
+                    if (m !== "done") setMergeOnly(false);
+                    nav.setCursor(scope, 0);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {mode === "done" && (
+              <>
+                <button
+                  type="button"
+                  className={`chip ${mergeOnly ? "on" : ""}`}
+                  onClick={() => setMergeOnly(!mergeOnly)}
+                  title="Only merge-ready features"
+                >
+                  ⇡ merge
+                </button>
+                <button
+                  type="button"
+                  className={`chip ${includeCancelled ? "on" : ""}`}
+                  onClick={() => toggleIncludeCancelled()}
+                  title="Include cancelled/superseded"
+                >
+                  + cancelled
+                </button>
+              </>
+            )}
+            <button type="button" className="chip" onClick={() => setSearchOpen(true)} title="Filter">
+              ⌕ filter
+            </button>
+          </div>
+        )}
         {rows.length === 0 ? (
           <div className="muted" style={{ padding: "8px 4px" }}>
             {!connected && tasks.length === 0
@@ -606,6 +649,21 @@ export function TasksView() {
                       );
                     })()}
                   </span>
+                  {row.feature !== UNGROUPED && (
+                    <button
+                      type="button"
+                      className="feature-drill"
+                      title="Open this feature scoped (Enter)"
+                      aria-label={`Drill into feature ${row.feature}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
+                        nav.setCursor(scope, 0);
+                      }}
+                    >
+                      »
+                    </button>
+                  )}
                   {featureSample?.projectId && (
                     <button
                       type="button"

@@ -2634,6 +2634,122 @@ body.resizing-pane-col * {
   font-weight: 700;
 }
 
+/* Mobile context strip: drill breadcrumb + mode + filter with tap-to-back. */
+.mctx {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.6rem;
+  border-bottom: 1px solid var(--border-strong);
+  font-size: 0.85em;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.mctx-back {
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0.5rem;
+}
+
+.mctx-crumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 700;
+}
+
+.mctx-frame {
+  color: var(--purple);
+}
+
+.mctx-chip {
+  border: none;
+  border-radius: 3px;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0.4rem;
+}
+
+.mctx-mode {
+  background: var(--blue);
+  color: var(--bg);
+}
+
+.mctx-filter {
+  background: var(--yellow);
+  color: var(--bg);
+  margin-left: auto;
+}
+
+/* Tasks mobile toolbar: mode segments + done-mode chips + filter. */
+.tasks-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.2rem 0.45rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.tasks-toolbar .seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.tasks-toolbar .seg button {
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  padding: 0.2rem 0.6rem;
+}
+
+.tasks-toolbar .seg button.on {
+  background: var(--blue);
+  color: var(--bg);
+  font-weight: 700;
+}
+
+.tasks-toolbar .chip {
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  padding: 0.15rem 0.55rem;
+}
+
+.tasks-toolbar .chip.on {
+  background: var(--purple);
+  color: var(--bg);
+  border-color: var(--purple);
+  font-weight: 700;
+}
+
+/* Feature-header drill affordance (tap counterpart of Enter-descend). */
+.feature-drill {
+  border: none;
+  background: transparent;
+  color: var(--purple);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0.35rem;
+}
+
+/* The status bar can overflow on phones — let it scroll sideways. */
+.tui.mobile .tui-statusrow {
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
 /* Clickable StatusBar chips/segments keep their text styling. */
 .sb-state-btn,
 .sb-seg-btn {

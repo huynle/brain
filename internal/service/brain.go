@@ -709,6 +709,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.Status != nil {
 		fm.Status = *req.Status
+		if stamp, changed := completionStamp(oldStatus, fm.Status); changed {
+			fm.CompletedAt = stamp
+		}
 	}
 	if req.Priority != nil {
 		fm.Priority = *req.Priority
@@ -1270,6 +1273,31 @@ func extractProjectFromPath(path string) string {
 // Metadata Updates
 // =============================================================================
 
+// completionStatuses are the statuses that represent finished work worth
+// timestamping. Cancelled/superseded are terminal but not completions.
+var completionStatuses = map[string]bool{
+	"completed": true,
+	"validated": true,
+}
+
+// completionStamp decides how completed_at changes for a status transition.
+// Returns (newValue, true) when the field should be written: an RFC3339
+// timestamp on entering a completion status, "" on leaving one (reopen).
+// Moving between completion statuses (completed→validated) keeps the
+// original stamp, so returns changed=false.
+func completionStamp(oldStatus, newStatus string) (string, bool) {
+	wasDone := completionStatuses[oldStatus]
+	isDone := completionStatuses[newStatus]
+	switch {
+	case isDone && !wasDone:
+		return types.TimeNowUTC().Format(time.RFC3339), true
+	case !isDone && wasDone:
+		return "", true
+	default:
+		return "", false
+	}
+}
+
 // durableMetadataFields is the set of metadata fields that should be persisted
 // back to the markdown file on disk. Fields not in this set are considered
 // transient/runtime-only and live only in SQLite.
@@ -1289,6 +1317,7 @@ var durableMetadataFields = map[string]bool{
 	"run_once_at":        true,
 	"timezone":           true,
 	"automation_run_id":  true,
+	"completed_at":       true,
 }
 
 // UpdateMetadata performs a shallow merge of fields into the entry's metadata
@@ -1303,6 +1332,22 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	}
 	if row == nil {
 		return nil, api.ErrNotFound
+	}
+
+	// Status transitions stamp/clear completed_at. Injecting into the fields
+	// map here (before durability routing) means the stamp reaches both the
+	// SQLite metadata JSON and the markdown file, and every status-changing
+	// caller — runner completion, PWA, assistant tools — gets it for free.
+	if v, ok := fields["status"]; ok {
+		if newStatus, ok := v.(string); ok {
+			oldStatus := ""
+			if row.Status != nil {
+				oldStatus = *row.Status
+			}
+			if stamp, changed := completionStamp(oldStatus, newStatus); changed {
+				fields["completed_at"] = stamp
+			}
+		}
 	}
 
 	// Check if any durable fields are present
@@ -1384,6 +1429,11 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	if v, ok := fields["status"]; ok {
 		if s, ok := v.(string); ok {
 			fm.Status = s
+		}
+	}
+	if v, ok := fields["completed_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.CompletedAt = s
 		}
 	}
 	if v, ok := fields["priority"]; ok {

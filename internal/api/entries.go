@@ -995,7 +995,7 @@ func isValidEnum(val string, valid []string) bool {
 // isValidSortBy checks if a sortBy value is valid.
 func isValidSortBy(s string) bool {
 	switch s {
-	case "created", "modified", "priority":
+	case "created", "modified", "priority", "completed", "title":
 		return true
 	}
 	return false

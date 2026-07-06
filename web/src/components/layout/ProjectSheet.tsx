@@ -14,6 +14,7 @@ import {
   runOrTriggerTask,
   summarizeTriggerResults,
 } from "../../lib/api";
+import { fuzzyScore } from "../../lib/fuzzy";
 import { useLive } from "../../lib/sse";
 import type { Task } from "../../lib/types";
 import { BottomSheet } from "./BottomSheet";
@@ -22,37 +23,6 @@ import { Modal } from "../common/Modal";
 function shortName(id: string): string {
   if (id === ALL_PROJECTS) return "All projects";
   return id.split(/[/\\]/).pop() || id;
-}
-
-// fuzzyScore scores `query` against `text` as a subsequence match, or returns
-// null if it doesn't match at all. Higher is better: contiguous runs,
-// word-boundary hits, and prefix matches score more, shorter names break ties.
-function fuzzyScore(text: string, query: string): number | null {
-  if (!query) return 0;
-  const t = text.toLowerCase();
-  const q = query.toLowerCase();
-  let ti = 0;
-  let score = 0;
-  let run = 0;
-  let firstIdx = -1;
-  for (const ch of q) {
-    const idx = t.indexOf(ch, ti);
-    if (idx === -1) return null;
-    if (firstIdx === -1) firstIdx = idx;
-    if (idx === ti) {
-      run += 1;
-      score += 3 + run; // reward contiguous matches
-    } else {
-      run = 0;
-      score += 1;
-      const prev = t[idx - 1];
-      if (prev === "-" || prev === "_" || prev === "/" || prev === " ") score += 2; // word boundary
-    }
-    ti = idx + 1;
-  }
-  if (firstIdx === 0) score += 5; // prefix bonus
-  score -= t.length * 0.05; // prefer shorter names
-  return score;
 }
 
 const FEATURELESS = "__ungrouped__";

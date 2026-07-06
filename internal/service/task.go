@@ -1442,6 +1442,9 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaStringSlice(meta, "tags"); ok {
 		entry.Tags = v
 	}
+	if v, ok := metaString(meta, "completed_at"); ok {
+		entry.CompletedAt = v
+	}
 	if v, ok := meta["attachments"]; ok {
 		data, err := json.Marshal(v)
 		if err == nil {

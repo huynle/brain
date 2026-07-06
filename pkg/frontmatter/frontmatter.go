@@ -154,6 +154,9 @@ type Frontmatter struct {
 	Tags     []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	Priority string   `yaml:"priority,omitempty" json:"priority,omitempty"`
 	Created  string   `yaml:"created,omitempty" json:"created,omitempty"`
+	// CompletedAt is stamped by the service layer when status transitions
+	// into a completion state (completed/validated); cleared on reopen.
+	CompletedAt string `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
 
 	Attachments []AttachmentReference `yaml:"attachments,omitempty" json:"attachments,omitempty"`
 
@@ -327,6 +330,7 @@ type rawFrontmatter struct {
 	Attachments         []AttachmentReference      `yaml:"attachments"`
 	Priority            string                     `yaml:"priority"`
 	Created             string                     `yaml:"created"`
+	CompletedAt         string                     `yaml:"completed_at"`
 	Schedule            string                     `yaml:"schedule"`
 	ScheduleEnabled     *bool                      `yaml:"schedule_enabled"`
 	NextRun             string                     `yaml:"next_run"`
@@ -386,7 +390,7 @@ type rawFrontmatter struct {
 // Anything not in this set goes into Extra.
 var knownFields = map[string]bool{
 	"title": true, "type": true, "name": true, "status": true,
-	"tags": true, "priority": true, "created": true,
+	"tags": true, "priority": true, "created": true, "completed_at": true,
 	"attachments": true,
 	"schedule":    true, "schedule_enabled": true, "next_run": true,
 	"max_runs": true, "starts_at": true, "expires_at": true,
@@ -504,6 +508,7 @@ func Parse(content string) (*Document, error) {
 		Attachments:         raw.Attachments,
 		Priority:            raw.Priority,
 		Created:             raw.Created,
+		CompletedAt:         raw.CompletedAt,
 		Schedule:            raw.Schedule,
 		ScheduleEnabled:     raw.ScheduleEnabled,
 		NextRun:             raw.NextRun,
@@ -740,6 +745,7 @@ func Serialize(fm *Frontmatter) string {
 	}
 
 	emitPlain("created", fm.Created)
+	emitPlain("completed_at", fm.CompletedAt)
 	emitPlain("priority", fm.Priority)
 	emitPlain("parent_id", fm.ParentID)
 	emit("projectId", fm.ProjectID)

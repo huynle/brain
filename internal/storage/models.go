@@ -140,7 +140,7 @@ type ListOptions struct {
 	Tag        string
 	Tags       []string
 	Priority   string
-	SortBy     string // "modified", "created", "priority", "title"
+	SortBy     string // "modified", "created", "priority", "title", "completed"
 	SortOrder  string // "asc", "desc"
 	Limit      int
 	Offset     int

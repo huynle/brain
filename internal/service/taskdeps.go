@@ -192,6 +192,8 @@ func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 		ParentID:            task.ParentID,
 		DependsOn:           task.DependsOn,
 		Created:             task.Created,
+		Modified:            task.Modified,
+		CompletedAt:         task.CompletedAt,
 		Workdir:             task.Workdir,
 		GitRemote:           task.GitRemote,
 		GitBranch:           task.GitBranch,

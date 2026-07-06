@@ -272,6 +272,7 @@ type BrainEntry struct {
 
 	Created      string `json:"created,omitempty"`
 	Modified     string `json:"modified,omitempty"`
+	CompletedAt  string `json:"completed_at,omitempty"`
 	AccessCount  int    `json:"access_count,omitempty"`
 	LastVerified string `json:"last_verified,omitempty"`
 
@@ -923,7 +924,11 @@ type ResolvedTask struct {
 	ParentID  string   `json:"parent_id,omitempty"`
 	DependsOn []string `json:"depends_on"`
 	Created   string   `json:"created"`
-	ProjectID string   `json:"projectId,omitempty"`
+	// Modified/CompletedAt power the PWA's history ordering. Modified was
+	// historically declared by the web Task type but never sent.
+	Modified    string `json:"modified,omitempty"`
+	CompletedAt string `json:"completed_at,omitempty"`
+	ProjectID   string `json:"projectId,omitempty"`
 
 	Workdir            string `json:"workdir"`
 	GitRemote          string `json:"git_remote"`

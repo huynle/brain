@@ -8,7 +8,9 @@ import { FEATURE_SORT_FIELDS, TASKS_SPECS } from "./tasks/keymap";
 import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useLiveTasks } from "../hooks/useLiveTasks";
-import { filterTasks, groupByFeature, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
+import { filterTasks, groupByFeature, isReadyTask, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
+import { mergeReadyFeatures } from "./tasks/mergeAttention";
+import { useQuery } from "@tanstack/react-query";
 import { buildTaskTree } from "./tasks/tree";
 import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
@@ -17,7 +19,7 @@ import { Panel } from "../components/layout/Panel";
 import { TaskSessionPane } from "../components/layout/TaskSessionPane";
 import { PaneSplitterRow, PaneSplitterColumn } from "../components/layout/PaneSplitters";
 import { ConfirmDialog } from "../components/common/Modal";
-import { deleteEntry, listInstances, runFeature, runOrTriggerTask, setTaskStatus, summarizeRunFeatureResult, summarizeTriggerResults } from "../lib/api";
+import { deleteEntry, listEntries, listInstances, runFeature, runOrTriggerTask, setTaskStatus, summarizeRunFeatureResult, summarizeTriggerResults } from "../lib/api";
 import {
   isActive,
   relativeTime,
@@ -40,6 +42,12 @@ const EntryRawViewModal = lazy(() =>
 );
 
 const TERMINAL = ["completed", "cancelled", "archived", "superseded"];
+// Done-mode sort: flat newest-completion-first, or grouped by feature.
+const DONE_SORT_FIELDS = ["completed", "feature"] as const;
+function completionMs(t: Task): number {
+  const n = Date.parse(t.completed_at || t.modified || "");
+  return Number.isNaN(n) ? 0 : n;
+}
 const FEATURE_SORT_LABELS: Record<FeatureSortMode, string> = {
   completed: "done",
   created: "new",
@@ -93,14 +101,55 @@ export function TasksView() {
   const openInControl = useUI((s) => s.openInControl);
   const isMobile = useIsMobile();
 
-  const { tasks, connected } = useLiveTasks(activeProject);
+  const mode = useUI((s) => s.tasksMode);
+  const setTasksMode = useUI((s) => s.setTasksMode);
+  const includeCancelled = useUI((s) => s.doneIncludeCancelled);
+  const toggleIncludeCancelled = useUI((s) => s.toggleDoneIncludeCancelled);
+  const mergeOnly = useUI((s) => s.doneMergeOnly);
+  const setMergeOnly = useUI((s) => s.setDoneMergeOnly);
+
+  const { tasks: liveTasks, connected } = useLiveTasks(activeProject);
+
+  // Done mode reaches past the (limit-bounded) SSE snapshot with a completed-
+  // history query ordered by the completed_at stamp server-side; live tasks
+  // win on id collisions (they are fresher).
+  const historyQ = useQuery({
+    queryKey: ["done-history", activeProject],
+    queryFn: () =>
+      listEntries({
+        type: "task",
+        status: "completed",
+        sortBy: "completed",
+        sortOrder: "desc",
+        limit: 200,
+        ...(activeProject !== ALL_PROJECTS ? { project: activeProject } : {}),
+      }),
+    enabled: false,
+    staleTime: 30_000,
+  });
+  const historyEnabled = mode === "done";
+  useEffect(() => {
+    if (historyEnabled) void historyQ.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyEnabled, activeProject]);
+  const tasks = useMemo(() => {
+    if (mode !== "done") return liveTasks;
+    const byId = new Map<string, Task>();
+    for (const e of historyQ.data?.entries ?? []) {
+      byId.set(e.id, {
+        ...(e as unknown as Task),
+        projectId: (e as { project_id?: string }).project_id,
+      });
+    }
+    for (const t of liveTasks) byId.set(t.id, t);
+    return [...byId.values()];
+  }, [mode, liveTasks, historyQ.data]);
 
   const nav = useNav();
   const scope = `tasks:${activeProject}`;
   const cursor = useNav((s) => s.cursor[scope] ?? 0);
   const selected = useNav((s) => s.selected);
 
-  const [mode, setMode] = useState<"tasks" | "schedules">("tasks");
   // Filter and sort live in the scope store so the ContextBar can show them
   // and the global Esc chain can clear/unwind them.
   const query = useScope((s) => s.filter["tasks"] ?? "");
@@ -145,13 +194,28 @@ export function TasksView() {
   const { rows, taskList, featureKeys, tasksByFeature } = useMemo(() => {
     let list = filterTasks(tasks, query);
     if (mode === "schedules") list = list.filter((t) => t.schedule || t.run_once_at);
-    else if (!showDone) list = list.filter((t) => !TERMINAL.includes(t.status));
+    else if (mode === "done") {
+      const doneSet = includeCancelled
+        ? new Set([...TERMINAL, "validated"])
+        : new Set(["completed", "validated"]);
+      list = list.filter((t) => doneSet.has(t.status));
+      if (mergeOnly) {
+        const ready = new Set(mergeReadyFeatures(list).map((m) => m.feature));
+        list = list.filter((t) => t.feature_id && ready.has(t.feature_id));
+      }
+    } else if (!showDone) list = list.filter((t) => !TERMINAL.includes(t.status));
     // Drill-down: a feature frame (Enter on its header) scopes the whole
     // view to that feature; Esc pops back out.
     if (featureFrame) {
       list = list.filter((t) => (t.feature_id || UNGROUPED) === featureFrame.id);
     }
-    const groups = groupByFeature(list, activeProject === ALL_PROJECTS ? featureSort : "name", sortDir);
+    if (mode === "done" && (featureSort as string) !== "feature") {
+      // Flat history, newest completion first (completed_at, modified fallback).
+      const done = [...list].sort((a, b) => completionMs(b) - completionMs(a));
+      const flatRows: Row[] = done.map((t) => ({ kind: "task", task: t, lead: "", inCycle: false }));
+      return { rows: flatRows, taskList: done, featureKeys: [], tasksByFeature: new Map() };
+    }
+    const groups = groupByFeature(list, mode === "done" ? "completed" : activeProject === ALL_PROJECTS ? featureSort : "name", sortDir);
     const r: Row[] = [];
     const flat: Task[] = [];
     const keys: string[] = [];
@@ -179,7 +243,7 @@ export function TasksView() {
       }
     }
     return { rows: r, taskList: flat, featureKeys: keys, tasksByFeature: byFeature };
-  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort, sortDir, featureFrame]);
+  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort, sortDir, featureFrame, includeCancelled, mergeOnly]);
 
   // Feed the ContextBar's shown/total counter.
   useEffect(() => {
@@ -212,6 +276,11 @@ export function TasksView() {
     setCollapseDefault(value);
     setCollapsed(Object.fromEntries(featureKeys.map((key) => [key, value])));
   };
+
+  const mergeReadySet = useMemo(
+    () => new Set(mergeReadyFeatures(tasks).map((m) => m.feature)),
+    [tasks],
+  );
 
   const selectedTasks = useMemo(
     () => taskList.filter((t) => selected[taskKey(t)]),
@@ -416,16 +485,30 @@ export function TasksView() {
           toast("Copied title");
         }
       },
-      "tasks.sortCycle": () => cycleSortField("tasks", FEATURE_SORT_FIELDS, "completed"),
+      "tasks.sortCycle": () =>
+        cycleSortField("tasks", mode === "done" ? DONE_SORT_FIELDS : FEATURE_SORT_FIELDS, "completed"),
       "tasks.sortReverse": () => toggleSortDir("tasks", "completed"),
       "tasks.filter": () => setSearchOpen(true),
       "tasks.mode": () => {
-        setMode((m) => (m === "tasks" ? "schedules" : "tasks"));
+        setTasksMode(mode === "schedules" ? "tasks" : "schedules");
         nav.setCursor(scope, 0);
+      },
+      "tasks.done": () => {
+        setTasksMode(mode === "done" ? "tasks" : "done");
+        if (mode === "done") setMergeOnly(false);
+        nav.setCursor(scope, 0);
+      },
+      "tasks.includeCancelled": () => {
+        if (mode !== "done") return false;
+        toggleIncludeCancelled();
+      },
+      "tasks.mergeOnly": () => {
+        if (mode !== "done") return false;
+        setMergeOnly(!mergeOnly);
       },
       "tasks.new": () => setComposing(true),
     },
-    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast, featureFrame],
+    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast, featureFrame, mode, mergeOnly, includeCancelled],
   );
 
   async function doDelete(ts: Task[]) {
@@ -455,7 +538,7 @@ export function TasksView() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false); if (e.key === "Enter") setSearchOpen(false); }}
           />
-          <button className="btn sm" onClick={() => setMode((m) => (m === "tasks" ? "schedules" : "tasks"))}>
+          <button className="btn sm" onClick={() => setTasksMode(mode === "schedules" ? "tasks" : "schedules")}>
             {mode === "schedules" ? "sched" : "tasks"}
           </button>
           {mode === "tasks" && (
@@ -513,7 +596,16 @@ export function TasksView() {
                 >
                   <span className="htri">{(collapsed[row.feature] ?? collapseDefault) ? "▸" : "▾"}</span>
                   {row.label}
-                  <span className="hcount">({row.count})</span>
+                  <span className="hcount">
+                    {(() => {
+                      const ready = (tasksByFeature.get(row.feature) ?? []).filter(isReadyTask).length;
+                      return ready > 0 ? (
+                        <>({ready}<span style={{ color: "var(--green)" }}>●</span> / {row.count})</>
+                      ) : (
+                        <>({row.count})</>
+                      );
+                    })()}
+                  </span>
                   {featureSample?.projectId && (
                     <button
                       type="button"
@@ -565,6 +657,16 @@ export function TasksView() {
                 )}
                 {mode === "schedules" && t.schedule && (
                   <span className="suffix" style={{ color: "var(--cyan)" }}>{t.schedule}</span>
+                )}
+                {mode === "done" && (
+                  <>
+                    {t.feature_id && mergeReadySet.has(t.feature_id) && (
+                      <span className="suffix" style={{ color: "var(--purple)", fontWeight: 700 }} title="Feature fully completed with merge config — probably needs merging">⇡ merge</span>
+                    )}
+                    {t.feature_id && <span className="suffix" style={{ color: "var(--teal)" }}>{t.feature_id}</span>}
+                    {t.executor && <span className="suffix faint">{t.executor}</span>}
+                    <span className="suffix faint">{relativeTime(t.completed_at || t.modified || "")}</span>
+                  </>
                 )}
               </div>
             );

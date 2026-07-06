@@ -1,9 +1,12 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLive } from "../../lib/sse";
 import { useNav } from "../../store/nav";
+import { useScope } from "../../store/scope";
 import { ALL_PROJECTS, useUI } from "../../store/ui";
 import { useLiveTasks, deriveCounts } from "../../hooks/useLiveTasks";
 import { getHealth, getRunnerStatus } from "../../lib/api";
+import { applyPause } from "../../lib/pauseActions";
+import { mergeReadyFeatures } from "../../views/tasks/mergeAttention";
 import type { RunnerStatusResponse } from "../../lib/types";
 
 function shortName(id: string): string {
@@ -44,6 +47,11 @@ export function deriveAutomationsPaused(
 export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
   const activeProject = useUI((s) => s.activeProject);
   const setProjectSheetOpen = useUI((s) => s.setProjectSheetOpen);
+  const setView = useUI((s) => s.setView);
+  const setTasksMode = useUI((s) => s.setTasksMode);
+  const setDoneMergeOnly = useUI((s) => s.setDoneMergeOnly);
+  const toast = useUI((s) => s.toast);
+  const qc = useQueryClient();
   const runners = useLive((s) => s.runners);
   const selected = useNav((s) => Object.keys(s.selected).length);
   const { tasks, stats, connected } = useLiveTasks(activeProject);
@@ -71,6 +79,21 @@ export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
 
   const online = runners.filter((r) => r.status === "online").length;
   const stale = runners.filter((r) => r.status === "stale").length;
+  const mergeReady = mergeReadyFeatures(tasks).length;
+  // The silent production failure mode: work is ready but nothing can run it.
+  const noCapacity = stats.ready > 0 && online === 0;
+  const pauseProjectArg = activeProject === ALL_PROJECTS ? undefined : activeProject;
+
+  function gotoReady() {
+    setView("tasks");
+    setTasksMode("tasks");
+    useScope.getState().setFilter("tasks", "status:ready");
+  }
+  function gotoMergeReady() {
+    setView("tasks");
+    setTasksMode("done");
+    setDoneMergeOnly(true);
+  }
 
   const brainColor = connected ? "var(--green)" : "var(--red)";
   const embColor = !connected
@@ -97,12 +120,20 @@ export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
           </span>
         ) : null}
         <span className="sb-stats">
-          <Seg glyph="●" color="var(--green)" n={stats.ready} label="ready" />
+          <Seg glyph="●" color="var(--green)" n={stats.ready} label="ready" onClick={gotoReady} title="Show ready-to-execute tasks (:ready)" />
           <Seg glyph="○" color="var(--yellow)" n={stats.waiting} label="waiting" />
           <Seg glyph="▶" color="var(--blue)" n={active} label="active" />
           <Seg glyph="✓" color="var(--fg-faint)" n={completed} label="inactive" />
           {stats.blocked > 0 && (
             <Seg glyph="✗" color="var(--red)" n={stats.blocked} label="blocked" />
+          )}
+          {mergeReady > 0 && (
+            <Seg glyph="⇡" color="var(--purple)" n={mergeReady} label="merge" onClick={gotoMergeReady} title="Completed features that probably need merging (:merge-ready)" />
+          )}
+          {noCapacity && (
+            <span className="sb-seg" style={{ color: "var(--red)", fontWeight: 700 }} title="Tasks are ready but no runner is online to execute them">
+              ⚠ no online runners
+            </span>
           )}
           {selected > 0 && (
             <span className="sb-seg" style={{ color: "var(--blue)" }}>
@@ -133,10 +164,12 @@ export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
           paused={taskPaused}
           runningText="run"
           pausedText="paused"
-          title={
-            activeProject === ALL_PROJECTS
-              ? "task runner pool status"
-              : `task runner status for ${activeProject}`
+          title={`click to ${taskPaused ? "resume" : "pause"} tasks — ${
+            activeProject === ALL_PROJECTS ? "all projects" : activeProject
+          } (p)`}
+          onClick={() =>
+            taskPaused !== undefined &&
+            void applyPause(qc, { kind: "tasks", project: pauseProjectArg, pause: !taskPaused }, toast)
           }
         />
         <StatusChip
@@ -144,10 +177,12 @@ export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
           paused={automationsPaused}
           runningText="on"
           pausedText="off"
-          title={
-            activeProject === ALL_PROJECTS
-              ? "automation runner status"
-              : `automation status for ${activeProject}`
+          title={`click to ${automationsPaused ? "resume" : "pause"} automations — ${
+            activeProject === ALL_PROJECTS ? "all projects" : activeProject
+          } (b)`}
+          onClick={() =>
+            automationsPaused !== undefined &&
+            void applyPause(qc, { kind: "autos", project: pauseProjectArg, pause: !automationsPaused }, toast)
           }
         />
         <button className="sb-assistant" onClick={onAssistant} title="Open Brain Assistant">assistant</button>
@@ -168,21 +203,29 @@ function StatusChip({
   runningText,
   pausedText,
   title,
+  onClick,
 }: {
   label: string;
   paused: boolean | undefined;
   runningText: string;
   pausedText: string;
   title: string;
+  onClick?: () => void;
 }) {
   const known = paused !== undefined;
   const color = !known ? "var(--fg-faint)" : paused ? "var(--red)" : "var(--green)";
   const state = !known ? "…" : paused ? pausedText : runningText;
   return (
-    <span className={`sb-state ${paused ? "paused" : "running"}`} title={title}>
+    <button
+      type="button"
+      className={`sb-state sb-state-btn ${paused ? "paused" : "running"}`}
+      title={title}
+      onClick={onClick}
+      disabled={!known || !onClick}
+    >
       <span style={{ color }}>●</span> {label}:{" "}
       <b style={{ color }}>{state}</b>
-    </span>
+    </button>
   );
 }
 
@@ -191,14 +234,25 @@ function Seg({
   color,
   n,
   label,
+  onClick,
+  title,
 }: {
   glyph: string;
   color: string;
   n: number;
   label: string;
+  onClick?: () => void;
+  title?: string;
 }) {
+  if (onClick) {
+    return (
+      <button type="button" className="sb-seg sb-seg-btn" onClick={onClick} title={title}>
+        <span style={{ color }}>{glyph}</span> <b>{n}</b> {label}
+      </button>
+    );
+  }
   return (
-    <span className="sb-seg">
+    <span className="sb-seg" title={title}>
       <span style={{ color }}>{glyph}</span> <b>{n}</b> {label}
     </span>
   );

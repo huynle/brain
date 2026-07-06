@@ -82,3 +82,11 @@ test("suggest: command names first, then argument domains per position", () => {
   const projArg = suggest("proj de", ctx);
   assert.ok(projArg.some((s) => s.insert === "projects demo"));
 });
+
+test("preset commands: done/ready/merge-ready with optional project", () => {
+  assert.deepEqual(resolveCommand("done", ctx), { type: "preset", preset: "done" });
+  assert.deepEqual(resolveCommand("history demo", ctx), { type: "preset", preset: "done", project: "demo" });
+  assert.deepEqual(resolveCommand("ready", ctx), { type: "preset", preset: "ready" });
+  assert.deepEqual(resolveCommand("merge-ready", ctx), { type: "preset", preset: "merge-ready" });
+  assert.deepEqual(resolveCommand("merge beta", ctx), { type: "preset", preset: "merge-ready", project: "beta-proj" });
+});

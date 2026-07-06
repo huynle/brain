@@ -29,10 +29,20 @@ export interface TaskGroup {
   tasks: Task[];
 }
 
+export function isReadyTask(t: Task): boolean {
+  const runnable = t.status === "pending" || t.status === "active";
+  return runnable && !(t.waiting_on?.length || t.blocked_by?.length);
+}
+
 function cmp(a: Task, b: Task): number {
   const sa = STATUS_ORDER[a.status] ?? 50;
   const sb = STATUS_ORDER[b.status] ?? 50;
   if (sa !== sb) return sa - sb;
+  // Ready-first within a status band: pending-with-nothing-to-wait-on sorts
+  // above pending-waiting, so the actionable work tops each group.
+  const ra = isReadyTask(a) ? 0 : 1;
+  const rb = isReadyTask(b) ? 0 : 1;
+  if (ra !== rb) return ra - rb;
   const pa = PRIORITY_ORDER[a.priority] ?? 3;
   const pb = PRIORITY_ORDER[b.priority] ?? 3;
   if (pa !== pb) return pa - pb;

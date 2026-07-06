@@ -33,6 +33,7 @@ export type CommandOutcome =
   | { type: "navigate"; view: View; project?: string }
   | { type: "projectPicker" }
   | { type: "projectSwitch"; project: string }
+  | { type: "preset"; preset: "done" | "ready" | "merge-ready"; project?: string }
   | {
       type: "pauseResume";
       verb: "pause" | "resume";
@@ -138,6 +139,42 @@ const COMMANDS: CommandSpec[] = [
   },
   pauseResume("pause"),
   pauseResume("resume"),
+  {
+    primary: "done",
+    aliases: ["history", "completed"],
+    describe: "Executed tasks ordered by completion date",
+    argHint: "[project]",
+    resolve: (args, ctx) => {
+      if (args.length === 0) return { type: "preset", preset: "done" };
+      const project = resolveProject(args[0], ctx);
+      if (typeof project !== "string") return project;
+      return { type: "preset", preset: "done", project };
+    },
+  },
+  {
+    primary: "ready",
+    aliases: [],
+    describe: "Tasks ready to execute (status:ready filter)",
+    argHint: "[project]",
+    resolve: (args, ctx) => {
+      if (args.length === 0) return { type: "preset", preset: "ready" };
+      const project = resolveProject(args[0], ctx);
+      if (typeof project !== "string") return project;
+      return { type: "preset", preset: "ready", project };
+    },
+  },
+  {
+    primary: "merge-ready",
+    aliases: ["merge"],
+    describe: "Completed features that probably need merging",
+    argHint: "[project]",
+    resolve: (args, ctx) => {
+      if (args.length === 0) return { type: "preset", preset: "merge-ready" };
+      const project = resolveProject(args[0], ctx);
+      if (typeof project !== "string") return project;
+      return { type: "preset", preset: "merge-ready", project };
+    },
+  },
 ];
 
 // Extension point: later phases append specs here (done/ready/feature/

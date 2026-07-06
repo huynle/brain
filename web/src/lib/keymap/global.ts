@@ -16,6 +16,8 @@ export interface GlobalKeyboardOpts {
   onRefresh: () => void;
   onPauseToggle: () => void;
   onPauseAll: () => void;
+  onPauseAutosToggle: () => void;
+  onPauseAutosAll: () => void;
 }
 
 export const GLOBAL_SPECS: ActionSpec[] = [
@@ -31,6 +33,8 @@ export const GLOBAL_SPECS: ActionSpec[] = [
   { id: "global.refresh", keys: ["r"], desc: "Refresh / reconnect", group: "global" },
   { id: "global.pauseToggle", keys: ["p"], desc: "Pause/resume tasks for the active project", group: "global" },
   { id: "global.pauseAll", keys: ["P"], desc: "Pause/resume tasks for all projects", group: "global" },
+  { id: "global.pauseAutosToggle", keys: ["b"], desc: "Pause/resume automations for the active project (shadowed by embed on the Brain tab — use :pause autos there)", group: "global" },
+  { id: "global.pauseAutosAll", keys: ["B"], desc: "Pause/resume automations for all projects (shadowed on the Brain tab)", group: "global" },
   { id: "global.escape", keys: ["Escape"], desc: "Clear selection / close", group: "global" },
   // Handled by pre-guard chords in keyboard.ts (they work inside inputs);
   // listed here so help stays complete. No handlers → never dispatched.
@@ -63,6 +67,8 @@ export function buildGlobalHandlers(opts: () => GlobalKeyboardOpts): ActionHandl
     "global.refresh": () => opts().onRefresh(),
     "global.pauseToggle": () => opts().onPauseToggle(),
     "global.pauseAll": () => opts().onPauseAll(),
+    "global.pauseAutosToggle": () => opts().onPauseAutosToggle(),
+    "global.pauseAutosAll": () => opts().onPauseAutosAll(),
     // The unified back-out chain. View-transient closes (search popups etc.)
     // run before this because view scopes / legacy handlers dispatch first.
     "global.escape": () => {

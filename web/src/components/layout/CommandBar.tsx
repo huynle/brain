@@ -15,6 +15,7 @@ import {
   resumeProject,
 } from "../../lib/api";
 import { resolveCommand, suggest, type CommandOutcome } from "../../lib/commands";
+import { useScope } from "../../store/scope";
 import { ALL_PROJECTS, useUI } from "../../store/ui";
 
 export function CommandBar({ onClose }: { onClose: () => void }) {
@@ -80,6 +81,23 @@ export function CommandBar({ onClose }: { onClose: () => void }) {
         toast(`Project: ${outcome.project}`);
         onClose();
         return;
+      case "preset": {
+        if (outcome.project) setActiveProject(outcome.project);
+        setView("tasks");
+        const ui = useUI.getState();
+        if (outcome.preset === "done") {
+          ui.setTasksMode("done");
+          ui.setDoneMergeOnly(false);
+        } else if (outcome.preset === "merge-ready") {
+          ui.setTasksMode("done");
+          ui.setDoneMergeOnly(true);
+        } else if (outcome.preset === "ready") {
+          ui.setTasksMode("tasks");
+          useScope.getState().setFilter("tasks", "status:ready");
+        }
+        onClose();
+        return;
+      }
       case "pauseResume":
         void runPauseResume(outcome);
         onClose();

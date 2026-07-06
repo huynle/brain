@@ -1,13 +1,8 @@
 import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../hooks/useProjects";
-import {
-  getRunnerStatus,
-  pauseAll,
-  pauseProject,
-  resumeAll,
-  resumeProject,
-} from "../lib/api";
+import { getRunnerStatus } from "../lib/api";
+import { applyPause } from "../lib/pauseActions";
 import { streams } from "../lib/sse";
 import { useAuth } from "../lib/auth";
 import { useUI, ALL_PROJECTS } from "../store/ui";
@@ -76,15 +71,7 @@ export function Dashboard() {
     if (token) streams.restartAll();
   }, [token]);
 
-  async function runPause(label: string, fn: () => Promise<unknown>) {
-    try {
-      await fn();
-      toast(label, "success");
-      void qc.invalidateQueries({ queryKey: ["runner-status"] });
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "Action failed", "error");
-    }
-  }
+
 
   // Swipe-to-cycle-tabs handlers (used on mobile). Declared unconditionally
   // (hook) — applied conditionally in the render.
@@ -112,29 +99,32 @@ export function Dashboard() {
       void qc.invalidateQueries();
       toast("Reconnecting…");
     },
+    // p — tasks pause for the active project (global when on the All tab);
+    // P — tasks pause for ALL projects (this used to duplicate p — fixed);
+    // b/B — the automations equivalents. All optimistic via pauseActions.
     onPauseToggle: () => {
-      const st = statusQ.data;
-      if (activeProject === ALL_PROJECTS) {
-        void runPause(st?.paused ? "Resumed all" : "Paused all", st?.paused ? resumeAll : pauseAll);
-        return;
-      }
-      const paused = deriveTaskPaused(st, activeProject);
-      void runPause(
-        paused ? `Resumed ${activeProject}` : `Paused ${activeProject}`,
-        () => (paused ? resumeProject(activeProject) : pauseProject(activeProject)),
-      );
+      const project = activeProject === ALL_PROJECTS ? undefined : activeProject;
+      const paused = project ? deriveTaskPaused(statusQ.data, activeProject) : statusQ.data?.paused;
+      if (paused === undefined) return;
+      void applyPause(qc, { kind: "tasks", project, pause: !paused }, toast);
     },
     onPauseAll: () => {
-      const st = statusQ.data;
-      if (activeProject === ALL_PROJECTS) {
-        void runPause(st?.paused ? "Resumed all" : "Paused all", st?.paused ? resumeAll : pauseAll);
-        return;
-      }
-      const paused = deriveTaskPaused(st, activeProject);
-      void runPause(
-        paused ? `Resumed ${activeProject}` : `Paused ${activeProject}`,
-        () => (paused ? resumeProject(activeProject) : pauseProject(activeProject)),
-      );
+      const paused = statusQ.data?.paused;
+      if (paused === undefined) return;
+      void applyPause(qc, { kind: "tasks", pause: !paused }, toast);
+    },
+    onPauseAutosToggle: () => {
+      const project = activeProject === ALL_PROJECTS ? undefined : activeProject;
+      const paused = project
+        ? (statusQ.data?.automationPausedProjects ?? []).includes(activeProject)
+        : statusQ.data?.automationsPaused;
+      if (paused === undefined) return;
+      void applyPause(qc, { kind: "autos", project, pause: !paused }, toast);
+    },
+    onPauseAutosAll: () => {
+      const paused = statusQ.data?.automationsPaused;
+      if (paused === undefined) return;
+      void applyPause(qc, { kind: "autos", pause: !paused }, toast);
     },
   });
 

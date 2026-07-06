@@ -207,7 +207,7 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 	if sortBy := q.Get("sortBy"); sortBy != "" && !isValidSortBy(sortBy) {
 		details = append(details, types.ValidationDetail{
 			Field:   "sortBy",
-			Message: fmt.Sprintf("invalid sortBy %q, must be one of: created, modified, priority", sortBy),
+			Message: fmt.Sprintf("invalid sortBy %q, must be one of: created, modified, priority, completed, title", sortBy),
 		})
 	}
 	if sortOrder := q.Get("sortOrder"); sortOrder != "" && sortOrder != "asc" && sortOrder != "desc" {

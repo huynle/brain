@@ -2634,6 +2634,27 @@ body.resizing-pane-col * {
   font-weight: 700;
 }
 
+/* Clickable StatusBar chips/segments keep their text styling. */
+.sb-state-btn,
+.sb-seg-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.sb-state-btn:hover,
+.sb-seg-btn:hover {
+  text-decoration: underline;
+}
+
+.sb-state-btn:disabled {
+  cursor: default;
+  text-decoration: none;
+}
+
 .search-layer {
   position: fixed;
   inset: 0;

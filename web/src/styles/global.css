@@ -2529,6 +2529,48 @@ body.resizing-pane-col * {
   color: #07111f;
 }
 
+/* k9s-style vertical suggestion list with a keyboard highlight (↑/↓/C-n/C-p),
+   replacing the pill row when the grammar provides labeled suggestions. */
+.command-suggestions-list {
+  flex-direction: column;
+  gap: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.command-suggestions-list button {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-weight: 500;
+  padding: 0.3rem 0.5rem;
+}
+
+.command-suggestions-list button.on,
+.command-suggestions-list button:hover {
+  background: var(--blue);
+  color: var(--bg);
+}
+
+.command-suggestion-label {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.command-suggestion-detail {
+  opacity: 0.7;
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .search-layer {
   position: fixed;
   inset: 0;

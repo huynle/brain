@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useProjects } from "../hooks/useProjects";
 import {
@@ -12,8 +12,8 @@ import { streams } from "../lib/sse";
 import { useAuth } from "../lib/auth";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
-import { commandSuggestions, resolveCommand } from "../lib/commands";
 import { useGlobalKeyboard } from "../lib/keyboard";
+import { CommandBar } from "../components/layout/CommandBar";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useViewport } from "../hooks/useViewport";
 import { useSwipe } from "../hooks/useSwipe";
@@ -190,56 +190,3 @@ export function Dashboard() {
   );
 }
 
-function CommandBar({ onClose }: { onClose: () => void }) {
-  const [value, setValue] = useState(":");
-  const inputRef = useRef<HTMLInputElement>(null);
-  const setView = useUI((s) => s.setView);
-  const setProjectSheetOpen = useUI((s) => s.setProjectSheetOpen);
-  const toast = useUI((s) => s.toast);
-  const suggestions = commandSuggestions(value).slice(0, 6);
-
-  useEffect(() => {
-    inputRef.current?.focus();
-    inputRef.current?.setSelectionRange(value.length, value.length);
-  }, [value.length]);
-
-  function submit() {
-    const result = resolveCommand(value);
-    if (result.type === "view") {
-      setView(result.view);
-      onClose();
-      return;
-    }
-    if (result.type === "projectPicker") {
-      setProjectSheetOpen(true);
-      onClose();
-      return;
-    }
-    toast(result.suggestions.length ? `Try :${result.suggestions[0]}` : `Unknown command ${value}`, "error");
-  }
-
-  return (
-    <div className="command-bar" role="dialog" aria-label="Command">
-      <span className="command-prompt">:</span>
-      <input
-        ref={inputRef}
-        value={value.replace(/^:/, "")}
-        onChange={(e) => setValue(`:${e.currentTarget.value}`)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") onClose();
-          if (e.key === "Enter") submit();
-        }}
-        placeholder="tasks, brain, automations, runners, logs, projects"
-      />
-      {suggestions.length > 0 && (
-        <div className="command-suggestions">
-          {suggestions.map((suggestion) => (
-            <button key={suggestion} type="button" onClick={() => setValue(`:${suggestion}`)}>
-              :{suggestion}
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}

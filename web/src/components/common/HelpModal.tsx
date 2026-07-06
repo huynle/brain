@@ -1,5 +1,8 @@
 import { Modal } from "./Modal";
 import { useUI, type View } from "../../store/ui";
+import { helpModalGroups } from "../../lib/keymap/registry";
+import { prettyChord } from "../../lib/keymap/types";
+import { useKeymapVersion } from "../../lib/keymap/useActions";
 
 interface Row {
   keys: string[];
@@ -108,66 +111,6 @@ const VIEW_GROUPS: Record<string, Group> = {
   },
 };
 
-const GLOBAL: Group = {
-  id: "global",
-  title: "Global",
-  rows: [
-    { keys: ["h", "l", "[", "]"], desc: "Previous / next tab" },
-    { keys: [":"], desc: "Command: jump to tasks, brain, automations, runners, logs, projects" },
-    { keys: ["⌘;", "Ctrl+;"], desc: "Quick-switch project (fuzzy search)" },
-    { keys: ["⌘.", "Ctrl+."], desc: "Toggle Brain Assistant (sidebar / drawer)" },
-    { keys: ["H", "L"], desc: "Previous / next project" },
-    { keys: ["1–9"], desc: "Jump to project tab" },
-    { keys: ["R"], desc: "Jump to Runners" },
-    { keys: ["S"], desc: "Settings" },
-    { keys: ["w"], desc: "Toggle text wrap" },
-    { keys: ["p", "P"], desc: "Pause project / all" },
-    { keys: ["r"], desc: "Refresh / reconnect" },
-    { keys: ["?"], desc: "Toggle this help" },
-    { keys: ["Esc"], desc: "Clear selection / close" },
-  ],
-};
-
-const LISTS: Group = {
-  id: "lists",
-  title: "Lists (all tabs)",
-  rows: [
-    { keys: ["j", "k"], desc: "Move cursor" },
-    { keys: ["g", "G"], desc: "Top / bottom" },
-    { keys: ["Enter"], desc: "Open / expand" },
-  ],
-};
-
-const POPUPS: Group = {
-  id: "popups",
-  title: "Popups / sheets",
-  rows: [
-    { keys: ["j", "k", "↑", "↓"], desc: "Scroll" },
-    { keys: ["g", "G"], desc: "Top / bottom" },
-    { keys: ["Ctrl-D", "Ctrl-U"], desc: "Page down / up" },
-    { keys: ["m"], desc: "Expand / restore" },
-    { keys: ["e"], desc: "Edit when available" },
-    { keys: ["q", "Esc"], desc: "Close" },
-  ],
-};
-
-// Pane focus + vim-style scroll inside Tasks/Brain/Automations content panes.
-const PANES: Group = {
-  id: "panes",
-  title: "Detail / Logs panes",
-  rows: [
-    { keys: ["Tab"], desc: "Cycle pane focus (tasks → detail → logs)" },
-    { keys: ["Shift-Tab"], desc: "Cycle pane focus backward" },
-    { keys: ["j", "k"], desc: "Scroll line down / up (in focused pane)" },
-    { keys: ["g", "g"], desc: "Jump to top (vim 'gg', ~500ms)" },
-    { keys: ["G"], desc: "Jump to bottom" },
-    { keys: ["Ctrl-D", "Ctrl-U"], desc: "Half-page down / up" },
-    { keys: ["Alt-J", "Alt-K"], desc: "Grow / shrink bottom-row height" },
-    { keys: ["Alt-L", "Alt-H"], desc: "Grow / shrink detail vs logs width" },
-    { keys: ["double-click separator"], desc: "Reset that split to default" },
-  ],
-};
-
 const VIEW_LABEL: Record<string, string> = {
   tasks: "Tasks",
   brain: "Brain",
@@ -179,11 +122,26 @@ const VIEW_LABEL: Record<string, string> = {
 
 export function HelpModal({ onClose }: { onClose: () => void }) {
   const view = useUI((s) => s.view) as View;
+  useKeymapVersion();
   const current = VIEW_GROUPS[view];
 
-  // Current tab first (highlighted), then Global + Lists, then the other tabs.
-  const others = Object.values(VIEW_GROUPS).filter((g) => g.id !== view);
-  const ordered: Group[] = [...(current ? [current] : []), GLOBAL, LISTS, PANES, POPUPS, ...others];
+  // Shared groups (global / lists / panes / popups) derive from the keymap
+  // registry — the same specs that dispatch — so they cannot drift. Per-view
+  // groups stay static until each view migrates to ActionSpec tables; a
+  // registry group with a view's id takes precedence over its static table.
+  const derived = helpModalGroups(view).map((g) => ({
+    id: g.id,
+    title: g.title,
+    rows: g.rows.map((r) => ({ keys: r.keys.map(prettyChord), desc: r.desc })),
+  }));
+  const derivedIds = new Set(derived.map((g) => g.id));
+
+  // Current tab first (registry version if migrated, else static),
+  // then the derived shared groups, then the other static tabs.
+  const currentGroup = derivedIds.has(view) ? derived.find((g) => g.id === view) : current;
+  const shared = derived.filter((g) => g.id !== view);
+  const others = Object.values(VIEW_GROUPS).filter((g) => g.id !== view && !derivedIds.has(g.id));
+  const ordered: Group[] = [...(currentGroup ? [currentGroup] : []), ...shared, ...others];
 
   return (
     <Modal title={`Keyboard shortcuts — ${VIEW_LABEL[view] ?? ""}`} onClose={onClose}>

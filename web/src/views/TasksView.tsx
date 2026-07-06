@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
+import { useScope } from "../store/scope";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { useIsMobile } from "../hooks/useIsMobile";
@@ -98,10 +99,20 @@ export function TasksView() {
   const selected = useNav((s) => s.selected);
 
   const [mode, setMode] = useState<"tasks" | "schedules">("tasks");
-  const [query, setQuery] = useState("");
+  // Filter and sort live in the scope store so the ContextBar can show them
+  // and the global Esc chain can clear/unwind them.
+  const query = useScope((s) => s.filter["tasks"] ?? "");
+  const setScopeFilter = useScope((s) => s.setFilter);
+  const setQuery = (q: string) => setScopeFilter("tasks", q);
+  const featureSort = (useScope((s) => s.sort["tasks"]?.field) ?? "completed") as FeatureSortMode;
+  const setScopeSort = useScope((s) => s.setSort);
+  const setFeatureSort = (f: FeatureSortMode) => setScopeSort("tasks", { field: f, dir: "desc" });
+  const setCounts = useScope((s) => s.setCounts);
+  const drillStack = useScope((s) => s.stack);
+  const pushFrame = useScope((s) => s.push);
+  const featureFrame = [...drillStack].reverse().find((f) => f.view === "tasks" && f.kind === "feature");
   const [searchOpen, setSearchOpen] = useState(false);
   const [showDone, setShowDone] = useState(false);
-  const [featureSort, setFeatureSort] = useState<FeatureSortMode>("completed");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [collapseDefault, setCollapseDefault] = useState(activeProject === ALL_PROJECTS);
 
@@ -130,6 +141,11 @@ export function TasksView() {
     let list = filterTasks(tasks, query);
     if (mode === "schedules") list = list.filter((t) => t.schedule || t.run_once_at);
     else if (!showDone) list = list.filter((t) => !TERMINAL.includes(t.status));
+    // Drill-down: a feature frame (Enter on its header) scopes the whole
+    // view to that feature; Esc pops back out.
+    if (featureFrame) {
+      list = list.filter((t) => (t.feature_id || UNGROUPED) === featureFrame.id);
+    }
     const groups = groupByFeature(list, activeProject === ALL_PROJECTS ? featureSort : "name");
     const r: Row[] = [];
     const flat: Task[] = [];
@@ -137,12 +153,12 @@ export function TasksView() {
     const byFeature = new Map<string, Task[]>();
     for (const g of groups) {
       byFeature.set(g.feature, g.tasks);
-      const showHeader = g.feature !== UNGROUPED || groups.length > 1;
+      const showHeader = (g.feature !== UNGROUPED || groups.length > 1) && !featureFrame;
       if (showHeader) {
         keys.push(g.feature);
         r.push({ kind: "header", feature: g.feature, label: g.label, count: g.tasks.length });
       }
-      if (!(collapsed[g.feature] ?? collapseDefault)) {
+      if (featureFrame || !(collapsed[g.feature] ?? collapseDefault)) {
         if (mode === "schedules") {
           g.tasks.forEach((t) => {
             r.push({ kind: "task", task: t, lead: "", inCycle: false });
@@ -158,7 +174,12 @@ export function TasksView() {
       }
     }
     return { rows: r, taskList: flat, featureKeys: keys, tasksByFeature: byFeature };
-  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort]);
+  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort, featureFrame]);
+
+  // Feed the ContextBar's shown/total counter.
+  useEffect(() => {
+    setCounts("tasks", taskList.length, tasks.length);
+  }, [taskList.length, tasks.length, setCounts]);
 
   useEffect(() => {
     setCollapsed({});
@@ -332,9 +353,13 @@ export function TasksView() {
       const cur = row?.kind === "task" ? row.task : undefined;
       switch (e.key) {
         case "Enter":
-          if (row?.kind === "header")
-            setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
-          else if (cur) void openTaskSession(cur);
+          // Enter DESCENDS (k9s): a feature header pushes a drill frame that
+          // scopes the view to that feature (Esc pops back). Collapse
+          // toggling lives on Space.
+          if (row?.kind === "header") {
+            pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
+            nav.setCursor(scope, 0);
+          } else if (cur) void openTaskSession(cur);
           return true;
         case " ":
           if (row?.kind === "header")
@@ -396,7 +421,7 @@ export function TasksView() {
         default: return false;
       }
     },
-    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast],
+    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast, featureFrame],
   );
 
   async function doDelete(ts: Task[]) {

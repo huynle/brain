@@ -1,3 +1,4 @@
+import { matchTask, parseFilter } from "../../lib/filter";
 import type { Task } from "../../lib/types";
 
 const STATUS_ORDER: Record<string, number> = {
@@ -38,17 +39,15 @@ function cmp(a: Task, b: Task): number {
   return (a.title || "").localeCompare(b.title || "");
 }
 
+// filterTasks accepts plain substrings and field queries (status:blocked
+// feature:auth, status:ready pseudo-value...) — see lib/filter.ts for the
+// grammar. Plain terms keep the legacy semantics (substring over
+// title/id/feature/status/tags).
 export function filterTasks(tasks: Task[], q: string): Task[] {
-  const query = q.trim().toLowerCase();
+  const query = q.trim();
   if (!query) return tasks;
-  return tasks.filter(
-    (t) =>
-      t.title?.toLowerCase().includes(query) ||
-      t.id?.toLowerCase().includes(query) ||
-      t.feature_id?.toLowerCase().includes(query) ||
-      t.status?.toLowerCase().includes(query) ||
-      t.tags?.some((tag) => tag.toLowerCase().includes(query)),
-  );
+  const parsed = parseFilter(query);
+  return tasks.filter((t) => matchTask(t, parsed));
 }
 
 function timeValue(value?: string): number {

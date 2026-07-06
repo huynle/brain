@@ -5,6 +5,7 @@
 // their own machinery but must appear in the help modal.
 
 import { useNav } from "../../store/nav";
+import { useScope } from "../../store/scope";
 import { useUI } from "../../store/ui";
 import { registerScope } from "./registry";
 import type { ActionHandlers, ActionSpec } from "./types";
@@ -62,12 +63,21 @@ export function buildGlobalHandlers(opts: () => GlobalKeyboardOpts): ActionHandl
     "global.refresh": () => opts().onRefresh(),
     "global.pauseToggle": () => opts().onPauseToggle(),
     "global.pauseAll": () => opts().onPauseAll(),
+    // The unified back-out chain. View-transient closes (search popups etc.)
+    // run before this because view scopes / legacy handlers dispatch first.
     "global.escape": () => {
       if (nav().selectedCount() > 0) {
         nav().clearSelect();
         return true;
       }
-      return false; // nothing to clear — leave Escape to the browser
+      const scope = useScope.getState();
+      if (scope.clearFilter(ui().view)) return true;
+      if (scope.pop()) return true;
+      if (ui().focus !== "tasks") {
+        ui().setFocus("tasks");
+        return true;
+      }
+      return false; // nothing to back out of — leave Escape to the browser
     },
   };
 }

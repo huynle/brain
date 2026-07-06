@@ -1,4 +1,5 @@
 import { useUI, type View } from "../../store/ui";
+import { ContextBar } from "./ContextBar";
 
 const GLOBAL: { view: View; label: string }[] = [
   { view: "runners", label: "Runners" },
@@ -38,6 +39,9 @@ export function ContentTabs() {
           {t.label}
         </button>
       ))}
+      {/* Navigation context (breadcrumb ▸ filter ▸ sort ▸ counts) shares the
+          tab row — no extra vertical space. */}
+      <ContextBar />
     </div>
   );
 }

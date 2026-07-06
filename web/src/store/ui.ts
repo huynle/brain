@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useScope } from "./scope";
 import {
   clampBottomHeight,
   clampDetailLogsRatio,
@@ -268,6 +269,9 @@ export const useUI = create<UIState>((set, get) => ({
     } catch {
       /* ignore storage errors (private mode, quota) */
     }
+    // A project switch abandons any drill-down path (the frames referenced
+    // entities of the previous project's scope).
+    useScope.getState().reset();
     set({ activeProject: p });
   },
   // The Logs tab is the global server-request log now; a task's own output

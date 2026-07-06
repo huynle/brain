@@ -2571,6 +2571,69 @@ body.resizing-pane-col * {
   white-space: nowrap;
 }
 
+/* Context header (breadcrumb ▸ filter ▸ sort ▸ counts) sharing the tab row. */
+.context-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.85em;
+}
+
+.context-crumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.context-crumb {
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0.15rem;
+}
+
+.context-crumb:hover {
+  text-decoration: underline;
+}
+
+.context-crumb-frame {
+  color: var(--purple);
+}
+
+.context-sep {
+  opacity: 0.5;
+}
+
+.context-chip {
+  border-radius: 3px;
+  padding: 0 0.35rem;
+  font-weight: 700;
+}
+
+.context-filter {
+  background: var(--yellow);
+  color: var(--bg);
+}
+
+.context-sort {
+  border: 1px solid currentColor;
+  opacity: 0.8;
+}
+
+.context-counts {
+  opacity: 0.7;
+  font-weight: 700;
+}
+
 .search-layer {
   position: fixed;
   inset: 0;

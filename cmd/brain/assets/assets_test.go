@@ -161,3 +161,30 @@ func TestGetTemplatesFS(t *testing.T) {
 		t.Error("Read 0 bytes from templates/default.md")
 	}
 }
+
+func TestBlockedTaskInspectorAutomationAssetTriggersOnBlockedStatusChange(t *testing.T) {
+	const name = "blocked-inspector.md"
+
+	content, err := GetAutomation(name)
+	if err != nil {
+		t.Fatalf("GetAutomation(%q) error: %v", name, err)
+	}
+
+	text := string(content)
+	for _, want := range []string{
+		"type: automation",
+		"title: \"Blocked Task Inspector\"",
+		"event: task.status_changed",
+		"to_status: blocked",
+		"project: \"*\"",
+		"once_per: task_id",
+		"task_get",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("automation asset missing %q", want)
+		}
+	}
+	if strings.Contains(text, "type: cron") || strings.Contains(text, "schedule: \"*/15 * * * *\"") {
+		t.Error("blocked inspector should be event-driven, not cron-driven")
+	}
+}

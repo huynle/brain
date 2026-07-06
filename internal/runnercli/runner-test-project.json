@@ -1,8 +1,8 @@
 {
   "projectId": "test-project",
   "status": "stopped",
-  "startedAt": "2026-04-04T07:55:48.027507-06:00",
-  "updatedAt": "2026-04-04T07:55:48.027906-06:00",
+  "startedAt": "2026-07-06T12:34:24.714235-06:00",
+  "updatedAt": "2026-07-06T12:34:24.824215-06:00",
   "runningTasks": null,
   "stats": {
     "completed": 0,
@@ -12,12 +12,18 @@
   "config": {
     "brain_api_url": "",
     "api_token": "",
+    "api_token_env": "",
     "poll_interval": 0,
     "task_poll_interval": 0,
     "max_parallel": 0,
     "state_dir": "",
     "log_dir": "",
     "work_dir": "",
+    "repo_cache_dir": "",
+    "git_token": "",
+    "git_token_env": "",
+    "require_https": false,
+    "allow_unauthenticated_https": false,
     "api_timeout": 0,
     "task_timeout": 0,
     "idle_detection_threshold": 0,
@@ -28,9 +34,62 @@
       "agent": "",
       "model": ""
     },
+    "script": {
+      "enabled": false,
+      "allowed_commands": null,
+      "blocked_commands": null,
+      "max_timeout": 0,
+      "workdir_restrict": null
+    },
+    "pi": {
+      "bin": "",
+      "model": "",
+      "thinking": "",
+      "agents_dir": "",
+      "extensions_dir": "",
+      "extensions": null,
+      "no_session": false
+    },
+    "executors": null,
+    "default_executor": "",
+    "task_defaults": {
+      "agent": "",
+      "model": "",
+      "executor": "",
+      "extensions": null,
+      "execution_mode": "",
+      "complete_on_idle": null,
+      "merge_policy": "",
+      "merge_strategy": "",
+      "merge_target_branch": "",
+      "remote_branch_policy": "",
+      "open_pr_before_merge": null,
+      "target_workdir": ""
+    },
     "exclude_projects": null,
+    "include_projects": null,
     "auto_monitors": false,
     "env_passthrough": null,
-    "feature_ids": null
+    "feature_ids": null,
+    "hooks": {
+      "hooks_dir": "",
+      "hooks": null
+    },
+    "hooks_dir": "",
+    "hook_timeout": 0,
+    "heartbeat_interval": 0,
+    "log_streaming": false,
+    "capabilities": null,
+    "dispatch_push": false,
+    "labels": null,
+    "workspace_roots": null,
+    "resources": null,
+    "capacity": null,
+    "draining": false,
+    "passive": false,
+    "control": {
+      "disabled": false,
+      "allowed_workdir_roots": null
+    }
   }
 }

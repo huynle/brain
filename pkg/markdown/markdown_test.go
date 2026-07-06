@@ -51,6 +51,23 @@ func TestExtractLinks_HTTPLink(t *testing.T) {
 	}
 }
 
+func TestExtractLinks_AttachmentLink(t *testing.T) {
+	md := `See [source PDF](brain-attachment://att_x) and [note](abc12def).`
+	links := ExtractLinks(md)
+	if len(links) != 2 {
+		t.Fatalf("expected 2 links, got %d", len(links))
+	}
+	if links[0].Href != "brain-attachment://att_x" {
+		t.Fatalf("href = %q, want brain-attachment://att_x", links[0].Href)
+	}
+	if links[0].Type != "attachment" {
+		t.Errorf("type = %q, want %q", links[0].Type, "attachment")
+	}
+	if links[1].Type != "markdown" {
+		t.Errorf("ordinary link type = %q, want markdown", links[1].Type)
+	}
+}
+
 func TestExtractLinks_SkipsImageLinks(t *testing.T) {
 	md := `Here is an image ![alt text](image.png) and a [real link](target).`
 	links := ExtractLinks(md)

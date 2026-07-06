@@ -141,9 +141,46 @@ var InactiveTabStyle = lipgloss.NewStyle().
 
 // View renders the tab bar as a single-line string.
 func (p ProjectTabs) View(width int) string {
+	// The project-tab row is intentionally not rendered: projects are switched
+	// with H/L (shift) and the active project is shown in the status bar. This
+	// keeps every content tab visually clean (matching the Automations view).
+	// ProjectTabs still tracks active index + per-project stats for H/L nav.
+	return ""
+}
+
+// TabIndexAt returns the tab index at a rendered x coordinate, or -1 if none.
+func (p ProjectTabs) TabIndexAt(x, width int) int {
 	if len(p.Projects) <= 1 {
-		return "" // Don't render tabs for single project
+		return -1
 	}
+	tabs := p.tabLabels(false)
+	pos := 0
+	for i, tab := range tabs {
+		tabWidth := lipgloss.Width(tab)
+		if pos+tabWidth > width {
+			return -1
+		}
+		if x >= pos && x < pos+tabWidth {
+			return i
+		}
+		pos += tabWidth + 2 // strings.Join separator
+	}
+	return -1
+}
+
+func (p ProjectTabs) render(width int, styled bool) string {
+	tabs := p.tabLabels(styled)
+	tabLine := strings.Join(tabs, "  ")
+
+	// Truncate if too wide
+	if lipgloss.Width(tabLine) > width {
+		tabLine = tabLine[:width-3] + "..."
+	}
+
+	return tabLine
+}
+
+func (p ProjectTabs) tabLabels(styled bool) []string {
 
 	var tabs []string
 
@@ -154,7 +191,9 @@ func (p ProjectTabs) View(width int) string {
 	if allIndicator != "" {
 		allText = lipgloss.NewStyle().Foreground(allColor).Render(allIndicator) + " " + allLabel
 	}
-	if p.ActiveIndex == 0 {
+	if !styled {
+		tabs = append(tabs, "["+allText+"]")
+	} else if p.ActiveIndex == 0 {
 		tabs = append(tabs, ActiveTabStyle.Render("["+allText+"]"))
 	} else {
 		tabs = append(tabs, InactiveTabStyle.Render("["+allText+"]"))
@@ -171,20 +210,14 @@ func (p ProjectTabs) View(width int) string {
 		if indicator != "" {
 			tabText = lipgloss.NewStyle().Foreground(indicatorColor).Render(indicator) + " " + label
 		}
-		if p.ActiveIndex == i+1 {
+		if !styled {
+			tabs = append(tabs, "["+tabText+"]")
+		} else if p.ActiveIndex == i+1 {
 			tabs = append(tabs, ActiveTabStyle.Render("["+tabText+"]"))
 		} else {
 			tabs = append(tabs, InactiveTabStyle.Render("["+tabText+"]"))
 		}
 	}
 
-	// Join tabs with spacing
-	tabLine := strings.Join(tabs, "  ")
-
-	// Truncate if too wide
-	if lipgloss.Width(tabLine) > width {
-		tabLine = tabLine[:width-3] + "..."
-	}
-
-	return tabLine
+	return tabs
 }

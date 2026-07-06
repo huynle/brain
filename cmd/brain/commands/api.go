@@ -6,10 +6,10 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/huynle/brain-api/internal/apiserver"
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/lifecycle"
 	"github.com/huynle/brain-api/internal/runner"
 )
@@ -26,16 +26,24 @@ type UnifiedConfig struct {
 		LogLevel   string
 		CORSOrigin string
 		OAuthPIN   string
+		JWTSecret  string
 		TLS        struct {
 			Enabled  bool
 			CertPath string
 			KeyPath  string
 		}
-		PIDFile       string
-		LogFile       string
-		LogMaxSize    int // MB
-		LogMaxBackups int
-		LogMaxAge     int // days
+		PIDFile         string
+		LogFile         string
+		LogMaxSize      int // MB
+		LogMaxBackups   int
+		LogMaxAge       int // days
+		TaskDefaults    config.TaskDefaultsConfig
+		FeatureCheckout config.FeatureCheckoutConfig
+		Embedding       config.EmbeddingConfig
+		Attachments     config.AttachmentConfig
+
+		AttachmentExtraction config.AttachmentExtractionConfig
+		Assistant            config.AssistantConfig
 	}
 	Runner runner.RunnerConfig
 	MCP    struct {
@@ -48,13 +56,19 @@ type UnifiedConfig struct {
 
 // APIFlags holds API server command flags.
 type APIFlags struct {
-	Port    int
-	Host    string
-	Daemon  bool
-	LogFile string
-	TLS     bool
-	TLSCert string
-	TLSKey  string
+	Port          int
+	Host          string
+	Daemon        bool
+	LogFile       string
+	TLS           bool
+	TLSCert       string
+	TLSKey        string
+	Runner        bool
+	RunnerProject string
+	MaxParallel   int
+	Include       []string
+	Exclude       []string
+	Executor      string
 }
 
 // APICommand implements the Command interface for the api command.
@@ -72,13 +86,21 @@ func (c *APICommand) Type() string {
 func (c *APICommand) Execute() error {
 	// Build options from config + flags
 	opts := apiserver.ServerOptions{
-		Port:       c.Config.Server.Port,
-		Host:       c.Config.Server.Host,
-		BrainDir:   c.Config.Server.BrainDir,
-		EnableAuth: c.Config.Server.EnableAuth,
-		LogLevel:   c.Config.Server.LogLevel,
-		CORSOrigin: c.Config.Server.CORSOrigin,
-		OAuthPIN:   c.Config.Server.OAuthPIN,
+		Port:            c.Config.Server.Port,
+		Host:            c.Config.Server.Host,
+		BrainDir:        c.Config.Server.BrainDir,
+		EnableAuth:      c.Config.Server.EnableAuth,
+		LogLevel:        c.Config.Server.LogLevel,
+		CORSOrigin:      c.Config.Server.CORSOrigin,
+		OAuthPIN:        c.Config.Server.OAuthPIN,
+		JWTSecret:       c.Config.Server.JWTSecret,
+		TaskDefaults:    c.Config.Server.TaskDefaults,
+		FeatureCheckout: c.Config.Server.FeatureCheckout,
+		Embedding:       c.Config.Server.Embedding,
+		Attachments:     c.Config.Server.Attachments,
+
+		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
+		Assistant:            c.Config.Server.Assistant,
 	}
 
 	// Flags override config
@@ -97,8 +119,7 @@ func (c *APICommand) Execute() error {
 	if c.Flags.Daemon {
 		pidFile := c.Config.Server.PIDFile
 		if pidFile == "" {
-			homeDir, _ := os.UserHomeDir()
-			pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+			pidFile = defaultPIDFile()
 		}
 
 		logFile := c.Flags.LogFile
@@ -106,22 +127,21 @@ func (c *APICommand) Execute() error {
 			logFile = c.Config.Server.LogFile
 		}
 		if logFile == "" {
-			homeDir, _ := os.UserHomeDir()
-			logFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+			logFile = defaultLogFile()
 		}
 
-		return daemonizeServer(ctx, opts, pidFile, logFile, c.Config)
+		return daemonizeServer(ctx, opts, pidFile, logFile, c.Config, lifecycleFlagsFromAPIFlags(c.Flags))
 	}
 
 	// Otherwise run in foreground
 	fmt.Printf("Starting Brain API server on %s:%d\n", opts.Host, opts.Port)
-	return apiserver.RunServer(ctx, opts)
+	return runServerWithOptionalRunner(ctx, c.Config, opts, lifecycleFlagsFromAPIFlags(c.Flags))
 }
 
 // daemonizeServer handles daemon mode for the server with SIGHUP log rotation.
 // In daemon mode, we write the PID file when the server starts and setup signal handlers.
 // The StartCommand is responsible for the actual fork/detach via lifecycle.Daemonize.
-func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile, logFile string, cfg *UnifiedConfig) error {
+func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile, logFile string, cfg *UnifiedConfig, flags LifecycleFlags) error {
 	// Check if already running (skip if the PID file contains our own PID,
 	// which happens when the parent wrote it before we started)
 	if pid, err := lifecycle.ReadPID(pidFile); err == nil {
@@ -178,5 +198,5 @@ func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile,
 	fmt.Printf("PID file: %s\n", pidFile)
 
 	// Run server
-	return apiserver.RunServer(ctx, opts)
+	return runServerWithOptionalRunner(ctx, cfg, opts, flags)
 }

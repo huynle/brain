@@ -241,9 +241,6 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 		status = featureStatus
 	}
 
-	// Build the direct_prompt for the agent
-	directPrompt := buildMonitorPrompt(templateID, scope)
-
 	// Default max_runs for recurring monitors (prevents infinite cycling)
 	var maxRuns *int
 	if template.DefaultMaxRuns > 0 {
@@ -259,7 +256,6 @@ func (s *MonitorServiceImpl) Create(ctx context.Context, templateID string, scop
 		ScheduleEnabled: &schedEnabled,
 		CompleteOnIdle:  &completeOnIdle,
 		ExecutionMode:   "current_branch",
-		DirectPrompt:    directPrompt,
 		MaxRuns:         maxRuns,
 		Tags:            tags,
 		FeatureID:       scope.FeatureID,
@@ -323,9 +319,6 @@ func (s *MonitorServiceImpl) CreateForFeature(ctx context.Context, templateID st
 	completeOnIdle := true
 	generated := true
 
-	// Build the direct_prompt for the review agent
-	directPrompt := buildMonitorPrompt(templateID, scope)
-
 	result, err := s.brain.Save(ctx, types.CreateEntryRequest{
 		Type:           "task",
 		Title:          title,
@@ -333,7 +326,6 @@ func (s *MonitorServiceImpl) CreateForFeature(ctx context.Context, templateID st
 		Status:         "pending",
 		CompleteOnIdle: &completeOnIdle,
 		ExecutionMode:  "current_branch",
-		DirectPrompt:   directPrompt,
 		Tags:           tags,
 		FeatureID:      scope.FeatureID,
 		Project:        scope.Project,

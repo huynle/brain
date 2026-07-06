@@ -1,29 +1,37 @@
 package api
 
 import (
-	"context"
-
-	"github.com/huynle/brain-api/internal/events"
+	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/logbuffer"
 	"github.com/huynle/brain-api/internal/realtime"
 )
 
-// WebhookAutomationSource provides active automations for webhook matching.
-// This is a narrower interface than events.AutomationSource, scoped to the api package.
-type WebhookAutomationSource interface {
-	ListActiveAutomations(ctx context.Context) ([]events.AutomationEntry, error)
-}
-
 // Handler holds service dependencies for HTTP handlers.
 type Handler struct {
-	brain       BrainService
-	tasks       TaskService
-	runner      RunnerService
-	runners     RunnersService
-	monitor     MonitorService
-	tokens      TokenService
-	hub         *realtime.Hub
-	eventBus    events.Bus
-	automations WebhookAutomationSource
+	brain          BrainService
+	attachments    AttachmentService
+	tasks          TaskService
+	runner         RunnerService
+	runnerRegistry RunnerRegistryService
+	clientContext  ClientContextService
+	monitor        MonitorService
+	tokens         TokenService
+	events         EventService
+	webhooks       WebhookService
+	goalService    GoalService
+	assistant      *AssistantService
+	placement      ProjectPlacementService
+	scheduler      SchedulerService
+	schedulerViews SchedulerVisibilityService
+	runTask        RunTaskService
+	runFeature     RunFeatureService
+	bridge         BridgeService
+	hub            *realtime.Hub
+	logBuffer      *logbuffer.Buffer
+	taskDefaults   config.TaskDefaultsConfig
+	credentials    CredentialVerifier
+	passwordTokens PasswordTokenStore
+	loginThrottle  *loginThrottle
 }
 
 // HandlerOption configures a Handler.
@@ -31,17 +39,38 @@ type HandlerOption func(*Handler)
 
 // NewHandler creates a Handler with the given BrainService and optional services.
 func NewHandler(brain BrainService, opts ...HandlerOption) *Handler {
-	h := &Handler{brain: brain}
+	h := &Handler{brain: brain, loginThrottle: newLoginThrottle()}
 	for _, opt := range opts {
 		opt(h)
 	}
 	return h
 }
 
+// WithCredentialVerifier enables the password login flow with the given verifier.
+func WithCredentialVerifier(v CredentialVerifier) HandlerOption {
+	return func(h *Handler) {
+		h.credentials = v
+	}
+}
+
+// WithPasswordTokenStore sets the store used to issue/rotate password-login tokens.
+func WithPasswordTokenStore(s PasswordTokenStore) HandlerOption {
+	return func(h *Handler) {
+		h.passwordTokens = s
+	}
+}
+
 // WithTaskService sets the TaskService on the Handler.
 func WithTaskService(ts TaskService) HandlerOption {
 	return func(h *Handler) {
 		h.tasks = ts
+	}
+}
+
+// WithAttachmentService sets the AttachmentService on the Handler.
+func WithAttachmentService(as AttachmentService) HandlerOption {
+	return func(h *Handler) {
+		h.attachments = as
 	}
 }
 
@@ -52,17 +81,59 @@ func WithRunnerService(rs RunnerService) HandlerOption {
 	}
 }
 
-// WithRunnersService sets the RunnersService on the Handler.
-func WithRunnersService(rs RunnersService) HandlerOption {
-	return func(h *Handler) {
-		h.runners = rs
-	}
-}
-
 // WithMonitorService sets the MonitorService on the Handler.
 func WithMonitorService(ms MonitorService) HandlerOption {
 	return func(h *Handler) {
 		h.monitor = ms
+	}
+}
+
+// WithRunnerRegistryService sets the RunnerRegistryService on the Handler.
+func WithRunnerRegistryService(rrs RunnerRegistryService) HandlerOption {
+	return func(h *Handler) {
+		h.runnerRegistry = rrs
+	}
+}
+
+// WithClientContextService sets the ClientContextService on the Handler.
+func WithClientContextService(ccs ClientContextService) HandlerOption {
+	return func(h *Handler) {
+		h.clientContext = ccs
+	}
+}
+
+// WithEventService sets the EventService on the Handler.
+func WithEventService(es EventService) HandlerOption {
+	return func(h *Handler) {
+		h.events = es
+	}
+}
+
+// WithWebhookService sets the WebhookService on the Handler.
+func WithWebhookService(ws WebhookService) HandlerOption {
+	return func(h *Handler) {
+		h.webhooks = ws
+	}
+}
+
+// WithGoalService sets the GoalService on the Handler.
+func WithGoalService(gs GoalService) HandlerOption {
+	return func(h *Handler) {
+		h.goalService = gs
+	}
+}
+
+// WithAssistantService sets the built-in assistant service on the Handler.
+func WithAssistantService(as *AssistantService) HandlerOption {
+	return func(h *Handler) {
+		h.assistant = as
+	}
+}
+
+// WithBridgeService sets the runner BridgeService on the Handler.
+func WithBridgeService(b BridgeService) HandlerOption {
+	return func(h *Handler) {
+		h.bridge = b
 	}
 }
 
@@ -73,16 +144,49 @@ func WithHub(hub *realtime.Hub) HandlerOption {
 	}
 }
 
-// WithEventBus sets the event bus on the Handler.
-func WithEventBus(bus events.Bus) HandlerOption {
+// WithTaskDefaults sets the task defaults configuration on the Handler.
+func WithTaskDefaults(td config.TaskDefaultsConfig) HandlerOption {
 	return func(h *Handler) {
-		h.eventBus = bus
+		h.taskDefaults = td
 	}
 }
 
-// WithAutomationSource sets the automation source for webhook matching.
-func WithAutomationSource(src WebhookAutomationSource) HandlerOption {
+// WithProjectPlacementService sets the project placement service on the Handler.
+func WithProjectPlacementService(ps ProjectPlacementService) HandlerOption {
 	return func(h *Handler) {
-		h.automations = src
+		h.placement = ps
+	}
+}
+
+// WithSchedulerService sets the scheduler service on the Handler.
+func WithSchedulerService(s SchedulerService) HandlerOption {
+	return func(h *Handler) {
+		h.scheduler = s
+	}
+}
+
+// WithSchedulerVisibilityService sets the scheduler visibility service on the Handler.
+func WithSchedulerVisibilityService(s SchedulerVisibilityService) HandlerOption {
+	return func(h *Handler) {
+		h.schedulerViews = s
+	}
+}
+
+// WithRunTaskService sets the RunTaskService used by HandleRunTask. When
+// unset, /tasks/{project}/{task}/run returns 501 Not Implemented so clients
+// fall back to /trigger.
+func WithRunTaskService(s RunTaskService) HandlerOption {
+	return func(h *Handler) {
+		h.runTask = s
+	}
+}
+
+// WithRunFeatureService sets the RunFeatureService used by HandleRunFeature.
+// When unset, /tasks/{project}/features/{feature}/run returns 501 Not
+// Implemented so clients can show a clear "feature not supported" message
+// instead of a confusing dispatch failure.
+func WithRunFeatureService(s RunFeatureService) HandlerOption {
+	return func(h *Handler) {
+		h.runFeature = s
 	}
 }

@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -110,6 +112,22 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Notify SSE clients about the change
+	h.notifyProjectChanged(r, resp.Path, req.Type)
+
+	// Emit entry.created event
+	evt := types.NewEvent(types.EventEntryCreated, types.EventSourceAPI)
+	evt.ProjectID = extractProjectID(resp.Path)
+	evt.TaskPath = resp.Path
+	evt.Metadata = map[string]string{
+		"entry_type": req.Type,
+		"title":      req.Title,
+	}
+	if req.FeatureID != "" {
+		evt.FeatureID = req.FeatureID
+	}
+	h.emitEvent(r.Context(), evt)
+
 	WriteJSON(w, http.StatusCreated, resp)
 }
 
@@ -122,7 +140,7 @@ func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
 		id = chi.URLParam(r, "id")
 	}
 
-	entry, err := h.brain.Recall(r.Context(), id)
+	entry, err := h.brain.Recall(r.Context(), id, parseIncludeQuery(r.URL.Query().Get("include"))...)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("Entry not found: %s", id))
@@ -189,7 +207,7 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 	if sortBy := q.Get("sortBy"); sortBy != "" && !isValidSortBy(sortBy) {
 		details = append(details, types.ValidationDetail{
 			Field:   "sortBy",
-			Message: fmt.Sprintf("invalid sortBy %q, must be one of: created, modified, priority", sortBy),
+			Message: fmt.Sprintf("invalid sortBy %q, must be one of: created, modified, priority, completed, title", sortBy),
 		})
 	}
 	if sortOrder := q.Get("sortOrder"); sortOrder != "" && sortOrder != "asc" && sortOrder != "desc" {
@@ -216,6 +234,7 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 		FeatureID: q.Get("feature_id"),
 		Filename:  q.Get("filename"),
 		Tags:      q.Get("tags"),
+		Include:   parseIncludeQuery(q.Get("include")),
 		SortBy:    q.Get("sortBy"),
 		Project:   q.Get("project"),
 		SortOrder: q.Get("sortOrder"),
@@ -364,6 +383,14 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture old status before update for status_changed events.
+	var oldStatus string
+	if req.Status != nil && h.events != nil {
+		if oldEntry, err := h.brain.Recall(r.Context(), id); err == nil {
+			oldStatus = oldEntry.Status
+		}
+	}
+
 	entry, err := h.brain.Update(r.Context(), id, req)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -372,6 +399,41 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
+	}
+
+	// Notify SSE clients about the change
+	h.notifyProjectChanged(r, entry.Path, entry.Type)
+
+	// Check feature completion when a task status changes to completed/validated
+	h.checkFeatureCompletionForEntry(r.Context(), entry, req.Status)
+
+	// Emit entry.updated event
+	projectID := extractProjectID(entry.Path)
+	evt := types.NewEvent(types.EventEntryUpdated, types.EventSourceAPI)
+	evt.ProjectID = projectID
+	evt.TaskPath = entry.Path
+	evt.TaskID = entry.ID
+	evt.FeatureID = entry.FeatureID
+	evt.Metadata = map[string]string{
+		"entry_type": entry.Type,
+		"title":      entry.Title,
+	}
+	if req.Status != nil {
+		evt.Metadata["new_status"] = *req.Status
+	}
+	h.emitEvent(r.Context(), evt)
+
+	// Emit task.status_changed when a task's status actually changed
+	if entry.Type == "task" && req.Status != nil && oldStatus != "" && oldStatus != *req.Status {
+		statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+		statusEvt.ProjectID = projectID
+		statusEvt.TaskID = entry.ID
+		statusEvt.TaskPath = entry.Path
+		statusEvt.TaskTitle = entry.Title
+		statusEvt.FeatureID = entry.FeatureID
+		statusEvt.FromStatus = oldStatus
+		statusEvt.ToStatus = *req.Status
+		h.emitEvent(r.Context(), statusEvt)
 	}
 
 	WriteJSON(w, http.StatusOK, entry)
@@ -406,6 +468,16 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Capture old status before update so we can emit task.status_changed.
+	// The runner marks task completion through this endpoint, so this is the
+	// emission path that drives goal/automation reconcile loops.
+	var oldStatus string
+	if _, ok := fields["status"]; ok && h.events != nil {
+		if oldEntry, err := h.brain.Recall(r.Context(), id); err == nil {
+			oldStatus = oldEntry.Status
+		}
+	}
+
 	entry, err := h.brain.UpdateMetadata(r.Context(), id, fields)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -414,6 +486,43 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
+	}
+
+	// Notify SSE clients about the change
+	h.notifyProjectChanged(r, entry.Path, entry.Type)
+
+	// Emit entry.updated event for metadata change
+	evt := types.NewEvent(types.EventEntryUpdated, types.EventSourceAPI)
+	projectID := extractProjectID(entry.Path)
+	evt.ProjectID = projectID
+	evt.TaskPath = entry.Path
+	evt.TaskID = entry.ID
+	evt.FeatureID = entry.FeatureID
+	evt.Metadata = map[string]string{
+		"entry_type": entry.Type,
+		"action":     "metadata_update",
+	}
+	h.emitEvent(r.Context(), evt)
+
+	// Emit task.status_changed when a task's status actually changed. This
+	// mirrors HandleUpdateEntry so that runner-driven status updates (which go
+	// through this metadata endpoint) trigger goal/automation reconcile loops.
+	if entry.Type == "task" && entry.Status != "" && oldStatus != "" && oldStatus != entry.Status {
+		statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+		statusEvt.ProjectID = projectID
+		statusEvt.TaskID = entry.ID
+		statusEvt.TaskPath = entry.Path
+		statusEvt.TaskTitle = entry.Title
+		statusEvt.FeatureID = entry.FeatureID
+		statusEvt.FromStatus = oldStatus
+		statusEvt.ToStatus = entry.Status
+		h.emitEvent(r.Context(), statusEvt)
+	}
+
+	if h.events != nil && entry.Type == "task" && entry.FeatureID != "" {
+		if _, ok := fields["status"]; ok {
+			h.events.CheckFeatureCompletion(r.Context(), projectID, entry.FeatureID, entry.ID)
+		}
 	}
 
 	WriteJSON(w, http.StatusOK, entry)
@@ -434,6 +543,12 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Recall entry before deletion for event metadata.
+	var deletedEntry *types.BrainEntry
+	if h.events != nil {
+		deletedEntry, _ = h.brain.Recall(r.Context(), id)
+	}
+
 	err := h.brain.Delete(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -443,6 +558,23 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+
+	// Notify SSE clients about the deletion
+	h.notifyProjectChanged(r, id, "task") // id may be a path like projects/test1/task/xxx.md
+
+	// Emit entry.deleted event
+	evt := types.NewEvent(types.EventEntryDeleted, types.EventSourceAPI)
+	evt.ProjectID = extractProjectID(id)
+	evt.TaskPath = id
+	if deletedEntry != nil {
+		evt.TaskID = deletedEntry.ID
+		evt.FeatureID = deletedEntry.FeatureID
+		evt.Metadata = map[string]string{
+			"entry_type": deletedEntry.Type,
+			"title":      deletedEntry.Title,
+		}
+	}
+	h.emitEvent(r.Context(), evt)
 
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -512,6 +644,38 @@ func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
+	}
+
+	// Send deduplicated SSE notifications (skip for dry runs)
+	if !req.DryRun {
+		seen := make(map[string]bool)
+		for _, result := range resp.Results {
+			if result.Status != "ok" {
+				continue
+			}
+			projectID := extractProjectID(result.Path)
+			if projectID != "" && !seen[projectID] {
+				seen[projectID] = true
+				h.notifyProjectChanged(r, result.Path, "task")
+			}
+		}
+
+		// Emit entry.updated events for each successful update
+		for _, result := range resp.Results {
+			if result.Status != "ok" {
+				continue
+			}
+			evt := types.NewEvent(types.EventEntryUpdated, types.EventSourceAPI)
+			evt.ProjectID = extractProjectID(result.Path)
+			evt.TaskPath = result.Path
+			evt.Metadata = map[string]string{
+				"bulk": "true",
+			}
+			h.emitEvent(r.Context(), evt)
+		}
+
+		// Check feature completion for bulk-updated tasks
+		h.checkFeatureCompletionForBulkUpdate(r.Context(), req, resp)
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
@@ -614,7 +778,204 @@ func (h *Handler) HandleMoveEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Notify both source and target projects
+	h.notifyProjectChanged(r, result.From, "task") // source project
+	h.notifyProjectChanged(r, result.To, "task")   // target project
+
+	// Emit entry.updated event for move
+	evt := types.NewEvent(types.EventEntryUpdated, types.EventSourceAPI)
+	evt.ProjectID = extractProjectID(result.To)
+	evt.TaskPath = result.To
+	evt.Metadata = map[string]string{
+		"action":       "move",
+		"from_path":    result.From,
+		"to_path":      result.To,
+		"from_project": extractProjectID(result.From),
+		"to_project":   extractProjectID(result.To),
+	}
+	h.emitEvent(r.Context(), evt)
+
 	WriteJSON(w, http.StatusOK, result)
+}
+
+// =============================================================================
+// SSE Notification Helpers
+// =============================================================================
+
+// notifyProjectChanged publishes SSE events after an entry mutation.
+// It publishes both a project_dirty and a tasks_snapshot event for the
+// project extracted from the entry path.
+func (h *Handler) notifyProjectChanged(r *http.Request, entryPath string, entryType string) {
+	if h.hub == nil {
+		return
+	}
+
+	// Only publish for task-type entries (or always dirty for any mutation)
+	projectID := extractProjectID(entryPath)
+	if projectID == "" {
+		return
+	}
+
+	h.hub.PublishProjectDirty(projectID)
+
+	// Also send a fresh tasks_snapshot so SSE clients get updated data
+	if h.tasks != nil {
+		resp, err := h.tasks.GetTasks(r.Context(), projectID)
+		if err == nil {
+			h.hub.PublishTaskSnapshot(projectID, types.SSETasksSnapshotData{
+				SSEEventData: types.SSEEventData{
+					Type:      types.SSEEventTasksSnapshot,
+					Transport: "sse",
+					Timestamp: types.TimeNowUTC().Format("2006-01-02T15:04:05Z"),
+					ProjectID: projectID,
+				},
+				Tasks:  resp.Tasks,
+				Count:  resp.Count,
+				Stats:  resp.Stats,
+				Cycles: resp.Cycles,
+			})
+		}
+	}
+}
+
+// =============================================================================
+// Event Emission Helper
+// =============================================================================
+
+// emitEvent publishes an event through the EventService if configured.
+// It is a fire-and-forget helper — errors are logged but never block the
+// HTTP response path.
+func (h *Handler) emitEvent(ctx context.Context, evt types.Event) {
+	if h.events == nil {
+		return
+	}
+	if err := h.events.Ingest(ctx, []types.Event{evt}); err != nil {
+		slog.Warn("failed to emit event",
+			"event_type", evt.Type,
+			"error", err,
+		)
+	}
+}
+
+// =============================================================================
+// Feature Completion Detection
+// =============================================================================
+
+// checkFeatureCompletionForEntry checks if a task's feature is now complete
+// after a single entry update. Only triggers when:
+// 1. The entry is a task type
+// 2. The status was explicitly changed to "completed" or "validated"
+// 3. The entry has a feature_id
+// 4. An event service is configured
+func (h *Handler) checkFeatureCompletionForEntry(ctx context.Context, entry *types.BrainEntry, newStatus *string) {
+	if h.events == nil || entry == nil {
+		return
+	}
+	if entry.Type != "task" {
+		return
+	}
+	if newStatus == nil {
+		return
+	}
+	if *newStatus != "completed" && *newStatus != "validated" {
+		return
+	}
+	if entry.FeatureID == "" {
+		return
+	}
+
+	projectID := extractProjectID(entry.Path)
+	if projectID == "" {
+		return
+	}
+
+	h.events.CheckFeatureCompletion(ctx, projectID, entry.FeatureID, entry.ID)
+}
+
+// checkFeatureCompletionForBulkUpdate checks feature completion for tasks
+// updated in a bulk update operation. It recalls each successfully updated
+// entry to check if it's a task with a feature_id.
+func (h *Handler) checkFeatureCompletionForBulkUpdate(ctx context.Context, req types.BulkUpdateRequest, resp *types.BulkUpdateResponse) {
+	if h.events == nil || resp == nil {
+		return
+	}
+
+	// Determine the status being set
+	var newStatus *string
+	if req.Updates != nil && req.Updates.Status != nil {
+		newStatus = req.Updates.Status
+	}
+
+	// For explicit mode, check each entry's status
+	if newStatus == nil && len(req.Entries) > 0 {
+		for _, result := range resp.Results {
+			if result.Status != "ok" {
+				continue
+			}
+			for _, reqEntry := range req.Entries {
+				if reqEntry.Path == result.Path && reqEntry.Updates.Status != nil {
+					s := *reqEntry.Updates.Status
+					if s == "completed" || s == "validated" {
+						entry, err := h.brain.Recall(ctx, result.Path)
+						if err == nil && entry.Type == "task" && entry.FeatureID != "" {
+							projectID := extractProjectID(entry.Path)
+							if projectID != "" {
+								h.events.CheckFeatureCompletion(ctx, projectID, entry.FeatureID, entry.ID)
+							}
+						}
+					}
+					break
+				}
+			}
+		}
+		return
+	}
+
+	// For filter mode with status change to completed/validated
+	if newStatus == nil {
+		return
+	}
+	if *newStatus != "completed" && *newStatus != "validated" {
+		return
+	}
+
+	// Check each successfully updated entry
+	seenFeatures := make(map[string]bool)
+	for _, result := range resp.Results {
+		if result.Status != "ok" {
+			continue
+		}
+		entry, err := h.brain.Recall(ctx, result.Path)
+		if err != nil {
+			continue
+		}
+		if entry.Type != "task" || entry.FeatureID == "" {
+			continue
+		}
+		projectID := extractProjectID(entry.Path)
+		if projectID == "" {
+			continue
+		}
+		featureKey := projectID + ":" + entry.FeatureID
+		if seenFeatures[featureKey] {
+			continue // Already checked this feature
+		}
+		seenFeatures[featureKey] = true
+		h.events.CheckFeatureCompletion(ctx, projectID, entry.FeatureID, entry.ID)
+	}
+}
+
+// extractProjectID extracts the project ID from an entry path.
+// Path format: "projects/{projectId}/task/{shortId}.md"
+func extractProjectID(path string) string {
+	if !strings.HasPrefix(path, "projects/") {
+		return ""
+	}
+	parts := strings.SplitN(path, "/", 4)
+	if len(parts) < 2 {
+		return ""
+	}
+	return parts[1]
 }
 
 // =============================================================================
@@ -634,7 +995,7 @@ func isValidEnum(val string, valid []string) bool {
 // isValidSortBy checks if a sortBy value is valid.
 func isValidSortBy(s string) bool {
 	switch s {
-	case "created", "modified", "priority":
+	case "created", "modified", "priority", "completed", "title":
 		return true
 	}
 	return false
@@ -643,6 +1004,24 @@ func isValidSortBy(s string) bool {
 // isValidPriority checks if a priority value is valid.
 func isValidPriority(p string) bool {
 	return p == "high" || p == "medium" || p == "low"
+}
+
+// parseIncludeQuery parses comma-separated include query values while ignoring
+// empty segments. It preserves caller order so services can apply precedence.
+func parseIncludeQuery(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	include := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		include = append(include, part)
+	}
+	return include
 }
 
 // strPtr returns a pointer to the given string, or nil if empty.
@@ -735,6 +1114,7 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		DirectPrompt:       strPtr(fm.DirectPrompt),
 		Agent:              strPtr(fm.Agent),
 		Model:              strPtr(fm.Model),
+		Executor:           strPtr(fm.Executor),
 		Schedule:           strPtr(fm.Schedule),
 	}
 
@@ -754,10 +1134,21 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		req.DependsOn = &deps
 	}
 
+	if len(fm.Attachments) > 0 {
+		attachments := attachmentRefsFromFM(fm.Attachments)
+		req.Attachments = &attachments
+	}
+
 	// FeatureDependsOn (pointer to slice)
 	if len(fm.FeatureDependsOn) > 0 {
 		fdeps := fm.FeatureDependsOn
 		req.FeatureDependsOn = &fdeps
+	}
+
+	// Extensions (pointer to slice)
+	if len(fm.Extensions) > 0 {
+		exts := fm.Extensions
+		req.Extensions = &exts
 	}
 
 	// Boolean pointer fields — only set when present in frontmatter
@@ -776,61 +1167,43 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		req.MaxRuns = fm.MaxRuns
 	}
 
-	// Automation fields
-	if fm.Trigger != nil {
-		req.Trigger = fmTriggerToTypeForAPI(fm.Trigger)
-	}
-	if fm.Action != nil {
-		req.Action = fmActionToTypeForAPI(fm.Action)
-	}
-	if fm.Retry != nil {
-		req.Retry = fmRetryToTypeForAPI(fm.Retry)
-	}
-
 	return req
 }
 
-// fmTriggerToTypeForAPI converts a frontmatter AutomationTrigger to a types AutomationTrigger.
-func fmTriggerToTypeForAPI(t *frontmatter.AutomationTrigger) *types.AutomationTrigger {
-	if t == nil {
+func attachmentRefsFromFM(refs []frontmatter.AttachmentReference) []types.AttachmentReference {
+	if len(refs) == 0 {
 		return nil
 	}
-	return &types.AutomationTrigger{
-		Type:     t.Type,
-		Event:    t.Event,
-		Schedule: t.Schedule,
-		Filter:   t.Filter,
-		OncePer:  t.OncePer,
-		Webhook:  t.Webhook,
+	result := make([]types.AttachmentReference, 0, len(refs))
+	for _, ref := range refs {
+		result = append(result, types.AttachmentReference{
+			ID:          ref.ID,
+			Filename:    ref.Filename,
+			ContentType: ref.ContentType,
+			Size:        ref.Size,
+			SHA256:      ref.SHA256,
+			Role:        ref.Role,
+			Caption:     ref.Caption,
+			Derived:     attachmentDerivedFromFM(ref.Derived),
+		})
 	}
+	return result
 }
 
-// fmActionToTypeForAPI converts a frontmatter AutomationAction to a types AutomationAction.
-func fmActionToTypeForAPI(a *frontmatter.AutomationAction) *types.AutomationAction {
-	if a == nil {
+func attachmentDerivedFromFM(items []frontmatter.AttachmentDerived) []types.AttachmentDerived {
+	if len(items) == 0 {
 		return nil
 	}
-	return &types.AutomationAction{
-		Type:               a.Type,
-		DirectPrompt:       a.DirectPrompt,
-		Command:            a.Command,
-		Agent:              a.Agent,
-		Model:              a.Model,
-		ExecutionMode:      a.ExecutionMode,
-		CompleteOnIdle:     a.CompleteOnIdle,
-		Timeout:            a.Timeout,
-		RequiresCapability: a.RequiresCapability,
+	result := make([]types.AttachmentDerived, 0, len(items))
+	for _, item := range items {
+		result = append(result, types.AttachmentDerived{
+			ID:          item.ID,
+			Kind:        item.Kind,
+			ContentType: item.ContentType,
+			Size:        item.Size,
+			StorageKey:  item.StorageKey,
+			Created:     item.Created,
+		})
 	}
-}
-
-// fmRetryToTypeForAPI converts a frontmatter AutomationRetry to a types AutomationRetry.
-func fmRetryToTypeForAPI(r *frontmatter.AutomationRetry) *types.AutomationRetry {
-	if r == nil {
-		return nil
-	}
-	return &types.AutomationRetry{
-		MaxAttempts: r.MaxAttempts,
-		Backoff:     r.Backoff,
-		Delay:       r.Delay,
-	}
+	return result
 }

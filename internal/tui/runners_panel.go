@@ -148,7 +148,7 @@ func (p *RunnersPanel) View(width, height int) string {
 func (p *RunnersPanel) renderHeader(width int) string {
 	bold := BoldStyle
 
-	// Column layout: Status | Runner ID | Hostname | Tasks | Capabilities | Heartbeat
+	// Column layout: Status | Runner ID | Hostname | Tasks | Assigned | Capabilities | Heartbeat
 	cols := []struct {
 		label string
 		width int
@@ -157,6 +157,7 @@ func (p *RunnersPanel) renderHeader(width int) string {
 		{"Runner ID", 20},
 		{"Hostname", 16},
 		{"Tasks", 10},
+		{"Assigned", 18},
 		{"Capabilities", 20},
 		{"Heartbeat", 14},
 	}
@@ -190,7 +191,7 @@ func (p *RunnersPanel) renderRunnerRow(r types.RunnerInfo, selected bool, width 
 		statusStyle = lipgloss.NewStyle().Foreground(ColorWaiting)
 	}
 
-	statusCol := statusStyle.Render(fmt.Sprintf("%-8s", statusIndicator+" "+r.Status))
+	statusCol := statusStyle.Render(fmt.Sprintf("%-8s", statusIndicator+" "+string(r.Status)))
 
 	// Runner ID (truncate if needed)
 	runnerID := r.RunnerID
@@ -222,6 +223,15 @@ func (p *RunnersPanel) renderRunnerRow(r types.RunnerInfo, selected bool, width 
 	}
 	tasksCol := tasksStyle.Render(fmt.Sprintf("%-10s", fmt.Sprintf("%d/%d %d%%", r.ActiveTasks, r.MaxParallel, utilPct)))
 
+	assignments := formatRunnerAssignments(r.FeatureAssignments, false)
+	if assignments == "" {
+		assignments = "-"
+	}
+	if len(assignments) > 18 {
+		assignments = assignments[:15] + "..."
+	}
+	assignmentCol := DimStyle.Render(fmt.Sprintf("%-18s", assignments))
+
 	// Capabilities
 	caps := strings.Join(r.Capabilities, ",")
 	if len(caps) > 20 {
@@ -235,7 +245,7 @@ func (p *RunnersPanel) renderRunnerRow(r types.RunnerInfo, selected bool, width 
 	// Heartbeat age
 	heartbeatCol := p.renderHeartbeatAge(r.LastHeartbeat)
 
-	row := fmt.Sprintf(" %s %s %s %s %s %s", statusCol, runnerIDCol, hostnameCol, tasksCol, capsCol, heartbeatCol)
+	row := fmt.Sprintf(" %s %s %s %s %s %s %s", statusCol, runnerIDCol, hostnameCol, tasksCol, assignmentCol, capsCol, heartbeatCol)
 
 	if selected {
 		row = GetSelectedRowStyle().Width(width).Render(row)

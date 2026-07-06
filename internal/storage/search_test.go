@@ -277,6 +277,88 @@ func TestSearchFTS_DefaultLimit(t *testing.T) {
 	}
 }
 
+func TestSearchNotes_FindsReadyAttachmentDerivedTextFromDerivedTable(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	note := sampleNote("projects/test/report/derived-entry.md", "derv1234", "Derived Attachment Entry")
+	body := "entry body does not contain the attachment search token"
+	note.Body = &body
+	inserted, err := s.InsertNote(ctx, note)
+	if err != nil {
+		t.Fatalf("InsertNote failed: %v", err)
+	}
+	attachment, err := s.CreateAttachment(ctx, AttachmentInput{
+		Digest:    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Size:      128,
+		MediaType: "application/pdf",
+		Metadata:  `{"filename":"source.pdf","project_id":"test"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAttachment failed: %v", err)
+	}
+	if err := s.LinkAttachmentToEntry(ctx, inserted.Path, attachment.ID, "source"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+	if _, err := s.UpsertAttachmentDerived(ctx, AttachmentDerivedInput{
+		AttachmentID: attachment.ID,
+		Kind:         "text",
+		Status:       "ready",
+		ContentType:  "text/plain",
+		Text:         "derivedtableneedle appears only in persisted extracted text",
+		Metadata:     `{}`,
+	}); err != nil {
+		t.Fatalf("UpsertAttachmentDerived failed: %v", err)
+	}
+
+	results, err := s.SearchNotes(ctx, "derivedtableneedle", &SearchOptions{Strategy: "fts", Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchNotes failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("results len = %d, want 1", len(results))
+	}
+	if results[0].Path != inserted.Path {
+		t.Fatalf("result path = %q, want %q", results[0].Path, inserted.Path)
+	}
+	if results[0].MatchSource != "attachment" {
+		t.Fatalf("MatchSource = %q, want attachment", results[0].MatchSource)
+	}
+}
+
+func TestSearchNotes_DoesNotSearchAttachmentMetadataPseudoDerivedText(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	note := sampleNote("projects/test/report/metadata-entry.md", "meta1234", "Metadata Attachment Entry")
+	body := "entry body does not contain metadata pseudo token"
+	note.Body = &body
+	inserted, err := s.InsertNote(ctx, note)
+	if err != nil {
+		t.Fatalf("InsertNote failed: %v", err)
+	}
+	attachment, err := s.CreateAttachment(ctx, AttachmentInput{
+		Digest:    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		Size:      128,
+		MediaType: "application/pdf",
+		Metadata:  `{"filename":"source.pdf","project_id":"test","derived_text":"metadatapseudoneedle must not be indexed"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAttachment failed: %v", err)
+	}
+	if err := s.LinkAttachmentToEntry(ctx, inserted.Path, attachment.ID, "source"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+
+	results, err := s.SearchNotes(ctx, "metadatapseudoneedle", &SearchOptions{Strategy: "fts", Limit: 10})
+	if err != nil {
+		t.Fatalf("SearchNotes failed: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("results len = %d, want 0; first result = %#v", len(results), results[0])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // FTS search with filters: path prefix
 // ---------------------------------------------------------------------------
@@ -828,5 +910,57 @@ func TestSearchNotes_FilterByTags(t *testing.T) {
 	}
 	if results[0].ShortID != "tags0002" {
 		t.Errorf("expected tags0002, got %s", results[0].ShortID)
+	}
+}
+
+func TestSearchNotes_FindsAttachmentDerivedText(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	note := sampleNote("projects/proj/report/attachment-derived.md", "adtx0001", "Attachment Derived Entry")
+	body := "body without the attachment-only token"
+	note.Body = &body
+	typ := "report"
+	note.Type = &typ
+	if _, err := s.InsertNote(ctx, note); err != nil {
+		t.Fatalf("insert note: %v", err)
+	}
+
+	attachment, err := s.CreateAttachment(ctx, AttachmentInput{
+		Digest:    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		Size:      128,
+		MediaType: "application/pdf",
+		Metadata:  `{"filename":"source.pdf"}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateAttachment failed: %v", err)
+	}
+	if err := s.LinkAttachmentToEntry(ctx, note.Path, attachment.ID, "source"); err != nil {
+		t.Fatalf("LinkAttachmentToEntry failed: %v", err)
+	}
+	if _, err := s.UpsertAttachmentDerived(ctx, AttachmentDerivedInput{
+		AttachmentID: attachment.ID,
+		Kind:         "text",
+		Status:       "ready",
+		ContentType:  "text/plain",
+		Text:         "needleattachmenttoken appears only in extracted attachment text",
+		Metadata:     `{}`,
+	}); err != nil {
+		t.Fatalf("UpsertAttachmentDerived failed: %v", err)
+	}
+
+	results, err := s.SearchNotes(ctx, "needleattachmenttoken", nil)
+	if err != nil {
+		t.Fatalf("SearchNotes error: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("SearchNotes returned %d results, want 1 attachment-derived match", len(results))
+	}
+	if results[0].ShortID != "adtx0001" {
+		t.Fatalf("SearchNotes result short_id = %q, want adtx0001", results[0].ShortID)
+	}
+
+	if results[0].MatchSource != "attachment" {
+		t.Fatalf("MatchSource = %q, want attachment", results[0].MatchSource)
 	}
 }

@@ -26,6 +26,33 @@ type SessionInfo struct {
 	Timestamp string `yaml:"timestamp" json:"timestamp"`
 	CronID    string `yaml:"cron_id,omitempty" json:"cron_id,omitempty"`
 	RunID     string `yaml:"run_id,omitempty" json:"run_id,omitempty"`
+	// Where the session lives, recorded at discovery so remote control can
+	// re-open/resume it after the task's live instance is gone.
+	RunnerID  string `yaml:"runner_id,omitempty" json:"runner_id,omitempty"`
+	MachineID string `yaml:"machine_id,omitempty" json:"machine_id,omitempty"`
+	Hostname  string `yaml:"hostname,omitempty" json:"hostname,omitempty"`
+	Workdir   string `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+}
+
+// TriggerConfig defines when a hook should fire based on an event.
+// This mirrors internal/types.TriggerConfig for the frontmatter package boundary.
+type TriggerConfig struct {
+	Type string `yaml:"type,omitempty" json:"type,omitempty"`
+	// Event is the event pattern to match (e.g., "task.completed", "task.*").
+	Event string `yaml:"event" json:"event"`
+	// Events is an optional list of event patterns to match (OR semantics).
+	// An event matches the trigger if it matches Event OR any entry in Events.
+	Events   []string `yaml:"events,omitempty" json:"events,omitempty"`
+	Schedule string   `yaml:"schedule,omitempty" json:"schedule,omitempty"`
+	// Filter is optional key-value filters applied to event fields.
+	Filter                 map[string]string `yaml:"filter,omitempty" json:"filter,omitempty"`
+	OncePer                string            `yaml:"once_per,omitempty" json:"once_per,omitempty"`
+	Webhook                string            `yaml:"webhook,omitempty" json:"webhook,omitempty"`
+	IgnoreAutomationEvents *bool             `yaml:"ignore_automation_events,omitempty" json:"ignore_automation_events,omitempty"`
+	// Cooldown is the minimum interval between firings (e.g., "5m", "1h").
+	Cooldown string `yaml:"cooldown,omitempty" json:"cooldown,omitempty"`
+	// MaxConcurrent limits the number of concurrent executions.
+	MaxConcurrent int `yaml:"max_concurrent,omitempty" json:"max_concurrent,omitempty"`
 }
 
 // CronRun represents a single cron execution run.
@@ -47,6 +74,28 @@ type RunFinalization struct {
 	SessionID   string `yaml:"session_id,omitempty" json:"session_id,omitempty"`
 }
 
+// AttachmentReference is the entry-frontmatter representation for an attachment.
+type AttachmentReference struct {
+	ID          string              `yaml:"id" json:"id"`
+	Filename    string              `yaml:"filename,omitempty" json:"filename,omitempty"`
+	ContentType string              `yaml:"content_type,omitempty" json:"content_type,omitempty"`
+	Size        int64               `yaml:"size,omitempty" json:"size,omitempty"`
+	SHA256      string              `yaml:"sha256,omitempty" json:"sha256,omitempty"`
+	Role        string              `yaml:"role,omitempty" json:"role,omitempty"`
+	Caption     string              `yaml:"caption,omitempty" json:"caption,omitempty"`
+	Derived     []AttachmentDerived `yaml:"derived,omitempty" json:"derived,omitempty"`
+}
+
+// AttachmentDerived references generated artifacts for an attachment.
+type AttachmentDerived struct {
+	ID          string `yaml:"id" json:"id"`
+	Kind        string `yaml:"kind" json:"kind"`
+	ContentType string `yaml:"content_type,omitempty" json:"content_type,omitempty"`
+	Size        int64  `yaml:"size,omitempty" json:"size,omitempty"`
+	StorageKey  string `yaml:"storage_key,omitempty" json:"storage_key,omitempty"`
+	Created     string `yaml:"created,omitempty" json:"created,omitempty"`
+}
+
 // AutomationTrigger defines when an automation fires (frontmatter representation).
 type AutomationTrigger struct {
 	Type     string            `yaml:"type" json:"type"`
@@ -64,7 +113,10 @@ type AutomationAction struct {
 	Command            string `yaml:"command,omitempty" json:"command,omitempty"`
 	Agent              string `yaml:"agent,omitempty" json:"agent,omitempty"`
 	Model              string `yaml:"model,omitempty" json:"model,omitempty"`
+	Executor           string `yaml:"executor,omitempty" json:"executor,omitempty"`
+	TargetWorkdir      string `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
 	ExecutionMode      string `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	SessionMode        string `yaml:"session_mode,omitempty" json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool  `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`
 	Timeout            string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	RequiresCapability string `yaml:"requires_capability,omitempty" json:"requires_capability,omitempty"`
@@ -75,6 +127,18 @@ type AutomationRetry struct {
 	MaxAttempts int    `yaml:"max_attempts,omitempty" json:"max_attempts,omitempty"`
 	Backoff     string `yaml:"backoff,omitempty" json:"backoff,omitempty"`
 	Delay       string `yaml:"delay,omitempty" json:"delay,omitempty"`
+}
+
+// GoalConfig holds goal-specific configuration (frontmatter representation).
+// Mirrors internal/types.GoalConfig for the frontmatter package boundary.
+type GoalConfig struct {
+	ID               string   `yaml:"id" json:"id"`
+	Criteria         string   `yaml:"criteria,omitempty" json:"criteria,omitempty"`
+	Validation       string   `yaml:"validation,omitempty" json:"validation,omitempty"`
+	Workdir          string   `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+	TriggerSource    string   `yaml:"trigger_source,omitempty" json:"trigger_source,omitempty"`
+	CompleteStatuses []string `yaml:"complete_statuses,omitempty" json:"complete_statuses,omitempty"`
+	BlockedStatuses  []string `yaml:"blocked_statuses,omitempty" json:"blocked_statuses,omitempty"`
 }
 
 // Frontmatter holds all known brain entry frontmatter fields.
@@ -90,6 +154,11 @@ type Frontmatter struct {
 	Tags     []string `yaml:"tags,omitempty" json:"tags,omitempty"`
 	Priority string   `yaml:"priority,omitempty" json:"priority,omitempty"`
 	Created  string   `yaml:"created,omitempty" json:"created,omitempty"`
+	// CompletedAt is stamped by the service layer when status transitions
+	// into a completion state (completed/validated); cleared on reopen.
+	CompletedAt string `yaml:"completed_at,omitempty" json:"completed_at,omitempty"`
+
+	Attachments []AttachmentReference `yaml:"attachments,omitempty" json:"attachments,omitempty"`
 
 	// Scheduling
 	Schedule        string    `yaml:"schedule,omitempty" json:"schedule,omitempty"`
@@ -125,6 +194,7 @@ type Frontmatter struct {
 	RemoteBranchPolicy string   `yaml:"remote_branch_policy,omitempty" json:"remote_branch_policy,omitempty"`
 	OpenPRBeforeMerge  *bool    `yaml:"open_pr_before_merge,omitempty" json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string   `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	SessionMode        string   `yaml:"session_mode,omitempty" json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool    `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`
 	TargetWorkdir      string   `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
 	Executor           string   `yaml:"executor,omitempty" json:"executor,omitempty"`
@@ -137,15 +207,17 @@ type Frontmatter struct {
 	Model               string `yaml:"model,omitempty" json:"model,omitempty"`
 
 	// Generated task metadata
-	Generated     *bool  `yaml:"generated,omitempty" json:"generated,omitempty"`
-	GeneratedKind string `yaml:"generated_kind,omitempty" json:"generated_kind,omitempty"`
-	GeneratedKey  string `yaml:"generated_key,omitempty" json:"generated_key,omitempty"`
-	GeneratedBy   string `yaml:"generated_by,omitempty" json:"generated_by,omitempty"`
+	Generated       *bool  `yaml:"generated,omitempty" json:"generated,omitempty"`
+	GeneratedKind   string `yaml:"generated_kind,omitempty" json:"generated_kind,omitempty"`
+	GeneratedKey    string `yaml:"generated_key,omitempty" json:"generated_key,omitempty"`
+	GeneratedBy     string `yaml:"generated_by,omitempty" json:"generated_by,omitempty"`
+	AutomationRunID string `yaml:"automation_run_id,omitempty" json:"automation_run_id,omitempty"`
 
-	// Automation fields (type=automation entries)
-	Trigger *AutomationTrigger `yaml:"trigger,omitempty" json:"trigger,omitempty"`
-	Action  *AutomationAction  `yaml:"action,omitempty" json:"action,omitempty"`
-	Retry   *AutomationRetry   `yaml:"retry,omitempty" json:"retry,omitempty"`
+	// Event trigger configuration
+	Trigger *TriggerConfig    `yaml:"trigger,omitempty" json:"trigger,omitempty"`
+	Action  *AutomationAction `yaml:"action,omitempty" json:"action,omitempty"`
+	Retry   *AutomationRetry  `yaml:"retry,omitempty" json:"retry,omitempty"`
+	Goal    *GoalConfig       `yaml:"goal,omitempty" json:"goal,omitempty"`
 
 	// Session traceability
 	Sessions         map[string]SessionInfo     `yaml:"sessions,omitempty" json:"sessions,omitempty"`
@@ -202,6 +274,7 @@ type GenerateOptions struct {
 	RemoteBranchPolicy string
 	OpenPRBeforeMerge  *bool
 	ExecutionMode      string
+	SessionMode        string
 	CompleteOnIdle     *bool
 	TargetWorkdir      string
 	Executor           string
@@ -212,15 +285,18 @@ type GenerateOptions struct {
 	Agent               string
 	Model               string
 
-	Generated     *bool
-	GeneratedKind string
-	GeneratedKey  string
-	GeneratedBy   string
+	Generated       *bool
+	GeneratedKind   string
+	GeneratedKey    string
+	GeneratedBy     string
+	AutomationRunID string
 
-	// Automation fields
-	Trigger *AutomationTrigger
+	Trigger *TriggerConfig
 	Action  *AutomationAction
 	Retry   *AutomationRetry
+	Goal    *GoalConfig
+
+	Attachments []AttachmentReference
 
 	Sessions         map[string]SessionInfo
 	RunFinalizations map[string]RunFinalization
@@ -251,8 +327,10 @@ type rawFrontmatter struct {
 	Name                string                     `yaml:"name"`
 	Status              string                     `yaml:"status"`
 	Tags                []string                   `yaml:"tags"`
+	Attachments         []AttachmentReference      `yaml:"attachments"`
 	Priority            string                     `yaml:"priority"`
 	Created             string                     `yaml:"created"`
+	CompletedAt         string                     `yaml:"completed_at"`
 	Schedule            string                     `yaml:"schedule"`
 	ScheduleEnabled     *bool                      `yaml:"schedule_enabled"`
 	NextRun             string                     `yaml:"next_run"`
@@ -282,6 +360,7 @@ type rawFrontmatter struct {
 	RemoteBranchPolicy  string                     `yaml:"remote_branch_policy"`
 	OpenPRBeforeMerge   *bool                      `yaml:"open_pr_before_merge"`
 	ExecutionMode       string                     `yaml:"execution_mode"`
+	SessionMode         string                     `yaml:"session_mode"`
 	CompleteOnIdle      *bool                      `yaml:"complete_on_idle"`
 	TargetWorkdir       string                     `yaml:"target_workdir"`
 	Executor            string                     `yaml:"executor"`
@@ -294,9 +373,11 @@ type rawFrontmatter struct {
 	GeneratedKind       string                     `yaml:"generated_kind"`
 	GeneratedKey        string                     `yaml:"generated_key"`
 	GeneratedBy         string                     `yaml:"generated_by"`
-	Trigger             *AutomationTrigger         `yaml:"trigger"`
+	AutomationRunID     string                     `yaml:"automation_run_id"`
+	Trigger             *TriggerConfig             `yaml:"trigger"`
 	Action              *AutomationAction          `yaml:"action"`
 	Retry               *AutomationRetry           `yaml:"retry"`
+	Goal                *GoalConfig                `yaml:"goal"`
 	Sessions            map[string]SessionInfo     `yaml:"sessions"`
 	RunFinalizations    map[string]RunFinalization `yaml:"run_finalizations"`
 
@@ -309,8 +390,9 @@ type rawFrontmatter struct {
 // Anything not in this set goes into Extra.
 var knownFields = map[string]bool{
 	"title": true, "type": true, "name": true, "status": true,
-	"tags": true, "priority": true, "created": true,
-	"schedule": true, "schedule_enabled": true, "next_run": true,
+	"tags": true, "priority": true, "created": true, "completed_at": true,
+	"attachments": true,
+	"schedule":    true, "schedule_enabled": true, "next_run": true,
 	"max_runs": true, "starts_at": true, "expires_at": true,
 	"run_once_at": true, "timezone": true, "runs": true,
 	"parent_id": true, "projectId": true,
@@ -326,8 +408,8 @@ var knownFields = map[string]bool{
 	"user_original_request": true, "direct_prompt": true,
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
-	"generated_by": true,
-	"trigger":      true, "action": true, "retry": true,
+	"generated_by": true, "automation_run_id": true,
+	"trigger": true, "action": true, "retry": true, "goal": true,
 	"sessions": true, "run_finalizations": true,
 	// Legacy fields (consumed during normalization, not emitted)
 	"session_ids": true, "session_timestamps": true,
@@ -423,8 +505,10 @@ func Parse(content string) (*Document, error) {
 		Name:                raw.Name,
 		Status:              raw.Status,
 		Tags:                raw.Tags,
+		Attachments:         raw.Attachments,
 		Priority:            raw.Priority,
 		Created:             raw.Created,
+		CompletedAt:         raw.CompletedAt,
 		Schedule:            raw.Schedule,
 		ScheduleEnabled:     raw.ScheduleEnabled,
 		NextRun:             raw.NextRun,
@@ -454,6 +538,7 @@ func Parse(content string) (*Document, error) {
 		RemoteBranchPolicy:  raw.RemoteBranchPolicy,
 		OpenPRBeforeMerge:   raw.OpenPRBeforeMerge,
 		ExecutionMode:       raw.ExecutionMode,
+		SessionMode:         raw.SessionMode,
 		CompleteOnIdle:      raw.CompleteOnIdle,
 		TargetWorkdir:       raw.TargetWorkdir,
 		Executor:            raw.Executor,
@@ -466,9 +551,11 @@ func Parse(content string) (*Document, error) {
 		GeneratedKind:       raw.GeneratedKind,
 		GeneratedKey:        raw.GeneratedKey,
 		GeneratedBy:         raw.GeneratedBy,
+		AutomationRunID:     raw.AutomationRunID,
 		Trigger:             raw.Trigger,
 		Action:              raw.Action,
 		Retry:               raw.Retry,
+		Goal:                raw.Goal,
 		Sessions:            sessions,
 		RunFinalizations:    raw.RunFinalizations,
 	}
@@ -620,6 +707,10 @@ func Serialize(fm *Frontmatter) string {
 		}
 	}
 
+	if len(fm.Attachments) > 0 {
+		lines = append(lines, serializeNestedStruct("attachments", fm.Attachments)...)
+	}
+
 	emitPlain("status", fm.Status)
 	emit("schedule", fm.Schedule)
 
@@ -654,6 +745,7 @@ func Serialize(fm *Frontmatter) string {
 	}
 
 	emitPlain("created", fm.Created)
+	emitPlain("completed_at", fm.CompletedAt)
 	emitPlain("priority", fm.Priority)
 	emitPlain("parent_id", fm.ParentID)
 	emit("projectId", fm.ProjectID)
@@ -696,6 +788,7 @@ func Serialize(fm *Frontmatter) string {
 	}
 
 	emitPlain("execution_mode", fm.ExecutionMode)
+	emitPlain("session_mode", fm.SessionMode)
 
 	if fm.CompleteOnIdle != nil {
 		lines = append(lines, fmt.Sprintf("complete_on_idle: %v", *fm.CompleteOnIdle))
@@ -729,6 +822,7 @@ func Serialize(fm *Frontmatter) string {
 	emitPlain("generated_kind", fm.GeneratedKind)
 	emit("generated_key", fm.GeneratedKey)
 	emit("generated_by", fm.GeneratedBy)
+	emit("automation_run_id", fm.AutomationRunID)
 
 	// Automation fields (nested YAML structs)
 	if fm.Trigger != nil {
@@ -739,6 +833,9 @@ func Serialize(fm *Frontmatter) string {
 	}
 	if fm.Retry != nil {
 		lines = append(lines, serializeNestedStruct("retry", fm.Retry)...)
+	}
+	if fm.Goal != nil {
+		lines = append(lines, serializeNestedStruct("goal", fm.Goal)...)
 	}
 
 	// Sessions map
@@ -829,6 +926,7 @@ func Generate(opts *GenerateOptions) string {
 		Name:                opts.Name,
 		Status:              status,
 		Tags:                tags,
+		Attachments:         opts.Attachments,
 		Priority:            opts.Priority,
 		Created:             opts.Created,
 		Schedule:            opts.Schedule,
@@ -859,6 +957,7 @@ func Generate(opts *GenerateOptions) string {
 		RemoteBranchPolicy:  opts.RemoteBranchPolicy,
 		OpenPRBeforeMerge:   opts.OpenPRBeforeMerge,
 		ExecutionMode:       opts.ExecutionMode,
+		SessionMode:         opts.SessionMode,
 		CompleteOnIdle:      opts.CompleteOnIdle,
 		TargetWorkdir:       opts.TargetWorkdir,
 		Executor:            opts.Executor,
@@ -871,9 +970,11 @@ func Generate(opts *GenerateOptions) string {
 		GeneratedKind:       opts.GeneratedKind,
 		GeneratedKey:        opts.GeneratedKey,
 		GeneratedBy:         opts.GeneratedBy,
+		AutomationRunID:     opts.AutomationRunID,
 		Trigger:             opts.Trigger,
 		Action:              opts.Action,
 		Retry:               opts.Retry,
+		Goal:                opts.Goal,
 		Sessions:            opts.Sessions,
 		RunFinalizations:    opts.RunFinalizations,
 	}

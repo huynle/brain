@@ -35,14 +35,14 @@ func TestHandleGetStats(t *testing.T) {
 	tests := []struct {
 		name       string
 		query      string
-		mockStats  func(ctx context.Context, global bool) (*types.StatsResponse, error)
+		mockStats  func(ctx context.Context, global bool, project string) (*types.StatsResponse, error)
 		wantStatus int
 		checkBody  func(t *testing.T, resp *http.Response)
 	}{
 		{
 			name:  "success without global",
 			query: "",
-			mockStats: func(ctx context.Context, global bool) (*types.StatsResponse, error) {
+			mockStats: func(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
 				if global {
 					return nil, fmt.Errorf("global = true, want false")
 				}
@@ -65,7 +65,7 @@ func TestHandleGetStats(t *testing.T) {
 		{
 			name:  "success with global=true",
 			query: "?global=true",
-			mockStats: func(ctx context.Context, global bool) (*types.StatsResponse, error) {
+			mockStats: func(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
 				if !global {
 					return nil, fmt.Errorf("global = false, want true")
 				}
@@ -79,7 +79,7 @@ func TestHandleGetStats(t *testing.T) {
 		{
 			name:  "service error",
 			query: "",
-			mockStats: func(ctx context.Context, global bool) (*types.StatsResponse, error) {
+			mockStats: func(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
 				return nil, fmt.Errorf("stats unavailable")
 			},
 			wantStatus: http.StatusInternalServerError,
@@ -118,14 +118,14 @@ func TestHandleGetOrphans(t *testing.T) {
 	tests := []struct {
 		name        string
 		query       string
-		mockOrphans func(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error)
+		mockOrphans func(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error)
 		wantStatus  int
 		checkBody   func(t *testing.T, resp *http.Response)
 	}{
 		{
 			name:  "success with defaults",
 			query: "",
-			mockOrphans: func(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error) {
+			mockOrphans: func(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 				if entryType != "" {
 					return nil, fmt.Errorf("entryType = %q, want empty", entryType)
 				}
@@ -147,7 +147,7 @@ func TestHandleGetOrphans(t *testing.T) {
 		{
 			name:  "with type and limit",
 			query: "?type=task&limit=5",
-			mockOrphans: func(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error) {
+			mockOrphans: func(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 				if entryType != "task" {
 					return nil, fmt.Errorf("entryType = %q, want %q", entryType, "task")
 				}
@@ -161,7 +161,7 @@ func TestHandleGetOrphans(t *testing.T) {
 		{
 			name:  "service error",
 			query: "",
-			mockOrphans: func(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error) {
+			mockOrphans: func(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 				return nil, fmt.Errorf("database error")
 			},
 			wantStatus: http.StatusInternalServerError,
@@ -200,14 +200,14 @@ func TestHandleGetStale(t *testing.T) {
 	tests := []struct {
 		name       string
 		query      string
-		mockStale  func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
+		mockStale  func(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error)
 		wantStatus int
 		checkBody  func(t *testing.T, resp *http.Response)
 	}{
 		{
 			name:  "success with defaults",
 			query: "",
-			mockStale: func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error) {
+			mockStale: func(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 				if days != 30 {
 					return nil, fmt.Errorf("days = %d, want %d", days, 30)
 				}
@@ -229,7 +229,7 @@ func TestHandleGetStale(t *testing.T) {
 		{
 			name:  "with custom params",
 			query: "?days=7&type=task&limit=10",
-			mockStale: func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error) {
+			mockStale: func(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 				if days != 7 {
 					return nil, fmt.Errorf("days = %d, want %d", days, 7)
 				}
@@ -246,7 +246,7 @@ func TestHandleGetStale(t *testing.T) {
 		{
 			name:  "service error",
 			query: "",
-			mockStale: func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error) {
+			mockStale: func(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 				return nil, fmt.Errorf("database error")
 			},
 			wantStatus: http.StatusInternalServerError,

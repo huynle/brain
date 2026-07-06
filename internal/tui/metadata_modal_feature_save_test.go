@@ -74,11 +74,12 @@ func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModalFeature("dark-mode", "brain-api", apiClient)
 
-	// Initialize to populate taskIDs
+	// Initialize to populate taskIDs (Init returns a batch)
 	cmd := modal.Init()
-	msg := cmd()
-	modalInterface, _ := modal.Update(msg)
-	modal = modalInterface.(*MetadataModal)
+	for _, msg := range executeBatchCmd(cmd) {
+		modalInterface, _ := modal.Update(msg)
+		modal = modalInterface.(*MetadataModal)
+	}
 
 	// Simulate user editing status field
 	modal.focusedField = FieldStatus
@@ -175,11 +176,12 @@ func TestMetadataModalFeature_SaveField_ParallelUpdates(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModalFeature("perf-test", "brain-api", apiClient)
 
-	// Initialize
+	// Initialize (Init returns a batch)
 	cmd := modal.Init()
-	msg := cmd()
-	modalInterface, _ := modal.Update(msg)
-	modal = modalInterface.(*MetadataModal)
+	for _, msg := range executeBatchCmd(cmd) {
+		modalInterface, _ := modal.Update(msg)
+		modal = modalInterface.(*MetadataModal)
+	}
 
 	// Simulate editing
 	modal.focusedField = FieldStatus
@@ -272,11 +274,12 @@ func TestMetadataModalFeature_SaveField_ErrorHandling(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModalFeature("error-test", "brain-api", apiClient)
 
-	// Initialize
+	// Initialize (Init returns a batch)
 	cmd := modal.Init()
-	msg := cmd()
-	modalInterface, _ := modal.Update(msg)
-	modal = modalInterface.(*MetadataModal)
+	for _, msg := range executeBatchCmd(cmd) {
+		modalInterface, _ := modal.Update(msg)
+		modal = modalInterface.(*MetadataModal)
+	}
 
 	// Simulate editing
 	modal.focusedField = FieldStatus
@@ -351,11 +354,12 @@ func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModalFeature("priority-test", "brain-api", apiClient)
 
-	// Initialize
+	// Initialize (Init returns a batch)
 	cmd := modal.Init()
-	msg := cmd()
-	modalInterface, _ := modal.Update(msg)
-	modal = modalInterface.(*MetadataModal)
+	for _, msg := range executeBatchCmd(cmd) {
+		modalInterface, _ := modal.Update(msg)
+		modal = modalInterface.(*MetadataModal)
+	}
 
 	// Simulate editing FieldFeaturePriority
 	modal.focusedField = FieldFeaturePriority
@@ -486,10 +490,12 @@ func TestMetadataModalFeature_SaveField_FeatureDependsOn_ArraySerialization(t *t
 			apiClient := runner.NewAPIClient(cfg)
 			modal := NewMetadataModalFeature("deps-test", "brain-api", apiClient)
 
+			// Initialize (Init returns a batch)
 			cmd := modal.Init()
-			msg := cmd()
-			modalInterface, _ := modal.Update(msg)
-			modal = modalInterface.(*MetadataModal)
+			for _, msg := range executeBatchCmd(cmd) {
+				modalInterface, _ := modal.Update(msg)
+				modal = modalInterface.(*MetadataModal)
+			}
 
 			// Set the field value and focus
 			modal.focusedField = FieldFeatureDependsOn
@@ -591,11 +597,12 @@ func TestMetadataModalFeature_SuccessMessage(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModalFeature("message-test", "brain-api", apiClient)
 
-	// Initialize
+	// Initialize (Init returns a batch)
 	cmd := modal.Init()
-	msg := cmd()
-	modalInterface, _ := modal.Update(msg)
-	modal = modalInterface.(*MetadataModal)
+	for _, msg := range executeBatchCmd(cmd) {
+		modalInterface, _ := modal.Update(msg)
+		modal = modalInterface.(*MetadataModal)
+	}
 
 	// Simulate editing and saving
 	modal.focusedField = FieldStatus
@@ -607,7 +614,7 @@ func TestMetadataModalFeature_SuccessMessage(t *testing.T) {
 	saveMsg := saveCmd()
 
 	// Process the update message
-	modalInterface, _ = modal.Update(saveMsg)
+	modalInterface, _ := modal.Update(saveMsg)
 	modal = modalInterface.(*MetadataModal)
 
 	// Render view and check success message

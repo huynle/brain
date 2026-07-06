@@ -72,7 +72,99 @@ type DreamContentMsg struct {
 	Error   error
 }
 
-// RunnersUpdatedMsg is sent when the runner list is refreshed (via SSE or polling).
+// DreamConfigMsg is sent when dream monitor configuration has been fetched from the API.
+type DreamConfigMsg struct {
+	Config *DreamConfigInfo
+	Error  error
+}
+
+// AutomationDataMsg is sent when automation entries and scheduled task entries are fetched.
+type AutomationDataMsg struct {
+	Automations    []types.BrainEntry
+	ScheduledTasks []types.BrainEntry
+	GeneratedTasks []types.BrainEntry
+	Error          error
+}
+
+// AutomationToggleMsg is sent when a selected automation row has been toggled.
+type AutomationToggleMsg struct {
+	RowID string
+	Error error
+}
+
+// AutomationRunMsg is sent when a selected automation has been manually queued.
+type AutomationRunMsg struct {
+	RowID  string
+	TaskID string
+	Error  error
+}
+
+// AutomationDeletedMsg is sent when a project-level automation entry is deleted.
+type AutomationDeletedMsg struct {
+	RowID string
+	Error error
+}
+
+// RunnerListMsg is sent when the runner list has been fetched from the API.
+type RunnerListMsg struct {
+	Runners []types.RunnerInfo
+	Err     error
+}
+
+// BrainEntriesMsg is sent when project brain entries have been fetched.
+type BrainEntriesMsg struct {
+	Entries []types.BrainEntry
+	Err     error
+}
+
+// BrainSearchMsg is sent when a Brain tab search completes.
+type BrainSearchMsg struct {
+	Entries  []types.BrainEntry
+	Query    string
+	Strategy string
+	Err      error
+}
+
+// BrainEmbeddingBackfillMsg is sent when embedding generation completes.
+type BrainEmbeddingBackfillMsg struct {
+	Project string
+	All     bool
+	Force   bool
+	Result  *types.EmbeddingBackfillResponse
+	Err     error
+}
+
+// BrainEntryContentMsg is sent when a selected brain entry's full content has been fetched.
+type BrainEntryContentMsg struct {
+	Path        string
+	Title       string
+	Type        string
+	Content     string
+	Attachments []types.AttachmentReference
+	Err         error
+}
+
+// AttachmentActionMsg is sent when a user-triggered attachment download/open completes.
+type AttachmentActionMsg struct {
+	Action       string
+	AttachmentID string
+	Path         string
+	Status       string
+	Provider     string
+	Model        string
+	Err          error
+}
+
+// RunnersUpdatedMsg is sent when the SSE stream pushes an updated runner list.
 type RunnersUpdatedMsg struct {
 	Runners []types.RunnerInfo
+}
+
+// RunnerLogMsg is sent when a runner_log SSE event is received from a remote runner.
+// This enables monitor-only mode to display logs from runners executing elsewhere.
+type RunnerLogMsg struct {
+	ProjectID string
+	TaskID    string
+	RunnerID  string
+	Lines     []types.LogLine
 }

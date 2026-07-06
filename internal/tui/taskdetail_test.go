@@ -1,12 +1,68 @@
 package tui
 
 import (
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/types"
 )
+
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+func stripANSI(s string) string {
+	return ansiRE.ReplaceAllString(s, "")
+}
+
+// =============================================================================
+// TaskDetail - Brain Entry Attachments
+// =============================================================================
+
+func TestTaskDetail_EntryMode_RendersAttachmentMetadata(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(100, 30)
+	attachments := []types.AttachmentReference{{
+		ID:          "att_123",
+		Role:        "source",
+		Filename:    "evidence.pdf",
+		ContentType: "application/pdf",
+		Size:        1536,
+		Derived: []types.AttachmentDerived{{
+			ID:          "drv_1",
+			Kind:        "text",
+			ContentType: "text/markdown",
+			Size:        512,
+		}},
+		DerivedText: &types.AttachmentDerivedText{
+			Status: types.AttachmentExtractionStatusReady,
+			Metadata: map[string]string{
+				"provider": "openrouter",
+				"model":    "google/gemini-2.5-flash",
+			},
+		},
+	}}
+	td.SetEntryContentWithAttachments("projects/brain-api/report/r.md", "Report", "report", "entry body", attachments, "Entry Detail")
+
+	view := stripANSI(td.View())
+	for _, want := range []string{
+		"Attachments (1)",
+		"att_123",
+		"source",
+		"evidence.pdf",
+		"application/pdf",
+		"1.5 KB",
+		"extracted: text (text/markdown, 512 B)",
+		"Text: ready",
+		"Extraction: ready",
+		"Model: openrouter / google/gemini-2.5-flash",
+		"search: available",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("expected entry attachment detail to contain %q, got:\n%s", want, view)
+		}
+	}
+}
 
 // =============================================================================
 // TaskDetail - No Task Selected
@@ -16,7 +72,7 @@ func TestTaskDetail_NoTask_ShowsPlaceholder(t *testing.T) {
 	td := NewTaskDetail()
 	td.SetSize(60, 20)
 
-	view := td.View()
+	view := stripANSI(td.View())
 
 	if !strings.Contains(view, "No task selected") {
 		t.Errorf("expected 'No task selected' placeholder, got:\n%s", view)
@@ -131,6 +187,92 @@ func TestTaskDetail_WithTask_ShowsPath(t *testing.T) {
 
 	if !strings.Contains(view, "projects/brain/task/abc12def.md") {
 		t.Errorf("expected path in view, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_WithTask_ShowsContent(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 30)
+
+	task := &types.ResolvedTask{
+		ID:      "abc12def",
+		Title:   "Test task",
+		Content: "Implement the actual task body.\nInclude acceptance criteria.",
+	}
+	td.SetTask(task)
+
+	view := stripANSI(td.View())
+
+	for _, want := range []string{"Content:", "Implement the actual task body.", "Include acceptance criteria."} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expected %q in view, got:\n%s", want, view)
+		}
+	}
+}
+
+func TestTaskDetail_WithTask_ShowsContentAfterFrontmatter(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(80, 30)
+
+	task := &types.ResolvedTask{
+		ID:                  "abc12def",
+		Title:               "Test task",
+		Content:             "Long task body should be last.",
+		UserOriginalRequest: "Original request metadata",
+	}
+	td.SetTask(task)
+
+	view := stripANSI(td.View())
+	frontmatterIdx := strings.Index(view, "Frontmatter:")
+	contentIdx := strings.Index(view, "Content:")
+	if frontmatterIdx == -1 {
+		t.Fatalf("expected Frontmatter section, got:\n%s", view)
+	}
+	if contentIdx == -1 {
+		t.Fatalf("expected Content section, got:\n%s", view)
+	}
+	if contentIdx < frontmatterIdx {
+		t.Fatalf("expected Content section after Frontmatter, got:\n%s", view)
+	}
+}
+
+func TestTaskDetail_WithDispatchDiagnostics_ShowsLeaseAndPlacementReason(t *testing.T) {
+	td := NewTaskDetail()
+	td.SetSize(100, 30)
+
+	task := &types.ResolvedTask{
+		ID:    "abc12def",
+		Title: "Pending task",
+		DispatchLease: &types.DispatchLease{
+			AssignedRunnerID:  "runner-1",
+			AssignedMachineID: "machine-a",
+			State:             types.DispatchLeaseStatePushed,
+			ExpiresAt:         123456,
+			LastError:         "dispatch lease expired",
+		},
+		LastPlacementReason: &types.PlacementReason{
+			Decision:  "no_candidate",
+			Reason:    "runner-a: runner at capacity",
+			RunnerID:  "runner-a",
+			MachineID: "machine-a",
+		},
+	}
+	td.SetTask(task)
+
+	view := stripANSI(td.View())
+	for _, want := range []string{
+		"Dispatch:",
+		"Lease: pushed",
+		"Runner: runner-1",
+		"Machine: machine-a",
+		"Expires: 123456",
+		"Last error: dispatch lease expired",
+		"Placement: no_candidate",
+		"Reason: runner-a: runner at capacity",
+	} {
+		if !strings.Contains(view, want) {
+			t.Errorf("expected %q in view, got:\n%s", want, view)
+		}
 	}
 }
 

@@ -9,6 +9,10 @@ import (
 )
 
 func TestDefaultConfig(t *testing.T) {
+	// Clear env vars that affect defaults so we test the built-in fallbacks
+	t.Setenv("BRAIN_DIR", "")
+	t.Setenv("XDG_STATE_HOME", "")
+
 	cfg := defaultConfig()
 
 	// Server defaults
@@ -29,8 +33,23 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Server.EnableAuth != false {
 		t.Errorf("Server.EnableAuth = %v, want false", cfg.Server.EnableAuth)
 	}
+	if cfg.Server.Attachments.StorageRoot != filepath.Join(expectedBrainDir, "attachments") {
+		t.Errorf("Server.Attachments.StorageRoot = %q, want %q", cfg.Server.Attachments.StorageRoot, filepath.Join(expectedBrainDir, "attachments"))
+	}
+	if cfg.Server.Attachments.MaxUploadSizeBytes != 100*1024*1024 {
+		t.Errorf("Server.Attachments.MaxUploadSizeBytes = %d, want %d", cfg.Server.Attachments.MaxUploadSizeBytes, int64(100*1024*1024))
+	}
 
 	// Runner defaults
+	if cfg.Runner.BrainAPIURL != "http://localhost:3333" {
+		t.Errorf("Runner.BrainAPIURL = %q, want %q", cfg.Runner.BrainAPIURL, "http://localhost:3333")
+	}
+	if cfg.Runner.APIToken != "" {
+		t.Errorf("Runner.APIToken = %q, want empty", cfg.Runner.APIToken)
+	}
+	if cfg.Runner.APITokenEnv != "BRAIN_API_TOKEN" {
+		t.Errorf("Runner.APITokenEnv = %q, want %q", cfg.Runner.APITokenEnv, "BRAIN_API_TOKEN")
+	}
 	if cfg.Runner.MaxParallel != 3 {
 		t.Errorf("Runner.MaxParallel = %d, want 3", cfg.Runner.MaxParallel)
 	}
@@ -161,6 +180,12 @@ func TestUnifiedConfigYAMLMarshaling(t *testing.T) {
 	if decoded.Server.Host != cfg.Server.Host {
 		t.Errorf("After round-trip: Server.Host = %q, want %q", decoded.Server.Host, cfg.Server.Host)
 	}
+	if decoded.Server.Attachments.StorageRoot != cfg.Server.Attachments.StorageRoot {
+		t.Errorf("After round-trip: Server.Attachments.StorageRoot = %q, want %q", decoded.Server.Attachments.StorageRoot, cfg.Server.Attachments.StorageRoot)
+	}
+	if decoded.Server.Attachments.MaxUploadSizeBytes != cfg.Server.Attachments.MaxUploadSizeBytes {
+		t.Errorf("After round-trip: Server.Attachments.MaxUploadSizeBytes = %d, want %d", decoded.Server.Attachments.MaxUploadSizeBytes, cfg.Server.Attachments.MaxUploadSizeBytes)
+	}
 	if decoded.Runner.MaxParallel != cfg.Runner.MaxParallel {
 		t.Errorf("After round-trip: Runner.MaxParallel = %d, want %d", decoded.Runner.MaxParallel, cfg.Runner.MaxParallel)
 	}
@@ -239,6 +264,38 @@ mcp:
 	}
 	if cfg.MCP.APIURL != "http://custom:9999" {
 		t.Errorf("LoadConfig() MCP.APIURL = %q, want %q", cfg.MCP.APIURL, "http://custom:9999")
+	}
+}
+
+func TestAttachmentConfigYAMLParsing(t *testing.T) {
+	data := []byte(`server:
+  attachments:
+    storage_root: "/var/lib/brain/attachments"
+    max_upload_size_bytes: 5242880
+    allowed_mime_types:
+      - "image/png"
+      - "application/pdf"
+    blocked_mime_types:
+      - "application/x-msdownload"
+`)
+
+	cfg := defaultConfig()
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	attachments := cfg.Server.Attachments
+	if attachments.StorageRoot != "/var/lib/brain/attachments" {
+		t.Errorf("Attachments.StorageRoot = %q, want %q", attachments.StorageRoot, "/var/lib/brain/attachments")
+	}
+	if attachments.MaxUploadSizeBytes != 5242880 {
+		t.Errorf("Attachments.MaxUploadSizeBytes = %d, want 5242880", attachments.MaxUploadSizeBytes)
+	}
+	if len(attachments.AllowedMIMETypes) != 2 || attachments.AllowedMIMETypes[0] != "image/png" || attachments.AllowedMIMETypes[1] != "application/pdf" {
+		t.Errorf("Attachments.AllowedMIMETypes = %#v, want image/png and application/pdf", attachments.AllowedMIMETypes)
+	}
+	if len(attachments.BlockedMIMETypes) != 1 || attachments.BlockedMIMETypes[0] != "application/x-msdownload" {
+		t.Errorf("Attachments.BlockedMIMETypes = %#v, want application/x-msdownload", attachments.BlockedMIMETypes)
 	}
 }
 
@@ -1142,4 +1199,813 @@ plugins:
 			t.Errorf("Modified Plugins.ClaudeCodePath = %q, want /custom/claude", cfg.Plugins.ClaudeCodePath)
 		}
 	})
+}
+
+// =============================================================================
+// TaskDefaultsConfig Tests
+// =============================================================================
+
+// TestTaskDefaultsConfig_YAMLParsing verifies that server.task_defaults YAML section parses correctly.
+func TestTaskDefaultsConfig_YAMLParsing(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Create config directory
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.yaml")
+	yamlContent := `server:
+  port: 3333
+  task_defaults:
+    agent: "tdd-dev"
+    model: "claude-sonnet-4"
+    execution_mode: "worktree"
+    complete_on_idle: true
+    merge_policy: "auto_pr"
+    merge_strategy: "squash"
+    merge_target_branch: "main"
+    remote_branch_policy: "delete"
+    open_pr_before_merge: false
+    target_workdir: "/home/user/projects"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+
+	td := cfg.Server.TaskDefaults
+	if td.Agent != "tdd-dev" {
+		t.Errorf("TaskDefaults.Agent = %q, want %q", td.Agent, "tdd-dev")
+	}
+	if td.Model != "claude-sonnet-4" {
+		t.Errorf("TaskDefaults.Model = %q, want %q", td.Model, "claude-sonnet-4")
+	}
+	if td.ExecutionMode != "worktree" {
+		t.Errorf("TaskDefaults.ExecutionMode = %q, want %q", td.ExecutionMode, "worktree")
+	}
+	if td.CompleteOnIdle == nil || *td.CompleteOnIdle != true {
+		t.Errorf("TaskDefaults.CompleteOnIdle = %v, want true", td.CompleteOnIdle)
+	}
+	if td.MergePolicy != "auto_pr" {
+		t.Errorf("TaskDefaults.MergePolicy = %q, want %q", td.MergePolicy, "auto_pr")
+	}
+	if td.MergeStrategy != "squash" {
+		t.Errorf("TaskDefaults.MergeStrategy = %q, want %q", td.MergeStrategy, "squash")
+	}
+	if td.MergeTargetBranch != "main" {
+		t.Errorf("TaskDefaults.MergeTargetBranch = %q, want %q", td.MergeTargetBranch, "main")
+	}
+	if td.RemoteBranchPolicy != "delete" {
+		t.Errorf("TaskDefaults.RemoteBranchPolicy = %q, want %q", td.RemoteBranchPolicy, "delete")
+	}
+	if td.OpenPRBeforeMerge == nil || *td.OpenPRBeforeMerge != false {
+		t.Errorf("TaskDefaults.OpenPRBeforeMerge = %v, want false", td.OpenPRBeforeMerge)
+	}
+	if td.TargetWorkdir != "/home/user/projects" {
+		t.Errorf("TaskDefaults.TargetWorkdir = %q, want %q", td.TargetWorkdir, "/home/user/projects")
+	}
+}
+
+// TestTaskDefaultsYAMLFullParsing verifies that a YAML with all task_defaults
+// fields set parses every field correctly.
+func TestTaskDefaultsYAMLFullParsing(t *testing.T) {
+	yamlContent := `server:
+  task_defaults:
+    agent: "tdd-dev"
+    model: "claude-opus-4"
+    execution_mode: "worktree"
+    complete_on_idle: true
+    merge_policy: "auto_merge"
+    merge_strategy: "squash"
+    merge_target_branch: "main"
+    remote_branch_policy: "delete"
+    open_pr_before_merge: false
+    target_workdir: "/home/user/projects"
+`
+	var cfg UnifiedConfig
+	if err := yaml.Unmarshal([]byte(yamlContent), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	td := cfg.Server.TaskDefaults
+
+	if td.Agent != "tdd-dev" {
+		t.Errorf("TaskDefaults.Agent = %q, want %q", td.Agent, "tdd-dev")
+	}
+	if td.Model != "claude-opus-4" {
+		t.Errorf("TaskDefaults.Model = %q, want %q", td.Model, "claude-opus-4")
+	}
+	if td.ExecutionMode != "worktree" {
+		t.Errorf("TaskDefaults.ExecutionMode = %q, want %q", td.ExecutionMode, "worktree")
+	}
+	if td.CompleteOnIdle == nil {
+		t.Fatal("TaskDefaults.CompleteOnIdle should not be nil")
+	}
+	if *td.CompleteOnIdle != true {
+		t.Errorf("TaskDefaults.CompleteOnIdle = %v, want true", *td.CompleteOnIdle)
+	}
+	if td.MergePolicy != "auto_merge" {
+		t.Errorf("TaskDefaults.MergePolicy = %q, want %q", td.MergePolicy, "auto_merge")
+	}
+	if td.MergeStrategy != "squash" {
+		t.Errorf("TaskDefaults.MergeStrategy = %q, want %q", td.MergeStrategy, "squash")
+	}
+	if td.MergeTargetBranch != "main" {
+		t.Errorf("TaskDefaults.MergeTargetBranch = %q, want %q", td.MergeTargetBranch, "main")
+	}
+	if td.RemoteBranchPolicy != "delete" {
+		t.Errorf("TaskDefaults.RemoteBranchPolicy = %q, want %q", td.RemoteBranchPolicy, "delete")
+	}
+	if td.OpenPRBeforeMerge == nil {
+		t.Fatal("TaskDefaults.OpenPRBeforeMerge should not be nil")
+	}
+	if *td.OpenPRBeforeMerge != false {
+		t.Errorf("TaskDefaults.OpenPRBeforeMerge = %v, want false", *td.OpenPRBeforeMerge)
+	}
+	if td.TargetWorkdir != "/home/user/projects" {
+		t.Errorf("TaskDefaults.TargetWorkdir = %q, want %q", td.TargetWorkdir, "/home/user/projects")
+	}
+}
+
+// TestTaskDefaultsConfig_EmptySection verifies missing task_defaults uses configured defaults.
+func TestTaskDefaultsConfig_EmptySection(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Create config directory
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.yaml")
+	yamlContent := `server:
+  port: 3333
+  host: "localhost"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+
+	td := cfg.Server.TaskDefaults
+	if td.Agent != "" {
+		t.Errorf("TaskDefaults.Agent = %q, want empty", td.Agent)
+	}
+	if td.Model != "" {
+		t.Errorf("TaskDefaults.Model = %q, want empty", td.Model)
+	}
+	if td.ExecutionMode != "worktree" {
+		t.Errorf("TaskDefaults.ExecutionMode = %q, want worktree", td.ExecutionMode)
+	}
+	if td.CompleteOnIdle != nil {
+		t.Errorf("TaskDefaults.CompleteOnIdle = %v, want nil", td.CompleteOnIdle)
+	}
+	if td.MergePolicy != "auto_merge" {
+		t.Errorf("TaskDefaults.MergePolicy = %q, want auto_merge", td.MergePolicy)
+	}
+	if td.MergeStrategy != "squash" {
+		t.Errorf("TaskDefaults.MergeStrategy = %q, want squash", td.MergeStrategy)
+	}
+	if td.OpenPRBeforeMerge != nil {
+		t.Errorf("TaskDefaults.OpenPRBeforeMerge = %v, want nil", td.OpenPRBeforeMerge)
+	}
+	if td.TargetWorkdir != "" {
+		t.Errorf("TaskDefaults.TargetWorkdir = %q, want empty", td.TargetWorkdir)
+	}
+}
+
+// TestTaskDefaultsYAMLMissingEmpty verifies that YAML with no task_defaults
+// section results in zero-value defaults (empty strings, nil bools).
+func TestTaskDefaultsYAMLMissingEmpty(t *testing.T) {
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{
+			name: "no task_defaults section at all",
+			yaml: `server:
+  port: 3333
+  host: "localhost"
+`,
+		},
+		{
+			name: "empty task_defaults section",
+			yaml: `server:
+  port: 3333
+  task_defaults:
+`,
+		},
+		{
+			name: "task_defaults with empty braces",
+			yaml: `server:
+  task_defaults: {}
+`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg UnifiedConfig
+			if err := yaml.Unmarshal([]byte(tt.yaml), &cfg); err != nil {
+				t.Fatalf("yaml.Unmarshal() error = %v", err)
+			}
+
+			td := cfg.Server.TaskDefaults
+
+			if td.Agent != "" {
+				t.Errorf("TaskDefaults.Agent = %q, want empty", td.Agent)
+			}
+			if td.Model != "" {
+				t.Errorf("TaskDefaults.Model = %q, want empty", td.Model)
+			}
+			if td.ExecutionMode != "" {
+				t.Errorf("TaskDefaults.ExecutionMode = %q, want empty", td.ExecutionMode)
+			}
+			if td.CompleteOnIdle != nil {
+				t.Errorf("TaskDefaults.CompleteOnIdle = %v, want nil", td.CompleteOnIdle)
+			}
+			if td.MergePolicy != "" {
+				t.Errorf("TaskDefaults.MergePolicy = %q, want empty", td.MergePolicy)
+			}
+			if td.MergeStrategy != "" {
+				t.Errorf("TaskDefaults.MergeStrategy = %q, want empty", td.MergeStrategy)
+			}
+			if td.MergeTargetBranch != "" {
+				t.Errorf("TaskDefaults.MergeTargetBranch = %q, want empty", td.MergeTargetBranch)
+			}
+			if td.RemoteBranchPolicy != "" {
+				t.Errorf("TaskDefaults.RemoteBranchPolicy = %q, want empty", td.RemoteBranchPolicy)
+			}
+			if td.OpenPRBeforeMerge != nil {
+				t.Errorf("TaskDefaults.OpenPRBeforeMerge = %v, want nil", td.OpenPRBeforeMerge)
+			}
+			if td.TargetWorkdir != "" {
+				t.Errorf("TaskDefaults.TargetWorkdir = %q, want empty", td.TargetWorkdir)
+			}
+		})
+	}
+}
+
+// TestTaskDefaultsYAMLPartial verifies that partial task_defaults only fills
+// the fields that are set, leaving others at zero values.
+func TestTaskDefaultsYAMLPartial(t *testing.T) {
+	yamlContent := `server:
+  task_defaults:
+    agent: "explore"
+    merge_strategy: "rebase"
+    complete_on_idle: true
+`
+	var cfg UnifiedConfig
+	if err := yaml.Unmarshal([]byte(yamlContent), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	td := cfg.Server.TaskDefaults
+
+	// Set fields should have values
+	if td.Agent != "explore" {
+		t.Errorf("TaskDefaults.Agent = %q, want %q", td.Agent, "explore")
+	}
+	if td.MergeStrategy != "rebase" {
+		t.Errorf("TaskDefaults.MergeStrategy = %q, want %q", td.MergeStrategy, "rebase")
+	}
+	if td.CompleteOnIdle == nil || *td.CompleteOnIdle != true {
+		t.Errorf("TaskDefaults.CompleteOnIdle = %v, want true", td.CompleteOnIdle)
+	}
+
+	// Unset fields should be zero values
+	if td.Model != "" {
+		t.Errorf("TaskDefaults.Model = %q, want empty", td.Model)
+	}
+	if td.ExecutionMode != "" {
+		t.Errorf("TaskDefaults.ExecutionMode = %q, want empty", td.ExecutionMode)
+	}
+	if td.MergePolicy != "" {
+		t.Errorf("TaskDefaults.MergePolicy = %q, want empty", td.MergePolicy)
+	}
+	if td.MergeTargetBranch != "" {
+		t.Errorf("TaskDefaults.MergeTargetBranch = %q, want empty", td.MergeTargetBranch)
+	}
+	if td.RemoteBranchPolicy != "" {
+		t.Errorf("TaskDefaults.RemoteBranchPolicy = %q, want empty", td.RemoteBranchPolicy)
+	}
+	if td.OpenPRBeforeMerge != nil {
+		t.Errorf("TaskDefaults.OpenPRBeforeMerge = %v, want nil", td.OpenPRBeforeMerge)
+	}
+	if td.TargetWorkdir != "" {
+		t.Errorf("TaskDefaults.TargetWorkdir = %q, want empty", td.TargetWorkdir)
+	}
+}
+
+// TestTaskDefaultsConfig_RoundTrip verifies YAML marshal/unmarshal round-trip preserves all fields.
+func TestTaskDefaultsConfig_RoundTrip(t *testing.T) {
+	boolTrue := true
+	boolFalse := false
+
+	original := defaultConfig()
+	original.Server.TaskDefaults = TaskDefaultsConfig{
+		Agent:              "explore",
+		Model:              "claude-opus-4",
+		ExecutionMode:      "current_branch",
+		CompleteOnIdle:     &boolTrue,
+		MergePolicy:        "auto_merge",
+		MergeStrategy:      "rebase",
+		MergeTargetBranch:  "develop",
+		RemoteBranchPolicy: "keep",
+		OpenPRBeforeMerge:  &boolFalse,
+		TargetWorkdir:      "/opt/projects",
+	}
+
+	// Marshal to YAML
+	data, err := yaml.Marshal(original)
+	if err != nil {
+		t.Fatalf("yaml.Marshal() error = %v", err)
+	}
+
+	// Unmarshal back
+	var decoded UnifiedConfig
+	if err := yaml.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	td := decoded.Server.TaskDefaults
+	if td.Agent != "explore" {
+		t.Errorf("Round-trip TaskDefaults.Agent = %q, want %q", td.Agent, "explore")
+	}
+	if td.Model != "claude-opus-4" {
+		t.Errorf("Round-trip TaskDefaults.Model = %q, want %q", td.Model, "claude-opus-4")
+	}
+	if td.ExecutionMode != "current_branch" {
+		t.Errorf("Round-trip TaskDefaults.ExecutionMode = %q, want %q", td.ExecutionMode, "current_branch")
+	}
+	if td.CompleteOnIdle == nil || *td.CompleteOnIdle != true {
+		t.Errorf("Round-trip TaskDefaults.CompleteOnIdle = %v, want true", td.CompleteOnIdle)
+	}
+	if td.MergePolicy != "auto_merge" {
+		t.Errorf("Round-trip TaskDefaults.MergePolicy = %q, want %q", td.MergePolicy, "auto_merge")
+	}
+	if td.MergeStrategy != "rebase" {
+		t.Errorf("Round-trip TaskDefaults.MergeStrategy = %q, want %q", td.MergeStrategy, "rebase")
+	}
+	if td.MergeTargetBranch != "develop" {
+		t.Errorf("Round-trip TaskDefaults.MergeTargetBranch = %q, want %q", td.MergeTargetBranch, "develop")
+	}
+	if td.RemoteBranchPolicy != "keep" {
+		t.Errorf("Round-trip TaskDefaults.RemoteBranchPolicy = %q, want %q", td.RemoteBranchPolicy, "keep")
+	}
+	if td.OpenPRBeforeMerge == nil || *td.OpenPRBeforeMerge != false {
+		t.Errorf("Round-trip TaskDefaults.OpenPRBeforeMerge = %v, want false", td.OpenPRBeforeMerge)
+	}
+	if td.TargetWorkdir != "/opt/projects" {
+		t.Errorf("Round-trip TaskDefaults.TargetWorkdir = %q, want %q", td.TargetWorkdir, "/opt/projects")
+	}
+}
+
+// TestTaskDefaultsBoolPointerSemantics verifies that *bool fields correctly
+// distinguish between absent (nil), explicit true, and explicit false.
+func TestTaskDefaultsBoolPointerSemantics(t *testing.T) {
+	tests := []struct {
+		name              string
+		yaml              string
+		completeOnIdle    *bool // nil means we expect nil
+		openPRBeforeMerge *bool
+	}{
+		{
+			name: "both absent - nil pointers",
+			yaml: `server:
+  task_defaults:
+    agent: "test"
+`,
+			completeOnIdle:    nil,
+			openPRBeforeMerge: nil,
+		},
+		{
+			name: "both explicit true",
+			yaml: `server:
+  task_defaults:
+    complete_on_idle: true
+    open_pr_before_merge: true
+`,
+			completeOnIdle:    boolPtr(true),
+			openPRBeforeMerge: boolPtr(true),
+		},
+		{
+			name: "both explicit false",
+			yaml: `server:
+  task_defaults:
+    complete_on_idle: false
+    open_pr_before_merge: false
+`,
+			completeOnIdle:    boolPtr(false),
+			openPRBeforeMerge: boolPtr(false),
+		},
+		{
+			name: "mixed - one true one false",
+			yaml: `server:
+  task_defaults:
+    complete_on_idle: true
+    open_pr_before_merge: false
+`,
+			completeOnIdle:    boolPtr(true),
+			openPRBeforeMerge: boolPtr(false),
+		},
+		{
+			name: "mixed - one set one absent",
+			yaml: `server:
+  task_defaults:
+    complete_on_idle: false
+`,
+			completeOnIdle:    boolPtr(false),
+			openPRBeforeMerge: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cfg UnifiedConfig
+			if err := yaml.Unmarshal([]byte(tt.yaml), &cfg); err != nil {
+				t.Fatalf("yaml.Unmarshal() error = %v", err)
+			}
+
+			td := cfg.Server.TaskDefaults
+
+			// Check CompleteOnIdle
+			if tt.completeOnIdle == nil {
+				if td.CompleteOnIdle != nil {
+					t.Errorf("CompleteOnIdle = %v, want nil", *td.CompleteOnIdle)
+				}
+			} else {
+				if td.CompleteOnIdle == nil {
+					t.Errorf("CompleteOnIdle = nil, want %v", *tt.completeOnIdle)
+				} else if *td.CompleteOnIdle != *tt.completeOnIdle {
+					t.Errorf("CompleteOnIdle = %v, want %v", *td.CompleteOnIdle, *tt.completeOnIdle)
+				}
+			}
+
+			// Check OpenPRBeforeMerge
+			if tt.openPRBeforeMerge == nil {
+				if td.OpenPRBeforeMerge != nil {
+					t.Errorf("OpenPRBeforeMerge = %v, want nil", *td.OpenPRBeforeMerge)
+				}
+			} else {
+				if td.OpenPRBeforeMerge == nil {
+					t.Errorf("OpenPRBeforeMerge = nil, want %v", *tt.openPRBeforeMerge)
+				} else if *td.OpenPRBeforeMerge != *tt.openPRBeforeMerge {
+					t.Errorf("OpenPRBeforeMerge = %v, want %v", *td.OpenPRBeforeMerge, *tt.openPRBeforeMerge)
+				}
+			}
+		})
+	}
+}
+
+// TestDefaultConfigIncludesFeatureWorktreeTaskDefaults verifies that defaultConfig()
+// defaults feature execution to isolated worktrees with automatic merge intent.
+func TestDefaultConfigIncludesFeatureWorktreeTaskDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	td := cfg.Server.TaskDefaults
+
+	if td.Agent != "" {
+		t.Errorf("defaultConfig() TaskDefaults.Agent = %q, want empty", td.Agent)
+	}
+	if td.Model != "" {
+		t.Errorf("defaultConfig() TaskDefaults.Model = %q, want empty", td.Model)
+	}
+	if td.ExecutionMode != "worktree" {
+		t.Errorf("defaultConfig() TaskDefaults.ExecutionMode = %q, want worktree", td.ExecutionMode)
+	}
+	if td.CompleteOnIdle != nil {
+		t.Errorf("defaultConfig() TaskDefaults.CompleteOnIdle = %v, want nil", td.CompleteOnIdle)
+	}
+	if td.MergePolicy != "auto_merge" {
+		t.Errorf("defaultConfig() TaskDefaults.MergePolicy = %q, want auto_merge", td.MergePolicy)
+	}
+	if td.MergeStrategy != "squash" {
+		t.Errorf("defaultConfig() TaskDefaults.MergeStrategy = %q, want squash", td.MergeStrategy)
+	}
+	if td.MergeTargetBranch != "main" {
+		t.Errorf("defaultConfig() TaskDefaults.MergeTargetBranch = %q, want main", td.MergeTargetBranch)
+	}
+	if td.RemoteBranchPolicy != "delete" {
+		t.Errorf("defaultConfig() TaskDefaults.RemoteBranchPolicy = %q, want delete", td.RemoteBranchPolicy)
+	}
+	if td.OpenPRBeforeMerge != nil {
+		t.Errorf("defaultConfig() TaskDefaults.OpenPRBeforeMerge = %v, want nil", td.OpenPRBeforeMerge)
+	}
+	if td.TargetWorkdir != "" {
+		t.Errorf("defaultConfig() TaskDefaults.TargetWorkdir = %q, want empty", td.TargetWorkdir)
+	}
+}
+
+func TestDefaultConfigIncludesOpenAIEmbeddingDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	emb := cfg.Server.Embedding
+
+	if emb.Enabled {
+		t.Error("default embedding enabled = true, want false")
+	}
+	if emb.Provider != "openrouter" {
+		t.Errorf("default embedding provider = %q, want %q", emb.Provider, "openrouter")
+	}
+	if emb.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Errorf("default embedding base_url = %q, want OpenRouter API", emb.BaseURL)
+	}
+	if emb.APIKeyEnv != "OPENROUTER_API_KEY" {
+		t.Errorf("default embedding api_key_env = %q, want OPENROUTER_API_KEY", emb.APIKeyEnv)
+	}
+	if emb.Model != "text-embedding-3-small" {
+		t.Errorf("default embedding model = %q, want text-embedding-3-small", emb.Model)
+	}
+	if emb.Dim != 1536 {
+		t.Errorf("default embedding dim = %d, want 1536", emb.Dim)
+	}
+}
+
+func TestDefaultConfigIncludesAttachmentExtractionDefaults(t *testing.T) {
+	cfg := defaultConfig()
+	ext := cfg.Server.AttachmentExtraction
+
+	if ext.Enabled {
+		t.Error("default attachment extraction enabled = true, want false")
+	}
+	if ext.Provider != "openrouter" {
+		t.Errorf("default attachment extraction provider = %q, want openrouter", ext.Provider)
+	}
+	if ext.BaseURL != "https://openrouter.ai/api/v1" {
+		t.Errorf("default attachment extraction base_url = %q, want OpenRouter API", ext.BaseURL)
+	}
+	if ext.APIKeyEnv != "OPENROUTER_API_KEY" {
+		t.Errorf("default attachment extraction api_key_env = %q, want OPENROUTER_API_KEY", ext.APIKeyEnv)
+	}
+	if ext.Model != "google/gemini-2.5-flash" {
+		t.Errorf("default attachment extraction model = %q, want google/gemini-2.5-flash", ext.Model)
+	}
+	if ext.TimeoutMs != 60000 {
+		t.Errorf("default attachment extraction timeout_ms = %d, want 60000", ext.TimeoutMs)
+	}
+	if ext.MaxSizeBytes != 10*1024*1024 {
+		t.Errorf("default attachment extraction max_size_bytes = %d, want %d", ext.MaxSizeBytes, int64(10*1024*1024))
+	}
+	if len(ext.SupportedMIMETypes) != 2 || ext.SupportedMIMETypes[0] != "image/*" || ext.SupportedMIMETypes[1] != "application/pdf" {
+		t.Errorf("default attachment extraction supported_mime_types = %#v, want image/* and application/pdf", ext.SupportedMIMETypes)
+	}
+	if ext.MaxDerivedTextChars != 0 {
+		t.Errorf("default attachment extraction max_derived_text_chars = %d, want 0", ext.MaxDerivedTextChars)
+	}
+}
+
+func TestAttachmentExtractionConfigYAMLParsing(t *testing.T) {
+	data := []byte(`server:
+  embedding:
+    enabled: true
+    provider: openrouter
+    model: text-embedding-3-small
+  attachment_extraction:
+    enabled: true
+    provider: openrouter
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "BRAIN_ATTACHMENT_EXTRACTION_API_KEY"
+    model: "google/gemini-2.5-pro"
+    timeout_ms: 120000
+    max_size_bytes: 20971520
+    supported_mime_types:
+      - "image/*"
+      - "application/pdf"
+      - "audio/*"
+    max_derived_text_chars: 50000
+`)
+
+	cfg := defaultConfig()
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+
+	ext := cfg.Server.AttachmentExtraction
+	if !ext.Enabled {
+		t.Error("AttachmentExtraction.Enabled = false, want true")
+	}
+	if ext.APIKeyEnv != "BRAIN_ATTACHMENT_EXTRACTION_API_KEY" {
+		t.Errorf("AttachmentExtraction.APIKeyEnv = %q, want BRAIN_ATTACHMENT_EXTRACTION_API_KEY", ext.APIKeyEnv)
+	}
+	if ext.Model != "google/gemini-2.5-pro" {
+		t.Errorf("AttachmentExtraction.Model = %q, want google/gemini-2.5-pro", ext.Model)
+	}
+	if ext.TimeoutMs != 120000 {
+		t.Errorf("AttachmentExtraction.TimeoutMs = %d, want 120000", ext.TimeoutMs)
+	}
+	if ext.MaxSizeBytes != 20971520 {
+		t.Errorf("AttachmentExtraction.MaxSizeBytes = %d, want 20971520", ext.MaxSizeBytes)
+	}
+	if len(ext.SupportedMIMETypes) != 3 || ext.SupportedMIMETypes[2] != "audio/*" {
+		t.Errorf("AttachmentExtraction.SupportedMIMETypes = %#v, want image/*, application/pdf, audio/*", ext.SupportedMIMETypes)
+	}
+	if ext.MaxDerivedTextChars != 50000 {
+		t.Errorf("AttachmentExtraction.MaxDerivedTextChars = %d, want 50000", ext.MaxDerivedTextChars)
+	}
+
+	if cfg.Server.Embedding.Model != "text-embedding-3-small" {
+		t.Errorf("Embedding.Model = %q, want unchanged text-embedding-3-small", cfg.Server.Embedding.Model)
+	}
+}
+
+// TestLoadConfigCopiesTaskDefaults verifies that LoadConfig() from a unified
+// config file correctly populates the TaskDefaults field.
+func TestLoadConfigCopiesTaskDefaults(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Create config directory
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	// Write config file with task_defaults
+	configPath := filepath.Join(configDir, "config.yaml")
+	configYAML := `server:
+  port: 3333
+  task_defaults:
+    agent: "tdd-dev"
+    model: "claude-opus-4"
+    execution_mode: "worktree"
+    complete_on_idle: true
+    merge_policy: "auto_pr"
+    merge_strategy: "squash"
+    merge_target_branch: "develop"
+    remote_branch_policy: "keep"
+    open_pr_before_merge: true
+    target_workdir: "/opt/projects"
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+
+	td := cfg.Server.TaskDefaults
+
+	if td.Agent != "tdd-dev" {
+		t.Errorf("LoadConfig() TaskDefaults.Agent = %q, want %q", td.Agent, "tdd-dev")
+	}
+	if td.Model != "claude-opus-4" {
+		t.Errorf("LoadConfig() TaskDefaults.Model = %q, want %q", td.Model, "claude-opus-4")
+	}
+	if td.ExecutionMode != "worktree" {
+		t.Errorf("LoadConfig() TaskDefaults.ExecutionMode = %q, want %q", td.ExecutionMode, "worktree")
+	}
+	if td.CompleteOnIdle == nil || *td.CompleteOnIdle != true {
+		t.Errorf("LoadConfig() TaskDefaults.CompleteOnIdle = %v, want true", td.CompleteOnIdle)
+	}
+	if td.MergePolicy != "auto_pr" {
+		t.Errorf("LoadConfig() TaskDefaults.MergePolicy = %q, want %q", td.MergePolicy, "auto_pr")
+	}
+	if td.MergeStrategy != "squash" {
+		t.Errorf("LoadConfig() TaskDefaults.MergeStrategy = %q, want %q", td.MergeStrategy, "squash")
+	}
+	if td.MergeTargetBranch != "develop" {
+		t.Errorf("LoadConfig() TaskDefaults.MergeTargetBranch = %q, want %q", td.MergeTargetBranch, "develop")
+	}
+	if td.RemoteBranchPolicy != "keep" {
+		t.Errorf("LoadConfig() TaskDefaults.RemoteBranchPolicy = %q, want %q", td.RemoteBranchPolicy, "keep")
+	}
+	if td.OpenPRBeforeMerge == nil || *td.OpenPRBeforeMerge != true {
+		t.Errorf("LoadConfig() TaskDefaults.OpenPRBeforeMerge = %v, want true", td.OpenPRBeforeMerge)
+	}
+	if td.TargetWorkdir != "/opt/projects" {
+		t.Errorf("LoadConfig() TaskDefaults.TargetWorkdir = %q, want %q", td.TargetWorkdir, "/opt/projects")
+	}
+}
+
+// TestLoadCopiesTaskDefaultsFromUnifiedConfig verifies that config.Load()
+// (the public API used by brain-api) correctly copies TaskDefaults from
+// the unified config's server section into the Config struct.
+func TestLoadCopiesTaskDefaultsFromUnifiedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Clear env vars that might interfere
+	for _, key := range []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN"} {
+		os.Unsetenv(key)
+	}
+
+	// Create config directory
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	// Write config with task_defaults
+	configPath := filepath.Join(configDir, "config.yaml")
+	configYAML := `server:
+  task_defaults:
+    agent: "explore"
+    model: "claude-sonnet-4"
+    execution_mode: "current_branch"
+    complete_on_idle: false
+    merge_policy: "prompt_only"
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := Load()
+
+	if cfg.TaskDefaults.Agent != "explore" {
+		t.Errorf("Load() TaskDefaults.Agent = %q, want %q", cfg.TaskDefaults.Agent, "explore")
+	}
+	if cfg.TaskDefaults.Model != "claude-sonnet-4" {
+		t.Errorf("Load() TaskDefaults.Model = %q, want %q", cfg.TaskDefaults.Model, "claude-sonnet-4")
+	}
+	if cfg.TaskDefaults.ExecutionMode != "current_branch" {
+		t.Errorf("Load() TaskDefaults.ExecutionMode = %q, want %q", cfg.TaskDefaults.ExecutionMode, "current_branch")
+	}
+	if cfg.TaskDefaults.CompleteOnIdle == nil || *cfg.TaskDefaults.CompleteOnIdle != false {
+		t.Errorf("Load() TaskDefaults.CompleteOnIdle = %v, want false", cfg.TaskDefaults.CompleteOnIdle)
+	}
+	if cfg.TaskDefaults.MergePolicy != "prompt_only" {
+		t.Errorf("Load() TaskDefaults.MergePolicy = %q, want %q", cfg.TaskDefaults.MergePolicy, "prompt_only")
+	}
+	// Unset fields inherit default config values.
+	if cfg.TaskDefaults.MergeStrategy != "squash" {
+		t.Errorf("Load() TaskDefaults.MergeStrategy = %q, want squash", cfg.TaskDefaults.MergeStrategy)
+	}
+	if cfg.TaskDefaults.OpenPRBeforeMerge != nil {
+		t.Errorf("Load() TaskDefaults.OpenPRBeforeMerge = %v, want nil", cfg.TaskDefaults.OpenPRBeforeMerge)
+	}
+}
+
+func TestFeatureCheckoutConfigYAMLParsing(t *testing.T) {
+	var cfg UnifiedConfig
+	if err := yaml.Unmarshal([]byte(`server:
+  feature_checkout:
+    enabled: false
+`), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if cfg.Server.FeatureCheckout.Enabled {
+		t.Fatal("FeatureCheckout.Enabled = true, want false")
+	}
+}
+
+func TestDefaultConfigEnablesFeatureCheckout(t *testing.T) {
+	cfg := defaultConfig()
+	if !cfg.Server.FeatureCheckout.Enabled {
+		t.Fatal("default feature checkout enabled = false, want true")
+	}
+}
+
+func TestLoadCopiesFeatureCheckoutFromUnifiedConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	for _, key := range []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "BRAIN_FEATURE_CHECKOUT_ENABLED"} {
+		os.Unsetenv(key)
+	}
+
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	configYAML := `server:
+  feature_checkout:
+    enabled: false
+`
+	if err := os.WriteFile(configPath, []byte(configYAML), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := Load()
+	if cfg.FeatureCheckout.Enabled {
+		t.Fatal("Load() FeatureCheckout.Enabled = true, want false")
+	}
+}
+
+func TestLoadFeatureCheckoutEnvOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+	t.Setenv("BRAIN_FEATURE_CHECKOUT_ENABLED", "false")
+
+	cfg := Load()
+	if cfg.FeatureCheckout.Enabled {
+		t.Fatal("BRAIN_FEATURE_CHECKOUT_ENABLED=false should disable feature checkout")
+	}
+}
+
+// boolPtr is a helper to create *bool values for test expectations.
+func boolPtr(b bool) *bool {
+	return &b
 }

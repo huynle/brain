@@ -17,6 +17,7 @@ const (
 	PanelTasks Panel = iota
 	PanelDetails
 	PanelLogs
+	PanelRunners
 )
 
 // String returns the display name for a panel.
@@ -28,6 +29,8 @@ func (p Panel) String() string {
 		return "details"
 	case PanelLogs:
 		return "logs"
+	case PanelRunners:
+		return "runners"
 	default:
 		return "unknown"
 	}
@@ -51,6 +54,27 @@ func NextPanel(current Panel, detailVisible, logsVisible bool) Panel {
 	return PanelTasks
 }
 
+// NextPanelWithRunners cycles to the next visible panel, including the runner panel.
+func NextPanelWithRunners(current Panel, detailVisible, logsVisible, runnerVisible bool) Panel {
+	panels := []Panel{PanelTasks}
+	if detailVisible {
+		panels = append(panels, PanelDetails)
+	}
+	if logsVisible {
+		panels = append(panels, PanelLogs)
+	}
+	if runnerVisible {
+		panels = append(panels, PanelRunners)
+	}
+
+	for i, p := range panels {
+		if p == current {
+			return panels[(i+1)%len(panels)]
+		}
+	}
+	return PanelTasks
+}
+
 // RunnerController is an interface for controlling the embedded task runner.
 // If nil, the TUI falls back to HTTP API calls for pause/resume.
 type RunnerController interface {
@@ -58,14 +82,23 @@ type RunnerController interface {
 	ResumeProject(projectID string)
 	PauseAll()
 	ResumeAll()
+	PauseAutomations()
+	ResumeAutomations()
+	PauseProjectAutomations(projectID string)
+	ResumeProjectAutomations(projectID string)
 	IsPaused(projectID string) bool
 	IsAllPaused() bool
+	IsAutomationsPaused() bool
+	IsAutomationsPausedForProject(projectID string) bool
 	// ExecuteTask manually executes a task (TUI "x" key).
 	// Performs the full claim → status update → workdir resolve → spawn pipeline.
 	ExecuteTask(ctx context.Context, task *types.ResolvedTask, projectID string) error
 	// SetMaxParallel updates the maximum number of parallel tasks at runtime.
 	// Values <= 0 are clamped to 1.
 	SetMaxParallel(n int)
+	// SetDefaultModel updates the runtime default model override.
+	// An empty string clears the override.
+	SetDefaultModel(model string)
 
 	// EnableFeature adds a feature to the enabled whitelist.
 	// When a project is paused, only enabled features are polled for new tasks.
@@ -113,8 +146,19 @@ type ContentTab int
 
 const (
 	ContentTabTasks ContentTab = iota
+	ContentTabBrain
 	ContentTabDream
+	ContentTabAutomation
 	ContentTabRunners
+	ContentTabLogs
+)
+
+// AutomationSubTab identifies which subtab is active within Automation.
+type AutomationSubTab int
+
+const (
+	AutomationSubTabAutomations AutomationSubTab = iota
+	AutomationSubTabDream
 )
 
 // String returns the display name for a content tab.
@@ -122,10 +166,28 @@ func (ct ContentTab) String() string {
 	switch ct {
 	case ContentTabTasks:
 		return "Tasks"
+	case ContentTabBrain:
+		return "Brain"
 	case ContentTabDream:
 		return "Dream"
+	case ContentTabAutomation:
+		return "Automations"
 	case ContentTabRunners:
 		return "Runners"
+	case ContentTabLogs:
+		return "Logs"
+	default:
+		return "unknown"
+	}
+}
+
+// String returns the display name for an automation subtab.
+func (ast AutomationSubTab) String() string {
+	switch ast {
+	case AutomationSubTabAutomations:
+		return "Automations"
+	case AutomationSubTabDream:
+		return "Dream"
 	default:
 		return "unknown"
 	}

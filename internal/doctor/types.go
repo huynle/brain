@@ -59,6 +59,13 @@ type DoctorOptions struct {
 	Verbose          bool
 	SkipVersionCheck bool
 	BrainDir         string
+
+	// Attachment diagnostics are optional so existing lightweight doctor uses do
+	// not need to open attachment storage or a database unless configured.
+	EnableAttachmentDiagnostics  bool
+	AttachmentStorageRoot        string
+	AttachmentMaxUploadSizeBytes int64
+	AttachmentDigestChecks       []AttachmentDigestCheck
 }
 
 // DoctorResult contains the results of running doctor diagnostics.

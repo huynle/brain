@@ -137,16 +137,39 @@ type AccessTokenStore interface {
 	SaveAccessToken(ctx context.Context, token, clientID, scope string, expiresAt int64) error
 }
 
-// Handler serves the OAuth endpoints. It uses an in-memory Store
-// for transient OAuth flow state (auth codes, clients) and an
-// AccessTokenStore to persist issued access tokens.
+// FlowStore holds OAuth flow state — registered clients, authorization codes,
+// and refresh tokens. The in-memory *Store satisfies it (used in tests); the
+// SQLite-backed *PersistentStore satisfies it in production so this state
+// survives server restarts (otherwise every restart invalidates already-issued
+// client registrations → "unknown client_id").
+type FlowStore interface {
+	GetClient(id string) (*Client, bool)
+	SaveClient(c *Client)
+	SaveAuthCode(ac *AuthCode)
+	ConsumeAuthCode(code string) (*AuthCode, bool)
+	SaveRefreshToken(token string, entry *RefreshEntry)
+	ConsumeRefreshToken(token string) (*RefreshEntry, bool)
+}
+
+// CredentialVerifier verifies operator username/password credentials on the
+// consent page. *auth.Verifier satisfies it.
+type CredentialVerifier interface {
+	Verify(username, password string) bool
+	Configured() bool
+	Username() string
+}
+
+// Handler serves the OAuth endpoints. It uses a FlowStore for OAuth flow state
+// (clients, auth codes, refresh tokens) and an AccessTokenStore to persist
+// issued access tokens.
 type Handler struct {
-	store            *Store
+	store            FlowStore
 	accessTokenStore AccessTokenStore
+	credentials      CredentialVerifier
 }
 
 // NewHandler creates an OAuth handler backed by the given store.
-func NewHandler(store *Store, opts ...func(*Handler)) *Handler {
+func NewHandler(store FlowStore, opts ...func(*Handler)) *Handler {
 	h := &Handler{store: store}
 	for _, opt := range opts {
 		opt(h)
@@ -159,6 +182,39 @@ func WithAccessTokenStore(ats AccessTokenStore) func(*Handler) {
 	return func(h *Handler) {
 		h.accessTokenStore = ats
 	}
+}
+
+// WithCredentialVerifier makes the consent page require the operator's
+// username/password. When set and configured, it takes precedence over the
+// legacy OAUTH_PIN.
+func WithCredentialVerifier(v CredentialVerifier) func(*Handler) {
+	return func(h *Handler) {
+		h.credentials = v
+	}
+}
+
+// passwordRequired reports whether the consent page should challenge with
+// username/password (preferred over the PIN when configured).
+func (h *Handler) passwordRequired() bool {
+	return h.credentials != nil && h.credentials.Configured()
+}
+
+// verifyConsent validates the operator challenge on the consent form. It returns
+// an empty string on success, or a user-facing error message on failure. When
+// neither password nor PIN is configured, consent is granted without a challenge.
+func (h *Handler) verifyConsent(r *http.Request) string {
+	if h.passwordRequired() {
+		if !h.credentials.Verify(r.FormValue("username"), r.FormValue("password")) {
+			return "Invalid username or password"
+		}
+		return ""
+	}
+	if pin := oauthPIN(); pin != "" {
+		if r.FormValue("pin") != pin {
+			return "Invalid PIN"
+		}
+	}
+	return ""
 }
 
 // ──────────────────────────────────────────────────────────────
@@ -236,7 +292,7 @@ func (h *Handler) HandleServerMetadata(w http.ResponseWriter, r *http.Request) {
 		"grant_types_supported":                 []string{"authorization_code", "refresh_token"},
 		"code_challenge_methods_supported":      []string{"S256"},
 		"token_endpoint_auth_methods_supported": []string{"client_secret_post", "client_secret_basic", "none"},
-		"scopes_supported":                      []string{"mcp", "mcp:read", "mcp:write"},
+		"scopes_supported":                      []string{"mcp", "mcp:read", "mcp:write", "control"},
 	})
 }
 
@@ -250,7 +306,7 @@ func (h *Handler) HandleProtectedResourceMetadata(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, map[string]any{
 		"resource":                 base,
 		"authorization_servers":    []string{base},
-		"scopes_supported":         []string{"mcp", "mcp:read", "mcp:write"},
+		"scopes_supported":         []string{"mcp", "mcp:read", "mcp:write", "control"},
 		"bearer_methods_supported": []string{"header"},
 	})
 }
@@ -374,6 +430,7 @@ func (h *Handler) HandleAuthorizeGET(w http.ResponseWriter, r *http.Request) {
 		clientName = clientID
 	}
 
+	pwReq := h.passwordRequired()
 	data := ConsentData{
 		ClientName:          clientName,
 		ClientID:            clientID,
@@ -383,7 +440,12 @@ func (h *Handler) HandleAuthorizeGET(w http.ResponseWriter, r *http.Request) {
 		CodeChallenge:       codeChallenge,
 		CodeChallengeMethod: codeChallengeMethod,
 		Scopes:              DescribeScopes(scopes),
-		PINRequired:         oauthPIN() != "",
+		PasswordRequired:    pwReq,
+		// Fall back to the legacy PIN only when password login isn't configured.
+		PINRequired: !pwReq && oauthPIN() != "",
+	}
+	if pwReq {
+		data.Username = h.credentials.Username()
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -441,35 +503,37 @@ func (h *Handler) HandleAuthorizePOST(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check PIN if configured
-	if pin := oauthPIN(); pin != "" {
-		if r.FormValue("pin") != pin {
-			// Re-render consent page with error
-			scopes := strings.Fields(scope)
-			if len(scopes) == 0 {
-				scopes = []string{"mcp"}
-			}
-			clientName := client.ClientName
-			if clientName == "" {
-				clientName = clientID
-			}
-			data := ConsentData{
-				ClientName:          clientName,
-				ClientID:            clientID,
-				RedirectURI:         redirectURI,
-				State:               state,
-				RawScope:            scope,
-				CodeChallenge:       codeChallenge,
-				CodeChallengeMethod: codeChallengeMethod,
-				Scopes:              DescribeScopes(scopes),
-				PINRequired:         true,
-				Error:               "Invalid PIN",
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.WriteHeader(http.StatusForbidden)
-			consentTmpl.Execute(w, data) //nolint:errcheck
-			return
+	// Operator challenge: username/password (preferred) or legacy PIN.
+	if authErr := h.verifyConsent(r); authErr != "" {
+		scopes := strings.Fields(scope)
+		if len(scopes) == 0 {
+			scopes = []string{"mcp"}
 		}
+		clientName := client.ClientName
+		if clientName == "" {
+			clientName = clientID
+		}
+		pwReq := h.passwordRequired()
+		data := ConsentData{
+			ClientName:          clientName,
+			ClientID:            clientID,
+			RedirectURI:         redirectURI,
+			State:               state,
+			RawScope:            scope,
+			CodeChallenge:       codeChallenge,
+			CodeChallengeMethod: codeChallengeMethod,
+			Scopes:              DescribeScopes(scopes),
+			PasswordRequired:    pwReq,
+			PINRequired:         !pwReq && oauthPIN() != "",
+			Error:               authErr,
+		}
+		if pwReq {
+			data.Username = h.credentials.Username()
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusForbidden)
+		consentTmpl.Execute(w, data) //nolint:errcheck
+		return
 	}
 
 	// Generate authorization code

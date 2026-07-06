@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 6
+const CurrentSchemaVersion = 22
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -81,6 +81,7 @@ const createAPITokensTable = `
 CREATE TABLE IF NOT EXISTS api_tokens (
   name TEXT PRIMARY KEY,
   token TEXT UNIQUE NOT NULL,
+  scope TEXT NOT NULL DEFAULT 'admin:*',
   created_at TEXT DEFAULT (datetime('now')),
   last_used TEXT,
   revoked_at TEXT
@@ -146,18 +147,244 @@ CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
   created_at INTEGER NOT NULL
 );`
 
+const createTaskClaimsTable = `
+CREATE TABLE IF NOT EXISTS task_claims (
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  runner_id TEXT NOT NULL,
+  claimed_at INTEGER NOT NULL,
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, task_id)
+);`
+
+const createTaskDispatchLeasesTable = `
+CREATE TABLE IF NOT EXISTS task_dispatch_leases (
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  lease_id TEXT NOT NULL DEFAULT '',
+  assigned_runner_id TEXT NOT NULL,
+  assigned_machine_id TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL,
+  pushed_at INTEGER NOT NULL,
+  acked_at INTEGER NOT NULL DEFAULT 0,
+  rejected_at INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT NOT NULL DEFAULT '',
+  expires_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, task_id)
+);`
+
+const createTaskPlacementReasonsTable = `
+CREATE TABLE IF NOT EXISTS task_placement_reasons (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id TEXT NOT NULL,
+  task_id TEXT NOT NULL,
+  runner_id TEXT NOT NULL DEFAULT '',
+  machine_id TEXT NOT NULL DEFAULT '',
+  decision TEXT NOT NULL,
+  reason TEXT NOT NULL DEFAULT '',
+  required_labels TEXT NOT NULL DEFAULT '{}',
+  runner_labels TEXT NOT NULL DEFAULT '{}',
+  missing_labels TEXT NOT NULL DEFAULT '[]',
+  created_at INTEGER NOT NULL
+);`
+
+const createFeatureAssignmentsTable = `
+CREATE TABLE IF NOT EXISTS feature_assignments (
+  project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  runner_id TEXT NOT NULL,
+  source TEXT NOT NULL,
+  status TEXT NOT NULL,
+  assigned_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, feature_id)
+);`
+
 const createRunnersTable = `
 CREATE TABLE IF NOT EXISTS runners (
   runner_id TEXT PRIMARY KEY,
-  hostname TEXT NOT NULL DEFAULT '',
-  projects TEXT NOT NULL DEFAULT '[]',
-  capabilities TEXT NOT NULL DEFAULT '[]',
+  machine_id TEXT DEFAULT '',
+  hostname TEXT NOT NULL,
+  labels TEXT DEFAULT '{}',
+  executors TEXT DEFAULT '[]',
+  capabilities TEXT DEFAULT '[]',
+  dispatch_push INTEGER NOT NULL DEFAULT 0,
+  workspace_roots TEXT DEFAULT '[]',
+  projects TEXT DEFAULT '[]',
+  resources TEXT DEFAULT '{}',
+  capacity TEXT DEFAULT '{}',
+  draining INTEGER NOT NULL DEFAULT 0,
   max_parallel INTEGER NOT NULL DEFAULT 1,
-  active_tasks INTEGER NOT NULL DEFAULT 0,
-  status TEXT NOT NULL DEFAULT 'online',
-  version TEXT NOT NULL DEFAULT '',
-  registered_at TEXT NOT NULL DEFAULT (datetime('now')),
-  last_heartbeat TEXT NOT NULL DEFAULT (datetime('now'))
+  feature_ids TEXT DEFAULT '',
+  registered_at INTEGER NOT NULL,
+  last_heartbeat INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'online'
+);`
+
+const createOpencodeInstancesTable = `
+CREATE TABLE IF NOT EXISTS opencode_instances (
+  instance_id TEXT PRIMARY KEY,
+  runner_id TEXT NOT NULL,
+  hostname TEXT DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'task',
+  project_id TEXT DEFAULT '',
+  task_id TEXT DEFAULT '',
+  feature_id TEXT DEFAULT '',
+  priority TEXT DEFAULT '',
+  title TEXT DEFAULT '',
+  workdir TEXT DEFAULT '',
+  port INTEGER DEFAULT 0,
+  pid INTEGER DEFAULT 0,
+  session_ids TEXT DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'starting',
+  executor TEXT DEFAULT 'opencode',
+  agent TEXT DEFAULT '',
+  model TEXT DEFAULT '',
+  started_at INTEGER NOT NULL DEFAULT 0,
+  last_seen INTEGER NOT NULL DEFAULT 0
+);`
+
+const createProjectPauseStateTable = `
+CREATE TABLE IF NOT EXISTS project_pause_state (
+  project_id TEXT PRIMARY KEY,
+  tasks_paused INTEGER NOT NULL DEFAULT 0,
+  automations_paused INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);`
+
+const createProjectPlacementTable = `
+CREATE TABLE IF NOT EXISTS project_placement (
+  project_id TEXT PRIMARY KEY,
+  affinity TEXT NOT NULL DEFAULT 'soft',
+  preferred_machines TEXT NOT NULL DEFAULT '[]',
+  allowed_machines TEXT NOT NULL DEFAULT '[]',
+  workspace_policy TEXT NOT NULL DEFAULT '',
+  required_labels TEXT NOT NULL DEFAULT '{}',
+  required_capabilities TEXT NOT NULL DEFAULT '[]',
+  resource_requirements TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);`
+
+const createBrainClientsTable = `
+CREATE TABLE IF NOT EXISTS brain_clients (
+  client_id TEXT PRIMARY KEY,
+  kind TEXT DEFAULT '',
+  host_id TEXT NOT NULL,
+  hostname TEXT DEFAULT '',
+  os TEXT DEFAULT '',
+  arch TEXT DEFAULT '',
+  username TEXT DEFAULT '',
+  home_dir TEXT DEFAULT '',
+  labels TEXT DEFAULT '{}',
+  capabilities TEXT DEFAULT '[]',
+  registered_at INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'online'
+);`
+
+const createBrainClientWorkspacesTable = `
+CREATE TABLE IF NOT EXISTS brain_client_workspaces (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  client_id TEXT NOT NULL,
+  host_id TEXT NOT NULL,
+  project_id TEXT NOT NULL,
+  path TEXT NOT NULL,
+  git_root TEXT DEFAULT '',
+  git_common_dir TEXT DEFAULT '',
+  git_worktree_main TEXT DEFAULT '',
+  git_branch TEXT DEFAULT '',
+  git_remote TEXT DEFAULT '',
+  folder_name TEXT DEFAULT '',
+  confidence TEXT DEFAULT '',
+  resolution_source TEXT DEFAULT '',
+  first_seen INTEGER NOT NULL,
+  last_seen INTEGER NOT NULL,
+  UNIQUE(client_id, path)
+);`
+
+const createWebhooksTable = `
+CREATE TABLE IF NOT EXISTS webhooks (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  url TEXT NOT NULL,
+  events TEXT NOT NULL,
+  filter TEXT DEFAULT '{}',
+  secret TEXT DEFAULT '',
+  enabled INTEGER DEFAULT 1,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);`
+
+const createWebhookDeliveriesTable = `
+CREATE TABLE IF NOT EXISTS webhook_deliveries (
+  id TEXT PRIMARY KEY,
+  webhook_id TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  status_code INTEGER,
+  success INTEGER NOT NULL,
+  latency_ms INTEGER,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (webhook_id) REFERENCES webhooks(id) ON DELETE CASCADE
+);`
+
+const createNoteEmbeddingsTable = `
+CREATE TABLE IF NOT EXISTS note_embeddings (
+  note_id INTEGER NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  embedding BLOB NOT NULL,
+  PRIMARY KEY (note_id, chunk_index),
+  FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+);`
+
+const createNoteEmbeddingsMetaTable = `
+CREATE TABLE IF NOT EXISTS note_embeddings_meta (
+  note_id INTEGER NOT NULL,
+  chunk_index INTEGER NOT NULL,
+  project_id TEXT,
+  type TEXT,
+  status TEXT,
+  feature_id TEXT,
+  priority TEXT,
+  embedding_indexed_at TEXT DEFAULT (datetime('now')),
+  PRIMARY KEY (note_id, chunk_index),
+  FOREIGN KEY (note_id) REFERENCES notes(id) ON DELETE CASCADE
+);`
+
+const createAttachmentsTable = `
+CREATE TABLE IF NOT EXISTS attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  digest TEXT UNIQUE NOT NULL,
+  size INTEGER NOT NULL,
+  media_type TEXT DEFAULT '',
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);`
+
+const createEntryAttachmentsTable = `
+CREATE TABLE IF NOT EXISTS entry_attachments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  note_id INTEGER NOT NULL REFERENCES notes(id) ON DELETE CASCADE,
+  attachment_id INTEGER NOT NULL REFERENCES attachments(id) ON DELETE RESTRICT,
+  role TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(note_id, attachment_id, role)
+);`
+
+const createAttachmentDerivedTable = `
+CREATE TABLE IF NOT EXISTS attachment_derived (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  attachment_id INTEGER NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL DEFAULT 'text',
+  status TEXT NOT NULL DEFAULT '',
+  content_type TEXT NOT NULL DEFAULT '',
+  text TEXT NOT NULL DEFAULT '',
+  error TEXT NOT NULL DEFAULT '',
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(attachment_id, kind)
 );`
 
 // ---------------------------------------------------------------------------
@@ -175,12 +402,33 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_links_target_path ON links(target_path);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_note ON tags(note_id);",
 	"CREATE INDEX IF NOT EXISTS idx_tags_tag ON tags(tag);",
-	// Event log indexes
 	"CREATE INDEX IF NOT EXISTS idx_event_log_type_created ON event_log(event_type, created_at);",
 	"CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_dedup_key ON event_log(dedup_key) WHERE dedup_key IS NOT NULL;",
-	// Runner indexes
+	// Task claims indexes
+	"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at);",
+	// Task dispatch lease indexes
+	"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_runner ON task_dispatch_leases(assigned_runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_machine ON task_dispatch_leases(assigned_machine_id);",
+	"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_state ON task_dispatch_leases(state);",
+	"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_expires ON task_dispatch_leases(expires_at);",
+	// Task placement reason indexes
+	"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_task ON task_placement_reasons(project_id, task_id);",
+	"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_runner ON task_placement_reasons(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_decision ON task_placement_reasons(decision);",
+	"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_created ON task_placement_reasons(created_at);",
+	// Feature assignment indexes
+	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_runner ON feature_assignments(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_project ON feature_assignments(project_id);",
+	"CREATE INDEX IF NOT EXISTS idx_feature_assignments_status ON feature_assignments(status);",
+	// Runners indexes
 	"CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status);",
-	"CREATE INDEX IF NOT EXISTS idx_runners_last_heartbeat ON runners(last_heartbeat);",
+	// OpenCode instance indexes
+	"CREATE INDEX IF NOT EXISTS idx_opencode_instances_runner ON opencode_instances(runner_id);",
+	"CREATE INDEX IF NOT EXISTS idx_opencode_instances_task ON opencode_instances(project_id, task_id);",
+	"CREATE INDEX IF NOT EXISTS idx_project_placement_affinity ON project_placement(affinity);",
+	"CREATE INDEX IF NOT EXISTS idx_project_pause_state_tasks ON project_pause_state(tasks_paused);",
+	"CREATE INDEX IF NOT EXISTS idx_project_pause_state_automations ON project_pause_state(automations_paused);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -188,6 +436,23 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_expires ON oauth_access_tokens(expires_at);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client ON oauth_refresh_tokens(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_expires ON oauth_refresh_tokens(expires_at);",
+	// Webhook indexes
+	"CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON webhooks(enabled);",
+	"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id);",
+	"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at);",
+	// Note embeddings indexes
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_project ON note_embeddings_meta(project_id);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_type ON note_embeddings_meta(type);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_status ON note_embeddings_meta(status);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_feature ON note_embeddings_meta(feature_id);",
+	"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_priority ON note_embeddings_meta(priority);",
+	// Attachment indexes
+	"CREATE INDEX IF NOT EXISTS idx_attachments_digest ON attachments(digest);",
+	"CREATE INDEX IF NOT EXISTS idx_entry_attachments_note ON entry_attachments(note_id);",
+	"CREATE INDEX IF NOT EXISTS idx_entry_attachments_attachment ON entry_attachments(attachment_id);",
+	"CREATE UNIQUE INDEX IF NOT EXISTS idx_entry_attachments_note_attachment_role ON entry_attachments(note_id, attachment_id, role);",
+	"CREATE INDEX IF NOT EXISTS idx_attachment_derived_attachment ON attachment_derived(attachment_id);",
+	"CREATE INDEX IF NOT EXISTS idx_attachment_derived_status ON attachment_derived(status);",
 }
 
 // ---------------------------------------------------------------------------
@@ -305,20 +570,374 @@ func migrateSchema(db *sql.DB) error {
 	}
 
 	if ver < 5 {
-		// v5: add event_log table for at-least-once event delivery.
+		// v5: add event_log table for durable event delivery.
 		if _, err := db.Exec(createEventLogTable); err != nil {
 			if !isTableExistsError(err) {
 				return fmt.Errorf("migrate v5 (event_log table): %w", err)
 			}
 		}
+		eventIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_event_log_type_created ON event_log(event_type, created_at)",
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_event_log_dedup_key ON event_log(dedup_key) WHERE dedup_key IS NOT NULL",
+		}
+		for _, stmt := range eventIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v5 (event_log indexes): %w", err)
+			}
+		}
 	}
 
 	if ver < 6 {
-		// v6: add runners table for distributed runner registration and heartbeats.
+		// v6: add task_claims table for persistent lease-based task claims (multi-runner support).
+		if _, err := db.Exec(createTaskClaimsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v6 (task_claims table): %w", err)
+			}
+		}
+		claimIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_claims_runner ON task_claims(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_claims_expires ON task_claims(expires_at)",
+		}
+		for _, stmt := range claimIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v6 (task_claims indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 7 {
+		// v7: add runners table for runner registration (horizontal scaling).
 		if _, err := db.Exec(createRunnersTable); err != nil {
 			if !isTableExistsError(err) {
-				return fmt.Errorf("migrate v6 (runners table): %w", err)
+				return fmt.Errorf("migrate v7 (runners table): %w", err)
 			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_runners_status ON runners(status)"); err != nil {
+			return fmt.Errorf("migrate v7 (runners index): %w", err)
+		}
+	}
+
+	if ver < 8 {
+		// v8: add scope column to api_tokens for scoped authorization.
+		// Existing tokens default to 'admin:*' (full access) for backward compatibility.
+		// Only alter if api_tokens exists (it may not in partial schema scenarios).
+		var tblName string
+		tblErr := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='api_tokens'").Scan(&tblName)
+		if tblErr == nil {
+			_, err := db.Exec("ALTER TABLE api_tokens ADD COLUMN scope TEXT NOT NULL DEFAULT 'admin:*'")
+			if err != nil {
+				if !isDuplicateColumnError(err) {
+					return fmt.Errorf("migrate v8 (add scope to api_tokens): %w", err)
+				}
+			}
+		}
+	}
+
+	if ver < 9 {
+		// v9: add webhooks and webhook_deliveries tables for event hook system.
+		webhookTables := []string{
+			createWebhooksTable,
+			createWebhookDeliveriesTable,
+		}
+		for _, ddl := range webhookTables {
+			if _, err := db.Exec(ddl); err != nil {
+				if !isTableExistsError(err) {
+					return fmt.Errorf("migrate v9 (webhook tables): %w", err)
+				}
+			}
+		}
+		webhookIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_webhooks_enabled ON webhooks(enabled)",
+			"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_webhook ON webhook_deliveries(webhook_id)",
+			"CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_created ON webhook_deliveries(created_at)",
+		}
+		for _, stmt := range webhookIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v9 (webhook indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 10 {
+		// v10: add feature_assignments table for durable server-enforced feature affinity.
+		if _, err := db.Exec(createFeatureAssignmentsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v10 (feature_assignments table): %w", err)
+			}
+		}
+		featureAssignmentIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_feature_assignments_runner ON feature_assignments(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_feature_assignments_project ON feature_assignments(project_id)",
+			"CREATE INDEX IF NOT EXISTS idx_feature_assignments_status ON feature_assignments(status)",
+		}
+		for _, stmt := range featureAssignmentIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v10 (feature_assignments indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 11 {
+		// v11: persist runner capabilities for server-side capability routing.
+		var tblName string
+		tblErr := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='runners'").Scan(&tblName)
+		if tblErr == nil {
+			_, err := db.Exec("ALTER TABLE runners ADD COLUMN capabilities TEXT DEFAULT '[]'")
+			if err != nil {
+				if !isDuplicateColumnError(err) {
+					return fmt.Errorf("migrate v11 (add runner capabilities): %w", err)
+				}
+			}
+		}
+	}
+
+	if ver < 12 {
+		// v12: add note_embeddings and note_embeddings_meta tables for embedding-based search.
+		if err := ensureNoteEmbeddingsTable(db); err != nil {
+			return fmt.Errorf("migrate v12 (note_embeddings table): %w", err)
+		}
+		if _, err := db.Exec(createNoteEmbeddingsMetaTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v12 (embedding meta table): %w", err)
+			}
+		}
+		embeddingIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_project ON note_embeddings_meta(project_id)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_type ON note_embeddings_meta(type)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_status ON note_embeddings_meta(status)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_feature ON note_embeddings_meta(feature_id)",
+			"CREATE INDEX IF NOT EXISTS idx_note_embeddings_meta_priority ON note_embeddings_meta(priority)",
+		}
+		for _, stmt := range embeddingIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v12 (embedding indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 13 {
+		// v13: add attachment metadata and entry-reference tables.
+		attachmentTables := []string{
+			createAttachmentsTable,
+			createEntryAttachmentsTable,
+		}
+		for _, ddl := range attachmentTables {
+			if _, err := db.Exec(ddl); err != nil {
+				if !isTableExistsError(err) {
+					return fmt.Errorf("migrate v13 (attachment tables): %w", err)
+				}
+			}
+		}
+		attachmentIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_attachments_digest ON attachments(digest)",
+			"CREATE INDEX IF NOT EXISTS idx_entry_attachments_note ON entry_attachments(note_id)",
+			"CREATE INDEX IF NOT EXISTS idx_entry_attachments_attachment ON entry_attachments(attachment_id)",
+			"CREATE UNIQUE INDEX IF NOT EXISTS idx_entry_attachments_note_attachment_role ON entry_attachments(note_id, attachment_id, role)",
+		}
+		for _, stmt := range attachmentIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v13 (attachment indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 14 {
+		// v14: add derived attachment extraction status/text table.
+		if _, err := db.Exec(createAttachmentDerivedTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v14 (attachment derived table): %w", err)
+			}
+		}
+		attachmentDerivedIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_attachment_derived_attachment ON attachment_derived(attachment_id)",
+			"CREATE INDEX IF NOT EXISTS idx_attachment_derived_status ON attachment_derived(status)",
+		}
+		for _, stmt := range attachmentDerivedIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v14 (attachment derived indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 15 {
+		// v15: register Brain clients and observed workspaces for project context resolution.
+		clientTables := []string{
+			createBrainClientsTable,
+			createBrainClientWorkspacesTable,
+		}
+		for _, ddl := range clientTables {
+			if _, err := db.Exec(ddl); err != nil {
+				if !isTableExistsError(err) {
+					return fmt.Errorf("migrate v15 (brain client tables): %w", err)
+				}
+			}
+		}
+		clientIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_brain_clients_host ON brain_clients(host_id)",
+			"CREATE INDEX IF NOT EXISTS idx_brain_client_workspaces_project ON brain_client_workspaces(project_id)",
+			"CREATE INDEX IF NOT EXISTS idx_brain_client_workspaces_host_path ON brain_client_workspaces(host_id, path)",
+			"CREATE INDEX IF NOT EXISTS idx_brain_client_workspaces_git_remote ON brain_client_workspaces(git_remote)",
+		}
+		for _, stmt := range clientIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v15 (brain client indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 16 {
+		// v16: add opencode_instances table for the remote-control instance registry.
+		if _, err := db.Exec(createOpencodeInstancesTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v16 (opencode_instances table): %w", err)
+			}
+		}
+		instanceIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_opencode_instances_runner ON opencode_instances(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_opencode_instances_task ON opencode_instances(project_id, task_id)",
+		}
+		for _, stmt := range instanceIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v16 (opencode_instances indexes): %w", err)
+			}
+		}
+	}
+
+	if exists, err := tableExists(db, "opencode_instances"); err != nil {
+		return fmt.Errorf("migrate opencode_instances metadata (inspect table): %w", err)
+	} else if exists {
+		columns := []struct {
+			name string
+			ddl  string
+		}{
+			{"feature_id", "ALTER TABLE opencode_instances ADD COLUMN feature_id TEXT DEFAULT ''"},
+			{"priority", "ALTER TABLE opencode_instances ADD COLUMN priority TEXT DEFAULT ''"},
+			{"agent", "ALTER TABLE opencode_instances ADD COLUMN agent TEXT DEFAULT ''"},
+			{"model", "ALTER TABLE opencode_instances ADD COLUMN model TEXT DEFAULT ''"},
+		}
+		for _, column := range columns {
+			if err := ensureTableColumn(db, "opencode_instances", column.name, column.ddl); err != nil {
+				return fmt.Errorf("migrate opencode_instances metadata (add %s): %w", column.name, err)
+			}
+		}
+	}
+
+	if ver < 18 {
+		// v18: add explicit runner dispatch metadata for push scheduling.
+		var tblName string
+		tblErr := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name='runners'").Scan(&tblName)
+		if tblErr == nil {
+			columns := []struct {
+				name string
+				ddl  string
+			}{
+				{"machine_id", "ALTER TABLE runners ADD COLUMN machine_id TEXT DEFAULT ''"},
+				{"dispatch_push", "ALTER TABLE runners ADD COLUMN dispatch_push INTEGER NOT NULL DEFAULT 0"},
+				{"workspace_roots", "ALTER TABLE runners ADD COLUMN workspace_roots TEXT DEFAULT '[]'"},
+				{"projects", "ALTER TABLE runners ADD COLUMN projects TEXT DEFAULT '[]'"},
+				{"resources", "ALTER TABLE runners ADD COLUMN resources TEXT DEFAULT '{}'"},
+				{"capacity", "ALTER TABLE runners ADD COLUMN capacity TEXT DEFAULT '{}'"},
+				{"draining", "ALTER TABLE runners ADD COLUMN draining INTEGER NOT NULL DEFAULT 0"},
+			}
+			for _, column := range columns {
+				if _, err := db.Exec(column.ddl); err != nil {
+					if !isDuplicateColumnError(err) {
+						return fmt.Errorf("migrate v18 (add runner %s): %w", column.name, err)
+					}
+				}
+			}
+		}
+	}
+
+	if ver < 20 {
+		// v20: add placement reason storage for scheduler decisions.
+		if _, err := db.Exec(createTaskPlacementReasonsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v20 (task_placement_reasons table): %w", err)
+			}
+		}
+		placementReasonIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_task ON task_placement_reasons(project_id, task_id)",
+			"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_runner ON task_placement_reasons(runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_decision ON task_placement_reasons(decision)",
+			"CREATE INDEX IF NOT EXISTS idx_task_placement_reasons_created ON task_placement_reasons(created_at)",
+		}
+		for _, stmt := range placementReasonIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v20 (task_placement_reasons indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 22 {
+		// v22: persist per-project pause state for tasks and automations.
+		if _, err := db.Exec(createProjectPauseStateTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v22 (project_pause_state table): %w", err)
+			}
+		}
+		pauseIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_project_pause_state_tasks ON project_pause_state(tasks_paused)",
+			"CREATE INDEX IF NOT EXISTS idx_project_pause_state_automations ON project_pause_state(automations_paused)",
+		}
+		for _, stmt := range pauseIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v22 (project_pause_state indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 21 {
+		// v21: add stable lease IDs to dispatch leases for ack/reject validation.
+		if exists, err := tableExists(db, "task_dispatch_leases"); err != nil {
+			return fmt.Errorf("migrate v21 (inspect task_dispatch_leases): %w", err)
+		} else if exists {
+			hasLeaseID, err := tableColumnExists(db, "task_dispatch_leases", "lease_id")
+			if err != nil {
+				return fmt.Errorf("migrate v21 (inspect lease_id): %w", err)
+			}
+			if !hasLeaseID {
+				if _, err := db.Exec("ALTER TABLE task_dispatch_leases ADD COLUMN lease_id TEXT NOT NULL DEFAULT ''"); err != nil {
+					if !isDuplicateColumnError(err) {
+						return fmt.Errorf("migrate v21 (add lease_id): %w", err)
+					}
+				}
+				if _, err := db.Exec("UPDATE task_dispatch_leases SET lease_id = 'legacy-' || project_id || '-' || task_id WHERE lease_id = ''"); err != nil {
+					return fmt.Errorf("migrate v21 (backfill lease_id): %w", err)
+				}
+			}
+		}
+	}
+
+	if ver < 19 {
+		// v19: add Brain-owned task dispatch leases for push scheduling.
+		if _, err := db.Exec(createTaskDispatchLeasesTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v19 (task_dispatch_leases table): %w", err)
+			}
+		}
+		dispatchLeaseIndexes := []string{
+			"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_runner ON task_dispatch_leases(assigned_runner_id)",
+			"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_machine ON task_dispatch_leases(assigned_machine_id)",
+			"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_state ON task_dispatch_leases(state)",
+			"CREATE INDEX IF NOT EXISTS idx_task_dispatch_leases_expires ON task_dispatch_leases(expires_at)",
+		}
+		for _, stmt := range dispatchLeaseIndexes {
+			if _, err := db.Exec(stmt); err != nil {
+				return fmt.Errorf("migrate v19 (task_dispatch_leases indexes): %w", err)
+			}
+		}
+	}
+
+	if ver < 17 {
+		// v17: add Brain-owned project placement metadata for scheduling policy.
+		if _, err := db.Exec(createProjectPlacementTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v17 (project_placement table): %w", err)
+			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_project_placement_affinity ON project_placement(affinity)"); err != nil {
+			return fmt.Errorf("migrate v17 (project_placement indexes): %w", err)
 		}
 	}
 
@@ -333,6 +952,79 @@ func isDuplicateColumnError(err error) bool {
 // isTableExistsError checks if an error is SQLite's "table already exists".
 func isTableExistsError(err error) bool {
 	return err != nil && contains(err.Error(), "already exists")
+}
+
+func ensureNoteEmbeddingsTable(db *sql.DB) error {
+	if exists, err := tableExists(db, "note_embeddings"); err != nil {
+		return fmt.Errorf("inspect note_embeddings: %w", err)
+	} else if exists {
+		hasPath, err := tableColumnExists(db, "note_embeddings", "path")
+		if err != nil {
+			return fmt.Errorf("inspect note_embeddings.path: %w", err)
+		}
+		if hasPath {
+			if _, err := db.Exec("DROP TABLE note_embeddings"); err != nil {
+				return fmt.Errorf("drop legacy note_embeddings: %w", err)
+			}
+		}
+	}
+	if _, err := db.Exec(createNoteEmbeddingsTable); err != nil {
+		if !isTableExistsError(err) {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureTableColumn(db *sql.DB, table, column, ddl string) error {
+	exists, err := tableColumnExists(db, table, column)
+	if err != nil {
+		return fmt.Errorf("inspect %s.%s: %w", table, column, err)
+	}
+	if exists {
+		return nil
+	}
+	if _, err := db.Exec(ddl); err != nil && !isDuplicateColumnError(err) {
+		return err
+	}
+	return nil
+}
+
+func tableExists(db *sql.DB, table string) (bool, error) {
+	var name string
+	err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&name)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func tableColumnExists(db *sql.DB, table, column string) (bool, error) {
+	rows, err := db.Query("PRAGMA table_info(" + table + ")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue interface{}
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return false, err
+		}
+		if name == column {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 // contains is a simple substring check (avoids importing strings).
@@ -364,13 +1056,26 @@ func InitSchema(db *sql.DB) error {
 		createEntryMetaTable,
 		createGeneratedTasksTable,
 		createSchemaVersionTable,
-		createEventLogTable,
 		createAPITokensTable,
+		createEventLogTable,
 		createOAuthClientsTable,
 		createOAuthAuthCodesTable,
 		createOAuthAccessTokensTable,
 		createOAuthRefreshTokensTable,
+		createTaskClaimsTable,
+		createTaskDispatchLeasesTable,
+		createTaskPlacementReasonsTable,
+		createFeatureAssignmentsTable,
 		createRunnersTable,
+		createOpencodeInstancesTable,
+		createProjectPlacementTable,
+		createProjectPauseStateTable,
+		createWebhooksTable,
+		createWebhookDeliveriesTable,
+		createNoteEmbeddingsMetaTable,
+		createAttachmentsTable,
+		createEntryAttachmentsTable,
+		createAttachmentDerivedTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {
@@ -398,6 +1103,9 @@ func InitSchema(db *sql.DB) error {
 	// Run migrations for existing databases (may drop/recreate tables).
 	if err := migrateSchema(db); err != nil {
 		return fmt.Errorf("migrate schema: %w", err)
+	}
+	if err := ensureNoteEmbeddingsTable(db); err != nil {
+		return fmt.Errorf("ensure note embeddings table: %w", err)
 	}
 
 	// Indexes (after migrations, so they apply to final table state)

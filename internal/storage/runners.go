@@ -5,225 +5,401 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 )
 
 // RunnerRow represents a row in the runners table.
 type RunnerRow struct {
-	RunnerID      string
-	Hostname      string
-	Projects      string // JSON array
-	Capabilities  string // JSON array
-	MaxParallel   int
-	ActiveTasks   int
-	Status        string
-	Version       string
-	RegisteredAt  string
-	LastHeartbeat string
+	RunnerID       string                 `json:"runner_id"`
+	MachineID      string                 `json:"machine_id"`
+	Hostname       string                 `json:"hostname"`
+	Labels         map[string]string      `json:"labels"`
+	Executors      []string               `json:"executors"`
+	Capabilities   []string               `json:"capabilities"`
+	DispatchPush   bool                   `json:"dispatch_push"`
+	WorkspaceRoots []string               `json:"workspace_roots"`
+	Projects       []string               `json:"projects"`
+	Resources      map[string]interface{} `json:"resources"`
+	Capacity       map[string]interface{} `json:"capacity"`
+	Draining       bool                   `json:"draining"`
+	MaxParallel    int                    `json:"max_parallel"`
+	FeatureIDs     string                 `json:"feature_ids"`
+	RegisteredAt   int64                  `json:"registered_at"`  // Unix milliseconds
+	LastHeartbeat  int64                  `json:"last_heartbeat"` // Unix milliseconds
+	Status         string                 `json:"status"`
 }
 
-// RegisterRunner inserts or updates a runner registration.
-// If the runner already exists, it updates hostname, projects, capabilities,
-// max_parallel, version, status, and last_heartbeat (acts as upsert).
-func (s *StorageLayer) RegisterRunner(ctx context.Context, row RunnerRow) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO runners (runner_id, hostname, projects, capabilities, max_parallel, active_tasks, status, version, registered_at, last_heartbeat)
-		 VALUES (?, ?, ?, ?, ?, ?, 'online', ?, datetime('now'), datetime('now'))
-		 ON CONFLICT(runner_id) DO UPDATE SET
-		   hostname = excluded.hostname,
-		   projects = excluded.projects,
-		   capabilities = excluded.capabilities,
-		   max_parallel = excluded.max_parallel,
-		   status = 'online',
-		   version = excluded.version,
-		   last_heartbeat = datetime('now')`,
-		row.RunnerID, row.Hostname, row.Projects, row.Capabilities,
-		row.MaxParallel, row.ActiveTasks, row.Version,
+// UpsertRunner inserts a new runner or replaces an existing one with the same ID.
+// This is the primary registration/re-registration method.
+func (s *StorageLayer) UpsertRunner(ctx context.Context, runner *RunnerRow) error {
+	labelsJSON, err := json.Marshal(runner.Labels)
+	if err != nil {
+		return fmt.Errorf("marshal labels: %w", err)
+	}
+	executorsJSON, err := json.Marshal(runner.Executors)
+	if err != nil {
+		return fmt.Errorf("marshal executors: %w", err)
+	}
+	capabilitiesJSON, err := json.Marshal(runner.Capabilities)
+	if err != nil {
+		return fmt.Errorf("marshal capabilities: %w", err)
+	}
+	workspaceRootsJSON, err := json.Marshal(runner.WorkspaceRoots)
+	if err != nil {
+		return fmt.Errorf("marshal workspace roots: %w", err)
+	}
+	projectsJSON, err := json.Marshal(runner.Projects)
+	if err != nil {
+		return fmt.Errorf("marshal projects: %w", err)
+	}
+	resourcesJSON, err := json.Marshal(runner.Resources)
+	if err != nil {
+		return fmt.Errorf("marshal resources: %w", err)
+	}
+	capacityJSON, err := json.Marshal(runner.Capacity)
+	if err != nil {
+		return fmt.Errorf("marshal capacity: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO runners
+			(runner_id, machine_id, hostname, labels, executors, capabilities, dispatch_push,
+			 workspace_roots, projects, resources, capacity, draining, max_parallel,
+			 feature_ids, registered_at, last_heartbeat, status)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT (runner_id) DO UPDATE SET
+			machine_id      = excluded.machine_id,
+			hostname        = excluded.hostname,
+			labels          = excluded.labels,
+			executors       = excluded.executors,
+			capabilities   = excluded.capabilities,
+			dispatch_push  = excluded.dispatch_push,
+			workspace_roots = excluded.workspace_roots,
+			projects        = excluded.projects,
+			resources       = excluded.resources,
+			capacity        = excluded.capacity,
+			draining        = excluded.draining,
+			max_parallel    = excluded.max_parallel,
+			feature_ids     = excluded.feature_ids,
+			registered_at   = excluded.registered_at,
+			last_heartbeat  = excluded.last_heartbeat,
+			status          = excluded.status`,
+		runner.RunnerID, runner.MachineID, runner.Hostname, string(labelsJSON), string(executorsJSON), string(capabilitiesJSON),
+		runner.DispatchPush, string(workspaceRootsJSON), string(projectsJSON), string(resourcesJSON), string(capacityJSON),
+		runner.Draining, runner.MaxParallel, runner.FeatureIDs, runner.RegisteredAt, runner.LastHeartbeat,
+		runner.Status,
 	)
 	if err != nil {
-		return fmt.Errorf("register runner: %w", err)
+		return fmt.Errorf("upsert runner: %w", err)
 	}
 	return nil
 }
 
-// HeartbeatRunner updates a runner's last_heartbeat and optionally active_tasks.
-// Returns an error if the runner is not found.
-func (s *StorageLayer) HeartbeatRunner(ctx context.Context, runnerID string, activeTasks int, version string) error {
-	setClauses := "last_heartbeat = datetime('now'), status = 'online', active_tasks = ?"
-	args := []interface{}{activeTasks}
-
-	if version != "" {
-		setClauses += ", version = ?"
-		args = append(args, version)
-	}
-
-	args = append(args, runnerID)
-
-	result, err := s.db.ExecContext(ctx,
-		"UPDATE runners SET "+setClauses+" WHERE runner_id = ?",
-		args...,
-	)
-	if err != nil {
-		return fmt.Errorf("heartbeat runner: %w", err)
-	}
-
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
-	}
-	if rows == 0 {
-		return fmt.Errorf("runner not found: %s", runnerID)
-	}
-	return nil
-}
-
-// ListRunners returns all runners, marking stale ones as "lost".
-// A runner is considered stale if its last heartbeat was more than
-// staleDuration ago.
-func (s *StorageLayer) ListRunners(ctx context.Context, staleDuration time.Duration) ([]RunnerRow, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT runner_id, hostname, projects, capabilities, max_parallel,
-		        active_tasks, status, version, registered_at, last_heartbeat
-		 FROM runners
-		 ORDER BY registered_at DESC`,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query runners: %w", err)
-	}
-	defer rows.Close()
-
-	var runners []RunnerRow
-	now := time.Now().UTC()
-	for rows.Next() {
-		var r RunnerRow
-		if err := rows.Scan(&r.RunnerID, &r.Hostname, &r.Projects, &r.Capabilities,
-			&r.MaxParallel, &r.ActiveTasks, &r.Status, &r.Version,
-			&r.RegisteredAt, &r.LastHeartbeat); err != nil {
-			return nil, fmt.Errorf("scan runner: %w", err)
-		}
-
-		// Compute status based on heartbeat freshness
-		if hb, err := time.Parse("2006-01-02 15:04:05", r.LastHeartbeat); err == nil {
-			if now.Sub(hb) > staleDuration {
-				r.Status = "lost"
-			} else {
-				r.Status = "online"
-			}
-		}
-
-		runners = append(runners, r)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows error: %w", err)
-	}
-
-	if runners == nil {
-		return []RunnerRow{}, nil
-	}
-	return runners, nil
-}
-
-// MarkStaleRunners marks runners whose last heartbeat is older than
-// staleDuration as "lost" and returns their IDs.
-func (s *StorageLayer) MarkStaleRunners(ctx context.Context, staleDuration time.Duration) ([]string, error) {
-	cutoff := time.Now().UTC().Add(-staleDuration).Format("2006-01-02 15:04:05")
-
-	// First, find stale runners
-	rows, err := s.db.QueryContext(ctx,
-		"SELECT runner_id FROM runners WHERE last_heartbeat < ? AND status = 'online'",
-		cutoff,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query stale runners: %w", err)
-	}
-	defer rows.Close()
-
-	var staleIDs []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, fmt.Errorf("scan stale runner: %w", err)
-		}
-		staleIDs = append(staleIDs, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("rows error: %w", err)
-	}
-
-	// Mark them as lost
-	if len(staleIDs) > 0 {
-		_, err = s.db.ExecContext(ctx,
-			"UPDATE runners SET status = 'lost' WHERE last_heartbeat < ? AND status = 'online'",
-			cutoff,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("mark stale runners: %w", err)
-		}
-	}
-
-	return staleIDs, nil
-}
-
-// GetRunnerByID returns a single runner by ID, or nil if not found.
-func (s *StorageLayer) GetRunnerByID(ctx context.Context, runnerID string) (*RunnerRow, error) {
+// GetRunner returns a runner by ID, or nil if not found.
+func (s *StorageLayer) GetRunner(ctx context.Context, runnerID string) (*RunnerRow, error) {
 	var r RunnerRow
+	var labelsJSON, executorsJSON, capabilitiesJSON, workspaceRootsJSON, projectsJSON, resourcesJSON, capacityJSON string
+
 	err := s.db.QueryRowContext(ctx,
-		`SELECT runner_id, hostname, projects, capabilities, max_parallel,
-		        active_tasks, status, version, registered_at, last_heartbeat
+		`SELECT runner_id, machine_id, hostname, labels, executors, capabilities, dispatch_push,
+		        workspace_roots, projects, resources, capacity, draining, max_parallel,
+		        feature_ids, registered_at, last_heartbeat, status
 		 FROM runners WHERE runner_id = ?`,
 		runnerID,
-	).Scan(&r.RunnerID, &r.Hostname, &r.Projects, &r.Capabilities,
-		&r.MaxParallel, &r.ActiveTasks, &r.Status, &r.Version,
-		&r.RegisteredAt, &r.LastHeartbeat)
+	).Scan(&r.RunnerID, &r.MachineID, &r.Hostname, &labelsJSON, &executorsJSON, &capabilitiesJSON, &r.DispatchPush,
+		&workspaceRootsJSON, &projectsJSON, &resourcesJSON, &capacityJSON, &r.Draining,
+		&r.MaxParallel, &r.FeatureIDs, &r.RegisteredAt, &r.LastHeartbeat,
+		&r.Status)
+
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get runner: %w", err)
 	}
+
+	if err := json.Unmarshal([]byte(labelsJSON), &r.Labels); err != nil {
+		return nil, fmt.Errorf("unmarshal labels: %w", err)
+	}
+	if err := json.Unmarshal([]byte(executorsJSON), &r.Executors); err != nil {
+		return nil, fmt.Errorf("unmarshal executors: %w", err)
+	}
+	if err := json.Unmarshal([]byte(capabilitiesJSON), &r.Capabilities); err != nil {
+		return nil, fmt.Errorf("unmarshal capabilities: %w", err)
+	}
+	if err := decodeRunnerMetadata(&r, workspaceRootsJSON, projectsJSON, resourcesJSON, capacityJSON); err != nil {
+		return nil, err
+	}
+
 	return &r, nil
 }
 
-// DeleteRunner removes a runner registration.
-func (s *StorageLayer) DeleteRunner(ctx context.Context, runnerID string) error {
+// ListRunners returns all runners ordered by registered_at descending (newest first).
+func (s *StorageLayer) ListRunners(ctx context.Context) ([]RunnerRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT runner_id, machine_id, hostname, labels, executors, capabilities, dispatch_push,
+		        workspace_roots, projects, resources, capacity, draining, max_parallel,
+		        feature_ids, registered_at, last_heartbeat, status
+		 FROM runners ORDER BY registered_at DESC`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list runners: %w", err)
+	}
+	defer rows.Close()
+
+	return scanRunners(rows)
+}
+
+// ListRunnersByStatus returns runners filtered by status.
+func (s *StorageLayer) ListRunnersByStatus(ctx context.Context, status string) ([]RunnerRow, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT runner_id, machine_id, hostname, labels, executors, capabilities, dispatch_push,
+		        workspace_roots, projects, resources, capacity, draining, max_parallel,
+		        feature_ids, registered_at, last_heartbeat, status
+		 FROM runners WHERE status = ? ORDER BY registered_at DESC`,
+		status,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list runners by status: %w", err)
+	}
+	defer rows.Close()
+
+	return scanRunners(rows)
+}
+
+// DeleteRunner removes a runner by ID. Returns true if a row was deleted.
+func (s *StorageLayer) DeleteRunner(ctx context.Context, runnerID string) (bool, error) {
 	result, err := s.db.ExecContext(ctx,
 		"DELETE FROM runners WHERE runner_id = ?",
 		runnerID,
 	)
 	if err != nil {
-		return fmt.Errorf("delete runner: %w", err)
+		return false, fmt.Errorf("delete runner: %w", err)
 	}
 
-	rows, err := result.RowsAffected()
+	n, err := result.RowsAffected()
 	if err != nil {
-		return fmt.Errorf("get rows affected: %w", err)
+		return false, fmt.Errorf("delete runner rows affected: %w", err)
 	}
-	if rows == 0 {
-		return fmt.Errorf("runner not found: %s", runnerID)
+	return n > 0, nil
+}
+
+// UpdateHeartbeat updates a runner's last_heartbeat timestamp and optionally
+// its running task count (stored in labels as "_running_tasks").
+// Returns an error if the runner does not exist.
+func (s *StorageLayer) UpdateHeartbeat(ctx context.Context, runnerID string, runningTasks int, stats map[string]interface{}) error {
+	now := time.Now().UnixMilli()
+
+	runner, err := s.GetRunner(ctx, runnerID)
+	if err != nil {
+		return fmt.Errorf("update heartbeat get runner: %w", err)
+	}
+	if runner == nil {
+		return fmt.Errorf("runner %q not found", runnerID)
+	}
+
+	if runner.Labels == nil {
+		runner.Labels = make(map[string]string)
+	}
+	runner.Labels["_running_tasks"] = fmt.Sprintf("%d", runningTasks)
+	for k, v := range stats {
+		runner.Labels["_stat_"+k] = fmt.Sprintf("%v", v)
+	}
+
+	labelsJSON, err := json.Marshal(runner.Labels)
+	if err != nil {
+		return fmt.Errorf("marshal labels: %w", err)
+	}
+
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE runners SET last_heartbeat = ?, labels = ? WHERE runner_id = ?",
+		now, string(labelsJSON), runnerID,
+	)
+	if err != nil {
+		return fmt.Errorf("update heartbeat: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("heartbeat rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("runner %q not found", runnerID)
 	}
 	return nil
 }
 
-// ParseJSONStringArray parses a JSON array string into a Go string slice.
-func ParseJSONStringArray(s string) []string {
-	if s == "" || s == "[]" {
-		return nil
+// UpdateRunnerDispatchMetadata updates heartbeat-adjacent scheduler metadata when
+// a runner reports current push-dispatch state. Nil pointer fields are left
+// unchanged; nil slices/maps are treated as not reported to preserve older
+// heartbeat behavior.
+func (s *StorageLayer) UpdateRunnerDispatchMetadata(ctx context.Context, runnerID string, dispatchPush *bool, labels map[string]string, workspaceRoots []string, projects []string, resources map[string]interface{}, capacity map[string]interface{}, draining *bool) error {
+	runner, err := s.GetRunner(ctx, runnerID)
+	if err != nil {
+		return fmt.Errorf("update runner dispatch metadata get runner: %w", err)
 	}
-	var result []string
-	if err := json.Unmarshal([]byte(s), &result); err != nil {
-		return nil
+	if runner == nil {
+		return fmt.Errorf("runner %q not found", runnerID)
 	}
-	return result
+	if dispatchPush != nil {
+		runner.DispatchPush = *dispatchPush
+	}
+	if labels != nil {
+		if runner.Labels == nil {
+			runner.Labels = make(map[string]string)
+		}
+		for key, value := range labels {
+			runner.Labels[key] = value
+		}
+	}
+	if workspaceRoots != nil {
+		runner.WorkspaceRoots = workspaceRoots
+	}
+	if projects != nil {
+		runner.Projects = projects
+	}
+	if resources != nil {
+		runner.Resources = resources
+	}
+	if capacity != nil {
+		runner.Capacity = capacity
+	}
+	if draining != nil {
+		runner.Draining = *draining
+	}
+	return s.UpsertRunner(ctx, runner)
 }
 
-// ToJSONStringArray serializes a string slice to a JSON array string.
-func ToJSONStringArray(ss []string) string {
-	if len(ss) == 0 {
-		return "[]"
-	}
-	data, err := json.Marshal(ss)
+// UpdateAffinity updates a runner's feature_ids (comma-separated list of feature IDs
+// this runner has affinity for).
+func (s *StorageLayer) UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
+	featureStr := strings.Join(featureIDs, ",")
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE runners SET feature_ids = ? WHERE runner_id = ?",
+		featureStr, runnerID,
+	)
 	if err != nil {
-		return "[]"
+		return fmt.Errorf("update affinity: %w", err)
 	}
-	return string(data)
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("affinity rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("runner %q not found", runnerID)
+	}
+	return nil
+}
+
+// SetRunnerStatus updates a runner's status. Returns an error if the runner
+// does not exist.
+func (s *StorageLayer) SetRunnerStatus(ctx context.Context, runnerID, status string) error {
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE runners SET status = ? WHERE runner_id = ?",
+		status, runnerID,
+	)
+	if err != nil {
+		return fmt.Errorf("set runner status: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("set status rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("runner %q not found", runnerID)
+	}
+	return nil
+}
+
+// UpdateRunnerMaxParallel updates a runner's max_parallel setting.
+// Returns an error if the runner does not exist.
+func (s *StorageLayer) UpdateRunnerMaxParallel(ctx context.Context, runnerID string, maxParallel int) error {
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE runners SET max_parallel = ? WHERE runner_id = ?",
+		maxParallel, runnerID,
+	)
+	if err != nil {
+		return fmt.Errorf("update runner max_parallel: %w", err)
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("max_parallel rows affected: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("runner %q not found", runnerID)
+	}
+	return nil
+}
+
+// ExpireStaleRunners marks runners as "offline" if their last heartbeat is
+// older than the given threshold. Returns the number of runners updated.
+func (s *StorageLayer) ExpireStaleRunners(ctx context.Context, threshold time.Duration) (int64, error) {
+	cutoff := time.Now().UnixMilli() - threshold.Milliseconds()
+	result, err := s.db.ExecContext(ctx,
+		"UPDATE runners SET status = 'offline' WHERE status = 'online' AND last_heartbeat < ?",
+		cutoff,
+	)
+	if err != nil {
+		return 0, fmt.Errorf("expire stale runners: %w", err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("expire stale rows affected: %w", err)
+	}
+	return count, nil
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+// scanRunners scans multiple runner rows from a query result.
+func scanRunners(rows *sql.Rows) ([]RunnerRow, error) {
+	var runners []RunnerRow
+	for rows.Next() {
+		var r RunnerRow
+		var labelsJSON, executorsJSON, capabilitiesJSON, workspaceRootsJSON, projectsJSON, resourcesJSON, capacityJSON string
+
+		if err := rows.Scan(&r.RunnerID, &r.MachineID, &r.Hostname, &labelsJSON, &executorsJSON, &capabilitiesJSON, &r.DispatchPush,
+			&workspaceRootsJSON, &projectsJSON, &resourcesJSON, &capacityJSON, &r.Draining,
+			&r.MaxParallel, &r.FeatureIDs, &r.RegisteredAt, &r.LastHeartbeat,
+			&r.Status); err != nil {
+			return nil, fmt.Errorf("scan runner: %w", err)
+		}
+
+		if err := json.Unmarshal([]byte(labelsJSON), &r.Labels); err != nil {
+			return nil, fmt.Errorf("unmarshal labels: %w", err)
+		}
+		if err := json.Unmarshal([]byte(executorsJSON), &r.Executors); err != nil {
+			return nil, fmt.Errorf("unmarshal executors: %w", err)
+		}
+		if err := json.Unmarshal([]byte(capabilitiesJSON), &r.Capabilities); err != nil {
+			return nil, fmt.Errorf("unmarshal capabilities: %w", err)
+		}
+		if err := decodeRunnerMetadata(&r, workspaceRootsJSON, projectsJSON, resourcesJSON, capacityJSON); err != nil {
+			return nil, err
+		}
+
+		runners = append(runners, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("runners rows error: %w", err)
+	}
+	return runners, nil
+}
+
+func decodeRunnerMetadata(r *RunnerRow, workspaceRootsJSON, projectsJSON, resourcesJSON, capacityJSON string) error {
+	if err := json.Unmarshal([]byte(workspaceRootsJSON), &r.WorkspaceRoots); err != nil {
+		return fmt.Errorf("unmarshal workspace roots: %w", err)
+	}
+	if err := json.Unmarshal([]byte(projectsJSON), &r.Projects); err != nil {
+		return fmt.Errorf("unmarshal projects: %w", err)
+	}
+	if err := json.Unmarshal([]byte(resourcesJSON), &r.Resources); err != nil {
+		return fmt.Errorf("unmarshal resources: %w", err)
+	}
+	if err := json.Unmarshal([]byte(capacityJSON), &r.Capacity); err != nil {
+		return fmt.Errorf("unmarshal capacity: %w", err)
+	}
+	return nil
 }

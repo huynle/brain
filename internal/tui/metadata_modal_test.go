@@ -14,6 +14,41 @@ import (
 )
 
 // ============================================================================
+// Test Helpers
+// ============================================================================
+
+// executeBatchCmd executes a tea.Cmd (which may be a Batch) and returns all resulting messages.
+// This handles both single commands and tea.Batch commands transparently.
+func executeBatchCmd(cmd tea.Cmd) []tea.Msg {
+	if cmd == nil {
+		return nil
+	}
+	msg := cmd()
+	if batch, ok := msg.(tea.BatchMsg); ok {
+		var msgs []tea.Msg
+		for _, c := range batch {
+			if c != nil {
+				msgs = append(msgs, c())
+			}
+		}
+		return msgs
+	}
+	return []tea.Msg{msg}
+}
+
+// findMsg finds a message of the target type from a slice of messages.
+// Returns the message and true if found, or zero value and false otherwise.
+func findMsg[T any](msgs []tea.Msg) (T, bool) {
+	for _, msg := range msgs {
+		if typed, ok := msg.(T); ok {
+			return typed, true
+		}
+	}
+	var zero T
+	return zero, false
+}
+
+// ============================================================================
 // MetadataModal Construction Tests
 // ============================================================================
 
@@ -737,17 +772,17 @@ func TestMetadataModal_Init_FetchesEntry(t *testing.T) {
 	apiClient := runner.NewAPIClient(cfg)
 	modal := NewMetadataModal("projects/test/task/abc123.md", apiClient)
 
-	// Init should return a command
+	// Init should return a command (now a batch)
 	cmd := modal.Init()
 	if cmd == nil {
 		t.Fatal("Init() should return non-nil command to fetch entry")
 	}
 
-	// Execute the command
-	msg := cmd()
-	fetchedMsg, ok := msg.(metadataFetchedMsg)
+	// Execute the batch and find the metadataFetchedMsg
+	msgs := executeBatchCmd(cmd)
+	fetchedMsg, ok := findMsg[metadataFetchedMsg](msgs)
 	if !ok {
-		t.Fatalf("Init() command should return metadataFetchedMsg, got %T", msg)
+		t.Fatalf("Init() batch should contain metadataFetchedMsg, got messages: %v", msgs)
 	}
 
 	// Check that entry was fetched
@@ -1527,6 +1562,44 @@ func TestMetadataModal_HandleMouse_FieldClick(t *testing.T) {
 	}
 	if modal.focusedIndex != 2 {
 		t.Errorf("focusedIndex = %d, want 2 (Feature ID)", modal.focusedIndex)
+	}
+}
+
+func TestMetadataModal_HandleMouse_FocusedFieldClickEntersEditMode(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+	modal.loading = false
+
+	// Click the already-focused Status field row.
+	handled, cmd := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 5, 2)
+	if !handled {
+		t.Fatal("expected focused field click to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected status dropdown to open synchronously, got command")
+	}
+	if modal.interactionMode != ModeEditDropdown {
+		t.Fatalf("expected click on focused dropdown field to enter edit mode, got %v", modal.interactionMode)
+	}
+}
+
+func TestMetadataModal_HandleMouse_DropdownOptionClickSelectsOption(t *testing.T) {
+	cfg := runner.RunnerConfig{BrainAPIURL: "http://localhost:3333"}
+	apiClient := runner.NewAPIClient(cfg)
+	modal := NewMetadataModal("task123", apiClient)
+	modal.loading = false
+	modal.focusedField = FieldStatus
+	modal.focusedIndex = 0
+	modal.enterEditMode()
+
+	// Dropdown rows start after the focused field line and blank separator.
+	handled, _ := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 5, 5)
+	if !handled {
+		t.Fatal("expected dropdown option click to be handled")
+	}
+	if modal.dropdownIndex != 1 {
+		t.Fatalf("expected dropdownIndex 1 after clicking second option, got %d", modal.dropdownIndex)
 	}
 }
 

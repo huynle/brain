@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // =============================================================================
@@ -394,6 +396,76 @@ func TestMonitorClient_DeleteMonitorTask_NotFound(t *testing.T) {
 	err := client.DeleteMonitorTask(context.Background(), "abc12345")
 	if err == nil {
 		t.Error("Expected error for 404 response, got nil")
+	}
+}
+
+// =============================================================================
+// Dream Config
+// =============================================================================
+
+func TestMonitorClient_FetchDreamConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v1/monitors/templates":
+			_ = json.NewEncoder(w).Encode(types.MonitorTemplatesResponse{
+				Templates: []types.MonitorTemplate{{
+					ID:              "dream",
+					Label:           "Dream Consolidation",
+					Description:     "Periodically consolidates project knowledge",
+					DefaultSchedule: "0 3 * * *",
+					CreationMode:    types.CreationModeScheduled,
+				}},
+			})
+		case "/api/v1/monitors":
+			if r.URL.Query().Get("template_id") != "dream" {
+				t.Fatalf("template_id query = %q, want dream", r.URL.Query().Get("template_id"))
+			}
+			if r.URL.Query().Get("project") != "brain-api" {
+				t.Fatalf("project query = %q, want brain-api", r.URL.Query().Get("project"))
+			}
+			_ = json.NewEncoder(w).Encode(types.MonitorListResponse{
+				Monitors: []types.MonitorInfo{{
+					ID:         "abc123",
+					Path:       "projects/brain-api/task/abc123.md",
+					TemplateID: "dream",
+					Scope:      types.MonitorScope{Type: "project", Project: "brain-api"},
+					Enabled:    true,
+					Schedule:   "15 4 * * *",
+					Title:      "Monitor: Dream Consolidation (project brain-api)",
+				}},
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	client := NewMonitorClient(server.URL, "")
+	config, err := client.FetchDreamConfig(context.Background(), "brain-api")
+	if err != nil {
+		t.Fatalf("FetchDreamConfig returned error: %v", err)
+	}
+
+	if config.TemplateLabel != "Dream Consolidation" {
+		t.Fatalf("TemplateLabel = %q, want Dream Consolidation", config.TemplateLabel)
+	}
+	if config.TemplateDescription != "Periodically consolidates project knowledge" {
+		t.Fatalf("TemplateDescription = %q", config.TemplateDescription)
+	}
+	if config.DefaultSchedule != "0 3 * * *" {
+		t.Fatalf("DefaultSchedule = %q, want 0 3 * * *", config.DefaultSchedule)
+	}
+	if config.Monitor == nil {
+		t.Fatal("expected project monitor")
+	}
+	if !config.Monitor.Enabled {
+		t.Fatal("expected monitor enabled")
+	}
+	if config.Monitor.Schedule != "15 4 * * *" {
+		t.Fatalf("Monitor.Schedule = %q, want 15 4 * * *", config.Monitor.Schedule)
+	}
+	if config.Monitor.Scope != "project brain-api" {
+		t.Fatalf("Monitor.Scope = %q, want project brain-api", config.Monitor.Scope)
 	}
 }
 

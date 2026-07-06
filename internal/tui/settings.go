@@ -8,15 +8,17 @@ import (
 
 // Settings holds persisted TUI preferences.
 type Settings struct {
-	GroupCollapsed    map[string]bool `json:"groupCollapsed"`    // group name -> collapsed state
-	GroupVisible      map[string]bool `json:"groupVisible"`      // group name -> visibility state
-	FeatureCollapsed  map[string]bool `json:"featureCollapsed"`  // feature ID -> collapsed state
-	ProjectLimits     map[string]int  `json:"projectLimits"`     // project -> max parallel tasks
-	GlobalMaxParallel int             `json:"globalMaxParallel"` // global max parallel limit
-	DefaultModel      string          `json:"defaultModel"`      // default model override for tasks
-	TextWrap          bool            `json:"textWrap"`          // wrap long lines in panels
-	LogLevel          string          `json:"logLevel"`          // log level: "error", "info", "debug"
-	AutoMonitors      bool            `json:"autoMonitors"`      // auto-create monitors for new features
+	GroupCollapsed       map[string]bool `json:"groupCollapsed"`       // group name -> collapsed state
+	GroupVisible         map[string]bool `json:"groupVisible"`         // group name -> visibility state
+	FeatureCollapsed     map[string]bool `json:"featureCollapsed"`     // feature ID -> collapsed state
+	ProjectLimits        map[string]int  `json:"projectLimits"`        // project -> max parallel tasks
+	GlobalMaxParallel    int             `json:"globalMaxParallel"`    // global max parallel limit
+	DefaultModel         string          `json:"defaultModel"`         // default model override for tasks
+	TextWrap             bool            `json:"textWrap"`             // wrap long lines in panels
+	LogLevel             string          `json:"logLevel"`             // log level: "error", "info", "debug"
+	AutoMonitors         bool            `json:"autoMonitors"`         // auto-create monitors for new features
+	TaskPanelHeight      int             `json:"taskPanelHeight"`      // user-resized task panel outer height
+	BottomTopPanelHeight int             `json:"bottomTopPanelHeight"` // user-resized top panel height in stacked bottom panes
 }
 
 // getDefaultGroupVisible returns the default visibility map for status groups.
@@ -33,13 +35,16 @@ func getDefaultGroupVisible() map[string]bool {
 }
 
 // getSettingsPath returns the path to the settings file.
-// Uses ~/.brain/tui-settings.json
+// Respects BRAIN_DIR env var; falls back to ~/.brain/tui-settings.json.
 func getSettingsPath() (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		brainDir = filepath.Join(home, ".brain")
 	}
-	brainDir := filepath.Join(home, ".brain")
 	if err := os.MkdirAll(brainDir, 0755); err != nil {
 		return "", err
 	}

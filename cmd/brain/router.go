@@ -12,7 +12,6 @@ import (
 	"github.com/huynle/brain-api/cmd/brain/commands"
 	uconfig "github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/runner"
-	"github.com/huynle/brain-api/pkg/pathutil"
 )
 
 // =============================================================================
@@ -82,6 +81,7 @@ var builtinCommands = map[string]bool{
 	"uninstall":     true,
 	"plugin-status": true,
 	"token":         true,
+	"auth":          true,
 	"dream":         true,
 	"save":          true,
 	"get":           true,
@@ -91,7 +91,10 @@ var builtinCommands = map[string]bool{
 	"search":        true,
 	"list":          true,
 	"automation":    true,
+	"goal":          true, // deprecated alias for "automation goal"
+	"attachments":   true,
 	"migrate":       true,
+	"embeddings":    true,
 	"help":          true,
 }
 
@@ -211,6 +214,8 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parseMCPCommand(cmdArgs)
 	case "token":
 		return parseTokenCommand(cmdArgs)
+	case "auth":
+		return parseAuthCommand(cmdArgs)
 	case "dream":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "dream"}, nil
@@ -263,20 +268,39 @@ func parseBuiltinCommand(args []string) (Command, error) {
 		return parsePluginStatusCommand(cmdArgs)
 	case "automation":
 		return parseAutomationCommand(cmdArgs)
+	case "goal":
+		// Deprecated alias: "brain goal <sub>" delegates to
+		// "brain automation goal <sub>" and prints a deprecation notice.
+		return parseGoalCommand(cmdArgs)
+	case "attachments":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "attachments"}, nil
+		}
+		return parseAttachmentsCommand(cmdArgs)
 	case "migrate":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "migrate"}, nil
 		}
 		return parseMigrateCommand(cmdArgs)
-	case "run", "runner":
+	case "embeddings":
+		if wantsHelp(cmdArgs) {
+			return &HelpCommand{command: "embeddings"}, nil
+		}
+		return parseEmbeddingsCommand(cmdArgs)
+	case "runner":
+		// "brain runner <start|stop|status>" — background daemonized runner.
+		if len(cmdArgs) == 0 || isHelpArg(cmdArgs[0]) {
+			return &HelpCommand{command: "runner"}, nil
+		}
+		return parseRunnerCommand(cmdArgs)
+	case "run":
 		if len(cmdArgs) == 0 {
 			return &stubCommand{cmdType: "run"}, nil
 		}
 		if isHelpArg(cmdArgs[0]) {
 			return &HelpCommand{command: "run"}, nil
 		}
-		// Handle "brain run <subcommand>" and "brain runner <subcommand>" patterns
-		// "runner" is a backwards-compat alias for "run" (from old Node.js CLI)
+		// Granular "brain run <subcommand>" (start/stop/status/list/…).
 		return parseRunCommand(cmdArgs)
 	case "help":
 		// "brain help server" / "brain help server start" → show contextual help
@@ -385,6 +409,17 @@ func parseTokenCommand(args []string) (Command, error) {
 	}, nil
 }
 
+// parseAuthCommand creates an AuthCommand from args (e.g. `brain auth hash`).
+func parseAuthCommand(args []string) (Command, error) {
+	if len(args) == 0 || isHelpArg(args[0]) {
+		return &HelpCommand{command: "auth"}, nil
+	}
+	return &commands.AuthCommand{
+		Subcommand: args[0],
+		Args:       args[1:],
+	}, nil
+}
+
 // parseRunCommand creates a RunCommand from args.
 func parseRunCommand(args []string) (Command, error) {
 	if len(args) == 0 {
@@ -401,18 +436,66 @@ func parseRunCommand(args []string) (Command, error) {
 	subArgs := args[1:]
 
 	cfg := defaultConfig()
-	flags, err := ParseRunnerFlags(subArgs)
+
+	// Pre-scan args to find positional project arg regardless of flag order.
+	// This mirrors parseDreamCommand: find first non-flag arg before calling
+	// ParseRunnerFlags so that "brain run start <project> --headless" works
+	// the same as "brain run start --headless <project>".
+	project := "all"
+	var flagArgs []string
+	for _, a := range subArgs {
+		if !isFlag(a) && project == "all" {
+			project = a
+		} else {
+			flagArgs = append(flagArgs, a)
+		}
+	}
+
+	flags, err := ParseRunnerFlags(flagArgs)
 	if err != nil {
 		return nil, err
 	}
 
-	// Determine project from subArgs or default to "all"
-	project := "all"
-	if len(subArgs) > 0 && !isFlag(subArgs[0]) {
-		project = subArgs[0]
+	return &commands.RunCommand{
+		Subcommand: subcommand,
+		Project:    project,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsRunnerFlags(flags),
+	}, nil
+}
+
+// parseRunnerCommand creates a RunnerDaemonCommand from
+// `brain runner <start|stop|status> [project] [flags]`.
+func parseRunnerCommand(args []string) (Command, error) {
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "runner"}, nil
+	}
+	subArgs := args[1:]
+	if wantsHelp(subArgs) {
+		return &HelpCommand{command: "runner " + subcommand}, nil
 	}
 
-	return &commands.RunCommand{
+	// Find the first positional (project) regardless of flag order; default "all".
+	project := "all"
+	var flagArgs []string
+	found := false
+	for _, a := range subArgs {
+		if !isFlag(a) && !found {
+			project = a
+			found = true
+		} else {
+			flagArgs = append(flagArgs, a)
+		}
+	}
+
+	flags, err := ParseRunnerFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	cfg := defaultConfig()
+	return &commands.RunnerDaemonCommand{
 		Subcommand: subcommand,
 		Project:    project,
 		Config:     convertToCommandsConfig(cfg),
@@ -451,15 +534,24 @@ func wantsHelp(args []string) bool {
 func defaultConfig() *UnifiedConfig {
 	cfg := &UnifiedConfig{}
 
-	// Server defaults
+	// Server defaults — respect XDG_STATE_HOME and BRAIN_DIR
+	homeDir, _ := os.UserHomeDir()
+	stateHome := os.Getenv("XDG_STATE_HOME")
+	if stateHome == "" {
+		stateHome = filepath.Join(homeDir, ".local", "state")
+	}
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		brainDir = filepath.Join(homeDir, ".brain")
+	}
+
 	cfg.Server.Port = 3333
 	cfg.Server.Host = "localhost"
-	cfg.Server.BrainDir = pathutil.ExpandTilde("~/brain")
+	cfg.Server.BrainDir = brainDir
+	cfg.Server.FeatureCheckout.Enabled = true
 	cfg.Server.LogLevel = "info"
-
-	homeDir, _ := os.UserHomeDir()
-	cfg.Server.PIDFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
-	cfg.Server.LogFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log")
+	cfg.Server.PIDFile = filepath.Join(stateHome, "brain-api", "brain-api.pid")
+	cfg.Server.LogFile = filepath.Join(stateHome, "brain-api", "brain-api.log")
 
 	// Load unified config for server settings (enable_auth, cors_origin, etc.)
 	ucfg, err := uconfig.LoadConfig()
@@ -494,6 +586,16 @@ func defaultConfig() *UnifiedConfig {
 		if ucfg.Server.OAuthPIN != "" {
 			cfg.Server.OAuthPIN = ucfg.Server.OAuthPIN
 		}
+		if ucfg.Server.JWTSecret != "" {
+			cfg.Server.JWTSecret = ucfg.Server.JWTSecret
+		}
+		// Thread task defaults from unified config
+		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
+		cfg.Server.FeatureCheckout = ucfg.Server.FeatureCheckout
+		cfg.Server.Embedding = ucfg.Server.Embedding
+		cfg.Server.Attachments = ucfg.Server.Attachments
+		cfg.Server.AttachmentExtraction = ucfg.Server.AttachmentExtraction
+		cfg.Server.Assistant = ucfg.Server.Assistant
 
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
@@ -525,6 +627,23 @@ func defaultConfig() *UnifiedConfig {
 	}
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.Server.OAuthPIN = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.Server.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_JWT_SECRET"); v != "" {
+		cfg.Server.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_FEATURE_CHECKOUT_ENABLED"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.Server.FeatureCheckout.Enabled = lower == "true" || lower == "1" || lower == "yes"
+	}
+	// Task defaults env var overrides
+	if v := os.Getenv("BRAIN_DEFAULT_AGENT"); v != "" {
+		cfg.Server.TaskDefaults.Agent = v
+	}
+	if v := os.Getenv("BRAIN_DEFAULT_MODEL"); v != "" {
+		cfg.Server.TaskDefaults.Model = v
 	}
 
 	// Load runner config from config file + env vars
@@ -560,11 +679,18 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.LogLevel = cfg.Server.LogLevel
 	cmdCfg.Server.CORSOrigin = cfg.Server.CORSOrigin
 	cmdCfg.Server.OAuthPIN = cfg.Server.OAuthPIN
+	cmdCfg.Server.JWTSecret = cfg.Server.JWTSecret
 	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
 	cmdCfg.Server.LogFile = cfg.Server.LogFile
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
+	cmdCfg.Server.TaskDefaults = cfg.Server.TaskDefaults
+	cmdCfg.Server.FeatureCheckout = cfg.Server.FeatureCheckout
+	cmdCfg.Server.Embedding = cfg.Server.Embedding
+	cmdCfg.Server.Attachments = cfg.Server.Attachments
+	cmdCfg.Server.AttachmentExtraction = cfg.Server.AttachmentExtraction
+	cmdCfg.Server.Assistant = cfg.Server.Assistant
 	// Runner — assign the full config directly, no lossy field-by-field copying
 	cmdCfg.Runner = cfg.Runner
 
@@ -580,13 +706,19 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 // convertToCommandsAPIFlags converts main.APIFlags to commands.APIFlags.
 func convertToCommandsAPIFlags(flags *APIFlags) *commands.APIFlags {
 	return &commands.APIFlags{
-		Port:    flags.Port,
-		Host:    flags.Host,
-		Daemon:  flags.Daemon,
-		LogFile: flags.LogFile,
-		TLS:     flags.TLS,
-		TLSCert: flags.TLSCert,
-		TLSKey:  flags.TLSKey,
+		Port:          flags.Port,
+		Host:          flags.Host,
+		Daemon:        flags.Daemon,
+		LogFile:       flags.LogFile,
+		TLS:           flags.TLS,
+		TLSCert:       flags.TLSCert,
+		TLSKey:        flags.TLSKey,
+		Runner:        flags.Runner,
+		RunnerProject: flags.RunnerProject,
+		MaxParallel:   flags.MaxParallel,
+		Include:       flags.Include,
+		Exclude:       flags.Exclude,
+		Executor:      flags.Executor,
 	}
 }
 
@@ -597,6 +729,8 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Foreground:   flags.Foreground,
 		Headless:     flags.Headless,
 		Dashboard:    flags.Dashboard,
+		Monitor:      flags.Monitor,
+		Runner:       flags.Runner,
 		MaxParallel:  flags.MaxParallel,
 		PollInterval: flags.PollInterval,
 		Workdir:      flags.Workdir,
@@ -618,7 +752,8 @@ func convertToCommandsMCPFlags(flags *MCPFlags) *commands.MCPFlags {
 
 func convertToCommandsTokenFlags(flags *TokenFlags) *commands.TokenFlags {
 	return &commands.TokenFlags{
-		Name: flags.Name,
+		Name:  flags.Name,
+		Scope: flags.Scope,
 	}
 }
 
@@ -784,10 +919,31 @@ func parseDoctorCommand(args []string) (Command, error) {
 // parseConfigCommand creates a ConfigCommand from args.
 func parseConfigCommand(args []string) (Command, error) {
 	cfg := defaultConfig()
+	flags := &commands.ConfigFlags{}
+	subcommand := ""
+
+	for _, arg := range args {
+		switch arg {
+		case "--print":
+			flags.Print = true
+		case "--force", "-f":
+			flags.Force = true
+		default:
+			if strings.HasPrefix(arg, "-") {
+				return nil, fmt.Errorf("unknown config flag: %s", arg)
+			}
+			if subcommand != "" {
+				return nil, fmt.Errorf("unexpected config argument: %s", arg)
+			}
+			subcommand = arg
+		}
+	}
 
 	return &commands.ConfigCommand{
-		Config: convertToCommandsConfig(cfg),
-		Out:    nil, // Will use os.Stdout in Execute if nil
+		Config:     convertToCommandsConfig(cfg),
+		Subcommand: subcommand,
+		Flags:      flags,
+		Out:        nil, // Will use os.Stdout in Execute if nil
 	}, nil
 }
 
@@ -1038,6 +1194,9 @@ func parseAutomationCommand(args []string) (Command, error) {
 	if isHelpArg(subcommand) {
 		return &HelpCommand{command: "automation"}, nil
 	}
+	if subcommand == "goal" {
+		return parseAutomationGoalCommand(args[1:])
+	}
 	if len(args) > 1 && wantsHelp(args[1:]) {
 		return &HelpCommand{command: "automation " + subcommand}, nil
 	}
@@ -1066,5 +1225,201 @@ func parseAutomationCommand(args []string) (Command, error) {
 		IDOrName:   idOrName,
 		Config:     convertToCommandsConfig(cfg),
 		Flags:      convertToCommandsAutomationFlags(flags),
+	}, nil
+}
+
+// parseAutomationGoalCommand creates an AutomationGoalCommand from the args
+// following "automation goal". Usage:
+//
+//	brain automation goal <subcommand> [arg1] [arg2] [flags]
+//
+// The first positional is the project; the second is the goal ID (for `set`,
+// the second positional is the goal objective text stored in GoalID).
+func parseAutomationGoalCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		// Default: list goals.
+		cfg := defaultConfig()
+		flags, _ := ParseAutomationGoalFlags(nil)
+		return &commands.AutomationGoalCommand{
+			Subcommand: "list",
+			Config:     convertToCommandsConfig(cfg),
+			Flags:      convertToCommandsGoalFlags(flags),
+		}, nil
+	}
+
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "automation goal"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "automation goal " + subcommand}, nil
+	}
+
+	subArgs := args[1:]
+
+	// Collect up to two positionals (project, goalId) in order; the rest are flags.
+	var positionals []string
+	var flagArgs []string
+	for i := 0; i < len(subArgs); i++ {
+		arg := subArgs[i]
+		if !isFlag(arg) && len(positionals) < 2 {
+			positionals = append(positionals, arg)
+		} else {
+			flagArgs = append(flagArgs, arg)
+		}
+	}
+
+	project := ""
+	goalID := ""
+	if len(positionals) > 0 {
+		project = positionals[0]
+	}
+	if len(positionals) > 1 {
+		goalID = positionals[1]
+	}
+
+	cfg := defaultConfig()
+	flags, err := ParseAutomationGoalFlags(flagArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.AutomationGoalCommand{
+		Subcommand: subcommand,
+		Project:    project,
+		GoalID:     goalID,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsGoalFlags(flags),
+	}, nil
+}
+
+// =============================================================================
+// Deprecation Alias: brain goal -> brain automation goal
+// =============================================================================
+
+// deprecatedAliasCommand wraps an underlying Command and prints a deprecation
+// notice (to stderr, so stdout/JSON output is unaffected) before delegating
+// Execute to the wrapped command.
+type deprecatedAliasCommand struct {
+	inner  Command
+	notice string
+}
+
+func (c *deprecatedAliasCommand) Execute() error {
+	if c.notice != "" {
+		fmt.Fprintln(os.Stderr, c.notice)
+	}
+	return c.inner.Execute()
+}
+
+func (c *deprecatedAliasCommand) Type() string {
+	return c.inner.Type()
+}
+
+// parseGoalCommand is a thin deprecation shim that delegates "brain goal <sub>"
+// to "brain automation goal <sub>". Help requests pass through to the
+// underlying automation-goal help so users see the canonical command.
+func parseGoalCommand(args []string) (Command, error) {
+	inner, err := parseAutomationGoalCommand(args)
+	if err != nil {
+		return nil, err
+	}
+
+	// Help commands should render directly without a deprecation notice so the
+	// help output stays clean.
+	if _, ok := inner.(*HelpCommand); ok {
+		return inner, nil
+	}
+
+	return &deprecatedAliasCommand{
+		inner:  inner,
+		notice: "Warning: 'brain goal' is deprecated; use 'brain automation goal' instead.",
+	}, nil
+}
+
+// parseAttachmentsCommand creates an AttachmentCommand from args.
+func parseAttachmentsCommand(args []string) (Command, error) {
+	cfg := defaultConfig()
+	if len(args) == 0 {
+		return &commands.AttachmentCommand{Subcommand: "", Config: convertToCommandsConfig(defaultConfig()), Flags: &commands.AttachmentFlags{}}, nil
+	}
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &commands.AttachmentCommand{Config: convertToCommandsConfig(cfg), Flags: &commands.AttachmentFlags{}}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "attachments"}, nil
+	}
+
+	flags, positionals, err := ParseAttachmentFlags(args[1:])
+	if err != nil {
+		return nil, err
+	}
+	cmd := &commands.AttachmentCommand{Subcommand: subcommand, Config: convertToCommandsConfig(cfg), Flags: convertToCommandsAttachmentFlags(flags)}
+	switch subcommand {
+	case "upload":
+		if len(positionals) > 0 {
+			cmd.Path = positionals[0]
+		}
+	case "attach":
+		if len(positionals) > 0 {
+			cmd.Entry = positionals[0]
+		}
+		if len(positionals) > 1 {
+			cmd.AttachmentID = positionals[1]
+		}
+	case "list":
+		if len(positionals) > 0 {
+			cmd.Entry = positionals[0]
+		} else if flags.Entry != "" {
+			cmd.Entry = flags.Entry
+		}
+	case "download", "extract", "delete":
+		if len(positionals) > 0 {
+			cmd.AttachmentID = positionals[0]
+		}
+	case "detach":
+		if len(positionals) > 0 {
+			cmd.Entry = positionals[0]
+		}
+		if len(positionals) > 1 {
+			cmd.AttachmentID = positionals[1]
+		}
+	}
+	return cmd, nil
+}
+
+// parseEmbeddingsCommand creates an EmbeddingsCommand from args.
+// Usage: brain embeddings <subcommand> [flags]
+func parseEmbeddingsCommand(args []string) (Command, error) {
+	if len(args) == 0 {
+		cfg := defaultConfig()
+		return &commands.EmbeddingsCommand{
+			Subcommand: "",
+			Config:     convertToCommandsConfig(cfg),
+			Flags:      &commands.EmbeddingsFlags{},
+		}, nil
+	}
+
+	subcommand := args[0]
+	if isHelpArg(subcommand) {
+		return &HelpCommand{command: "embeddings"}, nil
+	}
+	if len(args) > 1 && wantsHelp(args[1:]) {
+		return &HelpCommand{command: "embeddings " + subcommand}, nil
+	}
+
+	subArgs := args[1:]
+
+	cfg := defaultConfig()
+	flags, err := ParseEmbeddingsFlags(subArgs)
+	if err != nil {
+		return nil, err
+	}
+
+	return &commands.EmbeddingsCommand{
+		Subcommand: subcommand,
+		Config:     convertToCommandsConfig(cfg),
+		Flags:      convertToCommandsEmbeddingsFlags(flags),
 	}, nil
 }

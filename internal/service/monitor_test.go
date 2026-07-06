@@ -117,6 +117,17 @@ func TestBuildMonitorTitle_FeatureScope(t *testing.T) {
 	}
 }
 
+func TestBuildDreamPrompt_UsesValidProjectFilter(t *testing.T) {
+	prompt := buildDreamPrompt(MonitorScope{Type: "project", Project: "brain-api"})
+
+	if strings.Contains(prompt, `type: "dream"brain-api`) {
+		t.Fatalf("dream prompt contains malformed search filter: %s", prompt)
+	}
+	if !strings.Contains(prompt, `brain_search({ query: "Project Dream", type: "dream", project: "brain-api" })`) {
+		t.Fatalf("dream prompt missing valid project-scoped search filter: %s", prompt)
+	}
+}
+
 // =============================================================================
 // MonitorService Tests (with mock BrainService)
 // =============================================================================
@@ -195,7 +206,7 @@ func (m *mockBrainForMonitor) List(_ context.Context, req types.ListEntriesReque
 	}, nil
 }
 
-func (m *mockBrainForMonitor) Recall(_ context.Context, pathOrID string) (*types.BrainEntry, error) {
+func (m *mockBrainForMonitor) Recall(_ context.Context, pathOrID string, include ...string) (*types.BrainEntry, error) {
 	if entry, ok := m.entries[pathOrID]; ok {
 		return entry, nil
 	}
@@ -257,13 +268,13 @@ func (m *mockBrainForMonitor) GetSections(context.Context, string) (*types.Secti
 func (m *mockBrainForMonitor) GetSection(context.Context, string, string, bool) (*types.SectionContentResponse, error) {
 	return nil, nil
 }
-func (m *mockBrainForMonitor) GetStats(context.Context, bool) (*types.StatsResponse, error) {
+func (m *mockBrainForMonitor) GetStats(context.Context, bool, string) (*types.StatsResponse, error) {
 	return nil, nil
 }
-func (m *mockBrainForMonitor) GetOrphans(context.Context, string, int) ([]types.BrainEntry, error) {
+func (m *mockBrainForMonitor) GetOrphans(context.Context, string, int, string) ([]types.BrainEntry, error) {
 	return nil, nil
 }
-func (m *mockBrainForMonitor) GetStale(context.Context, int, string, int) ([]types.BrainEntry, error) {
+func (m *mockBrainForMonitor) GetStale(context.Context, int, string, int, string) ([]types.BrainEntry, error) {
 	return nil, nil
 }
 func (m *mockBrainForMonitor) Verify(context.Context, string) (*types.VerifyResponse, error) {
@@ -305,6 +316,37 @@ func TestMonitorService_Create(t *testing.T) {
 	if !strings.Contains(result.Title, "Blocked Task Inspector") {
 		t.Errorf("expected title to contain 'Blocked Task Inspector', got %s", result.Title)
 	}
+}
+
+func TestMonitorService_CreateBuiltinMonitorStoresReferenceOnly(t *testing.T) {
+	mock := newMockBrainForMonitor()
+	svc := NewMonitorService(mock)
+	ctx := context.Background()
+
+	result, err := svc.Create(ctx, "dream", MonitorScope{Type: "project", Project: "brain-api"}, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	entry, err := mock.Recall(ctx, result.Path)
+	if err != nil {
+		t.Fatalf("recall created monitor: %v", err)
+	}
+	if entry.DirectPrompt != "" {
+		t.Fatalf("DirectPrompt = %q, want empty so built-in prompt resolves live", entry.DirectPrompt)
+	}
+	if !monitorTestContainsString(entry.Tags, "monitor:dream:project:brain-api") {
+		t.Fatalf("created monitor tags = %v, want built-in monitor reference tag", entry.Tags)
+	}
+}
+
+func monitorTestContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestMonitorService_Create_UnknownTemplate(t *testing.T) {

@@ -31,13 +31,26 @@ var (
 
 // Config holds all Brain API configuration.
 type Config struct {
-	BrainDir   string
-	Port       int
-	Host       string
-	EnableAuth bool
-	CORSOrigin string
-	LogLevel   string
-	OAuthPIN   string // Optional PIN for consent page protection
+	BrainDir        string
+	Port            int
+	Host            string
+	EnableAuth      bool
+	CORSOrigin      string
+	LogLevel        string
+	OAuthPIN        string // Optional PIN for consent page protection
+	JWTSecret       string // Optional HMAC secret for HS256 JWT bearer tokens
+	TaskDefaults    TaskDefaultsConfig
+	FeatureCheckout FeatureCheckoutConfig
+	Embedding       EmbeddingConfig
+	Attachments     AttachmentConfig
+
+	AttachmentExtraction AttachmentExtractionConfig
+	Assistant            AssistantConfig
+
+	// Rate limiting (0 = disabled)
+	RateLimitPerMinute int // Per-IP requests per minute (default: 100)
+	RateLimitBurst     int // Maximum burst size per IP (default: same as RateLimitPerMinute)
+	SSEMaxPerIP        int // Maximum concurrent SSE connections per IP (default: 10)
 }
 
 // Load reads configuration with the following priority (highest wins):
@@ -51,15 +64,22 @@ type Config struct {
 func Load() Config {
 	homeDir, _ := os.UserHomeDir()
 
-	// Layer 1: Built-in defaults (aligned with unified.go defaults)
+	// Layer 1: Built-in defaults (aligned with unified.go defaults).
+	// BRAIN_DIR env var is checked here so it applies even when no config file exists.
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		brainDir = filepath.Join(homeDir, ".brain")
+	}
+
 	cfg := Config{
-		BrainDir:   filepath.Join(homeDir, ".brain"),
+		BrainDir:   brainDir,
 		Port:       3333,
 		Host:       "localhost",
 		EnableAuth: false,
 		CORSOrigin: "*",
 		LogLevel:   "info",
 		OAuthPIN:   "",
+		JWTSecret:  "",
 	}
 
 	// Layer 2: Config file overrides
@@ -87,6 +107,16 @@ func Load() Config {
 		if s.OAuthPIN != "" {
 			cfg.OAuthPIN = s.OAuthPIN
 		}
+		if s.JWTSecret != "" {
+			cfg.JWTSecret = s.JWTSecret
+		}
+		// Thread task defaults from unified config
+		cfg.TaskDefaults = s.TaskDefaults
+		cfg.FeatureCheckout = s.FeatureCheckout
+		cfg.Embedding = s.Embedding
+		cfg.Attachments = s.Attachments
+		cfg.AttachmentExtraction = s.AttachmentExtraction
+		cfg.Assistant = s.Assistant
 	}
 
 	// Layer 3: Environment variable overrides (highest priority)
@@ -113,6 +143,40 @@ func Load() Config {
 	}
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.OAuthPIN = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_JWT_SECRET"); v != "" {
+		cfg.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_FEATURE_CHECKOUT_ENABLED"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.FeatureCheckout.Enabled = lower == "true" || lower == "1" || lower == "yes"
+	}
+	// Rate limiting env var overrides
+	if v := os.Getenv("RATE_LIMIT_PER_MINUTE"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RateLimitPerMinute = n
+		}
+	}
+	if v := os.Getenv("RATE_LIMIT_BURST"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.RateLimitBurst = n
+		}
+	}
+	if v := os.Getenv("SSE_MAX_PER_IP"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil {
+			cfg.SSEMaxPerIP = n
+		}
+	}
+
+	// Task defaults env var overrides
+	if v := os.Getenv("BRAIN_DEFAULT_AGENT"); v != "" {
+		cfg.TaskDefaults.Agent = v
+	}
+	if v := os.Getenv("BRAIN_DEFAULT_MODEL"); v != "" {
+		cfg.TaskDefaults.Model = v
 	}
 
 	return cfg

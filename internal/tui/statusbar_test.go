@@ -254,3 +254,23 @@ func TestStatusBarContentElements(t *testing.T) {
 		t.Error("Status bar should contain 'inactive' stat")
 	}
 }
+
+func TestStatusBarShowsEmbeddingStatusBesideBrainConnection(t *testing.T) {
+	sb := NewStatusBar("test-project")
+	sb.Connected = true
+	sb.EmbeddingReady = true
+
+	ready := sb.View(100)
+	if !strings.Contains(ready, "brain") {
+		t.Fatalf("expected status bar to label brain connection, got:\n%s", ready)
+	}
+	if !strings.Contains(ready, "emb") {
+		t.Fatalf("expected status bar to label embedding connection, got:\n%s", ready)
+	}
+
+	sb.EmbeddingReady = false
+	degraded := sb.View(100)
+	if !strings.Contains(degraded, "brain") || !strings.Contains(degraded, "emb") {
+		t.Fatalf("expected degraded status bar to keep both labels, got:\n%s", degraded)
+	}
+}

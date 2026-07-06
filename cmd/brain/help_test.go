@@ -38,6 +38,7 @@ func TestShowHelp_BasicTopics(t *testing.T) {
 		{name: "doctor", topic: "doctor", wants: []string{"brain doctor", "--skip-version-check"}},
 		{name: "install", topic: "install", wants: []string{"brain install", "opencode", "--api-url"}},
 		{name: "token", topic: "token", wants: []string{"brain token", "create", "revoke"}},
+		{name: "attachments", topic: "attachments", wants: []string{"brain attachments", "upload <path>", "download <attachment-id>", "extract <attachment-id>", "delete <attachment-id>"}},
 	}
 
 	for _, tt := range tests {
@@ -49,6 +50,37 @@ func TestShowHelp_BasicTopics(t *testing.T) {
 			for _, want := range tt.wants {
 				if !strings.Contains(output, want) {
 					t.Errorf("help for %q missing %q", tt.topic, want)
+				}
+			}
+		})
+	}
+}
+
+func TestShowHelp_AutomationGoalTopics(t *testing.T) {
+	wants := []string{
+		"brain automation goal",
+		"set <project>",
+		"--trigger-source",
+		"--session-mode",
+		"--criteria",
+		"reconcile",
+	}
+	topics := []string{
+		"automation goal",
+		"automation goal set",
+		"automation goal list",
+		"automation goal run",
+		"automation goal reconcile",
+		"automation goal validate",
+	}
+	for _, topic := range topics {
+		t.Run(topic, func(t *testing.T) {
+			output := captureOutput(func() {
+				ShowHelp(topic)
+			})
+			for _, want := range wants {
+				if !strings.Contains(output, want) {
+					t.Errorf("help for %q missing %q", topic, want)
 				}
 			}
 		})
@@ -77,6 +109,51 @@ func TestShowHelp_SubTopicsAndAliases(t *testing.T) {
 
 			if !strings.Contains(output, tt.want) {
 				t.Errorf("help for %q missing %q", tt.topic, tt.want)
+			}
+		})
+	}
+}
+
+func TestShowHelp_AutomationSurfacesMentionSupportedTriggersAndGuards(t *testing.T) {
+	tests := []struct {
+		name  string
+		topic string
+		wants []string
+	}{
+		{
+			name:  "automation overview",
+			topic: "automation",
+			wants: []string{
+				"event",
+				"cron",
+				"webhook",
+				"session",
+				"cooldown",
+				"max_concurrent",
+			},
+		},
+		{
+			name:  "automation create wizard",
+			topic: "automation create",
+			wants: []string{
+				"Trigger type (event, cron, webhook, session)",
+				"runner.session_discovered",
+				"cooldown",
+				"max_concurrent",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			output := captureOutput(func() {
+				ShowHelp(tt.topic)
+			})
+
+			for _, want := range tt.wants {
+				if !strings.Contains(output, want) {
+					t.Errorf("help for %q missing %q", tt.topic, want)
+				}
 			}
 		})
 	}

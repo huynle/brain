@@ -1,12 +1,16 @@
 package tui
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"sort"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
@@ -40,6 +44,12 @@ const DefaultReconnectDelay = 3 * time.Second
 
 // DefaultMaxLogEntries is the default maximum number of log entries to keep.
 const DefaultMaxLogEntries = 500
+
+const (
+	minTaskPanelHeight   = 8
+	minBottomPanelHeight = 6
+	minSubPanelHeight    = 4
+)
 
 // Model is the root Bubble Tea model for the TUI dashboard.
 type Model struct {
@@ -75,6 +85,15 @@ type Model struct {
 	detailVisible bool
 	logsVisible   bool
 
+	// Global server-request log (Logs tab); refreshed while that tab is active.
+	serverRequests []types.ServerRequestRecord
+
+	// Persisted logs for the task the logs pane is scoped to (Brain/Automations
+	// and filtered Tasks). Fetched from the API so completed tasks show their
+	// stored output, not just the live SSE buffer.
+	scopedTaskLogs  []types.LogLine
+	scopedTaskLogID string
+
 	// Filter state (3-mode state machine: Off → Typing → Locked)
 	filterState FilterMode // Current filter mode
 	filterQuery string     // Current filter text
@@ -93,9 +112,11 @@ type Model struct {
 	selectedTasks map[string]bool
 
 	// Pause/resume state
-	pausedProjects   map[string]bool
-	allPaused        bool
-	runnerController RunnerController // direct reference to embedded runner (nil if standalone)
+	pausedProjects           map[string]bool
+	automationPausedProjects map[string]bool
+	allPaused                bool
+	automationsPaused        bool
+	runnerController         RunnerController // direct reference to embedded runner (nil if standalone)
 
 	// Resource metrics
 	metricsCollector *MetricsCollector
@@ -120,10 +141,169 @@ type Model struct {
 	// Feature toggle execution state
 	enabledFeatures map[string]bool // features toggled on via x key
 
-	// Content tab state (Tasks / Dream / Runners)
-	activeContentTab ContentTab
-	dreamViewer      DreamViewer
-	runnersPanel     RunnersPanel
+	// Content tab state (global Runners/Logs, project Tasks/Brain/Automation)
+	activeContentTab         ContentTab
+	activeAutomationSubTab   AutomationSubTab
+	automationList           AutomationList
+	automationGeneratedTasks []types.BrainEntry
+	// goalAuditByEntry caches the reconcile audit history for goal automation
+	// rows, keyed by the automation entry ID (AutomationListRow.ID). Populated
+	// asynchronously when a goal detail pane syncs (goalDetailAuditMsg).
+	goalAuditByEntry map[string][]types.GoalReconcileAudit
+	// goalDetailRaw caches the raw (un-decorated) entry content for goal detail
+	// rows keyed by entry path, so the detail pane can be re-rendered with the
+	// reconcile section once the audit history loads asynchronously.
+	goalDetailRaw            map[string]string
+	dreamViewer              DreamViewer
+	entryTree                EntryTree
+	brainEntries             []types.BrainEntry
+	brainSearchState         FilterMode
+	brainSearchQuery         string
+	brainSearchLabel         string
+	lastAttachmentClickIndex int
+	lastAttachmentClickTime  time.Time
+
+	// Runner panel state
+	runnerPanel        RunnerPanel
+	runnerPanelVisible bool
+
+	// User-resizable vertical split between the task pane and visible bottom pane.
+	taskPanelHeight        int
+	bottomTopPanelHeight   int
+	splitDragActive        bool
+	bottomSplitDragActive  bool
+	splitDragOffsetY       int
+	bottomSplitDragOffsetY int
+}
+
+func visibleContentTabs() []ContentTab {
+	return []ContentTab{ContentTabRunners, ContentTabLogs, ContentTabBrain, ContentTabTasks, ContentTabAutomation}
+}
+
+func nextContentTab(current ContentTab) ContentTab {
+	tabs := visibleContentTabs()
+	for i, tab := range tabs {
+		if tab == current {
+			return tabs[(i+1)%len(tabs)]
+		}
+	}
+	return ContentTabTasks
+}
+
+func prevContentTab(current ContentTab) ContentTab {
+	tabs := visibleContentTabs()
+	for i, tab := range tabs {
+		if tab == current {
+			return tabs[(i+len(tabs)-1)%len(tabs)]
+		}
+	}
+	return ContentTabTasks
+}
+
+func (m Model) renderContentTabBar() string {
+	activeStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(ColorCyan).Padding(0, 1)
+	inactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("7")).Padding(0, 1)
+	globalActiveStyle := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("0")).Background(lipgloss.Color("6")).Padding(0, 1)
+	globalInactiveStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("6")).Padding(0, 1)
+	dividerStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("8"))
+
+	tab := func(ct ContentTab) string {
+		isGlobal := ct == ContentTabRunners || ct == ContentTabLogs
+		if m.activeContentTab == ct {
+			if isGlobal {
+				return globalActiveStyle.Render(ct.String())
+			}
+			return activeStyle.Render(ct.String())
+		}
+		if isGlobal {
+			return globalInactiveStyle.Render(ct.String())
+		}
+		return inactiveStyle.Render(ct.String())
+	}
+
+	return lipgloss.JoinHorizontal(lipgloss.Center,
+		" ",
+		tab(ContentTabRunners),
+		" ",
+		tab(ContentTabLogs),
+		"   ",
+		dividerStyle.Render("│"),
+		" ",
+		tab(ContentTabBrain),
+		" ",
+		tab(ContentTabTasks),
+		" ",
+		tab(ContentTabAutomation),
+	)
+}
+
+func (m Model) contentTabAtX(x int) (ContentTab, bool) {
+	plain := " "
+	for _, zone := range []struct {
+		tab   ContentTab
+		label string
+	}{
+		{ContentTabRunners, "Runners"},
+		{ContentTabLogs, "Logs"},
+	} {
+		start := len(plain)
+		plain += " " + zone.label + " "
+		end := len(plain)
+		if x >= start && x < end {
+			return zone.tab, true
+		}
+		plain += " "
+	}
+
+	plain += "  │ "
+	for _, zone := range []struct {
+		tab   ContentTab
+		label string
+	}{
+		{ContentTabBrain, "Brain"},
+		{ContentTabTasks, "Tasks"},
+		{ContentTabAutomation, "Automations"},
+	} {
+		start := len(plain)
+		plain += " " + zone.label + " "
+		end := len(plain)
+		if x >= start && x < end {
+			return zone.tab, true
+		}
+		plain += " "
+	}
+
+	return m.activeContentTab, false
+}
+
+func (m Model) automationSubTabAtX(x int) (AutomationSubTab, bool) {
+	plain := " "
+	for _, zone := range []struct {
+		tab   AutomationSubTab
+		label string
+	}{
+		{AutomationSubTabAutomations, "Automations"},
+		{AutomationSubTabDream, "Dream"},
+	} {
+		start := len(plain)
+		plain += " " + zone.label + " "
+		end := len(plain)
+		if x >= start && x < end {
+			return zone.tab, true
+		}
+		plain += " "
+	}
+	return m.activeAutomationSubTab, false
+}
+
+func contentTabCenterX(tab ContentTab) (int, bool) {
+	m := Model{}
+	for x := 0; x < 80; x++ {
+		if got, ok := m.contentTabAtX(x); ok && got == tab {
+			return x, true
+		}
+	}
+	return 0, false
 }
 
 // NewModel creates a new TUI model with the given configuration.
@@ -152,40 +332,54 @@ func NewModel(cfg Config) Model {
 	}
 
 	m := Model{
-		config:           cfg,
-		keymap:           KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
-		statusBar:        NewStatusBar(cfg.Project),
-		helpBar:          NewHelpBar(),
-		taskTree:         NewTaskTree(),
-		taskDetail:       NewTaskDetail(),
-		logViewer:        NewLogViewer(DefaultMaxLogEntries),
-		scheduleList:     NewScheduleList(),
-		scheduleDetail:   NewScheduleDetail(),
-		modalManager:     NewModalManager(),
-		settings:         settings,
-		activePanel:      PanelTasks,
-		sseClient:        NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
-		ctx:              context.Background(),
-		selectedTasks:    make(map[string]bool),
-		pausedProjects:   make(map[string]bool),
-		runnerController: cfg.Runner,
-		tasksByProject:   make(map[string][]types.ResolvedTask),
-		sseClients:       make(map[string]*SSEClient),
-		metricsCollector: NewMetricsCollector(),
-		seenFeatureIDs:   make(map[string]bool),
-		monitorClient:    NewMonitorClient(cfg.APIURL, cfg.APIToken),
-		enabledFeatures:  make(map[string]bool),
-		dreamViewer:      NewDreamViewer(),
-		runnersPanel:     NewRunnersPanel(),
+		config:                   cfg,
+		keymap:                   KeyMapFromConfig(DefaultKeyMap(), cfg.KeyBindings),
+		statusBar:                NewStatusBar(cfg.Project),
+		helpBar:                  NewHelpBar(),
+		taskTree:                 NewTaskTree(),
+		taskDetail:               NewTaskDetail(),
+		logViewer:                NewLogViewer(DefaultMaxLogEntries),
+		scheduleList:             NewScheduleList(),
+		scheduleDetail:           NewScheduleDetail(),
+		modalManager:             NewModalManager(),
+		settings:                 settings,
+		activePanel:              PanelTasks,
+		sseClient:                NewSSEClient(cfg.APIURL, cfg.APIToken, cfg.Project),
+		ctx:                      context.Background(),
+		selectedTasks:            make(map[string]bool),
+		pausedProjects:           make(map[string]bool),
+		automationPausedProjects: make(map[string]bool),
+		runnerController:         cfg.Runner,
+		tasksByProject:           make(map[string][]types.ResolvedTask),
+		sseClients:               make(map[string]*SSEClient),
+		metricsCollector:         NewMetricsCollector(),
+		seenFeatureIDs:           make(map[string]bool),
+		monitorClient:            NewMonitorClient(cfg.APIURL, cfg.APIToken),
+		enabledFeatures:          make(map[string]bool),
+		activeAutomationSubTab:   AutomationSubTabAutomations,
+		automationList:           NewAutomationList(),
+		goalAuditByEntry:         make(map[string][]types.GoalReconcileAudit),
+		goalDetailRaw:            make(map[string]string),
+		dreamViewer:              NewDreamViewer(),
+		entryTree:                NewEntryTree(),
+		runnerPanel:              NewRunnerPanel(),
+		taskPanelHeight:          settings.TaskPanelHeight,
+		bottomTopPanelHeight:     settings.BottomTopPanelHeight,
 	}
 
 	// Wire TextWrap setting to sub-models
 	m.taskTree.TextWrap = settings.TextWrap
 	m.helpBar.TextWrap = settings.TextWrap
+	m.helpBar.ActiveAutomationSubTab = m.activeAutomationSubTab
 
 	// Propagate max parallel setting to the runner on startup
 	if cfg.Runner != nil && settings.GlobalMaxParallel > 0 {
 		cfg.Runner.SetMaxParallel(settings.GlobalMaxParallel)
+	}
+
+	// Propagate default model setting to the runner on startup
+	if cfg.Runner != nil && settings.DefaultModel != "" {
+		cfg.Runner.SetDefaultModel(settings.DefaultModel)
 	}
 
 	// Create SSE clients for multi-project mode
@@ -211,9 +405,16 @@ func NewModel(cfg Config) Model {
 		if cfg.LogDir != "" {
 			logPath = filepath.Join(cfg.LogDir, cfg.Project, "tui-logs.jsonl")
 		} else {
-			homeDir, err := os.UserHomeDir()
-			if err == nil {
-				logPath = filepath.Join(homeDir, ".local", "log", "brain-runner", cfg.Project, "tui-logs.jsonl")
+			// Respect XDG_STATE_HOME for log directory fallback
+			stateHome := os.Getenv("XDG_STATE_HOME")
+			if stateHome == "" {
+				homeDir, err := os.UserHomeDir()
+				if err == nil {
+					stateHome = filepath.Join(homeDir, ".local", "state")
+				}
+			}
+			if stateHome != "" {
+				logPath = filepath.Join(stateHome, "brain-runner", cfg.Project, "tui-logs.jsonl")
 			}
 		}
 		if logPath != "" {
@@ -259,6 +460,7 @@ func (m Model) Init() tea.Cmd {
 		cmds := []tea.Cmd{
 			tea.EnableMouseAllMotion,
 			tickCmd(),
+			fetchAPIHealthCmd(m.apiRunnerConfig()),
 		}
 		for _, client := range m.sseClients {
 			cmds = append(cmds, client.Connect(m.ctx))
@@ -270,6 +472,7 @@ func (m Model) Init() tea.Cmd {
 	return tea.Batch(
 		tea.EnableMouseAllMotion,
 		m.sseClient.Connect(m.ctx),
+		fetchAPIHealthCmd(m.apiRunnerConfig()),
 		tickCmd(),
 	)
 }
@@ -300,13 +503,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case TasksUpdatedMsg:
 		// Always store tasks by project if ProjectID is set
 		if msg.ProjectID != "" {
-			m.tasksByProject[msg.ProjectID] = msg.Tasks
+			m.tasksByProject[msg.ProjectID] = visibleTaskRows(msg.Tasks)
 		}
 		// In single-project mode, always update m.tasks directly
 		// (SSE events include ProjectID even for single-project connections,
 		// but syncActiveProjectView is a no-op in single-project mode)
 		if !m.config.IsMultiProject() {
-			m.tasks = msg.Tasks
+			m.tasks = visibleTaskRows(msg.Tasks)
 		}
 
 		// Update stats if provided
@@ -321,7 +524,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.statusBar.Stats = m.stats
 			} else {
 				// Single-project mode: set stats directly
-				m.stats = tuiStats
+				m.stats = displayStatsForTasks(msg.Tasks, tuiStats)
 				m.statusBar.Stats = m.stats
 			}
 		}
@@ -349,9 +552,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			nextCmd = m.sseClient.WaitForNextMsg()
 		}
 
-		// Batch SSE continuation with any auto-monitor commands
-		if len(autoMonitorCmds) > 0 {
-			allCmds := append([]tea.Cmd{nextCmd}, autoMonitorCmds...)
+		// Batch SSE continuation with any auto-monitor commands and automation refreshes.
+		additionalCmds := autoMonitorCmds
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			additionalCmds = append(additionalCmds, m.fetchAutomationListCmd())
+		}
+		if len(additionalCmds) > 0 {
+			allCmds := append([]tea.Cmd{nextCmd}, additionalCmds...)
 			return m, tea.Batch(allCmds...)
 		}
 		return m, nextCmd
@@ -410,12 +617,96 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.truncateCounter = 0
 		}
 		// Schedule next tick and sync runner pause state
-		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig())}
-		// Poll runner list when Runners tab is active (every tick = ~2s)
-		if m.activeContentTab == ContentTabRunners {
-			cmds = append(cmds, fetchRunnersListCmd(m.apiRunnerConfig()))
+		cmds := []tea.Cmd{tickCmd(), fetchRunnerStatusCmd(m.apiRunnerConfig()), fetchAPIHealthCmd(m.apiRunnerConfig())}
+		// Always fetch runners for status bar metrics (data goes to both panel and status bar)
+		cmds = append(cmds, fetchRunnerListCmd(m.apiRunnerConfig()))
+		// Refresh the global server-request log while the Logs tab is active.
+		if m.activeContentTab == ContentTabLogs {
+			cmds = append(cmds, fetchServerRequestsCmd(m.apiRunnerConfig()))
+		}
+		// Refresh the scoped task's persisted logs while the logs pane is open.
+		if c := m.maybeFetchScopedLogs(); c != nil {
+			cmds = append(cmds, c)
 		}
 		return m, tea.Batch(cmds...)
+
+	case serverRequestsMsg:
+		if msg.err == nil {
+			m.serverRequests = msg.requests
+		}
+		return m, nil
+
+	case taskLogsLoadedMsg:
+		if msg.err == nil {
+			m.scopedTaskLogID = msg.taskID
+			m.scopedTaskLogs = msg.lines
+		}
+		return m, nil
+
+	case RunnerListMsg:
+		if msg.Err == nil {
+			m.runnerPanel.SetRunners(msg.Runners)
+			// Compute runner metrics for status bar
+			m.statusBar.RunnerMetrics = computeRunnerMetrics(msg.Runners)
+		}
+		return m, nil
+
+	case apiHealthMsg:
+		if msg.err != nil || msg.health.Status == "unhealthy" {
+			m.statusBar.EmbeddingReady = false
+			return m, nil
+		}
+		m.statusBar.EmbeddingReady = msg.health.Embedding.Enabled && msg.health.Embedding.Status == "ready"
+		return m, nil
+
+	case BrainEntriesMsg:
+		if msg.Err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to fetch brain entries: %v", msg.Err))
+			return m, nil
+		}
+		m.brainEntries = append([]types.BrainEntry(nil), msg.Entries...)
+		m.entryTree.SetEntries(msg.Entries)
+		m.clearBrainSearch()
+		if m.activeContentTab == ContentTabBrain && m.detailVisible {
+			return m, m.syncBrainEntryDetail()
+		}
+		return m, nil
+
+	case BrainSearchMsg:
+		if msg.Err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Brain search failed: %v", msg.Err))
+			return m, nil
+		}
+		m.brainSearchState = FilterLocked
+		m.brainSearchQuery = msg.Query
+		m.brainSearchLabel = msg.Strategy
+		m.entryTree.SetSearchResults(msg.Entries)
+		if m.activeContentTab == ContentTabBrain && m.detailVisible {
+			return m, m.syncBrainEntryDetail()
+		}
+		return m, nil
+
+	case BrainEmbeddingBackfillMsg:
+		if msg.Err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Embedding backfill failed: %v", msg.Err))
+			return m, nil
+		}
+		scope := msg.Project
+		if msg.All || scope == "" {
+			scope = "all entries"
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Embedded %s: %d processed, %d skipped, %d failed", scope, msg.Result.Processed, msg.Result.Skipped, msg.Result.Failed))
+		return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+
+	case runnerShutdownRequestedMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to shutdown runner %s: %v", msg.runnerID, msg.err))
+			m.addLog("error", fmt.Sprintf("Runner shutdown failed: %s: %v", msg.runnerID, msg.err))
+			return m, nil
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Shutdown requested for runner %s", msg.runnerID))
+		m.addLog("info", fmt.Sprintf("Runner shutdown requested: %s", msg.runnerID))
+		return m, fetchRunnerListCmd(m.apiRunnerConfig())
 
 	case taskCompletedMsg:
 		if msg.err != nil {
@@ -488,8 +779,48 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case featureAssignmentResultMsg:
+		m.modalManager.Close()
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to %s feature %s: %v", msg.action, msg.featureID, msg.err))
+			m.addLog("error", fmt.Sprintf("Feature assignment %s failed for runner %s feature %s: %v", msg.action, msg.runnerID, msg.featureID, msg.err))
+		} else {
+			if msg.action == "clear" {
+				m.setStatusMessage("success", fmt.Sprintf("Cleared assignment for %s", msg.featureID))
+				m.addLog("info", fmt.Sprintf("Feature %s assignment cleared", msg.featureID))
+			} else {
+				m.setStatusMessage("success", fmt.Sprintf("Assigned %s to runner %s", msg.featureID, msg.runnerID))
+				m.addLog("info", fmt.Sprintf("Feature %s assigned to runner %s via %s", msg.featureID, msg.runnerID, msg.action))
+			}
+			// Refresh runner list to show updated assignments.
+			return m, fetchRunnerListCmd(m.apiRunnerConfig())
+		}
+		return m, nil
+
 	case LogEntryMsg:
 		m.logViewer.AddEntry(msg.Entry)
+		return m, nil
+
+	case RunnerLogMsg:
+		// Convert runner_log SSE event lines to LogEntry and add to viewer.
+		// This enables monitor-only mode to display logs from remote runners.
+		// In hybrid mode, these remote logs are merged chronologically with local logs.
+		for _, line := range msg.Lines {
+			ts, err := time.Parse(time.RFC3339, line.Timestamp)
+			if err != nil {
+				// Fallback to current time if parse fails
+				ts = time.Now()
+			}
+			entry := LogEntry{
+				Timestamp: ts,
+				Level:     line.Level,
+				Message:   line.Content,
+				TaskID:    msg.TaskID,
+				ProjectID: msg.ProjectID,
+				RunnerID:  msg.RunnerID,
+			}
+			m.logViewer.AddEntry(entry)
+		}
 		return m, nil
 
 	case SessionDiscoveredMsg:
@@ -516,8 +847,162 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case RunnersUpdatedMsg:
-		m.runnersPanel.SetRunners(msg.Runners)
+	case DreamConfigMsg:
+		if msg.Error != nil {
+			m.dreamViewer.SetDreamConfigError(msg.Error.Error())
+		} else if msg.Config != nil {
+			m.dreamViewer.SetDreamConfig(*msg.Config)
+		}
+		return m, nil
+
+	case AutomationDataMsg:
+		if msg.Error != nil {
+			m.automationList.SetError(msg.Error.Error())
+			return m, nil
+		}
+		m.automationGeneratedTasks = msg.GeneratedTasks
+		m.automationList.SetEntryRows(msg.Automations, msg.ScheduledTasks, msg.GeneratedTasks)
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations && m.detailVisible {
+			return m, m.syncAutomationEntryDetail()
+		}
+		return m, nil
+
+	case BrainEntryContentMsg:
+		if !m.detailVisible || msg.Path == "" || msg.Path != m.taskDetail.entryPath {
+			return m, nil
+		}
+		header := "Entry Detail"
+		if m.activeContentTab == ContentTabAutomation {
+			header = "Automation Detail"
+		}
+		if msg.Err != nil {
+			m.taskDetail.SetEntryError(msg.Path, msg.Title, msg.Type, msg.Err, header)
+			return m, nil
+		}
+		content := msg.Content
+		if m.activeContentTab == ContentTabAutomation && msg.Type == "automation" {
+			// Cache raw automation content so the detail pane can be re-decorated
+			// when async data loads or the generated-task cursor moves.
+			if row := m.automationList.SelectedRow(); row != nil && row.Path == msg.Path {
+				if m.goalDetailRaw == nil {
+					m.goalDetailRaw = make(map[string]string)
+				}
+				m.goalDetailRaw[msg.Path] = msg.Content
+			}
+			content = m.automationDetailContent(msg.Path, content)
+		}
+		attachments := m.taskDetail.entryAttachments
+		if msg.Attachments != nil {
+			attachments = msg.Attachments
+		}
+		m.taskDetail.SetEntryContentWithAttachments(msg.Path, msg.Title, msg.Type, content, attachments, header)
+		return m, nil
+
+	case AttachmentActionMsg:
+		if msg.Err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Attachment %s failed: %v", msg.Action, msg.Err))
+			m.addLog("error", fmt.Sprintf("Attachment %s failed for %s: %v", msg.Action, msg.AttachmentID, msg.Err))
+			return m, nil
+		}
+		if msg.Action == "extract" {
+			status := attachmentDisplayValue(msg.Status, "complete")
+			detail := status
+			if msg.Provider != "" || msg.Model != "" {
+				detail = fmt.Sprintf("%s via %s / %s", status, attachmentDisplayValue(msg.Provider, "unknown provider"), attachmentDisplayValue(msg.Model, "unknown model"))
+			}
+			m.setStatusMessage("success", fmt.Sprintf("Attachment extract %s: %s", detail, msg.AttachmentID))
+			m.addLog("info", fmt.Sprintf("Attachment extract %s for %s", detail, msg.AttachmentID))
+			return m, nil
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Attachment %s complete: %s", msg.Action, msg.Path))
+		m.addLog("info", fmt.Sprintf("Attachment %s complete: %s", msg.Action, msg.Path))
+		return m, nil
+
+	case AutomationToggleMsg:
+		if msg.Error != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation: %v", msg.Error))
+			return m, nil
+		}
+		m.setStatusMessage("success", "Automation updated")
+		return m, m.refreshActiveAutomationSubTab()
+
+	case AutomationRunMsg:
+		if msg.Error != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to run automation: %v", msg.Error))
+			return m, nil
+		}
+		m.setStatusMessage("success", fmt.Sprintf("Automation run queued: %s", msg.TaskID))
+		return m, m.refreshActiveAutomationSubTab()
+
+	case AutomationDeletedMsg:
+		if m.modalManager.IsOpen() {
+			m.modalManager.Close()
+		}
+		if msg.Error != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to delete automation: %v", msg.Error))
+			return m, nil
+		}
+		m.setStatusMessage("success", "Automation deleted")
+		return m, m.refreshActiveAutomationSubTab()
+
+	case goalConfigOpenMsg:
+		// Resolved goal summary -> open the GoalConfigModal. Opening a modal
+		// mutates the manager, so it must happen here on the Model.
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Failed to load goal: %v", msg.err))
+			return m, nil
+		}
+		if msg.summary == nil {
+			m.setStatusMessage("error", "Goal summary unavailable")
+			return m, nil
+		}
+		modal := NewGoalConfigModal(*msg.summary, runner.NewAPIClient(m.apiRunnerConfig()))
+		return m, m.modalManager.Open(modal)
+
+	case goalConfigSavedMsg:
+		if msg.err != nil {
+			verb := "save"
+			if msg.created {
+				verb = "create"
+			}
+			m.setStatusMessage("error", fmt.Sprintf("Failed to %s goal: %v", verb, msg.err))
+			return m, nil
+		}
+		if msg.created {
+			m.setStatusMessage("success", "Goal created")
+		} else {
+			m.setStatusMessage("success", "Goal updated")
+		}
+		m.modalManager.Close()
+		return m, m.refreshActiveAutomationSubTab()
+
+	case goalReconcileResultMsg:
+		if msg.err != nil {
+			m.setStatusMessage("error", fmt.Sprintf("Reconcile failed: %v", msg.err))
+			return m, nil
+		}
+		if msg.audit != nil {
+			m.setStatusMessage("success", fmt.Sprintf("Reconcile: %s — %s", string(msg.audit.Decision), msg.audit.Reason))
+		} else {
+			m.setStatusMessage("success", "Reconcile complete")
+		}
+		return m, m.refreshActiveAutomationSubTab()
+
+	case goalDetailAuditMsg:
+		if msg.err == nil {
+			if m.goalAuditByEntry == nil {
+				m.goalAuditByEntry = make(map[string][]types.GoalReconcileAudit)
+			}
+			m.goalAuditByEntry[msg.entryID] = msg.audit
+		}
+		// Re-render the goal detail pane with the now-available reconcile
+		// history, using the cached raw content for the matching path.
+		if row := m.automationList.SelectedRow(); row != nil && row.IsGoal && row.ID == msg.entryID && m.detailVisible {
+			if raw, ok := m.goalDetailRaw[row.Path]; ok {
+				content := m.automationDetailContent(row.Path, raw)
+				m.taskDetail.SetEntryContent(row.Path, row.Title, "automation", content, "Automation Detail")
+			}
+		}
 		return m, nil
 
 	case featureExecutedMsg:
@@ -638,14 +1123,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			// Sync changes back to API
 			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
-			_, err = apiClient.UpdateEntry(context.Background(), msg.taskPath, map[string]interface{}{
-				"content": string(newContent),
-			})
+			if msg.fullContent {
+				err = apiClient.UpdateEntryFull(context.Background(), msg.taskPath, string(newContent))
+			} else {
+				_, err = apiClient.UpdateEntry(context.Background(), msg.taskPath, map[string]interface{}{
+					"content": string(newContent),
+				})
+			}
 			if err != nil {
 				m.setStatusMessage("error", fmt.Sprintf("✗ Failed to sync changes: %v", err))
 				return m, nil
 			}
 
+			if msg.fullContent {
+				m.setStatusMessage("success", "✓ Entry updated from editor")
+				return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+			}
 			m.setStatusMessage("success", "✓ Task updated from editor")
 		} else {
 			m.setStatusMessage("success", "✓ File saved - refreshing...")
@@ -687,12 +1180,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncHelpBarPauseState()
 		return m, nil
 
+	case automationsPauseToggledMsg:
+		if msg.projectID == "" {
+			if msg.err != nil {
+				m.automationsPaused = !msg.paused
+				m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation pause: %v", msg.err))
+			} else if msg.paused {
+				m.setStatusMessage("success", "Automations paused")
+				m.addLog("info", "Automations paused")
+			} else {
+				m.setStatusMessage("success", "Automations resumed")
+				m.addLog("info", "Automations resumed")
+			}
+		} else {
+			if msg.err != nil {
+				m.automationPausedProjects[msg.projectID] = !msg.paused
+				m.setStatusMessage("error", fmt.Sprintf("Failed to toggle automation pause for %s: %v", msg.projectID, msg.err))
+			} else if msg.paused {
+				m.setStatusMessage("success", fmt.Sprintf("Automations paused for %s", msg.projectID))
+				m.addLog("info", fmt.Sprintf("Automations paused for %s", msg.projectID))
+			} else {
+				m.setStatusMessage("success", fmt.Sprintf("Automations resumed for %s", msg.projectID))
+				m.addLog("info", fmt.Sprintf("Automations resumed for %s", msg.projectID))
+			}
+		}
+		m.syncHelpBarPauseState()
+		return m, nil
+
 	case runnerStatusMsg:
 		if msg.err == nil {
 			// If we have a direct runner controller, get pause state from it
 			// instead of from the API server's separate RunnerService
 			if m.runnerController != nil {
 				m.allPaused = m.runnerController.IsAllPaused()
+				m.automationsPaused = m.runnerController.IsAutomationsPaused()
+				m.automationPausedProjects = make(map[string]bool)
+				for _, proj := range m.config.Projects {
+					if m.runnerController.IsAutomationsPausedForProject(proj) && !m.runnerController.IsAutomationsPaused() {
+						m.automationPausedProjects[proj] = true
+					}
+				}
 				// Per-project pause state from the embedded runner
 				m.pausedProjects = make(map[string]bool)
 				for _, proj := range m.config.Projects {
@@ -702,6 +1229,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else {
 				m.allPaused = msg.paused
+				m.automationsPaused = msg.automationsPaused
+				m.automationPausedProjects = make(map[string]bool)
+				for _, id := range msg.automationPausedProjects {
+					m.automationPausedProjects[id] = true
+				}
 				m.pausedProjects = make(map[string]bool)
 				for _, id := range msg.pausedProjects {
 					m.pausedProjects[id] = true
@@ -744,8 +1276,21 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.runnerController != nil && settings.GlobalMaxParallel > 0 {
 				m.runnerController.SetMaxParallel(settings.GlobalMaxParallel)
 			}
+
+			// Propagate default model setting to the runner
+			if m.runnerController != nil {
+				m.runnerController.SetDefaultModel(settings.DefaultModel)
+			}
 		}
 		return m, nil
+
+	case projectSelectedMsg:
+		m.modalManager.Close()
+		return m.selectProject(msg.projectID)
+
+	case attachmentModalActionMsg:
+		m.modalManager.Close()
+		return m, brainAttachmentActionCmd(m.apiRunnerConfig(), m.currentProjectID(), msg.Attachment, msg.Action)
 	}
 
 	// Route unhandled messages to the active modal (e.g., metadataFetchedMsg,
@@ -763,7 +1308,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.(type) {
 		case sessionSelectedMsg, taskExecutedMsg, featureExecutedMsg, taskCompletedMsg, taskCancelledMsg,
 			batchTasksCompletedMsg, batchTasksCancelledMsg, taskDeletedMsg, batchTasksDeletedMsg,
-			sessionOpenedMsg, statusPickerResultMsg:
+			sessionOpenedMsg, statusPickerResultMsg, AutomationDeletedMsg,
+			goalConfigOpenMsg, goalConfigSavedMsg, goalReconcileResultMsg:
 			// Let these fall through to the main switch above (they won't match
 			// because we're past it, so we need to handle them here)
 		default:
@@ -791,9 +1337,24 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// If on Dream tab with search typing mode, handle search input first
-	if m.activeContentTab == ContentTabDream && m.dreamViewer.SearchMode() == DreamSearchTyping {
+	// If on Automation > Dream with search typing mode, handle search input first
+	if m.isAutomationDreamActive() && m.dreamViewer.SearchMode() == DreamSearchTyping {
 		return m.handleDreamSearchInput(msg)
+	}
+	if m.activeContentTab == ContentTabBrain && m.brainSearchState == FilterTyping {
+		return m.handleBrainSearchInput(msg)
+	}
+	if m.activeContentTab == ContentTabBrain && m.brainSearchState == FilterLocked {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.clearBrainSearch()
+			return m, nil
+		case tea.KeyRunes:
+			if string(msg.Runes) == "/" {
+				m.brainSearchState = FilterTyping
+				return m, nil
+			}
+		}
 	}
 
 	// If in filter typing mode, handle filter input first
@@ -826,15 +1387,18 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Configurable keybindings (checked via key.Matches before hardcoded switch).
-	// These must be checked before the msg.Type switch because some bindings
-	// (e.g., ctrl+l) use special key types, not KeyRunes.
-	// Skip toggle-logs in multi-project mode where 'l' is used for project tab navigation
-	if key.Matches(msg, m.keymap.ToggleLogs) && !m.config.IsMultiProject() {
+	// h/l navigate content tabs; H/L (shift) switch projects in multi-project
+	// mode. The guard keeps a custom logs binding from shadowing project nav.
+	if key.Matches(msg, m.keymap.ToggleLogs) && !(m.config.IsMultiProject() && key.Matches(msg, m.keymap.NextTab)) {
 		m.logsVisible = !m.logsVisible
 		if !m.logsVisible && m.activePanel == PanelLogs {
 			m.activePanel = PanelTasks
 		}
 		m.syncPanelSizes()
+		if m.logsVisible {
+			// Load the scoped task's persisted logs immediately.
+			return m, m.maybeFetchScopedLogs()
+		}
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.ToggleDetail) {
@@ -843,6 +1407,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.activePanel = PanelTasks
 		}
 		if m.detailVisible {
+			if m.activeContentTab == ContentTabBrain {
+				return m, m.syncBrainEntryDetail()
+			}
+			if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+				return m, m.syncAutomationEntryDetail()
+			}
 			m.syncTaskDetail()
 		} else {
 			m.syncPanelSizes()
@@ -850,90 +1420,71 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.NextContentTab) {
-		if m.activeContentTab < ContentTabRunners {
-			m.activeContentTab++
-		} else {
-			m.activeContentTab = ContentTabTasks
-		}
+		m.activeContentTab = nextContentTab(m.activeContentTab)
 		m.helpBar.ActiveContentTab = m.activeContentTab
-		// Fetch dream content lazily when switching to Dream tab
-		if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
-			m.dreamViewer.SetLoading(true)
-			project := m.config.Project
-			if m.activeProjectID != "" && m.activeProjectID != "all" {
-				project = m.activeProjectID
-			}
-			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
-		}
-		// Fetch runners lazily when switching to Runners tab
+		m.helpBar.ActiveAutomationSubTab = m.activeAutomationSubTab
 		if m.activeContentTab == ContentTabRunners {
-			return m, fetchRunnersListCmd(m.apiRunnerConfig())
+			m.activePanel = PanelRunners
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchRunnerListCmd(m.apiRunnerConfig())
+		}
+		if m.activeContentTab == ContentTabLogs {
+			m.activePanel = PanelLogs
+			m.helpBar.ActivePanel = m.activePanel
+			m.syncPanelSizes()
+			return m, fetchServerRequestsCmd(m.apiRunnerConfig())
+		}
+		if m.activeContentTab == ContentTabBrain {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+		}
+		if m.activeContentTab == ContentTabTasks {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+		}
+		if m.activeContentTab == ContentTabAutomation {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, m.prepareActiveAutomationFetch()
 		}
 		return m, nil
 	}
 	if key.Matches(msg, m.keymap.PrevContentTab) {
-		if m.activeContentTab > ContentTabTasks {
-			m.activeContentTab--
-		} else {
-			m.activeContentTab = ContentTabRunners
-		}
+		m.activeContentTab = prevContentTab(m.activeContentTab)
 		m.helpBar.ActiveContentTab = m.activeContentTab
-		// Fetch dream content lazily when switching to Dream tab
-		if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
-			m.dreamViewer.SetLoading(true)
-			project := m.config.Project
-			if m.activeProjectID != "" && m.activeProjectID != "all" {
-				project = m.activeProjectID
-			}
-			return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
-		}
-		// Fetch runners lazily when switching to Runners tab
+		m.helpBar.ActiveAutomationSubTab = m.activeAutomationSubTab
 		if m.activeContentTab == ContentTabRunners {
-			return m, fetchRunnersListCmd(m.apiRunnerConfig())
+			m.activePanel = PanelRunners
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchRunnerListCmd(m.apiRunnerConfig())
+		}
+		if m.activeContentTab == ContentTabLogs {
+			m.activePanel = PanelLogs
+			m.helpBar.ActivePanel = m.activePanel
+			m.syncPanelSizes()
+			return m, fetchServerRequestsCmd(m.apiRunnerConfig())
+		}
+		if m.activeContentTab == ContentTabBrain {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+		}
+		if m.activeContentTab == ContentTabTasks {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+		}
+		if m.activeContentTab == ContentTabAutomation {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, m.prepareActiveAutomationFetch()
 		}
 		return m, nil
 	}
 
-	// When on Runners tab, handle runner-specific keys
-	if m.activeContentTab == ContentTabRunners {
-		switch msg.Type {
-		case tea.KeyCtrlC:
-			m.sseClient.Stop()
-			return m, tea.Quit
-		case tea.KeyEsc:
-			m.activeContentTab = ContentTabTasks
-			m.helpBar.ActiveContentTab = m.activeContentTab
-			return m, nil
-		}
-		switch string(msg.Runes) {
-		case "j":
-			m.runnersPanel.MoveDown()
-			return m, nil
-		case "k":
-			m.runnersPanel.MoveUp()
-			return m, nil
-		case "g":
-			m.runnersPanel.GotoTop()
-			return m, nil
-		case "G":
-			m.runnersPanel.GotoBottom()
-			return m, nil
-		case "r":
-			// Refresh runners list
-			return m, fetchRunnersListCmd(m.apiRunnerConfig())
-		case "q":
-			m.sseClient.Stop()
-			return m, tea.Quit
-		case "?":
-			m.modalManager.Open(NewHelpModal(m.config.IsMultiProject()))
-			return m, nil
-		}
-		return m, nil
-	}
-
-	// When on Dream tab, forward non-rune keys (ctrl+d/u/f/b, arrows, pgup/pgdn)
+	// When on Automation > Dream, forward non-rune keys (ctrl+d/u/f/b, arrows, pgup/pgdn)
 	// to the viewport for vim-style scrolling. Only intercept quit keys.
-	if m.activeContentTab == ContentTabDream {
+	if m.isAutomationDreamActive() {
 		switch msg.Type {
 		case tea.KeyCtrlC:
 			m.sseClient.Stop()
@@ -956,6 +1507,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.Type {
 	case tea.KeyBackspace:
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			return m, m.deleteSelectedAutomationRunTask()
+		}
 		// Delete task(s) - with confirmation modal (tasks view only)
 		// Only handle when NOT in filter mode (filter mode consumes backspace for editing)
 		if m.filterState == FilterOff && m.viewMode == ViewModeTasks && m.activePanel == PanelTasks {
@@ -1011,11 +1565,22 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 
 	case tea.KeyTab:
-		m.activePanel = NextPanel(m.activePanel, m.detailVisible, m.logsVisible)
+		if m.runnerPanelVisible {
+			m.activePanel = NextPanelWithRunners(m.activePanel, m.detailVisible, m.logsVisible, true)
+		} else {
+			m.activePanel = NextPanel(m.activePanel, m.detailVisible, m.logsVisible)
+		}
 		m.helpBar.ActivePanel = m.activePanel
 		return m, nil
 
 	case tea.KeyEnter:
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			m.automationList.ToggleExpandedSelected()
+			return m, nil
+		}
+		if m.activeContentTab == ContentTabBrain && m.entryTree.ToggleCollapse() {
+			return m, nil
+		}
 		// Enter toggles group collapse when on a group header
 		if m.activePanel == PanelTasks && m.taskTree.IsOnGroupHeader() {
 			m.taskTree.ToggleCollapse()
@@ -1023,6 +1588,12 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeySpace:
+		if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+			return m, m.toggleSelectedAutomationRow()
+		}
+		if m.activeContentTab == ContentTabBrain && m.entryTree.ToggleCollapse() {
+			return m, nil
+		}
 		// Space toggles group collapse when on group header, selection when on task.
 		// NOTE: Bubbletea sends Space as KeySpace (not KeyRunes with ' '), so this
 		// must be handled separately from the KeyRunes switch below.
@@ -1036,31 +1607,104 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyRunes:
-		// Multi-project tab navigation
+		// Multi-project tab navigation: H/L (shift) switch projects, leaving
+		// h/l for content-tab navigation (handled above via the keymap).
 		if m.config.IsMultiProject() {
 			switch string(msg.Runes) {
-			case "h", "[":
+			case "H":
 				m.projectTabs.PrevTab()
-				m.activeProjectID = m.projectTabs.ActiveProject()
-				m.syncActiveProjectView()
-				return m, nil
-			case "l", "]":
+				return m.selectProject(m.projectTabs.ActiveProject())
+			case "L":
 				m.projectTabs.NextTab()
-				m.activeProjectID = m.projectTabs.ActiveProject()
-				m.syncActiveProjectView()
-				return m, nil
+				return m.selectProject(m.projectTabs.ActiveProject())
 			case "1", "2", "3", "4", "5", "6", "7", "8", "9":
 				tabNum := int(msg.Runes[0] - '0')
 				if m.projectTabs.JumpToTab(tabNum) {
-					m.activeProjectID = m.projectTabs.ActiveProject()
-					m.syncActiveProjectView()
-					return m, nil
+					return m.selectProject(m.projectTabs.ActiveProject())
 				}
 			}
 		}
 
-		// When on Dream tab, handle dream-specific keys then forward the rest to the viewport
-		if m.activeContentTab == ContentTabDream {
+		// When on Automation tab, handle active-subtab keys.
+		if m.activeContentTab == ContentTabAutomation {
+			if m.activeAutomationSubTab == AutomationSubTabAutomations && msg.String() == "enter" {
+				m.automationList.ToggleExpandedSelected()
+				return m, nil
+			}
+			if m.activePanel == PanelDetails {
+				switch string(msg.Runes) {
+				case "j":
+					m.taskDetail.ScrollDown()
+					return m, nil
+				case "k":
+					m.taskDetail.ScrollUp()
+					return m, nil
+				case "g":
+					m.taskDetail.ScrollToTop()
+					return m, nil
+				case "G":
+					m.taskDetail.ScrollToBottom()
+					return m, nil
+				}
+			}
+			if m.activeAutomationSubTab == AutomationSubTabAutomations {
+				switch string(msg.Runes) {
+				case "o":
+					return m, m.openSessionForAutomationGeneratedTask(false)
+				case "O":
+					return m, m.openSessionForAutomationGeneratedTask(true)
+				case "d":
+					return m, m.deleteSelectedAutomationItem()
+				case "s":
+					return m, m.openSelectedAutomationMetadata()
+				case "j", "k", "g", "G":
+					m.automationList.Update(msg)
+					if m.detailVisible {
+						return m, m.syncAutomationEntryDetail()
+					}
+					return m, nil
+				case "n":
+					// Create a brand-new goal automation.
+					modal := NewGoalCreateModal(m.activeAutomationProject(), runner.NewAPIClient(m.apiRunnerConfig()))
+					return m, m.modalManager.Open(modal)
+				case "e":
+					// Goal rows open the GoalConfigModal; non-goal rows open $EDITOR.
+					if row := m.automationList.SelectedRow(); row != nil && row.IsGoal {
+						return m, m.editSelectedGoalRow()
+					}
+					return m, m.editSelectedAutomationRow()
+				case "r":
+					return m, m.refreshActiveAutomationSubTab()
+				case " ":
+					// Toggle enable/disable. For goals this flips the underlying
+					// automation entry status (active <-> archived), same as any
+					// automation entry — toggleSelectedAutomationRow handles both.
+					return m, m.toggleSelectedAutomationRow()
+				case "x":
+					if _, ok := m.automationList.SelectedRunTask(); ok {
+						return m, m.executeSelectedAutomationRunTask()
+					}
+					// Goal rows run an inline reconcile via RunGoal; non-goal rows
+					// use the generic manual-run that creates a task.
+					if row := m.automationList.SelectedRow(); row != nil && row.IsGoal {
+						return m, m.runSelectedGoalRow()
+					}
+					return m, m.runSelectedAutomationRow()
+				case "p":
+					cmd := m.toggleAutomationPauseForActiveScope()
+					return m, cmd
+				case "q":
+					m.sseClient.Stop()
+					return m, tea.Quit
+				case "?":
+					modal := NewHelpModal(m.config.IsMultiProject())
+					cmd := m.modalManager.Open(modal)
+					return m, cmd
+				}
+				return m, nil
+			}
+
+			// Automation > Dream: handle dream-specific keys then forward the rest to the viewport.
 			switch string(msg.Runes) {
 			case "/":
 				m.dreamViewer.StartSearch()
@@ -1082,13 +1726,7 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.dreamViewer.GotoBottom()
 				return m, nil
 			case "r":
-				// Re-fetch dream content
-				m.dreamViewer.SetLoading(true)
-				project := m.config.Project
-				if m.activeProjectID != "" && m.activeProjectID != "all" {
-					project = m.activeProjectID
-				}
-				return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
+				return m, m.refreshActiveAutomationSubTab()
 			case "q":
 				m.sseClient.Stop()
 				return m, tea.Quit
@@ -1103,12 +1741,99 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, cmd
 		}
 
+		if m.activeContentTab == ContentTabBrain {
+			if m.activePanel == PanelDetails {
+				switch string(msg.Runes) {
+				case "a":
+					if !m.taskDetail.HasEntryAttachments() {
+						m.setStatusMessage("info", "No attachments on selected entry")
+						return m, nil
+					}
+					modal := NewAttachmentModal(m.taskDetail.entryAttachments, m.taskDetail.selectedAttachment)
+					return m, m.modalManager.Open(modal)
+				case "A":
+					if !m.taskDetail.SelectPrevAttachment() {
+						m.setStatusMessage("info", "No attachments on selected entry")
+					}
+					return m, nil
+				case "d":
+					return m, m.selectedBrainAttachmentCmd("download")
+				case "o":
+					return m, m.selectedBrainAttachmentCmd("open")
+				case "j":
+					m.taskDetail.ScrollDown()
+					return m, nil
+				case "k":
+					m.taskDetail.ScrollUp()
+					return m, nil
+				case "g":
+					m.taskDetail.ScrollToTop()
+					return m, nil
+				case "G":
+					m.taskDetail.ScrollToBottom()
+					return m, nil
+				}
+			}
+			switch string(msg.Runes) {
+			case "/":
+				m.brainSearchState = FilterTyping
+				m.brainSearchQuery = ""
+				m.brainSearchLabel = ""
+				return m, nil
+			case "j":
+				m.entryTree.MoveDown()
+				if m.detailVisible {
+					return m, m.syncBrainEntryDetail()
+				}
+				return m, nil
+			case "k":
+				m.entryTree.MoveUp()
+				if m.detailVisible {
+					return m, m.syncBrainEntryDetail()
+				}
+				return m, nil
+			case "g":
+				m.entryTree.GotoTop()
+				if m.detailVisible {
+					return m, m.syncBrainEntryDetail()
+				}
+				return m, nil
+			case "G":
+				m.entryTree.GotoBottom()
+				if m.detailVisible {
+					return m, m.syncBrainEntryDetail()
+				}
+				return m, nil
+			case "r":
+				return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+			case "b":
+				return m, fetchBrainEmbeddingBackfillCmd(m.apiRunnerConfig(), m.currentProjectID(), false, false)
+			case "B":
+				return m, fetchBrainEmbeddingBackfillCmd(m.apiRunnerConfig(), "", true, false)
+			case "F":
+				return m, fetchBrainEmbeddingBackfillCmd(m.apiRunnerConfig(), m.currentProjectID(), false, true)
+			case "A":
+				return m, fetchBrainEmbeddingBackfillCmd(m.apiRunnerConfig(), "", true, true)
+			case "e":
+				return m.editSelectedBrainEntry()
+			case "q":
+				m.sseClient.Stop()
+				return m, tea.Quit
+			}
+		}
+
 		switch string(msg.Runes) {
 		case "?":
 			// Open help modal
 			modal := NewHelpModal(m.config.IsMultiProject())
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
+		case "R":
+			m.activeContentTab = ContentTabRunners
+			m.activePanel = PanelRunners
+			m.helpBar.ActiveContentTab = m.activeContentTab
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchRunnerListCmd(m.apiRunnerConfig())
 		case "S":
 			// Open settings modal with task counts per status group and per-project running counts
 			taskCounts := m.computeTaskCountsByStatus()
@@ -1117,6 +1842,15 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.modalManager.Open(modal)
 			return m, cmd
 		case "s":
+			if m.activePanel == PanelRunners {
+				selectedRunner := m.runnerPanel.SelectedRunner()
+				if selectedRunner == nil {
+					return m, nil
+				}
+				m.setStatusMessage("info", fmt.Sprintf("Requesting shutdown for runner %s...", selectedRunner.RunnerID))
+				return m, shutdownRunnerCmd(m.apiRunnerConfig(), selectedRunner.RunnerID, "requested from TUI")
+			}
+
 			// Open metadata modal for selected task(s) (tasks view only)
 			if m.viewMode != ViewModeTasks {
 				return m, nil
@@ -1211,6 +1945,27 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				if selectedTask != nil {
 					return m, completeTaskCmd(m.apiRunnerConfig(), selectedTask.Path)
 				}
+			}
+			return m, nil
+		case "a":
+			// Assign a project feature to the selected runner (runner panel only).
+			if m.activePanel == PanelRunners {
+				selectedRunner := m.runnerPanel.SelectedRunner()
+				if selectedRunner == nil {
+					return m, nil
+				}
+				projectID, ok := m.assignmentProjectID()
+				if !ok {
+					m.setStatusMessage("error", "Select a project tab before assigning a runner feature")
+					return m, nil
+				}
+
+				allFeatures := m.assignmentFeaturesForProject(projectID)
+				assignments := m.runnerAssignmentsForProject(projectID)
+				apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+				modal := NewFeaturePickerModal(selectedRunner.RunnerID, projectID, allFeatures, assignments, apiClient)
+				cmd := m.modalManager.Open(modal)
+				return m, cmd
 			}
 			return m, nil
 		case "C":
@@ -1468,7 +2223,9 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "j":
-			if m.activePanel == PanelTasks {
+			if m.activePanel == PanelRunners {
+				m.runnerPanel.MoveDown()
+			} else if m.activePanel == PanelTasks {
 				if m.viewMode == ViewModeSchedules {
 					m.scheduleList.MoveDown()
 					m.syncScheduleDetail()
@@ -1482,10 +2239,14 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					m.taskDetail.ScrollDown()
 				}
+			} else if m.activePanel == PanelLogs {
+				m.logViewer.ScrollDown()
 			}
 			return m, nil
 		case "k":
-			if m.activePanel == PanelTasks {
+			if m.activePanel == PanelRunners {
+				m.runnerPanel.MoveUp()
+			} else if m.activePanel == PanelTasks {
 				if m.viewMode == ViewModeSchedules {
 					m.scheduleList.MoveUp()
 					m.syncScheduleDetail()
@@ -1499,10 +2260,14 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					m.taskDetail.ScrollUp()
 				}
+			} else if m.activePanel == PanelLogs {
+				m.logViewer.ScrollUp()
 			}
 			return m, nil
 		case "g":
-			if m.activePanel == PanelTasks {
+			if m.activePanel == PanelRunners {
+				m.runnerPanel.GotoTop()
+			} else if m.activePanel == PanelTasks {
 				if m.viewMode == ViewModeSchedules {
 					m.scheduleList.MoveToTop()
 					m.syncScheduleDetail()
@@ -1516,10 +2281,16 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					m.taskDetail.ScrollToTop()
 				}
+			} else if m.activePanel == PanelLogs {
+				for !m.logViewer.autoFollow && m.logViewer.scrollTop > 0 {
+					m.logViewer.ScrollUp()
+				}
 			}
 			return m, nil
 		case "G":
-			if m.activePanel == PanelTasks {
+			if m.activePanel == PanelRunners {
+				m.runnerPanel.GotoBottom()
+			} else if m.activePanel == PanelTasks {
 				if m.viewMode == ViewModeSchedules {
 					m.scheduleList.MoveToBottom()
 					m.syncScheduleDetail()
@@ -1533,6 +2304,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				} else {
 					m.taskDetail.ScrollToBottom()
 				}
+			} else if m.activePanel == PanelLogs {
+				m.logViewer.autoFollow = true
 			}
 			return m, nil
 		case " ":
@@ -1560,6 +2333,10 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "p":
+			if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+				cmd := m.toggleAutomationPauseForActiveScope()
+				return m, cmd
+			}
 			// Pause/resume active project.
 			// In single-project mode, if allPaused is true (startup default),
 			// pressing 'p' should toggle allPaused to start execution.
@@ -1611,15 +2388,8 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "P":
-			// Pause/resume all projects
-			m.allPaused = !m.allPaused
-			if m.allPaused {
-				m.setStatusMessage("info", "Pausing all projects...")
-			} else {
-				m.setStatusMessage("info", "Resuming all projects...")
-			}
-			m.syncHelpBarPauseState()
-			return m, pauseAllCmd(m.apiRunnerConfig(), !m.allPaused, m.runnerController)
+			cmd := m.toggleTaskPauseForActiveScope()
+			return m, cmd
 		}
 
 	case tea.KeyUp:
@@ -1651,18 +2421,140 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.splitDragActive {
+		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+			m.splitDragActive = false
+			m.splitDragOffsetY = 0
+			m.persistPanelHeights()
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionMotion || msg.Type == tea.MouseMotion || msg.Type == tea.MouseLeft {
+			m.resizeMainSplitToY(msg.Y - m.splitDragOffsetY)
+			return m, nil
+		}
+	}
+	if m.bottomSplitDragActive {
+		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+			m.bottomSplitDragActive = false
+			m.bottomSplitDragOffsetY = 0
+			m.persistPanelHeights()
+			return m, nil
+		}
+		if msg.Action == tea.MouseActionMotion || msg.Type == tea.MouseMotion || msg.Type == tea.MouseLeft {
+			m.resizeBottomSplitToY(msg.Y - m.bottomSplitDragOffsetY)
+			return m, nil
+		}
+	}
+
 	switch msg.Type {
 	case tea.MouseLeft:
+		if m.isBottomSplitterY(msg.Y) {
+			bottomStart, bottomHeight := m.bottomPanelBounds()
+			detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+			m.bottomSplitDragOffsetY = msg.Y - (bottomStart + detailHeight - 1)
+			m.bottomSplitDragActive = true
+			return m, nil
+		}
+		if m.isMainSplitterY(msg.Y) {
+			mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+			m.splitDragOffsetY = msg.Y - (mainContentStartY + taskPanelOuterHeight - 1)
+			m.splitDragActive = true
+			return m, nil
+		}
 		return m.handleMouseClick(msg)
+	case tea.MouseRelease:
+		wasDragging := m.splitDragActive || m.bottomSplitDragActive
+		m.splitDragActive = false
+		m.bottomSplitDragActive = false
+		m.splitDragOffsetY = 0
+		m.bottomSplitDragOffsetY = 0
+		if wasDragging {
+			m.persistPanelHeights()
+		}
+		return m, nil
 	case tea.MouseWheelUp:
 		return m.handleMouseWheelUp(msg)
 	case tea.MouseWheelDown:
 		return m.handleMouseWheelDown(msg)
 	case tea.MouseRight:
 		return m.handleRightClick(msg)
+	case tea.MouseMotion:
+		return m.handleMouseHover(msg)
 	}
 
 	return m, nil
+}
+
+func (m *Model) persistPanelHeights() {
+	m.settings.TaskPanelHeight = m.taskPanelHeight
+	m.settings.BottomTopPanelHeight = m.bottomTopPanelHeight
+	_ = SaveSettings(m.settings)
+}
+
+func (m Model) isMainSplitterY(y int) bool {
+	if !m.hasBottomPanel() {
+		return false
+	}
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	return absInt(y-(mainContentStartY+taskPanelOuterHeight-1)) <= 1
+}
+
+func (m Model) isBottomSplitterY(y int) bool {
+	if m.activeContentTab == ContentTabAutomation || m.runnerPanelVisible || !(m.detailVisible && m.logsVisible) {
+		return false
+	}
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	if bottomHeight <= 0 {
+		return false
+	}
+	detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
+	return absInt(y-(bottomStart+detailHeight-1)) <= 1
+}
+
+func (m *Model) resizeMainSplitToY(y int) {
+	if !m.hasBottomPanel() {
+		return
+	}
+	mainContentStartY := m.computeMainContentStartY()
+	mainHeight := m.mainContentHeight()
+	m.taskPanelHeight = clampTaskPanelHeight(y-mainContentStartY+1, mainHeight)
+	m.syncPanelSizes()
+}
+
+func (m *Model) resizeBottomSplitToY(y int) {
+	bottomStart, bottomHeight := m.bottomPanelBounds()
+	if bottomHeight <= 0 {
+		return
+	}
+	m.bottomTopPanelHeight = clampBottomTopPanelHeight(y-bottomStart+1, bottomHeight)
+	m.syncPanelSizes()
+}
+
+func (m Model) bottomPanelBounds() (start, height int) {
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	start = mainContentStartY + taskPanelOuterHeight
+	height = m.mainContentHeight() - taskPanelOuterHeight
+	if height < 0 {
+		height = 0
+	}
+	return start, height
+}
+
+func absInt(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+func (m Model) handleMouseHover(_ tea.MouseMsg) (tea.Model, tea.Cmd) {
+	return m, nil
+}
+
+func (m Model) brainMouseLine(mouseY, mainContentStartY int) int {
+	// Terminal mouse coordinates track the cursor cell under the body of the
+	// pointer; subtract one extra row so the arrow tip selects the intended row.
+	return mouseY - mainContentStartY - 2
 }
 
 // handleMouseClick handles left mouse button clicks.
@@ -1670,49 +2562,82 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	x, y := msg.X, msg.Y
 	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
 
+	if m.config.IsMultiProject() {
+		statusBarHeight := lipgloss.Height(m.statusBar.View(m.width))
+		projectTabsView := m.projectTabs.View(m.width)
+		projectTabsHeight := lipgloss.Height(projectTabsView)
+		isProjectTabRow := projectTabsView != "" && y >= statusBarHeight && y < statusBarHeight+projectTabsHeight
+		isAdjacentProjectRow := projectTabsView != "" && y == statusBarHeight+projectTabsHeight
+		if isProjectTabRow || isAdjacentProjectRow {
+			if tabIndex := m.projectTabs.TabIndexAt(x, m.width); tabIndex >= 0 {
+				if tabIndex == 0 {
+					m.modalManager.Open(NewProjectPickerModal(m.projectTabs.Projects, m.activeProjectID))
+					return m, nil
+				}
+				return m.selectProject(m.projectTabs.Projects[tabIndex-1])
+			}
+			if isAdjacentProjectRow {
+				if _, ok := m.contentTabAtX(x); ok {
+					return m.handleContentTabClick(x)
+				}
+			}
+			return m, nil
+		}
+	}
+
 	// Click on content tab bar (the row just above mainContentStartY)
 	contentTabBarY := mainContentStartY - 1
-	if y == contentTabBarY {
-		// Layout: " " + " Tasks " + "  " + " Dream " + "  " + " Runners "
-		// Calculate hit zones from actual text widths
-		const tabPadding = 1 // leading " "
-		const tabGap = 2     // "  " between tabs
-		tasksText := " Tasks "
-		dreamText := " Dream "
-		runnersText := " Runners "
+	if y == contentTabBarY || y == contentTabBarY+1 {
+		return m.handleContentTabClick(x)
+	}
 
-		tasksStart := tabPadding
-		tasksEnd := tasksStart + len(tasksText)
-		dreamStart := tasksEnd + tabGap
-		dreamEnd := dreamStart + len(dreamText)
-		runnersStart := dreamEnd + tabGap
-		runnersEnd := runnersStart + len(runnersText)
-
-		var newTab ContentTab = m.activeContentTab
-		if x >= tasksStart && x < tasksEnd {
-			newTab = ContentTabTasks
-		} else if x >= dreamStart && x < dreamEnd {
-			newTab = ContentTabDream
-		} else if x >= runnersStart && x < runnersEnd {
-			newTab = ContentTabRunners
-		}
-
-		if newTab != m.activeContentTab {
-			m.activeContentTab = newTab
-			m.helpBar.ActiveContentTab = m.activeContentTab
-			if m.activeContentTab == ContentTabDream && !m.dreamViewer.HasContent() {
-				m.dreamViewer.SetLoading(true)
-				project := m.config.Project
-				if m.activeProjectID != "" && m.activeProjectID != "all" {
-					project = m.activeProjectID
+	if m.activeContentTab == ContentTabRunners && y >= mainContentStartY && y < m.height-1 {
+		m.activePanel = PanelRunners
+		m.helpBar.ActivePanel = m.activePanel
+		lineInPanel := y - mainContentStartY
+		return m.handleRunnerPanelClick(lineInPanel, x)
+	}
+	if m.activeContentTab == ContentTabLogs && y >= mainContentStartY && y < m.height-1 {
+		m.activePanel = PanelLogs
+		m.helpBar.ActivePanel = m.activePanel
+		return m, nil
+	}
+	if m.activeContentTab == ContentTabBrain && y >= mainContentStartY && y < m.height-1 {
+		if m.detailVisible && y >= mainContentStartY+taskPanelOuterHeight {
+			m.activePanel = PanelDetails
+			m.helpBar.ActivePanel = m.activePanel
+			line := y - (mainContentStartY + taskPanelOuterHeight) - 2 + m.taskDetail.scrollOffset
+			if m.taskDetail.SelectAttachmentAtEntryLine(line) {
+				idx := m.taskDetail.selectedAttachment
+				now := time.Now()
+				isDoubleClick := idx == m.lastAttachmentClickIndex && now.Sub(m.lastAttachmentClickTime) <= 500*time.Millisecond
+				m.lastAttachmentClickIndex = idx
+				m.lastAttachmentClickTime = now
+				if isDoubleClick {
+					return m, m.selectedBrainAttachmentCmd("open")
 				}
-				return m, fetchDreamContentCmd(m.apiRunnerConfig(), project)
 			}
-			if m.activeContentTab == ContentTabRunners {
-				return m, fetchRunnersListCmd(m.apiRunnerConfig())
-			}
+			return m, nil
+		}
+		m.activePanel = PanelTasks
+		m.helpBar.ActivePanel = m.activePanel
+		if m.entryTree.SelectVisibleLine(m.brainMouseLine(y, mainContentStartY)) && m.entryTree.IsOnGroupHeader() {
+			m.entryTree.ToggleCollapse()
+		}
+		if m.detailVisible {
+			return m, m.syncBrainEntryDetail()
 		}
 		return m, nil
+	}
+	if m.activeContentTab == ContentTabAutomation && y >= mainContentStartY && y < m.height-1 {
+		if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations && y >= mainContentStartY+taskPanelOuterHeight {
+			m.activePanel = PanelDetails
+			m.helpBar.ActivePanel = m.activePanel
+			return m, nil
+		}
+		m.activePanel = PanelTasks
+		m.helpBar.ActivePanel = m.activePanel
+		return m.handleAutomationPanelClick(y-mainContentStartY, x)
 	}
 
 	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
@@ -1725,8 +2650,15 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 
 	// Click in bottom panel area (detail/logs) if visible
 	if y >= mainContentStartY+taskPanelOuterHeight && y < m.height-1 {
+		bottomStart := mainContentStartY + taskPanelOuterHeight
+		if m.runnerPanelVisible {
+			m.activePanel = PanelRunners
+			m.helpBar.ActivePanel = m.activePanel
+			lineInPanel := y - bottomStart
+			return m.handleRunnerPanelClick(lineInPanel, x)
+		}
+
 		if m.detailVisible && m.logsVisible {
-			bottomStart := mainContentStartY + taskPanelOuterHeight
 			bottomOuterHeight := m.height - bottomStart - 1 // reserve footer line
 			detailHeight := bottomOuterHeight * 60 / 100
 			if detailHeight < 4 {
@@ -1745,6 +2677,190 @@ func (m Model) handleMouseClick(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		m.helpBar.ActivePanel = m.activePanel
 	}
 
+	return m, nil
+}
+
+func (m Model) selectedBrainAttachmentCmd(action string) tea.Cmd {
+	att, ok := m.taskDetail.SelectedAttachment()
+	if !ok {
+		return func() tea.Msg {
+			return AttachmentActionMsg{Action: action, Err: fmt.Errorf("selected entry has no attachments")}
+		}
+	}
+	return brainAttachmentActionCmd(m.apiRunnerConfig(), m.currentProjectID(), att, action)
+}
+
+func brainAttachmentActionCmd(cfg runner.RunnerConfig, projectID string, att types.AttachmentReference, action string) tea.Cmd {
+	return func() tea.Msg {
+		if action != "download" && action != "open" && action != "extract" {
+			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: fmt.Errorf("unsupported attachment action %q", action)}
+		}
+		if strings.TrimSpace(att.ID) == "" {
+			return AttachmentActionMsg{Action: action, Err: fmt.Errorf("attachment ID is required")}
+		}
+		client := runner.NewAPIClient(cfg)
+		if action == "extract" {
+			result, err := client.ExtractAttachmentText(context.Background(), projectID, att.ID)
+			if err != nil {
+				return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: err}
+			}
+			msg := AttachmentActionMsg{Action: action, AttachmentID: att.ID}
+			if result != nil {
+				msg.Status = result.DerivedText.Status
+				msg.Provider = result.DerivedText.Metadata["provider"]
+				msg.Model = result.DerivedText.Metadata["model"]
+			}
+			return msg
+		}
+		attachment, data, err := client.DownloadAttachment(context.Background(), projectID, att.ID)
+		if err != nil {
+			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: err}
+		}
+		filename := att.Filename
+		if filename == "" && attachment != nil {
+			filename = attachment.Filename
+		}
+		if filename == "" {
+			filename = att.ID
+		}
+
+		dir := attachmentDownloadDir(action)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: fmt.Errorf("create attachment directory: %w", err)}
+		}
+		path, err := writeUniqueAttachmentFile(dir, filename, data)
+		if err != nil {
+			return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Err: err}
+		}
+		if action == "open" {
+			if err := openFileWithDefaultApp(path); err != nil {
+				return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Path: path, Err: err}
+			}
+		}
+		return AttachmentActionMsg{Action: action, AttachmentID: att.ID, Path: path}
+	}
+}
+
+func attachmentDownloadDir(action string) string {
+	if action == "open" {
+		return filepath.Join(os.TempDir(), "brain-attachments")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "."
+	}
+	return filepath.Join(home, "Downloads")
+}
+
+func writeUniqueAttachmentFile(dir, filename string, data []byte) (string, error) {
+	name := sanitizeAttachmentFilename(filename)
+	ext := filepath.Ext(name)
+	base := strings.TrimSuffix(name, ext)
+	for i := 0; i < 1000; i++ {
+		candidate := filepath.Join(dir, name)
+		if i > 0 {
+			candidate = filepath.Join(dir, fmt.Sprintf("%s-%d%s", base, i, ext))
+		}
+		file, err := os.OpenFile(candidate, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+		if os.IsExist(err) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("create attachment file: %w", err)
+		}
+		if _, err := file.Write(data); err != nil {
+			_ = file.Close()
+			return "", fmt.Errorf("write attachment file: %w", err)
+		}
+		if err := file.Close(); err != nil {
+			return "", fmt.Errorf("close attachment file: %w", err)
+		}
+		return candidate, nil
+	}
+	return "", fmt.Errorf("could not choose unique filename for %q", filename)
+}
+
+func sanitizeAttachmentFilename(filename string) string {
+	name := filepath.Base(strings.TrimSpace(filename))
+	if name == "." || name == string(filepath.Separator) || name == "" {
+		return "attachment"
+	}
+	name = strings.Map(func(r rune) rune {
+		if r == '/' || r == '\\' || r == ':' || r == 0 {
+			return '-'
+		}
+		return r
+	}, name)
+	if strings.Trim(name, ". ") == "" {
+		return "attachment"
+	}
+	return name
+}
+
+func openFileWithDefaultApp(path string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "windows":
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	return cmd.Start()
+}
+
+func (m Model) handleContentTabClick(x int) (tea.Model, tea.Cmd) {
+	newTab, ok := m.contentTabAtX(x)
+	if !ok {
+		return m, nil
+	}
+	if newTab != m.activeContentTab {
+		m.activeContentTab = newTab
+		m.helpBar.ActiveContentTab = m.activeContentTab
+		if m.activeContentTab == ContentTabRunners {
+			m.activePanel = PanelRunners
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchRunnerListCmd(m.apiRunnerConfig())
+		}
+		if m.activeContentTab == ContentTabLogs {
+			m.activePanel = PanelLogs
+			m.helpBar.ActivePanel = m.activePanel
+			m.syncPanelSizes()
+			return m, fetchServerRequestsCmd(m.apiRunnerConfig())
+		}
+		if m.activeContentTab == ContentTabBrain {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+		}
+		if m.activeContentTab == ContentTabTasks {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+		}
+		if m.activeContentTab == ContentTabAutomation {
+			m.activePanel = PanelTasks
+			m.helpBar.ActivePanel = m.activePanel
+			return m, m.prepareActiveAutomationFetch()
+		}
+	}
+	return m, nil
+}
+
+// handleRunnerPanelClick handles clicks within the runner panel.
+func (m Model) handleRunnerPanelClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
+	_ = x
+	contentLine := lineInPanel - 1 // exclude top border
+	if contentLine < 0 {
+		return m, nil
+	}
+
+	// RunnerPanel.View renders title at content line 0, column header at 1,
+	// and runner rows starting at 2.
+	runnerRow := contentLine - 2 + m.runnerPanel.scrollTop
+	if runnerRow >= 0 && runnerRow < len(m.runnerPanel.runners) {
+		m.runnerPanel.SelectIndex(runnerRow)
+	}
 	return m, nil
 }
 
@@ -1818,33 +2934,7 @@ func (m Model) computeTaskPanelMetrics() (mainContentStartY, taskPanelOuterHeigh
 		mainHeight = 3
 	}
 
-	hasBottomPanel := m.detailVisible || m.logsVisible
-	topHeight := mainHeight
-	if hasBottomPanel {
-		taskContentLines := 0
-		if m.viewMode == ViewModeSchedules {
-			taskContentLines = m.scheduleList.ContentHeight()
-		} else {
-			taskContentLines = m.taskTree.ContentHeight()
-		}
-
-		desiredTaskHeight := taskContentLines + 3
-		minTaskHeight := 8
-		maxTaskRatio := mainHeight * 60 / 100
-		topHeight = desiredTaskHeight
-		if topHeight < minTaskHeight {
-			topHeight = minTaskHeight
-		}
-		if topHeight > maxTaskRatio {
-			topHeight = maxTaskRatio
-		}
-
-		bottomHeight := mainHeight - topHeight
-		if bottomHeight < 6 {
-			bottomHeight = 6
-			topHeight = mainHeight - bottomHeight
-		}
-	}
+	topHeight := m.computeTaskPanelOuterHeight(mainHeight)
 
 	mainContentStartY = statusBarHeight + projectTabsHeight + contentTabBarHeight
 	taskPanelOuterHeight = topHeight
@@ -1853,6 +2943,110 @@ func (m Model) computeTaskPanelMetrics() (mainContentStartY, taskPanelOuterHeigh
 		taskInnerHeight = 1
 	}
 	return mainContentStartY, taskPanelOuterHeight, taskInnerHeight
+}
+
+func (m Model) mainContentHeight() int {
+	_, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	if !m.hasBottomPanel() {
+		return taskPanelOuterHeight
+	}
+	return taskPanelOuterHeight + (m.height - 1 - (m.computeMainContentStartY() + taskPanelOuterHeight))
+}
+
+func (m Model) computeMainContentStartY() int {
+	projectTabsHeight := 0
+	if m.config.IsMultiProject() {
+		if projectTabsView := m.projectTabs.View(m.width); projectTabsView != "" {
+			projectTabsHeight = lipgloss.Height(projectTabsView)
+		}
+	}
+	return lipgloss.Height(m.statusBar.View(m.width)) + projectTabsHeight + 1
+}
+
+func (m Model) hasBottomPanel() bool {
+	if m.activeContentTab == ContentTabTasks {
+		return m.detailVisible || m.logsVisible || m.runnerPanelVisible
+	}
+	if m.activeContentTab == ContentTabBrain {
+		return m.detailVisible
+	}
+	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		return m.detailVisible
+	}
+	return false
+}
+
+func (m Model) computeTaskPanelOuterHeight(mainHeight int) int {
+	if !m.hasBottomPanel() {
+		return mainHeight
+	}
+	if m.taskPanelHeight > 0 {
+		return clampTaskPanelHeight(m.taskPanelHeight, mainHeight)
+	}
+
+	taskContentLines := 0
+	if m.activeContentTab == ContentTabBrain {
+		taskContentLines = len(m.entryTree.visible) + 1
+	} else if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		taskContentLines = len(m.automationList.rows) + 2
+	} else if m.viewMode == ViewModeSchedules {
+		taskContentLines = m.scheduleList.ContentHeight()
+	} else {
+		taskContentLines = m.taskTree.ContentHeight()
+	}
+	desiredTaskHeight := taskContentLines + 3
+	maxTaskRatio := mainHeight * 60 / 100
+	topHeight := desiredTaskHeight
+	if topHeight < minTaskPanelHeight {
+		topHeight = minTaskPanelHeight
+	}
+	if topHeight > maxTaskRatio {
+		topHeight = maxTaskRatio
+	}
+	return clampTaskPanelHeight(topHeight, mainHeight)
+}
+
+func clampTaskPanelHeight(height, mainHeight int) int {
+	if mainHeight <= minTaskPanelHeight+minBottomPanelHeight {
+		if mainHeight-minBottomPanelHeight > 1 {
+			return mainHeight - minBottomPanelHeight
+		}
+		return 1
+	}
+	minHeight := minTaskPanelHeight
+	maxHeight := mainHeight - minBottomPanelHeight
+	if height < minHeight {
+		return minHeight
+	}
+	if height > maxHeight {
+		return maxHeight
+	}
+	return height
+}
+
+func (m Model) computeBottomTopPanelHeight(bottomHeight int) int {
+	if m.bottomTopPanelHeight > 0 {
+		return clampBottomTopPanelHeight(m.bottomTopPanelHeight, bottomHeight)
+	}
+	return clampBottomTopPanelHeight(bottomHeight*60/100, bottomHeight)
+}
+
+func clampBottomTopPanelHeight(height, bottomHeight int) int {
+	if bottomHeight <= minSubPanelHeight*2 {
+		if bottomHeight-minSubPanelHeight > 1 {
+			return bottomHeight - minSubPanelHeight
+		}
+		return 1
+	}
+	minHeight := minSubPanelHeight
+	maxHeight := bottomHeight - minSubPanelHeight
+	if height < minHeight {
+		return minHeight
+	}
+	if height > maxHeight {
+		return maxHeight
+	}
+	return height
 }
 
 // handleTaskPanelClick handles clicks within the task panel.
@@ -1876,6 +3070,26 @@ func (m Model) handleTaskPanelClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 		m.taskTree.Cursor = lineInList
 		m.taskTree.SelectedID = m.taskTree.order[lineInList]
 		m.syncTaskDetail()
+	}
+	return m, nil
+}
+
+func (m Model) handleAutomationPanelClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
+	contentLine := lineInPanel - 1 // account for top border
+	if contentLine < 0 {
+		return m, nil
+	}
+
+	if m.activeAutomationSubTab != AutomationSubTabAutomations {
+		return m, nil
+	}
+
+	rowLine := contentLine - 1 // terminal reports the cursor body row; use the pointer tip row
+	if rowLine < 0 {
+		return m, nil
+	}
+	if m.automationList.SelectVisibleRow(rowLine) && m.detailVisible {
+		return m, m.syncAutomationEntryDetail()
 	}
 	return m, nil
 }
@@ -2257,32 +3471,177 @@ func (m Model) handleFeatureViewClick(lineInPanel, x int) (tea.Model, tea.Cmd) {
 
 // handleMouseWheelUp handles scroll wheel up (scroll up / move selection up).
 func (m Model) handleMouseWheelUp(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.activeContentTab == ContentTabDream {
-		m.dreamViewer.ScrollUp(3)
-		return m, nil
-	}
-	if m.activePanel == PanelTasks {
-		m.taskTree.MoveUp()
-		m.syncTaskDetail()
-	} else if m.activePanel == PanelDetails {
-		m.taskDetail.ScrollUp()
-	}
-	return m, nil
+	return m.handleMouseWheel(msg, -1)
 }
 
 // handleMouseWheelDown handles scroll wheel down (scroll down / move selection down).
 func (m Model) handleMouseWheelDown(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.activeContentTab == ContentTabDream {
-		m.dreamViewer.ScrollDown(3)
+	return m.handleMouseWheel(msg, 1)
+}
+
+func (m Model) handleMouseWheel(msg tea.MouseMsg, direction int) (tea.Model, tea.Cmd) {
+	if m.activeContentTab == ContentTabAutomation {
+		mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+		if msg.Y >= mainContentStartY && msg.Y < m.height-1 {
+			if m.detailVisible && m.activeAutomationSubTab == AutomationSubTabAutomations && msg.Y >= mainContentStartY+taskPanelOuterHeight {
+				if direction < 0 {
+					m.taskDetail.ScrollUp()
+				} else {
+					m.taskDetail.ScrollDown()
+				}
+				return m, nil
+			}
+			if m.activeAutomationSubTab == AutomationSubTabAutomations {
+				if direction < 0 {
+					m.automationList.ScrollUp(3)
+				} else {
+					m.automationList.ScrollDown(3)
+				}
+				if m.detailVisible {
+					return m, m.syncAutomationEntryDetail()
+				}
+				return m, nil
+			}
+			key := tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("j")}
+			if direction < 0 {
+				key = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("k")}
+			}
+			cmd := m.dreamViewer.Update(key)
+			return m, cmd
+		}
 		return m, nil
 	}
-	if m.activePanel == PanelTasks {
-		m.taskTree.MoveDown()
-		m.syncTaskDetail()
-	} else if m.activePanel == PanelDetails {
-		m.taskDetail.ScrollDown()
+	if m.activeContentTab == ContentTabBrain {
+		mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+		if msg.Y >= mainContentStartY && msg.Y < m.height-1 {
+			if m.detailVisible && msg.Y >= mainContentStartY+taskPanelOuterHeight {
+				if direction < 0 {
+					m.taskDetail.ScrollUp()
+				} else {
+					m.taskDetail.ScrollDown()
+				}
+				return m, nil
+			}
+			m.entryTree.SetSize(m.width-4, m.height-mainContentStartY-1)
+			if direction < 0 {
+				m.entryTree.MoveUp()
+			} else {
+				m.entryTree.MoveDown()
+			}
+			if m.detailVisible {
+				return m, m.syncBrainEntryDetail()
+			}
+		}
+		return m, nil
+	}
+
+	targetPanel, ok := m.panelAtMouseY(msg.Y)
+	if !ok {
+		return m, nil
+	}
+
+	m.syncPanelSizes()
+	switch targetPanel {
+	case PanelRunners:
+		if direction < 0 {
+			m.runnerPanel.MoveUp()
+		} else {
+			m.runnerPanel.MoveDown()
+		}
+	case PanelTasks:
+		if m.viewMode == ViewModeSchedules {
+			if direction < 0 {
+				m.scheduleList.MoveUp()
+			} else {
+				m.scheduleList.MoveDown()
+			}
+			m.syncScheduleDetail()
+		} else {
+			if direction < 0 {
+				m.taskTree.MoveUp()
+			} else {
+				m.taskTree.MoveDown()
+			}
+			m.syncTaskDetail()
+		}
+	case PanelDetails:
+		if m.viewMode == ViewModeSchedules {
+			if direction < 0 {
+				m.scheduleDetail.ScrollUp()
+			} else {
+				m.scheduleDetail.ScrollDown()
+			}
+		} else {
+			if direction < 0 {
+				m.taskDetail.ScrollUp()
+			} else {
+				m.taskDetail.ScrollDown()
+			}
+		}
+	case PanelLogs:
+		if direction < 0 {
+			m.logViewer.ScrollUp()
+		} else {
+			m.logViewer.ScrollDown()
+		}
 	}
 	return m, nil
+}
+
+func (m Model) panelAtMouseY(y int) (Panel, bool) {
+	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
+	if m.activeContentTab == ContentTabRunners {
+		return PanelRunners, y >= mainContentStartY && y < m.height-1
+	}
+	if m.activeContentTab == ContentTabLogs {
+		return PanelLogs, y >= mainContentStartY && y < m.height-1
+	}
+	if m.activeContentTab == ContentTabBrain {
+		if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
+			return PanelTasks, true
+		}
+		if m.detailVisible && y >= mainContentStartY+taskPanelOuterHeight && y < m.height-1 {
+			return PanelDetails, true
+		}
+		return PanelTasks, false
+	}
+	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
+			return PanelTasks, true
+		}
+		if m.detailVisible && y >= mainContentStartY+taskPanelOuterHeight && y < m.height-1 {
+			return PanelDetails, true
+		}
+		return PanelTasks, false
+	}
+
+	if y >= mainContentStartY && y < mainContentStartY+taskPanelOuterHeight {
+		return PanelTasks, true
+	}
+
+	bottomStart := mainContentStartY + taskPanelOuterHeight
+	if y < bottomStart || y >= m.height-1 {
+		return PanelTasks, false
+	}
+
+	if m.runnerPanelVisible {
+		return PanelRunners, true
+	}
+	if m.detailVisible && m.logsVisible {
+		_, bottomOuterHeight := m.bottomPanelBounds()
+		detailHeight := m.computeBottomTopPanelHeight(bottomOuterHeight)
+		if y < bottomStart+detailHeight {
+			return PanelDetails, true
+		}
+		return PanelLogs, true
+	}
+	if m.detailVisible {
+		return PanelDetails, true
+	}
+	if m.logsVisible {
+		return PanelLogs, true
+	}
+	return PanelTasks, false
 }
 
 // handleRightClick handles right mouse button clicks (context menu).
@@ -2319,6 +3678,276 @@ func (m *Model) syncTaskDetail() {
 	m.syncHelpBarSessionState()
 }
 
+func (m *Model) syncBrainEntryDetail() tea.Cmd {
+	entry := m.entryTree.SelectedEntry()
+	if entry == nil {
+		m.taskDetail.SetTask(nil)
+		m.syncPanelSizes()
+		return nil
+	}
+	m.taskDetail.SetEntryLoading(*entry)
+	m.syncPanelSizes()
+	return fetchBrainEntryContentCmd(m.apiRunnerConfig(), *entry)
+}
+
+func (m *Model) syncAutomationEntryDetail() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil || row.Path == "" {
+		m.taskDetail.SetTask(nil)
+		m.syncPanelSizes()
+		return nil
+	}
+	entry := types.BrainEntry{ID: row.ID, Path: row.Path, Title: row.Title, Type: row.Source}
+	m.taskDetail.SetEntryLoading(entry, "Automation Detail")
+	m.syncPanelSizes()
+	contentCmd := fetchBrainEntryContentCmd(m.apiRunnerConfig(), entry)
+	// Goal rows additionally load reconcile audit history for the detail pane.
+	if row.IsGoal {
+		auditCmd := fetchGoalDetailAuditCmd(m.apiRunnerConfig(), *row, m.activeAutomationProject())
+		return tea.Batch(contentCmd, auditCmd)
+	}
+	return contentCmd
+}
+
+func (m *Model) automationDetailContent(path, content string) string {
+	row := m.automationList.SelectedRow()
+	if row == nil || row.Path != path {
+		return content
+	}
+
+	var b strings.Builder
+	b.WriteString(content)
+
+	// Runs section: first-class automation_run entries when available, with
+	// generated-task inference retained as compatibility fallback.
+	generatedBy := "automation:" + row.ID
+	realRuns := make([]types.BrainEntry, 0)
+	runs := make([]types.BrainEntry, 0)
+	for _, task := range m.automationGeneratedTasks {
+		if task.Type == "automation_run" && automationRunContentField(task.Content, "automation_id") == row.ID {
+			realRuns = append(realRuns, task)
+		} else if task.GeneratedBy == generatedBy {
+			runs = append(runs, task)
+		}
+	}
+	if len(realRuns) > 0 {
+		tasksByRun := automationTasksByRun(m.automationGeneratedTasks)
+		sort.SliceStable(realRuns, func(i, j int) bool {
+			return realRuns[i].Modified > realRuns[j].Modified
+		})
+		b.WriteString("\n\n## Runs\n")
+		for _, run := range realRuns {
+			status := run.Status
+			if status == "" {
+				status = "unknown"
+			}
+			b.WriteString(fmt.Sprintf("- %s [%s] %s", run.ID, status, run.Title))
+			if run.Modified != "" {
+				b.WriteString(" modified=" + run.Modified)
+			}
+			if errText := automationRunContentField(run.Content, "error"); errText != "" {
+				b.WriteString(" error=" + errText)
+			}
+			if skipReason := automationRunContentField(run.Content, "skip_reason"); skipReason != "" {
+				b.WriteString(" skip=" + skipReason)
+			}
+			b.WriteString("\n")
+			seenTasks := make(map[string]bool)
+			for _, taskID := range automationRunTaskIDs(run.Content) {
+				seenTasks[taskID] = true
+				if task, ok := tasksByRun[run.ID][taskID]; ok {
+					b.WriteString("  - " + automationRunTaskDetailLine(task) + "\n")
+					continue
+				}
+				b.WriteString("  - " + taskID + "\n")
+			}
+			extraTasks := make([]types.BrainEntry, 0, len(tasksByRun[run.ID]))
+			for _, task := range tasksByRun[run.ID] {
+				if seenTasks[task.ID] {
+					continue
+				}
+				extraTasks = append(extraTasks, task)
+			}
+			sort.SliceStable(extraTasks, func(i, j int) bool {
+				return extraTasks[i].ID < extraTasks[j].ID
+			})
+			for _, task := range extraTasks {
+				b.WriteString("  - " + automationRunTaskDetailLine(task) + "\n")
+			}
+		}
+	} else if len(runs) == 0 {
+		b.WriteString("\n\n## Runs\nNo generated runs.")
+	} else {
+		sort.SliceStable(runs, func(i, j int) bool {
+			return runs[i].Modified > runs[j].Modified
+		})
+		b.WriteString("\n\n## Runs\n")
+		for _, task := range runs {
+			line := automationRunTaskDetailLine(task)
+			if task.Modified != "" {
+				line += " modified=" + task.Modified
+			}
+			b.WriteString("- " + line + "\n")
+		}
+	}
+
+	// Goal rows additionally render the last reconcile decision and audit
+	// history from the asynchronously-cached audit (m.goalAuditByEntry).
+	if row.IsGoal {
+		b.WriteString(m.goalReconcileDetailSection(row.ID))
+	}
+
+	return b.String()
+}
+
+func automationRunTaskIDs(content string) []string {
+	lines := strings.Split(content, "\n")
+	result := make([]string, 0)
+	inTasks := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "### ") || strings.HasPrefix(trimmed, "## ") {
+			inTasks = strings.EqualFold(strings.TrimSpace(strings.TrimLeft(trimmed, "#")), "Generated Tasks")
+			continue
+		}
+		if !inTasks || !strings.HasPrefix(trimmed, "- ") {
+			continue
+		}
+		item := strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))
+		if item != "" && item != "none" {
+			result = append(result, strings.Fields(item)[0])
+		}
+	}
+	return result
+}
+
+func automationTasksByRun(entries []types.BrainEntry) map[string]map[string]types.BrainEntry {
+	result := make(map[string]map[string]types.BrainEntry)
+	for _, entry := range entries {
+		if entry.Type != "task" || entry.AutomationRunID == "" {
+			continue
+		}
+		if result[entry.AutomationRunID] == nil {
+			result[entry.AutomationRunID] = make(map[string]types.BrainEntry)
+		}
+		result[entry.AutomationRunID][entry.ID] = entry
+	}
+	return result
+}
+
+func automationRunTaskDetailLine(task types.BrainEntry) string {
+	status := task.Status
+	if status == "" {
+		status = "unknown"
+	}
+	line := fmt.Sprintf("%s [%s] %s", task.ID, status, task.Title)
+	if task.GeneratedBy != "" {
+		line += " generated_by=" + task.GeneratedBy
+	}
+	if task.AutomationRunID != "" {
+		line += " automation_run_id=" + task.AutomationRunID
+	}
+	if task.Path != "" {
+		line += " path=" + task.Path
+	}
+	if sessionID := newestSessionID(task.Sessions); sessionID != "" {
+		line += " session=" + sessionID + " (o: open, O: tmux)"
+	} else {
+		line += " session=none"
+	}
+	return line
+}
+
+func newestSessionID(sessions map[string]types.SessionInfo) string {
+	sessionIDs := sortedSessionIDs(sessions)
+	if len(sessionIDs) == 0 {
+		return ""
+	}
+	return sessionIDs[0]
+}
+
+func (m *Model) openSessionForAutomationGeneratedTask(tmuxMode bool) tea.Cmd {
+	task, ok := m.automationList.SelectedRunTask()
+	if !ok || task.Path == "" {
+		m.setStatusMessage("warn", "No sessions available for generated tasks")
+		m.addLog("warn", "No sessions available for generated tasks")
+		return nil
+	}
+	if len(task.Sessions) == 0 {
+		if sessionID := m.automationRunFinalizationSessionID(task); sessionID != "" {
+			return func() tea.Msg {
+				return sessionsFetchedMsg{
+					sessionIDs: []string{sessionID},
+					taskPath:   task.Path,
+					tmuxMode:   tmuxMode,
+				}
+			}
+		}
+		if sessionID := localOpenCodeSessionIDForTask(task); sessionID != "" {
+			return func() tea.Msg {
+				return sessionsFetchedMsg{
+					sessionIDs: []string{sessionID},
+					taskPath:   task.Path,
+					tmuxMode:   tmuxMode,
+				}
+			}
+		}
+	}
+	resolved := types.ResolvedTask{
+		ID:       task.ID,
+		Path:     task.Path,
+		Title:    task.Title,
+		Status:   task.Status,
+		Sessions: task.Sessions,
+	}
+	return m.openSessionForTask(&resolved, tmuxMode)
+}
+
+func (m *Model) automationRunFinalizationSessionID(task types.BrainEntry) string {
+	automationID := strings.TrimPrefix(task.GeneratedBy, "automation:")
+	if automationID == task.GeneratedBy || automationID == "" || task.AutomationRunID == "" {
+		return ""
+	}
+	entry, ok := m.automationList.automationsByID[automationID]
+	if !ok {
+		return ""
+	}
+	finalization, ok := entry.RunFinalizations[task.AutomationRunID]
+	if !ok {
+		return ""
+	}
+	return finalization.SessionID
+}
+
+// goalReconcileDetailSection renders the "Last Reconcile" + "Audit" detail
+// markdown for a goal automation row, using the audit cached under entryID. It
+// returns a placeholder when no audit has been cached yet (the audit loads
+// asynchronously, mirroring how Runs render off cached generated tasks).
+func (m *Model) goalReconcileDetailSection(entryID string) string {
+	audit := m.goalAuditByEntry[entryID]
+	if len(audit) == 0 {
+		return "\n\n## Last Reconcile\nNo reconcile history (or loading…)."
+	}
+
+	last := audit[0]
+	var b strings.Builder
+	b.WriteString("\n\n## Last Reconcile\n")
+	b.WriteString(fmt.Sprintf("%s — %s", string(last.Decision), last.Reason))
+	if last.Timestamp != "" {
+		b.WriteString("\n" + last.Timestamp)
+	}
+
+	b.WriteString("\n\n## Audit\n")
+	for _, a := range audit {
+		b.WriteString(fmt.Sprintf("- %s [%s] %s", a.Timestamp, string(a.Decision), a.Reason))
+		if a.GeneratedTaskID != "" {
+			b.WriteString(" task=" + a.GeneratedTaskID)
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
 // syncPanelSizes computes and sets the inner dimensions for detail/log panels.
 // This must be called whenever panel visibility, window size, or selected task changes,
 // so that ScrollDown/ScrollUp have accurate height and totalLines for scroll bounds.
@@ -2327,49 +3956,72 @@ func (m *Model) syncPanelSizes() {
 		return
 	}
 
-	// Replicate the height calculation from renderBaseView
-	// We need approximate fixed heights; use conservative estimates
-	statusBarHeight := 4 // 2 content + 2 border
-	helpBarHeight := 1   // single line: "? Help ... Focus: tasks"
-
-	fixedUIHeight := statusBarHeight + helpBarHeight
-	mainHeight := m.height - fixedUIHeight
-	if mainHeight < 3 {
-		mainHeight = 3
-	}
-
-	hasBottomPanel := m.detailVisible || m.logsVisible
-	if !hasBottomPanel {
-		return
-	}
-
-	// Split: 60% tasks, 40% bottom
-	topHeight := mainHeight * 60 / 100
-	if topHeight < 10 {
-		topHeight = 10
-	}
+	mainHeight := m.mainContentHeight()
+	topHeight := m.computeTaskPanelOuterHeight(mainHeight)
 	bottomHeight := mainHeight - topHeight
-	if bottomHeight < 3 {
-		bottomHeight = 3
-		topHeight = mainHeight - bottomHeight
-	}
 
 	innerWidth := m.width - 4
 	if innerWidth < 10 {
 		innerWidth = 10
 	}
+	if m.activeContentTab == ContentTabRunners {
+		runnerInner := mainHeight - 2
+		if runnerInner < 1 {
+			runnerInner = 1
+		}
+		m.runnerPanel.SetSize(innerWidth, runnerInner)
+		return
+	}
+	if m.activeContentTab == ContentTabLogs {
+		logInner := mainHeight - 2
+		if logInner < 1 {
+			logInner = 1
+		}
+		m.logViewer.SetSize(innerWidth, logInner)
+		return
+	}
+	if m.activeContentTab == ContentTabBrain {
+		entryOuter := mainHeight
+		if m.detailVisible {
+			entryOuter = topHeight
+		}
+		entryInner := entryOuter - 2
+		if entryInner < 1 {
+			entryInner = 1
+		}
+		m.entryTree.SetSize(innerWidth, entryInner)
+		if m.detailVisible {
+			detailInner := bottomHeight - 2
+			if detailInner < 1 {
+				detailInner = 1
+			}
+			m.taskDetail.SetSize(innerWidth, detailInner)
+		}
+		return
+	}
+	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations && m.detailVisible {
+		detailInner := bottomHeight - 2
+		if detailInner < 1 {
+			detailInner = 1
+		}
+		m.taskDetail.SetSize(innerWidth, detailInner)
+		return
+	}
 
-	if m.detailVisible && m.logsVisible {
-		// Bottom split: 60% detail, 40% logs
-		detailHeight := bottomHeight * 60 / 100
-		if detailHeight < 4 {
-			detailHeight = 4
+	hasBottomPanel := m.detailVisible || m.logsVisible || m.runnerPanelVisible
+	if !hasBottomPanel {
+		return
+	}
+
+	if m.runnerPanelVisible {
+		runnerInner := bottomHeight - 2
+		if runnerInner < 1 {
+			runnerInner = 1
 		}
+		m.runnerPanel.SetSize(innerWidth, runnerInner)
+	} else if m.detailVisible && m.logsVisible {
+		detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
 		logHeight := bottomHeight - detailHeight
-		if logHeight < 4 {
-			logHeight = 4
-			detailHeight = bottomHeight - logHeight
-		}
 		detailInner := detailHeight - 2
 		logInner := logHeight - 2
 		if detailInner < 1 {
@@ -2400,6 +4052,101 @@ func (m *Model) syncScheduleDetail() {
 	m.scheduleDetail.SetTask(m.scheduleList.SelectedTask())
 }
 
+func (m Model) currentProjectID() string {
+	if m.activeProjectID != "" && m.activeProjectID != "all" {
+		return m.activeProjectID
+	}
+	return m.config.Project
+}
+
+func (m Model) editSelectedBrainEntry() (tea.Model, tea.Cmd) {
+	entry := m.entryTree.SelectedEntry()
+	if entry == nil {
+		return m, nil
+	}
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	content, err := apiClient.GetEntryFull(context.Background(), entry.Path)
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to fetch entry: %v", err))
+		return m, nil
+	}
+	tempDir, err := os.MkdirTemp("", "brain-entry-")
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to create temp dir: %v", err))
+		return m, nil
+	}
+	tempFile := filepath.Join(tempDir, entry.ID+".md")
+	if err := os.WriteFile(tempFile, []byte(content), 0o644); err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to write temp file: %v", err))
+		return m, nil
+	}
+
+	return m, tea.ExecProcess(getEditorCmd(tempFile), func(err error) tea.Msg {
+		return editorClosedMsg{
+			taskID:          entry.ID,
+			taskPath:        entry.Path,
+			tempFile:        tempFile,
+			originalContent: content,
+			fullContent:     true,
+			err:             err,
+		}
+	})
+}
+
+func (m *Model) toggleTaskPauseForActiveScope() tea.Cmd {
+	projectID := m.activeProjectID
+	if projectID == "all" {
+		currentlyPaused := m.allPaused
+		m.allPaused = !currentlyPaused
+		if m.allPaused {
+			m.setStatusMessage("info", "Pausing all projects...")
+		} else {
+			m.setStatusMessage("info", "Resuming all projects...")
+		}
+		m.syncHelpBarPauseState()
+		return pauseAllCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+	}
+	if projectID == "" {
+		projectID = m.config.Project
+	}
+	currentlyPaused := m.pausedProjects[projectID]
+	m.pausedProjects[projectID] = !currentlyPaused
+	if currentlyPaused {
+		m.setStatusMessage("info", fmt.Sprintf("Resuming project %s...", projectID))
+	} else {
+		m.setStatusMessage("info", fmt.Sprintf("Pausing project %s...", projectID))
+	}
+	m.syncHelpBarPauseState()
+	return pauseProjectCmd(m.apiRunnerConfig(), projectID, currentlyPaused, m.runnerController)
+}
+
+func (m *Model) toggleAutomationPauseForActiveScope() tea.Cmd {
+	projectID := m.activeProjectID
+	if projectID == "all" {
+		currentlyPaused := m.automationsPaused
+		m.automationsPaused = !currentlyPaused
+		if currentlyPaused {
+			m.setStatusMessage("info", "Resuming automations...")
+		} else {
+			m.setStatusMessage("info", "Pausing automations...")
+		}
+		m.syncHelpBarPauseState()
+		return pauseAutomationsCmd(m.apiRunnerConfig(), currentlyPaused, m.runnerController)
+	}
+	if projectID == "" {
+		projectID = m.config.Project
+	}
+	currentlyPaused := m.automationPausedProjects[projectID]
+	m.automationPausedProjects[projectID] = !currentlyPaused
+	if currentlyPaused {
+		m.setStatusMessage("info", fmt.Sprintf("Resuming automations for %s...", projectID))
+	} else {
+		m.setStatusMessage("info", fmt.Sprintf("Pausing automations for %s...", projectID))
+	}
+	m.syncHelpBarPauseState()
+	return pauseProjectAutomationsCmd(m.apiRunnerConfig(), projectID, currentlyPaused, m.runnerController)
+}
+
 // syncHelpBarSessionState updates the help bar's HasTaskSessions field based on current selection.
 func (m *Model) syncHelpBarSessionState() {
 	selectedTask := m.taskTree.SelectedTask()
@@ -2411,7 +4158,11 @@ func (m *Model) syncHelpBarPauseState() {
 	m.helpBar.AllPaused = m.allPaused
 	// Determine active project ID for pause check
 	projectID := m.activeProjectID
-	if projectID == "" || projectID == "all" {
+	if projectID == "all" {
+		m.helpBar.IsPaused = m.allPaused
+		return
+	}
+	if projectID == "" {
 		projectID = m.config.Project
 	}
 	m.helpBar.IsPaused = m.pausedProjects[projectID]
@@ -2499,15 +4250,27 @@ func (m Model) renderBaseView() string {
 	m.statusBar.Metrics = &m.resourceMetrics
 
 	// Wire pause state to status bar
-	projectID := m.activeProjectID
-	if projectID == "" || projectID == "all" {
-		projectID = m.config.Project
-	}
-	if m.activeProjectID == "all" && m.config.IsMultiProject() {
-		// In "all" mode, paused only if every project is paused
-		m.statusBar.IsPaused = m.allPaused
+	if m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabAutomations {
+		projectID := m.activeProjectID
+		if projectID == "all" {
+			m.statusBar.IsPaused = m.automationsPaused
+		} else {
+			if projectID == "" {
+				projectID = m.config.Project
+			}
+			m.statusBar.IsPaused = m.automationPausedProjects[projectID]
+		}
 	} else {
-		m.statusBar.IsPaused = m.pausedProjects[projectID]
+		projectID := m.activeProjectID
+		if projectID == "" || projectID == "all" {
+			projectID = m.config.Project
+		}
+		if m.activeProjectID == "all" && m.config.IsMultiProject() {
+			// In "all" mode, paused only if every project is paused
+			m.statusBar.IsPaused = m.allPaused
+		} else {
+			m.statusBar.IsPaused = m.allPaused || m.pausedProjects[projectID]
+		}
 	}
 
 	// EnabledFeatureCount reflects user-toggled features (via x key)
@@ -2526,30 +4289,8 @@ func (m Model) renderBaseView() string {
 		projectTabsView = m.projectTabs.View(m.width)
 	}
 
-	// Render content tab bar (Tasks / Dream / Runners)
-	var contentTabBarView string
-	{
-		activeStyle := lipgloss.NewStyle().Bold(true).Foreground(ColorCyan)
-
-		tasksLabel := " Tasks "
-		dreamLabel := " Dream "
-		runnersLabel := " Runners "
-		switch m.activeContentTab {
-		case ContentTabTasks:
-			tasksLabel = activeStyle.Render(tasksLabel)
-			dreamLabel = DimStyle.Render(dreamLabel)
-			runnersLabel = DimStyle.Render(runnersLabel)
-		case ContentTabDream:
-			tasksLabel = DimStyle.Render(tasksLabel)
-			dreamLabel = activeStyle.Render(dreamLabel)
-			runnersLabel = DimStyle.Render(runnersLabel)
-		case ContentTabRunners:
-			tasksLabel = DimStyle.Render(tasksLabel)
-			dreamLabel = DimStyle.Render(dreamLabel)
-			runnersLabel = activeStyle.Render(runnersLabel)
-		}
-		contentTabBarView = " " + tasksLabel + "  " + dreamLabel + "  " + runnersLabel
-	}
+	// Render content tab bar.
+	contentTabBarView := m.renderContentTabBar()
 
 	// Render status bar at top
 	statusBarView := m.statusBar.View(m.width)
@@ -2582,8 +4323,8 @@ func (m Model) renderBaseView() string {
 
 	// Filter/Search bar (based on context)
 	var filterBarView string
-	if m.activeContentTab == ContentTabDream {
-		// Dream tab: show search bar
+	if m.isAutomationDreamActive() {
+		// Automation > Dream: show search bar
 		switch m.dreamViewer.SearchMode() {
 		case DreamSearchTyping:
 			matchCount := m.dreamViewer.MatchCount()
@@ -2603,7 +4344,7 @@ func (m Model) renderBaseView() string {
 					DimStyle.Render("  Esc: clear")
 			}
 		}
-	} else {
+	} else if m.activeContentTab == ContentTabTasks {
 		// Tasks tab: show task filter bar
 		switch m.filterState {
 		case FilterTyping:
@@ -2654,43 +4395,14 @@ func (m Model) renderBaseView() string {
 		mainHeight = 3
 	}
 
-	// Determine if right panels are visible
-	hasBottomPanel := m.detailVisible || m.logsVisible
+	// Determine if bottom panels are visible
+	hasBottomPanel := m.hasBottomPanel()
 
 	// Calculate heights - ensure total equals mainHeight exactly
-	var topHeight, bottomHeight int
+	topHeight := m.computeTaskPanelOuterHeight(mainHeight)
+	bottomHeight := 0
 	if hasBottomPanel {
-		// Calculate task panel height based on content, not fixed ratio.
-		// This avoids huge empty space when there are few tasks.
-		taskContentLines := 0
-		if m.viewMode == ViewModeSchedules {
-			taskContentLines = m.scheduleList.ContentHeight()
-		} else {
-			taskContentLines = m.taskTree.ContentHeight()
-		}
-		// Add 2 for border, 1 for header ("Tasks (N)")
-		desiredTaskHeight := taskContentLines + 3
-		minTaskHeight := 8                    // minimum for usability
-		maxTaskRatio := mainHeight * 60 / 100 // cap at 60%
-
-		topHeight = desiredTaskHeight
-		if topHeight < minTaskHeight {
-			topHeight = minTaskHeight
-		}
-		if topHeight > maxTaskRatio {
-			topHeight = maxTaskRatio
-		}
-
-		// Give the rest to bottom panels
 		bottomHeight = mainHeight - topHeight
-		if bottomHeight < 6 {
-			bottomHeight = 6
-			topHeight = mainHeight - bottomHeight
-		}
-	} else {
-		// No bottom panels — task panel fills all available space
-		topHeight = mainHeight
-		bottomHeight = 0
 	}
 
 	// Top panel: task tree
@@ -2729,21 +4441,101 @@ func (m Model) renderBaseView() string {
 	// Build main content based on active content tab
 	var mainContent string
 	if m.activeContentTab == ContentTabRunners {
-		// Runners tab: full-width runners panel, no task/detail/log panels
-		runnersView := m.runnersPanel.View(m.width-4, mainHeight-2)
-		runnersPanel := InactiveBorder.
+		// Runners tab: full-width runners panel, no task/detail/log panels.
+		runnerView := m.runnerPanel.View(m.width-4, mainHeight-2)
+		runnerPanel := InactiveBorder.
 			Width(m.width - 2).
 			Height(mainHeight - 2).
-			Render(runnersView)
-		mainContent = runnersPanel
-	} else if m.activeContentTab == ContentTabDream {
-		// Dream tab: full-width dream viewer, no task/detail/log panels
-		dreamView := m.dreamViewer.View(m.width-4, mainHeight-2)
-		dreamPanel := InactiveBorder.
+			Render(runnerView)
+		mainContent = runnerPanel
+	} else if m.activeContentTab == ContentTabLogs {
+		// Logs tab: global server-request log (all HTTP traffic in/out of the
+		// Brain server, by actor). Per-task output lives in the Logs pane (z).
+		mainContent = m.renderServerRequestsPanel(m.width, mainHeight)
+	} else if m.activeContentTab == ContentTabBrain {
+		// Brain tab: project entry tree for understanding stored memory.
+		brainBottom := m.detailVisible || m.logsVisible
+		entryOuterHeight := mainHeight
+		if brainBottom {
+			entryOuterHeight = topHeight
+		}
+		entryHeight := entryOuterHeight - 2
+		entryView := m.entryTree.View(m.width-4, entryHeight)
+		if searchBar := m.renderBrainSearchBar(m.width - 4); searchBar != "" {
+			entryHeight--
+			if entryHeight < 1 {
+				entryHeight = 1
+			}
+			entryView = searchBar + "\n" + m.entryTree.View(m.width-4, entryHeight)
+		}
+		entryPanelStyle := InactiveBorder
+		if m.activePanel == PanelTasks {
+			entryPanelStyle = ActiveBorder
+		}
+		entryPanel := entryPanelStyle.
 			Width(m.width - 2).
-			Height(mainHeight - 2).
-			Render(dreamView)
-		mainContent = dreamPanel
+			Height(entryHeight).
+			MaxHeight(entryOuterHeight).
+			Render(entryView)
+		if brainBottom {
+			bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
+			mainContent = lipgloss.JoinVertical(lipgloss.Left, entryPanel, bottomPanel)
+		} else {
+			mainContent = entryPanel
+		}
+	} else if m.activeContentTab == ContentTabAutomation {
+		// Automation tab: full-width automation list or Dream subtab.
+		autoBottom := (m.detailVisible || m.logsVisible) && m.activeAutomationSubTab == AutomationSubTabAutomations
+		contentOuterHeight := mainHeight
+		if autoBottom {
+			contentOuterHeight = topHeight
+		}
+		contentHeight := contentOuterHeight - 2
+		if contentHeight < 1 {
+			contentHeight = 1
+		}
+		var content string
+		if m.activeAutomationSubTab == AutomationSubTabDream {
+			content = m.dreamViewer.View(m.width-4, contentHeight-1)
+		} else {
+			content = m.automationList.View(m.width-4, contentHeight)
+		}
+		automationPanelStyle := InactiveBorder
+		if m.activePanel == PanelTasks {
+			automationPanelStyle = ActiveBorder
+		}
+		automationPanel := automationPanelStyle.
+			Width(m.width - 2).
+			Height(contentHeight).
+			MaxHeight(contentOuterHeight).
+			Render(content)
+		if autoBottom {
+			bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
+			mainContent = lipgloss.JoinVertical(lipgloss.Left, automationPanel, bottomPanel)
+		} else {
+			mainContent = automationPanel
+		}
+	} else if m.runnerPanelVisible {
+		// Runner panel visible: split into task panel (top) + runner panel (bottom)
+		// Use the same bottom panel area for the runner panel
+		runnerPanelStyle := InactiveBorder
+		if m.activePanel == PanelRunners {
+			runnerPanelStyle = ActiveBorder
+		}
+
+		runnerInnerHeight := bottomHeight - 2
+		if runnerInnerHeight < 1 {
+			runnerInnerHeight = 1
+		}
+		runnerView := m.runnerPanel.View(innerWidth, runnerInnerHeight)
+		runnerView = truncateToHeight(runnerView, runnerInnerHeight)
+		runnerPanelView := runnerPanelStyle.
+			Width(m.width - 2).
+			Height(runnerInnerHeight).
+			MaxHeight(bottomHeight).
+			Render(runnerView)
+
+		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, runnerPanelView)
 	} else if hasBottomPanel {
 		bottomPanel := m.renderBottomPanel(m.width, bottomHeight)
 		mainContent = lipgloss.JoinVertical(lipgloss.Left, taskPanel, bottomPanel)
@@ -2779,17 +4571,9 @@ func (m Model) renderBaseView() string {
 // height is the total outer height for the bottom section.
 func (m Model) renderBottomPanel(width, height int) string {
 	if m.detailVisible && m.logsVisible {
-		// Stack vertically: detail on top (60%), logs on bottom (40%)
-		// Each sub-panel height includes its own border (2 lines each)
-		detailHeight := height * 60 / 100
-		if detailHeight < 4 {
-			detailHeight = 4 // minimum: 2 border + 2 content
-		}
+		// Stack vertically: detail on top, logs on bottom.
+		detailHeight := m.computeBottomTopPanelHeight(height)
 		logHeight := height - detailHeight
-		if logHeight < 4 {
-			logHeight = 4
-			detailHeight = height - logHeight
-		}
 		detailPanel := m.renderDetailPanel(width, detailHeight)
 		logPanel := m.renderLogPanel(width, logHeight)
 		return lipgloss.JoinVertical(lipgloss.Left, detailPanel, logPanel)
@@ -2842,6 +4626,166 @@ func (m Model) renderDetailPanel(width, height int) string {
 		Render(content)
 }
 
+// automationLogTaskID returns the task id whose logs the Automations logs pane
+// should show: the highlighted run-task within an expanded row, else the
+// selected automation's latest run task.
+func (m Model) automationLogTaskID() string {
+	if id := m.automationList.SelectedRunTaskID(); id != "" {
+		return id
+	}
+	if row := m.automationList.SelectedRow(); row != nil {
+		return row.RunTaskID
+	}
+	return ""
+}
+
+// scopedLogTarget returns the (projectID, taskID) whose persisted logs the logs
+// pane should display for the active tab, or ("","") when the pane isn't scoped
+// to a specific task.
+func (m Model) scopedLogTarget() (string, string) {
+	switch m.activeContentTab {
+	case ContentTabBrain:
+		if e := m.entryTree.SelectedEntry(); e != nil && e.Type == "task" {
+			return e.ProjectID, e.ID
+		}
+	case ContentTabAutomation:
+		if taskID := m.automationLogTaskID(); taskID != "" {
+			if t := m.automationList.RunTaskByID(taskID); t != nil {
+				return t.ProjectID, t.ID
+			}
+			return m.activeAutomationProject(), taskID
+		}
+	case ContentTabTasks:
+		if m.filterLogsByTask {
+			if t := m.taskTree.SelectedTask(); t != nil {
+				return t.ProjectID, t.ID
+			}
+		}
+	}
+	return "", ""
+}
+
+// taskLogsLoadedMsg carries persisted logs for a scoped task.
+type taskLogsLoadedMsg struct {
+	taskID string
+	lines  []types.LogLine
+	err    error
+}
+
+// fetchTaskLogsCmd fetches a task's persisted logs for the scoped logs pane.
+func fetchTaskLogsCmd(cfg runner.RunnerConfig, projectID, taskID string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		resp, err := apiClient.GetTaskLogs(context.Background(), projectID, taskID, 500)
+		if err != nil {
+			return taskLogsLoadedMsg{taskID: taskID, err: err}
+		}
+		return taskLogsLoadedMsg{taskID: taskID, lines: resp.Lines}
+	}
+}
+
+// maybeFetchScopedLogs returns a command to refresh the scoped task's persisted
+// logs when the logs pane is visible and scoped to a task.
+func (m Model) maybeFetchScopedLogs() tea.Cmd {
+	if !m.logsVisible {
+		return nil
+	}
+	projectID, taskID := m.scopedLogTarget()
+	if taskID == "" || projectID == "" {
+		return nil
+	}
+	return fetchTaskLogsCmd(m.apiRunnerConfig(), projectID, taskID)
+}
+
+// renderServerRequestsPanel renders the global server-request log (Logs tab):
+// every HTTP request the Brain server handled, with actor, method, status, and
+// duration. Newest at the bottom.
+func (m Model) renderServerRequestsPanel(width, height int) string {
+	style := InactiveBorder
+	if m.activePanel == PanelLogs {
+		style = ActiveBorder
+	}
+	innerWidth := width - 4
+	innerHeight := height - 2
+	if innerWidth < 10 {
+		innerWidth = 10
+	}
+	if innerHeight < 1 {
+		innerHeight = 1
+	}
+
+	var b strings.Builder
+	reqs := m.serverRequests
+	if len(reqs) == 0 {
+		b.WriteString(DimStyle.Render("No requests yet — traffic from runners, clients, and browsers appears here."))
+	} else {
+		// Show the newest rows that fit.
+		start := 0
+		if len(reqs) > innerHeight {
+			start = len(reqs) - innerHeight
+		}
+		for i := start; i < len(reqs); i++ {
+			b.WriteString(formatServerRequestLine(reqs[i], innerWidth))
+			if i < len(reqs)-1 {
+				b.WriteString("\n")
+			}
+		}
+	}
+
+	content := truncateToHeight(b.String(), innerHeight)
+	return style.
+		Width(width - 2).
+		Height(innerHeight).
+		MaxHeight(height).
+		Render(content)
+}
+
+// formatServerRequestLine renders one server-request row: time, actor, method,
+// status, duration, path.
+func formatServerRequestLine(r types.ServerRequestRecord, width int) string {
+	ts := time.UnixMilli(r.Time).Format("15:04:05")
+	actor := r.ActorName
+	if actor == "" {
+		if r.ActorType != "" && r.ActorType != "anonymous" {
+			actor = r.ActorType
+		} else {
+			actor = "anon"
+		}
+	}
+	if len(actor) > 14 {
+		actor = actor[:14]
+	}
+	statusStyle := lipgloss.NewStyle().Foreground(lipgloss.Color(serverStatusColor(r.Status)))
+	// Only the variable-length path is truncated (plain text, ANSI-safe); the
+	// fixed-width styled prefix is ~45 visible columns.
+	pathWidth := width - 45
+	if pathWidth < 5 {
+		pathWidth = 5
+	}
+	path := truncateMsg(r.Path, pathWidth)
+	return fmt.Sprintf("%s  %-14s %-6s %s %5dms  %s",
+		DimStyle.Render(ts),
+		actor,
+		r.Method,
+		statusStyle.Render(fmt.Sprintf("%3d", r.Status)),
+		r.DurationMs,
+		path,
+	)
+}
+
+func serverStatusColor(status int) string {
+	switch {
+	case status >= 500:
+		return "9" // red
+	case status >= 400:
+		return "11" // yellow
+	case status >= 300:
+		return "14" // cyan
+	default:
+		return "10" // green
+	}
+}
+
 // renderLogPanel renders the log viewer panel with border.
 // height is the total outer height including borders.
 func (m Model) renderLogPanel(width, height int) string {
@@ -2860,35 +4804,71 @@ func (m Model) renderLogPanel(width, height int) string {
 		innerHeight = 1
 	}
 
-	// Temporarily set size for rendering
-	lv := m.logViewer
-	lv.SetSize(innerWidth, innerHeight)
-
-	// Wire log filtering by selected task
-	if m.filterLogsByTask {
-		selectedTask := m.taskTree.SelectedTask()
-		if selectedTask != nil {
-			lv.IsFiltering = true
-			lv.FilterTaskID = selectedTask.ID
-		} else {
-			lv.IsFiltering = false
-			lv.FilterTaskID = ""
-		}
-	} else {
-		lv.IsFiltering = false
-		lv.FilterTaskID = ""
+	render := func(content string) string {
+		return style.
+			Width(width - 2).
+			Height(innerHeight).
+			MaxHeight(height).
+			Render(truncateToHeight(content, innerHeight))
 	}
 
-	content := lv.View()
+	// When the pane is scoped to a specific task (Brain/Automations, or a
+	// filtered Tasks view), render that task's PERSISTED logs (historical +
+	// current) fetched from the API — so completed tasks show their stored
+	// output, matching the PWA. Otherwise fall back to the live SSE stream.
+	_, scopedTaskID := m.scopedLogTarget()
+	if scopedTaskID != "" {
+		if m.scopedTaskLogID != scopedTaskID {
+			return render(DimStyle.Render("Loading logs…"))
+		}
+		if len(m.scopedTaskLogs) == 0 {
+			return render(DimStyle.Render("No logs for this task."))
+		}
+		return render(renderTaskLogLines(m.scopedTaskLogs, innerWidth, innerHeight))
+	}
+	// Scoped tab but nothing selected (e.g. a non-task Brain entry).
+	if m.activeContentTab == ContentTabBrain || m.activeContentTab == ContentTabAutomation {
+		return render(DimStyle.Render("No logs — highlight a task to see its output."))
+	}
 
-	// Truncate content to fit within allocated height
-	content = truncateToHeight(content, innerHeight)
+	// Live SSE stream (Tasks tab, all output).
+	lv := m.logViewer
+	lv.SetSize(innerWidth, innerHeight)
+	lv.IsFiltering = false
+	lv.FilterTaskID = ""
+	return render(lv.View())
+}
 
-	return style.
-		Width(width - 2).
-		Height(innerHeight).
-		MaxHeight(height).
-		Render(content)
+// renderTaskLogLines formats persisted task log lines, newest that fit, with a
+// dim timestamp and level prefix; only the content is truncated (ANSI-safe).
+func renderTaskLogLines(lines []types.LogLine, width, height int) string {
+	start := 0
+	if len(lines) > height {
+		start = len(lines) - height
+	}
+	contentWidth := width - 15
+	if contentWidth < 5 {
+		contentWidth = 5
+	}
+	var b strings.Builder
+	for i := start; i < len(lines); i++ {
+		l := lines[i]
+		ts := l.Timestamp
+		if t, err := time.Parse(time.RFC3339, l.Timestamp); err == nil {
+			ts = t.Format("15:04:05")
+		} else if len(ts) > 8 {
+			ts = ts[:8]
+		}
+		level := strings.ToUpper(l.Level)
+		if len(level) > 5 {
+			level = level[:5]
+		}
+		b.WriteString(fmt.Sprintf("%s %-5s %s", DimStyle.Render(ts), level, truncateMsg(l.Content, contentWidth)))
+		if i < len(lines)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }
 
 // =============================================================================
@@ -2976,6 +4956,66 @@ func (m Model) handleFilterInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleBrainSearchInput processes Brain tab search input.
+func (m Model) handleBrainSearchInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyEnter:
+		if m.brainSearchQuery == "" {
+			m.clearBrainSearch()
+			return m, nil
+		}
+		m.brainSearchState = FilterLocked
+		return m, fetchBrainSearchCmd(m.apiRunnerConfig(), m.currentProjectID(), m.brainSearchQuery)
+
+	case tea.KeyEsc:
+		m.clearBrainSearch()
+		return m, nil
+
+	case tea.KeyBackspace, tea.KeyDelete:
+		if len(m.brainSearchQuery) > 0 {
+			m.brainSearchQuery = m.brainSearchQuery[:len(m.brainSearchQuery)-1]
+		}
+		return m, nil
+
+	case tea.KeyCtrlU:
+		m.brainSearchQuery = ""
+		return m, nil
+
+	case tea.KeySpace:
+		m.brainSearchQuery += " "
+		return m, nil
+
+	case tea.KeyRunes:
+		m.brainSearchQuery += string(msg.Runes)
+		return m, nil
+	}
+	return m, nil
+}
+
+func (m *Model) clearBrainSearch() {
+	m.brainSearchState = FilterOff
+	m.brainSearchQuery = ""
+	m.brainSearchLabel = ""
+	if m.brainEntries != nil {
+		m.entryTree.SetEntries(m.brainEntries)
+	}
+}
+
+func (m Model) renderBrainSearchBar(width int) string {
+	switch m.brainSearchState {
+	case FilterTyping:
+		return FilterTypingStyle.Width(width).Render(fmt.Sprintf(" / %s_ ", m.brainSearchQuery))
+	case FilterLocked:
+		strategy := m.brainSearchLabel
+		if strategy == "" {
+			strategy = "search"
+		}
+		return FilterLockedStyle.Render(fmt.Sprintf(" Brain %s: %s (%d) ", strategy, m.brainSearchQuery, len(m.entryTree.entries))) + DimStyle.Render("  Esc: clear")
+	default:
+		return ""
+	}
+}
+
 // applyFilter applies the current filter query to the task list.
 func (m *Model) applyFilter() {
 	if m.filterQuery == "" {
@@ -3006,6 +5046,105 @@ func (m *Model) filteredTasks() []types.ResolvedTask {
 	return FilterTasks(m.tasks, m.filterQuery)
 }
 
+func visibleTaskRows(tasks []types.ResolvedTask) []types.ResolvedTask {
+	visible := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		if strings.HasPrefix(task.GeneratedBy, "automation:") {
+			continue
+		}
+		visible = append(visible, task)
+	}
+	return visible
+}
+
+func displayStatsForTasks(tasks []types.ResolvedTask, fallback TaskStats) TaskStats {
+	stats := fallback
+	for _, task := range tasks {
+		if !strings.HasPrefix(task.GeneratedBy, "automation:") {
+			continue
+		}
+		switch task.Status {
+		case "pending":
+			if stats.Ready > 0 {
+				stats.Ready--
+			}
+		case "blocked":
+			if stats.Blocked > 0 {
+				stats.Blocked--
+			}
+		case "active", "in_progress":
+			if stats.InProgress > 0 {
+				stats.InProgress--
+			}
+		default:
+			if stats.Completed > 0 {
+				stats.Completed--
+			}
+		}
+	}
+	return stats
+}
+
+func (m Model) assignmentProjectID() (string, bool) {
+	if m.config.IsMultiProject() {
+		if m.activeProjectID == "" || m.activeProjectID == "all" {
+			return "", false
+		}
+		return m.activeProjectID, true
+	}
+	if m.config.Project == "" || m.config.Project == "all" {
+		return "", false
+	}
+	return m.config.Project, true
+}
+
+func (m Model) assignmentFeaturesForProject(projectID string) []string {
+	tasks := m.tasks
+	if projectTasks, ok := m.tasksByProject[projectID]; ok {
+		tasks = projectTasks
+	}
+
+	featureIDSet := make(map[string]bool)
+	for _, task := range tasks {
+		if task.ProjectID != "" && task.ProjectID != projectID {
+			continue
+		}
+		if task.FeatureID != "" {
+			featureIDSet[task.FeatureID] = true
+		}
+	}
+
+	features := make([]string, 0, len(featureIDSet))
+	for featureID := range featureIDSet {
+		features = append(features, featureID)
+	}
+	sort.Strings(features)
+	return features
+}
+
+func (m Model) runnerAssignmentsForProject(projectID string) []types.FeatureAssignmentResponse {
+	assignmentsByFeature := make(map[string]types.FeatureAssignmentResponse)
+	for _, runnerInfo := range m.runnerPanel.runners {
+		for _, assignment := range runnerInfo.FeatureAssignments {
+			if assignment.ProjectID == projectID && assignment.FeatureID != "" {
+				assignmentsByFeature[assignment.FeatureID] = assignment
+			}
+		}
+	}
+
+	featureIDs := make([]string, 0, len(assignmentsByFeature))
+	for featureID := range assignmentsByFeature {
+		featureIDs = append(featureIDs, featureID)
+	}
+	sort.Strings(featureIDs)
+
+	assignments := make([]types.FeatureAssignmentResponse, 0, len(featureIDs))
+	for _, featureID := range featureIDs {
+		assignments = append(assignments, assignmentsByFeature[featureID])
+	}
+	return assignments
+}
+
 // syncActiveProjectView switches between aggregate view (all projects) and project-specific view.
 // In aggregate view (activeProjectID="all"), merges tasks from all projects.
 // In project-specific view, shows only that project's tasks.
@@ -3031,6 +5170,7 @@ func (m *Model) syncActiveProjectView() {
 		m.tasks = m.getAllTasks()
 		// Gap 3: Set aggregate stats from ProjectTabs
 		m.stats = m.projectTabs.AggregateStats
+		m.stats = displayStatsForTasks(m.tasks, m.stats)
 		m.statusBar.Stats = m.stats
 	} else {
 		// Project-specific view: show only that project's tasks
@@ -3045,6 +5185,7 @@ func (m *Model) syncActiveProjectView() {
 		} else {
 			m.stats = TaskStats{}
 		}
+		m.stats = displayStatsForTasks(m.tasks, m.stats)
 		m.statusBar.Stats = m.stats
 	}
 
@@ -3055,6 +5196,471 @@ func (m *Model) syncActiveProjectView() {
 	} else {
 		// No filter, just set tasks directly
 		m.taskTree.SetTasks(m.tasks)
+	}
+}
+
+func (m Model) selectProject(projectID string) (tea.Model, tea.Cmd) {
+	if projectID == "" {
+		projectID = "all"
+	}
+	m.projectTabs.SetActiveProject(projectID)
+	m.activeProjectID = m.projectTabs.ActiveProject()
+	m.syncActiveProjectView()
+	if m.activeContentTab == ContentTabAutomation {
+		return m, m.refreshActiveAutomationSubTab()
+	}
+	return m, m.refreshBrainOnProjectSwitch()
+}
+
+func (m *Model) refreshBrainOnProjectSwitch() tea.Cmd {
+	if m.activeContentTab != ContentTabBrain {
+		return nil
+	}
+	m.clearBrainSearch()
+	m.brainEntries = nil
+	m.entryTree.SetEntries(nil)
+	return fetchBrainEntriesCmd(m.apiRunnerConfig(), m.currentProjectID())
+}
+
+func (m *Model) activeDreamProject() string {
+	project := m.config.Project
+	if m.activeProjectID != "" && m.activeProjectID != "all" {
+		project = m.activeProjectID
+	}
+	return project
+}
+
+func (m *Model) activeAutomationProject() string {
+	return m.activeDreamProject()
+}
+
+func (m Model) isAutomationDreamActive() bool {
+	return m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabDream
+}
+
+func (m *Model) cycleAutomationSubTab() tea.Cmd {
+	if m.activeAutomationSubTab == AutomationSubTabAutomations {
+		return m.setAutomationSubTab(AutomationSubTabDream)
+	}
+	return m.setAutomationSubTab(AutomationSubTabAutomations)
+}
+
+func (m *Model) setAutomationSubTab(tab AutomationSubTab) tea.Cmd {
+	m.activeAutomationSubTab = tab
+	m.helpBar.ActiveAutomationSubTab = tab
+	return m.prepareActiveAutomationFetch()
+}
+
+func (m *Model) prepareActiveAutomationFetch() tea.Cmd {
+	if m.activeAutomationSubTab == AutomationSubTabDream {
+		if !m.dreamViewer.HasContent() || !m.dreamViewer.HasConfig() {
+			m.prepareDreamFetch()
+			return m.fetchDreamTabCmd()
+		}
+		return nil
+	}
+	if len(m.automationList.rows) == 0 {
+		m.prepareAutomationFetch()
+		return m.fetchAutomationListCmd()
+	}
+	return nil
+}
+
+func (m *Model) refreshActiveAutomationSubTab() tea.Cmd {
+	if m.activeAutomationSubTab == AutomationSubTabDream {
+		m.prepareDreamFetch()
+		return m.fetchDreamTabCmd()
+	}
+	m.prepareAutomationFetch()
+	return m.fetchAutomationListCmd()
+}
+
+func (m *Model) prepareAutomationFetch() {
+	m.automationList.SetLoading(true)
+}
+
+func (m *Model) fetchAutomationListCmd() tea.Cmd {
+	return fetchAutomationDataCmd(m.apiRunnerConfig(), m.activeAutomationProject())
+}
+
+func (m *Model) toggleSelectedAutomationRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	return toggleAutomationRowCmd(m.apiRunnerConfig(), *row, m.activeAutomationProject())
+}
+
+func (m *Model) runSelectedAutomationRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	return runAutomationRowCmd(m.apiRunnerConfig(), *row, m.activeAutomationProject())
+}
+
+func (m *Model) executeSelectedAutomationRunTask() tea.Cmd {
+	entry, ok := m.automationList.SelectedRunTask()
+	if !ok {
+		return nil
+	}
+	task := resolvedTaskFromAutomationRunEntry(entry)
+	actionLabel := "Execute"
+	if task.Status == "in_progress" {
+		actionLabel = "Resume"
+	}
+	projectID := m.activeAutomationProject()
+	rc := m.runnerController
+	taskCopy := task
+	modal := NewConfirmModal(actionLabel+" Task", fmt.Sprintf("%s task '%s' now?", actionLabel, task.Title)).
+		WithOnConfirm(func() tea.Msg {
+			if rc != nil {
+				return executeTaskViaRunnerCmd(rc, taskCopy, projectID)()
+			}
+			runnerID := "manual-tui"
+			if m.config.RunnerID != "" {
+				runnerID = m.config.RunnerID
+			}
+			apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+			return executeTaskCmd(apiClient, projectID, taskCopy.ID, runnerID)()
+		})
+	return m.modalManager.Open(modal)
+}
+
+func (m *Model) deleteSelectedAutomationRunTask() tea.Cmd {
+	entry, ok := m.automationList.SelectedRunTask()
+	if !ok {
+		return nil
+	}
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	modal := NewConfirmModal("Delete Task", "Delete 1 task(s)?").
+		WithTaskTitles([]string{entry.Title}).
+		WithDestructive(true).
+		WithOnConfirm(func() tea.Msg {
+			return deleteTaskCmd(apiClient, entry.Path)()
+		})
+	return m.modalManager.Open(modal)
+}
+
+func (m *Model) deleteSelectedAutomationItem() tea.Cmd {
+	if _, ok := m.automationList.SelectedRunTask(); ok {
+		return m.deleteSelectedAutomationRunTask()
+	}
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	if row.Source != "automation" {
+		m.setStatusMessage("warn", "Only automation entries can be deleted here")
+		return nil
+	}
+	if row.Scope == "global" || row.Scope == "built-in" || strings.HasPrefix(row.Path, "global/") {
+		m.setStatusMessage("warn", "Built-in automations cannot be deleted")
+		return nil
+	}
+	if !strings.HasPrefix(row.Path, "projects/") {
+		m.setStatusMessage("warn", "Only project-level automations can be deleted")
+		return nil
+	}
+	rowCopy := *row
+	modal := NewConfirmModal("Delete Automation", "Delete project automation?").
+		WithTaskTitles([]string{row.Title}).
+		WithDestructive(true).
+		WithOnConfirm(func() tea.Msg {
+			return deleteAutomationRowCmd(m.apiRunnerConfig(), rowCopy)()
+		})
+	return m.modalManager.Open(modal)
+}
+
+func (m *Model) openSelectedAutomationMetadata() tea.Cmd {
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	if entry, ok := m.automationList.SelectedRunTask(); ok {
+		if entry.Path == "" {
+			m.setStatusMessage("error", "Selected automation run task has no path")
+			return nil
+		}
+		return m.modalManager.Open(NewMetadataModal(entry.Path, apiClient))
+	}
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	path := row.Path
+	if path == "" {
+		path = row.ID
+	}
+	if path == "" {
+		m.setStatusMessage("error", "Selected automation has no path")
+		return nil
+	}
+	return m.modalManager.Open(NewMetadataModal(path, apiClient))
+}
+
+func resolvedTaskFromAutomationRunEntry(entry types.BrainEntry) *types.ResolvedTask {
+	return &types.ResolvedTask{
+		ID:            entry.ID,
+		Path:          entry.Path,
+		Title:         entry.Title,
+		Content:       entry.Content,
+		Priority:      entry.Priority,
+		Status:        entry.Status,
+		Created:       entry.Created,
+		Workdir:       entry.Workdir,
+		GitRemote:     entry.GitRemote,
+		GitBranch:     entry.GitBranch,
+		TargetWorkdir: entry.TargetWorkdir,
+		DirectPrompt:  entry.DirectPrompt,
+		Agent:         entry.Agent,
+		Model:         entry.Model,
+		Executor:      entry.Executor,
+		Sessions:      entry.Sessions,
+		Generated:     entry.Generated,
+		GeneratedBy:   entry.GeneratedBy,
+	}
+}
+
+func (m *Model) editSelectedAutomationRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	path := row.Path
+	if path == "" {
+		path = row.ID
+	}
+	if path == "" {
+		m.setStatusMessage("error", "Selected automation has no path")
+		return nil
+	}
+
+	apiClient := runner.NewAPIClient(m.apiRunnerConfig())
+	entry, err := apiClient.GetEntry(context.Background(), path)
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to fetch automation: %v", err))
+		return nil
+	}
+
+	tempDir, err := os.MkdirTemp("", "brain-automation-")
+	if err != nil {
+		m.setStatusMessage("error", fmt.Sprintf("Failed to create temp dir: %v", err))
+		return nil
+	}
+	tempFile := filepath.Join(tempDir, row.ID+".md")
+	if err := os.WriteFile(tempFile, []byte(entry.Content), 0o644); err != nil {
+		os.RemoveAll(tempDir)
+		m.setStatusMessage("error", fmt.Sprintf("Failed to write temp file: %v", err))
+		return nil
+	}
+
+	originalContent := entry.Content
+	return tea.ExecProcess(getEditorCmd(tempFile), func(err error) tea.Msg {
+		return editorClosedMsg{
+			taskID:          row.ID,
+			taskPath:        path,
+			tempFile:        tempFile,
+			originalContent: originalContent,
+			err:             err,
+		}
+	})
+}
+
+// ============================================================================
+// Goal automation row actions (Phase 3)
+//
+// When the selected Automations row is a goal (IsGoal == true), the `e` and `x`
+// keys route to goal-specific behavior instead of the generic automation
+// editor / manual-run:
+//   - `e` -> editSelectedGoalRow(): resolves the goal's GoalSummary and opens
+//            the GoalConfigModal (NOT $EDITOR).
+//   - `x` -> runSelectedGoalRow(): runs an inline goal reconcile via
+//            apiClient.RunGoal (NOT the generic automation manual-run that
+//            creates a task).
+//
+// Goal id resolution: AutomationListRow carries the automation entry id (ID)
+// and path, but the goal API methods key off the goal id. We resolve the goal
+// id by calling apiClient.ListGoals(project, "") and matching on
+// GoalSummary.EntryID == row.ID. This is preferred over GetEntry because it
+// returns a fully-populated types.GoalSummary that can be passed straight into
+// NewGoalConfigModal, AND yields GoalID for RunGoal/GoalAudit — one fetch
+// serves both needs.
+// ============================================================================
+
+// goalConfigOpenMsg is emitted after editSelectedGoalRow resolves the goal's
+// summary. The main Update opens the GoalConfigModal (opening a modal mutates
+// the ModalManager, which must happen on the Model in Update, not in a cmd).
+type goalConfigOpenMsg struct {
+	summary *types.GoalSummary
+	err     error
+}
+
+// goalReconcileResultMsg is emitted after runSelectedGoalRow triggers an inline
+// goal reconcile via apiClient.RunGoal.
+type goalReconcileResultMsg struct {
+	goalID string
+	audit  *types.GoalReconcileAudit
+	err    error
+}
+
+// goalDetailAuditMsg carries reconcile audit history fetched for the goal detail
+// pane. It is DISTINCT from the modal's goalAuditLoadedMsg so the two consumers
+// (detail pane vs config modal) never clash. entryID is the automation entry id
+// (AutomationListRow.ID) used as the cache key in m.goalAuditByEntry.
+type goalDetailAuditMsg struct {
+	entryID string
+	audit   []types.GoalReconcileAudit
+	err     error
+}
+
+// resolveGoalSummaryForRow fetches the fully-populated GoalSummary for an
+// automation row by listing goals for the project and matching on EntryID.
+func resolveGoalSummaryForRow(cfg runner.RunnerConfig, row AutomationListRow, project string) (*types.GoalSummary, error) {
+	apiClient := runner.NewAPIClient(cfg)
+	goals, err := apiClient.ListGoals(context.Background(), project, "")
+	if err != nil {
+		return nil, err
+	}
+	for i := range goals {
+		if goals[i].EntryID == row.ID {
+			return &goals[i], nil
+		}
+	}
+	return nil, fmt.Errorf("goal not found for automation entry %q", row.ID)
+}
+
+// editSelectedGoalRow returns a command that resolves the selected goal row's
+// GoalSummary and emits goalConfigOpenMsg. Returns nil when no row is selected
+// or the selected row is not a goal (callers fall back to generic behavior).
+func (m *Model) editSelectedGoalRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil || !row.IsGoal {
+		return nil
+	}
+	cfg := m.apiRunnerConfig()
+	project := m.activeAutomationProject()
+	selected := *row
+	return func() tea.Msg {
+		summary, err := resolveGoalSummaryForRow(cfg, selected, project)
+		return goalConfigOpenMsg{summary: summary, err: err}
+	}
+}
+
+// runSelectedGoalRow returns a command that resolves the selected goal row's
+// goal id and triggers an inline reconcile via apiClient.RunGoal, emitting
+// goalReconcileResultMsg. Returns nil when no row is selected or the selected
+// row is not a goal.
+func (m *Model) runSelectedGoalRow() tea.Cmd {
+	row := m.automationList.SelectedRow()
+	if row == nil || !row.IsGoal {
+		return nil
+	}
+	cfg := m.apiRunnerConfig()
+	project := m.activeAutomationProject()
+	selected := *row
+	return func() tea.Msg {
+		summary, err := resolveGoalSummaryForRow(cfg, selected, project)
+		if err != nil {
+			return goalReconcileResultMsg{err: err}
+		}
+		apiClient := runner.NewAPIClient(cfg)
+		audit, err := apiClient.RunGoal(context.Background(), summary.GoalID)
+		return goalReconcileResultMsg{goalID: summary.GoalID, audit: audit, err: err}
+	}
+}
+
+// fetchGoalDetailAuditCmd returns a command that loads the reconcile audit
+// history for a goal row's detail pane and emits goalDetailAuditMsg.
+func fetchGoalDetailAuditCmd(cfg runner.RunnerConfig, row AutomationListRow, project string) tea.Cmd {
+	entryID := row.ID
+	return func() tea.Msg {
+		summary, err := resolveGoalSummaryForRow(cfg, row, project)
+		if err != nil {
+			return goalDetailAuditMsg{entryID: entryID, err: err}
+		}
+		apiClient := runner.NewAPIClient(cfg)
+		audit, err := apiClient.GoalAudit(context.Background(), summary.GoalID, 10)
+		return goalDetailAuditMsg{entryID: entryID, audit: audit, err: err}
+	}
+}
+
+func (m *Model) prepareDreamFetch() {
+	m.dreamViewer.SetLoading(true)
+	m.dreamViewer.SetDreamConfigLoading(true)
+}
+
+func (m *Model) fetchDreamTabCmd() tea.Cmd {
+	project := m.activeDreamProject()
+	return tea.Batch(
+		fetchDreamContentCmd(m.apiRunnerConfig(), project),
+		fetchDreamConfigCmd(m.monitorClient, project),
+	)
+}
+
+func fetchBrainEntriesCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
+	return func() tea.Msg {
+		client := runner.NewAPIClient(cfg)
+		params := map[string]string{"sortBy": "modified", "sortOrder": "desc", "limit": "500", "include": "attachments"}
+		if project != "" && project != "all" {
+			params["project"] = project
+		}
+		resp, err := client.ListEntries(context.Background(), params)
+		if err != nil {
+			return BrainEntriesMsg{Err: err}
+		}
+		return BrainEntriesMsg{Entries: resp.Entries}
+	}
+}
+
+func fetchBrainEntryContentCmd(cfg runner.RunnerConfig, entry types.BrainEntry) tea.Cmd {
+	return func() tea.Msg {
+		if entry.Path == "" {
+			return BrainEntryContentMsg{Path: entry.Path, Title: entry.Title, Type: entry.Type, Err: fmt.Errorf("entry has no path")}
+		}
+		client := runner.NewAPIClient(cfg)
+		content, err := client.GetEntryFull(context.Background(), entry.Path)
+		return BrainEntryContentMsg{Path: entry.Path, Title: entry.Title, Type: entry.Type, Content: content, Attachments: append([]types.AttachmentReference(nil), entry.Attachments...), Err: err}
+	}
+}
+
+func fetchBrainSearchCmd(cfg runner.RunnerConfig, project, query string) tea.Cmd {
+	return func() tea.Msg {
+		strategy := "semantic"
+		limit := 10
+		client := runner.NewAPIClient(cfg)
+		resp, err := client.SearchEntries(context.Background(), types.SearchRequest{
+			Query:    query,
+			Project:  project,
+			Strategy: strategy,
+			Limit:    &limit,
+			Include:  []string{"attachments"},
+		})
+		if err != nil {
+			return BrainSearchMsg{Query: query, Strategy: strategy, Err: err}
+		}
+		entries := make([]types.BrainEntry, 0, len(resp.Results))
+		for _, result := range resp.Results {
+			entries = append(entries, types.BrainEntry{
+				ID:          result.ID,
+				Path:        result.Path,
+				Title:       result.Title,
+				Type:        result.Type,
+				Status:      result.Status,
+				ProjectID:   project,
+				Attachments: append([]types.AttachmentReference(nil), result.Attachments...),
+			})
+		}
+		return BrainSearchMsg{Entries: entries, Query: query, Strategy: strategy}
+	}
+}
+
+func fetchBrainEmbeddingBackfillCmd(cfg runner.RunnerConfig, project string, all, force bool) tea.Cmd {
+	return func() tea.Msg {
+		client := runner.NewAPIClient(cfg)
+		req := types.EmbeddingBackfillRequest{Force: force}
+		if !all {
+			req.Project = project
+		}
+		resp, err := client.BackfillEmbeddings(context.Background(), req)
+		return BrainEmbeddingBackfillMsg{Project: req.Project, All: all, Force: force, Result: resp, Err: err}
 	}
 }
 
@@ -3176,6 +5782,7 @@ type editorClosedMsg struct {
 	taskPath        string
 	tempFile        string
 	originalContent string
+	fullContent     bool
 	err             error
 }
 
@@ -3196,10 +5803,28 @@ type pauseAllToggledMsg struct {
 	err    error
 }
 
+type automationsPauseToggledMsg struct {
+	projectID string
+	paused    bool
+	err       error
+}
+
 type runnerStatusMsg struct {
-	paused         bool
-	pausedProjects []string
-	err            error
+	paused                   bool
+	pausedProjects           []string
+	automationsPaused        bool
+	automationPausedProjects []string
+	err                      error
+}
+
+type apiHealthMsg struct {
+	health runner.APIHealth
+	err    error
+}
+
+type runnerShutdownRequestedMsg struct {
+	runnerID string
+	err      error
 }
 
 // =============================================================================
@@ -3236,6 +5861,356 @@ func fetchDreamContentCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
 
 		return DreamContentMsg{Content: entry.Content}
 	}
+}
+
+// fetchDreamConfigCmd fetches Dream monitor configuration for a project from the API.
+func fetchDreamConfigCmd(client *MonitorClient, project string) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil {
+			return DreamConfigMsg{Error: fmt.Errorf("monitor client unavailable")}
+		}
+		config, err := client.FetchDreamConfig(context.Background(), project)
+		if err != nil {
+			return DreamConfigMsg{Error: err}
+		}
+		return DreamConfigMsg{Config: config}
+	}
+}
+
+func fetchAutomationDataCmd(cfg runner.RunnerConfig, project string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+
+		automationParams := map[string]string{"type": "automation"}
+		taskParams := map[string]string{"type": "task"}
+		if project != "" {
+			automationParams["project"] = project
+			taskParams["project"] = project
+		}
+
+		automations, err := apiClient.ListEntries(ctx, automationParams)
+		if err != nil {
+			return AutomationDataMsg{Error: fmt.Errorf("fetch automation entries: %w", err)}
+		}
+		if project != "" {
+			globalAutomations, err := apiClient.ListEntries(ctx, map[string]string{"type": "automation", "global": "true"})
+			if err != nil {
+				return AutomationDataMsg{Error: fmt.Errorf("fetch global automation entries: %w", err)}
+			}
+			automations.Entries = appendUniqueAutomationEntries(projectDisabledAutomationTemplates(globalAutomations.Entries), automations.Entries)
+		}
+		tasks, err := apiClient.ListEntries(ctx, taskParams)
+		if err != nil {
+			return AutomationDataMsg{Error: fmt.Errorf("fetch scheduled task entries: %w", err)}
+		}
+
+		// Collect feature IDs of goal automations so their linked tasks can be
+		// included in generatedTasks for progress computation. Goal automations
+		// link work via the shared feature_id (mirroring server GetTasksByFeature).
+		goalFeatureIDs := make(map[string]bool)
+		for _, entry := range automations.Entries {
+			if entry.GeneratedBy == types.GoalGeneratedBy && entry.FeatureID != "" {
+				goalFeatureIDs[entry.FeatureID] = true
+			}
+		}
+
+		scheduledTasks := make([]types.BrainEntry, 0, len(tasks.Entries))
+		generatedTasks := make([]types.BrainEntry, 0)
+		for _, task := range tasks.Entries {
+			if task.Schedule != "" || task.RunOnceAt != "" {
+				scheduledTasks = append(scheduledTasks, task)
+			}
+			if strings.HasPrefix(task.GeneratedBy, "automation:") {
+				generatedTasks = append(generatedTasks, task)
+			} else if task.FeatureID != "" && goalFeatureIDs[task.FeatureID] {
+				generatedTasks = append(generatedTasks, task)
+			}
+		}
+		runParams := map[string]string{"type": "automation_run"}
+		if project != "" {
+			runParams["project"] = project
+		}
+		if automationRuns, err := apiClient.ListEntries(ctx, runParams); err == nil {
+			generatedTasks = append(generatedTasks, automationRuns.Entries...)
+		}
+
+		return AutomationDataMsg{Automations: automations.Entries, ScheduledTasks: scheduledTasks, GeneratedTasks: generatedTasks}
+	}
+}
+
+func projectDisabledAutomationTemplates(entries []types.BrainEntry) []types.BrainEntry {
+	if len(entries) == 0 {
+		return entries
+	}
+	templates := make([]types.BrainEntry, len(entries))
+	copy(templates, entries)
+	for i := range templates {
+		if templates[i].ProjectID == "" && strings.HasPrefix(templates[i].Path, "global/") {
+			templates[i].Status = "archived"
+		}
+	}
+	return templates
+}
+
+func appendUniqueAutomationEntries(first, second []types.BrainEntry) []types.BrainEntry {
+	entries := make([]types.BrainEntry, 0, len(first)+len(second))
+	indexByKey := make(map[string]int, len(first)+len(second))
+	for _, group := range [][]types.BrainEntry{first, second} {
+		for _, entry := range group {
+			key := automationTemplateKey(entry)
+			if key == "" {
+				entries = append(entries, entry)
+				continue
+			}
+			if idx, ok := indexByKey[key]; ok {
+				if entry.ProjectID != "" || strings.HasPrefix(entry.Path, "projects/") {
+					entries[idx] = entry
+				}
+				continue
+			}
+			indexByKey[key] = len(entries)
+			entries = append(entries, entry)
+		}
+	}
+	return entries
+}
+
+func automationTemplateKey(entry types.BrainEntry) string {
+	if entry.GeneratedBy != "" {
+		return "generated:" + entry.GeneratedBy
+	}
+	if entry.Title != "" {
+		return "title:" + strings.ToLower(strings.TrimSpace(entry.Title))
+	}
+	if entry.Path != "" {
+		return "path:" + entry.Path
+	}
+	return entry.ID
+}
+
+func toggleAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeProject string) tea.Cmd {
+	return func() tea.Msg {
+		path := row.Path
+		if path == "" {
+			path = row.ID
+		}
+		if path == "" {
+			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("automation row has no path or id")}
+		}
+
+		apiClient := runner.NewAPIClient(cfg)
+		updates := map[string]interface{}{}
+		switch row.Source {
+		case "automation":
+			newStatus := "active"
+			if row.Enabled || row.Status == "active" {
+				newStatus = "archived"
+			}
+			if row.Scope == "global" || row.Scope == "built-in" || strings.HasPrefix(path, "global/") {
+				if activeProject == "" || activeProject == "all" {
+					return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("built-in automation toggle requires an active project")}
+				}
+				existing, err := apiClient.ListEntries(context.Background(), map[string]string{"type": "automation", "project": activeProject})
+				if err != nil {
+					return AutomationToggleMsg{RowID: row.ID, Error: err}
+				}
+				rowEntry := types.BrainEntry{ID: row.ID, Path: row.Path, Title: row.Title, Status: row.Status}
+				rowKey := automationTemplateKey(rowEntry)
+				for _, entry := range existing.Entries {
+					if automationTemplateKey(entry) == rowKey {
+						_, err := apiClient.UpdateEntry(context.Background(), entry.Path, map[string]interface{}{"status": newStatus})
+						return AutomationToggleMsg{RowID: row.ID, Error: err}
+					}
+				}
+				template, err := apiClient.GetEntry(context.Background(), path)
+				if err != nil {
+					return AutomationToggleMsg{RowID: row.ID, Error: err}
+				}
+				generated := true
+				_, err = apiClient.CreateEntry(context.Background(), types.CreateEntryRequest{
+					Type:               "automation",
+					Title:              template.Title,
+					Content:            template.Content,
+					Tags:               template.Tags,
+					Status:             newStatus,
+					Priority:           template.Priority,
+					Project:            activeProject,
+					Trigger:            template.Trigger,
+					Action:             template.Action,
+					Retry:              template.Retry,
+					DirectPrompt:       template.DirectPrompt,
+					Agent:              template.Agent,
+					Model:              template.Model,
+					Executor:           template.Executor,
+					ExecutionMode:      template.ExecutionMode,
+					SessionMode:        template.SessionMode,
+					CompleteOnIdle:     template.CompleteOnIdle,
+					TargetWorkdir:      template.TargetWorkdir,
+					MergeTargetBranch:  template.MergeTargetBranch,
+					MergePolicy:        template.MergePolicy,
+					MergeStrategy:      template.MergeStrategy,
+					RemoteBranchPolicy: template.RemoteBranchPolicy,
+					OpenPRBeforeMerge:  template.OpenPRBeforeMerge,
+					Generated:          &generated,
+					GeneratedBy:        template.GeneratedBy,
+				})
+				return AutomationToggleMsg{RowID: row.ID, Error: err}
+			}
+			updates["status"] = newStatus
+		case "task":
+			updates["schedule_enabled"] = !row.Enabled
+		default:
+			return AutomationToggleMsg{RowID: row.ID, Error: fmt.Errorf("unknown automation row source %q", row.Source)}
+		}
+
+		_, err := apiClient.UpdateEntry(context.Background(), path, updates)
+		return AutomationToggleMsg{RowID: row.ID, Error: err}
+	}
+}
+
+func deleteAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow) tea.Cmd {
+	return func() tea.Msg {
+		path := row.Path
+		if path == "" {
+			path = row.ID
+		}
+		if path == "" {
+			return AutomationDeletedMsg{RowID: row.ID, Error: fmt.Errorf("automation row has no path or id")}
+		}
+		if row.Source != "automation" {
+			return AutomationDeletedMsg{RowID: row.ID, Error: fmt.Errorf("delete only supports automation entries")}
+		}
+		if row.Scope == "global" || row.Scope == "built-in" || strings.HasPrefix(path, "global/") {
+			return AutomationDeletedMsg{RowID: row.ID, Error: fmt.Errorf("built-in automations cannot be deleted")}
+		}
+		if !strings.HasPrefix(path, "projects/") {
+			return AutomationDeletedMsg{RowID: row.ID, Error: fmt.Errorf("only project-level automations can be deleted")}
+		}
+
+		apiClient := runner.NewAPIClient(cfg)
+		err := apiClient.DeleteEntry(context.Background(), path)
+		return AutomationDeletedMsg{RowID: row.ID, Error: err}
+	}
+}
+
+func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeProject string) tea.Cmd {
+	return func() tea.Msg {
+		path := row.Path
+		if path == "" {
+			path = row.ID
+		}
+		if path == "" {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation row has no path or id")}
+		}
+		if row.Source != "automation" {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("manual run only supports automation entries")}
+		}
+
+		apiClient := runner.NewAPIClient(cfg)
+		entry, err := apiClient.GetEntry(context.Background(), path)
+		if err != nil {
+			return AutomationRunMsg{RowID: row.ID, Error: err}
+		}
+		if entry.Action == nil {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation has no action")}
+		}
+
+		project := entry.ProjectID
+		if project == "" {
+			project = activeProject
+		}
+		if project == "" || project == "all" {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation has no project")}
+		}
+
+		generated := true
+		prompt := interpolateAutomationManualPrompt(entry.Action.DirectPrompt, project)
+		if entry.Action.Type == "script" {
+			prompt = interpolateAutomationManualPrompt(entry.Action.Command, project)
+		}
+		if prompt == "" {
+			return AutomationRunMsg{RowID: row.ID, Error: fmt.Errorf("automation action has no prompt or command")}
+		}
+
+		completeOnIdle := automationManualCompleteOnIdle(entry.Action.CompleteOnIdle)
+		agent := firstNonEmpty(entry.Agent, entry.Action.Agent)
+		model := firstNonEmpty(entry.Model, entry.Action.Model)
+		executor := firstNonEmpty(entry.Executor, entry.Action.Executor)
+		executionMode := firstNonEmpty(entry.ExecutionMode, entry.Action.ExecutionMode)
+		targetWorkdir := firstNonEmpty(entry.TargetWorkdir, entry.Action.TargetWorkdir)
+		req := types.CreateEntryRequest{
+			Type:           "task",
+			Title:          fmt.Sprintf("Automation: %s", entry.ID),
+			Content:        prompt,
+			Status:         "pending",
+			Project:        project,
+			Generated:      &generated,
+			GeneratedBy:    fmt.Sprintf("automation:%s", entry.ID),
+			GeneratedKey:   fmt.Sprintf("automation:manual:%s:%d", entry.ID, time.Now().UTC().UnixNano()),
+			DirectPrompt:   prompt,
+			Agent:          agent,
+			Model:          model,
+			Executor:       executor,
+			ExecutionMode:  executionMode,
+			CompleteOnIdle: completeOnIdle,
+			TargetWorkdir:  targetWorkdir,
+		}
+		if entry.Action.Type == "script" {
+			req.Executor = "script"
+			if req.ExecutionMode == "" {
+				req.ExecutionMode = "current_branch"
+			}
+			if req.TargetWorkdir == "" {
+				req.TargetWorkdir = "/tmp"
+			}
+		}
+
+		created, err := apiClient.CreateEntry(context.Background(), req)
+		if err != nil {
+			return AutomationRunMsg{RowID: row.ID, Error: err}
+		}
+		return AutomationRunMsg{RowID: row.ID, TaskID: created.ID}
+	}
+}
+
+func automationManualCompleteOnIdle(value *bool) *bool {
+	if value != nil {
+		return value
+	}
+	defaultValue := true
+	return &defaultValue
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func interpolateAutomationManualPrompt(prompt, project string) string {
+	if prompt == "" {
+		return ""
+	}
+	tmpl, err := template.New("automation-manual-run").Option("missingkey=error").Parse(prompt)
+	if err != nil {
+		return prompt
+	}
+	data := struct {
+		Project   string
+		ProjectID string
+	}{
+		Project:   project,
+		ProjectID: project,
+	}
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return prompt
+	}
+	return buf.String()
 }
 
 // completeTaskCmd completes a single task.
@@ -3480,6 +6455,75 @@ func pauseAllCmd(cfg runner.RunnerConfig, currentlyPaused bool, rc RunnerControl
 	}
 }
 
+// fetchRunnerListCmd fetches the list of registered runners from the API.
+func fetchRunnerListCmd(cfg runner.RunnerConfig) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		resp, err := apiClient.ListRunners(ctx)
+		if err != nil {
+			return RunnerListMsg{Err: err}
+		}
+		return RunnerListMsg{Runners: resp.Runners}
+	}
+}
+
+// shutdownRunnerCmd requests graceful shutdown for a registered runner.
+func shutdownRunnerCmd(cfg runner.RunnerConfig, runnerID, reason string) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		err := apiClient.ShutdownRunner(ctx, runnerID, reason)
+		return runnerShutdownRequestedMsg{runnerID: runnerID, err: err}
+	}
+}
+
+// pauseAutomationsCmd toggles pause/resume for automation-generated tasks.
+func pauseAutomationsCmd(cfg runner.RunnerConfig, currentlyPaused bool, rc RunnerController) tea.Cmd {
+	return func() tea.Msg {
+		if rc != nil {
+			if currentlyPaused {
+				rc.ResumeAutomations()
+			} else {
+				rc.PauseAutomations()
+			}
+			return automationsPauseToggledMsg{paused: !currentlyPaused, err: nil}
+		}
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		var err error
+		if currentlyPaused {
+			err = apiClient.ResumeAutomations(ctx)
+		} else {
+			err = apiClient.PauseAutomations(ctx)
+		}
+		return automationsPauseToggledMsg{paused: !currentlyPaused, err: err}
+	}
+}
+
+// pauseProjectAutomationsCmd toggles pause/resume for automation-generated tasks in one project.
+func pauseProjectAutomationsCmd(cfg runner.RunnerConfig, projectID string, currentlyPaused bool, rc RunnerController) tea.Cmd {
+	return func() tea.Msg {
+		if rc != nil {
+			if currentlyPaused {
+				rc.ResumeProjectAutomations(projectID)
+			} else {
+				rc.PauseProjectAutomations(projectID)
+			}
+			return automationsPauseToggledMsg{projectID: projectID, paused: !currentlyPaused, err: nil}
+		}
+		apiClient := runner.NewAPIClient(cfg)
+		ctx := context.Background()
+		var err error
+		if currentlyPaused {
+			err = apiClient.ResumeProjectAutomations(ctx, projectID)
+		} else {
+			err = apiClient.PauseProjectAutomations(ctx, projectID)
+		}
+		return automationsPauseToggledMsg{projectID: projectID, paused: !currentlyPaused, err: err}
+	}
+}
+
 // fetchRunnerStatusCmd fetches the current runner status (pause state).
 func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 	return func() tea.Msg {
@@ -3490,7 +6534,34 @@ func fetchRunnerStatusCmd(cfg runner.RunnerConfig) tea.Cmd {
 		if err != nil {
 			return runnerStatusMsg{err: err}
 		}
-		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects}
+		return runnerStatusMsg{paused: status.Paused, pausedProjects: status.PausedProjects, automationsPaused: status.AutomationsPaused, automationPausedProjects: status.AutomationPausedProjects}
+	}
+}
+
+// serverRequestsMsg carries the global server-request log.
+type serverRequestsMsg struct {
+	requests []types.ServerRequestRecord
+	err      error
+}
+
+// fetchServerRequestsCmd fetches the recent server-request log for the Logs tab.
+func fetchServerRequestsCmd(cfg runner.RunnerConfig) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		resp, err := apiClient.GetServerRequests(context.Background(), 800)
+		if err != nil {
+			return serverRequestsMsg{err: err}
+		}
+		return serverRequestsMsg{requests: resp.Requests}
+	}
+}
+
+// fetchAPIHealthCmd fetches server and embedding readiness for the status bar.
+func fetchAPIHealthCmd(cfg runner.RunnerConfig) tea.Cmd {
+	return func() tea.Msg {
+		apiClient := runner.NewAPIClient(cfg)
+		health, err := apiClient.CheckHealth(context.Background())
+		return apiHealthMsg{health: health, err: err}
 	}
 }
 
@@ -3627,6 +6698,28 @@ func (m Model) computeRunningPerProject() map[string]int {
 	return running
 }
 
+// computeRunnerMetrics calculates aggregate runner statistics from a list of runners.
+func computeRunnerMetrics(runners []types.RunnerInfo) *RunnerMetrics {
+	if len(runners) == 0 {
+		return nil
+	}
+
+	metrics := &RunnerMetrics{
+		TotalRunners: len(runners),
+	}
+
+	for _, r := range runners {
+		switch r.Status {
+		case types.RunnerStatusOnline:
+			metrics.OnlineRunners++
+		case types.RunnerStatusStale:
+			metrics.StaleRunners++
+		}
+	}
+
+	return metrics
+}
+
 // getEditorCmd returns an exec.Cmd configured to open a file in $EDITOR.
 func getEditorCmd(filePath string) *exec.Cmd {
 	editor := os.Getenv("EDITOR")
@@ -3636,18 +6729,4 @@ func getEditorCmd(filePath string) *exec.Cmd {
 
 	cmd := exec.Command(editor, filePath)
 	return cmd
-}
-
-// fetchRunnersListCmd returns a tea.Cmd that fetches the runner list from the API.
-func fetchRunnersListCmd(cfg runner.RunnerConfig) tea.Cmd {
-	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(cfg)
-		ctx := context.Background()
-		resp, err := apiClient.ListRunners(ctx)
-		if err != nil {
-			// Silently ignore errors — runners panel will just show stale data
-			return nil
-		}
-		return RunnersUpdatedMsg{Runners: resp.Runners}
-	}
 }

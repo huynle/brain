@@ -187,14 +187,30 @@ func NewProcessManager(config RunnerConfig) *ProcessManager {
 // Process Tracking
 // =============================================================================
 
-// Add tracks a new process. Returns error if task is already tracked.
+// Add tracks a new process. Returns error if task is already tracked
+// by a real (non-reservation) entry.
+//
+// If a slot reservation exists for this taskID (ReserveSlot was called
+// first), Add upgrades the placeholder to a live process without
+// consuming an extra slot. This is the "spawn succeeded" path: the
+// reservation held capacity during the executor/workdir resolution
+// and ack round-trip, and now the running Proc takes its place.
 func (pm *ProcessManager) Add(taskID string, task RunningTask, proc Process) error {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
-	if _, exists := pm.processes[taskID]; exists {
-		slog.Warn("process already tracked", "task_id", taskID)
-		return fmt.Errorf("task %s is already being tracked", taskID)
+	if existing, exists := pm.processes[taskID]; exists {
+		if existing.Proc != nil {
+			slog.Warn("process already tracked", "task_id", taskID)
+			return fmt.Errorf("task %s is already being tracked", taskID)
+		}
+		// Reservation placeholder — upgrade it in place. This is the
+		// happy path: ReserveSlot held the capacity slot during dispatch
+		// preflight, and now the real Proc replaces the placeholder.
+		existing.Task = task
+		existing.Proc = proc
+		slog.Info("process tracked (upgraded reservation)", "task_id", taskID, "pid", proc.Pid(), "project", task.ProjectID)
+		return nil
 	}
 
 	pm.processes[taskID] = &ProcessInfo{
@@ -204,6 +220,65 @@ func (pm *ProcessManager) Add(taskID string, task RunningTask, proc Process) err
 
 	slog.Info("process tracked", "task_id", taskID, "pid", proc.Pid(), "project", task.ProjectID)
 	return nil
+}
+
+// ReserveSlot atomically checks and holds an execution slot for a task.
+// Returns true if the slot was granted, false if the runner is at
+// capacity. Idempotent for the same task ID (re-reservation returns
+// true without consuming an extra slot).
+//
+// This closes a race in the dispatch consumer: previously the
+// capacity check (RunningCount() >= MaxParallel) and the actual
+// spawn were separated by several HTTP round-trips (ack, executor
+// resolution, workdir resolution). Multiple concurrent dispatch
+// workers could all pass the check before any spawned, causing the
+// runner to exceed max_parallel (production observed 7-8 concurrent
+// processes on a max_parallel=3 runner).
+//
+// The reservation counts toward RunningCount so subsequent
+// ReserveSlot callers see the accurate load. Callers MUST either:
+//   - Call Add(taskID, ...) to upgrade the reservation to a live
+//     process on successful spawn, or
+//   - Call ReleaseReservation(taskID) if the dispatch fails between
+//     reserve and spawn (task_lookup_failed, executor_unsupported,
+//     workdir_unavailable, ack failure, spawn error).
+func (pm *ProcessManager) ReserveSlot(taskID string, maxParallel int) bool {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	// Idempotent: if we've already reserved (or the task is already
+	// running), let the caller proceed. This handles legitimate
+	// dispatch redelivery.
+	if _, exists := pm.processes[taskID]; exists {
+		return true
+	}
+
+	if maxParallel > 0 && len(pm.processes) >= maxParallel {
+		return false
+	}
+
+	// Insert the placeholder with a nil Proc. RunningCount sees this
+	// as one occupied slot, and Add will upgrade it later.
+	pm.processes[taskID] = &ProcessInfo{}
+	return true
+}
+
+// ReleaseReservation removes an unspawned slot reservation. Safe to
+// call when no reservation exists (no-op). Never removes a live
+// process — those must go through Remove after CheckCompletion.
+func (pm *ProcessManager) ReleaseReservation(taskID string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	info, exists := pm.processes[taskID]
+	if !exists {
+		return
+	}
+	if info.Proc != nil {
+		// Not a reservation — a real process. Don't touch it.
+		return
+	}
+	delete(pm.processes, taskID)
 }
 
 // Remove removes and returns process info. Returns nil if not found.
@@ -217,7 +292,11 @@ func (pm *ProcessManager) Remove(taskID string) *ProcessInfo {
 	}
 
 	delete(pm.processes, taskID)
-	slog.Info("process removed", "task_id", taskID, "pid", info.Proc.Pid())
+	if info.Proc != nil {
+		slog.Info("process removed", "task_id", taskID, "pid", info.Proc.Pid())
+	} else {
+		slog.Info("reservation removed", "task_id", taskID)
+	}
 	return info
 }
 
@@ -241,6 +320,18 @@ func (pm *ProcessManager) UpdatePort(taskID string, port int) {
 	info.Task.OpencodePort = port
 }
 
+// UpdateSessionID updates the SessionID on a tracked task.
+func (pm *ProcessManager) UpdateSessionID(taskID string, sessionID string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	info, exists := pm.processes[taskID]
+	if !exists {
+		return
+	}
+	info.Task.SessionID = sessionID
+}
+
 // UpdateIdleSince updates the IdleSince timestamp on a tracked task.
 func (pm *ProcessManager) UpdateIdleSince(taskID string, idleSince string) {
 	pm.mu.Lock()
@@ -262,6 +353,12 @@ func (pm *ProcessManager) IsRunning(taskID string) bool {
 	if !exists {
 		return false
 	}
+	if info.Proc == nil {
+		// Reservation placeholder — the task is scheduled but not yet
+		// spawned. Treat as not-yet-running so callers waiting on real
+		// process state don't misfire.
+		return false
+	}
 
 	return !info.Proc.Exited()
 }
@@ -278,13 +375,18 @@ func (pm *ProcessManager) GetAll() []ProcessInfo {
 	return result
 }
 
-// GetAllRunning returns only running processes.
+// GetAllRunning returns only running processes. Excludes both exited
+// processes and unspawned reservations.
 func (pm *ProcessManager) GetAllRunning() []ProcessInfo {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	var result []ProcessInfo
 	for _, info := range pm.processes {
+		if info.Proc == nil {
+			// Reservation placeholder — no live process yet.
+			continue
+		}
 		if !info.Proc.Exited() {
 			result = append(result, *info)
 		}
@@ -300,13 +402,21 @@ func (pm *ProcessManager) Count() int {
 	return len(pm.processes)
 }
 
-// RunningCount returns currently running process count.
+// RunningCount returns the count of slots currently in use — both
+// live processes AND unspawned reservations. Reservations count so
+// concurrent dispatch workers observe the true load and don't
+// over-allocate slots (see ReserveSlot).
 func (pm *ProcessManager) RunningCount() int {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	count := 0
 	for _, info := range pm.processes {
+		if info.Proc == nil {
+			// Reservation placeholder — counts as one used slot.
+			count++
+			continue
+		}
 		if !info.Proc.Exited() {
 			count++
 		}

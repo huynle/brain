@@ -18,11 +18,15 @@ func (s *StorageLayer) GenerateToken() (string, error) {
 	return base64.URLEncoding.WithPadding(base64.NoPadding).EncodeToString(b), nil
 }
 
-// CreateToken stores a token with the given name in the database.
-func (s *StorageLayer) CreateToken(ctx context.Context, name, token string) error {
+// CreateToken stores a token with the given name and scope in the database.
+// If scope is empty, it defaults to "admin:*".
+func (s *StorageLayer) CreateToken(ctx context.Context, name, token, scope string) error {
+	if scope == "" {
+		scope = "admin:*"
+	}
 	_, err := s.db.ExecContext(ctx,
-		"INSERT INTO api_tokens (name, token) VALUES (?, ?)",
-		name, token,
+		"INSERT INTO api_tokens (name, token, scope) VALUES (?, ?, ?)",
+		name, token, scope,
 	)
 	if err != nil {
 		return fmt.Errorf("insert token: %w", err)
@@ -34,6 +38,7 @@ func (s *StorageLayer) CreateToken(ctx context.Context, name, token string) erro
 type Token struct {
 	Name      string
 	Token     string // Full value on create/validate; prefix (8 chars) on list
+	Scope     string // Token scope: "admin:*", "runner:*", or "read:*"
 	CreatedAt string
 	LastUsed  string
 	RevokedAt string
@@ -51,19 +56,17 @@ func tokenPrefix(token string) string {
 // and updates last_used on success. Returns the full Token on success.
 func (s *StorageLayer) ValidateToken(ctx context.Context, tokenValue string) (*Token, error) {
 	var t Token
-	var revokedAt sql.NullString
 	err := s.db.QueryRowContext(ctx,
-		`SELECT name, token, created_at, COALESCE(last_used, '') 
+		`SELECT name, token, scope, created_at, COALESCE(last_used, '') 
          FROM api_tokens WHERE token = ? AND revoked_at IS NULL`,
 		tokenValue,
-	).Scan(&t.Name, &t.Token, &t.CreatedAt, &t.LastUsed)
+	).Scan(&t.Name, &t.Token, &t.Scope, &t.CreatedAt, &t.LastUsed)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("token not found or revoked")
 	}
 	if err != nil {
 		return nil, fmt.Errorf("validate token: %w", err)
 	}
-	_ = revokedAt // not scanned since WHERE filters it
 
 	// Update last_used asynchronously
 	go s.UpdateTokenLastUsed(context.Background(), t.Name)
@@ -75,7 +78,7 @@ func (s *StorageLayer) ValidateToken(ctx context.Context, tokenValue string) (*T
 // to show only the first 8 characters. Set includeRevoked to true to include
 // revoked tokens in the result.
 func (s *StorageLayer) ListTokens(ctx context.Context, includeRevoked ...bool) ([]Token, error) {
-	query := "SELECT name, token, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens"
+	query := "SELECT name, token, scope, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens"
 	if len(includeRevoked) == 0 || !includeRevoked[0] {
 		query += " WHERE revoked_at IS NULL"
 	}
@@ -90,7 +93,7 @@ func (s *StorageLayer) ListTokens(ctx context.Context, includeRevoked ...bool) (
 	var tokens []Token
 	for rows.Next() {
 		var t Token
-		if err := rows.Scan(&t.Name, &t.Token, &t.CreatedAt, &t.LastUsed, &t.RevokedAt); err != nil {
+		if err := rows.Scan(&t.Name, &t.Token, &t.Scope, &t.CreatedAt, &t.LastUsed, &t.RevokedAt); err != nil {
 			return nil, fmt.Errorf("scan token: %w", err)
 		}
 		// Mask token value to prefix only
@@ -111,9 +114,9 @@ func (s *StorageLayer) ListTokens(ctx context.Context, includeRevoked ...bool) (
 func (s *StorageLayer) GetTokenByName(ctx context.Context, name string) (*Token, error) {
 	var t Token
 	err := s.db.QueryRowContext(ctx,
-		"SELECT name, token, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens WHERE name = ?",
+		"SELECT name, token, scope, created_at, COALESCE(last_used, ''), COALESCE(revoked_at, '') FROM api_tokens WHERE name = ?",
 		name,
-	).Scan(&t.Name, &t.Token, &t.CreatedAt, &t.LastUsed, &t.RevokedAt)
+	).Scan(&t.Name, &t.Token, &t.Scope, &t.CreatedAt, &t.LastUsed, &t.RevokedAt)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("token not found: %s", name)
 	}

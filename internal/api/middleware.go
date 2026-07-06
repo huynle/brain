@@ -1,9 +1,15 @@
 package api
 
 import (
+	"bufio"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"runtime/debug"
@@ -23,7 +29,7 @@ type TokenValidator interface {
 // AuthResult carries authentication metadata after successful validation.
 // Downstream handlers read these values from the request context.
 type AuthResult struct {
-	Type     string // "api_token" or "oauth"
+	Type     string // "api_token", "oauth", or "jwt"
 	Name     string // token name (api) or client_id (oauth)
 	ClientID string // oauth only
 	Scope    string // oauth only
@@ -113,11 +119,17 @@ func Logger(next http.Handler) http.Handler {
 			path += "?" + tokenPattern.ReplaceAllString(r.URL.RawQuery, "${1}token=***")
 		}
 
-		slog.Info("request",
-			"method", r.Method,
-			"path", path,
-			"status", sw.status,
-			"duration", duration.String(),
+		level := slog.LevelDebug
+		if sw.status >= http.StatusInternalServerError {
+			level = slog.LevelError
+		} else if sw.status >= http.StatusBadRequest {
+			level = slog.LevelWarn
+		}
+		slog.LogAttrs(r.Context(), level, "request",
+			slog.String("method", r.Method),
+			slog.String("path", path),
+			slog.Int("status", sw.status),
+			slog.String("duration", duration.String()),
 		)
 	})
 }
@@ -152,6 +164,16 @@ func (sw *statusWriter) Flush() {
 	}
 }
 
+// Hijack implements http.Hijacker by delegating to the underlying
+// ResponseWriter. Required for WebSocket upgrades (the runner bridge) to
+// work through the Logger middleware.
+func (sw *statusWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := sw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
+}
+
 // CORS returns middleware that sets CORS headers based on config.
 func CORS(cfg config.Config) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -160,8 +182,8 @@ func CORS(cfg config.Config) func(http.Handler) http.Handler {
 
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id")
+			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Mcp-Session-Id")
 			w.Header().Set("Access-Control-Max-Age", "86400")
 
 			if origin != "*" {
@@ -236,7 +258,12 @@ func isTLS(r *http.Request) bool {
 // Auth returns middleware that validates Bearer tokens or ?token= query params
 // against a TokenValidator (e.g. database-backed token store).
 // When enabled is false, all requests pass through.
-func Auth(enabled bool, validator TokenValidator) func(http.Handler) http.Handler {
+func Auth(enabled bool, validator TokenValidator, jwtSecrets ...string) func(http.Handler) http.Handler {
+	jwtSecret := ""
+	if len(jwtSecrets) > 0 {
+		jwtSecret = jwtSecrets[0]
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !enabled {
@@ -259,6 +286,22 @@ func Auth(enabled bool, validator TokenValidator) func(http.Handler) http.Handle
 				return
 			}
 
+			if jwtSecret != "" && looksLikeJWT(token) {
+				authResult, err := validateJWT(token, jwtSecret)
+				if err != nil {
+					w.Header().Set("WWW-Authenticate", `Bearer realm="brain-api", error="invalid_token"`)
+					WriteError(w, http.StatusUnauthorized,
+						"Unauthorized",
+						"Invalid authentication token",
+					)
+					return
+				}
+
+				ctx := context.WithValue(r.Context(), ctxAuthResult, authResult)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
 			validToken, err := validator.ValidateToken(r.Context(), token)
 			if err != nil {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="brain-api", error="invalid_token"`)
@@ -275,6 +318,69 @@ func Auth(enabled bool, validator TokenValidator) func(http.Handler) http.Handle
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func looksLikeJWT(token string) bool {
+	return strings.Count(token, ".") == 2
+}
+
+type jwtClaims struct {
+	Subject string  `json:"sub"`
+	Expiry  float64 `json:"exp"`
+}
+
+func validateJWT(token, secret string) (*AuthResult, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid jwt format")
+	}
+
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("invalid jwt header: %w", err)
+	}
+	var header struct {
+		Algorithm string `json:"alg"`
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return nil, fmt.Errorf("invalid jwt header json: %w", err)
+	}
+	if header.Algorithm != "HS256" {
+		return nil, fmt.Errorf("unsupported jwt algorithm %q", header.Algorithm)
+	}
+
+	signingInput := parts[0] + "." + parts[1]
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signingInput))
+	expectedSig := mac.Sum(nil)
+	actualSig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return nil, fmt.Errorf("invalid jwt signature encoding: %w", err)
+	}
+	if !hmac.Equal(actualSig, expectedSig) {
+		return nil, fmt.Errorf("invalid jwt signature")
+	}
+
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid jwt payload: %w", err)
+	}
+	var claims jwtClaims
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return nil, fmt.Errorf("invalid jwt payload json: %w", err)
+	}
+	if claims.Expiry == 0 {
+		return nil, fmt.Errorf("jwt missing exp claim")
+	}
+	if time.Now().Unix() >= int64(claims.Expiry) {
+		return nil, fmt.Errorf("jwt expired")
+	}
+
+	return &AuthResult{
+		Type:  "jwt",
+		Name:  claims.Subject,
+		Scope: "admin:*",
+	}, nil
 }
 
 // extractBearerToken extracts the token from a "Bearer <token>" header value.
@@ -311,7 +417,116 @@ func buildAuthResult(tok *storage.Token) *AuthResult {
 		}
 	}
 	return &AuthResult{
-		Type: "api_token",
-		Name: tok.Name,
+		Type:  "api_token",
+		Name:  tok.Name,
+		Scope: tok.Scope,
 	}
+}
+
+// RequireScope returns middleware that checks the AuthResult scope against
+// the required scopes. If the authenticated token's scope is not in the
+// allowed list, it returns 403 Forbidden.
+// Admin scope ("admin:*") always passes all scope checks.
+func RequireScope(allowed ...string) func(http.Handler) http.Handler {
+	allowedSet := make(map[string]bool, len(allowed))
+	for _, s := range allowed {
+		allowedSet[s] = true
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			auth, ok := AuthResultFromContext(r.Context())
+			if !ok {
+				// No auth result — let the auth middleware handle 401
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// admin:* always passes
+			if auth.Scope == "admin:*" {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// OAuth tokens carry a space-delimited scope set with its own
+			// grammar; evaluate it against the route's allowed scopes.
+			if auth.Type == "oauth" {
+				if oauthScopeSatisfies(auth.Scope, allowedSet) {
+					next.ServeHTTP(w, r)
+					return
+				}
+				WriteError(w, http.StatusForbidden, "Forbidden",
+					fmt.Sprintf("OAuth scope %q insufficient; requires one of: %s",
+						auth.Scope, scopeList(allowed)))
+				return
+			}
+
+			// Check if token scope is in the allowed set
+			if allowedSet[auth.Scope] {
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			WriteError(w, http.StatusForbidden, "Forbidden",
+				fmt.Sprintf("Token scope %q insufficient; requires one of: %s",
+					auth.Scope, scopeList(allowed)))
+		})
+	}
+}
+
+// oauthScopeSatisfies evaluates an OAuth token's space-delimited scope set
+// against a route's allowed scopes.
+//
+// Grammar:
+//   - "admin:*" grants everything.
+//   - "control" (or "control:*") grants the remote-control surface.
+//   - "mcp" is the legacy full-access scope and satisfies every allowed
+//     scope EXCEPT "control:*" — remote control means code execution on
+//     runner machines, so it must be requested explicitly.
+//   - any other granted scope matches an allowed scope verbatim.
+func oauthScopeSatisfies(grantedStr string, allowed map[string]bool) bool {
+	granted := strings.Fields(grantedStr)
+	if len(granted) == 0 {
+		// Clients that never requested a scope historically had full access;
+		// treat them as the legacy "mcp" grant (still excludes control).
+		granted = []string{"mcp"}
+	}
+	for _, g := range granted {
+		switch g {
+		case "admin:*":
+			return true
+		case "control", "control:*":
+			if allowed[ScopeControl] {
+				return true
+			}
+		case "mcp":
+			for a := range allowed {
+				if a != ScopeControl {
+					return true
+				}
+			}
+		default:
+			if allowed[g] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// ScopeControl gates the remote-control surface (proxied OpenCode access,
+// ad-hoc instance spawning). Granting it is equivalent to granting code
+// execution on connected runner machines.
+const ScopeControl = "control:*"
+
+// scopeList formats a list of scopes for display.
+func scopeList(scopes []string) string {
+	if len(scopes) == 0 {
+		return "(none)"
+	}
+	parts := make([]string, len(scopes))
+	for i, s := range scopes {
+		parts[i] = s
+	}
+	return strings.Join(parts, ", ")
 }

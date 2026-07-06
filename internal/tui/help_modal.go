@@ -87,7 +87,7 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("p", "Pause/resume project"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("P", "Pause/resume all projects"))
+	b.WriteString(formatShortcut("P", "Pause/resume active project (all on All tab)"))
 	b.WriteString("\n")
 
 	// Multi-select shortcuts
@@ -105,9 +105,13 @@ func (m *HelpModal) View() string {
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("T", "Toggle task detail"))
 	b.WriteString("\n")
-	b.WriteString(formatShortcut("L", "Toggle logs"))
+	b.WriteString(formatShortcut("h/l  [/]", "Switch content tab (Tasks/Brain/Automation/…)"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("z", "Toggle logs panel"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("w", "Toggle text wrap/truncate"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("R", "Show runners panel"))
 	b.WriteString("\n")
 	b.WriteString(formatShortcut("r", "Refresh"))
 	b.WriteString("\n")
@@ -116,13 +120,29 @@ func (m *HelpModal) View() string {
 	if m.isMultiProject {
 		b.WriteString(categoryStyle.Render("Projects (Multi-Project Mode):"))
 		b.WriteString("\n")
-		b.WriteString(formatShortcut("h/l", "Previous/next project"))
-		b.WriteString("\n")
-		b.WriteString(formatShortcut("[/]", "Previous/next project"))
+		b.WriteString(formatShortcut("H/L", "Previous/next project (shift)"))
 		b.WriteString("\n")
 		b.WriteString(formatShortcut("1-9", "Jump to project tab"))
 		b.WriteString("\n")
 	}
+
+	// Automations tab — automation and goal row actions
+	b.WriteString(categoryStyle.Render("Automations:"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("n", "New goal automation"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("s", "Edit automation metadata"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("e", "Edit automation / goal config"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("x", "Run automation / goal reconcile"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("Space", "Enable/disable automation"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("d", "Delete project automation only"))
+	b.WriteString("\n")
+	b.WriteString(formatShortcut("ctrl+s", "Save config (in modal)"))
+	b.WriteString("\n")
 
 	// Help and quit
 	b.WriteString(categoryStyle.Render("Other:"))
@@ -168,13 +188,17 @@ func (m *HelpModal) Width() int {
 // Height implements Modal.
 func (m *HelpModal) Height() int {
 	// Calculate based on content:
-	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (4), Other (2)
-	// Plus category headers (5 or 6) and footer (2)
-	baseLines := 5 + 10 + 3 + 4 + 2 + 5 + 2
+	// Categories: Navigation (5), Actions (10), Multi-Select (3), Views (5-6),
+	// Automations/Goal Rows (5), Other (2)
+	// Plus category headers (6 or 7) and footer (2)
+	viewLines := 6
+	automationLines := 5
+	// content lines + category headers (6) + footer (2)
+	baseLines := 5 + 10 + 3 + viewLines + automationLines + 2 + 6 + 2
 
-	// Add 3 more lines if multi-project mode (Projects section)
+	// Add 2 more lines if multi-project mode (Projects section: H/L + 1-9)
 	if m.isMultiProject {
-		return baseLines + 3 + 1 // +1 for category header
+		return baseLines + 2 + 1 // +1 for category header
 	}
 
 	return baseLines

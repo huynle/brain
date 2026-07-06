@@ -36,17 +36,21 @@ func TestHandleSearch(t *testing.T) {
 		{
 			name: "success",
 			body: map[string]any{
-				"query": "test search",
-				"type":  "task",
-				"limit": 5,
+				"query":   "test search",
+				"type":    "task",
+				"limit":   5,
+				"include": []string{"attachments"},
 			},
 			mockSearch: func(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
 				if req.Query != "test search" {
 					return nil, fmt.Errorf("query = %q, want %q", req.Query, "test search")
 				}
+				if len(req.Include) != 1 || req.Include[0] != "attachments" {
+					return nil, fmt.Errorf("include = %#v, want attachments", req.Include)
+				}
 				return &types.SearchResponse{
 					Results: []types.SearchResult{
-						{ID: "abc12def", Path: "projects/default/task/test.md", Title: "Test Task", Type: "task", Status: "active", Snippet: "test content..."},
+						{ID: "abc12def", Path: "projects/default/task/test.md", Title: "Test Task", Type: "task", Status: "active", Snippet: "test content...", MatchSource: "entry", Attachments: []types.AttachmentReference{{ID: "att_1", Filename: "source.pdf"}}},
 					},
 					Total: 1,
 				}, nil
@@ -62,6 +66,12 @@ func TestHandleSearch(t *testing.T) {
 				}
 				if body.Results[0].ID != "abc12def" {
 					t.Errorf("result id = %q, want %q", body.Results[0].ID, "abc12def")
+				}
+				if body.Results[0].MatchSource != "entry" {
+					t.Errorf("match_source = %q, want %q", body.Results[0].MatchSource, "entry")
+				}
+				if len(body.Results[0].Attachments) != 1 || body.Results[0].Attachments[0].ID != "att_1" {
+					t.Errorf("attachments = %#v, want att_1 metadata", body.Results[0].Attachments)
 				}
 			},
 		},

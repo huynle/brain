@@ -24,6 +24,13 @@ type testModal struct {
 	updateCount int
 }
 
+type mouseTestModal struct {
+	*testModal
+	clicked bool
+	lastX   int
+	lastY   int
+}
+
 func newTestModal(title, content string) *testModal {
 	return &testModal{
 		title:   title,
@@ -66,6 +73,13 @@ func (m *testModal) Width() int {
 
 func (m *testModal) Height() int {
 	return m.height
+}
+
+func (m *mouseTestModal) HandleMouse(_ tea.MouseMsg, x, y int) (bool, tea.Cmd) {
+	m.clicked = true
+	m.lastX = x
+	m.lastY = y
+	return y == 0, nil
 }
 
 // ============================================================================
@@ -265,6 +279,57 @@ func TestModalManager_HandleKey_WhenClosed(t *testing.T) {
 	}
 }
 
+func TestModalManager_HandleMouse_ComputesLayoutBeforeViewPersists(t *testing.T) {
+	mgr := NewModalManager()
+	modal := &mouseTestModal{testModal: newTestModal("Mouse", "one\ntwo\nthree")}
+	mgr.Open(modal)
+
+	// Model.View has a value receiver, so rendered content measurements are not
+	// guaranteed to persist back to ModalManager before mouse hit testing.
+	handled, cmd := mgr.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft, X: 31, Y: 14}, 100, 30)
+
+	if !handled {
+		t.Fatal("expected click on modal content line to be handled")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if !modal.clicked {
+		t.Fatal("expected mouse modal to receive click")
+	}
+	if modal.lastX != 1 || modal.lastY != 0 {
+		t.Fatalf("expected relative click (1,0), got (%d,%d)", modal.lastX, modal.lastY)
+	}
+}
+
+func TestModalManager_HandleMouseWheelRoutesToJK(t *testing.T) {
+	mgr := NewModalManager()
+	modal := newFocusableTestModal(5)
+	mgr.Open(modal)
+
+	handled, cmd := mgr.HandleMouse(tea.MouseMsg{Type: tea.MouseWheelDown, X: 1, Y: 1}, 100, 30)
+	if !handled {
+		t.Fatal("expected mouse wheel down to be handled by modal j navigation")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if modal.focusedIdx != 1 {
+		t.Fatalf("expected wheel down to move focus like j to 1, got %d", modal.focusedIdx)
+	}
+
+	handled, cmd = mgr.HandleMouse(tea.MouseMsg{Type: tea.MouseWheelUp, X: 1, Y: 1}, 100, 30)
+	if !handled {
+		t.Fatal("expected mouse wheel up to be handled by modal k navigation")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if modal.focusedIdx != 0 {
+		t.Fatalf("expected wheel up to move focus like k to 0, got %d", modal.focusedIdx)
+	}
+}
+
 func TestModalManager_View_WhenClosed(t *testing.T) {
 	mgr := NewModalManager()
 
@@ -446,6 +511,39 @@ func TestModalManager_ScrollUp_ClampsToZero(t *testing.T) {
 	mgr.ScrollUp()
 	if mgr.scrollOffset != 0 {
 		t.Errorf("scrollOffset = %d, want 0 (should not go negative)", mgr.scrollOffset)
+	}
+}
+
+func TestModalManager_HandleKeyScrollsHelpModalWithJK(t *testing.T) {
+	mgr := NewModalManager()
+	mgr.Open(NewHelpModal(false))
+
+	// Render first so the manager knows the modal content and viewport sizes.
+	mgr.View(80, 20)
+	if !mgr.NeedsScroll() {
+		t.Fatal("expected help modal to need scrolling in a short viewport")
+	}
+
+	handled, cmd := mgr.HandleKey("j")
+	if !handled {
+		t.Fatal("expected j to be handled by help modal scrolling")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if mgr.scrollOffset == 0 {
+		t.Fatal("expected j to scroll help modal down")
+	}
+
+	handled, cmd = mgr.HandleKey("k")
+	if !handled {
+		t.Fatal("expected k to be handled by help modal scrolling")
+	}
+	if cmd != nil {
+		t.Fatalf("expected no command, got %v", cmd)
+	}
+	if mgr.scrollOffset != 0 {
+		t.Fatalf("expected k to scroll help modal back up to 0, got %d", mgr.scrollOffset)
 	}
 }
 

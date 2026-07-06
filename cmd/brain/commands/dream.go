@@ -197,15 +197,15 @@ This is an ad-hoc invocation via 'brain dream --now'. Skip cooldown and threshol
 
 ## Phase 2: Read All Project Knowledge
 
-Gather every piece of knowledge by type. For each call, then call brain_recall on every returned entry to get full content.
+Gather every piece of knowledge by type. For each call, then call recall on every returned entry to get full content.
 
-- brain_list({ type: "decision"%[2]s }) — architectural decisions
-- brain_list({ type: "pattern"%[2]s }) — reusable patterns
-- brain_list({ type: "learning"%[2]s }) — learnings and best practices
-- brain_list({ type: "summary"%[2]s }) — session summaries
-- brain_list({ type: "plan", status: "active"%[2]s }) — active plans
-- brain_list({ type: "exploration"%[2]s }) — research and investigations
-- brain_list({ type: "idea"%[2]s }) — future ideas
+- list({ type: "decision"%[2]s }) — architectural decisions
+- list({ type: "pattern"%[2]s }) — reusable patterns
+- list({ type: "learning"%[2]s }) — learnings and best practices
+- list({ type: "summary"%[2]s }) — session summaries
+- list({ type: "plan", status: "active"%[2]s }) — active plans
+- list({ type: "exploration"%[2]s }) — research and investigations
+- list({ type: "idea"%[2]s }) — future ideas
 
 ## Phase 3: Synthesize Dream Document
 
@@ -236,9 +236,9 @@ Unresolved questions, proposed features, exploration candidates.
 
 ## Phase 4: Save Dream Entry
 
-1. Search for existing dream: brain_search({ query: "Project Dream", type: "dream"%[2]s })
-2. If found, delete it: brain_delete({ path: "<path>", confirm: true })
-3. Save new dream: brain_save({ type: "dream", title: "Project Dream: %[1]s", content: "<document>", tags: ["dream", "consolidation"]%[2]s })
+1. Search for existing dream: search({ query: "Project Dream", type: "dream"%[2]s })
+2. If found, delete it: delete({ path: "<path>", confirm: true })
+3. Save new dream: save({ type: "dream", title: "Project Dream: %[1]s", content: "<document>", tags: ["dream", "consolidation"]%[2]s })
 
 ## Safety Rules
 - NEVER modify existing entries — read and synthesize only

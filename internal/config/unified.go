@@ -56,6 +56,7 @@
 package config
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -73,22 +74,85 @@ type UnifiedConfig struct {
 }
 
 // ServerConfig holds API server configuration.
+// EmbeddingConfig holds embedding service configuration for semantic search.
+type EmbeddingConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	BaseURL   string `yaml:"base_url"`
+	APIKeyEnv string `yaml:"api_key_env"`
+	Model     string `yaml:"model"`
+	Dim       int    `yaml:"dim"`
+	BatchSize int    `yaml:"batch_size"`
+	TimeoutMs int    `yaml:"timeout_ms"`
+}
+
+// AssistantConfig holds server-side LLM configuration for the built-in PWA assistant.
+type AssistantConfig struct {
+	Enabled   bool   `yaml:"enabled"`
+	Provider  string `yaml:"provider"`
+	BaseURL   string `yaml:"base_url"`
+	APIKeyEnv string `yaml:"api_key_env"`
+	Model     string `yaml:"model"`
+	TimeoutMs int    `yaml:"timeout_ms"`
+}
+
+// AttachmentExtractionConfig holds multimodal model-role configuration for
+// deriving searchable text from media attachments. Zero text limits mean unset.
+type AttachmentExtractionConfig struct {
+	Enabled             bool     `yaml:"enabled"`
+	Provider            string   `yaml:"provider"`
+	BaseURL             string   `yaml:"base_url"`
+	APIKeyEnv           string   `yaml:"api_key_env"`
+	Model               string   `yaml:"model"`
+	TimeoutMs           int      `yaml:"timeout_ms"`
+	MaxSizeBytes        int64    `yaml:"max_size_bytes"`
+	SupportedMIMETypes  []string `yaml:"supported_mime_types"`
+	MaxDerivedTextChars int      `yaml:"max_derived_text_chars"`
+}
+
+// AttachmentConfig holds storage and policy placeholders for first-class
+// attachment support. StorageRoot is where attachment binaries will be stored;
+// MaxUploadSizeBytes limits incoming uploads; MIME allow/block lists are policy
+// placeholders for upload validation.
+type AttachmentConfig struct {
+	StorageRoot        string   `yaml:"storage_root"`
+	MaxUploadSizeBytes int64    `yaml:"max_upload_size_bytes"`
+	AllowedMIMETypes   []string `yaml:"allowed_mime_types"`
+	BlockedMIMETypes   []string `yaml:"blocked_mime_types"`
+}
+
 type ServerConfig struct {
-	Port       int    `yaml:"port"`
-	Host       string `yaml:"host"`
-	BrainDir   string `yaml:"brain_dir"`
-	EnableAuth bool   `yaml:"enable_auth"`
-	CORSOrigin string `yaml:"cors_origin"`
-	LogLevel   string `yaml:"log_level"`
-	OAuthPIN   string `yaml:"oauth_pin"`
-	TLSCert    string `yaml:"tls_cert"`
-	TLSKey     string `yaml:"tls_key"`
-	PIDFile    string `yaml:"pid_file"`
-	LogFile    string `yaml:"log_file"`
+	Port            int                   `yaml:"port"`
+	Host            string                `yaml:"host"`
+	BrainDir        string                `yaml:"brain_dir"`
+	EnableAuth      bool                  `yaml:"enable_auth"`
+	CORSOrigin      string                `yaml:"cors_origin"`
+	LogLevel        string                `yaml:"log_level"`
+	OAuthPIN        string                `yaml:"oauth_pin"`
+	JWTSecret       string                `yaml:"jwt_secret"`
+	TLSCert         string                `yaml:"tls_cert"`
+	TLSKey          string                `yaml:"tls_key"`
+	PIDFile         string                `yaml:"pid_file"`
+	LogFile         string                `yaml:"log_file"`
+	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
+	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
+	Embedding       EmbeddingConfig       `yaml:"embedding"`
+	Attachments     AttachmentConfig      `yaml:"attachments"`
+
+	AttachmentExtraction AttachmentExtractionConfig `yaml:"attachment_extraction"`
+	Assistant            AssistantConfig            `yaml:"assistant"`
+}
+
+// FeatureCheckoutConfig controls built-in feature completion checkout automation.
+type FeatureCheckoutConfig struct {
+	Enabled bool `yaml:"enabled"`
 }
 
 // RunnerConfig holds task runner configuration.
 type RunnerConfig struct {
+	BrainAPIURL            string           `yaml:"brain_api_url"`
+	APIToken               string           `yaml:"api_token"`
+	APITokenEnv            string           `yaml:"api_token_env"`
 	MaxParallel            int              `yaml:"max_parallel"`
 	PollInterval           int              `yaml:"poll_interval"`
 	TaskPollInterval       int              `yaml:"task_poll_interval"`
@@ -102,6 +166,7 @@ type RunnerConfig struct {
 	MemoryThresholdPercent int              `yaml:"memory_threshold_percent"`
 	Opencode               OpencodeSettings `yaml:"opencode"`
 	ExcludeProjects        []string         `yaml:"exclude_projects"`
+	IncludeProjects        []string         `yaml:"include_projects"`
 	AutoMonitors           bool             `yaml:"auto_monitors"`
 }
 
@@ -110,6 +175,24 @@ type OpencodeSettings struct {
 	Bin   string `yaml:"bin"`
 	Agent string `yaml:"agent"`
 	Model string `yaml:"model"`
+}
+
+// TaskDefaultsConfig holds default values for task execution settings.
+// These defaults are applied by the API server when resolving tasks.
+// Task frontmatter values always take precedence over these defaults.
+type TaskDefaultsConfig struct {
+	Agent              string   `yaml:"agent"`
+	Model              string   `yaml:"model"`
+	Executor           string   `yaml:"executor"`
+	Extensions         []string `yaml:"extensions"`
+	ExecutionMode      string   `yaml:"execution_mode"`
+	CompleteOnIdle     *bool    `yaml:"complete_on_idle"`
+	MergePolicy        string   `yaml:"merge_policy"`
+	MergeStrategy      string   `yaml:"merge_strategy"`
+	MergeTargetBranch  string   `yaml:"merge_target_branch"`
+	RemoteBranchPolicy string   `yaml:"remote_branch_policy"`
+	OpenPRBeforeMerge  *bool    `yaml:"open_pr_before_merge"`
+	TargetWorkdir      string   `yaml:"target_workdir"`
 }
 
 // TUIConfig holds TUI display and keybinding configuration.
@@ -129,27 +212,82 @@ type PluginsConfig struct {
 }
 
 // defaultConfig returns a UnifiedConfig with sensible defaults.
-// All paths use standard XDG Base Directory locations where appropriate.
+// All paths respect XDG Base Directory environment variables:
+//   - XDG_STATE_HOME: PID files, runner state (default ~/.local/state)
+//   - BRAIN_DIR: brain data directory (default ~/.brain)
 func defaultConfig() UnifiedConfig {
 	homeDir, _ := os.UserHomeDir()
+	stateHome := getStateHome()
+
+	// Brain data directory: BRAIN_DIR env var > ~/.brain
+	brainDir := os.Getenv("BRAIN_DIR")
+	if brainDir == "" {
+		brainDir = filepath.Join(homeDir, ".brain")
+	}
 
 	return UnifiedConfig{
 		Server: ServerConfig{
-			Port:       3333,
-			Host:       "localhost",
-			BrainDir:   filepath.Join(homeDir, ".brain"),
-			LogLevel:   "info",
-			PIDFile:    filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid"),
-			LogFile:    filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.log"),
-			EnableAuth: false,
-			CORSOrigin: "*",
+			Port:            3333,
+			Host:            "localhost",
+			BrainDir:        brainDir,
+			LogLevel:        "info",
+			PIDFile:         filepath.Join(stateHome, "brain-api", "brain-api.pid"),
+			LogFile:         filepath.Join(stateHome, "brain-api", "brain-api.log"),
+			EnableAuth:      false,
+			CORSOrigin:      "*",
+			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
+			TaskDefaults: TaskDefaultsConfig{
+				ExecutionMode:      "worktree",
+				MergePolicy:        "auto_merge",
+				MergeStrategy:      "squash",
+				MergeTargetBranch:  "main",
+				RemoteBranchPolicy: "delete",
+			},
+			Embedding: EmbeddingConfig{
+				Enabled:   false,
+				Provider:  "openrouter",
+				BaseURL:   "https://openrouter.ai/api/v1",
+				APIKeyEnv: "OPENROUTER_API_KEY",
+				Model:     "text-embedding-3-small",
+				Dim:       1536,
+				BatchSize: 32,
+				TimeoutMs: 30000,
+			},
+			Attachments: AttachmentConfig{
+				StorageRoot:        filepath.Join(brainDir, "attachments"),
+				MaxUploadSizeBytes: 100 * 1024 * 1024,
+				AllowedMIMETypes:   []string{},
+				BlockedMIMETypes:   []string{},
+			},
+			AttachmentExtraction: AttachmentExtractionConfig{
+				Enabled:             false,
+				Provider:            "openrouter",
+				BaseURL:             "https://openrouter.ai/api/v1",
+				APIKeyEnv:           "OPENROUTER_API_KEY",
+				Model:               "google/gemini-2.5-flash",
+				TimeoutMs:           60000,
+				MaxSizeBytes:        10 * 1024 * 1024,
+				SupportedMIMETypes:  []string{"image/*", "application/pdf"},
+				MaxDerivedTextChars: 0,
+			},
+			Assistant: AssistantConfig{
+				Enabled:   false,
+				Provider:  "openrouter",
+				BaseURL:   "https://openrouter.ai/api/v1",
+				APIKeyEnv: "OPENROUTER_API_KEY",
+				Model:     "anthropic/claude-sonnet-4",
+				TimeoutMs: 120000,
+			},
 		},
 		Runner: RunnerConfig{
+			BrainAPIURL:            "http://localhost:3333",
+			APIToken:               "",
+			APITokenEnv:            "BRAIN_API_TOKEN",
 			MaxParallel:            3, // Max concurrent tasks
 			PollInterval:           5, // Seconds between task queue polls
 			TaskPollInterval:       5, // Seconds between task status polls
 			WorkDir:                homeDir,
-			StateDir:               filepath.Join(homeDir, ".local", "state", "brain-runner"),
+			StateDir:               filepath.Join(stateHome, "brain-runner"),
 			LogDir:                 filepath.Join(homeDir, ".local", "log"),
 			APITimeout:             5000,  // Milliseconds
 			TaskTimeout:            0,     // 0 = no timeout
@@ -162,6 +300,7 @@ func defaultConfig() UnifiedConfig {
 				Model: "",
 			},
 			ExcludeProjects: []string{},
+			IncludeProjects: []string{},
 			AutoMonitors:    true,
 		},
 		MCP: MCPConfig{
@@ -174,6 +313,28 @@ func defaultConfig() UnifiedConfig {
 	}
 }
 
+// DefaultConfig returns a fully-populated default configuration.
+func DefaultConfig() UnifiedConfig {
+	return defaultConfig()
+}
+
+// DefaultConfigYAML returns the default configuration as YAML.
+func DefaultConfigYAML() ([]byte, error) {
+	cfg := defaultConfig()
+	return yaml.Marshal(&cfg)
+}
+
+// WriteDefaultConfig writes the default configuration to the unified config path.
+// It refuses to overwrite an existing file unless force is true.
+func WriteDefaultConfig(force bool) (string, error) {
+	path := getUnifiedConfigPath()
+	if fileExists(path) && !force {
+		return path, fmt.Errorf("config file already exists: %s", path)
+	}
+	cfg := defaultConfig()
+	return path, writeConfig(path, &cfg)
+}
+
 // getConfigHome returns the XDG config directory, with fallback to ~/.config.
 func getConfigHome() string {
 	configHome := os.Getenv("XDG_CONFIG_HOME")
@@ -182,6 +343,15 @@ func getConfigHome() string {
 		return filepath.Join(homeDir, ".config")
 	}
 	return configHome
+}
+
+// getStateHome returns the XDG state directory, with fallback to ~/.local/state.
+func getStateHome() string {
+	if v := os.Getenv("XDG_STATE_HOME"); v != "" {
+		return v
+	}
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".local", "state")
 }
 
 // getUnifiedConfigPath returns the path to the unified config file.

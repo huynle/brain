@@ -169,6 +169,7 @@ func setupTestBrain(t *testing.T, brainDir string) {
 	// Create directory structure
 	dirs := []string{
 		brainDir,
+		filepath.Join(brainDir, "attachments"),
 		filepath.Join(brainDir, ".brain-data"),
 		filepath.Join(brainDir, ".brain-data", "templates"),
 		filepath.Join(brainDir, "global"),

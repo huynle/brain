@@ -35,20 +35,58 @@ func (tr *TaskRunner) ExecuteTask(ctx context.Context, task *types.ResolvedTask,
 // resumeTask spawns an executor for an already in_progress task without
 // re-claiming or updating status. Used when resuming orphaned tasks.
 func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, projectID string) error {
+	// Pre-task-start hook for resumed tasks.
+	// If the hook aborts, we don't reset status (task is already in_progress from
+	// a previous session) — just skip spawning and return the error.
+	if tr.hookDispatcher != nil {
+		evt := types.NewEvent(types.EventTaskStarted, types.EventSourceRunner)
+		evt.RunnerID = tr.runnerID
+		evt.TaskID = task.ID
+		evt.TaskPath = task.Path
+		evt.TaskTitle = task.Title
+		evt.ProjectID = projectID
+		evt.FeatureID = task.FeatureID
+		if err := tr.hookDispatcher.DispatchPre(evt); err != nil {
+			return fmt.Errorf("pre-task-start hook (resume): %w", err)
+		}
+	}
+
+	// Resolve executor for this task
+	taskExecutor, executorType, err := tr.resolveExecutor(task)
+	if err != nil {
+		return fmt.Errorf("resolve executor: %w", err)
+	}
+
 	// Resolve workdir (may create git worktree)
-	workdir, err := tr.executor.ResolveWorkdir(task)
+	workdir, err := taskExecutor.ResolveWorkdir(task)
 	if err != nil {
 		return fmt.Errorf("resolve workdir: %w", err)
 	}
 
 	spawnOpts := SpawnOptions{
-		Mode:     tr.mode,
-		Workdir:  workdir,
-		IsResume: true,
+		Mode:                tr.mode,
+		Workdir:             workdir,
+		IsResume:            true,
+		RuntimeDefaultModel: tr.getDefaultModel(),
 	}
 
-	spawnResult, err := tr.executor.Spawn(ctx, task, projectID, spawnOpts)
+	// Start log streamer if enabled
+	var logStreamer *LogStreamer
+	if tr.config.LogStreaming {
+		logStreamer = NewLogStreamer(LogStreamerConfig{
+			Client:    tr.client,
+			RunnerID:  tr.runnerID,
+			ProjectID: projectID,
+			TaskID:    task.ID,
+		})
+		spawnOpts.LogWriter = logStreamer
+	}
+
+	spawnResult, err := taskExecutor.Spawn(ctx, task, projectID, spawnOpts)
 	if err != nil {
+		if logStreamer != nil {
+			logStreamer.Stop()
+		}
 		return fmt.Errorf("spawn task: %w", err)
 	}
 
@@ -64,8 +102,10 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		WindowName:     spawnResult.WindowName,
 		StartedAt:      time.Now(),
 		Workdir:        spawnResult.Workdir,
+		ExecutorType:   executorType,
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
+		FeatureID:      task.FeatureID,
 	}
 
 	// Track in process manager
@@ -75,14 +115,29 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		}
 	}
 
+	// Track log streamer for cleanup on completion
+	if logStreamer != nil {
+		tr.trackLogStreamer(task.ID, logStreamer)
+	}
+
 	// Emit event
-	tr.emitEvent(RunnerEvent{
+	startedEvt := RunnerEvent{
 		Type: EventTaskStarted,
 		Task: &runningTask,
-	})
+	}
+	tr.emitEvent(startedEvt)
 
-	// Discover opencode session ID in background and save to task entry
-	go tr.discoverAndSaveSession(task.Path, spawnResult.PID)
+	// Post-task-start hook: fire-and-forget after process is tracked.
+	if tr.hookDispatcher != nil {
+		startedEvt.RunnerID = tr.runnerID
+		tr.hookDispatcher.DispatchPost(startedEvt.ToEvent())
+	}
+
+	// Discover opencode session metadata in background. Pi tasks don't expose
+	// an HTTP session endpoint, so skip discovery for them.
+	if executorType != "pi" {
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort, spawnResult.ExistingSessionIDs)
+	}
 
 	return nil
 }

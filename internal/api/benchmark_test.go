@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -88,7 +89,7 @@ func benchRouter(mock *mockBrainService) *chi.Mux {
 	h := NewHandler(mock)
 	r := chi.NewRouter()
 	r.Route("/api/v1", func(r chi.Router) {
-		r.Get("/health", HealthHandler())
+		r.Get("/health", HealthHandler(config.Config{}, false))
 		r.Post("/search", h.HandleSearch)
 		r.Route("/entries", func(r chi.Router) {
 			r.Post("/", h.HandleCreateEntry)

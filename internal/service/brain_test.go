@@ -42,7 +42,7 @@ func newTestBrainService(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer
 	cfg := &config.Config{BrainDir: brainDir}
 	idx := indexer.NewIndexer(brainDir, store)
 
-	svc := NewBrainService(cfg, store, idx, nil)
+	svc := NewBrainService(cfg, store, idx, nil, nil)
 	return svc, store, brainDir
 }
 
@@ -67,7 +67,7 @@ func newTestBrainServiceWithBus(t *testing.T) (*BrainServiceImpl, *storage.Stora
 	bus := events.NewMemoryBus()
 	t.Cleanup(func() { bus.Close() })
 
-	svc := NewBrainService(cfg, store, idx, bus)
+	svc := NewBrainService(cfg, store, idx, bus, nil)
 	return svc, store, brainDir, bus
 }
 
@@ -703,6 +703,131 @@ func TestUpdate_Priority(t *testing.T) {
 
 	if updated.Priority != "high" {
 		t.Errorf("expected priority 'high', got %q", updated.Priority)
+	}
+}
+
+// TestUpdate_DirectPrompt_OnAutomationMirrorsToAction verifies that updating
+// the root direct_prompt of an automation entry also writes the same value to
+// action.direct_prompt. The runtime renders prompts from action.direct_prompt;
+// callers (notably MCP brain_update) only expose top-level direct_prompt and
+// would otherwise silently fail to update the prompt that's actually used.
+func TestUpdate_DirectPrompt_OnAutomationMirrorsToAction(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	originalAction := &types.AutomationAction{
+		Type:         "prompt",
+		DirectPrompt: "old prompt",
+		Agent:        "general",
+	}
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Inspector",
+		Project: "automation-update-test",
+		Trigger: &types.TriggerConfig{
+			Type:  "event",
+			Event: "task.status_changed",
+		},
+		Action: originalAction,
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	newPrompt := "new prompt with {{.TaskID}}"
+	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		DirectPrompt: &newPrompt,
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	if updated.DirectPrompt != newPrompt {
+		t.Errorf("root direct_prompt = %q, want %q", updated.DirectPrompt, newPrompt)
+	}
+	if updated.Action == nil {
+		t.Fatalf("action is nil after update; expected mirrored prompt")
+	}
+	if updated.Action.DirectPrompt != newPrompt {
+		t.Errorf("action.direct_prompt = %q, want %q", updated.Action.DirectPrompt, newPrompt)
+	}
+	// Other fields on the existing Action must be preserved (the mirror is
+	// strictly additive — it must not stomp agent/type set on the action).
+	if updated.Action.Agent != "general" {
+		t.Errorf("action.agent = %q, want preserved %q", updated.Action.Agent, "general")
+	}
+	if updated.Action.Type != "prompt" {
+		t.Errorf("action.type = %q, want preserved %q", updated.Action.Type, "prompt")
+	}
+}
+
+// TestUpdate_DirectPrompt_AutomationExplicitActionWins verifies that an
+// explicit action.direct_prompt in the same update wins over the root
+// direct_prompt mirror. Callers that pass both a root direct_prompt and a
+// nested action expect the nested one to take precedence.
+func TestUpdate_DirectPrompt_AutomationExplicitActionWins(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Inspector",
+		Project: "automation-update-explicit-test",
+		Trigger: &types.TriggerConfig{Type: "event", Event: "task.status_changed"},
+		Action:  &types.AutomationAction{Type: "prompt", DirectPrompt: "old"},
+	})
+	if err != nil {
+		t.Fatalf("Save automation failed: %v", err)
+	}
+
+	root := "from root"
+	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		DirectPrompt: &root,
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "from nested action",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	if updated.Action.DirectPrompt != "from nested action" {
+		t.Errorf("action.direct_prompt = %q, want explicit nested value", updated.Action.DirectPrompt)
+	}
+	if updated.DirectPrompt != root {
+		t.Errorf("root direct_prompt = %q, want %q", updated.DirectPrompt, root)
+	}
+}
+
+// TestUpdate_DirectPrompt_OnTaskDoesNotCreateAction verifies that the
+// automation-mirror behavior does not leak into task entries.
+func TestUpdate_DirectPrompt_OnTaskDoesNotCreateAction(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Real task",
+		Project: "task-update-test",
+	})
+	if err != nil {
+		t.Fatalf("Save task failed: %v", err)
+	}
+
+	prompt := "do the work"
+	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		DirectPrompt: &prompt,
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	if updated.DirectPrompt != prompt {
+		t.Errorf("root direct_prompt = %q, want %q", updated.DirectPrompt, prompt)
+	}
+	if updated.Action != nil {
+		t.Errorf("task entry should not have action set after update; got %+v", updated.Action)
 	}
 }
 

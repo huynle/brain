@@ -59,20 +59,29 @@ AI coding agents are powerful but stateless — they forget everything between s
 - **External editor integration** — press `e` to edit a task in `$EDITOR`
 - **Clipboard support** — press `y` to yank task info to system clipboard
 - **Focus mode** — press `x` to execute a single feature to completion
-- **Pause/resume** at project, feature, or individual task level
+- **Pause/resume toggles** for the active project scope; the `All` project tab toggles global execution, while a single project tab toggles only that project
 - **Live resource metrics** (CPU, memory) in the status bar
 - **Real-time SSE streaming** with automatic polling fallback
 - **Keyboard-driven** with vim-style navigation (`j/k/g/G`), Tab panel cycling, and `?` help overlay
 - **Text wrap toggle** — press `w` to toggle truncation vs wrapping in the task tree
 - **Log panel** with togglable visibility and real-time streaming
 
-### MCP Server (35 tools)
+### MCP Server (93 tools)
 - **Embedded Streamable HTTP transport** — no separate process, served on the same port as the REST API
 - **OAuth 2.1 with PKCE** for secure remote client authentication
 - **HTTPS/TLS support** for Claude web connector integration
 - **Plugin targets** for Claude Code and OpenCode with full tool parity
-- Tools span: entry CRUD, search, graph traversal, task management, scheduled task triggers, section extraction, verification, and link generation
-
+- **Tool categories:**
+  - **Brain tools (32)**: Entry CRUD, search, graph traversal, attachments, verification
+  - **Task tools (14)**: Task queue management, dependency resolution, status tracking
+  - **Feature tools (6)**: Feature orchestration, checkout, assignment
+  - **Runner tools (5)**: Read-only runner visibility and monitoring
+  - **Observability tools (7)**: Read-only observability for system inspection
+  - **Control tools (9)**: Explicit side-effecting runner control operations
+  - **Project tools (3)**: Project context and placement management
+  - **Planning tools (9)**: Planning phase gates, document discovery, architecture checks
+  - **Webhook tools (8)**: Webhook management and event handling
+- **Architecture**: MCP tools route through the REST API client layer, not directly to services
 ### Multi-Project Mode
 - **Shared execution pool** across all projects with a single `--max-parallel` limit
 - **Project tabs** with per-project stats and an "All" aggregate view
@@ -188,6 +197,7 @@ make lint
 - `POST /api/v1/tasks/:taskId/start` - Mark task in_progress
 - `POST /api/v1/tasks/:taskId/complete` - Mark task completed
 - `POST /api/v1/tasks/:taskId/block` - Mark task blocked
+- `PUT /api/v1/runners/:runnerId/shutdown` - Request graceful remote runner shutdown
 
 #### Feature Endpoints
 - `GET /api/v1/features/:projectId` - List features for project
@@ -251,6 +261,40 @@ Or add to `.mcp.json`:
 }
 ```
 
+### Connecting OpenCode
+
+OpenCode launches MCP servers as local subprocesses over stdio. Add the
+following to your OpenCode config (e.g. `~/.config/opencode/opencode.json`)
+under `mcp`:
+
+```json
+{
+  "mcp": {
+    "brain": {
+      "type": "local",
+      "command": ["brain", "mcp"],
+      "enabled": true,
+      "environment": {
+        "BRAIN_API_URL": "http://localhost:3333"
+      }
+    }
+  }
+}
+```
+
+The `brain mcp` subcommand reads `api_url` and `api_token` from
+`~/.config/brain/config.yaml` (env vars override). No bearer token is
+required for local brain servers; remote/protected deployments should set
+`runner.api_token` in the config file or `BRAIN_API_TOKEN` in the
+environment.
+
+> **Migrating from the old `brain.ts` plugin:** earlier brain releases
+> shipped a TypeScript plugin installed at `~/.config/opencode/plugin/brain.ts`.
+> That plugin has been removed. Re-running `brain install opencode` will no
+> longer create it; delete any existing `~/.config/opencode/plugin/brain.ts`
+> and add the MCP config above. The companion `brain-planning.ts` plugin
+> and the brain skills/agents/commands continue to install as before.
+
 ### Connecting Claude Web UI (Custom Connector)
 
 Claude's web UI "Add Custom Connector" feature requires HTTPS with a **publicly trusted certificate**. Self-signed certificates (including mkcert) won't work because validation requests come from Anthropic's backend servers, not your browser.
@@ -298,7 +342,7 @@ ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem ./bin/brain
 
 **Note:** Local HTTPS works for browser access but NOT for Claude's custom connector (see above).
 
-### Available Tools (35)
+### Available Tools (63)
 
 #### Core Entry Tools
 | Tool | Description |
@@ -327,6 +371,16 @@ ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem ./bin/brain
 | Tool | Description |
 |------|-------------|
 | `brain_task_trigger` | Manually trigger a scheduled task run |
+
+#### Goal Automation Tools
+| Tool | Description |
+|------|-------------|
+| `brain_goal_create` | Create a goal automation that reconciles until an objective is satisfied |
+| `brain_goal_list` | List active goal automations by project or feature |
+| `brain_goal_update` | Update goal title, content, status, config, or action fields |
+| `brain_goal_run` | Manually reconcile a goal now |
+| `brain_goal_progress` | Show linked task progress for a goal |
+| `brain_goal_audit` | Show reconcile audit history for a goal |
 
 #### Graph Traversal Tools
 | Tool | Description |
@@ -361,6 +415,169 @@ Brain API supports OAuth 2.1 with PKCE for secure MCP client authentication. Thi
 - `POST /token` - Token exchange endpoint
 
 **Supported Scopes:** `mcp`, `mcp:read`, `mcp:write`
+
+## Embedding-Based Semantic Search
+
+Brain API supports optional embedding-based semantic search for more intelligent knowledge retrieval. When enabled, you can search by meaning rather than just keywords.
+
+### Features
+
+- **Multiple search strategies**: Choose between `fts` (full-text), `semantic` (embedding-based), or `hybrid` (combined)
+- **Automatic fallback**: Gracefully falls back to FTS when embeddings are unavailable or failing
+- **Incremental indexing**: Generate embeddings on-demand via the `backfill` command
+- **Configurable providers**: Supports any OpenAI-compatible embedding API (OpenRouter, OpenAI, AI Factory, etc.)
+
+### Configuration
+
+Add an `embedding` block to your `config.yaml`:
+
+```yaml
+server:
+  embedding:
+    enabled: true                                     # Enable semantic search
+    provider: "openrouter"                            # Provider name (for logging)
+    base_url: "https://openrouter.ai/api/v1"          # OpenAI-compatible API endpoint
+    api_key_env: "OPENROUTER_API_KEY"                 # Environment variable for API key
+    model: "text-embedding-3-small"                   # Embedding model name
+    dim: 1536                                         # Embedding dimension (must match model)
+    batch_size: 32                                    # Batch size for embedding generation
+    timeout_ms: 30000                                 # Request timeout in milliseconds
+```
+
+Generate a full default config safely:
+
+```bash
+brain config defaults       # print default YAML
+brain config init --print   # print the config that would be written
+brain config init           # write ~/.config/brain/config.yaml if missing
+```
+
+Runner API tokens can also be kept out of `config.yaml` by pointing at an environment variable:
+
+```yaml
+runner:
+  api_token_env: "BRAIN_API_TOKEN"
+```
+
+Set `OPENROUTER_API_KEY` in the environment before running semantic search or backfill.
+
+### Search Strategies
+
+Brain API supports three search strategies:
+
+#### 1. FTS (Full-Text Search) - Default
+
+Traditional keyword-based search using SQLite's FTS5 with BM25 ranking.
+
+```bash
+# API request
+curl -X POST http://localhost:3333/api/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "authentication JWT", "strategy": "fts"}'
+```
+
+**Best for:** Exact keyword matches, technical terms, code snippets
+
+#### 2. Semantic Search
+
+Embedding-based search that finds results by semantic similarity. Understands synonyms and related concepts.
+
+```bash
+# API request
+curl -X POST http://localhost:3333/api/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "how to secure user logins", "strategy": "semantic"}'
+```
+
+**Best for:** Conceptual queries, natural language questions, finding related ideas
+
+#### 3. Hybrid Search
+
+Combines both FTS and semantic search, merging results by relevance score.
+
+```bash
+# API request
+curl -X POST http://localhost:3333/api/v1/search \
+  -H 'Content-Type: application/json' \
+  -d '{"query": "JWT token validation", "strategy": "hybrid"}'
+```
+
+**Best for:** General-purpose search when you want both keyword precision and semantic understanding
+
+### Generating Embeddings
+
+After enabling embeddings in your config, run the backfill command to generate embeddings for existing notes:
+
+```bash
+# Generate embeddings for all notes
+brain embeddings backfill
+
+# Dry run to see what would be done
+brain embeddings backfill --dry-run
+
+# Filter by project
+brain embeddings backfill --project my-project
+
+# Filter by path prefix
+brain embeddings backfill --path projects/opencode/
+
+# Verbose output
+brain embeddings backfill --verbose
+```
+
+**How it works:**
+- Scans all notes in the brain
+- Identifies notes missing embeddings or with stale embeddings (content changed since last indexing)
+- Generates embeddings in batches (configurable via `batch_size`)
+- Stores embeddings with metadata (project, type, status, feature, priority) for filtered searches
+- Updates `embedding_indexed_at` timestamp to track freshness
+
+**When to run:**
+- After enabling embeddings for the first time
+- Periodically to update stale embeddings (e.g., weekly)
+- After bulk imports or large content updates
+- When changing embedding models (requires re-indexing all notes)
+
+### Fallback Behavior
+
+Brain API is designed to work reliably even when embeddings are unavailable:
+
+| Scenario | Behavior |
+|----------|----------|
+| `enabled: false` | All searches use FTS, semantic/hybrid strategies fall back to FTS |
+| Missing API key | Logs warning, falls back to FTS |
+| Embedding API unreachable | Logs error, falls back to FTS |
+| No embeddings indexed yet | Falls back to FTS (run `brain embeddings backfill`) |
+| Query embedding generation fails | Logs error, falls back to FTS |
+
+**No search failures:** Embedding issues never break search — users always get results via FTS fallback.
+
+### Storage Overhead
+
+Embeddings are stored in separate SQLite tables (`note_embeddings`, `note_embeddings_meta`):
+
+- **Typical size**: ~3 MB for a moderate brain with 100-200 notes (using 1536-dim embeddings)
+- **Scaling**: Roughly 6-10 KB per note (depends on note length and chunking)
+- **Tables**:
+  - `note_embeddings`: Stores packed float32 vectors as BLOBs
+  - `note_embeddings_meta`: Tracks indexing timestamps and metadata for filtering
+
+### MCP Client Usage
+
+When using the MCP server (Claude Code, OpenCode), the search strategy is automatically determined:
+
+- `brain_search` tool: Uses configured default strategy (usually FTS for compatibility)
+- `brain_inject` tool: Uses semantic/hybrid search when embeddings are enabled (better for context retrieval)
+
+Configure strategy preference in client tools by setting the `strategy` parameter:
+
+```typescript
+// In MCP tool call
+await callTool('brain_search', {
+  query: 'authentication patterns',
+  strategy: 'hybrid'  // or 'semantic', 'fts'
+})
+```
 
 ## Task Runner
 
@@ -425,9 +642,10 @@ The `--tui` flag enables an interactive terminal dashboard built with [Bubbletea
 | `y` | Yank task info to clipboard |
 | `w` | Toggle text wrap/truncation |
 | `x` | Focus mode (run feature to completion) |
-| `p` | Pause/resume (project, feature, or task) |
+| `p` | Pause/resume active scope; `All` toggles global execution, single-project tabs toggle only that project |
 | `o` | Open settings popup |
 | `O` | Open OpenCode session in tmux |
+| `s` | Shutdown selected runner (runners panel) |
 | `r` | Refresh task list |
 | `L` | Toggle logs panel visibility |
 | `Backspace` | Open metadata popup |
@@ -503,9 +721,14 @@ brain doctor --fix --dry-run
 |----------|--------|
 | **Storage Layer** | SQLite database accessible and healthy |
 | **Database Health** | Tables exist, migrations applied |
+| **Attachment Storage** | Attachment storage root exists, upload limits are configured, database attachment digests match stored blobs, and orphan blobs are reported |
 | **Directory Permissions** | Brain directory readable and writable |
 | **Tool Versions** | Go version (optional, skippable) |
 | **OpenCode Integration** | Plugin installed and configured |
+
+#### Attachment Backup Guidance
+
+First-class attachments are split across SQLite metadata (`brain.db`) and blob files under `server.attachments.storage_root` (default: `<brain_dir>/attachments`). Production backups and exports must include both. If `storage_root` is outside `BRAIN_DIR`, `brain doctor -v` warns so backup jobs can explicitly include that external path alongside `brain.db`.
 
 ### Runner Commands
 
@@ -545,6 +768,143 @@ brain-runner logs [-f]
 | `--dry-run` | Log actions without executing |
 | `-v, --verbose` | Enable verbose logging |
 
+## Automations
+
+Automation entries are brain entries with `type: automation` and a `trigger` plus an `action` in frontmatter. Active automations are evaluated by the runner and create generated tasks when their trigger matches.
+
+Automation execution can be paused globally or by project. In the TUI and PWA,
+pause/resume controls are toggles scoped to the active project tab: selecting
+`All` toggles global automation pause, while selecting a single project toggles
+only that project's automation pause. Project-scoped automation pauses are
+reported in runner status as `automationPausedProjects`; global automation pause
+continues to use `automationsPaused`.
+
+Scoped automation control endpoints:
+
+| Endpoint | Scope |
+|----------|-------|
+| `POST /api/v1/tasks/runner/automations/pause` | Pause automations globally |
+| `POST /api/v1/tasks/runner/automations/resume` | Resume automations globally |
+| `POST /api/v1/tasks/runner/automations/pause/{projectId}` | Pause automations for one project |
+| `POST /api/v1/tasks/runner/automations/resume/{projectId}` | Resume automations for one project |
+
+Task execution pause/resume follows the same active-scope rule in the TUI and
+PWA: `All` toggles global task execution and a single-project tab toggles only
+that project via the existing project pause/resume endpoints.
+
+### Supported trigger capabilities
+
+| Capability | Field | Description |
+|------------|-------|-------------|
+| Cron schedules | `trigger.type: cron` + `trigger.schedule` | Runs on a standard 5-field cron expression such as `0 3 * * *`. |
+| Named events | `trigger.type: event` + `trigger.event` | Matches Brain events such as `task.completed` or `feature.all_completed`. Wildcards such as `task.*` are supported. |
+| Webhooks | `trigger.type: webhook` + `trigger.webhook` | Matches incoming `webhook.received` events by path, e.g. `/hooks/deploy`. |
+| Runner sessions | `trigger.type: session` | Matches runner session discovery events. If `trigger.event` is omitted, the create wizard defaults to `runner.session_discovered`. |
+| Filters | `trigger.filter` | Key/value filters applied to event fields. Use `project` or `project_id` for project scope; `*` matches any value. |
+| Deduplication | `trigger.once_per` | Prevents duplicate generation for the same event field value, e.g. `feature_id`, `task_id`, `session`, or `day`. |
+| Cooldown | `trigger.cooldown` | Minimum interval between generated runs, expressed as a Go duration such as `5m`, `1h`, or `24h`. |
+| Concurrency guard | `trigger.max_concurrent` | Positive integer cap on runnable generated tasks for the automation. |
+
+Automations default to ignoring events generated by other automations to avoid feedback loops. Set `trigger.ignore_automation_events: false` only when an automation intentionally needs to react to automation-generated events.
+
+### Example frontmatter
+
+```yaml
+---
+type: automation
+title: "Feature Code Review"
+status: active
+trigger:
+  type: event
+  event: feature.all_completed
+  filter:
+    project: "*"
+  once_per: feature_id
+  cooldown: 10m
+  max_concurrent: 1
+action:
+  type: prompt
+  execution_mode: current_branch
+  complete_on_idle: true
+  direct_prompt: |
+    Review the completed feature {{.FeatureID}} in project {{.Project}}.
+enabled: true
+max_runs: 0
+---
+```
+
+## Web UI (PWA)
+
+Brain ships an installable Progressive Web App that mirrors the TUI — tasks,
+real-time logs, automations/goals, the knowledge base, and runners — and is
+**embedded directly in the `brain` binary**. When the server runs, the app is
+served at `/` from the same origin as the API, so visiting your Brain URL (e.g.
+`https://brain.example.com`) loads the full dashboard with no separate deploy
+and no CORS.
+
+### Install on your phone
+
+1. Deploy Brain behind HTTPS with auth enabled (see below) and open your domain
+   in a mobile browser.
+2. Use the browser's **Add to Home Screen / Install app** option. The app
+   launches standalone, full-screen, with its own icon.
+
+### Sign in
+
+When `ENABLE_AUTH=true`, the app uses the OAuth 2.1 + PKCE flow built into the
+server:
+
+1. Tap **Sign in with PIN** — you're sent to the server's consent page.
+2. Enter the `OAUTH_PIN` you configured; you're redirected back, signed in.
+
+Tokens are stored in the browser and refreshed silently. You can also paste a
+long-lived API token instead ("Use an API token").
+
+```bash
+# Minimum for a phone-installable, authenticated deployment:
+ENABLE_AUTH=true
+OAUTH_PIN=your-secure-pin
+CORS_ORIGIN=https://brain.example.com   # optional; same-origin needs no CORS
+```
+
+HTTPS is required for PWA installation and is normally provided by your reverse
+proxy (Traefik labels are stubbed in `docker-compose.yml`); the server honors
+`X-Forwarded-Proto`.
+
+### Keyboard shortcuts (desktop)
+
+The PWA mirrors the TUI's keyboard model — press `?` for the full list. Highlights:
+
+- `j`/`k`, `g`/`G` — move the cursor; `Enter` opens.
+- `H`/`L` — switch tabs; `h`/`l`/`[`/`]`/`1–9` — switch projects.
+- Tasks: `Space` select, `A`/`D` select/clear all, `c` complete, `x` run, `X`
+  cancel, `d` delete, `s` metadata, `e` edit, `y` yank, `/` filter, `C`
+  Tasks⇄Schedules, `n` new — selection enables batch complete/edit/delete.
+- Brain: `/` search, `e` edit, `b`/`B`/`F`/`A` embed/re-embed; Automations:
+  `Space` enable, `x` reconcile, `e` configure, `C` Automations⇄Dream.
+- `p`/`P` toggle pause/resume for the active scope (`All` toggles global;
+  single-project tabs toggle only that project), `S` settings, `w` wrap, `r`
+  refresh.
+
+### Build & develop
+
+The web app lives in [`web/`](web/README.md) and compiles into
+`internal/webui/dist`.
+
+```bash
+just web-dev      # PWA dev server (HMR) at :5179, proxying the API
+just web-build    # compile the PWA into internal/webui/dist
+just build-all    # web-build + build the Go binary with the UI embedded
+```
+
+`just release` and `docker build` build the web UI automatically. A plain
+`just build` embeds whatever assets are already present (a placeholder page is
+served if the UI hasn't been built).
+
+> Two TUI features have no browser equivalent and are intentionally omitted:
+> spawning your local `$EDITOR` (replaced by an in-app editor) and tmux/full-screen
+> session reattach (logs are streamed instead).
+
 ## Environment Variables
 
 | Variable | Default | Description |
@@ -553,6 +913,11 @@ brain-runner logs [-f]
 | `BRAIN_HOST` | `0.0.0.0` | API server host |
 | `BRAIN_DIR` | `~/.brain` | Brain data directory |
 | `BRAIN_API_URL` | `http://localhost:3333` | API URL (for runner) |
+| `server.attachments.storage_root` | `<BRAIN_DIR>/attachments` | Attachment blob storage root in `config.yaml`; include with `brain.db` in backups |
+| `server.attachments.max_upload_size_bytes` | `104857600` | Maximum attachment upload size in bytes |
+| `ENABLE_AUTH` | `false` | Require auth (API token or OAuth) on `/api/v1/*` |
+| `OAUTH_PIN` | — | PIN shown on the OAuth consent page; used by the PWA "Sign in with PIN" flow |
+| `CORS_ORIGIN` | `*` | Allowed CORS origin; the embedded PWA is same-origin and needs no CORS |
 | `ENABLE_TLS` | `false` | Enable HTTPS/TLS |
 | `TLS_KEY` | — | Path to TLS private key file (PEM format) |
 | `TLS_CERT` | — | Path to TLS certificate file (PEM format) |

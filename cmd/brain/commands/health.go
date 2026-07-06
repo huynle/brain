@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/huynle/brain-api/internal/lifecycle"
@@ -40,8 +38,7 @@ func (c *HealthCommand) Execute() error {
 	// Check if server is running via PID file
 	pidFile := c.Config.Server.PIDFile
 	if pidFile == "" {
-		homeDir, _ := os.UserHomeDir()
-		pidFile = filepath.Join(homeDir, ".local", "state", "brain-api", "brain-api.pid")
+		pidFile = defaultPIDFile()
 	}
 
 	state, err := lifecycle.GetServerStatus(pidFile, port)
@@ -70,7 +67,7 @@ func (c *HealthCommand) Execute() error {
 
 func (c *HealthCommand) checkHealth(port int) error {
 	url := fmt.Sprintf("http://localhost:%d/api/v1/health", port)
-	
+
 	client := &http.Client{Timeout: 5 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -94,7 +91,7 @@ func (c *HealthCommand) checkHealth(port int) error {
 	// Print health info
 	status, _ := result["status"].(string)
 	timestamp, _ := result["timestamp"].(string)
-	
+
 	fmt.Fprintf(c.Out, "Status: %s\n", status)
 	fmt.Fprintf(c.Out, "Timestamp: %s\n", timestamp)
 
@@ -107,7 +104,7 @@ func (c *HealthCommand) checkHealth(port int) error {
 
 func (c *HealthCommand) waitForHealth(port int, timeout int) error {
 	deadline := time.Now().Add(time.Duration(timeout) * time.Second)
-	
+
 	for time.Now().Before(deadline) {
 		err := c.checkHealth(port)
 		if err == nil {

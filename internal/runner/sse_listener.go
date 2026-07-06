@@ -2,26 +2,52 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/huynle/brain-api/internal/sse"
 )
 
-// SSEListener watches SSE streams for task changes and signals the runner to poll.
+// =============================================================================
+// Backoff constants
+// =============================================================================
+
+const (
+	// initialBackoff is the starting reconnect delay.
+	initialBackoff = 2 * time.Second
+
+	// maxBackoff is the ceiling for exponential backoff.
+	maxBackoff = 60 * time.Second
+
+	// backoffMultiplier doubles the delay on each consecutive failure.
+	backoffMultiplier = 2
+)
+
+// =============================================================================
+// SSEListener
+// =============================================================================
+
+// SSEListener watches SSE streams for task changes and commands, signaling
+// the runner to poll or handling server-pushed commands.
 type SSEListener struct {
-	apiURL   string
-	apiToken string
-	projects []string
-	wakeCh   chan<- struct{}
-	clients  []*sse.Client
+	apiURL    string
+	apiToken  string
+	projects  []string
+	runnerID  string
+	wakeCh    chan<- struct{}
+	commandCh chan<- RunnerCommand
+	clients   []*sse.Client
 
 	mu     sync.Mutex
 	cancel context.CancelFunc
 }
 
 // NewSSEListener creates a new SSE listener.
+// commandCh and runnerID may be zero-valued for backward compat (no runner stream).
 func NewSSEListener(apiURL, apiToken string, projects []string, wakeCh chan<- struct{}) *SSEListener {
 	return &SSEListener{
 		apiURL:   apiURL,
@@ -31,8 +57,17 @@ func NewSSEListener(apiURL, apiToken string, projects []string, wakeCh chan<- st
 	}
 }
 
-// Start begins listening to SSE streams for all projects.
-// Blocks until the context is cancelled or Stop is called.
+// SetRunnerStream configures the runner-scoped SSE stream.
+// Must be called before Start().
+func (l *SSEListener) SetRunnerStream(runnerID string, commandCh chan<- RunnerCommand) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.runnerID = runnerID
+	l.commandCh = commandCh
+}
+
+// Start begins listening to SSE streams for all projects and (optionally)
+// the runner command stream. Blocks until the context is cancelled or Stop is called.
 func (l *SSEListener) Start(ctx context.Context) {
 	ctx, cancel := context.WithCancel(ctx)
 	l.mu.Lock()
@@ -41,6 +76,7 @@ func (l *SSEListener) Start(ctx context.Context) {
 
 	var wg sync.WaitGroup
 
+	// Per-project task streams
 	for _, projectID := range l.projects {
 		client := sse.NewClient(l.apiURL, l.apiToken, projectID)
 		l.mu.Lock()
@@ -54,11 +90,27 @@ func (l *SSEListener) Start(ctx context.Context) {
 		}(client, projectID)
 	}
 
+	// Runner-scoped command stream
+	l.mu.Lock()
+	runnerID := l.runnerID
+	commandCh := l.commandCh
+	l.mu.Unlock()
+
+	if runnerID != "" && commandCh != nil {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			l.listenRunner(ctx, runnerID)
+		}()
+	}
+
 	wg.Wait()
 }
 
 // listenProject listens to a single project's SSE stream and sends wake signals.
 func (l *SSEListener) listenProject(ctx context.Context, client *sse.Client, projectID string) {
+	backoff := initialBackoff
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -67,6 +119,7 @@ func (l *SSEListener) listenProject(ctx context.Context, client *sse.Client, pro
 		}
 
 		ch := client.Connect(ctx)
+		connected := false
 
 		for event := range ch {
 			select {
@@ -75,7 +128,12 @@ func (l *SSEListener) listenProject(ctx context.Context, client *sse.Client, pro
 			default:
 			}
 
-			if event.Type == "tasks_snapshot" {
+			if event.Type == "connected" {
+				connected = true
+				backoff = initialBackoff // reset on successful connection
+			}
+
+			if event.Type == "tasks_snapshot" || event.Type == "tasks_changed" {
 				// Non-blocking send — if the channel is full, drop the signal
 				select {
 				case l.wakeCh <- struct{}{}:
@@ -91,11 +149,156 @@ func (l *SSEListener) listenProject(ctx context.Context, client *sse.Client, pro
 			}
 		}
 
-		// Reconnect delay
+		// Reset backoff if we had a successful connection
+		if connected {
+			backoff = initialBackoff
+		}
+
+		// Reconnect with exponential backoff
+		slog.Debug("SSE reconnecting", "project", projectID, "backoff", backoff)
 		select {
 		case <-ctx.Done():
 			return
-		case <-time.After(2 * time.Second):
+		case <-time.After(backoff):
+		}
+
+		// Increase backoff for next failure (capped at maxBackoff)
+		backoff = backoff * time.Duration(backoffMultiplier)
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
+// listenRunner connects to the runner-scoped SSE stream at
+// GET /api/v1/runners/{runnerId}/stream and handles command events.
+func (l *SSEListener) listenRunner(ctx context.Context, runnerID string) {
+	backoff := initialBackoff
+
+	streamURL := fmt.Sprintf("%s/api/v1/runners/%s/stream",
+		strings.TrimRight(l.apiURL, "/"), runnerID)
+
+	// Create a dedicated SSE client for the runner stream.
+	// We use a synthetic "project ID" that won't collide with real projects
+	// since the sse.Client builds its URL from projectID — so we use a raw client approach.
+	client := sse.NewClientWithURL(l.apiURL, l.apiToken, streamURL)
+
+	l.mu.Lock()
+	l.clients = append(l.clients, client)
+	l.mu.Unlock()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		ch := client.Connect(ctx)
+		connected := false
+
+		for event := range ch {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+
+			if event.Type == "connected" {
+				connected = true
+				backoff = initialBackoff
+				slog.Info("runner SSE stream connected", "runner_id", runnerID)
+			}
+
+			if event.Type == "tasks_changed" {
+				// Wake signal (same as project streams)
+				select {
+				case l.wakeCh <- struct{}{}:
+					slog.Debug("runner SSE wake signal sent", "runner_id", runnerID)
+				default:
+				}
+			}
+
+			if event.Type == "command" {
+				l.handleCommandEvent(event, runnerID)
+			}
+
+			if event.Type == "disconnected" {
+				slog.Debug("runner SSE disconnected, will reconnect", "runner_id", runnerID)
+				break
+			}
+		}
+
+		if connected {
+			backoff = initialBackoff
+		}
+
+		slog.Debug("runner SSE reconnecting", "runner_id", runnerID, "backoff", backoff)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(backoff):
+		}
+
+		backoff = backoff * time.Duration(backoffMultiplier)
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
+	}
+}
+
+// handleCommandEvent parses a "command" SSE event and sends it to the commandCh.
+func (l *SSEListener) handleCommandEvent(event sse.Event, runnerID string) {
+	l.mu.Lock()
+	commandCh := l.commandCh
+	l.mu.Unlock()
+
+	if commandCh == nil {
+		return
+	}
+
+	var cmd RunnerCommand
+	if err := json.Unmarshal(event.Data, &cmd); err != nil {
+		slog.Warn("failed to parse runner command", "error", err, "runner_id", runnerID)
+		return
+	}
+	if cmd.Type == "" {
+		var envelope struct {
+			Command RunnerCommandType `json:"command"`
+			Payload json.RawMessage   `json:"payload"`
+		}
+		if err := json.Unmarshal(event.Data, &envelope); err != nil {
+			slog.Warn("failed to parse runner command envelope", "error", err, "runner_id", runnerID)
+			return
+		}
+		cmd.Type = envelope.Command
+		if len(envelope.Payload) > 0 && string(envelope.Payload) != "null" {
+			if err := json.Unmarshal(envelope.Payload, &cmd); err != nil {
+				slog.Warn("failed to parse runner command payload", "error", err, "runner_id", runnerID)
+				return
+			}
+			cmd.Type = envelope.Command
+		}
+	}
+
+	// Non-blocking send to command channel
+	select {
+	case commandCh <- cmd:
+		slog.Debug("runner command sent", "type", cmd.Type, "runner_id", runnerID)
+	default:
+		// Channel full = the runner is severely backlogged. Promote this
+		// from debug to error so it's noticeable; for dispatch commands
+		// also include the task/lease IDs so operators can correlate to
+		// the stuck `pushed` lease on the Brain side.
+		if cmd.Type == CommandDispatch {
+			slog.Error("dispatch command dropped (channel full); lease will remain pushed until TTL expires",
+				"task_id", cmd.TaskID,
+				"project_id", cmd.ProjectID,
+				"lease_id", cmd.LeaseID,
+				"runner_id", runnerID,
+			)
+		} else {
+			slog.Warn("runner command dropped (channel full)", "type", cmd.Type, "runner_id", runnerID)
 		}
 	}
 }

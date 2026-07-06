@@ -37,7 +37,10 @@ func automationActionToFM(a *types.AutomationAction) *frontmatter.AutomationActi
 		Command:            a.Command,
 		Agent:              a.Agent,
 		Model:              a.Model,
+		Executor:           a.Executor,
+		TargetWorkdir:      a.TargetWorkdir,
 		ExecutionMode:      a.ExecutionMode,
+		SessionMode:        a.SessionMode,
 		CompleteOnIdle:     a.CompleteOnIdle,
 		Timeout:            a.Timeout,
 		RequiresCapability: a.RequiresCapability,
@@ -53,6 +56,22 @@ func automationRetryToFM(r *types.AutomationRetry) *frontmatter.AutomationRetry 
 		MaxAttempts: r.MaxAttempts,
 		Backoff:     r.Backoff,
 		Delay:       r.Delay,
+	}
+}
+
+// goalConfigToFM converts a domain GoalConfig to a frontmatter GoalConfig.
+func goalConfigToFM(g *types.GoalConfig) *frontmatter.GoalConfig {
+	if g == nil {
+		return nil
+	}
+	return &frontmatter.GoalConfig{
+		ID:               g.ID,
+		Criteria:         g.Criteria,
+		Validation:       g.Validation,
+		Workdir:          g.Workdir,
+		TriggerSource:    g.TriggerSource,
+		CompleteStatuses: g.CompleteStatuses,
+		BlockedStatuses:  g.BlockedStatuses,
 	}
 }
 
@@ -82,7 +101,10 @@ func fmActionToType(a *frontmatter.AutomationAction) *types.AutomationAction {
 		Command:            a.Command,
 		Agent:              a.Agent,
 		Model:              a.Model,
+		Executor:           a.Executor,
+		TargetWorkdir:      a.TargetWorkdir,
 		ExecutionMode:      a.ExecutionMode,
+		SessionMode:        a.SessionMode,
 		CompleteOnIdle:     a.CompleteOnIdle,
 		Timeout:            a.Timeout,
 		RequiresCapability: a.RequiresCapability,

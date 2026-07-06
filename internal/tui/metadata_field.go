@@ -41,6 +41,17 @@ const (
 	FieldFeatureExpiresAt MetadataField = "feature_expires_at"
 	FieldFeatureRunOnceAt MetadataField = "feature_run_once_at"
 	FieldFeatureTimezone  MetadataField = "feature_timezone"
+
+	// Goal automation fields
+	FieldGoalTriggerSource MetadataField = "goal_trigger_source"
+	FieldGoalSessionMode   MetadataField = "goal_session_mode"
+	FieldGoalExecutor      MetadataField = "goal_executor"
+	FieldGoalCriteria      MetadataField = "goal_criteria"
+	FieldGoalValidation    MetadataField = "goal_validation"
+	FieldGoalWorkdir       MetadataField = "goal_workdir"
+	FieldGoalObjective     MetadataField = "goal_objective"
+	FieldGoalProject       MetadataField = "goal_project"
+	FieldGoalFeature       MetadataField = "goal_feature"
 )
 
 // ============================================================================
@@ -217,6 +228,55 @@ var fieldMetadata = map[MetadataField]FieldMeta{
 		Label: "Move to Project",
 		Hint:  "Move tasks to another project (type to filter)",
 		Type:  FieldTypeFilterDropdown,
+	},
+	// Goal automation fields
+	FieldGoalTriggerSource: {
+		Label:       "Trigger Source",
+		Hint:        "Which lifecycle events wake the goal (task/feature/both)",
+		Type:        FieldTypeDropdown,
+		EnumOptions: []string{"task", "feature", "both"},
+	},
+	FieldGoalSessionMode: {
+		Label:       "Session Mode",
+		Hint:        "Resume prior session (continue) or start clean (fresh)",
+		Type:        FieldTypeDropdown,
+		EnumOptions: []string{"continue", "fresh"},
+	},
+	FieldGoalExecutor: {
+		Label:       "Executor",
+		Hint:        "Execution backend for generated work",
+		Type:        FieldTypeDropdown,
+		EnumOptions: []string{"opencode", "pi"},
+	},
+	FieldGoalCriteria: {
+		Label: "Criteria",
+		Hint:  "Success criteria the goal must satisfy",
+		Type:  FieldTypeText,
+	},
+	FieldGoalValidation: {
+		Label: "Validation",
+		Hint:  "How completion is validated (validation commands)",
+		Type:  FieldTypeText,
+	},
+	FieldGoalWorkdir: {
+		Label: "Workdir",
+		Hint:  "Working directory for goal-generated work (default: cwd)",
+		Type:  FieldTypeText,
+	},
+	FieldGoalObjective: {
+		Label: "Objective",
+		Hint:  "The goal objective / title",
+		Type:  FieldTypeText,
+	},
+	FieldGoalProject: {
+		Label: "Project",
+		Hint:  "Project the goal belongs to (required)",
+		Type:  FieldTypeText,
+	},
+	FieldGoalFeature: {
+		Label: "Feature",
+		Hint:  "Optional feature id the goal scopes to",
+		Type:  FieldTypeText,
 	},
 }
 

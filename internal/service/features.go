@@ -1,9 +1,14 @@
 package service
 
 import (
+	"context"
+	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -385,4 +390,95 @@ func ComputeAndResolveFeatures(tasks []types.ResolvedTask) *FeatureDependencyRes
 	}
 
 	return result
+}
+
+// AssignFeatureToRunner manually assigns a project-scoped feature to a runner.
+func (s *TaskServiceImpl) AssignFeatureToRunner(ctx context.Context, projectID, featureID string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+	runnerID := strings.TrimSpace(req.RunnerID)
+	if runnerID == "" {
+		return nil, fmt.Errorf("runner_id is required")
+	}
+
+	runner, err := s.storage.GetRunner(ctx, runnerID)
+	if err != nil {
+		return nil, fmt.Errorf("get runner: %w", err)
+	}
+	if runner == nil {
+		return nil, api.ErrNotFound
+	}
+	if !req.Force && computeRunnerStatus(runner.LastHeartbeat) != types.RunnerStatusOnline {
+		return nil, api.ErrConflict
+	}
+
+	assigned, existing, err := s.storage.AssignFeatureIfEmpty(ctx, projectID, featureID, runnerID, "manual", "active")
+	if err != nil {
+		return nil, fmt.Errorf("assign feature: %w", err)
+	}
+	if assigned {
+		existing, err = s.storage.GetFeatureAssignment(ctx, projectID, featureID)
+		if err != nil {
+			return nil, fmt.Errorf("get feature assignment: %w", err)
+		}
+	}
+	if existing == nil {
+		return nil, api.ErrNotFound
+	}
+	if existing.RunnerID == runnerID {
+		return featureAssignmentRowToResponse(existing, ""), nil
+	}
+	if strings.TrimSpace(req.Intent) != "reassign" {
+		return nil, api.ErrConflict
+	}
+
+	previousRunner := existing.RunnerID
+	reassigned, err := s.storage.ForceAssignFeature(ctx, projectID, featureID, runnerID, "manual", "active")
+	if err != nil {
+		return nil, fmt.Errorf("force assign feature: %w", err)
+	}
+	return featureAssignmentRowToResponse(reassigned, previousRunner), nil
+}
+
+// ClearFeatureAssignment manually clears a project-scoped feature assignment.
+func (s *TaskServiceImpl) ClearFeatureAssignment(ctx context.Context, projectID, featureID string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error) {
+	if strings.TrimSpace(req.Intent) != "clear" {
+		return nil, api.ErrConflict
+	}
+	existing, err := s.storage.GetFeatureAssignment(ctx, projectID, featureID)
+	if err != nil {
+		return nil, fmt.Errorf("get feature assignment: %w", err)
+	}
+	if existing == nil {
+		return nil, api.ErrNotFound
+	}
+
+	cleared, err := s.storage.ClearFeatureAssignment(ctx, projectID, featureID)
+	if err != nil {
+		return nil, fmt.Errorf("clear feature assignment: %w", err)
+	}
+	if !cleared {
+		return nil, api.ErrNotFound
+	}
+
+	return &types.FeatureAssignmentResponse{
+		ProjectID:      projectID,
+		FeatureID:      featureID,
+		PreviousRunner: existing.RunnerID,
+		Source:         existing.Source,
+		Status:         "cleared",
+		AssignedAt:     time.UnixMilli(existing.AssignedAt).UTC().Format(time.RFC3339),
+		UpdatedAt:      time.Now().UTC().Format(time.RFC3339),
+	}, nil
+}
+
+func featureAssignmentRowToResponse(assignment *storage.FeatureAssignmentRow, previousRunner string) *types.FeatureAssignmentResponse {
+	return &types.FeatureAssignmentResponse{
+		ProjectID:      assignment.ProjectID,
+		FeatureID:      assignment.FeatureID,
+		RunnerID:       assignment.RunnerID,
+		PreviousRunner: previousRunner,
+		Source:         assignment.Source,
+		Status:         assignment.Status,
+		AssignedAt:     time.UnixMilli(assignment.AssignedAt).UTC().Format(time.RFC3339),
+		UpdatedAt:      time.UnixMilli(assignment.UpdatedAt).UTC().Format(time.RFC3339),
+	}
 }

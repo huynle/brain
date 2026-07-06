@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
+	"github.com/huynle/brain-api/pkg/frontmatter"
 )
 
 // =============================================================================
@@ -18,26 +20,58 @@ import (
 // =============================================================================
 
 type mockBrainService struct {
-	saveFunc         func(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error)
-	recallFunc       func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
-	recallFullFunc   func(ctx context.Context, pathOrID string) (string, error)
-	updateFunc       func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
-	deleteFunc       func(ctx context.Context, pathOrID string) error
-	listFunc         func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error)
-	moveFunc         func(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error)
-	searchFunc       func(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error)
-	injectFunc       func(ctx context.Context, req types.InjectRequest) (*types.InjectResponse, error)
-	getBacklinksFunc func(ctx context.Context, path string) ([]types.BrainEntry, error)
-	getOutlinksFunc  func(ctx context.Context, path string) ([]types.BrainEntry, error)
-	getRelatedFunc   func(ctx context.Context, path string, limit int) ([]types.BrainEntry, error)
-	getSectionsFunc  func(ctx context.Context, path string) (*types.SectionsResponse, error)
-	getSectionFunc   func(ctx context.Context, path string, title string, includeSubsections bool) (*types.SectionContentResponse, error)
-	getStatsFunc     func(ctx context.Context, global bool) (*types.StatsResponse, error)
-	getOrphansFunc   func(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error)
-	getStaleFunc     func(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
-	verifyFunc       func(ctx context.Context, path string) (*types.VerifyResponse, error)
-	generateLinkFunc func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
-	bulkUpdateFunc   func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
+	saveFunc           func(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error)
+	recallFunc         func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
+	recallIncludeFunc  func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error)
+	recallFullFunc     func(ctx context.Context, pathOrID string) (string, error)
+	updateFunc         func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error)
+	deleteFunc         func(ctx context.Context, pathOrID string) error
+	listFunc           func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error)
+	moveFunc           func(ctx context.Context, pathOrID string, targetProject string) (*types.MoveResult, error)
+	searchFunc         func(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error)
+	injectFunc         func(ctx context.Context, req types.InjectRequest) (*types.InjectResponse, error)
+	getBacklinksFunc   func(ctx context.Context, path string) ([]types.BrainEntry, error)
+	getOutlinksFunc    func(ctx context.Context, path string) ([]types.BrainEntry, error)
+	getRelatedFunc     func(ctx context.Context, path string, limit int) ([]types.BrainEntry, error)
+	getSectionsFunc    func(ctx context.Context, path string) (*types.SectionsResponse, error)
+	getSectionFunc     func(ctx context.Context, path string, title string, includeSubsections bool) (*types.SectionContentResponse, error)
+	getStatsFunc       func(ctx context.Context, global bool, project string) (*types.StatsResponse, error)
+	getOrphansFunc     func(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error)
+	getStaleFunc       func(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error)
+	verifyFunc         func(ctx context.Context, path string) (*types.VerifyResponse, error)
+	generateLinkFunc   func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
+	bulkUpdateFunc     func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
+	updateMetadataFunc func(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error)
+}
+
+func TestMapFrontmatterToUpdateRequest_Attachments(t *testing.T) {
+	req := mapFrontmatterToUpdateRequest(frontmatter.Frontmatter{
+		Title:  "Attachment Entry",
+		Status: "active",
+		Attachments: []frontmatter.AttachmentReference{{
+			ID:          "att_x",
+			Filename:    "notes.pdf",
+			ContentType: "application/pdf",
+			Size:        1234,
+			Caption:     "Source notes",
+			Derived: []frontmatter.AttachmentDerived{{
+				ID:         "att_thumb",
+				Kind:       "thumbnail",
+				StorageKey: "thumbnails/att_thumb.png",
+			}},
+		}},
+	}, "Body")
+
+	if req.Attachments == nil {
+		t.Fatal("Attachments pointer is nil, want explicit update")
+	}
+	attachments := *req.Attachments
+	if len(attachments) != 1 || attachments[0].ID != "att_x" || attachments[0].ContentType != "application/pdf" || attachments[0].Caption != "Source notes" {
+		t.Fatalf("attachments = %#v, want mapped attachment reference", attachments)
+	}
+	if len(attachments[0].Derived) != 1 || attachments[0].Derived[0].Kind != "thumbnail" || attachments[0].Derived[0].StorageKey != "thumbnails/att_thumb.png" {
+		t.Fatalf("derived attachments = %#v, want thumbnail reference", attachments[0].Derived)
+	}
 }
 
 func (m *mockBrainService) Save(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
@@ -47,7 +81,10 @@ func (m *mockBrainService) Save(ctx context.Context, req types.CreateEntryReques
 	return nil, fmt.Errorf("saveFunc not set")
 }
 
-func (m *mockBrainService) Recall(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+func (m *mockBrainService) Recall(ctx context.Context, pathOrID string, include ...string) (*types.BrainEntry, error) {
+	if m.recallIncludeFunc != nil {
+		return m.recallIncludeFunc(ctx, pathOrID, include)
+	}
 	if m.recallFunc != nil {
 		return m.recallFunc(ctx, pathOrID)
 	}
@@ -138,23 +175,23 @@ func (m *mockBrainService) GetSection(ctx context.Context, path string, title st
 	return nil, fmt.Errorf("getSectionFunc not set")
 }
 
-func (m *mockBrainService) GetStats(ctx context.Context, global bool) (*types.StatsResponse, error) {
+func (m *mockBrainService) GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
 	if m.getStatsFunc != nil {
-		return m.getStatsFunc(ctx, global)
+		return m.getStatsFunc(ctx, global, project)
 	}
 	return nil, fmt.Errorf("getStatsFunc not set")
 }
 
-func (m *mockBrainService) GetOrphans(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error) {
+func (m *mockBrainService) GetOrphans(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if m.getOrphansFunc != nil {
-		return m.getOrphansFunc(ctx, entryType, limit)
+		return m.getOrphansFunc(ctx, entryType, limit, project)
 	}
 	return nil, fmt.Errorf("getOrphansFunc not set")
 }
 
-func (m *mockBrainService) GetStale(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error) {
+func (m *mockBrainService) GetStale(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if m.getStaleFunc != nil {
-		return m.getStaleFunc(ctx, days, entryType, limit)
+		return m.getStaleFunc(ctx, days, entryType, limit, project)
 	}
 	return nil, fmt.Errorf("getStaleFunc not set")
 }
@@ -181,6 +218,9 @@ func (m *mockBrainService) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 }
 
 func (m *mockBrainService) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
+	if m.updateMetadataFunc != nil {
+		return m.updateMetadataFunc(ctx, pathOrID, fields)
+	}
 	return nil, fmt.Errorf("updateMetadataFunc not set")
 }
 
@@ -456,16 +496,19 @@ func TestHandleGetEntry(t *testing.T) {
 	tests := []struct {
 		name       string
 		id         string
-		mockRecall func(ctx context.Context, pathOrID string) (*types.BrainEntry, error)
+		mockRecall func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error)
 		wantStatus int
 		checkBody  func(t *testing.T, resp *http.Response)
 	}{
 		{
 			name: "success by ID",
 			id:   "abc12def",
-			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
 				if pathOrID != "abc12def" {
 					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
+				}
+				if len(include) != 0 {
+					return nil, fmt.Errorf("include = %#v, want empty", include)
 				}
 				return &types.BrainEntry{
 					ID:      "abc12def",
@@ -491,7 +534,7 @@ func TestHandleGetEntry(t *testing.T) {
 		{
 			name: "not found",
 			id:   "notexist",
-			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
 				return nil, ErrNotFound
 			},
 			wantStatus: http.StatusNotFound,
@@ -505,7 +548,7 @@ func TestHandleGetEntry(t *testing.T) {
 		{
 			name: "service error",
 			id:   "abc12def",
-			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
 				return nil, fmt.Errorf("database error")
 			},
 			wantStatus: http.StatusInternalServerError,
@@ -513,7 +556,7 @@ func TestHandleGetEntry(t *testing.T) {
 		{
 			name: "success by full path",
 			id:   "projects/govpu/task/1bg4bj9y.md",
-			mockRecall: func(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
 				if pathOrID != "projects/govpu/task/1bg4bj9y.md" {
 					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
 				}
@@ -538,11 +581,25 @@ func TestHandleGetEntry(t *testing.T) {
 				}
 			},
 		},
+		{
+			name: "passes include query values",
+			id:   "abc12def?include=attachments,attachment_text",
+			mockRecall: func(ctx context.Context, pathOrID string, include []string) (*types.BrainEntry, error) {
+				if pathOrID != "abc12def" {
+					return nil, fmt.Errorf("unexpected pathOrID: %s", pathOrID)
+				}
+				if len(include) != 2 || include[0] != "attachments" || include[1] != "attachment_text" {
+					return nil, fmt.Errorf("include = %#v, want attachments and attachment_text", include)
+				}
+				return &types.BrainEntry{ID: "abc12def", Path: "projects/default/plan/test.md", Title: "Test Entry", Type: "plan", Status: "active"}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockBrainService{recallFunc: tt.mockRecall}
+			mock := &mockBrainService{recallIncludeFunc: tt.mockRecall}
 			router := newTestRouter(mock)
 			srv := httptest.NewServer(router)
 			defer srv.Close()
@@ -853,7 +910,7 @@ func TestHandleListEntries(t *testing.T) {
 		},
 		{
 			name:  "with all query params",
-			query: "?type=task&status=pending&feature_id=auth&filename=abc&tags=go,api&limit=10&offset=5&global=true&sortBy=modified",
+			query: "?type=task&status=pending&feature_id=auth&filename=abc&tags=go,api&limit=10&offset=5&global=true&sortBy=modified&include=attachments,attachment_text",
 			mockList: func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error) {
 				// Verify all query params were parsed correctly
 				if req.Type != "task" {
@@ -882,6 +939,9 @@ func TestHandleListEntries(t *testing.T) {
 				}
 				if req.SortBy != "modified" {
 					return nil, fmt.Errorf("sortBy = %q, want %q", req.SortBy, "modified")
+				}
+				if len(req.Include) != 2 || req.Include[0] != "attachments" || req.Include[1] != "attachment_text" {
+					return nil, fmt.Errorf("include = %#v, want attachments and attachment_text", req.Include)
 				}
 				return &types.ListEntriesResponse{
 					Entries: []types.BrainEntry{},
@@ -2298,5 +2358,477 @@ func TestHandleBulkUpdate(t *testing.T) {
 				tt.checkBody(t, resp)
 			}
 		})
+	}
+}
+
+// =============================================================================
+// Event Emission Tests
+// =============================================================================
+
+// newTestRouterWithEvents creates a chi router with entry handlers wired to
+// both a mock BrainService and a mock EventService for testing event emission.
+func newTestRouterWithEvents(mock *mockBrainService, es *mockEventService) *chi.Mux {
+	hub := realtime.NewHub()
+	h := NewHandler(mock,
+		WithEventService(es),
+		WithHub(hub),
+	)
+	r := chi.NewRouter()
+	r.Route("/entries", func(r chi.Router) {
+		r.Post("/", h.HandleCreateEntry)
+		r.Get("/", h.HandleListEntries)
+		r.Post("/{id}/move", h.HandleMoveEntry)
+		r.Post("/bulk-update", h.HandleBulkUpdate)
+		r.Get("/*", h.HandleGetEntry)
+		r.Patch("/*", h.HandleUpdateOrMetadata)
+		r.Delete("/*", h.HandleDeleteEntry)
+	})
+	return r
+}
+
+func TestHandleCreateEntry_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		saveFunc: func(_ context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
+			return &types.CreateEntryResponse{
+				ID:    "abc12def",
+				Path:  "projects/myproj/plan/test.md",
+				Title: req.Title,
+				Type:  req.Type,
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"type":    "plan",
+		"title":   "My Plan",
+		"content": "Plan content",
+	})
+	resp, err := http.Post(srv.URL+"/entries", "application/json", body)
+	if err != nil {
+		t.Fatalf("POST /entries failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusCreated)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventEntryCreated {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventEntryCreated)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "myproj" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "myproj")
+	}
+	if evt.Metadata["entry_type"] != "plan" {
+		t.Errorf("metadata[entry_type] = %q, want %q", evt.Metadata["entry_type"], "plan")
+	}
+}
+
+func TestHandleUpdateEntry_EmitsEvents(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "pending",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+		updateFunc: func(_ context.Context, _ string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+			status := "pending"
+			if req.Status != nil {
+				status = *req.Status
+			}
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    status,
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"status": "completed",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/abc12def", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/abc12def failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	// Should emit both entry.updated and task.status_changed
+	if len(es.ingested) != 2 {
+		t.Fatalf("ingested events = %d, want 2", len(es.ingested))
+	}
+
+	// First event: entry.updated
+	if es.ingested[0].Type != types.EventEntryUpdated {
+		t.Errorf("event[0].type = %q, want %q", es.ingested[0].Type, types.EventEntryUpdated)
+	}
+	if es.ingested[0].Source != types.EventSourceAPI {
+		t.Errorf("event[0].source = %q, want %q", es.ingested[0].Source, types.EventSourceAPI)
+	}
+	if es.ingested[0].TaskID != "abc12def" {
+		t.Errorf("event[0].task_id = %q, want %q", es.ingested[0].TaskID, "abc12def")
+	}
+
+	// Second event: task.status_changed
+	if es.ingested[1].Type != types.EventTaskStatusChanged {
+		t.Errorf("event[1].type = %q, want %q", es.ingested[1].Type, types.EventTaskStatusChanged)
+	}
+	if es.ingested[1].FromStatus != "pending" {
+		t.Errorf("event[1].from_status = %q, want %q", es.ingested[1].FromStatus, "pending")
+	}
+	if es.ingested[1].ToStatus != "completed" {
+		t.Errorf("event[1].to_status = %q, want %q", es.ingested[1].ToStatus, "completed")
+	}
+	if es.ingested[1].FeatureID != "feat-1" {
+		t.Errorf("event[1].feature_id = %q, want %q", es.ingested[1].FeatureID, "feat-1")
+	}
+}
+
+func TestHandleDeleteEntry_EmitsEvent(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:    "abc12def",
+				Path:  "projects/myproj/task/abc12def.md",
+				Type:  "task",
+				Title: "Test Task",
+			}, nil
+		},
+		deleteFunc: func(_ context.Context, _ string) error {
+			return nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	req, _ := http.NewRequest("DELETE", srv.URL+"/entries/projects/myproj/task/abc12def.md?confirm=true", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNoContent)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventEntryDeleted {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventEntryDeleted)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.TaskID != "abc12def" {
+		t.Errorf("task_id = %q, want %q", evt.TaskID, "abc12def")
+	}
+}
+
+func TestHandleUpdateMetadata_ChecksFeatureCompletionOnTaskStatusChange(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		updateMetadataFunc: func(_ context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {
+			if pathOrID != "projects/myproj/task/abc12def.md" {
+				t.Fatalf("pathOrID = %q, want task path", pathOrID)
+			}
+			if fields["status"] != "completed" {
+				t.Fatalf("status field = %v, want completed", fields["status"])
+			}
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "completed",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"status": "completed",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/projects/myproj/task/abc12def.md/metadata", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/.../metadata failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.checks) != 1 {
+		t.Fatalf("feature completion checks = %d, want 1", len(es.checks))
+	}
+	check := es.checks[0]
+	if check.ProjectID != "myproj" || check.FeatureID != "feat-1" || check.TaskID != "abc12def" {
+		t.Fatalf("feature completion check = %+v, want myproj/feat-1/abc12def", check)
+	}
+}
+
+func TestHandleUpdateMetadata_EmitsTaskStatusChanged(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		// Recall returns the OLD status so the handler can detect the change.
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "in_progress",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+		updateMetadataFunc: func(_ context.Context, _ string, fields map[string]interface{}) (*types.BrainEntry, error) {
+			if fields["status"] != "completed" {
+				t.Fatalf("status field = %v, want completed", fields["status"])
+			}
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "completed",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"status": "completed",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/projects/myproj/task/abc12def.md/metadata", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/.../metadata failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	// Find the task.status_changed event among the ingested events.
+	var statusEvt *types.Event
+	for i := range es.ingested {
+		if es.ingested[i].Type == types.EventTaskStatusChanged {
+			statusEvt = &es.ingested[i]
+			break
+		}
+	}
+	if statusEvt == nil {
+		t.Fatalf("no %q event ingested; got %d events: %+v",
+			types.EventTaskStatusChanged, len(es.ingested), es.ingested)
+	}
+	if statusEvt.Source != types.EventSourceAPI {
+		t.Errorf("status event source = %q, want %q", statusEvt.Source, types.EventSourceAPI)
+	}
+	if statusEvt.ProjectID != "myproj" {
+		t.Errorf("status event project_id = %q, want %q", statusEvt.ProjectID, "myproj")
+	}
+	if statusEvt.TaskID != "abc12def" {
+		t.Errorf("status event task_id = %q, want %q", statusEvt.TaskID, "abc12def")
+	}
+	if statusEvt.FeatureID != "feat-1" {
+		t.Errorf("status event feature_id = %q, want %q", statusEvt.FeatureID, "feat-1")
+	}
+	if statusEvt.FromStatus != "in_progress" {
+		t.Errorf("status event from_status = %q, want %q", statusEvt.FromStatus, "in_progress")
+	}
+	if statusEvt.ToStatus != "completed" {
+		t.Errorf("status event to_status = %q, want %q", statusEvt.ToStatus, "completed")
+	}
+}
+
+func TestHandleUpdateMetadata_NoStatusChange_NoTaskStatusChangedEvent(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "completed",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+		updateMetadataFunc: func(_ context.Context, _ string, _ map[string]interface{}) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:        "abc12def",
+				Path:      "projects/myproj/task/abc12def.md",
+				Type:      "task",
+				Status:    "completed",
+				Title:     "Test Task",
+				FeatureID: "feat-1",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	// Update a non-status field; status stays "completed".
+	body := jsonBody(t, map[string]any{
+		"status": "completed",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/projects/myproj/task/abc12def.md/metadata", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/.../metadata failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	for _, evt := range es.ingested {
+		if evt.Type == types.EventTaskStatusChanged {
+			t.Fatalf("unexpected %q event when status did not change", types.EventTaskStatusChanged)
+		}
+	}
+}
+
+func TestHandleUpdateEntry_NoStatusChange_EmitsSingleEvent(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		updateFunc: func(_ context.Context, _ string, _ types.UpdateEntryRequest) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:    "abc12def",
+				Path:  "projects/myproj/plan/abc12def.md",
+				Type:  "plan",
+				Title: "Updated Plan",
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"title": "Updated Plan",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/abc12def", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH /entries/abc12def failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+
+	// Should emit only entry.updated (no status change, no task.status_changed)
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	if es.ingested[0].Type != types.EventEntryUpdated {
+		t.Errorf("event type = %q, want %q", es.ingested[0].Type, types.EventEntryUpdated)
+	}
+}
+
+func TestNoEventsForReadOnly(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID:    "abc12def",
+				Path:  "projects/myproj/plan/abc12def.md",
+				Type:  "plan",
+				Title: "Test Plan",
+			}, nil
+		},
+		listFunc: func(_ context.Context, _ types.ListEntriesRequest) (*types.ListEntriesResponse, error) {
+			return &types.ListEntriesResponse{Entries: []types.BrainEntry{}}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	// GET entry
+	resp, err := http.Get(srv.URL + "/entries/abc12def")
+	if err != nil {
+		t.Fatalf("GET /entries/abc12def failed: %v", err)
+	}
+	resp.Body.Close()
+
+	// GET list
+	resp, err = http.Get(srv.URL + "/entries")
+	if err != nil {
+		t.Fatalf("GET /entries failed: %v", err)
+	}
+	resp.Body.Close()
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 0 {
+		t.Errorf("ingested events = %d, want 0 for read-only operations", len(es.ingested))
 	}
 }

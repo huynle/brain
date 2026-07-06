@@ -446,7 +446,7 @@ func TestGetStats_ReturnsStats(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "task", Title: "Task 1"})
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Plan 2"})
 
-	resp, err := svc.GetStats(ctx, false)
+	resp, err := svc.GetStats(ctx, false, "")
 	if err != nil {
 		t.Fatalf("GetStats failed: %v", err)
 	}
@@ -475,7 +475,7 @@ func TestGetStats_GlobalFilter(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "pattern", Title: "Global", Global: boolPtr(true)})
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Project"})
 
-	resp, err := svc.GetStats(ctx, true)
+	resp, err := svc.GetStats(ctx, true, "")
 	if err != nil {
 		t.Fatalf("GetStats failed: %v", err)
 	}
@@ -483,6 +483,118 @@ func TestGetStats_GlobalFilter(t *testing.T) {
 	// Global filter should only count global entries
 	if resp.TotalEntries != 1 {
 		t.Errorf("expected 1 global entry, got %d", resp.TotalEntries)
+	}
+}
+
+// TestGetStats_ProjectFilter verifies that passing a project name scopes
+// TotalEntries to the entries under projects/<name>/. This is the P1.b end
+// of the "brain_stats needs a project param" fix — proves the plumbing
+// works from service through storage.
+func TestGetStats_ProjectFilter(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Two projects with clearly different counts.
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Alpha 1", Project: "alpha"})
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "task", Title: "Alpha 2", Project: "alpha"})
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "task", Title: "Alpha 3", Project: "alpha"})
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Beta 1", Project: "beta"})
+
+	// Baseline: unscoped call sees all 4 entries.
+	all, err := svc.GetStats(ctx, false, "")
+	if err != nil {
+		t.Fatalf("GetStats(all) failed: %v", err)
+	}
+	if all.TotalEntries != 4 {
+		t.Fatalf("unscoped TotalEntries = %d, want 4", all.TotalEntries)
+	}
+
+	// Scoped to alpha: only the 3 alpha entries count in the primary total.
+	alpha, err := svc.GetStats(ctx, false, "alpha")
+	if err != nil {
+		t.Fatalf("GetStats(alpha) failed: %v", err)
+	}
+	if alpha.TotalEntries != 3 {
+		t.Errorf("project=alpha TotalEntries = %d, want 3", alpha.TotalEntries)
+	}
+
+	// Scoped to beta: only the 1 beta entry counts.
+	beta, err := svc.GetStats(ctx, false, "beta")
+	if err != nil {
+		t.Fatalf("GetStats(beta) failed: %v", err)
+	}
+	if beta.TotalEntries != 1 {
+		t.Errorf("project=beta TotalEntries = %d, want 1", beta.TotalEntries)
+	}
+
+	// The GlobalEntries and ProjectEntries roll-ups should be independent of
+	// the primary scope (they use their own storage.GetStats calls).
+	if beta.ProjectEntries != 4 {
+		t.Errorf("beta.ProjectEntries (roll-up) = %d, want 4", beta.ProjectEntries)
+	}
+}
+
+// TestGetStats_ProjectWinsOverGlobal verifies the precedence rule: when
+// both `global=true` and `project=X` are supplied, the project scope wins.
+func TestGetStats_ProjectWinsOverGlobal(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "pattern", Title: "Global One", Global: boolPtr(true)})
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "pattern", Title: "Global Two", Global: boolPtr(true)})
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "P One", Project: "alpha"})
+
+	resp, err := svc.GetStats(ctx, true, "alpha")
+	if err != nil {
+		t.Fatalf("GetStats failed: %v", err)
+	}
+	if resp.TotalEntries != 1 {
+		t.Errorf("project should win over global: TotalEntries = %d, want 1", resp.TotalEntries)
+	}
+}
+
+// TestGetOrphans_ProjectFilter verifies P1.d storage plumbing: the
+// project param is translated into a path-prefix filter and only orphans
+// under that prefix are returned.
+func TestGetOrphans_ProjectFilter(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Alpha Orphan", Project: "alpha"})
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Beta Orphan", Project: "beta"})
+
+	results, err := svc.GetOrphans(ctx, "", 50, "alpha")
+	if err != nil {
+		t.Fatalf("GetOrphans failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 orphan in alpha, got %d", len(results))
+	}
+	if results[0].Title != "Alpha Orphan" {
+		t.Errorf("got %q, want %q", results[0].Title, "Alpha Orphan")
+	}
+}
+
+// TestGetStale_ProjectFilter verifies P1.c storage plumbing.
+func TestGetStale_ProjectFilter(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Alpha Stale", Project: "alpha"})
+	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Beta Stale", Project: "beta"})
+
+	// days=0 → after normalization becomes 30, and both entries are
+	// unverified (last_verified NULL) so both qualify as stale.
+	// Scoping to alpha should filter to one.
+	results, err := svc.GetStale(ctx, 30, "", 50, "alpha")
+	if err != nil {
+		t.Fatalf("GetStale failed: %v", err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("expected 1 stale in alpha, got %d", len(results))
+	}
+	if results[0].Title != "Alpha Stale" {
+		t.Errorf("got %q, want %q", results[0].Title, "Alpha Stale")
 	}
 }
 
@@ -498,7 +610,7 @@ func TestGetOrphans_ReturnsEntries(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Orphan 1"})
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "task", Title: "Orphan 2"})
 
-	results, err := svc.GetOrphans(ctx, "", 50)
+	results, err := svc.GetOrphans(ctx, "", 50, "")
 	if err != nil {
 		t.Fatalf("GetOrphans failed: %v", err)
 	}
@@ -515,7 +627,7 @@ func TestGetOrphans_FilterByType(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Plan Orphan"})
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "task", Title: "Task Orphan"})
 
-	results, err := svc.GetOrphans(ctx, "plan", 50)
+	results, err := svc.GetOrphans(ctx, "plan", 50, "")
 	if err != nil {
 		t.Fatalf("GetOrphans failed: %v", err)
 	}
@@ -535,7 +647,7 @@ func TestGetOrphans_DefaultLimit(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Orphan"})
 
 	// limit=0 should default to 50, not error
-	results, err := svc.GetOrphans(ctx, "", 0)
+	results, err := svc.GetOrphans(ctx, "", 0, "")
 	if err != nil {
 		t.Fatalf("GetOrphans with limit=0 failed: %v", err)
 	}
@@ -556,7 +668,7 @@ func TestGetStale_ReturnsUnverifiedEntries(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Stale 1"})
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Stale 2"})
 
-	results, err := svc.GetStale(ctx, 30, "", 50)
+	results, err := svc.GetStale(ctx, 30, "", 50, "")
 	if err != nil {
 		t.Fatalf("GetStale failed: %v", err)
 	}
@@ -573,7 +685,7 @@ func TestGetStale_FilterByType(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Stale Plan"})
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "task", Title: "Stale Task"})
 
-	results, err := svc.GetStale(ctx, 30, "plan", 50)
+	results, err := svc.GetStale(ctx, 30, "plan", 50, "")
 	if err != nil {
 		t.Fatalf("GetStale failed: %v", err)
 	}
@@ -592,7 +704,7 @@ func TestGetStale_DefaultValues(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Default Stale"})
 
 	// days=0 and limit=0 should use defaults
-	results, err := svc.GetStale(ctx, 0, "", 0)
+	results, err := svc.GetStale(ctx, 0, "", 0, "")
 	if err != nil {
 		t.Fatalf("GetStale with defaults failed: %v", err)
 	}

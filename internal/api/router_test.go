@@ -20,7 +20,7 @@ type mockTokenValidator struct {
 
 func (m *mockTokenValidator) ValidateToken(_ context.Context, tokenValue string) (*storage.Token, error) {
 	if tokenValue == m.validToken {
-		return &storage.Token{Name: "test", Token: tokenValue}, nil
+		return &storage.Token{Name: "test", Token: tokenValue, Scope: "admin:*"}, nil
 	}
 	return nil, fmt.Errorf("invalid token")
 }
@@ -68,6 +68,40 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 	if health.Timestamp == "" {
 		t.Error("timestamp should not be empty")
+	}
+}
+
+func TestHealthEndpointReportsEmbeddingAvailability(t *testing.T) {
+	cfg := testConfig()
+	cfg.Embedding.Enabled = true
+	cfg.Embedding.Provider = "openrouter"
+	cfg.Embedding.Model = "text-embedding-3-small"
+
+	router := NewRouter(cfg, WithEmbeddingReady(true))
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/health")
+	if err != nil {
+		t.Fatalf("GET /api/v1/health failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var health types.HealthResponse
+	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
+		t.Fatalf("failed to decode health response: %v", err)
+	}
+	if health.Embedding.Status != "ready" {
+		t.Fatalf("embedding status = %q, want ready", health.Embedding.Status)
+	}
+	if !health.Embedding.Enabled {
+		t.Fatal("embedding enabled = false, want true")
+	}
+	if health.Embedding.Provider != "openrouter" {
+		t.Fatalf("embedding provider = %q, want openrouter", health.Embedding.Provider)
+	}
+	if health.Embedding.Model != "text-embedding-3-small" {
+		t.Fatalf("embedding model = %q, want text-embedding-3-small", health.Embedding.Model)
 	}
 }
 

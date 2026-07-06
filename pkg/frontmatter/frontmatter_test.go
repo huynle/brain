@@ -92,6 +92,53 @@ func TestParse_Tags(t *testing.T) {
 	}
 }
 
+func TestParse_Attachments(t *testing.T) {
+	content := `---
+title: Test
+type: report
+status: active
+attachments:
+  - id: att_x
+    filename: notes.pdf
+    content_type: application/pdf
+    size: 1234
+    sha256: abc123
+    role: source
+    caption: Source notes
+    derived:
+      - id: att_thumb
+        kind: thumbnail
+        content_type: image/png
+        size: 55
+        storage_key: thumbnails/att_thumb.png
+        created: "2026-05-20T12:00:00Z"
+---
+
+Content`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	attachments := doc.Frontmatter.Attachments
+	if len(attachments) != 1 {
+		t.Fatalf("attachments length = %d, want 1", len(attachments))
+	}
+	att := attachments[0]
+	if att.ID != "att_x" || att.Filename != "notes.pdf" || att.ContentType != "application/pdf" || att.Size != 1234 || att.SHA256 != "abc123" || att.Role != "source" || att.Caption != "Source notes" {
+		t.Fatalf("attachment = %#v, want parsed metadata", att)
+	}
+	if len(att.Derived) != 1 || att.Derived[0].ID != "att_thumb" || att.Derived[0].Kind != "thumbnail" || att.Derived[0].StorageKey != "thumbnails/att_thumb.png" {
+		t.Fatalf("derived attachment = %#v, want thumbnail metadata", att.Derived)
+	}
+	if doc.Frontmatter.Extra != nil {
+		if _, ok := doc.Frontmatter.Extra["attachments"]; ok {
+			t.Fatal("attachments should be a typed frontmatter field, not Extra")
+		}
+	}
+}
+
 func TestParse_QuotedTitleWithSpecialChars(t *testing.T) {
 	content := "---\ntitle: \"Test: With Colon\"\ntype: task\nstatus: active\n---\n\nContent"
 
@@ -896,6 +943,59 @@ func TestSerialize_TagsArray(t *testing.T) {
 	}
 }
 
+func TestSerialize_Attachments(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Task",
+		Type:   "task",
+		Status: "active",
+		Attachments: []AttachmentReference{{
+			ID:          "att_x",
+			Filename:    "notes.pdf",
+			ContentType: "application/pdf",
+			Size:        1234,
+			SHA256:      "abc123",
+			Role:        "source",
+			Caption:     "Source notes",
+			Derived: []AttachmentDerived{{
+				ID:          "att_thumb",
+				Kind:        "thumbnail",
+				ContentType: "image/png",
+				Size:        55,
+				StorageKey:  "thumbnails/att_thumb.png",
+				Created:     "2026-05-20T12:00:00Z",
+			}},
+		}},
+	}
+
+	result := Serialize(fm)
+	for _, want := range []string{
+		"attachments:",
+		"  - id: att_x",
+		"    filename: notes.pdf",
+		"    content_type: application/pdf",
+		"    size: 1234",
+		"    sha256: abc123",
+		"    role: source",
+		"    caption: Source notes",
+		"    derived:",
+		"      - id: att_thumb",
+		"        kind: thumbnail",
+		"        storage_key: thumbnails/att_thumb.png",
+	} {
+		if !strings.Contains(result, want) {
+			t.Errorf("missing %q in:\n%s", want, result)
+		}
+	}
+
+	doc, err := Parse("---\n" + result + "---\n\nBody")
+	if err != nil {
+		t.Fatalf("parse serialized result: %v", err)
+	}
+	if len(doc.Frontmatter.Attachments) != 1 || doc.Frontmatter.Attachments[0].ID != "att_x" || len(doc.Frontmatter.Attachments[0].Derived) != 1 {
+		t.Fatalf("round-tripped attachments = %#v, want typed attachment metadata", doc.Frontmatter.Attachments)
+	}
+}
+
 func TestSerialize_DependsOn(t *testing.T) {
 	fm := &Frontmatter{
 		Title:     "Task",
@@ -1083,6 +1183,37 @@ func TestSerialize_BooleanFields(t *testing.T) {
 	}
 	if !strings.Contains(result, "complete_on_idle: true") {
 		t.Errorf("missing complete_on_idle in:\n%s", result)
+	}
+}
+
+func TestSerialize_ActionSessionMode(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Automation",
+		Type:   "automation",
+		Status: "active",
+		Action: &AutomationAction{
+			Type:        "prompt",
+			SessionMode: "fresh",
+		},
+	}
+	result := Serialize(fm)
+	if !strings.Contains(result, "session_mode: fresh") {
+		t.Errorf("missing session_mode in:\n%s", result)
+	}
+}
+
+func TestParse_ActionSessionMode(t *testing.T) {
+	content := "---\ntitle: Automation\ntype: automation\nstatus: active\naction:\n  type: prompt\n  session_mode: continue\n---\n\nBody"
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc.Frontmatter.Action == nil {
+		t.Fatal("expected action to be parsed, got nil")
+	}
+	if doc.Frontmatter.Action.SessionMode != "continue" {
+		t.Errorf("action.session_mode = %q, want %q", doc.Frontmatter.Action.SessionMode, "continue")
 	}
 }
 
@@ -1643,6 +1774,335 @@ func TestGenerate_ExecutorAndExtensions(t *testing.T) {
 	}
 	if !strings.Contains(yaml, "  - browser") {
 		t.Errorf("generated YAML should contain browser extension, got:\n%s", yaml)
+	}
+}
+
+// =============================================================================
+// Trigger field tests
+// =============================================================================
+
+func TestParse_TriggerConfig(t *testing.T) {
+	content := `---
+title: Hook Task
+type: task
+status: pending
+trigger:
+  event: "task.blocked"
+  filter:
+    project_id: "brain-api"
+  cooldown: 5m
+  max_concurrent: 1
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trigger := doc.Frontmatter.Trigger
+	if trigger == nil {
+		t.Fatal("trigger should not be nil")
+	}
+	if trigger.Event != "task.blocked" {
+		t.Errorf("trigger.event = %q, want %q", trigger.Event, "task.blocked")
+	}
+	if trigger.Cooldown != "5m" {
+		t.Errorf("trigger.cooldown = %q, want %q", trigger.Cooldown, "5m")
+	}
+	if trigger.MaxConcurrent != 1 {
+		t.Errorf("trigger.max_concurrent = %d, want 1", trigger.MaxConcurrent)
+	}
+	if trigger.Filter == nil || trigger.Filter["project_id"] != "brain-api" {
+		t.Errorf("trigger.filter = %v, want map[project_id:brain-api]", trigger.Filter)
+	}
+}
+
+func TestParse_TriggerConfig_Minimal(t *testing.T) {
+	content := `---
+title: Minimal Hook
+type: task
+status: pending
+trigger:
+  event: "task.completed"
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trigger := doc.Frontmatter.Trigger
+	if trigger == nil {
+		t.Fatal("trigger should not be nil")
+	}
+	if trigger.Event != "task.completed" {
+		t.Errorf("trigger.event = %q, want %q", trigger.Event, "task.completed")
+	}
+	if trigger.Cooldown != "" {
+		t.Errorf("trigger.cooldown should be empty, got %q", trigger.Cooldown)
+	}
+	if trigger.MaxConcurrent != 0 {
+		t.Errorf("trigger.max_concurrent should be 0, got %d", trigger.MaxConcurrent)
+	}
+	if len(trigger.Filter) != 0 {
+		t.Errorf("trigger.filter should be empty, got %v", trigger.Filter)
+	}
+}
+
+func TestParse_NoTrigger(t *testing.T) {
+	content := "---\ntitle: No Hook\ntype: task\nstatus: active\n---\n\nBody"
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if doc.Frontmatter.Trigger != nil {
+		t.Errorf("trigger should be nil, got %v", doc.Frontmatter.Trigger)
+	}
+}
+
+func TestParse_TriggerNotInExtra(t *testing.T) {
+	content := `---
+title: Hook Task
+type: task
+status: pending
+trigger:
+  event: "task.completed"
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, ok := doc.Frontmatter.Extra["trigger"]; ok {
+		t.Error("trigger should not appear in Extra")
+	}
+}
+
+func TestSerialize_TriggerConfig(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Hook Task",
+		Type:   "task",
+		Status: "pending",
+		Trigger: &TriggerConfig{
+			Event:         "task.blocked",
+			Filter:        map[string]string{"project_id": "brain-api"},
+			Cooldown:      "5m",
+			MaxConcurrent: 1,
+		},
+	}
+	result := Serialize(fm)
+	if !strings.Contains(result, "trigger:") {
+		t.Errorf("missing trigger in:\n%s", result)
+	}
+	if !strings.Contains(result, "  event: task.blocked") {
+		t.Errorf("missing trigger event in:\n%s", result)
+	}
+	if !strings.Contains(result, "  filter:") {
+		t.Errorf("missing trigger filter in:\n%s", result)
+	}
+	if !strings.Contains(result, "    project_id: brain-api") {
+		t.Errorf("missing trigger filter project_id in:\n%s", result)
+	}
+	if !strings.Contains(result, "  cooldown: 5m") {
+		t.Errorf("missing trigger cooldown in:\n%s", result)
+	}
+	if !strings.Contains(result, "  max_concurrent: 1") {
+		t.Errorf("missing trigger max_concurrent in:\n%s", result)
+	}
+}
+
+func TestSerialize_TriggerOmittedWhenNil(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "No Hook",
+		Type:   "task",
+		Status: "active",
+	}
+	result := Serialize(fm)
+	if strings.Contains(result, "trigger") {
+		t.Errorf("should not contain trigger when nil, got:\n%s", result)
+	}
+}
+
+func TestRoundTrip_TriggerConfig(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Round Trip Hook",
+		Type:   "task",
+		Status: "pending",
+		Trigger: &TriggerConfig{
+			Event:         "task.blocked",
+			Filter:        map[string]string{"project_id": "brain-api", "feature_id": "my-feat"},
+			Cooldown:      "10m",
+			MaxConcurrent: 3,
+		},
+	}
+
+	serialized := Serialize(fm)
+	content := "---\n" + serialized + "---\n\nBody"
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	trigger := doc.Frontmatter.Trigger
+	if trigger == nil {
+		t.Fatal("trigger should not be nil after round-trip")
+	}
+	if trigger.Event != fm.Trigger.Event {
+		t.Errorf("trigger.event = %q, want %q", trigger.Event, fm.Trigger.Event)
+	}
+	if trigger.Cooldown != fm.Trigger.Cooldown {
+		t.Errorf("trigger.cooldown = %q, want %q", trigger.Cooldown, fm.Trigger.Cooldown)
+	}
+	if trigger.MaxConcurrent != fm.Trigger.MaxConcurrent {
+		t.Errorf("trigger.max_concurrent = %d, want %d", trigger.MaxConcurrent, fm.Trigger.MaxConcurrent)
+	}
+	if len(trigger.Filter) != len(fm.Trigger.Filter) {
+		t.Fatalf("trigger.filter length = %d, want %d", len(trigger.Filter), len(fm.Trigger.Filter))
+	}
+	for k, v := range fm.Trigger.Filter {
+		if trigger.Filter[k] != v {
+			t.Errorf("trigger.filter[%s] = %q, want %q", k, trigger.Filter[k], v)
+		}
+	}
+}
+
+func TestGenerate_WithTrigger(t *testing.T) {
+	opts := &GenerateOptions{
+		Title:  "Generated Hook",
+		Type:   "task",
+		Status: "pending",
+		Trigger: &TriggerConfig{
+			Event:    "task.completed",
+			Cooldown: "1h",
+		},
+	}
+	result := Generate(opts)
+	if !strings.Contains(result, "trigger:") {
+		t.Errorf("generated YAML should contain trigger, got:\n%s", result)
+	}
+	if !strings.Contains(result, "  event: task.completed") {
+		t.Errorf("generated YAML should contain trigger event, got:\n%s", result)
+	}
+	if !strings.Contains(result, "  cooldown: 1h") {
+		t.Errorf("generated YAML should contain trigger cooldown, got:\n%s", result)
+	}
+}
+
+// =============================================================================
+// Goal field tests
+// =============================================================================
+
+func TestRoundTrip_GoalConfig(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Round Trip Goal",
+		Type:   "automation",
+		Status: "active",
+		Goal: &GoalConfig{
+			ID:               "ship-feature",
+			Criteria:         "all acceptance tests pass",
+			Validation:       "run integration suite",
+			Workdir:          "/work/dir",
+			TriggerSource:    "both",
+			CompleteStatuses: []string{"completed", "validated"},
+			BlockedStatuses:  []string{"blocked", "cancelled"},
+		},
+	}
+
+	serialized := Serialize(fm)
+	content := "---\n" + serialized + "---\n\nBody"
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	goal := doc.Frontmatter.Goal
+	if goal == nil {
+		t.Fatal("goal should not be nil after round-trip")
+	}
+	if goal.ID != fm.Goal.ID {
+		t.Errorf("goal.id = %q, want %q", goal.ID, fm.Goal.ID)
+	}
+	if goal.Criteria != fm.Goal.Criteria {
+		t.Errorf("goal.criteria = %q, want %q", goal.Criteria, fm.Goal.Criteria)
+	}
+	if goal.Validation != fm.Goal.Validation {
+		t.Errorf("goal.validation = %q, want %q", goal.Validation, fm.Goal.Validation)
+	}
+	if goal.Workdir != fm.Goal.Workdir {
+		t.Errorf("goal.workdir = %q, want %q", goal.Workdir, fm.Goal.Workdir)
+	}
+	if goal.TriggerSource != fm.Goal.TriggerSource {
+		t.Errorf("goal.trigger_source = %q, want %q", goal.TriggerSource, fm.Goal.TriggerSource)
+	}
+	if len(goal.CompleteStatuses) != len(fm.Goal.CompleteStatuses) {
+		t.Fatalf("goal.complete_statuses length = %d, want %d", len(goal.CompleteStatuses), len(fm.Goal.CompleteStatuses))
+	}
+	for i, v := range fm.Goal.CompleteStatuses {
+		if goal.CompleteStatuses[i] != v {
+			t.Errorf("goal.complete_statuses[%d] = %q, want %q", i, goal.CompleteStatuses[i], v)
+		}
+	}
+	if len(goal.BlockedStatuses) != len(fm.Goal.BlockedStatuses) {
+		t.Fatalf("goal.blocked_statuses length = %d, want %d", len(goal.BlockedStatuses), len(fm.Goal.BlockedStatuses))
+	}
+	for i, v := range fm.Goal.BlockedStatuses {
+		if goal.BlockedStatuses[i] != v {
+			t.Errorf("goal.blocked_statuses[%d] = %q, want %q", i, goal.BlockedStatuses[i], v)
+		}
+	}
+}
+
+func TestParse_NoGoal(t *testing.T) {
+	content := `---
+title: No Goal
+type: task
+status: pending
+---
+
+Body`
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc.Frontmatter.Goal != nil {
+		t.Errorf("goal should be nil, got %v", doc.Frontmatter.Goal)
+	}
+}
+
+func TestGenerate_WithGoal(t *testing.T) {
+	opts := &GenerateOptions{
+		Title:  "Generated Goal",
+		Type:   "automation",
+		Status: "active",
+		Goal: &GoalConfig{
+			ID:               "my-goal",
+			Criteria:         "done when ready",
+			CompleteStatuses: []string{"completed"},
+		},
+	}
+	result := Generate(opts)
+	if !strings.Contains(result, "goal:") {
+		t.Errorf("generated YAML should contain goal, got:\n%s", result)
+	}
+	if !strings.Contains(result, "  id: my-goal") {
+		t.Errorf("generated YAML should contain goal id, got:\n%s", result)
+	}
+	if !strings.Contains(result, "  criteria: done when ready") {
+		t.Errorf("generated YAML should contain goal criteria, got:\n%s", result)
+	}
+	if !strings.Contains(result, "completed") {
+		t.Errorf("generated YAML should contain complete status, got:\n%s", result)
 	}
 }
 

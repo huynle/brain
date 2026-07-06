@@ -1,434 +1,749 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/types"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-// newEventsTestRouter creates a minimal router with just the events endpoint.
-func newEventsTestRouter(bus events.Bus) *chi.Mux {
-	h := NewHandler(&mockBrainService{}, WithEventBus(bus))
+// =============================================================================
+// Mock EventService
+// =============================================================================
+
+type mockEventService struct {
+	mu       sync.Mutex
+	ingested []types.Event
+	checks   []featureCompletionCheck
+
+	ingestFunc    func(ctx context.Context, events []types.Event) error
+	recentFunc    func(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error)
+	subscribeFunc func(ctx context.Context, filters map[string]string) (<-chan types.Event, func())
+}
+
+type featureCompletionCheck struct {
+	ProjectID string
+	FeatureID string
+	TaskID    string
+}
+
+func (m *mockEventService) Ingest(ctx context.Context, events []types.Event) error {
+	if m.ingestFunc != nil {
+		return m.ingestFunc(ctx, events)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	// Auto-assign IDs for testing.
+	for i := range events {
+		if events[i].ID == "" {
+			events[i].ID = fmt.Sprintf("evt_test_%d", len(m.ingested)+i)
+		}
+	}
+	m.ingested = append(m.ingested, events...)
+	return nil
+}
+
+func (m *mockEventService) Recent(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error) {
+	if m.recentFunc != nil {
+		return m.recentFunc(ctx, limit, filters)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	result := make([]types.Event, len(m.ingested))
+	copy(result, m.ingested)
+	if limit > 0 && len(result) > limit {
+		result = result[len(result)-limit:]
+	}
+	return result, nil
+}
+
+func (m *mockEventService) Subscribe(ctx context.Context, filters map[string]string) (<-chan types.Event, func()) {
+	if m.subscribeFunc != nil {
+		return m.subscribeFunc(ctx, filters)
+	}
+	ch := make(chan types.Event, 64)
+	return ch, func() { close(ch) }
+}
+
+func (m *mockEventService) CheckFeatureCompletion(ctx context.Context, projectID, featureID, taskID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.checks = append(m.checks, featureCompletionCheck{ProjectID: projectID, FeatureID: featureID, TaskID: taskID})
+}
+
+// =============================================================================
+// Helper: create event test router
+// =============================================================================
+
+func newEventTestRouter() (*chi.Mux, *mockEventService) {
+	es := &mockEventService{}
+	h := NewHandler(
+		&mockBrainService{},
+		WithEventService(es),
+	)
 	r := chi.NewRouter()
-	r.Post("/events/emit", h.HandleEmitEvent)
-	return r
+	r.Post("/events", h.HandleIngestEvents)
+	r.Get("/events/stream", h.HandleEventStream)
+	r.Get("/events/recent", h.HandleRecentEvents)
+	return r, es
 }
 
-func TestHandleEmitEvent(t *testing.T) {
-	tests := []struct {
-		name       string
-		body       any
-		wantStatus int
-		checkBody  func(t *testing.T, resp *http.Response)
-		checkEvent func(t *testing.T, bus *capturingBus)
-	}{
-		{
-			name:       "valid event with all fields",
-			body:       map[string]any{"type": "runner.started", "payload": map[string]any{"runner_id": "r1"}, "dedup_key": "start-r1"},
-			wantStatus: http.StatusAccepted,
-			checkBody: func(t *testing.T, resp *http.Response) {
-				var body map[string]any
-				require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-				assert.Equal(t, "accepted", body["status"])
-			},
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				require.Len(t, bus.events, 1)
-				e := bus.events[0]
-				assert.Equal(t, events.EventType("runner.started"), e.Type)
-				assert.Equal(t, "r1", e.Payload["runner_id"])
-				assert.Equal(t, "start-r1", e.DedupKey)
-				assert.Equal(t, "external", e.Source)
-			},
-		},
-		{
-			name:       "valid event with type only",
-			body:       map[string]any{"type": "webhook.received"},
-			wantStatus: http.StatusAccepted,
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				require.Len(t, bus.events, 1)
-				e := bus.events[0]
-				assert.Equal(t, events.EventType("webhook.received"), e.Type)
-				assert.Equal(t, "external", e.Source)
-				assert.NotZero(t, e.Timestamp)
-			},
-		},
-		{
-			name:       "missing type returns 400",
-			body:       map[string]any{"payload": map[string]any{"foo": "bar"}},
-			wantStatus: http.StatusBadRequest,
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				assert.Empty(t, bus.events)
-			},
-		},
-		{
-			name:       "empty type returns 400",
-			body:       map[string]any{"type": ""},
-			wantStatus: http.StatusBadRequest,
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				assert.Empty(t, bus.events)
-			},
-		},
-		{
-			name:       "whitespace-only type returns 400",
-			body:       map[string]any{"type": "   "},
-			wantStatus: http.StatusBadRequest,
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				assert.Empty(t, bus.events)
-			},
-		},
-		{
-			name:       "invalid JSON body returns 400",
-			body:       "not json",
-			wantStatus: http.StatusBadRequest,
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				assert.Empty(t, bus.events)
-			},
-		},
+// =============================================================================
+// POST /events
+// =============================================================================
+
+func TestHandleIngestEvents_Success(t *testing.T) {
+	router, _ := newEventTestRouter()
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	events := []types.Event{
+		{Type: types.EventTaskStarted, Source: types.EventSourceRunner, ProjectID: "proj-1"},
+		{Type: types.EventTaskCompleted, Source: types.EventSourceRunner, ProjectID: "proj-1"},
+	}
+	body, _ := json.Marshal(events)
+
+	resp, err := http.Post(srv.URL+"/events", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /events failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusAccepted)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			bus := &capturingBus{}
-			router := newEventsTestRouter(bus)
-			srv := httptest.NewServer(router)
-			defer srv.Close()
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
 
-			var bodyBytes []byte
-			switch v := tt.body.(type) {
-			case string:
-				bodyBytes = []byte(v)
-			default:
-				var err error
-				bodyBytes, err = json.Marshal(v)
-				require.NoError(t, err)
-			}
-
-			resp, err := http.Post(srv.URL+"/events/emit", "application/json", bytes.NewReader(bodyBytes))
-			require.NoError(t, err)
-			defer resp.Body.Close()
-
-			assert.Equal(t, tt.wantStatus, resp.StatusCode)
-
-			if tt.checkBody != nil {
-				tt.checkBody(t, resp)
-			}
-			if tt.checkEvent != nil {
-				tt.checkEvent(t, bus)
-			}
-		})
+	if accepted, ok := result["accepted"].(float64); !ok || int(accepted) != 2 {
+		t.Errorf("accepted = %v, want 2", result["accepted"])
 	}
 }
 
-func TestHandleEmitEvent_NoBus(t *testing.T) {
-	// When no event bus is configured, the endpoint should return 501
+func TestHandleIngestEvents_InvalidJSON(t *testing.T) {
+	router, _ := newEventTestRouter()
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/events", "application/json", strings.NewReader("not json"))
+	if err != nil {
+		t.Fatalf("POST /events failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestHandleIngestEvents_ValidationError(t *testing.T) {
+	router, _ := newEventTestRouter()
+
+	// Override ingest to simulate validation error.
+	r2, es := newEventTestRouter()
+	_ = r2
+	es.ingestFunc = func(ctx context.Context, events []types.Event) error {
+		return fmt.Errorf("invalid event type \"bad.type\" at index 0")
+	}
+	h := NewHandler(&mockBrainService{}, WithEventService(es))
+	mux := chi.NewRouter()
+	mux.Post("/events", h.HandleIngestEvents)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	events := []types.Event{{Type: "bad.type", Source: types.EventSourceRunner}}
+	body, _ := json.Marshal(events)
+
+	resp, err := http.Post(srv.URL+"/events", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /events failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	_ = router
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestHandleIngestEvents_NilService(t *testing.T) {
 	h := NewHandler(&mockBrainService{})
 	r := chi.NewRouter()
-	r.Post("/events/emit", h.HandleEmitEvent)
+	r.Post("/events", h.HandleIngestEvents)
 	srv := httptest.NewServer(r)
 	defer srv.Close()
 
-	body := map[string]any{"type": "test.event"}
-	bodyBytes, _ := json.Marshal(body)
-	resp, err := http.Post(srv.URL+"/events/emit", "application/json", bytes.NewReader(bodyBytes))
-	require.NoError(t, err)
+	resp, err := http.Post(srv.URL+"/events", "application/json", strings.NewReader("[]"))
+	if err != nil {
+		t.Fatalf("POST /events failed: %v", err)
+	}
 	defer resp.Body.Close()
 
-	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
-}
-
-// =============================================================================
-// Webhook Trigger Tests
-// =============================================================================
-
-// mockAutomationSource implements WebhookAutomationSource for tests.
-type mockAutomationSource struct {
-	entries []events.AutomationEntry
-}
-
-func (m *mockAutomationSource) ListActiveAutomations(_ context.Context) ([]events.AutomationEntry, error) {
-	return m.entries, nil
-}
-
-func newWebhookTestRouter(bus events.Bus, src WebhookAutomationSource) *chi.Mux {
-	opts := []HandlerOption{WithEventBus(bus)}
-	if src != nil {
-		opts = append(opts, WithAutomationSource(src))
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusNotImplemented)
 	}
-	h := NewHandler(&mockBrainService{}, opts...)
+}
+
+// =============================================================================
+// GET /events/recent
+// =============================================================================
+
+func TestHandleRecentEvents_Empty(t *testing.T) {
+	router, _ := newEventTestRouter()
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/events/recent")
+	if err != nil {
+		t.Fatalf("GET /events/recent failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	count, ok := result["count"].(float64)
+	if !ok || int(count) != 0 {
+		t.Errorf("count = %v, want 0", result["count"])
+	}
+}
+
+func TestHandleRecentEvents_WithEvents(t *testing.T) {
+	es := &mockEventService{
+		recentFunc: func(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error) {
+			return []types.Event{
+				{ID: "evt_1", Type: types.EventTaskStarted, Source: types.EventSourceRunner},
+				{ID: "evt_2", Type: types.EventTaskCompleted, Source: types.EventSourceRunner},
+				{ID: "evt_3", Type: types.EventTaskFailed, Source: types.EventSourceRunner},
+			}, nil
+		},
+	}
+	h := NewHandler(&mockBrainService{}, WithEventService(es))
 	r := chi.NewRouter()
-	r.Post("/events/webhook/*", h.HandleWebhookTrigger)
-	return r
-}
+	r.Get("/events/recent", h.HandleRecentEvents)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
 
-func TestHandleWebhookTrigger(t *testing.T) {
-	tests := []struct {
-		name        string
-		path        string
-		body        any
-		automations []events.AutomationEntry
-		wantStatus  int
-		checkBody   func(t *testing.T, resp *http.Response)
-		checkEvent  func(t *testing.T, bus *capturingBus)
-	}{
-		{
-			name: "matching webhook returns 200 with automations",
-			path: "/events/webhook/hooks/deploy",
-			body: map[string]any{"repo": "my-app", "ref": "main"},
-			automations: []events.AutomationEntry{
-				{
-					ID:        "auto1",
-					Path:      "projects/test/automation/auto1.md",
-					ProjectID: "test",
-					Trigger: types.AutomationTrigger{
-						Type:    "webhook",
-						Webhook: "/hooks/deploy",
-					},
-				},
-			},
-			wantStatus: http.StatusOK,
-			checkBody: func(t *testing.T, resp *http.Response) {
-				var body webhookTriggerResponse
-				require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-				assert.Equal(t, "triggered", body.Status)
-				assert.Equal(t, 1, body.Matched)
-				assert.Len(t, body.Automations, 1)
-				assert.Equal(t, "auto1", body.Automations[0].ID)
-				assert.Equal(t, "test", body.Automations[0].ProjectID)
-			},
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				require.Len(t, bus.events, 1)
-				e := bus.events[0]
-				assert.Equal(t, events.WebhookReceived, e.Type)
-				assert.Equal(t, "webhook", e.Source)
-				assert.Equal(t, "hooks/deploy", e.Payload["webhook_path"])
-				assert.Equal(t, "my-app", e.Payload["repo"])
-			},
-		},
-		{
-			name: "no matching webhook returns 204",
-			path: "/events/webhook/hooks/deploy",
-			body: map[string]any{"repo": "my-app"},
-			automations: []events.AutomationEntry{
-				{
-					ID: "auto1",
-					Trigger: types.AutomationTrigger{
-						Type:    "webhook",
-						Webhook: "/hooks/build",
-					},
-				},
-			},
-			wantStatus: http.StatusNoContent,
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				// Event should still be published even with no match
-				require.Len(t, bus.events, 1)
-				assert.Equal(t, events.WebhookReceived, bus.events[0].Type)
-			},
-		},
-		{
-			name:        "empty body is allowed",
-			path:        "/events/webhook/hooks/test",
-			body:        nil,
-			automations: nil,
-			wantStatus:  http.StatusNoContent,
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				require.Len(t, bus.events, 1)
-				assert.Equal(t, "hooks/test", bus.events[0].Payload["webhook_path"])
-			},
-		},
-		{
-			name:       "invalid JSON body returns 400",
-			path:       "/events/webhook/hooks/test",
-			body:       "not json",
-			wantStatus: http.StatusBadRequest,
-			checkEvent: func(t *testing.T, bus *capturingBus) {
-				assert.Empty(t, bus.events)
-			},
-		},
-		{
-			name: "webhook path normalization ignores leading/trailing slashes",
-			path: "/events/webhook/hooks/deploy/",
-			body: map[string]any{},
-			automations: []events.AutomationEntry{
-				{
-					ID:        "auto1",
-					Path:      "projects/test/automation/auto1.md",
-					ProjectID: "test",
-					Trigger: types.AutomationTrigger{
-						Type:    "webhook",
-						Webhook: "hooks/deploy",
-					},
-				},
-			},
-			wantStatus: http.StatusOK,
-			checkBody: func(t *testing.T, resp *http.Response) {
-				var body webhookTriggerResponse
-				require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-				assert.Equal(t, 1, body.Matched)
-			},
-		},
-		{
-			name: "only type=webhook automations are matched",
-			path: "/events/webhook/hooks/deploy",
-			body: map[string]any{},
-			automations: []events.AutomationEntry{
-				{
-					ID: "event-auto",
-					Trigger: types.AutomationTrigger{
-						Type:  "event",
-						Event: "webhook.received",
-					},
-				},
-				{
-					ID: "webhook-auto",
-					Trigger: types.AutomationTrigger{
-						Type:    "webhook",
-						Webhook: "/hooks/deploy",
-					},
-				},
-			},
-			wantStatus: http.StatusOK,
-			checkBody: func(t *testing.T, resp *http.Response) {
-				var body webhookTriggerResponse
-				require.NoError(t, json.NewDecoder(resp.Body).Decode(&body))
-				assert.Equal(t, 1, body.Matched)
-				assert.Equal(t, "webhook-auto", body.Automations[0].ID)
-			},
-		},
+	resp, err := http.Get(srv.URL + "/events/recent")
+	if err != nil {
+		t.Fatalf("GET /events/recent failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			bus := &capturingBus{}
-			src := &mockAutomationSource{entries: tt.automations}
-			router := newWebhookTestRouter(bus, src)
-			srv := httptest.NewServer(router)
-			defer srv.Close()
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
 
-			var bodyBytes []byte
-			if tt.body != nil {
-				switch v := tt.body.(type) {
-				case string:
-					bodyBytes = []byte(v)
-				default:
-					var err error
-					bodyBytes, err = json.Marshal(v)
-					require.NoError(t, err)
+	count, ok := result["count"].(float64)
+	if !ok || int(count) != 3 {
+		t.Errorf("count = %v, want 3", result["count"])
+	}
+}
+
+func TestHandleRecentEvents_PassesFilters(t *testing.T) {
+	var capturedLimit int
+	var capturedFilters map[string]string
+
+	es := &mockEventService{
+		recentFunc: func(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error) {
+			capturedLimit = limit
+			capturedFilters = filters
+			return nil, nil
+		},
+	}
+	h := NewHandler(&mockBrainService{}, WithEventService(es))
+	r := chi.NewRouter()
+	r.Get("/events/recent", h.HandleRecentEvents)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/events/recent?limit=50&type=task.*&project_id=proj-1&feature_id=auth")
+	if err != nil {
+		t.Fatalf("GET /events/recent failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if capturedLimit != 50 {
+		t.Errorf("limit = %d, want 50", capturedLimit)
+	}
+	if capturedFilters["type"] != "task.*" {
+		t.Errorf("type filter = %q, want %q", capturedFilters["type"], "task.*")
+	}
+	if capturedFilters["project_id"] != "proj-1" {
+		t.Errorf("project_id filter = %q, want %q", capturedFilters["project_id"], "proj-1")
+	}
+	if capturedFilters["feature_id"] != "auth" {
+		t.Errorf("feature_id filter = %q, want %q", capturedFilters["feature_id"], "auth")
+	}
+}
+
+func TestHandleRecentEvents_LimitClamped(t *testing.T) {
+	var capturedLimit int
+
+	es := &mockEventService{
+		recentFunc: func(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error) {
+			capturedLimit = limit
+			return nil, nil
+		},
+	}
+	h := NewHandler(&mockBrainService{}, WithEventService(es))
+	r := chi.NewRouter()
+	r.Get("/events/recent", h.HandleRecentEvents)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	// Limit above 1000 should be clamped.
+	resp, err := http.Get(srv.URL + "/events/recent?limit=5000")
+	if err != nil {
+		t.Fatalf("GET /events/recent failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if capturedLimit != 1000 {
+		t.Errorf("limit = %d, want 1000 (clamped)", capturedLimit)
+	}
+}
+
+func TestHandleRecentEvents_InvalidLimit(t *testing.T) {
+	router, _ := newEventTestRouter()
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/events/recent?limit=abc")
+	if err != nil {
+		t.Fatalf("GET /events/recent failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestHandleRecentEvents_NegativeLimit(t *testing.T) {
+	router, _ := newEventTestRouter()
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/events/recent?limit=-1")
+	if err != nil {
+		t.Fatalf("GET /events/recent failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+func TestHandleRecentEvents_NilService(t *testing.T) {
+	h := NewHandler(&mockBrainService{})
+	r := chi.NewRouter()
+	r.Get("/events/recent", h.HandleRecentEvents)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/events/recent")
+	if err != nil {
+		t.Fatalf("GET /events/recent failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	}
+}
+
+func TestHandleRecentEvents_ServiceError(t *testing.T) {
+	es := &mockEventService{
+		recentFunc: func(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error) {
+			return nil, fmt.Errorf("database error")
+		},
+	}
+	h := NewHandler(&mockBrainService{}, WithEventService(es))
+	r := chi.NewRouter()
+	r.Get("/events/recent", h.HandleRecentEvents)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/events/recent")
+	if err != nil {
+		t.Fatalf("GET /events/recent failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusInternalServerError)
+	}
+}
+
+// =============================================================================
+// GET /events/stream (SSE)
+// =============================================================================
+
+func TestHandleEventStream_SSEHeaders(t *testing.T) {
+	router, _ := newEventTestRouter()
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/events/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	ct := resp.Header.Get("Content-Type")
+	if !strings.HasPrefix(ct, "text/event-stream") {
+		t.Errorf("Content-Type = %q, want text/event-stream prefix", ct)
+	}
+
+	if resp.Header.Get("Cache-Control") != "no-cache, no-transform" {
+		t.Errorf("Cache-Control = %q, want %q", resp.Header.Get("Cache-Control"), "no-cache, no-transform")
+	}
+
+	if resp.Header.Get("X-Accel-Buffering") != "no" {
+		t.Errorf("X-Accel-Buffering = %q, want %q", resp.Header.Get("X-Accel-Buffering"), "no")
+	}
+}
+
+func TestHandleEventStream_ReceivesEvents(t *testing.T) {
+	eventCh := make(chan types.Event, 64)
+	es := &mockEventService{
+		subscribeFunc: func(ctx context.Context, filters map[string]string) (<-chan types.Event, func()) {
+			return eventCh, func() {}
+		},
+	}
+	h := NewHandler(&mockBrainService{}, WithEventService(es))
+	r := chi.NewRouter()
+	r.Get("/events/stream", h.HandleEventStream)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/events/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Send an event through the channel.
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		eventCh <- types.Event{
+			ID:     "evt_test_1",
+			Type:   types.EventTaskStarted,
+			Source: types.EventSourceRunner,
+		}
+	}()
+
+	events := parseEventSSE(t, resp, 1, 2*time.Second)
+	if len(events) < 1 {
+		t.Fatal("expected at least 1 SSE event")
+	}
+
+	if events[0].Event != types.EventTaskStarted {
+		t.Errorf("event type = %q, want %q", events[0].Event, types.EventTaskStarted)
+	}
+
+	if events[0].ID != "evt_test_1" {
+		t.Errorf("event id = %q, want %q", events[0].ID, "evt_test_1")
+	}
+}
+
+func TestHandleEventStream_PassesFilters(t *testing.T) {
+	var capturedFilters map[string]string
+
+	es := &mockEventService{
+		subscribeFunc: func(ctx context.Context, filters map[string]string) (<-chan types.Event, func()) {
+			capturedFilters = filters
+			ch := make(chan types.Event, 1)
+			return ch, func() { close(ch) }
+		},
+	}
+	h := NewHandler(&mockBrainService{}, WithEventService(es))
+	r := chi.NewRouter()
+	r.Get("/events/stream", h.HandleEventStream)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/events/stream?type=task.*&project_id=proj-1&feature_id=auth", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Wait for connection to be established.
+	time.Sleep(100 * time.Millisecond)
+
+	if capturedFilters["type"] != "task.*" {
+		t.Errorf("type filter = %q, want %q", capturedFilters["type"], "task.*")
+	}
+	if capturedFilters["project_id"] != "proj-1" {
+		t.Errorf("project_id filter = %q, want %q", capturedFilters["project_id"], "proj-1")
+	}
+	if capturedFilters["feature_id"] != "auth" {
+		t.Errorf("feature_id filter = %q, want %q", capturedFilters["feature_id"], "auth")
+	}
+}
+
+func TestHandleEventStream_NilService(t *testing.T) {
+	h := NewHandler(&mockBrainService{})
+	r := chi.NewRouter()
+	r.Get("/events/stream", h.HandleEventStream)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/events/stream")
+	if err != nil {
+		t.Fatalf("GET /events/stream failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	}
+}
+
+func TestHandleEventStream_Heartbeat(t *testing.T) {
+	// Use a very short heartbeat interval for testing.
+	origInterval := DefaultHeartbeatInterval
+	DefaultHeartbeatInterval = 100 * time.Millisecond
+	defer func() { DefaultHeartbeatInterval = origInterval }()
+
+	router, _ := newEventTestRouter()
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/events/stream", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Read lines looking for heartbeat comment.
+	scanner := bufio.NewScanner(resp.Body)
+	found := false
+	deadline := time.After(1 * time.Second)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, ": heartbeat") {
+				found = true
+				return
+			}
+		}
+	}()
+
+	select {
+	case <-done:
+	case <-deadline:
+	}
+
+	if !found {
+		t.Error("expected heartbeat comment in SSE stream")
+	}
+}
+
+func TestHandleEventStream_LastEventIDReplay(t *testing.T) {
+	es := &mockEventService{
+		recentFunc: func(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error) {
+			return []types.Event{
+				{ID: "evt_1", Type: types.EventTaskStarted, Source: types.EventSourceRunner, ProjectID: "proj-1"},
+				{ID: "evt_2", Type: types.EventTaskCompleted, Source: types.EventSourceRunner, ProjectID: "proj-1"},
+				{ID: "evt_3", Type: types.EventTaskFailed, Source: types.EventSourceRunner, ProjectID: "proj-1"},
+			}, nil
+		},
+		subscribeFunc: func(ctx context.Context, filters map[string]string) (<-chan types.Event, func()) {
+			ch := make(chan types.Event, 1)
+			return ch, func() { close(ch) }
+		},
+	}
+	h := NewHandler(&mockBrainService{}, WithEventService(es))
+	r := chi.NewRouter()
+	r.Get("/events/stream", h.HandleEventStream)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, _ := http.NewRequestWithContext(ctx, "GET", srv.URL+"/events/stream", nil)
+	req.Header.Set("Last-Event-ID", "evt_1")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events/stream failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Should replay evt_2 and evt_3 (events after evt_1).
+	events := parseEventSSE(t, resp, 2, 2*time.Second)
+	if len(events) < 2 {
+		t.Fatalf("expected 2 replayed events, got %d", len(events))
+	}
+
+	if events[0].ID != "evt_2" {
+		t.Errorf("first replayed event ID = %q, want %q", events[0].ID, "evt_2")
+	}
+	if events[1].ID != "evt_3" {
+		t.Errorf("second replayed event ID = %q, want %q", events[1].ID, "evt_3")
+	}
+}
+
+// =============================================================================
+// Router integration: verify routes registered
+// =============================================================================
+
+func TestEventsRoutes_Registered(t *testing.T) {
+	es := &mockEventService{}
+	h := NewHandler(
+		&mockBrainService{},
+		WithEventService(es),
+	)
+
+	cfg := testConfig()
+	router := NewRouter(cfg, WithHandler(h))
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	// POST /api/v1/events should not be 404.
+	events := []types.Event{
+		{Type: types.EventTaskStarted, Source: types.EventSourceRunner},
+	}
+	body, _ := json.Marshal(events)
+	resp, err := http.Post(srv.URL+"/api/v1/events", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST /api/v1/events failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		t.Error("POST /api/v1/events should be registered (got 404)")
+	}
+
+	// GET /api/v1/events/recent should be accessible.
+	resp2, err := http.Get(srv.URL + "/api/v1/events/recent")
+	if err != nil {
+		t.Fatalf("GET /api/v1/events/recent failed: %v", err)
+	}
+	defer resp2.Body.Close()
+
+	if resp2.StatusCode == http.StatusNotFound {
+		t.Error("GET /api/v1/events/recent should be registered (got 404)")
+	}
+	if resp2.StatusCode != http.StatusOK {
+		t.Errorf("GET /api/v1/events/recent status = %d, want %d", resp2.StatusCode, http.StatusOK)
+	}
+}
+
+func TestEventsRoutes_NotImplementedWithoutHandler(t *testing.T) {
+	cfg := testConfig()
+	router := NewRouter(cfg)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/api/v1/events/recent")
+	if err != nil {
+		t.Fatalf("GET /api/v1/events/recent failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusNotImplemented)
+	}
+}
+
+// =============================================================================
+// Helpers
+// =============================================================================
+
+// eventSSE represents a parsed SSE event from the event stream.
+type eventSSE struct {
+	ID    string
+	Event string
+	Data  string
+}
+
+// parseEventSSE reads SSE events from a response body until count is reached or timeout.
+func parseEventSSE(t *testing.T, resp *http.Response, count int, timeout time.Duration) []eventSSE {
+	t.Helper()
+	var events []eventSSE
+	scanner := bufio.NewScanner(resp.Body)
+
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var current eventSSE
+		for scanner.Scan() {
+			line := scanner.Text()
+			if strings.HasPrefix(line, "id: ") {
+				current.ID = strings.TrimPrefix(line, "id: ")
+			} else if strings.HasPrefix(line, "event: ") {
+				current.Event = strings.TrimPrefix(line, "event: ")
+			} else if strings.HasPrefix(line, "data: ") {
+				current.Data = strings.TrimPrefix(line, "data: ")
+			} else if line == "" && current.Event != "" {
+				events = append(events, current)
+				current = eventSSE{}
+				if len(events) >= count {
+					return
 				}
 			}
+		}
+	}()
 
-			var bodyReader *bytes.Reader
-			if bodyBytes != nil {
-				bodyReader = bytes.NewReader(bodyBytes)
-			} else {
-				bodyReader = bytes.NewReader([]byte{})
-			}
-
-			resp, err := http.Post(srv.URL+tt.path, "application/json", bodyReader)
-			require.NoError(t, err)
-			defer resp.Body.Close()
-
-			assert.Equal(t, tt.wantStatus, resp.StatusCode)
-
-			if tt.checkBody != nil {
-				tt.checkBody(t, resp)
-			}
-			if tt.checkEvent != nil {
-				tt.checkEvent(t, bus)
-			}
-		})
-	}
-}
-
-func TestHandleWebhookTrigger_NoBus(t *testing.T) {
-	h := NewHandler(&mockBrainService{})
-	r := chi.NewRouter()
-	r.Post("/events/webhook/*", h.HandleWebhookTrigger)
-	srv := httptest.NewServer(r)
-	defer srv.Close()
-
-	body := map[string]any{"repo": "test"}
-	bodyBytes, _ := json.Marshal(body)
-	resp, err := http.Post(srv.URL+"/events/webhook/hooks/deploy", "application/json", bytes.NewReader(bodyBytes))
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
-}
-
-func TestHandleWebhookTrigger_PayloadTooLarge(t *testing.T) {
-	bus := &capturingBus{}
-	router := newWebhookTestRouter(bus, nil)
-	srv := httptest.NewServer(router)
-	defer srv.Close()
-
-	// Create a payload larger than 1MB
-	largeBody := make([]byte, DefaultWebhookMaxBodySize+100)
-	for i := range largeBody {
-		largeBody[i] = 'x'
+	select {
+	case <-done:
+	case <-ctx.Done():
 	}
 
-	resp, err := http.Post(srv.URL+"/events/webhook/hooks/deploy", "application/json", bytes.NewReader(largeBody))
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, http.StatusRequestEntityTooLarge, resp.StatusCode)
-	assert.Empty(t, bus.events, "no event should be published for oversized payloads")
+	return events
 }
-
-func TestHandleEmitEvent_SetsExternalSource(t *testing.T) {
-	// Even if the caller provides a source, it should be overridden to "external"
-	bus := &capturingBus{}
-	router := newEventsTestRouter(bus)
-	srv := httptest.NewServer(router)
-	defer srv.Close()
-
-	body := map[string]any{"type": "test.event", "payload": map[string]any{"source": "sneaky"}}
-	bodyBytes, _ := json.Marshal(body)
-	resp, err := http.Post(srv.URL+"/events/emit", "application/json", bytes.NewReader(bodyBytes))
-	require.NoError(t, err)
-	defer resp.Body.Close()
-
-	assert.Equal(t, http.StatusAccepted, resp.StatusCode)
-	require.Len(t, bus.events, 1)
-	assert.Equal(t, "external", bus.events[0].Source, "source must always be 'external' for API-emitted events")
-}
-
-// capturingBus is a simple in-memory bus that captures published events for assertions.
-type capturingBus struct {
-	mu     sync.Mutex
-	events []events.Event
-}
-
-func (b *capturingBus) Publish(event events.Event) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if event.Timestamp.IsZero() {
-		event.Timestamp = time.Now()
-	}
-	b.events = append(b.events, event)
-}
-
-func (b *capturingBus) Subscribe(eventType events.EventType, handler events.Handler) events.Subscription {
-	return &noopSub{}
-}
-
-func (b *capturingBus) SubscribePattern(pattern string, handler events.Handler) events.Subscription {
-	return &noopSub{}
-}
-
-func (b *capturingBus) Close() {}
-
-type noopSub struct{}
-
-func (s *noopSub) Unsubscribe() {}

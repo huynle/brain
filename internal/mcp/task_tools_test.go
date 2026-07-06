@@ -30,18 +30,18 @@ func TestRegisterTaskTools_Names(t *testing.T) {
 	RegisterTaskTools(s, client)
 
 	expectedTools := []string{
-		"brain_tasks",
-		"brain_task_next",
-		"brain_task_get",
-		"brain_task_metadata",
-		"brain_tasks_status",
-		"brain_task_trigger",
-		"brain_feature_review_enable",
-		"brain_feature_review_disable",
-		"brain_blocked_inspector_enable",
-		"brain_blocked_inspector_disable",
-		"brain_dream_enable",
-		"brain_dream_disable",
+		"tasks",
+		"task_next",
+		"task_get",
+		"task_metadata",
+		"tasks_status",
+		"task_trigger",
+		"feature_review_enable",
+		"feature_review_disable",
+		"blocked_inspector_enable",
+		"blocked_inspector_disable",
+		"dream_enable",
+		"dream_disable",
 	}
 
 	for _, name := range expectedTools {
@@ -87,7 +87,7 @@ func TestBrainTasks_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterTaskTools(s, client)
 
-	tool := s.tools["brain_tasks"].tool
+	tool := s.tools["tasks"].tool
 
 	// No required fields
 	if len(tool.InputSchema.Required) != 0 {
@@ -114,7 +114,7 @@ func TestBrainTaskGet_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterTaskTools(s, client)
 
-	tool := s.tools["brain_task_get"].tool
+	tool := s.tools["task_get"].tool
 
 	// Required: taskId
 	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "taskId" {
@@ -127,7 +127,7 @@ func TestBrainTaskMetadata_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterTaskTools(s, client)
 
-	tool := s.tools["brain_task_metadata"].tool
+	tool := s.tools["task_metadata"].tool
 
 	// Required: taskId
 	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "taskId" {
@@ -140,7 +140,7 @@ func TestBrainTasksStatus_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterTaskTools(s, client)
 
-	tool := s.tools["brain_tasks_status"].tool
+	tool := s.tools["tasks_status"].tool
 
 	// Required: taskIds
 	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "taskIds" {
@@ -168,7 +168,7 @@ func TestBrainTaskTrigger_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterTaskTools(s, client)
 
-	tool := s.tools["brain_task_trigger"].tool
+	tool := s.tools["task_trigger"].tool
 
 	// Required: taskId
 	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "taskId" {
@@ -181,7 +181,7 @@ func TestBrainFeatureReviewEnable_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterTaskTools(s, client)
 
-	tool := s.tools["brain_feature_review_enable"].tool
+	tool := s.tools["feature_review_enable"].tool
 
 	// Required: project, feature_id
 	if len(tool.InputSchema.Required) != 2 {
@@ -194,7 +194,7 @@ func TestBrainBlockedInspectorEnable_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterTaskTools(s, client)
 
-	tool := s.tools["brain_blocked_inspector_enable"].tool
+	tool := s.tools["blocked_inspector_enable"].tool
 
 	// Required: project, feature_id
 	if len(tool.InputSchema.Required) != 2 {
@@ -252,7 +252,7 @@ func TestBrainTasks_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_tasks"].handler
+	handler := s.tools["tasks"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -310,7 +310,7 @@ func TestBrainTasks_FilterByClassification(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_tasks"].handler
+	handler := s.tools["tasks"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"classification": "ready",
 	})
@@ -344,7 +344,7 @@ func TestBrainTasks_EmptyResult(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_tasks"].handler
+	handler := s.tools["tasks"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -394,7 +394,7 @@ func TestBrainTaskNext_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_next"].handler
+	handler := s.tools["task_next"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -452,7 +452,7 @@ func TestBrainTaskNext_NoReadyTasks(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_next"].handler
+	handler := s.tools["task_next"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -520,7 +520,7 @@ func TestBrainTaskGet_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_get"].handler
+	handler := s.tools["task_get"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "abc12345",
 	})
@@ -635,7 +635,7 @@ func TestBrainTaskGet_DeepDependencyChain(t *testing.T) {
 	RegisterTaskTools(s, client)
 
 	// Test the deepest task (level 4) - has 4 dependencies
-	handler := s.tools["brain_task_get"].handler
+	handler := s.tools["task_get"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "0if2p4bc",
 	})
@@ -734,7 +734,7 @@ func TestBrainTaskGet_NotFound(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_get"].handler
+	handler := s.tools["task_get"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "nonexistent",
 	})
@@ -766,7 +766,7 @@ func TestBrainTaskGet_PartialMatch(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_get"].handler
+	handler := s.tools["task_get"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "auth",
 	})
@@ -787,7 +787,7 @@ func TestBrainTaskGet_MissingTaskId(t *testing.T) {
 	client := NewAPIClient("http://localhost:1")
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_get"].handler
+	handler := s.tools["task_get"].handler
 	result, err := handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -815,7 +815,11 @@ func TestBrainTaskMetadata_Handler(t *testing.T) {
 					"tags": []string{"feature"}, "created": "2024-01-01T00:00:00Z",
 					"agent": "tdd-dev", "model": "anthropic/claude-sonnet-4-20250514",
 					"git_branch": "feature-branch", "git_remote": "origin",
-					"feature_id": "auth-system", "feature_priority": "high",
+					"execution_mode": "worktree", "complete_on_idle": true,
+					"merge_target_branch": "main", "merge_policy": "auto_merge",
+					"merge_strategy": "squash", "remote_branch_policy": "delete",
+					"open_pr_before_merge": true,
+					"feature_id":           "auth-system", "feature_priority": "high",
 				},
 			},
 			"count": 1,
@@ -827,7 +831,7 @@ func TestBrainTaskMetadata_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_metadata"].handler
+	handler := s.tools["task_metadata"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "abc12345",
 	})
@@ -853,6 +857,33 @@ func TestBrainTaskMetadata_Handler(t *testing.T) {
 	}
 	if exec["agent"] != "tdd-dev" {
 		t.Errorf("agent = %v, want tdd-dev", exec["agent"])
+	}
+	if exec["execution_mode"] != "worktree" {
+		t.Errorf("execution.execution_mode = %v, want worktree", exec["execution_mode"])
+	}
+	if exec["complete_on_idle"] != true {
+		t.Errorf("execution.complete_on_idle = %v, want true", exec["complete_on_idle"])
+	}
+
+	// Check merge intent
+	merge, ok := metadata["merge"].(map[string]any)
+	if !ok {
+		t.Fatal("missing merge config")
+	}
+	if merge["merge_target_branch"] != "main" {
+		t.Errorf("merge.merge_target_branch = %v, want main", merge["merge_target_branch"])
+	}
+	if merge["merge_policy"] != "auto_merge" {
+		t.Errorf("merge.merge_policy = %v, want auto_merge", merge["merge_policy"])
+	}
+	if merge["merge_strategy"] != "squash" {
+		t.Errorf("merge.merge_strategy = %v, want squash", merge["merge_strategy"])
+	}
+	if merge["remote_branch_policy"] != "delete" {
+		t.Errorf("merge.remote_branch_policy = %v, want delete", merge["remote_branch_policy"])
+	}
+	if merge["open_pr_before_merge"] != true {
+		t.Errorf("merge.open_pr_before_merge = %v, want true", merge["open_pr_before_merge"])
 	}
 
 	// Check feature grouping
@@ -882,7 +913,7 @@ func TestBrainTaskMetadata_NotFound(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_metadata"].handler
+	handler := s.tools["task_metadata"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "nonexistent",
 	})
@@ -930,7 +961,7 @@ func TestBrainTasksStatus_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_tasks_status"].handler
+	handler := s.tools["tasks_status"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskIds": []any{"abc12345", "def67890"},
 	})
@@ -954,7 +985,7 @@ func TestBrainTasksStatus_EmptyTaskIds(t *testing.T) {
 	client := NewAPIClient("http://localhost:1")
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_tasks_status"].handler
+	handler := s.tools["tasks_status"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskIds": []any{},
 	})
@@ -986,7 +1017,7 @@ func TestBrainTasksStatus_WithNotFound(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_tasks_status"].handler
+	handler := s.tools["tasks_status"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskIds": []any{"missing123"},
 	})
@@ -1025,7 +1056,7 @@ func TestBrainTaskTrigger_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_trigger"].handler
+	handler := s.tools["task_trigger"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "abc12345",
 	})
@@ -1058,7 +1089,7 @@ func TestBrainTaskTrigger_Error(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_task_trigger"].handler
+	handler := s.tools["task_trigger"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "nonexistent",
 	})
@@ -1101,7 +1132,7 @@ func TestBrainFeatureReviewEnable_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_feature_review_enable"].handler
+	handler := s.tools["feature_review_enable"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"project":    "test-project",
 		"feature_id": "auth-system",
@@ -1142,7 +1173,7 @@ func TestBrainFeatureReviewDisable_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_feature_review_disable"].handler
+	handler := s.tools["feature_review_disable"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"project":    "test-project",
 		"feature_id": "auth-system",
@@ -1184,7 +1215,7 @@ func TestBrainBlockedInspectorEnable_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_blocked_inspector_enable"].handler
+	handler := s.tools["blocked_inspector_enable"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"project":    "test-project",
 		"feature_id": "auth-system",
@@ -1216,7 +1247,7 @@ func TestBrainBlockedInspectorEnable_WithSchedule(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_blocked_inspector_enable"].handler
+	handler := s.tools["blocked_inspector_enable"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"project":    "test-project",
 		"feature_id": "auth-system",
@@ -1255,7 +1286,7 @@ func TestBrainBlockedInspectorDisable_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_blocked_inspector_disable"].handler
+	handler := s.tools["blocked_inspector_disable"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"project":    "test-project",
 		"feature_id": "auth-system",
@@ -1274,7 +1305,7 @@ func TestBrainDreamEnable_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterTaskTools(s, client)
 
-	tool := s.tools["brain_dream_enable"].tool
+	tool := s.tools["dream_enable"].tool
 
 	// Required: project only
 	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "project" {
@@ -1297,7 +1328,7 @@ func TestBrainDreamDisable_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterTaskTools(s, client)
 
-	tool := s.tools["brain_dream_disable"].tool
+	tool := s.tools["dream_disable"].tool
 
 	// Required: project only
 	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "project" {
@@ -1347,7 +1378,7 @@ func TestBrainDreamEnable_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_dream_enable"].handler
+	handler := s.tools["dream_enable"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"project": "my-project",
 	})
@@ -1378,7 +1409,7 @@ func TestBrainDreamEnable_WithSchedule(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_dream_enable"].handler
+	handler := s.tools["dream_enable"].handler
 	_, err := handler(context.Background(), map[string]any{
 		"project":  "my-project",
 		"schedule": "0 3 * * *",
@@ -1404,7 +1435,7 @@ func TestBrainDreamEnable_Conflict(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_dream_enable"].handler
+	handler := s.tools["dream_enable"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"project": "my-project",
 	})
@@ -1450,7 +1481,7 @@ func TestBrainDreamDisable_Handler(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_dream_disable"].handler
+	handler := s.tools["dream_disable"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"project": "my-project",
 	})
@@ -1478,7 +1509,7 @@ func TestBrainDreamDisable_NotEnabled(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterTaskTools(s, client)
 
-	handler := s.tools["brain_dream_disable"].handler
+	handler := s.tools["dream_disable"].handler
 	result, err := handler(context.Background(), map[string]any{
 		"project": "my-project",
 	})
@@ -1596,8 +1627,8 @@ func TestTaskToolsDoNotOverlapBrainTools(t *testing.T) {
 	RegisterBrainTools(s, client)
 
 	brainToolCount := len(s.tools)
-	if brainToolCount != 22 {
-		t.Errorf("expected 22 brain tools, got %d", brainToolCount)
+	if brainToolCount != 32 {
+		t.Errorf("expected 32 brain tools, got %d", brainToolCount)
 	}
 
 	RegisterTaskTools(s, client)

@@ -15,6 +15,18 @@ type TaskDetail struct {
 	task          *types.ResolvedTask
 	width, height int
 
+	// Entry mode: reuses the same detail viewport for full brain entry content.
+	entryMode          bool
+	entryPath          string
+	entryTitle         string
+	entryType          string
+	entryContent       string
+	entryAttachments   []types.AttachmentReference
+	selectedAttachment int
+	entryLoading       bool
+	entryErr           string
+	entryHeader        string
+
 	// Feature mode: when a feature header is selected instead of a task
 	featureMode bool
 	featureID   string
@@ -37,6 +49,16 @@ func (td *TaskDetail) SetTask(task *types.ResolvedTask) {
 	td.featureMode = false
 	td.featureID = ""
 	td.feature = nil
+	td.entryMode = false
+	td.entryPath = ""
+	td.entryTitle = ""
+	td.entryType = ""
+	td.entryContent = ""
+	td.entryAttachments = nil
+	td.selectedAttachment = 0
+	td.entryLoading = false
+	td.entryErr = ""
+	td.entryHeader = ""
 
 	// Only reset scroll position when switching to a different task
 	oldID := ""
@@ -60,6 +82,16 @@ func (td *TaskDetail) SetTask(task *types.ResolvedTask) {
 func (td *TaskDetail) SetFeature(featureID string, feature *service.ComputedFeature) {
 	// Clear task mode
 	td.task = nil
+	td.entryMode = false
+	td.entryPath = ""
+	td.entryTitle = ""
+	td.entryType = ""
+	td.entryContent = ""
+	td.entryAttachments = nil
+	td.selectedAttachment = 0
+	td.entryLoading = false
+	td.entryErr = ""
+	td.entryHeader = ""
 
 	// Only reset scroll when switching to a different feature
 	oldID := td.featureID
@@ -71,6 +103,149 @@ func (td *TaskDetail) SetFeature(featureID string, feature *service.ComputedFeat
 		td.scrollOffset = 0
 		td.totalLines = 0
 	}
+}
+
+// SetEntryLoading switches to brain entry detail mode while content is fetched.
+func (td *TaskDetail) SetEntryLoading(entry types.BrainEntry, header ...string) {
+	td.task = nil
+	td.featureMode = false
+	td.featureID = ""
+	td.feature = nil
+
+	oldPath := td.entryPath
+	td.entryMode = true
+	td.entryPath = entry.Path
+	td.entryTitle = entry.Title
+	td.entryType = entry.Type
+	td.entryContent = ""
+	td.entryAttachments = append([]types.AttachmentReference(nil), entry.Attachments...)
+	td.clampSelectedAttachment()
+	td.entryLoading = true
+	td.entryErr = ""
+	td.entryHeader = entryDetailHeader(header)
+	if oldPath != entry.Path {
+		td.scrollOffset = 0
+		td.totalLines = 0
+	}
+}
+
+// SetEntryContent displays full brain entry content in the detail viewport.
+func (td *TaskDetail) SetEntryContent(path, title, entryType, content string, header ...string) {
+	td.SetEntryContentWithAttachments(path, title, entryType, content, nil, header...)
+}
+
+// SetEntryContentWithAttachments displays full brain entry content with metadata-only attachment references.
+func (td *TaskDetail) SetEntryContentWithAttachments(path, title, entryType, content string, attachments []types.AttachmentReference, header ...string) {
+	oldPath := td.entryPath
+	td.task = nil
+	td.featureMode = false
+	td.featureID = ""
+	td.feature = nil
+	td.entryMode = true
+	td.entryPath = path
+	td.entryTitle = title
+	td.entryType = entryType
+	td.entryContent = content
+	td.entryAttachments = append([]types.AttachmentReference(nil), attachments...)
+	td.clampSelectedAttachment()
+	td.entryLoading = false
+	td.entryErr = ""
+	td.entryHeader = entryDetailHeader(header)
+	td.totalLines = td.countEntryContentLines()
+	if oldPath != path {
+		td.scrollOffset = 0
+	}
+}
+
+func (td *TaskDetail) HasEntryAttachments() bool {
+	return td.entryMode && len(td.entryAttachments) > 0
+}
+
+func (td *TaskDetail) SelectedAttachment() (types.AttachmentReference, bool) {
+	if !td.HasEntryAttachments() {
+		return types.AttachmentReference{}, false
+	}
+	td.clampSelectedAttachment()
+	return td.entryAttachments[td.selectedAttachment], true
+}
+
+func (td *TaskDetail) SelectNextAttachment() bool {
+	if !td.HasEntryAttachments() {
+		return false
+	}
+	td.selectedAttachment = (td.selectedAttachment + 1) % len(td.entryAttachments)
+	return true
+}
+
+func (td *TaskDetail) SelectPrevAttachment() bool {
+	if !td.HasEntryAttachments() {
+		return false
+	}
+	td.selectedAttachment = (td.selectedAttachment + len(td.entryAttachments) - 1) % len(td.entryAttachments)
+	return true
+}
+
+func (td *TaskDetail) SelectAttachmentAtEntryLine(line int) bool {
+	idx := td.attachmentIndexAtEntryLine(line)
+	if idx < 0 {
+		return false
+	}
+	td.selectedAttachment = idx
+	return true
+}
+
+func (td *TaskDetail) attachmentIndexAtEntryLine(line int) int {
+	if !td.HasEntryAttachments() || line < 0 || td.entryLoading || td.entryErr != "" {
+		return -1
+	}
+	contentLines := 1
+	if td.entryContent != "" {
+		contentLines = len(strings.Split(td.entryContent, "\n"))
+	}
+	attachmentLine := line - contentLines
+	if attachmentLine < 2 {
+		return -1
+	}
+	attachmentLine -= 2 // blank line + Attachments header
+	for i, att := range td.entryAttachments {
+		rowLines := 5 + len(attachmentExtractionLines(att)) + len(att.Derived)
+		if len(att.Derived) > 0 {
+			rowLines++
+		}
+		if attachmentLine < rowLines {
+			return i
+		}
+		attachmentLine -= rowLines
+	}
+	return -1
+}
+
+func (td *TaskDetail) clampSelectedAttachment() {
+	if len(td.entryAttachments) == 0 {
+		td.selectedAttachment = 0
+		return
+	}
+	if td.selectedAttachment < 0 {
+		td.selectedAttachment = 0
+	}
+	if td.selectedAttachment >= len(td.entryAttachments) {
+		td.selectedAttachment = len(td.entryAttachments) - 1
+	}
+}
+
+// SetEntryError displays an entry fetch error in the detail viewport.
+func (td *TaskDetail) SetEntryError(path, title, entryType string, err error, header ...string) {
+	td.SetEntryContent(path, title, entryType, "", entryDetailHeader(header))
+	if err != nil {
+		td.entryErr = err.Error()
+	}
+}
+
+func entryDetailHeader(header []string) string {
+	if len(header) > 0 && header[0] != "" {
+		return header[0]
+	}
+	return "Entry Detail"
 }
 
 // ScrollDown scrolls the viewport down by one line.
@@ -114,9 +289,21 @@ func (td *TaskDetail) SetSize(width, height int) {
 	// Recompute totalLines so ScrollDown/ScrollUp have accurate bounds
 	if td.featureMode && td.feature != nil {
 		td.totalLines = td.countFeatureContentLines()
+	} else if td.entryMode {
+		td.totalLines = td.countEntryContentLines()
 	} else if td.task != nil {
 		td.totalLines = td.countContentLines()
 	}
+}
+
+func (td *TaskDetail) countEntryContentLines() int {
+	if !td.entryMode || td.entryLoading || td.entryErr != "" {
+		return 1
+	}
+	if td.entryContent == "" {
+		return 1 + len(td.renderEntryAttachmentLines())
+	}
+	return len(strings.Split(td.entryContent, "\n")) + len(td.renderEntryAttachmentLines())
 }
 
 // countContentLines counts how many content lines the task produces (excluding header).
@@ -168,6 +355,13 @@ func (td *TaskDetail) countContentLines() int {
 			count++
 		}
 	}
+	// Dispatch diagnostics
+	dispatchLines := td.renderDispatchLines(task)
+	if len(dispatchLines) > 0 {
+		count++ // blank line
+		count++ // header
+		count += len(dispatchLines)
+	}
 	// Dependencies
 	hasDeps := len(task.DependsOn) > 0
 	hasWaiting := len(task.WaitingOn) > 0
@@ -191,6 +385,12 @@ func (td *TaskDetail) countContentLines() int {
 		count++ // blank line
 		count++ // header
 		count += len(task.Sessions)
+	}
+	// Content/body
+	if strings.TrimSpace(task.Content) != "" {
+		count++ // blank line
+		count++ // header
+		count += len(strings.Split(task.Content, "\n"))
 	}
 	// Frontmatter — compute actual count
 	fmLines := td.renderFrontmatter(task)
@@ -221,10 +421,151 @@ func (td *TaskDetail) View() string {
 	if td.featureMode && td.feature != nil {
 		return td.renderFeature()
 	}
+	if td.entryMode {
+		return td.renderEntry()
+	}
 	if td.task == nil {
 		return td.renderEmpty()
 	}
 	return td.renderTask()
+}
+
+func (td *TaskDetail) renderEntry() string {
+	label := td.entryTitle
+	if label == "" {
+		label = td.entryPath
+	}
+	if td.entryType != "" {
+		label = fmt.Sprintf("%s [%s]", label, td.entryType)
+	}
+
+	lines := []string{}
+	if td.entryLoading {
+		lines = append(lines, DimStyle.Render("Loading entry content..."))
+	} else if td.entryErr != "" {
+		lines = append(lines, lipgloss.NewStyle().Foreground(ColorBlocked).Render("Error: "+td.entryErr))
+	} else if td.entryContent == "" {
+		lines = append(lines, DimStyle.Render("Entry is empty"))
+	} else {
+		lines = strings.Split(td.entryContent, "\n")
+	}
+	lines = append(lines, td.renderEntryAttachmentLines()...)
+	td.totalLines = len(lines)
+
+	headerTitle := td.entryHeader
+	if headerTitle == "" {
+		headerTitle = "Entry Detail"
+	}
+	header := TitleStyle.Render(headerTitle)
+	if label != "" {
+		header = TitleStyle.Render(headerTitle + ": " + label)
+	}
+
+	if td.height > 0 && td.totalLines > td.height-1 {
+		viewportHeight := td.height - 1
+		if viewportHeight < 1 {
+			viewportHeight = 1
+		}
+		maxOffset := td.totalLines - viewportHeight
+		if maxOffset < 0 {
+			maxOffset = 0
+		}
+		if td.scrollOffset > maxOffset {
+			td.scrollOffset = maxOffset
+		}
+		startLine := td.scrollOffset + 1
+		endLine := td.scrollOffset + viewportHeight
+		if endLine > td.totalLines {
+			endLine = td.totalLines
+		}
+		header += DimStyle.Render(fmt.Sprintf(" (%d-%d/%d)", startLine, endLine, td.totalLines))
+
+		end := td.scrollOffset + viewportHeight
+		if end > td.totalLines {
+			end = td.totalLines
+		}
+		visibleLines := make([]string, end-td.scrollOffset)
+		copy(visibleLines, lines[td.scrollOffset:end])
+		if td.scrollOffset > 0 && len(visibleLines) > 0 {
+			visibleLines[0] = DimStyle.Render("▲ more above")
+		}
+		if end < td.totalLines && len(visibleLines) > 0 {
+			visibleLines[len(visibleLines)-1] = DimStyle.Render("▼ more below")
+		}
+		return strings.Join(append([]string{header}, visibleLines...), "\n")
+	}
+
+	td.scrollOffset = 0
+	return strings.Join(append([]string{header}, lines...), "\n")
+}
+
+func (td *TaskDetail) renderEntryAttachmentLines() []string {
+	if len(td.entryAttachments) == 0 {
+		return nil
+	}
+
+	lines := []string{"", fmt.Sprintf("Attachments (%d):", len(td.entryAttachments))}
+	td.clampSelectedAttachment()
+	for i, att := range td.entryAttachments {
+		name := att.Filename
+		if name == "" {
+			name = "(unnamed)"
+		}
+		role := att.Role
+		if role == "" {
+			role = "attachment"
+		}
+		contentType := att.ContentType
+		if contentType == "" {
+			contentType = "unknown MIME"
+		}
+		size := formatAttachmentSize(att.Size)
+
+		marker := " "
+		if i == td.selectedAttachment {
+			marker = ">"
+		}
+		lines = append(lines, fmt.Sprintf("  %s %s", marker, name))
+		lines = append(lines, fmt.Sprintf("    Role: %s", role))
+		lines = append(lines, fmt.Sprintf("    MIME: %s", contentType))
+		lines = append(lines, fmt.Sprintf("    Size: %s", size))
+		lines = append(lines, fmt.Sprintf("    ID: %s", att.ID))
+		for _, extractionLine := range attachmentExtractionLines(att) {
+			lines = append(lines, "    "+extractionLine)
+		}
+
+		for _, derived := range att.Derived {
+			derivedType := derived.ContentType
+			if derivedType == "" {
+				derivedType = "unknown MIME"
+			}
+			lines = append(lines, fmt.Sprintf("    extracted: %s (%s, %s)", derived.Kind, derivedType, formatAttachmentSize(derived.Size)))
+		}
+		if len(att.Derived) > 0 {
+			lines = append(lines, "    search: available")
+		}
+	}
+	return lines
+}
+
+func formatAttachmentSize(size int64) string {
+	if size <= 0 {
+		return "unknown"
+	}
+	const unit = 1024
+	if size < unit {
+		return fmt.Sprintf("%d B", size)
+	}
+	value := float64(size) / unit
+	if value < unit {
+		return fmt.Sprintf("%.1f KB", value)
+	}
+	value /= unit
+	if value < unit {
+		return fmt.Sprintf("%.1f MB", value)
+	}
+	value /= unit
+	return fmt.Sprintf("%.1f GB", value)
 }
 
 // renderEmpty renders the placeholder when no task is selected.
@@ -304,6 +645,14 @@ func (td *TaskDetail) renderTask() string {
 		if task.Workdir != "" && task.Workdir != task.ResolvedWorkdir {
 			lines = append(lines, fmt.Sprintf("  (from: %s)", DimStyle.Render(task.Workdir)))
 		}
+	}
+
+	// Dispatch diagnostics
+	dispatchLines := td.renderDispatchLines(task)
+	if len(dispatchLines) > 0 {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Dispatch:"))
+		lines = append(lines, dispatchLines...)
 	}
 
 	// Dependencies
@@ -397,6 +746,12 @@ func (td *TaskDetail) renderTask() string {
 		}
 	}
 
+	if strings.TrimSpace(task.Content) != "" {
+		lines = append(lines, "")
+		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Content:"))
+		lines = append(lines, strings.Split(task.Content, "\n")...)
+	}
+
 	// Store total content lines
 	td.totalLines = len(lines)
 
@@ -458,6 +813,40 @@ func (td *TaskDetail) renderTask() string {
 	result = append(result, headerLine)
 	result = append(result, lines...)
 	return strings.Join(result, "\n")
+}
+
+func (td *TaskDetail) renderDispatchLines(task *types.ResolvedTask) []string {
+	var lines []string
+	if task.DispatchLease != nil {
+		lease := task.DispatchLease
+		lines = append(lines, fmt.Sprintf("  Lease: %s", lipgloss.NewStyle().Foreground(ColorCyan).Render(lease.State)))
+		if lease.AssignedRunnerID != "" {
+			lines = append(lines, fmt.Sprintf("  Runner: %s", lease.AssignedRunnerID))
+		}
+		if lease.AssignedMachineID != "" {
+			lines = append(lines, fmt.Sprintf("  Machine: %s", lease.AssignedMachineID))
+		}
+		if lease.ExpiresAt != 0 {
+			lines = append(lines, fmt.Sprintf("  Expires: %d", lease.ExpiresAt))
+		}
+		if lease.LastError != "" {
+			lines = append(lines, fmt.Sprintf("  Last error: %s", lease.LastError))
+		}
+	}
+	if task.LastPlacementReason != nil {
+		reason := task.LastPlacementReason
+		lines = append(lines, fmt.Sprintf("  Placement: %s", reason.Decision))
+		if reason.Reason != "" {
+			lines = append(lines, fmt.Sprintf("  Reason: %s", reason.Reason))
+		}
+		if reason.RunnerID != "" {
+			lines = append(lines, fmt.Sprintf("  Placement runner: %s", reason.RunnerID))
+		}
+		if reason.MachineID != "" {
+			lines = append(lines, fmt.Sprintf("  Placement machine: %s", reason.MachineID))
+		}
+	}
+	return lines
 }
 
 // renderFrontmatter renders all metadata fields as key: value pairs.

@@ -441,3 +441,151 @@ func TestParsePluginFlags(t *testing.T) {
 		assert.Equal(t, "http://example.com:3000", flags.APIURL)
 	})
 }
+
+func TestParseAutomationGoalFlags(t *testing.T) {
+	t.Run("all string flags parsed correctly", func(t *testing.T) {
+		args := []string{
+			"--project", "brain-api",
+			"--feature", "ga-cli",
+			"--title", "My Goal",
+			"--content", "Some content",
+			"--trigger-source", "both",
+			"--session-mode", "fresh",
+			"--agent", "tdd-dev",
+			"--model", "claude-3",
+			"--executor", "pi",
+			"--workdir", "/tmp/work",
+			"--status", "active",
+			"--format", "json",
+		}
+		flags, err := ParseAutomationGoalFlags(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, "brain-api", flags.Project)
+		assert.Equal(t, "ga-cli", flags.Feature)
+		assert.Equal(t, "My Goal", flags.Title)
+		assert.Equal(t, "Some content", flags.Content)
+		assert.Equal(t, "both", flags.TriggerSource)
+		assert.Equal(t, "fresh", flags.SessionMode)
+		assert.Equal(t, "tdd-dev", flags.Agent)
+		assert.Equal(t, "claude-3", flags.Model)
+		assert.Equal(t, "pi", flags.Executor)
+		assert.Equal(t, "/tmp/work", flags.Workdir)
+		assert.Equal(t, "active", flags.Status)
+		assert.Equal(t, "json", flags.Format)
+	})
+
+	t.Run("criteria repeated twice", func(t *testing.T) {
+		args := []string{"--criteria", "first", "--criteria", "second"}
+		flags, err := ParseAutomationGoalFlags(args)
+		require.NoError(t, err)
+
+		assert.Len(t, flags.Criteria, 2)
+		assert.Contains(t, flags.Criteria, "first")
+		assert.Contains(t, flags.Criteria, "second")
+	})
+
+	t.Run("validate repeated", func(t *testing.T) {
+		args := []string{"--validate", "check-a", "--validate", "check-b"}
+		flags, err := ParseAutomationGoalFlags(args)
+		require.NoError(t, err)
+
+		assert.Len(t, flags.Validate, 2)
+		assert.Contains(t, flags.Validate, "check-a")
+		assert.Contains(t, flags.Validate, "check-b")
+	})
+
+	t.Run("limit parsed", func(t *testing.T) {
+		args := []string{"--limit", "5"}
+		flags, err := ParseAutomationGoalFlags(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, 5, flags.Limit)
+	})
+
+	t.Run("limit defaults to 20 when absent", func(t *testing.T) {
+		args := []string{"--project", "p"}
+		flags, err := ParseAutomationGoalFlags(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, 20, flags.Limit)
+	})
+
+	t.Run("quiet short flag", func(t *testing.T) {
+		args := []string{"-q"}
+		flags, err := ParseAutomationGoalFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.Quiet)
+	})
+
+	t.Run("quiet long flag", func(t *testing.T) {
+		args := []string{"--quiet"}
+		flags, err := ParseAutomationGoalFlags(args)
+		require.NoError(t, err)
+
+		assert.True(t, flags.Quiet)
+	})
+
+	t.Run("unknown flags silently ignored", func(t *testing.T) {
+		args := []string{"--unknown", "value", "--project", "p"}
+		flags, err := ParseAutomationGoalFlags(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, "p", flags.Project)
+	})
+
+	t.Run("empty args returns defaults", func(t *testing.T) {
+		args := []string{}
+		flags, err := ParseAutomationGoalFlags(args)
+		require.NoError(t, err)
+
+		assert.Equal(t, 20, flags.Limit)
+		assert.False(t, flags.Quiet)
+		assert.Empty(t, flags.Project)
+	})
+}
+
+func TestParseLifecycleFlagsWithEmbeddedRunner(t *testing.T) {
+	args := []string{
+		"--runner",
+		"--runner-project", "personal-productivity",
+		"--max-parallel", "4",
+		"--include", "prod-*",
+		"-i", "brain-*",
+		"--exclude", "test-*",
+		"-e", "legacy-*",
+		"--executor", "pi",
+	}
+	flags, err := ParseLifecycleFlags(args)
+	require.NoError(t, err)
+
+	assert.True(t, flags.Runner)
+	assert.Equal(t, "personal-productivity", flags.RunnerProject)
+	assert.Equal(t, 4, flags.MaxParallel)
+	assert.Equal(t, []string{"prod-*", "brain-*"}, flags.Include)
+	assert.Equal(t, []string{"test-*", "legacy-*"}, flags.Exclude)
+	assert.Equal(t, "pi", flags.Executor)
+}
+
+func TestParseAPIFlagsWithEmbeddedRunner(t *testing.T) {
+	args := []string{
+		"--daemon",
+		"--runner",
+		"--runner-project", "all",
+		"--max-parallel", "6",
+		"--include", "prod-*",
+		"--exclude", "sandbox-*",
+		"--executor", "opencode",
+	}
+	flags, err := ParseAPIFlags(args)
+	require.NoError(t, err)
+
+	assert.True(t, flags.Daemon)
+	assert.True(t, flags.Runner)
+	assert.Equal(t, "all", flags.RunnerProject)
+	assert.Equal(t, 6, flags.MaxParallel)
+	assert.Equal(t, []string{"prod-*"}, flags.Include)
+	assert.Equal(t, []string{"sandbox-*"}, flags.Exclude)
+	assert.Equal(t, "opencode", flags.Executor)
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,23 +23,27 @@ import (
 
 // Compile-time check that BrainServiceImpl implements api.BrainService.
 var _ api.BrainService = (*BrainServiceImpl)(nil)
+var _ AttachmentDerivedChangeHook = (*BrainServiceImpl)(nil)
 
 // BrainServiceImpl implements api.BrainService using filesystem + SQLite storage.
 type BrainServiceImpl struct {
-	config  *config.Config
-	storage *storage.StorageLayer
-	indexer *indexer.Indexer
-	bus     events.Bus
+	config          *config.Config
+	storage         *storage.StorageLayer
+	indexer         *indexer.Indexer
+	bus             events.Bus
+	embeddingClient EmbeddingClient
 }
 
 // NewBrainService creates a new BrainServiceImpl.
 // The bus parameter is optional; if nil, no events are published.
-func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus) *BrainServiceImpl {
+// The embeddingClient parameter is optional; if nil, semantic search features will be disabled.
+func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus, embeddingClient EmbeddingClient) *BrainServiceImpl {
 	return &BrainServiceImpl{
-		config:  cfg,
-		storage: store,
-		indexer: idx,
-		bus:     bus,
+		config:          cfg,
+		storage:         store,
+		indexer:         idx,
+		bus:             bus,
+		embeddingClient: embeddingClient,
 	}
 }
 
@@ -157,6 +162,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		Type:                req.Type,
 		Status:              status,
 		Tags:                sanitizedTags,
+		Attachments:         attachmentRefsToFM(req.Attachments),
 		Priority:            req.Priority,
 		Created:             now,
 		DependsOn:           sanitizedDeps,
@@ -177,18 +183,24 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		RemoteBranchPolicy:  req.RemoteBranchPolicy,
 		OpenPRBeforeMerge:   req.OpenPRBeforeMerge,
 		ExecutionMode:       req.ExecutionMode,
+		SessionMode:         req.SessionMode,
 		CompleteOnIdle:      req.CompleteOnIdle,
 		TargetWorkdir:       frontmatter.SanitizeSimpleValue(req.TargetWorkdir),
-		Executor:            req.Executor,
-		Extensions:          req.Extensions,
 		UserOriginalRequest: req.UserOriginalRequest,
 		DirectPrompt:        req.DirectPrompt,
 		Agent:               req.Agent,
 		Model:               req.Model,
+		Executor:            frontmatter.SanitizeSimpleValue(req.Executor),
+		Extensions:          req.Extensions,
 		Generated:           req.Generated,
 		GeneratedKind:       req.GeneratedKind,
 		GeneratedKey:        req.GeneratedKey,
 		GeneratedBy:         req.GeneratedBy,
+		AutomationRunID:     req.AutomationRunID,
+		Trigger:             fmTriggerFromTypes(req.Trigger),
+		Action:              automationActionToFM(req.Action),
+		Retry:               automationRetryToFM(req.Retry),
+		Goal:                goalConfigToFM(req.Goal),
 		Schedule:            req.Schedule,
 		ScheduleEnabled:     req.ScheduleEnabled,
 		NextRun:             req.NextRun,
@@ -197,9 +209,6 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		ExpiresAt:           req.ExpiresAt,
 		RunOnceAt:           req.RunOnceAt,
 		Timezone:            req.Timezone,
-		Trigger:             automationTriggerToFM(req.Trigger),
-		Action:              automationActionToFM(req.Action),
-		Retry:               automationRetryToFM(req.Retry),
 	}
 
 	if !isGlobal {
@@ -233,6 +242,9 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	// Index the file
 	if err := s.indexer.IndexFile(relPath); err != nil {
 		return nil, fmt.Errorf("index file %q: %w", relPath, err)
+	}
+	if err := s.indexEmbeddingsForEntry(ctx, relPath); err != nil {
+		return nil, fmt.Errorf("embed file %q: %w", relPath, err)
 	}
 
 	// Generate markdown link
@@ -284,7 +296,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 // =============================================================================
 
 // Recall retrieves a brain entry by path, short ID, or title.
-func (s *BrainServiceImpl) Recall(ctx context.Context, pathOrID string) (*types.BrainEntry, error) {
+func (s *BrainServiceImpl) Recall(ctx context.Context, pathOrID string, include ...string) (*types.BrainEntry, error) {
 	if pathOrID == "" {
 		return nil, fmt.Errorf("path or ID is required")
 	}
@@ -298,6 +310,11 @@ func (s *BrainServiceImpl) Recall(ctx context.Context, pathOrID string) (*types.
 	}
 
 	entry := NoteRowToBrainEntry(row)
+	if wantsAttachmentMetadata(include) {
+		if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
+			return nil, err
+		}
+	}
 
 	// Record access
 	_ = s.storage.RecordAccess(ctx, row.Path)
@@ -440,6 +457,9 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["depends_on"]; ok {
 			fm.DependsOn = metaToStringSlice(v)
 		}
+		if v, ok := meta["attachments"]; ok {
+			fm.Attachments = metaToAttachmentRefsFM(v)
+		}
 		if v, ok := meta["parent_id"].(string); ok {
 			fm.ParentID = v
 		}
@@ -463,6 +483,12 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		}
 		if v, ok := meta["model"].(string); ok {
 			fm.Model = v
+		}
+		if v, ok := meta["executor"].(string); ok {
+			fm.Executor = v
+		}
+		if v, ok := meta["extensions"]; ok {
+			fm.Extensions = metaToStringSlice(v)
 		}
 		if v, ok := meta["target_workdir"].(string); ok {
 			fm.TargetWorkdir = v
@@ -503,8 +529,12 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 
 		// Automation fields (nested maps from metadata JSON)
 		if v, ok := meta["trigger"]; ok {
-			if t := metaToAutomationTriggerFM(v); t != nil {
-				fm.Trigger = t
+			data, err := json.Marshal(v)
+			if err == nil {
+				var t frontmatter.TriggerConfig
+				if err := json.Unmarshal(data, &t); err == nil {
+					fm.Trigger = &t
+				}
 			}
 		}
 		if v, ok := meta["action"]; ok {
@@ -540,9 +570,108 @@ func metaToStringSlice(v interface{}) []string {
 	}
 }
 
+func attachmentRefsToFM(refs []types.AttachmentReference) []frontmatter.AttachmentReference {
+	if len(refs) == 0 {
+		return nil
+	}
+	result := make([]frontmatter.AttachmentReference, 0, len(refs))
+	for _, ref := range refs {
+		result = append(result, frontmatter.AttachmentReference{
+			ID:          ref.ID,
+			Filename:    ref.Filename,
+			ContentType: ref.ContentType,
+			Size:        ref.Size,
+			SHA256:      ref.SHA256,
+			Role:        ref.Role,
+			Caption:     ref.Caption,
+			Derived:     attachmentDerivedToFM(ref.Derived),
+		})
+	}
+	return result
+}
+
+func attachmentDerivedToFM(items []types.AttachmentDerived) []frontmatter.AttachmentDerived {
+	if len(items) == 0 {
+		return nil
+	}
+	result := make([]frontmatter.AttachmentDerived, 0, len(items))
+	for _, item := range items {
+		result = append(result, frontmatter.AttachmentDerived{
+			ID:          item.ID,
+			Kind:        item.Kind,
+			ContentType: item.ContentType,
+			Size:        item.Size,
+			StorageKey:  item.StorageKey,
+			Created:     item.Created,
+		})
+	}
+	return result
+}
+
+func metaToAttachmentRefsFM(v interface{}) []frontmatter.AttachmentReference {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil
+	}
+	var refs []frontmatter.AttachmentReference
+	if err := json.Unmarshal(data, &refs); err != nil {
+		return nil
+	}
+	return refs
+}
+
 // =============================================================================
 // Update
 // =============================================================================
+
+// updateRequestTouchedFields returns the set of metadata-key names that the
+// caller explicitly included in an UpdateEntryRequest. This is used by Update
+// to decide which fields the post-reindex MergeMetadata step is allowed to
+// preserve from the prior DB state — fields the user is editing must be
+// sourced from the freshly-written file, not the stale DB metadata.
+//
+// Keys match the JSON keys stored in the notes.metadata column (which are
+// derived from the frontmatter struct's `json:` tags).
+func updateRequestTouchedFields(req types.UpdateEntryRequest) map[string]bool {
+	touched := make(map[string]bool)
+	if req.Schedule != nil {
+		touched["schedule"] = true
+	}
+	if req.ScheduleEnabled != nil {
+		touched["schedule_enabled"] = true
+	}
+	if req.NextRun != nil {
+		touched["next_run"] = true
+	}
+	if req.MaxRuns != nil {
+		touched["max_runs"] = true
+	}
+	if req.StartsAt != nil {
+		touched["starts_at"] = true
+	}
+	if req.ExpiresAt != nil {
+		touched["expires_at"] = true
+	}
+	if req.RunOnceAt != nil {
+		touched["run_once_at"] = true
+	}
+	if req.Timezone != nil {
+		touched["timezone"] = true
+	}
+	if req.CompleteOnIdle != nil {
+		touched["complete_on_idle"] = true
+	}
+	if req.DirectPrompt != nil {
+		touched["direct_prompt"] = true
+	}
+	if req.Sessions != nil {
+		touched["sessions"] = true
+	}
+	if req.Runs != nil {
+		touched["runs"] = true
+	}
+	return touched
+}
 
 // Update modifies an existing brain entry.
 func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
@@ -580,6 +709,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.Status != nil {
 		fm.Status = *req.Status
+		if stamp, changed := completionStamp(oldStatus, fm.Status); changed {
+			fm.CompletedAt = stamp
+		}
 	}
 	if req.Priority != nil {
 		fm.Priority = *req.Priority
@@ -601,6 +733,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 			}
 		}
 		fm.DependsOn = sanitized
+	}
+	if req.Attachments != nil {
+		fm.Attachments = attachmentRefsToFM(*req.Attachments)
 	}
 
 	// Schedule fields
@@ -657,12 +792,6 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.CompleteOnIdle != nil {
 		fm.CompleteOnIdle = req.CompleteOnIdle
 	}
-	if req.Executor != nil {
-		fm.Executor = *req.Executor
-	}
-	if len(req.Extensions) > 0 {
-		fm.Extensions = req.Extensions
-	}
 
 	// Feature fields
 	if req.FeatureID != nil {
@@ -678,12 +807,33 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	// Task execution fields
 	if req.DirectPrompt != nil {
 		fm.DirectPrompt = *req.DirectPrompt
+		// For automation entries, the root direct_prompt is meaningless — the
+		// runtime reads automation.Action.DirectPrompt to render the prompt
+		// for each generated task. Mirror the value into Action.DirectPrompt
+		// so MCP clients (which only expose the top-level direct_prompt arg)
+		// can update automation prompts without knowing about the nested
+		// shape. An explicit req.Action takes precedence over this mirror.
+		if fm.Type == "automation" && (req.Action == nil || req.Action.DirectPrompt == "") {
+			if fm.Action == nil {
+				fm.Action = &frontmatter.AutomationAction{}
+			}
+			fm.Action.DirectPrompt = *req.DirectPrompt
+			if fm.Action.Type == "" {
+				fm.Action.Type = "prompt"
+			}
+		}
 	}
 	if req.Agent != nil {
 		fm.Agent = *req.Agent
 	}
 	if req.Model != nil {
 		fm.Model = *req.Model
+	}
+	if req.Executor != nil {
+		fm.Executor = *req.Executor
+	}
+	if req.Extensions != nil {
+		fm.Extensions = *req.Extensions
 	}
 
 	// Generated fields
@@ -699,13 +849,18 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.GeneratedBy != nil {
 		fm.GeneratedBy = *req.GeneratedBy
 	}
+	if req.AutomationRunID != nil {
+		fm.AutomationRunID = *req.AutomationRunID
+	}
 
-	// Automation fields
 	if req.Trigger != nil {
-		fm.Trigger = automationTriggerToFM(req.Trigger)
+		fm.Trigger = fmTriggerFromTypes(req.Trigger)
 	}
 	if req.Action != nil {
 		fm.Action = automationActionToFM(req.Action)
+	}
+	if req.Goal != nil {
+		fm.Goal = goalConfigToFM(req.Goal)
 	}
 	if req.Retry != nil {
 		fm.Retry = automationRetryToFM(req.Retry)
@@ -721,6 +876,10 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 				Timestamp: v.Timestamp,
 				CronID:    v.CronID,
 				RunID:     v.RunID,
+				RunnerID:  v.RunnerID,
+				MachineID: v.MachineID,
+				Hostname:  v.Hostname,
+				Workdir:   v.Workdir,
 			}
 		}
 	}
@@ -804,20 +963,31 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 
 	// Preserve runtime metadata from the DB that the filesystem doesn't track.
-	// The re-index reads from disk which only has frontmatter fields, so any
-	// runtime-only fields (sessions, schedule state, direct_prompt, etc.) would
-	// be lost without this preservation step.
-	var preservedFields map[string]interface{}
+	// The re-index reads from disk; for fields the user did NOT explicitly
+	// touch in this request, restore the prior DB value so that runtime-only
+	// state (e.g. sessions/runs populated by the scheduler, or legacy entries
+	// where these fields were never written to disk) is not lost.
+	//
+	// IMPORTANT: do NOT preserve a runtime field if the user explicitly set it
+	// in the request — the on-disk write is the source of truth and the
+	// re-indexed value must win, otherwise edits to fields like direct_prompt,
+	// schedule, max_runs, etc. silently revert in the DB metadata even though
+	// the markdown file has the new value.
 	runtimeKeys := []string{
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
 	}
+	userTouched := updateRequestTouchedFields(req)
+	var preservedFields map[string]interface{}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}
 		if err := json.Unmarshal([]byte(row.Metadata), &existingMeta); err == nil {
 			preservedFields = make(map[string]interface{})
 			for _, key := range runtimeKeys {
+				if userTouched[key] {
+					continue // user-supplied value already on disk; let re-index win
+				}
 				if val, ok := existingMeta[key]; ok {
 					preservedFields[key] = val
 				}
@@ -831,6 +1001,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	// Re-index
 	if err := s.indexer.IndexFile(row.Path); err != nil {
 		return nil, fmt.Errorf("re-index file %q: %w", row.Path, err)
+	}
+	if err := s.indexEmbeddingsForEntry(ctx, row.Path); err != nil {
+		return nil, fmt.Errorf("re-embed file %q: %w", row.Path, err)
 	}
 
 	// Restore preserved runtime fields into the re-indexed metadata
@@ -1100,6 +1273,31 @@ func extractProjectFromPath(path string) string {
 // Metadata Updates
 // =============================================================================
 
+// completionStatuses are the statuses that represent finished work worth
+// timestamping. Cancelled/superseded are terminal but not completions.
+var completionStatuses = map[string]bool{
+	"completed": true,
+	"validated": true,
+}
+
+// completionStamp decides how completed_at changes for a status transition.
+// Returns (newValue, true) when the field should be written: an RFC3339
+// timestamp on entering a completion status, "" on leaving one (reopen).
+// Moving between completion statuses (completed→validated) keeps the
+// original stamp, so returns changed=false.
+func completionStamp(oldStatus, newStatus string) (string, bool) {
+	wasDone := completionStatuses[oldStatus]
+	isDone := completionStatuses[newStatus]
+	switch {
+	case isDone && !wasDone:
+		return types.TimeNowUTC().Format(time.RFC3339), true
+	case !isDone && wasDone:
+		return "", true
+	default:
+		return "", false
+	}
+}
+
 // durableMetadataFields is the set of metadata fields that should be persisted
 // back to the markdown file on disk. Fields not in this set are considered
 // transient/runtime-only and live only in SQLite.
@@ -1118,6 +1316,8 @@ var durableMetadataFields = map[string]bool{
 	"expires_at":         true,
 	"run_once_at":        true,
 	"timezone":           true,
+	"automation_run_id":  true,
+	"completed_at":       true,
 }
 
 // UpdateMetadata performs a shallow merge of fields into the entry's metadata
@@ -1132,6 +1332,22 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	}
 	if row == nil {
 		return nil, api.ErrNotFound
+	}
+
+	// Status transitions stamp/clear completed_at. Injecting into the fields
+	// map here (before durability routing) means the stamp reaches both the
+	// SQLite metadata JSON and the markdown file, and every status-changing
+	// caller — runner completion, PWA, assistant tools — gets it for free.
+	if v, ok := fields["status"]; ok {
+		if newStatus, ok := v.(string); ok {
+			oldStatus := ""
+			if row.Status != nil {
+				oldStatus = *row.Status
+			}
+			if stamp, changed := completionStamp(oldStatus, newStatus); changed {
+				fields["completed_at"] = stamp
+			}
+		}
 	}
 
 	// Check if any durable fields are present
@@ -1215,6 +1431,11 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 			fm.Status = s
 		}
 	}
+	if v, ok := fields["completed_at"]; ok {
+		if s, ok := v.(string); ok {
+			fm.CompletedAt = s
+		}
+	}
 	if v, ok := fields["priority"]; ok {
 		if s, ok := v.(string); ok {
 			fm.Priority = s
@@ -1280,6 +1501,11 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 			fm.Timezone = s
 		}
 	}
+	if v, ok := fields["automation_run_id"]; ok {
+		if s, ok := v.(string); ok {
+			fm.AutomationRunID = s
+		}
+	}
 
 	// Slice fields: coerce from JSON's []interface{} or []string, then sanitize
 	if v, ok := fields["tags"]; ok {
@@ -1343,18 +1569,25 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	}
 
 	// Preserve runtime metadata from the DB that the filesystem doesn't track.
-	// Same pattern as Update() method.
-	var preservedFields map[string]interface{}
+	// Skip preservation for keys the caller explicitly set in `fields`, so that
+	// the freshly re-indexed value (sourced from the just-written file) wins
+	// over the stale pre-update DB value. Without this, edits to fields like
+	// schedule, starts_at, max_runs, etc. silently revert in the DB metadata
+	// even though the file has the new value.
 	runtimeKeys := []string{
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
 	}
+	var preservedFields map[string]interface{}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}
 		if err := json.Unmarshal([]byte(row.Metadata), &existingMeta); err == nil {
 			preservedFields = make(map[string]interface{})
 			for _, key := range runtimeKeys {
+				if _, touched := fields[key]; touched {
+					continue // caller-supplied value is already on disk; let re-index win
+				}
 				if val, ok := existingMeta[key]; ok {
 					preservedFields[key] = val
 				}
@@ -1368,6 +1601,9 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	// Re-index the file
 	if err := s.indexer.IndexFile(row.Path); err != nil {
 		return fmt.Errorf("re-index file %q: %w", row.Path, err)
+	}
+	if err := s.indexEmbeddingsForEntry(ctx, row.Path); err != nil {
+		return fmt.Errorf("re-embed file %q: %w", row.Path, err)
 	}
 
 	// Restore preserved runtime fields into the re-indexed metadata
@@ -1428,6 +1664,82 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 	return nil
 }
 
+func (s *BrainServiceImpl) indexEmbeddingsForEntry(ctx context.Context, path string) error {
+	if s.embeddingClient == nil {
+		return nil
+	}
+	row, err := s.storage.GetNoteByPath(ctx, path)
+	if err != nil {
+		return err
+	}
+	if row != nil {
+		if err := s.storage.DeleteNoteEmbeddings(ctx, row.ID); err != nil {
+			return err
+		}
+	}
+	_, err = s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, indexer.EmbeddingIndexOptions{Path: path})
+	return err
+}
+
+// AttachmentDerivedTextChanged refreshes semantic embeddings for entries linked
+// to an attachment whose derived text has changed.
+func (s *BrainServiceImpl) AttachmentDerivedTextChanged(ctx context.Context, projectID, attachmentID string, derived types.AttachmentDerivedText, linked []types.AttachmentLinkedEntry) error {
+	seen := make(map[string]struct{}, len(linked))
+	for _, entry := range linked {
+		path := strings.TrimSpace(entry.Path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		if err := s.indexEmbeddingsForEntry(ctx, path); err != nil {
+			return fmt.Errorf("refresh attachment-derived embeddings for %q: %w", path, err)
+		}
+	}
+	return nil
+}
+
+// EmbedEntries generates embeddings for matching entries.
+func (s *BrainServiceImpl) EmbedEntries(ctx context.Context, req types.EmbeddingBackfillRequest) (*types.EmbeddingBackfillResponse, error) {
+	opts := indexer.EmbeddingIndexOptions{
+		Project: req.Project,
+		Path:    req.Path,
+		Force:   req.Force,
+	}
+	if req.DryRun {
+		candidates, err := s.indexer.ListEmbeddingBackfillCandidates(ctx, opts)
+		if err != nil {
+			return nil, err
+		}
+		entries := make([]types.EmbeddingBackfillEntry, 0, len(candidates))
+		for _, candidate := range candidates {
+			entries = append(entries, types.EmbeddingBackfillEntry{
+				ID:      candidate.ID,
+				Path:    candidate.Path,
+				Title:   candidate.Title,
+				Project: candidate.Project,
+				Type:    candidate.Type,
+			})
+		}
+		return &types.EmbeddingBackfillResponse{Processed: len(entries), DryRun: true, Entries: entries}, nil
+	}
+	if s.embeddingClient == nil {
+		return nil, fmt.Errorf("embedding client is not available")
+	}
+	result, err := s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &types.EmbeddingBackfillResponse{
+		Processed: result.Processed,
+		Skipped:   result.Skipped,
+		Failed:    result.Failed,
+		Duration:  result.Duration.Round(time.Millisecond).String(),
+	}, nil
+}
+
 // =============================================================================
 // List
 // =============================================================================
@@ -1486,7 +1798,16 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 
 	entries := make([]types.BrainEntry, 0, len(filtered))
 	for _, row := range filtered {
-		entries = append(entries, NoteRowToBrainEntry(row))
+		entry := NoteRowToBrainEntry(row)
+		if wantsAttachmentMetadata(req.Include) {
+			if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
+				return nil, err
+			}
+		}
+		if status, err := s.storage.EmbeddingStatus(ctx, row); err == nil {
+			entry.EmbeddingStatus = status
+		}
+		entries = append(entries, entry)
 	}
 
 	total := len(entries)
@@ -1503,7 +1824,15 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 // Search
 // =============================================================================
 
-// Search performs full-text search across brain entries.
+// Search performs search across brain entries with support for FTS, semantic, and hybrid strategies.
+//
+// Strategy behavior:
+//   - "fts" / empty → existing FTS5 behavior
+//   - "semantic" → use query embedding + SearchByEmbedding when embeddings enabled, falls back to FTS
+//   - "hybrid" → run both FTS and embedding search and merge results, falls back to FTS if embeddings unavailable
+//
+// Fallback semantics: on any embedding error (client or storage), logs the error and returns FTS results
+// instead of failing the request. This ensures the API remains responsive even when embeddings are disabled.
 func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) (*types.SearchResponse, error) {
 	if req.Query == "" {
 		return &types.SearchResponse{
@@ -1512,13 +1841,20 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 		}, nil
 	}
 
+	// Determine strategy: default to "fts" if not specified
+	strategy := req.Strategy
+	if strategy == "" {
+		strategy = "fts"
+	}
+
+	// Build filter options shared across all strategies
 	opts := &storage.SearchOptions{
 		Type:      req.Type,
 		Status:    req.Status,
 		ProjectID: req.Project,
 		FeatureID: req.FeatureID,
 		Tags:      req.Tags,
-		Strategy:  req.Strategy,
+		Strategy:  "fts", // Always use FTS for the underlying storage call
 		Priority:  req.Priority,
 	}
 	if req.Limit != nil {
@@ -1528,24 +1864,185 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 		opts.PathPrefix = "global/"
 	}
 
+	switch strategy {
+	case "semantic":
+		return s.searchSemantic(ctx, req, opts)
+	case "hybrid":
+		return s.searchHybrid(ctx, req, opts)
+	default:
+		// "fts" or unknown → use existing FTS behavior
+		return s.searchFTS(ctx, req, opts)
+	}
+}
+
+// searchFTS performs standard FTS5 full-text search.
+func (s *BrainServiceImpl) searchFTS(ctx context.Context, req types.SearchRequest, opts *storage.SearchOptions) (*types.SearchResponse, error) {
 	rows, err := s.storage.SearchNotes(ctx, req.Query, opts)
 	if err != nil {
 		return nil, fmt.Errorf("search notes: %w", err)
 	}
 
+	return s.buildSearchResponse(ctx, rows, req.Include)
+}
+
+// searchSemantic performs embedding-based semantic search.
+// Falls back to FTS if embeddings are unavailable or if an error occurs.
+func (s *BrainServiceImpl) searchSemantic(ctx context.Context, req types.SearchRequest, opts *storage.SearchOptions) (*types.SearchResponse, error) {
+	// Check if embedding client is available
+	if s.embeddingClient == nil {
+		slog.Warn("semantic search requested but embedding client is nil, falling back to FTS", "query", req.Query)
+		return s.searchFTS(ctx, req, opts)
+	}
+
+	// Generate query embedding
+	embeddings, err := s.embeddingClient.Embed(ctx, []string{req.Query})
+	if err != nil {
+		slog.Error("failed to generate query embedding, falling back to FTS", "query", req.Query, "error", err)
+		return s.searchFTS(ctx, req, opts)
+	}
+	if len(embeddings) == 0 {
+		slog.Warn("no embeddings returned for query, falling back to FTS", "query", req.Query)
+		return s.searchFTS(ctx, req, opts)
+	}
+
+	queryVec := embeddings[0]
+
+	// Build embedding search options from filter options
+	embOpts := &storage.EmbeddingSearchOptions{
+		Limit:     opts.Limit,
+		ProjectID: opts.ProjectID,
+		Type:      opts.Type,
+		Status:    opts.Status,
+		FeatureID: opts.FeatureID,
+		Priority:  opts.Priority,
+		Tags:      opts.Tags,
+	}
+
+	// Perform embedding-based search
+	rows, err := s.storage.SearchByEmbedding(ctx, queryVec, embOpts)
+	if err != nil {
+		slog.Error("embedding search failed, falling back to FTS", "query", req.Query, "error", err)
+		return s.searchFTS(ctx, req, opts)
+	}
+
+	return s.buildSearchResponse(ctx, rows, req.Include)
+}
+
+// searchHybrid combines FTS and semantic search results.
+// Falls back to FTS-only if embeddings are unavailable or if an error occurs.
+func (s *BrainServiceImpl) searchHybrid(ctx context.Context, req types.SearchRequest, opts *storage.SearchOptions) (*types.SearchResponse, error) {
+	// Always run FTS search first
+	ftsRows, err := s.storage.SearchNotes(ctx, req.Query, opts)
+	if err != nil {
+		return nil, fmt.Errorf("FTS search failed in hybrid mode: %w", err)
+	}
+
+	// Check if embedding client is available
+	if s.embeddingClient == nil {
+		slog.Warn("hybrid search requested but embedding client is nil, returning FTS results only", "query", req.Query)
+		return s.buildSearchResponse(ctx, ftsRows, req.Include)
+	}
+
+	// Generate query embedding
+	embeddings, err := s.embeddingClient.Embed(ctx, []string{req.Query})
+	if err != nil {
+		slog.Error("failed to generate query embedding in hybrid mode, returning FTS results only", "query", req.Query, "error", err)
+		return s.buildSearchResponse(ctx, ftsRows, req.Include)
+	}
+	if len(embeddings) == 0 {
+		slog.Warn("no embeddings returned for query in hybrid mode, returning FTS results only", "query", req.Query)
+		return s.buildSearchResponse(ctx, ftsRows, req.Include)
+	}
+
+	queryVec := embeddings[0]
+
+	// Build embedding search options
+	embOpts := &storage.EmbeddingSearchOptions{
+		Limit:     opts.Limit,
+		ProjectID: opts.ProjectID,
+		Type:      opts.Type,
+		Status:    opts.Status,
+		FeatureID: opts.FeatureID,
+		Priority:  opts.Priority,
+		Tags:      opts.Tags,
+	}
+
+	// Perform embedding-based search
+	embRows, err := s.storage.SearchByEmbedding(ctx, queryVec, embOpts)
+	if err != nil {
+		slog.Error("embedding search failed in hybrid mode, returning FTS results only", "query", req.Query, "error", err)
+		return s.buildSearchResponse(ctx, ftsRows, req.Include)
+	}
+
+	// Merge results: deduplicate by path, FTS results take precedence for ordering
+	merged := s.mergeSearchResults(ftsRows, embRows, opts.Limit)
+
+	return s.buildSearchResponse(ctx, merged, req.Include)
+}
+
+// mergeSearchResults combines FTS and embedding search results, deduplicating by path.
+// FTS results appear first (to preserve BM25 ranking), followed by unique embedding results.
+// The final result is limited to the specified limit.
+func (s *BrainServiceImpl) mergeSearchResults(ftsRows, embRows []*storage.NoteRow, limit int) []*storage.NoteRow {
+	if limit <= 0 {
+		limit = 20 // default limit
+	}
+
+	// Track seen paths to deduplicate
+	seen := make(map[string]bool)
+	var merged []*storage.NoteRow
+
+	// Add FTS results first
+	for _, row := range ftsRows {
+		if len(merged) >= limit {
+			break
+		}
+		if !seen[row.Path] {
+			merged = append(merged, row)
+			seen[row.Path] = true
+		}
+	}
+
+	// Add unique embedding results
+	for _, row := range embRows {
+		if len(merged) >= limit {
+			break
+		}
+		if !seen[row.Path] {
+			merged = append(merged, row)
+			seen[row.Path] = true
+		}
+	}
+
+	return merged
+}
+
+// buildSearchResponse converts NoteRow slice to SearchResponse.
+func (s *BrainServiceImpl) buildSearchResponse(ctx context.Context, rows []*storage.NoteRow, include []string) (*types.SearchResponse, error) {
 	results := make([]types.SearchResult, 0, len(rows))
+	includeAttachments := wantsAttachmentMetadata(include)
 	for _, row := range rows {
 		snippet := ""
 		if row.Lead != nil {
 			snippet = *row.Lead
 		}
+		var attachments []types.AttachmentReference
+		if includeAttachments {
+			entry := NoteRowToBrainEntry(row)
+			if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
+				return nil, err
+			}
+			attachments = entry.Attachments
+		}
 		results = append(results, types.SearchResult{
-			ID:      row.ShortID,
-			Path:    row.Path,
-			Title:   row.Title,
-			Type:    derefStr(row.Type),
-			Status:  derefStr(row.Status),
-			Snippet: snippet,
+			ID:          row.ShortID,
+			Path:        row.Path,
+			Title:       row.Title,
+			Type:        derefStr(row.Type),
+			Status:      derefStr(row.Status),
+			Snippet:     snippet,
+			MatchSource: row.MatchSource,
+			Attachments: attachments,
 		})
 	}
 
@@ -1553,6 +2050,109 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 		Results: results,
 		Total:   len(results),
 	}, nil
+}
+
+func wantsAttachmentMetadata(include []string) bool {
+	for _, value := range include {
+		switch strings.ToLower(strings.TrimSpace(value)) {
+		case "attachments", "attachment_metadata":
+			return true
+		}
+	}
+	return false
+}
+
+func (s *BrainServiceImpl) enrichEntryAttachmentMetadata(ctx context.Context, entry *types.BrainEntry) error {
+	if entry == nil || strings.TrimSpace(entry.Path) == "" {
+		return nil
+	}
+	rows, err := s.storage.ListAttachmentsForEntry(ctx, entry.Path)
+	if err != nil {
+		return fmt.Errorf("list attachment metadata for %s: %w", entry.Path, err)
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+
+	attachmentsByID := make(map[string]types.Attachment, len(rows))
+	orderedIDs := make([]string, 0, len(rows))
+	for _, row := range rows {
+		att, err := attachmentRowToDTO(row)
+		if err != nil {
+			return err
+		}
+		attachmentsByID[att.ID] = att
+		orderedIDs = append(orderedIDs, att.ID)
+	}
+
+	projectID := attachmentURLProjectID(entry, attachmentsByID)
+	refs := make([]types.AttachmentReference, 0, max(len(entry.Attachments), len(rows)))
+	seen := make(map[string]bool, len(rows))
+	for _, ref := range entry.Attachments {
+		if att, ok := attachmentsByID[ref.ID]; ok {
+			ref = s.enrichedAttachmentReference(ctx, att, ref, projectID)
+			seen[ref.ID] = true
+		}
+		refs = append(refs, ref)
+	}
+	for _, id := range orderedIDs {
+		if seen[id] {
+			continue
+		}
+		refs = append(refs, s.enrichedAttachmentReference(ctx, attachmentsByID[id], types.AttachmentReference{ID: id}, projectID))
+	}
+	entry.Attachments = refs
+	return nil
+}
+
+func (s *BrainServiceImpl) enrichedAttachmentReference(ctx context.Context, att types.Attachment, ref types.AttachmentReference, projectID string) types.AttachmentReference {
+	ref.ID = att.ID
+	ref.Filename = att.Filename
+	ref.ContentType = att.ContentType
+	ref.Size = att.Size
+	ref.SHA256 = att.SHA256
+	ref.Metadata = copyStringMap(att.Metadata)
+	if projectID != "" {
+		escapedProject := url.QueryEscape(projectID)
+		ref.DownloadURL = "/api/v1/attachments/" + url.PathEscape(att.ID) + "/content?project_id=" + escapedProject
+		ref.TextURL = "/api/v1/attachments/" + url.PathEscape(att.ID) + "/text?project_id=" + escapedProject
+	}
+	if id, err := parseAttachmentID(att.ID); err == nil && s.storage != nil {
+		if row, err := s.storage.GetAttachmentDerived(ctx, id, "text"); err == nil && row != nil {
+			if derived, err := attachmentDerivedRowToDTO(row); err == nil {
+				ref.DerivedText = &derived
+			}
+		}
+	}
+	return ref
+}
+
+func attachmentURLProjectID(entry *types.BrainEntry, attachments map[string]types.Attachment) string {
+	if entry != nil {
+		if strings.TrimSpace(entry.ProjectID) != "" {
+			return strings.TrimSpace(entry.ProjectID)
+		}
+		if projectID := extractProjectFromPath(entry.Path); projectID != "" {
+			return projectID
+		}
+	}
+	for _, att := range attachments {
+		if projectID := strings.TrimSpace(att.Metadata["project_id"]); projectID != "" {
+			return projectID
+		}
+	}
+	return ""
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // =============================================================================
@@ -1575,8 +2175,9 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 	}
 
 	opts := &storage.SearchOptions{
-		Limit: limit,
-		Type:  req.Type,
+		Limit:     limit,
+		Type:      req.Type,
+		ProjectID: req.Project,
 	}
 
 	rows, err := s.storage.SearchNotes(ctx, req.Query, opts)
@@ -1867,12 +2468,22 @@ func (s *BrainServiceImpl) GetSection(ctx context.Context, path string, title st
 // =============================================================================
 
 // GetStats returns aggregate statistics.
-// When global=true, returns only global entries stats.
-// When global=false, returns total stats across all entries.
-func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool) (*types.StatsResponse, error) {
-	// Primary stats based on the global flag
+//
+// Filter precedence (highest wins):
+//  1. project != ""  → primary stats are scoped to entries under
+//     projects/<project>/. `global` is ignored in that case.
+//  2. global == true → primary stats include only entries under global/.
+//  3. neither       → primary stats span all entries.
+//
+// The response always includes overall GlobalEntries and ProjectEntries
+// counts so callers can compare a scoped result against the totals.
+func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
+	// Primary stats based on the filter precedence above.
 	var primaryOpts *storage.StatsOptions
-	if global {
+	switch {
+	case project != "":
+		primaryOpts = &storage.StatsOptions{Path: "projects/" + project + "/"}
+	case global:
 		primaryOpts = &storage.StatsOptions{Path: "global/"}
 	}
 
@@ -1907,14 +2518,18 @@ func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool) (*types.St
 }
 
 // GetOrphans returns entries with no incoming links.
-func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error) {
+func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	noteRows, err := s.storage.GetOrphans(ctx, &storage.OrphanOptions{
+	opts := &storage.OrphanOptions{
 		Type:  entryType,
 		Limit: limit,
-	})
+	}
+	if project != "" {
+		opts.Path = "projects/" + project + "/"
+	}
+	noteRows, err := s.storage.GetOrphans(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("get orphans: %w", err)
 	}
@@ -1922,17 +2537,22 @@ func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, lim
 }
 
 // GetStale returns entries not verified in N days.
-func (s *BrainServiceImpl) GetStale(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error) {
+// When project is set, results are scoped to entries under projects/<project>/.
+func (s *BrainServiceImpl) GetStale(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if days <= 0 {
 		days = 30
 	}
 	if limit <= 0 {
 		limit = 50
 	}
-	noteRows, err := s.storage.GetStaleEntries(ctx, days, &storage.StaleOptions{
+	opts := &storage.StaleOptions{
 		Type:  entryType,
 		Limit: limit,
-	})
+	}
+	if project != "" {
+		opts.Path = "projects/" + project + "/"
+	}
+	noteRows, err := s.storage.GetStaleEntries(ctx, days, opts)
 	if err != nil {
 		return nil, fmt.Errorf("get stale entries: %w", err)
 	}
@@ -2155,4 +2775,42 @@ func coerceStringSlice(v interface{}, sanitize func(string) (string, bool)) []st
 		}
 	}
 	return result
+}
+
+// fmTriggerFromTypes converts a types.TriggerConfig to a frontmatter.TriggerConfig.
+func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
+	if t == nil {
+		return nil
+	}
+	return &frontmatter.TriggerConfig{
+		Type:                   t.Type,
+		Event:                  t.Event,
+		Events:                 t.Events,
+		Schedule:               t.Schedule,
+		Filter:                 t.Filter,
+		OncePer:                t.OncePer,
+		Webhook:                t.Webhook,
+		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
+		Cooldown:               t.Cooldown,
+		MaxConcurrent:          t.MaxConcurrent,
+	}
+}
+
+// typesTriggerFromFM converts a frontmatter.TriggerConfig to a types.TriggerConfig.
+func typesTriggerFromFM(t *frontmatter.TriggerConfig) *types.TriggerConfig {
+	if t == nil {
+		return nil
+	}
+	return &types.TriggerConfig{
+		Type:                   t.Type,
+		Event:                  t.Event,
+		Events:                 t.Events,
+		Schedule:               t.Schedule,
+		Filter:                 t.Filter,
+		OncePer:                t.OncePer,
+		Webhook:                t.Webhook,
+		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
+		Cooldown:               t.Cooldown,
+		MaxConcurrent:          t.MaxConcurrent,
+	}
 }

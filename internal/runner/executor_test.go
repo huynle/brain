@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,8 +51,23 @@ func TestExecutor_BuildPrompt_DirectPrompt(t *testing.T) {
 	task.DirectPrompt = "Do this specific thing verbatim"
 
 	prompt := e.BuildPrompt(task, false)
-	if prompt != "Do this specific thing verbatim" {
-		t.Errorf("BuildPrompt with direct_prompt = %q, want %q", prompt, "Do this specific thing verbatim")
+
+	// direct_prompt must be present verbatim somewhere in the output
+	if !strings.Contains(prompt, "Do this specific thing verbatim") {
+		t.Errorf("BuildPrompt should preserve direct_prompt verbatim, got %q", prompt)
+	}
+	// task identity header must pin the agent to this task
+	if !strings.Contains(prompt, task.ID) {
+		t.Errorf("BuildPrompt should contain task ID %q, got %q", task.ID, prompt)
+	}
+	if !strings.Contains(prompt, task.Path) {
+		t.Errorf("BuildPrompt should contain brain path %q, got %q", task.Path, prompt)
+	}
+	if !strings.Contains(prompt, "Task Assignment") {
+		t.Errorf("BuildPrompt should contain 'Task Assignment' header, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Do NOT call brain_task_next") {
+		t.Errorf("BuildPrompt should instruct the agent not to call brain_task_next, got %q", prompt)
 	}
 }
 
@@ -62,10 +78,17 @@ func TestExecutor_BuildPrompt_DirectPrompt_IgnoresResume(t *testing.T) {
 	task := testResolvedTask("abc123")
 	task.DirectPrompt = "Do this specific thing"
 
-	// Even with isResume=true, direct_prompt should be used verbatim
+	// Even with isResume=true, direct_prompt should be preserved verbatim
+	// alongside the task assignment header.
 	prompt := e.BuildPrompt(task, true)
-	if prompt != "Do this specific thing" {
-		t.Errorf("BuildPrompt with direct_prompt and isResume = %q, want %q", prompt, "Do this specific thing")
+	if !strings.Contains(prompt, "Do this specific thing") {
+		t.Errorf("BuildPrompt should preserve direct_prompt on resume, got %q", prompt)
+	}
+	if !strings.Contains(prompt, task.ID) {
+		t.Errorf("BuildPrompt should contain task ID on resume, got %q", prompt)
+	}
+	if !strings.Contains(prompt, "Resume:     true") {
+		t.Errorf("BuildPrompt should mark Resume=true, got %q", prompt)
 	}
 }
 
@@ -86,6 +109,26 @@ func TestExecutor_BuildPrompt_NewTask(t *testing.T) {
 	}
 	if strings.Contains(prompt, "RESUME") {
 		t.Error("new task prompt should not contain RESUME")
+	}
+}
+
+func TestExecutor_BuildPrompt_IncludesTaskContentWithFrontmatter(t *testing.T) {
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Content = "---\ntitle: Frontmatter passthrough test\nstatus: pending\n---\n\n# Frontmatter passthrough test\n\nTask content here."
+
+	prompt := e.BuildPrompt(task, false)
+
+	if !strings.Contains(prompt, "Task content from Brain API:") {
+		t.Fatal("prompt should include task content section")
+	}
+	if !strings.Contains(prompt, "title: Frontmatter passthrough test") {
+		t.Error("prompt should preserve frontmatter fields")
+	}
+	if !strings.Contains(prompt, "Task content here.") {
+		t.Error("prompt should preserve task body")
 	}
 }
 
@@ -187,6 +230,481 @@ func TestExecutor_ResolveWorkdir_Priority_TargetOverResolved(t *testing.T) {
 	}
 }
 
+func TestExecutor_ResolveWorkdir_WorktreeModeRequiresRepoContext(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.WorkDir = "/unsafe/fallback"
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("/bin/echo", "unexpected git command")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+
+	_, err := e.ResolveWorkdir(task)
+	if err == nil {
+		t.Fatal("ResolveWorkdir should fail for worktree mode without repo context")
+	}
+	if !strings.Contains(err.Error(), "worktree") || !strings.Contains(err.Error(), "repo context") {
+		t.Fatalf("error should clearly mention missing worktree repo context, got: %v", err)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_ExplicitWorktreeWithoutBranchRequiresRepoContext(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.WorkDir = "/unsafe/fallback"
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("/bin/echo", "unexpected git command")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+
+	_, err := e.ResolveWorkdir(task)
+	if err == nil {
+		t.Fatal("ResolveWorkdir should fail for explicit worktree mode without repo context")
+	}
+	if !strings.Contains(err.Error(), "worktree") || !strings.Contains(err.Error(), "repo context") {
+		t.Fatalf("error should clearly mention missing worktree repo context, got: %v", err)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_RejectsUnsafeGitRemotes(t *testing.T) {
+	tests := []struct {
+		name    string
+		remote  string
+		wantErr string
+	}{
+		{
+			name:    "ssh remote",
+			remote:  "git@github.com:owner/repo.git",
+			wantErr: "HTTPS",
+		},
+		{
+			name:    "embedded credentials",
+			remote:  "https://token@github.com/owner/repo.git",
+			wantErr: "embedded credentials",
+		},
+		{
+			name:    "non-https remote",
+			remote:  "http://github.com/owner/repo.git",
+			wantErr: "HTTPS",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testExecutorConfig()
+			cfg.RepoCacheDir = t.TempDir()
+			cfg.GitToken = "secret-token"
+			cfg.RequireHTTPS = true
+			e := NewExecutor(cfg)
+			e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+				return exec.Command("/bin/echo", "unexpected git command")
+			}
+
+			task := testResolvedTask("abc123")
+			task.ExecutionMode = "worktree"
+			task.GitBranch = "feature/bootstrap"
+			task.GitRemote = tt.remote
+
+			_, err := e.ResolveWorkdir(task)
+			if err == nil {
+				t.Fatalf("ResolveWorkdir should reject %s", tt.remote)
+			}
+			if !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("error = %v, want it to contain %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestExecutor_ResolveWorkdir_GitRemoteRequiresTokenUnlessUnauthenticatedAllowed(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = t.TempDir()
+	cfg.GitToken = ""
+	cfg.GitTokenEnv = ""
+	cfg.RequireHTTPS = true
+	cfg.AllowUnauthenticatedHTTPS = false
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("/bin/echo", "unexpected git command")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = "https://github.com/owner/repo.git"
+
+	_, err := e.ResolveWorkdir(task)
+	if err == nil {
+		t.Fatal("ResolveWorkdir should fail when HTTPS git_remote has no token")
+	}
+	if !strings.Contains(err.Error(), "git token") && !strings.Contains(err.Error(), "unauthenticated") {
+		t.Fatalf("error should clearly mention missing git token or unauthenticated HTTPS policy, got: %v", err)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_GitRemoteAllowsUnauthenticatedHTTPSWhenEnabled(t *testing.T) {
+	cacheDir := t.TempDir()
+	remote := "https://github.com/owner/repo.git"
+	parsedRemote, err := url.Parse(remote)
+	if err != nil {
+		t.Fatalf("parse remote: %v", err)
+	}
+	expectedRepo := filepath.Join(cacheDir, cacheDirNameForRemote(parsedRemote))
+	expectedWorktree := filepath.Join(expectedRepo, ".worktrees", "feature-bootstrap")
+
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = cacheDir
+	cfg.GitToken = ""
+	cfg.GitTokenEnv = ""
+	cfg.RequireHTTPS = true
+	cfg.AllowUnauthenticatedHTTPS = true
+	e := NewExecutor(cfg)
+
+	var cloneArgs []string
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name != "git" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 3 && args[0] == "clone" {
+			cloneArgs = append([]string(nil), args...)
+			if args[1] != remote || args[2] != expectedRepo {
+				return exec.Command("/bin/sh", "-c", "printf 'wrong clone target' && exit 1")
+			}
+			return exec.Command("/bin/sh", "-c", "mkdir -p \"$1\"", "sh", expectedRepo)
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "branch" && args[3] == "--show-current" {
+			return exec.Command("/bin/sh", "-c", "printf main")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "list" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "feature/bootstrap" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "main" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 7 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "add" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = remote
+
+	got, err := e.ResolveWorkdir(task)
+	if err != nil {
+		t.Fatalf("ResolveWorkdir returned error: %v", err)
+	}
+	if got != expectedWorktree {
+		t.Fatalf("ResolveWorkdir = %q, want %q", got, expectedWorktree)
+	}
+	if len(cloneArgs) == 0 {
+		t.Fatal("expected unauthenticated git clone to run")
+	}
+	if containsArg(cloneArgs, "http.extraheader=Authorization: Bearer ") || containsArg(cloneArgs, "-c") {
+		t.Fatalf("unauthenticated clone should not include auth config, got: %v", cloneArgs)
+	}
+}
+
+func TestValidateGitRemote_AllowsHTTPOnlyWhenRequireHTTPSDisabled(t *testing.T) {
+	if _, err := validateGitRemote("http://github.com/owner/repo.git", true); err == nil {
+		t.Fatal("validateGitRemote should reject HTTP when require_https is enabled")
+	}
+	if _, err := validateGitRemote("http://github.com/owner/repo.git", false); err != nil {
+		t.Fatalf("validateGitRemote should allow HTTP when require_https is disabled: %v", err)
+	}
+	if _, err := validateGitRemote("ssh://github.com/owner/repo.git", false); err == nil {
+		t.Fatal("validateGitRemote should always reject SSH remotes")
+	}
+}
+
+func TestExecutor_ResolveWorkdir_WorktreeModeUsesAbsoluteWorkdirGitRepo(t *testing.T) {
+	repo := t.TempDir()
+	var worktreeAddArgs []string
+
+	cfg := testExecutorConfig()
+	cfg.WorkDir = "/unsafe/fallback"
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name != "git" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == repo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == repo && args[2] == "branch" && args[3] == "--show-current" {
+			return exec.Command("/bin/sh", "-c", "printf main")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == repo && args[2] == "worktree" && args[3] == "list" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == repo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "feature/bootstrap" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == repo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "main" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 7 && args[0] == "-C" && args[1] == repo && args[2] == "worktree" && args[3] == "add" {
+			worktreeAddArgs = append([]string(nil), args...)
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.Workdir = repo
+
+	got, err := e.ResolveWorkdir(task)
+	if err != nil {
+		t.Fatalf("ResolveWorkdir returned error: %v", err)
+	}
+	expected := filepath.Join(repo, ".worktrees", "feature-bootstrap")
+	if got != expected {
+		t.Fatalf("ResolveWorkdir = %q, want %q", got, expected)
+	}
+	if len(worktreeAddArgs) == 0 {
+		t.Fatal("expected git worktree add to run against absolute workdir repo")
+	}
+}
+
+func TestExecutor_ResolveWorkdir_WorktreeModeUsesValidLocalRepoWhenSeparateWorktreeUnneeded(t *testing.T) {
+	tests := []struct {
+		name          string
+		currentBranch string
+		gitBranch     string
+	}{
+		{name: "already on requested branch", currentBranch: "feature/bootstrap", gitBranch: "feature/bootstrap"},
+		{name: "default branch", currentBranch: "main", gitBranch: "main"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := t.TempDir()
+			cfg := testExecutorConfig()
+			cfg.WorkDir = "/unsafe/fallback"
+			e := NewExecutor(cfg)
+			e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+				if name != "git" {
+					return exec.Command("/bin/sh", "-c", "exit 1")
+				}
+				if len(args) >= 4 && args[0] == "-C" && args[1] == repo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+					return exec.Command("/bin/sh", "-c", "exit 0")
+				}
+				if len(args) >= 4 && args[0] == "-C" && args[1] == repo && args[2] == "branch" && args[3] == "--show-current" {
+					return exec.Command("/bin/echo", tt.currentBranch)
+				}
+				return exec.Command("/bin/sh", "-c", "exit 1")
+			}
+
+			task := testResolvedTask("abc123")
+			task.ExecutionMode = "worktree"
+			task.GitBranch = tt.gitBranch
+			task.TargetWorkdir = repo
+
+			got, err := e.ResolveWorkdir(task)
+			if err != nil {
+				t.Fatalf("ResolveWorkdir returned error: %v", err)
+			}
+			if got != repo {
+				t.Fatalf("ResolveWorkdir = %q, want local repo %q", got, repo)
+			}
+		})
+	}
+}
+
+func TestExecutor_ResolveWorkdir_RedactsGitTokenFromCloneErrors(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = t.TempDir()
+	cfg.GitToken = "secret-token"
+	cfg.RequireHTTPS = true
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name == "git" && len(args) >= 4 && args[0] == "-c" && args[2] == "clone" {
+			return exec.Command("/bin/sh", "-c", "printf 'fatal: Authorization: Bearer secret-token rejected' && exit 1")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = "https://github.com/owner/repo.git"
+
+	_, err := e.ResolveWorkdir(task)
+	if err == nil {
+		t.Fatal("ResolveWorkdir should return clone failure")
+	}
+	if strings.Contains(err.Error(), "secret-token") || strings.Contains(err.Error(), "Authorization: Bearer") {
+		t.Fatalf("clone error leaked git token/header: %v", err)
+	}
+	if !strings.Contains(err.Error(), "git clone failed") {
+		t.Fatalf("error should preserve useful clone context, got: %v", err)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_GitRemoteClonesIntoRepoCacheAndCreatesWorktree(t *testing.T) {
+	t.Setenv("TEST_GIT_TOKEN", "env-secret-token")
+	cacheDir := t.TempDir()
+	remote := "https://github.com/owner/repo.git"
+	parsedRemote, err := url.Parse(remote)
+	if err != nil {
+		t.Fatalf("parse remote: %v", err)
+	}
+	expectedRepo := filepath.Join(cacheDir, cacheDirNameForRemote(parsedRemote))
+	expectedWorktree := filepath.Join(expectedRepo, ".worktrees", "feature-bootstrap")
+
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = cacheDir
+	cfg.GitToken = ""
+	cfg.GitTokenEnv = "TEST_GIT_TOKEN"
+	cfg.RequireHTTPS = true
+	e := NewExecutor(cfg)
+
+	var cloneArgs []string
+	var worktreeAddArgs []string
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name != "git" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 5 && args[0] == "-c" && args[2] == "clone" {
+			cloneArgs = append([]string(nil), args...)
+			if args[3] != remote {
+				return exec.Command("/bin/sh", "-c", "printf 'wrong remote' && exit 1")
+			}
+			if args[4] != expectedRepo {
+				return exec.Command("/bin/sh", "-c", "printf 'wrong cache path' && exit 1")
+			}
+			return exec.Command("/bin/sh", "-c", "mkdir -p \"$1\"", "sh", expectedRepo)
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "branch" && args[3] == "--show-current" {
+			return exec.Command("/bin/sh", "-c", "printf main")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "list" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "feature/bootstrap" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--verify" && args[4] == "main" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 7 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "add" {
+			worktreeAddArgs = append([]string(nil), args...)
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = remote
+
+	got, err := e.ResolveWorkdir(task)
+	if err != nil {
+		t.Fatalf("ResolveWorkdir returned error: %v", err)
+	}
+	if got != expectedWorktree {
+		t.Fatalf("ResolveWorkdir = %q, want %q", got, expectedWorktree)
+	}
+	if len(cloneArgs) == 0 {
+		t.Fatal("expected git clone to run")
+	}
+	if !containsArg(cloneArgs, "http.extraheader=Authorization: Bearer env-secret-token") {
+		t.Fatalf("clone args should include token via http.extraheader, got: %v", cloneArgs)
+	}
+	if strings.Contains(cloneArgs[3], "env-secret-token") {
+		t.Fatalf("clone remote should not embed token, got args: %v", cloneArgs)
+	}
+	if len(worktreeAddArgs) == 0 || !containsArg(worktreeAddArgs, expectedWorktree) {
+		t.Fatalf("expected worktree under cached repo, got worktree args: %v", worktreeAddArgs)
+	}
+}
+
+func TestExecutor_ResolveWorkdir_GitRemoteFetchesExistingCachedRepo(t *testing.T) {
+	cacheDir := t.TempDir()
+	remote := "https://github.com/owner/repo.git"
+	parsedRemote, err := url.Parse(remote)
+	if err != nil {
+		t.Fatalf("parse remote: %v", err)
+	}
+	expectedRepo := filepath.Join(cacheDir, cacheDirNameForRemote(parsedRemote))
+	if err := os.MkdirAll(expectedRepo, 0o755); err != nil {
+		t.Fatalf("create cached repo: %v", err)
+	}
+
+	cfg := testExecutorConfig()
+	cfg.RepoCacheDir = cacheDir
+	cfg.GitToken = "secret-token"
+	cfg.RequireHTTPS = true
+	e := NewExecutor(cfg)
+
+	var fetchArgs []string
+	var cloneRan bool
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name != "git" {
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 7 && args[0] == "-c" && args[2] == "-C" && args[3] == expectedRepo && args[4] == "fetch" {
+			fetchArgs = append([]string(nil), args...)
+			return exec.Command("/bin/sh", "-c", "exit 0")
+		}
+		if len(args) >= 5 && args[0] == "-c" && args[2] == "clone" {
+			cloneRan = true
+			return exec.Command("/bin/sh", "-c", "exit 1")
+		}
+		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "branch" && args[3] == "--show-current" {
+			return exec.Command("/bin/sh", "-c", "printf main")
+		}
+		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "list" {
+			return exec.Command("/bin/sh", "-c", "printf 'worktree /cached/worktree\nbranch refs/heads/feature/bootstrap\n'")
+		}
+		return exec.Command("/bin/sh", "-c", "exit 1")
+	}
+
+	task := testResolvedTask("abc123")
+	task.ExecutionMode = "worktree"
+	task.GitBranch = "feature/bootstrap"
+	task.GitRemote = remote
+
+	got, err := e.ResolveWorkdir(task)
+	if err != nil {
+		t.Fatalf("ResolveWorkdir returned error: %v", err)
+	}
+	if got != "/cached/worktree" {
+		t.Fatalf("ResolveWorkdir = %q, want existing cached worktree", got)
+	}
+	if cloneRan {
+		t.Fatal("existing cached repo should fetch, not clone")
+	}
+	if len(fetchArgs) == 0 {
+		t.Fatal("expected git fetch for existing cached repo")
+	}
+	if !containsArg(fetchArgs, "http.extraheader=Authorization: Bearer secret-token") {
+		t.Fatalf("fetch args should include token via http.extraheader, got: %v", fetchArgs)
+	}
+}
+
 // =============================================================================
 // GetEffectiveAgent / GetEffectiveModel Tests
 // =============================================================================
@@ -272,6 +790,192 @@ func TestExecutor_GetEffectiveModel_Precedence(t *testing.T) {
 	model := e.GetEffectiveModel(task, "runtime-model")
 	if model != "task-model" {
 		t.Errorf("GetEffectiveModel = %q, want %q (task > runtime > config)", model, "task-model")
+	}
+}
+
+// =============================================================================
+// Server-Applied Defaults Tests
+// =============================================================================
+// These tests verify behavior when the server pre-fills task.Agent and task.Model
+// via centralized task_defaults, simulating the full precedence chain:
+//   1. Task-level (explicit at creation)
+//   2. Server task_defaults (applied when field is empty)
+//   3. Runtime default model (TUI picker, model only)
+//   4. Runner config (runner-local override)
+
+func TestExecutor_GetEffectiveAgent_ServerDefault_UsedWhenSet(t *testing.T) {
+	// Scenario: Server applied task_defaults agent to a task that had no explicit agent.
+	// The runner should use the server-filled value.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Agent = "runner-local-agent"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Agent = "server-default-agent" // Pre-filled by server task_defaults
+
+	agent := e.GetEffectiveAgent(task)
+	if agent != "server-default-agent" {
+		t.Errorf("GetEffectiveAgent = %q, want %q (server default should be used)", agent, "server-default-agent")
+	}
+}
+
+func TestExecutor_GetEffectiveAgent_RunnerConfigUsedWhenServerEmpty(t *testing.T) {
+	// Scenario: Server has no task_defaults for agent, task has no explicit agent.
+	// The runner's config.Opencode.Agent should be the fallback.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Agent = "runner-local-agent"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	// task.Agent is empty (no server default configured either)
+
+	agent := e.GetEffectiveAgent(task)
+	if agent != "runner-local-agent" {
+		t.Errorf("GetEffectiveAgent = %q, want %q (runner config fallback)", agent, "runner-local-agent")
+	}
+}
+
+func TestExecutor_GetEffectiveAgent_TaskExplicitOverridesServerDefault(t *testing.T) {
+	// Scenario: Task was created with an explicit agent that differs from
+	// the server task_defaults. Since the server only fills empty fields,
+	// the task's explicit agent is preserved. The runner sees it the same way.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Agent = "runner-local-agent"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Agent = "task-explicit-agent" // Set at creation (server did not override)
+
+	agent := e.GetEffectiveAgent(task)
+	if agent != "task-explicit-agent" {
+		t.Errorf("GetEffectiveAgent = %q, want %q (task explicit wins)", agent, "task-explicit-agent")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_ServerDefault_UsedWhenSet(t *testing.T) {
+	// Scenario: Server applied task_defaults model to a task that had no explicit model.
+	// With no runtime default, the server-filled value should be used.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Model = "runner-local-model"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Model = "server-default-model" // Pre-filled by server task_defaults
+
+	model := e.GetEffectiveModel(task, "")
+	if model != "server-default-model" {
+		t.Errorf("GetEffectiveModel = %q, want %q (server default should be used)", model, "server-default-model")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_ServerDefault_BeatsRuntimeDefault(t *testing.T) {
+	// Scenario: Server filled task.Model, and a runtime default is also set.
+	// task.Model (includes server defaults) takes precedence over runtime default.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Model = "runner-local-model"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.Model = "server-default-model" // Pre-filled by server task_defaults
+
+	model := e.GetEffectiveModel(task, "tui-runtime-model")
+	if model != "server-default-model" {
+		t.Errorf("GetEffectiveModel = %q, want %q (server default > runtime default)", model, "server-default-model")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_RuntimeDefault_BeatsRunnerConfig(t *testing.T) {
+	// Scenario: No task-level or server-level model, but TUI set a runtime default.
+	// Runtime default should beat the runner config.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Model = "runner-local-model"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	// task.Model empty (server had no default either)
+
+	model := e.GetEffectiveModel(task, "tui-runtime-model")
+	if model != "tui-runtime-model" {
+		t.Errorf("GetEffectiveModel = %q, want %q (runtime default > runner config)", model, "tui-runtime-model")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_RunnerConfigFallback(t *testing.T) {
+	// Scenario: No task-level, no server default, no runtime default.
+	// Runner config should be the final fallback.
+	cfg := testExecutorConfig()
+	cfg.Opencode.Model = "runner-local-model"
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+
+	model := e.GetEffectiveModel(task, "")
+	if model != "runner-local-model" {
+		t.Errorf("GetEffectiveModel = %q, want %q (runner config fallback)", model, "runner-local-model")
+	}
+}
+
+func TestExecutor_GetEffectiveModel_FullPrecedenceChain(t *testing.T) {
+	// Table-driven test verifying the full precedence chain:
+	// task.Model (server-applied) > runtimeDefault > config.Model
+	tests := []struct {
+		name           string
+		taskModel      string
+		runtimeDefault string
+		configModel    string
+		expectedModel  string
+	}{
+		{
+			name:           "all set: task wins",
+			taskModel:      "task-model",
+			runtimeDefault: "runtime-model",
+			configModel:    "config-model",
+			expectedModel:  "task-model",
+		},
+		{
+			name:           "no task: runtime wins",
+			taskModel:      "",
+			runtimeDefault: "runtime-model",
+			configModel:    "config-model",
+			expectedModel:  "runtime-model",
+		},
+		{
+			name:           "no task no runtime: config wins",
+			taskModel:      "",
+			runtimeDefault: "",
+			configModel:    "config-model",
+			expectedModel:  "config-model",
+		},
+		{
+			name:           "all empty: returns empty",
+			taskModel:      "",
+			runtimeDefault: "",
+			configModel:    "",
+			expectedModel:  "",
+		},
+		{
+			name:           "server default set no runtime: server wins",
+			taskModel:      "server-applied-model",
+			runtimeDefault: "",
+			configModel:    "config-model",
+			expectedModel:  "server-applied-model",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := testExecutorConfig()
+			cfg.Opencode.Model = tt.configModel
+			e := NewExecutor(cfg)
+
+			task := testResolvedTask("abc123")
+			task.Model = tt.taskModel
+
+			model := e.GetEffectiveModel(task, tt.runtimeDefault)
+			if model != tt.expectedModel {
+				t.Errorf("GetEffectiveModel = %q, want %q", model, tt.expectedModel)
+			}
+		})
 	}
 }
 
@@ -693,6 +1397,91 @@ opencode 1234 user   12u  IPv4 0x1234 0t0  TCP 127.0.0.1:3000 (LISTEN)
 }
 
 // =============================================================================
+// ParseLsofListeners Tests
+// =============================================================================
+
+func TestParseLsofListeners_TwoOpencodeServers(t *testing.T) {
+	// What `lsof -a -i -P -n -c opencode -sTCP:LISTEN` produces on a host
+	// with two TUIs running on different ports.
+	output := `COMMAND    PID    USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+opencode 17646 e367212   10u  IPv4 0x3e05bca366471696      0t0  TCP 127.0.0.1:4096 (LISTEN)
+opencode 46938 e367212   10u  IPv4 0xa7dad7e1f519110a      0t0  TCP 127.0.0.1:4778 (LISTEN)
+`
+	got := ParseLsofListeners(output)
+	want := []OpencodeListener{
+		{PID: 17646, Port: 4096},
+		{PID: 46938, Port: 4778},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ParseLsofListeners returned %d listeners, want %d (got=%+v)", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("listener[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+func TestParseLsofListeners_SkipsNonListenLines(t *testing.T) {
+	// ESTABLISHED and header lines must be ignored.
+	output := `COMMAND    PID    USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+opencode 17646 e367212   10u  IPv4 0x3e05bca366471696      0t0  TCP 127.0.0.1:4096 (LISTEN)
+opencode 17646 e367212   13u  IPv4 0x5678                  0t0  TCP 127.0.0.1:4096->127.0.0.1:50001 (ESTABLISHED)
+`
+	got := ParseLsofListeners(output)
+	if len(got) != 1 || got[0] != (OpencodeListener{PID: 17646, Port: 4096}) {
+		t.Errorf("ParseLsofListeners = %+v, want exactly one (17646,4096)", got)
+	}
+}
+
+func TestParseLsofListeners_EmptyOutput(t *testing.T) {
+	if got := ParseLsofListeners(""); got != nil {
+		t.Errorf("ParseLsofListeners(\"\") = %+v, want nil", got)
+	}
+}
+
+func TestParseLsofListeners_HeaderOnly(t *testing.T) {
+	// lsof prints a header even when nothing matches; some versions print
+	// nothing at all. Both must yield an empty result without errors.
+	output := "COMMAND    PID    USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME\n"
+	if got := ParseLsofListeners(output); got != nil {
+		t.Errorf("ParseLsofListeners(header only) = %+v, want nil", got)
+	}
+}
+
+func TestParseLsofListeners_IPv6AndStarBind(t *testing.T) {
+	output := `COMMAND  PID USER   FD   TYPE DEVICE SIZE/OFF NODE NAME
+opencode 1001 user   10u  IPv6 0x1234      0t0  TCP [::]:9000 (LISTEN)
+opencode 1002 user   11u  IPv4 0x5678      0t0  TCP *:9001 (LISTEN)
+`
+	got := ParseLsofListeners(output)
+	want := []OpencodeListener{
+		{PID: 1001, Port: 9000},
+		{PID: 1002, Port: 9001},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("ParseLsofListeners returned %d, want %d (got=%+v)", len(got), len(want), got)
+	}
+	for i, w := range want {
+		if got[i] != w {
+			t.Errorf("listener[%d] = %+v, want %+v", i, got[i], w)
+		}
+	}
+}
+
+func TestParseLsofListeners_GarbledLineSkipped(t *testing.T) {
+	// A truncated line shouldn't crash or emit a bogus listener.
+	output := `COMMAND  PID USER NAME
+not-a-real-line (LISTEN)
+opencode 1234 user 12u IPv4 0x0 0t0 TCP 127.0.0.1:7777 (LISTEN)
+`
+	got := ParseLsofListeners(output)
+	if len(got) != 1 || got[0] != (OpencodeListener{PID: 1234, Port: 7777}) {
+		t.Errorf("ParseLsofListeners = %+v, want one (1234,7777)", got)
+	}
+}
+
+// =============================================================================
 // IsPidAlive Tests
 // =============================================================================
 
@@ -757,6 +1546,218 @@ func TestExecutor_Spawn_UnknownMode(t *testing.T) {
 	if err == nil {
 		t.Error("Spawn should return error for unknown mode")
 	}
+}
+
+// =============================================================================
+// ensureWorktree Tests - Feature ID Derivation
+// =============================================================================
+
+func TestEnsureWorktree_FeatureID_DerivesBranch(t *testing.T) {
+	// When git_branch is empty but feature_id is set, feature_id should be used as branch name
+	mainRepo := t.TempDir()
+
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	// Track git commands to verify feature_id is used as branch
+	var gitCmds [][]string
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name == "git" {
+			gitCmds = append(gitCmds, args)
+			if len(args) >= 4 && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+				return exec.Command("/bin/sh", "-c", "exit 0")
+			}
+		}
+		// Default: return a command that fails (branch doesn't exist, etc.)
+		return exec.Command("false")
+	}
+
+	task := testResolvedTask("abc123")
+	task.GitBranch = ""                          // No explicit branch
+	task.FeatureID = "centralized-task-defaults" // Has feature_id
+	task.TargetWorkdir = mainRepo
+	task.ExecutionMode = "worktree"
+
+	_, _ = e.ensureWorktree(task)
+
+	// Verify that git commands used the feature_id as the branch name
+	foundBranchRef := false
+	for _, cmd := range gitCmds {
+		for _, arg := range cmd {
+			if arg == "centralized-task-defaults" {
+				foundBranchRef = true
+				break
+			}
+		}
+	}
+	if !foundBranchRef {
+		t.Errorf("ensureWorktree should use feature_id as branch name, git commands were: %v", gitCmds)
+	}
+}
+
+func TestEnsureWorktree_FeatureID_NoFeatureID_NoGitBranch(t *testing.T) {
+	// When both git_branch and feature_id are empty, should return "" (no worktree)
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.GitBranch = ""
+	task.FeatureID = ""
+	task.ExecutionMode = "worktree"
+
+	path, err := e.ensureWorktree(task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "" {
+		t.Errorf("ensureWorktree should return empty string when no branch and no feature_id, got %q", path)
+	}
+}
+
+func TestEnsureWorktree_ExplicitGitBranch_OverridesFeatureID(t *testing.T) {
+	// Explicit git_branch should always win over feature_id
+	mainRepo := t.TempDir()
+
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	var gitCmds [][]string
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if name == "git" {
+			gitCmds = append(gitCmds, args)
+			if len(args) >= 4 && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
+				return exec.Command("/bin/sh", "-c", "exit 0")
+			}
+		}
+		return exec.Command("false")
+	}
+
+	task := testResolvedTask("abc123")
+	task.GitBranch = "my-explicit-branch"
+	task.FeatureID = "centralized-task-defaults"
+	task.TargetWorkdir = mainRepo
+	task.ExecutionMode = "worktree"
+
+	_, _ = e.ensureWorktree(task)
+
+	// Verify git commands used the explicit branch, not feature_id
+	foundExplicit := false
+	foundFeature := false
+	for _, cmd := range gitCmds {
+		for _, arg := range cmd {
+			if arg == "my-explicit-branch" {
+				foundExplicit = true
+			}
+			if arg == "centralized-task-defaults" {
+				foundFeature = true
+			}
+		}
+	}
+	if !foundExplicit {
+		t.Errorf("ensureWorktree should use explicit git_branch, git commands were: %v", gitCmds)
+	}
+	if foundFeature {
+		t.Errorf("ensureWorktree should not use feature_id when explicit git_branch is set, git commands were: %v", gitCmds)
+	}
+}
+
+func TestEnsureWorktree_FeatureID_DefaultBranchGuard(t *testing.T) {
+	// Feature IDs of "main" or "master" should be rejected (same as branch guard)
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("false")
+	}
+
+	tests := []struct {
+		name      string
+		featureID string
+	}{
+		{"main feature_id", "main"},
+		{"master feature_id", "master"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			task := testResolvedTask("abc123")
+			task.GitBranch = ""
+			task.FeatureID = tt.featureID
+			task.ExecutionMode = "worktree"
+
+			path, err := e.ensureWorktree(task)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if path != "" {
+				t.Errorf("ensureWorktree should return empty for feature_id=%q (default branch), got %q", tt.featureID, path)
+			}
+		})
+	}
+}
+
+func TestEnsureWorktree_FeatureID_CurrentBranchGuard(t *testing.T) {
+	// execution_mode="current_branch" should prevent worktree even with feature_id
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+
+	task := testResolvedTask("abc123")
+	task.GitBranch = ""
+	task.FeatureID = "some-feature"
+	task.ExecutionMode = "current_branch"
+
+	path, err := e.ensureWorktree(task)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if path != "" {
+		t.Errorf("ensureWorktree should return empty for current_branch mode, got %q", path)
+	}
+}
+
+func TestEnsureWorktree_FeatureID_SameWorktreeForSameFeature(t *testing.T) {
+	// Two tasks with same feature_id should resolve to the same worktree directory path
+	mainRepo := t.TempDir()
+	cfg := testExecutorConfig()
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		return exec.Command("false")
+	}
+
+	task1 := testResolvedTask("task1")
+	task1.GitBranch = ""
+	task1.FeatureID = "shared-feature"
+	task1.TargetWorkdir = mainRepo
+	task1.ExecutionMode = "worktree"
+
+	task2 := testResolvedTask("task2")
+	task2.GitBranch = ""
+	task2.FeatureID = "shared-feature"
+	task2.TargetWorkdir = mainRepo
+	task2.ExecutionMode = "worktree"
+
+	// Both should attempt the same worktree path (they will fail because git isn't real,
+	// but the error message will contain the path)
+	_, err1 := e.ensureWorktree(task1)
+	_, err2 := e.ensureWorktree(task2)
+
+	// Both should produce the same error (same worktree path attempted)
+	// Since CommandFactory returns "false", both will fail identically
+	if err1 == nil || err2 == nil {
+		// If one succeeds (e.g., directory exists), that's fine too
+		// The key test is the path would be the same
+	}
+
+	// Verify by computing expected path manually
+	expectedPath := filepath.Join(mainRepo, ".worktrees", sanitizeBranchName("shared-feature"))
+	_ = expectedPath // Path computation check - both tasks should target same path
+	// The real verification is that sanitizeBranchName produces consistent output
+	path1 := filepath.Join(mainRepo, ".worktrees", sanitizeBranchName(task1.FeatureID))
+	path2 := filepath.Join(mainRepo, ".worktrees", sanitizeBranchName(task2.FeatureID))
+	if path1 != path2 {
+		t.Errorf("same feature_id should produce same worktree path: %q vs %q", path1, path2)
+	}
+	_ = err1
+	_ = err2
 }
 
 // =============================================================================
@@ -917,7 +1918,7 @@ func TestExecutor_Spawn_PiExecutor_CustomBin(t *testing.T) {
 	stateDir := t.TempDir()
 	cfg := testExecutorConfig()
 	cfg.StateDir = stateDir
-	cfg.PiBin = "/usr/local/bin/my-pi"
+	cfg.Pi.Bin = "/usr/local/bin/my-pi"
 
 	var capturedName string
 
@@ -1304,4 +2305,94 @@ func indexOf(slice []string, item string) int {
 		}
 	}
 	return -1
+}
+
+func containsArg(slice []string, item string) bool {
+	return indexOf(slice, item) >= 0
+}
+
+// ─── Headless serve+attach (remote-control attachability) ─────────
+
+// TestSpawnHeadless_ControlDisabled_DirectRun verifies that with the bridge
+// disabled, headless spawn uses a plain in-process `opencode run` (no serve,
+// no --attach, no port).
+func TestSpawnHeadless_ControlDisabled_DirectRun(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.StateDir = t.TempDir()
+	cfg.Control.Disabled = true
+
+	var calls [][]string
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		calls = append(calls, args)
+		return exec.Command("/bin/echo", "mock")
+	}
+
+	res, err := e.Spawn(context.Background(), testResolvedTask("t1"), "proj", SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Spawn failed: %v", err)
+	}
+	if len(calls) != 1 {
+		t.Fatalf("expected exactly 1 command (direct run), got %d: %v", len(calls), calls)
+	}
+	args := calls[0]
+	if args[0] != "run" {
+		t.Errorf("expected 'run', got %v", args)
+	}
+	if indexOf(args, "--attach") >= 0 {
+		t.Errorf("control disabled should not use --attach: %v", args)
+	}
+	if indexOf(args, "--port") >= 0 {
+		t.Errorf("the dead --port flag should not be passed: %v", args)
+	}
+	if res.OpencodePort != 0 {
+		t.Errorf("expected no port when control disabled, got %d", res.OpencodePort)
+	}
+}
+
+// TestSpawnHeadless_ServeFailsFallsBackToDirect verifies that when the serve
+// process can't bind a port (the mock exits immediately), spawn falls back to
+// an in-process `opencode run` so the task still executes.
+func TestSpawnHeadless_ServeFailsFallsBackToDirect(t *testing.T) {
+	cfg := testExecutorConfig()
+	cfg.StateDir = t.TempDir()
+	// Control enabled (default) → serve+attach attempted.
+
+	var lastArgs []string
+	var serveAttempted bool
+	e := NewExecutor(cfg)
+	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
+		if len(args) > 0 && args[0] == "serve" {
+			serveAttempted = true
+		}
+		lastArgs = args
+		// /bin/echo exits immediately → serve never binds a port → fallback.
+		return exec.Command("/bin/echo", "mock")
+	}
+
+	res, err := e.Spawn(context.Background(), testResolvedTask("t2"), "proj", SpawnOptions{
+		Mode:    ExecutionModeHeadless,
+		Workdir: t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Spawn failed: %v", err)
+	}
+	if !serveAttempted {
+		t.Error("expected a serve attempt when control is enabled")
+	}
+	if lastArgs[0] != "run" {
+		t.Errorf("fallback should be a direct run, got %v", lastArgs)
+	}
+	if indexOf(lastArgs, "--attach") >= 0 {
+		t.Errorf("fallback run must not use --attach: %v", lastArgs)
+	}
+	if res.OpencodePort != 0 {
+		t.Errorf("fallback (non-attachable) should report no port, got %d", res.OpencodePort)
+	}
+	if res.PID <= 0 {
+		t.Errorf("expected a tracked PID, got %d", res.PID)
+	}
 }

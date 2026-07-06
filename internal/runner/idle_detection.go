@@ -61,8 +61,13 @@ func resolveCompleteOnIdle(completeOnIdle *bool, directPrompt string) bool {
 	return directPrompt != ""
 }
 
-// checkIdleStatus iterates running tasks, checks their OpenCode status,
-// and handles idle detection for tasks with CompleteOnIdle or direct_prompt.
+// checkIdleStatus iterates running tasks, checks their status based on
+// executor type, and handles idle detection for tasks with CompleteOnIdle
+// or direct_prompt.
+//
+// OpenCode tasks: HTTP polling via /session/status endpoint.
+// Pi tasks: Process exit detection (Pi RPC processes exit when done;
+// a running Pi process is always "busy").
 func (tr *TaskRunner) checkIdleStatus(ctx context.Context) {
 	allProcesses := tr.processMgr.GetAllRunning()
 	threshold := tr.idleDetectionThreshold()
@@ -73,47 +78,102 @@ func (tr *TaskRunner) checkIdleStatus(ctx context.Context) {
 		}
 
 		task := info.Task
-		port := task.OpencodePort
 
-		// Skip tasks without a discovered port
-		if port == 0 {
-			continue
-		}
-
-		status := checkOpencodeStatus(port)
-
-		switch status {
-		case "idle":
-			if task.IdleSince == "" {
-				// First idle detection — record the timestamp
-				now := time.Now().UTC().Format(time.RFC3339)
-				tr.processMgr.UpdateIdleSince(task.ID, now)
-				tr.logger.Printf("idle detection: task %s first idle at %s", task.ID, now)
-			} else {
-				// Already idle — check if threshold exceeded
-				idleSince, err := time.Parse(time.RFC3339, task.IdleSince)
-				if err != nil {
-					tr.logger.Printf("idle detection: failed to parse IdleSince for %s: %v", task.ID, err)
-					continue
-				}
-
-				idleDuration := time.Since(idleSince)
-				if idleDuration >= threshold {
-					tr.handleIdleThresholdExceeded(ctx, task)
-				}
-			}
-
-		case "busy":
-			// Agent is working — clear idle timestamp
-			if task.IdleSince != "" {
-				tr.processMgr.UpdateIdleSince(task.ID, "")
-				tr.logger.Printf("idle detection: task %s back to busy, clearing idle timer", task.ID)
-			}
-
-		case "unavailable":
-			// Skip — might be temporary (process starting up, network blip)
+		// Branch on executor type.
+		//
+		// "pi" and "script" both use process-exit semantics: a running process
+		// is always considered busy and completion is detected via process
+		// exit in checkRunningTasks/CheckCompletion. They have no HTTP API to
+		// poll, so calling checkOpencodeIdleStatus on them would always
+		// observe "unavailable" (best case) or — worse — connect to whatever
+		// happens to be listening on a guessed port and misinterpret the
+		// response. The bug this prevents: script-executor automation tasks
+		// (e.g. cron-triggered shell commands) being marked "blocked" by the
+		// runner because the OpenCode HTTP poll never finds a session.
+		switch task.ExecutorType {
+		case "pi":
+			tr.checkPiIdleStatus(ctx, info, threshold)
+		case "script":
+			tr.checkScriptIdleStatus(ctx, info, threshold)
+		default:
+			tr.checkOpencodeIdleStatus(ctx, task, threshold)
 		}
 	}
+}
+
+// checkScriptIdleStatus handles idle detection for script executor tasks.
+// Script processes don't expose an HTTP endpoint. A running script process
+// is always considered "busy" (the command is still executing).
+// Completion is detected via process exit in checkRunningTasks/CheckCompletion.
+//
+// This function is intentionally a no-op for running script processes.
+// GetAllRunning() already filters out exited processes, so process-exit
+// completion is handled by the checkRunningTasks path instead.
+func (tr *TaskRunner) checkScriptIdleStatus(ctx context.Context, info ProcessInfo, threshold time.Duration) {
+	// Script processes are always "busy" while running — no HTTP idle
+	// detection. Process exit/completion is handled by checkRunningTasks →
+	// CheckCompletion. Parameters are unused but kept for symmetry with
+	// checkPiIdleStatus.
+	_ = ctx
+	_ = info
+	_ = threshold
+}
+
+// checkOpencodeIdleStatus handles idle detection for OpenCode tasks via HTTP polling.
+func (tr *TaskRunner) checkOpencodeIdleStatus(ctx context.Context, task RunningTask, threshold time.Duration) {
+	port := task.OpencodePort
+
+	// Skip tasks without a discovered port
+	if port == 0 {
+		return
+	}
+
+	status := checkOpencodeStatus(port)
+
+	switch status {
+	case "idle":
+		if task.IdleSince == "" {
+			// First idle detection — record the timestamp
+			now := time.Now().UTC().Format(time.RFC3339)
+			tr.processMgr.UpdateIdleSince(task.ID, now)
+			tr.logger.Printf("idle detection: task %s first idle at %s", task.ID, now)
+		} else {
+			// Already idle — check if threshold exceeded
+			idleSince, err := time.Parse(time.RFC3339, task.IdleSince)
+			if err != nil {
+				tr.logger.Printf("idle detection: failed to parse IdleSince for %s: %v", task.ID, err)
+				return
+			}
+
+			idleDuration := time.Since(idleSince)
+			if idleDuration >= threshold {
+				tr.handleIdleThresholdExceeded(ctx, task)
+			}
+		}
+
+	case "busy":
+		// Agent is working — clear idle timestamp
+		if task.IdleSince != "" {
+			tr.processMgr.UpdateIdleSince(task.ID, "")
+			tr.logger.Printf("idle detection: task %s back to busy, clearing idle timer", task.ID)
+		}
+
+	case "unavailable":
+		// Skip — might be temporary (process starting up, network blip)
+	}
+}
+
+// checkPiIdleStatus handles idle detection for Pi executor tasks.
+// Pi RPC processes don't expose an HTTP endpoint. A running Pi process
+// is always considered "busy" (actively working on the prompt).
+// Completion is detected via process exit in checkRunningTasks/CheckCompletion.
+//
+// This function is intentionally a no-op for running Pi processes.
+// GetAllRunning() already filters out exited processes, so process-exit
+// completion is handled by the checkRunningTasks path instead.
+func (tr *TaskRunner) checkPiIdleStatus(ctx context.Context, info ProcessInfo, threshold time.Duration) {
+	// Pi processes are always "busy" while running — no HTTP idle detection.
+	// Process exit/completion is handled by checkRunningTasks → CheckCompletion.
 }
 
 // isTerminalStatus returns true if the given status is a terminal state
@@ -177,7 +237,7 @@ func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task Runn
 		tr.mu.Unlock()
 
 		tr.cleanupTaskTmux(task)
-		tr.executor.Cleanup(task.ID, task.ProjectID)
+		tr.cleanupTaskArtifacts(task)
 
 		tr.emitEvent(RunnerEvent{
 			Type:   eventType,
@@ -232,7 +292,7 @@ func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task Runn
 		tr.cleanupTaskTmux(task)
 
 		// Cleanup temp files
-		tr.executor.Cleanup(task.ID, task.ProjectID)
+		tr.cleanupTaskArtifacts(task)
 
 		// Emit completion event
 		tr.emitEvent(RunnerEvent{
@@ -269,7 +329,7 @@ func (tr *TaskRunner) handleIdleThresholdExceeded(ctx context.Context, task Runn
 		tr.cleanupTaskTmux(task)
 
 		// Cleanup temp files
-		tr.executor.Cleanup(task.ID, task.ProjectID)
+		tr.cleanupTaskArtifacts(task)
 
 		// Emit event
 		tr.emitEvent(RunnerEvent{

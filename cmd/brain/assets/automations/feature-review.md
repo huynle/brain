@@ -12,6 +12,7 @@ trigger:
   filter:
     project: "*"
   once_per: feature_id
+  max_concurrent: 1
 action:
   type: prompt
   execution_mode: current_branch
@@ -21,8 +22,8 @@ action:
 
     ## Phase 1: Completeness Review
 
-    1. Discover sibling tasks: brain_tasks({ project: "{{.Project}}", feature_id: "{{.FeatureID}}" })
-    2. For each task, call brain_task_get({ taskId: "<id>" }) and extract user_original_request
+    1. Discover sibling tasks: tasks({ project: "{{.Project}}", feature_id: "{{.FeatureID}}" })
+    2. For each task, call task_get({ taskId: "<id>" }) and extract user_original_request
     3. Verify each requirement is addressed by the implementation
     4. Calculate completeness score: (implemented / total requirements)
 
@@ -38,7 +39,7 @@ action:
 
     Save your review as a brain report:
 
-    brain_save({
+    save({
       type: "report",
       title: "Feature Review: {{.FeatureID}}",
       project: "{{.Project}}",
@@ -65,6 +66,7 @@ Automatically performs a two-phase code review when all tasks in a feature compl
 
 - Triggers on `feature.all_completed` event
 - Fires once per feature (dedup by feature_id)
+- Limits generated reviews to one runnable task at a time (`max_concurrent: 1`)
 - Phase 1: Completeness review — checks all original requirements are addressed
 - Phase 2: Code quality review — reviews patterns, testing, error handling, security
 - Saves a structured report as a brain entry

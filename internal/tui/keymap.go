@@ -56,12 +56,12 @@ func DefaultKeyMap() KeyMap {
 			key.WithHelp("Tab", "Panel"),
 		),
 		PrevTab: key.NewBinding(
-			key.WithKeys("h", "["),
-			key.WithHelp("h/l", "Tabs"),
+			key.WithKeys("H"),
+			key.WithHelp("H/L", "Project"),
 		),
 		NextTab: key.NewBinding(
-			key.WithKeys("l", "]"),
-			key.WithHelp("h/l", "Tabs"),
+			key.WithKeys("L"),
+			key.WithHelp("H/L", "Project"),
 		),
 		Refresh: key.NewBinding(
 			key.WithKeys("r"),
@@ -77,19 +77,19 @@ func DefaultKeyMap() KeyMap {
 		),
 		PauseAll: key.NewBinding(
 			key.WithKeys("P"),
-			key.WithHelp("P", "Pause All"),
+			key.WithHelp("P", "Pause Scope"),
 		),
 		PrevContentTab: key.NewBinding(
-			key.WithKeys("H"),
-			key.WithHelp("H/L", "Content Tab"),
+			key.WithKeys("h", "["),
+			key.WithHelp("h/l", "Tabs"),
 		),
 		NextContentTab: key.NewBinding(
-			key.WithKeys("L"),
-			key.WithHelp("H/L", "Content Tab"),
+			key.WithKeys("l", "]"),
+			key.WithHelp("h/l", "Tabs"),
 		),
 		ToggleLogs: key.NewBinding(
-			key.WithKeys("l"),
-			key.WithHelp("l", "Logs"),
+			key.WithKeys("z"),
+			key.WithHelp("z", "Logs"),
 		),
 		ToggleDetail: key.NewBinding(
 			key.WithKeys("T"),

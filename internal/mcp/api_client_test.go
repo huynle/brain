@@ -3,9 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 func TestAPIClient_Request_GET(t *testing.T) {
@@ -170,4 +175,120 @@ func TestAPIClient_Request_PATCH(t *testing.T) {
 	if result["status"] != "completed" {
 		t.Errorf("status = %q, want %q", result["status"], "completed")
 	}
+}
+
+func TestAPIClient_UploadAttachmentMultipart(t *testing.T) {
+	filePath := writeTempFile(t, "report.txt", "attachment contents")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if r.URL.Path != "/api/v1/attachments" {
+			t.Errorf("path = %q, want /api/v1/attachments", r.URL.Path)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want Bearer test-token", got)
+		}
+		if got := r.Header.Get("Content-Type"); !strings.HasPrefix(got, "multipart/form-data; boundary=") {
+			t.Errorf("Content-Type = %q, want multipart/form-data with boundary", got)
+		}
+
+		if err := r.ParseMultipartForm(1024 * 1024); err != nil {
+			t.Fatalf("ParseMultipartForm failed: %v", err)
+		}
+		if got := r.FormValue("project_id"); got != "test-project" {
+			t.Errorf("project_id = %q, want test-project", got)
+		}
+		if got := r.FormValue("metadata"); got != `{"kind":"fixture"}` {
+			t.Errorf("metadata = %q, want JSON string", got)
+		}
+
+		file, header, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("FormFile failed: %v", err)
+		}
+		defer file.Close()
+		if header.Filename != "report.txt" {
+			t.Errorf("filename = %q, want report.txt", header.Filename)
+		}
+		content, err := io.ReadAll(file)
+		if err != nil {
+			t.Fatalf("ReadAll failed: %v", err)
+		}
+		if string(content) != "attachment contents" {
+			t.Errorf("file content = %q, want attachment contents", string(content))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.CreateAttachmentResponse{
+			Attachment: types.Attachment{ID: "att_123", Filename: "report.txt"},
+		})
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL).WithAuthToken("test-token")
+	resp, err := client.UploadAttachment(context.Background(), "test-project", filePath, map[string]string{"kind": "fixture"})
+	if err != nil {
+		t.Fatalf("UploadAttachment failed: %v", err)
+	}
+	if resp.Attachment.ID != "att_123" {
+		t.Errorf("attachment id = %q, want att_123", resp.Attachment.ID)
+	}
+}
+
+func TestAPIClient_DownloadAttachmentText(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			t.Errorf("method = %q, want GET", r.Method)
+		}
+		if r.URL.Path != "/api/v1/attachments/att_123/text" {
+			t.Errorf("path = %q, want /api/v1/attachments/att_123/text", r.URL.Path)
+		}
+		if got := r.URL.Query().Get("project_id"); got != "test-project" {
+			t.Errorf("project_id = %q, want test-project", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer test-token" {
+			t.Errorf("Authorization = %q, want Bearer test-token", got)
+		}
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		io.WriteString(w, "plain text attachment")
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL).WithAuthToken("test-token")
+	text, err := client.DownloadAttachmentText(context.Background(), "test-project", "att_123")
+	if err != nil {
+		t.Fatalf("DownloadAttachmentText failed: %v", err)
+	}
+	if text != "plain text attachment" {
+		t.Errorf("text = %q, want plain text attachment", text)
+	}
+}
+
+func TestAPIClient_AttachmentHelpersHTTPError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "invalid", "message": "attachment unavailable"})
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL)
+	_, err := client.DownloadAttachmentText(context.Background(), "test-project", "missing")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err.Error() != "attachment unavailable" {
+		t.Errorf("error = %q, want attachment unavailable", err.Error())
+	}
+}
+
+func writeTempFile(t *testing.T, name, content string) string {
+	t.Helper()
+	path := t.TempDir() + string(os.PathSeparator) + name
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	return path
 }

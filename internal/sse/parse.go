@@ -16,6 +16,8 @@ type Event struct {
 var knownEventTypes = map[string]bool{
 	"connected":      true,
 	"tasks_snapshot": true,
+	"tasks_changed":  true,
+	"command":        true,
 	"error":          true,
 }
 

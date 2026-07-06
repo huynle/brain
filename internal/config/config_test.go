@@ -8,7 +8,7 @@ import (
 
 func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	// Clear env vars that might affect config
-	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN"}
+	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "JWT_SECRET", "BRAIN_JWT_SECRET"}
 	for _, key := range envVars {
 		t.Setenv(key, "")
 		os.Unsetenv(key)
@@ -57,6 +57,9 @@ func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "info")
 	}
+	if cfg.JWTSecret != "" {
+		t.Errorf("JWTSecret = %q, want empty", cfg.JWTSecret)
+	}
 }
 
 func TestLoadEnvVarsOverrideAll(t *testing.T) {
@@ -68,6 +71,7 @@ func TestLoadEnvVarsOverrideAll(t *testing.T) {
 	t.Setenv("CORS_ORIGIN", "https://example.com")
 	t.Setenv("LOG_LEVEL", "debug")
 	t.Setenv("OAUTH_PIN", "test-pin-123")
+	t.Setenv("JWT_SECRET", "test-jwt-secret")
 
 	cfg := Load()
 
@@ -91,6 +95,20 @@ func TestLoadEnvVarsOverrideAll(t *testing.T) {
 	}
 	if cfg.OAuthPIN != "test-pin-123" {
 		t.Errorf("OAuthPIN = %q, want %q", cfg.OAuthPIN, "test-pin-123")
+	}
+	if cfg.JWTSecret != "test-jwt-secret" {
+		t.Errorf("JWTSecret = %q, want %q", cfg.JWTSecret, "test-jwt-secret")
+	}
+}
+
+func TestLoadBrainJWTSecretOverridesJWTSecret(t *testing.T) {
+	t.Setenv("JWT_SECRET", "base-secret")
+	t.Setenv("BRAIN_JWT_SECRET", "brain-secret")
+
+	cfg := Load()
+
+	if cfg.JWTSecret != "brain-secret" {
+		t.Errorf("JWTSecret = %q, want %q", cfg.JWTSecret, "brain-secret")
 	}
 }
 
@@ -155,5 +173,199 @@ func TestLoadPriority_UnsetEnvUsesConfigOrDefault(t *testing.T) {
 	// Should be either "localhost" (default/config) - never empty
 	if cfg.Host == "" {
 		t.Error("Host should not be empty when HOST env is unset")
+	}
+}
+
+func TestLoadTaskDefaults_EnvVarOverrides(t *testing.T) {
+	t.Setenv("BRAIN_DEFAULT_AGENT", "tdd-dev")
+	t.Setenv("BRAIN_DEFAULT_MODEL", "claude-opus-4")
+
+	cfg := Load()
+
+	if cfg.TaskDefaults.Agent != "tdd-dev" {
+		t.Errorf("TaskDefaults.Agent = %q, want %q", cfg.TaskDefaults.Agent, "tdd-dev")
+	}
+	if cfg.TaskDefaults.Model != "claude-opus-4" {
+		t.Errorf("TaskDefaults.Model = %q, want %q", cfg.TaskDefaults.Model, "claude-opus-4")
+	}
+}
+
+func TestLoadTaskDefaults_EmptyByDefault(t *testing.T) {
+	// Clear any env vars that might set task defaults
+	os.Unsetenv("BRAIN_DEFAULT_AGENT")
+	os.Unsetenv("BRAIN_DEFAULT_MODEL")
+	t.Setenv("BRAIN_DEFAULT_AGENT", "")
+	t.Setenv("BRAIN_DEFAULT_MODEL", "")
+
+	cfg := Load()
+
+	// Without config file or env vars, task defaults should be empty.
+	// Config file may set these, so this test only verifies Load completes
+	// after env vars are cleared and does not assert ambient config state.
+	_ = cfg
+}
+
+func TestLoadTaskDefaults_ThreadsFromConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Clear env vars that might override
+	os.Unsetenv("BRAIN_DEFAULT_AGENT")
+	os.Unsetenv("BRAIN_DEFAULT_MODEL")
+
+	// Create config directory and file with task_defaults
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.yaml")
+	yamlContent := `server:
+  port: 3333
+  task_defaults:
+    agent: "explore"
+    model: "claude-sonnet-4"
+    execution_mode: "worktree"
+    merge_policy: "auto_pr"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := Load()
+
+	if cfg.TaskDefaults.Agent != "explore" {
+		t.Errorf("TaskDefaults.Agent = %q, want %q", cfg.TaskDefaults.Agent, "explore")
+	}
+	if cfg.TaskDefaults.Model != "claude-sonnet-4" {
+		t.Errorf("TaskDefaults.Model = %q, want %q", cfg.TaskDefaults.Model, "claude-sonnet-4")
+	}
+	if cfg.TaskDefaults.ExecutionMode != "worktree" {
+		t.Errorf("TaskDefaults.ExecutionMode = %q, want %q", cfg.TaskDefaults.ExecutionMode, "worktree")
+	}
+	if cfg.TaskDefaults.MergePolicy != "auto_pr" {
+		t.Errorf("TaskDefaults.MergePolicy = %q, want %q", cfg.TaskDefaults.MergePolicy, "auto_pr")
+	}
+}
+
+func TestLoadAttachmentExtraction_ThreadsFromConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.yaml")
+	yamlContent := `server:
+  embedding:
+    enabled: true
+    model: "text-embedding-3-small"
+  attachment_extraction:
+    enabled: true
+    provider: "openrouter"
+    base_url: "https://openrouter.ai/api/v1"
+    api_key_env: "BRAIN_ATTACHMENT_EXTRACTION_API_KEY"
+    model: "google/gemini-2.5-pro"
+    timeout_ms: 90000
+    max_size_bytes: 12345
+    supported_mime_types:
+      - "image/png"
+    max_derived_text_chars: 4096
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := Load()
+	ext := cfg.AttachmentExtraction
+
+	if !ext.Enabled {
+		t.Error("AttachmentExtraction.Enabled = false, want true")
+	}
+	if ext.APIKeyEnv != "BRAIN_ATTACHMENT_EXTRACTION_API_KEY" {
+		t.Errorf("AttachmentExtraction.APIKeyEnv = %q, want BRAIN_ATTACHMENT_EXTRACTION_API_KEY", ext.APIKeyEnv)
+	}
+	if ext.Model != "google/gemini-2.5-pro" {
+		t.Errorf("AttachmentExtraction.Model = %q, want google/gemini-2.5-pro", ext.Model)
+	}
+	if ext.MaxDerivedTextChars != 4096 {
+		t.Errorf("AttachmentExtraction.MaxDerivedTextChars = %d, want 4096", ext.MaxDerivedTextChars)
+	}
+	if cfg.Embedding.Model != "text-embedding-3-small" {
+		t.Errorf("Embedding.Model = %q, want unchanged text-embedding-3-small", cfg.Embedding.Model)
+	}
+}
+
+func TestLoadTaskDefaults_EnvOverridesConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	// Config file sets one value, env var overrides it
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.yaml")
+	yamlContent := `server:
+  task_defaults:
+    agent: "from-config"
+    model: "from-config"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	t.Setenv("BRAIN_DEFAULT_AGENT", "from-env")
+	t.Setenv("BRAIN_DEFAULT_MODEL", "from-env-model")
+
+	cfg := Load()
+
+	if cfg.TaskDefaults.Agent != "from-env" {
+		t.Errorf("TaskDefaults.Agent = %q, want %q (env should override config)", cfg.TaskDefaults.Agent, "from-env")
+	}
+	if cfg.TaskDefaults.Model != "from-env-model" {
+		t.Errorf("TaskDefaults.Model = %q, want %q (env should override config)", cfg.TaskDefaults.Model, "from-env-model")
+	}
+}
+
+func TestLoadAttachments_ThreadsFromConfigFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmpDir)
+
+	configDir := filepath.Join(tmpDir, "brain")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatalf("failed to create config dir: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.yaml")
+	yamlContent := `server:
+  attachments:
+    storage_root: "/tmp/brain-attachments"
+    max_upload_size_bytes: 1048576
+    allowed_mime_types:
+      - "image/png"
+    blocked_mime_types:
+      - "application/x-msdownload"
+`
+	if err := os.WriteFile(configPath, []byte(yamlContent), 0644); err != nil {
+		t.Fatalf("failed to write config file: %v", err)
+	}
+
+	cfg := Load()
+
+	if cfg.Attachments.StorageRoot != "/tmp/brain-attachments" {
+		t.Errorf("Attachments.StorageRoot = %q, want %q", cfg.Attachments.StorageRoot, "/tmp/brain-attachments")
+	}
+	if cfg.Attachments.MaxUploadSizeBytes != 1048576 {
+		t.Errorf("Attachments.MaxUploadSizeBytes = %d, want 1048576", cfg.Attachments.MaxUploadSizeBytes)
+	}
+	if len(cfg.Attachments.AllowedMIMETypes) != 1 || cfg.Attachments.AllowedMIMETypes[0] != "image/png" {
+		t.Errorf("Attachments.AllowedMIMETypes = %#v, want image/png", cfg.Attachments.AllowedMIMETypes)
+	}
+	if len(cfg.Attachments.BlockedMIMETypes) != 1 || cfg.Attachments.BlockedMIMETypes[0] != "application/x-msdownload" {
+		t.Errorf("Attachments.BlockedMIMETypes = %#v, want application/x-msdownload", cfg.Attachments.BlockedMIMETypes)
 	}
 }

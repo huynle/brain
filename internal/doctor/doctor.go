@@ -29,16 +29,39 @@ func (s *DoctorService) Diagnose(opts DoctorOptions) (*DoctorResult, error) {
 		checkConfig(brainDir),
 		checkDatabase(brainDir),
 	}
+	if opts.EnableAttachmentDiagnostics {
+		digestChecks := opts.AttachmentDigestChecks
+		if digestChecks == nil {
+			var err error
+			digestChecks, err = loadAttachmentDigestChecksFromDatabase(brainDir)
+			if err != nil {
+				checks = append(checks, Check{Name: "attachment-integrity", Status: CheckStatusFail, Message: fmt.Sprintf("Cannot load attachment metadata from brain.db: %v", err)})
+				result.Checks = append(result.Checks, checks...)
+				result.Summary = summarizeChecks(result.Checks)
+				return result, nil
+			}
+		}
+		checks = append(checks,
+			checkAttachmentStorageRoot(brainDir, expandPath(opts.AttachmentStorageRoot)),
+			checkAttachmentUploadLimits(opts.AttachmentMaxUploadSizeBytes),
+			checkAttachmentBlobIntegrity(expandPath(opts.AttachmentStorageRoot), digestChecks),
+		)
+	}
 
 	result.Checks = append(result.Checks, checks...)
 
-	// Generate summary
+	result.Summary = summarizeChecks(result.Checks)
+
+	return result, nil
+}
+
+func summarizeChecks(checks []Check) string {
 	passCount := 0
 	warnCount := 0
 	failCount := 0
 	fixableCount := 0
 
-	for _, check := range result.Checks {
+	for _, check := range checks {
 		switch check.Status {
 		case CheckStatusPass:
 			passCount++
@@ -52,10 +75,8 @@ func (s *DoctorService) Diagnose(opts DoctorOptions) (*DoctorResult, error) {
 		}
 	}
 
-	result.Summary = fmt.Sprintf("Passed: %d, Warnings: %d, Failed: %d (Fixable: %d)",
+	return fmt.Sprintf("Passed: %d, Warnings: %d, Failed: %d (Fixable: %d)",
 		passCount, warnCount, failCount, fixableCount)
-
-	return result, nil
 }
 
 // Fix runs diagnostics and attempts to fix any failures.

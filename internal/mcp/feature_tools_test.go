@@ -1,0 +1,339 @@
+package mcp
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func TestRegisterFeatureTools_CountNamesHandlersDescriptions(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:3333")
+	RegisterFeatureTools(s, client)
+
+	expected := []string{
+		"features",
+		"feature_ready",
+		"feature_get",
+		"feature_checkout",
+		"feature_assign",
+		"feature_clear_assignment",
+	}
+	if len(s.tools) != len(expected) {
+		t.Fatalf("expected %d feature tools registered, got %d", len(expected), len(s.tools))
+	}
+	for _, name := range expected {
+		rt, ok := s.tools[name]
+		if !ok {
+			t.Fatalf("tool %q not registered", name)
+		}
+		if rt.handler == nil {
+			t.Errorf("tool %q has nil handler", name)
+		}
+		if strings.TrimSpace(rt.tool.Description) == "" {
+			t.Errorf("tool %q has empty description", name)
+		}
+		if rt.tool.InputSchema.Type != "object" {
+			t.Errorf("tool %q inputSchema.type = %q, want object", name, rt.tool.InputSchema.Type)
+		}
+	}
+}
+
+func TestFeatureToolSchemas(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:3333")
+	RegisterFeatureTools(s, client)
+
+	tests := []struct {
+		tool     string
+		required []string
+		props    []string
+	}{
+		{"features", nil, []string{"project", "ready_only", "limit"}},
+		{"feature_ready", nil, []string{"project", "limit"}},
+		{"feature_get", []string{"feature_id"}, []string{"project", "feature_id"}},
+		{"feature_checkout", []string{"feature_id"}, []string{"project", "feature_id", "execution_branch", "merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "open_pr_before_merge", "execution_mode"}},
+		{"feature_assign", []string{"feature_id", "runner_id"}, []string{"project", "feature_id", "runner_id", "intent", "force"}},
+		{"feature_clear_assignment", []string{"feature_id"}, []string{"project", "feature_id", "intent"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			tool := s.tools[tt.tool].tool
+			if len(tool.InputSchema.Required) != len(tt.required) {
+				t.Fatalf("required = %v, want %v", tool.InputSchema.Required, tt.required)
+			}
+			for _, req := range tt.required {
+				found := false
+				for _, got := range tool.InputSchema.Required {
+					if got == req {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("required missing %q in %v", req, tool.InputSchema.Required)
+				}
+			}
+			for _, prop := range tt.props {
+				if _, ok := tool.InputSchema.Properties[prop]; !ok {
+					t.Errorf("schema missing property %q", prop)
+				}
+			}
+		})
+	}
+}
+
+func TestBrainFeatures_RequestAndFormatting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/tasks/test-project/features" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"features": []map[string]any{{
+			"featureId": "auth-system",
+			"ready":     true,
+			"stats":     map[string]any{"total": 2, "ready": 1, "waiting": 0, "blocked": 0, "not_pending": 1},
+			"tasks": []map[string]any{{
+				"id": "task-1", "title": "Add auth", "status": "pending", "classification": "ready",
+			}},
+		}}})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterFeatureTools(s, client)
+
+	result, err := s.tools["features"].handler(context.Background(), map[string]any{"project": "test-project"})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	for _, want := range []string{"Features for project: test-project", "auth-system", "ready", "Tasks: 2", "Ready: 1", "Add auth", "task-1"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result missing %q:\n%s", want, result)
+		}
+	}
+}
+
+func TestBrainFeatures_ReadyOnlyUsesReadyEndpointAndLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/tasks/test-project/features/ready" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"features": []map[string]any{{"featureId": "one", "ready": true}, {"featureId": "two", "ready": true}}})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterFeatureTools(s, client)
+
+	result, err := s.tools["features"].handler(context.Background(), map[string]any{"project": "test-project", "ready_only": true, "limit": float64(1)})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(result, "one") || strings.Contains(result, "two") {
+		t.Fatalf("limit not applied to result:\n%s", result)
+	}
+}
+
+func TestBrainFeatureReady_RequestAndEmptyFormatting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/tasks/test-project/features/ready" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"features": []map[string]any{}})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterFeatureTools(s, client)
+
+	result, err := s.tools["feature_ready"].handler(context.Background(), map[string]any{"project": "test-project"})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(result, "No ready features found") {
+		t.Fatalf("unexpected result: %s", result)
+	}
+}
+
+func TestBrainFeatureGet_RequestAndFormatting(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/tasks/test-project/features/auth-system" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"feature": map[string]any{
+			"featureId": "auth-system",
+			"ready":     false,
+			"stats":     map[string]any{"total": 2, "ready": 1, "waiting": 1, "blocked": 0, "not_pending": 0},
+			"tasks": []map[string]any{
+				{"id": "task-1", "title": "Ready task", "status": "pending", "classification": "ready"},
+				{"id": "task-2", "title": "Waiting task", "status": "pending", "classification": "waiting", "waiting_on": []string{"task-1"}},
+			},
+		}})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterFeatureTools(s, client)
+
+	result, err := s.tools["feature_get"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth-system"})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	for _, want := range []string{"Feature auth-system", "Project: test-project", "Status: waiting", "Ready task", "Waiting task", "waiting_on: task-1"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result missing %q:\n%s", want, result)
+		}
+	}
+}
+
+func TestBrainFeatureCheckout_RequestBodyAndFormatting(t *testing.T) {
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/tasks/test-project/features/auth-system/checkout" {
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"created":      true,
+			"generatedKey": "feature-checkout:auth-system",
+			"task": map[string]any{
+				"id": "checkout-1", "path": "projects/test/task/checkout-1.md", "title": "Review auth-system", "status": "pending",
+			},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterFeatureTools(s, client)
+
+	result, err := s.tools["feature_checkout"].handler(context.Background(), map[string]any{
+		"project": "test-project", "feature_id": "auth-system", "execution_branch": "feat/auth", "merge_target_branch": "main",
+		"merge_policy": "auto_pr", "merge_strategy": "squash", "remote_branch_policy": "delete", "open_pr_before_merge": true, "execution_mode": "worktree",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	for _, key := range []string{"execution_branch", "merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "open_pr_before_merge", "execution_mode"} {
+		if _, ok := capturedBody[key]; !ok {
+			t.Fatalf("body missing %q: %#v", key, capturedBody)
+		}
+	}
+	for _, want := range []string{"Feature checkout", "auth-system", "created: true", "feature-checkout:auth-system", "checkout-1", "Review auth-system"} {
+		if !strings.Contains(result, want) {
+			t.Errorf("result missing %q:\n%s", want, result)
+		}
+	}
+}
+
+func TestBrainFeatureAssignAndClear_RequestBodiesAndFormatting(t *testing.T) {
+	requests := []string{}
+	var assignBody map[string]any
+	var clearBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/v1/tasks/test-project/features/auth-system/assignment":
+			if r.Method != http.MethodPut {
+				t.Fatalf("unexpected method: %s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&assignBody); err != nil {
+				t.Fatalf("decode assign body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]any{"project_id": "test-project", "feature_id": "auth-system", "runner_id": "runner-1", "previous_runner": "runner-0", "source": "manual", "status": "assigned", "assigned_at": "2026-06-17T00:00:00Z"})
+		case "/api/v1/tasks/test-project/features/auth-system/assignment/clear":
+			if r.Method != http.MethodPost {
+				t.Fatalf("unexpected method: %s", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&clearBody); err != nil {
+				t.Fatalf("decode clear body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]any{"project_id": "test-project", "feature_id": "auth-system", "previous_runner": "runner-1", "source": "manual", "status": "cleared", "updated_at": "2026-06-17T00:01:00Z"})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterFeatureTools(s, client)
+
+	assigned, err := s.tools["feature_assign"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth-system", "runner_id": "runner-1", "intent": "claim feature", "force": true})
+	if err != nil {
+		t.Fatalf("assign handler error: %v", err)
+	}
+	cleared, err := s.tools["feature_clear_assignment"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth-system", "intent": "release feature"})
+	if err != nil {
+		t.Fatalf("clear handler error: %v", err)
+	}
+
+	if assignBody["runner_id"] != "runner-1" || assignBody["intent"] != "claim feature" || assignBody["force"] != true {
+		t.Fatalf("unexpected assign body: %#v", assignBody)
+	}
+	if clearBody["intent"] != "release feature" {
+		t.Fatalf("unexpected clear body: %#v", clearBody)
+	}
+	for _, want := range []string{"Feature assignment", "assigned", "runner-1", "runner-0", "manual"} {
+		if !strings.Contains(assigned, want) {
+			t.Errorf("assign result missing %q:\n%s", want, assigned)
+		}
+	}
+	for _, want := range []string{"Feature assignment", "cleared", "runner-1", "manual"} {
+		if !strings.Contains(cleared, want) {
+			t.Errorf("clear result missing %q:\n%s", want, cleared)
+		}
+	}
+	wantRequests := []string{"PUT /api/v1/tasks/test-project/features/auth-system/assignment", "POST /api/v1/tasks/test-project/features/auth-system/assignment/clear"}
+	if len(requests) != len(wantRequests) {
+		t.Fatalf("requests = %#v, want %#v", requests, wantRequests)
+	}
+	for i := range wantRequests {
+		if requests[i] != wantRequests[i] {
+			t.Errorf("request[%d] = %q, want %q", i, requests[i], wantRequests[i])
+		}
+	}
+}
+
+func TestFeatureTools_ValidationErrors(t *testing.T) {
+	s := NewServer()
+	client := NewAPIClient("http://localhost:1")
+	RegisterFeatureTools(s, client)
+
+	tests := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"feature_get", map[string]any{}, "feature_id"},
+		{"feature_checkout", map[string]any{}, "feature_id"},
+		{"feature_assign", map[string]any{"feature_id": "auth"}, "runner_id"},
+		{"feature_clear_assignment", map[string]any{}, "feature_id"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			result, err := s.tools[tt.tool].handler(context.Background(), tt.args)
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+			if !strings.Contains(result, tt.want) {
+				t.Fatalf("result = %q, want substring %q", result, tt.want)
+			}
+		})
+	}
+}

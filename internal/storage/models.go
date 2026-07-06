@@ -161,12 +161,14 @@ type EmbeddingSearchOptions struct {
 type OrphanOptions struct {
 	Type  string
 	Limit int
+	Path  string // optional path prefix filter (e.g. "projects/<id>/")
 }
 
 // StaleOptions configures the GetStaleEntries query.
 type StaleOptions struct {
 	Type  string
 	Limit int
+	Path  string // optional path prefix filter (e.g. "projects/<id>/")
 }
 
 // StatsOptions configures the GetStats query.

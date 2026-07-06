@@ -844,6 +844,65 @@ func DiscoverPort(pid int) (int, error) {
 	return ParseLsofOutputForPID(string(output), pid)
 }
 
+// OpencodeListener describes one OpenCode HTTP server discovered on the host.
+type OpencodeListener struct {
+	PID  int
+	Port int
+}
+
+// ParseLsofListeners parses the output of
+// `lsof -a -i -P -n -c opencode -sTCP:LISTEN` into a list of (pid, port)
+// pairs. The header row and any non-LISTEN lines are skipped. A line that
+// can't be parsed is silently dropped — this is best-effort discovery and
+// must not surface lsof quirks to the caller.
+func ParseLsofListeners(output string) []OpencodeListener {
+	var listeners []OpencodeListener
+	for _, line := range strings.Split(output, "\n") {
+		if !strings.Contains(line, listenSuffix) {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[1])
+		if err != nil {
+			continue
+		}
+		// NAME is the field immediately preceding "(LISTEN)".
+		for i, f := range fields {
+			if f == listenSuffix && i > 0 {
+				if port, ok := portFromName(fields[i-1]); ok && port > 0 {
+					listeners = append(listeners, OpencodeListener{PID: pid, Port: port})
+				}
+				break
+			}
+		}
+	}
+	return listeners
+}
+
+// DiscoverOpencodeListeners returns every localhost-bound OpenCode HTTP
+// listener on this machine, regardless of whether brain spawned it. Used
+// as a last-resort fallback so the audit UI can serve session transcripts
+// from a user-started OpenCode TUI whose messages are still only in memory
+// (OpenCode persists session_diff/<sid>.json eagerly, but message/<sid>/
+// is not always flushed to disk before the instance exits).
+//
+// Returns nil on any lsof error — discovery is best-effort and must not
+// fail the caller.
+func DiscoverOpencodeListeners() []OpencodeListener {
+	cmd := exec.Command("lsof", "-a", "-i", "-P", "-n", "-c", "opencode", "-sTCP:LISTEN")
+	output, err := cmd.Output()
+	if err != nil {
+		// lsof exits 1 when no matches — still return whatever was on stdout.
+		if len(output) == 0 {
+			return nil
+		}
+	}
+	return ParseLsofListeners(string(output))
+}
+
 // =============================================================================
 // PID Utilities
 // =============================================================================

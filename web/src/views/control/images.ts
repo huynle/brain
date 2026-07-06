@@ -1,12 +1,13 @@
-// Image attachment helpers for the chat composer. Pasted/dropped images are
-// downscaled client-side (keeps payloads small) and encoded as data: URLs,
-// which OpenCode accepts directly as file parts — no upload to the runner.
+// Attachment helpers for chat composers. Images are downscaled client-side before
+// they are encoded as data: URLs; non-image files are preserved as raw data
+// URLs so assistant upload flows can pass PDFs/text/etc. through.
 
 export interface Attachment {
   id: string;
   filename: string;
   mime: string;
   dataUrl: string; // data:<mime>;base64,<...>
+  size?: number;
 }
 
 const MAX_DIM = 1568; // Claude's optimal max edge; larger images gain nothing
@@ -23,38 +24,42 @@ export function isImageType(mime: string): boolean {
 }
 
 /**
- * Read an image File/Blob, downscale it so its longest edge is <= MAX_DIM,
- * and return a data-URL attachment. Falls back to the raw bytes if the image
- * can't be decoded (e.g. SVG/exotic formats).
+ * Read a File/Blob and return a data-URL attachment. Images are downscaled
+ * so their longest edge is <= MAX_DIM; non-images are preserved as raw bytes.
  */
 export async function fileToAttachment(file: File | Blob, name?: string): Promise<Attachment> {
-  const mime = file.type || "image/png";
-  const filename = name || (file instanceof File ? file.name : "") || `pasted-${Date.now()}.png`;
+  const mime = file.type || "application/octet-stream";
+  const fallbackExt = isImageType(mime) ? "png" : "bin";
+  const filename = name || (file instanceof File ? file.name : "") || "pasted-" + Date.now() + "." + fallbackExt;
+  const size = file.size;
 
   const rawUrl = await blobToDataUrl(file);
+  if (!isImageType(mime)) {
+    return { id: nextId(), filename, mime, dataUrl: rawUrl, size };
+  }
   // SVGs and tiny images: skip the canvas round-trip.
   if (mime === "image/svg+xml") {
-    return { id: nextId(), filename, mime, dataUrl: rawUrl };
+    return { id: nextId(), filename, mime, dataUrl: rawUrl, size };
   }
 
   try {
     const img = await loadImage(rawUrl);
     const scale = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
     if (scale >= 1) {
-      return { id: nextId(), filename, mime, dataUrl: rawUrl };
+      return { id: nextId(), filename, mime, dataUrl: rawUrl, size };
     }
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(img.width * scale);
     canvas.height = Math.round(img.height * scale);
     const ctx = canvas.getContext("2d");
-    if (!ctx) return { id: nextId(), filename, mime, dataUrl: rawUrl };
+    if (!ctx) return { id: nextId(), filename, mime, dataUrl: rawUrl, size };
     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
     // PNG preserves screenshots/diagrams crisply; everything else → JPEG.
     const outMime = mime === "image/png" ? "image/png" : "image/jpeg";
     const dataUrl = canvas.toDataURL(outMime, 0.9);
-    return { id: nextId(), filename, mime: outMime, dataUrl };
+    return { id: nextId(), filename, mime: outMime, dataUrl, size };
   } catch {
-    return { id: nextId(), filename, mime, dataUrl: rawUrl };
+    return { id: nextId(), filename, mime, dataUrl: rawUrl, size };
   }
 }
 

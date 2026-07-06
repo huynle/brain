@@ -52,7 +52,7 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 
 func registerBrainSave(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_save",
+		Name: "save",
 		Description: `Save content to the brain for future reference. Use this to persist:
 - summaries: Session summaries, key decisions made
 - reports: Analysis reports, code reviews, investigations
@@ -87,7 +87,7 @@ Feature orchestration:
 				"feature_priority":      {Type: "string", Enum: types.Priorities, Description: "Priority level for the feature group. Determines execution order relative to other features."},
 				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start. Use this for before-feature orchestration (e.g., feature 'main' depends on feature 'preflight')."},
 				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
-				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type ('create_task' or 'script'), title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir."},
+				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type ('create_task' or 'script'), title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
 				"retry":                 {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
 				"direct_prompt":         {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim when the task runs."},
 				"agent":                 {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')"},
@@ -209,13 +209,14 @@ Feature orchestration:
 
 func registerBrainRecall(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_recall",
+		Name:        "recall",
 		Description: "Retrieve a specific entry from the brain by path, ID, or title.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
 				"path":    {Type: "string", Description: "Path or ID to the note"},
 				"title":   {Type: "string", Description: "Title to search for (exact match)"},
+				"project": {Type: "string", Description: "When resolving by title, restrict the match to this project ID (e.g., 'orion-ai'). Ignored when 'path' is provided."},
 				"include": {Type: "array", Items: &Property{Type: "string"}, Description: "Optional related data to include, e.g. ['attachments', 'attachment_text']. Passed to the API as a comma-separated include query."},
 			},
 		},
@@ -229,13 +230,20 @@ func registerBrainRecall(s *Server, client *APIClient) {
 				return "Please provide a path or title", nil
 			}
 
+			searchBody := map[string]any{"query": title, "limit": 5}
+			// If a project was specified, scope the title lookup so two
+			// projects with a same-titled note don't collide.
+			if project := StringArg(args, "project", ""); project != "" {
+				searchBody["project"] = project
+			}
+
 			var searchResp struct {
 				Results []struct {
 					Path  string `json:"path"`
 					Title string `json:"title"`
 				} `json:"results"`
 			}
-			if err := client.Request(ctx, "POST", "/search", map[string]any{"query": title, "limit": 5}, nil, &searchResp); err != nil {
+			if err := client.Request(ctx, "POST", "/search", searchBody, nil, &searchResp); err != nil {
 				return "", err
 			}
 
@@ -293,7 +301,7 @@ func registerBrainRecall(s *Server, client *APIClient) {
 
 func registerBrainAttachmentUpload(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_attachment_upload",
+		Name: "attachment_upload",
 		Description: `Upload a local file as a first-class Brain attachment.
 
 Use this for pasted-image or local-PDF workflows: save the file locally, upload it with this tool, then attach the returned attachment_id to an entry with brain_attachment_attach.`,
@@ -321,7 +329,7 @@ Use this for pasted-image or local-PDF workflows: save the file locally, upload 
 
 func registerBrainAttachmentAttach(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_attach",
+		Name:        "attachment_attach",
 		Description: "Attach an existing Brain attachment to an entry with optional role and caption metadata.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the entry and attachment"},
@@ -357,7 +365,7 @@ func registerBrainAttachmentAttach(s *Server, client *APIClient) {
 
 func registerBrainAttachmentDetach(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_detach",
+		Name:        "attachment_detach",
 		Description: "Detach an attachment from an entry. Provide role when detaching a role-specific reference.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the entry and attachment"},
@@ -387,7 +395,7 @@ func registerBrainAttachmentDetach(s *Server, client *APIClient) {
 
 func registerBrainAttachmentList(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_list",
+		Name:        "attachment_list",
 		Description: "List attachments available in a project, or attachments linked to a specific entry when entry_id is provided.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id": {Type: "string", Description: "Project whose attachments should be listed"},
@@ -423,7 +431,7 @@ func registerBrainAttachmentList(s *Server, client *APIClient) {
 
 func registerBrainAttachmentGet(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_get",
+		Name:        "attachment_get",
 		Description: "Get attachment metadata, download/text URLs, and derived artifact references.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -445,7 +453,7 @@ func registerBrainAttachmentGet(s *Server, client *APIClient) {
 
 func registerBrainAttachmentDelete(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_delete",
+		Name:        "attachment_delete",
 		Description: "Delete an attachment from a project when it is not referenced by entries.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -470,7 +478,7 @@ func registerBrainAttachmentDelete(s *Server, client *APIClient) {
 
 func registerBrainAttachmentBackfill(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_backfill",
+		Name:        "attachment_backfill",
 		Description: "Run project-level attachment text extraction backfill and return counts for considered attachments.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":          {Type: "string", Description: "Project whose attachments should be backfilled"},
@@ -500,7 +508,7 @@ func registerBrainAttachmentBackfill(s *Server, client *APIClient) {
 
 func registerBrainAttachmentExtract(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_extract",
+		Name:        "attachment_extract",
 		Description: "Trigger server-side media-to-text extraction for an attachment and return extraction status, provider/model, reason, and derived text metadata.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -523,7 +531,7 @@ func registerBrainAttachmentExtract(s *Server, client *APIClient) {
 
 func registerBrainAttachmentText(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_text",
+		Name:        "attachment_text",
 		Description: "Retrieve extracted plain text for an attachment, useful for local PDF/image OCR workflows after upload.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -548,7 +556,7 @@ func registerBrainAttachmentText(s *Server, client *APIClient) {
 
 func registerBrainAttachmentDownload(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_attachment_download",
+		Name:        "attachment_download",
 		Description: "Download raw attachment bytes to a local output path. Use this when an agent needs the exact original image, PDF, or media file for later processing.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project_id":    {Type: "string", Description: "Project containing the attachment"},
@@ -815,12 +823,13 @@ func formatAttachmentExtractionResult(result types.AttachmentExtractionResult) s
 
 func registerBrainSearch(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_search",
+		Name:        "search",
 		Description: "Search the brain using full-text search.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
 				"query":      {Type: "string", Description: "Search query"},
+				"project":    {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to search across all projects."},
 				"type":       {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 				"status":     {Type: "string", Enum: types.EntryStatuses, Description: "Filter by status"},
 				"feature_id": {Type: "string", Description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"},
@@ -868,7 +877,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 
 func registerBrainList(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_list",
+		Name: "list",
 		Description: `List entries in the brain with optional filtering by type, status, and filename.
 
 Filename filtering supports:
@@ -877,6 +886,7 @@ Filename filtering supports:
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
+				"project":    {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to list across all projects."},
 				"type":       {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 				"status":     {Type: "string", Enum: types.EntryStatuses, Description: "Filter by status"},
 				"feature_id": {Type: "string", Description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"},
@@ -890,6 +900,9 @@ Filename filtering supports:
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		// Convert tags array to comma-separated string for GET query params
 		params := make(map[string]string)
+		if v := StringArg(args, "project", ""); v != "" {
+			params["project"] = v
+		}
 		if v := StringArg(args, "type", ""); v != "" {
 			params["type"] = v
 		}
@@ -948,12 +961,13 @@ Filename filtering supports:
 
 func registerBrainInject(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_inject",
+		Name:        "inject",
 		Description: "Search the brain and return relevant context for a task.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
 				"query":      {Type: "string", Description: "What context are you looking for?"},
+				"project":    {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to search across all projects."},
 				"maxEntries": {Type: "number", Description: "Maximum entries to include (default: 5)"},
 				"type":       {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 			},
@@ -986,7 +1000,7 @@ func registerBrainInject(s *Server, client *APIClient) {
 
 func registerBrainUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_update",
+		Name: "update",
 		Description: `Update an existing brain entry's status, title, dependencies, trigger configuration, or append content.
 
 Use cases:
@@ -1033,7 +1047,7 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 				"feature_priority":     {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
 				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. Use this for feature-to-feature ordering."},
 				"trigger":              {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
-				"action":               {Type: "object", Description: "Automation action config for automation entries. Common fields: type, title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir."},
+				"action":               {Type: "object", Description: "Automation action config for automation entries. Common fields: type, title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
 				"retry":                {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
 				"feature_schedule":     {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
 				"feature_starts_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
@@ -1359,7 +1373,7 @@ func sanitizeBulkUpdateEntry(value any) any {
 
 func registerBrainBulkUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_bulk_update",
+		Name: "bulk_update",
 		Description: `Update multiple brain entries in a single request.
 
 Two modes (mutually exclusive):
@@ -1379,6 +1393,7 @@ Examples:
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
+				"project": {Type: "string", Description: "Convenience shortcut for filter.project: restrict updates to entries in this project (e.g., 'orion-ai'). Only used in filter mode; explicit-entries mode ignores this. If filter already has a project field, that value wins."},
 				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string). Use with 'updates'."},
 				"updates": {Type: "object", Description: "Updates to apply to matched entries. Fields: status (string), priority (string), tags (string[]), append (string), note (string). Use with 'filter'."},
 				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: { status?, priority?, tags?, append?, note? } }"},
@@ -1389,6 +1404,22 @@ Examples:
 		// Validate: must have either (filter + updates) or entries, not both, not neither
 		filter := sanitizeObjectArg(args["filter"])
 		updates := sanitizeUpdateValue(args["updates"])
+
+		// Merge the top-level `project` convenience shortcut into filter.project.
+		// The nested value wins if the caller set both, so we don't clobber
+		// intentional filter{}-only usage. This lets LLMs discover project
+		// scoping without needing to know the nested filter shape.
+		if topProject := StringArg(args, "project", ""); topProject != "" {
+			filterMap, _ := filter.(map[string]any)
+			if filterMap == nil {
+				filterMap = make(map[string]any)
+			}
+			if _, alreadySet := filterMap["project"]; !alreadySet {
+				filterMap["project"] = topProject
+			}
+			filter = filterMap
+		}
+
 		hasFilter := hasFields(filter)
 		hasUpdates := hasFields(updates)
 		_, hasEntries := args["entries"]
@@ -1467,7 +1498,7 @@ Examples:
 
 func registerBrainDelete(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_delete",
+		Name:        "delete",
 		Description: "Delete a specific entry from the brain by path. Use with caution.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1501,7 +1532,7 @@ func registerBrainDelete(s *Server, client *APIClient) {
 
 func registerBrainMove(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_move",
+		Name: "move",
 		Description: `Move a brain entry to a different project.
 
 IMPORTANT LIMITATIONS:
@@ -1551,18 +1582,22 @@ Example: brain_move({ path: "projects/old/task/abc12def.md", project: "new-proje
 
 func registerBrainStats(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_stats",
+		Name:        "stats",
 		Description: "Get statistics about the brain storage.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"global": {Type: "boolean", Description: "Show only global entries stats"},
+				"global":  {Type: "boolean", Description: "Show only global entries stats"},
+				"project": {Type: "string", Description: "Scope stats to a project (e.g., 'orion-ai'). Takes precedence over 'global' when both are set."},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		params := make(map[string]string)
 		if v, ok := args["global"].(bool); ok {
 			params["global"] = fmt.Sprintf("%t", v)
+		}
+		if v := StringArg(args, "project", ""); v != "" {
+			params["project"] = v
 		}
 
 		var resp struct {
@@ -1608,7 +1643,7 @@ func registerBrainStats(s *Server, client *APIClient) {
 
 func registerBrainCheckConnection(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_check_connection",
+		Name: "check_connection",
 		Description: `Check if the Brain API server is running and accessible.
 
 Use this tool FIRST if you're unsure whether brain tools will work.
@@ -1659,7 +1694,7 @@ All brain tools (save, recall, search, inject, etc.) are available.`, client.bas
 
 func registerBrainLink(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_link",
+		Name:        "link",
 		Description: "Generate a markdown link to a brain entry. Use this when referencing other brain entries to ensure proper link resolution with mkdnflow.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1701,7 +1736,7 @@ func registerBrainLink(s *Server, client *APIClient) {
 
 func registerBrainSection(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_section",
+		Name: "section",
 		Description: `Retrieve a specific section's FULL CONTENT from a brain plan by section title.
 
 Use this when you need the detailed implementation spec for your assigned task.
@@ -1755,13 +1790,14 @@ This is more precise than brain_inject (which uses fuzzy search) - it extracts t
 
 func registerBrainPlanSections(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_plan_sections",
+		Name:        "plan_sections",
 		Description: "Extract section headers from a plan entry for orchestration mapping.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"path":  {Type: "string", Description: "Path to the plan entry"},
-				"title": {Type: "string", Description: "Title to search for"},
+				"path":    {Type: "string", Description: "Path to the plan entry"},
+				"title":   {Type: "string", Description: "Title to search for"},
+				"project": {Type: "string", Description: "When resolving by title, restrict the match to this project ID. Ignored when 'path' is provided."},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -1773,13 +1809,18 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 				return "Please provide either a path or title", nil
 			}
 
+			searchBody := map[string]any{"query": title, "limit": 5}
+			if project := StringArg(args, "project", ""); project != "" {
+				searchBody["project"] = project
+			}
+
 			var searchResp struct {
 				Results []struct {
 					Path  string `json:"path"`
 					Title string `json:"title"`
 				} `json:"results"`
 			}
-			if err := client.Request(ctx, "POST", "/search", map[string]any{"query": title, "limit": 5}, nil, &searchResp); err != nil {
+			if err := client.Request(ctx, "POST", "/search", searchBody, nil, &searchResp); err != nil {
 				return "", err
 			}
 
@@ -1845,7 +1886,7 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 
 func registerBrainVerify(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_verify",
+		Name:        "verify",
 		Description: "Mark an entry as verified (still accurate). Updates the last_verified timestamp.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1874,14 +1915,15 @@ func registerBrainVerify(s *Server, client *APIClient) {
 
 func registerBrainStale(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_stale",
+		Name:        "stale",
 		Description: "Find entries that may need verification (not verified in N days).",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"days":  {Type: "number", Description: "Days threshold (default: 30)"},
-				"type":  {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
-				"limit": {Type: "number", Description: "Maximum results (default: 20)"},
+				"days":    {Type: "number", Description: "Days threshold (default: 30)"},
+				"type":    {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
+				"limit":   {Type: "number", Description: "Maximum results (default: 20)"},
+				"project": {Type: "string", Description: "Restrict to entries under a specific project (e.g., 'orion-ai'). Omit for cross-project results."},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -1892,6 +1934,9 @@ func registerBrainStale(s *Server, client *APIClient) {
 		}
 		if v := StringArg(args, "type", ""); v != "" {
 			params["type"] = v
+		}
+		if v := StringArg(args, "project", ""); v != "" {
+			params["project"] = v
 		}
 
 		var resp struct {
@@ -1941,13 +1986,14 @@ func registerBrainStale(s *Server, client *APIClient) {
 
 func registerBrainOrphans(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_orphans",
+		Name:        "orphans",
 		Description: "Find entries with no incoming links (orphans). Useful for knowledge graph health.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"type":  {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
-				"limit": {Type: "number", Description: "Maximum results (default: 20)"},
+				"type":    {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
+				"limit":   {Type: "number", Description: "Maximum results (default: 20)"},
+				"project": {Type: "string", Description: "Restrict to entries under a specific project (e.g., 'orion-ai'). Omit for cross-project results."},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -1956,6 +2002,9 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 		}
 		if v := StringArg(args, "type", ""); v != "" {
 			params["type"] = v
+		}
+		if v := StringArg(args, "project", ""); v != "" {
+			params["project"] = v
 		}
 
 		var resp struct {
@@ -2008,7 +2057,7 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 
 func registerBrainBacklinks(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_backlinks",
+		Name:        "backlinks",
 		Description: "Find entries that link TO a given entry (backlinks).",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -2058,7 +2107,7 @@ func registerBrainBacklinks(s *Server, client *APIClient) {
 
 func registerBrainOutlinks(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_outlinks",
+		Name:        "outlinks",
 		Description: "Find entries that a given entry links TO (outlinks).",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -2108,7 +2157,7 @@ func registerBrainOutlinks(s *Server, client *APIClient) {
 
 func registerBrainRelated(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_related",
+		Name:        "related",
 		Description: "Find entries that share linked notes with a given entry.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -2162,7 +2211,7 @@ func registerBrainRelated(s *Server, client *APIClient) {
 
 func registerBrainAutomationList(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_automation_list",
+		Name:        "automation_list",
 		Description: "List active automations with their trigger type, status, and last-fired info. Automations are event-driven behaviors stored as brain entries that replace hardcoded monitors.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -2245,7 +2294,7 @@ func registerBrainAutomationList(s *Server, client *APIClient) {
 
 func registerBrainAutomationTest(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_automation_test",
+		Name:        "automation_test",
 		Description: "Dry-run an event against active automations to see which would match. No tasks are created -- this is a simulation for debugging automation triggers.",
 		InputSchema: InputSchema{
 			Type: "object",

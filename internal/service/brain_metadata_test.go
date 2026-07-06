@@ -399,3 +399,114 @@ func TestUpdateMetadata_TitleChangeWritesToFile(t *testing.T) {
 		t.Errorf("file should contain updated title, got:\n%s", fileStr)
 	}
 }
+
+// TestUpdate_DirectPromptChangePersistsInDBMetadata is a regression test for
+// the bug where `Update()` would re-apply the pre-update DB metadata for
+// "runtime" fields (including direct_prompt) AFTER re-indexing the freshly
+// written file. That clobbered the new value with the stale one in the DB
+// `metadata` column, even though the on-disk file had the new value.
+//
+// Symptom (from the PWA): the user edits direct_prompt, clicks Save, the modal
+// closes, the file on disk is correct, but list/detail views keep showing the
+// old direct_prompt because they read from `metadata` JSON.
+func TestUpdate_DirectPromptChangePersistsInDBMetadata(t *testing.T) {
+	svc, _, brainDir := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Seed an entry that already has a direct_prompt in its frontmatter, so the
+	// DB metadata (built from the indexer) carries the original value.
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:         "task",
+		Title:        "Direct Prompt Update Test",
+		Status:       "pending",
+		DirectPrompt: "ORIGINAL prompt",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Update with a new direct_prompt — what the PWA full-file edit would do.
+	newPrompt := "UPDATED prompt - if you can read this in the DB, the bug is fixed"
+	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		DirectPrompt: &newPrompt,
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	// The returned entry must reflect the new prompt.
+	if updated.DirectPrompt != newPrompt {
+		t.Errorf("Update return: DirectPrompt = %q, want %q", updated.DirectPrompt, newPrompt)
+	}
+
+	// The on-disk file must have the new prompt.
+	absPath := filepath.Join(brainDir, filepath.FromSlash(saved.Path))
+	fileBytes, err := os.ReadFile(absPath)
+	if err != nil {
+		t.Fatalf("read file: %v", err)
+	}
+	fileStr := string(fileBytes)
+	if !strings.Contains(fileStr, newPrompt) {
+		t.Errorf("file should contain new prompt, got:\n%s", fileStr)
+	}
+	if strings.Contains(fileStr, "ORIGINAL prompt") {
+		t.Errorf("file should NOT contain original prompt, got:\n%s", fileStr)
+	}
+
+	// And — the actual regression — Recall (which reads from the DB metadata
+	// column) must also return the new prompt, not the stale preserved value.
+	recalled, err := svc.Recall(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if recalled.DirectPrompt != newPrompt {
+		t.Errorf("Recall: DirectPrompt = %q, want %q (preservation logic clobbered the freshly indexed value)", recalled.DirectPrompt, newPrompt)
+	}
+}
+
+// TestUpdate_PreservesUntouchedRuntimeFields verifies that the runtime-field
+// preservation logic still works for fields the caller did NOT include in the
+// request — i.e. fixing the direct_prompt bug must not regress preservation of
+// things like sessions or scheduler-managed next_run.
+func TestUpdate_PreservesUntouchedRuntimeFields(t *testing.T) {
+	svc, store, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:   "task",
+		Title:  "Preserve Untouched Test",
+		Status: "pending",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Inject a runtime-only sessions map directly into DB metadata, simulating
+	// what the runner would do at task-claim time.
+	if _, err := store.MergeMetadata(ctx, saved.Path, map[string]interface{}{
+		"sessions": map[string]interface{}{
+			"ses_runtime": map[string]interface{}{
+				"timestamp": "2025-06-15T00:00:00Z",
+			},
+		},
+	}); err != nil {
+		t.Fatalf("MergeMetadata setup failed: %v", err)
+	}
+
+	// Update an unrelated field (status). The user did NOT touch sessions, so
+	// they must survive the re-index.
+	completed := "completed"
+	if _, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		Status: &completed,
+	}); err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	recalled, err := svc.Recall(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if recalled.Sessions == nil || len(recalled.Sessions) == 0 {
+		t.Error("expected sessions to survive Update() of an unrelated field")
+	}
+}

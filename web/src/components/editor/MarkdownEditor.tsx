@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { oneDark } from "@codemirror/theme-one-dark";
 import { openSearchPanel } from "@codemirror/search";
@@ -27,6 +27,7 @@ export function MarkdownEditor({
   const [useVim, setUseVim] = useState(vimEnabled());
 
   const extensions = useMemo(() => editorExtensions(useVim), [useVim]);
+  const prefersDark = usePrefersDarkMode();
 
   function toggleVim() {
     const next = !useVim;
@@ -82,7 +83,7 @@ export function MarkdownEditor({
             ref={cmRef}
             value={value}
             height={height}
-            theme={oneDark}
+            theme={prefersDark ? oneDark : "light"}
             extensions={extensions}
             onChange={onChange}
             autoFocus={autoFocus}
@@ -108,4 +109,20 @@ export function MarkdownEditor({
       )}
     </div>
   );
+}
+
+function usePrefersDarkMode() {
+  const [prefersDark, setPrefersDark] = useState(() =>
+    window.matchMedia("(prefers-color-scheme: dark)").matches,
+  );
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const update = () => setPrefersDark(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  return prefersDark;
 }

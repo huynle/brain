@@ -47,6 +47,7 @@ const VIEW_GROUPS: Record<string, Group> = {
       { keys: ["F", "A"], desc: "Re-embed project / all" },
       { keys: ["T"], desc: "Toggle detail pane" },
       { keys: ["z"], desc: "Toggle logs pane" },
+      { keys: ["Tab"], desc: "Cycle panel focus" },
     ],
   },
   automations: {
@@ -64,6 +65,7 @@ const VIEW_GROUPS: Record<string, Group> = {
       { keys: ["p"], desc: "Pause automations" },
       { keys: ["T"], desc: "Toggle detail pane" },
       { keys: ["z"], desc: "Toggle logs pane" },
+      { keys: ["Tab"], desc: "Cycle panel focus" },
     ],
   },
   control: {
@@ -144,6 +146,23 @@ const POPUPS: Group = {
   ],
 };
 
+// Pane focus + vim-style scroll inside Tasks/Brain/Automations content panes.
+const PANES: Group = {
+  id: "panes",
+  title: "Detail / Logs panes",
+  rows: [
+    { keys: ["Tab"], desc: "Cycle pane focus (tasks → detail → logs)" },
+    { keys: ["Shift-Tab"], desc: "Cycle pane focus backward" },
+    { keys: ["j", "k"], desc: "Scroll line down / up (in focused pane)" },
+    { keys: ["g", "g"], desc: "Jump to top (vim 'gg', ~500ms)" },
+    { keys: ["G"], desc: "Jump to bottom" },
+    { keys: ["Ctrl-D", "Ctrl-U"], desc: "Half-page down / up" },
+    { keys: ["Alt-J", "Alt-K"], desc: "Grow / shrink bottom-row height" },
+    { keys: ["Alt-L", "Alt-H"], desc: "Grow / shrink detail vs logs width" },
+    { keys: ["double-click separator"], desc: "Reset that split to default" },
+  ],
+};
+
 const VIEW_LABEL: Record<string, string> = {
   tasks: "Tasks",
   brain: "Brain",
@@ -159,7 +178,7 @@ export function HelpModal({ onClose }: { onClose: () => void }) {
 
   // Current tab first (highlighted), then Global + Lists, then the other tabs.
   const others = Object.values(VIEW_GROUPS).filter((g) => g.id !== view);
-  const ordered: Group[] = [...(current ? [current] : []), GLOBAL, LISTS, POPUPS, ...others];
+  const ordered: Group[] = [...(current ? [current] : []), GLOBAL, LISTS, PANES, POPUPS, ...others];
 
   return (
     <Modal title={`Keyboard shortcuts — ${VIEW_LABEL[view] ?? ""}`} onClose={onClose}>

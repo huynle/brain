@@ -786,6 +786,102 @@ func (h *Handler) HandleTriggerTask(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleRunTask handles POST /tasks/{projectId}/{taskId}/run.
+//
+// This is the user-explicit "run this task now" path used by the PWA "x"
+// shortcut and any other UI that needs to push a task to a runner without
+// waiting for the scheduler tick or runner poll loop. It picks an eligible
+// runner via the scheduler's selectCandidate logic and publishes a dispatch
+// command via the realtime hub.
+//
+// Behaviour:
+//   - 200 with Dispatched=true and {runnerId, leaseId, expiresAt} on success.
+//   - 200 with Dispatched=false and a Reason token (no_online_runner,
+//     no_eligible_runner, task_not_ready, all_runners_at_capacity, ...) when
+//     dispatch can't proceed. The PWA can branch on Reason for UX (e.g. show
+//     "no runner online" toast).
+//   - 501 Not Implemented when the run service is not wired, so clients can
+//     fall back to /trigger transparently.
+//   - 500 only on unexpected infrastructure failures (storage, hub).
+func (h *Handler) HandleRunTask(w http.ResponseWriter, r *http.Request) {
+	if h.runTask == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "run-task service is not configured")
+		return
+	}
+
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+
+	var req types.RunTaskRequest
+	// Empty body is fine — Force defaults to false. Only fail on malformed JSON.
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+			return
+		}
+	}
+
+	resp, err := h.runTask.RunTaskNow(r.Context(), projectId, taskId, req.Force)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	// Emit task.triggered event when dispatch actually happened so existing
+	// audit/observability paths (dispatch UI, automation reactions) see it.
+	if resp != nil && resp.Dispatched {
+		evt := types.NewEvent(types.EventTaskTriggered, types.EventSourceAPI)
+		evt.ProjectID = projectId
+		evt.TaskID = taskId
+		evt.TaskPath = fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
+		h.emitEvent(r.Context(), evt)
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleRunFeature handles POST /tasks/{projectId}/features/{featureId}/run.
+//
+// User-explicit "run this whole feature now" path. The scheduler dispatches
+// every ready task in the feature up to current runner capacity and queues
+// the rest for a feature-scoped cascade that auto-dispatches as in-flight
+// tasks complete — even when the project is paused.
+//
+// Behaviour:
+//   - 200 with Dispatched=true and a per-task Results array on success.
+//   - 200 with Dispatched=false and Reason ("feature_not_found",
+//     "no_ready_tasks", "feature_in_progress", "scheduler_not_configured")
+//     when nothing dispatched.
+//   - 400 on malformed JSON body.
+//   - 501 Not Implemented when the run-feature service is not wired so PWA
+//     can fall back gracefully.
+//   - 500 only on unexpected infrastructure failures.
+func (h *Handler) HandleRunFeature(w http.ResponseWriter, r *http.Request) {
+	if h.runFeature == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "run-feature service is not configured")
+		return
+	}
+
+	projectId := chi.URLParam(r, "projectId")
+	featureId := chi.URLParam(r, "featureId")
+
+	var req types.RunFeatureRequest
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+			return
+		}
+	}
+
+	resp, err := h.runFeature.RunFeatureNow(r.Context(), projectId, featureId, req.Force)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandlePauseProject handles POST /tasks/runner/pause/{projectId}.
 func (h *Handler) HandlePauseProject(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")
@@ -793,6 +889,7 @@ func (h *Handler) HandlePauseProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, projectId, "tasks", true)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -803,6 +900,7 @@ func (h *Handler) HandleResumeProject(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, projectId, "tasks", false)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -812,6 +910,7 @@ func (h *Handler) HandlePauseAll(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, "", "tasks", true)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -821,6 +920,7 @@ func (h *Handler) HandleResumeAll(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, "", "tasks", false)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -830,6 +930,7 @@ func (h *Handler) HandlePauseAutomations(w http.ResponseWriter, r *http.Request)
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, "", "automations", true)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 
@@ -839,6 +940,7 @@ func (h *Handler) HandleResumeAutomations(w http.ResponseWriter, r *http.Request
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
+	publishPauseCommand(r.Context(), h.hub, h.runnerRegistry, "", "automations", false)
 	WriteJSON(w, http.StatusOK, map[string]any{"success": true})
 }
 

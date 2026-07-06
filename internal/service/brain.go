@@ -624,6 +624,55 @@ func metaToAttachmentRefsFM(v interface{}) []frontmatter.AttachmentReference {
 // Update
 // =============================================================================
 
+// updateRequestTouchedFields returns the set of metadata-key names that the
+// caller explicitly included in an UpdateEntryRequest. This is used by Update
+// to decide which fields the post-reindex MergeMetadata step is allowed to
+// preserve from the prior DB state — fields the user is editing must be
+// sourced from the freshly-written file, not the stale DB metadata.
+//
+// Keys match the JSON keys stored in the notes.metadata column (which are
+// derived from the frontmatter struct's `json:` tags).
+func updateRequestTouchedFields(req types.UpdateEntryRequest) map[string]bool {
+	touched := make(map[string]bool)
+	if req.Schedule != nil {
+		touched["schedule"] = true
+	}
+	if req.ScheduleEnabled != nil {
+		touched["schedule_enabled"] = true
+	}
+	if req.NextRun != nil {
+		touched["next_run"] = true
+	}
+	if req.MaxRuns != nil {
+		touched["max_runs"] = true
+	}
+	if req.StartsAt != nil {
+		touched["starts_at"] = true
+	}
+	if req.ExpiresAt != nil {
+		touched["expires_at"] = true
+	}
+	if req.RunOnceAt != nil {
+		touched["run_once_at"] = true
+	}
+	if req.Timezone != nil {
+		touched["timezone"] = true
+	}
+	if req.CompleteOnIdle != nil {
+		touched["complete_on_idle"] = true
+	}
+	if req.DirectPrompt != nil {
+		touched["direct_prompt"] = true
+	}
+	if req.Sessions != nil {
+		touched["sessions"] = true
+	}
+	if req.Runs != nil {
+		touched["runs"] = true
+	}
+	return touched
+}
+
 // Update modifies an existing brain entry.
 func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
 	// Resolve the entry
@@ -755,6 +804,21 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	// Task execution fields
 	if req.DirectPrompt != nil {
 		fm.DirectPrompt = *req.DirectPrompt
+		// For automation entries, the root direct_prompt is meaningless — the
+		// runtime reads automation.Action.DirectPrompt to render the prompt
+		// for each generated task. Mirror the value into Action.DirectPrompt
+		// so MCP clients (which only expose the top-level direct_prompt arg)
+		// can update automation prompts without knowing about the nested
+		// shape. An explicit req.Action takes precedence over this mirror.
+		if fm.Type == "automation" && (req.Action == nil || req.Action.DirectPrompt == "") {
+			if fm.Action == nil {
+				fm.Action = &frontmatter.AutomationAction{}
+			}
+			fm.Action.DirectPrompt = *req.DirectPrompt
+			if fm.Action.Type == "" {
+				fm.Action.Type = "prompt"
+			}
+		}
 	}
 	if req.Agent != nil {
 		fm.Agent = *req.Agent
@@ -896,20 +960,31 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 
 	// Preserve runtime metadata from the DB that the filesystem doesn't track.
-	// The re-index reads from disk which only has frontmatter fields, so any
-	// runtime-only fields (sessions, schedule state, direct_prompt, etc.) would
-	// be lost without this preservation step.
-	var preservedFields map[string]interface{}
+	// The re-index reads from disk; for fields the user did NOT explicitly
+	// touch in this request, restore the prior DB value so that runtime-only
+	// state (e.g. sessions/runs populated by the scheduler, or legacy entries
+	// where these fields were never written to disk) is not lost.
+	//
+	// IMPORTANT: do NOT preserve a runtime field if the user explicitly set it
+	// in the request — the on-disk write is the source of truth and the
+	// re-indexed value must win, otherwise edits to fields like direct_prompt,
+	// schedule, max_runs, etc. silently revert in the DB metadata even though
+	// the markdown file has the new value.
 	runtimeKeys := []string{
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
 	}
+	userTouched := updateRequestTouchedFields(req)
+	var preservedFields map[string]interface{}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}
 		if err := json.Unmarshal([]byte(row.Metadata), &existingMeta); err == nil {
 			preservedFields = make(map[string]interface{})
 			for _, key := range runtimeKeys {
+				if userTouched[key] {
+					continue // user-supplied value already on disk; let re-index win
+				}
 				if val, ok := existingMeta[key]; ok {
 					preservedFields[key] = val
 				}
@@ -1444,18 +1519,25 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	}
 
 	// Preserve runtime metadata from the DB that the filesystem doesn't track.
-	// Same pattern as Update() method.
-	var preservedFields map[string]interface{}
+	// Skip preservation for keys the caller explicitly set in `fields`, so that
+	// the freshly re-indexed value (sourced from the just-written file) wins
+	// over the stale pre-update DB value. Without this, edits to fields like
+	// schedule, starts_at, max_runs, etc. silently revert in the DB metadata
+	// even though the file has the new value.
 	runtimeKeys := []string{
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
 	}
+	var preservedFields map[string]interface{}
 	if row.Metadata != "" && row.Metadata != "{}" {
 		var existingMeta map[string]interface{}
 		if err := json.Unmarshal([]byte(row.Metadata), &existingMeta); err == nil {
 			preservedFields = make(map[string]interface{})
 			for _, key := range runtimeKeys {
+				if _, touched := fields[key]; touched {
+					continue // caller-supplied value is already on disk; let re-index win
+				}
 				if val, ok := existingMeta[key]; ok {
 					preservedFields[key] = val
 				}
@@ -2043,8 +2125,9 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 	}
 
 	opts := &storage.SearchOptions{
-		Limit: limit,
-		Type:  req.Type,
+		Limit:     limit,
+		Type:      req.Type,
+		ProjectID: req.Project,
 	}
 
 	rows, err := s.storage.SearchNotes(ctx, req.Query, opts)
@@ -2335,12 +2418,22 @@ func (s *BrainServiceImpl) GetSection(ctx context.Context, path string, title st
 // =============================================================================
 
 // GetStats returns aggregate statistics.
-// When global=true, returns only global entries stats.
-// When global=false, returns total stats across all entries.
-func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool) (*types.StatsResponse, error) {
-	// Primary stats based on the global flag
+//
+// Filter precedence (highest wins):
+//  1. project != ""  → primary stats are scoped to entries under
+//     projects/<project>/. `global` is ignored in that case.
+//  2. global == true → primary stats include only entries under global/.
+//  3. neither       → primary stats span all entries.
+//
+// The response always includes overall GlobalEntries and ProjectEntries
+// counts so callers can compare a scoped result against the totals.
+func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
+	// Primary stats based on the filter precedence above.
 	var primaryOpts *storage.StatsOptions
-	if global {
+	switch {
+	case project != "":
+		primaryOpts = &storage.StatsOptions{Path: "projects/" + project + "/"}
+	case global:
 		primaryOpts = &storage.StatsOptions{Path: "global/"}
 	}
 
@@ -2375,14 +2468,18 @@ func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool) (*types.St
 }
 
 // GetOrphans returns entries with no incoming links.
-func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error) {
+func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	noteRows, err := s.storage.GetOrphans(ctx, &storage.OrphanOptions{
+	opts := &storage.OrphanOptions{
 		Type:  entryType,
 		Limit: limit,
-	})
+	}
+	if project != "" {
+		opts.Path = "projects/" + project + "/"
+	}
+	noteRows, err := s.storage.GetOrphans(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("get orphans: %w", err)
 	}
@@ -2390,17 +2487,22 @@ func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, lim
 }
 
 // GetStale returns entries not verified in N days.
-func (s *BrainServiceImpl) GetStale(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error) {
+// When project is set, results are scoped to entries under projects/<project>/.
+func (s *BrainServiceImpl) GetStale(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if days <= 0 {
 		days = 30
 	}
 	if limit <= 0 {
 		limit = 50
 	}
-	noteRows, err := s.storage.GetStaleEntries(ctx, days, &storage.StaleOptions{
+	opts := &storage.StaleOptions{
 		Type:  entryType,
 		Limit: limit,
-	})
+	}
+	if project != "" {
+		opts.Path = "projects/" + project + "/"
+	}
+	noteRows, err := s.storage.GetStaleEntries(ctx, days, opts)
 	if err != nil {
 		return nil, fmt.Errorf("get stale entries: %w", err)
 	}

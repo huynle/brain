@@ -43,7 +43,7 @@ What plan should I convert to tasks? Provide a Brain path/ID/title, paste the pl
 - Prefer `execution_mode: "worktree"` and set `target_workdir` for multi-task work.
 - Prevent parallel file conflicts through dependencies or task grouping.
 - Create tasks as `draft` first, then promote to `pending` only after the full graph exists.
-- Verify the queue with `brain_tasks` before reporting success.
+- Verify the queue with `tasks` before reporting success.
 
 ## Output
 

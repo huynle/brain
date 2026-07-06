@@ -1,27 +1,27 @@
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
 
-  /* Palette — tokyonight-ish, matching the TUI accents. */
-  --bg: #0b0e14;
-  --bg-1: #11151f;
-  --bg-2: #161b26;
-  --bg-3: #1e2433;
-  --bg-hover: #222a3d;
-  --border: #232a3b;
-  --border-strong: #2f3b5c;
+  /* Palette - light by default, dark overrides follow system appearance. */
+  --bg: #f7f3ea;
+  --bg-1: #fffaf0;
+  --bg-2: #ebe3d3;
+  --bg-3: #ded2bd;
+  --bg-hover: #d6c7ad;
+  --border: #d3c6af;
+  --border-strong: #9f8f75;
 
-  --fg: #c7d0e0;
-  --fg-dim: #8a93a8;
-  --fg-faint: #5b6478;
+  --fg: #25221d;
+  --fg-dim: #5f5749;
+  --fg-faint: #8a7d68;
 
-  --blue: #7aa2f7;
-  --cyan: #7dcfff;
-  --green: #9ece6a;
-  --yellow: #e0af68;
-  --orange: #ff9e64;
-  --red: #f7768e;
-  --purple: #bb9af7;
-  --teal: #73daca;
+  --blue: #2458b8;
+  --cyan: #007089;
+  --green: #4f781b;
+  --yellow: #8a6400;
+  --orange: #b9561d;
+  --red: #b3263c;
+  --purple: #6d48b8;
+  --teal: #137a62;
 
   --accent: var(--blue);
 
@@ -34,6 +34,35 @@
 
   --font: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
   --mono: ui-monospace, SFMono-Regular, "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --text: var(--fg);
+  --faint: var(--fg-faint);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Palette - tokyonight-ish, matching the TUI accents. */
+    --bg: #0b0e14;
+    --bg-1: #11151f;
+    --bg-2: #161b26;
+    --bg-3: #1e2433;
+    --bg-hover: #222a3d;
+    --border: #232a3b;
+    --border-strong: #2f3b5c;
+
+    --fg: #c7d0e0;
+    --fg-dim: #8a93a8;
+    --fg-faint: #5b6478;
+
+    --blue: #7aa2f7;
+    --cyan: #7dcfff;
+    --green: #9ece6a;
+    --yellow: #e0af68;
+    --orange: #ff9e64;
+    --red: #f7768e;
+    --purple: #bb9af7;
+    --teal: #73daca;
+  }
 }
 
 * {
@@ -430,6 +459,16 @@ a {
   font-size: 13.5px;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   animation: toast-in 0.18s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.toast-message {
+  flex: 1;
+  min-width: 0;
+}
+.toast-action {
+  flex-shrink: 0;
 }
 .toast.error {
   border-color: color-mix(in srgb, var(--red) 50%, var(--border));
@@ -1016,6 +1055,19 @@ kbd {
   min-height: 0;
   gap: 3px;
 }
+/* Horizontal flex row that hosts the main content column on the left and the
+   persistent assistant sidebar on the right (when visible). On viewports
+   without the sidebar this row simply contains .tui-main and behaves
+   identically to it. */
+.tui-body {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  min-width: 0;
+  gap: 3px;
+}
+.tui-body > .tui-main { flex: 1; min-width: 0; }
 .tui-bottom {
   display: flex;
   gap: 3px;
@@ -1143,6 +1195,37 @@ kbd {
 .tree-header.cursor { background: var(--bg-3); }
 .tree-header .htri { color: var(--purple); }
 .tree-header .hcount { color: var(--fg-faint); font-weight: 400; }
+
+/* Compact, low-emphasis play glyph that appears on the feature header.
+   Discreet by default (faded, small, no border) and lights up on hover so
+   it doesn't compete with the feature title or count for attention. */
+.tree-header .feature-run {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  padding: 0 4px;
+  margin-left: 4px;
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--fg-faint);
+  cursor: pointer;
+  opacity: 0.55;
+  transition: opacity 0.12s ease, color 0.12s ease;
+}
+.tree-header:hover .feature-run,
+.tree-header.cursor .feature-run {
+  opacity: 1;
+}
+.tree-header .feature-run:hover {
+  color: var(--green, var(--accent));
+  opacity: 1;
+}
+.tree-header .feature-run:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+  opacity: 1;
+}
 
 /* detail panel rows */
 .detail-field { display: flex; gap: 8px; padding: 0; line-height: 1.5; }
@@ -1729,6 +1812,7 @@ kbd {
 
 /* Desktop split Detail/Logs panes are replaced by the inspect sheet on mobile. */
 .tui.mobile .tui-bottom { display: none !important; }
+.tui.mobile .pane-splitter { display: none !important; }
 
 /* Compact-but-tappable list rows. */
 .tui.mobile .tree-row { padding-top: 4px; padding-bottom: 4px; line-height: 1.35; }
@@ -1980,6 +2064,11 @@ kbd {
 }
 .assistant-actions { margin-top: 8px; }
 .assistant-composer { background: var(--bg); }
+.assistant-model-custom {
+  max-width: 170px;
+  padding: 2px 6px;
+  font-size: 12px;
+}
 .assistant-strip {
   border: 1px solid color-mix(in srgb, var(--purple) 35%, var(--border));
   background: color-mix(in srgb, var(--purple) 6%, transparent);
@@ -1990,6 +2079,385 @@ kbd {
 @media (max-width: 720px) {
   .assistant-drawer { width: 100vw; }
   .assistant-backdrop { display: none; }
+}
+
+/* ── Brain Assistant: floating action button (mobile) ──────────── */
+.assistant-fab {
+  position: fixed;
+  right: 18px;
+  /* Sit above MobileNav (~50px) and the iOS safe-area inset. */
+  bottom: calc(58px + env(safe-area-inset-bottom));
+  z-index: 75;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--purple) 55%, var(--border));
+  background: color-mix(in srgb, var(--purple) 18%, var(--bg-2));
+  color: var(--purple);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 0.12s ease, background 0.12s ease;
+}
+.assistant-fab:hover { background: color-mix(in srgb, var(--purple) 28%, var(--bg-2)); }
+.assistant-fab:active { transform: scale(0.94); }
+.assistant-fab-glyph { font-size: 22px; line-height: 1; }
+
+/* ── Brain Assistant: bottom sheet (mobile) ────────────────────── */
+.assistant-shell.mobile { z-index: 85; }
+/* On mobile we want a tappable scrim above the sheet; restore default opacity. */
+.assistant-shell.mobile .assistant-backdrop { display: block; }
+
+.assistant-sheet {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  max-height: 88vh;
+  background: var(--bg);
+  border-top: 1px solid var(--border-strong);
+  border-top-left-radius: 14px;
+  border-top-right-radius: 14px;
+  box-shadow: 0 -18px 48px rgba(0, 0, 0, 0.55);
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+  padding-bottom: env(safe-area-inset-bottom);
+  animation: sheet-up 0.2s ease;
+  /* Snap-back transition when the user releases a partial drag. */
+  transition: transform 0.18s ease;
+  /* Don't let touch moves on the sheet edge cause weird scrolling on iOS. */
+  touch-action: pan-y;
+}
+.assistant-grabber {
+  display: flex;
+  justify-content: center;
+  padding: 8px 0 4px;
+  /* The grabber is the drag-target — disable text selection / native scroll
+     handling so the touch handler captures cleanly. */
+  touch-action: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: grab;
+}
+.assistant-grabber-bar {
+  width: 44px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-strong);
+}
+
+/* ── Brain Assistant: project pill in header ──────────────────── */
+.assistant-head-main { min-width: 0; flex: 1; }
+.assistant-project-pill {
+  flex: 0 0 auto;
+  max-width: 38vw;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--blue) 40%, var(--border));
+  background: color-mix(in srgb, var(--blue) 10%, transparent);
+  color: var(--fg);
+  font-size: 11.5px;
+  font-family: inherit;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+.assistant-project-pill:hover {
+  background: color-mix(in srgb, var(--blue) 18%, transparent);
+}
+.assistant-project-pill.warn {
+  border-color: color-mix(in srgb, var(--yellow) 50%, var(--border));
+  background: color-mix(in srgb, var(--yellow) 10%, transparent);
+  color: var(--yellow);
+}
+
+/* ── Brain Assistant: inline project picker prompt ────────────── */
+.assistant-project-prompt {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 12px 0;
+  padding: 10px 12px;
+  border: 1px dashed color-mix(in srgb, var(--yellow) 50%, var(--border));
+  background: color-mix(in srgb, var(--yellow) 6%, transparent);
+  border-radius: 7px;
+}
+.assistant-project-prompt-text {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+.assistant-project-prompt .btn { align-self: flex-start; }
+
+/* ── Brain Assistant: persistent sidebar (wide desktop) ───────── */
+.assistant-sidebar {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-2);
+  /* Sidebar lives next to .tui-main inside .tui-body; flex-basis is set
+     inline (assistantWidth) and overridden by the user's drag-resize. */
+}
+.assistant-sidebar .assistant-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* ── Brain Assistant: splitter (drag-to-resize on wide desktop) ── */
+.assistant-splitter {
+  flex: 0 0 4px;
+  width: 4px;
+  align-self: stretch;
+  cursor: col-resize;
+  background: transparent;
+  position: relative;
+  /* Stop the browser from intercepting the drag as a text-selection. */
+  touch-action: none;
+  user-select: none;
+}
+.assistant-splitter::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: 0 1px;
+  background: var(--border);
+  border-radius: 1px;
+  transition: background 0.12s ease;
+}
+.assistant-splitter:hover::before {
+  background: color-mix(in srgb, var(--purple) 55%, var(--border));
+}
+/* While dragging, lock the cursor and suppress accidental text selection
+   anywhere in the document. The splitter component toggles this class. */
+body.resizing-assistant {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.resizing-assistant * {
+  user-select: none !important;
+}
+
+/* ── Pane splitters (Tasks/Brain/Automations Detail+Logs row) ───────────
+   Two variants:
+     .pane-splitter-row  4px-tall horizontal bar; drag changes bottom-row height
+     .pane-splitter-col  4px-wide vertical bar; drag changes detail/logs ratio
+   Shape and hover glow mirror the assistant splitter. */
+.pane-splitter {
+  position: relative;
+  background: transparent;
+  touch-action: none;
+  user-select: none;
+}
+.pane-splitter::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: var(--border);
+  border-radius: 1px;
+  transition: background 0.12s ease;
+}
+.pane-splitter:hover::before {
+  background: color-mix(in srgb, var(--purple) 55%, var(--border));
+}
+.pane-splitter-row {
+  flex: 0 0 4px;
+  height: 4px;
+  align-self: stretch;
+  cursor: row-resize;
+}
+.pane-splitter-row::before {
+  margin: 1px 0;
+}
+.pane-splitter-col {
+  flex: 0 0 4px;
+  width: 4px;
+  align-self: stretch;
+  cursor: col-resize;
+}
+.pane-splitter-col::before {
+  margin: 0 1px;
+}
+body.resizing-pane {
+  cursor: row-resize !important;
+  user-select: none;
+}
+body.resizing-pane * {
+  user-select: none !important;
+}
+body.resizing-pane-col {
+  cursor: col-resize !important;
+  user-select: none;
+}
+body.resizing-pane-col * {
+  user-select: none !important;
+}
+
+/* Below 720px width, .tui-bottom switches to flex-direction: column —
+   detail and logs stack vertically. The column splitter's drag math
+   (cursor X → ratio of container width) doesn't translate to a vertical
+   stack, and a 4px-wide bar between stacked rows would look out of place.
+   Simplest fix: hide the col splitter at narrow widths. The row splitter
+   between the list and the bottom row still works fine. */
+@media (max-width: 720px) {
+  .pane-splitter-col { display: none; }
+}
+
+/* ── Brain Assistant: shared panel body (used by sidebar + overlay) ── */
+.assistant-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+  background: var(--bg);
+}
+.assistant-panel-overlay {
+  /* Inside the overlay the surface (sheet/drawer) already provides the bg
+     and border; the panel just stretches to fill it. */
+  background: transparent;
+}
+
+/* ── Brain Assistant: refined chat transcript ─────────────────── */
+.assistant-scroll {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 12px 12px;
+  background:
+    radial-gradient(circle at 100% 0%, color-mix(in srgb, var(--blue) 5%, transparent), transparent 34%),
+    radial-gradient(circle at 0% 100%, color-mix(in srgb, var(--purple) 5%, transparent), transparent 32%);
+}
+.assistant-msg {
+  width: fit-content;
+  max-width: min(86%, 680px);
+  margin: 0;
+  padding: 9px 11px 10px;
+  border-radius: 13px;
+  line-height: 1.48;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset, 0 8px 18px rgba(0, 0, 0, 0.12);
+}
+.assistant-msg.user {
+  align-self: flex-end;
+  margin-left: auto;
+  border-bottom-right-radius: 5px;
+  border-color: color-mix(in srgb, var(--blue) 42%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--blue) 17%, var(--bg-2)), color-mix(in srgb, var(--blue) 9%, var(--bg)));
+}
+.assistant-msg.assistant {
+  align-self: flex-start;
+  margin-right: auto;
+  border-bottom-left-radius: 5px;
+  border-color: color-mix(in srgb, var(--purple) 34%, var(--border));
+  background: linear-gradient(180deg, color-mix(in srgb, var(--purple) 11%, var(--bg-2)), color-mix(in srgb, var(--purple) 5%, var(--bg)));
+}
+.assistant-msg .ctl-msg-role {
+  margin-bottom: 4px;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.72;
+}
+.assistant-msg.user .ctl-msg-role { text-align: right; color: var(--blue); }
+.assistant-msg.assistant .ctl-msg-role { color: var(--purple); }
+.assistant-msg .ctl-part-text p { margin: 0 0 0.65em; }
+.assistant-msg .ctl-part-text p:last-child { margin-bottom: 0; }
+.assistant-msg.user .ctl-part-text { text-align: left; }
+.assistant-stream-placeholder {
+  color: var(--fg-muted);
+  letter-spacing: 0.03em;
+}
+.assistant-stream-placeholder::after {
+  content: "";
+  display: inline-block;
+  width: 7px;
+  height: 1.1em;
+  margin-left: 2px;
+  vertical-align: -0.18em;
+  background: color-mix(in srgb, var(--purple) 70%, var(--fg));
+  animation: blink 1s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+.assistant-actions { margin-top: 9px; }
+
+.assistant-composer {
+  padding: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--bg-2) 60%, transparent), var(--bg));
+}
+.assistant-composer textarea {
+  min-height: 72px;
+  resize: vertical;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: color-mix(in srgb, var(--bg-2) 82%, black);
+  border-color: color-mix(in srgb, var(--border) 78%, var(--blue));
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) inset;
+}
+.assistant-composer textarea:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--blue) 70%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--blue) 14%, transparent);
+}
+.assistant-composer .btn-row { align-items: center; justify-content: space-between; }
+
+/* ── Brain Assistant: attachment chips ────────────────────────── */
+.assistant-composer .ctl-attach-row { gap: 8px; padding-bottom: 2px; }
+.assistant-composer .ctl-attach {
+  width: 64px;
+  height: 64px;
+  border-radius: 10px;
+  border-color: color-mix(in srgb, var(--border) 80%, var(--blue));
+  background: color-mix(in srgb, var(--bg-2) 85%, black);
+}
+.assistant-composer .ctl-attach.file {
+  width: 172px;
+  height: 58px;
+  padding: 8px 26px 8px 8px;
+}
+.ctl-attach-file {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr);
+  grid-template-rows: 1fr 1fr;
+  column-gap: 8px;
+  height: 100%;
+  align-items: center;
+}
+.ctl-attach-file-icon {
+  grid-row: 1 / 3;
+  width: 24px;
+  height: 30px;
+  border: 1px solid color-mix(in srgb, var(--blue) 45%, var(--border));
+  border-radius: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--blue);
+  font-size: 10px;
+}
+.ctl-attach-file-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  font-size: 11.5px;
+}
+.ctl-attach-file-meta {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-muted);
+  font-size: 10.5px;
 }
 
 .command-layer {
@@ -2098,4 +2566,119 @@ kbd {
 .search-popup button {
   width: auto;
   flex: 0 0 auto;
+}
+
+/* ── Brain Assistant: tool-call chips ─────────────────────────── */
+.assistant-tool-chips {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 8px;
+}
+.assistant-tool-chip {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-2) 80%, black);
+  overflow: hidden;
+  font-family: var(--mono, monospace);
+  font-size: 0.85em;
+}
+.assistant-tool-chip.tier-read { border-color: color-mix(in srgb, var(--border) 60%, var(--cyan)); }
+.assistant-tool-chip.tier-write { border-color: color-mix(in srgb, var(--border) 60%, var(--blue)); }
+.assistant-tool-chip.tier-destructive { border-color: color-mix(in srgb, var(--border) 55%, var(--red, #ff6b6b)); }
+.assistant-tool-chip.status-failed { background: color-mix(in srgb, var(--bg-2) 60%, var(--red, #ff6b6b) 8%); }
+.assistant-tool-chip.status-proposed { background: color-mix(in srgb, var(--bg-2) 60%, var(--yellow, #d4b458) 8%); }
+
+.assistant-tool-chip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.assistant-tool-chip-head:hover {
+  background: color-mix(in srgb, var(--bg-2) 60%, white 4%);
+}
+.assistant-tool-chip-glyph {
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-1) 60%, var(--border));
+  color: var(--fg-muted);
+  font-weight: 700;
+}
+.assistant-tool-chip.status-completed .assistant-tool-chip-glyph { color: var(--green, #7fd77c); }
+.assistant-tool-chip.status-failed .assistant-tool-chip-glyph { color: var(--red, #ff6b6b); }
+.assistant-tool-chip.status-proposed .assistant-tool-chip-glyph { color: var(--yellow, #d4b458); }
+
+.assistant-tool-chip-name {
+  font-weight: 700;
+  color: var(--fg);
+}
+.assistant-tool-chip-tier {
+  font-size: 0.75em;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg-1) 80%, var(--border));
+  color: var(--fg-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.assistant-tool-chip-err {
+  color: var(--red, #ff6b6b);
+  font-size: 0.85em;
+  margin-left: auto;
+}
+.assistant-tool-chip-body {
+  padding: 4px 10px 10px;
+  border-top: 1px dashed color-mix(in srgb, var(--border) 70%, transparent);
+}
+.assistant-tool-chip-label {
+  font-size: 0.72em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-muted);
+  margin: 6px 0 2px;
+}
+.assistant-tool-chip-pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--bg-1) 90%, black);
+  padding: 8px;
+  border-radius: 6px;
+  font-size: 0.85em;
+}
+.assistant-tool-chip-note {
+  margin-top: 6px;
+  color: var(--yellow, #d4b458);
+  font-size: 0.85em;
+}
+
+/* ── Brain Assistant: cancelled badge + Stop button ───────────── */
+.assistant-cancelled-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--red) 22%, var(--bg-2));
+  color: var(--red);
+  font-size: 0.72em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+.assistant-stop-btn {
+  min-width: 76px;
 }

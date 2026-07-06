@@ -446,3 +446,79 @@ func TestListExpiredDispatchLeasesForReconciliation(t *testing.T) {
 		t.Fatalf("expired[0] = %#v", expired[0])
 	}
 }
+
+func TestClearDispatchLease_RemovesRegardlessOfRunner(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	// Create a lease against runner-old, then clear it without specifying runner.
+	if _, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+		ProjectID:         "brain-api",
+		TaskID:            "stale-task",
+		AssignedRunnerID:  "runner-old",
+		AssignedMachineID: "machine-old",
+		PushedAt:          1000,
+		ExpiresAt:         5000,
+	}); err != nil || !created {
+		t.Fatalf("CreateDispatchLease failed: created=%v err=%v", created, err)
+	}
+
+	cleared, err := s.ClearDispatchLease(ctx, "brain-api", "stale-task")
+	if err != nil {
+		t.Fatalf("ClearDispatchLease failed: %v", err)
+	}
+	if !cleared {
+		t.Fatal("ClearDispatchLease returned false, want true")
+	}
+
+	got, err := s.GetDispatchLeaseRow(ctx, "brain-api", "stale-task")
+	if err != nil {
+		t.Fatalf("GetDispatchLeaseRow failed: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected lease gone, got %#v", got)
+	}
+}
+
+func TestClearDispatchLease_MissingRowIsNoop(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	cleared, err := s.ClearDispatchLease(ctx, "brain-api", "never-existed")
+	if err != nil {
+		t.Fatalf("ClearDispatchLease failed: %v", err)
+	}
+	if cleared {
+		t.Fatal("ClearDispatchLease returned true for missing row, want false")
+	}
+}
+
+func TestClearDispatchLease_DoesNotTouchOtherTasks(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	if _, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+		ProjectID: "brain-api", TaskID: "keep-me", AssignedRunnerID: "runner-a",
+		AssignedMachineID: "machine-a", PushedAt: 1000, ExpiresAt: 5000,
+	}); err != nil || !created {
+		t.Fatalf("create keep-me: created=%v err=%v", created, err)
+	}
+	if _, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+		ProjectID: "brain-api", TaskID: "drop-me", AssignedRunnerID: "runner-b",
+		AssignedMachineID: "machine-b", PushedAt: 1000, ExpiresAt: 5000,
+	}); err != nil || !created {
+		t.Fatalf("create drop-me: created=%v err=%v", created, err)
+	}
+
+	if _, err := s.ClearDispatchLease(ctx, "brain-api", "drop-me"); err != nil {
+		t.Fatalf("ClearDispatchLease drop-me: %v", err)
+	}
+
+	kept, err := s.GetDispatchLeaseRow(ctx, "brain-api", "keep-me")
+	if err != nil {
+		t.Fatalf("GetDispatchLeaseRow keep-me: %v", err)
+	}
+	if kept == nil {
+		t.Fatal("keep-me lease unexpectedly cleared")
+	}
+}

@@ -146,6 +146,38 @@ export interface Task {
   waiting_on?: string[];
   in_cycle?: boolean;
   resolved_workdir?: string;
+
+  // Scheduler push-dispatch state. Populated by the task list endpoint
+  // (`enrichDispatchDiagnostics` on the server). Lets the UI show *which*
+  // runner is holding a task and what state the lease is in, instead of
+  // generic "dispatched to a runner" text.
+  dispatch_lease?: DispatchLease;
+  placement_reasons?: PlacementReason[];
+  last_placement_reason?: PlacementReason;
+}
+
+export interface DispatchLease {
+  leaseId: string;
+  id?: string;
+  project_id: string;
+  task_id: string;
+  assigned_runner_id: string;
+  assigned_machine_id: string;
+  state: string; // pushed | acked | rejected | expired
+  pushed_at: number;
+  acked_at?: number;
+  rejected_at?: number;
+  last_error?: string;
+  expires_at: number;
+}
+
+export interface PlacementReason {
+  task_id?: string;
+  runner_id?: string;
+  machine_id?: string;
+  decision?: string;
+  reason?: string;
+  created_at?: number;
 }
 
 export interface TaskStats {
@@ -359,9 +391,11 @@ export interface OcProvider {
 export interface RunnerStatusResponse {
   running: boolean;
   paused: boolean;
-  pausedProjects: string[];
+  // Go's encoding/json emits nil slices as JSON `null`, not `[]`. Reflect
+  // that in the type so callers must defend against null.
+  pausedProjects: string[] | null;
   automationsPaused: boolean;
-  automationPausedProjects: string[];
+  automationPausedProjects: string[] | null;
 }
 
 // ─── Brain entries ───────────────────────────────────────────────

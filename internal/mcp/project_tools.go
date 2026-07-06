@@ -39,7 +39,7 @@ func registerBrainContextResolve(s *Server, client *APIClient) {
 		"folder_name":       {Type: "string", Description: "Workspace folder name"},
 	}
 	s.RegisterTool(Tool{
-		Name:        "brain_context_resolve",
+		Name:        "context_resolve",
 		Description: "Resolve the Brain project for a client/workspace observation.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"client_id", "host_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -85,7 +85,7 @@ func registerBrainContextResolve(s *Server, client *APIClient) {
 
 func registerBrainProjectPlacementGet(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_project_placement_get",
+		Name:        "project_placement_get",
 		Description: "Get Brain scheduling placement configuration for a project.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string", Description: "Project ID"}}, Required: []string{"project"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -104,7 +104,7 @@ func registerBrainProjectPlacementGet(s *Server, client *APIClient) {
 func registerBrainProjectPlacementPut(s *Server, client *APIClient) {
 	props := projectPlacementProperties()
 	s.RegisterTool(Tool{
-		Name:        "brain_project_placement_put",
+		Name:        "project_placement_put",
 		Description: "Create or update Brain scheduling placement configuration for a project.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"project"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {

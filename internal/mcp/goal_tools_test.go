@@ -15,15 +15,15 @@ func TestRegisterGoalTools_CountNamesHandlersDescriptions(t *testing.T) {
 	RegisterGoalTools(s, client)
 
 	expected := []string{
-		"brain_goal_create",
-		"brain_goal_list",
-		"brain_goal_update",
-		"brain_goal_pause",
-		"brain_goal_resume",
-		"brain_goal_archive",
-		"brain_goal_run",
-		"brain_goal_progress",
-		"brain_goal_audit",
+		"goal_create",
+		"goal_list",
+		"goal_update",
+		"goal_pause",
+		"goal_resume",
+		"goal_archive",
+		"goal_run",
+		"goal_progress",
+		"goal_audit",
 	}
 	if len(s.tools) != len(expected) {
 		t.Fatalf("expected %d goal tools registered, got %d", len(expected), len(s.tools))
@@ -55,15 +55,15 @@ func TestGoalToolSchemas(t *testing.T) {
 		required []string
 		props    []string
 	}{
-		{"brain_goal_create", []string{"project", "title"}, []string{"project", "feature_id", "title", "content", "goal_id", "criteria", "validation", "workdir", "trigger_source", "complete_statuses", "blocked_statuses", "action_type", "direct_prompt", "command", "agent", "model", "executor", "target_workdir", "execution_mode", "session_mode", "complete_on_idle", "timeout", "requires_capability", "config", "action"}},
-		{"brain_goal_list", nil, []string{"project", "feature_id"}},
-		{"brain_goal_update", []string{"goal_id"}, []string{"goal_id", "title", "content", "status", "criteria", "validation", "workdir", "trigger_source", "complete_statuses", "blocked_statuses", "action_type", "direct_prompt", "command", "agent", "model", "executor", "target_workdir", "execution_mode", "session_mode", "complete_on_idle", "timeout", "requires_capability", "action"}},
-		{"brain_goal_pause", []string{"goal_id"}, []string{"goal_id"}},
-		{"brain_goal_resume", []string{"goal_id"}, []string{"goal_id"}},
-		{"brain_goal_archive", []string{"goal_id"}, []string{"goal_id"}},
-		{"brain_goal_run", []string{"goal_id"}, []string{"goal_id"}},
-		{"brain_goal_progress", []string{"goal_id"}, []string{"goal_id"}},
-		{"brain_goal_audit", []string{"goal_id"}, []string{"goal_id", "limit"}},
+		{"goal_create", []string{"project", "title"}, []string{"project", "feature_id", "title", "content", "goal_id", "criteria", "validation", "workdir", "trigger_source", "complete_statuses", "blocked_statuses", "action_type", "direct_prompt", "command", "agent", "model", "executor", "target_workdir", "execution_mode", "session_mode", "complete_on_idle", "timeout", "requires_capability", "config", "action"}},
+		{"goal_list", nil, []string{"project", "feature_id"}},
+		{"goal_update", []string{"goal_id"}, []string{"goal_id", "title", "content", "status", "criteria", "validation", "workdir", "trigger_source", "complete_statuses", "blocked_statuses", "action_type", "direct_prompt", "command", "agent", "model", "executor", "target_workdir", "execution_mode", "session_mode", "complete_on_idle", "timeout", "requires_capability", "action"}},
+		{"goal_pause", []string{"goal_id"}, []string{"goal_id"}},
+		{"goal_resume", []string{"goal_id"}, []string{"goal_id"}},
+		{"goal_archive", []string{"goal_id"}, []string{"goal_id"}},
+		{"goal_run", []string{"goal_id"}, []string{"goal_id"}},
+		{"goal_progress", []string{"goal_id"}, []string{"goal_id"}},
+		{"goal_audit", []string{"goal_id"}, []string{"goal_id", "limit"}},
 	}
 
 	for _, tt := range tests {
@@ -114,7 +114,7 @@ func TestBrainGoalCreate_RequestAndFormatting(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterGoalTools(s, client)
 
-	result, err := s.tools["brain_goal_create"].handler(context.Background(), map[string]any{
+	result, err := s.tools["goal_create"].handler(context.Background(), map[string]any{
 		"project": "brain", "feature_id": "goals", "title": "Ship goals", "content": "Keep going",
 		"goal_id": "goal-123", "criteria": "all tests pass", "validation": "go test ./...", "workdir": "/repo", "trigger_source": "both",
 		"complete_statuses": []any{"completed", "validated"}, "blocked_statuses": []any{"blocked"},
@@ -158,11 +158,11 @@ func TestBrainGoalList_RequestAndEmptyFormatting(t *testing.T) {
 	s := NewServer()
 	client := NewAPIClient(server.URL)
 	RegisterGoalTools(s, client)
-	result, err := s.tools["brain_goal_list"].handler(context.Background(), map[string]any{"project": "brain", "feature_id": "goals"})
+	result, err := s.tools["goal_list"].handler(context.Background(), map[string]any{"project": "brain", "feature_id": "goals"})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	if !strings.Contains(result, "No goals found") || !strings.Contains(result, "brain_goal_create") {
+	if !strings.Contains(result, "No goals found") || !strings.Contains(result, "goal_create") {
 		t.Fatalf("unexpected result: %s", result)
 	}
 }
@@ -177,7 +177,7 @@ func TestBrainGoalList_FormatsGoals(t *testing.T) {
 	s := NewServer()
 	client := NewAPIClient(server.URL)
 	RegisterGoalTools(s, client)
-	result, err := s.tools["brain_goal_list"].handler(context.Background(), map[string]any{})
+	result, err := s.tools["goal_list"].handler(context.Background(), map[string]any{})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -205,7 +205,7 @@ func TestBrainGoalUpdate_RequestAndFormatting(t *testing.T) {
 	s := NewServer()
 	client := NewAPIClient(server.URL)
 	RegisterGoalTools(s, client)
-	result, err := s.tools["brain_goal_update"].handler(context.Background(), map[string]any{"goal_id": "goal-123", "title": "Updated", "status": "blocked", "criteria": "done", "trigger_source": "task", "complete_statuses": []any{"completed"}, "action_type": "script", "command": "just test"})
+	result, err := s.tools["goal_update"].handler(context.Background(), map[string]any{"goal_id": "goal-123", "title": "Updated", "status": "blocked", "criteria": "done", "trigger_source": "task", "complete_statuses": []any{"completed"}, "action_type": "script", "command": "just test"})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -229,9 +229,9 @@ func TestBrainGoalLifecycleAliases_RequestAndFormatting(t *testing.T) {
 		status string
 		prefix string
 	}{
-		{"brain_goal_pause", "blocked", "Goal paused"},
-		{"brain_goal_resume", "active", "Goal resumed"},
-		{"brain_goal_archive", "archived", "Goal archived"},
+		{"goal_pause", "blocked", "Goal paused"},
+		{"goal_resume", "active", "Goal resumed"},
+		{"goal_archive", "archived", "Goal archived"},
 	}
 
 	for _, tt := range tests {
@@ -292,7 +292,7 @@ func TestBrainGoalRunProgressAudit_RequestAndFormatting(t *testing.T) {
 	s := NewServer()
 	client := NewAPIClient(server.URL)
 	RegisterGoalTools(s, client)
-	run, err := s.tools["brain_goal_run"].handler(context.Background(), map[string]any{"goal_id": "goal-123"})
+	run, err := s.tools["goal_run"].handler(context.Background(), map[string]any{"goal_id": "goal-123"})
 	if err != nil {
 		t.Fatalf("run handler error: %v", err)
 	}
@@ -301,7 +301,7 @@ func TestBrainGoalRunProgressAudit_RequestAndFormatting(t *testing.T) {
 			t.Errorf("run missing %q:\n%s", want, run)
 		}
 	}
-	progress, err := s.tools["brain_goal_progress"].handler(context.Background(), map[string]any{"goal_id": "goal-123"})
+	progress, err := s.tools["goal_progress"].handler(context.Background(), map[string]any{"goal_id": "goal-123"})
 	if err != nil {
 		t.Fatalf("progress handler error: %v", err)
 	}
@@ -310,7 +310,7 @@ func TestBrainGoalRunProgressAudit_RequestAndFormatting(t *testing.T) {
 			t.Errorf("progress missing %q:\n%s", want, progress)
 		}
 	}
-	audit, err := s.tools["brain_goal_audit"].handler(context.Background(), map[string]any{"goal_id": "goal-123", "limit": float64(7)})
+	audit, err := s.tools["goal_audit"].handler(context.Background(), map[string]any{"goal_id": "goal-123", "limit": float64(7)})
 	if err != nil {
 		t.Fatalf("audit handler error: %v", err)
 	}
@@ -339,15 +339,15 @@ func TestGoalTools_ValidationErrors(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"brain_goal_create", map[string]any{"title": "Missing project"}, "project"},
-		{"brain_goal_create", map[string]any{"project": "brain"}, "title"},
-		{"brain_goal_update", map[string]any{}, "goal_id"},
-		{"brain_goal_pause", map[string]any{}, "goal_id"},
-		{"brain_goal_resume", map[string]any{}, "goal_id"},
-		{"brain_goal_archive", map[string]any{}, "goal_id"},
-		{"brain_goal_run", map[string]any{}, "goal_id"},
-		{"brain_goal_progress", map[string]any{}, "goal_id"},
-		{"brain_goal_audit", map[string]any{}, "goal_id"},
+		{"goal_create", map[string]any{"title": "Missing project"}, "project"},
+		{"goal_create", map[string]any{"project": "brain"}, "title"},
+		{"goal_update", map[string]any{}, "goal_id"},
+		{"goal_pause", map[string]any{}, "goal_id"},
+		{"goal_resume", map[string]any{}, "goal_id"},
+		{"goal_archive", map[string]any{}, "goal_id"},
+		{"goal_run", map[string]any{}, "goal_id"},
+		{"goal_progress", map[string]any{}, "goal_id"},
+		{"goal_audit", map[string]any{}, "goal_id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {

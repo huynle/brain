@@ -4,7 +4,7 @@ import { useUI } from "../../store/ui";
 import { useOpenInControl } from "../../hooks/useOpenInControl";
 import { BottomSheet } from "./BottomSheet";
 import { EntryDetailPane } from "./EntryDetailPane";
-import { EntryLogsPane } from "./EntryLogsPane";
+import { TaskSessionPane } from "./TaskSessionPane";
 
 // CodeMirror is heavy — load the editor only when the user edits.
 const EntryEditModal = lazy(() =>
@@ -96,7 +96,11 @@ export function MobileInspectSheet() {
       {tab === "detail" ? (
         <EntryDetailPane path={target.path} />
       ) : (
-        <EntryLogsPane taskId={target.taskId} projectId={target.projectId} />
+        <TaskSessionPane
+          taskId={target.taskId}
+          projectId={target.projectId}
+          taskPath={target.path}
+        />
       )}
     </BottomSheet>
   );

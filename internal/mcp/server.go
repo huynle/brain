@@ -1,20 +1,31 @@
 // Package mcp implements a Model Context Protocol (MCP) server
 // for exposing Brain API tools to Claude Code and other MCP clients.
 //
-// Protocol: JSON-RPC 2.0 over stdin/stdout with Content-Length framing.
+// Protocol: JSON-RPC 2.0 over stdin/stdout with newline-delimited JSON (NDJSON)
+// framing, per the MCP stdio transport specification:
+// https://modelcontextprotocol.io/specification/2025-03-26/basic/transports#stdio
+//
+// Each message is a single JSON object serialized on one line, terminated
+// by a '\n'. Messages MUST NOT contain embedded (literal) newlines; any
+// newlines inside JSON string values must be encoded as "\n".
+//
 // Version: MCP 2024-11-05
 package mcp
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
-	"strconv"
-	"strings"
 	"sync"
 )
+
+// maxMessageBytes is the largest single JSON-RPC message the stdio transport
+// will accept. brain_save with a large content payload can be several MB, so
+// we allow up to 10 MiB. This matches the LimitReader cap in http_transport.go.
+const maxMessageBytes = 10 * 1024 * 1024
 
 // ToolHandler is the function signature for MCP tool implementations.
 type ToolHandler func(ctx context.Context, args map[string]any) (string, error)
@@ -102,99 +113,84 @@ type toolCallParams struct {
 }
 
 // Serve reads JSON-RPC requests from r and writes responses to w.
-// It blocks until r is closed (returns io.EOF) or ctx is cancelled.
+//
+// Framing is newline-delimited JSON (NDJSON): each request is one JSON
+// object on a line, terminated by '\n'. Each response is written the same
+// way. Individual messages may be up to maxMessageBytes.
+//
+// Serve blocks until r is closed (returns io.EOF), ctx is cancelled, or
+// a fatal write error occurs.
 func (s *Server) Serve(ctx context.Context, r io.Reader, w io.Writer) error {
-	reader := bufio.NewReader(r)
+	scanner := bufio.NewScanner(r)
+	// Give the scanner a buffer large enough for our biggest legitimate
+	// message. Starting size 64 KiB grows as needed up to maxMessageBytes.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxMessageBytes)
 
-	for {
+	for scanner.Scan() {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		default:
 		}
 
-		// Read Content-Length header
-		contentLength, err := readContentLength(reader)
-		if err != nil {
-			if err == io.EOF {
-				return err
-			}
-			// Skip malformed headers
+		line := bytes.TrimSpace(scanner.Bytes())
+		if len(line) == 0 {
 			continue
 		}
 
-		// Read the body
-		body := make([]byte, contentLength)
-		_, err = io.ReadFull(reader, body)
-		if err != nil {
-			return fmt.Errorf("read body: %w", err)
-		}
-
-		// Parse the request
 		var req JSONRPCRequest
-		if err := json.Unmarshal(body, &req); err != nil {
-			continue // Skip malformed JSON
-		}
-
-		// Notifications have no ID — don't send a response
-		if req.ID == nil || string(req.ID) == "null" {
+		if err := json.Unmarshal(line, &req); err != nil {
+			// Reply with a JSON-RPC parse error so the client can see
+			// what happened instead of hanging on a missing response.
+			parseErr := &JSONRPCResponse{
+				JSONRPC: "2.0",
+				Error: &JSONRPCError{
+					Code:    -32700,
+					Message: fmt.Sprintf("Parse error: %v", err),
+				},
+			}
+			if werr := writeNDJSON(w, parseErr); werr != nil {
+				return fmt.Errorf("write parse-error response: %w", werr)
+			}
 			continue
 		}
 
-		// Handle the request
-		resp := s.HandleRequest(ctx, &req)
+		// Notifications have no ID — don't send a response.
+		if req.IsNotification() {
+			continue
+		}
 
-		// Write the response
-		if err := writeMessage(w, resp); err != nil {
+		resp := s.HandleRequest(ctx, &req)
+		if err := writeNDJSON(w, resp); err != nil {
 			return fmt.Errorf("write response: %w", err)
 		}
 	}
-}
 
-// readContentLength reads the Content-Length header and the blank line separator.
-func readContentLength(r *bufio.Reader) (int, error) {
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return 0, err
-		}
-
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			continue // Skip empty lines between messages
-		}
-
-		if strings.HasPrefix(line, "Content-Length:") {
-			lengthStr := strings.TrimSpace(strings.TrimPrefix(line, "Content-Length:"))
-			length, err := strconv.Atoi(lengthStr)
-			if err != nil {
-				return 0, fmt.Errorf("invalid Content-Length: %w", err)
-			}
-
-			// Read the blank line after the header
-			separator, err := r.ReadString('\n')
-			if err != nil {
-				return 0, err
-			}
-			_ = separator // Should be "\r\n"
-
-			return length, nil
-		}
+	if err := scanner.Err(); err != nil {
+		// bufio.ErrTooLong means the client sent a message larger than
+		// maxMessageBytes. That's a client bug, not a server crash — but
+		// we can't recover the stream, so return it and let the caller
+		// restart if desired.
+		return fmt.Errorf("stdio read: %w", err)
 	}
+	return io.EOF
 }
 
-// writeMessage writes a Content-Length framed JSON message.
-func writeMessage(w io.Writer, msg any) error {
+// writeNDJSON writes a single JSON-RPC message followed by '\n'.
+//
+// Per the MCP stdio spec, the JSON encoding of the message must not contain
+// embedded (literal) newlines. json.Marshal already escapes any \n inside
+// string values as "\n", so a single json.Marshal output is guaranteed to
+// occupy exactly one line.
+func writeNDJSON(w io.Writer, msg any) error {
 	data, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)
 	}
-
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(data))
-	if _, err := io.WriteString(w, header); err != nil {
+	if _, err := w.Write(data); err != nil {
 		return err
 	}
-	_, err = w.Write(data)
+	_, err = w.Write([]byte{'\n'})
 	return err
 }
 

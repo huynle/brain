@@ -35,7 +35,7 @@ func RegisterTaskTools(s *Server, client *APIClient) {
 
 func registerBrainTasks(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_tasks",
+		Name: "tasks",
 		Description: `List all tasks for current project with dependency status (ready/waiting/blocked), stats, and cycles detected.
 
 Use this to see:
@@ -239,7 +239,7 @@ Use this to see:
 
 func registerBrainTaskNext(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_task_next",
+		Name: "task_next",
 		Description: `Get the next actionable task (highest priority ready task) with full content.
 
 Use this to quickly find what to work on next. Returns the complete task including:
@@ -383,7 +383,7 @@ Use brain_tasks to see the full task list and dependency status.`, waiting, bloc
 
 func registerBrainTaskGet(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_task_get",
+		Name: "task_get",
 		Description: `Get a specific task by ID with full dependency info, dependents list, and content.
 
 Use this to get detailed information about a specific task including:
@@ -552,7 +552,7 @@ Use this to get detailed information about a specific task including:
 
 func registerBrainTaskMetadata(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_task_metadata",
+		Name: "task_metadata",
 		Description: `Get execution metadata for a task — fields NOT included in brain_task_get.
 
 Returns structured JSON with:
@@ -699,7 +699,7 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
 
 func registerBrainTasksStatus(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_tasks_status",
+		Name: "tasks_status",
 		Description: `Get status of multiple tasks by ID, with optional blocking wait.
 
 Use cases:
@@ -822,7 +822,7 @@ Example - wait for completion:
 
 func registerBrainTaskTrigger(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_task_trigger",
+		Name:        "task_trigger",
 		Description: "Manually trigger a scheduled task and its downstream dependents.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -870,7 +870,7 @@ func registerBrainTaskTrigger(s *Server, client *APIClient) {
 
 func registerBrainMonitorEnable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_monitor_enable",
+		Name:        "monitor_enable",
 		Description: "(Deprecated - use automations) Enable a monitor template for a feature. Creates an automated task. Prefer brain_automation_list and creating automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -927,7 +927,7 @@ func registerBrainMonitorEnable(s *Server, client *APIClient) {
 
 func registerBrainMonitorDisable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_monitor_disable",
+		Name:        "monitor_disable",
 		Description: "(Deprecated - use automations) Disable a monitor template for a feature. Permanently removes the monitor task. Prefer managing automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -981,7 +981,7 @@ func registerBrainMonitorDisable(s *Server, client *APIClient) {
 
 func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_feature_review_enable",
+		Name:        "feature_review_enable",
 		Description: "(Deprecated - use automations) Enable Feature Code Review for a feature. Creates a one-shot review task that triggers when all tasks complete. Prefer creating an automation entry with trigger type 'event' and event 'feature.all_completed'.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1030,7 +1030,7 @@ func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
 
 func registerBrainFeatureReviewDisable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_feature_review_disable",
+		Name:        "feature_review_disable",
 		Description: "(Deprecated - use automations) Disable Feature Code Review for a feature. Permanently removes the review task. Prefer managing automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1078,7 +1078,7 @@ func registerBrainFeatureReviewDisable(s *Server, client *APIClient) {
 
 func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_blocked_inspector_enable",
+		Name:        "blocked_inspector_enable",
 		Description: "(Deprecated - use automations) Enable Blocked Task Inspector for a feature. Creates a recurring scheduled task. Prefer creating an automation entry with trigger type 'cron'.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1133,7 +1133,7 @@ func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
 
 func registerBrainBlockedInspectorDisable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_blocked_inspector_disable",
+		Name:        "blocked_inspector_disable",
 		Description: "(Deprecated - use automations) Disable Blocked Task Inspector for a feature. Permanently removes the inspector task. Prefer managing automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1181,7 +1181,7 @@ func registerBrainBlockedInspectorDisable(s *Server, client *APIClient) {
 
 func registerBrainDreamEnable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_dream_enable",
+		Name:        "dream_enable",
 		Description: "(Deprecated - use automations) Enable Dream Mode for a project. Creates a recurring dream consolidation task. Prefer creating an automation entry with trigger type 'cron'.",
 		InputSchema: InputSchema{
 			Type: "object",
@@ -1233,7 +1233,7 @@ func registerBrainDreamEnable(s *Server, client *APIClient) {
 
 func registerBrainDreamDisable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_dream_disable",
+		Name:        "dream_disable",
 		Description: "(Deprecated - use automations) Disable Dream Mode for a project. Removes the dream consolidation task. Existing dream entries are preserved. Prefer managing automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",

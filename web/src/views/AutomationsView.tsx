@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { useIsMobile } from "../hooks/useIsMobile";
 import {
   createEntry,
@@ -22,6 +23,7 @@ import { Pill } from "../components/common/Badge";
 import { ConfirmDialog } from "../components/common/Modal";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { ListDetail } from "../components/layout/ListDetail";
+import { deriveAutomationsPaused } from "../components/layout/StatusBar";
 import { GoalConfigModal } from "./automations/GoalConfigModal";
 import { NewAutomationModal } from "./automations/NewGoalModal";
 import {
@@ -35,6 +37,7 @@ import {
   triggerLabel,
 } from "./automations/rows";
 import type { BrainEntry, GoalSummary, OpencodeInstance, SessionInfo } from "../lib/types";
+import { relativeTime } from "../lib/format";
 
 // CodeMirror is heavy — load the editor only when the user edits.
 const EntryEditModal = lazy(() =>
@@ -367,10 +370,11 @@ export function AutomationsView() {
     }
   }
 
-  const automationsPaused =
-    activeProject === ALL_PROJECTS
-      ? !!statusQ.data?.automationsPaused
-      : !!statusQ.data?.automationPausedProjects?.includes(activeProject);
+  const automationsPaused = !!deriveAutomationsPaused(statusQ.data, activeProject);
+
+  // Pane focus + vim-style scroll (Tab/Shift-Tab + j/k/gg/G/Ctrl-D/U inside
+  // the focused detail or logs pane).
+  const paneNav = usePaneNavigation();
 
   function toggleAutomationPause() {
     const scopedProject = activeProject === ALL_PROJECTS ? undefined : activeProject;
@@ -382,6 +386,12 @@ export function AutomationsView() {
 
   useViewKeyboard(
     (e) => {
+      // Delegate to pane-nav first: Tab and scroll keys inside detail/logs.
+      if (paneNav.handleKey(e)) return true;
+      // Don't drop into list nav while a content pane is focused.
+      if (paneNav.detailPaneProps.focused || paneNav.logsPaneProps.focused) {
+        return false;
+      }
       if (handleListNavKey(e, scope, display.length)) return true;
       const cur = display[cursor];
       switch (e.key) {
@@ -461,11 +471,11 @@ export function AutomationsView() {
   const selectedPath = cur?.kind === "auto" ? cur.row.path : cur?.kind === "task" ? cur.task.path : null;
   const logTarget =
     cur?.kind === "task"
-      ? { taskId: cur.task.id, projectId: cur.task.project_id }
+      ? { taskId: cur.task.id, projectId: cur.task.project_id, taskPath: cur.task.path }
       : null;
 
   return (
-    <ListDetail detailPath={selectedPath} logTarget={logTarget}>
+    <ListDetail detailPath={selectedPath} logTarget={logTarget} paneNav={paneNav}>
       {searchOpen && (
         <div className="search-layer" onMouseDown={(e) => { if (e.target === e.currentTarget) setSearchOpen(false); }}>
           <div className="search-popup">
@@ -820,6 +830,14 @@ function RunTaskRow({
       <span className="suffix faint mono">{task.id}</span>
       <span className="suffix faint">[{task.status || "unknown"}]</span>
       <span className="title truncate">{task.title}</span>
+      {(task.modified || task.created) && (
+        <span
+          className="suffix faint mono"
+          title={new Date(task.modified ?? task.created ?? "").toLocaleString()}
+        >
+          {relativeTime(task.modified ?? task.created)}
+        </span>
+      )}
       <span
         className="suffix"
         style={{ color: live ? "var(--cyan, var(--teal))" : "var(--blue)" }}

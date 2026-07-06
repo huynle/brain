@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { embedBackfill, listEntries, search } from "../lib/api";
 import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
@@ -127,8 +128,19 @@ export function BrainView() {
   const setCursor = useNav((s) => s.setCursor);
   const searchRef = useRef<HTMLInputElement>(null);
 
+  // Pane focus + vim-style scroll (Tab/Shift-Tab + j/k/gg/G/Ctrl-D/U inside
+  // the focused detail or logs pane).
+  const paneNav = usePaneNavigation();
+
   useViewKeyboard(
     (e) => {
+      // Delegate to pane-nav first: Tab and scroll keys inside detail/logs.
+      if (paneNav.handleKey(e)) return true;
+      // If detail/logs are focused and pane-nav didn't claim, stop —
+      // don't drop into list navigation while the user is in a content pane.
+      if (paneNav.detailPaneProps.focused || paneNav.logsPaneProps.focused) {
+        return false;
+      }
       if (handleListNavKey(e, scope, items.length)) return true;
       const cur = items[cursor];
       switch (e.key) {
@@ -197,11 +209,11 @@ export function BrainView() {
   const selectedPath = selItem?.path ?? null;
   const logTarget =
     selItem?.type === "task" && selItem.id
-      ? { taskId: selItem.id, projectId: selItem.project_id }
+      ? { taskId: selItem.id, projectId: selItem.project_id, taskPath: selItem.path }
       : null;
 
   return (
-    <ListDetail detailPath={selectedPath} logTarget={logTarget}>
+    <ListDetail detailPath={selectedPath} logTarget={logTarget} paneNav={paneNav}>
       <form
         className="search-layer"
         style={{ display: searchOpen ? undefined : "none" }}

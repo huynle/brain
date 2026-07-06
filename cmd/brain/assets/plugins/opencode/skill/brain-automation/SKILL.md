@@ -28,7 +28,7 @@ Brain supports two timed-work shapes, but user-facing project automations should
 
 ## Workflow
 1. Identify whether this is a user-facing automation or an explicit scheduled task. Default to `type: "automation"` for project-level automations.
-2. Resolve the destination Brain project before saving. Use `brain_project_context` when working from a checkout, but do not assume the current checkout is the right project for personal, cross-project, office, or external-system automations.
+2. Resolve the destination Brain project before saving. Use `project_context` when working from a checkout, but do not assume the current checkout is the right project for personal, cross-project, office, or external-system automations.
 3. Ask one clarifying question if the destination project is not obvious from the user's words or workspace. Example: "Which Brain project should own this automation?"
 4. Ask one clarifying question only if the trigger time/event or action is ambiguous.
 5. Save the durable Brain entry with the minimum fields needed, including explicit `project: "<project>"`.
@@ -38,17 +38,17 @@ Brain supports two timed-work shapes, but user-facing project automations should
 
 ## Project Selection Rules
 - If the user names a project, use that project.
-- If the automation is clearly tied to the current repository, use the project returned by `brain_project_context`.
+- If the automation is clearly tied to the current repository, use the project returned by `project_context`.
 - If the automation is personal productivity, office activity, cross-project summarization, or not tied to the current repository, ask which Brain project should own it.
 - If the user names an output path like `/tmp`, do not infer the Brain project from the path. The output path and the owning Brain project are separate decisions.
-- Always set `project` explicitly in `brain_save`; do not rely on the plugin's default project when creating automations.
+- Always set `project` explicitly in `save`; do not rely on the plugin's default project when creating automations.
 
 ## Default Pattern: Cron Automation Entry
 
 Use this for user-facing project automations that should run repeatedly. This is the right shape for requests such as "check Teams every 5 minutes", "monitor blockers hourly", or "summarize activity every day".
 
 ```
-brain_save(
+save(
   type: "automation",
   title: "Monitor Teams activity for project work log",
   content: "Every 5 minutes, create a read-only task to inspect recent Teams activity and save concise project-work notes to Brain.",
@@ -82,7 +82,7 @@ Expected UI behavior: one parent row in the Automations tab. Each cron firing cr
 Use this only when the user specifically asks for a scheduled task rather than an automation entry. This will appear in the Tasks tab and as a task row in the Automations tab, not like the built-in Automation rows.
 
 ```
-brain_save(
+save(
   type: "task",
   title: "Weekly Dependency Audit Task",
   content: "Audit dependencies, identify risky updates, and save a report.",
@@ -103,7 +103,7 @@ brain_save(
 Use this when the user says "do X at time Y".
 
 ```
-brain_save(
+save(
   type: "task",
   title: "Run Release Readiness Check",
   content: "Run release readiness checks and report blockers.",
@@ -121,7 +121,7 @@ brain_save(
 Use this when a whole feature should run on a schedule, not just one task.
 
 ```
-brain_save(
+save(
   type: "task",
   title: "Nightly Performance Feature Gate",
   content: "Gate task that schedules the performance-check feature.",
@@ -140,7 +140,7 @@ brain_save(
 Use `trigger.event: "feature.completed"` when a follow-up should start after a feature completes.
 
 ```
-brain_save(
+save(
   type: "automation",
   title: "Create checkout after feature completion",
   content: "When the feature completes, create a checkout task to verify original requirements.",
@@ -172,7 +172,7 @@ brain_save(
 Use event filters when only specific task transitions should fire.
 
 ```
-brain_save(
+save(
   type: "automation",
   title: "Notify when critical task completes",
   content: "Create a follow-up report when the critical task moves to completed.",
@@ -198,7 +198,7 @@ brain_save(
 Use this when a cron trigger should create generated run tasks under a collapsible automation parent. For user-facing project-level automations, prefer this over `type: "task"` schedules.
 
 ```
-brain_save(
+save(
   type: "automation",
   title: "Daily stale task review",
   content: "Create a task each weekday to review stale Brain tasks.",

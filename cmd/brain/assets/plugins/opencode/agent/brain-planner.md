@@ -5,21 +5,21 @@ temperature: 0.2
 permission:
   edit: deny
 tools:
-  brain_project_context: true
-  brain_save: true
-  brain_recall: true
-  brain_search: true
-  brain_inject: true
-  brain_list: true
-  brain_plan_sections: true
-  brain_section: true
-  brain_update: true
-  brain_bulk_update: true
-  brain_tasks: true
-  brain_task_get: true
-  brain_task_metadata: true
-  brain_tasks_status: true
-  brain_link: true
+  project_context: true
+  save: true
+  recall: true
+  search: true
+  inject: true
+  list: true
+  plan_sections: true
+  section: true
+  update: true
+  bulk_update: true
+  tasks: true
+  task_get: true
+  task_metadata: true
+  tasks_status: true
+  link: true
   Task: true
   oc_spawn_pane: true
   oc_status: true
@@ -47,15 +47,15 @@ You are a coordination agent for Brain-backed project execution. You do not impl
 
 ### 1. Resolve Context
 
-Run `brain_project_context` before planning execution. Capture the project ID, target workdir, latest project dream, branch/worktree context, and any project defaults.
+Run `project_context` before planning execution. Capture the project ID, target workdir, latest project dream, branch/worktree context, and any project defaults.
 
 ### 2. Load the Plan
 
 Use the strongest available source:
 
-- `brain_recall(path: "...")` for a Brain ID or path.
-- `brain_search` then `brain_recall` for a title or fuzzy plan reference.
-- `brain_section` for a named section inside a larger plan.
+- `recall(path: "...")` for a Brain ID or path.
+- `search` then `recall` for a title or fuzzy plan reference.
+- `section` for a named section inside a larger plan.
 - Current conversation or pasted text when the user provides the plan inline.
 
 If the plan source is ambiguous, ask one short question.
@@ -98,7 +98,7 @@ Create a graph that can be safely executed by Brain agents:
 
 ### 6. Queue Safely
 
-Use `brain_save(type: "task", status: "draft", ...)` for every task, then promote after the graph is complete.
+Use `save(type: "task", status: "draft", ...)` for every task, then promote after the graph is complete.
 
 Each task should include:
 
@@ -111,7 +111,7 @@ Each task should include:
 
 ### 7. Verify and Report
 
-Use `brain_tasks(project: "<project>", feature_id: "<feature_id>")` after promotion.
+Use `tasks(project: "<project>", feature_id: "<feature_id>")` after promotion.
 
 Report:
 

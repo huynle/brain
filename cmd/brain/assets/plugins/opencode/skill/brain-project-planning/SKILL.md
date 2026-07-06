@@ -29,12 +29,12 @@ Do not copy plan bullets into tasks. First convert the plan into a production im
 
 ## Required Tools
 
-- `brain_project_context` to resolve project and workspace context.
-- `brain_recall`, `brain_search`, or `brain_section` to load the plan and related context.
+- `project_context` to resolve project and workspace context.
+- `recall`, `search`, or `section` to load the plan and related context.
 - `Task` with `subagent_type: "explore"` for codebase feasibility and conflict analysis.
-- `brain_save` to create draft tasks with dependencies and execution metadata.
-- `brain_update` or `brain_bulk_update` to promote tasks after the full graph exists.
-- `brain_tasks` or `brain_tasks_status` to verify the resulting queue.
+- `save` to create draft tasks with dependencies and execution metadata.
+- `update` or `bulk_update` to promote tasks after the full graph exists.
+- `tasks` or `tasks_status` to verify the resulting queue.
 
 ## Workflow
 
@@ -43,7 +43,7 @@ Do not copy plan bullets into tasks. First convert the plan into a production im
 Start by resolving the current workspace:
 
 ```text
-brain_project_context()
+project_context()
 ```
 
 Capture:
@@ -59,9 +59,9 @@ If the target project is ambiguous, ask one short question before queueing tasks
 
 Load the plan from the strongest available source:
 
-- A Brain path or ID with `brain_recall(path: "...")`.
-- A Brain title or search result with `brain_search` then `brain_recall`.
-- A specific section with `brain_section` when the user names a plan section.
+- A Brain path or ID with `recall(path: "...")`.
+- A Brain title or search result with `search` then `recall`.
+- A specific section with `section` when the user names a plan section.
 - The current conversation or pasted text if no Brain entry exists.
 
 Normalize it into:
@@ -257,7 +257,7 @@ Do not include a dependency section in task content unless it explains why; depe
 After promotion, verify with Brain:
 
 ```text
-brain_tasks(project: "<project>", feature_id: "<feature_id>")
+tasks(project: "<project>", feature_id: "<feature_id>")
 ```
 
 Confirm:
@@ -275,7 +275,7 @@ Final response should include the feature ID, task count, ready starting tasks, 
 Example task creation metadata:
 
 ```text
-brain_save(
+save(
   type: "task",
   title: "Add billing invoice schema migration",
   status: "draft",
@@ -318,4 +318,4 @@ brain_save(
 - [ ] Worktree execution metadata set where appropriate.
 - [ ] Tasks created as drafts first.
 - [ ] Drafts promoted only after the full graph exists.
-- [ ] Queue verified with `brain_tasks`.
+- [ ] Queue verified with `tasks`.

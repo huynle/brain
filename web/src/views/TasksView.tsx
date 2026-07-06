@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
-import { useLive } from "../lib/sse";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useLiveTasks } from "../hooks/useLiveTasks";
 import { filterTasks, groupByFeature, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
@@ -11,13 +11,12 @@ import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
 import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
 import { Panel } from "../components/layout/Panel";
+import { TaskSessionPane } from "../components/layout/TaskSessionPane";
+import { PaneSplitterRow, PaneSplitterColumn } from "../components/layout/PaneSplitters";
 import { ConfirmDialog } from "../components/common/Modal";
-import { deleteEntry, listInstances, setTaskStatus, triggerTask } from "../lib/api";
+import { deleteEntry, listInstances, runFeature, runOrTriggerTask, setTaskStatus, summarizeRunFeatureResult, summarizeTriggerResults } from "../lib/api";
 import {
-  cleanLogContent,
-  clockTime,
   isActive,
-  logLevelColor,
   relativeTime,
   statusColor,
 } from "../lib/format";
@@ -81,10 +80,10 @@ export function TasksView() {
   const wrap = useUI((s) => s.wrap);
   const toast = useUI((s) => s.toast);
   const focus = useUI((s) => s.focus);
-  const setFocus = useUI((s) => s.setFocus);
-  const cycleFocus = useUI((s) => s.cycleFocus);
   const detailVisible = useUI((s) => s.detailVisible);
   const logsVisible = useUI((s) => s.logsVisible);
+  const bottomHeight = useUI((s) => s.bottomHeight);
+  const detailLogsRatio = useUI((s) => s.detailLogsRatio);
   const toggleDetail = useUI((s) => s.toggleDetail);
   const toggleLogs = useUI((s) => s.toggleLogs);
   const openInspect = useUI((s) => s.openInspect);
@@ -92,7 +91,6 @@ export function TasksView() {
   const isMobile = useIsMobile();
 
   const { tasks, connected } = useLiveTasks(activeProject);
-  const logs = useLive((s) => s.logs);
 
   const nav = useNav();
   const scope = `tasks:${activeProject}`;
@@ -118,8 +116,15 @@ export function TasksView() {
 
   const filterRef = useRef<HTMLInputElement>(null);
   const treeBodyRef = useRef<HTMLDivElement>(null);
-  const detailBodyRef = useRef<HTMLDivElement>(null);
-  const logBodyRef = useRef<HTMLDivElement>(null);
+  // The bottom row container ref is used by the column splitter to translate
+  // cursor X into a detail/logs ratio (we need a stable rect, not the
+  // splitter's own — that moves as the user drags).
+  const bottomRowRef = useRef<HTMLDivElement>(null);
+
+  // Pane focus + vim-style scroll wiring (Tab/Shift-Tab + j/k/gg/G/Ctrl-D/U
+  // inside the focused detail or logs pane). The hook owns the detail and
+  // logs body refs so it can drive scrollTop.
+  const paneNav = usePaneNavigation();
 
   const { rows, taskList, featureKeys, tasksByFeature } = useMemo(() => {
     let list = filterTasks(tasks, query);
@@ -188,20 +193,6 @@ export function TasksView() {
   );
   const selCount = selectedTasks.length;
 
-  // logs for the cursored task (or whole active project)
-  const panelLogs = useMemo(() => {
-    if (detailTask)
-      return logs.filter((l) => l.taskId === detailTask.id).slice(-300);
-    if (activeProject !== ALL_PROJECTS)
-      return logs.filter((l) => l.projectId === activeProject).slice(-300);
-    return logs.slice(-300);
-  }, [logs, detailTask, activeProject]);
-
-  useEffect(() => {
-    if (logBodyRef.current)
-      logBodyRef.current.scrollTop = logBodyRef.current.scrollHeight;
-  }, [panelLogs.length]);
-
   async function run(label: string, fn: () => Promise<unknown>) {
     setBusy(true);
     try {
@@ -215,6 +206,81 @@ export function TasksView() {
   }
   const targets = (cur?: Task | null): Task[] =>
     selectedTasks.length ? selectedTasks : cur ? [cur] : [];
+
+  // Run one or more tasks. Prefers /run (push dispatch to a runner) and
+  // falls back to /trigger automatically when the server doesn't support
+  // /run yet. summarizeTriggerResults still shapes the toast — runOrTrigger
+  // returns a TriggerResponse-compatible value.
+  //
+  // When force=true, this bypasses any existing dispatch lease — used as the
+  // recovery action for stuck/orphaned leases (e.g. a runner that crashed
+  // silently). Single-task force flows can also surface a follow-up toast
+  // action so users don't have to reissue from a different UI.
+  async function triggerMany(tasks: Task[], force = false) {
+    const eligible = tasks.filter((t) => t.projectId);
+    if (!eligible.length) return;
+    setBusy(true);
+    try {
+      const results = await Promise.all(
+        eligible.map((t) => runOrTriggerTask(t.projectId!, t.id, force)),
+      );
+      const { message, kind } = summarizeTriggerResults(results);
+      // If exactly one task came back blocked by an existing lease, offer a
+      // "Force" action so the user can release+redispatch in one click.
+      // Multi-task force is intentionally not auto-offered — batch flows are
+      // riskier and the user should be deliberate.
+      const blocked = results.find((r) => !r.triggered && r.reasonCode === "already_leased" && r.projectId);
+      const isSingleBlocked = !force && results.length === 1 && !!blocked;
+      if (isSingleBlocked && blocked) {
+        toast(message, kind, {
+          action: {
+            label: "Force",
+            onClick: () => triggerMany(
+              eligible.filter((t) => t.id === blocked.taskId),
+              true,
+            ),
+          },
+        });
+      } else {
+        toast(message, kind);
+      }
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Run failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // runFeatureNow dispatches every ready task in a feature in one server call.
+  // Unlike triggerMany (which fires N independent /run requests racing for the
+  // same runner slots), this lets the scheduler reserve slots cohesively and
+  // queue leftovers for the feature-cascade so the rest fire as slots free —
+  // even while the project is paused. Falls back silently to triggerMany on
+  // older servers that return 501 Not Implemented.
+  async function runFeatureNow(projectId: string, featureId: string, force = false) {
+    setBusy(true);
+    try {
+      const result = await runFeature(projectId, featureId, force);
+      const { message, kind } = summarizeRunFeatureResult(result);
+      toast(message, kind);
+    } catch (e) {
+      // 501 fallback: server doesn't support /features/{id}/run yet. Use the
+      // per-task path so the user still gets work dispatched.
+      const msg = e instanceof Error ? e.message : "";
+      if (msg.includes("501") || msg.toLowerCase().includes("not implemented")) {
+        const ready = taskList.filter(
+          (t) => (t.feature_id || UNGROUPED) === featureId && ["pending", "active"].includes(t.status),
+        );
+        if (ready.length) {
+          await triggerMany(ready, force);
+          return;
+        }
+      }
+      toast(msg || "Run feature failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function openTaskSession(task: Task) {
     if (!isActive(task.status)) {
@@ -241,11 +307,11 @@ export function TasksView() {
 
   useViewKeyboard(
     (e) => {
-      // panel-level keys
-      if (e.key === "Tab") {
-        cycleFocus();
-        return true;
-      }
+      // Tab/Shift-Tab + vim-style scroll inside detail/logs panes.
+      if (paneNav.handleKey(e)) return true;
+
+      // View-owned panel toggles. (paneNav handles Tab; T and z are still
+      // view-scoped because they mutate visibility, not focus.)
       if (e.key === "T") {
         toggleDetail();
         return true;
@@ -254,14 +320,10 @@ export function TasksView() {
         toggleLogs();
         return true;
       }
-      // detail / logs focus → scroll those bodies
+      // When detail/logs are focused, paneNav already handled or rejected
+      // j/k/g/G/Ctrl-D/Ctrl-U above. If we got here, the key is unhandled
+      // for that focus — don't fall into list nav.
       if (focus === "detail" || focus === "logs") {
-        const el = focus === "detail" ? detailBodyRef.current : logBodyRef.current;
-        if (!el) return false;
-        if (e.key === "j" || e.key === "ArrowDown") { el.scrollTop += 40; return true; }
-        if (e.key === "k" || e.key === "ArrowUp") { el.scrollTop -= 40; return true; }
-        if (e.key === "g") { el.scrollTop = 0; return true; }
-        if (e.key === "G") { el.scrollTop = el.scrollHeight; return true; }
         return false;
       }
       // tasks focus
@@ -290,9 +352,18 @@ export function TasksView() {
         }
         case "x":
           if (row?.kind === "header") {
-            const ready = taskList.filter((t) => (t.feature_id || UNGROUPED) === row.feature && ["pending", "active"].includes(t.status));
-            if (ready.length) void run(`Triggered ${ready.length}`, () => Promise.all(ready.map((t) => triggerTask(t.projectId!, t.id))));
-          } else if (cur?.projectId) void run("Triggered", () => triggerTask(cur.projectId!, cur.id));
+            // Whole-feature dispatch: hand the server a single call so it
+            // can plan capacity, queue leftovers, and start a cascade for
+            // drain-while-paused. UNGROUPED rows fall back to the per-task
+            // path because they don't share a feature_id.
+            if (row.feature === UNGROUPED) {
+              const ready = taskList.filter((t) => !t.feature_id && ["pending", "active"].includes(t.status));
+              if (ready.length) void triggerMany(ready);
+            } else {
+              const sample = taskList.find((t) => t.feature_id === row.feature && t.projectId);
+              if (sample?.projectId) void runFeatureNow(sample.projectId, row.feature);
+            }
+          } else if (cur?.projectId) void triggerMany([cur]);
           return true;
         case "X":
           if (cur && isActive(cur.status)) void run("Cancelled", () => setTaskStatus(cur, "cancelled"));
@@ -341,8 +412,7 @@ export function TasksView() {
       <Panel
         title={mode === "schedules" ? "Schedules" : "Tasks"}
         meta={query ? `filter "${query}" · ${taskList.length}` : `${taskList.length}`}
-        focused={focus === "tasks"}
-        onFocus={() => setFocus("tasks")}
+        {...paneNav.tasksPaneProps}
         bodyRef={treeBodyRef}
         style={{ flex: 1 }}
       >
@@ -397,6 +467,9 @@ export function TasksView() {
           rows.map((row, i) => {
             const isCur = i === cursor;
             if (row.kind === "header") {
+              const featureSample = row.feature !== UNGROUPED
+                ? taskList.find((t) => t.feature_id === row.feature && t.projectId)
+                : undefined;
               return (
                 <div
                   key={`h:${row.feature}`}
@@ -407,11 +480,25 @@ export function TasksView() {
                     const ts = tasksByFeature.get(row.feature) ?? [];
                     if (row.feature !== UNGROUPED && ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
                   }}
-                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "s opens feature settings · Enter/Space toggles collapse"}
+                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "s opens feature settings · x runs feature · Enter/Space toggles collapse"}
                 >
                   <span className="htri">{(collapsed[row.feature] ?? collapseDefault) ? "▸" : "▾"}</span>
                   {row.label}
                   <span className="hcount">({row.count})</span>
+                  {featureSample?.projectId && (
+                    <button
+                      type="button"
+                      className="feature-run"
+                      title="Run this feature (dispatch every ready task; queues leftovers as slots free, even if project is paused)"
+                      aria-label={`Run feature ${row.feature}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void runFeatureNow(featureSample.projectId!, row.feature);
+                      }}
+                    >
+                      ▶
+                    </button>
+                  )}
                 </div>
               );
             }
@@ -457,45 +544,45 @@ export function TasksView() {
       </Panel>
 
       {(detailVisible || logsVisible) && (
-        <div className="tui-bottom" style={{ height: "34vh" }}>
-          {detailVisible && (
-            <Panel
-              title="Detail"
-              focused={focus === "detail"}
-              onFocus={() => setFocus("detail")}
-              bodyRef={detailBodyRef}
-              style={{ flex: 1 }}
-            >
-              {detailTask ? (
-                <DetailBody task={detailTask} onEditMeta={() => setEditMeta(detailTask)} onEditContent={() => setEditContent(detailTask)} />
-              ) : (
-                <span className="faint">No task selected.</span>
-              )}
-            </Panel>
-          )}
-          {logsVisible && (
-            <Panel
-              title="Logs"
-              meta={detailTask ? detailTask.id : undefined}
-              focused={focus === "logs"}
-              onFocus={() => setFocus("logs")}
-              bodyRef={logBodyRef}
-              style={{ flex: 1 }}
-            >
-              {panelLogs.length === 0 ? (
-                <span className="faint">No logs yet.</span>
-              ) : (
-                panelLogs.map((r) => (
-                  <div key={r.seq} className="logline">
-                    <span className="lt">{clockTime(r.line.timestamp)}</span>
-                    <span className="ll" style={{ color: logLevelColor(r.line.level) }}>{r.line.level}</span>
-                    <span className="lc">{cleanLogContent(r.line.content)}</span>
-                  </div>
-                ))
-              )}
-            </Panel>
-          )}
-        </div>
+        <>
+          <PaneSplitterRow />
+          <div
+            ref={bottomRowRef}
+            className="tui-bottom"
+            style={{ height: `${bottomHeight}px` }}
+          >
+            {detailVisible && (
+              <Panel
+                title="Detail"
+                {...paneNav.detailPaneProps}
+                style={{ flex: logsVisible ? detailLogsRatio : 1 }}
+              >
+                {detailTask ? (
+                  <DetailBody task={detailTask} onEditMeta={() => setEditMeta(detailTask)} onEditContent={() => setEditContent(detailTask)} />
+                ) : (
+                  <span className="faint">No task selected.</span>
+                )}
+              </Panel>
+            )}
+            {detailVisible && logsVisible && (
+              <PaneSplitterColumn containerRef={bottomRowRef} />
+            )}
+            {logsVisible && (
+              <Panel
+                title="Logs"
+                meta={detailTask ? detailTask.id : undefined}
+                {...paneNav.logsPaneProps}
+                style={{ flex: detailVisible ? 1 - detailLogsRatio : 1 }}
+              >
+                <TaskSessionPane
+                  taskId={detailTask?.id}
+                  projectId={detailTask?.projectId}
+                  taskPath={detailTask?.path}
+                />
+              </Panel>
+            )}
+          </div>
+        </>
       )}
 
       {editMeta && <MetadataModal task={editMeta} onClose={() => setEditMeta(null)} />}

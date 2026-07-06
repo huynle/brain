@@ -7,6 +7,7 @@ import { API_V1 } from "./config";
 import { useAuth } from "./auth";
 import type {
   BrainEntry,
+  DispatchLease,
   GoalAuditResponse,
   GoalListResponse,
   GoalProgressResponse,
@@ -206,18 +207,300 @@ export const deleteEntry = (path: string) =>
 export const setTaskStatus = (task: Task, status: string) =>
   updateEntry(task.path, { status });
 
+export interface TriggerResponse {
+  success: boolean;
+  taskId: string;
+  triggered: boolean;
+  runId?: string;
+  nextRun?: string;
+  reason?: string;
+  // Machine-readable reason from /run (e.g. "already_leased"). Surface in
+  // toasts so callers can offer recovery actions (Force redispatch).
+  reasonCode?: string;
+  projectId?: string;
+  // Lease metadata populated when reasonCode === "already_leased". The PWA
+  // surfaces this on the toast and on the task detail pane so users can see
+  // which runner is holding the task without digging through logs.
+  lease?: {
+    runnerId?: string;
+    leaseId?: string;
+    state?: string;
+    expiresAt?: string;
+  };
+}
+
 export const triggerTask = (projectId: string, taskId: string) =>
-  api<unknown>(
+  api<TriggerResponse>(
     `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/trigger`,
     { method: "POST" },
   );
+
+// /run is the user-explicit "execute this task now" endpoint. Unlike /trigger
+// (which only flips status to pending and waits for the runner to poll),
+// /run picks an eligible runner and pushes a dispatch command immediately.
+// This matches the TUI's "x" key behaviour from the runner-controller path.
+export interface RunTaskResponse {
+  dispatched: boolean;
+  taskId: string;
+  projectId: string;
+  runnerId?: string;
+  leaseId?: string;
+  leaseState?: string;
+  expiresAt?: string;
+  reason?: string;
+  detail?: string;
+}
+
+export const runTask = (projectId: string, taskId: string, force = false) =>
+  api<RunTaskResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/run`,
+    {
+      method: "POST",
+      body: { force },
+    },
+  );
+
+// /features/{featureId}/run is the user-explicit "execute this whole feature
+// now" endpoint. The server dispatches every ready task in the feature up to
+// current runner capacity and queues the rest for a feature-scoped cascade
+// that auto-dispatches as in-flight tasks complete — even when the project
+// is paused. Mirrors runTask but operates on a whole feature in one click.
+export interface RunFeatureResponse {
+  dispatched: boolean;
+  projectId: string;
+  featureId: string;
+  results?: RunTaskResponse[];
+  queued?: string[];
+  dispatchedCount: number;
+  skippedCount: number;
+  reason?: string;
+  detail?: string;
+  cascadeActive?: boolean;
+}
+
+export const runFeature = (projectId: string, featureId: string, force = false) =>
+  api<RunFeatureResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/run`,
+    {
+      method: "POST",
+      body: { force },
+    },
+  );
+
+// Format a RunFeatureResponse into a toast message. Mirrors
+// summarizeTriggerResults' shape so callers can drop this straight into the
+// toast notification system.
+export function summarizeRunFeatureResult(
+  r: RunFeatureResponse,
+): { message: string; kind: "info" | "success" } {
+  if (r.dispatched && r.dispatchedCount > 0 && (r.queued?.length ?? 0) === 0) {
+    return {
+      message:
+        r.dispatchedCount === 1
+          ? "Dispatched 1 task"
+          : `Dispatched ${r.dispatchedCount} tasks`,
+      kind: "success",
+    };
+  }
+  if (r.dispatched && (r.queued?.length ?? 0) > 0) {
+    return {
+      message: `Dispatched ${r.dispatchedCount}, queued ${r.queued?.length ?? 0} (auto-dispatch as slots free)`,
+      kind: "success",
+    };
+  }
+  // Nothing dispatched — surface the reason.
+  const reasonText = humanizeRunFeatureReason(r);
+  return { message: `Not triggered: ${reasonText}`, kind: "info" };
+}
+
+function humanizeRunFeatureReason(r: RunFeatureResponse): string {
+  switch (r.reason) {
+    case "feature_not_found":
+      return "feature not found";
+    case "no_ready_tasks":
+      return "no ready tasks in this feature (check dependencies)";
+    case "feature_in_progress":
+      return "every ready task is already in flight";
+    case "scheduler_not_configured":
+      return "scheduler not configured on server";
+    case "":
+    case undefined:
+      return "nothing to dispatch";
+    default:
+      return r.detail ? `${r.reason}: ${r.detail}` : r.reason;
+  }
+}
+
+// Fetch the current dispatch lease for a task. Returns 404 when none is
+// active — callers should treat that as "not currently dispatched" rather
+// than an error. Used by the task detail pane to show which runner is
+// holding a task without waiting for the next task-list refresh.
+export async function getDispatchLease(
+  projectId: string,
+  taskId: string,
+): Promise<DispatchLease | null> {
+  try {
+    return await api<DispatchLease>(
+      `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/dispatch-lease`,
+    );
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 404) return null;
+    throw err;
+  }
+}
+
+// Force-release a dispatch lease owned by a specific runner. Used as the
+// recovery action when a runner went silent without clearing its lease.
+// Pairs with runTask(force=true) on the server, but explicit release is
+// useful when the user just wants to clear the lease without redispatching.
+export const releaseDispatchLease = (runnerId: string, projectId: string, taskId: string) =>
+  api<{ success: boolean; taskId?: string; runnerId?: string }>(
+    `/api/v1/tasks/runners/${encodeURIComponent(runnerId)}/dispatch/release`,
+    {
+      method: "POST",
+      body: { projectId, taskId },
+    },
+  );
+
+// runOrTriggerTask prefers /run (push dispatch to a runner) and silently
+// falls back to /trigger when the server hasn't been upgraded — letting the
+// PWA work against older brain-api builds. The fallback path returns a
+// shape compatible with TriggerResponse so callers can keep using
+// summarizeTriggerResults.
+export async function runOrTriggerTask(
+  projectId: string,
+  taskId: string,
+  force = false,
+): Promise<TriggerResponse> {
+  try {
+    const r = await runTask(projectId, taskId, force);
+    return runResponseToTrigger(r, projectId);
+  } catch (err) {
+    if (err instanceof ApiError && err.status === 501) {
+      return triggerTask(projectId, taskId);
+    }
+    throw err;
+  }
+}
+
+function runResponseToTrigger(r: RunTaskResponse, projectId: string): TriggerResponse {
+  if (r.dispatched) {
+    const detail = r.runnerId ? `dispatched to ${r.runnerId}` : "dispatched";
+    return {
+      success: true,
+      taskId: r.taskId,
+      projectId,
+      triggered: true,
+      reason: detail,
+      reasonCode: "dispatched",
+    };
+  }
+  // Map machine-readable reasons to user-facing copy. The shape matches
+  // TriggerResponse so summarizeTriggerResults handles it transparently.
+  const lease =
+    r.reason === "already_leased" && (r.runnerId || r.leaseState)
+      ? {
+          runnerId: r.runnerId,
+          leaseId: r.leaseId,
+          state: r.leaseState,
+          expiresAt: r.expiresAt,
+        }
+      : undefined;
+  return {
+    success: true,
+    taskId: r.taskId,
+    projectId,
+    triggered: false,
+    reason: humanizeRunReason(r),
+    reasonCode: r.reason,
+    lease,
+  };
+}
+
+// Format an absolute ISO timestamp as a coarse "in 3m" / "5s ago" string so
+// toast messages and detail panes can show lease freshness without dragging
+// in date-fns. Keeps the output deliberately short (chip-sized).
+function relativeFromNow(iso?: string): string | undefined {
+  if (!iso) return undefined;
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return undefined;
+  const deltaSec = Math.round((t - Date.now()) / 1000);
+  const abs = Math.abs(deltaSec);
+  const fmt =
+    abs < 60 ? `${abs}s` :
+    abs < 3600 ? `${Math.round(abs / 60)}m` :
+    abs < 86400 ? `${Math.round(abs / 3600)}h` :
+    `${Math.round(abs / 86400)}d`;
+  return deltaSec >= 0 ? `in ${fmt}` : `${fmt} ago`;
+}
+
+function humanizeRunReason(r: RunTaskResponse): string {
+  const reason = r.reason;
+  const detail = r.detail;
+  switch (reason) {
+    case "no_online_runner":
+      return "no runners are online";
+    case "no_eligible_runner":
+      return detail ? `no eligible runner (${detail})` : "no eligible runner for this task";
+    case "all_runners_at_capacity":
+      return "all runners are at capacity";
+    case "task_not_ready":
+      return "task is not ready (check dependencies)";
+    case "already_leased": {
+      // Surface the actual lease owner + state so users can tell at a
+      // glance whether to wait, abort, or force-redispatch.
+      if (!r.runnerId) return "task already dispatched to a runner";
+      const parts: string[] = [r.runnerId];
+      if (r.leaseState) parts.push(r.leaseState);
+      const rel = relativeFromNow(r.expiresAt);
+      if (rel) parts.push(`expires ${rel}`);
+      return `already dispatched to ${parts[0]} (${parts.slice(1).join(", ")})`;
+    }
+    case "scheduler_not_configured":
+      return "scheduler not configured on server";
+    case "":
+    case undefined:
+      return "no eligible tasks to trigger";
+    default:
+      return detail ? `${reason}: ${detail}` : reason;
+  }
+}
+
+// Summarize one-or-many TriggerResponse(s) into a user-friendly toast string
+// and severity. The backend distinguishes between "actually triggered" and
+// "no-op with reason" (e.g. task already pending), and we surface both.
+export function summarizeTriggerResults(
+  results: TriggerResponse[],
+): { message: string; kind: "info" | "success" } {
+  const triggered = results.filter((r) => r.triggered);
+  const skipped = results.filter((r) => !r.triggered);
+
+  if (triggered.length && !skipped.length) {
+    return {
+      message: triggered.length === 1 ? "Triggered" : `Triggered ${triggered.length}`,
+      kind: "success",
+    };
+  }
+  if (triggered.length && skipped.length) {
+    return {
+      message: `Triggered ${triggered.length}, skipped ${skipped.length}`,
+      kind: "success",
+    };
+  }
+  // All skipped — show the reason from the first one (or a generic message).
+  const reason = skipped[0]?.reason || "no eligible tasks to trigger";
+  return {
+    message: skipped.length === 1 ? `Not triggered: ${reason}` : `Skipped ${skipped.length}: ${reason}`,
+    kind: "info",
+  };
+}
 
 
 // ─── Built-in Assistant ──────────────────────────────────────────
 
 export interface AssistantStatusResponse {
   available: boolean;
-  mode: "direct_llm" | "manual" | string;
+  mode: "agentic" | "direct_llm" | "manual" | string;
   provider?: string;
   model?: string;
   capabilities: string[];
@@ -236,6 +519,27 @@ export interface AssistantChatResponse {
   proposed_actions: AssistantAction[];
 }
 
+// AssistantToolCall / AssistantToolResult are streamed for each tool the
+// server-side agent loop invokes. The PWA renders these as collapsible chips
+// above the assistant's final natural-language reply.
+export interface AssistantToolCall {
+  id: string;
+  name: string;
+  // Arguments are JSON-encoded (as sent to the model) so the UI can decode
+  // and pretty-print them when a chip is expanded.
+  args?: string | Record<string, unknown>;
+  tier: "read" | "write" | "destructive" | string;
+}
+
+export interface AssistantToolResult {
+  id: string;
+  name: string;
+  status: "completed" | "failed" | "proposed" | string;
+  result?: unknown;
+  error?: string;
+  proposed?: boolean;
+}
+
 export interface AssistantGoalDraft {
   project?: string;
   feature_id?: string;
@@ -250,15 +554,81 @@ export interface AssistantGoalDraft {
   blocked_statuses?: string[];
 }
 
+// AssistantHistoryMessage is the compact shape the PWA replays to the server
+// so the agent loop has memory across HTTP turns. Tool result payloads are
+// intentionally omitted — role="tool" entries carry only the tool_call_id +
+// name + status. The server substitutes a placeholder body when replaying.
+export interface AssistantHistoryMessage {
+  role: "user" | "assistant" | "tool";
+  content?: string;
+  tool_calls?: { id: string; name: string; arguments?: string }[];
+  tool_call_id?: string;
+  name?: string;
+  status?: string;
+}
+
 export const assistantStatus = () =>
   api<AssistantStatusResponse>("/api/v1/assistant/status");
 
 export const assistantChat = (body: {
   project?: string;
   message: string;
+  model?: string;
   attachments?: string[];
   context?: Record<string, string>;
+  history?: AssistantHistoryMessage[];
 }) => api<AssistantChatResponse>("/api/v1/assistant/chat", { method: "POST", body });
+
+export interface AssistantStreamEvent {
+  type: "delta" | "tool_call" | "tool_result" | "done" | "error" | string;
+  delta?: string;
+  reply?: string;
+  executed_actions?: AssistantChatResponse["executed_actions"];
+  proposed_actions?: AssistantChatResponse["proposed_actions"];
+  tool_call?: AssistantToolCall;
+  tool_result?: AssistantToolResult;
+  error?: string;
+}
+
+export async function assistantChatStream(
+  body: {
+    project?: string;
+    message: string;
+    model?: string;
+    attachments?: string[];
+    context?: Record<string, string>;
+    history?: AssistantHistoryMessage[];
+  },
+  onEvent: (event: AssistantStreamEvent) => void,
+  signal?: AbortSignal,
+): Promise<void> {
+  const res = await api<Response>("/api/v1/assistant/chat/stream", {
+    method: "POST",
+    body,
+    raw: true,
+    headers: { Accept: "application/x-ndjson" },
+    signal,
+  });
+  if (!res.body) throw new ApiError(0, "Streaming response body is unavailable");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    pending += decoder.decode(value, { stream: true });
+    const lines = pending.split("\n");
+    pending = lines.pop() || "";
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      onEvent(JSON.parse(trimmed) as AssistantStreamEvent);
+    }
+  }
+  pending += decoder.decode();
+  const trimmed = pending.trim();
+  if (trimmed) onEvent(JSON.parse(trimmed) as AssistantStreamEvent);
+}
 
 export const assistantGoalDraft = (body: {
   project?: string;

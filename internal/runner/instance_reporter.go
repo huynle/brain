@@ -35,24 +35,41 @@ func runnerHostname() string {
 }
 
 // taskInstanceStatus derives the registry status for a tracked task process.
+// For OpenCode we use the presence of the API port + IdleSince marker; for
+// pi/script the process is either running (busy) or not tracked at all —
+// there is no "attached to a session" concept, so we simplify to
+// starting/busy/exited based on process lifecycle.
 func taskInstanceStatus(info *ProcessInfo) string {
 	if info.IsExited || info.Proc.Exited() {
 		return types.InstanceStatusExited
 	}
-	if info.Task.OpencodePort == 0 {
-		return types.InstanceStatusStarting
+	if info.Task.ExecutorType == "opencode" {
+		if info.Task.OpencodePort == 0 {
+			return types.InstanceStatusStarting
+		}
+		if info.Task.IdleSince != "" {
+			return types.InstanceStatusIdle
+		}
+		return types.InstanceStatusBusy
 	}
-	if info.Task.IdleSince != "" {
-		return types.InstanceStatusIdle
-	}
+	// pi / script: running process ⇒ busy. No "idle" concept.
 	return types.InstanceStatusBusy
 }
 
 // taskInstance builds an OpencodeInstance record for a tracked task process.
+// This is used for every executor type (opencode, pi, script) so the Runners
+// tab can render a live "currently executing" row for any in-flight task.
+// Fields that only apply to OpenCode (Port, SessionIDs) are populated when
+// available and left zero-valued for other executors — the PWA already
+// handles those absences.
 func (tr *TaskRunner) taskInstance(info *ProcessInfo, hostname string) types.OpencodeInstance {
 	var sessionIDs []string
 	if info.Task.SessionID != "" {
 		sessionIDs = []string{info.Task.SessionID}
+	}
+	executor := info.Task.ExecutorType
+	if executor == "" {
+		executor = "opencode" // legacy default
 	}
 	return types.OpencodeInstance{
 		InstanceID: info.Task.InstanceID,
@@ -69,7 +86,7 @@ func (tr *TaskRunner) taskInstance(info *ProcessInfo, hostname string) types.Ope
 		PID:        info.Proc.Pid(),
 		SessionIDs: sessionIDs,
 		Status:     taskInstanceStatus(info),
-		Executor:   "opencode",
+		Executor:   executor,
 		Agent:      info.Task.Agent,
 		Model:      info.Task.Model,
 		StartedAt:  info.Task.StartedAt.UnixMilli(),
@@ -77,14 +94,16 @@ func (tr *TaskRunner) taskInstance(info *ProcessInfo, hostname string) types.Ope
 	}
 }
 
-// instanceSnapshot builds the full reconcile list of OpenCode instances for
-// heartbeat payloads. Always non-nil so the server can distinguish "zero
-// instances" from "runner does not report instances".
+// instanceSnapshot builds the full reconcile list of instances for heartbeat
+// payloads. Reports *all* executor types (opencode, pi, script) so the
+// Runners tab can show what's currently running regardless of executor.
+// Always non-nil so the server can distinguish "zero instances" from
+// "runner does not report instances".
 func (tr *TaskRunner) instanceSnapshot() []types.OpencodeInstance {
 	hostname := runnerHostname()
 	out := make([]types.OpencodeInstance, 0)
 	for _, info := range tr.processMgr.GetAll() {
-		if info.Task.ExecutorType != "opencode" || info.Task.InstanceID == "" {
+		if info.Task.InstanceID == "" {
 			continue
 		}
 		inst := tr.taskInstance(&info, hostname)

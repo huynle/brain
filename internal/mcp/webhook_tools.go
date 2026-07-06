@@ -29,7 +29,7 @@ func RegisterWebhookTools(s *Server, client *APIClient) {
 
 func registerBrainWebhookCreate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_webhook_create",
+		Name: "webhook_create",
 		Description: `Register a new webhook to receive event notifications.
 
 Creates a webhook that will receive HTTP POST callbacks when matching events occur.
@@ -130,7 +130,7 @@ Example:
 
 func registerBrainWebhookList(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_webhook_list",
+		Name: "webhook_list",
 		Description: `List all registered webhooks.
 
 Returns all webhooks with their IDs, URLs, subscribed events, and status.
@@ -190,7 +190,7 @@ Use enabled_only to filter to active webhooks.`,
 
 func registerBrainWebhookGet(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_webhook_get",
+		Name: "webhook_get",
 		Description: `Inspect a webhook configuration by ID.
 
 Returns the webhook URL, subscribed events, enabled status, filters, and timestamps.
@@ -228,7 +228,7 @@ Use brain_webhook_list to find webhook IDs.`,
 
 func registerBrainWebhookUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_webhook_update",
+		Name: "webhook_update",
 		Description: `Update a webhook configuration by ID.
 
 Only provided fields are changed. Supports updating name, URL, events, filter,
@@ -316,7 +316,7 @@ secret, and enabled status. Use brain_webhook_get to inspect the result.`,
 
 func registerBrainWebhookTest(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_webhook_test",
+		Name: "webhook_test",
 		Description: `Send a synthetic test event to a webhook by ID.
 
 The API delivers a webhook.test event synchronously and returns the delivery
@@ -354,7 +354,7 @@ result, including success, status code, latency, and error details.`,
 
 func registerBrainWebhookDeliveries(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_webhook_deliveries",
+		Name: "webhook_deliveries",
 		Description: `List recent delivery attempts for a webhook.
 
 Returns delivery IDs, event types, status codes, success state, latency, errors,
@@ -425,7 +425,7 @@ and timestamps. Use limit to control how many delivery records are returned.`,
 
 func registerBrainWebhookDelete(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_webhook_delete",
+		Name: "webhook_delete",
 		Description: `Remove a webhook by ID.
 
 Permanently deletes the webhook registration. Delivery history is also removed.
@@ -462,7 +462,7 @@ Use brain_webhook_list to find webhook IDs.`,
 
 func registerBrainWebhookToggle(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name: "brain_webhook_toggle",
+		Name: "webhook_toggle",
 		Description: `Enable or disable a webhook without deleting it.
 
 Toggling a webhook off stops delivery attempts while preserving the configuration.

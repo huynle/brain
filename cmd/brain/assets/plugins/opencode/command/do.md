@@ -95,7 +95,7 @@ if $1 is provided:
   PROJECT = "$1"
   PROJECT_DISPLAY = "project: $1"
 else:
-  PROJECT = null  # omit from brain_save calls
+  PROJECT = null  # omit from save calls
   PROJECT_DISPLAY = "project: (default)"
 ```
 
@@ -175,7 +175,7 @@ What's the issue?
 | Input | Action |
 |-------|--------|
 | `stop`, `quit`, `exit` | Promote all drafts to pending, then exit ticketing mode |
-| `status` | Show queue via `brain_list(type: "task", project: PROJECT)` (omit project if using default) |
+| `status` | Show queue via `list(type: "task", project: PROJECT)` (omit project if using default) |
 | Anything else | Dispatch general subagent |
 
 ### Filing an Issue
@@ -220,7 +220,7 @@ If subagent returns `CLARIFICATION_NEEDED:`:
 If the subagent identifies that the issue relates to an **existing task** in the brain (e.g., user feedback changes requirements for a task already filed):
 
 ```
-brain_update(
+update(
   path: "<existing_task_path>",
   status: "pending",  # CRITICAL: Reset to pending so it gets re-queued!
   append: @updated_requirements
@@ -250,7 +250,7 @@ Updated approach:
 # User says: "actually remove the scroll indicators entirely"
 # Agent finds existing task sdw6d94q about scroll indicator rendering
 
-brain_update(
+update(
   path: "projects/brain/task/sdw6d94q.md",
   status: "pending",
   append: """
@@ -270,7 +270,7 @@ Updated approach:
 
 **For simple/medium tasks (single discrete unit - no dependencies):**
 ```
-brain_save(
+save(
   type: "task",
   title: "<from investigation>",
   status: "pending",  # Simple tasks go directly to pending
@@ -316,7 +316,7 @@ To prevent race conditions where brain-runner picks up tasks before the full dep
 FEATURE_ID = slugify("<feature name>")
 
 # Step 1: Create task 1 as draft (small, focused - ~15-20 min)
-task1_path = brain_save(
+task1_path = save(
   type: "task",
   title: "Create theme context",
   status: "draft",  # Draft until chain complete
@@ -330,7 +330,7 @@ task1_path = brain_save(
 )
 
 # Step 2: Create task 2 as draft (depends on task 1, ~20-30 min)
-task2_path = brain_save(
+task2_path = save(
   type: "task",
   title: "Update components to use theme",
   status: "draft",  # Draft until chain complete
@@ -344,7 +344,7 @@ task2_path = brain_save(
 )
 
 # Step 3: Create task 3 as draft (depends on task 2, ~15 min)
-task3_path = brain_save(
+task3_path = save(
   type: "task",
   title: "Add toggle to header",
   status: "draft",  # Draft until chain complete
@@ -360,7 +360,7 @@ task3_path = brain_save(
 # Step 4 (OPTIONAL): Create checkout task ONLY if user explicitly requested verification
 # OR if the feature requires integration testing
 IF user_requested_verification OR feature_needs_integration_test:
-  checkout_path = brain_save(
+  checkout_path = save(
     type: "task",
     title: "Final checkout: Dark mode integration",
     status: "draft",
@@ -378,17 +378,17 @@ IF user_requested_verification OR feature_needs_integration_test:
   )
 
   # CRITICAL: Set direct_prompt with the ACTUAL saved path to avoid runtime fallback.
-  brain_update(
+  update(
     path: checkout_path,
     direct_prompt: "Load the feature-checkout skill and process the checkout task at brain path: ${checkout_path}. Validate implementation coverage against dependency tasks' user_original_request intent. Start now."
   )
 
 # Step 5: BATCH PROMOTE - All tasks created, now make them visible to brain-runner
-brain_update(path: task1_path, status: "pending")
-brain_update(path: task2_path, status: "pending")
-brain_update(path: task3_path, status: "pending")
+update(path: task1_path, status: "pending")
+update(path: task2_path, status: "pending")
+update(path: task3_path, status: "pending")
 IF checkout_path:
-  brain_update(path: checkout_path, status: "pending")
+  update(path: checkout_path, status: "pending")
 ```
 
 **Result in brain-runner dashboard:**
@@ -450,7 +450,7 @@ The brain's task queue will only mark Task B as "ready" after Task A completes.
 Use `feature_id` to group related tasks that belong to the same feature:
 
 ```
-brain_save(
+save(
   type: "task",
   title: "Create theme context",
   feature_id: "dark-mode",
@@ -458,7 +458,7 @@ brain_save(
   ...
 )
 
-brain_save(
+save(
   type: "task",
   title: "Update button styles for theme",
   feature_id: "dark-mode",
@@ -470,7 +470,7 @@ brain_save(
 **Benefits of feature_id:**
 - Tasks grouped together in TUI dashboard under collapsible feature headers
 - Enables feature-level actions: pause, resume, focus mode ('x' to run feature to completion)
-- Can query all tasks for a feature: `brain_list(type: "task", tags: ["dark-mode"])`
+- Can query all tasks for a feature: `list(type: "task", tags: ["dark-mode"])`
 - Provides logical organization beyond just dependencies
 - Shows feature completion progress (e.g., "2/5 tasks complete")
 
@@ -487,7 +487,7 @@ When entire features must complete before another feature starts:
 Feature: "auth-system" (login, registration, password reset)
 Feature: "user-dashboard" (depends on auth-system being complete)
 
-brain_save(
+save(
   type: "task",
   title: "Build dashboard layout",
   feature_id: "user-dashboard",
@@ -759,7 +759,7 @@ When saving to brain, the content MUST follow this structure:
 ### `/do status`
 
 ```
-brain_list(type: "task", project: PROJECT, limit: 20)  # Omit project if using default
+list(type: "task", project: PROJECT, limit: 20)  # Omit project if using default
 ```
 
 Display:

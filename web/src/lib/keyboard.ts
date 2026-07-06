@@ -96,18 +96,53 @@ export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
         return;
       }
 
-      // Quick project switcher: Cmd/Ctrl+K opens the searchable picker from
+      // Quick project switcher: Cmd/Ctrl+; opens the searchable picker from
       // anywhere (even while typing in a field). Handled before the modifier and
       // editable-target guards below.
-      if ((e.metaKey || e.ctrlKey) && (e.key === "k" || e.key === "K")) {
+      if ((e.metaKey || e.ctrlKey) && e.key === ";") {
         e.preventDefault();
         uiApi().setProjectSheetOpen(true);
+        return;
+      }
+
+      // Cmd/Ctrl+. toggles the Brain Assistant from anywhere — including while
+      // typing in another field — so it functions as a global command center.
+      // Behavior is viewport-aware: on a wide desktop it toggles the persistent
+      // sidebar; on narrow desktop / mobile it toggles the overlay drawer.
+      if ((e.metaKey || e.ctrlKey) && (e.key === ".")) {
+        e.preventDefault();
+        const ui = uiApi();
+        // Use a window width check rather than importing the hook here — this
+        // listener runs outside React's render cycle. Threshold mirrors the
+        // "wide" tier in useViewport.
+        const wide = window.innerWidth >= 1100;
+        if (wide) {
+          ui.setAssistantSidebar(!ui.assistantSidebar);
+          if (!ui.assistantSidebar) window.setTimeout(ui.focusAssistantPrompt, 0);
+        } else {
+          ui.setAssistantOpen(!ui.assistantOpen);
+          if (!ui.assistantOpen) window.setTimeout(ui.focusAssistantPrompt, 0);
+        }
         return;
       }
 
       // Don't hijack typing or modal interactions.
       if (isEditableTarget(e.target)) return;
       if (anyModalOpen()) return;
+
+      // Allow view handlers to claim Ctrl- or Alt-modified keys (e.g. vim
+      // Ctrl-D / Ctrl-U for half-page scroll inside a focused pane, or
+      // Alt+H/J/K/L for pane resize). The handler must explicitly return
+      // true to consume them; otherwise we fall through to the modifier
+      // bail-out below so chord shortcuts the browser owns (Ctrl-F,
+      // Ctrl-W, Ctrl-T, Alt+Left, etc.) still reach it.
+      if ((e.ctrlKey || e.metaKey || e.altKey) && activeHandler) {
+        if (activeHandler(e)) {
+          e.preventDefault();
+          return;
+        }
+      }
+
       if (e.metaKey || e.ctrlKey || e.altKey) return;
 
       // Delegate to the active view first (its action + list-nav keys).

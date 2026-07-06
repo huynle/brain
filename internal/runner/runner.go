@@ -100,6 +100,18 @@ type TaskProcessManager interface {
 	UpdatePort(taskID string, port int)
 	UpdateSessionID(taskID string, sessionID string)
 	UpdateIdleSince(taskID string, idleSince string)
+
+	// ReserveSlot atomically holds an execution slot for a task if
+	// capacity is available. Returns true when the slot is granted or
+	// the task is already tracked (idempotent). Callers must call
+	// ReleaseReservation (or Add, which upgrades) to free the slot.
+	// Closes a race between the RunningCount check and the actual
+	// spawn where multiple dispatch workers could overspend capacity.
+	ReserveSlot(taskID string, maxParallel int) bool
+	// ReleaseReservation frees an unspawned slot reservation. No-op
+	// when the task has already been Add'd as a live process or no
+	// reservation exists.
+	ReleaseReservation(taskID string)
 }
 
 // TaskStateManager abstracts the StateManager for testability.
@@ -233,6 +245,16 @@ type TaskRunner struct {
 	wakeCh      chan struct{}
 	commandCh   chan RunnerCommand
 	sseListener *SSEListener
+
+	// dispatchPool decouples CommandDispatch processing from the SSE
+	// consumer goroutine so the consumer can drain commandCh at line
+	// rate even while dispatches wait on HTTP calls in
+	// handleDispatchCommand. See dispatch_pool.go.
+	//
+	// nil until startDispatchPool is called (allows tests to invoke
+	// handleCommand directly without setting up a full runner).
+	dispatchPoolMu sync.RWMutex
+	dispatchPool   *dispatchPool
 
 	// Remote-control bridge (outbound WS tunnel to the Brain API)
 	bridgeClient *BridgeClient
@@ -432,6 +454,13 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
+	// Start the dispatch worker pool before wiring up the SSE listener.
+	// Once the SSE listener is running, dispatch commands can start
+	// arriving on commandCh, and the consumer goroutine will submit
+	// them to this pool for async processing. Starting the pool first
+	// avoids a race where dispatches arrive before workers exist.
+	tr.startDispatchPool(ctx)
+
 	// Start SSE listener for reactive polling
 	if tr.config.BrainAPIURL != "" && len(tr.projects) > 0 {
 		tr.sseListener = NewSSEListener(
@@ -489,6 +518,31 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		}
 	}()
 
+	// Start command consumer goroutine. Dispatched commands MUST be
+	// processed independently of poll() because poll() makes synchronous
+	// HTTP calls that can block for tens of seconds when the API is slow
+	// (e.g. a SQLite WAL stall or a CPU-bound JSON encode on the server
+	// side). Multiplexing poll and commandCh on the same goroutine caused
+	// the production wedge documented in brain plan ehwvfq8e and the
+	// 2026-06-25 goroutine-dump analysis: a blocked poll() would prevent
+	// commandCh from being drained, the SSE listener's 16-slot buffer
+	// would fill in seconds, and every subsequent dispatch lease would
+	// time out untouched ("dispatch command dropped (channel full)").
+	//
+	// Keeping this goroutine narrow (only commandCh + ctx.Done) makes
+	// dispatch consumption durable against any future slowness in the
+	// maintenance path.
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case cmd := <-tr.commandCh:
+				tr.handleCommand(ctx, cmd)
+			}
+		}
+	}()
+
 	// Run initial poll immediately
 	tr.poll(ctx)
 
@@ -498,6 +552,13 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.mu.Lock()
 			tr.status = RunnerStatusStopped
 			tr.mu.Unlock()
+			// Stop the dispatch pool with a bounded grace period so
+			// in-flight dispatches (spawn, ack, HTTP calls) get a
+			// chance to finish cleanly. Bounded so shutdown can't
+			// hang forever on a stuck handler.
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			tr.stopDispatchPool(stopCtx)
+			stopCancel()
 			tr.deregisterFromAPI()
 			tr.saveState()
 			close(tr.done)
@@ -506,8 +567,6 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			tr.poll(ctx)
 		case <-tr.wakeCh:
 			tr.poll(ctx)
-		case cmd := <-tr.commandCh:
-			tr.handleCommand(ctx, cmd)
 		}
 	}
 }
@@ -531,6 +590,20 @@ func (tr *TaskRunner) serverPauseState(ctx context.Context) (map[string]bool, ma
 		}
 		return tasksPaused, automationsPaused
 	}
+	// Global server pause flags propagate to every observed project. We
+	// signal "globally paused" by marking the sentinel "" key in each
+	// returned map; callers that already check tr.allPaused or
+	// tr.pauseCache[projectID] should also consult the sentinel via
+	// serverPausedGlobally(). Previously this function only read the
+	// per-project arrays, so a global "pause tasks" from the PWA never made
+	// it to the dispatch SSE path and dispatches would queue silently when
+	// the runner was idle.
+	if status.Paused {
+		tasksPaused[""] = true
+	}
+	if status.AutomationsPaused {
+		automationsPaused[""] = true
+	}
 	for _, projectID := range status.PausedProjects {
 		tasksPaused[projectID] = true
 	}
@@ -538,6 +611,13 @@ func (tr *TaskRunner) serverPauseState(ctx context.Context) (map[string]bool, ma
 		automationsPaused[projectID] = true
 	}
 	return tasksPaused, automationsPaused
+}
+
+// serverPausedFor returns true when the server has either paused all tasks
+// or paused this specific project. Pairs with serverPauseState's sentinel
+// "" key for global state.
+func serverPausedFor(serverPaused map[string]bool, projectID string) bool {
+	return serverPaused[""] || serverPaused[projectID]
 }
 
 func (tr *TaskRunner) dispatchLeaseExpired(expiresAt string, now time.Time) bool {
@@ -566,11 +646,193 @@ func (tr *TaskRunner) supportsProject(projectID string) bool {
 	return false
 }
 
+// handleDispatchCommand executes a CommandDispatch synchronously. This
+// function was extracted from the CommandDispatch case in handleCommand
+// so the async dispatch worker pool (see dispatch_pool.go) can invoke it
+// off the SSE consumer goroutine. Behavior is unchanged from the inline
+// version — the only difference is that the caller decides whether to
+// run it inline or on a worker.
+//
+// The break statements from the original switch case become returns.
+func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerCommand) {
+	slog.Info("dispatch command received",
+		"task_id", cmd.TaskID,
+		"project_id", cmd.ProjectID,
+		"lease_id", cmd.LeaseID,
+		"force", cmd.Force,
+		"runner_id", tr.runnerID,
+	)
+	leaseID := cmd.LeaseID
+	if leaseID == "" {
+		leaseID = cmd.Lease
+	}
+	if leaseID == "" || cmd.ProjectID == "" || cmd.TaskID == "" {
+		tr.rejectDispatch(ctx, cmd, leaseID, "missing_fields", "dispatch command missing required leaseId, projectId, or taskId")
+		return
+	}
+	if ctx.Err() != nil {
+		tr.rejectDispatch(ctx, cmd, leaseID, "runner_shutting_down", ctx.Err().Error())
+		return
+	}
+	if tr.dispatchLeaseExpired(cmd.ExpiresAt, time.Now()) {
+		tr.rejectDispatch(ctx, cmd, leaseID, "lease_expired", "dispatch lease has expired")
+		return
+	}
+	if !tr.supportsProject(cmd.ProjectID) {
+		tr.rejectDispatch(ctx, cmd, leaseID, "project_unsupported", "runner is not assigned to this project")
+		return
+	}
+	// Pause gating: when the user explicitly forced this run via /run
+	// (cmd.Force=true), bypass the pause check to honor the contract
+	// documented on SchedulerService.RunTaskNow. Capacity is still
+	// enforced — a forced dispatch can't magically create execution
+	// slots, and overrunning max_parallel would corrupt accounting.
+	//
+	// When NOT forced and tasks are paused, we still need to allow
+	// automation-generated tasks through if automations aren't paused
+	// for this project — mirroring the poll loop's carve-out at
+	// runner.go:956–984. The poll path pulls "automation:" tasks even
+	// when paused; the dispatch path historically rejected everything
+	// as runner_paused, so the PWA's "tasks: paused, autos: on" mode
+	// quietly stopped delivering automation work whenever dispatch
+	// push was enabled. We can't decide here yet because we don't
+	// have the task's GeneratedBy until we've resolved the task.
+	//
+	// Pause state comes from the runner's local cache only. The cache
+	// is kept in sync via SSE CommandPause/CommandResume — no HTTP
+	// round-trip per dispatch, which used to burn ~200ms per dispatch
+	// against a slow API and caused task_lookup_failed rejections in
+	// production. See fix/inline-dispatch-task.
+	tr.pauseMu.RLock()
+	paused := tr.allPaused || tr.pauseCache[cmd.ProjectID]
+	automationsPausedForProject := tr.automationsPaused || tr.automationPausedProjects[cmd.ProjectID]
+	tr.pauseMu.RUnlock()
+	if paused && cmd.Force {
+		slog.Info("force-dispatch bypassing pause",
+			"task_id", cmd.TaskID,
+			"project_id", cmd.ProjectID,
+			"all_paused", tr.allPaused,
+			"project_paused", tr.pauseCache[cmd.ProjectID],
+		)
+	}
+	if !tr.processMgr.ReserveSlot(cmd.TaskID, tr.getMaxParallel()) {
+		tr.rejectDispatch(ctx, cmd, leaseID, "capacity_unavailable", "runner has no available execution slots")
+		return
+	}
+	// From here on, any rejection must release the reservation.
+	// rejectDispatch calls ReleaseReservation internally so this
+	// happens automatically. The reservation is upgraded to a live
+	// process by ProcessManager.Add inside claimAndSpawn on success.
+
+	// Prefer the task inlined in the dispatch payload — the scheduler
+	// has the fully-resolved ResolvedTask when it creates the lease, so
+	// there's no need to fetch it again. Fall back to GetReadyTasks
+	// only when the payload doesn't carry the task (older API server).
+	var task *types.ResolvedTask
+	if cmd.Task != nil && cmd.Task.ID == cmd.TaskID {
+		task = cmd.Task
+	} else {
+		tasks, err := tr.client.GetReadyTasks(ctx, cmd.ProjectID, tr.buildFetchOptions())
+		if err != nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "task_lookup_failed", err.Error())
+			return
+		}
+		for i := range tasks {
+			if tasks[i].ID == cmd.TaskID {
+				task = &tasks[i]
+				break
+			}
+		}
+		if task == nil {
+			tr.rejectDispatch(ctx, cmd, leaseID, "task_not_found", "target task is not ready for this runner")
+			return
+		}
+		slog.Debug("dispatch used legacy fetch path (task not inlined in payload)",
+			"task_id", cmd.TaskID, "project_id", cmd.ProjectID)
+	}
+	// Now we know the task's GeneratedBy; finalize the pause decision.
+	// Automation-generated tasks may proceed when only tasks (not
+	// automations) are paused for this project. Everything else gets
+	// the unconditional runner_paused rejection.
+	if paused && !cmd.Force {
+		if !(isAutomationGeneratedTask(task) && !automationsPausedForProject) {
+			tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
+			return
+		}
+		slog.Info("automation dispatch bypassing pause",
+			"task_id", cmd.TaskID,
+			"project_id", cmd.ProjectID,
+			"generated_by", task.GeneratedBy,
+		)
+	}
+	taskExecutor, _, err := tr.resolveExecutor(task)
+	if err != nil {
+		tr.rejectDispatch(ctx, cmd, leaseID, "executor_unsupported", err.Error())
+		return
+	}
+	workdir, err := taskExecutor.ResolveWorkdir(task)
+	if err != nil {
+		tr.rejectDispatch(ctx, cmd, leaseID, "workdir_unavailable", err.Error())
+		return
+	}
+	if !tr.ackDispatch(ctx, cmd, leaseID) {
+		slog.Warn("dispatch ack failed; aborting spawn",
+			"task_id", cmd.TaskID,
+			"project_id", cmd.ProjectID,
+			"lease_id", leaseID,
+		)
+		return
+	}
+	slog.Info("dispatch acked; spawning task",
+		"task_id", cmd.TaskID,
+		"project_id", cmd.ProjectID,
+		"lease_id", leaseID,
+	)
+	if err := tr.claimAndSpawnWithWorkdir(ctx, task, cmd.ProjectID, workdir); err != nil {
+		// Spawn failed after the ack: release both the API-side lease
+		// and the local capacity reservation so the runner can accept
+		// new work in this slot.
+		tr.processMgr.ReleaseReservation(cmd.TaskID)
+		tr.releaseDispatchLease(ctx, cmd.ProjectID, cmd.TaskID)
+		tr.logger.Printf("claim and spawn dispatched task failed for %s/%s: %v", cmd.ProjectID, cmd.TaskID, err)
+	}
+}
+
 func (tr *TaskRunner) rejectDispatch(ctx context.Context, cmd RunnerCommand, leaseID, code, message string) {
-	_, _ = tr.client.RejectDispatch(ctx, tr.runnerID, cmd.ProjectID, cmd.TaskID, leaseID, types.DispatchRejectReason{
+	// If the dispatch had reached the reserve-slot step, free that
+	// slot so subsequent dispatches see accurate capacity. Safe no-op
+	// when no reservation exists (rejections before ReserveSlot).
+	if cmd.TaskID != "" {
+		tr.processMgr.ReleaseReservation(cmd.TaskID)
+	}
+	// Always log the rejection so operators can diagnose why a dispatch
+	// fell on the floor — previously the HTTP error was discarded, making
+	// "lease stuck in pushed" mysteries impossible to track down.
+	slog.Warn("rejecting dispatch",
+		"code", code,
+		"message", message,
+		"task_id", cmd.TaskID,
+		"project_id", cmd.ProjectID,
+		"lease_id", leaseID,
+		"force", cmd.Force,
+		"runner_id", tr.runnerID,
+	)
+	if _, err := tr.client.RejectDispatch(ctx, tr.runnerID, cmd.ProjectID, cmd.TaskID, leaseID, types.DispatchRejectReason{
 		Code:    code,
 		Message: message,
-	})
+	}); err != nil {
+		// A failed reject leaves the lease in `pushed` until its TTL
+		// expires — surface that explicitly so it shows up in runner logs
+		// instead of being silently swallowed.
+		slog.Error("failed to report dispatch rejection to brain-api",
+			"error", err,
+			"code", code,
+			"task_id", cmd.TaskID,
+			"project_id", cmd.ProjectID,
+			"lease_id", leaseID,
+			"runner_id", tr.runnerID,
+		)
+	}
 }
 
 func (tr *TaskRunner) ackDispatch(ctx context.Context, cmd RunnerCommand, leaseID string) bool {
@@ -626,81 +888,35 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 		}
 
 	case CommandPause:
-		tr.PauseAll()
-		slog.Info("runner paused via SSE command")
+		tr.applyPauseCommand(cmd, true)
 
 	case CommandResume:
-		tr.ResumeAll()
-		slog.Info("runner resumed via SSE command")
+		tr.applyPauseCommand(cmd, false)
 
 	case CommandDispatch:
-		slog.Info("dispatch command received", "task_id", cmd.TaskID, "project_id", cmd.ProjectID)
-		leaseID := cmd.LeaseID
-		if leaseID == "" {
-			leaseID = cmd.Lease
-		}
-		if leaseID == "" || cmd.ProjectID == "" || cmd.TaskID == "" {
-			tr.rejectDispatch(ctx, cmd, leaseID, "missing_fields", "dispatch command missing required leaseId, projectId, or taskId")
-			break
-		}
-		if ctx.Err() != nil {
-			tr.rejectDispatch(ctx, cmd, leaseID, "runner_shutting_down", ctx.Err().Error())
-			break
-		}
-		if tr.dispatchLeaseExpired(cmd.ExpiresAt, time.Now()) {
-			tr.rejectDispatch(ctx, cmd, leaseID, "lease_expired", "dispatch lease has expired")
-			break
-		}
-		if !tr.supportsProject(cmd.ProjectID) {
-			tr.rejectDispatch(ctx, cmd, leaseID, "project_unsupported", "runner is not assigned to this project")
-			break
-		}
-		serverTaskPaused, _ := tr.serverPauseState(ctx)
-		tr.pauseMu.RLock()
-		paused := tr.allPaused || tr.pauseCache[cmd.ProjectID] || serverTaskPaused[cmd.ProjectID]
-		tr.pauseMu.RUnlock()
-		if paused {
-			tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
-			break
-		}
-		if tr.processMgr.RunningCount() >= tr.getMaxParallel() {
-			tr.rejectDispatch(ctx, cmd, leaseID, "capacity_unavailable", "runner has no available execution slots")
-			break
-		}
-
-		tasks, err := tr.client.GetReadyTasks(ctx, cmd.ProjectID, tr.buildFetchOptions())
-		if err != nil {
-			tr.rejectDispatch(ctx, cmd, leaseID, "task_lookup_failed", err.Error())
-			break
-		}
-		var task *types.ResolvedTask
-		for i := range tasks {
-			if tasks[i].ID == cmd.TaskID {
-				task = &tasks[i]
-				break
+		// Route through the dispatch worker pool when it's running so
+		// the SSE consumer goroutine can return to draining commandCh
+		// immediately, even under HTTP burst load. When the pool is
+		// not running (test scenarios that call handleCommand directly
+		// on a freshly-constructed TaskRunner), fall through to inline
+		// execution so tests observe ack/spawn side effects
+		// synchronously.
+		if pool := tr.getDispatchPool(); pool != nil {
+			if err := pool.Submit(cmd); err != nil {
+				// Bounded pool overflowed. Reject the lease
+				// synchronously with a real reason so the scheduler
+				// can record it as a placement failure and try
+				// elsewhere, instead of the historical silent drop
+				// that left leases stuck in `pushed` state.
+				leaseID := cmd.LeaseID
+				if leaseID == "" {
+					leaseID = cmd.Lease
+				}
+				tr.rejectDispatch(ctx, cmd, leaseID, "dispatch_backlog_full", "runner dispatch queue is full")
 			}
-		}
-		if task == nil {
-			tr.rejectDispatch(ctx, cmd, leaseID, "task_not_found", "target task is not ready for this runner")
 			break
 		}
-		taskExecutor, _, err := tr.resolveExecutor(task)
-		if err != nil {
-			tr.rejectDispatch(ctx, cmd, leaseID, "executor_unsupported", err.Error())
-			break
-		}
-		workdir, err := taskExecutor.ResolveWorkdir(task)
-		if err != nil {
-			tr.rejectDispatch(ctx, cmd, leaseID, "workdir_unavailable", err.Error())
-			break
-		}
-		if !tr.ackDispatch(ctx, cmd, leaseID) {
-			break
-		}
-		if err := tr.claimAndSpawnWithWorkdir(ctx, task, cmd.ProjectID, workdir); err != nil {
-			tr.releaseDispatchLease(ctx, cmd.ProjectID, cmd.TaskID)
-			tr.logger.Printf("claim and spawn dispatched task failed for %s/%s: %v", cmd.ProjectID, cmd.TaskID, err)
-		}
+		tr.handleDispatchCommand(ctx, cmd)
 
 	case CommandFeatureToggle:
 		if cmd.ToggleFeatureID == "" {
@@ -742,6 +958,10 @@ func (tr *TaskRunner) Stop() error {
 
 	// Deregister from the Brain API (best-effort)
 	tr.deregisterFromAPI()
+
+	// Stop the dispatch pool if it wasn't already stopped by the poll
+	// loop's ctx.Done path (idempotent — no-op when already stopped).
+	tr.stopDispatchPool(context.Background())
 
 	// Stop SSE listener
 	if tr.sseListener != nil {
@@ -855,9 +1075,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		projEnabledIDs := tr.getEnabledFeatureIDsLocked()
 		tr.pauseMu.RUnlock()
 
-		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID] || serverAutomationPaused[projectID]
+		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID] || serverPausedFor(serverAutomationPaused, projectID)
 
-		if paused || allPaused || serverTaskPaused[projectID] {
+		if paused || allPaused || serverPausedFor(serverTaskPaused, projectID) {
 			if !automationsPausedForProject {
 				task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
 					GeneratedByPrefix: "automation:",
@@ -1263,8 +1483,12 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		FeatureID:      task.FeatureID,
 		GeneratedBy:    task.GeneratedBy,
 	}
+	// Every executor gets an InstanceID so the Runners tab can surface a
+	// "currently running" row for it (issue: script/pi tasks were invisible
+	// in the PWA while executing). OpencodePort is only known up front for
+	// the OpenCode headless-serve+attach path; other executors report 0.
+	runningTask.InstanceID = generateInstanceID()
 	if executorType == "opencode" {
-		runningTask.InstanceID = generateInstanceID()
 		// Headless serve+attach reports its attachable port up front; TUI/
 		// dashboard discover it from the tmux child via discoverAndSaveSession.
 		runningTask.OpencodePort = spawnResult.OpencodePort
@@ -1771,6 +1995,18 @@ func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
 		Instances: tr.instanceSnapshot(),
 	}
 
+	// Include dispatch pool metrics so operators can see backpressure
+	// signals in brain_runner_status and the PWA runner card. Silent
+	// dispatch drops used to only appear in slog output; now they
+	// surface in the heartbeat's Stats map.
+	if pool := tr.getDispatchPool(); pool != nil {
+		s := pool.Stats()
+		req.Stats["dispatchQueueLen"] = s.QueueLen
+		req.Stats["dispatchQueueCap"] = s.QueueCapacity
+		req.Stats["dispatchWorkers"] = s.Workers
+		req.Stats["dispatchBacklogFull"] = s.BacklogFullCount
+	}
+
 	if err := tr.client.SendHeartbeat(ctx, tr.runnerID, req); err != nil {
 		slog.Warn("heartbeat failed", "runner_id", tr.runnerID, "error", err)
 	}
@@ -2152,6 +2388,79 @@ func (tr *TaskRunner) cleanupTaskTmux(task RunningTask) {
 // Pause / Resume
 // =============================================================================
 
+// applyPauseCommand routes an SSE pause/resume command to the
+// appropriate runner-local state mutator based on the command's
+// ProjectID and Scope. This is the single source of truth for how the
+// PWA's per-project + per-scope pause dials translate into runner
+// state.
+//
+// ProjectID:
+//   ""     → global (all projects)
+//   "foo"  → project foo only
+//
+// Scope:
+//   "" or "all"     → both tasks and automations
+//   "tasks"         → task-pause gate only (dispatch gate)
+//   "automations"   → automation-pause gate only (carve-out)
+//
+// pause=true applies the pause; pause=false applies the resume.
+func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
+	projectID := cmd.ProjectID
+	scope := cmd.Scope
+	tasksScope := scope == "" || scope == "all" || scope == "tasks"
+	automationsScope := scope == "" || scope == "all" || scope == "automations"
+
+	verb := "paused"
+	if !pause {
+		verb = "resumed"
+	}
+
+	switch {
+	case projectID == "" && tasksScope && automationsScope:
+		if pause {
+			tr.PauseAll()
+			tr.PauseAutomations()
+		} else {
+			tr.ResumeAll()
+			tr.ResumeAutomations()
+		}
+	case projectID == "" && tasksScope:
+		if pause {
+			tr.PauseAll()
+		} else {
+			tr.ResumeAll()
+		}
+	case projectID == "" && automationsScope:
+		if pause {
+			tr.PauseAutomations()
+		} else {
+			tr.ResumeAutomations()
+		}
+	case projectID != "" && tasksScope && automationsScope:
+		if pause {
+			tr.PauseProject(projectID)
+			tr.PauseProjectAutomations(projectID)
+		} else {
+			tr.ResumeProject(projectID)
+			tr.ResumeProjectAutomations(projectID)
+		}
+	case projectID != "" && tasksScope:
+		if pause {
+			tr.PauseProject(projectID)
+		} else {
+			tr.ResumeProject(projectID)
+		}
+	case projectID != "" && automationsScope:
+		if pause {
+			tr.PauseProjectAutomations(projectID)
+		} else {
+			tr.ResumeProjectAutomations(projectID)
+		}
+	}
+	slog.Info("runner "+verb+" via SSE command",
+		"project_id", projectID, "scope", scope)
+}
+
 // PauseProject pauses task processing for a specific project.
 func (tr *TaskRunner) PauseProject(projectID string) {
 	tr.pauseMu.Lock()
@@ -2501,9 +2810,17 @@ func (tr *TaskRunner) stopLogStreamer(taskID string) {
 // Capability Filtering
 // =============================================================================
 
-// matchesCapabilities checks whether this runner has all capabilities required
-// by the given task. Tasks without RequiresCapability are claimable by any runner
-// (backward compatible). Returns true if the runner can handle the task.
+// dispatchPushEnabled reports whether the runner should treat itself as
+// push-dispatch capable. In production this is always true because
+// LoadConfigFrom rejects dispatch_push: false at config load time. The
+// function preserves the original three-way check (config field, legacy
+// Passive shim, "dispatch_push" capability advertisement) so existing
+// tests can still construct runners that exercise the (otherwise
+// unreachable) poll-fetch code path.
+//
+// Deprecated: production callers should treat push dispatch as always-on.
+// The function will be removed once the poll-fetch branch is deleted (see
+// brain plan ehwvfq8e Tier 2).
 func (tr *TaskRunner) dispatchPushEnabled() bool {
 	if tr.config.Passive || tr.config.DispatchPush {
 		return true
@@ -2516,6 +2833,9 @@ func (tr *TaskRunner) dispatchPushEnabled() bool {
 	return false
 }
 
+// matchesCapabilities checks whether this runner has all capabilities required
+// by the given task. Tasks without RequiresCapability are claimable by any runner
+// (backward compatible). Returns true if the runner can handle the task.
 func (tr *TaskRunner) matchesCapabilities(task *types.ResolvedTask) bool {
 	if len(task.RequiresCapability) == 0 {
 		return true // untagged tasks are claimable by any runner

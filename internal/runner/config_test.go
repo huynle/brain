@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -984,5 +985,77 @@ func validBaseConfig() RunnerConfig {
 		IdleDetectionThreshold: 60000,
 		HeartbeatInterval:      30,
 		DefaultExecutor:        "opencode",
+	}
+}
+
+// =============================================================================
+// DispatchPush default behavior
+//
+// As of the PWA "x" / RunTaskNow change, dispatch_push defaults to true so
+// freshly-configured runners are immediately eligible for push-dispatched
+// tasks (the scheduler and /run path both require it). Users who want the
+// old poll-only behavior can opt out via dispatch_push: false in YAML or
+// RUNNER_DISPATCH_PUSH=false in env.
+// =============================================================================
+
+func TestLoadConfig_DispatchPushDefaultsTrue(t *testing.T) {
+	// No env var, no file — fresh runner should advertise push capability.
+	t.Setenv("RUNNER_DISPATCH_PUSH", "")
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.DispatchPush {
+		t.Fatal("DispatchPush = false, want true (default for fresh runners)")
+	}
+}
+
+// =============================================================================
+// LoadConfigFrom — dispatch_push: false is no longer supported.
+//
+// Background: push dispatch is now the only fully-functional task delivery
+// path (PWA /run, scheduler, manual TUI execute all require it). Poll-only
+// runners silently fail in confusing ways (e.g. /run returns "no eligible
+// runner"). Reject the misconfig at load time with a pointer to the fix.
+// =============================================================================
+
+func TestLoadConfig_DispatchPushFalseInYAMLIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("dispatch_push: false\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	t.Setenv("RUNNER_DISPATCH_PUSH", "")
+
+	_, err := LoadConfigFrom(configPath)
+	if err == nil {
+		t.Fatal("LoadConfigFrom should reject dispatch_push: false, got nil error")
+	}
+	if !strings.Contains(err.Error(), "dispatch_push") {
+		t.Errorf("error %q should mention dispatch_push", err)
+	}
+}
+
+func TestLoadConfig_DispatchPushFalseInEnvIsRejected(t *testing.T) {
+	t.Setenv("RUNNER_DISPATCH_PUSH", "false")
+
+	_, err := LoadConfigFrom("")
+	if err == nil {
+		t.Fatal("LoadConfigFrom should reject RUNNER_DISPATCH_PUSH=false, got nil error")
+	}
+	if !strings.Contains(err.Error(), "dispatch_push") {
+		t.Errorf("error %q should mention dispatch_push", err)
+	}
+}
+
+func TestLoadConfig_DispatchPushDefaultStillLoads(t *testing.T) {
+	// No env var, no file — should succeed with DispatchPush=true.
+	t.Setenv("RUNNER_DISPATCH_PUSH", "")
+	cfg, err := LoadConfigFrom("")
+	if err != nil {
+		t.Fatalf("LoadConfigFrom default should succeed: %v", err)
+	}
+	if !cfg.DispatchPush {
+		t.Fatal("DispatchPush = false, want true (default)")
 	}
 }

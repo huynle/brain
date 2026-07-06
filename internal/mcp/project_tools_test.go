@@ -16,9 +16,9 @@ func TestRegisterProjectTools_CountNamesHandlersDescriptions(t *testing.T) {
 	RegisterProjectTools(s, client)
 
 	expected := []string{
-		"brain_context_resolve",
-		"brain_project_placement_get",
-		"brain_project_placement_put",
+		"context_resolve",
+		"project_placement_get",
+		"project_placement_put",
 	}
 	if len(s.tools) != len(expected) {
 		t.Fatalf("expected %d project tools registered, got %d", len(expected), len(s.tools))
@@ -50,9 +50,9 @@ func TestProjectToolSchemas(t *testing.T) {
 		required []string
 		props    []string
 	}{
-		{"brain_context_resolve", []string{"client_id", "host_id"}, []string{"client_id", "host_id", "kind", "hostname", "os", "arch", "username", "home_dir", "labels", "capabilities", "path", "git_root", "git_common_dir", "git_worktree_main", "git_branch", "git_remote", "folder_name"}},
-		{"brain_project_placement_get", []string{"project"}, []string{"project"}},
-		{"brain_project_placement_put", []string{"project"}, []string{"project", "affinity", "preferred_machines", "allowed_machines", "workspace_policy", "required_labels", "required_capabilities", "resources"}},
+		{"context_resolve", []string{"client_id", "host_id"}, []string{"client_id", "host_id", "kind", "hostname", "os", "arch", "username", "home_dir", "labels", "capabilities", "path", "git_root", "git_common_dir", "git_worktree_main", "git_branch", "git_remote", "folder_name"}},
+		{"project_placement_get", []string{"project"}, []string{"project"}},
+		{"project_placement_put", []string{"project"}, []string{"project", "affinity", "preferred_machines", "allowed_machines", "workspace_policy", "required_labels", "required_capabilities", "resources"}},
 	}
 
 	for _, tt := range tests {
@@ -163,7 +163,7 @@ func TestProjectTools_RequestBodiesPathsQueriesAndFormatting(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterProjectTools(s, client)
 
-	contextResult, err := s.tools["brain_context_resolve"].handler(context.Background(), map[string]any{
+	contextResult, err := s.tools["context_resolve"].handler(context.Background(), map[string]any{
 		"client_id": "client-1", "host_id": "host-1", "kind": "opencode", "hostname": "devbox",
 		"os": "darwin", "arch": "arm64", "username": "me", "home_dir": "/Users/me",
 		"labels": map[string]any{"tier": "dev"}, "capabilities": []any{"go", "mcp"},
@@ -179,7 +179,7 @@ func TestProjectTools_RequestBodiesPathsQueriesAndFormatting(t *testing.T) {
 		}
 	}
 
-	placementResult, err := s.tools["brain_project_placement_get"].handler(context.Background(), map[string]any{"project": "brain api"})
+	placementResult, err := s.tools["project_placement_get"].handler(context.Background(), map[string]any{"project": "brain api"})
 	if err != nil {
 		t.Fatalf("placement get handler error: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestProjectTools_RequestBodiesPathsQueriesAndFormatting(t *testing.T) {
 		}
 	}
 
-	putResult, err := s.tools["brain_project_placement_put"].handler(context.Background(), map[string]any{
+	putResult, err := s.tools["project_placement_put"].handler(context.Background(), map[string]any{
 		"project": "brain api", "affinity": "strict", "preferred_machines": []any{"mac-c"}, "allowed_machines": []any{"mac-c"},
 		"workspace_policy": "current_branch", "required_labels": map[string]any{"gpu": "false"}, "required_capabilities": []any{"pi"}, "resources": map[string]any{"memory_gb": float64(16)},
 	})
@@ -228,10 +228,10 @@ func TestProjectTools_ValidationErrors(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"brain_context_resolve", map[string]any{"host_id": "host-1"}, "client_id"},
-		{"brain_context_resolve", map[string]any{"client_id": "client-1"}, "host_id"},
-		{"brain_project_placement_get", map[string]any{}, "project"},
-		{"brain_project_placement_put", map[string]any{}, "project"},
+		{"context_resolve", map[string]any{"host_id": "host-1"}, "client_id"},
+		{"context_resolve", map[string]any{"client_id": "client-1"}, "host_id"},
+		{"project_placement_get", map[string]any{}, "project"},
+		{"project_placement_put", map[string]any{}, "project"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {

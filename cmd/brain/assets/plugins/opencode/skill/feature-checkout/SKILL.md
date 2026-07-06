@@ -27,10 +27,10 @@ Load the feature-checkout skill and process the checkout task at brain path: <ta
 
 ## Checklist
 
-- [ ] Step 1: Read own task with `brain_recall(path: "<task-path>")`
-- [ ] Step 2: Read own metadata with `brain_task_metadata(taskId: "<own-id>")`
-- [ ] Step 3: Mark as in_progress with `brain_update(path: "...", status: "in_progress")`
-- [ ] Step 4: For each dependency ID, call `brain_task_get(taskId)` to get content + user_original_request
+- [ ] Step 1: Read own task with `recall(path: "<task-path>")`
+- [ ] Step 2: Read own metadata with `task_metadata(taskId: "<own-id>")`
+- [ ] Step 3: Mark as in_progress with `update(path: "...", status: "in_progress")`
+- [ ] Step 4: For each dependency ID, call `task_get(taskId)` to get content + user_original_request
 - [ ] Step 5: Synthesize acceptance criteria from all user_original_request fields
 - [ ] Step 5b: Split criteria into phases if > 7 criteria (≤7 per phase)
 - [ ] Step 6: For each phase, dispatch explore agent to verify criteria
@@ -44,7 +44,7 @@ Load the feature-checkout skill and process the checkout task at brain path: <ta
 ## Step 1: Read Own Task
 
 ```
-brain_recall(path: "<task-path-from-prompt>")
+recall(path: "<task-path-from-prompt>")
 ```
 
 Extract from the response:
@@ -57,7 +57,7 @@ If `depends_on` is empty, STOP and report: "Checkout task has no dependencies �
 ## Step 2: Read Own Metadata
 
 ```
-brain_task_metadata(taskId: "<own-id>")
+task_metadata(taskId: "<own-id>")
 ```
 
 Extract and save — these fields will be copied to any gap tasks:
@@ -82,7 +82,7 @@ Also extract the **project** from the path: `projects/<project>/task/<id>.md` �
 ## Step 3: Claim Task
 
 ```
-brain_update(path: "<task-path>", status: "in_progress")
+update(path: "<task-path>", status: "in_progress")
 ```
 
 ## Step 4: Gather Dependency Tasks
@@ -90,7 +90,7 @@ brain_update(path: "<task-path>", status: "in_progress")
 For each task ID in `dependencies.depends_on`:
 
 ```
-brain_task_get(taskId: "<dep-id>")
+task_get(taskId: "<dep-id>")
 ```
 
 From each response, collect:
@@ -111,7 +111,7 @@ Cannot checkout: <N> dependency task(s) are not yet completed:
 All tasks must be completed before checkout. Mark this task as blocked.
 ```
 
-Then: `brain_update(path: "<task-path>", status: "blocked", note: "Dependency tasks not yet completed")`
+Then: `update(path: "<task-path>", status: "blocked", note: "Dependency tasks not yet completed")`
 
 ## Step 5: Synthesize Acceptance Criteria
 
@@ -124,7 +124,7 @@ Combine all `user_original_request` fields into a unified picture:
 Append to the task:
 
 ```
-brain_update(
+update(
   path: "<task-path>",
   append: "## Acceptance Criteria\n\n<numbered list of criteria extracted from user_original_request fields>"
 )
@@ -226,7 +226,7 @@ From the explore agent's findings **across all phases**, build a unified report:
 Append to the task:
 
 ```
-brain_update(
+update(
   path: "<task-path>",
   append: "## Coverage Report\n\n<the report above>"
 )
@@ -249,7 +249,7 @@ The decision is mechanical: zero gaps = validated, any gaps = follow-up tasks. N
 1. **Mark dependency tasks as validated:**
 
 ```
-brain_update(path: "<dep-task-path>", status: "validated")
+update(path: "<dep-task-path>", status: "validated")
 ```
 
 For each dependency task.
@@ -257,7 +257,7 @@ For each dependency task.
 2. **Save checkout summary to brain:**
 
 ```
-brain_save(
+save(
   type: "summary",
   title: "Feature Checkout: <feature_id>",
   content: "<the coverage report>",
@@ -318,7 +318,7 @@ When `remote_branch_policy=keep`, skip remote branch deletion and report that th
 Create a Brain entry with:
 
 ```
-brain_save(
+save(
   type: "merge_request",
   title: "Merge request: <source_branch> -> <merge_target_branch>",
   content: """
@@ -358,7 +358,7 @@ Append a `## Merge Request` section to the checkout task with the created merge 
 4. **Complete checkout task:**
 
 ```
-brain_update(
+update(
   path: "<task-path>",
   status: "completed",
   append: "## Result\n\nFeature approved. All <N> criteria covered. <N> tasks validated. Brain merge request created and recorded in `## Merge Request`."
@@ -376,7 +376,7 @@ Gap tasks **depend on this checkout task's ID** so they stay blocked until check
 For each gap or partial item, create a new task. **Copy the task configuration from the dependency tasks:**
 
 ```
-brain_save(
+save(
   type: "task",
   title: "Cover gap: <short description of what's missing>",
   content: """
@@ -425,7 +425,7 @@ brain_save(
 After creating all gap tasks, create a new checkout task that depends on the gap tasks:
 
 ```
-brain_save(
+save(
   type: "task",
   title: "Feature checkout: <feature_id> (round <N+1>)",
   content: "Automated feature checkout — verify gap tasks cover remaining acceptance criteria.",
@@ -453,14 +453,14 @@ brain_save(
 )
 ```
 
-**Important:** The `direct_prompt` must reference the NEW task's path (returned from `brain_save`). Use the path from the response.
+**Important:** The `direct_prompt` must reference the NEW task's path (returned from `save`). Use the path from the response.
 
 ### Complete Current Checkout Task (LAST)
 
 This is the final action — completing this task unblocks the gap tasks in the work queue:
 
 ```
-brain_update(
+update(
   path: "<task-path>",
   status: "completed",
   append: "## Result\n\nFound <N> gaps. Created <N> follow-up tasks and scheduled next checkout.\n\nGap tasks: <list IDs>\nNext checkout: <checkout task ID>"
@@ -511,7 +511,7 @@ When creating a feature's task set, add the checkout as the final task:
 ```
 # After creating all implementation tasks and collecting their IDs:
 
-brain_save(
+save(
   type: "task",
   title: "Feature checkout: <feature_id>",
   content: "Automated feature checkout — verify all acceptance criteria are met.",
@@ -551,7 +551,7 @@ If the explore agent cannot determine coverage for a criterion, mark it as `PART
 
 ### Task Metadata Unavailable
 
-If `brain_task_metadata` fails for any task, fall back to `brain_recall` and extract what you can. The minimum required fields to propagate are `feature_id` and `project`.
+If `task_metadata` fails for any task, fall back to `recall` and extract what you can. The minimum required fields to propagate are `feature_id` and `project`.
 
 ---
 

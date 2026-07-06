@@ -15,9 +15,9 @@ func RegisterGoalTools(s *Server, client *APIClient) {
 	registerBrainGoalCreate(s, client)
 	registerBrainGoalList(s, client)
 	registerBrainGoalUpdate(s, client)
-	registerBrainGoalLifecycleAlias(s, client, "brain_goal_pause", "Pause a goal automation by setting status to blocked.", "blocked", "Goal paused")
-	registerBrainGoalLifecycleAlias(s, client, "brain_goal_resume", "Resume a goal automation by setting status to active.", "active", "Goal resumed")
-	registerBrainGoalLifecycleAlias(s, client, "brain_goal_archive", "Archive a goal automation by setting status to archived.", "archived", "Goal archived")
+	registerBrainGoalLifecycleAlias(s, client, "goal_pause", "Pause a goal automation by setting status to blocked.", "blocked", "Goal paused")
+	registerBrainGoalLifecycleAlias(s, client, "goal_resume", "Resume a goal automation by setting status to active.", "active", "Goal resumed")
+	registerBrainGoalLifecycleAlias(s, client, "goal_archive", "Archive a goal automation by setting status to archived.", "archived", "Goal archived")
 	registerBrainGoalRun(s, client)
 	registerBrainGoalProgress(s, client)
 	registerBrainGoalAudit(s, client)
@@ -60,7 +60,7 @@ func goalCommonProperties(includeCreateOnly bool) map[string]Property {
 
 func registerBrainGoalCreate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_goal_create",
+		Name:        "goal_create",
 		Description: "Create a goal automation: keep working until an objective is satisfied.",
 		InputSchema: InputSchema{Type: "object", Properties: goalCommonProperties(true), Required: []string{"project", "title"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -92,7 +92,7 @@ func registerBrainGoalCreate(s *Server, client *APIClient) {
 
 func registerBrainGoalList(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_goal_list",
+		Name:        "goal_list",
 		Description: "List active goal automations, optionally filtered by project and feature_id.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string", Description: "Filter by project"}, "feature_id": {Type: "string", Description: "Filter by feature ID"}}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -115,7 +115,7 @@ func registerBrainGoalList(s *Server, client *APIClient) {
 
 func registerBrainGoalUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_goal_update",
+		Name:        "goal_update",
 		Description: "Update a goal automation's title/content/status/config/action fields.",
 		InputSchema: InputSchema{Type: "object", Properties: goalCommonProperties(false), Required: []string{"goal_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -152,7 +152,7 @@ func registerBrainGoalLifecycleAlias(s *Server, client *APIClient, name, descrip
 }
 
 func registerBrainGoalRun(s *Server, client *APIClient) {
-	s.RegisterTool(Tool{Name: "brain_goal_run", Description: "Manually reconcile a goal automation now.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"goal_id": {Type: "string", Description: "Goal ID"}}, Required: []string{"goal_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
+	s.RegisterTool(Tool{Name: "goal_run", Description: "Manually reconcile a goal automation now.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"goal_id": {Type: "string", Description: "Goal ID"}}, Required: []string{"goal_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
 		goalID := StringArg(args, "goal_id", "")
 		if goalID == "" {
 			return "Please provide a goal_id", nil
@@ -166,7 +166,7 @@ func registerBrainGoalRun(s *Server, client *APIClient) {
 }
 
 func registerBrainGoalProgress(s *Server, client *APIClient) {
-	s.RegisterTool(Tool{Name: "brain_goal_progress", Description: "Show linked task progress for a goal automation.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"goal_id": {Type: "string", Description: "Goal ID"}}, Required: []string{"goal_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
+	s.RegisterTool(Tool{Name: "goal_progress", Description: "Show linked task progress for a goal automation.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"goal_id": {Type: "string", Description: "Goal ID"}}, Required: []string{"goal_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
 		goalID := StringArg(args, "goal_id", "")
 		if goalID == "" {
 			return "Please provide a goal_id", nil
@@ -180,7 +180,7 @@ func registerBrainGoalProgress(s *Server, client *APIClient) {
 }
 
 func registerBrainGoalAudit(s *Server, client *APIClient) {
-	s.RegisterTool(Tool{Name: "brain_goal_audit", Description: "Show reconcile audit history for a goal automation.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"goal_id": {Type: "string", Description: "Goal ID"}, "limit": {Type: "number", Description: "Maximum audit rows (default: 50)"}}, Required: []string{"goal_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
+	s.RegisterTool(Tool{Name: "goal_audit", Description: "Show reconcile audit history for a goal automation.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"goal_id": {Type: "string", Description: "Goal ID"}, "limit": {Type: "number", Description: "Maximum audit rows (default: 50)"}}, Required: []string{"goal_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
 		goalID := StringArg(args, "goal_id", "")
 		if goalID == "" {
 			return "Please provide a goal_id", nil

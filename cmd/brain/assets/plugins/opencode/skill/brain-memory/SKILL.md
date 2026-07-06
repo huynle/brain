@@ -31,17 +31,17 @@ Remember what will matter later, not everything that was said. A good memory is 
 
 At the start of project work or when prior context may matter:
 
-1. Call `brain_project_context` to load the current project and latest `dream` memory.
-2. Search for relevant memories using `brain_search` or `brain_inject` when the user asks about preferences, history, prior decisions, or project context.
+1. Call `project_context` to load the current project and latest `dream` memory.
+2. Search for relevant memories using `search` or `inject` when the user asks about preferences, history, prior decisions, or project context.
 3. Use recalled memory quietly as context. Mention it only when it materially affects your answer or there is uncertainty.
 
 Good recall prompts:
 
 ```text
-brain_project_context()
-brain_inject(query: "user preferences coding style project constraints", maxEntries: 5)
-brain_search(query: "deployment decision migration rollback", type: "decision", limit: 5)
-brain_search(query: "memory preference <topic>", tags: ["memory"], limit: 5)
+project_context()
+inject(query: "user preferences coding style project constraints", maxEntries: 5)
+search(query: "deployment decision migration rollback", type: "decision", limit: 5)
+search(query: "memory preference <topic>", tags: ["memory"], limit: 5)
 ```
 
 If recall is low-confidence or contradictory, say so and ask a short clarifying question.
@@ -128,7 +128,7 @@ Template:
 Conversation/session memory:
 
 ```text
-brain_save(
+save(
   type: "summary",
   title: "Memory: <short topic>",
   content: "<memory template>",
@@ -140,7 +140,7 @@ brain_save(
 Project decision:
 
 ```text
-brain_save(
+save(
   type: "decision",
   title: "Decision: <short decision>",
   content: "<decision, rationale, consequences>",
@@ -152,7 +152,7 @@ brain_save(
 Cross-project user preference or lesson:
 
 ```text
-brain_save(
+save(
   type: "learning",
   title: "Memory: <preference or lesson>",
   content: "<preference, why it matters, when to apply>",
@@ -164,7 +164,7 @@ brain_save(
 Reusable implementation pattern:
 
 ```text
-brain_save(
+save(
   type: "pattern",
   title: "Pattern: <name>",
   content: "<pattern, example, constraints>",
@@ -188,12 +188,12 @@ Saved as `a1b2c3d4`: prefer concise final responses unless more detail is reques
 Before saving a new memory, search for likely duplicates when practical:
 
 ```text
-brain_search(query: "<topic> memory preference", tags: ["memory"], limit: 5)
+search(query: "<topic> memory preference", tags: ["memory"], limit: 5)
 ```
 
 If an existing memory should change:
 
-- Use `brain_update(path: "<id-or-path>", append: "...")` for additive context.
+- Use `update(path: "<id-or-path>", append: "...")` for additive context.
 - Save a new `decision` when a decision supersedes an older one, and link the older entry.
 - Do not silently overwrite conflicting memories; note the conflict and ask if needed.
 
@@ -202,7 +202,7 @@ If an existing memory should change:
 At the end of substantial work, save a session summary if it would help future agents:
 
 ```text
-brain_save(
+save(
   type: "summary",
   title: "Session Memory: <work/topic>",
   content: "## Outcome
@@ -228,7 +228,7 @@ If the project uses dream mode, session summaries and decisions become source ma
 - Do not store secrets or credentials.
 - Do not store sensitive personal data unless the user explicitly asks and it is necessary.
 - Prefer summarization over raw conversation excerpts.
-- If a user asks to forget a memory, locate it with `brain_search` and delete or archive it according to the user's request.
+- If a user asks to forget a memory, locate it with `search` and delete or archive it according to the user's request.
 - If a memory could cause harmful personalization or privacy risk, do not save it.
 
 ## Anti-Patterns

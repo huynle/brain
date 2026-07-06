@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"io"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -88,8 +86,10 @@ func TestRunMCPServer_ContextCancellation(t *testing.T) {
 
 func TestRunMCPServer_ToolsListIncludesProjectTools(t *testing.T) {
 	opts := MCPOptions{APIURL: "http://localhost:3333"}
+	// MCP stdio transport is newline-delimited JSON (NDJSON): each JSON-RPC
+	// message is one line terminated by '\n', no Content-Length header.
 	message := `{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`
-	stdin := strings.NewReader("Content-Length: " + fmt.Sprint(len(message)) + "\r\n\r\n" + message)
+	stdin := strings.NewReader(message + "\n")
 	stdout := &bytes.Buffer{}
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -98,19 +98,16 @@ func TestRunMCPServer_ToolsListIncludesProjectTools(t *testing.T) {
 	if err := RunMCPServer(ctx, opts, stdin, stdout); err != nil && err != io.EOF && !strings.Contains(err.Error(), "EOF") {
 		t.Fatalf("RunMCPServer error: %v", err)
 	}
-	parts := strings.SplitN(stdout.String(), "\r\n\r\n", 2)
-	if len(parts) != 2 {
-		t.Fatalf("stdout missing content separator: %q", stdout.String())
+
+	// Response is one JSON object on one line.
+	payload := strings.TrimRight(stdout.String(), "\n")
+	if payload == "" {
+		t.Fatalf("empty stdout")
 	}
-	lengthText := strings.TrimPrefix(parts[0], "Content-Length: ")
-	length, err := strconv.Atoi(lengthText)
-	if err != nil {
-		t.Fatalf("invalid content length %q: %v", lengthText, err)
+	if strings.Contains(payload, "\n") {
+		t.Fatalf("expected a single line, got multiple:\n%q", stdout.String())
 	}
-	payload := parts[1]
-	if len(payload) != length {
-		t.Fatalf("payload length = %d, want %d", len(payload), length)
-	}
+
 	var resp struct {
 		Result struct {
 			Tools []struct {
@@ -125,7 +122,7 @@ func TestRunMCPServer_ToolsListIncludesProjectTools(t *testing.T) {
 	for _, tool := range resp.Result.Tools {
 		names[tool.Name] = true
 	}
-	for _, want := range []string{"brain_context_resolve", "brain_project_placement_get", "brain_project_placement_put"} {
+	for _, want := range []string{"context_resolve", "project_placement_get", "project_placement_put"} {
 		if !names[want] {
 			t.Fatalf("tools/list response missing %q", want)
 		}

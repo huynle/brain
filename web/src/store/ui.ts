@@ -1,4 +1,16 @@
 import { create } from "zustand";
+import {
+  clampBottomHeight,
+  clampDetailLogsRatio,
+  nextFocus,
+  type Panel,
+  BOTTOM_HEIGHT_BOUNDS,
+  DETAIL_LOGS_RATIO_BOUNDS,
+} from "../lib/paneNav";
+
+// Re-export so existing consumers (`import { Panel } from "../../store/ui"`)
+// keep working without churn.
+export type { Panel };
 
 export type View = "tasks" | "brain" | "automations" | "runners" | "logs";
 
@@ -8,6 +20,14 @@ export interface Toast {
   id: number;
   kind: "info" | "success" | "error";
   message: string;
+  // Optional inline action. When set, the toast renders a button that
+  // triggers `action.onClick`. Used to surface recovery flows (e.g. "Force"
+  // when a task is blocked by an existing dispatch lease) without forcing
+  // the user into a separate modal.
+  action?: {
+    label: string;
+    onClick: () => void | Promise<void>;
+  };
 }
 
 // Content-tab order for H/L cycling — matches the TUI tab bar order
@@ -19,8 +39,6 @@ export const VIEW_ORDER: View[] = [
   "tasks",
   "automations",
 ];
-
-export type Panel = "tasks" | "detail" | "logs";
 
 // A mobile "inspect" request: open the Detail/Logs bottom sheet for one entry.
 // Carries enough to drive EntryDetailPane (path) and EntryLogsPane (task id +
@@ -55,10 +73,19 @@ interface UIState {
   logFilter: string; // task id filter applied when opening the logs view
   controlTarget: ControlTarget | null; // pending Control attach request
   settingsOpen: boolean;
+  assistantOpen: boolean; // overlay: mobile bottom sheet / narrow-viewport drawer
+  assistantSidebar: boolean; // desktop persistent right sidebar (when wide enough)
+  assistantWidth: number; // sidebar width in px (drag-to-resize)
+  assistantFocusSeq: number; // increments when the prompt should receive focus
   wrap: boolean; // text-wrap toggle (w)
   detailVisible: boolean; // T
   logsVisible: boolean; // z
   focus: Panel; // focused panel within the Tasks view
+  // Drag-resizable size of the bottom row (Detail + Logs together), in px.
+  bottomHeight: number;
+  // Share of the bottom row taken by the Detail pane (0.2 .. 0.8).
+  // Logs takes the complement.
+  detailLogsRatio: number;
   projectSheetOpen: boolean; // mobile: project picker bottom sheet
   inspect: InspectTarget | null; // mobile: Detail/Logs bottom sheet target
   toasts: Toast[];
@@ -75,15 +102,26 @@ interface UIState {
   openInControl: (target: ControlTarget) => void;
   consumeControlTarget: () => ControlTarget | null;
   setSettingsOpen: (open: boolean) => void;
+  setAssistantOpen: (open: boolean) => void;
+  setAssistantSidebar: (visible: boolean) => void;
+  setAssistantWidth: (px: number) => void;
+  focusAssistantPrompt: () => void;
   toggleWrap: () => void;
   toggleDetail: () => void;
   toggleLogs: () => void;
-  cycleFocus: () => void;
+  cycleFocus: (dir?: 1 | -1) => void;
   setFocus: (p: Panel) => void;
+  setBottomHeight: (px: number) => void;
+  setDetailLogsRatio: (r: number) => void;
+  resetPaneSizes: () => void;
   setProjectSheetOpen: (open: boolean) => void;
   openInspect: (t: InspectTarget) => void;
   closeInspect: () => void;
-  toast: (message: string, kind?: Toast["kind"]) => void;
+  toast: (
+    message: string,
+    kind?: Toast["kind"],
+    options?: { action?: Toast["action"]; durationMs?: number },
+  ) => void;
   dismissToast: (id: number) => void;
 }
 
@@ -98,16 +136,80 @@ function loadActiveProject(): string {
   }
 }
 
+// Persist the assistant sidebar's visibility and width so a reload returns to
+// the same layout. Defaults: visible at 380px on first load.
+const ASSISTANT_SIDEBAR_KEY = "brain.assistant_sidebar"; // "1" | "0"
+const ASSISTANT_WIDTH_KEY = "brain.assistant_width"; // integer string, px
+const ASSISTANT_WIDTH_DEFAULT = 380;
+const ASSISTANT_WIDTH_MIN = 280;
+const ASSISTANT_WIDTH_MAX = 720;
+function loadAssistantSidebar(): boolean {
+  try {
+    const v = localStorage.getItem(ASSISTANT_SIDEBAR_KEY);
+    return v === null ? true : v === "1";
+  } catch {
+    return true;
+  }
+}
+function loadAssistantWidth(): number {
+  try {
+    const raw = localStorage.getItem(ASSISTANT_WIDTH_KEY);
+    if (!raw) return ASSISTANT_WIDTH_DEFAULT;
+    const n = Number.parseInt(raw, 10);
+    if (!Number.isFinite(n)) return ASSISTANT_WIDTH_DEFAULT;
+    return Math.min(ASSISTANT_WIDTH_MAX, Math.max(ASSISTANT_WIDTH_MIN, n));
+  } catch {
+    return ASSISTANT_WIDTH_DEFAULT;
+  }
+}
+export const ASSISTANT_WIDTH_BOUNDS = {
+  min: ASSISTANT_WIDTH_MIN,
+  max: ASSISTANT_WIDTH_MAX,
+  default: ASSISTANT_WIDTH_DEFAULT,
+};
+
+// Persist the bottom-row pane sizes so a reload returns to the same split.
+const BOTTOM_HEIGHT_KEY = "brain.pane.bottom_height"; // integer px
+const DETAIL_LOGS_RATIO_KEY = "brain.pane.detail_logs_ratio"; // 0..1 float
+
+function loadBottomHeight(): number {
+  try {
+    const raw = localStorage.getItem(BOTTOM_HEIGHT_KEY);
+    if (!raw) return BOTTOM_HEIGHT_BOUNDS.default;
+    const n = Number.parseInt(raw, 10);
+    return clampBottomHeight(n);
+  } catch {
+    return BOTTOM_HEIGHT_BOUNDS.default;
+  }
+}
+
+function loadDetailLogsRatio(): number {
+  try {
+    const raw = localStorage.getItem(DETAIL_LOGS_RATIO_KEY);
+    if (!raw) return DETAIL_LOGS_RATIO_BOUNDS.default;
+    const n = Number.parseFloat(raw);
+    return clampDetailLogsRatio(n);
+  } catch {
+    return DETAIL_LOGS_RATIO_BOUNDS.default;
+  }
+}
+
 export const useUI = create<UIState>((set, get) => ({
   view: "tasks",
   activeProject: loadActiveProject(),
   logFilter: "",
   controlTarget: null,
   settingsOpen: false,
+  assistantOpen: false,
+  assistantSidebar: loadAssistantSidebar(),
+  assistantWidth: loadAssistantWidth(),
+  assistantFocusSeq: 0,
   wrap: false,
   detailVisible: true,
   logsVisible: true,
   focus: "tasks",
+  bottomHeight: loadBottomHeight(),
+  detailLogsRatio: loadDetailLogsRatio(),
   projectSheetOpen: false,
   inspect: null,
   toasts: [],
@@ -122,14 +224,44 @@ export const useUI = create<UIState>((set, get) => ({
   toggleDetail: () => set((s) => ({ detailVisible: !s.detailVisible })),
   toggleLogs: () => set((s) => ({ logsVisible: !s.logsVisible })),
   setFocus: (p) => set({ focus: p }),
-  cycleFocus: () =>
-    set((s) => {
-      const panels: Panel[] = ["tasks"];
-      if (s.detailVisible) panels.push("detail");
-      if (s.logsVisible) panels.push("logs");
-      const i = panels.indexOf(s.focus);
-      return { focus: panels[(i + 1) % panels.length] };
-    }),
+  cycleFocus: (dir = 1) =>
+    set((s) => ({
+      focus: nextFocus(
+        s.focus,
+        { detailVisible: s.detailVisible, logsVisible: s.logsVisible },
+        dir,
+      ),
+    })),
+  setBottomHeight: (px) => {
+    const clamped = clampBottomHeight(px);
+    try {
+      localStorage.setItem(BOTTOM_HEIGHT_KEY, String(clamped));
+    } catch {
+      /* ignore storage errors (private mode, quota) */
+    }
+    set({ bottomHeight: clamped });
+  },
+  setDetailLogsRatio: (r) => {
+    const clamped = clampDetailLogsRatio(r);
+    try {
+      localStorage.setItem(DETAIL_LOGS_RATIO_KEY, clamped.toFixed(3));
+    } catch {
+      /* ignore */
+    }
+    set({ detailLogsRatio: clamped });
+  },
+  resetPaneSizes: () => {
+    try {
+      localStorage.removeItem(BOTTOM_HEIGHT_KEY);
+      localStorage.removeItem(DETAIL_LOGS_RATIO_KEY);
+    } catch {
+      /* ignore */
+    }
+    set({
+      bottomHeight: BOTTOM_HEIGHT_BOUNDS.default,
+      detailLogsRatio: DETAIL_LOGS_RATIO_BOUNDS.default,
+    });
+  },
   setActiveProject: (p) => {
     try {
       localStorage.setItem(ACTIVE_PROJECT_KEY, p);
@@ -149,16 +281,38 @@ export const useUI = create<UIState>((set, get) => ({
     return t;
   },
   setSettingsOpen: (open) => set({ settingsOpen: open }),
+  setAssistantOpen: (open) => set({ assistantOpen: open }),
+  setAssistantSidebar: (visible) => {
+    try {
+      localStorage.setItem(ASSISTANT_SIDEBAR_KEY, visible ? "1" : "0");
+    } catch {
+      /* ignore storage errors (private mode, quota) */
+    }
+    set({ assistantSidebar: visible });
+  },
+  setAssistantWidth: (px) => {
+    const clamped = Math.min(ASSISTANT_WIDTH_MAX, Math.max(ASSISTANT_WIDTH_MIN, Math.round(px)));
+    try {
+      localStorage.setItem(ASSISTANT_WIDTH_KEY, String(clamped));
+    } catch {
+      /* ignore */
+    }
+    set({ assistantWidth: clamped });
+  },
+  focusAssistantPrompt: () => set((s) => ({ assistantFocusSeq: s.assistantFocusSeq + 1 })),
   setProjectSheetOpen: (open) => set({ projectSheetOpen: open }),
   openInspect: (t) => set({ inspect: t }),
   closeInspect: () => set({ inspect: null }),
   toggleWrap: () => set((s) => ({ wrap: !s.wrap })),
   updateApply: null,
   setUpdateApply: (fn) => set({ updateApply: fn }),
-  toast: (message, kind = "info") => {
+  toast: (message, kind = "info", options) => {
     const id = get()._tid + 1;
-    set((s) => ({ _tid: id, toasts: [...s.toasts, { id, kind, message }] }));
-    window.setTimeout(() => get().dismissToast(id), kind === "error" ? 6000 : 3500);
+    set((s) => ({ _tid: id, toasts: [...s.toasts, { id, kind, message, action: options?.action }] }));
+    // Toasts with an action stay around longer so the user has time to
+    // notice and click them. Errors also linger by default.
+    const defaultDuration = options?.action ? 8000 : kind === "error" ? 6000 : 3500;
+    window.setTimeout(() => get().dismissToast(id), options?.durationMs ?? defaultDuration);
   },
   dismissToast: (id) =>
     set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),

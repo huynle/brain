@@ -156,12 +156,45 @@ func (s *StorageLayer) ReleaseDispatchLease(ctx context.Context, projectID, task
 	return rows > 0, nil
 }
 
+// ClearDispatchLease removes any dispatch lease for a task regardless of which
+// runner it was previously assigned to. Used when the scheduler decides a task
+// has no eligible candidate, so any prior lease is by definition invalid and
+// should not linger to confuse observability tools (PWA runner card / dispatch
+// diagnostics enrichment). Distinct from ReleaseDispatchLease which requires a
+// runner_id and is intended for the happy path where a specific runner
+// completes / abandons a task it owned.
+func (s *StorageLayer) ClearDispatchLease(ctx context.Context, projectID, taskID string) (bool, error) {
+	result, err := s.db.ExecContext(ctx,
+		"DELETE FROM task_dispatch_leases WHERE project_id = ? AND task_id = ?",
+		projectID, taskID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("clear dispatch lease: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("clear dispatch lease rows affected: %w", err)
+	}
+	return rows > 0, nil
+}
+
+// ExpireDispatchLeases marks overdue *pushed* leases expired so the
+// scheduler re-dispatches work whose dispatch command never reached (or was
+// rejected without notice by) the runner.
+//
+// Acked leases are deliberately NOT expired: an ack means the runner took
+// the work, and long-running tasks routinely outlive the 60s lease TTL —
+// flipping them to expired mid-run made every dispatch diagnostic show
+// "dispatch lease expired" for healthy tasks. Liveness of acked work is
+// owned by claim renewal (runner.renewClaims); if the runner dies, the
+// task returns to ready and CreateDispatchLease's expires_at<now overwrite
+// clause lets the scheduler re-lease it regardless of the stale acked row.
 func (s *StorageLayer) ExpireDispatchLeases(ctx context.Context, now int64) (int64, error) {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE task_dispatch_leases
 		SET state = ?, last_error = CASE WHEN last_error = '' THEN 'dispatch lease expired' ELSE last_error END
-		WHERE expires_at < ? AND state IN (?, ?)`,
-		DispatchLeaseStateExpired, now, DispatchLeaseStatePushed, DispatchLeaseStateAcked,
+		WHERE expires_at < ? AND state = ?`,
+		DispatchLeaseStateExpired, now, DispatchLeaseStatePushed,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("expire dispatch leases: %w", err)
@@ -201,21 +234,82 @@ func (s *StorageLayer) RecordPlacementReason(ctx context.Context, row *Placement
 	if err != nil {
 		return fmt.Errorf("record placement reason: %w", err)
 	}
+	// Opportunistic per-task prune: cap history at
+	// PlacementReasonRetention rows so scheduler retry storms can't
+	// grow the table unboundedly (production wedge: 894k rows, 75k+ per
+	// task, GetReady endpoint at 5+ seconds). We prune every insert but
+	// the delete is a no-op below the threshold, so steady-state cost
+	// is one indexed count query per record. Prune failure is logged
+	// but does not fail the insert — the row is more important than
+	// the trim.
+	if _, err := s.PrunePlacementReasonsForTask(ctx, row.ProjectID, row.TaskID, PlacementReasonRetention); err != nil {
+		// Non-fatal: log via context, don't propagate.
+		_ = err
+	}
 	return nil
 }
 
+// PlacementReasonRetention is the number of most-recent placement
+// decisions kept per (project_id, task_id) after each
+// RecordPlacementReason call. Older rows are pruned opportunistically.
+// See PrunePlacementReasonsForTask.
+const PlacementReasonRetention = 20
+
 func (s *StorageLayer) ListPlacementReasonRows(ctx context.Context, projectID, taskID string) ([]PlacementReasonRow, error) {
+	return s.ListPlacementReasonRowsLimit(ctx, projectID, taskID, 0)
+}
+
+// ListPlacementReasonRowsLimit returns placement decisions for a task,
+// optionally capped at the most recent `limit` rows. When limit <= 0
+// the full history is returned (matches legacy ListPlacementReasonRows
+// behavior for diagnostic tools like brain_task_placement_reasons).
+//
+// The result is always sorted by (created_at, id) ascending — even in
+// the limited case, so callers receive the newest-N in chronological
+// order. Under the hood the SQL uses ORDER BY created_at DESC LIMIT N
+// for the limited case then reverses in-memory, which keeps the query
+// planner on the idx_task_placement_reasons_task index and avoids a
+// full sort of the matching rows.
+func (s *StorageLayer) ListPlacementReasonRowsLimit(ctx context.Context, projectID, taskID string, limit int) ([]PlacementReasonRow, error) {
+	if limit <= 0 {
+		rows, err := s.db.QueryContext(ctx, `
+			SELECT id, project_id, task_id, runner_id, machine_id, decision, reason,
+			       required_labels, runner_labels, missing_labels, created_at
+			FROM task_placement_reasons
+			WHERE project_id = ? AND task_id = ?
+			ORDER BY created_at, id`, projectID, taskID)
+		if err != nil {
+			return nil, fmt.Errorf("list placement reasons: %w", err)
+		}
+		return scanPlacementReasonRows(rows)
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT id, project_id, task_id, runner_id, machine_id, decision, reason,
 		       required_labels, runner_labels, missing_labels, created_at
 		FROM task_placement_reasons
 		WHERE project_id = ? AND task_id = ?
-		ORDER BY created_at, id`, projectID, taskID)
+		ORDER BY created_at DESC, id DESC
+		LIMIT ?`, projectID, taskID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("list placement reasons: %w", err)
+		return nil, fmt.Errorf("list placement reasons (limited): %w", err)
 	}
-	defer rows.Close()
+	reasons, err := scanPlacementReasonRows(rows)
+	if err != nil {
+		return nil, err
+	}
+	// Reverse to restore ascending order for callers that expect
+	// chronological output (matches unlimited path's ORDER BY).
+	for i, j := 0, len(reasons)-1; i < j; i, j = i+1, j-1 {
+		reasons[i], reasons[j] = reasons[j], reasons[i]
+	}
+	return reasons, nil
+}
 
+// scanPlacementReasonRows materializes rows from a placement reason
+// query. Extracted so ListPlacementReasonRows and its limited variant
+// share the scan/close logic.
+func scanPlacementReasonRows(rows *sql.Rows) ([]PlacementReasonRow, error) {
+	defer rows.Close()
 	var reasons []PlacementReasonRow
 	for rows.Next() {
 		var row PlacementReasonRow
@@ -230,6 +324,41 @@ func (s *StorageLayer) ListPlacementReasonRows(ctx context.Context, projectID, t
 	return reasons, nil
 }
 
+// PrunePlacementReasonsForTask deletes older placement decisions for a
+// given task, keeping only the most recent `keep` rows. Returns the
+// number of rows deleted. Called opportunistically after each new
+// RecordPlacementReason so per-task history stays bounded even under
+// scheduler retry storms (see task_placement_reasons production wedge:
+// 894k rows accumulated, 75k+ per task).
+//
+// When keep <= 0 nothing is deleted. When the task has fewer than
+// `keep` rows the query is a no-op (returns 0).
+func (s *StorageLayer) PrunePlacementReasonsForTask(ctx context.Context, projectID, taskID string, keep int) (int64, error) {
+	if keep <= 0 {
+		return 0, nil
+	}
+	// Delete rows whose id is NOT among the newest `keep` for this
+	// (project_id, task_id). Using id as the secondary key means the
+	// deletion is stable under ties on created_at.
+	result, err := s.db.ExecContext(ctx, `
+		DELETE FROM task_placement_reasons
+		WHERE project_id = ? AND task_id = ?
+		  AND id NOT IN (
+		    SELECT id FROM task_placement_reasons
+		    WHERE project_id = ? AND task_id = ?
+		    ORDER BY created_at DESC, id DESC
+		    LIMIT ?
+		  )`, projectID, taskID, projectID, taskID, keep)
+	if err != nil {
+		return 0, fmt.Errorf("prune placement reasons: %w", err)
+	}
+	deleted, err := result.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("prune placement reasons rows affected: %w", err)
+	}
+	return deleted, nil
+}
+
 func (s *StorageLayer) GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error) {
 	row, err := s.GetDispatchLeaseRow(ctx, projectID, taskID)
 	if err != nil || row == nil {
@@ -240,6 +369,23 @@ func (s *StorageLayer) GetDispatchLease(ctx context.Context, projectID, taskID s
 
 func (s *StorageLayer) ListPlacementReasons(ctx context.Context, projectID, taskID string) ([]types.PlacementReason, error) {
 	rows, err := s.ListPlacementReasonRows(ctx, projectID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	reasons := make([]types.PlacementReason, 0, len(rows))
+	for i := range rows {
+		reasons = append(reasons, placementReasonFromRow(&rows[i]))
+	}
+	return reasons, nil
+}
+
+// ListPlacementReasonsLimit is the bounded variant of ListPlacementReasons.
+// Hot paths like GetReady's enrichDispatchDiagnostics use this so a
+// runaway task_placement_reasons table can't slow every task list
+// response to 5+ seconds (production wedge: 894k rows total, 75k+ per
+// task before pruning was introduced). Pass limit=0 for full history.
+func (s *StorageLayer) ListPlacementReasonsLimit(ctx context.Context, projectID, taskID string, limit int) ([]types.PlacementReason, error) {
+	rows, err := s.ListPlacementReasonRowsLimit(ctx, projectID, taskID, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -6,8 +6,9 @@ import { useLive } from "../../lib/sse";
 import { useUI } from "../../store/ui";
 import {
   deleteEntry,
+  runOrTriggerTask,
   setTaskStatus,
-  triggerTask,
+  summarizeTriggerResults,
 } from "../../lib/api";
 import { isActive, relativeTime } from "../../lib/format";
 import type { Task } from "../../lib/types";
@@ -47,6 +48,22 @@ export function TaskDetail({
     }
   }
 
+  // Run this task. Prefers /run (push dispatch to runner immediately);
+  // falls back to /trigger when the server doesn't expose /run.
+  async function runTrigger() {
+    if (!projectId) return;
+    setBusy(true);
+    try {
+      const resp = await runOrTriggerTask(projectId, task.id);
+      const { message, kind } = summarizeTriggerResults([resp]);
+      toast(message, kind);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "Run failed", "error");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const description =
     task.content || task.direct_prompt || task.user_original_request || "";
 
@@ -61,11 +78,7 @@ export function TaskDetail({
               <button
                 className="btn primary sm"
                 disabled={busy}
-                onClick={() =>
-                  void run("Triggered", () =>
-                    triggerTask(projectId, task.id),
-                  )
-                }
+                onClick={() => void runTrigger()}
               >
                 ▶ Run
               </button>

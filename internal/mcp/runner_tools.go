@@ -21,7 +21,7 @@ func RegisterRunnerTools(s *Server, client *APIClient) {
 
 func registerBrainRunnerStatus(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_runner_status",
+		Name:        "runner_status",
 		Description: "Show runner service pause/running status.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -35,7 +35,7 @@ func registerBrainRunnerStatus(s *Server, client *APIClient) {
 
 func registerBrainRunners(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_runners",
+		Name:        "runners",
 		Description: "List registered runners with state, projects, capabilities, counts, and timestamps.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"status":   {Type: "string", Enum: []string{"online", "stale", "offline"}, Description: "Optional client-side status filter"},
@@ -59,7 +59,7 @@ func registerBrainRunners(s *Server, client *APIClient) {
 
 func registerBrainRunnerGet(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_runner_get",
+		Name:        "runner_get",
 		Description: "Get one registered runner by ID.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"runnerId": {Type: "string", Description: "Runner ID"},
@@ -79,7 +79,7 @@ func registerBrainRunnerGet(s *Server, client *APIClient) {
 
 func registerBrainRunnerInstances(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_runner_instances",
+		Name:        "runner_instances",
 		Description: "List executor instances for one runner.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"runnerId": {Type: "string", Description: "Runner ID"},
@@ -104,7 +104,7 @@ func registerBrainRunnerInstances(s *Server, client *APIClient) {
 
 func registerBrainRunnerInstancesAll(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_runner_instances_all",
+		Name:        "runner_instances_all",
 		Description: "List executor instances across all runners.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"runnerId": {Type: "string", Description: "Optional client-side runner filter"},

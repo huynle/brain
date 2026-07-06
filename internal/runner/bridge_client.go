@@ -51,8 +51,22 @@ type BridgeClient struct {
 	pumps   map[string]context.CancelFunc
 	streams map[string]bool // instanceID → full stream requested
 
+	// externalListeners caches the result of `lsof -c opencode -sTCP:LISTEN`
+	// briefly. The audit UI's history fetch falls back to scanning every
+	// localhost OpenCode HTTP server when the session was hosted by a TUI
+	// brain didn't spawn (its messages may still only live in that server's
+	// memory). Cached for externalListenersTTL to avoid hammering lsof.
+	externalListenersMu     sync.Mutex
+	externalListenersCached []OpencodeListener
+	externalListenersAt     time.Time
+
 	httpClient *http.Client
 }
+
+// externalListenersTTL bounds how long DiscoverOpencodeListeners output is
+// reused. Short enough that a freshly started TUI shows up promptly, long
+// enough to coalesce bursts of history requests.
+const externalListenersTTL = 5 * time.Second
 
 // NewBridgeClient creates a bridge client for the given runner.
 func NewBridgeClient(tr *TaskRunner) *BridgeClient {
@@ -698,6 +712,12 @@ func (bc *BridgeClient) handleHistory(f bridge.Frame) {
 // live instance that already hosts the session (so an in-flight session is
 // served from its running server); failing that it reads the messages from
 // OpenCode's on-disk storage, which survives the instance's exit.
+//
+// If neither brain-tracked instances nor on-disk storage have the session,
+// this falls back to scanning every localhost OpenCode HTTP server (TUIs
+// the user started outside of brain). OpenCode does not flush every
+// session's message/<sid>/ to disk eagerly, so a TUI's in-memory transcript
+// is often the only place a recently-completed session can still be read.
 func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
 	if sessionID == "" {
 		return nil, errors.New("missing session id")
@@ -709,6 +729,18 @@ func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
 		}
 		// Fall through to on-disk read if the live server can't answer.
 	}
+	if body, err := readSessionHistory(sessionID); err == nil {
+		return body, nil
+	}
+	// Last resort: a TUI brain never spawned may still hold the messages in
+	// memory. Probe every localhost OpenCode listener.
+	if port := bc.portForExternalSession(sessionID); port > 0 {
+		path := "/session/" + sessionID + "/message"
+		if status, body, err := bc.httpGet(port, path); err == nil && status == http.StatusOK {
+			return body, nil
+		}
+	}
+	// Re-run readSessionHistory so the caller gets its (well-shaped) error.
 	return readSessionHistory(sessionID)
 }
 
@@ -733,10 +765,69 @@ func (bc *BridgeClient) portForSession(sessionID string) int {
 	return 0
 }
 
+// portForExternalSession asks every OpenCode HTTP server on this host
+// whether it currently hosts sessionID. It returns the first port whose
+// GET /session/<sid>/message responds 200 with a non-empty body, or 0 if
+// none does. The listener list is cached for externalListenersTTL.
+//
+// This is a slow path — used only after fast in-memory checks and on-disk
+// storage have both come up empty. It exists so the audit UI can still
+// review sessions from user-started TUIs, since OpenCode does not
+// guarantee that message/<sid>/ is on disk before the instance exits.
+//
+// Each probe uses a tight timeout so a stalled or non-OpenCode listener
+// can't block the whole audit request when several listeners are present.
+func (bc *BridgeClient) portForExternalSession(sessionID string) int {
+	listeners := bc.externalListeners()
+	if len(listeners) == 0 {
+		return 0
+	}
+	path := "/session/" + sessionID + "/message"
+	for _, l := range listeners {
+		status, body, err := bc.httpGetFast(l.Port, path, externalProbeTimeout)
+		if err != nil || status != http.StatusOK {
+			continue
+		}
+		// Empty array means the server replied but doesn't actually have
+		// any messages for this session — keep looking.
+		trimmed := strings.TrimSpace(string(body))
+		if trimmed == "" || trimmed == "[]" {
+			continue
+		}
+		return l.Port
+	}
+	return 0
+}
+
+// externalProbeTimeout bounds each per-listener probe. OpenCode's
+// /session/<id>/message is an in-memory lookup, so a few hundred ms is
+// generous; making this too long lets a stuck listener block the whole
+// audit request.
+const externalProbeTimeout = 750 * time.Millisecond
+
+// externalListeners returns the cached lsof-discovered OpenCode listeners,
+// refreshing the cache when it's older than externalListenersTTL.
+func (bc *BridgeClient) externalListeners() []OpencodeListener {
+	bc.externalListenersMu.Lock()
+	defer bc.externalListenersMu.Unlock()
+	if time.Since(bc.externalListenersAt) < externalListenersTTL && bc.externalListenersCached != nil {
+		return bc.externalListenersCached
+	}
+	bc.externalListenersCached = DiscoverOpencodeListeners()
+	bc.externalListenersAt = time.Now()
+	return bc.externalListenersCached
+}
+
 // httpGet performs a bounded GET against a localhost instance port.
 func (bc *BridgeClient) httpGet(port int, path string) (int, []byte, error) {
-	ctx, cancel := context.WithTimeout(bc.baseContext(),
-		time.Duration(bridge.DefaultTimeoutMs)*time.Millisecond)
+	return bc.httpGetFast(port, path, time.Duration(bridge.DefaultTimeoutMs)*time.Millisecond)
+}
+
+// httpGetFast is like httpGet but with a caller-supplied per-request
+// timeout. Used by external-listener probes to keep a stuck listener from
+// blocking the whole audit request.
+func (bc *BridgeClient) httpGetFast(port int, path string, timeout time.Duration) (int, []byte, error) {
+	ctx, cancel := context.WithTimeout(bc.baseContext(), timeout)
 	defer cancel()
 	url := fmt.Sprintf("http://127.0.0.1:%d%s", port, path)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

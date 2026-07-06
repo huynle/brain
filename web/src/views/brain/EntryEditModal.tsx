@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Modal } from "../../components/common/Modal";
 import { MarkdownEditor } from "../../components/editor/MarkdownEditor";
 import { Loading, ErrorState } from "../../components/common/states";
@@ -69,6 +69,7 @@ function EditorBody({
   onSaved?: () => void;
 }) {
   const toast = useUI((s) => s.toast);
+  const qc = useQueryClient();
   const [content, setContent] = useState(initial);
   const [busy, setBusy] = useState(false);
   const dirty = content !== initial;
@@ -77,6 +78,19 @@ function EditorBody({
     setBusy(true);
     try {
       await updateEntryRaw(path, content);
+
+      // Invalidate every cache that could be displaying this entry so the
+      // next read (including reopening this modal) fetches fresh content.
+      // Without this, react-query keeps serving the pre-edit response and the
+      // user sees their changes "not save" until a hard refresh.
+      void qc.invalidateQueries({ queryKey: ["entry-raw", path] });
+      void qc.invalidateQueries({ queryKey: ["entry", path] });
+      void qc.invalidateQueries({ queryKey: ["entry-detail", path] });
+      void qc.invalidateQueries({ queryKey: ["entries"] });
+      void qc.invalidateQueries({ queryKey: ["search"] });
+      void qc.invalidateQueries({ queryKey: ["automation-data"] });
+      void qc.invalidateQueries({ queryKey: ["goals"] });
+
       toast("Entry saved", "success");
       onSaved?.();
       onClose();

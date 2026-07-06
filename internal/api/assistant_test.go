@@ -49,8 +49,8 @@ func TestHandleAssistantStatus(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if !got.Available || got.Mode != "direct_llm" || got.Provider != "openrouter" || got.Model != "anthropic/claude" {
-		t.Fatalf("status response = %#v, want direct_llm openrouter anthropic/claude", got)
+	if !got.Available || got.Mode != "agentic" || got.Provider != "openrouter" || got.Model != "anthropic/claude" {
+		t.Fatalf("status response = %#v, want agentic openrouter anthropic/claude", got)
 	}
 }
 
@@ -150,6 +150,82 @@ func TestOpenRouterAssistantPlanner_UsesRequestModelOverride(t *testing.T) {
 	}
 	if gotModel != "openai/gpt-4o-mini" {
 		t.Fatalf("request model = %q, want %q", gotModel, "openai/gpt-4o-mini")
+	}
+}
+
+type streamingAssistantPlanner struct {
+	chunks []string
+	resp   AssistantPlanResponse
+	req    *AssistantPlanRequest
+}
+
+func (s streamingAssistantPlanner) Plan(ctx context.Context, req AssistantPlanRequest) (AssistantPlanResponse, error) {
+	return s.resp, nil
+}
+
+func (s streamingAssistantPlanner) StreamPlan(ctx context.Context, req AssistantPlanRequest, onDelta func(string) error) (AssistantPlanResponse, error) {
+	if s.req != nil {
+		*s.req = req
+	}
+	for _, chunk := range s.chunks {
+		if err := onDelta(chunk); err != nil {
+			return AssistantPlanResponse{}, err
+		}
+	}
+	return s.resp, nil
+}
+
+func TestHandleAssistantChatStreamEmitsDeltasThenDone(t *testing.T) {
+	svc := NewAssistantService(AssistantServiceOptions{
+		Enabled: true,
+		Planner: streamingAssistantPlanner{
+			chunks: []string{"Hel", "lo"},
+			resp:   AssistantPlanResponse{Reply: "Hello", Actions: []AssistantAction{{Type: "create_task", Explicit: false, Payload: map[string]any{"title": "Draft"}}}},
+		},
+	})
+	h := NewHandler(&mockBrainService{}, WithAssistantService(svc))
+	r := chi.NewRouter()
+	r.Post("/assistant/chat/stream", h.HandleAssistantChatStream)
+
+	body := []byte(`{"project":"brain-api","message":"hello"}`)
+	req := httptest.NewRequest(http.MethodPost, "/assistant/chat/stream", bytes.NewReader(body))
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d, body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Fatalf("content-type = %q, want application/x-ndjson", ct)
+	}
+	lines := bytes.Split(bytes.TrimSpace(rec.Body.Bytes()), []byte("\n"))
+	if len(lines) != 3 {
+		t.Fatalf("stream lines = %d (%s), want 3", len(lines), rec.Body.String())
+	}
+	var first AssistantStreamEvent
+	if err := json.Unmarshal(lines[0], &first); err != nil {
+		t.Fatalf("decode first event: %v", err)
+	}
+	if first.Type != "delta" || first.Delta != "Hel" {
+		t.Fatalf("first event = %#v, want delta Hel", first)
+	}
+	var done AssistantStreamEvent
+	if err := json.Unmarshal(lines[2], &done); err != nil {
+		t.Fatalf("decode done event: %v", err)
+	}
+	if done.Type != "done" || done.Reply != "Hello" || len(done.ProposedActions) != 1 {
+		t.Fatalf("done event = %#v, want done reply with proposed action", done)
+	}
+}
+
+func TestExtractAssistantReplyPrefixFromPartialJSON(t *testing.T) {
+	prefix := extractAssistantReplyPrefix(`{"reply":"Hello\nwor`)
+	if prefix != "Hello\nwor" {
+		t.Fatalf("prefix = %q, want decoded partial reply", prefix)
+	}
+	prefix = extractAssistantReplyPrefix(`{"actions":[],"reply":"A \"quoted\" reply"}`)
+	if prefix != `A "quoted" reply` {
+		t.Fatalf("prefix = %q, want decoded quoted reply", prefix)
 	}
 }
 

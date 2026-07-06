@@ -112,7 +112,7 @@ func TestAuthLogin_Lockout(t *testing.T) {
 }
 
 func TestAuthRefresh_RotatesAndRejectsReuse(t *testing.T) {
-	h, _ := loginHandler(t, true, true)
+	h, store := loginHandler(t, true, true)
 	// Login to obtain a refresh token.
 	lw := postJSON(h.HandleAuthLogin, `{"username":"admin","password":"pw"}`)
 	var login tokenResponse
@@ -122,6 +122,19 @@ func TestAuthRefresh_RotatesAndRejectsReuse(t *testing.T) {
 	rw := postJSON(h.HandleAuthRefresh, fmt.Sprintf(`{"refresh_token":%q}`, login.RefreshToken))
 	if rw.Code != http.StatusOK {
 		t.Fatalf("refresh status = %d, want 200 (body %s)", rw.Code, rw.Body.String())
+	}
+	var refreshed tokenResponse
+	if err := json.Unmarshal(rw.Body.Bytes(), &refreshed); err != nil {
+		t.Fatalf("decode refresh response: %v", err)
+	}
+	if refreshed.AccessToken == "" || refreshed.RefreshToken == "" {
+		t.Fatal("expected refreshed access and refresh tokens")
+	}
+	if refreshed.AccessToken == login.AccessToken {
+		t.Fatal("expected refresh to return a new access token")
+	}
+	if _, ok := store.refresh[login.RefreshToken]; ok {
+		t.Fatal("expected old refresh token to be invalidated")
 	}
 	// Reusing the now-consumed refresh token must fail (single-use rotation).
 	again := postJSON(h.HandleAuthRefresh, fmt.Sprintf(`{"refresh_token":%q}`, login.RefreshToken))

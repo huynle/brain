@@ -28,14 +28,14 @@ action:
 
     ## Discovery
 
-    Call brain_tasks({ status: "blocked" }) and identify the most recently modified blocked task that is not this automation-generated task.
+    Call tasks({ status: "blocked" }) and identify the most recently modified blocked task that is not this automation-generated task.
 
     ## Workflow
 
     For the blocked task found, follow these steps in order:
 
     ### Step 1: Read the Task
-    Call brain_task_get({ taskId: "<id>" }) to get the full task content, status, and any appended notes.
+    Call task_get({ taskId: "<id>" }) to get the full task content, status, and any appended notes.
 
     ### Step 2: Check Session History
     Use session tools to find error context from the agent that was working on this task.
@@ -47,19 +47,19 @@ action:
     | **Worktree setup failure** | Task never started, no session history, worktree errors |
     | **Idle detection timeout** | Session shows agent went idle |
     | **Process crash** | Session ends abruptly, exit codes in runner logs |
-    | **Agent self-block** | Task has a blocked note from brain_update |
+    | **Agent self-block** | Task has a blocked note from update |
     | **Dependency block** | Task depends on blocked/incomplete tasks |
 
     ### Step 4: Attempt Resolution
 
-    **Worktree setup failure:** Reset to pending via brain_update({ path: "<task-path>", status: "pending" })
+    **Worktree setup failure:** Reset to pending via update({ path: "<task-path>", status: "pending" })
     **Idle timeout (process dead):** Reset to pending, append context from session history
     **Process crash:** Reset to pending, append crash context
     **Agent self-block:** Do NOT auto-reset. Log analysis only.
     **Dependency block:** Log analysis, check if upstream task can be unblocked first.
 
     ### Step 5: Log Actions
-    Append a summary of what you found and did to your own task via brain_update({ path: "<your-task-path>", append: "..." }).
+    Append a summary of what you found and did to your own task via update({ path: "<your-task-path>", append: "..." }).
 
     ## Safety Rules
 

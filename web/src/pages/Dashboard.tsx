@@ -15,8 +15,9 @@ import { useNav } from "../store/nav";
 import { commandSuggestions, resolveCommand } from "../lib/commands";
 import { useGlobalKeyboard } from "../lib/keyboard";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { useViewport } from "../hooks/useViewport";
 import { useSwipe } from "../hooks/useSwipe";
-import { StatusBar } from "../components/layout/StatusBar";
+import { StatusBar, deriveTaskPaused } from "../components/layout/StatusBar";
 import { ContentTabs } from "../components/layout/ContentTabs";
 import { HelpBar } from "../components/layout/HelpBar";
 import { MobileNav } from "../components/layout/MobileNav";
@@ -32,6 +33,8 @@ import { RunnersView } from "../views/RunnersView";
 import { LogsView } from "../views/LogsView";
 import { SettingsSheet } from "../views/SettingsSheet";
 import { AssistantDrawer } from "../views/AssistantDrawer";
+import { AssistantSidebar } from "../views/AssistantSidebar";
+import { AssistantFAB } from "../components/layout/AssistantFAB";
 
 export function Dashboard() {
   const view = useUI((s) => s.view);
@@ -39,8 +42,11 @@ export function Dashboard() {
   const isMobile = useIsMobile();
   const activeProject = useUI((s) => s.activeProject);
   const settingsOpen = useUI((s) => s.settingsOpen);
-  const [assistantOpen, setAssistantOpen] = useState(false);
+  const setAssistantOpen = useUI((s) => s.setAssistantOpen);
+  const sidebarVisible = useUI((s) => s.assistantSidebar);
+  const setSidebarVisible = useUI((s) => s.setAssistantSidebar);
   const setSettingsOpen = useUI((s) => s.setSettingsOpen);
+  const focusAssistantPrompt = useUI((s) => s.focusAssistantPrompt);
   const token = useAuth((s) => s.token);
   const helpOpen = useNav((s) => s.helpOpen);
   const commandOpen = useNav((s) => s.commandOpen);
@@ -84,6 +90,20 @@ export function Dashboard() {
   // (hook) — applied conditionally in the render.
   const swipe = useSwipe({ onLeft: () => cycleView(1), onRight: () => cycleView(-1) });
 
+  // Smart assistant toggle: on wide desktop the assistant lives as a
+  // persistent right sidebar (toggle visibility), on narrow desktop / mobile
+  // it's an overlay (toggle the open flag).
+  const tier = useViewport();
+  function toggleAssistant() {
+    if (tier === "wide") {
+      setSidebarVisible(!sidebarVisible);
+      if (!sidebarVisible) window.setTimeout(focusAssistantPrompt, 0);
+      return;
+    }
+    setAssistantOpen(true);
+    window.setTimeout(focusAssistantPrompt, 0);
+  }
+
   useGlobalKeyboard({
     projects: projects ?? [],
     allLabel: ALL_PROJECTS,
@@ -98,7 +118,7 @@ export function Dashboard() {
         void runPause(st?.paused ? "Resumed all" : "Paused all", st?.paused ? resumeAll : pauseAll);
         return;
       }
-      const paused = st?.pausedProjects?.includes(activeProject);
+      const paused = deriveTaskPaused(st, activeProject);
       void runPause(
         paused ? `Resumed ${activeProject}` : `Paused ${activeProject}`,
         () => (paused ? resumeProject(activeProject) : pauseProject(activeProject)),
@@ -110,7 +130,7 @@ export function Dashboard() {
         void runPause(st?.paused ? "Resumed all" : "Paused all", st?.paused ? resumeAll : pauseAll);
         return;
       }
-      const paused = st?.pausedProjects?.includes(activeProject);
+      const paused = deriveTaskPaused(st, activeProject);
       void runPause(
         paused ? `Resumed ${activeProject}` : `Paused ${activeProject}`,
         () => (paused ? resumeProject(activeProject) : pauseProject(activeProject)),
@@ -126,28 +146,34 @@ export function Dashboard() {
 
   return (
     <div className={`tui ${isMobile ? "mobile" : ""}`}>
-      <StatusBar onAssistant={() => setAssistantOpen(true)} />
+      <StatusBar onAssistant={toggleAssistant} />
       {!isMobile && <ContentTabs />}
-      <div className="tui-main" {...swipeProps}>
-        {/* Top-level views render without a panel title — the active content
-            tab already names them, so a titled border just duplicated it. */}
-        {view === "tasks" && <TasksView />}
-        {/* Brain & Automations manage their own list+detail layout (parity
-            with Tasks), so they render without an outer panel. */}
-        {view === "brain" && <BrainView />}
-        {view === "automations" && <AutomationsView />}
-        {view === "runners" && (
-          <Panel focused style={{ flex: 1 }}>
-            <RunnersView />
-          </Panel>
-        )}
-        {view === "logs" && (
-          <Panel focused style={{ flex: 1 }}>
-            <LogsView />
-          </Panel>
-        )}
+      <div className="tui-body">
+        <div className="tui-main" {...swipeProps}>
+          {/* Top-level views render without a panel title — the active content
+              tab already names them, so a titled border just duplicated it. */}
+          {view === "tasks" && <TasksView />}
+          {/* Brain & Automations manage their own list+detail layout (parity
+              with Tasks), so they render without an outer panel. */}
+          {view === "brain" && <BrainView />}
+          {view === "automations" && <AutomationsView />}
+          {view === "runners" && (
+            <Panel focused style={{ flex: 1 }}>
+              <RunnersView />
+            </Panel>
+          )}
+          {view === "logs" && (
+            <Panel focused style={{ flex: 1 }}>
+              <LogsView />
+            </Panel>
+          )}
+        </div>
+        {/* Persistent right-side assistant pane on wide desktop viewports.
+            Returns null on mobile / narrow desktops, where the AssistantDrawer
+            overlay is used instead. */}
+        <AssistantSidebar />
       </div>
-      {isMobile ? <MobileNav onAssistant={() => setAssistantOpen(true)} /> : <HelpBar />}
+      {isMobile ? <MobileNav /> : <HelpBar />}
       {commandOpen && (
         <div className="command-layer" onMouseDown={(e) => { if (e.target === e.currentTarget) setCommandOpen(false); }}>
           <CommandBar onClose={() => setCommandOpen(false)} />
@@ -158,7 +184,8 @@ export function Dashboard() {
       {isMobile && <MobileInspectSheet />}
       {settingsOpen && <SettingsSheet onClose={() => setSettingsOpen(false)} />}
       {helpOpen && <HelpModal onClose={() => setHelpOpen(false)} />}
-      <AssistantDrawer open={assistantOpen} onClose={() => setAssistantOpen(false)} />
+      <AssistantDrawer />
+      <AssistantFAB />
     </div>
   );
 }

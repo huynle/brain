@@ -34,7 +34,7 @@ func registerBrainFeatures(s *Server, client *APIClient) {
 		"limit":      {Type: "number", Description: "Maximum features to include in the summary"},
 	}
 	s.RegisterTool(Tool{
-		Name:        "brain_features",
+		Name:        "features",
 		Description: "List feature groups for a project, including readiness, task counts, and representative tasks.",
 		InputSchema: InputSchema{Type: "object", Properties: props},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -58,7 +58,7 @@ func registerBrainFeatures(s *Server, client *APIClient) {
 
 func registerBrainFeatureReady(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "brain_feature_ready",
+		Name:        "feature_ready",
 		Description: "List feature groups that are ready to run for a project.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"project": {Type: "string", Description: "Override auto-detected project"}, "limit": {Type: "number", Description: "Maximum features to include in the summary"}}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -74,7 +74,7 @@ func registerBrainFeatureReady(s *Server, client *APIClient) {
 func registerBrainFeatureGet(s *Server, client *APIClient) {
 	props := featureCommonProperties()
 	s.RegisterTool(Tool{
-		Name:        "brain_feature_get",
+		Name:        "feature_get",
 		Description: "Show one feature's readiness, task counts, and task dependency state.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -103,7 +103,7 @@ func registerBrainFeatureCheckout(s *Server, client *APIClient) {
 	props["open_pr_before_merge"] = Property{Type: "boolean", Description: "Open a PR before merge"}
 	props["execution_mode"] = Property{Type: "string", Enum: []string{"worktree", "current_branch"}, Description: "Execution mode for generated checkout work"}
 	s.RegisterTool(Tool{
-		Name:        "brain_feature_checkout",
+		Name:        "feature_checkout",
 		Description: "Create or reuse a feature checkout task for review and merge orchestration.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -137,7 +137,7 @@ func registerBrainFeatureAssign(s *Server, client *APIClient) {
 	props["intent"] = Property{Type: "string", Description: "Human-readable reason for the assignment"}
 	props["force"] = Property{Type: "boolean", Description: "Reassign even if another runner currently owns the feature"}
 	s.RegisterTool(Tool{
-		Name:        "brain_feature_assign",
+		Name:        "feature_assign",
 		Description: "Assign or reassign a feature to a runner.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id", "runner_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -165,7 +165,7 @@ func registerBrainFeatureClearAssignment(s *Server, client *APIClient) {
 	props := featureCommonProperties()
 	props["intent"] = Property{Type: "string", Description: "Human-readable reason for clearing the assignment"}
 	s.RegisterTool(Tool{
-		Name:        "brain_feature_clear_assignment",
+		Name:        "feature_clear_assignment",
 		Description: "Clear the current runner assignment for a feature.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"feature_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {

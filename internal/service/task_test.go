@@ -1585,13 +1585,13 @@ func TestTriggerTask_ScheduledTask(t *testing.T) {
 	}
 }
 
-func TestTriggerTask_NoSchedule(t *testing.T) {
+func TestTriggerTask_NoSchedule_Active(t *testing.T) {
 	svc, store, brainDir := newTestTaskService(t)
 	ctx := context.Background()
 
 	createProjectDir(t, brainDir, "proj")
 
-	// Task without schedule
+	// Active (running) task without schedule should be a no-op.
 	insertTaskNote(t, store, "nosched", "No Schedule Task", "active", "medium", "proj", map[string]interface{}{})
 
 	resp, err := svc.TriggerTask(ctx, "proj", "nosched")
@@ -1602,10 +1602,99 @@ func TestTriggerTask_NoSchedule(t *testing.T) {
 		t.Error("expected success=true")
 	}
 	if resp.Triggered {
-		t.Error("expected Triggered=false for task with no schedule")
+		t.Error("expected Triggered=false for already-active task")
 	}
-	if resp.Reason != "task has no schedule" {
-		t.Errorf("Reason = %q, want %q", resp.Reason, "task has no schedule")
+	if !strings.Contains(resp.Reason, "active") {
+		t.Errorf("Reason = %q, expected to mention 'active'", resp.Reason)
+	}
+}
+
+func TestTriggerTask_NoSchedule_Pending(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	createProjectDir(t, brainDir, "proj")
+
+	// Pending non-scheduled task: already in queue, no-op.
+	insertTaskNote(t, store, "pend1", "Pending Task", "pending", "medium", "proj", map[string]interface{}{})
+
+	resp, err := svc.TriggerTask(ctx, "proj", "pend1")
+	if err != nil {
+		t.Fatalf("TriggerTask failed: %v", err)
+	}
+	if resp.Triggered {
+		t.Error("expected Triggered=false for already-pending task")
+	}
+	if !strings.Contains(resp.Reason, "pending") {
+		t.Errorf("Reason = %q, expected to mention 'pending'", resp.Reason)
+	}
+
+	// Status should remain pending (unchanged).
+	tasks, _ := svc.getAllTasks(ctx, "proj")
+	for _, ts := range tasks {
+		if ts.ID == "pend1" && ts.Status != "pending" {
+			t.Errorf("status = %q, want pending", ts.Status)
+		}
+	}
+}
+
+func TestTriggerTask_NoSchedule_Completed(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	createProjectDir(t, brainDir, "proj")
+
+	// Completed non-scheduled task should be reset to pending so it re-runs.
+	insertTaskNote(t, store, "done1", "Done Task", "completed", "medium", "proj", map[string]interface{}{})
+
+	resp, err := svc.TriggerTask(ctx, "proj", "done1")
+	if err != nil {
+		t.Fatalf("TriggerTask failed: %v", err)
+	}
+	if !resp.Success {
+		t.Error("expected success=true")
+	}
+	if !resp.Triggered {
+		t.Errorf("expected Triggered=true for completed ad-hoc task, got reason: %s", resp.Reason)
+	}
+
+	// Status should now be pending.
+	tasks, _ := svc.getAllTasks(ctx, "proj")
+	var found bool
+	for _, ts := range tasks {
+		if ts.ID == "done1" {
+			found = true
+			if ts.Status != "pending" {
+				t.Errorf("status = %q, want pending", ts.Status)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("task not found after trigger")
+	}
+}
+
+func TestTriggerTask_NoSchedule_Blocked(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+
+	createProjectDir(t, brainDir, "proj")
+
+	insertTaskNote(t, store, "blk1", "Blocked Task", "blocked", "medium", "proj", map[string]interface{}{})
+
+	resp, err := svc.TriggerTask(ctx, "proj", "blk1")
+	if err != nil {
+		t.Fatalf("TriggerTask failed: %v", err)
+	}
+	if !resp.Triggered {
+		t.Errorf("expected Triggered=true for blocked ad-hoc task, got reason: %s", resp.Reason)
+	}
+
+	tasks, _ := svc.getAllTasks(ctx, "proj")
+	for _, ts := range tasks {
+		if ts.ID == "blk1" && ts.Status != "pending" {
+			t.Errorf("status = %q, want pending", ts.Status)
+		}
 	}
 }
 

@@ -154,15 +154,68 @@ func (s *RunnerServiceImpl) GetStatus(ctx context.Context) (*types.RunnerStatusR
 	}, nil
 }
 
-// IsAutomationsPaused returns true if automation-generated task execution is paused.
+// IsAutomationsPaused returns true if automation-generated task execution is
+// paused. When storage is enabled it reflects the persisted per-project
+// pause rows (any project paused ⇒ true); otherwise it uses in-memory state.
+//
+// NOTE: this is the *global* signal used by legacy callers. Per-project
+// enforcement should call IsAutomationsPausedForProject instead so that a
+// pause on project A does not silently stop project B.
 func (s *RunnerServiceImpl) IsAutomationsPaused() bool {
+	if s.store != nil {
+		rows, err := s.store.ListProjectPauseStates(context.Background())
+		if err == nil {
+			for _, row := range rows {
+				if row.AutomationsPaused {
+					return true
+				}
+			}
+			return false
+		}
+		// fall through to in-memory on error
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.automationsPaused
 }
 
-// IsPaused returns true if the given project is paused (either globally or per-project).
+// IsAutomationsPausedForProject returns true when automation-generated task
+// execution is paused for the given project. It consults the durable
+// project_pause_state row when storage is enabled and falls back to the
+// in-memory map otherwise. This is the check that must succeed to honor
+// the per-project "autos: off" state exposed in the PWA.
+func (s *RunnerServiceImpl) IsAutomationsPausedForProject(projectID string) bool {
+	if projectID == "" {
+		return false
+	}
+	if s.store != nil {
+		paused, err := s.store.IsProjectAutomationsPaused(context.Background(), projectID)
+		if err == nil {
+			return paused
+		}
+		// fall through to in-memory on error
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.automationPausedProjects[projectID] {
+		return true
+	}
+	return s.automationsPaused
+}
+
+// IsPaused returns true if the given project is paused (either globally or
+// per-project). Consults durable storage when available.
 func (s *RunnerServiceImpl) IsPaused(projectId string) bool {
+	if projectId == "" {
+		return false
+	}
+	if s.store != nil {
+		paused, err := s.store.IsProjectTaskPaused(context.Background(), projectId)
+		if err == nil {
+			return paused
+		}
+		// fall through to in-memory on error
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.globalPaused || s.pausedProjects[projectId]

@@ -262,6 +262,7 @@ type UnifiedConfig struct {
 		LogLevel   string
 		CORSOrigin string
 		OAuthPIN   string
+		JWTSecret  string
 		TLS        struct {
 			Enabled  bool
 			CertPath string

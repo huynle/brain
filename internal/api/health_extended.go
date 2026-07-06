@@ -15,8 +15,9 @@ import (
 // HandleGetStats handles GET /stats.
 func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
 	global := r.URL.Query().Get("global") == "true"
+	project := r.URL.Query().Get("project")
 
-	resp, err := h.brain.GetStats(r.Context(), global)
+	resp, err := h.brain.GetStats(r.Context(), global, project)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
@@ -29,6 +30,7 @@ func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleGetOrphans(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	entryType := q.Get("type")
+	project := q.Get("project")
 	limit := 0
 	if v := q.Get("limit"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -36,7 +38,7 @@ func (h *Handler) HandleGetOrphans(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	entries, err := h.brain.GetOrphans(r.Context(), entryType, limit)
+	entries, err := h.brain.GetOrphans(r.Context(), entryType, limit, project)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
@@ -49,6 +51,7 @@ func (h *Handler) HandleGetOrphans(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleGetStale(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	entryType := q.Get("type")
+	project := q.Get("project")
 
 	days := 30 // default
 	if v := q.Get("days"); v != "" {
@@ -64,7 +67,7 @@ func (h *Handler) HandleGetStale(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	entries, err := h.brain.GetStale(r.Context(), days, entryType, limit)
+	entries, err := h.brain.GetStale(r.Context(), days, entryType, limit, project)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return

@@ -3,6 +3,10 @@ package api
 import (
 	"bufio"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -25,7 +29,7 @@ type TokenValidator interface {
 // AuthResult carries authentication metadata after successful validation.
 // Downstream handlers read these values from the request context.
 type AuthResult struct {
-	Type     string // "api_token" or "oauth"
+	Type     string // "api_token", "oauth", or "jwt"
 	Name     string // token name (api) or client_id (oauth)
 	ClientID string // oauth only
 	Scope    string // oauth only
@@ -254,7 +258,12 @@ func isTLS(r *http.Request) bool {
 // Auth returns middleware that validates Bearer tokens or ?token= query params
 // against a TokenValidator (e.g. database-backed token store).
 // When enabled is false, all requests pass through.
-func Auth(enabled bool, validator TokenValidator) func(http.Handler) http.Handler {
+func Auth(enabled bool, validator TokenValidator, jwtSecrets ...string) func(http.Handler) http.Handler {
+	jwtSecret := ""
+	if len(jwtSecrets) > 0 {
+		jwtSecret = jwtSecrets[0]
+	}
+
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if !enabled {
@@ -277,6 +286,22 @@ func Auth(enabled bool, validator TokenValidator) func(http.Handler) http.Handle
 				return
 			}
 
+			if jwtSecret != "" && looksLikeJWT(token) {
+				authResult, err := validateJWT(token, jwtSecret)
+				if err != nil {
+					w.Header().Set("WWW-Authenticate", `Bearer realm="brain-api", error="invalid_token"`)
+					WriteError(w, http.StatusUnauthorized,
+						"Unauthorized",
+						"Invalid authentication token",
+					)
+					return
+				}
+
+				ctx := context.WithValue(r.Context(), ctxAuthResult, authResult)
+				next.ServeHTTP(w, r.WithContext(ctx))
+				return
+			}
+
 			validToken, err := validator.ValidateToken(r.Context(), token)
 			if err != nil {
 				w.Header().Set("WWW-Authenticate", `Bearer realm="brain-api", error="invalid_token"`)
@@ -293,6 +318,69 @@ func Auth(enabled bool, validator TokenValidator) func(http.Handler) http.Handle
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func looksLikeJWT(token string) bool {
+	return strings.Count(token, ".") == 2
+}
+
+type jwtClaims struct {
+	Subject string  `json:"sub"`
+	Expiry  float64 `json:"exp"`
+}
+
+func validateJWT(token, secret string) (*AuthResult, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("invalid jwt format")
+	}
+
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return nil, fmt.Errorf("invalid jwt header: %w", err)
+	}
+	var header struct {
+		Algorithm string `json:"alg"`
+	}
+	if err := json.Unmarshal(headerBytes, &header); err != nil {
+		return nil, fmt.Errorf("invalid jwt header json: %w", err)
+	}
+	if header.Algorithm != "HS256" {
+		return nil, fmt.Errorf("unsupported jwt algorithm %q", header.Algorithm)
+	}
+
+	signingInput := parts[0] + "." + parts[1]
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write([]byte(signingInput))
+	expectedSig := mac.Sum(nil)
+	actualSig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		return nil, fmt.Errorf("invalid jwt signature encoding: %w", err)
+	}
+	if !hmac.Equal(actualSig, expectedSig) {
+		return nil, fmt.Errorf("invalid jwt signature")
+	}
+
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("invalid jwt payload: %w", err)
+	}
+	var claims jwtClaims
+	if err := json.Unmarshal(payloadBytes, &claims); err != nil {
+		return nil, fmt.Errorf("invalid jwt payload json: %w", err)
+	}
+	if claims.Expiry == 0 {
+		return nil, fmt.Errorf("jwt missing exp claim")
+	}
+	if time.Now().Unix() >= int64(claims.Expiry) {
+		return nil, fmt.Errorf("jwt expired")
+	}
+
+	return &AuthResult{
+		Type:  "jwt",
+		Name:  claims.Subject,
+		Scope: "admin:*",
+	}, nil
 }
 
 // extractBearerToken extracts the token from a "Bearer <token>" header value.

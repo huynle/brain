@@ -28,11 +28,18 @@ export function Modal({
   const [expanded, setExpanded] = useState(() => readExpandedPreference(modalStorageKey));
 
   useEffect(() => {
+    // Remember what had focus so it can be restored on close — without this
+    // a keyboard-driven flow (j/k to a row, open a modal, q to close) dumps
+    // focus on <body> and the next keystroke goes nowhere.
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
     const focusables = getFocusableElements(dialog);
     const preferred = dialog?.querySelector<HTMLElement>('[data-autofocus="true"]');
     const target = preferred || focusables[0] || dialog;
     target?.focus({ preventScroll: true });
+    return () => {
+      if (opener && opener.isConnected) opener.focus({ preventScroll: true });
+    };
   }, []);
 
   useEffect(() => {

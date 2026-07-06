@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -13,10 +14,13 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-const assistantModeDirectLLM = "direct_llm"
-
 type AssistantPlanner interface {
 	Plan(ctx context.Context, req AssistantPlanRequest) (AssistantPlanResponse, error)
+}
+
+type AssistantStreamingPlanner interface {
+	AssistantPlanner
+	StreamPlan(ctx context.Context, req AssistantPlanRequest, onDelta func(string) error) (AssistantPlanResponse, error)
 }
 
 type AssistantServiceOptions struct {
@@ -29,16 +33,28 @@ type AssistantServiceOptions struct {
 	Planner   AssistantPlanner
 	Brain     BrainService
 	Goals     GoalService
+	Tasks     TaskService
+	Runner    RunnerService
+	Runners   RunnerRegistryService
+	Events    EventService
+	// MaxToolTurns caps how many tool-call iterations the agent loop will run
+	// in a single Chat/ChatStream request. Zero uses a sensible default (6).
+	MaxToolTurns int
 }
 
 type AssistantService struct {
-	enabled  bool
-	provider string
-	baseURL  string
-	model    string
-	planner  AssistantPlanner
-	brain    BrainService
-	goals    GoalService
+	enabled      bool
+	provider     string
+	baseURL      string
+	model        string
+	planner      AssistantPlanner
+	brain        BrainService
+	goals        GoalService
+	tasks        TaskService
+	runner       RunnerService
+	runners      RunnerRegistryService
+	events       EventService
+	maxToolTurns int
 }
 
 type AssistantStatusResponse struct {
@@ -56,6 +72,40 @@ type AssistantChatRequest struct {
 	Model       string            `json:"model,omitempty"`
 	Attachments []string          `json:"attachments,omitempty"`
 	Context     map[string]string `json:"context,omitempty"`
+	// History is the prior conversation the PWA replays back to the server so
+	// the agent loop has memory across HTTP turns. Order is oldest-first. See
+	// AssistantHistoryMessage for shape.
+	History []AssistantHistoryMessage `json:"history,omitempty"`
+}
+
+// AssistantHistoryMessage models one prior turn as replayed by the client.
+// Roles:
+//   - "user":       text-only prompt the user sent previously.
+//   - "assistant":  the model's reply. May carry ToolCalls describing tools it
+//     invoked during that turn; each ToolCall is paired with an entry of
+//     role="tool" later in the history whose ToolCallID matches.
+//   - "tool":       a placeholder for a prior tool result. To save tokens we
+//     do NOT resend the full tool result payload — the ToolCallID/Name lets
+//     the model recall it invoked the tool; if it needs the actual data
+//     again, it can re-run the (idempotent, cheap) read tool.
+type AssistantHistoryMessage struct {
+	Role       string                    `json:"role"`
+	Content    string                    `json:"content,omitempty"`
+	ToolCalls  []AssistantHistoryToolCall `json:"tool_calls,omitempty"`
+	ToolCallID string                    `json:"tool_call_id,omitempty"`
+	Name       string                    `json:"name,omitempty"`
+	// Status carries the tool result status (completed/failed/proposed) so
+	// the model knows how a prior call resolved even though the payload is
+	// stripped.
+	Status string `json:"status,omitempty"`
+}
+
+// AssistantHistoryToolCall is the compact form the client sends. Arguments
+// stay as a JSON string (same shape the OpenRouter API uses natively).
+type AssistantHistoryToolCall struct {
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments,omitempty"`
 }
 
 type AssistantPlanRequest struct {
@@ -91,6 +141,17 @@ type AssistantChatResponse struct {
 	ProposedActions []AssistantAction         `json:"proposed_actions"`
 }
 
+type AssistantStreamEvent struct {
+	Type            string                    `json:"type"`
+	Delta           string                    `json:"delta,omitempty"`
+	Reply           string                    `json:"reply,omitempty"`
+	ExecutedActions []AssistantExecutedAction `json:"executed_actions,omitempty"`
+	ProposedActions []AssistantAction         `json:"proposed_actions,omitempty"`
+	ToolCall        *ToolCallEvent            `json:"tool_call,omitempty"`
+	ToolResult      *ToolResultEvent          `json:"tool_result,omitempty"`
+	Error           string                    `json:"error,omitempty"`
+}
+
 type AssistantGoalDraftRequest struct {
 	Project     string             `json:"project,omitempty"`
 	Message     string             `json:"message"`
@@ -123,22 +184,40 @@ func NewAssistantService(opts AssistantServiceOptions) *AssistantService {
 	if planner == nil && opts.Enabled {
 		planner = NewOpenRouterAssistantPlanner(opts.Provider, opts.BaseURL, opts.APIKeyEnv, opts.Model, opts.Timeout)
 	}
+	maxTurns := opts.MaxToolTurns
+	if maxTurns <= 0 {
+		maxTurns = 6
+	}
 	return &AssistantService{
-		enabled:  opts.Enabled,
-		provider: firstNonEmptyString(opts.Provider, "openrouter"),
-		baseURL:  firstNonEmptyString(opts.BaseURL, "https://openrouter.ai/api/v1"),
-		model:    opts.Model,
-		planner:  planner,
-		brain:    opts.Brain,
-		goals:    opts.Goals,
+		enabled:      opts.Enabled,
+		provider:     firstNonEmptyString(opts.Provider, "openrouter"),
+		baseURL:      firstNonEmptyString(opts.BaseURL, "https://openrouter.ai/api/v1"),
+		model:        opts.Model,
+		planner:      planner,
+		brain:        opts.Brain,
+		goals:        opts.Goals,
+		tasks:        opts.Tasks,
+		runner:       opts.Runner,
+		runners:      opts.Runners,
+		events:       opts.Events,
+		maxToolTurns: maxTurns,
 	}
 }
 
+const assistantModeAgentic = "agentic"
+const assistantModeDirectLLM = "direct_llm" // retained for legacy planner status
+
 func (s *AssistantService) Status() AssistantStatusResponse {
+	toolNames := []string{}
+	for _, t := range ListToolDefinitions() {
+		toolNames = append(toolNames, t.Name)
+	}
+	// Legacy capability aliases still exposed for older PWA builds.
+	caps := append([]string{"chat", "attachments"}, toolNames...)
 	resp := AssistantStatusResponse{
 		Available:    s != nil && s.enabled && s.planner != nil,
-		Mode:         assistantModeDirectLLM,
-		Capabilities: []string{"chat", "create_goal", "create_task", "create_automation", "create_entry", "attachments"},
+		Mode:         assistantModeAgentic,
+		Capabilities: caps,
 	}
 	if s != nil {
 		resp.Provider = s.provider
@@ -155,20 +234,42 @@ func (s *AssistantService) Chat(ctx context.Context, req AssistantChatRequest) (
 	if s == nil || !s.enabled || s.planner == nil {
 		return AssistantChatResponse{}, fmt.Errorf("assistant is not configured")
 	}
-	plan, err := s.planner.Plan(ctx, AssistantPlanRequest{Project: req.Project, Message: req.Message, Model: req.Model, Attachments: req.Attachments, Context: req.Context})
+	res, err := s.runAgentLoop(ctx, req, nil)
 	if err != nil {
 		return AssistantChatResponse{}, err
 	}
+	return AssistantChatResponse{
+		Reply:           res.Reply,
+		ExecutedActions: res.Executed,
+		ProposedActions: res.Proposed,
+	}, nil
+}
+
+func (s *AssistantService) ChatStream(ctx context.Context, req AssistantChatRequest, emit func(AssistantStreamEvent) error) error {
+	if s == nil || !s.enabled || s.planner == nil {
+		return fmt.Errorf("assistant is not configured")
+	}
+	res, err := s.runAgentLoop(ctx, req, emit)
+	if err != nil {
+		return err
+	}
+	return emit(AssistantStreamEvent{
+		Type: "done", Reply: res.Reply,
+		ExecutedActions: res.Executed, ProposedActions: res.Proposed,
+	})
+}
+
+func (s *AssistantService) responseFromPlan(ctx context.Context, project string, plan AssistantPlanResponse) AssistantChatResponse {
 	resp := AssistantChatResponse{Reply: plan.Reply}
 	for _, action := range plan.Actions {
 		if shouldExecuteAssistantAction(action) {
-			executed := s.executeAction(ctx, req.Project, action)
+			executed := s.executeAction(ctx, project, action)
 			resp.ExecutedActions = append(resp.ExecutedActions, executed)
 			continue
 		}
 		resp.ProposedActions = append(resp.ProposedActions, action)
 	}
-	return resp, nil
+	return resp
 }
 
 func (s *AssistantService) GoalDraft(ctx context.Context, req AssistantGoalDraftRequest) (AssistantGoalDraftResponse, error) {
@@ -470,14 +571,167 @@ func (p *OpenRouterAssistantPlanner) Plan(ctx context.Context, req AssistantPlan
 	return plan, nil
 }
 
+func (p *OpenRouterAssistantPlanner) StreamPlan(ctx context.Context, req AssistantPlanRequest, onDelta func(string) error) (AssistantPlanResponse, error) {
+	if p.apiKey == "" {
+		return AssistantPlanResponse{}, fmt.Errorf("assistant API key is not configured")
+	}
+	model := firstNonEmptyString(req.Model, p.model)
+	payload := map[string]any{
+		"model":           model,
+		"stream":          true,
+		"response_format": map[string]string{"type": "json_object"},
+		"messages": []map[string]string{
+			{"role": "system", "content": assistantSystemPrompt()},
+			{"role": "user", "content": mustJSON(req)},
+		},
+	}
+	body, _ := json.Marshal(payload)
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.baseURL, "/")+"/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return AssistantPlanResponse{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Authorization", "Bearer "+p.apiKey)
+	resp, err := p.client.Do(httpReq)
+	if err != nil {
+		return AssistantPlanResponse{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return AssistantPlanResponse{}, fmt.Errorf("assistant provider returned %s", resp.Status)
+	}
+
+	var content strings.Builder
+	lastReply := ""
+	scanner := bufio.NewScanner(resp.Body)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, ":") {
+			continue
+		}
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if data == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+			} `json:"choices"`
+		}
+		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
+			continue
+		}
+		if len(chunk.Choices) == 0 || chunk.Choices[0].Delta.Content == "" {
+			continue
+		}
+		content.WriteString(chunk.Choices[0].Delta.Content)
+		reply := extractAssistantReplyPrefix(content.String())
+		if strings.HasPrefix(reply, lastReply) && len(reply) > len(lastReply) {
+			if err := onDelta(reply[len(lastReply):]); err != nil {
+				return AssistantPlanResponse{}, err
+			}
+			lastReply = reply
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return AssistantPlanResponse{}, err
+	}
+	var plan AssistantPlanResponse
+	if err := json.Unmarshal([]byte(content.String()), &plan); err != nil {
+		return AssistantPlanResponse{}, fmt.Errorf("decode assistant plan: %w", err)
+	}
+	if lastReply == "" && plan.Reply != "" {
+		if err := onDelta(plan.Reply); err != nil {
+			return AssistantPlanResponse{}, err
+		}
+	}
+	return plan, nil
+}
+
+func extractAssistantReplyPrefix(input string) string {
+	idx := strings.Index(input, `"reply"`)
+	if idx < 0 {
+		return ""
+	}
+	rest := input[idx+len(`"reply"`):]
+	colon := strings.Index(rest, ":")
+	if colon < 0 {
+		return ""
+	}
+	rest = strings.TrimLeft(rest[colon+1:], " \t\r\n")
+	if !strings.HasPrefix(rest, `"`) {
+		return ""
+	}
+	var out strings.Builder
+	for i := 1; i < len(rest); i++ {
+		ch := rest[i]
+		if ch == '"' {
+			return out.String()
+		}
+		if ch != '\\' {
+			out.WriteByte(ch)
+			continue
+		}
+		i++
+		if i >= len(rest) {
+			return out.String()
+		}
+		switch rest[i] {
+		case '"', '\\', '/':
+			out.WriteByte(rest[i])
+		case 'b':
+			out.WriteByte('\b')
+		case 'f':
+			out.WriteByte('\f')
+		case 'n':
+			out.WriteByte('\n')
+		case 'r':
+			out.WriteByte('\r')
+		case 't':
+			out.WriteByte('\t')
+		case 'u':
+			// Avoid emitting malformed partial unicode escapes. The final full JSON
+			// parse handles these exactly; streaming just waits for more bytes.
+			if i+4 >= len(rest) {
+				return out.String()
+			}
+			var decoded string
+			if err := json.Unmarshal([]byte(`"\u`+rest[i+1:i+5]+`"`), &decoded); err == nil {
+				out.WriteString(decoded)
+			}
+			i += 4
+		default:
+			out.WriteByte(rest[i])
+		}
+	}
+	return out.String()
+}
+
 func assistantSystemPrompt() string {
-	return `You are Brain's built-in assistant. Return only JSON matching {"reply":"...","actions":[{"type":"create_task|create_goal|create_entry|create_automation","explicit":true|false,"payload":{...}}]}.
-Choose the action type from the user's intent:
-- create_goal: an outcome-oriented goal with success criteria that may generate follow-up work until complete.
-- create_automation: a durable cron/event/webhook automation that should run later or repeatedly.
-- create_task: one concrete unit of work for the task queue.
-- create_entry: a note, report, plan, summary, or memory entry.
-For create_automation payloads include title, content, project, trigger, and action when the user describes timing/event behavior. For create_goal payloads include title, criteria, validation, feature_id, workdir, agent, and model when known. Mark explicit true only when the user directly asks to create/save/make/add a Brain object now. For ambiguous planning or drafting, explicit must be false. If the user JSON includes attachment IDs and the action creates a task, entry, or automation, include those IDs in payload.attachments.`
+	return `You are Brain's built-in assistant. You can both read and write the user's Brain via function/tool calls.
+
+Behavior:
+- If the user asks a factual/state question (e.g. "what automations do we have?", "why is task X stuck?"), CALL the relevant read tool first, then answer based on the result. Do not guess or invent state.
+- If the user asks you to create/update something and it is safe (non-destructive), call the write tool directly. Report what happened in plain language.
+- Prior turns are replayed to you as normal messages. Prior tool result payloads are stripped to save tokens — you can see WHICH tools you called and WHETHER they succeeded, but not the raw data. If a follow-up question relies on that data, re-invoke the tool.
+- Short affirmative user replies like "yes", "yes please", "do it", "go ahead" refer to whatever you most recently proposed or asked confirmation about in the previous assistant turn. Use the prior turn context; do NOT respond that you have no context.
+- For destructive tools (delete_*, bulk_*, move_*, runner pause/resume, feature assign/clear), do NOT auto-execute. Describe what you would do and ask for confirmation. When the user then explicitly confirms, retry the same tool call with argument _explicit=true.
+- The active project comes from the user's request context (see the JSON user message). Prefer that project unless the user names a different one.
+- Keep replies short and direct. When tool results are lists, summarize with counts and the most relevant items; do not dump raw JSON. When a task is stuck, cite the fields that explain why (classification, blocked_by, waiting_on, in_cycle, resolved_workdir, next_run, schedule_enabled, dispatch_lease).
+- If a tool returns an error, tell the user what went wrong and propose the next step. Do not silently retry the same call.
+
+Tool categories:
+- Reads: list_entries, get_entry, search_brain, list_tasks, get_task, get_task_metadata, list_features, get_feature, list_automations, list_goals, goal_progress, list_runners, runner_status, get_stats, get_backlinks, get_outlinks, get_related, get_sections, get_section, recent_events.
+- Writes (auto-execute): create_task, create_entry, create_automation, create_goal, update_entry, update_task, update_automation, verify_entry, link_entry, run_goal, trigger_task, checkout_feature.
+- Destructive (require _explicit=true after user confirmation): delete_entry, bulk_update, move_entry, pause_project, resume_project, pause_automations, resume_automations, assign_feature, clear_feature_assignment.
+
+Never fabricate tool results. If you don't have a tool for something, say so.`
 }
 
 func mustJSON(v any) string {
@@ -509,6 +763,38 @@ func (h *Handler) HandleAssistantChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) HandleAssistantChatStream(w http.ResponseWriter, r *http.Request) {
+	if h.assistant == nil {
+		WriteError(w, http.StatusServiceUnavailable, "Service Unavailable", "assistant is not configured")
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", "streaming unsupported")
+		return
+	}
+	var req AssistantChatRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON")
+		return
+	}
+	w.Header().Set("Content-Type", "application/x-ndjson")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Accel-Buffering", "no")
+	enc := json.NewEncoder(w)
+	err := h.assistant.ChatStream(r.Context(), req, func(event AssistantStreamEvent) error {
+		if err := enc.Encode(event); err != nil {
+			return err
+		}
+		flusher.Flush()
+		return nil
+	})
+	if err != nil {
+		_ = enc.Encode(AssistantStreamEvent{Type: "error", Error: err.Error()})
+		flusher.Flush()
+	}
 }
 
 func (h *Handler) HandleAssistantGoalDraft(w http.ResponseWriter, r *http.Request) {

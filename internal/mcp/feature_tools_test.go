@@ -15,12 +15,12 @@ func TestRegisterFeatureTools_CountNamesHandlersDescriptions(t *testing.T) {
 	RegisterFeatureTools(s, client)
 
 	expected := []string{
-		"brain_features",
-		"brain_feature_ready",
-		"brain_feature_get",
-		"brain_feature_checkout",
-		"brain_feature_assign",
-		"brain_feature_clear_assignment",
+		"features",
+		"feature_ready",
+		"feature_get",
+		"feature_checkout",
+		"feature_assign",
+		"feature_clear_assignment",
 	}
 	if len(s.tools) != len(expected) {
 		t.Fatalf("expected %d feature tools registered, got %d", len(expected), len(s.tools))
@@ -52,12 +52,12 @@ func TestFeatureToolSchemas(t *testing.T) {
 		required []string
 		props    []string
 	}{
-		{"brain_features", nil, []string{"project", "ready_only", "limit"}},
-		{"brain_feature_ready", nil, []string{"project", "limit"}},
-		{"brain_feature_get", []string{"feature_id"}, []string{"project", "feature_id"}},
-		{"brain_feature_checkout", []string{"feature_id"}, []string{"project", "feature_id", "execution_branch", "merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "open_pr_before_merge", "execution_mode"}},
-		{"brain_feature_assign", []string{"feature_id", "runner_id"}, []string{"project", "feature_id", "runner_id", "intent", "force"}},
-		{"brain_feature_clear_assignment", []string{"feature_id"}, []string{"project", "feature_id", "intent"}},
+		{"features", nil, []string{"project", "ready_only", "limit"}},
+		{"feature_ready", nil, []string{"project", "limit"}},
+		{"feature_get", []string{"feature_id"}, []string{"project", "feature_id"}},
+		{"feature_checkout", []string{"feature_id"}, []string{"project", "feature_id", "execution_branch", "merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "open_pr_before_merge", "execution_mode"}},
+		{"feature_assign", []string{"feature_id", "runner_id"}, []string{"project", "feature_id", "runner_id", "intent", "force"}},
+		{"feature_clear_assignment", []string{"feature_id"}, []string{"project", "feature_id", "intent"}},
 	}
 
 	for _, tt := range tests {
@@ -107,7 +107,7 @@ func TestBrainFeatures_RequestAndFormatting(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterFeatureTools(s, client)
 
-	result, err := s.tools["brain_features"].handler(context.Background(), map[string]any{"project": "test-project"})
+	result, err := s.tools["features"].handler(context.Background(), map[string]any{"project": "test-project"})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestBrainFeatures_ReadyOnlyUsesReadyEndpointAndLimit(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterFeatureTools(s, client)
 
-	result, err := s.tools["brain_features"].handler(context.Background(), map[string]any{"project": "test-project", "ready_only": true, "limit": float64(1)})
+	result, err := s.tools["features"].handler(context.Background(), map[string]any{"project": "test-project", "ready_only": true, "limit": float64(1)})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestBrainFeatureReady_RequestAndEmptyFormatting(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterFeatureTools(s, client)
 
-	result, err := s.tools["brain_feature_ready"].handler(context.Background(), map[string]any{"project": "test-project"})
+	result, err := s.tools["feature_ready"].handler(context.Background(), map[string]any{"project": "test-project"})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -186,7 +186,7 @@ func TestBrainFeatureGet_RequestAndFormatting(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterFeatureTools(s, client)
 
-	result, err := s.tools["brain_feature_get"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth-system"})
+	result, err := s.tools["feature_get"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth-system"})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestBrainFeatureCheckout_RequestBodyAndFormatting(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterFeatureTools(s, client)
 
-	result, err := s.tools["brain_feature_checkout"].handler(context.Background(), map[string]any{
+	result, err := s.tools["feature_checkout"].handler(context.Background(), map[string]any{
 		"project": "test-project", "feature_id": "auth-system", "execution_branch": "feat/auth", "merge_target_branch": "main",
 		"merge_policy": "auto_pr", "merge_strategy": "squash", "remote_branch_policy": "delete", "open_pr_before_merge": true, "execution_mode": "worktree",
 	})
@@ -274,11 +274,11 @@ func TestBrainFeatureAssignAndClear_RequestBodiesAndFormatting(t *testing.T) {
 	client := NewAPIClient(server.URL)
 	RegisterFeatureTools(s, client)
 
-	assigned, err := s.tools["brain_feature_assign"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth-system", "runner_id": "runner-1", "intent": "claim feature", "force": true})
+	assigned, err := s.tools["feature_assign"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth-system", "runner_id": "runner-1", "intent": "claim feature", "force": true})
 	if err != nil {
 		t.Fatalf("assign handler error: %v", err)
 	}
-	cleared, err := s.tools["brain_feature_clear_assignment"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth-system", "intent": "release feature"})
+	cleared, err := s.tools["feature_clear_assignment"].handler(context.Background(), map[string]any{"project": "test-project", "feature_id": "auth-system", "intent": "release feature"})
 	if err != nil {
 		t.Fatalf("clear handler error: %v", err)
 	}
@@ -320,10 +320,10 @@ func TestFeatureTools_ValidationErrors(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"brain_feature_get", map[string]any{}, "feature_id"},
-		{"brain_feature_checkout", map[string]any{}, "feature_id"},
-		{"brain_feature_assign", map[string]any{"feature_id": "auth"}, "runner_id"},
-		{"brain_feature_clear_assignment", map[string]any{}, "feature_id"},
+		{"feature_get", map[string]any{}, "feature_id"},
+		{"feature_checkout", map[string]any{}, "feature_id"},
+		{"feature_assign", map[string]any{"feature_id": "auth"}, "runner_id"},
+		{"feature_clear_assignment", map[string]any{}, "feature_id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {

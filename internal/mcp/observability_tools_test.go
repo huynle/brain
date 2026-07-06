@@ -32,13 +32,13 @@ func TestRegisterObservabilityTools_Names(t *testing.T) {
 	RegisterObservabilityTools(s, client)
 
 	expectedTools := []string{
-		"brain_task_logs",
-		"brain_task_dispatch_lease",
-		"brain_task_placement_reasons",
-		"brain_events_recent",
-		"brain_automation_runs",
-		"brain_automation_run_get",
-		"brain_scheduler_status",
+		"task_logs",
+		"task_dispatch_lease",
+		"task_placement_reasons",
+		"events_recent",
+		"automation_runs",
+		"automation_run_get",
+		"scheduler_status",
 	}
 
 	for _, name := range expectedTools {
@@ -84,7 +84,7 @@ func TestBrainTaskPlacementReasons_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterObservabilityTools(s, client)
 
-	tool := s.tools["brain_task_placement_reasons"].tool
+	tool := s.tools["task_placement_reasons"].tool
 
 	// Required fields
 	expectedRequired := []string{"taskId"}
@@ -125,7 +125,7 @@ func TestBrainAutomationRuns_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterObservabilityTools(s, client)
 
-	tool := s.tools["brain_automation_runs"].tool
+	tool := s.tools["automation_runs"].tool
 
 	// No required fields
 	if len(tool.InputSchema.Required) != 0 {
@@ -160,7 +160,7 @@ func TestBrainAutomationRunGet_Schema(t *testing.T) {
 	client := NewAPIClient("http://localhost:3333")
 	RegisterObservabilityTools(s, client)
 
-	tool := s.tools["brain_automation_run_get"].tool
+	tool := s.tools["automation_run_get"].tool
 
 	// Required fields
 	expectedRequired := []string{"runId"}
@@ -227,7 +227,7 @@ func TestBrainTaskPlacementReasons(t *testing.T) {
 	server := NewServer()
 	RegisterObservabilityTools(server, client)
 
-	tool := server.tools["brain_task_placement_reasons"]
+	tool := server.tools["task_placement_reasons"]
 	result, err := tool.handler(context.Background(), map[string]any{
 		"project": "test-proj",
 		"taskId":  "task123",
@@ -280,7 +280,7 @@ func TestBrainAutomationRuns(t *testing.T) {
 	server := NewServer()
 	RegisterObservabilityTools(server, client)
 
-	tool := server.tools["brain_automation_runs"]
+	tool := server.tools["automation_runs"]
 	result, err := tool.handler(context.Background(), map[string]any{
 		"project": "test-proj",
 	})
@@ -320,7 +320,7 @@ func TestBrainAutomationRunGet(t *testing.T) {
 	server := NewServer()
 	RegisterObservabilityTools(server, client)
 
-	tool := server.tools["brain_automation_run_get"]
+	tool := server.tools["automation_run_get"]
 	result, err := tool.handler(context.Background(), map[string]any{
 		"runId": "run123",
 	})
@@ -364,7 +364,7 @@ func TestBrainTaskLogs(t *testing.T) {
 	RegisterObservabilityTools(server, client)
 
 	// Get registered tool
-	tool, ok := server.tools["brain_task_logs"]
+	tool, ok := server.tools["task_logs"]
 	if !ok {
 		t.Fatal("brain_task_logs tool not registered")
 	}
@@ -421,7 +421,7 @@ func TestBrainTaskDispatchLease(t *testing.T) {
 	server := NewServer()
 	RegisterObservabilityTools(server, client)
 
-	tool := server.tools["brain_task_dispatch_lease"]
+	tool := server.tools["task_dispatch_lease"]
 	result, err := tool.handler(context.Background(), map[string]any{
 		"project": "test-proj",
 		"taskId":  "task123",
@@ -471,7 +471,7 @@ func TestBrainEventsRecent(t *testing.T) {
 	server := NewServer()
 	RegisterObservabilityTools(server, client)
 
-	tool := server.tools["brain_events_recent"]
+	tool := server.tools["events_recent"]
 	result, err := tool.handler(context.Background(), map[string]any{
 		"limit": float64(50), // JSON numbers are float64
 	})
@@ -508,7 +508,7 @@ func TestBrainSchedulerStatus(t *testing.T) {
 	server := NewServer()
 	RegisterObservabilityTools(server, client)
 
-	tool := server.tools["brain_scheduler_status"]
+	tool := server.tools["scheduler_status"]
 	result, err := tool.handler(context.Background(), map[string]any{})
 
 	if err != nil {
@@ -579,13 +579,13 @@ func TestHTTPHandlerRegistersObservabilityTools(t *testing.T) {
 
 	// Verify all 7 observability tools are present
 	expectedTools := []string{
-		"brain_task_logs",
-		"brain_task_dispatch_lease",
-		"brain_task_placement_reasons",
-		"brain_events_recent",
-		"brain_automation_runs",
-		"brain_automation_run_get",
-		"brain_scheduler_status",
+		"task_logs",
+		"task_dispatch_lease",
+		"task_placement_reasons",
+		"events_recent",
+		"automation_runs",
+		"automation_run_get",
+		"scheduler_status",
 	}
 
 	toolNames := make(map[string]bool)

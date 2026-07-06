@@ -6158,6 +6158,12 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 		}
 		if entry.Action.Type == "script" {
 			req.Executor = "script"
+			if req.ExecutionMode == "" {
+				req.ExecutionMode = "current_branch"
+			}
+			if req.TargetWorkdir == "" {
+				req.TargetWorkdir = "/tmp"
+			}
 		}
 
 		created, err := apiClient.CreateEntry(context.Background(), req)

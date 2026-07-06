@@ -5,29 +5,26 @@ import (
 	"testing"
 )
 
-// Test GetPluginFile can read opencode/brain.ts
-func TestGetPluginFile_OpenCodeBrain(t *testing.T) {
-	content, err := GetPluginFile("opencode", "brain.ts")
+// Test GetPluginFile can read a top-level opencode plugin asset.
+// Brain tools were previously shipped as a brain.ts plugin; they are now
+// exposed through the brain MCP stdio server, so the only top-level asset
+// in the opencode plugin tree is README.md.
+func TestGetPluginFile_OpenCodeReadme(t *testing.T) {
+	content, err := GetPluginFile("opencode", "README.md")
 	if err != nil {
-		t.Fatalf("GetPluginFile(opencode, brain.ts) failed: %v", err)
+		t.Fatalf("GetPluginFile(opencode, README.md) failed: %v", err)
 	}
 	if len(content) == 0 {
-		t.Error("GetPluginFile(opencode, brain.ts) returned empty content")
+		t.Error("GetPluginFile(opencode, README.md) returned empty content")
 	}
 
-	// Check for expected content markers
+	// Check for expected content markers describing the new MCP-based flow.
 	text := string(content)
-	if !strings.Contains(text, "BrainPlugin") {
-		t.Error("brain.ts missing expected BrainPlugin export")
+	if !strings.Contains(text, "OpenCode Brain Assets") {
+		t.Error("README.md missing expected heading")
 	}
-	if !strings.Contains(text, "BRAIN_API_URL") {
-		t.Error("brain.ts missing expected BRAIN_API_URL constant")
-	}
-	if !strings.Contains(text, "brain_attachment_download") {
-		t.Error("brain.ts missing raw binary attachment download tool")
-	}
-	if !strings.Contains(text, "attachmentDownloadRequest") {
-		t.Error("brain.ts missing attachment download request helper")
+	if !strings.Contains(text, "MCP") {
+		t.Error("README.md should reference the MCP-based replacement for the legacy plugin")
 	}
 }
 
@@ -41,27 +38,28 @@ func TestGetPluginFile_NotFound(t *testing.T) {
 
 // Test GetPluginFile returns error for missing target
 func TestGetPluginFile_InvalidTarget(t *testing.T) {
-	_, err := GetPluginFile("invalid-target", "brain.ts")
+	_, err := GetPluginFile("invalid-target", "README.md")
 	if err == nil {
-		t.Error("GetPluginFile(invalid-target, brain.ts) should return error, got nil")
+		t.Error("GetPluginFile(invalid-target, README.md) should return error, got nil")
 	}
 }
 
-// Test ListPluginFiles returns all opencode files
+// Test ListPluginFiles returns all top-level opencode files.
+// After the brain.ts → MCP migration, only README.md ships at the top level;
+// agents, skills, and commands live in subdirectories and are covered by
+// ListPluginFilesRecursive (exercised by installer tests in internal/plugins).
 func TestListPluginFiles_OpenCode(t *testing.T) {
 	files, err := ListPluginFiles("opencode")
 	if err != nil {
 		t.Fatalf("ListPluginFiles(opencode) failed: %v", err)
 	}
 
-	// Expected top-level files. Nested command/skill/agent assets are covered by recursive installer tests.
 	expectedFiles := map[string]bool{
-		"brain.ts":  true,
 		"README.md": true,
 	}
 
 	if len(files) != len(expectedFiles) {
-		t.Errorf("ListPluginFiles(opencode) returned %d files, expected %d", len(files), len(expectedFiles))
+		t.Errorf("ListPluginFiles(opencode) returned %d files, expected %d (%v)", len(files), len(expectedFiles), files)
 	}
 
 	for _, file := range files {
@@ -71,7 +69,6 @@ func TestListPluginFiles_OpenCode(t *testing.T) {
 		delete(expectedFiles, file)
 	}
 
-	// Check for missing files
 	for file := range expectedFiles {
 		t.Errorf("ListPluginFiles(opencode) missing expected file: %q", file)
 	}
@@ -85,7 +82,7 @@ func TestListPluginFiles_InvalidTarget(t *testing.T) {
 	}
 }
 
-// Test GetPluginsFS returns a valid filesystem
+// Test GetPluginsFS returns a valid filesystem with readable opencode assets.
 func TestGetPluginsFS(t *testing.T) {
 	fs := GetPluginsFS()
 	if fs == nil {
@@ -93,9 +90,9 @@ func TestGetPluginsFS(t *testing.T) {
 	}
 
 	// Try reading a plugin file directly from FS
-	file, err := fs.Open("plugins/opencode/brain.ts")
+	file, err := fs.Open("plugins/opencode/README.md")
 	if err != nil {
-		t.Fatalf("Failed to open plugins/opencode/brain.ts from FS: %v", err)
+		t.Fatalf("Failed to open plugins/opencode/README.md from FS: %v", err)
 	}
 	defer file.Close()
 
@@ -106,6 +103,6 @@ func TestGetPluginsFS(t *testing.T) {
 		t.Fatalf("Failed to read from file: %v", err)
 	}
 	if n == 0 {
-		t.Error("Read 0 bytes from plugins/opencode/brain.ts")
+		t.Error("Read 0 bytes from plugins/opencode/README.md")
 	}
 }

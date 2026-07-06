@@ -57,7 +57,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 		// All routes below require auth when enabled
 		r.Group(func(r chi.Router) {
-			r.Use(Auth(cfg.EnableAuth, o.validator))
+			r.Use(Auth(cfg.EnableAuth, o.validator, cfg.JWTSecret))
 			// Record each authenticated request (with its actor) for the
 			// global server-request log shown in the Logs tab. Installed after
 			// Auth so the actor is present in context.
@@ -267,9 +267,11 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Use(RequireScope("admin:*"))
 					if o.handler != nil && o.handler.assistant != nil {
 						r.Post("/chat", o.handler.HandleAssistantChat)
+						r.Post("/chat/stream", o.handler.HandleAssistantChatStream)
 						r.Post("/goal-draft", o.handler.HandleAssistantGoalDraft)
 					} else {
 						r.Post("/chat", notImplemented)
+						r.Post("/chat/stream", notImplemented)
 						r.Post("/goal-draft", notImplemented)
 					}
 				})
@@ -494,14 +496,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/features/{featureId}/checkout", o.handler.HandleCheckoutFeature)
 							r.Put("/features/{featureId}/assignment", o.handler.HandleAssignFeatureToRunner)
 							r.Post("/features/{featureId}/assignment/clear", o.handler.HandleClearFeatureAssignment)
+							r.Post("/features/{featureId}/run", o.handler.HandleRunFeature)
 							r.Post("/{taskId}/trigger", o.handler.HandleTriggerTask)
 							r.Post("/{taskId}/dispatch", o.handler.HandleDispatchTask)
+							r.Post("/{taskId}/run", o.handler.HandleRunTask)
 						} else {
 							r.Post("/features/{featureId}/checkout", notImplemented)
 							r.Put("/features/{featureId}/assignment", notImplemented)
 							r.Post("/features/{featureId}/assignment/clear", notImplemented)
+							r.Post("/features/{featureId}/run", notImplemented)
 							r.Post("/{taskId}/trigger", notImplemented)
 							r.Post("/{taskId}/dispatch", notImplemented)
+							r.Post("/{taskId}/run", notImplemented)
 						}
 					})
 				})

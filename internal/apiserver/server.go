@@ -35,6 +35,7 @@ type ServerOptions struct {
 	LogLevel        string
 	CORSOrigin      string
 	OAuthPIN        string
+	JWTSecret       string
 	TaskDefaults    config.TaskDefaultsConfig
 	FeatureCheckout config.FeatureCheckoutConfig
 	Embedding       config.EmbeddingConfig
@@ -182,6 +183,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		EnableAuth:      opts.EnableAuth,
 		CORSOrigin:      corsOrigin,
 		OAuthPIN:        opts.OAuthPIN,
+		JWTSecret:       opts.JWTSecret,
 		TaskDefaults:    opts.TaskDefaults,
 		FeatureCheckout: opts.FeatureCheckout,
 		Embedding:       opts.Embedding,
@@ -262,6 +264,15 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	eventSvc := service.NewEventService(eventHub)
 	eventSvc.SetFeatureTaskLister(taskSvc)
 	eventSvc.SetFeatureAssignmentCleaner(store)
+
+	// ─── Feature Cascade ───────────────────────────────────────────
+	// Manual "Run feature now" workflow needs the cascade to drain queued
+	// tasks as in-flight ones complete — even while the project is paused.
+	// Wire here so SchedulerService can register cascades from RunFeatureNow
+	// and the cascade can call back via the FeatureRunner interface.
+	featureCascade := service.NewFeatureCascadeService(eventHub, schedulerSvc)
+	schedulerSvc.SetFeatureCascade(featureCascade)
+	featureCascade.Start(ctx)
 	automationSvc := service.NewAutomationService(brainSvc)
 	automationSvc.SetPauseChecker(runnerSvc)
 	go automationSvc.Start(ctx, eventHub)
@@ -280,6 +291,10 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		Timeout:   time.Duration(cfg.Assistant.TimeoutMs) * time.Millisecond,
 		Brain:     brainSvc,
 		Goals:     goalSvc,
+		Tasks:     taskSvc,
+		Runner:    runnerSvc,
+		Runners:   runnerRegistrySvc,
+		Events:    eventSvc,
 	})
 	go goalSvc.Start(ctx, eventHub)
 
@@ -316,6 +331,8 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithProjectPlacementService(placementSvc),
 		api.WithSchedulerService(schedulerSvc),
 		api.WithSchedulerVisibilityService(store),
+		api.WithRunTaskService(schedulerSvc),
+		api.WithRunFeatureService(schedulerSvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
@@ -378,7 +395,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		OAuthValidator: store,
 	}
 	router.Route("/mcp", func(r chi.Router) {
-		r.Use(api.Auth(opts.EnableAuth, authValidator))
+		r.Use(api.Auth(opts.EnableAuth, authValidator, opts.JWTSecret))
 		r.Post("/", mcpHTTP.ServeHTTP)
 		r.Get("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
@@ -388,7 +405,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// webui.Handler below) owns browser navigations to "/", while MCP clients
 	// use POST/DELETE at the root. Clients that need a GET stream use /mcp.
 	router.Group(func(r chi.Router) {
-		r.Use(api.Auth(opts.EnableAuth, authValidator))
+		r.Use(api.Auth(opts.EnableAuth, authValidator, opts.JWTSecret))
 		r.Post("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})

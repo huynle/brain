@@ -363,6 +363,7 @@ func (c *StartCommand) startForeground(pidFile string) error {
 		LogLevel:     c.Config.Server.LogLevel,
 		CORSOrigin:   c.Config.Server.CORSOrigin,
 		OAuthPIN:     c.Config.Server.OAuthPIN,
+		JWTSecret:    c.Config.Server.JWTSecret,
 		TaskDefaults: c.Config.Server.TaskDefaults,
 		Embedding:    c.Config.Server.Embedding,
 		Attachments:  c.Config.Server.Attachments,

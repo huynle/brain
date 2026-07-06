@@ -38,6 +38,7 @@ type Config struct {
 	CORSOrigin      string
 	LogLevel        string
 	OAuthPIN        string // Optional PIN for consent page protection
+	JWTSecret       string // Optional HMAC secret for HS256 JWT bearer tokens
 	TaskDefaults    TaskDefaultsConfig
 	FeatureCheckout FeatureCheckoutConfig
 	Embedding       EmbeddingConfig
@@ -78,6 +79,7 @@ func Load() Config {
 		CORSOrigin: "*",
 		LogLevel:   "info",
 		OAuthPIN:   "",
+		JWTSecret:  "",
 	}
 
 	// Layer 2: Config file overrides
@@ -104,6 +106,9 @@ func Load() Config {
 		}
 		if s.OAuthPIN != "" {
 			cfg.OAuthPIN = s.OAuthPIN
+		}
+		if s.JWTSecret != "" {
+			cfg.JWTSecret = s.JWTSecret
 		}
 		// Thread task defaults from unified config
 		cfg.TaskDefaults = s.TaskDefaults
@@ -138,6 +143,12 @@ func Load() Config {
 	}
 	if v := os.Getenv("OAUTH_PIN"); v != "" {
 		cfg.OAuthPIN = v
+	}
+	if v := os.Getenv("JWT_SECRET"); v != "" {
+		cfg.JWTSecret = v
+	}
+	if v := os.Getenv("BRAIN_JWT_SECRET"); v != "" {
+		cfg.JWTSecret = v
 	}
 	if v := os.Getenv("BRAIN_FEATURE_CHECKOUT_ENABLED"); v != "" {
 		lower := strings.ToLower(v)

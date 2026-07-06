@@ -19,9 +19,11 @@ func (tr *TaskRunner) ResumeProjectAutomations(projectID string) {
 	tr.wake()
 }
 
-// IsAutomationsPausedForProject reports whether automation-generated tasks are paused for a project.
+// IsAutomationsPausedForProject reports whether automation-generated tasks are
+// paused for a project, by local request or server-side state.
 func (tr *TaskRunner) IsAutomationsPausedForProject(projectID string) bool {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
-	return tr.automationsPaused || tr.automationPausedProjects[projectID]
+	return tr.automationsPaused || tr.automationPausedProjects[projectID] ||
+		tr.serverAutosPaused[""] || tr.serverAutosPaused[projectID]
 }

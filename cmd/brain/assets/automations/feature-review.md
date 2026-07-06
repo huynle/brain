@@ -22,8 +22,8 @@ action:
 
     ## Phase 1: Completeness Review
 
-    1. Discover sibling tasks: brain_tasks({ project: "{{.Project}}", feature_id: "{{.FeatureID}}" })
-    2. For each task, call brain_task_get({ taskId: "<id>" }) and extract user_original_request
+    1. Discover sibling tasks: tasks({ project: "{{.Project}}", feature_id: "{{.FeatureID}}" })
+    2. For each task, call task_get({ taskId: "<id>" }) and extract user_original_request
     3. Verify each requirement is addressed by the implementation
     4. Calculate completeness score: (implemented / total requirements)
 
@@ -39,7 +39,7 @@ action:
 
     Save your review as a brain report:
 
-    brain_save({
+    save({
       type: "report",
       title: "Feature Review: {{.FeatureID}}",
       project: "{{.Project}}",

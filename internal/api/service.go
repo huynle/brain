@@ -70,13 +70,19 @@ type BrainService interface {
 	GetSection(ctx context.Context, path string, title string, includeSubsections bool) (*types.SectionContentResponse, error)
 
 	// GetStats returns brain statistics.
-	GetStats(ctx context.Context, global bool) (*types.StatsResponse, error)
+	// When project is set, stats are scoped to that project (path prefix
+	// projects/<project>/); the `global` flag is ignored in that case.
+	// When project is empty and global=true, stats cover global entries only.
+	// When both are empty/false, stats span all entries.
+	GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error)
 
 	// GetOrphans returns entries with no incoming links.
-	GetOrphans(ctx context.Context, entryType string, limit int) ([]types.BrainEntry, error)
+	// When project is set, results are scoped to entries under projects/<project>/.
+	GetOrphans(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error)
 
 	// GetStale returns entries not verified in N days.
-	GetStale(ctx context.Context, days int, entryType string, limit int) ([]types.BrainEntry, error)
+	// When project is set, results are scoped to entries under projects/<project>/.
+	GetStale(ctx context.Context, days int, entryType string, limit int, project string) ([]types.BrainEntry, error)
 
 	// Verify marks an entry as verified.
 	Verify(ctx context.Context, path string) (*types.VerifyResponse, error)
@@ -144,6 +150,27 @@ type ProjectPlacementService interface {
 // SchedulerService exposes scheduler lifecycle status for API visibility.
 type SchedulerService interface {
 	Status() types.SchedulerStatus
+}
+
+// RunTaskService implements the user-explicit "run this task now" path used
+// by the PWA "x" shortcut. Implementations pick an eligible runner, create a
+// dispatch lease, and publish a dispatch command via the realtime hub.
+//
+// Kept narrow on purpose: the existing SchedulerService interface only
+// exposes Status() and adding methods to it would require updating every
+// mock and test. A separate interface lets the SchedulerService
+// implementation satisfy both without forcing other implementations to
+// stub RunTaskNow.
+type RunTaskService interface {
+	RunTaskNow(ctx context.Context, projectID, taskID string, force bool) (*types.RunTaskResponse, error)
+}
+
+// RunFeatureService is the optional capability that backs POST
+// /tasks/{projectId}/features/{featureId}/run. Surfaced as its own interface
+// (mirroring RunTaskService) so implementations are free to wire one without
+// the other. In production both are satisfied by *service.SchedulerService.
+type RunFeatureService interface {
+	RunFeatureNow(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error)
 }
 
 // SchedulerVisibilityService exposes persisted scheduler placement artifacts.

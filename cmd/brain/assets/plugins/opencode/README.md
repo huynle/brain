@@ -2,9 +2,12 @@
 
 Resources installed by `brain install opencode` to make OpenCode work with Brain projects, plans, and task queues.
 
-## Core Plugins
+## Brain Tools (MCP)
 
-- `brain.ts` - Brain API tools for entries, tasks, automations, attachments, and project context.
+The brain `save`, `recall`, `search`, `tasks`, etc. tools are no longer shipped
+as a plugin. Configure OpenCode to launch the brain MCP server over stdio
+instead — see the project README's "Connecting OpenCode" section for the
+`brain mcp` config snippet.
 
 ## Agent
 

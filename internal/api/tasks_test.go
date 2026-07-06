@@ -2073,3 +2073,330 @@ func TestHandleTriggerTask_EmitsEvent(t *testing.T) {
 		t.Errorf("task_id = %q, want %q", evt.TaskID, "task123")
 	}
 }
+
+// =============================================================================
+// HandleRunTask tests — POST /tasks/{projectId}/{taskId}/run
+// User-explicit "run this now" path used by the PWA "x" key. The handler
+// delegates to RunTaskService.RunTaskNow which picks an eligible runner and
+// publishes a dispatch command via the realtime hub.
+// =============================================================================
+
+type mockRunTaskService struct {
+	runFunc    func(ctx context.Context, projectId, taskId string, force bool) (*types.RunTaskResponse, error)
+	gotProject string
+	gotTask    string
+	gotForce   bool
+	callCount  int
+}
+
+func (m *mockRunTaskService) RunTaskNow(ctx context.Context, projectID, taskID string, force bool) (*types.RunTaskResponse, error) {
+	m.callCount++
+	m.gotProject = projectID
+	m.gotTask = taskID
+	m.gotForce = force
+	if m.runFunc != nil {
+		return m.runFunc(ctx, projectID, taskID, force)
+	}
+	return &types.RunTaskResponse{Dispatched: true, ProjectID: projectID, TaskID: taskID}, nil
+}
+
+func newRunTaskTestRouter(svc RunTaskService) http.Handler {
+	h := NewHandler(&mockBrainService{}, WithRunTaskService(svc))
+	r := chi.NewRouter()
+	r.Route("/tasks/{projectId}", func(r chi.Router) {
+		r.Post("/{taskId}/run", h.HandleRunTask)
+	})
+	return r
+}
+
+func TestHandleRunTask_DispatchesAndReturnsRunnerID(t *testing.T) {
+	svc := &mockRunTaskService{
+		runFunc: func(_ context.Context, projectID, taskID string, force bool) (*types.RunTaskResponse, error) {
+			return &types.RunTaskResponse{
+				Dispatched: true,
+				ProjectID:  projectID,
+				TaskID:     taskID,
+				RunnerID:   "runner-a",
+				LeaseID:    "lease-1",
+				ExpiresAt:  "2026-06-24T12:00:00Z",
+			}, nil
+		},
+	}
+	router := newRunTaskTestRouter(svc)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/orion-ai/task-1/run", "application/json", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("POST /run failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.StatusCode, http.StatusOK, readBodyString(resp))
+	}
+	var got types.RunTaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if !got.Dispatched {
+		t.Fatal("dispatched = false, want true")
+	}
+	if got.RunnerID != "runner-a" {
+		t.Errorf("runnerId = %q, want runner-a", got.RunnerID)
+	}
+	if svc.gotProject != "orion-ai" || svc.gotTask != "task-1" {
+		t.Errorf("svc got project=%q task=%q, want orion-ai/task-1", svc.gotProject, svc.gotTask)
+	}
+	if svc.gotForce {
+		t.Error("force should default to false when omitted")
+	}
+}
+
+func TestHandleRunTask_NotDispatchedReturnsReason(t *testing.T) {
+	svc := &mockRunTaskService{
+		runFunc: func(_ context.Context, projectID, taskID string, _ bool) (*types.RunTaskResponse, error) {
+			return &types.RunTaskResponse{
+				Dispatched: false,
+				ProjectID:  projectID,
+				TaskID:     taskID,
+				Reason:     "no_online_runner",
+				Detail:     "no runners are registered",
+			}, nil
+		},
+	}
+	router := newRunTaskTestRouter(svc)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/orion-ai/task-1/run", "application/json", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("POST /run failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Even when not dispatched, this is a 200 — it's a structured no-op the
+	// PWA can render (mirrors trigger semantics). The Reason field carries
+	// the machine-readable token.
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, readBodyString(resp))
+	}
+	var got types.RunTaskResponse
+	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got.Dispatched {
+		t.Error("dispatched = true, want false")
+	}
+	if got.Reason != "no_online_runner" {
+		t.Errorf("reason = %q, want no_online_runner", got.Reason)
+	}
+}
+
+func TestHandleRunTask_PassesForceFlag(t *testing.T) {
+	svc := &mockRunTaskService{}
+	router := newRunTaskTestRouter(svc)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/orion-ai/task-1/run", "application/json", bytes.NewReader([]byte(`{"force":true}`)))
+	if err != nil {
+		t.Fatalf("POST /run failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", resp.StatusCode, readBodyString(resp))
+	}
+	if !svc.gotForce {
+		t.Error("svc did not receive force=true")
+	}
+}
+
+func TestHandleRunTask_ServiceNotConfiguredReturns501(t *testing.T) {
+	// When the run-task service is not wired, the handler must return 501
+	// so the PWA can fall back to the legacy /trigger endpoint.
+	h := NewHandler(&mockBrainService{})
+	r := chi.NewRouter()
+	r.Route("/tasks/{projectId}", func(r chi.Router) {
+		r.Post("/{taskId}/run", h.HandleRunTask)
+	})
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/orion-ai/task-1/run", "application/json", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("POST /run failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501", resp.StatusCode)
+	}
+}
+
+// readBodyString drains a response body for error-context formatting.
+func readBodyString(resp *http.Response) string {
+	buf := new(bytes.Buffer)
+	_, _ = buf.ReadFrom(resp.Body)
+	return buf.String()
+}
+
+// =============================================================================
+// HandleRunFeature tests — POST /tasks/{projectId}/features/{featureId}/run
+// =============================================================================
+
+type mockRunFeatureService struct {
+	runFunc    func(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error)
+	gotProject string
+	gotFeature string
+	gotForce   bool
+	callCount  int
+}
+
+func (m *mockRunFeatureService) RunFeatureNow(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error) {
+	m.callCount++
+	m.gotProject = projectID
+	m.gotFeature = featureID
+	m.gotForce = force
+	if m.runFunc != nil {
+		return m.runFunc(ctx, projectID, featureID, force)
+	}
+	return &types.RunFeatureResponse{
+		Dispatched:      true,
+		ProjectID:       projectID,
+		FeatureID:       featureID,
+		DispatchedCount: 1,
+	}, nil
+}
+
+func newRunFeatureTestRouter(svc RunFeatureService) http.Handler {
+	h := NewHandler(&mockBrainService{}, WithRunFeatureService(svc))
+	r := chi.NewRouter()
+	r.Route("/tasks/{projectId}/features/{featureId}", func(r chi.Router) {
+		r.Post("/run", h.HandleRunFeature)
+	})
+	return r
+}
+
+func TestHandleRunFeature_DispatchesAndReturnsResults(t *testing.T) {
+	svc := &mockRunFeatureService{
+		runFunc: func(_ context.Context, projectID, featureID string, _ bool) (*types.RunFeatureResponse, error) {
+			return &types.RunFeatureResponse{
+				Dispatched:      true,
+				ProjectID:       projectID,
+				FeatureID:       featureID,
+				DispatchedCount: 2,
+				Results: []types.RunTaskResponse{
+					{Dispatched: true, ProjectID: projectID, TaskID: "task-1", RunnerID: "runner-a"},
+					{Dispatched: true, ProjectID: projectID, TaskID: "task-2", RunnerID: "runner-a"},
+				},
+			}, nil
+		},
+	}
+	router := newRunFeatureTestRouter(svc)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/orion-ai/features/auth/run", "application/json", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("POST failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", resp.StatusCode, readBodyString(resp))
+	}
+	var body types.RunFeatureResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode failed: %v", err)
+	}
+	if !body.Dispatched {
+		t.Fatal("Dispatched = false, want true")
+	}
+	if body.FeatureID != "auth" {
+		t.Fatalf("FeatureID = %q, want auth", body.FeatureID)
+	}
+	if body.DispatchedCount != 2 {
+		t.Fatalf("DispatchedCount = %d, want 2", body.DispatchedCount)
+	}
+	if len(body.Results) != 2 {
+		t.Fatalf("Results len = %d, want 2", len(body.Results))
+	}
+	if svc.gotProject != "orion-ai" || svc.gotFeature != "auth" {
+		t.Fatalf("service got %s/%s, want orion-ai/auth", svc.gotProject, svc.gotFeature)
+	}
+}
+
+func TestHandleRunFeature_PassesForceFlag(t *testing.T) {
+	svc := &mockRunFeatureService{}
+	router := newRunFeatureTestRouter(svc)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/p/features/f/run", "application/json", bytes.NewReader([]byte(`{"force": true}`)))
+	if err != nil {
+		t.Fatalf("POST failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if !svc.gotForce {
+		t.Fatal("service gotForce = false, want true")
+	}
+}
+
+func TestHandleRunFeature_EmptyBodyDefaultsForceFalse(t *testing.T) {
+	svc := &mockRunFeatureService{}
+	router := newRunFeatureTestRouter(svc)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/p/features/f/run", "application/json", nil)
+	if err != nil {
+		t.Fatalf("POST failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if svc.gotForce {
+		t.Fatal("service gotForce = true with empty body, want false")
+	}
+}
+
+func TestHandleRunFeature_MalformedJSONReturns400(t *testing.T) {
+	svc := &mockRunFeatureService{}
+	router := newRunFeatureTestRouter(svc)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/p/features/f/run", "application/json", bytes.NewReader([]byte(`{not-json`)))
+	if err != nil {
+		t.Fatalf("POST failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestHandleRunFeature_ServiceNotConfiguredReturns501(t *testing.T) {
+	// No WithRunFeatureService option — handler should return 501.
+	h := NewHandler(&mockBrainService{})
+	r := chi.NewRouter()
+	r.Route("/tasks/{projectId}/features/{featureId}", func(r chi.Router) {
+		r.Post("/run", h.HandleRunFeature)
+	})
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/p/features/f/run", "application/json", bytes.NewReader([]byte(`{}`)))
+	if err != nil {
+		t.Fatalf("POST failed: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Fatalf("status = %d, want 501", resp.StatusCode)
+	}
+}

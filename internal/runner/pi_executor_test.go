@@ -117,8 +117,15 @@ func TestPiExecutor_BuildPrompt_DirectPrompt(t *testing.T) {
 	task.DirectPrompt = "Direct instruction"
 
 	prompt := e.BuildPrompt(task, false)
-	if prompt != "Direct instruction" {
-		t.Errorf("BuildPrompt = %q, want %q", prompt, "Direct instruction")
+	// direct_prompt verbatim alongside task identity header
+	if !strings.Contains(prompt, "Direct instruction") {
+		t.Errorf("BuildPrompt should preserve direct_prompt verbatim, got %q", prompt)
+	}
+	if !strings.Contains(prompt, task.ID) {
+		t.Errorf("BuildPrompt should contain task ID %q, got %q", task.ID, prompt)
+	}
+	if !strings.Contains(prompt, "Task Assignment") {
+		t.Errorf("BuildPrompt should contain Task Assignment header, got %q", prompt)
 	}
 }
 

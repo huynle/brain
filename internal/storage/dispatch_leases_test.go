@@ -191,6 +191,52 @@ func TestDispatchLeaseRejectAndExpire(t *testing.T) {
 	}
 }
 
+// Acked leases must NOT be expired even when past their TTL: an ack means
+// the runner accepted the work, and long-running tasks routinely outlive
+// the lease TTL. Liveness is owned by claim renewal, and re-dispatch after
+// a crash still works via CreateDispatchLease's expires_at<now overwrite.
+func TestExpireDispatchLeases_LeavesAckedLeases(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "long-task", AssignedRunnerID: "runner-1", AssignedMachineID: "machine-1", PushedAt: 1000, ExpiresAt: 1500})
+	if err != nil || !created {
+		t.Fatalf("create lease: created=%v err=%v", created, err)
+	}
+	if acked, err := s.AckDispatchLease(ctx, "brain-api", "long-task", "runner-1", lease.LeaseID, 1200); err != nil || !acked {
+		t.Fatalf("ack lease: acked=%v err=%v", acked, err)
+	}
+
+	// Far past the TTL — the task is still running on the runner.
+	expired, err := s.ExpireDispatchLeases(ctx, 100_000)
+	if err != nil {
+		t.Fatalf("ExpireDispatchLeases failed: %v", err)
+	}
+	if expired != 0 {
+		t.Fatalf("expired count = %d, want 0 (acked leases must be left alone)", expired)
+	}
+	got, err := s.GetDispatchLeaseRow(ctx, "brain-api", "long-task")
+	if err != nil {
+		t.Fatalf("get lease: %v", err)
+	}
+	if got == nil || got.State != DispatchLeaseStateAcked {
+		t.Fatalf("acked lease after expiry sweep = %#v, want state acked", got)
+	}
+
+	// Crash recovery: the stale acked lease must still be overwritable by a
+	// new dispatch once past its TTL (task went back to ready).
+	release, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "long-task", AssignedRunnerID: "runner-2", AssignedMachineID: "machine-2", PushedAt: 100_000, ExpiresAt: 160_000})
+	if err != nil {
+		t.Fatalf("re-lease after stale ack: %v", err)
+	}
+	if !created {
+		t.Fatal("re-lease after stale ack: created = false, want true (expires_at<now overwrite)")
+	}
+	if release.AssignedRunnerID != "runner-2" || release.State != DispatchLeaseStatePushed {
+		t.Fatalf("re-lease = %#v, want pushed lease on runner-2", release)
+	}
+}
+
 func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()
@@ -444,5 +490,81 @@ func TestListExpiredDispatchLeasesForReconciliation(t *testing.T) {
 	}
 	if expired[0].TaskID != "expired-pushed" || expired[0].State != DispatchLeaseStatePushed {
 		t.Fatalf("expired[0] = %#v", expired[0])
+	}
+}
+
+func TestClearDispatchLease_RemovesRegardlessOfRunner(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	// Create a lease against runner-old, then clear it without specifying runner.
+	if _, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+		ProjectID:         "brain-api",
+		TaskID:            "stale-task",
+		AssignedRunnerID:  "runner-old",
+		AssignedMachineID: "machine-old",
+		PushedAt:          1000,
+		ExpiresAt:         5000,
+	}); err != nil || !created {
+		t.Fatalf("CreateDispatchLease failed: created=%v err=%v", created, err)
+	}
+
+	cleared, err := s.ClearDispatchLease(ctx, "brain-api", "stale-task")
+	if err != nil {
+		t.Fatalf("ClearDispatchLease failed: %v", err)
+	}
+	if !cleared {
+		t.Fatal("ClearDispatchLease returned false, want true")
+	}
+
+	got, err := s.GetDispatchLeaseRow(ctx, "brain-api", "stale-task")
+	if err != nil {
+		t.Fatalf("GetDispatchLeaseRow failed: %v", err)
+	}
+	if got != nil {
+		t.Fatalf("expected lease gone, got %#v", got)
+	}
+}
+
+func TestClearDispatchLease_MissingRowIsNoop(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	cleared, err := s.ClearDispatchLease(ctx, "brain-api", "never-existed")
+	if err != nil {
+		t.Fatalf("ClearDispatchLease failed: %v", err)
+	}
+	if cleared {
+		t.Fatal("ClearDispatchLease returned true for missing row, want false")
+	}
+}
+
+func TestClearDispatchLease_DoesNotTouchOtherTasks(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	if _, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+		ProjectID: "brain-api", TaskID: "keep-me", AssignedRunnerID: "runner-a",
+		AssignedMachineID: "machine-a", PushedAt: 1000, ExpiresAt: 5000,
+	}); err != nil || !created {
+		t.Fatalf("create keep-me: created=%v err=%v", created, err)
+	}
+	if _, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{
+		ProjectID: "brain-api", TaskID: "drop-me", AssignedRunnerID: "runner-b",
+		AssignedMachineID: "machine-b", PushedAt: 1000, ExpiresAt: 5000,
+	}); err != nil || !created {
+		t.Fatalf("create drop-me: created=%v err=%v", created, err)
+	}
+
+	if _, err := s.ClearDispatchLease(ctx, "brain-api", "drop-me"); err != nil {
+		t.Fatalf("ClearDispatchLease drop-me: %v", err)
+	}
+
+	kept, err := s.GetDispatchLeaseRow(ctx, "brain-api", "keep-me")
+	if err != nil {
+		t.Fatalf("GetDispatchLeaseRow keep-me: %v", err)
+	}
+	if kept == nil {
+		t.Fatal("keep-me lease unexpectedly cleared")
 	}
 }

@@ -4,10 +4,41 @@ import { useNav } from "../../store/nav";
 import { ALL_PROJECTS, useUI } from "../../store/ui";
 import { useLiveTasks, deriveCounts } from "../../hooks/useLiveTasks";
 import { getHealth, getRunnerStatus } from "../../lib/api";
+import type { RunnerStatusResponse } from "../../lib/types";
 
 function shortName(id: string): string {
   if (id === ALL_PROJECTS) return "all";
   return id.split(/[/\\]/).pop() || id;
+}
+
+// deriveTaskPaused returns the per-project (or global) task-pause state
+// the StatusChip wants to render. Returns `undefined` only when the
+// runner-status snapshot itself hasn't loaded yet — empty/null per-
+// project lists must collapse to `false`, otherwise the chip renders a
+// faint "…" even though autos/tasks are clearly running for the project.
+//
+// The Go API serializes nil slices as JSON `null` (not `[]`), so we
+// have to defend against both null AND undefined on the list field.
+export function deriveTaskPaused(
+  data: RunnerStatusResponse | undefined,
+  activeProject: string,
+): boolean | undefined {
+  if (!data) return undefined;
+  if (activeProject === ALL_PROJECTS) return data.paused;
+  const list = data.pausedProjects ?? [];
+  return list.includes(activeProject);
+}
+
+// deriveAutomationsPaused mirrors deriveTaskPaused for automation pause
+// state. See that function for the empty-vs-unknown rationale.
+export function deriveAutomationsPaused(
+  data: RunnerStatusResponse | undefined,
+  activeProject: string,
+): boolean | undefined {
+  if (!data) return undefined;
+  if (activeProject === ALL_PROJECTS) return data.automationsPaused;
+  const list = data.automationPausedProjects ?? [];
+  return list.includes(activeProject);
 }
 
 export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
@@ -30,14 +61,8 @@ export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
     queryFn: getRunnerStatus,
     staleTime: 8_000,
   });
-  const taskPaused =
-    activeProject === ALL_PROJECTS
-      ? statusQ.data?.paused
-      : statusQ.data?.pausedProjects?.includes(activeProject);
-  const automationsPaused =
-    activeProject === ALL_PROJECTS
-      ? statusQ.data?.automationsPaused
-      : statusQ.data?.automationPausedProjects?.includes(activeProject);
+  const taskPaused = deriveTaskPaused(statusQ.data, activeProject);
+  const automationsPaused = deriveAutomationsPaused(statusQ.data, activeProject);
 
   const healthQ = useQuery({ queryKey: ["health"], queryFn: getHealth, staleTime: 30_000 });
   const embedding = healthQ.data?.embedding as
@@ -62,7 +87,7 @@ export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
         <button
           className="sb-project sb-project-btn"
           onClick={() => setProjectSheetOpen(true)}
-          title="Switch project (⌘K / Ctrl+K, or H/L)"
+          title="Switch project (⌘; / Ctrl+;, or H/L)"
         >
           {shortName(activeProject)} ▾
         </button>

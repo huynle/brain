@@ -9,7 +9,7 @@ description: Use when starting a new session, resuming project work, or needing 
 
 **Core Principle:** Load durable project context before making assumptions.
 
-Brain can resolve the current workspace to a project across hosts, worktrees, and checkout paths. The `brain_project_context` tool registers the current Brain client and workspace automatically, resolves the project, and returns the latest `dream` entry for that project.
+Brain can resolve the current workspace to a project across hosts, worktrees, and checkout paths. The `project_context` tool registers the current Brain client and workspace automatically, resolves the project, and returns the latest `dream` entry for that project.
 
 ## When to Use
 
@@ -27,11 +27,11 @@ Brain can resolve the current workspace to a project across hosts, worktrees, an
 
 ## Workflow
 
-1. Call `brain_project_context` before searching manually.
+1. Call `project_context` before searching manually.
 2. Read the returned project, confidence, source, and dream content.
 3. Treat high-confidence dream content as the default project context.
 4. If no dream exists, continue with normal exploration and consider saving a session summary later.
-5. If confidence is low or the project looks wrong, use `brain_search` with likely project names before relying on the result.
+5. If confidence is low or the project looks wrong, use `search` with likely project names before relying on the result.
 
 ## Key Rules
 
@@ -42,7 +42,7 @@ Brain can resolve the current workspace to a project across hosts, worktrees, an
 
 ## Checklist
 
-- [ ] Called `brain_project_context` when prior context could matter.
+- [ ] Called `project_context` when prior context could matter.
 - [ ] Used the resolved project ID for later Brain searches/saves.
 - [ ] Incorporated the dream context into planning or implementation.
 - [ ] Stated uncertainty if resolution confidence was low or no dream existed.

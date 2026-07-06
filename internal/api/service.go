@@ -313,6 +313,14 @@ type EventService interface {
 	CheckFeatureCompletion(ctx context.Context, projectID, featureID, taskID string)
 }
 
+// AutomationRunService triggers a manual run of an automation entry through
+// the same server-side task-generation path the cron/event dispatchers use.
+type AutomationRunService interface {
+	// RunAutomationNow generates the automation's task now. Returns the
+	// created task id, or "" when generation was skipped (concurrency guard).
+	RunAutomationNow(ctx context.Context, pathOrID string) (string, error)
+}
+
 // GoalService defines the interface for goal automation operations exposed over
 // the API: create/update/list/run a goal, fetch goal-scoped linked-task
 // progress, and fetch reconcile audit history. The concrete

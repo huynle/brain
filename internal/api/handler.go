@@ -19,6 +19,7 @@ type Handler struct {
 	events         EventService
 	webhooks       WebhookService
 	goalService    GoalService
+	automationRun  AutomationRunService
 	assistant      *AssistantService
 	placement      ProjectPlacementService
 	scheduler      SchedulerService
@@ -120,6 +121,13 @@ func WithWebhookService(ws WebhookService) HandlerOption {
 func WithGoalService(gs GoalService) HandlerOption {
 	return func(h *Handler) {
 		h.goalService = gs
+	}
+}
+
+// WithAutomationRunService sets the manual automation-run service on the Handler.
+func WithAutomationRunService(ar AutomationRunService) HandlerOption {
+	return func(h *Handler) {
+		h.automationRun = ar
 	}
 }
 

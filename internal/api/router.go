@@ -253,6 +253,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// ─── Automations (manual run) ────────────────────────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*", "runner:*"))
+				if o.handler != nil {
+					r.Post("/automations/run", o.handler.HandleRunAutomation)
+				} else {
+					r.Post("/automations/run", notImplemented)
+				}
+			})
+
 			// ─── Assistant ───────────────────────────────────────
 			r.Route("/assistant", func(r chi.Router) {
 				r.Group(func(r chi.Router) {

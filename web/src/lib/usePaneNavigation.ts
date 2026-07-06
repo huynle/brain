@@ -116,22 +116,26 @@ export function usePaneNavigation(): PaneNavigation {
     // because resizing the bottom row is a layout action, not a content
     // action. We read live store values via getState() to compute the
     // next size, then let the setter clamp.
+    //
+    // Match on e.code (physical key), not e.key: with Option held, macOS
+    // produces composed characters ("∆", "˚", "¬", "˙") in e.key, so a
+    // key-based match never fires on Mac.
     if (e.altKey && !e.ctrlKey && !e.metaKey) {
       const ui = useUI.getState();
-      if (e.key === "j" || e.key === "J") {
+      if (e.code === "KeyJ") {
         setBottomHeight(ui.bottomHeight + RESIZE_STEP.heightPx);
         return true;
       }
-      if (e.key === "k" || e.key === "K") {
+      if (e.code === "KeyK") {
         setBottomHeight(ui.bottomHeight - RESIZE_STEP.heightPx);
         return true;
       }
-      if (e.key === "l" || e.key === "L") {
+      if (e.code === "KeyL") {
         // Right means Detail gets more, Logs less.
         setDetailLogsRatio(ui.detailLogsRatio + RESIZE_STEP.ratio);
         return true;
       }
-      if (e.key === "h" || e.key === "H") {
+      if (e.code === "KeyH") {
         setDetailLogsRatio(ui.detailLogsRatio - RESIZE_STEP.ratio);
         return true;
       }

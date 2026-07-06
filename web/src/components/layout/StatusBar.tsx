@@ -87,7 +87,7 @@ export function StatusBar({ onAssistant }: { onAssistant?: () => void }) {
         <button
           className="sb-project sb-project-btn"
           onClick={() => setProjectSheetOpen(true)}
-          title="Switch project (⌘K / Ctrl+K, or H/L)"
+          title="Switch project (⌘; / Ctrl+;, or H/L)"
         >
           {shortName(activeProject)} ▾
         </button>

@@ -47,6 +47,10 @@ web-dev:
 web-check:
     cd {{ web_dir }} && npm run typecheck
 
+# Run web unit tests (node:test via tsx loader)
+web-test: web-install
+    cd {{ web_dir }} && npm test
+
 # =============================================================================
 # Go Development
 # =============================================================================
@@ -96,8 +100,8 @@ lint:
 vet:
     go vet ./...
 
-# Run all checks (vet + test + lint)
-check: vet test lint
+# Run all checks (vet + test + lint + web typecheck/tests)
+check: vet test lint web-check web-test
 
 # Format Go code
 fmt:

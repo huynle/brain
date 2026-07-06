@@ -36,7 +36,9 @@ export function isEditableTarget(t: EventTarget | null): boolean {
 }
 
 export function anyModalOpen(): boolean {
-  return !!document.querySelector(".modal-backdrop");
+  // Bottom sheets (.sheet-backdrop) count as modal too — global shortcuts
+  // must not fire underneath an open sheet.
+  return !!document.querySelector(".modal-backdrop, .sheet-backdrop");
 }
 
 /**

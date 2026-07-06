@@ -27,6 +27,8 @@ const VIEW_GROUPS: Record<string, Group> = {
       { keys: ["Enter"], desc: "View entry file" },
       { keys: ["s"], desc: "Edit metadata" },
       { keys: ["e"], desc: "Edit full file" },
+      { keys: ["y"], desc: "Copy task title" },
+      { keys: ["{", "}"], desc: "Collapse / expand all groups" },
       { keys: ["/"], desc: "Filter" },
       { keys: ["C"], desc: "Tasks ⇄ Schedules" },
       { keys: ["n"], desc: "New task" },
@@ -87,7 +89,9 @@ const VIEW_GROUPS: Record<string, Group> = {
     rows: [
       { keys: ["j", "k", "g", "G"], desc: "Move through runners and instances" },
       { keys: ["Enter", "o"], desc: "Open instance in Control" },
+      { keys: ["n", "+"], desc: "Spawn new ad-hoc instance" },
       { keys: ["s"], desc: "Shut down cursored runner" },
+      { keys: ["K"], desc: "Kill cursored instance" },
       { keys: ["p", "P"], desc: "Pause/resume active scope" },
       { keys: ["a", "A"], desc: "Pause/resume automations" },
     ],
@@ -110,7 +114,8 @@ const GLOBAL: Group = {
   rows: [
     { keys: ["h", "l", "[", "]"], desc: "Previous / next tab" },
     { keys: [":"], desc: "Command: jump to tasks, brain, automations, runners, logs, projects" },
-    { keys: ["⌘K", "Ctrl+K"], desc: "Quick-switch project (fuzzy search)" },
+    { keys: ["⌘;", "Ctrl+;"], desc: "Quick-switch project (fuzzy search)" },
+    { keys: ["⌘.", "Ctrl+."], desc: "Toggle Brain Assistant (sidebar / drawer)" },
     { keys: ["H", "L"], desc: "Previous / next project" },
     { keys: ["1–9"], desc: "Jump to project tab" },
     { keys: ["R"], desc: "Jump to Runners" },

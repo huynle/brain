@@ -156,6 +156,28 @@ func (s *StorageLayer) ReleaseDispatchLease(ctx context.Context, projectID, task
 	return rows > 0, nil
 }
 
+// ClearDispatchLease removes any dispatch lease for a task regardless of which
+// runner it was previously assigned to. Used when the scheduler decides a task
+// has no eligible candidate, so any prior lease is by definition invalid and
+// should not linger to confuse observability tools (PWA runner card / dispatch
+// diagnostics enrichment). Distinct from ReleaseDispatchLease which requires a
+// runner_id and is intended for the happy path where a specific runner
+// completes / abandons a task it owned.
+func (s *StorageLayer) ClearDispatchLease(ctx context.Context, projectID, taskID string) (bool, error) {
+	result, err := s.db.ExecContext(ctx,
+		"DELETE FROM task_dispatch_leases WHERE project_id = ? AND task_id = ?",
+		projectID, taskID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("clear dispatch lease: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("clear dispatch lease rows affected: %w", err)
+	}
+	return rows > 0, nil
+}
+
 func (s *StorageLayer) ExpireDispatchLeases(ctx context.Context, now int64) (int64, error) {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE task_dispatch_leases

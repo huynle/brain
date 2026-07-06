@@ -159,9 +159,10 @@ func (s *SchedulerService) RunFeatureNow(ctx context.Context, projectID, feature
 				// this dispatch without an HTTP round-trip back to
 				// GetReadyTasks.
 				"task": task,
-			}
-			if force {
-				payload["force"] = true
+				// RunFeatureNow is user-initiated, so always tell the
+				// runner this is a manual override — bypassing its pause
+				// gate. See scheduler.go RunTaskNow for the full rationale.
+				"force": true,
 			}
 			s.publisher.PublishRunnerCommand(candidate.RunnerID, "dispatch", payload)
 		}

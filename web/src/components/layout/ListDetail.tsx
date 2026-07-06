@@ -16,12 +16,16 @@ import { useUI } from "../../store/ui";
 import type { PaneNavigation } from "../../lib/usePaneNavigation";
 import { Panel } from "./Panel";
 import { EntryDetailPane } from "./EntryDetailPane";
-import { EntryLogsPane } from "./EntryLogsPane";
+import { TaskSessionPane } from "./TaskSessionPane";
 import { PaneSplitterRow, PaneSplitterColumn } from "./PaneSplitters";
 
 export interface LogTarget {
   taskId?: string;
   projectId?: string;
+  // taskPath lets the Logs pane fetch recorded session pointers from the
+  // brain entry when there's no live OpenCode instance. Optional so callers
+  // that already only have id+project (e.g. running tasks) still work.
+  taskPath?: string;
 }
 
 export function ListDetail({
@@ -79,7 +83,11 @@ export function ListDetail({
                 {...paneNav.logsPaneProps}
                 style={{ flex: detailVisible ? 1 - detailLogsRatio : 1 }}
               >
-                <EntryLogsPane taskId={logTarget?.taskId} projectId={logTarget?.projectId} />
+                <TaskSessionPane
+                  taskId={logTarget?.taskId}
+                  projectId={logTarget?.projectId}
+                  taskPath={logTarget?.taskPath}
+                />
               </Panel>
             )}
           </div>

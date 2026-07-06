@@ -209,7 +209,7 @@ export function BrainView() {
   const selectedPath = selItem?.path ?? null;
   const logTarget =
     selItem?.type === "task" && selItem.id
-      ? { taskId: selItem.id, projectId: selItem.project_id }
+      ? { taskId: selItem.id, projectId: selItem.project_id, taskPath: selItem.path }
       : null;
 
   return (

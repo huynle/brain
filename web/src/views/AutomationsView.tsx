@@ -471,7 +471,7 @@ export function AutomationsView() {
   const selectedPath = cur?.kind === "auto" ? cur.row.path : cur?.kind === "task" ? cur.task.path : null;
   const logTarget =
     cur?.kind === "task"
-      ? { taskId: cur.task.id, projectId: cur.task.project_id }
+      ? { taskId: cur.task.id, projectId: cur.task.project_id, taskPath: cur.task.path }
       : null;
 
   return (

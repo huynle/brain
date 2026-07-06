@@ -83,6 +83,49 @@ func TestSchedulerRecordsNoCandidateForStrictAffinityWithoutChangingTaskStatus(t
 	}
 }
 
+// TestSchedulerNoCandidateClearsStaleLease verifies that when a task has an
+// existing dispatch_lease (from a prior scheduling pass with a now-ineligible
+// runner) and the current pass finds no eligible candidate, the stale lease
+// is removed. Without this, observability tools would report the task as
+// pending against a runner that will never execute it — the exact bug that
+// surfaced in the PWA runner card's PENDING chip.
+func TestSchedulerNoCandidateClearsStaleLease(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{{ID: "task-1", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"}}
+	// No online runners at all — nothing is eligible for task-1.
+	store.runners = []types.RunnerInfo{}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	// Seed a stale lease as if a prior pass had assigned this task to
+	// runner-gone (which is no longer online).
+	store.activeLeases = map[string]*storage.DispatchLeaseRow{
+		"proj/task-1": {
+			ProjectID:        "proj",
+			TaskID:           "task-1",
+			LeaseID:          "dl_stale",
+			AssignedRunnerID: "runner-gone",
+			State:            storage.DispatchLeaseStatePushed,
+			PushedAt:         500,
+			ExpiresAt:        99999,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	if _, err := svc.ScheduleProject(context.Background(), "proj"); err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if _, still := store.activeLeases["proj/task-1"]; still {
+		t.Fatalf("expected stale lease to be cleared, still present: %#v", store.activeLeases)
+	}
+	if len(store.clearedKeys) != 1 || store.clearedKeys[0] != "proj/task-1" {
+		t.Fatalf("clearedKeys = %#v, want [proj/task-1]", store.clearedKeys)
+	}
+	if len(store.reasons) != 1 || store.reasons[0].Decision != "no_candidate" {
+		t.Fatalf("reasons = %#v, want one no_candidate row", store.reasons)
+	}
+}
+
 func TestSchedulerFiltersCandidatesByExecutorCapabilityWorkspaceCapacityAndDraining(t *testing.T) {
 	store := newFakeSchedulerStore()
 	store.tasks = []types.ResolvedTask{{
@@ -478,6 +521,7 @@ type fakeSchedulerStore struct {
 	// scenarios. Keyed by "projectID/taskID".
 	activeLeases  map[string]*storage.DispatchLeaseRow
 	releasedKeys  []string
+	clearedKeys   []string
 }
 
 type fakeRunnerCommand struct {
@@ -558,6 +602,19 @@ func (f *fakeSchedulerStore) ReleaseDispatchLease(ctx context.Context, projectID
 	return true, nil
 }
 
+func (f *fakeSchedulerStore) ClearDispatchLease(ctx context.Context, projectID, taskID string) (bool, error) {
+	key := projectID + "/" + taskID
+	if f.activeLeases == nil {
+		return false, nil
+	}
+	if _, ok := f.activeLeases[key]; !ok {
+		return false, nil
+	}
+	delete(f.activeLeases, key)
+	f.clearedKeys = append(f.clearedKeys, key)
+	return true, nil
+}
+
 func (f *fakeSchedulerStore) RecordPlacementReason(ctx context.Context, row *storage.PlacementReasonRow) error {
 	f.reasons = append(f.reasons, *row)
 	return nil
@@ -615,6 +672,52 @@ func TestRunTaskNow_DispatchesToEligibleRunner(t *testing.T) {
 	}
 	if len(store.commands) != 1 || store.commands[0].command != "dispatch" || store.commands[0].runnerID != "runner-a" {
 		t.Fatalf("expected dispatch command to runner-a, got %#v", store.commands)
+	}
+}
+
+// TestRunTaskNow_DispatchPayloadAlwaysIncludesForce pins down the contract
+// that RunTaskNow ALWAYS sends force=true to the runner — even when the
+// caller passed force=false. RunTaskNow is by definition a user-initiated
+// dispatch, so the runner's pause gate (which exists to halt the background
+// poll loop, not manual overrides) must be bypassed regardless of whether
+// the caller is also requesting a lease release. Previously the payload
+// only carried force=true when the caller passed it through, so the PWA
+// "x" key silently no-op'd on paused projects: server reported
+// dispatched=true while the runner rejected with runner_paused.
+func TestRunTaskNow_DispatchPayloadAlwaysIncludesForce(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{{
+		ID: "task-1", ProjectID: "proj", Status: "pending",
+		Classification: "ready", Executor: "opencode",
+	}}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 2,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	// force=false on the API: caller is NOT asking to release a lease,
+	// they're just clicking "run this task." The payload to the runner
+	// must still carry force=true so the runner accepts even when paused.
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "task-1", false)
+	if err != nil {
+		t.Fatalf("RunTaskNow failed: %v", err)
+	}
+	if !resp.Dispatched {
+		t.Fatalf("Dispatched = false; reason=%q", resp.Reason)
+	}
+	if len(store.commands) != 1 {
+		t.Fatalf("expected one dispatch command, got %d", len(store.commands))
+	}
+	payload, ok := store.commands[0].payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", store.commands[0].payload)
+	}
+	if payload["force"] != true {
+		t.Fatalf("dispatch payload force = %v, want true even when API force=false (so runner-side pause is bypassed for manual dispatches)", payload["force"])
 	}
 }
 
@@ -1025,7 +1128,49 @@ func TestRunFeatureNow_CapacityHitQueuesLeftovers(t *testing.T) {
 	}
 }
 
+// TestRunFeatureNow_DispatchPayloadAlwaysIncludesForce pins down the same
+// contract as TestRunTaskNow_DispatchPayloadAlwaysIncludesForce but at the
+// feature level: every per-task dispatch published by RunFeatureNow must
+// carry force=true so the runner-side pause gate doesn't silently swallow
+// manual feature runs on paused projects.
+func TestRunFeatureNow_DispatchPayloadAlwaysIncludesForce(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 1},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	// Caller passes force=false (default UI behaviour). The payload to the
+	// runner must still set force=true.
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if !resp.Dispatched {
+		t.Fatalf("Dispatched = false; reason=%q", resp.Reason)
+	}
+	if len(store.commands) != 1 {
+		t.Fatalf("expected one dispatch command, got %d", len(store.commands))
+	}
+	payload, ok := store.commands[0].payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T, want map[string]any", store.commands[0].payload)
+	}
+	if payload["force"] != true {
+		t.Fatalf("dispatch payload force = %v, want true even when API force=false", payload["force"])
+	}
+}
+
 func TestRunFeatureNow_HonorsForceFlagOnPerTaskCalls(t *testing.T) {
+	// Caller-passed force=true: the dispatch payload must carry force=true.
+	// (After the runner-payload-always-force fix this is also covered by
+	// TestRunFeatureNow_DispatchPayloadAlwaysIncludesForce, but we keep this
+	// case explicit so future refactors that re-introduce a conditional on
+	// the caller's `force` parameter still pass this test for the
+	// force=true case.)
 	store := newFakeSchedulerStore()
 	store.tasks = []types.ResolvedTask{
 		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},

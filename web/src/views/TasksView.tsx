@@ -1,7 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
-import { useLive } from "../lib/sse";
 import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
 import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { useIsMobile } from "../hooks/useIsMobile";
@@ -12,14 +11,12 @@ import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
 import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
 import { Panel } from "../components/layout/Panel";
+import { TaskSessionPane } from "../components/layout/TaskSessionPane";
 import { PaneSplitterRow, PaneSplitterColumn } from "../components/layout/PaneSplitters";
 import { ConfirmDialog } from "../components/common/Modal";
 import { deleteEntry, listInstances, runFeature, runOrTriggerTask, setTaskStatus, summarizeRunFeatureResult, summarizeTriggerResults } from "../lib/api";
 import {
-  cleanLogContent,
-  clockTime,
   isActive,
-  logLevelColor,
   relativeTime,
   statusColor,
 } from "../lib/format";
@@ -94,7 +91,6 @@ export function TasksView() {
   const isMobile = useIsMobile();
 
   const { tasks, connected } = useLiveTasks(activeProject);
-  const logs = useLive((s) => s.logs);
 
   const nav = useNav();
   const scope = `tasks:${activeProject}`;
@@ -129,7 +125,6 @@ export function TasksView() {
   // inside the focused detail or logs pane). The hook owns the detail and
   // logs body refs so it can drive scrollTop.
   const paneNav = usePaneNavigation();
-  const logBodyRef = paneNav.logsPaneProps.bodyRef;
 
   const { rows, taskList, featureKeys, tasksByFeature } = useMemo(() => {
     let list = filterTasks(tasks, query);
@@ -197,20 +192,6 @@ export function TasksView() {
     [taskList, selected],
   );
   const selCount = selectedTasks.length;
-
-  // logs for the cursored task (or whole active project)
-  const panelLogs = useMemo(() => {
-    if (detailTask)
-      return logs.filter((l) => l.taskId === detailTask.id).slice(-300);
-    if (activeProject !== ALL_PROJECTS)
-      return logs.filter((l) => l.projectId === activeProject).slice(-300);
-    return logs.slice(-300);
-  }, [logs, detailTask, activeProject]);
-
-  useEffect(() => {
-    if (logBodyRef.current)
-      logBodyRef.current.scrollTop = logBodyRef.current.scrollHeight;
-  }, [panelLogs.length]);
 
   async function run(label: string, fn: () => Promise<unknown>) {
     setBusy(true);
@@ -593,17 +574,11 @@ export function TasksView() {
                 {...paneNav.logsPaneProps}
                 style={{ flex: detailVisible ? 1 - detailLogsRatio : 1 }}
               >
-                {panelLogs.length === 0 ? (
-                  <span className="faint">No logs yet.</span>
-                ) : (
-                  panelLogs.map((r) => (
-                    <div key={r.seq} className="logline">
-                      <span className="lt">{clockTime(r.line.timestamp)}</span>
-                      <span className="ll" style={{ color: logLevelColor(r.line.level) }}>{r.line.level}</span>
-                      <span className="lc">{cleanLogContent(r.line.content)}</span>
-                    </div>
-                  ))
-                )}
+                <TaskSessionPane
+                  taskId={detailTask?.id}
+                  projectId={detailTask?.projectId}
+                  taskPath={detailTask?.path}
+                />
               </Panel>
             )}
           </div>

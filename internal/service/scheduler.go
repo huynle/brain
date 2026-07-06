@@ -42,6 +42,7 @@ type schedulerLeaseStore interface {
 	CreateDispatchLease(ctx context.Context, in storage.DispatchLeaseCreate) (*storage.DispatchLeaseRow, bool, error)
 	GetDispatchLeaseRow(ctx context.Context, projectID, taskID string) (*storage.DispatchLeaseRow, error)
 	ReleaseDispatchLease(ctx context.Context, projectID, taskID, runnerID string) (bool, error)
+	ClearDispatchLease(ctx context.Context, projectID, taskID string) (bool, error)
 	RecordPlacementReason(ctx context.Context, row *storage.PlacementReasonRow) error
 }
 
@@ -513,9 +514,18 @@ func (s *SchedulerService) RunTaskNow(ctx context.Context, projectID, taskID str
 			// Inline the resolved task so the runner can process this
 			// dispatch without an HTTP round-trip back to GetReadyTasks.
 			"task": task,
-		}
-		if force {
-			payload["force"] = true
+			// RunTaskNow is by definition a user-initiated dispatch, so the
+			// runner-side payload always carries force=true. This bypasses
+			// the runner's pause gate (which exists to halt the automatic
+			// poll-loop / ScheduleProject tick, not manual overrides).
+			// The `force` parameter on this method controls lease-release
+			// semantics (release an active lease before dispatch) — a
+			// separate concern from telling the runner "this is manual."
+			// Without this the PWA's "x" key silently fails on paused
+			// projects: server reports dispatched=true but the runner
+			// rejects with runner_paused, leaving the user staring at a
+			// "Triggered" toast while nothing actually runs.
+			"force": true,
 		}
 		s.publisher.PublishRunnerCommand(candidate.RunnerID, "dispatch", payload)
 	}
@@ -774,6 +784,16 @@ func (s *SchedulerService) recordNoCandidate(ctx context.Context, projectID, tas
 	}
 	if err := s.leases.RecordPlacementReason(ctx, row); err != nil {
 		return fmt.Errorf("record placement reason for %s: %w", taskID, err)
+	}
+	// If a prior scheduling pass left a lease against a runner that is no
+	// longer eligible, that lease is by definition stale — the current pass
+	// has decided there is no candidate at all. Wipe it so observability tools
+	// (PWA runner "PENDING" chip, dispatch diagnostics) don't report a task as
+	// pending against a runner that will never execute it. Without this the
+	// lease would linger for its full TTL and confuse the operator into
+	// thinking the runner is holding work.
+	if _, err := s.leases.ClearDispatchLease(ctx, projectID, taskID); err != nil {
+		return fmt.Errorf("clear stale dispatch lease for %s: %w", taskID, err)
 	}
 	return nil
 }

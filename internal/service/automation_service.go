@@ -35,6 +35,34 @@ func NewAutomationService(brain *BrainServiceImpl) *AutomationService {
 	return &AutomationService{brain: brain}
 }
 
+// RunAutomationNow manually triggers one automation through the exact task-
+// generation path the cron/event dispatchers use (createTask), so a manual
+// run can never behave differently from a scheduled one. The dedup key is
+// uniquified per invocation, and the pause gate is intentionally NOT applied
+// — a manual run is an explicit user override. Returns the created task id,
+// or "" when generation was skipped (e.g. max_concurrent reached; the skip
+// is recorded in the run audit).
+func (s *AutomationService) RunAutomationNow(ctx context.Context, pathOrID string) (string, error) {
+	entry, err := s.brain.Recall(ctx, pathOrID)
+	if err != nil {
+		return "", err
+	}
+	if entry.Type != "automation" {
+		return "", fmt.Errorf("entry %s is not an automation (type %q)", pathOrID, entry.Type)
+	}
+	if entry.Action == nil {
+		return "", fmt.Errorf("automation %s has no action", entry.ID)
+	}
+	evt := types.Event{
+		Type:      "manual",
+		Source:    "api",
+		Timestamp: time.Now().UTC(),
+		ProjectID: entry.ProjectID,
+	}
+	key := fmt.Sprintf("automation:manual:%s:%d", entry.ID, time.Now().UTC().UnixNano())
+	return s.createTask(ctx, *entry, evt, key)
+}
+
 // SetPauseChecker lets API runner pause state suppress automation task generation.
 func (s *AutomationService) SetPauseChecker(checker automationPauseChecker) {
 	if s == nil {
@@ -130,7 +158,7 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 		}
 
 		generatedKey := fmt.Sprintf("automation:cron:%s:%s", automation.ID, now.UTC().Format("200601021504"))
-		if err := s.createTask(ctx, automation, types.Event{ProjectID: automation.ProjectID}, generatedKey); err != nil {
+		if _, err := s.createTask(ctx, automation, types.Event{ProjectID: automation.ProjectID}, generatedKey); err != nil {
 			return err
 		}
 	}
@@ -175,7 +203,7 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 			continue
 		}
 
-		if err := s.createTask(ctx, automation, evt, ""); err != nil {
+		if _, err := s.createTask(ctx, automation, evt, ""); err != nil {
 			return err
 		}
 	}
@@ -299,13 +327,13 @@ func matchAutomationFilters(filters map[string]string, evt types.Event) bool {
 	return true
 }
 
-func (s *AutomationService) createTask(ctx context.Context, automation types.BrainEntry, evt types.Event, generatedKeyOverride string) error {
+func (s *AutomationService) createTask(ctx context.Context, automation types.BrainEntry, evt types.Event, generatedKeyOverride string) (string, error) {
 	project := automation.ProjectID
 	if project == "" {
 		project = evt.ProjectID
 	}
 	if skip, reason, err := s.shouldSkipTaskGeneration(ctx, project, automation); err != nil {
-		return err
+		return "", err
 	} else if skip {
 		_, err := s.createRunAudit(ctx, automationRunAudit{
 			automation: automation,
@@ -315,9 +343,9 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 			skipReason: reason,
 		})
 		if err != nil {
-			return err
+			return "", err
 		}
-		return nil
+		return "", nil
 	}
 
 	generated := true
@@ -328,7 +356,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	if generatedKey != "" {
 		exists, err := s.generatedTaskExists(ctx, project, generatedKey)
 		if err != nil {
-			return err
+			return "", err
 		}
 		if exists {
 			_, err := s.createRunAudit(ctx, automationRunAudit{
@@ -340,9 +368,9 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 				skipReason:   "dedup",
 			})
 			if err != nil {
-				return err
+				return "", err
 			}
-			return nil
+			return "", nil
 		}
 	}
 
@@ -390,7 +418,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 
 	taskResp, err := s.brain.Save(ctx, req)
 	if err != nil {
-		return fmt.Errorf("create automation task: %w", err)
+		return "", fmt.Errorf("create automation task: %w", err)
 	}
 	runID, err := s.createRunAudit(ctx, automationRunAudit{
 		automation:   automation,
@@ -401,15 +429,15 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		taskIDs:      []string{taskResp.ID},
 	})
 	if err != nil {
-		return err
+		return "", err
 	}
 	if runID != "" {
 		_, err = s.brain.Update(ctx, taskResp.ID, types.UpdateEntryRequest{AutomationRunID: &runID})
 		if err != nil {
-			return fmt.Errorf("link automation task to run audit: %w", err)
+			return "", fmt.Errorf("link automation task to run audit: %w", err)
 		}
 	}
-	return nil
+	return taskResp.ID, nil
 }
 
 func automationCompleteOnIdle(value *bool) *bool {

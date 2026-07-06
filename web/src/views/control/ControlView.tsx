@@ -16,7 +16,9 @@ import { Modal, ConfirmDialog } from "../../components/common/Modal";
 import { EmptyState, ErrorState, Loading, Spinner } from "../../components/common/states";
 import { useUI } from "../../store/ui";
 import { useNav } from "../../store/nav";
-import { handleListNavKey, useViewKeyboard } from "../../lib/keyboard";
+import { listNavHandlers } from "../../lib/keymap/listNav";
+import { useActions } from "../../lib/keymap/useActions";
+import { CONTROL_SPECS } from "./keymap";
 import type { ControlTarget } from "../../store/ui";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { useSwipe } from "../../hooks/useSwipe";
@@ -151,35 +153,27 @@ export function ControlView() {
     pick(first);
   }
 
-  useViewKeyboard(
-    (e) => {
-      if (handleListNavKey(e, scope, rows.length)) return true;
-      const cur = rows[cursor];
-      switch (e.key) {
-        case "Enter":
-          openRow(cur);
-          return true;
-        case "n":
-        case "+":
-          setSpawnOpen(true);
-          return true;
-        case "x":
-        case "s":
-          if (cur?.kind !== "instance") return true;
-          if (cur.instance.kind !== "adhoc") {
-            toast("Only ad-hoc instances can be killed", "info");
-            return true;
-          }
-          setConfirmKill(cur.instance);
-          return true;
-        case "Escape":
-        case "Backspace":
-          if (!chatOpen) return false;
-          goBack();
-          return true;
-        default:
-          return false;
-      }
+  useActions(
+    "view:control",
+    "view",
+    CONTROL_SPECS,
+    {
+      ...listNavHandlers("control", { scope: () => scope, count: () => rows.length }),
+      "control.open": () => openRow(rows[cursor]),
+      "control.spawn": () => setSpawnOpen(true),
+      "control.kill": () => {
+        const cur = rows[cursor];
+        if (cur?.kind !== "instance") return;
+        if (cur.instance.kind !== "adhoc") {
+          toast("Only ad-hoc instances can be killed", "info");
+          return;
+        }
+        setConfirmKill(cur.instance);
+      },
+      "control.back": () => {
+        if (!chatOpen) return false; // fall through to the global Esc chain
+        goBack();
+      },
     },
     [rows, cursor, chatOpen, rowIndexByKey],
   );

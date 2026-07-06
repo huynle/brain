@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { useScope } from "./scope";
 import {
   clampBottomHeight,
   clampDetailLogsRatio,
@@ -67,9 +68,20 @@ export interface ControlTarget {
   taskTitle?: string;
 }
 
+export type TasksMode = "tasks" | "schedules" | "done";
+
 interface UIState {
   view: View;
   activeProject: string; // project id or ALL_PROJECTS
+  // Tasks view mode. Lives here (not in TasksView state) so the command
+  // grammar (:done) and StatusBar segments can drive it.
+  tasksMode: TasksMode;
+  setTasksMode: (m: TasksMode) => void;
+  // Done-mode refinements, store-level so :merge-ready / StatusBar can drive them.
+  doneIncludeCancelled: boolean;
+  toggleDoneIncludeCancelled: () => void;
+  doneMergeOnly: boolean;
+  setDoneMergeOnly: (v: boolean) => void;
   logFilter: string; // task id filter applied when opening the logs view
   controlTarget: ControlTarget | null; // pending Control attach request
   settingsOpen: boolean;
@@ -196,6 +208,7 @@ function loadDetailLogsRatio(): number {
 
 export const useUI = create<UIState>((set, get) => ({
   view: "tasks",
+  tasksMode: "tasks",
   activeProject: loadActiveProject(),
   logFilter: "",
   controlTarget: null,
@@ -215,6 +228,11 @@ export const useUI = create<UIState>((set, get) => ({
   toasts: [],
   _tid: 0,
   setView: (v) => set({ view: v }),
+  setTasksMode: (m) => set({ tasksMode: m }),
+  doneIncludeCancelled: false,
+  toggleDoneIncludeCancelled: () => set((s) => ({ doneIncludeCancelled: !s.doneIncludeCancelled })),
+  doneMergeOnly: false,
+  setDoneMergeOnly: (v) => set({ doneMergeOnly: v }),
   cycleView: (dir) =>
     set((s) => {
       const i = VIEW_ORDER.indexOf(s.view);
@@ -268,6 +286,9 @@ export const useUI = create<UIState>((set, get) => ({
     } catch {
       /* ignore storage errors (private mode, quota) */
     }
+    // A project switch abandons any drill-down path (the frames referenced
+    // entities of the previous project's scope).
+    useScope.getState().reset();
     set({ activeProject: p });
   },
   // The Logs tab is the global server-request log now; a task's own output

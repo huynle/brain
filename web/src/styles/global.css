@@ -2529,6 +2529,253 @@ body.resizing-pane-col * {
   color: #07111f;
 }
 
+/* k9s-style vertical suggestion list with a keyboard highlight (↑/↓/C-n/C-p),
+   replacing the pill row when the grammar provides labeled suggestions. */
+.command-suggestions-list {
+  flex-direction: column;
+  gap: 0;
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+.command-suggestions-list button {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font-weight: 500;
+  padding: 0.3rem 0.5rem;
+}
+
+.command-suggestions-list button.on,
+.command-suggestions-list button:hover {
+  background: var(--blue);
+  color: var(--bg);
+}
+
+.command-suggestion-label {
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.command-suggestion-detail {
+  opacity: 0.7;
+  font-size: 0.85em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Context header (breadcrumb ▸ filter ▸ sort ▸ counts) sharing the tab row. */
+.context-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 0.85em;
+}
+
+.context-crumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.context-crumb {
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0.15rem;
+}
+
+.context-crumb:hover {
+  text-decoration: underline;
+}
+
+.context-crumb-frame {
+  color: var(--purple);
+}
+
+.context-sep {
+  opacity: 0.5;
+}
+
+.context-chip {
+  border-radius: 3px;
+  padding: 0 0.35rem;
+  font-weight: 700;
+}
+
+.context-filter {
+  background: var(--yellow);
+  color: var(--bg);
+}
+
+.context-sort {
+  border: 1px solid currentColor;
+  opacity: 0.8;
+}
+
+.context-counts {
+  opacity: 0.7;
+  font-weight: 700;
+}
+
+/* Session inspection modal: give the transcript room. */
+.session-modal .sheet-body {
+  min-height: 55vh;
+}
+
+/* Mobile context strip: drill breadcrumb + mode + filter with tap-to-back. */
+.mctx {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.6rem;
+  border-bottom: 1px solid var(--border-strong);
+  font-size: 0.85em;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.mctx-back {
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0.5rem;
+}
+
+.mctx-crumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-weight: 700;
+}
+
+.mctx-frame {
+  color: var(--purple);
+}
+
+.mctx-chip {
+  border: none;
+  border-radius: 3px;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0.4rem;
+}
+
+.mctx-mode {
+  background: var(--blue);
+  color: var(--bg);
+}
+
+.mctx-filter {
+  background: var(--yellow);
+  color: var(--bg);
+  margin-left: auto;
+}
+
+/* Tasks mobile toolbar: mode segments + done-mode chips + filter. */
+.tasks-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.2rem 0.45rem;
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+.tasks-toolbar .seg {
+  display: inline-flex;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  overflow: hidden;
+}
+
+.tasks-toolbar .seg button {
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  padding: 0.2rem 0.6rem;
+}
+
+.tasks-toolbar .seg button.on {
+  background: var(--blue);
+  color: var(--bg);
+  font-weight: 700;
+}
+
+.tasks-toolbar .chip {
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  padding: 0.15rem 0.55rem;
+}
+
+.tasks-toolbar .chip.on {
+  background: var(--purple);
+  color: var(--bg);
+  border-color: var(--purple);
+  font-weight: 700;
+}
+
+/* Feature-header drill affordance (tap counterpart of Enter-descend). */
+.feature-drill {
+  border: none;
+  background: transparent;
+  color: var(--purple);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0 0.35rem;
+}
+
+/* The status bar can overflow on phones — let it scroll sideways. */
+.tui.mobile .tui-statusrow {
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* Clickable StatusBar chips/segments keep their text styling. */
+.sb-state-btn,
+.sb-seg-btn {
+  border: none;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+}
+
+.sb-state-btn:hover,
+.sb-seg-btn:hover {
+  text-decoration: underline;
+}
+
+.sb-state-btn:disabled {
+  cursor: default;
+  text-decoration: none;
+}
+
 .search-layer {
   position: fixed;
   inset: 0;

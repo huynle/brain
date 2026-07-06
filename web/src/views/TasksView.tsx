@@ -1,20 +1,26 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
-import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { useScope } from "../store/scope";
+import { listNavHandlers } from "../lib/keymap/listNav";
+import { useActions } from "../lib/keymap/useActions";
+import { FEATURE_SORT_FIELDS, TASKS_SPECS } from "./tasks/keymap";
 import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useLiveTasks } from "../hooks/useLiveTasks";
-import { filterTasks, groupByFeature, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
+import { filterTasks, groupByFeature, isReadyTask, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
+import { mergeReadyFeatures } from "./tasks/mergeAttention";
+import { useQuery } from "@tanstack/react-query";
 import { buildTaskTree } from "./tasks/tree";
 import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
 import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
 import { Panel } from "../components/layout/Panel";
 import { TaskSessionPane } from "../components/layout/TaskSessionPane";
+import { SessionModal } from "../components/layout/SessionModal";
 import { PaneSplitterRow, PaneSplitterColumn } from "../components/layout/PaneSplitters";
 import { ConfirmDialog } from "../components/common/Modal";
-import { deleteEntry, listInstances, runFeature, runOrTriggerTask, setTaskStatus, summarizeRunFeatureResult, summarizeTriggerResults } from "../lib/api";
+import { deleteEntry, listEntries, runFeature, runOrTriggerTask, setTaskStatus, summarizeRunFeatureResult, summarizeTriggerResults } from "../lib/api";
 import {
   isActive,
   relativeTime,
@@ -32,11 +38,14 @@ const ComposeModal = lazy(() =>
 const EntryEditModal = lazy(() =>
   import("./brain/EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
 );
-const EntryRawViewModal = lazy(() =>
-  import("./brain/EntryRawViewModal").then((m) => ({ default: m.EntryRawViewModal })),
-);
 
 const TERMINAL = ["completed", "cancelled", "archived", "superseded"];
+// Done-mode sort: flat newest-completion-first, or grouped by feature.
+const DONE_SORT_FIELDS = ["completed", "feature"] as const;
+function completionMs(t: Task): number {
+  const n = Date.parse(t.completed_at || t.modified || "");
+  return Number.isNaN(n) ? 0 : n;
+}
 const FEATURE_SORT_LABELS: Record<FeatureSortMode, string> = {
   completed: "done",
   created: "new",
@@ -90,23 +99,77 @@ export function TasksView() {
   const openInControl = useUI((s) => s.openInControl);
   const isMobile = useIsMobile();
 
-  const { tasks, connected } = useLiveTasks(activeProject);
+  const mode = useUI((s) => s.tasksMode);
+  const setTasksMode = useUI((s) => s.setTasksMode);
+  const includeCancelled = useUI((s) => s.doneIncludeCancelled);
+  const toggleIncludeCancelled = useUI((s) => s.toggleDoneIncludeCancelled);
+  const mergeOnly = useUI((s) => s.doneMergeOnly);
+  const setMergeOnly = useUI((s) => s.setDoneMergeOnly);
+
+  const { tasks: liveTasks, connected } = useLiveTasks(activeProject);
+
+  // Done mode reaches past the (limit-bounded) SSE snapshot with a completed-
+  // history query ordered by the completed_at stamp server-side; live tasks
+  // win on id collisions (they are fresher).
+  const historyQ = useQuery({
+    queryKey: ["done-history", activeProject],
+    queryFn: () =>
+      listEntries({
+        type: "task",
+        status: "completed",
+        sortBy: "completed",
+        sortOrder: "desc",
+        limit: 200,
+        ...(activeProject !== ALL_PROJECTS ? { project: activeProject } : {}),
+      }),
+    enabled: false,
+    staleTime: 30_000,
+  });
+  const historyEnabled = mode === "done";
+  useEffect(() => {
+    if (historyEnabled) void historyQ.refetch();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [historyEnabled, activeProject]);
+  const tasks = useMemo(() => {
+    if (mode !== "done") return liveTasks;
+    const byId = new Map<string, Task>();
+    for (const e of historyQ.data?.entries ?? []) {
+      byId.set(e.id, {
+        ...(e as unknown as Task),
+        projectId: (e as { project_id?: string }).project_id,
+      });
+    }
+    for (const t of liveTasks) byId.set(t.id, t);
+    return [...byId.values()];
+  }, [mode, liveTasks, historyQ.data]);
 
   const nav = useNav();
   const scope = `tasks:${activeProject}`;
   const cursor = useNav((s) => s.cursor[scope] ?? 0);
   const selected = useNav((s) => s.selected);
 
-  const [mode, setMode] = useState<"tasks" | "schedules">("tasks");
-  const [query, setQuery] = useState("");
+  // Filter and sort live in the scope store so the ContextBar can show them
+  // and the global Esc chain can clear/unwind them.
+  const query = useScope((s) => s.filter["tasks"] ?? "");
+  const setScopeFilter = useScope((s) => s.setFilter);
+  const setQuery = (q: string) => setScopeFilter("tasks", q);
+  const featureSort = (useScope((s) => s.sort["tasks"]?.field) ?? "completed") as FeatureSortMode;
+  const sortDir = useScope((s) => s.sort["tasks"]?.dir) ?? "desc";
+  const setScopeSort = useScope((s) => s.setSort);
+  const setFeatureSort = (f: FeatureSortMode) => setScopeSort("tasks", { field: f, dir: "desc" });
+  const cycleSortField = useScope((s) => s.cycleSortField);
+  const toggleSortDir = useScope((s) => s.toggleSortDir);
+  const setCounts = useScope((s) => s.setCounts);
+  const drillStack = useScope((s) => s.stack);
+  const pushFrame = useScope((s) => s.push);
+  const featureFrame = [...drillStack].reverse().find((f) => f.view === "tasks" && f.kind === "feature");
   const [searchOpen, setSearchOpen] = useState(false);
   const [showDone, setShowDone] = useState(false);
-  const [featureSort, setFeatureSort] = useState<FeatureSortMode>("completed");
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [collapseDefault, setCollapseDefault] = useState(activeProject === ALL_PROJECTS);
 
   const [editMeta, setEditMeta] = useState<Task | null>(null);
-  const [viewContent, setViewContent] = useState<Task | null>(null);
+  const [sessionTask, setSessionTask] = useState<Task | null>(null);
   const [editContent, setEditContent] = useState<Task | null>(null);
   const [batchMeta, setBatchMeta] = useState<Task[] | null>(null);
   const [featureMeta, setFeatureMeta] = useState<{ feature: string; tasks: Task[] } | null>(null);
@@ -129,20 +192,40 @@ export function TasksView() {
   const { rows, taskList, featureKeys, tasksByFeature } = useMemo(() => {
     let list = filterTasks(tasks, query);
     if (mode === "schedules") list = list.filter((t) => t.schedule || t.run_once_at);
-    else if (!showDone) list = list.filter((t) => !TERMINAL.includes(t.status));
-    const groups = groupByFeature(list, activeProject === ALL_PROJECTS ? featureSort : "name");
+    else if (mode === "done") {
+      const doneSet = includeCancelled
+        ? new Set([...TERMINAL, "validated"])
+        : new Set(["completed", "validated"]);
+      list = list.filter((t) => doneSet.has(t.status));
+      if (mergeOnly) {
+        const ready = new Set(mergeReadyFeatures(list).map((m) => m.feature));
+        list = list.filter((t) => t.feature_id && ready.has(t.feature_id));
+      }
+    } else if (!showDone) list = list.filter((t) => !TERMINAL.includes(t.status));
+    // Drill-down: a feature frame (Enter on its header) scopes the whole
+    // view to that feature; Esc pops back out.
+    if (featureFrame) {
+      list = list.filter((t) => (t.feature_id || UNGROUPED) === featureFrame.id);
+    }
+    if (mode === "done" && (featureSort as string) !== "feature") {
+      // Flat history, newest completion first (completed_at, modified fallback).
+      const done = [...list].sort((a, b) => completionMs(b) - completionMs(a));
+      const flatRows: Row[] = done.map((t) => ({ kind: "task", task: t, lead: "", inCycle: false }));
+      return { rows: flatRows, taskList: done, featureKeys: [], tasksByFeature: new Map() };
+    }
+    const groups = groupByFeature(list, mode === "done" ? "completed" : activeProject === ALL_PROJECTS ? featureSort : "name", sortDir);
     const r: Row[] = [];
     const flat: Task[] = [];
     const keys: string[] = [];
     const byFeature = new Map<string, Task[]>();
     for (const g of groups) {
       byFeature.set(g.feature, g.tasks);
-      const showHeader = g.feature !== UNGROUPED || groups.length > 1;
+      const showHeader = (g.feature !== UNGROUPED || groups.length > 1) && !featureFrame;
       if (showHeader) {
         keys.push(g.feature);
         r.push({ kind: "header", feature: g.feature, label: g.label, count: g.tasks.length });
       }
-      if (!(collapsed[g.feature] ?? collapseDefault)) {
+      if (featureFrame || !(collapsed[g.feature] ?? collapseDefault)) {
         if (mode === "schedules") {
           g.tasks.forEach((t) => {
             r.push({ kind: "task", task: t, lead: "", inCycle: false });
@@ -158,7 +241,12 @@ export function TasksView() {
       }
     }
     return { rows: r, taskList: flat, featureKeys: keys, tasksByFeature: byFeature };
-  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort]);
+  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort, sortDir, featureFrame, includeCancelled, mergeOnly]);
+
+  // Feed the ContextBar's shown/total counter.
+  useEffect(() => {
+    setCounts("tasks", taskList.length, tasks.length);
+  }, [taskList.length, tasks.length, setCounts]);
 
   useEffect(() => {
     setCollapsed({});
@@ -186,6 +274,11 @@ export function TasksView() {
     setCollapseDefault(value);
     setCollapsed(Object.fromEntries(featureKeys.map((key) => [key, value])));
   };
+
+  const mergeReadySet = useMemo(
+    () => new Set(mergeReadyFeatures(tasks).map((m) => m.feature)),
+    [tasks],
+  );
 
   const selectedTasks = useMemo(
     () => taskList.filter((t) => selected[taskKey(t)]),
@@ -282,121 +375,121 @@ export function TasksView() {
     }
   }
 
-  async function openTaskSession(task: Task) {
-    if (!isActive(task.status)) {
-      setViewContent(task);
-      return;
-    }
-    try {
-      const instances = await listInstances();
-      const inst = instances.find((i) => i.task_id === task.id && (!task.projectId || i.project_id === task.projectId));
-      if (!inst) {
-        toast("No live session found for this task", "info");
-        return;
-      }
-      openInControl({
-        mode: "live",
-        runnerId: inst.runner_id,
-        instanceId: inst.instance_id,
-        taskTitle: task.title || task.id,
-      });
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "Could not open session", "error");
-    }
+  // Enter inspects the task's work in place: SessionModal renders the live
+  // stream or the recorded transcript without leaving the Tasks tab.
+  function openTaskSession(task: Task) {
+    setSessionTask(task);
   }
 
-  useViewKeyboard(
-    (e) => {
-      // Tab/Shift-Tab + vim-style scroll inside detail/logs panes.
-      if (paneNav.handleKey(e)) return true;
-
-      // View-owned panel toggles. (paneNav handles Tab; T and z are still
-      // view-scoped because they mutate visibility, not focus.)
-      if (e.key === "T") {
-        toggleDetail();
-        return true;
-      }
-      if (e.key === "z") {
-        toggleLogs();
-        return true;
-      }
-      // When detail/logs are focused, paneNav already handled or rejected
-      // j/k/g/G/Ctrl-D/Ctrl-U above. If we got here, the key is unhandled
-      // for that focus — don't fall into list nav.
-      if (focus === "detail" || focus === "logs") {
-        return false;
-      }
-      // tasks focus
-      if (handleListNavKey(e, scope, rows.length)) return true;
-      const row = rows[cursor];
-      const cur = row?.kind === "task" ? row.task : undefined;
-      switch (e.key) {
-        case "Enter":
-          if (row?.kind === "header")
-            setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
-          else if (cur) void openTaskSession(cur);
-          return true;
-        case " ":
-          if (row?.kind === "header")
-            setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
-          else if (cur) nav.toggleSelect(taskKey(cur));
-          return true;
-        case "{": setAllFeatureCollapsed(true); return true;
-        case "}": setAllFeatureCollapsed(false); return true;
-        case "A": nav.selectMany(taskList.map(taskKey)); return true;
-        case "D": nav.clearSelect(); return true;
-        case "c": {
-          const ts = targets(cur);
-          if (ts.length) void run(`Completed ${ts.length}`, () => Promise.all(ts.map((t) => setTaskStatus(t, "completed")))).then(() => nav.clearSelect());
-          return true;
-        }
-        case "x":
-          if (row?.kind === "header") {
-            // Whole-feature dispatch: hand the server a single call so it
-            // can plan capacity, queue leftovers, and start a cascade for
-            // drain-while-paused. UNGROUPED rows fall back to the per-task
-            // path because they don't share a feature_id.
-            if (row.feature === UNGROUPED) {
-              const ready = taskList.filter((t) => !t.feature_id && ["pending", "active"].includes(t.status));
-              if (ready.length) void triggerMany(ready);
-            } else {
-              const sample = taskList.find((t) => t.feature_id === row.feature && t.projectId);
-              if (sample?.projectId) void runFeatureNow(sample.projectId, row.feature);
-            }
-          } else if (cur?.projectId) void triggerMany([cur]);
-          return true;
-        case "X":
-          if (cur && isActive(cur.status)) void run("Cancelled", () => setTaskStatus(cur, "cancelled"));
-          return true;
-        case "d":
-        case "Backspace": {
-          const ts = targets(cur);
-          if (ts.length) setConfirmDel(ts);
-          return true;
-        }
-        case "s": {
-          if (row?.kind === "header") {
-            const ts = tasksByFeature.get(row.feature) ?? [];
-            if (row.feature === UNGROUPED) toast("Ungrouped tasks do not have feature settings", "info");
-            else if (ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
-            return true;
+  // Pane scroll/focus dispatches via the pane-tier scope registered by
+  // usePaneNavigation; list-scoped specs carry when:{focus:["tasks"]}.
+  useActions(
+    "view:tasks",
+    "view",
+    TASKS_SPECS,
+    {
+      ...listNavHandlers("tasks", { scope: () => scope, count: () => rows.length }),
+      "tasks.toggleDetail": () => toggleDetail(),
+      "tasks.toggleLogs": () => toggleLogs(),
+      "tasks.enter": () => {
+        const row = rows[cursor];
+        // Enter DESCENDS (k9s): a feature header pushes a drill frame that
+        // scopes the view to that feature (Esc pops back). Collapse
+        // toggling lives on Space.
+        if (row?.kind === "header") {
+          pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
+          nav.setCursor(scope, 0);
+        } else if (row?.kind === "task") openTaskSession(row.task);
+      },
+      "tasks.select": () => {
+        const row = rows[cursor];
+        if (row?.kind === "header")
+          setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
+        else if (row?.kind === "task") nav.toggleSelect(taskKey(row.task));
+      },
+      "tasks.collapseAll": () => setAllFeatureCollapsed(true),
+      "tasks.expandAll": () => setAllFeatureCollapsed(false),
+      "tasks.selectAll": () => nav.selectMany(taskList.map(taskKey)),
+      "tasks.deselect": () => nav.clearSelect(),
+      "tasks.complete": () => {
+        const row = rows[cursor];
+        const ts = targets(row?.kind === "task" ? row.task : undefined);
+        if (ts.length) void run(`Completed ${ts.length}`, () => Promise.all(ts.map((t) => setTaskStatus(t, "completed")))).then(() => nav.clearSelect());
+      },
+      "tasks.run": () => {
+        const row = rows[cursor];
+        if (row?.kind === "header") {
+          // Whole-feature dispatch: hand the server a single call so it
+          // can plan capacity, queue leftovers, and start a cascade for
+          // drain-while-paused. UNGROUPED rows fall back to the per-task
+          // path because they don't share a feature_id.
+          if (row.feature === UNGROUPED) {
+            const ready = taskList.filter((t) => !t.feature_id && ["pending", "active"].includes(t.status));
+            if (ready.length) void triggerMany(ready);
+          } else {
+            const sample = taskList.find((t) => t.feature_id === row.feature && t.projectId);
+            if (sample?.projectId) void runFeatureNow(sample.projectId, row.feature);
           }
-          const ts = targets(cur);
-          if (ts.length > 1) setBatchMeta(ts);
-          else if (cur) setEditMeta(cur);
-          return true;
+        } else if (row?.kind === "task" && row.task.projectId) void triggerMany([row.task]);
+      },
+      "tasks.cancel": () => {
+        const row = rows[cursor];
+        const cur = row?.kind === "task" ? row.task : undefined;
+        if (cur && isActive(cur.status)) void run("Cancelled", () => setTaskStatus(cur, "cancelled"));
+      },
+      "tasks.delete": () => {
+        const row = rows[cursor];
+        const ts = targets(row?.kind === "task" ? row.task : undefined);
+        if (ts.length) setConfirmDel(ts);
+      },
+      "tasks.editMeta": () => {
+        const row = rows[cursor];
+        if (row?.kind === "header") {
+          const ts = tasksByFeature.get(row.feature) ?? [];
+          if (row.feature === UNGROUPED) toast("Ungrouped tasks do not have feature settings", "info");
+          else if (ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
+          return;
         }
-        case "e": if (cur) setEditContent(cur); return true;
-        case "y":
-          if (cur) { void navigator.clipboard?.writeText(cur.title || cur.id); toast("Copied title"); }
-          return true;
-        case "/": setSearchOpen(true); return true;
-        case "C": setMode((m) => (m === "tasks" ? "schedules" : "tasks")); nav.setCursor(scope, 0); return true;
-        case "n": setComposing(true); return true;
-        default: return false;
-      }
+        const cur = row?.kind === "task" ? row.task : undefined;
+        const ts = targets(cur);
+        if (ts.length > 1) setBatchMeta(ts);
+        else if (cur) setEditMeta(cur);
+      },
+      "tasks.editFile": () => {
+        const row = rows[cursor];
+        if (row?.kind === "task") setEditContent(row.task);
+      },
+      "tasks.copyTitle": () => {
+        const row = rows[cursor];
+        if (row?.kind === "task") {
+          void navigator.clipboard?.writeText(row.task.title || row.task.id);
+          toast("Copied title");
+        }
+      },
+      "tasks.sortCycle": () =>
+        cycleSortField("tasks", mode === "done" ? DONE_SORT_FIELDS : FEATURE_SORT_FIELDS, "completed"),
+      "tasks.sortReverse": () => toggleSortDir("tasks", "completed"),
+      "tasks.filter": () => setSearchOpen(true),
+      "tasks.mode": () => {
+        setTasksMode(mode === "schedules" ? "tasks" : "schedules");
+        nav.setCursor(scope, 0);
+      },
+      "tasks.done": () => {
+        setTasksMode(mode === "done" ? "tasks" : "done");
+        if (mode === "done") setMergeOnly(false);
+        nav.setCursor(scope, 0);
+      },
+      "tasks.includeCancelled": () => {
+        if (mode !== "done") return false;
+        toggleIncludeCancelled();
+      },
+      "tasks.mergeOnly": () => {
+        if (mode !== "done") return false;
+        setMergeOnly(!mergeOnly);
+      },
+      "tasks.new": () => setComposing(true),
     },
-    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast],
+    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast, featureFrame, mode, mergeOnly, includeCancelled],
   );
 
   async function doDelete(ts: Task[]) {
@@ -426,7 +519,7 @@ export function TasksView() {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false); if (e.key === "Enter") setSearchOpen(false); }}
           />
-          <button className="btn sm" onClick={() => setMode((m) => (m === "tasks" ? "schedules" : "tasks"))}>
+          <button className="btn sm" onClick={() => setTasksMode(mode === "schedules" ? "tasks" : "schedules")}>
             {mode === "schedules" ? "sched" : "tasks"}
           </button>
           {mode === "tasks" && (
@@ -453,6 +546,49 @@ export function TasksView() {
           </div>
         </div>
 
+        {isMobile && (
+          <div className="tasks-toolbar">
+            <div className="seg">
+              {([["tasks", "Active"], ["done", "Done"], ["schedules", "Sched"]] as const).map(([m, label]) => (
+                <button
+                  key={m}
+                  type="button"
+                  className={mode === m ? "on" : ""}
+                  onClick={() => {
+                    setTasksMode(m);
+                    if (m !== "done") setMergeOnly(false);
+                    nav.setCursor(scope, 0);
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {mode === "done" && (
+              <>
+                <button
+                  type="button"
+                  className={`chip ${mergeOnly ? "on" : ""}`}
+                  onClick={() => setMergeOnly(!mergeOnly)}
+                  title="Only merge-ready features"
+                >
+                  ⇡ merge
+                </button>
+                <button
+                  type="button"
+                  className={`chip ${includeCancelled ? "on" : ""}`}
+                  onClick={() => toggleIncludeCancelled()}
+                  title="Include cancelled/superseded"
+                >
+                  + cancelled
+                </button>
+              </>
+            )}
+            <button type="button" className="chip" onClick={() => setSearchOpen(true)} title="Filter">
+              ⌕ filter
+            </button>
+          </div>
+        )}
         {rows.length === 0 ? (
           <div className="muted" style={{ padding: "8px 4px" }}>
             {!connected && tasks.length === 0
@@ -484,7 +620,31 @@ export function TasksView() {
                 >
                   <span className="htri">{(collapsed[row.feature] ?? collapseDefault) ? "▸" : "▾"}</span>
                   {row.label}
-                  <span className="hcount">({row.count})</span>
+                  <span className="hcount">
+                    {(() => {
+                      const ready = (tasksByFeature.get(row.feature) ?? []).filter(isReadyTask).length;
+                      return ready > 0 ? (
+                        <>({ready}<span style={{ color: "var(--green)" }}>●</span> / {row.count})</>
+                      ) : (
+                        <>({row.count})</>
+                      );
+                    })()}
+                  </span>
+                  {row.feature !== UNGROUPED && (
+                    <button
+                      type="button"
+                      className="feature-drill"
+                      title="Open this feature scoped (Enter)"
+                      aria-label={`Drill into feature ${row.feature}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
+                        nav.setCursor(scope, 0);
+                      }}
+                    >
+                      »
+                    </button>
+                  )}
                   {featureSample?.projectId && (
                     <button
                       type="button"
@@ -514,7 +674,7 @@ export function TasksView() {
                   nav.setCursor(scope, i);
                   if (isMobile) openInspect({ path: t.path, taskId: t.id, projectId: t.projectId, title: t.title });
                 }}
-                onDoubleClick={() => void openTaskSession(t)}
+                onDoubleClick={() => openTaskSession(t)}
               >
                 <span className="connector">{row.lead}</span>
                 {selCount > 0 && (
@@ -536,6 +696,16 @@ export function TasksView() {
                 )}
                 {mode === "schedules" && t.schedule && (
                   <span className="suffix" style={{ color: "var(--cyan)" }}>{t.schedule}</span>
+                )}
+                {mode === "done" && (
+                  <>
+                    {t.feature_id && mergeReadySet.has(t.feature_id) && (
+                      <span className="suffix" style={{ color: "var(--purple)", fontWeight: 700 }} title="Feature fully completed with merge config — probably needs merging">⇡ merge</span>
+                    )}
+                    {t.feature_id && <span className="suffix" style={{ color: "var(--teal)" }}>{t.feature_id}</span>}
+                    {t.executor && <span className="suffix faint">{t.executor}</span>}
+                    <span className="suffix faint">{relativeTime(t.completed_at || t.modified || "")}</span>
+                  </>
                 )}
               </div>
             );
@@ -586,14 +756,16 @@ export function TasksView() {
       )}
 
       {editMeta && <MetadataModal task={editMeta} onClose={() => setEditMeta(null)} />}
-      {viewContent && (
-        <Suspense fallback={null}>
-          <EntryRawViewModal
-            path={viewContent.path}
-            title={viewContent.title || viewContent.id}
-            onClose={() => setViewContent(null)}
-          />
-        </Suspense>
+      {sessionTask && (
+        <SessionModal
+          target={{
+            taskId: sessionTask.id,
+            projectId: sessionTask.projectId,
+            taskPath: sessionTask.path,
+            title: sessionTask.title,
+          }}
+          onClose={() => setSessionTask(null)}
+        />
       )}
       {batchMeta && <BatchMetadataModal tasks={batchMeta} onClose={() => setBatchMeta(null)} onDone={() => nav.clearSelect()} />}
       {featureMeta && (

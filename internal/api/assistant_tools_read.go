@@ -62,7 +62,7 @@ func listEntriesTool() ToolDefinition {
 				"limit":      map[string]any{"type": "integer", "description": "Max 50"},
 				"offset":     map[string]any{"type": "integer"},
 				"global":     map[string]any{"type": "boolean", "description": "Search only global entries"},
-				"sort_by":    map[string]any{"type": "string", "enum": []string{"created", "modified", "priority"}},
+				"sort_by":    map[string]any{"type": "string", "enum": []string{"created", "modified", "priority", "completed"}},
 			},
 		},
 		Handler: handleListEntries,

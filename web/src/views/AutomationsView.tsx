@@ -2,7 +2,9 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
-import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { listNavHandlers } from "../lib/keymap/listNav";
+import { useActions } from "../lib/keymap/useActions";
+import { AUTOMATIONS_SPECS } from "./automations/keymap";
 import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { useIsMobile } from "../hooks/useIsMobile";
 import {
@@ -21,6 +23,7 @@ import {
 } from "../lib/api";
 import { Pill } from "../components/common/Badge";
 import { ConfirmDialog } from "../components/common/Modal";
+import { SessionModal, type SessionModalTarget } from "../components/layout/SessionModal";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { ListDetail } from "../components/layout/ListDetail";
 import { deriveAutomationsPaused } from "../components/layout/StatusBar";
@@ -85,6 +88,7 @@ export function AutomationsView() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [visibleRunTaskLimits, setVisibleRunTaskLimits] = useState<Record<string, number>>({});
   const [confirmDel, setConfirmDel] = useState<BrainEntry[] | null>(null);
+  const [sessionTarget, setSessionTarget] = useState<SessionModalTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -384,74 +388,61 @@ export function AutomationsView() {
     ).then(() => void qc.invalidateQueries({ queryKey: ["runner-status"] }));
   }
 
-  useViewKeyboard(
-    (e) => {
-      // Delegate to pane-nav first: Tab and scroll keys inside detail/logs.
-      if (paneNav.handleKey(e)) return true;
-      // Don't drop into list nav while a content pane is focused.
-      if (paneNav.detailPaneProps.focused || paneNav.logsPaneProps.focused) {
-        return false;
-      }
-      if (handleListNavKey(e, scope, display.length)) return true;
-      const cur = display[cursor];
-      switch (e.key) {
-        case "T":
-          toggleDetail();
-          return true;
-        case "z":
-          toggleLogs();
-          return true;
-        case "o":
-        case "O":
-          if (cur?.kind === "task") void openTaskInControl(cur.task);
-          return true;
-        case "Enter":
-          if (cur?.kind === "task") void openTaskInControl(cur.task);
-          else if (cur?.kind === "show-more") showNextRunTaskPage(cur.parent);
-          else if (cur?.kind === "auto") {
-            if (childRunTasks(cur.row.id, tasks).length > 0) toggleExpand(cur.row);
-            else configure(cur.row);
+  // Pane scroll/focus dispatches via the pane-tier scope registered by
+  // usePaneNavigation; list-scoped specs carry when:{focus:["tasks"]}.
+  useActions(
+    "view:automations",
+    "view",
+    AUTOMATIONS_SPECS,
+    {
+      ...listNavHandlers("automations", { scope: () => scope, count: () => display.length }),
+      "automations.toggleDetail": () => toggleDetail(),
+      "automations.toggleLogs": () => toggleLogs(),
+      "automations.open": () => {
+        const cur = display[cursor];
+        if (cur?.kind === "task") void openTaskInControl(cur.task);
+      },
+      "automations.enter": () => {
+        const cur = display[cursor];
+        if (cur?.kind === "task") {
+          // Inspect in place; o still jumps to the Control tab for resume.
+          if (isMobile) {
+            openInspect({ path: cur.task.path, title: cur.task.title, taskId: cur.task.id, projectId: cur.task.project_id });
+          } else {
+            setSessionTarget({ taskId: cur.task.id, projectId: cur.task.project_id, taskPath: cur.task.path, title: cur.task.title });
           }
-          return true;
-        case "x":
-          if (cur?.kind === "auto") execute(cur.row);
-          return true;
-        case "e":
-          if (cur?.kind === "auto") edit(cur.row);
-          else if (cur?.kind === "task") setEditEntry({ path: cur.task.path, title: cur.task.title });
-          return true;
-        case " ":
-          if (cur?.kind === "task") nav.toggleSelect(runTaskKey(cur.task));
-          else if (cur?.kind === "show-more") showNextRunTaskPage(cur.parent);
-          else if (cur?.kind === "auto") toggle(cur.row);
-          return true;
-        case "A":
-          nav.selectMany(runTaskList.map(runTaskKey));
-          return true;
-        case "D":
-          nav.clearSelect();
-          return true;
-        case "d":
-        case "Backspace": {
-          const ts = deleteTargets(cur);
-          if (ts.length) setConfirmDel(ts);
-          return true;
         }
-        case "p":
-          toggleAutomationPause();
-          return true;
-        case "r":
-          refresh();
-          return true;
-        case "n":
-          setCreating(true);
-          return true;
-        case "/":
-          setSearchOpen(true);
-          return true;
-        default:
-          return false;
-      }
+        else if (cur?.kind === "show-more") showNextRunTaskPage(cur.parent);
+        else if (cur?.kind === "auto") {
+          if (childRunTasks(cur.row.id, tasks).length > 0) toggleExpand(cur.row);
+          else configure(cur.row);
+        }
+      },
+      "automations.run": () => {
+        const cur = display[cursor];
+        if (cur?.kind === "auto") execute(cur.row);
+      },
+      "automations.edit": () => {
+        const cur = display[cursor];
+        if (cur?.kind === "auto") edit(cur.row);
+        else if (cur?.kind === "task") setEditEntry({ path: cur.task.path, title: cur.task.title });
+      },
+      "automations.select": () => {
+        const cur = display[cursor];
+        if (cur?.kind === "task") nav.toggleSelect(runTaskKey(cur.task));
+        else if (cur?.kind === "show-more") showNextRunTaskPage(cur.parent);
+        else if (cur?.kind === "auto") toggle(cur.row);
+      },
+      "automations.selectAll": () => nav.selectMany(runTaskList.map(runTaskKey)),
+      "automations.deselect": () => nav.clearSelect(),
+      "automations.delete": () => {
+        const ts = deleteTargets(display[cursor]);
+        if (ts.length) setConfirmDel(ts);
+      },
+      "automations.pause": () => toggleAutomationPause(),
+      "automations.refresh": () => refresh(),
+      "automations.new": () => setCreating(true),
+      "automations.filter": () => setSearchOpen(true),
     },
     [display, cursor, tasks, automationsPaused, instanceByTaskId, goalByEntryId, runTaskList, selectedRunTasks],
   );
@@ -607,6 +598,9 @@ export function AutomationsView() {
           onClose={() => setCreating(false)}
           onCreated={() => { void qc.invalidateQueries({ queryKey: ["goals"] }); refresh(); }}
         />
+      )}
+      {sessionTarget && (
+        <SessionModal target={sessionTarget} onClose={() => setSessionTarget(null)} />
       )}
       {confirmDel && (
         <ConfirmDialog

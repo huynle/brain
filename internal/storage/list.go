@@ -9,13 +9,20 @@ import (
 // defaultListLimit is the default number of results returned by ListNotes.
 const defaultListLimit = 100
 
-// allowedSortColumns maps user-facing sort names to actual SQL column names.
-// This prevents SQL injection via dynamic column names.
+// allowedSortColumns maps user-facing sort names to SQL sort expressions.
+// Values are trusted constants keyed by an allowlist, which prevents SQL
+// injection via dynamic column names.
+//
+// "completed" sorts by the completed_at metadata stamp, falling back to
+// modified for entries completed before completed_at existed — for those,
+// modified IS the completion time (status flips were their last write), so
+// the COALESCE doubles as the backfill.
 var allowedSortColumns = map[string]string{
-	"modified": "modified",
-	"created":  "created",
-	"priority": "priority",
-	"title":    "title",
+	"modified":  "modified",
+	"created":   "created",
+	"priority":  "priority",
+	"title":     "title",
+	"completed": "COALESCE(NULLIF(json_extract(metadata, '$.completed_at'), ''), modified)",
 }
 
 // ListNotes returns notes matching the given filter options.

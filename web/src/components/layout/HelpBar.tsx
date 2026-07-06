@@ -1,86 +1,23 @@
+import { helpBarHints } from "../../lib/keymap/registry";
+import { prettyChord } from "../../lib/keymap/types";
+import { useKeymapVersion } from "../../lib/keymap/useActions";
 import { useNav } from "../../store/nav";
 import { useUI } from "../../store/ui";
 
 type Hint = [string, string]; // [keys, label]
 
+// Hints shared by every view, appended after the view-specific ones. Views
+// migrated to the keymap registry derive their hints from their ActionSpec
+// tables; these cover the global tier the registry marks with `hint`.
+const TAIL: Hint[] = [
+  ["Tab", "Focus"],
+  ["h/l", "Tabs"],
+  [":", "Cmd"],
+  ["H/L", "Proj"],
+  ["?", "Help"],
+];
+
 const HINTS: Record<string, Hint[]> = {
-  tasks: [
-    ["j/k", "Nav"],
-    ["Spc", "Select"],
-    ["Enter", "Open"],
-    ["c", "Done"],
-    ["x", "Run"],
-    ["d", "Del"],
-    ["s", "Edit"],
-    ["/", "Filter"],
-    ["C", "Sched"],
-    ["T", "Detail"],
-    ["z", "Logs"],
-    ["Tab", "Focus"],
-    ["h/l", "Tabs"],
-    [":", "Cmd"],
-    ["H/L", "Proj"],
-    ["?", "Help"],
-  ],
-  brain: [
-    ["j/k", "Nav"],
-    ["Enter", "Open"],
-    ["/", "Search"],
-    ["e", "Edit"],
-    ["b/B", "Embed"],
-    ["n", "New"],
-    ["T", "Detail"],
-    ["z", "Logs"],
-    ["Tab", "Focus"],
-    ["h/l", "Tabs"],
-    [":", "Cmd"],
-    ["H/L", "Proj"],
-    ["?", "Help"],
-  ],
-  automations: [
-    ["j/k", "Nav"],
-    ["/", "Filter"],
-    ["x", "Run"],
-    ["Enter", "Expand"],
-    ["o", "Open/Review"],
-    ["Spc", "Toggle"],
-    ["e", "Edit"],
-    ["n", "New"],
-    ["T", "Detail"],
-    ["z", "Logs"],
-    ["Tab", "Focus"],
-    ["p", "Pause"],
-    ["h/l", "Tabs"],
-    [":", "Cmd"],
-    ["?", "Help"],
-  ],
-  runners: [
-    ["j/k", "Nav"],
-    ["s", "Shutdown"],
-    ["p/P", "Pause"],
-    ["h/l", "Tabs"],
-    [":", "Cmd"],
-    ["H/L", "Proj"],
-    ["?", "Help"],
-  ],
-  control: [
-    ["Click", "Attach"],
-    ["Enter", "Send"],
-    ["h/l", "Tabs"],
-    [":", "Cmd"],
-    ["H/L", "Proj"],
-    ["?", "Help"],
-  ],
-  logs: [
-    ["/", "Filter"],
-    ["j/k", "Scroll"],
-    ["g/G", "Top/Bot"],
-    ["f", "Follow"],
-    ["h/l", "Tabs"],
-    [":", "Cmd"],
-    ["H/L", "Proj"],
-    ["?", "Help"],
-  ],
 };
 
 const FOCUS_LABEL: Record<string, string> = {
@@ -96,8 +33,17 @@ export function HelpBar() {
   const view = useUI((s) => s.view);
   const focus = useUI((s) => s.focus);
   const selected = useNav((s) => Object.keys(s.selected).length);
+  useKeymapVersion();
 
-  const hints = HINTS[view] ?? HINTS.tasks;
+  // Migrated views: hinted ActionSpecs from the registry (drift-proof).
+  // Unmigrated views fall back to their static table until phase 5 lands.
+  // A view counts as migrated when any view-tier scope contributes hints.
+  const all = helpBarHints({ focus, hasSelection: selected > 0, isMobile: false });
+  const migrated = all.some((h) => h.tier === "view");
+  const derived = all
+    .filter((h) => h.tier !== "global")
+    .map((h) => [h.keys.map(prettyChord).join("/"), h.hint] as Hint);
+  const hints = migrated ? [...derived, ...TAIL] : (HINTS[view] ?? TAIL);
   // Views that have a detail/logs pane resolve the focus label per-pane;
   // others just show the view name.
   const viewsWithPanes = new Set(["tasks", "brain", "automations"]);

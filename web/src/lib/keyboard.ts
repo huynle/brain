@@ -1,28 +1,24 @@
 // Keyboard system providing TUI-parity shortcuts on desktop.
 //
-// One global listener (useGlobalKeyboard, mounted in Dashboard) handles the
-// cross-view keys — content-tab cycling (h/l/[/]), project tabs (H/L/1-9),
-// help (?), settings (S), wrap (w), refresh (r/R) — and otherwise delegates to
-// the active view's handler, registered via useViewKeyboard. Views build their
-// handler with handleListNavKey() for j/k/g/G + a switch for their action keys.
+// One global listener (useGlobalKeyboard, mounted in Dashboard) normalizes
+// each keydown into a Chord and dispatches through the keymap registry in
+// tier order: pane scope, then the active view scope, then the global scope.
+// Global keys are declared in keymap/global.ts; every view registers its
+// ActionSpec table via useActions (views/*/keymap.ts).
 
 import { useEffect, useRef } from "react";
 import { useNav } from "../store/nav";
+import { makeCountMachine } from "./keymap/count";
+import {
+  buildGlobalHandlers,
+  GLOBAL_SPECS,
+  jumpToProject,
+  type GlobalKeyboardOpts,
+} from "./keymap/global";
+import { dispatchChord, isCountable, registerScope } from "./keymap/registry";
+import { chordOf, type WhenEnv } from "./keymap/types";
 
-export type ViewKeyHandler = (e: KeyboardEvent) => boolean;
-
-let activeHandler: ViewKeyHandler | null = null;
-
-/** Register the active view's key handler for the lifetime of the component. */
-export function useViewKeyboard(handler: ViewKeyHandler, deps: unknown[]) {
-  useEffect(() => {
-    activeHandler = handler;
-    return () => {
-      if (activeHandler === handler) activeHandler = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, deps);
-}
+export type { GlobalKeyboardOpts } from "./keymap/global";
 
 export function isEditableTarget(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
@@ -41,52 +37,33 @@ export function anyModalOpen(): boolean {
   return !!document.querySelector(".modal-backdrop, .sheet-backdrop");
 }
 
-/**
- * Shared list navigation for views. Handles j/k/↑/↓/g/G against `count`,
- * updating the cursor for `scope`. Returns true if the key was consumed.
- */
-export function handleListNavKey(
-  e: KeyboardEvent,
-  scope: string,
-  count: number,
-): boolean {
-  const nav = useNav.getState();
-  switch (e.key) {
-    case "j":
-    case "ArrowDown":
-      nav.moveCursor(scope, 1, count);
-      return true;
-    case "k":
-    case "ArrowUp":
-      nav.moveCursor(scope, -1, count);
-      return true;
-    case "g":
-      nav.top(scope);
-      return true;
-    case "G":
-      nav.bottom(scope, count);
-      return true;
-    default:
-      return false;
-  }
-}
-
-interface GlobalKeyboardOpts {
-  projects: string[];
-  allLabel: string; // the ALL_PROJECTS sentinel
-  onRefresh: () => void;
-  onPauseToggle: () => void; // p — pause/resume active project (or all on the All tab)
-  onPauseAll: () => void; // P — pause/resume active project (all only on All tab)
-}
-
 export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
   const optsRef = useRef(opts);
   optsRef.current = opts;
 
   // The listener is installed once; it reads the latest opts via the ref.
   useEffect(() => {
+    const unregisterGlobal = registerScope({
+      scopeId: "global",
+      tier: "global",
+      specs: GLOBAL_SPECS,
+      handlers: buildGlobalHandlers(() => optsRef.current),
+    });
+    const counts = makeCountMachine({
+      onReplayDigit: (n) => jumpToProject(n, optsRef.current),
+    });
+
+    function buildEnv(): WhenEnv {
+      const ui = uiApi();
+      return {
+        focus: ui.focus,
+        mode: undefined,
+        hasSelection: useNav.getState().selectedCount() > 0,
+        isMobile: false,
+      };
+    }
+
     function onKeyDown(e: KeyboardEvent) {
-      const opts = optsRef.current;
       const nav = useNav.getState();
 
       // Help overlay swallows everything.
@@ -99,8 +76,8 @@ export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
       }
 
       // Quick project switcher: Cmd/Ctrl+; opens the searchable picker from
-      // anywhere (even while typing in a field). Handled before the modifier and
-      // editable-target guards below.
+      // anywhere (even while typing in a field). Handled before the modifier
+      // and editable-target guards below.
       if ((e.metaKey || e.ctrlKey) && e.key === ";") {
         e.preventDefault();
         uiApi().setProjectSheetOpen(true);
@@ -114,9 +91,8 @@ export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
       if ((e.metaKey || e.ctrlKey) && (e.key === ".")) {
         e.preventDefault();
         const ui = uiApi();
-        // Use a window width check rather than importing the hook here — this
-        // listener runs outside React's render cycle. Threshold mirrors the
-        // "wide" tier in useViewport.
+        // Window width check rather than the hook — this listener runs outside
+        // React's render cycle. Threshold mirrors the "wide" tier in useViewport.
         const wide = window.innerWidth >= 1100;
         if (wide) {
           ui.setAssistantSidebar(!ui.assistantSidebar);
@@ -132,96 +108,51 @@ export function useGlobalKeyboard(opts: GlobalKeyboardOpts) {
       if (isEditableTarget(e.target)) return;
       if (anyModalOpen()) return;
 
-      // Allow view handlers to claim Ctrl- or Alt-modified keys (e.g. vim
-      // Ctrl-D / Ctrl-U for half-page scroll inside a focused pane, or
-      // Alt+H/J/K/L for pane resize). The handler must explicitly return
-      // true to consume them; otherwise we fall through to the modifier
-      // bail-out below so chord shortcuts the browser owns (Ctrl-F,
-      // Ctrl-W, Ctrl-T, Alt+Left, etc.) still reach it.
-      if ((e.ctrlKey || e.metaKey || e.altKey) && activeHandler) {
-        if (activeHandler(e)) {
+      const env = buildEnv();
+
+      // Modified chords: registered scopes may claim them (vim Ctrl-D/U,
+      // Alt+HJKL resize); otherwise leave them to the browser (Ctrl-F,
+      // Ctrl-W, Alt+Left, ...). Global-tier bindings deliberately don't
+      // participate — no global chord uses modifiers beyond the pre-guard
+      // Cmd+;/Cmd+. handled above.
+      if (e.ctrlKey || e.metaKey || e.altKey) {
+        const chord = chordOf(e);
+        if (chord && dispatchChord(chord, { event: e, count: 1 }, env, ["pane", "view"])) {
           e.preventDefault();
           return;
         }
+        return;
       }
 
-      if (e.metaKey || e.ctrlKey || e.altKey) return;
-
-      // Delegate to the active view first (its action + list-nav keys).
-      if (activeHandler && activeHandler(e)) {
+      // Digits buffer as vim counts; a lone 1-9 replays as a project jump on
+      // timeout or when the next chord isn't countable (see keymap/count.ts).
+      if (/^[0-9]$/.test(e.key) && counts.feedDigit(e.key)) {
         e.preventDefault();
         return;
       }
 
-      // ── Cross-view global keys ────────────────────────────────
-      // Import here to read the latest store APIs without stale closures.
-      const ui = uiApi();
-      const tabs = [opts.allLabel, ...opts.projects];
+      const chord = chordOf(e);
+      if (!chord) return;
+      const count = counts.resolveForChord(isCountable(chord, env));
+      const ctx = { event: e, count };
 
-      switch (e.key) {
-        case ":":
-          nav.setCommandOpen(true);
-          break;
-        case "?":
-          nav.setHelpOpen(true);
-          break;
-        case "S":
-          ui.setSettingsOpen(true);
-          break;
-        case "w":
-          ui.toggleWrap();
-          break;
-        // h/l (and [/]) cycle content tabs (Tasks / Brain / Automations / …).
-        case "l":
-        case "]":
-          ui.cycleView(1);
-          break;
-        case "h":
-        case "[":
-          ui.cycleView(-1);
-          break;
-        case "R":
-          ui.setView("runners");
-          break;
-        // H/L (shift) switch between project tabs in multi-project mode.
-        case "L": {
-          const i = tabs.indexOf(ui.activeProject);
-          ui.setActiveProject(tabs[Math.min(i + 1, tabs.length - 1)]);
-          break;
-        }
-        case "H": {
-          const i = tabs.indexOf(ui.activeProject);
-          ui.setActiveProject(tabs[Math.max(i - 1, 0)]);
-          break;
-        }
-        case "r":
-          opts.onRefresh();
-          break;
-        case "p":
-          opts.onPauseToggle();
-          break;
-        case "P":
-          opts.onPauseAll();
-          break;
-        case "Escape":
-          if (nav.selectedCount() > 0) nav.clearSelect();
-          else return;
-          break;
-        default: {
-          if (/^[1-9]$/.test(e.key)) {
-            const idx = Number(e.key) - 1;
-            if (idx < tabs.length) ui.setActiveProject(tabs[idx]);
-            else return;
-            break;
-          }
-          return; // not handled
-        }
+      // Pane and view scopes first, then the global scope.
+      if (dispatchChord(chord, ctx, env, ["pane", "view"])) {
+        e.preventDefault();
+        return;
       }
-      e.preventDefault();
+      if (dispatchChord(chord, ctx, env, ["global"])) {
+        e.preventDefault();
+        return;
+      }
     }
 
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      unregisterGlobal();
+      counts.dispose();
+    };
   }, []);
 }
 

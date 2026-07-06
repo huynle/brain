@@ -3,7 +3,9 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react"
 import { useLive } from "../lib/sse";
 import { ALL_PROJECTS, useUI } from "../store/ui";
 import { useNav } from "../store/nav";
-import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { listNavHandlers } from "../lib/keymap/listNav";
+import { useActions } from "../lib/keymap/useActions";
+import { RUNNERS_SPECS } from "./control/keymap";
 import {
   controlAbortTask,
   controlKillInstance,
@@ -229,36 +231,24 @@ export function RunnersView() {
     setHistoryTarget(null);
   }
 
-  useViewKeyboard(
-    (e) => {
-      if (handleListNavKey(e, scope, rows.length)) return true;
-      const cur = rows[cursor];
-      switch (e.key) {
-        case "Enter":
-        case "o":
-          openRow(cur);
-          return true;
-        case "n":
-        case "+":
-          setSpawnOpen(true);
-          return true;
-        case "s":
-          if (cur?.kind === "runner") setConfirmRunnerKill(cur.runner);
-          return true;
-        case "K":
-          if (cur?.kind === "instance") setConfirmInstanceKill(cur.instance);
-          return true;
-        case "p":
-        case "P":
-          allProjectsSelected ? toggleAllPause() : toggleTaskPause();
-          return true;
-        case "a":
-        case "A":
-          toggleAutomationPause();
-          return true;
-        default:
-          return false;
-      }
+  useActions(
+    "view:runners",
+    "view",
+    RUNNERS_SPECS,
+    {
+      ...listNavHandlers("runners", { scope: () => scope, count: () => rows.length }),
+      "runners.open": () => openRow(rows[cursor]),
+      "runners.spawn": () => setSpawnOpen(true),
+      "runners.shutdown": () => {
+        const cur = rows[cursor];
+        if (cur?.kind === "runner") setConfirmRunnerKill(cur.runner);
+      },
+      "runners.killInstance": () => {
+        const cur = rows[cursor];
+        if (cur?.kind === "instance") setConfirmInstanceKill(cur.instance);
+      },
+      "runners.pause": () => (allProjectsSelected ? toggleAllPause() : toggleTaskPause()),
+      "runners.pauseAutos": () => toggleAutomationPause(),
     },
     [rows, cursor, taskPaused, automationPaused, allProjectsSelected, allPaused, rowIndexByKey],
   );

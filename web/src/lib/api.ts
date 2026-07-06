@@ -835,8 +835,11 @@ export function controlEventsUrl(runnerId: string, instanceId: string): string {
 export const listEntries = (query?: {
   project?: string;
   type?: string;
+  status?: string;
   limit?: number;
   global?: string;
+  sortBy?: "created" | "modified" | "priority" | "completed" | "title";
+  sortOrder?: "asc" | "desc";
 }) => api<ListEntriesResponse>("/api/v1/entries", { query });
 
 // ─── Automations (mirrors the TUI Automations tab) ───────────────

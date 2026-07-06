@@ -92,6 +92,9 @@ export interface Task {
   depends_on?: string[];
   created?: string;
   modified?: string;
+  /** RFC3339 stamp set when status entered completed/validated; empty for
+   *  entries completed before the field existed (fall back to modified). */
+  completed_at?: string;
   projectId?: string;
 
   workdir?: string;

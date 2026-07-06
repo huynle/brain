@@ -2,7 +2,9 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
 import { useScope } from "../store/scope";
-import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { listNavHandlers } from "../lib/keymap/listNav";
+import { useActions } from "../lib/keymap/useActions";
+import { FEATURE_SORT_FIELDS, TASKS_SPECS } from "./tasks/keymap";
 import { usePaneNavigation } from "../lib/usePaneNavigation";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useLiveTasks } from "../hooks/useLiveTasks";
@@ -105,8 +107,11 @@ export function TasksView() {
   const setScopeFilter = useScope((s) => s.setFilter);
   const setQuery = (q: string) => setScopeFilter("tasks", q);
   const featureSort = (useScope((s) => s.sort["tasks"]?.field) ?? "completed") as FeatureSortMode;
+  const sortDir = useScope((s) => s.sort["tasks"]?.dir) ?? "desc";
   const setScopeSort = useScope((s) => s.setSort);
   const setFeatureSort = (f: FeatureSortMode) => setScopeSort("tasks", { field: f, dir: "desc" });
+  const cycleSortField = useScope((s) => s.cycleSortField);
+  const toggleSortDir = useScope((s) => s.toggleSortDir);
   const setCounts = useScope((s) => s.setCounts);
   const drillStack = useScope((s) => s.stack);
   const pushFrame = useScope((s) => s.push);
@@ -146,7 +151,7 @@ export function TasksView() {
     if (featureFrame) {
       list = list.filter((t) => (t.feature_id || UNGROUPED) === featureFrame.id);
     }
-    const groups = groupByFeature(list, activeProject === ALL_PROJECTS ? featureSort : "name");
+    const groups = groupByFeature(list, activeProject === ALL_PROJECTS ? featureSort : "name", sortDir);
     const r: Row[] = [];
     const flat: Task[] = [];
     const keys: string[] = [];
@@ -174,7 +179,7 @@ export function TasksView() {
       }
     }
     return { rows: r, taskList: flat, featureKeys: keys, tasksByFeature: byFeature };
-  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort, featureFrame]);
+  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort, sortDir, featureFrame]);
 
   // Feed the ContextBar's shown/total counter.
   useEffect(() => {
@@ -326,100 +331,99 @@ export function TasksView() {
     }
   }
 
-  useViewKeyboard(
-    (e) => {
-      // Tab/Shift-Tab + vim-style scroll inside detail/logs panes.
-      if (paneNav.handleKey(e)) return true;
-
-      // View-owned panel toggles. (paneNav handles Tab; T and z are still
-      // view-scoped because they mutate visibility, not focus.)
-      if (e.key === "T") {
-        toggleDetail();
-        return true;
-      }
-      if (e.key === "z") {
-        toggleLogs();
-        return true;
-      }
-      // When detail/logs are focused, paneNav already handled or rejected
-      // j/k/g/G/Ctrl-D/Ctrl-U above. If we got here, the key is unhandled
-      // for that focus — don't fall into list nav.
-      if (focus === "detail" || focus === "logs") {
-        return false;
-      }
-      // tasks focus
-      if (handleListNavKey(e, scope, rows.length)) return true;
-      const row = rows[cursor];
-      const cur = row?.kind === "task" ? row.task : undefined;
-      switch (e.key) {
-        case "Enter":
-          // Enter DESCENDS (k9s): a feature header pushes a drill frame that
-          // scopes the view to that feature (Esc pops back). Collapse
-          // toggling lives on Space.
-          if (row?.kind === "header") {
-            pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
-            nav.setCursor(scope, 0);
-          } else if (cur) void openTaskSession(cur);
-          return true;
-        case " ":
-          if (row?.kind === "header")
-            setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
-          else if (cur) nav.toggleSelect(taskKey(cur));
-          return true;
-        case "{": setAllFeatureCollapsed(true); return true;
-        case "}": setAllFeatureCollapsed(false); return true;
-        case "A": nav.selectMany(taskList.map(taskKey)); return true;
-        case "D": nav.clearSelect(); return true;
-        case "c": {
-          const ts = targets(cur);
-          if (ts.length) void run(`Completed ${ts.length}`, () => Promise.all(ts.map((t) => setTaskStatus(t, "completed")))).then(() => nav.clearSelect());
-          return true;
-        }
-        case "x":
-          if (row?.kind === "header") {
-            // Whole-feature dispatch: hand the server a single call so it
-            // can plan capacity, queue leftovers, and start a cascade for
-            // drain-while-paused. UNGROUPED rows fall back to the per-task
-            // path because they don't share a feature_id.
-            if (row.feature === UNGROUPED) {
-              const ready = taskList.filter((t) => !t.feature_id && ["pending", "active"].includes(t.status));
-              if (ready.length) void triggerMany(ready);
-            } else {
-              const sample = taskList.find((t) => t.feature_id === row.feature && t.projectId);
-              if (sample?.projectId) void runFeatureNow(sample.projectId, row.feature);
-            }
-          } else if (cur?.projectId) void triggerMany([cur]);
-          return true;
-        case "X":
-          if (cur && isActive(cur.status)) void run("Cancelled", () => setTaskStatus(cur, "cancelled"));
-          return true;
-        case "d":
-        case "Backspace": {
-          const ts = targets(cur);
-          if (ts.length) setConfirmDel(ts);
-          return true;
-        }
-        case "s": {
-          if (row?.kind === "header") {
-            const ts = tasksByFeature.get(row.feature) ?? [];
-            if (row.feature === UNGROUPED) toast("Ungrouped tasks do not have feature settings", "info");
-            else if (ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
-            return true;
+  // Pane scroll/focus dispatches via the pane-tier scope registered by
+  // usePaneNavigation; list-scoped specs carry when:{focus:["tasks"]}.
+  useActions(
+    "view:tasks",
+    "view",
+    TASKS_SPECS,
+    {
+      ...listNavHandlers("tasks", { scope: () => scope, count: () => rows.length }),
+      "tasks.toggleDetail": () => toggleDetail(),
+      "tasks.toggleLogs": () => toggleLogs(),
+      "tasks.enter": () => {
+        const row = rows[cursor];
+        // Enter DESCENDS (k9s): a feature header pushes a drill frame that
+        // scopes the view to that feature (Esc pops back). Collapse
+        // toggling lives on Space.
+        if (row?.kind === "header") {
+          pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
+          nav.setCursor(scope, 0);
+        } else if (row?.kind === "task") void openTaskSession(row.task);
+      },
+      "tasks.select": () => {
+        const row = rows[cursor];
+        if (row?.kind === "header")
+          setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
+        else if (row?.kind === "task") nav.toggleSelect(taskKey(row.task));
+      },
+      "tasks.collapseAll": () => setAllFeatureCollapsed(true),
+      "tasks.expandAll": () => setAllFeatureCollapsed(false),
+      "tasks.selectAll": () => nav.selectMany(taskList.map(taskKey)),
+      "tasks.deselect": () => nav.clearSelect(),
+      "tasks.complete": () => {
+        const row = rows[cursor];
+        const ts = targets(row?.kind === "task" ? row.task : undefined);
+        if (ts.length) void run(`Completed ${ts.length}`, () => Promise.all(ts.map((t) => setTaskStatus(t, "completed")))).then(() => nav.clearSelect());
+      },
+      "tasks.run": () => {
+        const row = rows[cursor];
+        if (row?.kind === "header") {
+          // Whole-feature dispatch: hand the server a single call so it
+          // can plan capacity, queue leftovers, and start a cascade for
+          // drain-while-paused. UNGROUPED rows fall back to the per-task
+          // path because they don't share a feature_id.
+          if (row.feature === UNGROUPED) {
+            const ready = taskList.filter((t) => !t.feature_id && ["pending", "active"].includes(t.status));
+            if (ready.length) void triggerMany(ready);
+          } else {
+            const sample = taskList.find((t) => t.feature_id === row.feature && t.projectId);
+            if (sample?.projectId) void runFeatureNow(sample.projectId, row.feature);
           }
-          const ts = targets(cur);
-          if (ts.length > 1) setBatchMeta(ts);
-          else if (cur) setEditMeta(cur);
-          return true;
+        } else if (row?.kind === "task" && row.task.projectId) void triggerMany([row.task]);
+      },
+      "tasks.cancel": () => {
+        const row = rows[cursor];
+        const cur = row?.kind === "task" ? row.task : undefined;
+        if (cur && isActive(cur.status)) void run("Cancelled", () => setTaskStatus(cur, "cancelled"));
+      },
+      "tasks.delete": () => {
+        const row = rows[cursor];
+        const ts = targets(row?.kind === "task" ? row.task : undefined);
+        if (ts.length) setConfirmDel(ts);
+      },
+      "tasks.editMeta": () => {
+        const row = rows[cursor];
+        if (row?.kind === "header") {
+          const ts = tasksByFeature.get(row.feature) ?? [];
+          if (row.feature === UNGROUPED) toast("Ungrouped tasks do not have feature settings", "info");
+          else if (ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
+          return;
         }
-        case "e": if (cur) setEditContent(cur); return true;
-        case "y":
-          if (cur) { void navigator.clipboard?.writeText(cur.title || cur.id); toast("Copied title"); }
-          return true;
-        case "/": setSearchOpen(true); return true;
-        case "C": setMode((m) => (m === "tasks" ? "schedules" : "tasks")); nav.setCursor(scope, 0); return true;
-        case "n": setComposing(true); return true;
-        default: return false;
-      }
+        const cur = row?.kind === "task" ? row.task : undefined;
+        const ts = targets(cur);
+        if (ts.length > 1) setBatchMeta(ts);
+        else if (cur) setEditMeta(cur);
+      },
+      "tasks.editFile": () => {
+        const row = rows[cursor];
+        if (row?.kind === "task") setEditContent(row.task);
+      },
+      "tasks.copyTitle": () => {
+        const row = rows[cursor];
+        if (row?.kind === "task") {
+          void navigator.clipboard?.writeText(row.task.title || row.task.id);
+          toast("Copied title");
+        }
+      },
+      "tasks.sortCycle": () => cycleSortField("tasks", FEATURE_SORT_FIELDS, "completed"),
+      "tasks.sortReverse": () => toggleSortDir("tasks", "completed"),
+      "tasks.filter": () => setSearchOpen(true),
+      "tasks.mode": () => {
+        setMode((m) => (m === "tasks" ? "schedules" : "tasks"));
+        nav.setCursor(scope, 0);
+      },
+      "tasks.new": () => setComposing(true),
     },
     [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast, featureFrame],
   );

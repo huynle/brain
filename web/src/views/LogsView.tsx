@@ -6,7 +6,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { getServerRequests } from "../lib/api";
 import { useUI } from "../store/ui";
-import { useViewKeyboard } from "../lib/keyboard";
+import { useActions } from "../lib/keymap/useActions";
+import { LOGS_SPECS } from "./logs/keymap";
 import { clockTime } from "../lib/format";
 import { EmptyState } from "../components/common/states";
 import type { ServerRequest } from "../lib/types";
@@ -94,41 +95,37 @@ export function LogsView() {
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  useViewKeyboard(
-    (e) => {
-      const el = scrollEl();
-      switch (e.key) {
-        case "/":
-          setSearchOpen(true);
-          return true;
-        case "j":
-        case "ArrowDown":
-          if (el) el.scrollTop += 60;
-          setFollow(false);
-          return true;
-        case "k":
-        case "ArrowUp":
-          if (el) el.scrollTop -= 60;
-          setFollow(false);
-          return true;
-        case "g":
-          if (el) el.scrollTop = 0;
-          setFollow(false);
-          return true;
-        case "G":
-          setFollow(true);
-          bottomRef.current?.scrollIntoView({ block: "end" });
-          return true;
-        case "f":
-          setFollow((v) => {
-            const nv = !v;
-            if (nv) bottomRef.current?.scrollIntoView({ block: "end" });
-            return nv;
-          });
-          return true;
-        default:
-          return false;
-      }
+  useActions(
+    "view:logs",
+    "view",
+    LOGS_SPECS,
+    {
+      "logs.filter": () => setSearchOpen(true),
+      "logs.down": ({ count }) => {
+        const el = scrollEl();
+        if (el) el.scrollTop += 60 * count;
+        setFollow(false);
+      },
+      "logs.up": ({ count }) => {
+        const el = scrollEl();
+        if (el) el.scrollTop -= 60 * count;
+        setFollow(false);
+      },
+      "logs.top": () => {
+        const el = scrollEl();
+        if (el) el.scrollTop = 0;
+        setFollow(false);
+      },
+      "logs.bottom": () => {
+        setFollow(true);
+        bottomRef.current?.scrollIntoView({ block: "end" });
+      },
+      "logs.follow": () =>
+        setFollow((v) => {
+          const nv = !v;
+          if (nv) bottomRef.current?.scrollIntoView({ block: "end" });
+          return nv;
+        }),
     },
     [],
   );

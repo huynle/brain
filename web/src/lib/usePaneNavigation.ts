@@ -19,6 +19,30 @@ import {
   RESIZE_STEP,
   type ScrollAction,
 } from "./paneNav";
+import { useActions } from "./keymap/useActions";
+import type { ActionSpec } from "./keymap/types";
+
+// Pane-tier action table: registered while a view with detail/logs panes is
+// mounted, dispatching BEFORE the view scope so pane scroll wins while a
+// content pane has focus. The help modal derives its "panes" group from
+// these — shown exactly when a paned view is active.
+const paneFocus = { focus: ["detail" as const, "logs" as const] };
+
+export const PANE_SPECS: ActionSpec[] = [
+  { id: "panes.cycle", keys: ["Tab"], desc: "Cycle pane focus (list → detail → logs)", group: "panes" },
+  { id: "panes.cycleBack", keys: ["S-Tab"], desc: "Cycle pane focus backward", group: "panes" },
+  { id: "panes.down", keys: ["j", "ArrowDown"], desc: "Scroll line down (in focused pane)", group: "panes", when: paneFocus, countable: true },
+  { id: "panes.up", keys: ["k", "ArrowUp"], desc: "Scroll line up (in focused pane)", group: "panes", when: paneFocus, countable: true },
+  { id: "panes.top", keys: ["g g"], desc: "Jump to top (vim gg)", group: "panes", when: paneFocus },
+  { id: "panes.bottom", keys: ["G"], desc: "Jump to bottom", group: "panes", when: paneFocus },
+  { id: "panes.halfDown", keys: ["C-d"], desc: "Half-page down", group: "panes", when: paneFocus },
+  { id: "panes.halfUp", keys: ["C-u"], desc: "Half-page up", group: "panes", when: paneFocus },
+  { id: "panes.rowGrow", keys: ["A-j"], desc: "Grow bottom-row height", group: "panes" },
+  { id: "panes.rowShrink", keys: ["A-k"], desc: "Shrink bottom-row height", group: "panes" },
+  { id: "panes.splitGrow", keys: ["A-l"], desc: "Grow detail vs logs width", group: "panes" },
+  { id: "panes.splitShrink", keys: ["A-h"], desc: "Shrink detail vs logs width", group: "panes" },
+  { id: "panes.resetSplit", keys: ["dbl-click"], desc: "Double-click a separator to reset that split", group: "panes" },
+];
 
 export interface PaneNavigation {
   // Wiring for the tasks pane (the top list). Spread onto a <Panel>.
@@ -104,6 +128,54 @@ export function usePaneNavigation(): PaneNavigation {
   useEffect(() => {
     return () => gg.dispose();
   }, [gg]);
+
+  // Registry pane scope: dispatches before view scopes. Migrated views rely
+  // on this alone; unmigrated views still call handleKey() below, which the
+  // dispatcher only reaches for chords this scope declined.
+  useActions(
+    "panes",
+    "pane",
+    PANE_SPECS,
+    {
+      "panes.cycle": () => cycleFocus(1),
+      "panes.cycleBack": () => cycleFocus(-1),
+      "panes.down": ({ count }) => {
+        const el = bodyForFocus();
+        if (!el) return false;
+        for (let i = 0; i < count; i++) scrollStep(el, "j");
+      },
+      "panes.up": ({ count }) => {
+        const el = bodyForFocus();
+        if (!el) return false;
+        for (let i = 0; i < count; i++) scrollStep(el, "k");
+      },
+      "panes.top": () => {
+        const el = bodyForFocus();
+        if (!el) return false;
+        scrollStep(el, "gg");
+      },
+      "panes.bottom": () => {
+        const el = bodyForFocus();
+        if (!el) return false;
+        scrollStep(el, "G");
+      },
+      "panes.halfDown": () => {
+        const el = bodyForFocus();
+        if (!el) return false;
+        scrollStep(el, "ctrl-d");
+      },
+      "panes.halfUp": () => {
+        const el = bodyForFocus();
+        if (!el) return false;
+        scrollStep(el, "ctrl-u");
+      },
+      "panes.rowGrow": () => setBottomHeight(useUI.getState().bottomHeight + RESIZE_STEP.heightPx),
+      "panes.rowShrink": () => setBottomHeight(useUI.getState().bottomHeight - RESIZE_STEP.heightPx),
+      "panes.splitGrow": () => setDetailLogsRatio(useUI.getState().detailLogsRatio + RESIZE_STEP.ratio),
+      "panes.splitShrink": () => setDetailLogsRatio(useUI.getState().detailLogsRatio - RESIZE_STEP.ratio),
+    },
+    [focus],
+  );
 
   function handleKey(e: KeyboardEvent): boolean {
     // Tab / Shift-Tab: always consumes, regardless of which pane is focused.

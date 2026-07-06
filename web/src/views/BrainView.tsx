@@ -2,8 +2,10 @@ import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useUI, ALL_PROJECTS } from "../store/ui";
 import { useNav } from "../store/nav";
-import { useViewKeyboard, handleListNavKey } from "../lib/keyboard";
+import { listNavHandlers } from "../lib/keymap/listNav";
+import { useActions } from "../lib/keymap/useActions";
 import { usePaneNavigation } from "../lib/usePaneNavigation";
+import { BRAIN_SPECS } from "./brain/keymap";
 import { embedBackfill, listEntries, search } from "../lib/api";
 import { Pill } from "../components/common/Badge";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
@@ -132,51 +134,31 @@ export function BrainView() {
   // the focused detail or logs pane).
   const paneNav = usePaneNavigation();
 
-  useViewKeyboard(
-    (e) => {
-      // Delegate to pane-nav first: Tab and scroll keys inside detail/logs.
-      if (paneNav.handleKey(e)) return true;
-      // If detail/logs are focused and pane-nav didn't claim, stop —
-      // don't drop into list navigation while the user is in a content pane.
-      if (paneNav.detailPaneProps.focused || paneNav.logsPaneProps.focused) {
-        return false;
-      }
-      if (handleListNavKey(e, scope, items.length)) return true;
-      const cur = items[cursor];
-      switch (e.key) {
-        case "T":
-          toggleDetail();
-          return true;
-        case "z":
-          toggleLogs();
-          return true;
-        case "Enter":
-          if (cur) setOpenPath(cur.path);
-          return true;
-        case "e":
-          if (cur) setEditPath({ path: cur.path, title: (cur as { title?: string }).title });
-          return true;
-        case "/":
-          setSearchOpen(true);
-          return true;
-        case "n":
-          setComposing(true);
-          return true;
-        case "b":
-          embed({ project, force: false }, "Embedding project");
-          return true;
-        case "B":
-          embed({ force: false }, "Embedding all");
-          return true;
-        case "F":
-          embed({ project, force: true }, "Re-embedding project");
-          return true;
-        case "A":
-          embed({ force: true }, "Re-embedding all");
-          return true;
-        default:
-          return false;
-      }
+  // Pane scroll/focus dispatches via the pane-tier scope registered by
+  // usePaneNavigation; the list specs carry when:{focus:["tasks"]} so they
+  // never fire while a content pane has focus.
+  useActions(
+    "view:brain",
+    "view",
+    BRAIN_SPECS,
+    {
+      ...listNavHandlers("brain", { scope: () => scope, count: () => items.length }),
+      "brain.toggleDetail": () => toggleDetail(),
+      "brain.toggleLogs": () => toggleLogs(),
+      "brain.open": () => {
+        const cur = items[cursor];
+        if (cur) setOpenPath(cur.path);
+      },
+      "brain.edit": () => {
+        const cur = items[cursor];
+        if (cur) setEditPath({ path: cur.path, title: (cur as { title?: string }).title });
+      },
+      "brain.search": () => setSearchOpen(true),
+      "brain.new": () => setComposing(true),
+      "brain.embedProject": () => embed({ project, force: false }, "Embedding project"),
+      "brain.embedAll": () => embed({ force: false }, "Embedding all"),
+      "brain.reembedProject": () => embed({ project, force: true }, "Re-embedding project"),
+      "brain.reembedAll": () => embed({ force: true }, "Re-embedding all"),
     },
     [items, cursor, scope, project],
   );

@@ -74,9 +74,6 @@ function bestPriority(tasks: Task[]): number {
 }
 
 function compareGroups(a: TaskGroup, b: TaskGroup, sortMode: FeatureSortMode): number {
-  if (a.feature === UNGROUPED) return 1;
-  if (b.feature === UNGROUPED) return -1;
-
   switch (sortMode) {
     case "created": {
       const diff = newestTaskTime(b.tasks, false) - newestTaskTime(a.tasks, false);
@@ -105,7 +102,13 @@ function compareGroups(a: TaskGroup, b: TaskGroup, sortMode: FeatureSortMode): n
   return a.label.localeCompare(b.label);
 }
 
-export function groupByFeature(tasks: Task[], sortMode: FeatureSortMode = "completed"): TaskGroup[] {
+export type SortDir = "asc" | "desc";
+
+export function groupByFeature(
+  tasks: Task[],
+  sortMode: FeatureSortMode = "completed",
+  dir: SortDir = "desc",
+): TaskGroup[] {
   const map = new Map<string, Task[]>();
   for (const t of tasks) {
     const key = t.feature_id || UNGROUPED;
@@ -122,6 +125,13 @@ export function groupByFeature(tasks: Task[], sortMode: FeatureSortMode = "compl
       tasks: arr,
     });
   }
-  groups.sort((a, b) => compareGroups(a, b, sortMode));
+  // UNGROUPED stays pinned last regardless of direction; only the ordering
+  // among real features reverses ("desc" is each mode's natural order).
+  groups.sort((a, b) => {
+    if (a.feature === UNGROUPED) return 1;
+    if (b.feature === UNGROUPED) return -1;
+    const base = compareGroups(a, b, sortMode);
+    return dir === "asc" ? -base : base;
+  });
   return groups;
 }

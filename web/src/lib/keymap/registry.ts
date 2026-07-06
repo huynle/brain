@@ -208,9 +208,14 @@ export function isCountable(chord: Chord, env: WhenEnv): boolean {
 export interface HelpHint {
   keys: Chord[];
   hint: string;
+  tier: ScopeTier;
 }
 
-/** HelpBar hints: active hinted specs, pane+view first, then global. */
+/**
+ * HelpBar hints: active hinted specs, pane+view first, then global. The
+ * tier lets the HelpBar decide whether the active view has migrated (any
+ * view-tier hints) or should fall back to its legacy static table.
+ */
 export function helpBarHints(env: WhenEnv): HelpHint[] {
   if (env.isMobile) return [];
   const out: HelpHint[] = [];
@@ -220,7 +225,7 @@ export function helpBarHints(env: WhenEnv): HelpHint[] {
       if (!spec.hint || seen.has(spec.id)) continue;
       if (!matchesWhen(spec.when, env)) continue;
       seen.add(spec.id);
-      out.push({ keys: spec.keys, hint: spec.hint });
+      out.push({ keys: spec.keys, hint: spec.hint, tier: scope.tier });
     }
   }
   return out;

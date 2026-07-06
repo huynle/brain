@@ -103,18 +103,6 @@ const LISTS_SPECS: ActionSpec[] = [
   { id: "lists.project", keys: ["1"], desc: "1–9: jump to project tab", group: "lists" },
 ];
 
-const PANES_SPECS: ActionSpec[] = [
-  { id: "panes.cycle", keys: ["Tab"], desc: "Cycle pane focus (list → detail → logs)", group: "panes" },
-  { id: "panes.cycleBack", keys: ["S-Tab"], desc: "Cycle pane focus backward", group: "panes" },
-  { id: "panes.scroll", keys: ["j", "k"], desc: "Scroll line down / up (in focused pane)", group: "panes" },
-  { id: "panes.top", keys: ["g g"], desc: "Jump to top (vim gg)", group: "panes" },
-  { id: "panes.bottom", keys: ["G"], desc: "Jump to bottom", group: "panes" },
-  { id: "panes.halfPage", keys: ["C-d", "C-u"], desc: "Half-page down / up", group: "panes" },
-  { id: "panes.resizeRow", keys: ["A-j", "A-k"], desc: "Grow / shrink bottom-row height", group: "panes" },
-  { id: "panes.resizeSplit", keys: ["A-l", "A-h"], desc: "Grow / shrink detail vs logs width", group: "panes" },
-  { id: "panes.resetSplit", keys: ["dbl-click"], desc: "Double-click a separator to reset that split", group: "panes" },
-];
-
 const POPUPS_SPECS: ActionSpec[] = [
   { id: "popups.scroll", keys: ["j", "k"], desc: "Scroll", group: "popups" },
   { id: "popups.jump", keys: ["g", "G"], desc: "Top / bottom", group: "popups" },
@@ -125,6 +113,7 @@ const POPUPS_SPECS: ActionSpec[] = [
 ];
 
 // Registered once at module load; help-only (no handlers → never dispatch).
+// The panes group lives with the real pane scope (usePaneNavigation), so it
+// appears exactly when a paned view is mounted.
 registerScope({ scopeId: "help:lists", tier: "global", specs: LISTS_SPECS });
-registerScope({ scopeId: "help:panes", tier: "pane", specs: PANES_SPECS });
 registerScope({ scopeId: "help:popups", tier: "global", specs: POPUPS_SPECS });

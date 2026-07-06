@@ -2634,6 +2634,11 @@ body.resizing-pane-col * {
   font-weight: 700;
 }
 
+/* Session inspection modal: give the transcript room. */
+.session-modal .sheet-body {
+  min-height: 55vh;
+}
+
 /* Mobile context strip: drill breadcrumb + mode + filter with tap-to-back. */
 .mctx {
   display: flex;

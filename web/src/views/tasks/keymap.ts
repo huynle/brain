@@ -11,7 +11,7 @@ export const FEATURE_SORT_FIELDS = ["completed", "created", "name", "status", "p
 
 export const TASKS_SPECS: ActionSpec[] = [
   ...listNavSpecs("tasks", "Move through tasks").map((s) => ({ ...s, when: listOnly })),
-  { id: "tasks.enter", keys: ["Enter"], desc: "Open task session; on a feature header: descend into the feature (Esc backs out)", hint: "Open", group: "tasks", when: listOnly },
+  { id: "tasks.enter", keys: ["Enter"], desc: "Inspect the session in a modal; on a feature header: descend into the feature (Esc backs out)", hint: "Open", group: "tasks", when: listOnly },
   { id: "tasks.select", keys: ["Space"], desc: "Select task; on a feature header: collapse/expand", hint: "Select", group: "tasks", when: listOnly },
   { id: "tasks.complete", keys: ["c"], desc: "Mark completed", hint: "Done", group: "tasks", when: listOnly },
   { id: "tasks.run", keys: ["x"], desc: "Run / dispatch task (whole feature on a header)", hint: "Run", group: "tasks", when: listOnly },

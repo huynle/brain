@@ -17,9 +17,10 @@ import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
 import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
 import { Panel } from "../components/layout/Panel";
 import { TaskSessionPane } from "../components/layout/TaskSessionPane";
+import { SessionModal } from "../components/layout/SessionModal";
 import { PaneSplitterRow, PaneSplitterColumn } from "../components/layout/PaneSplitters";
 import { ConfirmDialog } from "../components/common/Modal";
-import { deleteEntry, listEntries, listInstances, runFeature, runOrTriggerTask, setTaskStatus, summarizeRunFeatureResult, summarizeTriggerResults } from "../lib/api";
+import { deleteEntry, listEntries, runFeature, runOrTriggerTask, setTaskStatus, summarizeRunFeatureResult, summarizeTriggerResults } from "../lib/api";
 import {
   isActive,
   relativeTime,
@@ -36,9 +37,6 @@ const ComposeModal = lazy(() =>
 // CodeMirror is heavy — load the editor only when the user edits.
 const EntryEditModal = lazy(() =>
   import("./brain/EntryEditModal").then((m) => ({ default: m.EntryEditModal })),
-);
-const EntryRawViewModal = lazy(() =>
-  import("./brain/EntryRawViewModal").then((m) => ({ default: m.EntryRawViewModal })),
 );
 
 const TERMINAL = ["completed", "cancelled", "archived", "superseded"];
@@ -171,7 +169,7 @@ export function TasksView() {
   const [collapseDefault, setCollapseDefault] = useState(activeProject === ALL_PROJECTS);
 
   const [editMeta, setEditMeta] = useState<Task | null>(null);
-  const [viewContent, setViewContent] = useState<Task | null>(null);
+  const [sessionTask, setSessionTask] = useState<Task | null>(null);
   const [editContent, setEditContent] = useState<Task | null>(null);
   const [batchMeta, setBatchMeta] = useState<Task[] | null>(null);
   const [featureMeta, setFeatureMeta] = useState<{ feature: string; tasks: Task[] } | null>(null);
@@ -377,27 +375,10 @@ export function TasksView() {
     }
   }
 
-  async function openTaskSession(task: Task) {
-    if (!isActive(task.status)) {
-      setViewContent(task);
-      return;
-    }
-    try {
-      const instances = await listInstances();
-      const inst = instances.find((i) => i.task_id === task.id && (!task.projectId || i.project_id === task.projectId));
-      if (!inst) {
-        toast("No live session found for this task", "info");
-        return;
-      }
-      openInControl({
-        mode: "live",
-        runnerId: inst.runner_id,
-        instanceId: inst.instance_id,
-        taskTitle: task.title || task.id,
-      });
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "Could not open session", "error");
-    }
+  // Enter inspects the task's work in place: SessionModal renders the live
+  // stream or the recorded transcript without leaving the Tasks tab.
+  function openTaskSession(task: Task) {
+    setSessionTask(task);
   }
 
   // Pane scroll/focus dispatches via the pane-tier scope registered by
@@ -418,7 +399,7 @@ export function TasksView() {
         if (row?.kind === "header") {
           pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
           nav.setCursor(scope, 0);
-        } else if (row?.kind === "task") void openTaskSession(row.task);
+        } else if (row?.kind === "task") openTaskSession(row.task);
       },
       "tasks.select": () => {
         const row = rows[cursor];
@@ -693,7 +674,7 @@ export function TasksView() {
                   nav.setCursor(scope, i);
                   if (isMobile) openInspect({ path: t.path, taskId: t.id, projectId: t.projectId, title: t.title });
                 }}
-                onDoubleClick={() => void openTaskSession(t)}
+                onDoubleClick={() => openTaskSession(t)}
               >
                 <span className="connector">{row.lead}</span>
                 {selCount > 0 && (
@@ -775,14 +756,16 @@ export function TasksView() {
       )}
 
       {editMeta && <MetadataModal task={editMeta} onClose={() => setEditMeta(null)} />}
-      {viewContent && (
-        <Suspense fallback={null}>
-          <EntryRawViewModal
-            path={viewContent.path}
-            title={viewContent.title || viewContent.id}
-            onClose={() => setViewContent(null)}
-          />
-        </Suspense>
+      {sessionTask && (
+        <SessionModal
+          target={{
+            taskId: sessionTask.id,
+            projectId: sessionTask.projectId,
+            taskPath: sessionTask.path,
+            title: sessionTask.title,
+          }}
+          onClose={() => setSessionTask(null)}
+        />
       )}
       {batchMeta && <BatchMetadataModal tasks={batchMeta} onClose={() => setBatchMeta(null)} onDone={() => nav.clearSelect()} />}
       {featureMeta && (

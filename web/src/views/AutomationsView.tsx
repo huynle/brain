@@ -23,6 +23,7 @@ import {
 } from "../lib/api";
 import { Pill } from "../components/common/Badge";
 import { ConfirmDialog } from "../components/common/Modal";
+import { SessionModal, type SessionModalTarget } from "../components/layout/SessionModal";
 import { EmptyState, ErrorState, Loading } from "../components/common/states";
 import { ListDetail } from "../components/layout/ListDetail";
 import { deriveAutomationsPaused } from "../components/layout/StatusBar";
@@ -87,6 +88,7 @@ export function AutomationsView() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [visibleRunTaskLimits, setVisibleRunTaskLimits] = useState<Record<string, number>>({});
   const [confirmDel, setConfirmDel] = useState<BrainEntry[] | null>(null);
+  const [sessionTarget, setSessionTarget] = useState<SessionModalTarget | null>(null);
   const [busy, setBusy] = useState(false);
   const [query, setQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
@@ -402,7 +404,14 @@ export function AutomationsView() {
       },
       "automations.enter": () => {
         const cur = display[cursor];
-        if (cur?.kind === "task") void openTaskInControl(cur.task);
+        if (cur?.kind === "task") {
+          // Inspect in place; o still jumps to the Control tab for resume.
+          if (isMobile) {
+            openInspect({ path: cur.task.path, title: cur.task.title, taskId: cur.task.id, projectId: cur.task.project_id });
+          } else {
+            setSessionTarget({ taskId: cur.task.id, projectId: cur.task.project_id, taskPath: cur.task.path, title: cur.task.title });
+          }
+        }
         else if (cur?.kind === "show-more") showNextRunTaskPage(cur.parent);
         else if (cur?.kind === "auto") {
           if (childRunTasks(cur.row.id, tasks).length > 0) toggleExpand(cur.row);
@@ -589,6 +598,9 @@ export function AutomationsView() {
           onClose={() => setCreating(false)}
           onCreated={() => { void qc.invalidateQueries({ queryKey: ["goals"] }); refresh(); }}
         />
+      )}
+      {sessionTarget && (
+        <SessionModal target={sessionTarget} onClose={() => setSessionTarget(null)} />
       )}
       {confirmDel && (
         <ConfirmDialog

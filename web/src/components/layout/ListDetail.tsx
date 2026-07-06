@@ -4,7 +4,7 @@
 //
 // Pane focus + keyboard navigation: the consuming view is expected to call
 // `usePaneNavigation()` and pass the returned object as `paneNav`. The view
-// must also forward `paneNav.handleKey(e)` from inside its useViewKeyboard
+// gets pane keys via the pane-tier keymap scope usePaneNavigation registers
 // handler so Tab/Shift-Tab and vim-style scroll keys work. We can't install
 // our own useViewKeyboard here because that hook's `activeHandler` is a
 // module-level singleton — the last-mounted handler wins, which would race

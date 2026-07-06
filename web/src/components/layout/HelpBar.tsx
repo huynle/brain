@@ -18,14 +18,6 @@ const TAIL: Hint[] = [
 ];
 
 const HINTS: Record<string, Hint[]> = {
-  control: [
-    ["Click", "Attach"],
-    ["Enter", "Send"],
-    ["h/l", "Tabs"],
-    [":", "Cmd"],
-    ["H/L", "Proj"],
-    ["?", "Help"],
-  ],
 };
 
 const FOCUS_LABEL: Record<string, string> = {

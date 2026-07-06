@@ -13,3 +13,11 @@ export const RUNNERS_SPECS: ActionSpec[] = [
   { id: "runners.pause", keys: ["p", "P"], desc: "Pause/resume tasks for the active scope", hint: "Pause", group: "runners" },
   { id: "runners.pauseAutos", keys: ["a", "A"], desc: "Pause/resume automations", hint: "Autos", group: "runners" },
 ];
+
+export const CONTROL_SPECS: ActionSpec[] = [
+  ...listNavSpecs("control", "Move through the runner rail"),
+  { id: "control.open", keys: ["Enter"], desc: "Attach / open instance", hint: "Open", group: "control" },
+  { id: "control.spawn", keys: ["n", "+"], desc: "New ad-hoc instance", hint: "New", group: "control" },
+  { id: "control.kill", keys: ["x", "s"], desc: "Kill ad-hoc instance", hint: "Kill", group: "control" },
+  { id: "control.back", keys: ["Escape", "Backspace"], desc: "Back from chat/history to the rail", group: "control" },
+];

@@ -17,19 +17,6 @@ interface Group {
 // Per-view groups shown first (highlighted) when that tab is active, so the
 // help adapts to wherever you are. Global + Lists always follow.
 const VIEW_GROUPS: Record<string, Group> = {
-  control: {
-    id: "control",
-    title: "Control",
-    rows: [
-      { keys: ["j", "k", "g", "G"], desc: "Move through runner rail" },
-      { keys: ["Enter"], desc: "Attach / open instance" },
-      { keys: ["n", "+"], desc: "New instance" },
-      { keys: ["x", "s"], desc: "Kill ad-hoc instance" },
-      { keys: ["Esc", "⌫"], desc: "Back from chat/history to rail" },
-      { keys: ["▶"], desc: "Resume reviewed session" },
-      { keys: ["◼"], desc: "Stop / interrupt" },
-    ],
-  },
 };
 
 const VIEW_LABEL: Record<string, string> = {

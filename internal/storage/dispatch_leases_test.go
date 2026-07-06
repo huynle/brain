@@ -191,6 +191,52 @@ func TestDispatchLeaseRejectAndExpire(t *testing.T) {
 	}
 }
 
+// Acked leases must NOT be expired even when past their TTL: an ack means
+// the runner accepted the work, and long-running tasks routinely outlive
+// the lease TTL. Liveness is owned by claim renewal, and re-dispatch after
+// a crash still works via CreateDispatchLease's expires_at<now overwrite.
+func TestExpireDispatchLeases_LeavesAckedLeases(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	lease, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "long-task", AssignedRunnerID: "runner-1", AssignedMachineID: "machine-1", PushedAt: 1000, ExpiresAt: 1500})
+	if err != nil || !created {
+		t.Fatalf("create lease: created=%v err=%v", created, err)
+	}
+	if acked, err := s.AckDispatchLease(ctx, "brain-api", "long-task", "runner-1", lease.LeaseID, 1200); err != nil || !acked {
+		t.Fatalf("ack lease: acked=%v err=%v", acked, err)
+	}
+
+	// Far past the TTL — the task is still running on the runner.
+	expired, err := s.ExpireDispatchLeases(ctx, 100_000)
+	if err != nil {
+		t.Fatalf("ExpireDispatchLeases failed: %v", err)
+	}
+	if expired != 0 {
+		t.Fatalf("expired count = %d, want 0 (acked leases must be left alone)", expired)
+	}
+	got, err := s.GetDispatchLeaseRow(ctx, "brain-api", "long-task")
+	if err != nil {
+		t.Fatalf("get lease: %v", err)
+	}
+	if got == nil || got.State != DispatchLeaseStateAcked {
+		t.Fatalf("acked lease after expiry sweep = %#v, want state acked", got)
+	}
+
+	// Crash recovery: the stale acked lease must still be overwritable by a
+	// new dispatch once past its TTL (task went back to ready).
+	release, created, err := s.CreateDispatchLease(ctx, DispatchLeaseCreate{ProjectID: "brain-api", TaskID: "long-task", AssignedRunnerID: "runner-2", AssignedMachineID: "machine-2", PushedAt: 100_000, ExpiresAt: 160_000})
+	if err != nil {
+		t.Fatalf("re-lease after stale ack: %v", err)
+	}
+	if !created {
+		t.Fatal("re-lease after stale ack: created = false, want true (expires_at<now overwrite)")
+	}
+	if release.AssignedRunnerID != "runner-2" || release.State != DispatchLeaseStatePushed {
+		t.Fatalf("re-lease = %#v, want pushed lease on runner-2", release)
+	}
+}
+
 func TestDispatchLeaseExpiredCommandsAreIgnoredAndRedispatchable(t *testing.T) {
 	s := newTestStorage(t)
 	ctx := context.Background()

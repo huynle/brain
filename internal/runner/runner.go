@@ -216,12 +216,30 @@ type TaskRunner struct {
 	defaultModel    string // runtime-adjustable default model (empty = no override)
 	lastClaimDate   string // YYYY-MM-DD of last claim, for first_task_today detection
 
-	// Pause state (protected by pauseMu)
+	// Pause state (protected by pauseMu).
+	//
+	// Two origins are tracked separately:
+	//   - Local origin (pauseCache/allPaused/automationsPaused/
+	//     automationPausedProjects): set by direct calls to PauseProject/
+	//     PauseAll/etc. — the embedded TUI controller and StartPaused. The
+	//     server does not know about these, so they are never overwritten
+	//     by reconciliation.
+	//   - Server origin (serverTasksPaused/serverAutosPaused): set by SSE
+	//     CommandPause/CommandResume events and reconciled wholesale from
+	//     GetRunnerStatus on every poll tick in push-dispatch mode. The
+	//     sentinel "" key means "globally paused". Reconciliation heals
+	//     missed SSE events in both directions — without it, a missed
+	//     resume event left the runner rejecting every dispatch as
+	//     runner_paused until the next manual pause/resume.
+	//
+	// Effective pause = local OR server (see IsPaused / the dispatch gate).
 	pauseMu                  sync.RWMutex
 	pauseCache               map[string]bool
 	allPaused                bool
 	automationsPaused        bool
 	automationPausedProjects map[string]bool
+	serverTasksPaused        map[string]bool
+	serverAutosPaused        map[string]bool
 	enabledFeatures          map[string]bool // features toggled on via TUI "x" key
 
 	// Event handlers (protected by eventMu)
@@ -331,10 +349,12 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		status:                   RunnerStatusIdle,
 		pauseCache:               make(map[string]bool),
 		automationPausedProjects: make(map[string]bool),
+		serverTasksPaused:        make(map[string]bool),
+		serverAutosPaused:        make(map[string]bool),
 		enabledFeatures:          make(map[string]bool),
 		logStreamers:             make(map[string]*LogStreamer),
 		wakeCh:                   make(chan struct{}, 1),
-		commandCh:                make(chan RunnerCommand, 16),
+		commandCh:                make(chan RunnerCommand, commandChannelCapacity(opts.Config.MaxParallel)),
 		done:                     make(chan struct{}),
 	}
 	if executorRegistry != nil {
@@ -571,24 +591,41 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	}
 }
 
-func (tr *TaskRunner) serverPauseState(ctx context.Context) (map[string]bool, map[string]bool) {
+// commandChannelCapacity sizes the SSE runner-command buffer. The dispatch
+// pool runs maxParallel+2 workers, so a burst of dispatches for a large
+// runner must not be bottlenecked by a fixed 16-slot channel — commands
+// that don't fit are dropped by the SSE listener and only self-heal after
+// the lease TTL.
+func commandChannelCapacity(maxParallel int) int {
+	if cap := 2 * maxParallel; cap > 16 {
+		return cap
+	}
+	return 16
+}
+
+// fetchServerPauseState loads the server's pause switches. The third return
+// is false when the state could not be fetched (no client, unsupported
+// client, or HTTP error) — callers that reconcile cached state must keep
+// the previous snapshot in that case rather than treating "unknown" as
+// "nothing paused".
+func (tr *TaskRunner) fetchServerPauseState(ctx context.Context) (map[string]bool, map[string]bool, bool) {
 	tasksPaused := make(map[string]bool)
 	automationsPaused := make(map[string]bool)
 	if tr.client == nil {
-		return tasksPaused, automationsPaused
+		return tasksPaused, automationsPaused, false
 	}
 	statusClient, ok := tr.client.(interface {
 		GetRunnerStatus(context.Context) (*types.RunnerStatusResponse, error)
 	})
 	if !ok {
-		return tasksPaused, automationsPaused
+		return tasksPaused, automationsPaused, false
 	}
 	status, err := statusClient.GetRunnerStatus(ctx)
 	if err != nil || status == nil {
 		if err != nil {
 			tr.logger.Printf("get server pause state failed: %v", err)
 		}
-		return tasksPaused, automationsPaused
+		return tasksPaused, automationsPaused, false
 	}
 	// Global server pause flags propagate to every observed project. We
 	// signal "globally paused" by marking the sentinel "" key in each
@@ -610,7 +647,25 @@ func (tr *TaskRunner) serverPauseState(ctx context.Context) (map[string]bool, ma
 	for _, projectID := range status.AutomationPausedProjects {
 		automationsPaused[projectID] = true
 	}
-	return tasksPaused, automationsPaused
+	return tasksPaused, automationsPaused, true
+}
+
+// syncServerPauseState reconciles the server-origin pause snapshot from
+// GetRunnerStatus. Called on every poll tick in push-dispatch mode, where
+// the poll loop's own pause fetch is skipped by the early return — without
+// this the dispatch gate ran entirely on SSE-event state and a single
+// missed CommandPause/CommandResume left it permanently stale. On fetch
+// failure the previous snapshot is kept: SSE events keep applying on top
+// of it, and "unknown" must not be read as "everything resumed".
+func (tr *TaskRunner) syncServerPauseState(ctx context.Context) {
+	tasksPaused, automationsPaused, ok := tr.fetchServerPauseState(ctx)
+	if !ok {
+		return
+	}
+	tr.pauseMu.Lock()
+	tr.serverTasksPaused = tasksPaused
+	tr.serverAutosPaused = automationsPaused
+	tr.pauseMu.Unlock()
 }
 
 // serverPausedFor returns true when the server has either paused all tasks
@@ -698,14 +753,18 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 	// push was enabled. We can't decide here yet because we don't
 	// have the task's GeneratedBy until we've resolved the task.
 	//
-	// Pause state comes from the runner's local cache only. The cache
-	// is kept in sync via SSE CommandPause/CommandResume — no HTTP
-	// round-trip per dispatch, which used to burn ~200ms per dispatch
-	// against a slow API and caused task_lookup_failed rejections in
-	// production. See fix/inline-dispatch-task.
+	// Pause state comes from local caches only — no HTTP round-trip per
+	// dispatch, which used to burn ~200ms per dispatch against a slow API
+	// and caused task_lookup_failed rejections in production (see
+	// fix/inline-dispatch-task). Server-origin state arrives via SSE
+	// CommandPause/CommandResume and is reconciled from GetRunnerStatus on
+	// every poll tick (syncServerPauseState), so a missed event heals
+	// within one poll interval.
 	tr.pauseMu.RLock()
-	paused := tr.allPaused || tr.pauseCache[cmd.ProjectID]
-	automationsPausedForProject := tr.automationsPaused || tr.automationPausedProjects[cmd.ProjectID]
+	paused := tr.allPaused || tr.pauseCache[cmd.ProjectID] ||
+		serverPausedFor(tr.serverTasksPaused, cmd.ProjectID)
+	automationsPausedForProject := tr.automationsPaused || tr.automationPausedProjects[cmd.ProjectID] ||
+		serverPausedFor(tr.serverAutosPaused, cmd.ProjectID)
 	tr.pauseMu.RUnlock()
 	if paused && cmd.Force {
 		slog.Info("force-dispatch bypassing pause",
@@ -776,6 +835,11 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 		return
 	}
 	if !tr.ackDispatch(ctx, cmd, leaseID) {
+		// The ack failed (network error, or the server refused because the
+		// lease expired/was reassigned). The lease self-heals server-side via
+		// TTL expiry, but the local slot reservation must be released here or
+		// this runner permanently loses an execution slot per failed ack.
+		tr.processMgr.ReleaseReservation(cmd.TaskID)
 		slog.Warn("dispatch ack failed; aborting spawn",
 			"task_id", cmd.TaskID,
 			"project_id", cmd.ProjectID,
@@ -1031,8 +1095,11 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 
 	// Passive dispatch-capable runners wait for Brain-assigned dispatch leases
 	// instead of actively polling /next for work. Lifecycle maintenance above
-	// still runs on every poll tick.
+	// still runs on every poll tick — including the server pause snapshot,
+	// which the dispatch gate consults. Reconciling it here heals any SSE
+	// pause/resume events lost across a stream reconnect.
 	if tr.dispatchPushEnabled() {
+		tr.syncServerPauseState(ctx)
 		tr.saveState()
 		tr.emitPollComplete()
 		return
@@ -1046,14 +1113,24 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 		return
 	}
 
-	// 4. Check if paused
-	serverTaskPaused, serverAutomationPaused := tr.serverPauseState(ctx)
+	// 4. Check if paused — refresh the server-origin snapshot (kept on fetch
+	// failure) and read the cached maps, so pause state delivered via SSE
+	// commands survives a transient GetRunnerStatus error.
+	tr.syncServerPauseState(ctx)
 	tr.pauseMu.RLock()
 	allPaused := tr.allPaused
 	automationsPaused := tr.automationsPaused
 	automationPausedProjects := make(map[string]bool, len(tr.automationPausedProjects))
 	for projectID, paused := range tr.automationPausedProjects {
 		automationPausedProjects[projectID] = paused
+	}
+	serverTaskPaused := make(map[string]bool, len(tr.serverTasksPaused))
+	for projectID, paused := range tr.serverTasksPaused {
+		serverTaskPaused[projectID] = paused
+	}
+	serverAutomationPaused := make(map[string]bool, len(tr.serverAutosPaused))
+	for projectID, paused := range tr.serverAutosPaused {
+		serverAutomationPaused[projectID] = paused
 	}
 	tr.pauseMu.RUnlock()
 
@@ -2415,46 +2492,55 @@ func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
 		verb = "resumed"
 	}
 
-	switch {
-	case projectID == "" && tasksScope && automationsScope:
+	// SSE pause/resume commands broadcast server-side state, so pauses land
+	// in the server-origin maps (key "" = global) where syncServerPauseState
+	// can reconcile them against GetRunnerStatus — TUI-local pauses are a
+	// separate concern and stay untouched. Resumes additionally clear the
+	// matching local state: an explicit user resume overrides a pause
+	// regardless of origin (a StartPaused runner is resumed from the PWA
+	// exactly this way, and the pre-server-origin code also cleared local
+	// state on resume).
+	tr.pauseMu.Lock()
+	if tasksScope {
 		if pause {
-			tr.PauseAll()
-			tr.PauseAutomations()
+			tr.serverTasksPaused[projectID] = true
 		} else {
-			tr.ResumeAll()
-			tr.ResumeAutomations()
+			delete(tr.serverTasksPaused, projectID)
+			if projectID == "" {
+				tr.allPaused = false
+			} else {
+				delete(tr.pauseCache, projectID)
+			}
 		}
-	case projectID == "" && tasksScope:
+	}
+	if automationsScope {
 		if pause {
-			tr.PauseAll()
+			tr.serverAutosPaused[projectID] = true
 		} else {
-			tr.ResumeAll()
+			delete(tr.serverAutosPaused, projectID)
+			if projectID == "" {
+				tr.automationsPaused = false
+			} else {
+				delete(tr.automationPausedProjects, projectID)
+			}
 		}
-	case projectID == "" && automationsScope:
-		if pause {
-			tr.PauseAutomations()
-		} else {
-			tr.ResumeAutomations()
-		}
-	case projectID != "" && tasksScope && automationsScope:
-		if pause {
-			tr.PauseProject(projectID)
-			tr.PauseProjectAutomations(projectID)
-		} else {
-			tr.ResumeProject(projectID)
-			tr.ResumeProjectAutomations(projectID)
-		}
-	case projectID != "" && tasksScope:
-		if pause {
-			tr.PauseProject(projectID)
-		} else {
-			tr.ResumeProject(projectID)
-		}
-	case projectID != "" && automationsScope:
-		if pause {
-			tr.PauseProjectAutomations(projectID)
-		} else {
-			tr.ResumeProjectAutomations(projectID)
+	}
+	tr.pauseMu.Unlock()
+	tr.wake()
+
+	// Emit the same lifecycle events the local pause methods produce so
+	// TUI and event-forwarding consumers observe SSE-driven pauses
+	// identically to local ones.
+	if tasksScope {
+		switch {
+		case projectID == "" && pause:
+			tr.emitEvent(RunnerEvent{Type: EventAllPaused})
+		case projectID == "":
+			tr.emitEvent(RunnerEvent{Type: EventAllResumed})
+		case pause:
+			tr.emitEvent(RunnerEvent{Type: EventProjectPaused, ProjectID: projectID})
+		default:
+			tr.emitEvent(RunnerEvent{Type: EventProjectResumed, ProjectID: projectID})
 		}
 	}
 	slog.Info("runner "+verb+" via SSE command",
@@ -2523,11 +2609,12 @@ func (tr *TaskRunner) ResumeAutomations() {
 	tr.wake()
 }
 
-// IsAutomationsPaused returns whether automation-generated task processing is paused.
+// IsAutomationsPaused returns whether automation-generated task processing is
+// paused, by local request or server-side state.
 func (tr *TaskRunner) IsAutomationsPaused() bool {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
-	return tr.automationsPaused
+	return tr.automationsPaused || tr.serverAutosPaused[""]
 }
 
 func (tr *TaskRunner) wake() {
@@ -2561,21 +2648,22 @@ func (tr *TaskRunner) canStartAutomationTask(ctx context.Context, task *types.Re
 	return running < automation.Trigger.MaxConcurrent, nil
 }
 
-// IsPaused returns whether a project is paused.
+// IsPaused returns whether a project is paused, by local request or
+// server-side state.
 func (tr *TaskRunner) IsPaused(projectID string) bool {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
-	if tr.allPaused {
+	if tr.allPaused || tr.serverTasksPaused[""] {
 		return true
 	}
-	return tr.pauseCache[projectID]
+	return tr.pauseCache[projectID] || tr.serverTasksPaused[projectID]
 }
 
 // IsAllPaused returns whether all projects are globally paused.
 func (tr *TaskRunner) IsAllPaused() bool {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
-	return tr.allPaused
+	return tr.allPaused || tr.serverTasksPaused[""]
 }
 
 // =============================================================================

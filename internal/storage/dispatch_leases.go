@@ -178,12 +178,23 @@ func (s *StorageLayer) ClearDispatchLease(ctx context.Context, projectID, taskID
 	return rows > 0, nil
 }
 
+// ExpireDispatchLeases marks overdue *pushed* leases expired so the
+// scheduler re-dispatches work whose dispatch command never reached (or was
+// rejected without notice by) the runner.
+//
+// Acked leases are deliberately NOT expired: an ack means the runner took
+// the work, and long-running tasks routinely outlive the 60s lease TTL —
+// flipping them to expired mid-run made every dispatch diagnostic show
+// "dispatch lease expired" for healthy tasks. Liveness of acked work is
+// owned by claim renewal (runner.renewClaims); if the runner dies, the
+// task returns to ready and CreateDispatchLease's expires_at<now overwrite
+// clause lets the scheduler re-lease it regardless of the stale acked row.
 func (s *StorageLayer) ExpireDispatchLeases(ctx context.Context, now int64) (int64, error) {
 	result, err := s.db.ExecContext(ctx, `
 		UPDATE task_dispatch_leases
 		SET state = ?, last_error = CASE WHEN last_error = '' THEN 'dispatch lease expired' ELSE last_error END
-		WHERE expires_at < ? AND state IN (?, ?)`,
-		DispatchLeaseStateExpired, now, DispatchLeaseStatePushed, DispatchLeaseStateAcked,
+		WHERE expires_at < ? AND state = ?`,
+		DispatchLeaseStateExpired, now, DispatchLeaseStatePushed,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("expire dispatch leases: %w", err)

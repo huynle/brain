@@ -95,7 +95,8 @@ type mockClient struct {
 	releaseDispatchErr   error
 	releaseDispatchCalls []dispatchReleaseCall
 
-	runnerStatus *types.RunnerStatusResponse
+	runnerStatus    *types.RunnerStatusResponse
+	runnerStatusErr error
 
 	// healthBlockCh, when set, makes CheckHealth block on the channel until
 	// it is closed or a value is sent. Used to simulate a wedged HTTP call
@@ -275,6 +276,9 @@ func (m *mockClient) ReleaseDispatch(ctx context.Context, runnerID, projectID, t
 func (m *mockClient) GetRunnerStatus(ctx context.Context) (*types.RunnerStatusResponse, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.runnerStatusErr != nil {
+		return nil, m.runnerStatusErr
+	}
 	if m.runnerStatus == nil {
 		return &types.RunnerStatusResponse{Running: true}, nil
 	}

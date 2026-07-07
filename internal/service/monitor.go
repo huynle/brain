@@ -33,10 +33,14 @@ var monitorTemplates = map[string]types.MonitorTemplate{
 		Label:           "Blocked Task Inspector",
 		Description:     "Periodically checks for blocked tasks and attempts to unblock them",
 		DefaultSchedule: "*/15 * * * *",
-		DefaultMaxRuns:  10,
-		Tags:            []string{"scheduled", "inspector", "monitoring"},
-		CreationMode:    types.CreationModeScheduled,
-		AlwaysActive:    true, // runs on schedule regardless of feature status
+		// 0 = unlimited: the inspector is a long-running monitor that must keep
+		// polling forever. A bounded max_runs silently disables the schedule
+		// after N ticks, leaving the inspector inert if no blocked tasks
+		// existed during those first N ticks. Matches the "dream" template.
+		DefaultMaxRuns: 0,
+		Tags:           []string{"scheduled", "inspector", "monitoring"},
+		CreationMode:   types.CreationModeScheduled,
+		AlwaysActive:   true, // runs on schedule regardless of feature status
 	},
 	"feature-review": {
 		ID:            "feature-review",

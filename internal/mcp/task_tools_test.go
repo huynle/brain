@@ -116,9 +116,18 @@ func TestBrainTaskGet_Schema(t *testing.T) {
 
 	tool := s.tools["task_get"].tool
 
-	// Required: taskId
-	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "taskId" {
-		t.Errorf("brain_task_get required = %v, want [taskId]", tool.InputSchema.Required)
+	// Required: task_id
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "task_id" {
+		t.Errorf("task_get required = %v, want [task_id]", tool.InputSchema.Required)
+	}
+
+	// Property is snake_case and describes title matching
+	prop, ok := tool.InputSchema.Properties["task_id"]
+	if !ok {
+		t.Fatal("task_get missing property 'task_id'")
+	}
+	if !strings.Contains(prop.Description, "or exact title") {
+		t.Errorf("task_id description should mention 'or exact title', got: %s", prop.Description)
 	}
 }
 
@@ -129,9 +138,13 @@ func TestBrainTaskMetadata_Schema(t *testing.T) {
 
 	tool := s.tools["task_metadata"].tool
 
-	// Required: taskId
-	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "taskId" {
-		t.Errorf("brain_task_metadata required = %v, want [taskId]", tool.InputSchema.Required)
+	// Required: task_id
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "task_id" {
+		t.Errorf("task_metadata required = %v, want [task_id]", tool.InputSchema.Required)
+	}
+
+	if _, ok := tool.InputSchema.Properties["task_id"]; !ok {
+		t.Error("task_metadata missing property 'task_id'")
 	}
 }
 
@@ -142,24 +155,30 @@ func TestBrainTasksStatus_Schema(t *testing.T) {
 
 	tool := s.tools["tasks_status"].tool
 
-	// Required: taskIds
-	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "taskIds" {
-		t.Errorf("brain_tasks_status required = %v, want [taskIds]", tool.InputSchema.Required)
+	// Required: task_ids
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "task_ids" {
+		t.Errorf("tasks_status required = %v, want [task_ids]", tool.InputSchema.Required)
 	}
 
-	// Check taskIds is array type with string items
-	taskIdsProp := tool.InputSchema.Properties["taskIds"]
+	// Check task_ids is array type with string items
+	taskIdsProp := tool.InputSchema.Properties["task_ids"]
 	if taskIdsProp.Type != "array" {
-		t.Errorf("taskIds type = %q, want %q", taskIdsProp.Type, "array")
+		t.Errorf("task_ids type = %q, want %q", taskIdsProp.Type, "array")
 	}
 	if taskIdsProp.Items == nil || taskIdsProp.Items.Type != "string" {
-		t.Error("taskIds items should be string type")
+		t.Error("task_ids items should be string type")
 	}
 
-	// Check waitFor enum
-	waitForProp := tool.InputSchema.Properties["waitFor"]
+	// Check wait_for enum and description
+	waitForProp := tool.InputSchema.Properties["wait_for"]
 	if len(waitForProp.Enum) != 2 {
-		t.Errorf("waitFor enum has %d values, want 2", len(waitForProp.Enum))
+		t.Errorf("wait_for enum has %d values, want 2", len(waitForProp.Enum))
+	}
+	if !strings.Contains(waitForProp.Description, "'completed' waits until ALL listed tasks are done") {
+		t.Errorf("wait_for description mismatch, got: %s", waitForProp.Description)
+	}
+	if !strings.Contains(waitForProp.Description, "'any' returns on the first status change among them") {
+		t.Errorf("wait_for description mismatch, got: %s", waitForProp.Description)
 	}
 }
 
@@ -170,9 +189,13 @@ func TestBrainTaskTrigger_Schema(t *testing.T) {
 
 	tool := s.tools["task_trigger"].tool
 
-	// Required: taskId
-	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "taskId" {
-		t.Errorf("brain_task_trigger required = %v, want [taskId]", tool.InputSchema.Required)
+	// Required: task_id
+	if len(tool.InputSchema.Required) != 1 || tool.InputSchema.Required[0] != "task_id" {
+		t.Errorf("task_trigger required = %v, want [task_id]", tool.InputSchema.Required)
+	}
+
+	if _, ok := tool.InputSchema.Properties["task_id"]; !ok {
+		t.Error("task_trigger missing property 'task_id'")
 	}
 }
 
@@ -738,12 +761,15 @@ func TestBrainTaskGet_NotFound(t *testing.T) {
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "nonexistent",
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
+	if err == nil {
+		t.Fatalf("expected not-found error, got result: %s", result)
 	}
 
-	if !strings.Contains(result, "Task not found") {
-		t.Errorf("result should indicate not found, got: %s", result)
+	if !strings.Contains(err.Error(), `task not found: "nonexistent"`) {
+		t.Errorf("error should indicate not found, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Use the tasks tool to list all tasks") {
+		t.Errorf("error should point at the tasks tool, got: %v", err)
 	}
 }
 
@@ -770,15 +796,18 @@ func TestBrainTaskGet_PartialMatch(t *testing.T) {
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "auth",
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
+	if err == nil {
+		t.Fatalf("expected not-found error with suggestions, got result: %s", result)
 	}
 
-	if !strings.Contains(result, "Did you mean") {
-		t.Errorf("result should suggest partial matches, got: %s", result)
+	if !strings.Contains(err.Error(), `task not found: "auth"`) {
+		t.Errorf("error should indicate not found, got: %v", err)
 	}
-	if !strings.Contains(result, "Build Auth Module") {
-		t.Errorf("result should contain suggestion, got: %s", result)
+	if !strings.Contains(err.Error(), "Did you mean") {
+		t.Errorf("error should suggest partial matches, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Build Auth Module") {
+		t.Errorf("error should contain suggestion, got: %v", err)
 	}
 }
 
@@ -789,12 +818,12 @@ func TestBrainTaskGet_MissingTaskId(t *testing.T) {
 
 	handler := s.tools["task_get"].handler
 	result, err := handler(context.Background(), map[string]any{})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
+	if err == nil {
+		t.Fatalf("expected validation error, got result: %s", result)
 	}
 
-	if !strings.Contains(result, "provide a task ID") {
-		t.Errorf("result should ask for task ID, got: %s", result)
+	if !strings.Contains(err.Error(), "provide a 'task_id' (ID or title)") {
+		t.Errorf("error should ask for task_id, got: %v", err)
 	}
 }
 
@@ -917,12 +946,15 @@ func TestBrainTaskMetadata_NotFound(t *testing.T) {
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "nonexistent",
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
+	if err == nil {
+		t.Fatalf("expected not-found error, got result: %s", result)
 	}
 
-	if !strings.Contains(result, "Task not found") {
-		t.Errorf("result should indicate not found, got: %s", result)
+	if !strings.Contains(err.Error(), `task not found: "nonexistent"`) {
+		t.Errorf("error should indicate not found, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Use the tasks tool to list all tasks") {
+		t.Errorf("error should point at the tasks tool, got: %v", err)
 	}
 }
 
@@ -989,12 +1021,12 @@ func TestBrainTasksStatus_EmptyTaskIds(t *testing.T) {
 	result, err := handler(context.Background(), map[string]any{
 		"taskIds": []any{},
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
+	if err == nil {
+		t.Fatalf("expected validation error, got result: %s", result)
 	}
 
-	if !strings.Contains(result, "provide at least one task ID") {
-		t.Errorf("result should ask for task IDs, got: %s", result)
+	if !strings.Contains(err.Error(), "provide at least one task ID in 'task_ids'") {
+		t.Errorf("error should ask for task IDs, got: %v", err)
 	}
 }
 

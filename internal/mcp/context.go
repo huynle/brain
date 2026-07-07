@@ -169,6 +169,70 @@ func ResolveProject(args map[string]any) string {
 	return GetCachedContext().ProjectID
 }
 
+// ResolveProjectArg returns the project ID from args, preferring the canonical
+// "project" key, accepting legacy "project_id"/"projectId" spellings, and
+// falling back to the ambient launch-directory context.
+func ResolveProjectArg(args map[string]any) string {
+	if p := StringArgAlias(args, "", "project", "project_id", "projectId"); p != "" {
+		return p
+	}
+	return GetCachedContext().ProjectID
+}
+
+// argAlias returns the first non-nil raw value among keys.
+// Use for values passed through to API request bodies unchanged.
+func argAlias(args map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if v, ok := args[key]; ok && v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// StringArgAlias returns the first non-empty string value among keys.
+// Use to accept a canonical snake_case parameter name alongside legacy
+// camelCase spellings.
+func StringArgAlias(args map[string]any, defaultVal string, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := args[key].(string); ok && v != "" {
+			return v
+		}
+	}
+	return defaultVal
+}
+
+// BoolArgAlias returns the first present boolean value among keys.
+func BoolArgAlias(args map[string]any, defaultVal bool, keys ...string) bool {
+	for _, key := range keys {
+		if v, ok := args[key].(bool); ok {
+			return v
+		}
+	}
+	return defaultVal
+}
+
+// IntArgAlias returns the first present numeric value among keys.
+// JSON numbers are decoded as float64 by default.
+func IntArgAlias(args map[string]any, defaultVal int, keys ...string) int {
+	for _, key := range keys {
+		if v, ok := args[key].(float64); ok {
+			return int(v)
+		}
+	}
+	return defaultVal
+}
+
+// StringSliceArgAlias returns the first present string-array value among keys.
+func StringSliceArgAlias(args map[string]any, keys ...string) []string {
+	for _, key := range keys {
+		if v := StringSliceArg(args, key); v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
 // PathFromArgs extracts a path from args, trying keys in order.
 func PathFromArgs(args map[string]any, keys ...string) string {
 	for _, key := range keys {

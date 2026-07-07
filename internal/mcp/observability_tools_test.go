@@ -87,7 +87,7 @@ func TestBrainTaskPlacementReasons_Schema(t *testing.T) {
 	tool := s.tools["task_placement_reasons"].tool
 
 	// Required fields
-	expectedRequired := []string{"taskId"}
+	expectedRequired := []string{"task_id"}
 	if len(tool.InputSchema.Required) != len(expectedRequired) {
 		t.Errorf("brain_task_placement_reasons required = %v, want %v", tool.InputSchema.Required, expectedRequired)
 	}
@@ -104,7 +104,7 @@ func TestBrainTaskPlacementReasons_Schema(t *testing.T) {
 	}
 
 	// Check properties exist
-	expectedProps := []string{"project", "taskId"}
+	expectedProps := []string{"project", "task_id"}
 	for _, prop := range expectedProps {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("schema missing property %q", prop)
@@ -115,8 +115,8 @@ func TestBrainTaskPlacementReasons_Schema(t *testing.T) {
 	if tool.InputSchema.Properties["project"].Type != "string" {
 		t.Errorf("project type = %q, want string", tool.InputSchema.Properties["project"].Type)
 	}
-	if tool.InputSchema.Properties["taskId"].Type != "string" {
-		t.Errorf("taskId type = %q, want string", tool.InputSchema.Properties["taskId"].Type)
+	if tool.InputSchema.Properties["task_id"].Type != "string" {
+		t.Errorf("task_id type = %q, want string", tool.InputSchema.Properties["task_id"].Type)
 	}
 }
 
@@ -163,7 +163,7 @@ func TestBrainAutomationRunGet_Schema(t *testing.T) {
 	tool := s.tools["automation_run_get"].tool
 
 	// Required fields
-	expectedRequired := []string{"runId"}
+	expectedRequired := []string{"run_id"}
 	if len(tool.InputSchema.Required) != len(expectedRequired) {
 		t.Errorf("brain_automation_run_get required = %v, want %v", tool.InputSchema.Required, expectedRequired)
 	}
@@ -180,7 +180,7 @@ func TestBrainAutomationRunGet_Schema(t *testing.T) {
 	}
 
 	// Check properties exist
-	expectedProps := []string{"runId"}
+	expectedProps := []string{"run_id"}
 	for _, prop := range expectedProps {
 		if _, ok := tool.InputSchema.Properties[prop]; !ok {
 			t.Errorf("schema missing property %q", prop)
@@ -188,8 +188,8 @@ func TestBrainAutomationRunGet_Schema(t *testing.T) {
 	}
 
 	// Verify property types
-	if tool.InputSchema.Properties["runId"].Type != "string" {
-		t.Errorf("runId type = %q, want string", tool.InputSchema.Properties["runId"].Type)
+	if tool.InputSchema.Properties["run_id"].Type != "string" {
+		t.Errorf("run_id type = %q, want string", tool.InputSchema.Properties["run_id"].Type)
 	}
 }
 

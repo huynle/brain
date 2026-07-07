@@ -24,7 +24,7 @@ func RegisterWebhookTools(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_webhook_create
+// webhook_create
 // =============================================================================
 
 func registerBrainWebhookCreate(s *Server, client *APIClient) {
@@ -37,7 +37,7 @@ Events use a namespaced taxonomy (e.g., "task.completed", "entry.created").
 Supports glob patterns like "task.*" to match all task events.
 
 Example:
-  brain_webhook_create({ name: "deploy-hook", url: "https://example.com/hook", events: ["task.completed"] })`,
+  webhook_create({ name: "deploy-hook", url: "https://example.com/hook", events: ["task.completed"] })`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -53,12 +53,12 @@ Example:
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		webhookURL := StringArg(args, "url", "")
 		if webhookURL == "" {
-			return "Error: url is required", nil
+			return "", fmt.Errorf("url is required")
 		}
 
 		events := StringSliceArg(args, "events")
 		if len(events) == 0 {
-			return "Error: events must be a non-empty array of event type strings", nil
+			return "", fmt.Errorf("events must be a non-empty array of event type strings")
 		}
 
 		// Validate URL format
@@ -97,7 +97,7 @@ Example:
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "already exists") || strings.Contains(errMsg, "409") {
-				return fmt.Sprintf("Webhook already exists with that URL. Use brain_webhook_list to see existing webhooks."), nil
+				return fmt.Sprintf("Webhook already exists with that URL. Use webhook_list to see existing webhooks."), nil
 			}
 			return "", err
 		}
@@ -125,7 +125,7 @@ Example:
 }
 
 // =============================================================================
-// brain_webhook_list
+// webhook_list
 // =============================================================================
 
 func registerBrainWebhookList(s *Server, client *APIClient) {
@@ -155,7 +155,7 @@ Use enabled_only to filter to active webhooks.`,
 		}
 
 		if len(resp.Webhooks) == 0 {
-			return "No webhooks registered. Use brain_webhook_create to add one.", nil
+			return "No webhooks registered. Use webhook_create to add one.", nil
 		}
 
 		lines := []string{
@@ -185,7 +185,7 @@ Use enabled_only to filter to active webhooks.`,
 }
 
 // =============================================================================
-// brain_webhook_get
+// webhook_get
 // =============================================================================
 
 func registerBrainWebhookGet(s *Server, client *APIClient) {
@@ -194,7 +194,7 @@ func registerBrainWebhookGet(s *Server, client *APIClient) {
 		Description: `Inspect a webhook configuration by ID.
 
 Returns the webhook URL, subscribed events, enabled status, filters, and timestamps.
-Use brain_webhook_list to find webhook IDs.`,
+Use webhook_list to find webhook IDs.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -205,7 +205,7 @@ Use brain_webhook_list to find webhook IDs.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		id := StringArg(args, "id", "")
 		if id == "" {
-			return "Error: id is required", nil
+			return "", fmt.Errorf("id is required")
 		}
 
 		var resp types.WebhookResponse
@@ -213,7 +213,7 @@ Use brain_webhook_list to find webhook IDs.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use brain_webhook_list to see existing webhooks.", id), nil
+				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
 			}
 			return "", err
 		}
@@ -223,7 +223,7 @@ Use brain_webhook_list to find webhook IDs.`,
 }
 
 // =============================================================================
-// brain_webhook_update
+// webhook_update
 // =============================================================================
 
 func registerBrainWebhookUpdate(s *Server, client *APIClient) {
@@ -232,7 +232,7 @@ func registerBrainWebhookUpdate(s *Server, client *APIClient) {
 		Description: `Update a webhook configuration by ID.
 
 Only provided fields are changed. Supports updating name, URL, events, filter,
-secret, and enabled status. Use brain_webhook_get to inspect the result.`,
+secret, and enabled status. Use webhook_get to inspect the result.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -249,7 +249,7 @@ secret, and enabled status. Use brain_webhook_get to inspect the result.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		id := StringArg(args, "id", "")
 		if id == "" {
-			return "Error: id is required", nil
+			return "", fmt.Errorf("id is required")
 		}
 
 		body := map[string]any{}
@@ -258,7 +258,7 @@ secret, and enabled status. Use brain_webhook_get to inspect the result.`,
 		}
 		if webhookURL, ok := args["url"].(string); ok {
 			if webhookURL == "" {
-				return "Error: url must not be empty", nil
+				return "", fmt.Errorf("url must not be empty")
 			}
 			if _, err := url.ParseRequestURI(webhookURL); err != nil {
 				return fmt.Sprintf("Error: invalid URL %q: %v", webhookURL, err), nil
@@ -268,7 +268,7 @@ secret, and enabled status. Use brain_webhook_get to inspect the result.`,
 		if _, ok := args["events"]; ok {
 			events := StringSliceArg(args, "events")
 			if len(events) == 0 {
-				return "Error: events must be a non-empty array of event type strings", nil
+				return "", fmt.Errorf("events must be a non-empty array of event type strings")
 			}
 			body["events"] = events
 		}
@@ -290,7 +290,7 @@ secret, and enabled status. Use brain_webhook_get to inspect the result.`,
 			body["enabled"] = enabled
 		}
 		if len(body) == 0 {
-			return "Error: provide at least one field to update", nil
+			return "", fmt.Errorf("provide at least one field to update")
 		}
 
 		var resp types.WebhookResponse
@@ -298,10 +298,10 @@ secret, and enabled status. Use brain_webhook_get to inspect the result.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use brain_webhook_list to see existing webhooks.", id), nil
+				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
 			}
 			if strings.Contains(errMsg, "already exists") || strings.Contains(errMsg, "409") {
-				return "Webhook already exists with that URL. Use brain_webhook_list to see existing webhooks.", nil
+				return "Webhook already exists with that URL. Use webhook_list to see existing webhooks.", nil
 			}
 			return "", err
 		}
@@ -311,7 +311,7 @@ secret, and enabled status. Use brain_webhook_get to inspect the result.`,
 }
 
 // =============================================================================
-// brain_webhook_test
+// webhook_test
 // =============================================================================
 
 func registerBrainWebhookTest(s *Server, client *APIClient) {
@@ -331,7 +331,7 @@ result, including success, status code, latency, and error details.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		id := StringArg(args, "id", "")
 		if id == "" {
-			return "Error: id is required", nil
+			return "", fmt.Errorf("id is required")
 		}
 
 		var resp types.WebhookDeliveryResponse
@@ -339,7 +339,7 @@ result, including success, status code, latency, and error details.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use brain_webhook_list to see existing webhooks.", id), nil
+				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
 			}
 			return "", err
 		}
@@ -349,7 +349,7 @@ result, including success, status code, latency, and error details.`,
 }
 
 // =============================================================================
-// brain_webhook_deliveries
+// webhook_deliveries
 // =============================================================================
 
 func registerBrainWebhookDeliveries(s *Server, client *APIClient) {
@@ -370,7 +370,7 @@ and timestamps. Use limit to control how many delivery records are returned.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		id := StringArg(args, "id", "")
 		if id == "" {
-			return "Error: id is required", nil
+			return "", fmt.Errorf("id is required")
 		}
 
 		queryParams := map[string]string{}
@@ -385,7 +385,7 @@ and timestamps. Use limit to control how many delivery records are returned.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use brain_webhook_list to see existing webhooks.", id), nil
+				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
 			}
 			return "", err
 		}
@@ -420,7 +420,7 @@ and timestamps. Use limit to control how many delivery records are returned.`,
 }
 
 // =============================================================================
-// brain_webhook_delete
+// webhook_delete
 // =============================================================================
 
 func registerBrainWebhookDelete(s *Server, client *APIClient) {
@@ -429,7 +429,7 @@ func registerBrainWebhookDelete(s *Server, client *APIClient) {
 		Description: `Remove a webhook by ID.
 
 Permanently deletes the webhook registration. Delivery history is also removed.
-Use brain_webhook_list to find webhook IDs.`,
+Use webhook_list to find webhook IDs.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -440,14 +440,14 @@ Use brain_webhook_list to find webhook IDs.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		id := StringArg(args, "id", "")
 		if id == "" {
-			return "Error: id is required", nil
+			return "", fmt.Errorf("id is required")
 		}
 
 		err := client.Request(ctx, "DELETE", "/webhooks/"+url.PathEscape(id), nil, nil, nil)
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use brain_webhook_list to see existing webhooks.", id), nil
+				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
 			}
 			return "", err
 		}
@@ -457,7 +457,7 @@ Use brain_webhook_list to find webhook IDs.`,
 }
 
 // =============================================================================
-// brain_webhook_toggle
+// webhook_toggle
 // =============================================================================
 
 func registerBrainWebhookToggle(s *Server, client *APIClient) {
@@ -466,7 +466,7 @@ func registerBrainWebhookToggle(s *Server, client *APIClient) {
 		Description: `Enable or disable a webhook without deleting it.
 
 Toggling a webhook off stops delivery attempts while preserving the configuration.
-Use brain_webhook_list to find webhook IDs.`,
+Use webhook_list to find webhook IDs.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -478,7 +478,7 @@ Use brain_webhook_list to find webhook IDs.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		id := StringArg(args, "id", "")
 		if id == "" {
-			return "Error: id is required", nil
+			return "", fmt.Errorf("id is required")
 		}
 
 		enabled := BoolArg(args, "enabled", true)
@@ -492,7 +492,7 @@ Use brain_webhook_list to find webhook IDs.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use brain_webhook_list to see existing webhooks.", id), nil
+				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
 			}
 			return "", err
 		}

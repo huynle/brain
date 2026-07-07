@@ -52,6 +52,7 @@ func NewHTTPHandler(apiClient *APIClient) *HTTPHandler {
 			RegisterControlTools(s, client)
 			RegisterPlanningTools(s, client)
 			RegisterWebhookTools(s, client)
+			RegisterGoalTools(s, client)
 			return s
 		},
 		sessions: make(map[string]bool),

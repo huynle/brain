@@ -1277,6 +1277,61 @@ func TestTaskRunner_DispatchSpawnFailureReleasesDispatchLease(t *testing.T) {
 	}
 }
 
+// TestTaskRunner_SpawnFailureIncludesErrorInReleaseReason verifies that when a
+// spawn fails, the emitted EventTaskReleased carries the underlying error text
+// in its Reason field (not just the bare "spawn failed" label). This is the
+// difference between "some spawn failed somewhere" and "spawn failed: script
+// command rejected: command X does not match any allowed command prefix" — the
+// latter is what operators need to diagnose why an automation is silently
+// failing to launch.
+func TestTaskRunner_SpawnFailureIncludesErrorInReleaseReason(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	executor.spawnErr = fmt.Errorf("script command rejected: command %q does not match any allowed command prefix", "timeout 30s mm --random")
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	var events []RunnerEvent
+	var eventMu sync.Mutex
+	tr.OnEvent(func(event RunnerEvent) {
+		eventMu.Lock()
+		events = append(events, event)
+		eventMu.Unlock()
+	})
+
+	task := testTask("task1", "proj-a")
+	ctx := context.Background()
+
+	if err := tr.claimAndSpawn(ctx, task, "proj-a"); err == nil {
+		t.Fatalf("claimAndSpawn should return error when spawn fails")
+	}
+
+	eventMu.Lock()
+	defer eventMu.Unlock()
+
+	var released *RunnerEvent
+	for i := range events {
+		if events[i].Type == EventTaskReleased && events[i].TaskID == "task1" {
+			released = &events[i]
+			break
+		}
+	}
+	if released == nil {
+		t.Fatalf("expected EventTaskReleased for task1, got events: %+v", events)
+	}
+	if !strings.Contains(released.Reason, "spawn failed") {
+		t.Errorf("Reason = %q, want it to contain %q", released.Reason, "spawn failed")
+	}
+	if !strings.Contains(released.Reason, "allowed command prefix") {
+		t.Errorf("Reason = %q, want it to contain the underlying error text (%q)", released.Reason, "allowed command prefix")
+	}
+}
+
 func TestTaskRunner_TaskCompletionReleasesDispatchLease(t *testing.T) {
 	client := newMockClient()
 	processMgr := newMockProcessMgr()
@@ -2071,6 +2126,56 @@ func TestTaskRunner_ClaimAndSpawn_SpawnFails_ReleasesTask(t *testing.T) {
 	releases := client.getReleaseCalls()
 	if len(releases) == 0 {
 		t.Error("should release task when spawn fails")
+	}
+}
+
+// TestTaskRunner_SpawnFailureRollsStatusBackToBlocked verifies that when a
+// spawn fails, the runner not only releases the lease but also rolls back
+// the task's status from "in_progress" (set optimistically at claim time)
+// to "blocked". Without this rollback the task is stuck in in_progress
+// forever, invisible to schedulers and only recoverable by the orphan
+// reaper on a subsequent runner start.
+//
+// Bug reproduction: script-command rejection released the lease and
+// emitted task.released with an accurate reason, but the task itself
+// stayed in_progress until the runner was restarted.
+//
+// The rollback status is "blocked" for symmetry with the workdir-failure
+// branch (runner.go: resolve workdir errors also mark the task blocked),
+// so a human or the Blocked Task Inspector can address it.
+func TestTaskRunner_SpawnFailureRollsStatusBackToBlocked(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	executor.spawnErr = fmt.Errorf("script command rejected: command %q does not match any allowed command prefix", "rm -rf /tmp/nope")
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	task := testTask("task1", "proj-a")
+	ctx := context.Background()
+
+	if err := tr.claimAndSpawn(ctx, task, "proj-a"); err == nil {
+		t.Fatalf("claimAndSpawn should return error when spawn fails")
+	}
+
+	updates := client.getUpdateStatusCalls()
+	// We expect two UpdateTaskStatus calls: pending→in_progress at claim,
+	// then in_progress→blocked at spawn-failure rollback.
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 UpdateTaskStatus calls (in_progress at claim, blocked on rollback), got %d: %+v", len(updates), updates)
+	}
+	if updates[0].Status != "in_progress" {
+		t.Errorf("first UpdateTaskStatus should be in_progress (claim), got %q", updates[0].Status)
+	}
+	if updates[1].Status != "blocked" {
+		t.Errorf("second UpdateTaskStatus should be blocked (spawn-failure rollback), got %q", updates[1].Status)
+	}
+	if updates[1].TaskPath != task.Path {
+		t.Errorf("rollback UpdateTaskStatus path = %q, want %q", updates[1].TaskPath, task.Path)
 	}
 }
 

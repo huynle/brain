@@ -859,6 +859,14 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 		tr.processMgr.ReleaseReservation(cmd.TaskID)
 		tr.releaseDispatchLease(ctx, cmd.ProjectID, cmd.TaskID)
 		tr.logger.Printf("claim and spawn dispatched task failed for %s/%s: %v", cmd.ProjectID, cmd.TaskID, err)
+		slog.Error("spawn failed",
+			"task_id", cmd.TaskID,
+			"project_id", cmd.ProjectID,
+			"lease_id", leaseID,
+			"runner_id", tr.runnerID,
+			"path", "dispatch",
+			"error", err.Error(),
+		)
 	}
 }
 
@@ -1176,6 +1184,14 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 					} else if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
 						if !errors.Is(err, ErrTaskClaimConflict) {
 							tr.logger.Printf("claim and spawn automation task failed for %s/%s: %v", projectID, task.ID, err)
+							slog.Error("spawn failed",
+								"task_id", task.ID,
+								"project_id", projectID,
+								"runner_id", tr.runnerID,
+								"path", "automation_poll",
+								"generated_by", task.GeneratedBy,
+								"error", err.Error(),
+							)
 						}
 					} else {
 						filled++
@@ -1251,6 +1267,13 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 				continue
 			}
 			tr.logger.Printf("claim and spawn failed for %s/%s: %v", projectID, task.ID, err)
+			slog.Error("spawn failed",
+				"task_id", task.ID,
+				"project_id", projectID,
+				"runner_id", tr.runnerID,
+				"path", "poll",
+				"error", err.Error(),
+			)
 			continue
 		}
 
@@ -1527,15 +1550,24 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		if logStreamer != nil {
 			logStreamer.Stop()
 		}
-		// Release the claim on failure
+		// Release the claim on failure. Include the underlying error text
+		// in the release reason so `brain_events_recent` and downstream
+		// observers can diagnose *why* the spawn failed (e.g. script
+		// command rejected by allowlist) rather than just seeing the
+		// opaque "spawn failed" label.
 		tr.emitEvent(RunnerEvent{
 			Type:      EventTaskReleased,
 			TaskID:    task.ID,
 			ProjectID: projectID,
 			FeatureID: task.FeatureID,
-			Reason:    "spawn failed",
+			Reason:    fmt.Sprintf("spawn failed: %v", err),
 		})
 		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Roll the task's status back from "in_progress" (set optimistically
+		// at claim time) to "blocked" so it doesn't sit forever waiting on
+		// the orphan reaper. Symmetric with the workdir-failure branch
+		// above. A human or the Blocked Task Inspector can then address it.
+		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "blocked")
 		return fmt.Errorf("spawn task: %w", err)
 	}
 

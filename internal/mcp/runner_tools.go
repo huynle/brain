@@ -62,12 +62,12 @@ func registerBrainRunnerGet(s *Server, client *APIClient) {
 		Name:        "runner_get",
 		Description: "Get one registered runner by ID.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"runnerId": {Type: "string", Description: "Runner ID"},
-		}, Required: []string{"runnerId"}},
+			"runner_id": {Type: "string", Description: "Runner ID"},
+		}, Required: []string{"runner_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		runnerID := StringArg(args, "runnerId", "")
+		runnerID := StringArgAlias(args, "", "runner_id", "runnerId")
 		if runnerID == "" {
-			return "runnerId is required", nil
+			return "", fmt.Errorf("runner_id is required")
 		}
 		var resp types.RunnerInfo
 		if err := client.Request(ctx, http.MethodGet, "/runners/"+url.PathEscape(runnerID), nil, nil, &resp); err != nil {
@@ -82,15 +82,15 @@ func registerBrainRunnerInstances(s *Server, client *APIClient) {
 		Name:        "runner_instances",
 		Description: "List executor instances for one runner.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"runnerId": {Type: "string", Description: "Runner ID"},
-			"status":   {Type: "string", Enum: []string{"starting", "idle", "busy", "exited"}, Description: "Optional client-side status filter"},
-			"kind":     {Type: "string", Enum: []string{"task", "adhoc"}, Description: "Optional client-side kind filter"},
-			"project":  {Type: "string", Description: "Optional client-side project_id filter"},
-		}, Required: []string{"runnerId"}},
+			"runner_id": {Type: "string", Description: "Runner ID"},
+			"status":    {Type: "string", Enum: []string{"starting", "idle", "busy", "exited"}, Description: "Optional client-side status filter"},
+			"kind":      {Type: "string", Enum: []string{"task", "adhoc"}, Description: "Optional client-side kind filter"},
+			"project":   {Type: "string", Description: "Optional client-side project_id filter"},
+		}, Required: []string{"runner_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		runnerID := StringArg(args, "runnerId", "")
+		runnerID := StringArgAlias(args, "", "runner_id", "runnerId")
 		if runnerID == "" {
-			return "runnerId is required", nil
+			return "", fmt.Errorf("runner_id is required")
 		}
 		var resp types.InstanceListResponse
 		if err := client.Request(ctx, http.MethodGet, "/runners/"+url.PathEscape(runnerID)+"/instances", nil, nil, &resp); err != nil {
@@ -107,10 +107,10 @@ func registerBrainRunnerInstancesAll(s *Server, client *APIClient) {
 		Name:        "runner_instances_all",
 		Description: "List executor instances across all runners.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"runnerId": {Type: "string", Description: "Optional client-side runner filter"},
-			"status":   {Type: "string", Enum: []string{"starting", "idle", "busy", "exited"}, Description: "Optional client-side status filter"},
-			"kind":     {Type: "string", Enum: []string{"task", "adhoc"}, Description: "Optional client-side kind filter"},
-			"project":  {Type: "string", Description: "Optional client-side project_id filter"},
+			"runner_id": {Type: "string", Description: "Optional client-side runner filter"},
+			"status":    {Type: "string", Enum: []string{"starting", "idle", "busy", "exited"}, Description: "Optional client-side status filter"},
+			"kind":      {Type: "string", Enum: []string{"task", "adhoc"}, Description: "Optional client-side kind filter"},
+			"project":   {Type: "string", Description: "Optional client-side project_id filter"},
 		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		var resp types.InstanceListResponse
@@ -147,7 +147,7 @@ func filterRunners(runners []types.RunnerInfo, args map[string]any) []types.Runn
 }
 
 func filterInstances(instances []types.OpencodeInstance, args map[string]any) []types.OpencodeInstance {
-	runnerID := StringArg(args, "runnerId", "")
+	runnerID := StringArgAlias(args, "", "runner_id", "runnerId")
 	status := StringArg(args, "status", "")
 	kind := StringArg(args, "kind", "")
 	project := StringArg(args, "project", "")
@@ -194,7 +194,7 @@ func formatRunnerList(resp types.RunnerListResponse) string {
 	}
 	for _, runner := range resp.Runners {
 		writeRunnerSummary(&b, runner)
-		b.WriteString("- Instances: use brain_runner_instances with this runnerId\n\n")
+		b.WriteString("- Instances: use runner_instances with this runner_id\n\n")
 	}
 	return b.String()
 }

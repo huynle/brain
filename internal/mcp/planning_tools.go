@@ -373,21 +373,21 @@ This tool performs interactive discovery:
 After discovery, use plan_confirm_docs() to confirm selections.
 
 Arguments:
-- prdPath: Custom PRD path (skips auto-discovery for PRD)
-- archPath: Custom architecture doc path (skips auto-discovery for arch)
-- additionalDirs: Additional directories to scan for docs
-- planQuery: Search query for existing plans (uses objective if not provided)
-- planId: Specific brain plan ID to load directly
+- prd_path: Custom PRD path (skips auto-discovery for PRD)
+- arch_path: Custom architecture doc path (skips auto-discovery for arch)
+- additional_dirs: Additional directories to scan for docs
+- plan_query: Search query for existing plans (uses objective if not provided)
+- plan_id: Specific brain plan ID to load directly
 
 Call this during INIT phase to load project context.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"prdPath":        {Type: "string", Description: "Custom PRD path (skips auto-discovery for PRD)"},
-				"archPath":       {Type: "string", Description: "Custom architecture doc path (skips auto-discovery for arch)"},
-				"additionalDirs": {Type: "array", Items: &Property{Type: "string"}, Description: "Additional directories to scan for docs"},
-				"planQuery":      {Type: "string", Description: "Search query for existing plans (uses objective if not provided)"},
-				"planId":         {Type: "string", Description: "Specific brain plan ID to load directly"},
+				"prd_path":        {Type: "string", Description: "Custom PRD path (skips auto-discovery for PRD)"},
+				"arch_path":       {Type: "string", Description: "Custom architecture doc path (skips auto-discovery for arch)"},
+				"additional_dirs": {Type: "array", Items: &Property{Type: "string"}, Description: "Additional directories to scan for docs"},
+				"plan_query":      {Type: "string", Description: "Search query for existing plans (uses objective if not provided)"},
+				"plan_id":         {Type: "string", Description: "Specific brain plan ID to load directly"},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -399,7 +399,7 @@ Call this during INIT phase to load project context.`,
 		workdir := filepath.Join(home, execCtx.Workdir)
 
 		// Scan for PRD files
-		prdPath := StringArg(args, "prdPath", "")
+		prdPath := StringArgAlias(args, "", "prd_path", "prdPath")
 		if prdPath != "" {
 			discovery.PRDFiles = []string{prdPath}
 		} else {
@@ -417,7 +417,7 @@ Call this during INIT phase to load project context.`,
 		}
 
 		// Scan for architecture files
-		archPath := StringArg(args, "archPath", "")
+		archPath := StringArgAlias(args, "", "arch_path", "archPath")
 		if archPath != "" {
 			discovery.ArchFiles = []string{archPath}
 		} else {
@@ -436,7 +436,7 @@ Call this during INIT phase to load project context.`,
 		}
 
 		// Scan additional directories
-		additionalDirs := StringSliceArg(args, "additionalDirs")
+		additionalDirs := StringSliceArgAlias(args, "additional_dirs", "additionalDirs")
 		for _, dir := range additionalDirs {
 			fullDir := filepath.Join(workdir, dir)
 			matches, _ := filepath.Glob(filepath.Join(fullDir, "*.md"))
@@ -453,7 +453,7 @@ Call this during INIT phase to load project context.`,
 		}
 
 		// Search brain for existing plans
-		planQuery := StringArg(args, "planQuery", state.Objective)
+		planQuery := StringArgAlias(args, state.Objective, "plan_query", "planQuery")
 		if planQuery != "" {
 			var searchResp struct {
 				Results []struct {
@@ -492,8 +492,8 @@ Call this during INIT phase to load project context.`,
 			}
 		}
 
-		// Handle specific planId
-		planId := StringArg(args, "planId", "")
+		// Handle specific plan_id
+		planId := StringArgAlias(args, "", "plan_id", "planId")
 		if planId != "" {
 			discovery.BrainPlans = append([]string{planId}, discovery.BrainPlans...)
 		}
@@ -575,13 +575,13 @@ This stores the confirmed selections and marks INIT phase as ready for transitio
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"prdSelection":        {Type: "string", Description: "PRD selection: number from list, '0' for create new, or custom path"},
-				"archSelection":       {Type: "string", Description: "Architecture selection: number from list, '0' for create new, or custom path"},
-				"existingPlan":        {Type: "string", Description: "Existing plan: number from list, '0' for new plan, or brain ID"},
-				"includeExplorations": {Type: "array", Items: &Property{Type: "string"}, Description: "Exploration IDs to include as context"},
-				"includeOtherDocs":    {Type: "array", Items: &Property{Type: "string"}, Description: "Other doc paths to include"},
+				"prd_selection":        {Type: "string", Description: "PRD selection: number from list, '0' for create new, or custom path"},
+				"arch_selection":       {Type: "string", Description: "Architecture selection: number from list, '0' for create new, or custom path"},
+				"existing_plan":        {Type: "string", Description: "Existing plan: number from list, '0' for new plan, or brain ID"},
+				"include_explorations": {Type: "array", Items: &Property{Type: "string"}, Description: "Exploration IDs to include as context"},
+				"include_other_docs":   {Type: "array", Items: &Property{Type: "string"}, Description: "Other doc paths to include"},
 			},
-			Required: []string{"prdSelection", "archSelection", "existingPlan"},
+			Required: []string{"prd_selection", "arch_selection", "existing_plan"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		if state.DiscoveryResults == nil {
@@ -591,20 +591,20 @@ This stores the confirmed selections and marks INIT phase as ready for transitio
 		confirmed := &ConfirmedDocs{}
 
 		// Resolve PRD selection
-		prdSel := resolveDocSelection(args, "prdSelection", state.DiscoveryResults.PRDFiles)
+		prdSel := resolveDocSelection(args, state.DiscoveryResults.PRDFiles, "prd_selection", "prdSelection")
 		confirmed.PRDPath = prdSel
 
 		// Resolve arch selection
-		archSel := resolveDocSelection(args, "archSelection", state.DiscoveryResults.ArchFiles)
+		archSel := resolveDocSelection(args, state.DiscoveryResults.ArchFiles, "arch_selection", "archSelection")
 		confirmed.ArchPath = archSel
 
 		// Resolve existing plan
-		planSel := resolveDocSelection(args, "existingPlan", state.DiscoveryResults.BrainPlans)
+		planSel := resolveDocSelection(args, state.DiscoveryResults.BrainPlans, "existing_plan", "existingPlan")
 		confirmed.ExistingPlan = planSel
 
 		// Optional explorations
-		confirmed.Explorations = StringSliceArg(args, "includeExplorations")
-		confirmed.OtherDocs = StringSliceArg(args, "includeOtherDocs")
+		confirmed.Explorations = StringSliceArgAlias(args, "include_explorations", "includeExplorations")
+		confirmed.OtherDocs = StringSliceArgAlias(args, "include_other_docs", "includeOtherDocs")
 
 		state.ConfirmedDocs = confirmed
 		state.addAuditEvent("confirm_docs", fmt.Sprintf("prd:%s arch:%s plan:%s",
@@ -965,8 +965,8 @@ Returns audit events showing:
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"sessionID": {Type: "string", Description: "Session ID to report on (optional)"},
-				"format":    {Type: "string", Enum: []string{"summary", "detailed", "json"}, Description: "Report format"},
+				"session_id": {Type: "string", Description: "Session ID to report on (optional)"},
+				"format":     {Type: "string", Enum: []string{"summary", "detailed", "json"}, Description: "Report format"},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -1044,10 +1044,13 @@ func orDefault(value, defaultVal string) string {
 }
 
 // resolveDocSelection resolves a selection from args against a list of discovered files.
+// Keys are tried in order (canonical name first, then legacy aliases).
 // Handles: numeric index (1-based), "0" for create new, or custom string path.
-func resolveDocSelection(args map[string]any, key string, files []string) string {
+func resolveDocSelection(args map[string]any, files []string, keys ...string) string {
+	raw := argAlias(args, keys...)
+
 	// Try as number first (JSON numbers come as float64)
-	if v, ok := args[key].(float64); ok {
+	if v, ok := raw.(float64); ok {
 		idx := int(v)
 		if idx == 0 {
 			return "" // Create new
@@ -1059,7 +1062,7 @@ func resolveDocSelection(args map[string]any, key string, files []string) string
 	}
 
 	// Try as string
-	if v, ok := args[key].(string); ok {
+	if v, ok := raw.(string); ok {
 		if v == "0" || v == "" {
 			return "" // Create new
 		}

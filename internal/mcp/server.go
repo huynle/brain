@@ -23,7 +23,7 @@ import (
 )
 
 // maxMessageBytes is the largest single JSON-RPC message the stdio transport
-// will accept. brain_save with a large content payload can be several MB, so
+// will accept. the save tool with a large content payload can be several MB, so
 // we allow up to 10 MiB. This matches the LimitReader cap in http_transport.go.
 const maxMessageBytes = 10 * 1024 * 1024
 
@@ -289,18 +289,23 @@ func (s *Server) handleToolsCall(ctx context.Context, req *JSONRPCRequest) *JSON
 	}
 
 	text, err := rt.handler(ctx, args)
+	result := map[string]any{
+		"content": []map[string]string{
+			{"type": "text", "text": text},
+		},
+	}
 	if err != nil {
-		// Match TypeScript behavior: tool errors are returned as text content
-		text = fmt.Sprintf("Error: %v", err)
+		// Per the MCP spec, tool execution failures are reported as a normal
+		// result with isError: true so the model can see the message and react.
+		result["content"] = []map[string]string{
+			{"type": "text", "text": fmt.Sprintf("Error: %v", err)},
+		}
+		result["isError"] = true
 	}
 
 	return &JSONRPCResponse{
 		JSONRPC: "2.0",
 		ID:      req.ID,
-		Result: map[string]any{
-			"content": []map[string]string{
-				{"type": "text", "text": text},
-			},
-		},
+		Result:  result,
 	}
 }

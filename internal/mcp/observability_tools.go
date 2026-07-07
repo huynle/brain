@@ -30,19 +30,19 @@ func registerBrainTaskLogs(s *Server, client *APIClient) {
 			Type: "object",
 			Properties: map[string]Property{
 				"project": {Type: "string", Description: "Project ID (defaults to current context)"},
-				"taskId":  {Type: "string", Description: "Task ID"},
+				"task_id": {Type: "string", Description: "Task ID"},
 				"limit":   {Type: "number", Description: "Maximum log entries to return (optional)"},
 			},
-			Required: []string{"taskId"},
+			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		projectID := ResolveProject(args)
 		if projectID == "" {
-			return "project is required", nil
+			return "", fmt.Errorf("project is required")
 		}
-		taskID := StringArg(args, "taskId", "")
+		taskID := StringArgAlias(args, "", "task_id", "taskId")
 		if taskID == "" {
-			return "taskId is required", nil
+			return "", fmt.Errorf("task_id is required")
 		}
 
 		path := fmt.Sprintf("/tasks/%s/%s/logs", url.PathEscape(projectID), url.PathEscape(taskID))
@@ -68,18 +68,18 @@ func registerBrainTaskDispatchLease(s *Server, client *APIClient) {
 			Type: "object",
 			Properties: map[string]Property{
 				"project": {Type: "string", Description: "Project ID (defaults to current context)"},
-				"taskId":  {Type: "string", Description: "Task ID"},
+				"task_id": {Type: "string", Description: "Task ID"},
 			},
-			Required: []string{"taskId"},
+			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		projectID := ResolveProject(args)
 		if projectID == "" {
-			return "project is required", nil
+			return "", fmt.Errorf("project is required")
 		}
-		taskID := StringArg(args, "taskId", "")
+		taskID := StringArgAlias(args, "", "task_id", "taskId")
 		if taskID == "" {
-			return "taskId is required", nil
+			return "", fmt.Errorf("task_id is required")
 		}
 
 		path := fmt.Sprintf("/tasks/%s/%s/dispatch-lease", url.PathEscape(projectID), url.PathEscape(taskID))
@@ -101,18 +101,18 @@ func registerBrainTaskPlacementReasons(s *Server, client *APIClient) {
 			Type: "object",
 			Properties: map[string]Property{
 				"project": {Type: "string", Description: "Project ID (defaults to current context)"},
-				"taskId":  {Type: "string", Description: "Task ID"},
+				"task_id": {Type: "string", Description: "Task ID"},
 			},
-			Required: []string{"taskId"},
+			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		projectID := ResolveProject(args)
 		if projectID == "" {
-			return "project is required", nil
+			return "", fmt.Errorf("project is required")
 		}
-		taskID := StringArg(args, "taskId", "")
+		taskID := StringArgAlias(args, "", "task_id", "taskId")
 		if taskID == "" {
-			return "taskId is required", nil
+			return "", fmt.Errorf("task_id is required")
 		}
 
 		path := fmt.Sprintf("/tasks/%s/%s/placement-reasons", url.PathEscape(projectID), url.PathEscape(taskID))
@@ -214,14 +214,14 @@ func registerBrainAutomationRunGet(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"runId": {Type: "string", Description: "Automation run ID"},
+				"run_id": {Type: "string", Description: "Automation run ID"},
 			},
-			Required: []string{"runId"},
+			Required: []string{"run_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		runID := StringArg(args, "runId", "")
+		runID := StringArgAlias(args, "", "run_id", "runId")
 		if runID == "" {
-			return "runId is required", nil
+			return "", fmt.Errorf("run_id is required")
 		}
 
 		var resp types.BrainEntry

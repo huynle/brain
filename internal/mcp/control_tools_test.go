@@ -62,15 +62,15 @@ func TestControlToolSchemas(t *testing.T) {
 		required []string
 		props    []string
 	}{
-		{"runner_pause_project", []string{"projectId"}, []string{"projectId"}},
-		{"runner_resume_project", []string{"projectId"}, []string{"projectId"}},
+		{"runner_pause_project", nil, []string{"project"}},
+		{"runner_resume_project", nil, []string{"project"}},
 		{"runner_pause_all", []string{"confirm"}, []string{"confirm"}},
 		{"runner_resume_all", []string{"confirm"}, []string{"confirm"}},
-		{"control_send_prompt", []string{"runnerId", "instanceId", "sessionId", "text"}, []string{"runnerId", "instanceId", "sessionId", "text", "agent", "providerID", "modelID"}},
-		{"control_abort_session", []string{"runnerId", "instanceId", "sessionId"}, []string{"runnerId", "instanceId", "sessionId"}},
-		{"control_permission", []string{"runnerId", "instanceId", "sessionId", "permissionId", "response"}, []string{"runnerId", "instanceId", "sessionId", "permissionId", "response", "remember"}},
-		{"control_spawn_instance", []string{"runnerId", "workdir"}, []string{"runnerId", "workdir", "agent", "model", "title"}},
-		{"control_kill_instance", []string{"runnerId", "instanceId", "confirm"}, []string{"runnerId", "instanceId", "confirm"}},
+		{"control_send_prompt", []string{"runner_id", "instance_id", "session_id", "text"}, []string{"runner_id", "instance_id", "session_id", "text", "agent", "provider_id", "model_id"}},
+		{"control_abort_session", []string{"runner_id", "instance_id", "session_id"}, []string{"runner_id", "instance_id", "session_id"}},
+		{"control_permission", []string{"runner_id", "instance_id", "session_id", "permission_id", "response"}, []string{"runner_id", "instance_id", "session_id", "permission_id", "response", "remember"}},
+		{"control_spawn_instance", []string{"runner_id", "workdir"}, []string{"runner_id", "workdir", "agent", "model", "title"}},
+		{"control_kill_instance", []string{"runner_id", "instance_id", "confirm"}, []string{"runner_id", "instance_id", "confirm"}},
 	}
 
 	for _, tt := range tests {
@@ -205,25 +205,23 @@ func TestControlTools_ValidationAndConfirmation(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"runner_pause_project", map[string]any{}, "projectId is required"},
-		{"runner_resume_project", map[string]any{}, "projectId is required"},
 		{"runner_pause_all", map[string]any{}, "confirm=true is required"},
 		{"runner_resume_all", map[string]any{"confirm": false}, "confirm=true is required"},
-		{"control_send_prompt", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1"}, "text is required"},
-		{"control_abort_session", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1"}, "sessionId is required"},
-		{"control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "maybe"}, "response must be allow or deny"},
-		{"control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "allow", "remember": "forever"}, "remember must be once or always"},
-		{"control_spawn_instance", map[string]any{"runnerId": "runner-1", "workdir": "relative/path"}, "workdir must be an absolute path"},
-		{"control_kill_instance", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1"}, "confirm=true is required"},
+		{"control_send_prompt", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1", "session_id": "ses-1"}, "text is required"},
+		{"control_abort_session", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1"}, "session_id is required"},
+		{"control_permission", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1", "session_id": "ses-1", "permission_id": "perm-1", "response": "maybe"}, "response must be allow or deny"},
+		{"control_permission", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1", "session_id": "ses-1", "permission_id": "perm-1", "response": "allow", "remember": "forever"}, "remember must be once or always"},
+		{"control_spawn_instance", map[string]any{"runner_id": "runner-1", "workdir": "relative/path"}, "workdir must be an absolute path"},
+		{"control_kill_instance", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1"}, "confirm=true is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
 			result, err := s.tools[tt.tool].handler(context.Background(), tt.args)
-			if err != nil {
-				t.Fatalf("handler error: %v", err)
+			if err == nil {
+				t.Fatalf("expected validation error, got result %q", result)
 			}
-			if !strings.Contains(result, tt.want) {
-				t.Fatalf("result = %q, want substring %q", result, tt.want)
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
 			}
 		})
 	}

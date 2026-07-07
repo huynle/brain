@@ -67,10 +67,10 @@ func registerBrainGoalCreate(s *Server, client *APIClient) {
 		project := StringArg(args, "project", "")
 		title := StringArg(args, "title", "")
 		if project == "" {
-			return "Please provide a project", nil
+			return "", fmt.Errorf("provide a 'project'")
 		}
 		if title == "" {
-			return "Please provide a title", nil
+			return "", fmt.Errorf("provide a 'title'")
 		}
 
 		req := types.CreateGoalRequest{
@@ -121,7 +121,7 @@ func registerBrainGoalUpdate(s *Server, client *APIClient) {
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		goalID := StringArg(args, "goal_id", "")
 		if goalID == "" {
-			return "Please provide a goal_id", nil
+			return "", fmt.Errorf("provide a 'goal_id'")
 		}
 		req := buildUpdateGoalRequest(args)
 		var goal types.GoalSummary
@@ -140,7 +140,7 @@ func registerBrainGoalLifecycleAlias(s *Server, client *APIClient, name, descrip
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		goalID := StringArg(args, "goal_id", "")
 		if goalID == "" {
-			return "Please provide a goal_id", nil
+			return "", fmt.Errorf("provide a 'goal_id'")
 		}
 		req := types.UpdateGoalRequest{Status: &status}
 		var goal types.GoalSummary
@@ -155,7 +155,7 @@ func registerBrainGoalRun(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{Name: "goal_run", Description: "Manually reconcile a goal automation now.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"goal_id": {Type: "string", Description: "Goal ID"}}, Required: []string{"goal_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
 		goalID := StringArg(args, "goal_id", "")
 		if goalID == "" {
-			return "Please provide a goal_id", nil
+			return "", fmt.Errorf("provide a 'goal_id'")
 		}
 		var audit types.GoalReconcileAudit
 		if err := client.Request(ctx, http.MethodPost, "/goals/"+url.PathEscape(goalID)+"/run", nil, nil, &audit); err != nil {
@@ -169,7 +169,7 @@ func registerBrainGoalProgress(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{Name: "goal_progress", Description: "Show linked task progress for a goal automation.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"goal_id": {Type: "string", Description: "Goal ID"}}, Required: []string{"goal_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
 		goalID := StringArg(args, "goal_id", "")
 		if goalID == "" {
-			return "Please provide a goal_id", nil
+			return "", fmt.Errorf("provide a 'goal_id'")
 		}
 		var progress types.GoalProgressResponse
 		if err := client.Request(ctx, http.MethodGet, "/goals/"+url.PathEscape(goalID)+"/progress", nil, nil, &progress); err != nil {
@@ -183,7 +183,7 @@ func registerBrainGoalAudit(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{Name: "goal_audit", Description: "Show reconcile audit history for a goal automation.", InputSchema: InputSchema{Type: "object", Properties: map[string]Property{"goal_id": {Type: "string", Description: "Goal ID"}, "limit": {Type: "number", Description: "Maximum audit rows (default: 50)"}}, Required: []string{"goal_id"}}}, func(ctx context.Context, args map[string]any) (string, error) {
 		goalID := StringArg(args, "goal_id", "")
 		if goalID == "" {
-			return "Please provide a goal_id", nil
+			return "", fmt.Errorf("provide a 'goal_id'")
 		}
 		limit := IntArg(args, "limit", 50)
 		query := map[string]string{"limit": fmt.Sprintf("%d", limit)}
@@ -387,7 +387,7 @@ func formatGoalSummary(prefix string, goal *types.GoalSummary) string {
 
 func formatGoalList(goals []types.GoalSummary) string {
 	if len(goals) == 0 {
-		return "No goals found.\n\nCreate one with `brain_goal_create`."
+		return "No goals found.\n\nCreate one with `goal_create`."
 	}
 	lines := []string{fmt.Sprintf("## Goals (%d)", len(goals)), "", "| goal_id | title | project | feature | status | trigger |", "|---|---|---|---|---|---|"}
 	for _, goal := range goals {

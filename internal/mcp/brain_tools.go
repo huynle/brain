@@ -10,7 +10,8 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// RegisterBrainTools registers all 22 brain core tools on the server.
+// RegisterBrainTools registers the brain core entry, graph, automation,
+// and attachment tools on the server.
 func RegisterBrainTools(s *Server, client *APIClient) {
 	registerBrainSave(s, client)
 	registerBrainRecall(s, client)
@@ -47,28 +48,32 @@ func RegisterBrainTools(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_save
+// save
 // =============================================================================
 
 func registerBrainSave(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name: "save",
-		Description: `Save content to the brain for future reference. Use this to persist:
-- summaries: Session summaries, key decisions made
-- reports: Analysis reports, code reviews, investigations
-- walkthroughs: Code explanations, architecture overviews
-- plans: Implementation plans, designs, roadmaps
-- patterns: Reusable patterns discovered (use global:true for cross-project)
-- learnings: General learnings, best practices (use global:true for cross-project)
-- ideas: Ideas for future exploration
-- scratch: Temporary working notes
-- decision: Architectural decisions, ADRs
-- exploration: Investigation notes, research findings
+		Description: `Save content to the brain for future reference.
 
-Feature orchestration:
+Entry types:
+- summary, report, walkthrough, plan, decision, exploration: documentation entries (session summaries, analysis reports, code explanations, implementation plans, ADRs, research findings)
+- pattern, learning: reusable knowledge and best practices (use global:true for cross-project)
+- idea, scratch: ideas for future exploration and temporary working notes
+- task: a work item for the task runner (see task options below)
+- automation: an event-driven behavior (see trigger, action, retry)
+- execution, dream, automation_run, merge_request: system-generated entries (rarely created by hand)
+
+Only type, title, and content are required. The remaining parameters apply conditionally:
+- Task options (depends_on, feature_*, schedule*, merge_*, executor, agent, model, direct_prompt, extensions, target_workdir, git_branch, execution_mode, complete_on_idle, user_original_request) apply only when type is 'task' and are ignored for other types.
+- trigger applies to 'task' and 'automation' entries; action and retry apply to 'automation' entries only.
+
+Feature orchestration (tasks):
 - Use feature_id to group tasks into a feature.
 - Use feature_depends_on to make one feature wait for another feature to complete.
-- Use trigger.event="feature.completed" with trigger.filter.feature_id to create post-feature tasks that activate after a feature completes.`,
+- Use trigger.event="feature.completed" with trigger.filter.feature_id to create post-feature tasks that activate after a feature completes.
+
+If project is omitted, the entry is saved to the project detected from the MCP server's launch directory (see the context_get tool).`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -79,7 +84,7 @@ Feature orchestration:
 				"status":                {Type: "string", Enum: types.EntryStatuses, Description: "Initial status. Tasks default to 'draft' (user reviews before promoting to 'pending'). Other entry types default to 'active'."},
 				"priority":              {Type: "string", Enum: types.Priorities, Description: "Priority level"},
 				"global":                {Type: "boolean", Description: "Save to global brain (cross-project)"},
-				"project":               {Type: "string", Description: "Explicit project ID/name"},
+				"project":               {Type: "string", Description: "Project ID (e.g., 'orion-ai'). Defaults to the project detected from the MCP server's launch directory."},
 				"depends_on":            {Type: "array", Items: &Property{Type: "string"}, Description: "Task dependencies - list of task IDs or titles"},
 				"user_original_request": {Type: "string", Description: "Verbatim user request for this task. HIGHLY RECOMMENDED for tasks - enables validation during task completion. Supports multiline content, code blocks, and special characters. When creating multiple tasks from one user request, include this in EACH task."},
 				"target_workdir":        {Type: "string", Description: "Explicit working directory override for task execution (absolute path). When set, the task runner will try this directory first before falling back to workdir resolution. Use for tasks that should execute in a specific directory."},
@@ -114,7 +119,7 @@ Feature orchestration:
 				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
-				"relatedEntries":        {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entry paths to link"},
+				"related_entries":       {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entry paths to link"},
 			},
 			Required: []string{"type", "title", "content"},
 		},
@@ -133,7 +138,7 @@ Feature orchestration:
 			"global":         args["global"],
 			"project":        StringArg(args, "project", execCtx.ProjectID),
 			"depends_on":     args["depends_on"],
-			"relatedEntries": args["relatedEntries"],
+			"relatedEntries": argAlias(args, "related_entries", "relatedEntries"),
 		}
 
 		// Task-specific enrichment
@@ -204,18 +209,18 @@ Feature orchestration:
 }
 
 // =============================================================================
-// brain_recall
+// recall
 // =============================================================================
 
 func registerBrainRecall(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "recall",
-		Description: "Retrieve a specific entry from the brain by path, ID, or title.",
+		Description: "Retrieve a specific entry from the brain by path, ID, or title. Provide 'path' (entry path or 8-char ID; takes precedence) or 'title' (resolved via search, then exact match).",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"path":    {Type: "string", Description: "Path or ID to the note"},
-				"title":   {Type: "string", Description: "Title to search for (exact match)"},
+				"path":    {Type: "string", Description: "Entry path (e.g., 'projects/x/plan/abc12def.md') or 8-char entry ID. Takes precedence over 'title'."},
+				"title":   {Type: "string", Description: "Title to search for (exact, case-sensitive match)"},
 				"project": {Type: "string", Description: "When resolving by title, restrict the match to this project ID (e.g., 'orion-ai'). Ignored when 'path' is provided."},
 				"include": {Type: "array", Items: &Property{Type: "string"}, Description: "Optional related data to include, e.g. ['attachments', 'attachment_text']. Passed to the API as a comma-separated include query."},
 			},
@@ -227,10 +232,10 @@ func registerBrainRecall(s *Server, client *APIClient) {
 		if entryPath == "" {
 			title := StringArg(args, "title", "")
 			if title == "" {
-				return "Please provide a path or title", nil
+				return "", fmt.Errorf("provide 'path' or 'title'")
 			}
 
-			searchBody := map[string]any{"query": title, "limit": 5}
+			searchBody := map[string]any{"query": title, "limit": 20}
 			// If a project was specified, scope the title lookup so two
 			// projects with a same-titled note don't collide.
 			if project := StringArg(args, "project", ""); project != "" {
@@ -255,7 +260,17 @@ func registerBrainRecall(s *Server, client *APIClient) {
 				}
 			}
 			if entryPath == "" {
-				return fmt.Sprintf("No exact match for: %q", title), nil
+				if len(searchResp.Results) > 0 {
+					suggestions := make([]string, 0, 5)
+					for _, r := range searchResp.Results {
+						suggestions = append(suggestions, r.Title)
+						if len(suggestions) == 5 {
+							break
+						}
+					}
+					return "", fmt.Errorf("no exact title match for %q; closest titles: %s", title, strings.Join(suggestions, ", "))
+				}
+				return "", fmt.Errorf("no entry found with title %q", title)
 			}
 		}
 
@@ -304,17 +319,17 @@ func registerBrainAttachmentUpload(s *Server, client *APIClient) {
 		Name: "attachment_upload",
 		Description: `Upload a local file as a first-class Brain attachment.
 
-Use this for pasted-image or local-PDF workflows: save the file locally, upload it with this tool, then attach the returned attachment_id to an entry with brain_attachment_attach.`,
+Use this for pasted-image or local-PDF workflows: save the file locally, upload it with this tool, then attach the returned attachment_id to an entry with attachment_attach.`,
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id": {Type: "string", Description: "Project that owns the uploaded attachment"},
-			"file_path":  {Type: "string", Description: "Absolute or relative path to the local file to upload"},
-			"metadata":   {Type: "object", Description: "Optional string key/value metadata stored with the attachment"},
-		}, Required: []string{"project_id", "file_path"}},
+			"project":   {Type: "string", Description: "Project ID that owns the uploaded attachment. Defaults to the project detected from the MCP server's launch directory."},
+			"file_path": {Type: "string", Description: "Absolute or relative path to the local file to upload"},
+			"metadata":  {Type: "object", Description: "Optional string key/value metadata stored with the attachment"},
+		}, Required: []string{"file_path"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		filePath := StringArg(args, "file_path", "")
 		if projectID == "" || filePath == "" {
-			return "Please provide project_id and file_path", nil
+			return "", fmt.Errorf("provide 'file_path' (and 'project' if no ambient project is available)")
 		}
 
 		resp, err := client.UploadAttachment(ctx, projectID, filePath, stringMapArg(args, "metadata"))
@@ -322,7 +337,7 @@ Use this for pasted-image or local-PDF workflows: save the file locally, upload 
 			return "", err
 		}
 
-		return fmt.Sprintf("Uploaded attachment\n\n%s\n\nNext: attach it to an entry with `brain_attachment_attach` using attachment_id `%s`.",
+		return fmt.Sprintf("Uploaded attachment\n\n%s\n\nNext: attach it to an entry with `attachment_attach` using attachment_id `%s`.",
 			formatAttachment(resp.Attachment), resp.Attachment.ID), nil
 	})
 }
@@ -332,18 +347,18 @@ func registerBrainAttachmentAttach(s *Server, client *APIClient) {
 		Name:        "attachment_attach",
 		Description: "Attach an existing Brain attachment to an entry with optional role and caption metadata.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id":    {Type: "string", Description: "Project containing the entry and attachment"},
+			"project":       {Type: "string", Description: "Project ID containing the entry and attachment. Defaults to the project detected from the MCP server's launch directory."},
 			"entry_id":      {Type: "string", Description: "Entry ID or path to attach to"},
-			"attachment_id": {Type: "string", Description: "Attachment ID returned by brain_attachment_upload or brain_attachment_list"},
+			"attachment_id": {Type: "string", Description: "Attachment ID returned by attachment_upload or attachment_list"},
 			"role":          {Type: "string", Description: "Optional attachment role, e.g. source, inline, image, pdf"},
 			"caption":       {Type: "string", Description: "Optional model-friendly caption describing the attachment"},
-		}, Required: []string{"project_id", "entry_id", "attachment_id"}},
+		}, Required: []string{"entry_id", "attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		entryID := StringArg(args, "entry_id", "")
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || entryID == "" || attachmentID == "" {
-			return "Please provide project_id, entry_id, and attachment_id", nil
+			return "", fmt.Errorf("provide 'entry_id' and 'attachment_id' (and 'project' if no ambient project is available)")
 		}
 
 		body := map[string]any{"attachment": map[string]any{"id": attachmentID}}
@@ -368,17 +383,17 @@ func registerBrainAttachmentDetach(s *Server, client *APIClient) {
 		Name:        "attachment_detach",
 		Description: "Detach an attachment from an entry. Provide role when detaching a role-specific reference.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id":    {Type: "string", Description: "Project containing the entry and attachment"},
+			"project":       {Type: "string", Description: "Project ID containing the entry and attachment. Defaults to the project detected from the MCP server's launch directory."},
 			"entry_id":      {Type: "string", Description: "Entry ID or path to detach from"},
 			"attachment_id": {Type: "string", Description: "Attachment ID to detach"},
 			"role":          {Type: "string", Description: "Optional role to detach"},
-		}, Required: []string{"project_id", "entry_id", "attachment_id"}},
+		}, Required: []string{"entry_id", "attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		entryID := StringArg(args, "entry_id", "")
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || entryID == "" || attachmentID == "" {
-			return "Please provide project_id, entry_id, and attachment_id", nil
+			return "", fmt.Errorf("provide 'entry_id' and 'attachment_id' (and 'project' if no ambient project is available)")
 		}
 
 		params := map[string]string{"project_id": projectID}
@@ -398,13 +413,13 @@ func registerBrainAttachmentList(s *Server, client *APIClient) {
 		Name:        "attachment_list",
 		Description: "List attachments available in a project, or attachments linked to a specific entry when entry_id is provided.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id": {Type: "string", Description: "Project whose attachments should be listed"},
-			"entry_id":   {Type: "string", Description: "Optional entry ID or path for entry-scoped attachment references"},
-		}, Required: []string{"project_id"}},
+			"project":  {Type: "string", Description: "Project ID whose attachments should be listed. Defaults to the project detected from the MCP server's launch directory."},
+			"entry_id": {Type: "string", Description: "Optional entry ID or path for entry-scoped attachment references"},
+		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		if projectID == "" {
-			return "Please provide project_id", nil
+			return "", fmt.Errorf("provide 'project' (no ambient project is available)")
 		}
 		if entryID := StringArg(args, "entry_id", ""); entryID != "" {
 			var resp types.AttachEntryAttachmentResponse
@@ -434,14 +449,14 @@ func registerBrainAttachmentGet(s *Server, client *APIClient) {
 		Name:        "attachment_get",
 		Description: "Get attachment metadata, download/text URLs, and derived artifact references.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
 			"attachment_id": {Type: "string", Description: "Attachment ID to retrieve"},
-		}, Required: []string{"project_id", "attachment_id"}},
+		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || attachmentID == "" {
-			return "Please provide project_id and attachment_id", nil
+			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
 		}
 		var resp types.Attachment
 		if err := client.Request(ctx, "GET", "/attachments/"+url.PathEscape(attachmentID), nil, map[string]string{"project_id": projectID}, &resp); err != nil {
@@ -456,14 +471,14 @@ func registerBrainAttachmentDelete(s *Server, client *APIClient) {
 		Name:        "attachment_delete",
 		Description: "Delete an attachment from a project when it is not referenced by entries.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
 			"attachment_id": {Type: "string", Description: "Attachment ID to delete"},
-		}, Required: []string{"project_id", "attachment_id"}},
+		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || attachmentID == "" {
-			return "Please provide project_id and attachment_id", nil
+			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
 		}
 
 		var resp struct {
@@ -481,16 +496,16 @@ func registerBrainAttachmentBackfill(s *Server, client *APIClient) {
 		Name:        "attachment_backfill",
 		Description: "Run project-level attachment text extraction backfill and return counts for considered attachments.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id":          {Type: "string", Description: "Project whose attachments should be backfilled"},
+			"project":             {Type: "string", Description: "Project ID whose attachments should be backfilled. Defaults to the project detected from the MCP server's launch directory."},
 			"dry_run":             {Type: "boolean", Description: "Report candidates without extracting text"},
 			"force":               {Type: "boolean", Description: "Re-extract attachments that already have derived text"},
 			"batch_size":          {Type: "number", Description: "Maximum attachments to process in one run"},
 			"rate_limit_delay_ms": {Type: "number", Description: "Delay between extraction requests in milliseconds"},
-		}, Required: []string{"project_id"}},
+		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		if projectID == "" {
-			return "Please provide project_id", nil
+			return "", fmt.Errorf("provide 'project' (no ambient project is available)")
 		}
 		req := types.AttachmentExtractionBackfillRequest{
 			DryRun:           BoolArg(args, "dry_run", false),
@@ -511,14 +526,14 @@ func registerBrainAttachmentExtract(s *Server, client *APIClient) {
 		Name:        "attachment_extract",
 		Description: "Trigger server-side media-to-text extraction for an attachment and return extraction status, provider/model, reason, and derived text metadata.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
 			"attachment_id": {Type: "string", Description: "Attachment ID whose text extraction should be triggered"},
-		}, Required: []string{"project_id", "attachment_id"}},
+		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || attachmentID == "" {
-			return "Please provide project_id and attachment_id", nil
+			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
 		}
 
 		resp, err := client.ExtractAttachmentText(ctx, projectID, attachmentID, types.AttachmentExtractionRequest{})
@@ -534,14 +549,14 @@ func registerBrainAttachmentText(s *Server, client *APIClient) {
 		Name:        "attachment_text",
 		Description: "Retrieve extracted plain text for an attachment, useful for local PDF/image OCR workflows after upload.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
 			"attachment_id": {Type: "string", Description: "Attachment ID whose extracted text should be retrieved"},
-		}, Required: []string{"project_id", "attachment_id"}},
+		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		if projectID == "" || attachmentID == "" {
-			return "Please provide project_id and attachment_id", nil
+			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
 		}
 		text, err := client.DownloadAttachmentText(ctx, projectID, attachmentID)
 		if err != nil {
@@ -559,16 +574,16 @@ func registerBrainAttachmentDownload(s *Server, client *APIClient) {
 		Name:        "attachment_download",
 		Description: "Download raw attachment bytes to a local output path. Use this when an agent needs the exact original image, PDF, or media file for later processing.",
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"project_id":    {Type: "string", Description: "Project containing the attachment"},
+			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
 			"attachment_id": {Type: "string", Description: "Attachment ID whose raw content should be downloaded"},
 			"output_path":   {Type: "string", Description: "Local path where the downloaded bytes should be written"},
-		}, Required: []string{"project_id", "attachment_id", "output_path"}},
+		}, Required: []string{"attachment_id", "output_path"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "project_id", "")
+		projectID := ResolveProjectArg(args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		outputPath := StringArg(args, "output_path", "")
 		if projectID == "" || attachmentID == "" || outputPath == "" {
-			return "Please provide project_id, attachment_id, and output_path", nil
+			return "", fmt.Errorf("provide 'attachment_id' and 'output_path' (and 'project' if no ambient project is available)")
 		}
 		if err := client.DownloadAttachmentToFile(ctx, projectID, attachmentID, outputPath); err != nil {
 			return "", err
@@ -818,7 +833,7 @@ func formatAttachmentExtractionResult(result types.AttachmentExtractionResult) s
 }
 
 // =============================================================================
-// brain_search
+// search
 // =============================================================================
 
 func registerBrainSearch(s *Server, client *APIClient) {
@@ -872,7 +887,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_list
+// list
 // =============================================================================
 
 func registerBrainList(s *Server, client *APIClient) {
@@ -893,7 +908,7 @@ Filename filtering supports:
 				"tags":       {Type: "array", Items: &Property{Type: "string"}, Description: "Filter by tags (OR logic - matches entries with any of the specified tags)"},
 				"limit":      {Type: "number", Description: "Maximum entries to return (default: 20)"},
 				"global":     {Type: "boolean", Description: "List only global entries"},
-				"sortBy":     {Type: "string", Enum: []string{"created", "modified", "priority"}, Description: "Sort order"},
+				"sort_by":    {Type: "string", Enum: []string{"created", "modified", "priority"}, Description: "Sort order"},
 				"filename":   {Type: "string", Description: "Filter by filename/ID (supports wildcards: abc*, *def, abc*def)"},
 			},
 		},
@@ -915,7 +930,7 @@ Filename filtering supports:
 		if v := StringArg(args, "filename", ""); v != "" {
 			params["filename"] = v
 		}
-		if v := StringArg(args, "sortBy", ""); v != "" {
+		if v := StringArgAlias(args, "", "sort_by", "sortBy"); v != "" {
 			params["sortBy"] = v
 		}
 		if tags := StringSliceArg(args, "tags"); len(tags) > 0 {
@@ -956,7 +971,7 @@ Filename filtering supports:
 }
 
 // =============================================================================
-// brain_inject
+// inject
 // =============================================================================
 
 func registerBrainInject(s *Server, client *APIClient) {
@@ -966,14 +981,25 @@ func registerBrainInject(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"query":      {Type: "string", Description: "What context are you looking for?"},
-				"project":    {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to search across all projects."},
-				"maxEntries": {Type: "number", Description: "Maximum entries to include (default: 5)"},
-				"type":       {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
+				"query":       {Type: "string", Description: "What context are you looking for?"},
+				"project":     {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to search across all projects."},
+				"max_entries": {Type: "number", Description: "Maximum entries to include (default: 5)"},
+				"type":        {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 			},
 			Required: []string{"query"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
+		body := map[string]any{"query": args["query"]}
+		if v := StringArg(args, "project", ""); v != "" {
+			body["project"] = v
+		}
+		if v := StringArg(args, "type", ""); v != "" {
+			body["type"] = v
+		}
+		if v := IntArgAlias(args, 0, "max_entries", "maxEntries"); v > 0 {
+			body["maxEntries"] = v
+		}
+
 		var resp struct {
 			Context string `json:"context"`
 			Entries []struct {
@@ -983,7 +1009,7 @@ func registerBrainInject(s *Server, client *APIClient) {
 				Type  string `json:"type"`
 			} `json:"entries"`
 		}
-		if err := client.Request(ctx, "POST", "/inject", args, nil, &resp); err != nil {
+		if err := client.Request(ctx, "POST", "/inject", body, nil, &resp); err != nil {
 			return "", err
 		}
 
@@ -995,34 +1021,40 @@ func registerBrainInject(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_update
+// update
 // =============================================================================
 
 func registerBrainUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name: "update",
-		Description: `Update an existing brain entry's status, title, dependencies, trigger configuration, or append content.
+		Description: `Update an existing brain entry: status, title, tags, priority, dependencies, trigger configuration, or body content (replace or append).
 
 Use cases:
-- Mark a plan as completed: brain_update(path: "...", status: "completed")
-- Mark as in-progress: brain_update(path: "...", status: "in_progress")  
-- Block with reason: brain_update(path: "...", status: "blocked", note: "Waiting on API design")
-- Append progress notes: brain_update(path: "...", append: "## Progress\n- Completed auth module")
-- Update title: brain_update(path: "...", title: "New Title")
-- Update dependencies: brain_update(path: "...", depends_on: ["task-id-1", "task-id-2"])
-- Update feature dependencies: brain_update(path: "...", feature_depends_on: ["pre-feature"])
-- Add a post-feature trigger: brain_update(path: "...", trigger: {event:"feature.completed", filter:{feature_id:"main-feature"}})
-- Update tags: brain_update(path: "...", tags: ["tag1", "tag2"])
-- Update priority: brain_update(path: "...", priority: "high")
+- Mark a plan as completed: update(path: "...", status: "completed")
+- Mark as in-progress: update(path: "...", status: "in_progress")
+- Block with reason: update(path: "...", status: "blocked", note: "Waiting on API design")
+- Replace the full body: update(path: "...", content: "# Rewritten\n...")
+- Append progress notes: update(path: "...", append: "## Progress\n- Completed auth module")
+- Update title: update(path: "...", title: "New Title")
+- Update dependencies: update(path: "...", depends_on: ["task-id-1", "task-id-2"])
+- Update feature dependencies: update(path: "...", feature_depends_on: ["pre-feature"])
+- Add a post-feature trigger: update(path: "...", trigger: {event:"feature.completed", filter:{feature_id:"main-feature"}})
+- Update tags: update(path: "...", tags: ["tag1", "tag2"])
+- Update priority: update(path: "...", priority: "high")
 
-Statuses: draft, active, in_progress, blocked, completed, validated, superseded, archived`,
+If both content and append are provided, content replaces the body first, then append is added to the end. Replacing content preserves the entry's path, ID, and incoming links (unlike delete + save).
+
+Statuses: draft, pending, active, in_progress, blocked, cancelled, completed, validated, superseded, archived
+
+Note: as a guard against clients that autofill every optional field, when 3 or more optional fields exactly match their documented defaults (priority: "medium", feature_priority: "high", merge_policy: "prompt_only", merge_strategy: "squash", remote_branch_policy: "keep", execution_mode: "worktree", executor: "opencode", open_pr_before_merge: false, complete_on_idle: false, schedule_enabled: false, max_runs: 0), those default-valued fields are ignored and listed in the response. To intentionally set several fields to those exact values, update them in separate calls.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
 				"path":                 {Type: "string", Description: "Path to the entry to update"},
 				"status":               {Type: "string", Enum: types.EntryStatuses, Description: "New status"},
 				"title":                {Type: "string", Description: "New title"},
-				"append":               {Type: "string", Description: "Content to append"},
+				"content":              {Type: "string", Description: "Replace the entry's full body content (markdown). Preserves path, ID, and links. Use 'append' to add to the end instead; if both are set, content is applied first."},
+				"append":               {Type: "string", Description: "Content to append to the end of the entry body"},
 				"note":                 {Type: "string", Description: "Short note to add"},
 				"depends_on":           {Type: "array", Items: &Property{Type: "string"}, Description: "Task dependencies - list of task IDs or titles"},
 				"tags":                 {Type: "array", Items: &Property{Type: "string"}, Description: "Update tags for the entry"},
@@ -1064,11 +1096,11 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		path := StringArg(args, "path", "")
-		cleanArgs := sanitizeUpdateArgs(args)
+		cleanArgs, ignoredDefaults := sanitizeUpdateArgs(args)
 
 		body := map[string]any{}
 		addStringUpdateFields(body, cleanArgs,
-			"status", "title", "append", "note", "priority", "target_workdir", "git_branch",
+			"status", "title", "content", "append", "note", "priority", "target_workdir", "git_branch",
 			"merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode",
 			"schedule", "run_once_at", "timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
 			"feature_schedule", "feature_starts_at", "feature_expires_at", "feature_run_once_at", "feature_timezone",
@@ -1097,6 +1129,9 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 		}
 		if v := StringArg(cleanArgs, "note", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Note: %q", v))
+		}
+		if v := StringArg(cleanArgs, "content", ""); v != "" {
+			changes = append(changes, fmt.Sprintf("Replaced content (%d characters)", len(v)))
 		}
 		if v := StringArg(cleanArgs, "append", ""); v != "" {
 			changes = append(changes, fmt.Sprintf("Appended %d characters", len(v)))
@@ -1207,8 +1242,15 @@ Statuses: draft, active, in_progress, blocked, completed, validated, superseded,
 			changeLines[i] = "- " + c
 		}
 
-		return fmt.Sprintf("Updated: %s\n\n**Changes:**\n%s\n\n**Current Status:** %s\n**Title:** %s\n\nUse `brain_recall` to view the full entry.",
-			resp.Path, strings.Join(changeLines, "\n"), resp.Status, resp.Title), nil
+		ignoredNote := ""
+		if len(ignoredDefaults) > 0 {
+			sort.Strings(ignoredDefaults)
+			ignoredNote = fmt.Sprintf("\n\n**Ignored default-valued fields** (autofill guard, see tool description): %s",
+				strings.Join(ignoredDefaults, ", "))
+		}
+
+		return fmt.Sprintf("Updated: %s\n\n**Changes:**\n%s%s\n\n**Current Status:** %s\n**Title:** %s\n\nUse `recall` to view the full entry.",
+			resp.Path, strings.Join(changeLines, "\n"), ignoredNote, resp.Status, resp.Title), nil
 	})
 }
 
@@ -1242,7 +1284,12 @@ var openCodeOptionalDefaults = map[string]any{
 	"max_runs":             0,
 }
 
-func sanitizeUpdateArgs(args map[string]any) map[string]any {
+// sanitizeUpdateArgs drops empty-string values and guards against clients
+// that autofill optional fields: when 3 or more fields exactly match their
+// documented defaults (openCodeOptionalDefaults), those fields are removed
+// so the update doesn't clobber intentional per-task settings. The removed
+// keys are returned so callers can surface them instead of failing silently.
+func sanitizeUpdateArgs(args map[string]any) (map[string]any, []string) {
 	clean := make(map[string]any, len(args))
 	defaultCount := 0
 	for key, value := range args {
@@ -1256,15 +1303,17 @@ func sanitizeUpdateArgs(args map[string]any) map[string]any {
 	}
 
 	if defaultCount < 3 {
-		return clean
+		return clean, nil
 	}
 
+	dropped := make([]string, 0, defaultCount)
 	for key, value := range clean {
 		if matchesOpenCodeOptionalDefault(key, value) {
 			delete(clean, key)
+			dropped = append(dropped, key)
 		}
 	}
-	return clean
+	return clean, dropped
 }
 
 func matchesOpenCodeOptionalDefault(key string, value any) bool {
@@ -1328,7 +1377,8 @@ func sanitizeUpdateValue(value any) any {
 	if !ok {
 		return value
 	}
-	return sanitizeUpdateArgs(obj)
+	clean, _ := sanitizeUpdateArgs(obj)
+	return clean
 }
 
 func sanitizeBulkUpdateEntries(value any) any {
@@ -1368,7 +1418,7 @@ func sanitizeBulkUpdateEntry(value any) any {
 }
 
 // =============================================================================
-// brain_bulk_update
+// bulk_update
 // =============================================================================
 
 func registerBrainBulkUpdate(s *Server, client *APIClient) {
@@ -1385,18 +1435,18 @@ Omit filter fields you do not want to match. Do not include priority in the filt
 
 Examples:
 - Mark all tasks in a feature as cancelled:
-  brain_bulk_update({ filter: { feature_id: "old-feature" }, updates: { status: "cancelled" } })
+  bulk_update({ filter: { feature_id: "old-feature" }, updates: { status: "cancelled" } })
 - Update specific entries:
-  brain_bulk_update({ entries: [{ path: "projects/x/task/abc.md", updates: { status: "completed" } }] })
+  bulk_update({ entries: [{ path: "projects/x/task/abc.md", updates: { status: "completed" } }] })
 - Preview changes:
-  brain_bulk_update({ filter: { status: "draft" }, updates: { status: "pending" }, dry_run: true })`,
+  bulk_update({ filter: { status: "draft" }, updates: { status: "pending" }, dry_run: true })`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
 				"project": {Type: "string", Description: "Convenience shortcut for filter.project: restrict updates to entries in this project (e.g., 'orion-ai'). Only used in filter mode; explicit-entries mode ignores this. If filter already has a project field, that value wins."},
 				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string). Use with 'updates'."},
-				"updates": {Type: "object", Description: "Updates to apply to matched entries. Fields: status (string), priority (string), tags (string[]), append (string), note (string). Use with 'filter'."},
-				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: { status?, priority?, tags?, append?, note? } }"},
+				"updates": {Type: "object", Description: "Updates to apply to matched entries. Fields: status (string), priority (string), tags (string[]), content (string, replaces body), append (string), note (string). Use with 'filter'."},
+				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: { status?, priority?, tags?, content?, append?, note? } }"},
 				"dry_run": {Type: "boolean", Description: "Preview changes without applying (default: false)"},
 			},
 		},
@@ -1425,13 +1475,13 @@ Examples:
 		_, hasEntries := args["entries"]
 
 		if hasFilter && hasEntries {
-			return "Cannot use both 'filter' and 'entries' — pick one mode", nil
+			return "", fmt.Errorf("cannot use both 'filter' and 'entries' — pick one mode")
 		}
 		if !hasFilter && !hasEntries {
-			return "Please provide either 'filter' + 'updates' (filter mode) or 'entries' (explicit mode)", nil
+			return "", fmt.Errorf("provide either 'filter' + 'updates' (filter mode) or 'entries' (explicit mode)")
 		}
 		if hasFilter && !hasUpdates {
-			return "Filter mode requires 'updates' to specify what to change", nil
+			return "", fmt.Errorf("filter mode requires 'updates' to specify what to change")
 		}
 
 		// Build request body — pass through to the API which handles full validation
@@ -1493,7 +1543,7 @@ Examples:
 }
 
 // =============================================================================
-// brain_delete
+// delete
 // =============================================================================
 
 func registerBrainDelete(s *Server, client *APIClient) {
@@ -1510,7 +1560,7 @@ func registerBrainDelete(s *Server, client *APIClient) {
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		if !BoolArg(args, "confirm", false) {
-			return "Please set `confirm: true` to delete the entry", nil
+			return "", fmt.Errorf("set confirm: true to delete the entry")
 		}
 
 		path := StringArg(args, "path", "")
@@ -1527,7 +1577,7 @@ func registerBrainDelete(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_move
+// move
 // =============================================================================
 
 func registerBrainMove(s *Server, client *APIClient) {
@@ -1544,7 +1594,7 @@ Use cases:
 - Move a task filed in the wrong project
 - Reorganize project structure
 
-Example: brain_move({ path: "projects/old/task/abc12def.md", project: "new-project" })`,
+Example: move({ path: "projects/old/task/abc12def.md", project: "new-project" })`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -1557,7 +1607,7 @@ Example: brain_move({ path: "projects/old/task/abc12def.md", project: "new-proje
 		path := StringArg(args, "path", "")
 		project := StringArg(args, "project", "")
 		if path == "" || project == "" {
-			return "Please provide both path and target project", nil
+			return "", fmt.Errorf("provide both 'path' and target 'project'")
 		}
 
 		var resp struct {
@@ -1577,7 +1627,7 @@ Example: brain_move({ path: "projects/old/task/abc12def.md", project: "new-proje
 }
 
 // =============================================================================
-// brain_stats
+// stats
 // =============================================================================
 
 func registerBrainStats(s *Server, client *APIClient) {
@@ -1638,7 +1688,7 @@ func registerBrainStats(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_check_connection
+// check_connection
 // =============================================================================
 
 func registerBrainCheckConnection(s *Server, client *APIClient) {
@@ -1689,7 +1739,7 @@ All brain tools (save, recall, search, inject, etc.) are available.`, client.bas
 }
 
 // =============================================================================
-// brain_link
+// link
 // =============================================================================
 
 func registerBrainLink(s *Server, client *APIClient) {
@@ -1699,20 +1749,20 @@ func registerBrainLink(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"title":     {Type: "string", Description: "Title to search for"},
-				"path":      {Type: "string", Description: "Direct path or ID (8-char alphanumeric) to the entry"},
-				"withTitle": {Type: "boolean", Description: "Include title in link (default: true)"},
+				"title":      {Type: "string", Description: "Title to search for"},
+				"path":       {Type: "string", Description: "Direct path or ID (8-char alphanumeric) to the entry"},
+				"with_title": {Type: "boolean", Description: "Include title in link (default: true)"},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		if StringArg(args, "path", "") == "" && StringArg(args, "title", "") == "" {
-			return "Please provide either a path, ID, or title to generate a link", nil
+			return "", fmt.Errorf("provide a 'path', ID, or 'title' to generate a link")
 		}
 
 		body := map[string]any{
 			"title":     args["title"],
 			"path":      args["path"],
-			"withTitle": args["withTitle"],
+			"withTitle": argAlias(args, "with_title", "withTitle"),
 		}
 
 		var resp struct {
@@ -1731,7 +1781,7 @@ func registerBrainLink(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_section
+// section
 // =============================================================================
 
 func registerBrainSection(s *Server, client *APIClient) {
@@ -1742,28 +1792,28 @@ func registerBrainSection(s *Server, client *APIClient) {
 Use this when you need the detailed implementation spec for your assigned task.
 Returns the exact section content including all subsections, code examples, and acceptance criteria.
 
-Example: brain_section({ planId: "projects/abc/plan/auth.md", sectionTitle: "JWT Middleware" })
+Example: section({ plan_id: "projects/abc/plan/auth.md", section_title: "JWT Middleware" })
 
-This is more precise than brain_inject (which uses fuzzy search) - it extracts the exact section you need.`,
+This is more precise than inject (which uses fuzzy search) - it extracts the exact section you need.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"planId":             {Type: "string", Description: "Brain plan path (from orchestration context or brain_plan_sections)"},
-				"sectionTitle":       {Type: "string", Description: "Section title to retrieve (can be partial match)"},
-				"includeSubsections": {Type: "boolean", Description: "Include nested subsections (default: true)"},
+				"plan_id":             {Type: "string", Description: "Brain plan path (from orchestration context or the plan_sections tool)"},
+				"section_title":       {Type: "string", Description: "Section title to retrieve (can be partial match)"},
+				"include_subsections": {Type: "boolean", Description: "Include nested subsections (default: true)"},
 			},
-			Required: []string{"planId", "sectionTitle"},
+			Required: []string{"plan_id", "section_title"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		planId := StringArg(args, "planId", "")
-		sectionTitle := StringArg(args, "sectionTitle", "")
+		planId := StringArgAlias(args, "", "plan_id", "planId")
+		sectionTitle := StringArgAlias(args, "", "section_title", "sectionTitle")
 		if planId == "" || sectionTitle == "" {
-			return "Please provide both planId and sectionTitle", nil
+			return "", fmt.Errorf("provide both 'plan_id' and 'section_title'")
 		}
 
 		encodedTitle := url.PathEscape(sectionTitle)
 		params := map[string]string{}
-		if BoolArg(args, "includeSubsections", true) {
+		if BoolArgAlias(args, true, "include_subsections", "includeSubsections") {
 			params["includeSubsections"] = "true"
 		} else {
 			params["includeSubsections"] = "false"
@@ -1785,7 +1835,7 @@ This is more precise than brain_inject (which uses fuzzy search) - it extracts t
 }
 
 // =============================================================================
-// brain_plan_sections
+// plan_sections
 // =============================================================================
 
 func registerBrainPlanSections(s *Server, client *APIClient) {
@@ -1806,10 +1856,10 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 		if entryPath == "" {
 			title := StringArg(args, "title", "")
 			if title == "" {
-				return "Please provide either a path or title", nil
+				return "", fmt.Errorf("provide either a 'path' or 'title'")
 			}
 
-			searchBody := map[string]any{"query": title, "limit": 5}
+			searchBody := map[string]any{"query": title, "limit": 20}
 			if project := StringArg(args, "project", ""); project != "" {
 				searchBody["project"] = project
 			}
@@ -1835,10 +1885,13 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 					suggestions := make([]string, 0, 5)
 					for _, r := range searchResp.Results {
 						suggestions = append(suggestions, r.Title)
+						if len(suggestions) == 5 {
+							break
+						}
 					}
-					return fmt.Sprintf("No exact match for title: %q\n\nDid you mean: %s", title, strings.Join(suggestions, ", ")), nil
+					return "", fmt.Errorf("no exact title match for %q; closest titles: %s", title, strings.Join(suggestions, ", "))
 				}
-				return fmt.Sprintf("No entry found matching title: %q", title), nil
+				return "", fmt.Errorf("no entry found with title %q", title)
 			}
 		}
 
@@ -1881,7 +1934,7 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_verify
+// verify
 // =============================================================================
 
 func registerBrainVerify(s *Server, client *APIClient) {
@@ -1910,7 +1963,7 @@ func registerBrainVerify(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_stale
+// stale
 // =============================================================================
 
 func registerBrainStale(s *Server, client *APIClient) {
@@ -1974,14 +2027,14 @@ func registerBrainStale(s *Server, client *APIClient) {
 		}
 
 		lines = append(lines, "")
-		lines = append(lines, "*Use `brain_verify` to mark entries as still accurate.*")
+		lines = append(lines, "*Use `verify` to mark entries as still accurate.*")
 
 		return strings.Join(lines, "\n"), nil
 	})
 }
 
 // =============================================================================
-// brain_orphans
+// orphans
 // =============================================================================
 
 func registerBrainOrphans(s *Server, client *APIClient) {
@@ -2052,7 +2105,7 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_backlinks
+// backlinks
 // =============================================================================
 
 func registerBrainBacklinks(s *Server, client *APIClient) {
@@ -2102,7 +2155,7 @@ func registerBrainBacklinks(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_outlinks
+// outlinks
 // =============================================================================
 
 func registerBrainOutlinks(s *Server, client *APIClient) {
@@ -2152,7 +2205,7 @@ func registerBrainOutlinks(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_related
+// related
 // =============================================================================
 
 func registerBrainRelated(s *Server, client *APIClient) {
@@ -2206,7 +2259,7 @@ func registerBrainRelated(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_automation_list
+// automation_list
 // =============================================================================
 
 func registerBrainAutomationList(s *Server, client *APIClient) {
@@ -2240,7 +2293,7 @@ func registerBrainAutomationList(s *Server, client *APIClient) {
 		}
 
 		if len(resp.Entries) == 0 {
-			return "No automations found.\n\nCreate one with `brain automation create` or save a brain entry with type: automation.", nil
+			return "No automations found.\n\nCreate one with the `save` tool using type: 'automation' (or the `brain automation create` CLI).", nil
 		}
 
 		lines := []string{
@@ -2289,7 +2342,7 @@ func registerBrainAutomationList(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_automation_test
+// automation_test
 // =============================================================================
 
 func registerBrainAutomationTest(s *Server, client *APIClient) {

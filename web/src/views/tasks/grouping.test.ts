@@ -62,3 +62,59 @@ test("filterTasks accepts field queries", () => {
   assert.deepEqual(filterTasks(tasks, "status:blocked").map((t) => t.id), ["a"]);
   assert.deepEqual(filterTasks(tasks, "feature:auth status:pending").map((t) => t.id), ["b"]);
 });
+
+test("completed feature sort prefers completed_at over modified", () => {
+  // A task's completed_at is the source of truth for "when did this feature
+  // finish?". Falling back to modified conflates completion with later edits
+  // — e.g. a feature completed last week that got a note appended today
+  // would sort as if it finished today. This test locks in the correct
+  // precedence: completed_at wins when present, modified is a fallback.
+  const feat = (id: string, completed_at: string | undefined, modified: string): Task => ({
+    id,
+    path: `${id}.md`,
+    title: id,
+    priority: "medium",
+    status: "completed",
+    created: "2026-01-01T00:00:00Z",
+    modified,
+    completed_at,
+    feature_id: id, // one task per feature — feature label == id
+  });
+
+  const groups = groupByFeature([
+    // "old-actually" was completed last Monday but got a note edit today.
+    // Under completed_at semantics it should sort BELOW "new-actually",
+    // which was completed today. Under (buggy) modified-only semantics,
+    // "old-actually" would win because its modified is today.
+    feat("old-actually", "2026-07-01T09:00:00Z", "2026-07-07T14:00:00Z"),
+    feat("new-actually", "2026-07-07T10:00:00Z", "2026-07-07T10:00:00Z"),
+  ]);
+
+  assert.deepEqual(
+    groups.map((g) => g.feature),
+    ["new-actually", "old-actually"],
+    "features should sort by completed_at, not modified",
+  );
+});
+
+test("completed feature sort falls back to modified when completed_at missing", () => {
+  // Legacy entries created before the completed_at column existed still
+  // need to sort sanely. Fall back chain: completed_at → modified → created.
+  const feat = (id: string, modified: string): Task => ({
+    id,
+    path: `${id}.md`,
+    title: id,
+    priority: "medium",
+    status: "completed",
+    created: "2026-01-01T00:00:00Z",
+    modified,
+    feature_id: id,
+  });
+
+  const groups = groupByFeature([
+    feat("older", "2026-06-01T00:00:00Z"),
+    feat("newer", "2026-07-01T00:00:00Z"),
+  ]);
+
+  assert.deepEqual(groups.map((g) => g.feature), ["newer", "older"]);
+});

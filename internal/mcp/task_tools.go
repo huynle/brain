@@ -30,7 +30,7 @@ func RegisterTaskTools(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_tasks
+// tasks
 // =============================================================================
 
 func registerBrainTasks(s *Server, client *APIClient) {
@@ -234,7 +234,7 @@ Use this to see:
 }
 
 // =============================================================================
-// brain_task_next
+// task_next
 // =============================================================================
 
 func registerBrainTaskNext(s *Server, client *APIClient) {
@@ -321,7 +321,7 @@ Current state:
 - %d tasks blocked
 - %d tasks completed
 
-Use brain_tasks to see the full task list and dependency status.`, waiting, blocked, completed), nil
+Use tasks to see the full task list and dependency status.`, waiting, blocked, completed), nil
 		}
 
 		task := nextResp.Task
@@ -378,7 +378,7 @@ Use brain_tasks to see the full task list and dependency status.`, waiting, bloc
 }
 
 // =============================================================================
-// brain_task_get
+// task_get
 // =============================================================================
 
 func registerBrainTaskGet(s *Server, client *APIClient) {
@@ -395,15 +395,15 @@ Use this to get detailed information about a specific task including:
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"taskId":  {Type: "string", Description: "Task ID (8-char alphanumeric) or title"},
+				"task_id": {Type: "string", Description: "Task ID (8-char alphanumeric) or exact title"},
 				"project": {Type: "string", Description: "Override auto-detected project"},
 			},
-			Required: []string{"taskId"},
+			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		taskID := StringArg(args, "taskId", "")
+		taskID := StringArgAlias(args, "", "task_id", "taskId")
 		if taskID == "" {
-			return "Please provide a task ID or title", nil
+			return "", fmt.Errorf("provide a 'task_id' (ID or title)")
 		}
 
 		proj := ResolveProject(args)
@@ -447,10 +447,10 @@ Use this to get detailed information about a specific task including:
 				for i := 0; i < limit; i++ {
 					suggestions[i] = fmt.Sprintf("- %s (ID: %s)", partialMatches[i].Title, partialMatches[i].ID)
 				}
-				return fmt.Sprintf("Task not found: %q\n\nDid you mean:\n%s", taskID, strings.Join(suggestions, "\n")), nil
+				return "", fmt.Errorf("task not found: %q\n\nDid you mean:\n%s", taskID, strings.Join(suggestions, "\n"))
 			}
 
-			return fmt.Sprintf("Task not found: %q\n\nUse brain_tasks to list all tasks.", taskID), nil
+			return "", fmt.Errorf("task not found: %q\n\nUse the tasks tool to list all tasks", taskID)
 		}
 
 		// Calculate dependents - tasks that have this task in their resolved_deps
@@ -547,13 +547,13 @@ Use this to get detailed information about a specific task including:
 }
 
 // =============================================================================
-// brain_task_metadata
+// task_metadata
 // =============================================================================
 
 func registerBrainTaskMetadata(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name: "task_metadata",
-		Description: `Get execution metadata for a task — fields NOT included in brain_task_get.
+		Description: `Get execution metadata for a task — fields NOT included in task_get.
 
 Returns structured JSON with:
 - **Execution config:** agent, model, direct_prompt, target_workdir, resolved_workdir, git_branch, git_remote, execution_mode, complete_on_idle
@@ -564,19 +564,19 @@ Returns structured JSON with:
 - **Tags and sessions:** tags[], session_ids[]
 
 Use this when you need to know HOW a task should be executed (which agent, model, workdir, prompt)
-or to inspect its dependency graph details. Complements brain_task_get which returns content and high-level status.`,
+or to inspect its dependency graph details. Complements task_get which returns content and high-level status.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"taskId":  {Type: "string", Description: "Task ID (8-char alphanumeric) or title"},
+				"task_id": {Type: "string", Description: "Task ID (8-char alphanumeric) or exact title"},
 				"project": {Type: "string", Description: "Override auto-detected project"},
 			},
-			Required: []string{"taskId"},
+			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		taskID := StringArg(args, "taskId", "")
+		taskID := StringArgAlias(args, "", "task_id", "taskId")
 		if taskID == "" {
-			return "Please provide a task ID or title", nil
+			return "", fmt.Errorf("provide a 'task_id' (ID or title)")
 		}
 
 		proj := ResolveProject(args)
@@ -617,10 +617,10 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
 				for i := 0; i < limit; i++ {
 					suggestions[i] = fmt.Sprintf("- %s (ID: %s)", partialMatches[i].Title, partialMatches[i].ID)
 				}
-				return fmt.Sprintf("Task not found: %q\n\nDid you mean:\n%s", taskID, strings.Join(suggestions, "\n")), nil
+				return "", fmt.Errorf("task not found: %q\n\nDid you mean:\n%s", taskID, strings.Join(suggestions, "\n"))
 			}
 
-			return fmt.Sprintf("Task not found: %q\n\nUse brain_tasks to list all tasks.", taskID), nil
+			return "", fmt.Errorf("task not found: %q\n\nUse the tasks tool to list all tasks", taskID)
 		}
 
 		// Build metadata-only response (no content body)
@@ -694,7 +694,7 @@ or to inspect its dependency graph details. Complements brain_task_get which ret
 }
 
 // =============================================================================
-// brain_tasks_status
+// tasks_status
 // =============================================================================
 
 func registerBrainTasksStatus(s *Server, client *APIClient) {
@@ -708,36 +708,36 @@ Use cases:
 - Monitor multiple tasks from an orchestrator agent
 
 Parameters:
-- taskIds: Array of task IDs (8-char alphanumeric) to check
-- waitFor: Optional. "completed" (default) waits until all tasks completed/validated.
-           "any" returns as soon as any task status changes.
+- task_ids: Array of task IDs (8-char alphanumeric) to check
+- wait_for: Optional. "completed" waits until ALL listed tasks are completed/validated.
+           "any" returns as soon as any listed task's status changes.
            Omit for immediate response without waiting.
 - timeout: Max wait time in milliseconds (default: 60000, max: 300000)
 - project: Override auto-detected project
 
 Example - immediate check:
-  brain_tasks_status({ taskIds: ["abc12def", "xyz98765"] })
+  tasks_status({ task_ids: ["abc12def", "xyz98765"] })
 
 Example - wait for completion:
-  brain_tasks_status({ taskIds: ["abc12def"], waitFor: "completed", timeout: 120000 })`,
+  tasks_status({ task_ids: ["abc12def"], wait_for: "completed", timeout: 120000 })`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"taskIds": {Type: "array", Items: &Property{Type: "string"}, Description: "Array of task IDs (8-char alphanumeric) to check"},
-				"waitFor": {Type: "string", Enum: []string{"completed", "any"}, Description: "Wait condition: 'completed' waits for all done, 'any' waits for any change"},
-				"timeout": {Type: "number", Description: "Max wait time in milliseconds (default: 60000, max: 300000)"},
-				"project": {Type: "string", Description: "Override auto-detected project"},
+				"task_ids": {Type: "array", Items: &Property{Type: "string"}, Description: "Array of task IDs (8-char alphanumeric) to check"},
+				"wait_for": {Type: "string", Enum: []string{"completed", "any"}, Description: "Wait condition: 'completed' waits until ALL listed tasks are done, 'any' returns on the first status change among them"},
+				"timeout":  {Type: "number", Description: "Max wait time in milliseconds (default: 60000, max: 300000)"},
+				"project":  {Type: "string", Description: "Override auto-detected project"},
 			},
-			Required: []string{"taskIds"},
+			Required: []string{"task_ids"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		taskIDs := StringSliceArg(args, "taskIds")
+		taskIDs := StringSliceArgAlias(args, "task_ids", "taskIds")
 		if len(taskIDs) == 0 {
-			return "Please provide at least one task ID", nil
+			return "", fmt.Errorf("provide at least one task ID in 'task_ids'")
 		}
 
 		proj := ResolveProject(args)
-		waitFor := StringArg(args, "waitFor", "")
+		waitFor := StringArgAlias(args, "", "wait_for", "waitFor")
 		timeout := IntArg(args, "timeout", 60000)
 		if timeout > 300000 {
 			timeout = 300000
@@ -817,7 +817,7 @@ Example - wait for completion:
 }
 
 // =============================================================================
-// brain_task_trigger
+// task_trigger
 // =============================================================================
 
 func registerBrainTaskTrigger(s *Server, client *APIClient) {
@@ -827,14 +827,14 @@ func registerBrainTaskTrigger(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"taskId":  {Type: "string", Description: "Task ID (8-char alphanumeric)"},
+				"task_id": {Type: "string", Description: "Task ID (8-char alphanumeric)"},
 				"project": {Type: "string", Description: "Override auto-detected project"},
 			},
-			Required: []string{"taskId"},
+			Required: []string{"task_id"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		proj := ResolveProject(args)
-		taskID := StringArg(args, "taskId", "")
+		taskID := StringArgAlias(args, "", "task_id", "taskId")
 
 		var resp struct {
 			TaskID        string `json:"taskId"`
@@ -865,13 +865,13 @@ func registerBrainTaskTrigger(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_monitor_enable (generic)
+// monitor_enable (generic)
 // =============================================================================
 
 func registerBrainMonitorEnable(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "monitor_enable",
-		Description: "(Deprecated - use automations) Enable a monitor template for a feature. Creates an automated task. Prefer brain_automation_list and creating automation entries directly.",
+		Description: "(Deprecated - use automations) Enable a monitor template for a feature. Creates an automated task. Prefer automation_list and creating automation entries directly.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -922,7 +922,7 @@ func registerBrainMonitorEnable(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_monitor_disable (generic)
+// monitor_disable (generic)
 // =============================================================================
 
 func registerBrainMonitorDisable(s *Server, client *APIClient) {
@@ -976,7 +976,7 @@ func registerBrainMonitorDisable(s *Server, client *APIClient) {
 // =============================================================================
 
 // =============================================================================
-// brain_feature_review_enable
+// feature_review_enable
 // =============================================================================
 
 func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
@@ -1014,7 +1014,7 @@ func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
 		if err != nil {
 			msg := err.Error()
 			if strings.Contains(msg, "409") || strings.Contains(strings.ToLower(msg), "conflict") {
-				return fmt.Sprintf("Feature Code Review is already enabled for feature %q. Use brain_feature_review_disable first to reset it.", featureID), nil
+				return fmt.Sprintf("Feature Code Review is already enabled for feature %q. Use feature_review_disable first to reset it.", featureID), nil
 			}
 			return "", err
 		}
@@ -1025,7 +1025,7 @@ func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_feature_review_disable
+// feature_review_disable
 // =============================================================================
 
 func registerBrainFeatureReviewDisable(s *Server, client *APIClient) {
@@ -1073,7 +1073,7 @@ func registerBrainFeatureReviewDisable(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_blocked_inspector_enable
+// blocked_inspector_enable
 // =============================================================================
 
 func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
@@ -1117,7 +1117,7 @@ func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
 		if err != nil {
 			msg := err.Error()
 			if strings.Contains(msg, "409") || strings.Contains(strings.ToLower(msg), "conflict") {
-				return fmt.Sprintf("Blocked Task Inspector is already enabled for feature %q. Use brain_blocked_inspector_disable first to reset it.", featureID), nil
+				return fmt.Sprintf("Blocked Task Inspector is already enabled for feature %q. Use blocked_inspector_disable first to reset it.", featureID), nil
 			}
 			return "", err
 		}
@@ -1128,7 +1128,7 @@ func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_blocked_inspector_disable
+// blocked_inspector_disable
 // =============================================================================
 
 func registerBrainBlockedInspectorDisable(s *Server, client *APIClient) {
@@ -1176,7 +1176,7 @@ func registerBrainBlockedInspectorDisable(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_dream_enable
+// dream_enable
 // =============================================================================
 
 func registerBrainDreamEnable(s *Server, client *APIClient) {
@@ -1217,7 +1217,7 @@ func registerBrainDreamEnable(s *Server, client *APIClient) {
 		if err != nil {
 			msg := err.Error()
 			if strings.Contains(msg, "409") || strings.Contains(strings.ToLower(msg), "conflict") {
-				return fmt.Sprintf("Dream Mode is already enabled for project %q. Use brain_dream_disable first to reset it.", project), nil
+				return fmt.Sprintf("Dream Mode is already enabled for project %q. Use dream_disable first to reset it.", project), nil
 			}
 			return "", err
 		}
@@ -1228,7 +1228,7 @@ func registerBrainDreamEnable(s *Server, client *APIClient) {
 }
 
 // =============================================================================
-// brain_dream_disable
+// dream_disable
 // =============================================================================
 
 func registerBrainDreamDisable(s *Server, client *APIClient) {
@@ -1276,7 +1276,7 @@ func registerBrainDreamDisable(s *Server, client *APIClient) {
 // Helper types
 // =============================================================================
 
-// resolvedTaskWithDeps is used by brain_task_get to find tasks and compute dependents.
+// resolvedTaskWithDeps is used by task_get to find tasks and compute dependents.
 type resolvedTaskWithDeps struct {
 	ID             string   `json:"id"`
 	Title          string   `json:"title"`
@@ -1290,7 +1290,7 @@ type resolvedTaskWithDeps struct {
 	DependsOn      []string `json:"depends_on"`
 }
 
-// fullTask is used by brain_task_metadata for the complete task representation.
+// fullTask is used by task_metadata for the complete task representation.
 type fullTask struct {
 	ID                  string   `json:"id"`
 	Title               string   `json:"title"`

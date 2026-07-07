@@ -292,11 +292,11 @@ func TestBrainWebhookCreate_MissingURL(t *testing.T) {
 		"events": []any{"task.completed"},
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("expected validation error, got result: %s", result)
 	}
-	if !strings.Contains(result, "url is required") {
-		t.Errorf("expected 'url is required' error, got: %s", result)
+	if !strings.Contains(err.Error(), "url is required") {
+		t.Errorf("expected 'url is required' error, got: %v", err)
 	}
 }
 
@@ -309,11 +309,11 @@ func TestBrainWebhookCreate_MissingEvents(t *testing.T) {
 		"url": "https://example.com/hook",
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("expected validation error, got result: %s", result)
 	}
-	if !strings.Contains(result, "events must be") {
-		t.Errorf("expected events validation error, got: %s", result)
+	if !strings.Contains(err.Error(), "events must be a non-empty array of event type strings") {
+		t.Errorf("expected events validation error, got: %v", err)
 	}
 }
 
@@ -552,11 +552,11 @@ func TestBrainWebhookDelete_MissingID(t *testing.T) {
 
 	result, err := s.tools["webhook_delete"].handler(context.Background(), map[string]any{})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("expected validation error, got result: %s", result)
 	}
-	if !strings.Contains(result, "id is required") {
-		t.Errorf("expected 'id is required' error, got: %s", result)
+	if !strings.Contains(err.Error(), "id is required") {
+		t.Errorf("expected 'id is required' error, got: %v", err)
 	}
 }
 
@@ -679,11 +679,11 @@ func TestBrainWebhookToggle_MissingID(t *testing.T) {
 		"enabled": true,
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("expected validation error, got result: %s", result)
 	}
-	if !strings.Contains(result, "id is required") {
-		t.Errorf("expected 'id is required' error, got: %s", result)
+	if !strings.Contains(err.Error(), "id is required") {
+		t.Errorf("expected 'id is required' error, got: %v", err)
 	}
 }
 
@@ -837,11 +837,11 @@ func TestBrainWebhookUpdate_NoFields(t *testing.T) {
 		"id": "wh_abc123",
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatalf("expected validation error, got result: %s", result)
 	}
-	if !strings.Contains(result, "provide at least one field") {
-		t.Errorf("expected no fields error, got: %s", result)
+	if !strings.Contains(err.Error(), "provide at least one field to update") {
+		t.Errorf("expected no fields error, got: %v", err)
 	}
 }
 

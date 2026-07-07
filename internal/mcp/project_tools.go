@@ -13,9 +13,55 @@ import (
 
 // RegisterProjectTools registers project context and placement MCP tools on the server.
 func RegisterProjectTools(s *Server, client *APIClient) {
+	registerBrainContextGet(s, client)
 	registerBrainContextResolve(s, client)
 	registerBrainProjectPlacementGet(s, client)
 	registerBrainProjectPlacementPut(s, client)
+}
+
+func registerBrainContextGet(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name: "context_get",
+		Description: `Show the ambient execution context this MCP server resolved at startup.
+
+Tools that take an optional 'project' parameter fall back to the project shown here when it is omitted. Use this to check which project a save/list/attachment call will target by default, and which identity (client/host) is stamped on MCP-created tasks.`,
+		InputSchema: InputSchema{
+			Type:       "object",
+			Properties: map[string]Property{},
+		},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		execCtx := GetCachedContext()
+		lines := []string{
+			"## MCP Execution Context",
+			"",
+			"### Project (default for tools when 'project' is omitted)",
+			fmt.Sprintf("- Project: %s", execCtx.ProjectID),
+			fmt.Sprintf("- Workdir: %s", execCtx.Workdir),
+		}
+		if execCtx.GitRemote != "" {
+			lines = append(lines, fmt.Sprintf("- Git remote: %s", execCtx.GitRemote))
+		}
+		if execCtx.GitBranch != "" {
+			lines = append(lines, fmt.Sprintf("- Git branch: %s", execCtx.GitBranch))
+		}
+		lines = append(lines,
+			"",
+			"### Identity (stamped on MCP-created tasks)",
+			fmt.Sprintf("- Client ID: %s", execCtx.ClientID),
+			fmt.Sprintf("- Host ID: %s", execCtx.HostID),
+			fmt.Sprintf("- Hostname: %s", execCtx.Hostname),
+			fmt.Sprintf("- OS/Arch: %s/%s", execCtx.OS, execCtx.Arch),
+		)
+		if execCtx.Username != "" {
+			lines = append(lines, fmt.Sprintf("- Username: %s", execCtx.Username))
+		}
+		lines = append(lines,
+			"",
+			"### API",
+			fmt.Sprintf("- Base URL: %s", client.baseURL),
+		)
+		return strings.Join(lines, "\n"), nil
+	})
 }
 
 func registerBrainContextResolve(s *Server, client *APIClient) {
@@ -46,10 +92,10 @@ func registerBrainContextResolve(s *Server, client *APIClient) {
 		clientID := StringArg(args, "client_id", "")
 		hostID := StringArg(args, "host_id", "")
 		if clientID == "" {
-			return "Please provide a client_id", nil
+			return "", fmt.Errorf("provide a 'client_id'")
 		}
 		if hostID == "" {
-			return "Please provide a host_id", nil
+			return "", fmt.Errorf("provide a 'host_id'")
 		}
 
 		req := types.ResolveClientContextRequest{
@@ -91,7 +137,7 @@ func registerBrainProjectPlacementGet(s *Server, client *APIClient) {
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		project := StringArg(args, "project", "")
 		if project == "" {
-			return "Please provide a project", nil
+			return "", fmt.Errorf("provide a 'project'")
 		}
 		var resp types.ProjectPlacement
 		if err := client.Request(ctx, http.MethodGet, "/projects/"+url.PathEscape(project)+"/placement", nil, nil, &resp); err != nil {
@@ -110,7 +156,7 @@ func registerBrainProjectPlacementPut(s *Server, client *APIClient) {
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		project := StringArg(args, "project", "")
 		if project == "" {
-			return "Please provide a project", nil
+			return "", fmt.Errorf("provide a 'project'")
 		}
 		req := types.ProjectPlacement{
 			Affinity:             StringArg(args, "affinity", ""),

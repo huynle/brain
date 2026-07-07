@@ -352,11 +352,11 @@ func TestGoalTools_ValidationErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
 			result, err := s.tools[tt.tool].handler(context.Background(), tt.args)
-			if err != nil {
-				t.Fatalf("handler error: %v", err)
+			if err == nil {
+				t.Fatalf("expected validation error, got result %q", result)
 			}
-			if !strings.Contains(result, tt.want) {
-				t.Fatalf("result = %q, want substring %q", result, tt.want)
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
 			}
 		})
 	}

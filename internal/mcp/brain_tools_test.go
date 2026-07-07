@@ -665,16 +665,16 @@ func TestBrainDelete_NoConfirm(t *testing.T) {
 	RegisterBrainTools(s, client)
 
 	handler := s.tools["delete"].handler
-	result, err := handler(context.Background(), map[string]any{
+	_, err := handler(context.Background(), map[string]any{
 		"path":    "projects/test/task/abc.md",
 		"confirm": false,
 	})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
+	if err == nil {
+		t.Fatal("expected validation error when confirm is false")
 	}
 
-	if !strings.Contains(result, "confirm: true") {
-		t.Errorf("result should ask for confirmation, got: %s", result)
+	if !strings.Contains(err.Error(), "set confirm: true to delete the entry") {
+		t.Errorf("error should ask for confirmation, got: %v", err)
 	}
 }
 
@@ -915,13 +915,13 @@ func TestBrainRecall_NoPathOrTitle(t *testing.T) {
 	RegisterBrainTools(s, client)
 
 	handler := s.tools["recall"].handler
-	result, err := handler(context.Background(), map[string]any{})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
+	_, err := handler(context.Background(), map[string]any{})
+	if err == nil {
+		t.Fatal("expected validation error when neither path nor title is provided")
 	}
 
-	if !strings.Contains(result, "provide a path or title") {
-		t.Errorf("result should ask for path/title, got: %s", result)
+	if !strings.Contains(err.Error(), "provide 'path' or 'title'") {
+		t.Errorf("error should ask for path/title, got: %v", err)
 	}
 }
 
@@ -989,21 +989,21 @@ func TestAttachmentToolSchemas(t *testing.T) {
 		tool     string
 		required []string
 	}{
-		{"attachment_upload", []string{"project_id", "file_path"}},
-		{"attachment_attach", []string{"project_id", "entry_id", "attachment_id"}},
-		{"attachment_detach", []string{"project_id", "entry_id", "attachment_id"}},
-		{"attachment_list", []string{"project_id"}},
-		{"attachment_get", []string{"project_id", "attachment_id"}},
-		{"attachment_delete", []string{"project_id", "attachment_id"}},
-		{"attachment_backfill", []string{"project_id"}},
-		{"attachment_extract", []string{"project_id", "attachment_id"}},
-		{"attachment_text", []string{"project_id", "attachment_id"}},
-		{"attachment_download", []string{"project_id", "attachment_id", "output_path"}},
+		{"attachment_upload", []string{"file_path"}},
+		{"attachment_attach", []string{"entry_id", "attachment_id"}},
+		{"attachment_detach", []string{"entry_id", "attachment_id"}},
+		{"attachment_list", []string{}},
+		{"attachment_get", []string{"attachment_id"}},
+		{"attachment_delete", []string{"attachment_id"}},
+		{"attachment_backfill", []string{}},
+		{"attachment_extract", []string{"attachment_id"}},
+		{"attachment_text", []string{"attachment_id"}},
+		{"attachment_download", []string{"attachment_id", "output_path"}},
 	}
 
 	listTool := s.tools["attachment_list"].tool
 	if _, ok := listTool.InputSchema.Properties["entry_id"]; !ok {
-		t.Fatalf("brain_attachment_list schema missing optional entry_id property")
+		t.Fatalf("attachment_list schema missing optional entry_id property")
 	}
 
 	for _, tt := range tests {
@@ -1021,6 +1021,20 @@ func TestAttachmentToolSchemas(t *testing.T) {
 			for _, req := range tt.required {
 				if _, ok := tool.tool.InputSchema.Properties[req]; !ok {
 					t.Errorf("schema missing required property %q", req)
+				}
+			}
+			// project is advertised as an optional property (ambient fallback),
+			// never as a required one, and the legacy project_id spelling is
+			// no longer in the schema.
+			if _, ok := tool.tool.InputSchema.Properties["project"]; !ok {
+				t.Errorf("schema missing optional property %q", "project")
+			}
+			if _, ok := tool.tool.InputSchema.Properties["project_id"]; ok {
+				t.Errorf("schema should not advertise legacy property %q", "project_id")
+			}
+			for _, req := range tool.tool.InputSchema.Required {
+				if req == "project" || req == "project_id" {
+					t.Errorf("project must not be required, got required = %v", tool.tool.InputSchema.Required)
 				}
 			}
 		})
@@ -1243,34 +1257,72 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 }
 
 func TestBrainAttachmentTools_ValidateRequiredIDsBeforeRequest(t *testing.T) {
+	cachedContext = &ExecutionContext{ProjectID: "ambient-project"}
+	defer func() { cachedContext = nil }()
+
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{})
+	}))
+	defer server.Close()
+
 	s := NewServer()
-	client := NewAPIClient("http://localhost:1")
+	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
-	tests := []struct {
+	// Missing attachment/entry/file/output identifiers fail with a Go error
+	// before any HTTP request is made, even when a project is available.
+	validationTests := []struct {
 		tool string
 		args map[string]any
 		want string
 	}{
-		{"attachment_upload", map[string]any{"project_id": "test-project"}, "project_id and file_path"},
-		{"attachment_attach", map[string]any{"project_id": "test-project", "entry_id": "entry-123"}, "project_id, entry_id, and attachment_id"},
-		{"attachment_detach", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, entry_id, and attachment_id"},
-		{"attachment_list", map[string]any{}, "project_id"},
-		{"attachment_get", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
-		{"attachment_delete", map[string]any{"project_id": "test-project"}, "project_id and attachment_id"},
-		{"attachment_backfill", map[string]any{}, "project_id"},
-		{"attachment_extract", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
-		{"attachment_text", map[string]any{"attachment_id": "att_123"}, "project_id and attachment_id"},
-		{"attachment_download", map[string]any{"project_id": "test-project", "attachment_id": "att_123"}, "project_id, attachment_id, and output_path"},
+		{"attachment_upload", map[string]any{"project": "test-project"}, "provide 'file_path' (and 'project' if no ambient project is available)"},
+		{"attachment_attach", map[string]any{"project": "test-project", "entry_id": "entry-123"}, "provide 'entry_id' and 'attachment_id' (and 'project' if no ambient project is available)"},
+		{"attachment_detach", map[string]any{"project": "test-project", "attachment_id": "att_123"}, "provide 'entry_id' and 'attachment_id' (and 'project' if no ambient project is available)"},
+		{"attachment_get", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
+		{"attachment_delete", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
+		{"attachment_extract", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
+		{"attachment_text", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
+		{"attachment_download", map[string]any{"project": "test-project", "attachment_id": "att_123"}, "provide 'attachment_id' and 'output_path' (and 'project' if no ambient project is available)"},
 	}
-	for _, tt := range tests {
+	for _, tt := range validationTests {
 		t.Run(tt.tool, func(t *testing.T) {
-			result, err := s.tools[tt.tool].handler(context.Background(), tt.args)
-			if err != nil {
+			_, err := s.tools[tt.tool].handler(context.Background(), tt.args)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
+			}
+		})
+	}
+	if len(requests) != 0 {
+		t.Fatalf("validation failures should not reach the API, got requests: %v", requests)
+	}
+
+	// A missing 'project' argument is no longer a validation failure: the
+	// handler falls back to the ambient launch-directory project.
+	ambientTests := []struct {
+		tool        string
+		args        map[string]any
+		wantRequest string
+	}{
+		{"attachment_list", map[string]any{}, "GET /api/v1/attachments?project_id=ambient-project"},
+		{"attachment_backfill", map[string]any{}, "POST /api/v1/attachments/backfill/extraction?project_id=ambient-project"},
+		{"attachment_extract", map[string]any{"attachment_id": "att_123"}, "POST /api/v1/attachments/att_123/extract?project_id=ambient-project"},
+		{"attachment_text", map[string]any{"attachment_id": "att_123"}, "GET /api/v1/attachments/att_123/text?project_id=ambient-project"},
+	}
+	for _, tt := range ambientTests {
+		t.Run(tt.tool+"_ambient_project", func(t *testing.T) {
+			requests = requests[:0]
+			if _, err := s.tools[tt.tool].handler(context.Background(), tt.args); err != nil {
 				t.Fatalf("handler error: %v", err)
 			}
-			if !strings.Contains(result, tt.want) {
-				t.Fatalf("result = %q, want substring %q", result, tt.want)
+			if len(requests) != 1 || requests[0] != tt.wantRequest {
+				t.Fatalf("requests = %v, want [%s]", requests, tt.wantRequest)
 			}
 		})
 	}
@@ -1306,7 +1358,7 @@ func TestBrainSave_SchemaProperties(t *testing.T) {
 		"direct_prompt", "agent", "model", "schedule", "schedule_enabled",
 		"git_branch", "merge_target_branch", "merge_policy", "merge_strategy",
 		"remote_branch_policy", "open_pr_before_merge", "execution_mode",
-		"complete_on_idle", "executor", "extensions", "trigger", "action", "retry", "relatedEntries",
+		"complete_on_idle", "executor", "extensions", "trigger", "action", "retry", "related_entries",
 	}
 
 	for _, prop := range expectedProps {
@@ -1538,13 +1590,13 @@ func TestBrainMove_MissingArgs(t *testing.T) {
 	RegisterBrainTools(s, client)
 
 	handler := s.tools["move"].handler
-	result, err := handler(context.Background(), map[string]any{})
-	if err != nil {
-		t.Fatalf("handler error: %v", err)
+	_, err := handler(context.Background(), map[string]any{})
+	if err == nil {
+		t.Fatal("expected validation error when path and project are missing")
 	}
 
-	if !strings.Contains(result, "provide both") {
-		t.Errorf("result should ask for both args, got: %s", result)
+	if !strings.Contains(err.Error(), "provide both 'path' and target 'project'") {
+		t.Errorf("error should ask for both args, got: %v", err)
 	}
 }
 

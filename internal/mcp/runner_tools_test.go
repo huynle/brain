@@ -54,9 +54,9 @@ func TestRunnerToolSchemas(t *testing.T) {
 	}{
 		{"runner_status", nil, []string{}},
 		{"runners", nil, []string{"status", "executor", "project", "limit"}},
-		{"runner_get", []string{"runnerId"}, []string{"runnerId"}},
-		{"runner_instances", []string{"runnerId"}, []string{"runnerId", "status", "kind", "project"}},
-		{"runner_instances_all", nil, []string{"runnerId", "status", "kind", "project"}},
+		{"runner_get", []string{"runner_id"}, []string{"runner_id"}},
+		{"runner_instances", []string{"runner_id"}, []string{"runner_id", "status", "kind", "project"}},
+		{"runner_instances_all", nil, []string{"runner_id", "status", "kind", "project"}},
 	}
 
 	for _, tt := range tests {
@@ -136,7 +136,7 @@ func TestRunnerTools_RequestPathsNoBodiesAndFormatting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runners handler error: %v", err)
 	}
-	for _, want := range []string{"Runners", "Total: 2", "runner-1", "host-a", "online", "Projects: brain", "Capabilities: go", "Instances: use brain_runner_instances"} {
+	for _, want := range []string{"Runners", "Total: 2", "runner-1", "host-a", "online", "Projects: brain", "Capabilities: go", "Instances: use runner_instances with this runner_id"} {
 		if !strings.Contains(runners, want) {
 			t.Errorf("runners missing %q:\n%s", want, runners)
 		}
@@ -199,17 +199,17 @@ func TestRunnerTools_ValidationErrors(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"runner_get", map[string]any{}, "runnerId"},
-		{"runner_instances", map[string]any{}, "runnerId"},
+		{"runner_get", map[string]any{}, "runner_id is required"},
+		{"runner_instances", map[string]any{}, "runner_id is required"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
 			result, err := s.tools[tt.tool].handler(context.Background(), tt.args)
-			if err != nil {
-				t.Fatalf("handler error: %v", err)
+			if err == nil {
+				t.Fatalf("expected validation error, got result: %q", result)
 			}
-			if !strings.Contains(result, tt.want) {
-				t.Fatalf("result = %q, want substring %q", result, tt.want)
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
 			}
 		})
 	}

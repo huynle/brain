@@ -33,12 +33,12 @@ func registerBrainRunnerPauseProject(s *Server, client *APIClient) {
 		Name:        "runner_pause_project",
 		Description: controlDescription("Pause task execution for one project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"projectId": {Type: "string", Description: "Project ID whose runner task execution will be paused"},
-		}, Required: []string{"projectId"}},
+			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "projectId", "")
+		projectID := ResolveProjectArg(args)
 		if projectID == "" {
-			return "projectId is required", nil
+			return "", fmt.Errorf("project is required")
 		}
 		var resp controlSuccessResponse
 		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/pause/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
@@ -53,12 +53,12 @@ func registerBrainRunnerResumeProject(s *Server, client *APIClient) {
 		Name:        "runner_resume_project",
 		Description: controlDescription("Resume task execution for one project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"projectId": {Type: "string", Description: "Project ID whose runner task execution will be resumed"},
-		}, Required: []string{"projectId"}},
+			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		projectID := StringArg(args, "projectId", "")
+		projectID := ResolveProjectArg(args)
 		if projectID == "" {
-			return "projectId is required", nil
+			return "", fmt.Errorf("project is required")
 		}
 		var resp controlSuccessResponse
 		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/resume/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
@@ -77,7 +77,7 @@ func registerBrainRunnerPauseAll(s *Server, client *APIClient) {
 		}, Required: []string{"confirm"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		if !BoolArg(args, "confirm", false) {
-			return "confirm=true is required to pause runner execution for all projects", nil
+			return "", fmt.Errorf("confirm=true is required to pause runner execution for all projects")
 		}
 		var resp controlSuccessResponse
 		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/pause", map[string]any{}, nil, &resp); err != nil {
@@ -96,7 +96,7 @@ func registerBrainRunnerResumeAll(s *Server, client *APIClient) {
 		}, Required: []string{"confirm"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		if !BoolArg(args, "confirm", false) {
-			return "confirm=true is required to resume runner execution for all projects", nil
+			return "", fmt.Errorf("confirm=true is required to resume runner execution for all projects")
 		}
 		var resp controlSuccessResponse
 		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/resume", map[string]any{}, nil, &resp); err != nil {
@@ -111,29 +111,29 @@ func registerBrainControlSendPrompt(s *Server, client *APIClient) {
 		Name:        "control_send_prompt",
 		Description: controlDescription("Send a prompt to a remote runner session."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"runnerId":   {Type: "string", Description: "Runner ID"},
-			"instanceId": {Type: "string", Description: "Remote instance ID"},
-			"sessionId":  {Type: "string", Description: "Session ID"},
-			"text":       {Type: "string", Description: "Prompt text to send"},
-			"agent":      {Type: "string", Description: "Optional agent override"},
-			"providerID": {Type: "string", Description: "Optional model provider ID; used with modelID"},
-			"modelID":    {Type: "string", Description: "Optional model ID; used with providerID"},
-		}, Required: []string{"runnerId", "instanceId", "sessionId", "text"}},
+			"runner_id":   {Type: "string", Description: "Runner ID"},
+			"instance_id": {Type: "string", Description: "Remote instance ID"},
+			"session_id":  {Type: "string", Description: "Session ID"},
+			"text":        {Type: "string", Description: "Prompt text to send"},
+			"agent":       {Type: "string", Description: "Optional agent override"},
+			"provider_id": {Type: "string", Description: "Optional model provider ID; used with model_id"},
+			"model_id":    {Type: "string", Description: "Optional model ID; used with provider_id"},
+		}, Required: []string{"runner_id", "instance_id", "session_id", "text"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		ids, ok := requireControlSessionIDs(args)
 		if !ok.valid {
-			return ok.message, nil
+			return "", fmt.Errorf("%s", ok.message)
 		}
 		text := strings.TrimSpace(StringArg(args, "text", ""))
 		if text == "" {
-			return "text is required", nil
+			return "", fmt.Errorf("text is required")
 		}
 		body := controlPromptBody{Text: text}
 		if agent := StringArg(args, "agent", ""); agent != "" {
 			body.Agent = agent
 		}
-		providerID := StringArg(args, "providerID", "")
-		modelID := StringArg(args, "modelID", "")
+		providerID := StringArgAlias(args, "", "provider_id", "providerID")
+		modelID := StringArgAlias(args, "", "model_id", "modelID")
 		if providerID != "" && modelID != "" {
 			body.Model = &controlPromptModel{ProviderID: providerID, ModelID: modelID}
 		}
@@ -151,14 +151,14 @@ func registerBrainControlAbortSession(s *Server, client *APIClient) {
 		Name:        "control_abort_session",
 		Description: controlDescription("Abort a remote runner session."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"runnerId":   {Type: "string", Description: "Runner ID"},
-			"instanceId": {Type: "string", Description: "Remote instance ID"},
-			"sessionId":  {Type: "string", Description: "Session ID to abort"},
-		}, Required: []string{"runnerId", "instanceId", "sessionId"}},
+			"runner_id":   {Type: "string", Description: "Runner ID"},
+			"instance_id": {Type: "string", Description: "Remote instance ID"},
+			"session_id":  {Type: "string", Description: "Session ID to abort"},
+		}, Required: []string{"runner_id", "instance_id", "session_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		ids, ok := requireControlSessionIDs(args)
 		if !ok.valid {
-			return ok.message, nil
+			return "", fmt.Errorf("%s", ok.message)
 		}
 		var resp controlSuccessResponse
 		path := controlSessionPath(ids.runnerID, ids.instanceID, ids.sessionID) + "/abort"
@@ -174,29 +174,29 @@ func registerBrainControlPermission(s *Server, client *APIClient) {
 		Name:        "control_permission",
 		Description: controlDescription("Respond to a remote session permission prompt."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"runnerId":     {Type: "string", Description: "Runner ID"},
-			"instanceId":   {Type: "string", Description: "Remote instance ID"},
-			"sessionId":    {Type: "string", Description: "Session ID"},
-			"permissionId": {Type: "string", Description: "Permission request ID"},
-			"response":     {Type: "string", Enum: []string{"allow", "deny"}, Description: "Permission response"},
-			"remember":     {Type: "string", Enum: []string{"once", "always"}, Description: "Optional memory duration"},
-		}, Required: []string{"runnerId", "instanceId", "sessionId", "permissionId", "response"}},
+			"runner_id":     {Type: "string", Description: "Runner ID"},
+			"instance_id":   {Type: "string", Description: "Remote instance ID"},
+			"session_id":    {Type: "string", Description: "Session ID"},
+			"permission_id": {Type: "string", Description: "Permission request ID"},
+			"response":      {Type: "string", Enum: []string{"allow", "deny"}, Description: "Permission response"},
+			"remember":      {Type: "string", Enum: []string{"once", "always"}, Description: "Optional memory duration"},
+		}, Required: []string{"runner_id", "instance_id", "session_id", "permission_id", "response"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		ids, ok := requireControlSessionIDs(args)
 		if !ok.valid {
-			return ok.message, nil
+			return "", fmt.Errorf("%s", ok.message)
 		}
-		permissionID := StringArg(args, "permissionId", "")
+		permissionID := StringArgAlias(args, "", "permission_id", "permissionId")
 		if permissionID == "" {
-			return "permissionId is required", nil
+			return "", fmt.Errorf("permission_id is required")
 		}
 		response := StringArg(args, "response", "")
 		if response != "allow" && response != "deny" {
-			return "response must be allow or deny", nil
+			return "", fmt.Errorf("response must be allow or deny")
 		}
 		remember := StringArg(args, "remember", "")
 		if remember != "" && remember != "once" && remember != "always" {
-			return "remember must be once or always", nil
+			return "", fmt.Errorf("remember must be once or always")
 		}
 		body := controlPermissionBody{Response: response, Remember: remember}
 		var resp controlSuccessResponse
@@ -213,23 +213,23 @@ func registerBrainControlSpawnInstance(s *Server, client *APIClient) {
 		Name:        "control_spawn_instance",
 		Description: controlDescription("Spawn a new ad-hoc remote control instance on a runner."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"runnerId": {Type: "string", Description: "Runner ID"},
-			"workdir":  {Type: "string", Description: "Absolute workdir on the runner machine"},
-			"agent":    {Type: "string", Description: "Optional agent"},
-			"model":    {Type: "string", Description: "Optional model"},
-			"title":    {Type: "string", Description: "Optional instance title"},
-		}, Required: []string{"runnerId", "workdir"}},
+			"runner_id": {Type: "string", Description: "Runner ID"},
+			"workdir":   {Type: "string", Description: "Absolute workdir on the runner machine"},
+			"agent":     {Type: "string", Description: "Optional agent"},
+			"model":     {Type: "string", Description: "Optional model"},
+			"title":     {Type: "string", Description: "Optional instance title"},
+		}, Required: []string{"runner_id", "workdir"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		runnerID := StringArg(args, "runnerId", "")
+		runnerID := StringArgAlias(args, "", "runner_id", "runnerId")
 		if runnerID == "" {
-			return "runnerId is required", nil
+			return "", fmt.Errorf("runner_id is required")
 		}
 		workdir := StringArg(args, "workdir", "")
 		if workdir == "" {
-			return "workdir is required", nil
+			return "", fmt.Errorf("workdir is required")
 		}
 		if !filepath.IsAbs(workdir) {
-			return "workdir must be an absolute path", nil
+			return "", fmt.Errorf("workdir must be an absolute path")
 		}
 		body := controlSpawnBody{
 			Agent:   StringArg(args, "agent", ""),
@@ -251,21 +251,21 @@ func registerBrainControlKillInstance(s *Server, client *APIClient) {
 		Name:        "control_kill_instance",
 		Description: controlDescription("Kill an ad-hoc remote control instance; requires confirm=true."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
-			"runnerId":   {Type: "string", Description: "Runner ID"},
-			"instanceId": {Type: "string", Description: "Instance ID to terminate"},
-			"confirm":    {Type: "boolean", Description: "Must be true to kill the instance"},
-		}, Required: []string{"runnerId", "instanceId", "confirm"}},
+			"runner_id":   {Type: "string", Description: "Runner ID"},
+			"instance_id": {Type: "string", Description: "Instance ID to terminate"},
+			"confirm":     {Type: "boolean", Description: "Must be true to kill the instance"},
+		}, Required: []string{"runner_id", "instance_id", "confirm"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		runnerID := StringArg(args, "runnerId", "")
+		runnerID := StringArgAlias(args, "", "runner_id", "runnerId")
 		if runnerID == "" {
-			return "runnerId is required", nil
+			return "", fmt.Errorf("runner_id is required")
 		}
-		instanceID := StringArg(args, "instanceId", "")
+		instanceID := StringArgAlias(args, "", "instance_id", "instanceId")
 		if instanceID == "" {
-			return "instanceId is required", nil
+			return "", fmt.Errorf("instance_id is required")
 		}
 		if !BoolArg(args, "confirm", false) {
-			return "confirm=true is required to kill a control instance", nil
+			return "", fmt.Errorf("confirm=true is required to kill a control instance")
 		}
 		var resp controlSuccessResponse
 		path := "/control/runners/" + url.PathEscape(runnerID) + "/instances/" + url.PathEscape(instanceID)
@@ -321,18 +321,18 @@ type validationResult struct {
 
 func requireControlSessionIDs(args map[string]any) (controlIDs, validationResult) {
 	ids := controlIDs{
-		runnerID:   StringArg(args, "runnerId", ""),
-		instanceID: StringArg(args, "instanceId", ""),
-		sessionID:  StringArg(args, "sessionId", ""),
+		runnerID:   StringArgAlias(args, "", "runner_id", "runnerId"),
+		instanceID: StringArgAlias(args, "", "instance_id", "instanceId"),
+		sessionID:  StringArgAlias(args, "", "session_id", "sessionId"),
 	}
 	if ids.runnerID == "" {
-		return ids, validationResult{message: "runnerId is required"}
+		return ids, validationResult{message: "runner_id is required"}
 	}
 	if ids.instanceID == "" {
-		return ids, validationResult{message: "instanceId is required"}
+		return ids, validationResult{message: "instance_id is required"}
 	}
 	if ids.sessionID == "" {
-		return ids, validationResult{message: "sessionId is required"}
+		return ids, validationResult{message: "session_id is required"}
 	}
 	return ids, validationResult{valid: true}
 }

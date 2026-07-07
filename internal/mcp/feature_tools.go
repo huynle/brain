@@ -81,7 +81,7 @@ func registerBrainFeatureGet(s *Server, client *APIClient) {
 		project := ResolveProject(args)
 		featureID := StringArg(args, "feature_id", "")
 		if featureID == "" {
-			return "Please provide a feature_id", nil
+			return "", fmt.Errorf("provide a 'feature_id'")
 		}
 
 		var resp types.FeatureResponse
@@ -110,7 +110,7 @@ func registerBrainFeatureCheckout(s *Server, client *APIClient) {
 		project := ResolveProject(args)
 		featureID := StringArg(args, "feature_id", "")
 		if featureID == "" {
-			return "Please provide a feature_id", nil
+			return "", fmt.Errorf("provide a 'feature_id'")
 		}
 
 		req := types.FeatureCheckoutOptions{
@@ -145,10 +145,10 @@ func registerBrainFeatureAssign(s *Server, client *APIClient) {
 		featureID := StringArg(args, "feature_id", "")
 		runnerID := StringArg(args, "runner_id", "")
 		if featureID == "" {
-			return "Please provide a feature_id", nil
+			return "", fmt.Errorf("provide a 'feature_id'")
 		}
 		if runnerID == "" {
-			return "Please provide a runner_id", nil
+			return "", fmt.Errorf("provide a 'runner_id'")
 		}
 
 		req := types.FeatureAssignmentRequest{RunnerID: runnerID, Intent: StringArg(args, "intent", ""), Force: BoolArg(args, "force", false)}
@@ -172,7 +172,7 @@ func registerBrainFeatureClearAssignment(s *Server, client *APIClient) {
 		project := ResolveProject(args)
 		featureID := StringArg(args, "feature_id", "")
 		if featureID == "" {
-			return "Please provide a feature_id", nil
+			return "", fmt.Errorf("provide a 'feature_id'")
 		}
 
 		intent := StringArg(args, "intent", "clear")

@@ -46,7 +46,7 @@ AI coding agents are powerful but stateless — they forget everything between s
 - **Cron expression scheduling** via `schedule` field in task frontmatter (standard 5-field syntax)
 - **Bounded schedules** with optional `not_before` / `not_after` datetime constraints
 - **Run history** tracking with trigger timestamps and outcomes via `runs` field
-- **Manual triggers** — trigger a scheduled task on demand with `brain_task_trigger`
+- **Manual triggers** — trigger a scheduled task on demand with `task_trigger`
 - **Automatic reset** — completed scheduled tasks reset for the next run
 
 ### Interactive TUI Dashboard
@@ -342,62 +342,71 @@ ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem ./bin/brain
 
 **Note:** Local HTTPS works for browser access but NOT for Claude's custom connector (see above).
 
-### Available Tools (63)
+### Available Tools
 
 #### Core Entry Tools
 | Tool | Description |
 |------|-------------|
-| `brain_save` | Save content to the brain (summaries, plans, decisions, tasks, etc.) |
-| `brain_recall` | Retrieve a specific entry by path, ID, or title |
-| `brain_search` | Full-text search with type, status, tags, and feature_id filters |
-| `brain_list` | List entries with filtering and sorting |
-| `brain_inject` | Get relevant context for a task via fuzzy search |
-| `brain_update` | Update status, title, tags, priority, feature grouping, or append content |
-| `brain_delete` | Delete an entry by path (requires confirmation) |
-| `brain_move` | Move an entry to a different project |
-| `brain_stats` | Get brain statistics (counts by type, project, global) |
-| `brain_check_connection` | Verify the brain API is running |
+| `save` | Save content to the brain (summaries, plans, decisions, tasks, etc.) |
+| `recall` | Retrieve a specific entry by path, ID, or title |
+| `search` | Full-text search with type, status, tags, and feature_id filters |
+| `list` | List entries with filtering and sorting |
+| `inject` | Get relevant context for a task via fuzzy search |
+| `update` | Update status, title, tags, priority, feature grouping, or append content |
+| `delete` | Delete an entry by path (requires confirmation) |
+| `move` | Move an entry to a different project |
+| `stats` | Get brain statistics (counts by type, project, global) |
+| `check_connection` | Verify the brain API is running |
 
 #### Task Management Tools
 | Tool | Description |
 |------|-------------|
-| `brain_tasks` | List tasks with dependency status (ready/waiting/blocked) and cycle detection |
-| `brain_task_next` | Get the highest-priority ready task with full content |
-| `brain_task_get` | Get a task by ID with dependencies, dependents, and classification |
-| `brain_task_metadata` | Get execution config (agent, model, workdir, merge intent, feature grouping) |
-| `brain_tasks_status` | Batch status check with optional blocking wait for completion |
+| `tasks` | List tasks with dependency status (ready/waiting/blocked) and cycle detection |
+| `task_next` | Get the highest-priority ready task with full content |
+| `task_get` | Get a task by ID with dependencies, dependents, and classification |
+| `task_metadata` | Get execution config (agent, model, workdir, merge intent, feature grouping) |
+| `tasks_status` | Batch status check with optional blocking wait for completion |
 
 #### Scheduled Task Tools
 | Tool | Description |
 |------|-------------|
-| `brain_task_trigger` | Manually trigger a scheduled task run |
+| `task_trigger` | Manually trigger a scheduled task run |
 
 #### Goal Automation Tools
 | Tool | Description |
 |------|-------------|
-| `brain_goal_create` | Create a goal automation that reconciles until an objective is satisfied |
-| `brain_goal_list` | List active goal automations by project or feature |
-| `brain_goal_update` | Update goal title, content, status, config, or action fields |
-| `brain_goal_run` | Manually reconcile a goal now |
-| `brain_goal_progress` | Show linked task progress for a goal |
-| `brain_goal_audit` | Show reconcile audit history for a goal |
+| `goal_create` | Create a goal automation that reconciles until an objective is satisfied |
+| `goal_list` | List active goal automations by project or feature |
+| `goal_update` | Update goal title, content, status, config, or action fields |
+| `goal_run` | Manually reconcile a goal now |
+| `goal_progress` | Show linked task progress for a goal |
+| `goal_audit` | Show reconcile audit history for a goal |
+| `goal_pause` | Pause a goal automation |
+| `goal_resume` | Resume a paused goal automation |
+| `goal_archive` | Archive a goal automation |
+
+#### Context Tools
+| Tool | Description |
+|------|-------------|
+| `context_get` | Show the ambient project/identity context the MCP server resolved at startup |
+| `context_resolve` | Resolve the Brain project for a client/workspace observation |
 
 #### Graph Traversal Tools
 | Tool | Description |
 |------|-------------|
-| `brain_backlinks` | Find entries that link TO a given entry |
-| `brain_outlinks` | Find entries that a given entry links TO |
-| `brain_related` | Find entries sharing linked notes with a given entry |
-| `brain_orphans` | Find entries with no incoming links |
+| `backlinks` | Find entries that link TO a given entry |
+| `outlinks` | Find entries that a given entry links TO |
+| `related` | Find entries sharing linked notes with a given entry |
+| `orphans` | Find entries with no incoming links |
 
 #### Verification & Section Tools
 | Tool | Description |
 |------|-------------|
-| `brain_stale` | Find entries not verified in N days |
-| `brain_verify` | Mark an entry as verified (still accurate) |
-| `brain_section` | Extract a specific section from a plan entry |
-| `brain_plan_sections` | List section headers from a plan for orchestration |
-| `brain_link` | Generate a markdown link to a brain entry |
+| `stale` | Find entries not verified in N days |
+| `verify` | Mark an entry as verified (still accurate) |
+| `section` | Extract a specific section from a plan entry |
+| `plan_sections` | List section headers from a plan for orchestration |
+| `link` | Generate a markdown link to a brain entry |
 
 The embedded MCP server calls the service layer directly (no HTTP round-trip), making it faster than a standalone stdio-based MCP server.
 
@@ -566,14 +575,14 @@ Embeddings are stored in separate SQLite tables (`note_embeddings`, `note_embedd
 
 When using the MCP server (Claude Code, OpenCode), the search strategy is automatically determined:
 
-- `brain_search` tool: Uses configured default strategy (usually FTS for compatibility)
-- `brain_inject` tool: Uses semantic/hybrid search when embeddings are enabled (better for context retrieval)
+- `search` tool: Uses configured default strategy (usually FTS for compatibility)
+- `inject` tool: Uses semantic/hybrid search when embeddings are enabled (better for context retrieval)
 
 Configure strategy preference in client tools by setting the `strategy` parameter:
 
 ```typescript
 // In MCP tool call
-await callTool('brain_search', {
+await callTool('search', {
   query: 'authentication patterns',
   strategy: 'hybrid'  // or 'semantic', 'fts'
 })

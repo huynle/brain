@@ -153,7 +153,10 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 		if err != nil {
 			continue
 		}
-		if !schedule.Matches(now.UTC()) {
+		// Evaluate the cron schedule in the automation's configured timezone.
+		// Empty or invalid timezone falls back to UTC (see pkg/cron.LoadTimezone).
+		loc := cron.LoadTimezone(automation.Trigger.Timezone)
+		if !schedule.Matches(now.In(loc)) {
 			continue
 		}
 

@@ -79,16 +79,11 @@ var cronEligibleStatuses = map[string]bool{
 }
 
 // loadTimezone loads an IANA timezone location.
-// Returns UTC if timezone is empty or invalid.
+// Delegates to pkg/cron.LoadTimezone for a single source of truth across
+// task-level scheduled tasks and automation-level cron triggers. Returns
+// UTC for empty or invalid timezone, with a warn log for invalid values.
 func loadTimezone(timezone string) *time.Location {
-	if timezone == "" {
-		return time.UTC
-	}
-	loc, err := time.LoadLocation(timezone)
-	if err != nil {
-		return time.UTC
-	}
-	return loc
+	return cron.LoadTimezone(timezone)
 }
 
 // shouldTrigger checks if a scheduled task should be triggered now.

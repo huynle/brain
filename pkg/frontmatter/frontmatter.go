@@ -44,6 +44,9 @@ type TriggerConfig struct {
 	// An event matches the trigger if it matches Event OR any entry in Events.
 	Events   []string `yaml:"events,omitempty" json:"events,omitempty"`
 	Schedule string   `yaml:"schedule,omitempty" json:"schedule,omitempty"`
+	// Timezone is the IANA timezone name used to interpret Schedule for cron
+	// automations. Empty or invalid values fall back to UTC.
+	Timezone string `yaml:"timezone,omitempty" json:"timezone,omitempty"`
 	// Filter is optional key-value filters applied to event fields.
 	Filter                 map[string]string `yaml:"filter,omitempty" json:"filter,omitempty"`
 	OncePer                string            `yaml:"once_per,omitempty" json:"once_per,omitempty"`

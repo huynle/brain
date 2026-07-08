@@ -184,6 +184,11 @@ type TriggerConfig struct {
 	Events []string `json:"events,omitempty" yaml:"events,omitempty"`
 	// Schedule is used by cron-style automations.
 	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty"`
+	// Timezone is the IANA timezone name (e.g., "America/Denver") used to
+	// interpret Schedule. Empty or invalid values fall back to UTC.
+	// Applies to cron-triggered automations; task-level Timezone lives on
+	// the task itself (types.CreateEntryRequest.Timezone).
+	Timezone string `json:"timezone,omitempty" yaml:"timezone,omitempty"`
 	// Filter is optional key-value filters applied to event fields.
 	//
 	// Filter values support two forms:

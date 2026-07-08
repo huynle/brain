@@ -1202,6 +1202,7 @@ func fmTriggerConfigToType(t *frontmatter.TriggerConfig) *types.TriggerConfig {
 		Event:                  t.Event,
 		Events:                 t.Events,
 		Schedule:               t.Schedule,
+		Timezone:               t.Timezone,
 		Filter:                 t.Filter,
 		OncePer:                t.OncePer,
 		Webhook:                t.Webhook,

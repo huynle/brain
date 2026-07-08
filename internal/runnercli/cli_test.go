@@ -2,6 +2,7 @@ package runnercli
 
 import (
 	"context"
+	"os"
 	"testing"
 	"time"
 
@@ -52,6 +53,13 @@ func TestRunTaskRunner_InvalidProject(t *testing.T) {
 
 // TestRunTUI_BasicStartStop tests TUI mode lifecycle.
 func TestRunTUI_BasicStartStop(t *testing.T) {
+	// Bubbletea needs a real TTY; headless environments (CI) don't have one.
+	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err != nil {
+		t.Skipf("no TTY available: %v", err)
+	} else {
+		_ = tty.Close()
+	}
+
 	opts := RunnerOptions{
 		Projects:    []string{"test-project"},
 		Mode:        "tui",
@@ -67,14 +75,9 @@ func TestRunTUI_BasicStartStop(t *testing.T) {
 	defer cancel()
 
 	// TUI should respect context cancellation
-	// Note: In CI/test environments without TTY, this may fail with "could not open a new TTY"
-	// which is expected behavior
 	err := RunTUI(ctx, opts)
 	if err != nil && err != context.DeadlineExceeded && err != context.Canceled {
-		// Allow TTY errors in non-interactive environments
-		if err.Error() != "TUI failed: could not open a new TTY: open /dev/tty: device not configured" {
-			t.Fatalf("unexpected error: %v", err)
-		}
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

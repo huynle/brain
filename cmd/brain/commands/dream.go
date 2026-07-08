@@ -202,6 +202,7 @@ Gather every piece of knowledge by type. For each call, then call recall on ever
 - list({ type: "decision"%[2]s }) — architectural decisions
 - list({ type: "pattern"%[2]s }) — reusable patterns
 - list({ type: "learning"%[2]s }) — learnings and best practices
+- list({ type: "quirk"%[2]s }) — project quirks and gotchas
 - list({ type: "summary"%[2]s }) — session summaries
 - list({ type: "plan", status: "active"%[2]s }) — active plans
 - list({ type: "exploration"%[2]s }) — research and investigations
@@ -228,6 +229,9 @@ Compressed ADRs — title, context (1-2 sentences), decision, consequences.
 
 ### Learnings & Patterns
 Reusable knowledge, gotchas, performance insights, proven approaches.
+
+### Quirks
+Project-specific quirks — surprising behaviors, non-obvious constraints, required workarounds.
 
 ### Open Questions & Ideas
 Unresolved questions, proposed features, exploration candidates.

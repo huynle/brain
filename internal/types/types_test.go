@@ -17,6 +17,7 @@ func TestIsValidEntryType(t *testing.T) {
 		{"plan", true},
 		{"pattern", true},
 		{"learning", true},
+		{"quirk", true},
 		{"idea", true},
 		{"scratch", true},
 		{"decision", true},
@@ -117,9 +118,9 @@ func TestIsValidTaskClassification(t *testing.T) {
 }
 
 func TestEntryTypeConstants(t *testing.T) {
-	// Verify the count matches TypeScript source (13 base types + automation + automation_run + merge_request)
-	if len(EntryTypes) != 16 {
-		t.Errorf("expected 16 entry types, got %d", len(EntryTypes))
+	// 14 base types (incl. quirk) + automation + automation_run + merge_request
+	if len(EntryTypes) != 17 {
+		t.Errorf("expected 17 entry types, got %d", len(EntryTypes))
 	}
 }
 

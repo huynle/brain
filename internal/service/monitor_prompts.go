@@ -145,7 +145,7 @@ Before doing any work, check if consolidation is needed:
 
 1. **Find existing dream:** Call brain_search({ query: "Project Dream", type: "dream"%[2]s }) to look for an existing dream entry for this project.
 2. **Check cooldown:** If a dream entry exists, check its modification timestamp. If it was modified less than 24 hours ago, skip this run.
-3. **Check entry threshold:** Call brain_list({ type: "decision"%[2]s }), brain_list({ type: "pattern"%[2]s }), brain_list({ type: "learning"%[2]s }), brain_list({ type: "summary"%[2]s }), and brain_list({ type: "exploration"%[2]s }) to count entries modified since the last dream. If fewer than 3 new or modified entries exist since the last dream, skip this run.
+3. **Check entry threshold:** Call brain_list({ type: "decision"%[2]s }), brain_list({ type: "pattern"%[2]s }), brain_list({ type: "learning"%[2]s }), brain_list({ type: "quirk"%[2]s }), brain_list({ type: "summary"%[2]s }), and brain_list({ type: "exploration"%[2]s }) to count entries modified since the last dream. If fewer than 3 new or modified entries exist since the last dream, skip this run.
 4. **If skipping:** Call brain_update({ path: "<your-own-task-path>", append: "Skipped: <reason> at <timestamp>" }) and exit without further action.
 
 ## Phase 2: Read All Project Knowledge
@@ -155,6 +155,7 @@ Gather every piece of knowledge by type. For each call below, then call brain_re
 - brain_list({ type: "decision"%[2]s }) — architectural decisions
 - brain_list({ type: "pattern"%[2]s }) — reusable patterns
 - brain_list({ type: "learning"%[2]s }) — learnings and best practices
+- brain_list({ type: "quirk"%[2]s }) — project quirks and gotchas
 - brain_list({ type: "summary"%[2]s }) — session summaries
 - brain_list({ type: "plan", status: "active"%[2]s }) — active plans
 - brain_list({ type: "exploration"%[2]s }) — research and investigations
@@ -184,6 +185,9 @@ Compressed ADRs — for each decision include: title, context (1-2 sentences), d
 
 ### Learnings & Patterns
 Reusable knowledge, gotchas, performance insights, and proven approaches.
+
+### Quirks
+Project-specific quirks — surprising behaviors, non-obvious constraints, and required workarounds. Keep each quirk verbatim enough to act on.
 
 ### Open Questions & Ideas
 Unresolved architectural questions, proposed features, and exploration candidates.

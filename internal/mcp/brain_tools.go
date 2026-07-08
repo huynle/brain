@@ -145,7 +145,18 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 		if isTask {
 			body["workdir"] = execCtx.Workdir
 			body["git_remote"] = execCtx.GitRemote
-			body["git_branch"] = StringArg(args, "git_branch", execCtx.GitBranch)
+			// Only auto-inject execCtx.GitBranch when feature_id is empty. When
+			// feature_id is set, leave git_branch blank so the runner's
+			// feature_id fallback (internal/runner/executor_common.go:86-88)
+			// engages and worktree isolation works from any branch. Otherwise
+			// a shell on main of a foreign repo would silently set
+			// git_branch="main" and trip the main/master worktree skip.
+			featureID, _ := args["feature_id"].(string)
+			if featureID != "" {
+				body["git_branch"] = StringArg(args, "git_branch", "")
+			} else {
+				body["git_branch"] = StringArg(args, "git_branch", execCtx.GitBranch)
+			}
 			body["target_workdir"] = args["target_workdir"]
 			body["user_original_request"] = args["user_original_request"]
 			body["feature_id"] = args["feature_id"]

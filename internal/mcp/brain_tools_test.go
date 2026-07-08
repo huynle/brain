@@ -2461,3 +2461,144 @@ func TestBrainOrphans_Handler_ForwardsProject(t *testing.T) {
 		t.Errorf("brain_orphans did not forward project: got %q, want %q", gotProject, "orion-ai")
 	}
 }
+
+// TestBrainSave_TaskGitBranchNotInjectedWhenFeatureIDSet verifies that when
+// feature_id is provided but git_branch is not, the runner's feature_id
+// fallback is preserved by leaving git_branch empty (not auto-injecting
+// execCtx.GitBranch, which would trip the main/master worktree skip).
+//
+// Regression guard for finding 1 of plan projects/brain/plan/24urhmtl.md.
+func TestBrainSave_TaskGitBranchNotInjectedWhenFeatureIDSet(t *testing.T) {
+	cachedContext = &ExecutionContext{
+		ProjectID: "test-project",
+		Workdir:   "projects/test",
+		GitRemote: "git@github.com:test/repo.git",
+		GitBranch: "main",
+	}
+	defer func() { cachedContext = nil }()
+
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"id": "abc", "path": "p/task/abc.md", "title": "Task", "type": "task", "status": "draft",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["save"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"type":       "task",
+		"title":      "Test Task",
+		"content":    "Do something",
+		"feature_id": "f",
+		// no git_branch arg provided
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	got, ok := capturedBody["git_branch"].(string)
+	if !ok {
+		t.Fatalf("git_branch missing or wrong type in body: %#v", capturedBody["git_branch"])
+	}
+	if got != "" {
+		t.Errorf("git_branch = %q, want \"\" (feature_id set, execCtx.GitBranch must not be auto-injected)", got)
+	}
+	if capturedBody["feature_id"] != "f" {
+		t.Errorf("feature_id = %v, want %q", capturedBody["feature_id"], "f")
+	}
+}
+
+// TestBrainSave_TaskGitBranchInjectedWhenNoFeatureID verifies backward
+// compatibility: when feature_id is absent and git_branch is not provided,
+// execCtx.GitBranch is still auto-injected as before.
+func TestBrainSave_TaskGitBranchInjectedWhenNoFeatureID(t *testing.T) {
+	cachedContext = &ExecutionContext{
+		ProjectID: "test-project",
+		Workdir:   "projects/test",
+		GitRemote: "git@github.com:test/repo.git",
+		GitBranch: "main",
+	}
+	defer func() { cachedContext = nil }()
+
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"id": "abc", "path": "p/task/abc.md", "title": "Task", "type": "task", "status": "draft",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["save"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"type":    "task",
+		"title":   "Test Task",
+		"content": "Do something",
+		// no feature_id, no git_branch
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	got, ok := capturedBody["git_branch"].(string)
+	if !ok {
+		t.Fatalf("git_branch missing or wrong type in body: %#v", capturedBody["git_branch"])
+	}
+	if got != "main" {
+		t.Errorf("git_branch = %q, want %q (backward compat: no feature_id, inject execCtx.GitBranch)", got, "main")
+	}
+}
+
+// TestBrainSave_TaskGitBranchExplicitOverridesEverything verifies that an
+// explicit git_branch arg is always honored, regardless of feature_id.
+func TestBrainSave_TaskGitBranchExplicitOverridesEverything(t *testing.T) {
+	cachedContext = &ExecutionContext{
+		ProjectID: "test-project",
+		Workdir:   "projects/test",
+		GitRemote: "git@github.com:test/repo.git",
+		GitBranch: "main",
+	}
+	defer func() { cachedContext = nil }()
+
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&capturedBody)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"id": "abc", "path": "p/task/abc.md", "title": "Task", "type": "task", "status": "draft",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["save"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"type":       "task",
+		"title":      "Test Task",
+		"content":    "Do something",
+		"feature_id": "f",
+		"git_branch": "custom-branch",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if capturedBody["git_branch"] != "custom-branch" {
+		t.Errorf("git_branch = %v, want %q (explicit arg must override)", capturedBody["git_branch"], "custom-branch")
+	}
+}

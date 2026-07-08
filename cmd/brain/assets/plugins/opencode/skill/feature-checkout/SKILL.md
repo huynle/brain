@@ -285,6 +285,18 @@ Use metadata defaults when fields are missing:
 - `remote_branch_policy`: `delete`
 - `open_pr_before_merge`: `false`
 
+### Git Command Invariants (all merge paths)
+
+Any downstream executor (AI-driven or script-driven) that actually shells out to `git merge` MUST use the exact invocations below. Do not paraphrase, and do not drop the `-c` overrides — they exist to survive users' global gitconfig settings.
+
+- **`squash` strategy:** `git -c merge.ff=true merge --squash <source_branch>`
+  - The `-c merge.ff=true` is REQUIRED: users with `merge.ff = no` in their global gitconfig otherwise hit `fatal: options '--squash' and '--no-ff.' cannot be used together`, because Git treats the global config value as an implicit `--no-ff` flag that conflicts with `--squash`.
+  - After the squash, create the commit explicitly: `git commit -m "<message>"`.
+- **`merge` strategy (true merge commit):** `git -c merge.ff=false merge --no-ff <source_branch>`
+- **`rebase` strategy:** `git rebase <target_branch>` on the source branch, then fast-forward the target: `git -c merge.ff=only merge <source_branch>`.
+
+These `-c <key>=<value>` overrides are per-invocation and do not persist in the user's global or repo config. Never rely on the ambient gitconfig for merge fast-forward behavior.
+
 Then apply policy:
 
 - `prompt_only`:

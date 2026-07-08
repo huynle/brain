@@ -75,6 +75,14 @@ type RunnerConfig struct {
 	// to the Brain API. Default: 30s. Set via RUNNER_HEARTBEAT_INTERVAL env var.
 	HeartbeatInterval int `yaml:"heartbeat_interval" json:"heartbeat_interval"`
 
+	// ProjectRefreshInterval is how often (in seconds) the runner refreshes its
+	// project list from the Brain API by calling ListProjects and applying the
+	// include/exclude filters. Projects created after the runner started become
+	// visible without a restart. Default: 60s. Set via
+	// RUNNER_PROJECT_REFRESH_INTERVAL env var. Set to 0 to disable refresh
+	// (list is frozen at startup — legacy behaviour).
+	ProjectRefreshInterval int `yaml:"project_refresh_interval" json:"project_refresh_interval"`
+
 	// LogStreaming enables runner-side log streaming. When true, the runner
 	// captures executor stdout/stderr and POSTs batches to the Brain API.
 	// Default: true. Set via RUNNER_LOG_STREAMING env var.

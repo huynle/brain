@@ -180,7 +180,7 @@ func (tr *TaskRunner) checkScheduledTasks(ctx context.Context, now time.Time) {
 	tr.lastCronCheckAt = now
 	tr.mu.Unlock()
 
-	for _, projectID := range tr.projects {
+	for _, projectID := range tr.getProjects() {
 		if ctx.Err() != nil {
 			return
 		}

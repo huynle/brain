@@ -1063,6 +1063,15 @@ type ClaimRequest struct {
 	RunnerID string `json:"runnerId"`
 }
 
+// ReleaseRequest is the request body for POST /tasks/:projectId/:taskId/release.
+// The optional Reason field surfaces as event.Reason and event.Metadata["reason"]
+// on the emitted task.released event so consumers reading either field see the
+// same diagnostic (parity with runner-emitted task.released events).
+type ReleaseRequest struct {
+	RunnerID string `json:"runnerId"`
+	Reason   string `json:"reason,omitempty"`
+}
+
 // DispatchRequest is the request body for POST /tasks/:projectId/:taskId/dispatch.
 type DispatchRequest struct {
 	TargetRunnerID string `json:"targetRunnerId"`

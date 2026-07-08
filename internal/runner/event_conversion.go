@@ -74,6 +74,11 @@ func (re RunnerEvent) ToEvent() types.Event {
 	meta := make(map[string]string)
 
 	if re.Reason != "" {
+		// Reason has both a top-level Event field AND a metadata mirror.
+		// Keep them in sync so consumers using either access pattern see
+		// the same string (matches the API-source emitter in
+		// internal/api/tasks.go HandleReleaseTask).
+		evt.Reason = re.Reason
 		meta["reason"] = re.Reason
 	}
 	if re.ClaimedBy != "" {

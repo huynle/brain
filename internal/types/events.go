@@ -153,6 +153,12 @@ type Event struct {
 	// ToStatus is the new status (for status change events).
 	ToStatus string `json:"to_status,omitempty" yaml:"to_status,omitempty"`
 
+	// Reason carries a short human-readable diagnostic for events that
+	// describe a release, cancellation, block, or failure. Emitters
+	// keep it in sync with Metadata["reason"] so consumers using either
+	// access pattern see the same string.
+	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
+
 	// Metadata holds arbitrary key-value pairs for extensibility.
 	Metadata map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }

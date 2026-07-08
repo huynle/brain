@@ -399,7 +399,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		TargetWorkdir:  targetWorkdir,
 	}
 
-	if automation.Action.Type == "script" {
+	if types.NormalizeAutomationActionType(automation.Action.Type) == types.AutomationActionScript {
 		command := renderAutomationTemplate(automation.Action.Command, project, evt)
 		req.Executor = "script"
 		req.Content = command

@@ -1094,6 +1094,67 @@ func TestRunAutomationRowCmdInterpolatesActiveProjectForGlobalAutomation(t *test
 	}
 }
 
+// TestRunAutomationRowCmdAcceptsShellAsScriptAlias verifies that manual runs
+// (x key) of an automation whose action.type is "shell" are treated the same
+// as "script": the command becomes the task prompt and the executor is set to
+// "script". Regression test for the "automation action has no prompt or
+// command" error observed on legacy entries using the undocumented "shell"
+// alias.
+func TestRunAutomationRowCmdAcceptsShellAsScriptAlias(t *testing.T) {
+	var gotCreate types.CreateEntryRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/v1/entries/"):
+			json.NewEncoder(w).Encode(types.BrainEntry{
+				ID:        "shellauto",
+				Path:      "projects/brain-api/automation/shellauto.md",
+				Title:     "Shell automation",
+				Type:      "automation",
+				Status:    "active",
+				ProjectID: "brain-api",
+				Action: &types.AutomationAction{
+					Type:          "shell",
+					Command:       "timeout 30s mm --random",
+					TargetWorkdir: "/tmp",
+				},
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v1/entries":
+			if err := json.NewDecoder(r.Body).Decode(&gotCreate); err != nil {
+				t.Fatalf("decode create request: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			json.NewEncoder(w).Encode(types.CreateEntryResponse{ID: "task1234", Path: "projects/brain-api/task/task1234.md", Title: gotCreate.Title, Type: "task", Status: "pending"})
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	cmd := runAutomationRowCmd(runner.RunnerConfig{BrainAPIURL: srv.URL, APITimeout: 5000}, AutomationListRow{
+		ID:     "shellauto",
+		Path:   "projects/brain-api/automation/shellauto.md",
+		Title:  "Shell automation",
+		Source: "automation",
+		Status: "active",
+	}, "brain-api")
+	msg := cmd().(AutomationRunMsg)
+	if msg.Error != nil {
+		t.Fatalf("run shell automation failed: %v", msg.Error)
+	}
+	if gotCreate.DirectPrompt != "timeout 30s mm --random" || gotCreate.Content != gotCreate.DirectPrompt {
+		t.Fatalf("shell command not used as prompt: direct_prompt=%q content=%q", gotCreate.DirectPrompt, gotCreate.Content)
+	}
+	if gotCreate.Executor != "script" {
+		t.Fatalf("executor = %q, want script for shell alias", gotCreate.Executor)
+	}
+	if gotCreate.ExecutionMode != "current_branch" {
+		t.Fatalf("execution_mode = %q, want current_branch default for shell alias", gotCreate.ExecutionMode)
+	}
+	if gotCreate.TargetWorkdir != "/tmp" {
+		t.Fatalf("target_workdir = %q, want /tmp preserved from action", gotCreate.TargetWorkdir)
+	}
+}
+
 func TestAutomationDetailShowsGeneratedRuns(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.width = 100

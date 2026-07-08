@@ -1167,7 +1167,99 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		req.MaxRuns = fm.MaxRuns
 	}
 
+	// Automation-specific nested structs (trigger/action/retry/goal). These
+	// are required for editing automation entries via the PWA's raw-file
+	// editor — without them the save would silently drop schedule/event
+	// changes and leave the entry unchanged. brain.Update at
+	// service/brain.go:856–867 knows how to apply these; we just need to
+	// carry them through the FM→UpdateRequest hop.
+	if fm.Trigger != nil {
+		req.Trigger = fmTriggerConfigToType(fm.Trigger)
+	}
+	if fm.Action != nil {
+		req.Action = fmAutomationActionToType(fm.Action)
+	}
+	if fm.Retry != nil {
+		req.Retry = fmAutomationRetryToType(fm.Retry)
+	}
+	if fm.Goal != nil {
+		req.Goal = fmGoalConfigToType(fm.Goal)
+	}
+
 	return req
+}
+
+// fmTriggerConfigToType converts a frontmatter TriggerConfig to a domain
+// TriggerConfig. The two structs are field-identical; this exists purely
+// as an API-package-local converter so we don't create an internal/api →
+// internal/service import.
+func fmTriggerConfigToType(t *frontmatter.TriggerConfig) *types.TriggerConfig {
+	if t == nil {
+		return nil
+	}
+	return &types.TriggerConfig{
+		Type:                   t.Type,
+		Event:                  t.Event,
+		Events:                 t.Events,
+		Schedule:               t.Schedule,
+		Filter:                 t.Filter,
+		OncePer:                t.OncePer,
+		Webhook:                t.Webhook,
+		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
+		Cooldown:               t.Cooldown,
+		MaxConcurrent:          t.MaxConcurrent,
+	}
+}
+
+// fmAutomationActionToType converts a frontmatter AutomationAction to a
+// domain AutomationAction.
+func fmAutomationActionToType(a *frontmatter.AutomationAction) *types.AutomationAction {
+	if a == nil {
+		return nil
+	}
+	return &types.AutomationAction{
+		Type:               a.Type,
+		DirectPrompt:       a.DirectPrompt,
+		Command:            a.Command,
+		Agent:              a.Agent,
+		Model:              a.Model,
+		Executor:           a.Executor,
+		TargetWorkdir:      a.TargetWorkdir,
+		ExecutionMode:      a.ExecutionMode,
+		SessionMode:        a.SessionMode,
+		CompleteOnIdle:     a.CompleteOnIdle,
+		Timeout:            a.Timeout,
+		RequiresCapability: a.RequiresCapability,
+	}
+}
+
+// fmAutomationRetryToType converts a frontmatter AutomationRetry to a
+// domain AutomationRetry.
+func fmAutomationRetryToType(r *frontmatter.AutomationRetry) *types.AutomationRetry {
+	if r == nil {
+		return nil
+	}
+	return &types.AutomationRetry{
+		MaxAttempts: r.MaxAttempts,
+		Backoff:     r.Backoff,
+		Delay:       r.Delay,
+	}
+}
+
+// fmGoalConfigToType converts a frontmatter GoalConfig to a domain GoalConfig.
+func fmGoalConfigToType(g *frontmatter.GoalConfig) *types.GoalConfig {
+	if g == nil {
+		return nil
+	}
+	return &types.GoalConfig{
+		ID:               g.ID,
+		Criteria:         g.Criteria,
+		Validation:       g.Validation,
+		Workdir:          g.Workdir,
+		TriggerSource:    g.TriggerSource,
+		CompleteStatuses: g.CompleteStatuses,
+		BlockedStatuses:  g.BlockedStatuses,
+	}
 }
 
 func attachmentRefsFromFM(refs []frontmatter.AttachmentReference) []types.AttachmentReference {

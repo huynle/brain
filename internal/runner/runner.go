@@ -627,20 +627,19 @@ func (tr *TaskRunner) fetchServerPauseState(ctx context.Context) (map[string]boo
 		}
 		return tasksPaused, automationsPaused, false
 	}
-	// Global server pause flags propagate to every observed project. We
-	// signal "globally paused" by marking the sentinel "" key in each
-	// returned map; callers that already check tr.allPaused or
-	// tr.pauseCache[projectID] should also consult the sentinel via
-	// serverPausedGlobally(). Previously this function only read the
-	// per-project arrays, so a global "pause tasks" from the PWA never made
-	// it to the dispatch SSE path and dispatches would queue silently when
-	// the runner was idle.
-	if status.Paused {
-		tasksPaused[""] = true
-	}
-	if status.AutomationsPaused {
-		automationsPaused[""] = true
-	}
+	// Only trust the explicit per-project lists. `status.Paused` and
+	// `status.AutomationsPaused` are DERIVED aggregates on the API side
+	// (`len(pausedProjects) > 0` — see service/runner.go:GetStatus), not a
+	// distinct "global pause" switch. Promoting them into the sentinel ""
+	// key caused every project to appear paused whenever any unrelated
+	// project was paused: e.g. 43 stale project pauses would make
+	// serverPausedFor("personal-productivity") return true and the dispatch
+	// gate would reject every lease with runner_paused, including
+	// automation-generated tasks whose per-project autos were on.
+	//
+	// A genuine "pause everything" is expressed by every project being
+	// listed in PausedProjects (SetAllProjectTasksPaused writes a row per
+	// project); the loops below already convey that.
 	for _, projectID := range status.PausedProjects {
 		tasksPaused[projectID] = true
 	}

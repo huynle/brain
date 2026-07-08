@@ -1428,6 +1428,116 @@ Body`,
 			wantStatus: http.StatusOK,
 		},
 		{
+			name:        "text/x-brain-full maps automation trigger/action/retry",
+			id:          "auto12df",
+			contentType: "text/x-brain-full",
+			body: `---
+title: Keep Teams active with random mouse movement
+type: automation
+status: active
+schedule_enabled: true
+trigger:
+  type: cron
+  event: ""
+  schedule: '*/5 7-17 * * 1-5'
+action:
+  type: script
+  command: timeout 30s mm --random
+  target_workdir: /tmp
+retry:
+  max_attempts: 3
+  backoff: exponential
+---
+Body content`,
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				// Regression: before the fix, mapFrontmatterToUpdateRequest
+				// silently dropped trigger/action/retry, so the PWA's raw
+				// automation editor "saved" changes that never persisted.
+				if req.Trigger == nil {
+					t.Fatal("Trigger = nil, want populated from frontmatter")
+				}
+				if req.Trigger.Type != "cron" {
+					t.Errorf("Trigger.Type = %q, want %q", req.Trigger.Type, "cron")
+				}
+				if req.Trigger.Schedule != "*/5 7-17 * * 1-5" {
+					t.Errorf("Trigger.Schedule = %q, want %q", req.Trigger.Schedule, "*/5 7-17 * * 1-5")
+				}
+				if req.Action == nil {
+					t.Fatal("Action = nil, want populated from frontmatter")
+				}
+				if req.Action.Type != "script" {
+					t.Errorf("Action.Type = %q, want %q", req.Action.Type, "script")
+				}
+				if req.Action.Command != "timeout 30s mm --random" {
+					t.Errorf("Action.Command = %q, want %q", req.Action.Command, "timeout 30s mm --random")
+				}
+				if req.Action.TargetWorkdir != "/tmp" {
+					t.Errorf("Action.TargetWorkdir = %q, want %q", req.Action.TargetWorkdir, "/tmp")
+				}
+				if req.Retry == nil {
+					t.Fatal("Retry = nil, want populated from frontmatter")
+				}
+				if req.Retry.MaxAttempts != 3 {
+					t.Errorf("Retry.MaxAttempts = %d, want 3", req.Retry.MaxAttempts)
+				}
+				if req.Retry.Backoff != "exponential" {
+					t.Errorf("Retry.Backoff = %q, want %q", req.Retry.Backoff, "exponential")
+				}
+				return &types.BrainEntry{
+					ID:    "auto12df",
+					Path:  "projects/personal-productivity/automation/keep-teams.md",
+					Title: "Keep Teams active with random mouse movement",
+					Type:  "automation",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:        "text/x-brain-full maps goal config",
+			id:          "goal1234",
+			contentType: "text/x-brain-full",
+			body: `---
+title: Ship auth by end of quarter
+type: automation
+status: active
+goal:
+  id: ship-auth
+  criteria: All auth tasks completed and deployed to production
+  validation: manual
+  trigger_source: both
+  complete_statuses:
+    - completed
+    - validated
+  blocked_statuses:
+    - blocked
+---
+Body`,
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				if req.Goal == nil {
+					t.Fatal("Goal = nil, want populated from frontmatter")
+				}
+				if req.Goal.ID != "ship-auth" {
+					t.Errorf("Goal.ID = %q, want %q", req.Goal.ID, "ship-auth")
+				}
+				if req.Goal.TriggerSource != "both" {
+					t.Errorf("Goal.TriggerSource = %q, want %q", req.Goal.TriggerSource, "both")
+				}
+				if len(req.Goal.CompleteStatuses) != 2 || req.Goal.CompleteStatuses[0] != "completed" {
+					t.Errorf("Goal.CompleteStatuses = %v, want [completed validated]", req.Goal.CompleteStatuses)
+				}
+				if len(req.Goal.BlockedStatuses) != 1 || req.Goal.BlockedStatuses[0] != "blocked" {
+					t.Errorf("Goal.BlockedStatuses = %v, want [blocked]", req.Goal.BlockedStatuses)
+				}
+				return &types.BrainEntry{
+					ID:    "goal1234",
+					Path:  "projects/default/automation/goal.md",
+					Title: "Ship auth by end of quarter",
+					Type:  "automation",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
 			name:        "default JSON still works unchanged",
 			id:          "abc12def",
 			contentType: "application/json",

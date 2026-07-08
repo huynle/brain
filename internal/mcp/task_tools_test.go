@@ -313,6 +313,87 @@ func TestBrainTasks_Handler(t *testing.T) {
 	}
 }
 
+// TestBrainTasks_StatsSplitBlocked verifies that the stats line surfaces both
+// dep_blocked (classification-blocked) and status_blocked (Status == "blocked")
+// as separate counters. See task ghtzzp1x / plan 24urhmtl (Finding 4).
+//
+// The fixture mixes four combinations:
+//   - dep-blocked-only:    classification="blocked", status="pending"
+//   - status-blocked-only: classification="waiting",  status="blocked"
+//   - both:                classification="blocked", status="blocked"
+//   - neither:             classification="ready",    status="pending"
+//
+// Expected counts:
+//   - dep_blocked    = 2 (both classification="blocked" entries)
+//   - status_blocked = 2 (both status="blocked" entries)
+func TestBrainTasks_StatsSplitBlocked(t *testing.T) {
+	cachedContext = &ExecutionContext{ProjectID: "test-project"}
+	defer func() { cachedContext = nil }()
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"tasks": []map[string]any{
+				{
+					"id": "aaaa1111", "title": "Dep blocked only", "status": "pending",
+					"priority": "medium", "classification": "blocked",
+					"blocked_by_reason": "waiting on X",
+				},
+				{
+					"id": "bbbb2222", "title": "Status blocked only", "status": "blocked",
+					"priority": "medium", "classification": "waiting",
+					"dependsOn": []map[string]any{},
+				},
+				{
+					"id": "cccc3333", "title": "Both blocked", "status": "blocked",
+					"priority": "medium", "classification": "blocked",
+					"blocked_by_reason": "waiting on Y",
+				},
+				{
+					"id": "dddd4444", "title": "Neither blocked", "status": "pending",
+					"priority": "medium", "classification": "ready",
+					"dependsOn": []map[string]any{},
+				},
+			},
+			"count": 4,
+			// Server-side stats reports classification-blocked count (2).
+			// The MCP tool computes status_blocked locally from the tasks array.
+			"stats": map[string]int{
+				"ready": 1, "waiting": 1, "blocked": 2, "completed": 0, "total": 4,
+			},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterTaskTools(s, client)
+
+	handler := s.tools["tasks"].handler
+	result, err := handler(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	// Assert stats line surfaces dep_blocked = 2.
+	if !strings.Contains(result, "2 dep_blocked") {
+		t.Errorf("stats line should report '2 dep_blocked', got: %s", result)
+	}
+
+	// Assert stats line surfaces status_blocked = 2.
+	if !strings.Contains(result, "2 status_blocked") {
+		t.Errorf("stats line should report '2 status_blocked', got: %s", result)
+	}
+
+	// Legacy: we do NOT keep an ambiguous "blocked" counter alongside the
+	// split counters. This prevents the "N blocked" wording that conflated
+	// the two meanings. If a legacy field ever reappears it must alias one
+	// of the two counters explicitly (see code comment in task_tools.go).
+	if strings.Contains(result, " blocked |") || strings.Contains(result, "| 2 blocked") {
+		t.Errorf("legacy ambiguous 'blocked' counter must not appear in stats line, got: %s", result)
+	}
+}
+
 func TestBrainTasks_FilterByClassification(t *testing.T) {
 	cachedContext = &ExecutionContext{ProjectID: "test-project"}
 	defer func() { cachedContext = nil }()
@@ -460,10 +541,19 @@ func TestBrainTaskNext_NoReadyTasks(t *testing.T) {
 
 		if r.URL.Path == "/api/v1/tasks/test-project" {
 			json.NewEncoder(w).Encode(map[string]any{
-				"tasks": []map[string]any{},
-				"count": 0,
+				"tasks": []map[string]any{
+					// One status-blocked task in the fixture so we can
+					// assert the split counter surfaces.
+					{
+						"id": "sss11111", "title": "Explicitly blocked",
+						"status": "blocked", "priority": "medium",
+						"classification": "waiting",
+					},
+				},
+				"count": 1,
 				"stats": map[string]int{
-					"ready": 0, "waiting": 3, "blocked": 1, "completed": 5,
+					"ready": 0, "waiting": 3, "blocked": 1,
+					"status_blocked": 1, "completed": 5,
 				},
 			})
 			return
@@ -487,8 +577,17 @@ func TestBrainTaskNext_NoReadyTasks(t *testing.T) {
 	if !strings.Contains(result, "3 tasks waiting") {
 		t.Errorf("result should contain waiting count, got: %s", result)
 	}
-	if !strings.Contains(result, "1 tasks blocked") {
-		t.Errorf("result should contain blocked count, got: %s", result)
+	// Split counters (task ghtzzp1x): dep_blocked and status_blocked
+	// are reported independently. Ambiguous "N tasks blocked" wording
+	// must not appear.
+	if !strings.Contains(result, "1 tasks dep_blocked") {
+		t.Errorf("result should contain dep_blocked count, got: %s", result)
+	}
+	if !strings.Contains(result, "1 tasks status_blocked") {
+		t.Errorf("result should contain status_blocked count, got: %s", result)
+	}
+	if strings.Contains(result, "tasks blocked\n") || strings.Contains(result, "- 1 tasks blocked") {
+		t.Errorf("legacy ambiguous 'tasks blocked' wording must not appear, got: %s", result)
 	}
 }
 

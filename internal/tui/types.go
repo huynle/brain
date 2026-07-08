@@ -215,12 +215,19 @@ func (v ViewMode) String() string {
 
 // TaskStats mirrors types.TaskStats with an additional InProgress field
 // for display purposes (active tasks currently being executed).
+//
+// Blocked and StatusBlocked mirror the split introduced in
+// types.TaskStats (see task ghtzzp1x / plan 24urhmtl#Finding-4):
+//   - Blocked:       dependency-classification blocked
+//   - StatusBlocked: Status == "blocked"
+// These are independent counters; a task can appear in both.
 type TaskStats struct {
-	Ready      int
-	Waiting    int
-	Blocked    int
-	InProgress int
-	Completed  int
+	Ready         int
+	Waiting       int
+	Blocked       int
+	StatusBlocked int
+	InProgress    int
+	Completed     int
 }
 
 // TaskStatsFromAPI converts an API TaskStats to the TUI TaskStats.
@@ -229,9 +236,10 @@ func TaskStatsFromAPI(s *types.TaskStats) TaskStats {
 		return TaskStats{}
 	}
 	return TaskStats{
-		Ready:   s.Ready,
-		Waiting: s.Waiting,
-		Blocked: s.Blocked,
+		Ready:         s.Ready,
+		Waiting:       s.Waiting,
+		Blocked:       s.Blocked,
+		StatusBlocked: s.StatusBlocked,
 		// NotPending includes in_progress + completed + validated + etc.
 		Completed: s.NotPending,
 	}

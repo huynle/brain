@@ -1018,12 +1018,25 @@ type ResolvedTask struct {
 }
 
 // TaskStats holds aggregate task statistics.
+//
+// Blocked and StatusBlocked are intentionally separate counters (see task
+// ghtzzp1x / plan 24urhmtl#Finding-4):
+//
+//   - Blocked (json: "blocked") counts tasks whose dependency Classification
+//     is "blocked" (unmet deps, blocked-by another task, or in a cycle).
+//     Kept named "blocked" for wire compatibility with existing clients.
+//   - StatusBlocked (json: "status_blocked") counts tasks whose Status field
+//     equals "blocked" (set explicitly by user/agent).
+//
+// A single task may be in both counters simultaneously — they are not
+// mutually exclusive.
 type TaskStats struct {
-	Total      int `json:"total"`
-	Ready      int `json:"ready"`
-	Waiting    int `json:"waiting"`
-	Blocked    int `json:"blocked"`
-	NotPending int `json:"not_pending"`
+	Total         int `json:"total"`
+	Ready         int `json:"ready"`
+	Waiting       int `json:"waiting"`
+	Blocked       int `json:"blocked"`
+	StatusBlocked int `json:"status_blocked"`
+	NotPending    int `json:"not_pending"`
 }
 
 // TaskListResponse is the response for GET /tasks/:projectId.

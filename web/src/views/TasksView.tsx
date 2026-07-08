@@ -11,6 +11,14 @@ import { useLiveTasks } from "../hooks/useLiveTasks";
 import { filterTasks, groupByFeature, isReadyTask, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
 import { mergeReadyFeatures } from "./tasks/mergeAttention";
 import { filterByHiddenStatuses } from "./tasks/statusFilters";
+import {
+  isFeatureCollapsed,
+  loadCollapseState,
+  saveCollapseState,
+  setAllCollapsed,
+  toggleFeatureCollapsed,
+  type CollapseState,
+} from "./tasks/collapse";
 import { deserializeHiddenEntryTypes, serializeHiddenEntryTypes, toggleHiddenEntryType } from "./brain/entryFilters";
 import { useQuery } from "@tanstack/react-query";
 import { buildTaskTree } from "./tasks/tree";
@@ -197,8 +205,20 @@ export function TasksView() {
   // just `blocked` while keeping `completed` visible, or hide `draft`
   // while triaging. Persisted across reloads.
   const [hiddenStatuses, setHiddenStatuses] = useState<Set<string>>(loadHiddenStatuses);
-  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
-  const [collapseDefault, setCollapseDefault] = useState(activeProject === ALL_PROJECTS);
+  // Feature-group collapse state, keyed per project tab and persisted to
+  // localStorage (TUI parity: featureCollapsed in settings). Survives view
+  // switches and reloads; the ALL_PROJECTS tab starts collapsed, single
+  // projects expanded.
+  const [collapseState, setCollapseState] = useState<CollapseState>(loadCollapseState);
+  const collapseScopeDefault = activeProject === ALL_PROJECTS;
+  const featureCollapsed = (feature: string) =>
+    isFeatureCollapsed(collapseState, activeProject, feature, collapseScopeDefault);
+  const toggleFeature = (feature: string) =>
+    setCollapseState((s) => {
+      const next = toggleFeatureCollapsed(s, activeProject, feature, collapseScopeDefault);
+      saveCollapseState(next);
+      return next;
+    });
 
   const [editMeta, setEditMeta] = useState<Task | null>(null);
   const [sessionTask, setSessionTask] = useState<Task | null>(null);
@@ -221,7 +241,7 @@ export function TasksView() {
   // logs body refs so it can drive scrollTop.
   const paneNav = usePaneNavigation();
 
-  const { rows, taskList, featureKeys, tasksByFeature } = useMemo(() => {
+  const { rows, taskList, tasksByFeature } = useMemo(() => {
     let list = filterTasks(tasks, query);
     if (mode === "schedules") list = list.filter((t) => t.schedule || t.run_once_at);
     else if (mode === "done") {
@@ -248,21 +268,19 @@ export function TasksView() {
       // Flat history, newest completion first (completed_at, modified fallback).
       const done = [...list].sort((a, b) => completionMs(b) - completionMs(a));
       const flatRows: Row[] = done.map((t) => ({ kind: "task", task: t, lead: "", inCycle: false }));
-      return { rows: flatRows, taskList: done, featureKeys: [], tasksByFeature: new Map() };
+      return { rows: flatRows, taskList: done, tasksByFeature: new Map() };
     }
     const groups = groupByFeature(list, mode === "done" ? "completed" : activeProject === ALL_PROJECTS ? featureSort : "name", sortDir);
     const r: Row[] = [];
     const flat: Task[] = [];
-    const keys: string[] = [];
     const byFeature = new Map<string, Task[]>();
     for (const g of groups) {
       byFeature.set(g.feature, g.tasks);
       const showHeader = (g.feature !== UNGROUPED || groups.length > 1) && !featureFrame;
       if (showHeader) {
-        keys.push(g.feature);
         r.push({ kind: "header", feature: g.feature, label: g.label, count: g.tasks.length });
       }
-      if (featureFrame || !(collapsed[g.feature] ?? collapseDefault)) {
+      if (featureFrame || !isFeatureCollapsed(collapseState, activeProject, g.feature, collapseScopeDefault)) {
         if (mode === "schedules") {
           g.tasks.forEach((t) => {
             r.push({ kind: "task", task: t, lead: "", inCycle: false });
@@ -277,8 +295,8 @@ export function TasksView() {
         }
       }
     }
-    return { rows: r, taskList: flat, featureKeys: keys, tasksByFeature: byFeature };
-  }, [tasks, query, showDone, hiddenStatuses, collapsed, collapseDefault, mode, activeProject, featureSort, sortDir, featureFrame, includeCancelled, mergeOnly]);
+    return { rows: r, taskList: flat, tasksByFeature: byFeature };
+  }, [tasks, query, showDone, hiddenStatuses, collapseState, mode, activeProject, featureSort, sortDir, featureFrame, includeCancelled, mergeOnly]);
 
   // Status chip row: derived from the raw task set (not the filtered list),
   // so hiding a status doesn't make its chip vanish and become un-un-
@@ -292,11 +310,6 @@ export function TasksView() {
   useEffect(() => {
     setCounts("tasks", taskList.length, tasks.length);
   }, [taskList.length, tasks.length, setCounts]);
-
-  useEffect(() => {
-    setCollapsed({});
-    setCollapseDefault(activeProject === ALL_PROJECTS);
-  }, [activeProject]);
 
   useEffect(() => {
     if (searchOpen) filterRef.current?.focus();
@@ -316,8 +329,11 @@ export function TasksView() {
   const detailTask = cursorRow?.kind === "task" ? cursorRow.task : null;
 
   const setAllFeatureCollapsed = (value: boolean) => {
-    setCollapseDefault(value);
-    setCollapsed(Object.fromEntries(featureKeys.map((key) => [key, value])));
+    setCollapseState((s) => {
+      const next = setAllCollapsed(s, activeProject, value);
+      saveCollapseState(next);
+      return next;
+    });
   };
 
   const mergeReadySet = useMemo(
@@ -438,18 +454,14 @@ export function TasksView() {
       "tasks.toggleLogs": () => toggleLogs(),
       "tasks.enter": () => {
         const row = rows[cursor];
-        // Enter DESCENDS (k9s): a feature header pushes a drill frame that
-        // scopes the view to that feature (Esc pops back). Collapse
-        // toggling lives on Space.
-        if (row?.kind === "header") {
-          pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
-          nav.setCursor(scope, 0);
-        } else if (row?.kind === "task") openTaskSession(row.task);
+        // Enter on a feature header toggles collapse (TUI parity). Drilling
+        // into a feature stays on the header's » button (Esc pops back).
+        if (row?.kind === "header") toggleFeature(row.feature);
+        else if (row?.kind === "task") openTaskSession(row.task);
       },
       "tasks.select": () => {
         const row = rows[cursor];
-        if (row?.kind === "header")
-          setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }));
+        if (row?.kind === "header") toggleFeature(row.feature);
         else if (row?.kind === "task") nav.toggleSelect(taskKey(row.task));
       },
       "tasks.collapseAll": () => setAllFeatureCollapsed(true),
@@ -538,7 +550,7 @@ export function TasksView() {
       },
       "tasks.new": () => setComposing(true),
     },
-    [rows, cursor, scope, taskList, selectedTasks, focus, collapseDefault, featureKeys, tasksByFeature, openInControl, toast, featureFrame, mode, mergeOnly, includeCancelled],
+    [rows, cursor, scope, taskList, selectedTasks, focus, collapseState, activeProject, tasksByFeature, openInControl, toast, featureFrame, mode, mergeOnly, includeCancelled],
   );
 
   async function doDelete(ts: Task[]) {
@@ -774,14 +786,14 @@ export function TasksView() {
                   key={`h:${row.feature}`}
                   className={`tree-header ${isCur ? "cursor" : ""}`}
                   data-cursor={isCur ? "1" : undefined}
-                  onClick={() => setCollapsed((c) => ({ ...c, [row.feature]: !(c[row.feature] ?? collapseDefault) }))}
+                  onClick={() => toggleFeature(row.feature)}
                   onDoubleClick={() => {
                     const ts = tasksByFeature.get(row.feature) ?? [];
                     if (row.feature !== UNGROUPED && ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
                   }}
-                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "s opens feature settings · x runs feature · Enter/Space toggles collapse"}
+                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "s opens feature settings · x runs feature · Enter/Space toggles collapse · » drills in"}
                 >
-                  <span className="htri">{(collapsed[row.feature] ?? collapseDefault) ? "▸" : "▾"}</span>
+                  <span className="htri">{featureCollapsed(row.feature) ? "▸" : "▾"}</span>
                   {row.label}
                   <span className="hcount">
                     {(() => {
@@ -797,7 +809,7 @@ export function TasksView() {
                     <button
                       type="button"
                       className="feature-drill"
-                      title="Open this feature scoped (Enter)"
+                      title="Open this feature scoped (Esc backs out)"
                       aria-label={`Drill into feature ${row.feature}`}
                       onClick={(e) => {
                         e.stopPropagation();

@@ -1455,7 +1455,7 @@ Examples:
 			Type: "object",
 			Properties: map[string]Property{
 				"project": {Type: "string", Description: "Convenience shortcut for filter.project: restrict updates to entries in this project (e.g., 'orion-ai'). Only used in filter mode; explicit-entries mode ignores this. If filter already has a project field, that value wins."},
-				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string). Use with 'updates'."},
+				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string), generated_by (string), generated_key (string), agent (string), executor (string), execution_mode (string). Unknown filter fields are rejected with HTTP 400 to prevent data-loss from typos. Use with 'updates'."},
 				"updates": {Type: "object", Description: "Updates to apply to matched entries. Fields: status (string), priority (string), tags (string[]), content (string, replaces body), append (string), note (string). Use with 'filter'."},
 				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: { status?, priority?, tags?, content?, append?, note? } }"},
 				"dry_run": {Type: "boolean", Description: "Preview changes without applying (default: false)"},

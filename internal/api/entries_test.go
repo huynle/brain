@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -2434,6 +2435,115 @@ func TestHandleBulkUpdate(t *testing.T) {
 				body := decodeJSON[types.ErrorResponse](t, resp)
 				if body.Error != "Internal Server Error" {
 					t.Errorf("error = %q, want %q", body.Error, "Internal Server Error")
+				}
+			},
+		},
+		{
+			// Verifies new filter field generated_by is accepted and forwarded to the service.
+			name: "success - filter with generated_by",
+			body: map[string]any{
+				"filter": map[string]any{
+					"generated_by": "auto:X",
+				},
+				"updates": map[string]any{
+					"status": "completed",
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				if req.Filter == nil {
+					t.Fatal("expected filter to be set")
+				}
+				if req.Filter.GeneratedBy == nil {
+					t.Fatal("expected filter.generated_by to be decoded, got nil")
+				}
+				if got, want := *req.Filter.GeneratedBy, "auto:X"; got != want {
+					t.Errorf("filter.generated_by = %q, want %q", got, want)
+				}
+				return &types.BulkUpdateResponse{
+					Updated: 1,
+					Total:   1,
+					Results: []types.BulkUpdateResult{
+						{Path: "projects/proj/task/a.md", ID: "a1234567", Status: "ok"},
+					},
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BulkUpdateResponse](t, resp)
+				if body.Updated != 1 {
+					t.Errorf("updated = %d, want %d", body.Updated, 1)
+				}
+			},
+		},
+		{
+			// Data-safety guard: unknown filter fields must be rejected, not silently dropped.
+			name: "bad request - unknown filter field",
+			body: map[string]any{
+				"filter": map[string]any{
+					"does_not_exist": "x",
+				},
+				"updates": map[string]any{
+					"status": "completed",
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				t.Fatal("service must not be called when unknown filter fields are present")
+				return nil, nil
+			},
+			wantStatus: http.StatusBadRequest,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Bad Request" {
+					t.Errorf("error = %q, want %q", body.Error, "Bad Request")
+				}
+				if !strings.Contains(body.Message, "unknown fields") {
+					t.Errorf("message = %q, want to contain %q", body.Message, "unknown fields")
+				}
+				if !strings.Contains(body.Message, "does_not_exist") {
+					t.Errorf("message = %q, want to contain %q", body.Message, "does_not_exist")
+				}
+			},
+		},
+		{
+			// Regression guard: existing valid filters keep working after DisallowUnknownFields.
+			name: "success - valid filter still works (regression guard)",
+			body: map[string]any{
+				"filter": map[string]any{
+					"feature_id": "feat-abc",
+					"status":     "blocked",
+					"type":       "task",
+				},
+				"updates": map[string]any{
+					"status": "completed",
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				if req.Filter == nil {
+					t.Fatal("expected filter to be set")
+				}
+				if req.Filter.FeatureID == nil || *req.Filter.FeatureID != "feat-abc" {
+					t.Errorf("filter.feature_id decoded incorrectly: %+v", req.Filter.FeatureID)
+				}
+				if req.Filter.Status == nil || *req.Filter.Status != "blocked" {
+					t.Errorf("filter.status decoded incorrectly: %+v", req.Filter.Status)
+				}
+				if req.Filter.Type == nil || *req.Filter.Type != "task" {
+					t.Errorf("filter.type decoded incorrectly: %+v", req.Filter.Type)
+				}
+				return &types.BulkUpdateResponse{
+					Updated: 2,
+					Total:   2,
+					Results: []types.BulkUpdateResult{
+						{Path: "projects/proj/task/a.md", ID: "a1234567", Status: "ok"},
+						{Path: "projects/proj/task/b.md", ID: "b1234567", Status: "ok"},
+					},
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BulkUpdateResponse](t, resp)
+				if body.Updated != 2 {
+					t.Errorf("updated = %d, want %d", body.Updated, 2)
 				}
 			},
 		},

@@ -736,6 +736,15 @@ type BulkUpdateFilter struct {
 	Status    *string  `json:"status,omitempty"`
 	Tags      []string `json:"tags,omitempty"`
 	Priority  *string  `json:"priority,omitempty"`
+
+	// Task-specific filters (mirror TaskEntry / BrainEntry fields).
+	// Applied as an in-memory pass over the storage list because the storage
+	// layer does not index these fields.
+	GeneratedBy   *string `json:"generated_by,omitempty"`
+	GeneratedKey  *string `json:"generated_key,omitempty"`
+	Agent         *string `json:"agent,omitempty"`
+	Executor      *string `json:"executor,omitempty"`
+	ExecutionMode *string `json:"execution_mode,omitempty"`
 }
 
 // BulkUpdateEntry targets a specific entry with updates.

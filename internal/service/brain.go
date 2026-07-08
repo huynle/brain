@@ -1148,8 +1148,29 @@ func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 
 	if hasFilter {
 		// Filter mode: query storage using existing List functionality.
+		//
+		// The storage layer only indexes a subset of task fields. New
+		// filter fields (generated_by, generated_key, agent, executor,
+		// execution_mode) are applied as a post-list in-memory pass below.
+		// When any post-filter is present, we fetch a larger candidate set
+		// from storage so the post-filter has enough material to work with
+		// before the final safety cap is applied.
+		hasPostFilters := req.Filter.GeneratedBy != nil ||
+			req.Filter.GeneratedKey != nil ||
+			req.Filter.Agent != nil ||
+			req.Filter.Executor != nil ||
+			req.Filter.ExecutionMode != nil
+
+		listLimit := limit
+		if hasPostFilters {
+			// Fetch a wider candidate set so we can filter down accurately.
+			// 500 is a compromise: large enough to cover typical automation
+			// batches without pulling the whole DB.
+			listLimit = 500
+		}
+
 		listReq := types.ListEntriesRequest{
-			Limit: limit,
+			Limit: listLimit,
 		}
 		if req.Filter.FeatureID != nil {
 			listReq.FeatureID = *req.Filter.FeatureID
@@ -1176,6 +1197,24 @@ func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 		}
 
 		for _, entry := range listResp.Entries {
+			// Apply post-list filters for task-specific fields that storage
+			// does not index. Each specified filter must match exactly; a
+			// mismatch (including empty vs non-empty) excludes the entry.
+			if req.Filter.GeneratedBy != nil && entry.GeneratedBy != *req.Filter.GeneratedBy {
+				continue
+			}
+			if req.Filter.GeneratedKey != nil && entry.GeneratedKey != *req.Filter.GeneratedKey {
+				continue
+			}
+			if req.Filter.Agent != nil && entry.Agent != *req.Filter.Agent {
+				continue
+			}
+			if req.Filter.Executor != nil && entry.Executor != *req.Filter.Executor {
+				continue
+			}
+			if req.Filter.ExecutionMode != nil && entry.ExecutionMode != *req.Filter.ExecutionMode {
+				continue
+			}
 			targets = append(targets, target{
 				path:    entry.Path,
 				updates: *req.Updates,

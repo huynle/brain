@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -581,8 +582,27 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 
 // HandleBulkUpdate handles POST /entries/bulk-update.
 func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
+	// Read the raw body so we can (a) do strict field validation up front and
+	// (b) still decode into the typed request afterwards. Strict decoding
+	// prevents silent field drops (e.g. filter typos like "generted_by") which
+	// have caused unintended mass mutations on unrelated entries.
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to read request body")
+		return
+	}
+
+	// Strict decode first: reject unknown fields at any nesting level of the
+	// request. If unknown fields exist, respond 400 with the list of names so
+	// the caller can fix their payload instead of matching too broadly.
+	if unknown := findUnknownBulkUpdateFields(raw); len(unknown) > 0 {
+		WriteError(w, http.StatusBadRequest, "Bad Request",
+			fmt.Sprintf("unknown fields: %s", strings.Join(unknown, ", ")))
+		return
+	}
+
 	var req types.BulkUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
 		return
 	}
@@ -679,6 +699,70 @@ func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+// bulkUpdateRequestFields is the set of top-level JSON keys accepted on a
+// BulkUpdateRequest. Anything else is rejected by HandleBulkUpdate.
+var bulkUpdateRequestFields = map[string]struct{}{
+	"filter":  {},
+	"updates": {},
+	"entries": {},
+	"dry_run": {},
+	"limit":   {},
+}
+
+// bulkUpdateFilterFields is the set of top-level JSON keys accepted on a
+// BulkUpdateFilter. This must be kept in sync with types.BulkUpdateFilter.
+var bulkUpdateFilterFields = map[string]struct{}{
+	"feature_id":     {},
+	"project":        {},
+	"type":           {},
+	"status":         {},
+	"tags":           {},
+	"priority":       {},
+	"generated_by":   {},
+	"generated_key":  {},
+	"agent":          {},
+	"executor":       {},
+	"execution_mode": {},
+}
+
+// findUnknownBulkUpdateFields returns a sorted-by-appearance list of unknown
+// JSON keys in the bulk-update request body, checking both top-level fields
+// and nested filter fields. It's tolerant of malformed JSON at deeper levels:
+// if a section is not a JSON object, it's simply skipped (the typed decode
+// step will produce the appropriate error).
+func findUnknownBulkUpdateFields(body []byte) []string {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		// Not a JSON object at all — let the typed decoder produce the error.
+		return nil
+	}
+
+	var unknown []string
+	for k := range top {
+		if _, ok := bulkUpdateRequestFields[k]; !ok {
+			unknown = append(unknown, k)
+		}
+	}
+
+	if rawFilter, ok := top["filter"]; ok && len(rawFilter) > 0 {
+		var filter map[string]json.RawMessage
+		if err := json.Unmarshal(rawFilter, &filter); err == nil {
+			for k := range filter {
+				if _, ok := bulkUpdateFilterFields[k]; !ok {
+					unknown = append(unknown, "filter."+k)
+				}
+			}
+		}
+	}
+
+	if len(unknown) == 0 {
+		return nil
+	}
+	// Sort for stable, testable output.
+	sort.Strings(unknown)
+	return unknown
 }
 
 // validateUpdateEnums validates enum fields in an UpdateEntryRequest and returns

@@ -243,6 +243,112 @@ func TestEnsureBuiltInFeatureCheckoutAutomationCreatesAutomation(t *testing.T) {
 	if !strings.Contains(automation.Action.DirectPrompt, "Brain-native merge request") {
 		t.Fatalf("action prompt should request a Brain-native merge request, got: %s", automation.Action.DirectPrompt)
 	}
+	// Phase 3.2: existing AI automation gains a checkout_mode:ai trigger filter
+	// so that only feature.completed events carrying checkout_mode=ai match it.
+	if automation.Trigger.Filter == nil || automation.Trigger.Filter["checkout_mode"] != "ai" {
+		t.Fatalf("trigger filter should be checkout_mode:ai, got %+v", automation.Trigger.Filter)
+	}
+}
+
+func TestEnsureBuiltInFeatureCheckoutAutomationMigratesLegacyEntryToAddFilter(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Seed a pre-migration entry that was created BEFORE Phase 3.2 shipped:
+	// same GeneratedBy, correct trigger event, but NO filter map.
+	legacyGeneratedBy := BuiltInFeatureCheckoutGeneratedBy
+	trueVal := true
+	seedResp, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:        "automation",
+		Title:       "Built-in feature checkout",
+		Status:      "active",
+		Global:      &trueVal,
+		Generated:   &trueVal,
+		GeneratedBy: legacyGeneratedBy,
+		Trigger: &types.TriggerConfig{
+			Type:    "event",
+			Event:   types.EventFeatureCompleted,
+			OncePer: "feature_id",
+			// No Filter — this simulates the pre-Phase-3 shape.
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Load the feature-checkout skill and process feature {{.FeatureID}} ...",
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed legacy automation: %v", err)
+	}
+
+	if err := EnsureBuiltInFeatureCheckoutAutomation(ctx, brain, BuiltInFeatureCheckoutConfig{
+		Enabled:           true,
+		MergeTargetBranch: "main",
+	}); err != nil {
+		t.Fatalf("EnsureBuiltInFeatureCheckoutAutomation failed: %v", err)
+	}
+
+	// Reload the seeded entry — its trigger must now include the filter.
+	updated, err := brain.Recall(ctx, seedResp.Path)
+	if err != nil {
+		t.Fatalf("recall migrated automation: %v", err)
+	}
+	if updated.Trigger == nil {
+		t.Fatalf("expected trigger on migrated entry, got nil")
+	}
+	if updated.Trigger.Filter["checkout_mode"] != "ai" {
+		t.Fatalf("migration failed: trigger filter %+v, want checkout_mode:ai", updated.Trigger.Filter)
+	}
+	// Migration must not create a duplicate entry.
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 100})
+	if err != nil {
+		t.Fatalf("List automations: %v", err)
+	}
+	count := 0
+	for _, e := range resp.Entries {
+		if e.GeneratedBy == BuiltInFeatureCheckoutGeneratedBy {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 AI built-in automation after migration, got %d", count)
+	}
+}
+
+func TestEnsureBuiltInFeatureCheckoutAutomationNoOpWhenFilterAlreadyPresent(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// First call: creates entry with the new filter.
+	if err := EnsureBuiltInFeatureCheckoutAutomation(ctx, brain, BuiltInFeatureCheckoutConfig{
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("first ensure: %v", err)
+	}
+	respFirst, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 10})
+	if err != nil {
+		t.Fatalf("first list: %v", err)
+	}
+	if len(respFirst.Entries) != 1 {
+		t.Fatalf("first ensure created %d entries, want 1", len(respFirst.Entries))
+	}
+	firstVersion := respFirst.Entries[0].Modified
+
+	// Second call: entry already has correct filter, must not update or create.
+	if err := EnsureBuiltInFeatureCheckoutAutomation(ctx, brain, BuiltInFeatureCheckoutConfig{
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("second ensure: %v", err)
+	}
+	respSecond, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 10})
+	if err != nil {
+		t.Fatalf("second list: %v", err)
+	}
+	if len(respSecond.Entries) != 1 {
+		t.Fatalf("second ensure changed entry count to %d, want 1", len(respSecond.Entries))
+	}
+	if respSecond.Entries[0].Modified != firstVersion {
+		t.Fatalf("second ensure modified an already-correct entry (was %v, now %v)", firstVersion, respSecond.Entries[0].Modified)
+	}
 }
 
 func TestEnsureBuiltInFeatureCheckoutAutomationDisabledDoesNothing(t *testing.T) {

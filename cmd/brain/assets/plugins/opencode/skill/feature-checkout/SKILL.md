@@ -9,6 +9,17 @@ Audit completed feature work against original user intent. Find gaps. Create fol
 
 **Announce at start:** "I'm using the feature-checkout skill to autonomously audit completed tasks against the original requests."
 
+## When this skill does NOT run
+
+Features whose tasks are marked `checkout_mode: "simple"` bypass this skill entirely — a deterministic bash automation (`brain:builtin-feature-checkout-simple`) runs instead. That path:
+
+- Uses `git -c merge.ff=true merge --squash <branch>` (same invariant as this skill).
+- Fails loudly on conflicts; does not attempt LLM-driven resolution.
+- Skips PR creation regardless of `merge_policy`.
+- Runs in ~3s at zero token cost.
+
+If you (as the LLM) are executing this skill, `checkout_mode` was either `"ai"` or unset — proceed normally.
+
 ## Overview
 
 This skill runs **as a task in the work queue** via `direct_prompt`. It:

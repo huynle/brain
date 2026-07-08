@@ -45,6 +45,17 @@ go run ./cmd/brain-api  # Run API server without building
 - `task_service.go` - Task management with dependency resolution
 - `task_deps.go` - Dependency graph algorithms
 
+### Feature checkout automation
+
+Two built-in automations trigger on `feature.completed`, discriminated by task-level `checkout_mode`:
+
+- `brain:builtin-feature-checkout` — AI-driven (LLM prompt), default path.
+- `brain:builtin-feature-checkout-simple` — deterministic squash-merge via script executor.
+
+Fold rule across a feature's tasks: any `checkout_mode:"simple"` → simple path; else AI. Missing/empty → AI. Folded value is placed on the `feature.completed` event's `metadata["checkout_mode"]` by `CheckFeatureCompletion` and matched by the automations' `Trigger.Filter`.
+
+The simple script honors the `git -c merge.ff=true` invariant (see `feature-checkout/SKILL.md`) so it works regardless of user `merge.ff` gitconfig. It uses `feature_id` as the source branch name and cannot recover from merge conflicts — use AI mode for anything non-trivial.
+
 ### Storage Layer (`internal/storage/`)
 - `entries.go` - Entry storage operations
 - `search.go` - Full-text search indexing

@@ -222,6 +222,21 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		cleanup()
 		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature checkout automation: %w", err)
 	}
+	// Phase 3.4: register the parallel deterministic script-based
+	// feature-checkout automation. Reuses the same enable toggle — users
+	// who want only the AI path can archive the "simple" automation entry
+	// via the existing UX. Both automations share the same feature.completed
+	// trigger but are discriminated by their checkout_mode trigger filter
+	// (ai vs simple), set from event metadata by CheckFeatureCompletion.
+	if err := service.EnsureBuiltInFeatureCheckoutSimpleAutomation(ctx, brainSvc, service.BuiltInFeatureCheckoutSimpleConfig{
+		Enabled:            cfg.FeatureCheckout.Enabled,
+		MergeTargetBranch:  cfg.TaskDefaults.MergeTargetBranch,
+		RemoteBranchPolicy: cfg.TaskDefaults.RemoteBranchPolicy,
+		TargetWorkdir:      cfg.TaskDefaults.TargetWorkdir,
+	}); err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature checkout simple automation: %w", err)
+	}
 	blobStore, err := blobstore.NewFilesystemStore(cfg.Attachments.StorageRoot, cfg.Attachments.MaxUploadSizeBytes)
 	if err != nil {
 		cleanup()

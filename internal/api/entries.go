@@ -63,6 +63,12 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			Message: fmt.Sprintf("invalid merge_policy %q", req.MergePolicy),
 		})
 	}
+	if !types.IsValidCheckoutMode(req.CheckoutMode) {
+		details = append(details, types.ValidationDetail{
+			Field:   "checkout_mode",
+			Message: fmt.Sprintf("invalid checkout_mode %q", req.CheckoutMode),
+		})
+	}
 	if req.MergeStrategy != "" && !isValidEnum(req.MergeStrategy, types.MergeStrategies) {
 		details = append(details, types.ValidationDetail{
 			Field:   "merge_strategy",
@@ -326,6 +332,12 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		details = append(details, types.ValidationDetail{
 			Field:   "merge_policy",
 			Message: fmt.Sprintf("invalid merge_policy %q", *req.MergePolicy),
+		})
+	}
+	if req.CheckoutMode != nil && !types.IsValidCheckoutMode(*req.CheckoutMode) {
+		details = append(details, types.ValidationDetail{
+			Field:   "checkout_mode",
+			Message: fmt.Sprintf("invalid checkout_mode %q", *req.CheckoutMode),
 		})
 	}
 	if req.MergeStrategy != nil && !isValidEnum(*req.MergeStrategy, types.MergeStrategies) {
@@ -787,6 +799,12 @@ func validateUpdateEnums(prefix string, req *types.UpdateEntryRequest) []types.V
 			Message: fmt.Sprintf("invalid merge_policy %q", *req.MergePolicy),
 		})
 	}
+	if req.CheckoutMode != nil && !types.IsValidCheckoutMode(*req.CheckoutMode) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".checkout_mode",
+			Message: fmt.Sprintf("invalid checkout_mode %q", *req.CheckoutMode),
+		})
+	}
 	if req.MergeStrategy != nil && !isValidEnum(*req.MergeStrategy, types.MergeStrategies) {
 		details = append(details, types.ValidationDetail{
 			Field:   prefix + ".merge_strategy",
@@ -1195,6 +1213,7 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		MergeStrategy:      strPtr(fm.MergeStrategy),
 		RemoteBranchPolicy: strPtr(fm.RemoteBranchPolicy),
 		ExecutionMode:      strPtr(fm.ExecutionMode),
+		CheckoutMode:       strPtr(fm.CheckoutMode),
 		DirectPrompt:       strPtr(fm.DirectPrompt),
 		Agent:              strPtr(fm.Agent),
 		Model:              strPtr(fm.Model),

@@ -27,9 +27,24 @@ type BuiltInFeatureCheckoutConfig struct {
 
 // EnsureBuiltInFeatureCheckoutAutomation creates the built-in feature checkout
 // automation once. Existing user-created automations are not modified.
+//
+// Phase 3.2: the automation now carries a trigger filter of
+// checkout_mode:"ai" so that only feature.completed events whose folded
+// checkout mode is "ai" match it (the parallel simple/script automation
+// carries checkout_mode:"simple"). Older built-in entries created before
+// Phase 3 shipped had no filter; this function migrates them in place by
+// UPDATE (only when the GeneratedBy marker matches our built-in — never
+// touches user-created automations).
 func EnsureBuiltInFeatureCheckoutAutomation(ctx context.Context, brain *BrainServiceImpl, cfg BuiltInFeatureCheckoutConfig) error {
 	if !cfg.Enabled || brain == nil {
 		return nil
+	}
+
+	desiredTrigger := &types.TriggerConfig{
+		Type:    "event",
+		Event:   types.EventFeatureCompleted,
+		OncePer: "feature_id",
+		Filter:  map[string]string{"checkout_mode": "ai"},
 	}
 
 	existing, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 1000})
@@ -37,9 +52,16 @@ func EnsureBuiltInFeatureCheckoutAutomation(ctx context.Context, brain *BrainSer
 		return fmt.Errorf("list automations: %w", err)
 	}
 	for _, entry := range existing.Entries {
-		if entry.GeneratedBy == BuiltInFeatureCheckoutGeneratedBy {
-			return nil
+		if entry.GeneratedBy != BuiltInFeatureCheckoutGeneratedBy {
+			continue
 		}
+		// Migrate legacy shape (missing filter or wrong filter) in place.
+		if triggerNeedsCheckoutModeMigration(entry.Trigger, "ai") {
+			if _, err := brain.Update(ctx, entry.Path, types.UpdateEntryRequest{Trigger: desiredTrigger}); err != nil {
+				return fmt.Errorf("migrate built-in feature checkout trigger filter: %w", err)
+			}
+		}
+		return nil
 	}
 
 	prompt := "Load the feature-checkout skill and process feature {{.FeatureID}} in project {{.ProjectID}}. Validate implementation coverage against dependency tasks' user_original_request intent. Create gap tasks if needed. If no gaps remain, open a Brain-native merge request into " + cfg.MergeTargetBranch + ". Start now."
@@ -55,11 +77,7 @@ func EnsureBuiltInFeatureCheckoutAutomation(ctx context.Context, brain *BrainSer
 		Global:      serviceBoolPtr(true),
 		Generated:   serviceBoolPtr(true),
 		GeneratedBy: BuiltInFeatureCheckoutGeneratedBy,
-		Trigger: &types.TriggerConfig{
-			Type:    "event",
-			Event:   types.EventFeatureCompleted,
-			OncePer: "feature_id",
-		},
+		Trigger:     desiredTrigger,
 		Action: &types.AutomationAction{
 			Type:          "prompt",
 			DirectPrompt:  prompt,
@@ -79,6 +97,19 @@ func EnsureBuiltInFeatureCheckoutAutomation(ctx context.Context, brain *BrainSer
 		return fmt.Errorf("create built-in feature checkout automation: %w", err)
 	}
 	return nil
+}
+
+// triggerNeedsCheckoutModeMigration reports whether an existing built-in
+// automation trigger is missing the expected checkout_mode filter value.
+// A nil trigger or missing/mismatched filter counts as "needs migration".
+func triggerNeedsCheckoutModeMigration(trigger *types.TriggerConfig, wantMode string) bool {
+	if trigger == nil {
+		return true
+	}
+	if trigger.Filter == nil {
+		return true
+	}
+	return trigger.Filter["checkout_mode"] != wantMode
 }
 
 func serviceBoolPtr(v bool) *bool { return &v }

@@ -65,8 +65,9 @@ Entry types:
 - execution, dream, automation_run, merge_request: system-generated entries (rarely created by hand)
 
 Only type, title, and content are required. The remaining parameters apply conditionally:
-- Task options (depends_on, feature_*, schedule*, merge_*, executor, agent, model, direct_prompt, extensions, target_workdir, git_branch, execution_mode, complete_on_idle, user_original_request) apply only when type is 'task' and are ignored for other types.
+- Task options (depends_on, feature_*, schedule*, merge_*, executor, agent, model, direct_prompt, extensions, target_workdir, git_branch, execution_mode, complete_on_idle, checkout_mode, user_original_request) apply only when type is 'task' and are ignored for other types.
 - trigger applies to 'task' and 'automation' entries; action and retry apply to 'automation' entries only.
+- checkout_mode ("ai" default, or "simple") selects the feature-checkout automation path for a feature's post-completion checkout: "ai" runs the feature-checkout skill via LLM, "simple" runs a deterministic script-based squash merge.
 
 Feature orchestration (tasks):
 - Use feature_id to group tasks into a feature.
@@ -119,6 +120,7 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
+				"checkout_mode":         {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation. Only meaningful on task entries whose feature completion triggers a checkout automation."},
 				"related_entries":       {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entry paths to link"},
 			},
 			Required: []string{"type", "title", "content"},
@@ -187,6 +189,9 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 			body["open_pr_before_merge"] = args["open_pr_before_merge"]
 			body["execution_mode"] = args["execution_mode"]
 			body["complete_on_idle"] = args["complete_on_idle"]
+			if v, ok := args["checkout_mode"].(string); ok && v != "" {
+				body["checkout_mode"] = v
+			}
 			if v, ok := args["executor"].(string); ok && v != "" {
 				body["executor"] = v
 			}
@@ -1057,7 +1062,7 @@ If both content and append are provided, content replaces the body first, then a
 
 Statuses: draft, pending, active, in_progress, blocked, cancelled, completed, validated, superseded, archived
 
-Note: as a guard against clients that autofill every optional field, when 3 or more optional fields exactly match their documented defaults (priority: "medium", feature_priority: "high", merge_policy: "prompt_only", merge_strategy: "squash", remote_branch_policy: "keep", execution_mode: "worktree", executor: "opencode", open_pr_before_merge: false, complete_on_idle: false, schedule_enabled: false, max_runs: 0), those default-valued fields are ignored and listed in the response. To intentionally set several fields to those exact values, update them in separate calls.`,
+Note: as a guard against clients that autofill every optional field, when 3 or more optional fields exactly match their documented defaults (priority: "medium", feature_priority: "high", merge_policy: "prompt_only", merge_strategy: "squash", remote_branch_policy: "keep", execution_mode: "worktree", executor: "opencode", open_pr_before_merge: false, complete_on_idle: false, schedule_enabled: false, max_runs: 0, checkout_mode: "ai"), those default-valued fields are ignored and listed in the response. To intentionally set several fields to those exact values, update them in separate calls.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -1079,6 +1084,7 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 				"open_pr_before_merge": {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":       {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":     {Type: "boolean", Description: "Mark task as completed when agent becomes idle"},
+				"checkout_mode":        {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation."},
 				"schedule":             {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *')"},
 				"schedule_enabled":     {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
 				"max_runs":             {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."},
@@ -1115,7 +1121,7 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 			"merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode",
 			"schedule", "run_once_at", "timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
 			"feature_schedule", "feature_starts_at", "feature_expires_at", "feature_run_once_at", "feature_timezone",
-			"direct_prompt", "agent", "model", "executor",
+			"direct_prompt", "agent", "model", "executor", "checkout_mode",
 		)
 		addPresentUpdateFields(body, cleanArgs,
 			"depends_on", "tags", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs",
@@ -1293,6 +1299,7 @@ var openCodeOptionalDefaults = map[string]any{
 	"complete_on_idle":     false,
 	"schedule_enabled":     false,
 	"max_runs":             0,
+	"checkout_mode":        "ai",
 }
 
 // sanitizeUpdateArgs drops empty-string values and guards against clients

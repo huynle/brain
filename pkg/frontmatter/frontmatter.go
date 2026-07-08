@@ -202,6 +202,7 @@ type Frontmatter struct {
 	TargetWorkdir      string   `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
 	Executor           string   `yaml:"executor,omitempty" json:"executor,omitempty"`
 	Extensions         []string `yaml:"extensions,omitempty" json:"extensions,omitempty"`
+	CheckoutMode       string   `yaml:"checkout_mode,omitempty" json:"checkout_mode,omitempty"`
 
 	// User intent / prompts
 	UserOriginalRequest string `yaml:"user_original_request,omitempty" json:"user_original_request,omitempty"`
@@ -282,6 +283,7 @@ type GenerateOptions struct {
 	TargetWorkdir      string
 	Executor           string
 	Extensions         []string
+	CheckoutMode       string
 
 	UserOriginalRequest string
 	DirectPrompt        string
@@ -368,6 +370,7 @@ type rawFrontmatter struct {
 	TargetWorkdir       string                     `yaml:"target_workdir"`
 	Executor            string                     `yaml:"executor"`
 	Extensions          []string                   `yaml:"extensions"`
+	CheckoutMode        string                     `yaml:"checkout_mode"`
 	UserOriginalRequest string                     `yaml:"user_original_request"`
 	DirectPrompt        string                     `yaml:"direct_prompt"`
 	Agent               string                     `yaml:"agent"`
@@ -408,6 +411,7 @@ var knownFields = map[string]bool{
 	"remote_branch_policy": true, "open_pr_before_merge": true,
 	"execution_mode": true, "complete_on_idle": true, "target_workdir": true,
 	"executor": true, "extensions": true,
+	"checkout_mode": true,
 	"user_original_request": true, "direct_prompt": true,
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
@@ -546,6 +550,7 @@ func Parse(content string) (*Document, error) {
 		TargetWorkdir:       raw.TargetWorkdir,
 		Executor:            raw.Executor,
 		Extensions:          raw.Extensions,
+		CheckoutMode:        raw.CheckoutMode,
 		UserOriginalRequest: raw.UserOriginalRequest,
 		DirectPrompt:        raw.DirectPrompt,
 		Agent:               raw.Agent,
@@ -785,6 +790,7 @@ func Serialize(fm *Frontmatter) string {
 	emitPlain("merge_policy", fm.MergePolicy)
 	emitPlain("merge_strategy", fm.MergeStrategy)
 	emitPlain("remote_branch_policy", fm.RemoteBranchPolicy)
+	emitPlain("checkout_mode", fm.CheckoutMode)
 
 	if fm.OpenPRBeforeMerge != nil {
 		lines = append(lines, fmt.Sprintf("open_pr_before_merge: %v", *fm.OpenPRBeforeMerge))
@@ -965,6 +971,7 @@ func Generate(opts *GenerateOptions) string {
 		TargetWorkdir:       opts.TargetWorkdir,
 		Executor:            opts.Executor,
 		Extensions:          opts.Extensions,
+		CheckoutMode:        opts.CheckoutMode,
 		UserOriginalRequest: opts.UserOriginalRequest,
 		DirectPrompt:        opts.DirectPrompt,
 		Agent:               opts.Agent,

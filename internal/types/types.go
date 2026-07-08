@@ -120,6 +120,30 @@ var RemoteBranchPolicies = []string{"keep", "delete"}
 var ExecutionModes = []string{"worktree", "current_branch"}
 var Executors = []string{"opencode", "pi", "script"}
 
+// CheckoutModes lists valid values for CheckoutMode on tasks/entries.
+// "ai" (default) runs the LLM-based feature-checkout skill; "simple" triggers a
+// deterministic squash-merge automation.
+//
+// Storage policy: we do NOT persist "ai" as a default value. Empty string is
+// stored on entries that omit the field, and downstream code treats empty as
+// equivalent to "ai". This preserves backward compatibility for existing tasks
+// that pre-date the CheckoutMode field.
+var CheckoutModes = []string{"ai", "simple"}
+
+// IsValidCheckoutMode reports whether s is a recognized checkout mode.
+// Empty string is treated as valid (defaults to "ai" downstream).
+func IsValidCheckoutMode(s string) bool {
+	if s == "" {
+		return true
+	}
+	for _, v := range CheckoutModes {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
 // =============================================================================
 // Project Placement
 // =============================================================================
@@ -297,6 +321,7 @@ type BrainEntry struct {
 	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 	SessionMode        string `json:"session_mode,omitempty"`
+	CheckoutMode       string `json:"checkout_mode,omitempty"`
 
 	// Task execution fields
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
@@ -615,6 +640,7 @@ type CreateEntryRequest struct {
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 	SessionMode        string `json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool  `json:"complete_on_idle,omitempty"`
+	CheckoutMode       string `json:"checkout_mode,omitempty"`
 
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
@@ -692,6 +718,7 @@ type UpdateEntryRequest struct {
 	CompleteOnIdle     *bool     `json:"complete_on_idle,omitempty"`
 	Executor           *string   `json:"executor,omitempty"`
 	Extensions         *[]string `json:"extensions,omitempty"`
+	CheckoutMode       *string   `json:"checkout_mode,omitempty"`
 
 	FeatureID        *string   `json:"feature_id,omitempty"`
 	FeaturePriority  *string   `json:"feature_priority,omitempty"`
@@ -948,6 +975,7 @@ type ResolvedTask struct {
 	RemoteBranchPolicy string `json:"remote_branch_policy,omitempty"`
 	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"`
+	CheckoutMode       string `json:"checkout_mode,omitempty"`
 
 	FeatureID        string   `json:"feature_id,omitempty"`
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
@@ -1232,6 +1260,7 @@ type FeatureCheckoutOptions struct {
 	RemoteBranchPolicy string `json:"remote_branch_policy,omitempty"` // "keep", "delete"
 	OpenPRBeforeMerge  bool   `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"` // "worktree", "current_branch"
+	CheckoutMode       string `json:"checkout_mode,omitempty"`  // "ai" (default) or "simple"
 }
 
 // CheckoutFeatureResult is the response for CheckoutFeature.

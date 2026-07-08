@@ -170,6 +170,7 @@ type TaskMetadataResponse struct {
 	ResolvedWorkdir     string                       `json:"resolved_workdir"`
 	DirectPrompt        string                       `json:"direct_prompt"`
 	Executor            string                       `json:"executor"`
+	CheckoutMode        string                       `json:"checkout_mode,omitempty"`
 	FeatureID           string                       `json:"feature_id"`
 	FeaturePriority     string                       `json:"feature_priority"`
 	FeatureDependsOn    []string                     `json:"feature_depends_on"`
@@ -230,6 +231,7 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 		ResolvedWorkdir:     task.ResolvedWorkdir,
 		DirectPrompt:        task.DirectPrompt,
 		Executor:            task.Executor,
+		CheckoutMode:        task.CheckoutMode,
 		FeatureID:           task.FeatureID,
 		FeaturePriority:     task.FeaturePriority,
 		FeatureDependsOn:    task.FeatureDependsOn,

@@ -412,6 +412,7 @@ func checkoutFeatureTool() ToolDefinition {
 				"remote_branch_policy": map[string]any{"type": "string", "enum": []string{"keep", "delete"}},
 				"open_pr_before_merge": map[string]any{"type": "boolean"},
 				"execution_mode":       map[string]any{"type": "string", "enum": []string{"worktree", "current_branch"}},
+				"checkout_mode":        map[string]any{"type": "string", "enum": types.CheckoutModes, "description": "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation."},
 			},
 			"required": []string{"feature_id"},
 		},
@@ -435,6 +436,7 @@ func checkoutFeatureTool() ToolDefinition {
 				MergeStrategy:      stringArg(args, "merge_strategy"),
 				RemoteBranchPolicy: stringArg(args, "remote_branch_policy"),
 				ExecutionMode:      stringArg(args, "execution_mode"),
+				CheckoutMode:       stringArg(args, "checkout_mode"),
 			}
 			if b := boolPtrArg(args, "open_pr_before_merge"); b != nil {
 				opts.OpenPRBeforeMerge = *b

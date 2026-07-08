@@ -209,3 +209,27 @@ func TestCreateUpdateEntryRequestsCarryAttachmentReferences(t *testing.T) {
 		t.Fatalf("UpdateEntryRequest attachments = %#v, want att-2 reference", updateReq.Attachments)
 	}
 }
+
+func TestIsValidCheckoutMode(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"", true}, // empty is allowed (defaults to "ai" downstream)
+		{"ai", true},
+		{"simple", true},
+		{"AI", false},      // case-sensitive
+		{"Simple", false},  // case-sensitive
+		{"garbage", false},
+		{"auto_pr", false}, // valid merge_policy but not a checkout_mode
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := IsValidCheckoutMode(tt.input)
+			if got != tt.want {
+				t.Errorf("IsValidCheckoutMode(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}

@@ -438,7 +438,7 @@ func TestBrainUpdate_HandlerOmitsOpenCodeOptionalDefaults(t *testing.T) {
 		if body["status"] != "pending" {
 			t.Errorf("body.status = %v, want %q", body["status"], "pending")
 		}
-		for _, key := range []string{"priority", "feature_priority", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode", "executor", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs"} {
+		for _, key := range []string{"priority", "feature_priority", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode", "executor", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs", "checkout_mode"} {
 			if _, ok := body[key]; ok {
 				t.Fatalf("body should not include OpenCode optional default %q: %#v", key, body)
 			}
@@ -492,6 +492,7 @@ func TestBrainUpdate_HandlerOmitsOpenCodeOptionalDefaults(t *testing.T) {
 		"agent":                "",
 		"model":                "",
 		"executor":             "opencode",
+		"checkout_mode":        "ai",
 	})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
@@ -524,7 +525,7 @@ func TestBrainBulkUpdate_HandlerOmitsOpenCodeOptionalDefaultsInEntryUpdates(t *t
 		if updates["status"] != "pending" {
 			t.Errorf("updates.status = %v, want %q", updates["status"], "pending")
 		}
-		for _, key := range []string{"priority", "feature_priority", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode", "executor", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs"} {
+		for _, key := range []string{"priority", "feature_priority", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode", "executor", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs", "checkout_mode"} {
 			if _, ok := updates[key]; ok {
 				t.Fatalf("updates should not include OpenCode optional default %q: %#v", key, updates)
 			}
@@ -563,6 +564,7 @@ func TestBrainBulkUpdate_HandlerOmitsOpenCodeOptionalDefaultsInEntryUpdates(t *t
 					"schedule_enabled":     false,
 					"max_runs":             float64(0),
 					"executor":             "opencode",
+					"checkout_mode":        "ai",
 				},
 			},
 		},
@@ -1359,6 +1361,7 @@ func TestBrainSave_SchemaProperties(t *testing.T) {
 		"git_branch", "merge_target_branch", "merge_policy", "merge_strategy",
 		"remote_branch_policy", "open_pr_before_merge", "execution_mode",
 		"complete_on_idle", "executor", "extensions", "trigger", "action", "retry", "related_entries",
+		"checkout_mode",
 	}
 
 	for _, prop := range expectedProps {
@@ -1390,6 +1393,7 @@ func TestBrainUpdate_SchemaProperties(t *testing.T) {
 		"schedule", "schedule_enabled", "feature_id", "feature_priority",
 		"feature_depends_on", "direct_prompt", "agent", "model",
 		"executor", "extensions", "trigger", "action", "retry",
+		"checkout_mode",
 	}
 
 	for _, prop := range expectedProps {
@@ -1461,6 +1465,94 @@ func TestBrainSave_ForwardsFeatureCompletionTrigger(t *testing.T) {
 	})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
+	}
+}
+
+// TestBrainSave_ForwardsCheckoutMode verifies that when a client sets
+// checkout_mode on a task save, the value is copied through to the outbound
+// entries request body. This is the write-side of the checkout_mode field
+// wired in Phase 2.
+func TestBrainSave_ForwardsCheckoutMode(t *testing.T) {
+	cachedContext = &ExecutionContext{
+		ProjectID: "test-project",
+		Workdir:   "projects/test",
+		GitRemote: "git@github.com:test/repo.git",
+		GitBranch: "main",
+	}
+	defer func() { cachedContext = nil }()
+
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != "POST" || r.URL.Path != "/api/v1/entries" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"id": "abc", "path": "p/task/abc.md", "title": "Task", "type": "task", "status": "draft",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["save"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"type":          "task",
+		"title":         "Simple checkout task",
+		"content":       "Merge without AI review",
+		"feature_id":    "auth-system",
+		"checkout_mode": "simple",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if got := capturedBody["checkout_mode"]; got != "simple" {
+		t.Fatalf("checkout_mode in body = %#v, want %q", got, "simple")
+	}
+}
+
+// TestBrainSave_CheckoutModeIgnoredForNonTask verifies that checkout_mode is
+// only forwarded for task entries; non-task entries should never carry it in
+// the outbound body.
+func TestBrainSave_CheckoutModeIgnoredForNonTask(t *testing.T) {
+	cachedContext = &ExecutionContext{ProjectID: "test-project"}
+	defer func() { cachedContext = nil }()
+
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"id": "abc", "path": "p/summary/abc.md", "title": "Note", "type": "summary", "status": "active",
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterBrainTools(s, client)
+
+	handler := s.tools["save"].handler
+	_, err := handler(context.Background(), map[string]any{
+		"type":          "summary",
+		"title":         "Not a task",
+		"content":       "Notes",
+		"checkout_mode": "simple",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if _, ok := capturedBody["checkout_mode"]; ok {
+		t.Fatalf("checkout_mode should not appear on non-task body: %#v", capturedBody)
 	}
 }
 

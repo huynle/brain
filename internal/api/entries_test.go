@@ -427,6 +427,28 @@ func TestHandleCreateEntry(t *testing.T) {
 			},
 		},
 		{
+			name: "invalid checkout_mode",
+			body: map[string]any{
+				"type":          "task",
+				"title":         "Test",
+				"content":       "Content",
+				"checkout_mode": "garbage",
+			},
+			wantStatus: http.StatusBadRequest,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				found := false
+				for _, d := range body.Details {
+					if d.Field == "checkout_mode" {
+						found = true
+					}
+				}
+				if !found {
+					t.Error("expected validation detail for field 'checkout_mode'")
+				}
+			},
+		},
+		{
 			name:       "invalid JSON body",
 			body:       "not json",
 			wantStatus: http.StatusBadRequest,
@@ -2377,6 +2399,32 @@ func TestHandleBulkUpdate(t *testing.T) {
 				}
 				if !found {
 					t.Errorf("expected validation detail for field 'entries[0].updates.merge_policy', got %+v", body.Details)
+				}
+			},
+		},
+		{
+			name: "validation error - invalid checkout_mode in entry updates",
+			body: map[string]any{
+				"entries": []map[string]any{
+					{
+						"path": "projects/x/task/y.md",
+						"updates": map[string]any{
+							"checkout_mode": "garbage",
+						},
+					},
+				},
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				found := false
+				for _, d := range body.Details {
+					if d.Field == "entries[0].updates.checkout_mode" {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("expected validation detail for field 'entries[0].updates.checkout_mode', got %+v", body.Details)
 				}
 			},
 		},

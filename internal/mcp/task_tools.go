@@ -700,6 +700,7 @@ or to inspect its dependency graph details. Complements task_get which returns c
 				"merge_strategy":       nilIfEmpty(task.MergeStrategy),
 				"remote_branch_policy": nilIfEmpty(task.RemoteBranchPolicy),
 				"open_pr_before_merge": task.OpenPRBeforeMerge,
+				"checkout_mode":        nilIfEmpty(task.CheckoutMode),
 			},
 
 			// Dependencies (raw IDs)
@@ -1370,6 +1371,7 @@ type fullTask struct {
 	OpenPRBeforeMerge   *bool    `json:"open_pr_before_merge"`
 	ExecutionMode       string   `json:"execution_mode"`
 	CompleteOnIdle      *bool    `json:"complete_on_idle"`
+	CheckoutMode        string   `json:"checkout_mode,omitempty"`
 	FeatureID           string   `json:"feature_id"`
 	FeaturePriority     string   `json:"feature_priority"`
 	FeatureDependsOn    []string `json:"feature_depends_on"`

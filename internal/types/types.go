@@ -19,6 +19,7 @@ var EntryTypes = []string{
 	"plan",
 	"pattern",
 	"learning",
+	"quirk",
 	"idea",
 	"scratch",
 	"decision",

@@ -59,6 +59,7 @@ func registerBrainSave(s *Server, client *APIClient) {
 Entry types:
 - summary, report, walkthrough, plan, decision, exploration: documentation entries (session summaries, analysis reports, code explanations, implementation plans, ADRs, research findings)
 - pattern, learning: reusable knowledge and best practices (use global:true for cross-project)
+- quirk: a project-specific gotcha — surprising behavior, non-obvious constraint, or required workaround (e.g. "tests hang unless FOO_ENV is unset", "the staging DB truncates timestamps"). Save one the moment you discover it, keep it short and factual, and include how to work around it. Recall a project's quirks at session start with list(type:'quirk') or inject(query, type:'quirk').
 - idea, scratch: ideas for future exploration and temporary working notes
 - task: a work item for the task runner (see task options below)
 - automation: an event-driven behavior (see trigger, action, retry)

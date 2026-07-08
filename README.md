@@ -10,7 +10,7 @@ Built with Go and [Bubbletea](https://github.com/charmbracelet/bubbletea).
 
 AI coding agents are powerful but stateless — they forget everything between sessions. Brain solves this by providing:
 
-- **Persistent memory** — Save decisions, explorations, patterns, and learnings that survive across sessions
+- **Persistent memory** — Save decisions, explorations, patterns, learnings, and project quirks that survive across sessions
 - **Structured task queues** — Break work into dependency-tracked tasks that agents execute autonomously
 - **Feature orchestration** — Group related tasks into features, execute them in order, and track progress
 - **Scheduled tasks** — Schedule recurring tasks with cron expressions directly in task frontmatter
@@ -22,7 +22,7 @@ AI coding agents are powerful but stateless — they forget everything between s
 
 ### Knowledge Management
 - **Zettelkasten-style knowledge graph** with bidirectional linking between entries
-- **12 entry types**: summaries, reports, walkthroughs, plans, patterns, learnings, ideas, scratch notes, decisions, explorations, executions, and tasks
+- **13 entry types**: summaries, reports, walkthroughs, plans, patterns, learnings, quirks, ideas, scratch notes, decisions, explorations, executions, and tasks
 - **Full-text search** across all entries with filtering by type, status, tags, and feature
 - **Graph traversal**: backlinks, outlinks, related entries, and orphan detection
 - **Section extraction** from plan entries for precise context injection

@@ -1,6 +1,38 @@
 package types
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
+
+// Canonical automation action types. Aliases are normalized via
+// NormalizeAutomationActionType.
+const (
+	AutomationActionPrompt = "prompt"
+	AutomationActionScript = "script"
+	AutomationActionUpdate = "update"
+	AutomationActionHTTP   = "http"
+)
+
+// NormalizeAutomationActionType returns the canonical action type for the
+// given raw value, folding known aliases into their canonical form.
+//
+// Currently recognized aliases:
+//   - "shell" → "script" (undocumented alias used by early automations that
+//     wrapped shell commands; kept working for backward compatibility so
+//     manual runs and event dispatch treat them the same as scripts).
+//
+// Unknown values are returned lower-cased and trimmed; empty stays empty
+// (callers should apply their own default, typically "prompt").
+func NormalizeAutomationActionType(raw string) string {
+	t := strings.ToLower(strings.TrimSpace(raw))
+	switch t {
+	case "shell":
+		return AutomationActionScript
+	default:
+		return t
+	}
+}
 
 // =============================================================================
 // Automation Entry Types

@@ -243,6 +243,112 @@ func TestEnsureBuiltInFeatureCheckoutAutomationCreatesAutomation(t *testing.T) {
 	if !strings.Contains(automation.Action.DirectPrompt, "Brain-native merge request") {
 		t.Fatalf("action prompt should request a Brain-native merge request, got: %s", automation.Action.DirectPrompt)
 	}
+	// Phase 3.2: existing AI automation gains a checkout_mode:ai trigger filter
+	// so that only feature.completed events carrying checkout_mode=ai match it.
+	if automation.Trigger.Filter == nil || automation.Trigger.Filter["checkout_mode"] != "ai" {
+		t.Fatalf("trigger filter should be checkout_mode:ai, got %+v", automation.Trigger.Filter)
+	}
+}
+
+func TestEnsureBuiltInFeatureCheckoutAutomationMigratesLegacyEntryToAddFilter(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Seed a pre-migration entry that was created BEFORE Phase 3.2 shipped:
+	// same GeneratedBy, correct trigger event, but NO filter map.
+	legacyGeneratedBy := BuiltInFeatureCheckoutGeneratedBy
+	trueVal := true
+	seedResp, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:        "automation",
+		Title:       "Built-in feature checkout",
+		Status:      "active",
+		Global:      &trueVal,
+		Generated:   &trueVal,
+		GeneratedBy: legacyGeneratedBy,
+		Trigger: &types.TriggerConfig{
+			Type:    "event",
+			Event:   types.EventFeatureCompleted,
+			OncePer: "feature_id",
+			// No Filter — this simulates the pre-Phase-3 shape.
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Load the feature-checkout skill and process feature {{.FeatureID}} ...",
+		},
+	})
+	if err != nil {
+		t.Fatalf("seed legacy automation: %v", err)
+	}
+
+	if err := EnsureBuiltInFeatureCheckoutAutomation(ctx, brain, BuiltInFeatureCheckoutConfig{
+		Enabled:           true,
+		MergeTargetBranch: "main",
+	}); err != nil {
+		t.Fatalf("EnsureBuiltInFeatureCheckoutAutomation failed: %v", err)
+	}
+
+	// Reload the seeded entry — its trigger must now include the filter.
+	updated, err := brain.Recall(ctx, seedResp.Path)
+	if err != nil {
+		t.Fatalf("recall migrated automation: %v", err)
+	}
+	if updated.Trigger == nil {
+		t.Fatalf("expected trigger on migrated entry, got nil")
+	}
+	if updated.Trigger.Filter["checkout_mode"] != "ai" {
+		t.Fatalf("migration failed: trigger filter %+v, want checkout_mode:ai", updated.Trigger.Filter)
+	}
+	// Migration must not create a duplicate entry.
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 100})
+	if err != nil {
+		t.Fatalf("List automations: %v", err)
+	}
+	count := 0
+	for _, e := range resp.Entries {
+		if e.GeneratedBy == BuiltInFeatureCheckoutGeneratedBy {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 AI built-in automation after migration, got %d", count)
+	}
+}
+
+func TestEnsureBuiltInFeatureCheckoutAutomationNoOpWhenFilterAlreadyPresent(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// First call: creates entry with the new filter.
+	if err := EnsureBuiltInFeatureCheckoutAutomation(ctx, brain, BuiltInFeatureCheckoutConfig{
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("first ensure: %v", err)
+	}
+	respFirst, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 10})
+	if err != nil {
+		t.Fatalf("first list: %v", err)
+	}
+	if len(respFirst.Entries) != 1 {
+		t.Fatalf("first ensure created %d entries, want 1", len(respFirst.Entries))
+	}
+	firstVersion := respFirst.Entries[0].Modified
+
+	// Second call: entry already has correct filter, must not update or create.
+	if err := EnsureBuiltInFeatureCheckoutAutomation(ctx, brain, BuiltInFeatureCheckoutConfig{
+		Enabled: true,
+	}); err != nil {
+		t.Fatalf("second ensure: %v", err)
+	}
+	respSecond, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 10})
+	if err != nil {
+		t.Fatalf("second list: %v", err)
+	}
+	if len(respSecond.Entries) != 1 {
+		t.Fatalf("second ensure changed entry count to %d, want 1", len(respSecond.Entries))
+	}
+	if respSecond.Entries[0].Modified != firstVersion {
+		t.Fatalf("second ensure modified an already-correct entry (was %v, now %v)", firstVersion, respSecond.Entries[0].Modified)
+	}
 }
 
 func TestEnsureBuiltInFeatureCheckoutAutomationDisabledDoesNothing(t *testing.T) {
@@ -2179,4 +2285,211 @@ func setTestNow(t *testing.T, now time.Time) {
 	original := types.TimeNowUTC
 	types.TimeNowUTC = func() time.Time { return now.UTC() }
 	t.Cleanup(func() { types.TimeNowUTC = original })
+}
+
+// TestAutomationService_CheckScheduledHonorsTimezone verifies that automation
+// cron triggers evaluate the schedule in the automation's configured timezone
+// rather than always UTC. Regression guard for Finding 3 of plan 24urhmtl.
+//
+// Schedule "0 7 * * 1-5" fires at 07:00 Mon-Fri. now=2026-07-07 13:00 UTC is
+// 07:00 MDT on Tuesday in America/Denver, so a Denver-scoped automation MUST
+// match while a UTC-scoped one MUST NOT.
+func TestAutomationService_CheckScheduledHonorsTimezone(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	// 07:00 America/Denver (MDT, UTC-6) on Tuesday 2026-07-07.
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:     "automation",
+		Title:    "Denver morning cron",
+		Content:  "Fires at 07:00 Denver local on weekdays.",
+		Status:   "active",
+		Project:  "automation-cron-tz-denver",
+		Agent:    "build",
+		Model:    "test-model",
+		Executor: "pi",
+		Trigger: &types.TriggerConfig{
+			Type:     "cron",
+			Schedule: "0 7 * * 1-5",
+			Timezone: "America/Denver",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Fire the Denver-timezone cron automation.",
+			Agent:        "assistant",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save Denver automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	if err := automation.CheckScheduled(ctx, now); err != nil {
+		t.Fatalf("CheckScheduled Denver failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-cron-tz-denver",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List Denver tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected 1 generated task for Denver-timezone automation at 07:00 MDT, got %d", len(resp.Entries))
+	}
+}
+
+// TestAutomationService_CheckScheduledUTCTimezoneDoesNotMatchOffHour is the
+// negative counterpart: the same "0 7 * * 1-5" schedule with timezone "UTC"
+// must NOT fire at now=13:00 UTC, because 13 != 7.
+func TestAutomationService_CheckScheduledUTCTimezoneDoesNotMatchOffHour(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	now := time.Date(2026, 7, 7, 13, 0, 0, 0, time.UTC)
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:     "automation",
+		Title:    "UTC 07:00 cron",
+		Content:  "Fires at 07:00 UTC weekdays.",
+		Status:   "active",
+		Project:  "automation-cron-tz-utc",
+		Agent:    "build",
+		Model:    "test-model",
+		Executor: "pi",
+		Trigger: &types.TriggerConfig{
+			Type:     "cron",
+			Schedule: "0 7 * * 1-5",
+			Timezone: "UTC",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Should not fire at 13:00 UTC.",
+			Agent:        "assistant",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save UTC automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	if err := automation.CheckScheduled(ctx, now); err != nil {
+		t.Fatalf("CheckScheduled UTC failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-cron-tz-utc",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List UTC tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 0 {
+		t.Fatalf("expected 0 generated tasks for UTC-timezone automation at 13:00 UTC (schedule is 07:00), got %d", len(resp.Entries))
+	}
+}
+
+// TestAutomationService_CheckScheduledEmptyTimezoneDefaultsToUTC is a
+// regression guard: existing automations without a timezone field must
+// continue to evaluate schedules in UTC.
+func TestAutomationService_CheckScheduledEmptyTimezoneDefaultsToUTC(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	// 07:00 UTC on Tuesday — matches "0 7 * * 1-5" only when interpreted as UTC.
+	now := time.Date(2026, 7, 7, 7, 0, 0, 0, time.UTC)
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:     "automation",
+		Title:    "Legacy no-tz cron",
+		Content:  "Existing automation without timezone field.",
+		Status:   "active",
+		Project:  "automation-cron-tz-empty",
+		Agent:    "build",
+		Model:    "test-model",
+		Executor: "pi",
+		Trigger: &types.TriggerConfig{
+			Type:     "cron",
+			Schedule: "0 7 * * 1-5",
+			// Timezone intentionally omitted.
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Legacy UTC behavior.",
+			Agent:        "assistant",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save legacy automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	if err := automation.CheckScheduled(ctx, now); err != nil {
+		t.Fatalf("CheckScheduled legacy failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-cron-tz-empty",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List legacy tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected 1 generated task for empty-timezone automation at 07:00 UTC (defaults to UTC), got %d", len(resp.Entries))
+	}
+}
+
+// TestAutomationService_CheckScheduledInvalidTimezoneDefaultsToUTC verifies
+// that a malformed timezone string does not break scheduling: it falls back
+// to UTC (with a warn log emitted by pkg/cron.LoadTimezone).
+func TestAutomationService_CheckScheduledInvalidTimezoneDefaultsToUTC(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	// 07:00 UTC on Tuesday.
+	now := time.Date(2026, 7, 7, 7, 0, 0, 0, time.UTC)
+
+	_, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:     "automation",
+		Title:    "Bad tz cron",
+		Content:  "Automation with an invalid timezone string.",
+		Status:   "active",
+		Project:  "automation-cron-tz-bad",
+		Agent:    "build",
+		Model:    "test-model",
+		Executor: "pi",
+		Trigger: &types.TriggerConfig{
+			Type:     "cron",
+			Schedule: "0 7 * * 1-5",
+			Timezone: "Not/A_Real_Zone_1234",
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Should still fire in UTC fallback.",
+			Agent:        "assistant",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save bad-tz automation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	if err := automation.CheckScheduled(ctx, now); err != nil {
+		t.Fatalf("CheckScheduled bad-tz failed: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{
+		Type:    "task",
+		Project: "automation-cron-tz-bad",
+		Limit:   10,
+	})
+	if err != nil {
+		t.Fatalf("List bad-tz tasks failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("expected 1 generated task for invalid-timezone automation (UTC fallback) at 07:00 UTC, got %d", len(resp.Entries))
+	}
 }

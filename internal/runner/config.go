@@ -202,6 +202,10 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		HooksDir:          resolvedHooksDir,
 		HookTimeout:       resolvedHookTimeout,
 		HeartbeatInterval: getEnvIntOrDefault("RUNNER_HEARTBEAT_INTERVAL", firstNonZero(fileCfg.HeartbeatInterval, 30)),
+		ProjectRefreshInterval: getEnvIntOrDefault(
+			"RUNNER_PROJECT_REFRESH_INTERVAL",
+			firstNonZero(fileCfg.ProjectRefreshInterval, 60),
+		),
 		LogStreaming:      getEnvBoolOrDefault("RUNNER_LOG_STREAMING", defaultLogStreaming(fileCfg.LogStreaming)),
 		Capabilities:      getEnvCSVOrDefault("RUNNER_CAPABILITIES", fileCfg.Capabilities),
 		DispatchPush:      getEnvBoolOrDefault("RUNNER_DISPATCH_PUSH", defaultDispatchPush(fileCfg.DispatchPush, fileHasDispatchPush)),
@@ -263,6 +267,9 @@ func ValidateConfig(cfg RunnerConfig) error {
 	}
 	if cfg.HeartbeatInterval < 1 {
 		errs = append(errs, fmt.Sprintf("heartbeatInterval must be >= 1, got %d", cfg.HeartbeatInterval))
+	}
+	if cfg.ProjectRefreshInterval < 0 {
+		errs = append(errs, fmt.Sprintf("projectRefreshInterval must be >= 0 (0 disables refresh), got %d", cfg.ProjectRefreshInterval))
 	}
 
 	// Validate inline hook configs.

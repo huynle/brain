@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -60,6 +61,12 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 		details = append(details, types.ValidationDetail{
 			Field:   "merge_policy",
 			Message: fmt.Sprintf("invalid merge_policy %q", req.MergePolicy),
+		})
+	}
+	if !types.IsValidCheckoutMode(req.CheckoutMode) {
+		details = append(details, types.ValidationDetail{
+			Field:   "checkout_mode",
+			Message: fmt.Sprintf("invalid checkout_mode %q", req.CheckoutMode),
 		})
 	}
 	if req.MergeStrategy != "" && !isValidEnum(req.MergeStrategy, types.MergeStrategies) {
@@ -327,6 +334,12 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 			Message: fmt.Sprintf("invalid merge_policy %q", *req.MergePolicy),
 		})
 	}
+	if req.CheckoutMode != nil && !types.IsValidCheckoutMode(*req.CheckoutMode) {
+		details = append(details, types.ValidationDetail{
+			Field:   "checkout_mode",
+			Message: fmt.Sprintf("invalid checkout_mode %q", *req.CheckoutMode),
+		})
+	}
 	if req.MergeStrategy != nil && !isValidEnum(*req.MergeStrategy, types.MergeStrategies) {
 		details = append(details, types.ValidationDetail{
 			Field:   "merge_strategy",
@@ -581,8 +594,27 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 
 // HandleBulkUpdate handles POST /entries/bulk-update.
 func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
+	// Read the raw body so we can (a) do strict field validation up front and
+	// (b) still decode into the typed request afterwards. Strict decoding
+	// prevents silent field drops (e.g. filter typos like "generted_by") which
+	// have caused unintended mass mutations on unrelated entries.
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to read request body")
+		return
+	}
+
+	// Strict decode first: reject unknown fields at any nesting level of the
+	// request. If unknown fields exist, respond 400 with the list of names so
+	// the caller can fix their payload instead of matching too broadly.
+	if unknown := findUnknownBulkUpdateFields(raw); len(unknown) > 0 {
+		WriteError(w, http.StatusBadRequest, "Bad Request",
+			fmt.Sprintf("unknown fields: %s", strings.Join(unknown, ", ")))
+		return
+	}
+
 	var req types.BulkUpdateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := json.Unmarshal(raw, &req); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
 		return
 	}
@@ -681,6 +713,70 @@ func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// bulkUpdateRequestFields is the set of top-level JSON keys accepted on a
+// BulkUpdateRequest. Anything else is rejected by HandleBulkUpdate.
+var bulkUpdateRequestFields = map[string]struct{}{
+	"filter":  {},
+	"updates": {},
+	"entries": {},
+	"dry_run": {},
+	"limit":   {},
+}
+
+// bulkUpdateFilterFields is the set of top-level JSON keys accepted on a
+// BulkUpdateFilter. This must be kept in sync with types.BulkUpdateFilter.
+var bulkUpdateFilterFields = map[string]struct{}{
+	"feature_id":     {},
+	"project":        {},
+	"type":           {},
+	"status":         {},
+	"tags":           {},
+	"priority":       {},
+	"generated_by":   {},
+	"generated_key":  {},
+	"agent":          {},
+	"executor":       {},
+	"execution_mode": {},
+}
+
+// findUnknownBulkUpdateFields returns a sorted-by-appearance list of unknown
+// JSON keys in the bulk-update request body, checking both top-level fields
+// and nested filter fields. It's tolerant of malformed JSON at deeper levels:
+// if a section is not a JSON object, it's simply skipped (the typed decode
+// step will produce the appropriate error).
+func findUnknownBulkUpdateFields(body []byte) []string {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		// Not a JSON object at all — let the typed decoder produce the error.
+		return nil
+	}
+
+	var unknown []string
+	for k := range top {
+		if _, ok := bulkUpdateRequestFields[k]; !ok {
+			unknown = append(unknown, k)
+		}
+	}
+
+	if rawFilter, ok := top["filter"]; ok && len(rawFilter) > 0 {
+		var filter map[string]json.RawMessage
+		if err := json.Unmarshal(rawFilter, &filter); err == nil {
+			for k := range filter {
+				if _, ok := bulkUpdateFilterFields[k]; !ok {
+					unknown = append(unknown, "filter."+k)
+				}
+			}
+		}
+	}
+
+	if len(unknown) == 0 {
+		return nil
+	}
+	// Sort for stable, testable output.
+	sort.Strings(unknown)
+	return unknown
+}
+
 // validateUpdateEnums validates enum fields in an UpdateEntryRequest and returns
 // validation details with the given field prefix.
 func validateUpdateEnums(prefix string, req *types.UpdateEntryRequest) []types.ValidationDetail {
@@ -701,6 +797,12 @@ func validateUpdateEnums(prefix string, req *types.UpdateEntryRequest) []types.V
 		details = append(details, types.ValidationDetail{
 			Field:   prefix + ".merge_policy",
 			Message: fmt.Sprintf("invalid merge_policy %q", *req.MergePolicy),
+		})
+	}
+	if req.CheckoutMode != nil && !types.IsValidCheckoutMode(*req.CheckoutMode) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".checkout_mode",
+			Message: fmt.Sprintf("invalid checkout_mode %q", *req.CheckoutMode),
 		})
 	}
 	if req.MergeStrategy != nil && !isValidEnum(*req.MergeStrategy, types.MergeStrategies) {
@@ -1111,6 +1213,7 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		MergeStrategy:      strPtr(fm.MergeStrategy),
 		RemoteBranchPolicy: strPtr(fm.RemoteBranchPolicy),
 		ExecutionMode:      strPtr(fm.ExecutionMode),
+		CheckoutMode:       strPtr(fm.CheckoutMode),
 		DirectPrompt:       strPtr(fm.DirectPrompt),
 		Agent:              strPtr(fm.Agent),
 		Model:              strPtr(fm.Model),
@@ -1167,7 +1270,100 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		req.MaxRuns = fm.MaxRuns
 	}
 
+	// Automation-specific nested structs (trigger/action/retry/goal). These
+	// are required for editing automation entries via the PWA's raw-file
+	// editor — without them the save would silently drop schedule/event
+	// changes and leave the entry unchanged. brain.Update at
+	// service/brain.go:856–867 knows how to apply these; we just need to
+	// carry them through the FM→UpdateRequest hop.
+	if fm.Trigger != nil {
+		req.Trigger = fmTriggerConfigToType(fm.Trigger)
+	}
+	if fm.Action != nil {
+		req.Action = fmAutomationActionToType(fm.Action)
+	}
+	if fm.Retry != nil {
+		req.Retry = fmAutomationRetryToType(fm.Retry)
+	}
+	if fm.Goal != nil {
+		req.Goal = fmGoalConfigToType(fm.Goal)
+	}
+
 	return req
+}
+
+// fmTriggerConfigToType converts a frontmatter TriggerConfig to a domain
+// TriggerConfig. The two structs are field-identical; this exists purely
+// as an API-package-local converter so we don't create an internal/api →
+// internal/service import.
+func fmTriggerConfigToType(t *frontmatter.TriggerConfig) *types.TriggerConfig {
+	if t == nil {
+		return nil
+	}
+	return &types.TriggerConfig{
+		Type:                   t.Type,
+		Event:                  t.Event,
+		Events:                 t.Events,
+		Schedule:               t.Schedule,
+		Timezone:               t.Timezone,
+		Filter:                 t.Filter,
+		OncePer:                t.OncePer,
+		Webhook:                t.Webhook,
+		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
+		Cooldown:               t.Cooldown,
+		MaxConcurrent:          t.MaxConcurrent,
+	}
+}
+
+// fmAutomationActionToType converts a frontmatter AutomationAction to a
+// domain AutomationAction.
+func fmAutomationActionToType(a *frontmatter.AutomationAction) *types.AutomationAction {
+	if a == nil {
+		return nil
+	}
+	return &types.AutomationAction{
+		Type:               a.Type,
+		DirectPrompt:       a.DirectPrompt,
+		Command:            a.Command,
+		Agent:              a.Agent,
+		Model:              a.Model,
+		Executor:           a.Executor,
+		TargetWorkdir:      a.TargetWorkdir,
+		ExecutionMode:      a.ExecutionMode,
+		SessionMode:        a.SessionMode,
+		CompleteOnIdle:     a.CompleteOnIdle,
+		Timeout:            a.Timeout,
+		RequiresCapability: a.RequiresCapability,
+	}
+}
+
+// fmAutomationRetryToType converts a frontmatter AutomationRetry to a
+// domain AutomationRetry.
+func fmAutomationRetryToType(r *frontmatter.AutomationRetry) *types.AutomationRetry {
+	if r == nil {
+		return nil
+	}
+	return &types.AutomationRetry{
+		MaxAttempts: r.MaxAttempts,
+		Backoff:     r.Backoff,
+		Delay:       r.Delay,
+	}
+}
+
+// fmGoalConfigToType converts a frontmatter GoalConfig to a domain GoalConfig.
+func fmGoalConfigToType(g *frontmatter.GoalConfig) *types.GoalConfig {
+	if g == nil {
+		return nil
+	}
+	return &types.GoalConfig{
+		ID:               g.ID,
+		Criteria:         g.Criteria,
+		Validation:       g.Validation,
+		Workdir:          g.Workdir,
+		TriggerSource:    g.TriggerSource,
+		CompleteStatuses: g.CompleteStatuses,
+		BlockedStatuses:  g.BlockedStatuses,
+	}
 }
 
 func attachmentRefsFromFM(refs []frontmatter.AttachmentReference) []types.AttachmentReference {

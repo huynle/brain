@@ -170,6 +170,7 @@ type TaskMetadataResponse struct {
 	ResolvedWorkdir     string                       `json:"resolved_workdir"`
 	DirectPrompt        string                       `json:"direct_prompt"`
 	Executor            string                       `json:"executor"`
+	CheckoutMode        string                       `json:"checkout_mode,omitempty"`
 	FeatureID           string                       `json:"feature_id"`
 	FeaturePriority     string                       `json:"feature_priority"`
 	FeatureDependsOn    []string                     `json:"feature_depends_on"`
@@ -230,6 +231,7 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 		ResolvedWorkdir:     task.ResolvedWorkdir,
 		DirectPrompt:        task.DirectPrompt,
 		Executor:            task.Executor,
+		CheckoutMode:        task.CheckoutMode,
 		FeatureID:           task.FeatureID,
 		FeaturePriority:     task.FeaturePriority,
 		FeatureDependsOn:    task.FeatureDependsOn,
@@ -316,7 +318,7 @@ func (h *Handler) HandleReleaseTask(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")
 	taskId := chi.URLParam(r, "taskId")
 
-	var req types.ClaimRequest
+	var req types.ReleaseRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
 		return
@@ -340,14 +342,23 @@ func (h *Handler) HandleReleaseTask(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("release request", "project", projectId, "task_id", taskId, "runner_id", req.RunnerID)
 
-	// Emit task.released event
+	// Emit task.released event. Mirror the runner-source shape (see
+	// internal/runner/event_conversion.go): reason is exposed BOTH as a
+	// top-level field AND in metadata["reason"] so consumers using either
+	// access pattern see the same diagnostic. Empty reason is left empty
+	// in both places — we never fabricate a synthetic reason string.
 	evt := types.NewEvent(types.EventTaskReleased, types.EventSourceAPI)
 	evt.ProjectID = projectId
 	evt.TaskID = taskId
 	evt.TaskPath = fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
-	evt.Metadata = map[string]string{
+	meta := map[string]string{
 		"runner_id": req.RunnerID,
 	}
+	if req.Reason != "" {
+		evt.Reason = req.Reason
+		meta["reason"] = req.Reason
+	}
+	evt.Metadata = meta
 	h.emitEvent(r.Context(), evt)
 
 	// Publish task_released SSE event to project subscribers

@@ -41,8 +41,14 @@ func registerBrainTasks(s *Server, client *APIClient) {
 Use this to see:
 - Which tasks are ready to work on (dependencies met)
 - Which tasks are waiting (dependencies incomplete)
-- Which tasks are blocked (circular deps or blocked deps)
-- Overall task queue stats`,
+- Which tasks are dependency-blocked (circular deps or blocked deps) — reported as dep_blocked
+- Which tasks have status=="blocked" set explicitly — reported as status_blocked
+- Overall task queue stats
+
+Stats line reports both counters separately:
+- dep_blocked: dependency-classification "blocked" (deps unmet, cycle, or blocked-by another task)
+- status_blocked: tasks whose Status field equals "blocked" (set explicitly by user/agent)
+These can overlap; the counts are independent, not mutually exclusive.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -154,10 +160,35 @@ Use this to see:
 			"",
 		}
 
-		// Stats summary
+		// Stats summary.
+		//
+		// Two "blocked" counters are reported separately to disambiguate the
+		// two meanings that previously shared the same word (see task
+		// ghtzzp1x / plan 24urhmtl#Finding-4):
+		//
+		//   - dep_blocked:    dependency classification == "blocked" (comes
+		//                     from the server's Stats.Blocked field, which is
+		//                     computed from t.Classification in taskdeps.go).
+		//   - status_blocked: t.Status == "blocked" (computed locally from
+		//                     the filtered tasks; the server does not
+		//                     currently expose this in TaskStats).
+		//
+		// The legacy ambiguous "blocked" counter is intentionally NOT emitted
+		// here. Downstream consumers must migrate to the split counters.
+		// TODO(ghtzzp1x): PWA StatusBar lives outside this repo; when it is
+		// updated, remove any legacy alias handling there too.
 		if resp.Stats != nil {
 			st := resp.Stats
-			lines = append(lines, fmt.Sprintf("**Stats:** %d ready | %d waiting | %d blocked | %d completed", st.Ready, st.Waiting, st.Blocked, st.Completed))
+			statusBlocked := 0
+			for _, t := range filtered {
+				if t.Status == "blocked" {
+					statusBlocked++
+				}
+			}
+			lines = append(lines, fmt.Sprintf(
+				"**Stats:** %d ready | %d waiting | %d dep_blocked | %d status_blocked | %d completed",
+				st.Ready, st.Waiting, st.Blocked, statusBlocked, st.Completed,
+			))
 			lines = append(lines, "")
 		}
 
@@ -284,29 +315,44 @@ If no ready tasks, shows current queue state.`,
 					Status         string `json:"status"`
 				} `json:"tasks"`
 				Stats *struct {
-					Ready     int `json:"ready"`
-					Waiting   int `json:"waiting"`
-					Blocked   int `json:"blocked"`
-					Completed int `json:"completed"`
-					Total     int `json:"total"`
+					Ready         int `json:"ready"`
+					Waiting       int `json:"waiting"`
+					Blocked       int `json:"blocked"`
+					StatusBlocked int `json:"status_blocked"`
+					Completed     int `json:"completed"`
+					Total         int `json:"total"`
 				} `json:"stats"`
 			}
 			if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj), nil, nil, &statsResp); err != nil {
 				return "", err
 			}
 
-			waiting, blocked, completed := 0, 0, 0
+			// depBlocked and statusBlocked are separate counters — see
+			// tasks tool description and TaskStats doc comment
+			// (task ghtzzp1x / plan 24urhmtl#Finding-4).
+			waiting, depBlocked, statusBlocked, completed := 0, 0, 0, 0
 			if statsResp.Stats != nil {
 				waiting = statsResp.Stats.Waiting
-				blocked = statsResp.Stats.Blocked
+				depBlocked = statsResp.Stats.Blocked
+				statusBlocked = statsResp.Stats.StatusBlocked
 				completed = statsResp.Stats.Completed
-			} else {
+			}
+			// Always derive from the tasks array too — the server may not
+			// populate StatusBlocked on older builds, and completed is not
+			// exposed in TaskStats at all. This keeps the numbers correct
+			// during rolling upgrades.
+			if statsResp.Stats == nil || statsResp.Stats.StatusBlocked == 0 {
 				for _, t := range statsResp.Tasks {
-					switch t.Classification {
-					case "waiting":
-						waiting++
-					case "blocked":
-						blocked++
+					if statsResp.Stats == nil {
+						switch t.Classification {
+						case "waiting":
+							waiting++
+						case "blocked":
+							depBlocked++
+						}
+					}
+					if t.Status == "blocked" {
+						statusBlocked++
 					}
 					if t.Status == "completed" {
 						completed++
@@ -318,10 +364,11 @@ If no ready tasks, shows current queue state.`,
 
 Current state:
 - %d tasks waiting on dependencies
-- %d tasks blocked
+- %d tasks dep_blocked (deps unmet / cycle / blocked-by)
+- %d tasks status_blocked (Status == "blocked")
 - %d tasks completed
 
-Use tasks to see the full task list and dependency status.`, waiting, blocked, completed), nil
+Use tasks to see the full task list and dependency status.`, waiting, depBlocked, statusBlocked, completed), nil
 		}
 
 		task := nextResp.Task
@@ -653,6 +700,7 @@ or to inspect its dependency graph details. Complements task_get which returns c
 				"merge_strategy":       nilIfEmpty(task.MergeStrategy),
 				"remote_branch_policy": nilIfEmpty(task.RemoteBranchPolicy),
 				"open_pr_before_merge": task.OpenPRBeforeMerge,
+				"checkout_mode":        nilIfEmpty(task.CheckoutMode),
 			},
 
 			// Dependencies (raw IDs)
@@ -1323,6 +1371,7 @@ type fullTask struct {
 	OpenPRBeforeMerge   *bool    `json:"open_pr_before_merge"`
 	ExecutionMode       string   `json:"execution_mode"`
 	CompleteOnIdle      *bool    `json:"complete_on_idle"`
+	CheckoutMode        string   `json:"checkout_mode,omitempty"`
 	FeatureID           string   `json:"feature_id"`
 	FeaturePriority     string   `json:"feature_priority"`
 	FeatureDependsOn    []string `json:"feature_depends_on"`

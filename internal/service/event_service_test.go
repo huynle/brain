@@ -795,6 +795,204 @@ func TestCheckFeatureCompletion_CancelledTasksCountAsNotDone(t *testing.T) {
 }
 
 // =============================================================================
+// Checkout Mode Folding (Phase 3.1)
+// =============================================================================
+
+func TestFoldCheckoutMode_AllEmptyDefaultsToAI(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1"},
+		{ID: "t2"},
+	}
+	if got := foldCheckoutMode(tasks); got != "ai" {
+		t.Fatalf("foldCheckoutMode(all empty) = %q, want %q", got, "ai")
+	}
+}
+
+func TestFoldCheckoutMode_AllAIStaysAI(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", CheckoutMode: "ai"},
+		{ID: "t2", CheckoutMode: "ai"},
+	}
+	if got := foldCheckoutMode(tasks); got != "ai" {
+		t.Fatalf("foldCheckoutMode(all ai) = %q, want %q", got, "ai")
+	}
+}
+
+func TestFoldCheckoutMode_AllSimpleStaysSimple(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", CheckoutMode: "simple"},
+		{ID: "t2", CheckoutMode: "simple"},
+	}
+	if got := foldCheckoutMode(tasks); got != "simple" {
+		t.Fatalf("foldCheckoutMode(all simple) = %q, want %q", got, "simple")
+	}
+}
+
+func TestFoldCheckoutMode_AnySimpleWins(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", CheckoutMode: "ai"},
+		{ID: "t2", CheckoutMode: "simple"},
+		{ID: "t3", CheckoutMode: "ai"},
+	}
+	if got := foldCheckoutMode(tasks); got != "simple" {
+		t.Fatalf("foldCheckoutMode(mixed ai+simple) = %q, want %q", got, "simple")
+	}
+}
+
+func TestFoldCheckoutMode_EmptyPlusSimpleIsSimple(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1"},
+		{ID: "t2", CheckoutMode: "simple"},
+	}
+	if got := foldCheckoutMode(tasks); got != "simple" {
+		t.Fatalf("foldCheckoutMode(empty+simple) = %q, want %q", got, "simple")
+	}
+}
+
+func TestFoldCheckoutMode_EmptyPlusAIIsAI(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1"},
+		{ID: "t2", CheckoutMode: "ai"},
+	}
+	if got := foldCheckoutMode(tasks); got != "ai" {
+		t.Fatalf("foldCheckoutMode(empty+ai) = %q, want %q", got, "ai")
+	}
+}
+
+func TestFoldCheckoutMode_UnknownValueIgnored(t *testing.T) {
+	// Defensive: API validation should prevent this, but if it happens,
+	// unknown values are treated as empty (fall through to default).
+	tasks := []types.ResolvedTask{
+		{ID: "t1", CheckoutMode: "bogus"},
+		{ID: "t2", CheckoutMode: "bogus"},
+	}
+	if got := foldCheckoutMode(tasks); got != "ai" {
+		t.Fatalf("foldCheckoutMode(unknown only) = %q, want %q (fall back to default)", got, "ai")
+	}
+}
+
+func TestFoldCheckoutMode_UnknownPlusSimpleIsSimple(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", CheckoutMode: "bogus"},
+		{ID: "t2", CheckoutMode: "simple"},
+	}
+	if got := foldCheckoutMode(tasks); got != "simple" {
+		t.Fatalf("foldCheckoutMode(bogus+simple) = %q, want %q", got, "simple")
+	}
+}
+
+func TestFoldCheckoutMode_EmptySlice(t *testing.T) {
+	if got := foldCheckoutMode(nil); got != "ai" {
+		t.Fatalf("foldCheckoutMode(nil) = %q, want %q", got, "ai")
+	}
+	if got := foldCheckoutMode([]types.ResolvedTask{}); got != "ai" {
+		t.Fatalf("foldCheckoutMode(empty) = %q, want %q", got, "ai")
+	}
+}
+
+// -----------------------------------------------------------------------------
+// CheckFeatureCompletion — checkout_mode metadata enrichment (Phase 3.1)
+// -----------------------------------------------------------------------------
+
+func TestCheckFeatureCompletion_EmitsCheckoutModeMetadata_Simple(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed", CheckoutMode: "simple"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed", CheckoutMode: "simple"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != types.EventFeatureCompleted {
+		t.Fatalf("expected feature.completed, got %q", events[0].Type)
+	}
+	if got := events[0].Metadata["checkout_mode"]; got != "simple" {
+		t.Fatalf("expected metadata checkout_mode=simple, got %q", got)
+	}
+}
+
+func TestCheckFeatureCompletion_DefaultsCheckoutModeToAI(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if got := events[0].Metadata["checkout_mode"]; got != "ai" {
+		t.Fatalf("expected metadata checkout_mode=ai (default), got %q", got)
+	}
+}
+
+func TestCheckFeatureCompletion_MixedTasksFoldToSimple(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed", CheckoutMode: "ai"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed", CheckoutMode: "simple"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if got := events[0].Metadata["checkout_mode"]; got != "simple" {
+		t.Fatalf("expected metadata checkout_mode=simple (mixed folds to simple), got %q", got)
+	}
+}
+
+func TestCheckFeatureCompletion_ProgressEventCarriesCheckoutMode(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed", CheckoutMode: "simple"},
+			{ID: "t2", FeatureID: "feat-1", Status: "pending", CheckoutMode: "simple"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if events[0].Type != types.EventFeatureProgress {
+		t.Fatalf("expected feature.progress, got %q", events[0].Type)
+	}
+	if got := events[0].Metadata["checkout_mode"]; got != "simple" {
+		t.Fatalf("expected progress metadata checkout_mode=simple, got %q", got)
+	}
+}
+
+// =============================================================================
 // Interface compliance
 // =============================================================================
 

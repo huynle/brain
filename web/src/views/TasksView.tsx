@@ -10,6 +10,8 @@ import { useIsMobile } from "../hooks/useIsMobile";
 import { useLiveTasks } from "../hooks/useLiveTasks";
 import { filterTasks, groupByFeature, isReadyTask, UNGROUPED, type FeatureSortMode } from "./tasks/grouping";
 import { mergeReadyFeatures } from "./tasks/mergeAttention";
+import { filterByHiddenStatuses } from "./tasks/statusFilters";
+import { deserializeHiddenEntryTypes, serializeHiddenEntryTypes, toggleHiddenEntryType } from "./brain/entryFilters";
 import { useQuery } from "@tanstack/react-query";
 import { buildTaskTree } from "./tasks/tree";
 import { MetadataModal } from "./tasks/MetadataModal";
@@ -40,6 +42,28 @@ const EntryEditModal = lazy(() =>
 );
 
 const TERMINAL = ["completed", "cancelled", "archived", "superseded"];
+
+// Persisted per-status hide filter. Users can hide any subset of statuses
+// (e.g. draft, blocked, archived) via the toolbar chip row; selection
+// survives page reloads via localStorage.
+const HIDDEN_STATUSES_KEY = "brain.tasks_view.hidden_statuses";
+
+function loadHiddenStatuses(): Set<string> {
+  try {
+    return deserializeHiddenEntryTypes(localStorage.getItem(HIDDEN_STATUSES_KEY));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveHiddenStatuses(hiddenStatuses: ReadonlySet<string>) {
+  try {
+    localStorage.setItem(HIDDEN_STATUSES_KEY, serializeHiddenEntryTypes(hiddenStatuses));
+  } catch {
+    // Ignore private-mode/quota errors; filters still work for this session.
+  }
+}
+
 // Done-mode sort: flat newest-completion-first, or grouped by feature.
 const DONE_SORT_FIELDS = ["completed", "feature"] as const;
 function completionMs(t: Task): number {
@@ -164,7 +188,15 @@ export function TasksView() {
   const pushFrame = useScope((s) => s.push);
   const featureFrame = [...drillStack].reverse().find((f) => f.view === "tasks" && f.kind === "feature");
   const [searchOpen, setSearchOpen] = useState(false);
-  const [showDone, setShowDone] = useState(false);
+  // Completed tasks are visible by default so users can see recently
+  // finished feature groups without opening a filter or switching to done
+  // mode. Toggle via the `.` key or the "hide done" toolbar chip.
+  const [showDone, setShowDone] = useState(true);
+  // Fine-grained per-status hide filter. Complements `showDone` (which is a
+  // coarse toggle for the terminal-status cluster) — users can e.g. hide
+  // just `blocked` while keeping `completed` visible, or hide `draft`
+  // while triaging. Persisted across reloads.
+  const [hiddenStatuses, setHiddenStatuses] = useState<Set<string>>(loadHiddenStatuses);
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
   const [collapseDefault, setCollapseDefault] = useState(activeProject === ALL_PROJECTS);
 
@@ -202,6 +234,11 @@ export function TasksView() {
         list = list.filter((t) => t.feature_id && ready.has(t.feature_id));
       }
     } else if (!showDone) list = list.filter((t) => !TERMINAL.includes(t.status));
+    // Fine-grained per-status hide filter applies to every mode after the
+    // mode-specific filtering above. Hiding e.g. `blocked` in tasks mode
+    // works the same as hiding `cancelled` in done mode — the chip row
+    // controls both.
+    list = filterByHiddenStatuses(list, hiddenStatuses);
     // Drill-down: a feature frame (Enter on its header) scopes the whole
     // view to that feature; Esc pops back out.
     if (featureFrame) {
@@ -241,7 +278,15 @@ export function TasksView() {
       }
     }
     return { rows: r, taskList: flat, featureKeys: keys, tasksByFeature: byFeature };
-  }, [tasks, query, showDone, collapsed, collapseDefault, mode, activeProject, featureSort, sortDir, featureFrame, includeCancelled, mergeOnly]);
+  }, [tasks, query, showDone, hiddenStatuses, collapsed, collapseDefault, mode, activeProject, featureSort, sortDir, featureFrame, includeCancelled, mergeOnly]);
+
+  // Status chip row: derived from the raw task set (not the filtered list),
+  // so hiding a status doesn't make its chip vanish and become un-un-
+  // hideable. Sorted alphabetically for a stable order across sessions.
+  const presentStatuses = useMemo(
+    () => Array.from(new Set(tasks.map((t) => t.status).filter(Boolean))).sort(),
+    [tasks],
+  );
 
   // Feed the ContextBar's shown/total counter.
   useEffect(() => {
@@ -479,6 +524,10 @@ export function TasksView() {
         if (mode === "done") setMergeOnly(false);
         nav.setCursor(scope, 0);
       },
+      "tasks.showDone": () => {
+        if (mode !== "tasks") return false;
+        setShowDone((v) => !v);
+      },
       "tasks.includeCancelled": () => {
         if (mode !== "done") return false;
         toggleIncludeCancelled();
@@ -523,8 +572,12 @@ export function TasksView() {
             {mode === "schedules" ? "sched" : "tasks"}
           </button>
           {mode === "tasks" && (
-            <button className={`btn sm ${showDone ? "primary" : ""}`} onClick={() => setShowDone((v) => !v)}>
-              {showDone ? "all" : "active"}
+            <button
+              className={`btn sm ${showDone ? "primary" : ""}`}
+              onClick={() => setShowDone((v) => !v)}
+              title="Show/hide completed tasks in the tree (.)"
+            >
+              {showDone ? "hide done" : "show done"}
             </button>
           )}
           {activeProject === ALL_PROJECTS && mode === "tasks" && (
@@ -584,9 +637,119 @@ export function TasksView() {
                 </button>
               </>
             )}
+            {mode === "tasks" && (
+              <button
+                type="button"
+                className={`chip ${showDone ? "on" : ""}`}
+                onClick={() => setShowDone((v) => !v)}
+                title="Toggle completed tasks in the tree (.)"
+              >
+                {showDone ? "✓ done" : "⏵ hide done"}
+              </button>
+            )}
             <button type="button" className="chip" onClick={() => setSearchOpen(true)} title="Filter">
               ⌕ filter
             </button>
+          </div>
+        )}
+        {isMobile && mode === "tasks" && presentStatuses.length > 0 && (
+          <div className="tasks-toolbar" style={{ paddingTop: 0, flexWrap: "wrap" }}>
+            <span className="faint" style={{ fontSize: 11 }}>
+              Hide status:
+            </span>
+            {presentStatuses.map((status) => {
+              const hidden = hiddenStatuses.has(status);
+              return (
+                <button
+                  key={status}
+                  type="button"
+                  className={`chip ${hidden ? "" : "on"}`}
+                  onClick={() => {
+                    setHiddenStatuses((prev) => {
+                      const next = toggleHiddenEntryType(prev, status);
+                      saveHiddenStatuses(next);
+                      return next;
+                    });
+                    nav.setCursor(scope, 0);
+                  }}
+                  aria-pressed={!hidden}
+                  title={hidden ? `Show ${status} tasks` : `Hide ${status} tasks`}
+                >
+                  {hidden ? "⊘" : "✓"} {status}
+                </button>
+              );
+            })}
+            {hiddenStatuses.size > 0 && (
+              <button
+                type="button"
+                className="chip"
+                onClick={() => {
+                  const next = new Set<string>();
+                  saveHiddenStatuses(next);
+                  setHiddenStatuses(next);
+                  nav.setCursor(scope, 0);
+                }}
+                title="Show all statuses"
+              >
+                Show all
+              </button>
+            )}
+          </div>
+        )}
+        {!isMobile && mode === "tasks" && (
+          <div className="tasks-toolbar" style={{ padding: "0.25rem 0.2rem 0.35rem", flexWrap: "wrap" }}>
+            <button
+              type="button"
+              className={`chip ${showDone ? "on" : ""}`}
+              onClick={() => setShowDone((v) => !v)}
+              title="Toggle completed tasks in the tree (.)"
+            >
+              {showDone ? "✓ done visible" : "⏵ hide done"}
+            </button>
+            {presentStatuses.length > 0 && (
+              <>
+                <span className="faint" style={{ fontSize: 11, marginLeft: 8 }}>
+                  Hide status:
+                </span>
+                {presentStatuses.map((status) => {
+                  const hidden = hiddenStatuses.has(status);
+                  return (
+                    <button
+                      key={status}
+                      type="button"
+                      className={`chip ${hidden ? "" : "on"}`}
+                      onClick={() => {
+                        setHiddenStatuses((prev) => {
+                          const next = toggleHiddenEntryType(prev, status);
+                          saveHiddenStatuses(next);
+                          return next;
+                        });
+                        nav.setCursor(scope, 0);
+                      }}
+                      aria-pressed={!hidden}
+                      title={hidden ? `Show ${status} tasks` : `Hide ${status} tasks`}
+                    >
+                      {hidden ? "⊘" : "✓"} {status}
+                    </button>
+                  );
+                })}
+                {hiddenStatuses.size > 0 && (
+                  <button
+                    type="button"
+                    className="chip"
+                    onClick={() => {
+                      const next = new Set<string>();
+                      saveHiddenStatuses(next);
+                      setHiddenStatuses(next);
+                      nav.setCursor(scope, 0);
+                    }}
+                    title="Show all statuses"
+                  >
+                    Show all
+                  </button>
+                )}
+              </>
+            )}
           </div>
         )}
         {rows.length === 0 ? (

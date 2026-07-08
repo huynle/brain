@@ -200,6 +200,13 @@ func TestRunnerEvent_ToEvent_TaskReleased(t *testing.T) {
 	if evt.Type != types.EventTaskReleased {
 		t.Errorf("Type = %q, want %q", evt.Type, types.EventTaskReleased)
 	}
+	// Reason must appear at BOTH the top-level Event.Reason field AND
+	// in Metadata["reason"] so consumers using either access pattern see
+	// the same string. See internal/api/tasks.go HandleReleaseTask for
+	// the matching API-source emitter.
+	if evt.Reason != "spawn failed" {
+		t.Errorf("Reason = %q, want %q", evt.Reason, "spawn failed")
+	}
 	if evt.Metadata["reason"] != "spawn failed" {
 		t.Errorf("Metadata[reason] = %q, want %q", evt.Metadata["reason"], "spawn failed")
 	}

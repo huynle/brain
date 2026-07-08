@@ -121,6 +121,30 @@ var RemoteBranchPolicies = []string{"keep", "delete"}
 var ExecutionModes = []string{"worktree", "current_branch"}
 var Executors = []string{"opencode", "pi", "script"}
 
+// CheckoutModes lists valid values for CheckoutMode on tasks/entries.
+// "ai" (default) runs the LLM-based feature-checkout skill; "simple" triggers a
+// deterministic squash-merge automation.
+//
+// Storage policy: we do NOT persist "ai" as a default value. Empty string is
+// stored on entries that omit the field, and downstream code treats empty as
+// equivalent to "ai". This preserves backward compatibility for existing tasks
+// that pre-date the CheckoutMode field.
+var CheckoutModes = []string{"ai", "simple"}
+
+// IsValidCheckoutMode reports whether s is a recognized checkout mode.
+// Empty string is treated as valid (defaults to "ai" downstream).
+func IsValidCheckoutMode(s string) bool {
+	if s == "" {
+		return true
+	}
+	for _, v := range CheckoutModes {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
 // =============================================================================
 // Project Placement
 // =============================================================================
@@ -298,6 +322,7 @@ type BrainEntry struct {
 	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 	SessionMode        string `json:"session_mode,omitempty"`
+	CheckoutMode       string `json:"checkout_mode,omitempty"`
 
 	// Task execution fields
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
@@ -616,6 +641,7 @@ type CreateEntryRequest struct {
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 	SessionMode        string `json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool  `json:"complete_on_idle,omitempty"`
+	CheckoutMode       string `json:"checkout_mode,omitempty"`
 
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
@@ -693,6 +719,7 @@ type UpdateEntryRequest struct {
 	CompleteOnIdle     *bool     `json:"complete_on_idle,omitempty"`
 	Executor           *string   `json:"executor,omitempty"`
 	Extensions         *[]string `json:"extensions,omitempty"`
+	CheckoutMode       *string   `json:"checkout_mode,omitempty"`
 
 	FeatureID        *string   `json:"feature_id,omitempty"`
 	FeaturePriority  *string   `json:"feature_priority,omitempty"`
@@ -737,6 +764,15 @@ type BulkUpdateFilter struct {
 	Status    *string  `json:"status,omitempty"`
 	Tags      []string `json:"tags,omitempty"`
 	Priority  *string  `json:"priority,omitempty"`
+
+	// Task-specific filters (mirror TaskEntry / BrainEntry fields).
+	// Applied as an in-memory pass over the storage list because the storage
+	// layer does not index these fields.
+	GeneratedBy   *string `json:"generated_by,omitempty"`
+	GeneratedKey  *string `json:"generated_key,omitempty"`
+	Agent         *string `json:"agent,omitempty"`
+	Executor      *string `json:"executor,omitempty"`
+	ExecutionMode *string `json:"execution_mode,omitempty"`
 }
 
 // BulkUpdateEntry targets a specific entry with updates.
@@ -940,6 +976,7 @@ type ResolvedTask struct {
 	RemoteBranchPolicy string `json:"remote_branch_policy,omitempty"`
 	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"`
+	CheckoutMode       string `json:"checkout_mode,omitempty"`
 
 	FeatureID        string   `json:"feature_id,omitempty"`
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
@@ -1010,12 +1047,25 @@ type ResolvedTask struct {
 }
 
 // TaskStats holds aggregate task statistics.
+//
+// Blocked and StatusBlocked are intentionally separate counters (see task
+// ghtzzp1x / plan 24urhmtl#Finding-4):
+//
+//   - Blocked (json: "blocked") counts tasks whose dependency Classification
+//     is "blocked" (unmet deps, blocked-by another task, or in a cycle).
+//     Kept named "blocked" for wire compatibility with existing clients.
+//   - StatusBlocked (json: "status_blocked") counts tasks whose Status field
+//     equals "blocked" (set explicitly by user/agent).
+//
+// A single task may be in both counters simultaneously — they are not
+// mutually exclusive.
 type TaskStats struct {
-	Total      int `json:"total"`
-	Ready      int `json:"ready"`
-	Waiting    int `json:"waiting"`
-	Blocked    int `json:"blocked"`
-	NotPending int `json:"not_pending"`
+	Total         int `json:"total"`
+	Ready         int `json:"ready"`
+	Waiting       int `json:"waiting"`
+	Blocked       int `json:"blocked"`
+	StatusBlocked int `json:"status_blocked"`
+	NotPending    int `json:"not_pending"`
 }
 
 // TaskListResponse is the response for GET /tasks/:projectId.
@@ -1040,6 +1090,15 @@ type ProjectListResponse struct {
 // ClaimRequest is the request body for POST /tasks/:projectId/:taskId/claim.
 type ClaimRequest struct {
 	RunnerID string `json:"runnerId"`
+}
+
+// ReleaseRequest is the request body for POST /tasks/:projectId/:taskId/release.
+// The optional Reason field surfaces as event.Reason and event.Metadata["reason"]
+// on the emitted task.released event so consumers reading either field see the
+// same diagnostic (parity with runner-emitted task.released events).
+type ReleaseRequest struct {
+	RunnerID string `json:"runnerId"`
+	Reason   string `json:"reason,omitempty"`
 }
 
 // DispatchRequest is the request body for POST /tasks/:projectId/:taskId/dispatch.
@@ -1202,6 +1261,7 @@ type FeatureCheckoutOptions struct {
 	RemoteBranchPolicy string `json:"remote_branch_policy,omitempty"` // "keep", "delete"
 	OpenPRBeforeMerge  bool   `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"` // "worktree", "current_branch"
+	CheckoutMode       string `json:"checkout_mode,omitempty"`  // "ai" (default) or "simple"
 }
 
 // CheckoutFeatureResult is the response for CheckoutFeature.

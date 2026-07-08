@@ -66,8 +66,9 @@ Entry types:
 - execution, dream, automation_run, merge_request: system-generated entries (rarely created by hand)
 
 Only type, title, and content are required. The remaining parameters apply conditionally:
-- Task options (depends_on, feature_*, schedule*, merge_*, executor, agent, model, direct_prompt, extensions, target_workdir, git_branch, execution_mode, complete_on_idle, user_original_request) apply only when type is 'task' and are ignored for other types.
+- Task options (depends_on, feature_*, schedule*, merge_*, executor, agent, model, direct_prompt, extensions, target_workdir, git_branch, execution_mode, complete_on_idle, checkout_mode, user_original_request) apply only when type is 'task' and are ignored for other types.
 - trigger applies to 'task' and 'automation' entries; action and retry apply to 'automation' entries only.
+- checkout_mode ("ai" default, or "simple") selects the feature-checkout automation path for a feature's post-completion checkout: "ai" runs the feature-checkout skill via LLM, "simple" runs a deterministic script-based squash merge.
 
 Feature orchestration (tasks):
 - Use feature_id to group tasks into a feature.
@@ -120,6 +121,7 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
+				"checkout_mode":         {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation. Only meaningful on task entries whose feature completion triggers a checkout automation."},
 				"related_entries":       {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entry paths to link"},
 			},
 			Required: []string{"type", "title", "content"},
@@ -146,7 +148,18 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 		if isTask {
 			body["workdir"] = execCtx.Workdir
 			body["git_remote"] = execCtx.GitRemote
-			body["git_branch"] = StringArg(args, "git_branch", execCtx.GitBranch)
+			// Only auto-inject execCtx.GitBranch when feature_id is empty. When
+			// feature_id is set, leave git_branch blank so the runner's
+			// feature_id fallback (internal/runner/executor_common.go:86-88)
+			// engages and worktree isolation works from any branch. Otherwise
+			// a shell on main of a foreign repo would silently set
+			// git_branch="main" and trip the main/master worktree skip.
+			featureID, _ := args["feature_id"].(string)
+			if featureID != "" {
+				body["git_branch"] = StringArg(args, "git_branch", "")
+			} else {
+				body["git_branch"] = StringArg(args, "git_branch", execCtx.GitBranch)
+			}
 			body["target_workdir"] = args["target_workdir"]
 			body["user_original_request"] = args["user_original_request"]
 			body["feature_id"] = args["feature_id"]
@@ -177,6 +190,9 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 			body["open_pr_before_merge"] = args["open_pr_before_merge"]
 			body["execution_mode"] = args["execution_mode"]
 			body["complete_on_idle"] = args["complete_on_idle"]
+			if v, ok := args["checkout_mode"].(string); ok && v != "" {
+				body["checkout_mode"] = v
+			}
 			if v, ok := args["executor"].(string); ok && v != "" {
 				body["executor"] = v
 			}
@@ -1047,7 +1063,7 @@ If both content and append are provided, content replaces the body first, then a
 
 Statuses: draft, pending, active, in_progress, blocked, cancelled, completed, validated, superseded, archived
 
-Note: as a guard against clients that autofill every optional field, when 3 or more optional fields exactly match their documented defaults (priority: "medium", feature_priority: "high", merge_policy: "prompt_only", merge_strategy: "squash", remote_branch_policy: "keep", execution_mode: "worktree", executor: "opencode", open_pr_before_merge: false, complete_on_idle: false, schedule_enabled: false, max_runs: 0), those default-valued fields are ignored and listed in the response. To intentionally set several fields to those exact values, update them in separate calls.`,
+Note: as a guard against clients that autofill every optional field, when 3 or more optional fields exactly match their documented defaults (priority: "medium", feature_priority: "high", merge_policy: "prompt_only", merge_strategy: "squash", remote_branch_policy: "keep", execution_mode: "worktree", executor: "opencode", open_pr_before_merge: false, complete_on_idle: false, schedule_enabled: false, max_runs: 0, checkout_mode: "ai"), those default-valued fields are ignored and listed in the response. To intentionally set several fields to those exact values, update them in separate calls.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -1069,6 +1085,7 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 				"open_pr_before_merge": {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":       {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":     {Type: "boolean", Description: "Mark task as completed when agent becomes idle"},
+				"checkout_mode":        {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation."},
 				"schedule":             {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *')"},
 				"schedule_enabled":     {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
 				"max_runs":             {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."},
@@ -1105,7 +1122,7 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 			"merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode",
 			"schedule", "run_once_at", "timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
 			"feature_schedule", "feature_starts_at", "feature_expires_at", "feature_run_once_at", "feature_timezone",
-			"direct_prompt", "agent", "model", "executor",
+			"direct_prompt", "agent", "model", "executor", "checkout_mode",
 		)
 		addPresentUpdateFields(body, cleanArgs,
 			"depends_on", "tags", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs",
@@ -1283,6 +1300,7 @@ var openCodeOptionalDefaults = map[string]any{
 	"complete_on_idle":     false,
 	"schedule_enabled":     false,
 	"max_runs":             0,
+	"checkout_mode":        "ai",
 }
 
 // sanitizeUpdateArgs drops empty-string values and guards against clients
@@ -1445,7 +1463,7 @@ Examples:
 			Type: "object",
 			Properties: map[string]Property{
 				"project": {Type: "string", Description: "Convenience shortcut for filter.project: restrict updates to entries in this project (e.g., 'orion-ai'). Only used in filter mode; explicit-entries mode ignores this. If filter already has a project field, that value wins."},
-				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string). Use with 'updates'."},
+				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string), generated_by (string), generated_key (string), agent (string), executor (string), execution_mode (string). Unknown filter fields are rejected with HTTP 400 to prevent data-loss from typos. Use with 'updates'."},
 				"updates": {Type: "object", Description: "Updates to apply to matched entries. Fields: status (string), priority (string), tags (string[]), content (string, replaces body), append (string), note (string). Use with 'filter'."},
 				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: { status?, priority?, tags?, content?, append?, note? } }"},
 				"dry_run": {Type: "boolean", Description: "Preview changes without applying (default: false)"},

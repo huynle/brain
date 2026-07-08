@@ -185,6 +185,8 @@ merge_strategy: "squash" or project default
 tags: ["plan-to-tasks", "<feature_id>"]
 ```
 
+**Note on squash merges:** Any task/prompt that instructs a downstream executor to run a squash merge MUST use `git -c merge.ff=true merge --squash <source_branch>` (not `git merge --squash <source_branch>`). The `-c merge.ff=true` override is required to avoid collision with users who have `merge.ff = no` in their global gitconfig — otherwise Git treats the global value as an implicit `--no-ff` flag and rejects the squash with `fatal: options '--squash' and '--no-ff.' cannot be used together`. See `feature-checkout` SKILL.md ("Git Command Invariants") for the full contract across all merge strategies.
+
 ### 7. Present the Graph Before Queueing
 
 Show the user the graph unless they explicitly asked for fully autonomous task creation.

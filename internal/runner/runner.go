@@ -447,7 +447,7 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 
 	tr.emitEvent(RunnerEvent{
 		Type:     EventRunnerStarted,
-		Projects: tr.projects,
+		Projects: tr.getProjects(),
 		Mode:     string(tr.mode),
 	})
 
@@ -460,7 +460,7 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			defer emitCancel()
 			_ = emitter.EmitEvent(emitCtx, "runner.started", map[string]any{
 				"runner_id": tr.runnerID,
-				"projects":  tr.projects,
+				"projects":  tr.getProjects(),
 				"mode":      string(tr.mode),
 			}, "runner-started-"+tr.runnerID)
 		}()
@@ -482,21 +482,24 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	tr.startDispatchPool(ctx)
 
 	// Start SSE listener for reactive polling
-	if tr.config.BrainAPIURL != "" && len(tr.projects) > 0 {
-		tr.sseListener = NewSSEListener(
-			tr.config.BrainAPIURL,
-			tr.config.APIToken,
-			tr.projects,
-			tr.wakeCh,
-		)
-		// Wire up runner-scoped command stream
-		tr.sseListener.SetRunnerStream(tr.runnerID, tr.commandCh)
-		go tr.sseListener.Start(ctx)
-		slog.Info("SSE listener started for reactive polling",
-			"projects", len(tr.projects),
-			"runner_stream", true,
-			"runner_id", tr.runnerID,
-		)
+	if tr.config.BrainAPIURL != "" {
+		initialProjects := tr.getProjects()
+		if len(initialProjects) > 0 {
+			tr.sseListener = NewSSEListener(
+				tr.config.BrainAPIURL,
+				tr.config.APIToken,
+				initialProjects,
+				tr.wakeCh,
+			)
+			// Wire up runner-scoped command stream
+			tr.sseListener.SetRunnerStream(tr.runnerID, tr.commandCh)
+			go tr.sseListener.Start(ctx)
+			slog.Info("SSE listener started for reactive polling",
+				"projects", len(initialProjects),
+				"runner_stream", true,
+				"runner_id", tr.runnerID,
+			)
+		}
 	}
 
 	// Start the remote-control bridge (outbound WS; reconnects internally)
@@ -537,6 +540,15 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 			}
 		}
 	}()
+
+	// Start periodic project-list refresh goroutine so projects created
+	// after the runner started become visible without a restart
+	// (Finding 2 from projects/brain/plan/24urhmtl.md, task wcg6lxfz).
+	// Interval <= 0 disables refresh entirely.
+	refreshInterval := time.Duration(tr.config.ProjectRefreshInterval) * time.Second
+	if refreshInterval > 0 {
+		go tr.runProjectRefreshLoop(ctx, refreshInterval)
+	}
 
 	// Start command consumer goroutine. Dispatched commands MUST be
 	// processed independently of poll() because poll() makes synchronous
@@ -603,6 +615,122 @@ func commandChannelCapacity(maxParallel int) int {
 	return 16
 }
 
+// =============================================================================
+// Project list management
+// =============================================================================
+//
+// tr.projects is treated as an immutable list at construction time by all the
+// read sites in this package, but the runner needs to pick up new projects
+// created after startup (Finding 2 from projects/brain/plan/24urhmtl.md).
+// getProjects/setProjects/refreshProjects serialize access under tr.mu and
+// return defensive copies so callers can iterate freely without worrying
+// about concurrent mutation.
+
+// getProjects returns a defensive copy of the current project list. Safe to
+// range over concurrently with refreshProjects.
+func (tr *TaskRunner) getProjects() []string {
+	tr.mu.RLock()
+	defer tr.mu.RUnlock()
+	if len(tr.projects) == 0 {
+		return nil
+	}
+	out := make([]string, len(tr.projects))
+	copy(out, tr.projects)
+	return out
+}
+
+// refreshProjects fetches the current project list from the Brain API, applies
+// the runner's include/exclude filters, diffs against the current list, and
+// atomically updates tr.projects. Returns the added and removed project IDs
+// for logging. On API failure the current list is preserved — the caller must
+// keep polling projects it already knows about.
+//
+// Fixes Finding 2 (wcg6lxfz): projects created after `brain api start --runner`
+// starts were previously invisible until restart.
+func (tr *TaskRunner) refreshProjects(ctx context.Context) (added, removed []string, err error) {
+	if tr.client == nil {
+		return nil, nil, nil
+	}
+	projects, err := tr.client.ListProjects(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	filtered := FilterProjects(projects, tr.config.IncludeProjects, tr.config.ExcludeProjects)
+
+	// Diff under the lock so concurrent readers see either the old or new
+	// list, never a torn intermediate state.
+	tr.mu.Lock()
+	current := tr.projects
+	currentSet := make(map[string]bool, len(current))
+	for _, p := range current {
+		currentSet[p] = true
+	}
+	nextSet := make(map[string]bool, len(filtered))
+	for _, p := range filtered {
+		nextSet[p] = true
+		if !currentSet[p] {
+			added = append(added, p)
+		}
+	}
+	for _, p := range current {
+		if !nextSet[p] {
+			removed = append(removed, p)
+		}
+	}
+	if len(added) > 0 || len(removed) > 0 {
+		// Store a fresh slice so external callers holding the old
+		// snapshot see a stable view.
+		next := make([]string, len(filtered))
+		copy(next, filtered)
+		tr.projects = next
+	}
+	tr.mu.Unlock()
+	return added, removed, nil
+}
+
+// runProjectRefreshLoop periodically calls refreshProjects on the configured
+// interval and logs added/removed projects. Exits when ctx is cancelled.
+// A refresh interval <= 0 disables the loop entirely (call site should skip
+// the goroutine, but this guard belts-and-braces the ticker construction).
+func (tr *TaskRunner) runProjectRefreshLoop(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			added, removed, err := tr.refreshProjects(ctx)
+			if err != nil {
+				slog.Warn("project refresh failed",
+					"runner_id", tr.runnerID,
+					"error", err,
+				)
+				continue
+			}
+			if len(added) > 0 {
+				slog.Info("project refresh: new projects visible",
+					"runner_id", tr.runnerID,
+					"added", added,
+				)
+			}
+			if len(removed) > 0 {
+				// Warn (not info): mid-flight tasks are not dropped
+				// here — the poll loop simply stops considering the
+				// project for NEW work. Running claims are renewed
+				// and completed by their own path.
+				slog.Warn("project refresh: projects no longer listed",
+					"runner_id", tr.runnerID,
+					"removed", removed,
+				)
+			}
+		}
+	}
+}
+
 // fetchServerPauseState loads the server's pause switches. The third return
 // is false when the state could not be fetched (no client, unsupported
 // client, or HTTP error) — callers that reconcile cached state must keep
@@ -627,20 +755,19 @@ func (tr *TaskRunner) fetchServerPauseState(ctx context.Context) (map[string]boo
 		}
 		return tasksPaused, automationsPaused, false
 	}
-	// Global server pause flags propagate to every observed project. We
-	// signal "globally paused" by marking the sentinel "" key in each
-	// returned map; callers that already check tr.allPaused or
-	// tr.pauseCache[projectID] should also consult the sentinel via
-	// serverPausedGlobally(). Previously this function only read the
-	// per-project arrays, so a global "pause tasks" from the PWA never made
-	// it to the dispatch SSE path and dispatches would queue silently when
-	// the runner was idle.
-	if status.Paused {
-		tasksPaused[""] = true
-	}
-	if status.AutomationsPaused {
-		automationsPaused[""] = true
-	}
+	// Only trust the explicit per-project lists. `status.Paused` and
+	// `status.AutomationsPaused` are DERIVED aggregates on the API side
+	// (`len(pausedProjects) > 0` — see service/runner.go:GetStatus), not a
+	// distinct "global pause" switch. Promoting them into the sentinel ""
+	// key caused every project to appear paused whenever any unrelated
+	// project was paused: e.g. 43 stale project pauses would make
+	// serverPausedFor("personal-productivity") return true and the dispatch
+	// gate would reject every lease with runner_paused, including
+	// automation-generated tasks whose per-project autos were on.
+	//
+	// A genuine "pause everything" is expressed by every project being
+	// listed in PausedProjects (SetAllProjectTasksPaused writes a row per
+	// project); the loops below already convey that.
 	for _, projectID := range status.PausedProjects {
 		tasksPaused[projectID] = true
 	}
@@ -693,7 +820,7 @@ func (tr *TaskRunner) dispatchLeaseExpired(expiresAt string, now time.Time) bool
 }
 
 func (tr *TaskRunner) supportsProject(projectID string) bool {
-	for _, p := range tr.projects {
+	for _, p := range tr.getProjects() {
 		if p == projectID || p == "all" {
 			return true
 		}
@@ -859,6 +986,14 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 		tr.processMgr.ReleaseReservation(cmd.TaskID)
 		tr.releaseDispatchLease(ctx, cmd.ProjectID, cmd.TaskID)
 		tr.logger.Printf("claim and spawn dispatched task failed for %s/%s: %v", cmd.ProjectID, cmd.TaskID, err)
+		slog.Error("spawn failed",
+			"task_id", cmd.TaskID,
+			"project_id", cmd.ProjectID,
+			"lease_id", leaseID,
+			"runner_id", tr.runnerID,
+			"path", "dispatch",
+			"error", err.Error(),
+		)
 	}
 }
 
@@ -1138,7 +1273,7 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 	slotsAvailable := maxParallel - running
 	filled := 0
 
-	for _, projectID := range tr.projects {
+	for _, projectID := range tr.getProjects() {
 		if ctx.Err() != nil {
 			break
 		}
@@ -1176,6 +1311,14 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 					} else if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
 						if !errors.Is(err, ErrTaskClaimConflict) {
 							tr.logger.Printf("claim and spawn automation task failed for %s/%s: %v", projectID, task.ID, err)
+							slog.Error("spawn failed",
+								"task_id", task.ID,
+								"project_id", projectID,
+								"runner_id", tr.runnerID,
+								"path", "automation_poll",
+								"generated_by", task.GeneratedBy,
+								"error", err.Error(),
+							)
 						}
 					} else {
 						filled++
@@ -1251,6 +1394,13 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 				continue
 			}
 			tr.logger.Printf("claim and spawn failed for %s/%s: %v", projectID, task.ID, err)
+			slog.Error("spawn failed",
+				"task_id", task.ID,
+				"project_id", projectID,
+				"runner_id", tr.runnerID,
+				"path", "poll",
+				"error", err.Error(),
+			)
 			continue
 		}
 
@@ -1527,15 +1677,24 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		if logStreamer != nil {
 			logStreamer.Stop()
 		}
-		// Release the claim on failure
+		// Release the claim on failure. Include the underlying error text
+		// in the release reason so `brain_events_recent` and downstream
+		// observers can diagnose *why* the spawn failed (e.g. script
+		// command rejected by allowlist) rather than just seeing the
+		// opaque "spawn failed" label.
 		tr.emitEvent(RunnerEvent{
 			Type:      EventTaskReleased,
 			TaskID:    task.ID,
 			ProjectID: projectID,
 			FeatureID: task.FeatureID,
-			Reason:    "spawn failed",
+			Reason:    fmt.Sprintf("spawn failed: %v", err),
 		})
 		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Roll the task's status back from "in_progress" (set optimistically
+		// at claim time) to "blocked" so it doesn't sit forever waiting on
+		// the orphan reaper. Symmetric with the workdir-failure branch
+		// above. A human or the Blocked Task Inspector can then address it.
+		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "blocked")
 		return fmt.Errorf("spawn task: %w", err)
 	}
 
@@ -1872,7 +2031,7 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 		Labels:         tr.config.Labels,
 		Executors:      tr.executorNames(),
 		Capabilities:   tr.config.Capabilities,
-		Projects:       tr.projects,
+		Projects:       tr.getProjects(),
 		MaxParallel:    tr.getMaxParallel(),
 		DispatchPush:   dispatchPush,
 		WorkspaceRoots: tr.schedulerWorkspaceRoots(),
@@ -1915,7 +2074,8 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 //
 // Failures are logged but never fatal; the runner proceeds normally.
 func (tr *TaskRunner) reapOrphanedTasks(ctx context.Context) {
-	if tr.client == nil || len(tr.projects) == 0 {
+	projects := tr.getProjects()
+	if tr.client == nil || len(projects) == 0 {
 		return
 	}
 
@@ -1924,7 +2084,7 @@ func (tr *TaskRunner) reapOrphanedTasks(ctx context.Context) {
 	defer cancel()
 
 	totalReaped := 0
-	for _, projectID := range tr.projects {
+	for _, projectID := range projects {
 		if reapCtx.Err() != nil {
 			slog.Warn("orphan reaper aborted", "error", reapCtx.Err(), "reaped", totalReaped)
 			return
@@ -1937,7 +2097,7 @@ func (tr *TaskRunner) reapOrphanedTasks(ctx context.Context) {
 		slog.Info("orphan reaper: marked stale in_progress tasks blocked",
 			"runner_id", tr.runnerID,
 			"count", totalReaped,
-			"projects", len(tr.projects),
+			"projects", len(projects),
 		)
 	}
 }
@@ -2060,7 +2220,7 @@ func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
 		DispatchPush:   &dispatchPush,
 		Labels:         tr.config.Labels,
 		WorkspaceRoots: tr.schedulerWorkspaceRoots(),
-		Projects:       tr.projects,
+		Projects:       tr.getProjects(),
 		Resources:      tr.config.Resources,
 		Capacity:       tr.config.Capacity,
 		Draining:       &draining,
@@ -2788,6 +2948,8 @@ func (tr *TaskRunner) getDefaultModel() string {
 
 // GetStatus returns a snapshot of the runner's current state.
 func (tr *TaskRunner) GetStatus() RunnerStatusInfo {
+	projects := tr.getProjects()
+
 	tr.mu.RLock()
 	status := tr.status
 	stats := tr.stats
@@ -2797,8 +2959,8 @@ func (tr *TaskRunner) GetStatus() RunnerStatusInfo {
 	tr.pauseMu.RLock()
 	var paused []string
 	if tr.allPaused {
-		paused = make([]string, len(tr.projects))
-		copy(paused, tr.projects)
+		paused = make([]string, len(projects))
+		copy(paused, projects)
 	} else {
 		for p := range tr.pauseCache {
 			paused = append(paused, p)
@@ -2809,7 +2971,7 @@ func (tr *TaskRunner) GetStatus() RunnerStatusInfo {
 	return RunnerStatusInfo{
 		RunnerID:    tr.runnerID,
 		Status:      status,
-		Projects:    tr.projects,
+		Projects:    projects,
 		Stats:       stats,
 		Running:     tr.processMgr.RunningCount(),
 		MaxParallel: tr.getMaxParallel(),

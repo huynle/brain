@@ -153,6 +153,12 @@ type Event struct {
 	// ToStatus is the new status (for status change events).
 	ToStatus string `json:"to_status,omitempty" yaml:"to_status,omitempty"`
 
+	// Reason carries a short human-readable diagnostic for events that
+	// describe a release, cancellation, block, or failure. Emitters
+	// keep it in sync with Metadata["reason"] so consumers using either
+	// access pattern see the same string.
+	Reason string `json:"reason,omitempty" yaml:"reason,omitempty"`
+
 	// Metadata holds arbitrary key-value pairs for extensibility.
 	Metadata map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
@@ -184,6 +190,11 @@ type TriggerConfig struct {
 	Events []string `json:"events,omitempty" yaml:"events,omitempty"`
 	// Schedule is used by cron-style automations.
 	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty"`
+	// Timezone is the IANA timezone name (e.g., "America/Denver") used to
+	// interpret Schedule. Empty or invalid values fall back to UTC.
+	// Applies to cron-triggered automations; task-level Timezone lives on
+	// the task itself (types.CreateEntryRequest.Timezone).
+	Timezone string `json:"timezone,omitempty" yaml:"timezone,omitempty"`
 	// Filter is optional key-value filters applied to event fields.
 	//
 	// Filter values support two forms:

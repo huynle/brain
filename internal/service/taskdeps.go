@@ -339,6 +339,12 @@ func ResolveDependencies(tasks []types.BrainEntry) *types.TaskListResponse {
 		case "not_pending":
 			stats.NotPending++
 		}
+		// StatusBlocked is orthogonal to Classification — a task may be
+		// counted in both Blocked and StatusBlocked, or in neither. See
+		// TaskStats doc comment for rationale.
+		if t.Status == "blocked" {
+			stats.StatusBlocked++
+		}
 	}
 
 	// Step 6: Extract cycle groups

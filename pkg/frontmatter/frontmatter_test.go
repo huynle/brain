@@ -470,6 +470,108 @@ Body`
 	}
 }
 
+func TestParse_CheckoutMode(t *testing.T) {
+	content := `---
+title: Checkout Task
+type: task
+status: pending
+checkout_mode: simple
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if doc.Frontmatter.CheckoutMode != "simple" {
+		t.Errorf("checkout_mode = %q, want %q", doc.Frontmatter.CheckoutMode, "simple")
+	}
+}
+
+func TestGenerate_WithCheckoutMode(t *testing.T) {
+	result := Generate(&GenerateOptions{
+		Title:        "Task with checkout mode",
+		Type:         "task",
+		CheckoutMode: "simple",
+	})
+	if !strings.Contains(result, "checkout_mode: simple") {
+		t.Errorf("missing checkout_mode in:\n%s", result)
+	}
+}
+
+func TestGenerate_OmitsCheckoutModeWhenEmpty(t *testing.T) {
+	result := Generate(&GenerateOptions{
+		Title: "Task without checkout mode",
+		Type:  "task",
+	})
+	if strings.Contains(result, "checkout_mode:") {
+		t.Errorf("unexpected checkout_mode line in:\n%s", result)
+	}
+}
+
+func TestCheckoutMode_RoundTrip(t *testing.T) {
+	// Parse -> Marshal -> Parse should preserve checkout_mode.
+	original := `---
+title: RoundTrip
+type: task
+status: pending
+checkout_mode: simple
+---
+
+Body`
+
+	doc1, err := Parse(original)
+	if err != nil {
+		t.Fatalf("first parse: %v", err)
+	}
+	if doc1.Frontmatter.CheckoutMode != "simple" {
+		t.Fatalf("first parse checkout_mode = %q, want %q", doc1.Frontmatter.CheckoutMode, "simple")
+	}
+
+	// Regenerate frontmatter via Generate, then reparse.
+	regen := Generate(&GenerateOptions{
+		Title:        doc1.Frontmatter.Title,
+		Type:         doc1.Frontmatter.Type,
+		Status:       doc1.Frontmatter.Status,
+		CheckoutMode: doc1.Frontmatter.CheckoutMode,
+	})
+	// Generate returns YAML body only; callers wrap in --- fences (see internal/service/brain.go).
+	full := "---\n" + regen + "---\n\nBody\n"
+	doc2, err := Parse(full)
+	if err != nil {
+		t.Fatalf("second parse: %v", err)
+	}
+	if doc2.Frontmatter.CheckoutMode != "simple" {
+		t.Errorf("round-trip checkout_mode = %q, want %q", doc2.Frontmatter.CheckoutMode, "simple")
+	}
+}
+
+func TestParse_CheckoutMode_UnknownFieldStillFlagged(t *testing.T) {
+	// Adding checkout_mode to knownFields should not silence unrelated unknown keys.
+	content := `---
+title: Task
+type: task
+status: pending
+checkout_mode: simple
+totally_bogus_key: yes
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := doc.Frontmatter.Extra["totally_bogus_key"]; !ok {
+		t.Errorf("expected totally_bogus_key in Extra map, got: %#v", doc.Frontmatter.Extra)
+	}
+	if _, ok := doc.Frontmatter.Extra["checkout_mode"]; ok {
+		t.Errorf("checkout_mode should be a known field, not in Extra")
+	}
+}
+
 func TestParse_ExplicitGeneratedFalse(t *testing.T) {
 	content := "---\ntitle: Manual Task\ntype: task\nstatus: pending\ngenerated: false\n---\n\nBody"
 

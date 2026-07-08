@@ -6125,8 +6125,9 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 		}
 
 		generated := true
+		actionType := types.NormalizeAutomationActionType(entry.Action.Type)
 		prompt := interpolateAutomationManualPrompt(entry.Action.DirectPrompt, project)
-		if entry.Action.Type == "script" {
+		if actionType == types.AutomationActionScript {
 			prompt = interpolateAutomationManualPrompt(entry.Action.Command, project)
 		}
 		if prompt == "" {
@@ -6156,7 +6157,7 @@ func runAutomationRowCmd(cfg runner.RunnerConfig, row AutomationListRow, activeP
 			CompleteOnIdle: completeOnIdle,
 			TargetWorkdir:  targetWorkdir,
 		}
-		if entry.Action.Type == "script" {
+		if actionType == types.AutomationActionScript {
 			req.Executor = "script"
 			if req.ExecutionMode == "" {
 				req.ExecutionMode = "current_branch"

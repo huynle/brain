@@ -9,6 +9,17 @@ Audit completed feature work against original user intent. Find gaps. Create fol
 
 **Announce at start:** "I'm using the feature-checkout skill to autonomously audit completed tasks against the original requests."
 
+## When this skill does NOT run
+
+Features whose tasks are marked `checkout_mode: "simple"` bypass this skill entirely — a deterministic bash automation (`brain:builtin-feature-checkout-simple`) runs instead. That path:
+
+- Uses `git -c merge.ff=true merge --squash <branch>` (same invariant as this skill).
+- Fails loudly on conflicts; does not attempt LLM-driven resolution.
+- Skips PR creation regardless of `merge_policy`.
+- Runs in ~3s at zero token cost.
+
+If you (as the LLM) are executing this skill, `checkout_mode` was either `"ai"` or unset — proceed normally.
+
 ## Overview
 
 This skill runs **as a task in the work queue** via `direct_prompt`. It:
@@ -284,6 +295,18 @@ Use metadata defaults when fields are missing:
 - `merge_target_branch`: `main`
 - `remote_branch_policy`: `delete`
 - `open_pr_before_merge`: `false`
+
+### Git Command Invariants (all merge paths)
+
+Any downstream executor (AI-driven or script-driven) that actually shells out to `git merge` MUST use the exact invocations below. Do not paraphrase, and do not drop the `-c` overrides — they exist to survive users' global gitconfig settings.
+
+- **`squash` strategy:** `git -c merge.ff=true merge --squash <source_branch>`
+  - The `-c merge.ff=true` is REQUIRED: users with `merge.ff = no` in their global gitconfig otherwise hit `fatal: options '--squash' and '--no-ff.' cannot be used together`, because Git treats the global config value as an implicit `--no-ff` flag that conflicts with `--squash`.
+  - After the squash, create the commit explicitly: `git commit -m "<message>"`.
+- **`merge` strategy (true merge commit):** `git -c merge.ff=false merge --no-ff <source_branch>`
+- **`rebase` strategy:** `git rebase <target_branch>` on the source branch, then fast-forward the target: `git -c merge.ff=only merge <source_branch>`.
+
+These `-c <key>=<value>` overrides are per-invocation and do not persist in the user's global or repo config. Never rely on the ambient gitconfig for merge fast-forward behavior.
 
 Then apply policy:
 

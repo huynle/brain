@@ -70,6 +70,18 @@ function newestTaskTime(tasks: Task[], terminalOnly: boolean): number {
   let newest = 0;
   for (const task of tasks) {
     if (terminalOnly && task.status !== "completed" && task.status !== "validated") continue;
+    if (terminalOnly) {
+      // completed_at is the source-of-truth timestamp for "when did this
+      // finish?". A feature completed last week that got a note appended
+      // today should still sort as "finished last week", not "finished
+      // today". Fall through to modified/created only for legacy entries
+      // that lack the completed_at column.
+      const completed = timeValue(task.completed_at);
+      if (completed > 0) {
+        newest = Math.max(newest, completed);
+        continue;
+      }
+    }
     newest = Math.max(newest, timeValue(task.modified), timeValue(task.created));
   }
   return newest;

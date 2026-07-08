@@ -88,6 +88,27 @@ AI coding agents are powerful but stateless — they forget everything between s
 - **Glob-based project filtering** with `--include` and `--exclude` patterns
 - **Per-project concurrency overrides** via the settings popup
 
+### Feature checkout mode (`checkout_mode`)
+
+Tasks and features carry an optional `checkout_mode` field that selects which automation runs when the feature's tasks all complete:
+
+- `"ai"` (default) — Runs the LLM-driven `feature-checkout` skill. Handles ambiguous work, resolves conflicts, writes commit messages, and creates PRs when policy dictates. ~15-30k tokens per invocation, ~30-60s wall time.
+- `"simple"` — Runs a deterministic script-based squash-merge. Skips LLM entirely. Uses `git -c merge.ff=true merge --squash`, deletes the feature branch, and removes the worktree. ~3s wall time, no LLM cost. Fails loudly on merge conflicts (no auto-resolution).
+
+Set via `brain_save`/`brain_update`:
+
+```json
+{"type":"task","title":"...","checkout_mode":"simple","feature_id":"my-feature"}
+```
+
+The fold rule across a feature: if any task in the feature has `checkout_mode:"simple"`, the simple automation fires; otherwise the AI path fires. Empty/missing values default to `"ai"` for backward compatibility.
+
+**When to prefer `"simple"`:** script-produced features where you know the branch is trivially mergeable and want fast, cheap, deterministic completion.
+
+**When to keep `"ai"`:** anything with potential conflicts, ambiguous work, or where you want an LLM to review and shape the merge commit.
+
+**Note on `merge_policy` interaction:** the "simple" path performs the merge directly and does not honor `merge_policy: auto_pr` or `prompt_only`. Choose `"ai"` if you need PR-first semantics.
+
 ## Installation
 
 ### Quick Install (Recommended)

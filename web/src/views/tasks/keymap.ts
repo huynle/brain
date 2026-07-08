@@ -29,6 +29,7 @@ export const TASKS_SPECS: ActionSpec[] = [
   { id: "tasks.filter", keys: ["/"], desc: "Filter (supports status:x feature:y tag:z, status:ready)", hint: "Filter", group: "tasks" },
   { id: "tasks.mode", keys: ["C"], desc: "Toggle Tasks ⇄ Schedules", group: "tasks" },
   { id: "tasks.done", keys: ["v"], desc: "Toggle done/history mode — executed tasks ordered by completion date", hint: "Done", group: "tasks" },
+  { id: "tasks.showDone", keys: ["."], desc: "Toggle completed tasks visibility in the tree (default: shown)", hint: "±Done", group: "tasks" },
   { id: "tasks.includeCancelled", keys: ["u"], desc: "Done mode: include cancelled/superseded/archived", group: "tasks" },
   { id: "tasks.mergeOnly", keys: ["m"], desc: "Done mode: only merge-ready features (fully completed with merge config)", group: "tasks" },
   { id: "tasks.new", keys: ["n"], desc: "New task", hint: "New", group: "tasks" },

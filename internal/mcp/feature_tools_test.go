@@ -55,7 +55,7 @@ func TestFeatureToolSchemas(t *testing.T) {
 		{"features", nil, []string{"project", "ready_only", "limit"}},
 		{"feature_ready", nil, []string{"project", "limit"}},
 		{"feature_get", []string{"feature_id"}, []string{"project", "feature_id"}},
-		{"feature_checkout", []string{"feature_id"}, []string{"project", "feature_id", "execution_branch", "merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "open_pr_before_merge", "execution_mode"}},
+		{"feature_checkout", []string{"feature_id"}, []string{"project", "feature_id", "execution_branch", "merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "open_pr_before_merge", "execution_mode", "checkout_mode"}},
 		{"feature_assign", []string{"feature_id", "runner_id"}, []string{"project", "feature_id", "runner_id", "intent", "force"}},
 		{"feature_clear_assignment", []string{"feature_id"}, []string{"project", "feature_id", "intent"}},
 	}
@@ -224,14 +224,18 @@ func TestBrainFeatureCheckout_RequestBodyAndFormatting(t *testing.T) {
 	result, err := s.tools["feature_checkout"].handler(context.Background(), map[string]any{
 		"project": "test-project", "feature_id": "auth-system", "execution_branch": "feat/auth", "merge_target_branch": "main",
 		"merge_policy": "auto_pr", "merge_strategy": "squash", "remote_branch_policy": "delete", "open_pr_before_merge": true, "execution_mode": "worktree",
+		"checkout_mode": "simple",
 	})
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	for _, key := range []string{"execution_branch", "merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "open_pr_before_merge", "execution_mode"} {
+	for _, key := range []string{"execution_branch", "merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "open_pr_before_merge", "execution_mode", "checkout_mode"} {
 		if _, ok := capturedBody[key]; !ok {
 			t.Fatalf("body missing %q: %#v", key, capturedBody)
 		}
+	}
+	if got := capturedBody["checkout_mode"]; got != "simple" {
+		t.Fatalf("checkout_mode = %#v, want %q", got, "simple")
 	}
 	for _, want := range []string{"Feature checkout", "auth-system", "created: true", "feature-checkout:auth-system", "checkout-1", "Review auth-system"} {
 		if !strings.Contains(result, want) {

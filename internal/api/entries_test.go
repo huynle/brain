@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -422,6 +423,28 @@ func TestHandleCreateEntry(t *testing.T) {
 				}
 				if !found {
 					t.Error("expected validation detail for field 'merge_policy'")
+				}
+			},
+		},
+		{
+			name: "invalid checkout_mode",
+			body: map[string]any{
+				"type":          "task",
+				"title":         "Test",
+				"content":       "Content",
+				"checkout_mode": "garbage",
+			},
+			wantStatus: http.StatusBadRequest,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				found := false
+				for _, d := range body.Details {
+					if d.Field == "checkout_mode" {
+						found = true
+					}
+				}
+				if !found {
+					t.Error("expected validation detail for field 'checkout_mode'")
 				}
 			},
 		},
@@ -1428,6 +1451,116 @@ Body`,
 			wantStatus: http.StatusOK,
 		},
 		{
+			name:        "text/x-brain-full maps automation trigger/action/retry",
+			id:          "auto12df",
+			contentType: "text/x-brain-full",
+			body: `---
+title: Keep Teams active with random mouse movement
+type: automation
+status: active
+schedule_enabled: true
+trigger:
+  type: cron
+  event: ""
+  schedule: '*/5 7-17 * * 1-5'
+action:
+  type: script
+  command: timeout 30s mm --random
+  target_workdir: /tmp
+retry:
+  max_attempts: 3
+  backoff: exponential
+---
+Body content`,
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				// Regression: before the fix, mapFrontmatterToUpdateRequest
+				// silently dropped trigger/action/retry, so the PWA's raw
+				// automation editor "saved" changes that never persisted.
+				if req.Trigger == nil {
+					t.Fatal("Trigger = nil, want populated from frontmatter")
+				}
+				if req.Trigger.Type != "cron" {
+					t.Errorf("Trigger.Type = %q, want %q", req.Trigger.Type, "cron")
+				}
+				if req.Trigger.Schedule != "*/5 7-17 * * 1-5" {
+					t.Errorf("Trigger.Schedule = %q, want %q", req.Trigger.Schedule, "*/5 7-17 * * 1-5")
+				}
+				if req.Action == nil {
+					t.Fatal("Action = nil, want populated from frontmatter")
+				}
+				if req.Action.Type != "script" {
+					t.Errorf("Action.Type = %q, want %q", req.Action.Type, "script")
+				}
+				if req.Action.Command != "timeout 30s mm --random" {
+					t.Errorf("Action.Command = %q, want %q", req.Action.Command, "timeout 30s mm --random")
+				}
+				if req.Action.TargetWorkdir != "/tmp" {
+					t.Errorf("Action.TargetWorkdir = %q, want %q", req.Action.TargetWorkdir, "/tmp")
+				}
+				if req.Retry == nil {
+					t.Fatal("Retry = nil, want populated from frontmatter")
+				}
+				if req.Retry.MaxAttempts != 3 {
+					t.Errorf("Retry.MaxAttempts = %d, want 3", req.Retry.MaxAttempts)
+				}
+				if req.Retry.Backoff != "exponential" {
+					t.Errorf("Retry.Backoff = %q, want %q", req.Retry.Backoff, "exponential")
+				}
+				return &types.BrainEntry{
+					ID:    "auto12df",
+					Path:  "projects/personal-productivity/automation/keep-teams.md",
+					Title: "Keep Teams active with random mouse movement",
+					Type:  "automation",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
+			name:        "text/x-brain-full maps goal config",
+			id:          "goal1234",
+			contentType: "text/x-brain-full",
+			body: `---
+title: Ship auth by end of quarter
+type: automation
+status: active
+goal:
+  id: ship-auth
+  criteria: All auth tasks completed and deployed to production
+  validation: manual
+  trigger_source: both
+  complete_statuses:
+    - completed
+    - validated
+  blocked_statuses:
+    - blocked
+---
+Body`,
+			mockUpdate: func(ctx context.Context, pathOrID string, req types.UpdateEntryRequest) (*types.BrainEntry, error) {
+				if req.Goal == nil {
+					t.Fatal("Goal = nil, want populated from frontmatter")
+				}
+				if req.Goal.ID != "ship-auth" {
+					t.Errorf("Goal.ID = %q, want %q", req.Goal.ID, "ship-auth")
+				}
+				if req.Goal.TriggerSource != "both" {
+					t.Errorf("Goal.TriggerSource = %q, want %q", req.Goal.TriggerSource, "both")
+				}
+				if len(req.Goal.CompleteStatuses) != 2 || req.Goal.CompleteStatuses[0] != "completed" {
+					t.Errorf("Goal.CompleteStatuses = %v, want [completed validated]", req.Goal.CompleteStatuses)
+				}
+				if len(req.Goal.BlockedStatuses) != 1 || req.Goal.BlockedStatuses[0] != "blocked" {
+					t.Errorf("Goal.BlockedStatuses = %v, want [blocked]", req.Goal.BlockedStatuses)
+				}
+				return &types.BrainEntry{
+					ID:    "goal1234",
+					Path:  "projects/default/automation/goal.md",
+					Title: "Ship auth by end of quarter",
+					Type:  "automation",
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+		},
+		{
 			name:        "default JSON still works unchanged",
 			id:          "abc12def",
 			contentType: "application/json",
@@ -2270,6 +2403,32 @@ func TestHandleBulkUpdate(t *testing.T) {
 			},
 		},
 		{
+			name: "validation error - invalid checkout_mode in entry updates",
+			body: map[string]any{
+				"entries": []map[string]any{
+					{
+						"path": "projects/x/task/y.md",
+						"updates": map[string]any{
+							"checkout_mode": "garbage",
+						},
+					},
+				},
+			},
+			wantStatus: http.StatusUnprocessableEntity,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				found := false
+				for _, d := range body.Details {
+					if d.Field == "entries[0].updates.checkout_mode" {
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("expected validation detail for field 'entries[0].updates.checkout_mode', got %+v", body.Details)
+				}
+			},
+		},
+		{
 			name: "dry run - returns 200 without SSE (via mock verifying service called)",
 			body: types.BulkUpdateRequest{
 				Entries: []types.BulkUpdateEntry{
@@ -2324,6 +2483,115 @@ func TestHandleBulkUpdate(t *testing.T) {
 				body := decodeJSON[types.ErrorResponse](t, resp)
 				if body.Error != "Internal Server Error" {
 					t.Errorf("error = %q, want %q", body.Error, "Internal Server Error")
+				}
+			},
+		},
+		{
+			// Verifies new filter field generated_by is accepted and forwarded to the service.
+			name: "success - filter with generated_by",
+			body: map[string]any{
+				"filter": map[string]any{
+					"generated_by": "auto:X",
+				},
+				"updates": map[string]any{
+					"status": "completed",
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				if req.Filter == nil {
+					t.Fatal("expected filter to be set")
+				}
+				if req.Filter.GeneratedBy == nil {
+					t.Fatal("expected filter.generated_by to be decoded, got nil")
+				}
+				if got, want := *req.Filter.GeneratedBy, "auto:X"; got != want {
+					t.Errorf("filter.generated_by = %q, want %q", got, want)
+				}
+				return &types.BulkUpdateResponse{
+					Updated: 1,
+					Total:   1,
+					Results: []types.BulkUpdateResult{
+						{Path: "projects/proj/task/a.md", ID: "a1234567", Status: "ok"},
+					},
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BulkUpdateResponse](t, resp)
+				if body.Updated != 1 {
+					t.Errorf("updated = %d, want %d", body.Updated, 1)
+				}
+			},
+		},
+		{
+			// Data-safety guard: unknown filter fields must be rejected, not silently dropped.
+			name: "bad request - unknown filter field",
+			body: map[string]any{
+				"filter": map[string]any{
+					"does_not_exist": "x",
+				},
+				"updates": map[string]any{
+					"status": "completed",
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				t.Fatal("service must not be called when unknown filter fields are present")
+				return nil, nil
+			},
+			wantStatus: http.StatusBadRequest,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if body.Error != "Bad Request" {
+					t.Errorf("error = %q, want %q", body.Error, "Bad Request")
+				}
+				if !strings.Contains(body.Message, "unknown fields") {
+					t.Errorf("message = %q, want to contain %q", body.Message, "unknown fields")
+				}
+				if !strings.Contains(body.Message, "does_not_exist") {
+					t.Errorf("message = %q, want to contain %q", body.Message, "does_not_exist")
+				}
+			},
+		},
+		{
+			// Regression guard: existing valid filters keep working after DisallowUnknownFields.
+			name: "success - valid filter still works (regression guard)",
+			body: map[string]any{
+				"filter": map[string]any{
+					"feature_id": "feat-abc",
+					"status":     "blocked",
+					"type":       "task",
+				},
+				"updates": map[string]any{
+					"status": "completed",
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				if req.Filter == nil {
+					t.Fatal("expected filter to be set")
+				}
+				if req.Filter.FeatureID == nil || *req.Filter.FeatureID != "feat-abc" {
+					t.Errorf("filter.feature_id decoded incorrectly: %+v", req.Filter.FeatureID)
+				}
+				if req.Filter.Status == nil || *req.Filter.Status != "blocked" {
+					t.Errorf("filter.status decoded incorrectly: %+v", req.Filter.Status)
+				}
+				if req.Filter.Type == nil || *req.Filter.Type != "task" {
+					t.Errorf("filter.type decoded incorrectly: %+v", req.Filter.Type)
+				}
+				return &types.BulkUpdateResponse{
+					Updated: 2,
+					Total:   2,
+					Results: []types.BulkUpdateResult{
+						{Path: "projects/proj/task/a.md", ID: "a1234567", Status: "ok"},
+						{Path: "projects/proj/task/b.md", ID: "b1234567", Status: "ok"},
+					},
+				}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BulkUpdateResponse](t, resp)
+				if body.Updated != 2 {
+					t.Errorf("updated = %d, want %d", body.Updated, 2)
 				}
 			},
 		},

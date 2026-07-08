@@ -105,11 +105,26 @@ func (s StatusBar) renderFirstRow(width int) string {
 		s.Stats.Completed,
 	)
 
-	// Add blocked count if > 0
+	// Add blocked counts if > 0.
+	//
+	// Two separate counters (see task ghtzzp1x / plan 24urhmtl#Finding-4):
+	//   - dep_blocked:    Stats.Blocked (classification-blocked)
+	//   - status_blocked: Stats.StatusBlocked (Status == "blocked")
+	// These are independent; a task can appear in both.
+	//
+	// TODO(ghtzzp1x): PWA StatusBar (separate repo) still shows the old
+	// single "blocked" label. Update it to mirror this split when that
+	// repo is touched.
 	if s.Stats.Blocked > 0 {
-		stats += fmt.Sprintf("  %s %d blocked",
+		stats += fmt.Sprintf("  %s %d dep_blocked",
 			lipgloss.NewStyle().Foreground(ColorBlocked).Render(IndicatorBlocked),
 			s.Stats.Blocked,
+		)
+	}
+	if s.Stats.StatusBlocked > 0 {
+		stats += fmt.Sprintf("  %s %d status_blocked",
+			lipgloss.NewStyle().Foreground(ColorBlocked).Render(IndicatorBlocked),
+			s.Stats.StatusBlocked,
 		)
 	}
 

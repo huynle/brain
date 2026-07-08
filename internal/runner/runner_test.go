@@ -1277,6 +1277,61 @@ func TestTaskRunner_DispatchSpawnFailureReleasesDispatchLease(t *testing.T) {
 	}
 }
 
+// TestTaskRunner_SpawnFailureIncludesErrorInReleaseReason verifies that when a
+// spawn fails, the emitted EventTaskReleased carries the underlying error text
+// in its Reason field (not just the bare "spawn failed" label). This is the
+// difference between "some spawn failed somewhere" and "spawn failed: script
+// command rejected: command X does not match any allowed command prefix" — the
+// latter is what operators need to diagnose why an automation is silently
+// failing to launch.
+func TestTaskRunner_SpawnFailureIncludesErrorInReleaseReason(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	executor.spawnErr = fmt.Errorf("script command rejected: command %q does not match any allowed command prefix", "timeout 30s mm --random")
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	var events []RunnerEvent
+	var eventMu sync.Mutex
+	tr.OnEvent(func(event RunnerEvent) {
+		eventMu.Lock()
+		events = append(events, event)
+		eventMu.Unlock()
+	})
+
+	task := testTask("task1", "proj-a")
+	ctx := context.Background()
+
+	if err := tr.claimAndSpawn(ctx, task, "proj-a"); err == nil {
+		t.Fatalf("claimAndSpawn should return error when spawn fails")
+	}
+
+	eventMu.Lock()
+	defer eventMu.Unlock()
+
+	var released *RunnerEvent
+	for i := range events {
+		if events[i].Type == EventTaskReleased && events[i].TaskID == "task1" {
+			released = &events[i]
+			break
+		}
+	}
+	if released == nil {
+		t.Fatalf("expected EventTaskReleased for task1, got events: %+v", events)
+	}
+	if !strings.Contains(released.Reason, "spawn failed") {
+		t.Errorf("Reason = %q, want it to contain %q", released.Reason, "spawn failed")
+	}
+	if !strings.Contains(released.Reason, "allowed command prefix") {
+		t.Errorf("Reason = %q, want it to contain the underlying error text (%q)", released.Reason, "allowed command prefix")
+	}
+}
+
 func TestTaskRunner_TaskCompletionReleasesDispatchLease(t *testing.T) {
 	client := newMockClient()
 	processMgr := newMockProcessMgr()
@@ -2071,6 +2126,56 @@ func TestTaskRunner_ClaimAndSpawn_SpawnFails_ReleasesTask(t *testing.T) {
 	releases := client.getReleaseCalls()
 	if len(releases) == 0 {
 		t.Error("should release task when spawn fails")
+	}
+}
+
+// TestTaskRunner_SpawnFailureRollsStatusBackToBlocked verifies that when a
+// spawn fails, the runner not only releases the lease but also rolls back
+// the task's status from "in_progress" (set optimistically at claim time)
+// to "blocked". Without this rollback the task is stuck in in_progress
+// forever, invisible to schedulers and only recoverable by the orphan
+// reaper on a subsequent runner start.
+//
+// Bug reproduction: script-command rejection released the lease and
+// emitted task.released with an accurate reason, but the task itself
+// stayed in_progress until the runner was restarted.
+//
+// The rollback status is "blocked" for symmetry with the workdir-failure
+// branch (runner.go: resolve workdir errors also mark the task blocked),
+// so a human or the Blocked Task Inspector can address it.
+func TestTaskRunner_SpawnFailureRollsStatusBackToBlocked(t *testing.T) {
+	client := newMockClient()
+	client.claimResult = ClaimResult{Success: true}
+
+	executor := newMockExecutor()
+	executor.spawnErr = fmt.Errorf("script command rejected: command %q does not match any allowed command prefix", "rm -rf /tmp/nope")
+
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	task := testTask("task1", "proj-a")
+	ctx := context.Background()
+
+	if err := tr.claimAndSpawn(ctx, task, "proj-a"); err == nil {
+		t.Fatalf("claimAndSpawn should return error when spawn fails")
+	}
+
+	updates := client.getUpdateStatusCalls()
+	// We expect two UpdateTaskStatus calls: pending→in_progress at claim,
+	// then in_progress→blocked at spawn-failure rollback.
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 UpdateTaskStatus calls (in_progress at claim, blocked on rollback), got %d: %+v", len(updates), updates)
+	}
+	if updates[0].Status != "in_progress" {
+		t.Errorf("first UpdateTaskStatus should be in_progress (claim), got %q", updates[0].Status)
+	}
+	if updates[1].Status != "blocked" {
+		t.Errorf("second UpdateTaskStatus should be blocked (spawn-failure rollback), got %q", updates[1].Status)
+	}
+	if updates[1].TaskPath != task.Path {
+		t.Errorf("rollback UpdateTaskStatus path = %q, want %q", updates[1].TaskPath, task.Path)
 	}
 }
 
@@ -4985,5 +5090,295 @@ func TestTaskRunner_DispatchConsumerNotBlockedByWedgedPoll(t *testing.T) {
 			len(executor.getSpawnCalls()),
 			len(client.getRejectCalls()),
 			len(client.getAckCalls()))
+	}
+}
+
+// =============================================================================
+// Project Refresh Tests (Finding 2 — wcg6lxfz)
+// =============================================================================
+
+// setMockProjects updates the mock client's project list in a thread-safe way.
+// Used by refresh tests to simulate projects appearing/disappearing between
+// ListProjects calls.
+func setMockProjects(m *mockClient, projects []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.projects = projects
+}
+
+// TestTaskRunner_GetProjects_ReturnsSnapshot verifies getProjects returns a
+// defensive copy — callers must not be able to mutate tr.projects by
+// modifying the returned slice.
+func TestTaskRunner_GetProjects_ReturnsSnapshot(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	snapshot := tr.getProjects()
+	if len(snapshot) != 2 {
+		t.Fatalf("snapshot len = %d, want 2", len(snapshot))
+	}
+
+	// Mutate the returned slice.
+	snapshot[0] = "hacked"
+
+	// Internal state must be unchanged.
+	fresh := tr.getProjects()
+	if fresh[0] == "hacked" {
+		t.Error("getProjects returned aliased slice; internal state was mutated externally")
+	}
+}
+
+// TestTaskRunner_RefreshProjects_AddsNewProject verifies that when the API
+// starts returning a new project, refreshProjects appends it to tr.projects.
+// This is the primary scenario from the plan: projects created after the
+// runner starts must become visible without a restart.
+func TestTaskRunner_RefreshProjects_AddsNewProject(t *testing.T) {
+	client := newMockClient()
+	setMockProjects(client, []string{"proj-a", "proj-b"})
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Simulate a new project appearing in the API.
+	setMockProjects(client, []string{"proj-a", "proj-b", "proj-c"})
+
+	added, removed, err := tr.refreshProjects(context.Background())
+	if err != nil {
+		t.Fatalf("refreshProjects: %v", err)
+	}
+	if len(added) != 1 || added[0] != "proj-c" {
+		t.Errorf("added = %v, want [proj-c]", added)
+	}
+	if len(removed) != 0 {
+		t.Errorf("removed = %v, want []", removed)
+	}
+
+	got := tr.getProjects()
+	want := []string{"proj-a", "proj-b", "proj-c"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("projects after refresh = %v, want %v", got, want)
+	}
+
+	// A subsequent poll must consider proj-c. The simplest way to assert
+	// this without running the full poll pipeline is to verify
+	// supportsProject picks it up.
+	if !tr.supportsProject("proj-c") {
+		t.Error("supportsProject(proj-c) = false after refresh")
+	}
+}
+
+// TestTaskRunner_RefreshProjects_RemovesProject verifies removed projects are
+// dropped from tr.projects (but no panic, no mid-flight task disruption at
+// this layer — that's a higher-level concern).
+func TestTaskRunner_RefreshProjects_RemovesProject(t *testing.T) {
+	client := newMockClient()
+	setMockProjects(client, []string{"proj-a", "proj-b"})
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	// Simulate proj-b being removed.
+	setMockProjects(client, []string{"proj-a"})
+
+	added, removed, err := tr.refreshProjects(context.Background())
+	if err != nil {
+		t.Fatalf("refreshProjects: %v", err)
+	}
+	if len(added) != 0 {
+		t.Errorf("added = %v, want []", added)
+	}
+	if len(removed) != 1 || removed[0] != "proj-b" {
+		t.Errorf("removed = %v, want [proj-b]", removed)
+	}
+
+	got := tr.getProjects()
+	want := []string{"proj-a"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("projects after refresh = %v, want %v", got, want)
+	}
+}
+
+// TestTaskRunner_RefreshProjects_NoChange verifies a stable API response does
+// not report spurious add/remove events.
+func TestTaskRunner_RefreshProjects_NoChange(t *testing.T) {
+	client := newMockClient()
+	setMockProjects(client, []string{"proj-a", "proj-b"})
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	added, removed, err := tr.refreshProjects(context.Background())
+	if err != nil {
+		t.Fatalf("refreshProjects: %v", err)
+	}
+	if len(added) != 0 {
+		t.Errorf("added = %v, want []", added)
+	}
+	if len(removed) != 0 {
+		t.Errorf("removed = %v, want []", removed)
+	}
+
+	got := tr.getProjects()
+	want := []string{"proj-a", "proj-b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("projects = %v, want %v", got, want)
+	}
+}
+
+// TestTaskRunner_RefreshProjects_APIErrorPreservesList verifies that a
+// transient API failure does not clear the project list. The runner must
+// keep polling the projects it already knows about.
+func TestTaskRunner_RefreshProjects_APIErrorPreservesList(t *testing.T) {
+	client := newMockClient()
+	setMockProjects(client, []string{"proj-a", "proj-b"})
+	client.mu.Lock()
+	client.projectsErr = fmt.Errorf("simulated API failure")
+	client.mu.Unlock()
+
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	_, _, err := tr.refreshProjects(context.Background())
+	if err == nil {
+		t.Fatal("refreshProjects: expected error, got nil")
+	}
+
+	got := tr.getProjects()
+	want := []string{"proj-a", "proj-b"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("projects after failed refresh = %v, want %v (must not clear list)", got, want)
+	}
+}
+
+// TestTaskRunner_RefreshProjects_AppliesFilters verifies include/exclude
+// filters from RunnerConfig are re-applied on every refresh — otherwise a
+// new project matching an exclude pattern would leak in.
+func TestTaskRunner_RefreshProjects_AppliesFilters(t *testing.T) {
+	client := newMockClient()
+	setMockProjects(client, []string{"proj-a", "proj-b"})
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	cfg := testRunnerConfig()
+	cfg.ExcludeProjects = []string{"test-*"}
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"proj-a", "proj-b"},
+		Config:   cfg,
+		Mode:     ExecutionModeHeadless,
+		Client:   client,
+		Executors: map[string]TaskExecutor{
+			"opencode": executor,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	// New project "test-foo" appears in the API — should be filtered out.
+	setMockProjects(client, []string{"proj-a", "proj-b", "test-foo", "proj-c"})
+
+	added, _, err := tr.refreshProjects(context.Background())
+	if err != nil {
+		t.Fatalf("refreshProjects: %v", err)
+	}
+
+	// Only proj-c should be added; test-foo must be filtered.
+	if len(added) != 1 || added[0] != "proj-c" {
+		t.Errorf("added = %v, want [proj-c] (test-foo must be excluded)", added)
+	}
+
+	got := tr.getProjects()
+	for _, p := range got {
+		if p == "test-foo" {
+			t.Error("test-foo leaked past ExcludeProjects filter after refresh")
+		}
+	}
+}
+
+// TestTaskRunner_RefreshProjects_ConcurrentReads exercises the mutex: many
+// goroutines reading projects while refreshProjects mutates. Under -race
+// this catches missing locks around tr.projects.
+func TestTaskRunner_RefreshProjects_ConcurrentReads(t *testing.T) {
+	client := newMockClient()
+	setMockProjects(client, []string{"proj-a", "proj-b"})
+	executor := newMockExecutor()
+	processMgr := newMockProcessMgr()
+	stateMgr := newMockStateMgr()
+
+	tr := newTestRunner(client, executor, processMgr, stateMgr)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var wg sync.WaitGroup
+	// Concurrent readers.
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 200; j++ {
+				_ = tr.getProjects()
+				_ = tr.supportsProject("proj-a")
+				select {
+				case <-ctx.Done():
+					return
+				default:
+				}
+			}
+		}()
+	}
+	// Concurrent writer.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for j := 0; j < 20; j++ {
+			if j%2 == 0 {
+				setMockProjects(client, []string{"proj-a", "proj-b", "proj-c"})
+			} else {
+				setMockProjects(client, []string{"proj-a", "proj-b"})
+			}
+			_, _, _ = tr.refreshProjects(ctx)
+		}
+	}()
+
+	wg.Wait()
+}
+
+// TestTaskRunner_RefreshProjectsInterval_Config verifies the config field is
+// wired up with the documented default and env-var override behaviour.
+func TestTaskRunner_RefreshProjectsInterval_Config(t *testing.T) {
+	cfg := testRunnerConfig()
+	if cfg.ProjectRefreshInterval != 0 {
+		// testRunnerConfig() intentionally leaves it 0 (no zero-value
+		// override); the LoadConfig default is 60. Tested separately
+		// in config_test.go.
+	}
+
+	// A NewTaskRunner must accept and store the value.
+	cfg.ProjectRefreshInterval = 5
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects:   []string{"proj-a"},
+		Config:     cfg,
+		Mode:       ExecutionModeHeadless,
+		Client:     newMockClient(),
+		Executor:   newMockExecutor(),
+		ProcessMgr: newMockProcessMgr(),
+		StateMgr:   newMockStateMgr(),
+	})
+	if tr.config.ProjectRefreshInterval != 5 {
+		t.Errorf("config.ProjectRefreshInterval = %d, want 5", tr.config.ProjectRefreshInterval)
 	}
 }

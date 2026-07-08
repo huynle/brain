@@ -153,7 +153,10 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 		if err != nil {
 			continue
 		}
-		if !schedule.Matches(now.UTC()) {
+		// Evaluate the cron schedule in the automation's configured timezone.
+		// Empty or invalid timezone falls back to UTC (see pkg/cron.LoadTimezone).
+		loc := cron.LoadTimezone(automation.Trigger.Timezone)
+		if !schedule.Matches(now.In(loc)) {
 			continue
 		}
 
@@ -320,6 +323,15 @@ func matchAutomationFilters(filters map[string]string, evt types.Event) bool {
 		if key == "project" {
 			actual = evt.ProjectID
 		}
+		// Phase 3: belt-and-suspenders default for checkout_mode. Feature
+		// completion events published via CheckFeatureCompletion always
+		// carry checkout_mode in metadata, but raw events from other code
+		// paths (or older persisted events replayed after upgrade) may not.
+		// Treat missing/empty checkout_mode as "ai" so the AI built-in
+		// automation still matches its default target audience.
+		if key == "checkout_mode" && actual == "" {
+			actual = "ai"
+		}
 		if !types.MatchFilterValue(actual, expr) {
 			return false
 		}
@@ -399,7 +411,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		TargetWorkdir:  targetWorkdir,
 	}
 
-	if automation.Action.Type == "script" {
+	if types.NormalizeAutomationActionType(automation.Action.Type) == types.AutomationActionScript {
 		command := renderAutomationTemplate(automation.Action.Command, project, evt)
 		req.Executor = "script"
 		req.Content = command

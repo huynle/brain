@@ -220,6 +220,26 @@ func (s *EventServiceImpl) Subscribe(_ context.Context, filters map[string]strin
 // Feature Completion Detection
 // =============================================================================
 
+// foldCheckoutMode reduces the checkout_mode values across a set of feature
+// tasks into a single mode used to route the feature.completed event to the
+// correct built-in automation.
+//
+// Fold rules (Phase 3):
+//   - Any task with CheckoutMode == "simple" → "simple" (simple wins over ai).
+//   - Else → "ai" (default; covers "all ai", "all empty", "unknown-only",
+//     and "no tasks" — the AI automation is the backward-compat default).
+//
+// Unknown values are treated as empty (defensive; API-layer validation should
+// already prevent them). Once one task is "simple", the fold short-circuits.
+func foldCheckoutMode(tasks []types.ResolvedTask) string {
+	for _, t := range tasks {
+		if t.CheckoutMode == "simple" {
+			return "simple"
+		}
+	}
+	return "ai"
+}
+
 // CheckFeatureCompletion checks if all tasks in a feature are completed
 // and emits the appropriate event (feature.completed or feature.progress).
 // This is called server-side after a task status update via the API,
@@ -260,6 +280,16 @@ func (s *EventServiceImpl) CheckFeatureCompletion(ctx context.Context, projectID
 
 	allDone := completed >= total
 
+	// Fold checkout_mode across all feature tasks so the event can route to
+	// the correct built-in automation (Phase 3.1). Always populate — including
+	// the default "ai" fallback — so downstream automation filters can use
+	// exact-match without worrying about missing keys.
+	metadata := map[string]string{
+		"completed":     strconv.Itoa(completed),
+		"total":         strconv.Itoa(total),
+		"checkout_mode": foldCheckoutMode(tasks),
+	}
+
 	if allDone {
 		if s.assignmentCleaner != nil {
 			if _, err := s.assignmentCleaner.ClearFeatureAssignment(ctx, projectID, featureID); err != nil {
@@ -275,20 +305,14 @@ func (s *EventServiceImpl) CheckFeatureCompletion(ctx context.Context, projectID
 		evt.ProjectID = projectID
 		evt.FeatureID = featureID
 		evt.TaskID = taskID
-		evt.Metadata = map[string]string{
-			"completed": strconv.Itoa(completed),
-			"total":     strconv.Itoa(total),
-		}
+		evt.Metadata = metadata
 		s.hub.Publish(evt)
 	} else {
 		evt := types.NewEvent(types.EventFeatureProgress, types.EventSourceAPI)
 		evt.ProjectID = projectID
 		evt.FeatureID = featureID
 		evt.TaskID = taskID
-		evt.Metadata = map[string]string{
-			"completed": strconv.Itoa(completed),
-			"total":     strconv.Itoa(total),
-		}
+		evt.Metadata = metadata
 		s.hub.Publish(evt)
 	}
 }

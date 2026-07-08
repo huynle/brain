@@ -102,6 +102,7 @@ func registerBrainFeatureCheckout(s *Server, client *APIClient) {
 	props["remote_branch_policy"] = Property{Type: "string", Enum: []string{"keep", "delete"}, Description: "Remote branch cleanup policy"}
 	props["open_pr_before_merge"] = Property{Type: "boolean", Description: "Open a PR before merge"}
 	props["execution_mode"] = Property{Type: "string", Enum: []string{"worktree", "current_branch"}, Description: "Execution mode for generated checkout work"}
+	props["checkout_mode"] = Property{Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation."}
 	s.RegisterTool(Tool{
 		Name:        "feature_checkout",
 		Description: "Create or reuse a feature checkout task for review and merge orchestration.",
@@ -121,6 +122,7 @@ func registerBrainFeatureCheckout(s *Server, client *APIClient) {
 			RemoteBranchPolicy: StringArg(args, "remote_branch_policy", ""),
 			OpenPRBeforeMerge:  BoolArg(args, "open_pr_before_merge", false),
 			ExecutionMode:      StringArg(args, "execution_mode", ""),
+			CheckoutMode:       StringArg(args, "checkout_mode", ""),
 		}
 		var resp types.CheckoutFeatureResult
 		path := "/tasks/" + url.PathEscape(project) + "/features/" + url.PathEscape(featureID) + "/checkout"

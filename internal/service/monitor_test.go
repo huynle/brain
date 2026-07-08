@@ -128,6 +128,24 @@ func TestBuildDreamPrompt_UsesValidProjectFilter(t *testing.T) {
 	}
 }
 
+// TestMonitorTemplate_BlockedInspector_UnlimitedRuns pins a design decision:
+// the Blocked Task Inspector is a long-running monitor that must keep polling
+// the queue forever. A bounded DefaultMaxRuns silently disables the monitor
+// after N ticks (as observed in the field: max_runs=10 → disabled within
+// 20 minutes of enable, at which point the inspector never sees blocked
+// tasks created afterwards). DefaultMaxRuns must remain 0 (unlimited),
+// matching the "dream" template's design.
+func TestMonitorTemplate_BlockedInspector_UnlimitedRuns(t *testing.T) {
+	tmpl, ok := monitorTemplates["blocked-inspector"]
+	if !ok {
+		t.Fatal("blocked-inspector template not registered")
+	}
+	if tmpl.DefaultMaxRuns != 0 {
+		t.Errorf("blocked-inspector DefaultMaxRuns = %d, want 0 (unlimited); a bounded value silently disables the inspector after N ticks and defeats its purpose",
+			tmpl.DefaultMaxRuns)
+	}
+}
+
 // =============================================================================
 // MonitorService Tests (with mock BrainService)
 // =============================================================================

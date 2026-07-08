@@ -254,7 +254,7 @@ func (s *GoalService) generateGoalTask(ctx context.Context, goal types.BrainEntr
 		TargetWorkdir:  goal.Goal.Workdir,
 	}
 
-	if goal.Action.Type == "script" {
+	if types.NormalizeAutomationActionType(goal.Action.Type) == types.AutomationActionScript {
 		req.Executor = "script"
 		req.Content = goal.Action.Command
 		req.DirectPrompt = goal.Action.Command

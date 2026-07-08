@@ -1834,6 +1834,96 @@ func TestHandleReleaseTask_EmitsEvent(t *testing.T) {
 	}
 }
 
+// TestHandleReleaseTask_PropagatesReason verifies that when the release
+// request body carries a `reason` field, the emitted task.released event
+// exposes it BOTH at the top level (event.Reason) AND in metadata (parity
+// with the runner-source event; see runner/event_conversion.go and commit
+// 9737ac3). Consumers reading either access pattern must get the same
+// string.
+func TestHandleReleaseTask_PropagatesReason(t *testing.T) {
+	es := &mockEventService{}
+	taskMock := &mockTaskService{
+		releaseTaskFunc: func(_ context.Context, _, _, _ string) error {
+			return nil
+		},
+	}
+	router := newTaskTestRouterWithEvents(taskMock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	const wantReason = "spawn failed: script command rejected"
+	body := jsonBody(t, map[string]any{
+		"runnerId": "runner-1",
+		"reason":   wantReason,
+	})
+	resp, err := http.Post(srv.URL+"/tasks/myproj/task123/release", "application/json", body)
+	if err != nil {
+		t.Fatalf("POST release failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventTaskReleased {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventTaskReleased)
+	}
+	if evt.Reason != wantReason {
+		t.Errorf("event.Reason = %q, want %q", evt.Reason, wantReason)
+	}
+	if evt.Metadata["reason"] != wantReason {
+		t.Errorf("event.Metadata[reason] = %q, want %q", evt.Metadata["reason"], wantReason)
+	}
+}
+
+// TestHandleReleaseTask_EmptyReasonNotFabricated is a regression guard: when
+// no reason is supplied in the request body, neither event.Reason nor
+// event.Metadata["reason"] should be populated. The handler must not invent
+// a synthetic reason string.
+func TestHandleReleaseTask_EmptyReasonNotFabricated(t *testing.T) {
+	es := &mockEventService{}
+	taskMock := &mockTaskService{
+		releaseTaskFunc: func(_ context.Context, _, _, _ string) error {
+			return nil
+		},
+	}
+	router := newTaskTestRouterWithEvents(taskMock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	// No "reason" field in the request body.
+	body := jsonBody(t, map[string]any{"runnerId": "runner-1"})
+	resp, err := http.Post(srv.URL+"/tasks/myproj/task123/release", "application/json", body)
+	if err != nil {
+		t.Fatalf("POST release failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Reason != "" {
+		t.Errorf("event.Reason = %q, want empty (do not fabricate)", evt.Reason)
+	}
+	if v, ok := evt.Metadata["reason"]; ok && v != "" {
+		t.Errorf("event.Metadata[reason] = %q, want unset or empty", v)
+	}
+}
+
 // =============================================================================
 // Get Task Metadata Tests
 // =============================================================================

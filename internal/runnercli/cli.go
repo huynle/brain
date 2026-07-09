@@ -144,7 +144,7 @@ func RunMonitorTUI(ctx context.Context, opts RunnerOptions) error {
 			logPath := filepath.Join(cfg.LogDir, "monitor.log")
 			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 			if err == nil {
-				defer logFile.Close()
+				defer func() { _ = logFile.Close() }()
 				slog.SetDefault(slog.New(slog.NewTextHandler(logFile, &slog.HandlerOptions{
 					Level: slog.LevelDebug,
 				})))
@@ -228,7 +228,7 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 			logPath := filepath.Join(cfg.LogDir, "runner.log")
 			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 			if err == nil {
-				defer logFile.Close()
+				defer func() { _ = logFile.Close() }()
 				runnerLogger = log.New(logFile, "", log.LstdFlags)
 				// Redirect slog to the same log file so structured logging
 				// (slog.Info/Warn/Debug) doesn't write to stderr and corrupt
@@ -300,11 +300,14 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		KeyBindings: opts.KeyBindings,
 	}
 	model := tui.NewModel(tuiCfg)
-	p := tea.NewProgram(model, tea.WithAltScreen())
 
 	// Create context that cancels on signal or ctx.Done
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
+
+	// tea.WithContext kills the program when runCtx is cancelled, so RunTUI
+	// actually returns on context cancellation instead of blocking forever.
+	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithContext(runCtx))
 
 	go func() {
 		for {
@@ -442,6 +445,10 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 		if _, err := p.Run(); err != nil {
 			cancel()
 			_ = tr.Stop()
+			if runCtx.Err() != nil {
+				// Killed by context cancellation or signal shutdown, not a TUI failure.
+				return ctx.Err()
+			}
 			return fmt.Errorf("TUI failed: %w", err)
 		}
 	}

@@ -572,6 +572,11 @@ func (m *mockProcessMgr) GetAll() []ProcessInfo {
 	defer m.mu.Unlock()
 	var result []ProcessInfo
 	for _, info := range m.processes {
+		if info.Proc == nil {
+			// Reservation placeholder — excluded, matching the real
+			// ProcessManager contract.
+			continue
+		}
 		result = append(result, *info)
 	}
 	return result
@@ -2478,6 +2483,75 @@ func TestTaskRunner_CheckRunningTasks_CompletedTask(t *testing.T) {
 	}
 	if !found {
 		t.Error("should emit task_completed event")
+	}
+}
+
+// TestTaskRunner_CheckRunningTasks_IgnoresSlotReservations is the
+// regression test for the spurious empty-path status update seen during
+// push dispatch: ReserveSlot inserts a placeholder ProcessInfo with a
+// zero-value Task, and the poll loop's completion check raced the
+// in-flight spawn, saw the placeholder in GetAll, treated it as a
+// crashed task (CheckCompletion("") = not tracked = crashed), and then
+// emitted a bogus in_progress→pending event with empty task_id/project
+// and called UpdateTaskStatus with an empty path (API 404
+// "Entry not found: "). Uses the real ProcessManager since that is
+// where the placeholder leaked from.
+func TestTaskRunner_CheckRunningTasks_IgnoresSlotReservations(t *testing.T) {
+	client := newMockClient()
+	executor := newMockExecutor()
+	stateMgr := newMockStateMgr()
+	processMgr := NewProcessManager(testRunnerConfig())
+
+	tr := NewTaskRunner(TaskRunnerOptions{
+		Projects: []string{"demo"},
+		Config:   testRunnerConfig(),
+		Mode:     ExecutionModeHeadless,
+		Client:   client,
+		Executors: map[string]TaskExecutor{
+			"opencode": executor,
+		},
+		ProcessMgr: processMgr,
+		StateMgr:   stateMgr,
+	})
+
+	// Dispatch preflight has reserved a slot; the spawn is still in flight.
+	if !processMgr.ReserveSlot("task-dispatching", 3) {
+		t.Fatal("reservation should succeed")
+	}
+
+	var events []RunnerEvent
+	var eventMu sync.Mutex
+	tr.OnEvent(func(event RunnerEvent) {
+		eventMu.Lock()
+		events = append(events, event)
+		eventMu.Unlock()
+	})
+
+	tr.checkRunningTasks(context.Background())
+
+	if calls := client.getUpdateStatusCalls(); len(calls) != 0 {
+		t.Fatalf("UpdateTaskStatus called %d times for an unspawned reservation; first call: path=%q status=%q",
+			len(calls), calls[0].TaskPath, calls[0].Status)
+	}
+
+	eventMu.Lock()
+	for _, e := range events {
+		if e.Type == EventTaskStatusChanged || e.Type == EventTaskFailed {
+			t.Errorf("spurious %s event emitted for reservation: task_id=%q project=%q", e.Type, e.TaskID, e.ProjectID)
+		}
+	}
+	eventMu.Unlock()
+
+	tr.mu.RLock()
+	failed := tr.stats.Failed
+	tr.mu.RUnlock()
+	if failed != 0 {
+		t.Errorf("stats.Failed = %d, want 0", failed)
+	}
+
+	// The reservation must survive so the in-flight spawn can upgrade it.
+	if processMgr.RunningCount() != 1 {
+		t.Errorf("RunningCount = %d, want 1 (reservation still held)", processMgr.RunningCount())
 	}
 }
 

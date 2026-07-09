@@ -102,6 +102,62 @@ func TestProcessManager_ReserveSlot_ConcurrentCapPreserved(t *testing.T) {
 	}
 }
 
+// TestProcessManager_GetAll_ExcludesReservations confirms that
+// unspawned slot reservations never leak out of GetAll. A reservation
+// carries a zero-value Task, and GetAll consumers (completion checks,
+// claim renewal, lease release, state persistence) all assume a live
+// process — leaking one caused the poll loop to treat the placeholder
+// as a crashed task and call UpdateTaskStatus with an empty task path
+// (API 404 "Entry not found: ") mid-dispatch.
+func TestProcessManager_GetAll_ExcludesReservations(t *testing.T) {
+	pm := NewProcessManager(RunnerConfig{})
+
+	pm.ReserveSlot("task-1", 3)
+	if got := len(pm.GetAll()); got != 0 {
+		t.Errorf("GetAll returned %d entries for a bare reservation, want 0", got)
+	}
+
+	// After the spawn upgrades the reservation, it appears.
+	if err := pm.Add("task-1", RunningTask{ID: "task-1"}, newMockProcess(1234)); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	if got := len(pm.GetAll()); got != 1 {
+		t.Errorf("GetAll returned %d entries after Add, want 1", got)
+	}
+}
+
+// TestProcessManager_CheckCompletion_ReservationIsRunning confirms a
+// reserved-but-unspawned task reads as still in flight, not crashed,
+// and does not nil-panic on the placeholder's nil Proc.
+func TestProcessManager_CheckCompletion_ReservationIsRunning(t *testing.T) {
+	pm := NewProcessManager(RunnerConfig{})
+
+	pm.ReserveSlot("task-1", 3)
+	if got := pm.CheckCompletion("task-1", true); got != CompletionRunning {
+		t.Errorf("CheckCompletion for reservation = %v, want %v", got, CompletionRunning)
+	}
+}
+
+// TestProcessManager_ToProcessStates_SkipsReservations confirms state
+// persistence doesn't nil-panic on a reservation's nil Proc and doesn't
+// persist the placeholder.
+func TestProcessManager_ToProcessStates_SkipsReservations(t *testing.T) {
+	pm := NewProcessManager(RunnerConfig{})
+
+	pm.ReserveSlot("task-1", 3)
+	if err := pm.Add("task-2", RunningTask{ID: "task-2"}, newMockProcess(99)); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+
+	states := pm.ToProcessStates()
+	if len(states) != 1 {
+		t.Fatalf("ToProcessStates returned %d states, want 1 (reservation skipped)", len(states))
+	}
+	if states[0].TaskID != "task-2" {
+		t.Errorf("persisted TaskID = %q, want %q", states[0].TaskID, "task-2")
+	}
+}
+
 // TestProcessManager_Add_UpgradesReservation confirms that when a
 // reservation exists, Add attaches the real Process to the placeholder
 // without double-counting. This is the "spawn succeeded" path: the

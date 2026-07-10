@@ -3100,3 +3100,221 @@ func TestNoEventsForReadOnly(t *testing.T) {
 		t.Errorf("ingested events = %d, want 0 for read-only operations", len(es.ingested))
 	}
 }
+
+// =============================================================================
+// PATCH /entries/*/metadata — strict field allowlist
+// =============================================================================
+//
+// The metadata endpoint only writes to the SQLite `metadata` JSON column plus
+// a small set of durable frontmatter fields. Historically, if a caller sent a
+// field outside that set (e.g. `git_remote`, `workdir`), it was silently merged
+// into SQLite but never written to disk — so a subsequent PATCH /entries/*
+// (which re-indexes from disk) would revert it. That is a data-loss footgun.
+//
+// The endpoint now rejects unknown fields with HTTP 400 and directs callers
+// to PATCH /entries/* for full-frontmatter fields.
+
+func TestHandleUpdateMetadata_RejectsDisallowedField_GitRemote(t *testing.T) {
+	es := &mockEventService{}
+	called := false
+	mock := &mockBrainService{
+		updateMetadataFunc: func(_ context.Context, _ string, _ map[string]interface{}) (*types.BrainEntry, error) {
+			called = true
+			return nil, fmt.Errorf("service must not be called when validation fails")
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"git_remote": "git@github.com:foo/bar.git",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/projects/myproj/task/abc12def.md/metadata", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+	if called {
+		t.Fatalf("UpdateMetadata service should NOT be called when validation fails")
+	}
+
+	var errResp types.ErrorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	// The response must clearly identify git_remote as the offending field.
+	found := false
+	for _, d := range errResp.Details {
+		if d.Field == "git_remote" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected git_remote in validation details, got: %+v (message=%q)", errResp.Details, errResp.Message)
+	}
+	// The message should direct callers to the full-entry PATCH endpoint.
+	// This is a soft check on the aggregate error text.
+	full := errResp.Message
+	for _, d := range errResp.Details {
+		full += " " + d.Message
+	}
+	if !strings.Contains(strings.ToLower(full), "patch") || !strings.Contains(full, "/entries/") {
+		t.Errorf("expected error message to direct callers to PATCH /entries/*, got: %q", full)
+	}
+}
+
+func TestHandleUpdateMetadata_RejectsMultipleDisallowedFields(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		updateMetadataFunc: func(_ context.Context, _ string, _ map[string]interface{}) (*types.BrainEntry, error) {
+			t.Fatal("service must not be called when validation fails")
+			return nil, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	// Mix allowed (`status`, `direct_prompt`, `sessions`) and disallowed
+	// (`git_remote`, `workdir`, `merge_policy`) fields. Only the disallowed
+	// ones should appear in the error details.
+	body := jsonBody(t, map[string]any{
+		"status":        "in_progress",
+		"direct_prompt": "hi",
+		"sessions":      map[string]any{"s1": map[string]any{}},
+		"git_remote":    "git@example.com:foo.git",
+		"workdir":       "/tmp/work",
+		"merge_policy":  "auto_merge",
+	})
+	req, _ := http.NewRequest("PATCH", srv.URL+"/entries/projects/myproj/task/abc12def.md/metadata", body)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+
+	var errResp types.ErrorResponse
+	if err := json.NewDecoder(resp.Body).Decode(&errResp); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	got := make(map[string]bool)
+	for _, d := range errResp.Details {
+		got[d.Field] = true
+	}
+	for _, want := range []string{"git_remote", "workdir", "merge_policy"} {
+		if !got[want] {
+			t.Errorf("expected %q in validation details, got fields: %v", want, keysOf(got))
+		}
+	}
+	// Allowed fields must NOT appear in the error.
+	for _, notWant := range []string{"status", "direct_prompt", "sessions"} {
+		if got[notWant] {
+			t.Errorf("allowed field %q must not appear in validation details", notWant)
+		}
+	}
+}
+
+// TestHandleUpdateMetadata_RunnerTypicalWrites_Succeed guards backward
+// compatibility for the runner. All of these are common runner writes and must
+// continue to return 200 after the strict-allowlist change lands.
+func TestHandleUpdateMetadata_RunnerTypicalWrites_Succeed(t *testing.T) {
+	cases := []struct {
+		name   string
+		fields map[string]any
+	}{
+		{"status transition", map[string]any{"status": "completed"}},
+		{"session tracking", map[string]any{"sessions": map[string]any{
+			"ses-1": map[string]any{"timestamp": "2025-07-10T00:00:00Z"},
+		}}},
+		{"schedule bookkeeping", map[string]any{
+			"runs":     []any{map[string]any{"run_id": "r1", "status": "in_progress"}},
+			"next_run": "2025-07-10T01:00:00Z",
+		}},
+		{"schedule disable", map[string]any{"schedule_enabled": false}},
+		{"script finalize", map[string]any{"exit_code": 0, "script_output": "ok"}},
+		{"goal reconcile", map[string]any{"last_reconcile": map[string]any{"at": "now"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			es := &mockEventService{}
+			mock := &mockBrainService{
+				updateMetadataFunc: func(_ context.Context, _ string, _ map[string]interface{}) (*types.BrainEntry, error) {
+					return &types.BrainEntry{
+						ID:    "abc12def",
+						Path:  "projects/myproj/task/abc12def.md",
+						Type:  "task",
+						Title: "T",
+					}, nil
+				},
+			}
+			router := newTestRouterWithEvents(mock, es)
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			body := jsonBody(t, tc.fields)
+			req, _ := http.NewRequest("PATCH", srv.URL+"/entries/projects/myproj/task/abc12def.md/metadata", body)
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("PATCH failed: %v", err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, want %d (fields=%v)", resp.StatusCode, http.StatusOK, tc.fields)
+			}
+		})
+	}
+}
+
+func keysOf(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
+// TestAllowedMetadataUpdateFields_CoversKnownRuntimeAndDurableFields is a
+// consistency guard. If someone adds a new field to service.durableMetadataFields
+// or service.runtimeKeys but forgets to update AllowedMetadataUpdateFields,
+// PATCH /entries/*/metadata would reject the runner's legitimate writes. Rather
+// than reach into the service package (which would create an import cycle),
+// we spot-check the fields the runner and scheduler are known to write and the
+// fields the file-sync path is known to handle. If you add a new one to either,
+// add it here too.
+func TestAllowedMetadataUpdateFields_CoversKnownRuntimeAndDurableFields(t *testing.T) {
+	// From service.durableMetadataFields — must be in API allowlist because
+	// syncDurableFieldsToFile expects to receive them via this endpoint.
+	durable := []string{
+		"status", "priority", "tags", "depends_on", "title",
+		"feature_id", "feature_priority", "feature_depends_on",
+		"note", "append",
+		"starts_at", "expires_at", "run_once_at", "timezone",
+		"automation_run_id", "completed_at",
+	}
+	// From service.runtimeKeys (Update + syncDurableFieldsToFile), plus the
+	// audit-only DB mirrors written by internal services and the runner.
+	runtime := []string{
+		"sessions", "next_run", "schedule", "schedule_enabled",
+		"complete_on_idle", "direct_prompt", "runs", "max_runs",
+		"last_reconcile", "exit_code", "script_output",
+	}
+	for _, f := range append(durable, runtime...) {
+		if !AllowedMetadataUpdateFields[f] {
+			t.Errorf("AllowedMetadataUpdateFields is missing %q — every durable or runtime metadata field must be writable via PATCH /entries/*/metadata", f)
+		}
+	}
+}

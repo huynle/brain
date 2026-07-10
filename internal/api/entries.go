@@ -19,6 +19,66 @@ import (
 	"github.com/huynle/brain-api/pkg/frontmatter"
 )
 
+// AllowedMetadataUpdateFields is the strict allowlist for
+// PATCH /entries/*/metadata. Any field not in this set is rejected with a
+// 400 validation error, because PATCH .../metadata does NOT rewrite the .md
+// file on disk — it only merges into the SQLite metadata JSON column. Fields
+// that would need to live in the frontmatter but were silently accepted here
+// would be reverted by the next PATCH /entries/{path} call (which re-indexes
+// from disk). Callers that need to update full-frontmatter fields
+// (git_remote, workdir, merge_policy, execution_mode, git_branch,
+// merge_target_branch, target_workdir, user_original_request, etc.) must use
+// PATCH /entries/{path} instead.
+//
+// This set is the union of three categories:
+//
+//  1. File-syncable durable fields — mirrored to service.durableMetadataFields
+//     and written back to the frontmatter by syncDurableFieldsToFile.
+//     Keep this list in sync with service.durableMetadataFields.
+//
+//  2. Runtime-only fields the runner and scheduler legitimately write direct
+//     to SQLite. These are preserved across re-index by service.runtimeKeys
+//     (see internal/service/brain.go). They MUST NOT appear in on-disk
+//     frontmatter (they would churn the file needlessly).
+//
+//  3. Audit-only DB mirrors written by internal services (e.g. goal
+//     reconciliation, script executor output) that intentionally stay out of
+//     the frontmatter.
+var AllowedMetadataUpdateFields = map[string]bool{
+	// (1) File-syncable durable fields. Mirror of service.durableMetadataFields.
+	"status":             true,
+	"priority":           true,
+	"tags":               true,
+	"depends_on":         true,
+	"title":              true,
+	"feature_id":         true,
+	"feature_priority":   true,
+	"feature_depends_on": true,
+	"note":               true,
+	"append":             true,
+	"starts_at":          true,
+	"expires_at":         true,
+	"run_once_at":        true,
+	"timezone":           true,
+	"automation_run_id":  true,
+	"completed_at":       true,
+
+	// (2) Runtime-only fields — see service.runtimeKeys in brain.go.
+	"sessions":         true, // runner: per-task session discovery
+	"next_run":         true, // scheduler: bookkeeping
+	"schedule":         true, // scheduler: cron expression cache
+	"schedule_enabled": true, // scheduler: on/off flag
+	"complete_on_idle": true, // task defaults cache
+	"direct_prompt":    true, // task defaults cache
+	"runs":             true, // scheduler: run history array
+	"max_runs":         true, // scheduler: run cap
+
+	// (3) Audit-only DB mirrors.
+	"last_reconcile": true, // goal_service: reconcile audit trail
+	"exit_code":      true, // runner script executor: process exit code
+	"script_output":  true, // runner script executor: captured output tail
+}
+
 // HandleCreateEntry handles POST /entries.
 func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	var req types.CreateEntryRequest
@@ -478,6 +538,34 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	var fields map[string]interface{}
 	if err := json.NewDecoder(r.Body).Decode(&fields); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
+		return
+	}
+
+	// Strict allowlist: PATCH /entries/*/metadata only accepts fields that this
+	// endpoint can fully persist. Fields outside the allowlist would land in
+	// the SQLite metadata JSON column but NEVER be written to the .md file on
+	// disk, so a later PATCH /entries/{path} (which re-indexes from disk)
+	// would silently revert them. That is a data-loss footgun, so we fail
+	// loud instead. Callers that want to update full-frontmatter fields such
+	// as git_remote, workdir, merge_policy, execution_mode, git_branch,
+	// merge_target_branch, target_workdir, user_original_request, etc. must
+	// use PATCH /entries/{path} (which reads → patches → writes → re-indexes).
+	var disallowed []string
+	for k := range fields {
+		if !AllowedMetadataUpdateFields[k] {
+			disallowed = append(disallowed, k)
+		}
+	}
+	if len(disallowed) > 0 {
+		sort.Strings(disallowed) // deterministic order for tests and users
+		details := make([]types.ValidationDetail, 0, len(disallowed))
+		for _, f := range disallowed {
+			details = append(details, types.ValidationDetail{
+				Field:   f,
+				Message: fmt.Sprintf("field %q cannot be updated via PATCH /entries/*/metadata; use PATCH /entries/{path} for full-frontmatter fields", f),
+			})
+		}
+		WriteValidationError(w, details)
 		return
 	}
 

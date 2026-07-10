@@ -1356,6 +1356,11 @@ func completionStamp(oldStatus, newStatus string) (string, bool) {
 // durableMetadataFields is the set of metadata fields that should be persisted
 // back to the markdown file on disk. Fields not in this set are considered
 // transient/runtime-only and live only in SQLite.
+//
+// NOTE: this set is also mirrored by the API-layer allowlist
+// `internal/api.AllowedMetadataUpdateFields` which additionally includes
+// runtime-only and audit-only DB-mirror fields. Keep both in sync when adding
+// a field that should be writable via PATCH /entries/*/metadata.
 var durableMetadataFields = map[string]bool{
 	"status":             true,
 	"priority":           true,

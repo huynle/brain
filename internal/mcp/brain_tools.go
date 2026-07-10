@@ -1077,7 +1077,9 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 				"tags":                 {Type: "array", Items: &Property{Type: "string"}, Description: "Update tags for the entry"},
 				"priority":             {Type: "string", Enum: types.Priorities, Description: "Priority level"},
 				"target_workdir":       {Type: "string", Description: "Explicit working directory override for task execution"},
+				"workdir":              {Type: "string", Description: "Working directory relative to home (e.g., 'orion/orion-ai'). Used together with git_remote to resolve the repo context for execution."},
 				"git_branch":           {Type: "string", Description: "Git branch for the task"},
+				"git_remote":           {Type: "string", Description: "Git remote URL for the task's repo (e.g., 'git@gitlab.example.com:group/project.git'). Used together with workdir to resolve the repo context for execution."},
 				"merge_target_branch":  {Type: "string", Description: "Branch to merge completed work into"},
 				"merge_policy":         {Type: "string", Enum: types.MergePolicies, Description: "Merge behavior at checkout completion"},
 				"merge_strategy":       {Type: "string", Enum: types.MergeStrategies, Description: "Git merge strategy"},
@@ -1105,6 +1107,7 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 				"feature_run_once_at":  {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
 				"feature_timezone":     {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
 				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
+				"user_original_request": {Type: "string", Description: "Verbatim user request that motivated this task, preserved for validation during feature checkout"},
 				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
 				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
 				"executor":             {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode', 'pi', or 'script'. Empty = use runner default."},
@@ -1118,11 +1121,11 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 
 		body := map[string]any{}
 		addStringUpdateFields(body, cleanArgs,
-			"status", "title", "content", "append", "note", "priority", "target_workdir", "git_branch",
+			"status", "title", "content", "append", "note", "priority", "target_workdir", "workdir", "git_branch", "git_remote",
 			"merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode",
 			"schedule", "run_once_at", "timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
 			"feature_schedule", "feature_starts_at", "feature_expires_at", "feature_run_once_at", "feature_timezone",
-			"direct_prompt", "agent", "model", "executor", "checkout_mode",
+			"direct_prompt", "user_original_request", "agent", "model", "executor", "checkout_mode",
 		)
 		addPresentUpdateFields(body, cleanArgs,
 			"depends_on", "tags", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs",

@@ -772,8 +772,14 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.TargetWorkdir != nil {
 		fm.TargetWorkdir = frontmatter.SanitizeSimpleValue(*req.TargetWorkdir)
 	}
+	if req.Workdir != nil {
+		fm.Workdir = frontmatter.SanitizeSimpleValue(*req.Workdir)
+	}
 	if req.GitBranch != nil {
 		fm.GitBranch = frontmatter.SanitizeSimpleValue(*req.GitBranch)
+	}
+	if req.GitRemote != nil {
+		fm.GitRemote = frontmatter.SanitizeSimpleValue(*req.GitRemote)
 	}
 	if req.MergeTargetBranch != nil {
 		fm.MergeTargetBranch = *req.MergeTargetBranch
@@ -829,6 +835,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 				fm.Action.Type = "prompt"
 			}
 		}
+	}
+	if req.UserOriginalRequest != nil {
+		fm.UserOriginalRequest = *req.UserOriginalRequest
 	}
 	if req.Agent != nil {
 		fm.Agent = *req.Agent

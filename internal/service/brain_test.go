@@ -706,6 +706,161 @@ func TestUpdate_Priority(t *testing.T) {
 	}
 }
 
+// TestUpdate_GitRemote verifies that git_remote can be updated via the
+// standard Update path. Regression test for a bug where git_remote (and other
+// execution-context frontmatter fields) were unreachable through PATCH
+// /entries/{path} because they were missing from UpdateEntryRequest.
+func TestUpdate_GitRemote(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "GitRemote Task",
+		GitRemote: "git@example.com:orig/repo.git",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		GitRemote: strPtr("git@example.com:new/repo.git"),
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	if updated.GitRemote != "git@example.com:new/repo.git" {
+		t.Errorf("expected git_remote 'git@example.com:new/repo.git', got %q", updated.GitRemote)
+	}
+
+	// Re-read via Recall to confirm the value persisted to file+DB, not just
+	// the in-memory response.
+	recalled, err := svc.Recall(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if recalled.GitRemote != "git@example.com:new/repo.git" {
+		t.Errorf("recall: expected git_remote 'git@example.com:new/repo.git', got %q", recalled.GitRemote)
+	}
+}
+
+// TestUpdate_Workdir verifies that workdir can be updated via Update.
+func TestUpdate_Workdir(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "task",
+		Title:   "Workdir Task",
+		Workdir: "orig/path",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		Workdir: strPtr("new/path"),
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	if updated.Workdir != "new/path" {
+		t.Errorf("expected workdir 'new/path', got %q", updated.Workdir)
+	}
+
+	recalled, err := svc.Recall(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if recalled.Workdir != "new/path" {
+		t.Errorf("recall: expected workdir 'new/path', got %q", recalled.Workdir)
+	}
+}
+
+// TestUpdate_UserOriginalRequest verifies user_original_request can be updated.
+func TestUpdate_UserOriginalRequest(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:                "task",
+		Title:               "UserOriginalRequest Task",
+		UserOriginalRequest: "original ask",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		UserOriginalRequest: strPtr("clarified ask"),
+	})
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+
+	if updated.UserOriginalRequest != "clarified ask" {
+		t.Errorf("expected user_original_request 'clarified ask', got %q", updated.UserOriginalRequest)
+	}
+
+	recalled, err := svc.Recall(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if recalled.UserOriginalRequest != "clarified ask" {
+		t.Errorf("recall: expected user_original_request 'clarified ask', got %q", recalled.UserOriginalRequest)
+	}
+}
+
+// TestUpdate_GitRemote_NotRevertedBySubsequentUpdate is the regression test
+// for the observed bug: an earlier `PATCH /entries/{path}/metadata` call with
+// git_remote wrote to the DB but not to the file. A later `PATCH /entries/{path}`
+// call (which reads from file, applies patch, writes file, reindexes)
+// silently overwrote the DB with the stale file value. Now that git_remote
+// is a first-class Update field, subsequent updates that don't touch
+// git_remote must NOT revert prior git_remote changes.
+func TestUpdate_GitRemote_NotRevertedBySubsequentUpdate(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:      "task",
+		Title:     "Persistence Task",
+		GitRemote: "git@example.com:orig/repo.git",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// Step 1: update git_remote via Update
+	if _, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		GitRemote: strPtr("git@example.com:new/repo.git"),
+	}); err != nil {
+		t.Fatalf("first Update failed: %v", err)
+	}
+
+	// Step 2: unrelated update (only touches priority) — must NOT revert git_remote
+	if _, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
+		Priority: strPtr("high"),
+	}); err != nil {
+		t.Fatalf("second Update failed: %v", err)
+	}
+
+	// Step 3: verify git_remote survived
+	recalled, err := svc.Recall(ctx, saved.ID)
+	if err != nil {
+		t.Fatalf("Recall failed: %v", err)
+	}
+	if recalled.GitRemote != "git@example.com:new/repo.git" {
+		t.Errorf("git_remote was reverted after unrelated update: got %q, want %q",
+			recalled.GitRemote, "git@example.com:new/repo.git")
+	}
+	if recalled.Priority != "high" {
+		t.Errorf("priority not applied: got %q, want %q", recalled.Priority, "high")
+	}
+}
+
 // TestUpdate_DirectPrompt_OnAutomationMirrorsToAction verifies that updating
 // the root direct_prompt of an automation entry also writes the same value to
 // action.direct_prompt. The runtime renders prompts from action.direct_prompt;

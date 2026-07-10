@@ -709,7 +709,9 @@ type UpdateEntryRequest struct {
 	Timezone        *string `json:"timezone,omitempty"`
 
 	TargetWorkdir      *string   `json:"target_workdir,omitempty"`
+	Workdir            *string   `json:"workdir,omitempty"`
 	GitBranch          *string   `json:"git_branch,omitempty"`
+	GitRemote          *string   `json:"git_remote,omitempty"`
 	MergeTargetBranch  *string   `json:"merge_target_branch,omitempty"`
 	MergePolicy        *string   `json:"merge_policy,omitempty"`
 	MergeStrategy      *string   `json:"merge_strategy,omitempty"`
@@ -732,9 +734,10 @@ type UpdateEntryRequest struct {
 	FeatureExpiresAt *string `json:"feature_expires_at,omitempty"`
 	FeatureTimezone  *string `json:"feature_timezone,omitempty"`
 
-	DirectPrompt *string `json:"direct_prompt,omitempty"`
-	Agent        *string `json:"agent,omitempty"`
-	Model        *string `json:"model,omitempty"`
+	DirectPrompt        *string `json:"direct_prompt,omitempty"`
+	UserOriginalRequest *string `json:"user_original_request,omitempty"`
+	Agent               *string `json:"agent,omitempty"`
+	Model               *string `json:"model,omitempty"`
 
 	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
 	Runs             []CronRun                  `json:"runs,omitempty"`

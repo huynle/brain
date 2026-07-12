@@ -528,6 +528,8 @@ USAGE:
 
 TARGETS:
   opencode                       Install OpenCode integration
+  claude                         Install brain skills for Claude Code (~/.claude/skills)
+  pi                             Install Pi agent bundles and extensions (~/.pi)
 
 FLAGS:
   -f, --force                    Overwrite existing target files
@@ -537,7 +539,8 @@ FLAGS:
 
 EXAMPLES:
   brain install opencode
-  brain install opencode --dry-run
+  brain install claude
+  brain install claude --dry-run
   brain install opencode --api-url http://localhost:3333
 `
 
@@ -548,9 +551,12 @@ USAGE:
 
 TARGETS:
   opencode                       Remove OpenCode integration
+  claude                         Remove brain skills from Claude Code
+  pi                             Remove Pi agent bundles and extensions
 
 EXAMPLES:
   brain uninstall opencode
+  brain uninstall claude
 `
 
 const pluginStatusHelp = `brain plugin-status - Check plugin installation state

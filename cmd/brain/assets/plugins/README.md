@@ -10,10 +10,15 @@ plugins/
 │   ├── brain-planning.ts  # Planning enforcement plugin
 │   ├── agent/             # Brain-aware OpenCode agents
 │   ├── command/           # Brain slash commands
-│   ├── skill/             # Brain skills
+│   ├── skill/             # Brain skills (shared — also installed for Claude Code)
 │   └── README.md          # OpenCode plugin documentation
 └── README.md              # This file
 ```
+
+The skills under `opencode/skill/` are the canonical, target-agnostic brain
+skills (SKILL.md with `name`/`description` frontmatter). `brain install claude`
+installs the same skills into `~/.claude/skills/<name>/SKILL.md` for Claude
+Code via `assets.ListSharedSkillFiles()`.
 
 > **Note:** The previous `brain.ts` API client plugin has been removed.
 > Brain tools are now exposed through the MCP stdio server (`brain mcp`)
@@ -36,6 +41,8 @@ Plugin files may contain placeholders that are replaced during installation:
 
 Plugins are embedded at compile time using go:embed and installed via:
 ```bash
-brain install opencode    # Install to OpenCode
-brain status             # Check installation status
+brain install opencode    # Install to OpenCode (~/.config/opencode)
+brain install claude      # Install brain skills to Claude Code (~/.claude/skills)
+brain install pi          # Install Pi agent bundles (~/.pi)
+brain plugin-status       # Check installation status
 ```

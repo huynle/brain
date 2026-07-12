@@ -106,3 +106,41 @@ func TestGetPluginsFS(t *testing.T) {
 		t.Error("Read 0 bytes from plugins/opencode/README.md")
 	}
 }
+
+// Test the shared-skills accessors used by the Claude Code target.
+func TestListSharedSkillFiles(t *testing.T) {
+	files, err := ListSharedSkillFiles()
+	if err != nil {
+		t.Fatalf("ListSharedSkillFiles() failed: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("ListSharedSkillFiles() returned no files")
+	}
+
+	found := false
+	for _, f := range files {
+		if f == "using-brain/SKILL.md" {
+			found = true
+		}
+		if strings.HasPrefix(f, "skill/") || strings.HasPrefix(f, "plugins/") {
+			t.Errorf("ListSharedSkillFiles() paths should be relative to the shared skills dir, got %q", f)
+		}
+	}
+	if !found {
+		t.Error("ListSharedSkillFiles() should include using-brain/SKILL.md")
+	}
+}
+
+func TestGetSharedSkillFile(t *testing.T) {
+	content, err := GetSharedSkillFile("using-brain/SKILL.md")
+	if err != nil {
+		t.Fatalf("GetSharedSkillFile(using-brain/SKILL.md) failed: %v", err)
+	}
+	if !strings.HasPrefix(string(content), "---\n") {
+		t.Error("shared skill should start with YAML frontmatter")
+	}
+
+	if _, err := GetSharedSkillFile("nonexistent/SKILL.md"); err == nil {
+		t.Error("GetSharedSkillFile() should fail for missing skill")
+	}
+}

@@ -282,6 +282,19 @@ Or add to `.mcp.json`:
 }
 ```
 
+To teach Claude Code how to use brain effectively (saving/recalling memories,
+turning plans into dependency-aware task graphs with `depends_on` and
+`feature_id`, creating automations, etc.), install the brain skills:
+
+```bash
+brain install claude              # installs skills to ~/.claude/skills/
+brain install claude --dry-run    # preview what would be installed
+brain install claude --force      # update previously installed skills
+```
+
+Claude Code picks up the skills automatically; existing files are never
+overwritten without `--force`. Remove them with `brain uninstall claude`.
+
 ### Connecting OpenCode
 
 OpenCode launches MCP servers as local subprocesses over stdio. Add the

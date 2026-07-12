@@ -84,6 +84,43 @@ func ListAutomations() []string {
 	return automations
 }
 
+// sharedSkillsDir is where the canonical brain skills live. Skills are written
+// once and installed into every coding-agent target that understands SKILL.md
+// files (OpenCode, Claude Code). They currently live under the opencode asset
+// tree; move them and update this constant if a target ever needs divergent
+// skill content.
+const sharedSkillsDir = "plugins/opencode/skill"
+
+// ListSharedSkillFiles returns skill file paths relative to the shared skills
+// directory (e.g., "using-brain/SKILL.md").
+func ListSharedSkillFiles() ([]string, error) {
+	var files []string
+	err := fs.WalkDir(embeddedFS, sharedSkillsDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			rel, _ := filepath.Rel(sharedSkillsDir, path)
+			files = append(files, rel)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("shared skills not found: %w", err)
+	}
+	return files, nil
+}
+
+// GetSharedSkillFile returns the content of a shared skill file by its path
+// relative to the shared skills directory.
+func GetSharedSkillFile(relPath string) ([]byte, error) {
+	content, err := embeddedFS.ReadFile(filepath.Join(sharedSkillsDir, relPath))
+	if err != nil {
+		return nil, fmt.Errorf("shared skill %q not found: %w", relPath, err)
+	}
+	return content, nil
+}
+
 // GetPluginFile returns the content of a plugin file by target and path
 func GetPluginFile(target, path string) ([]byte, error) {
 	fullPath := filepath.Join("plugins", target, path)

@@ -363,13 +363,22 @@ func (pm *ProcessManager) IsRunning(taskID string) bool {
 	return !info.Proc.Exited()
 }
 
-// GetAll returns all tracked process info.
+// GetAll returns all tracked process info. Excludes unspawned slot
+// reservations (nil Proc): a reservation has a zero-value Task, and
+// every consumer of this list (completion checks, claim renewal,
+// lease release, state persistence) assumes a live process with a
+// populated Task — leaking a placeholder produces spurious API calls
+// with empty task paths.
 func (pm *ProcessManager) GetAll() []ProcessInfo {
 	pm.mu.Lock()
 	defer pm.mu.Unlock()
 
 	result := make([]ProcessInfo, 0, len(pm.processes))
 	for _, info := range pm.processes {
+		if info.Proc == nil {
+			// Reservation placeholder — no live process yet.
+			continue
+		}
 		result = append(result, *info)
 	}
 	return result
@@ -443,6 +452,12 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 
 	if !exists {
 		return CompletionCrashed
+	}
+
+	if info.Proc == nil {
+		// Reservation placeholder — spawn is still in flight, so the
+		// task is neither complete nor crashed.
+		return CompletionRunning
 	}
 
 	// Check for timeout (0 = no timeout)
@@ -578,6 +593,11 @@ func (pm *ProcessManager) Kill(ctx context.Context, taskID string) bool {
 		return false
 	}
 
+	if info.Proc == nil {
+		// Reservation placeholder — no process to kill.
+		return false
+	}
+
 	if info.Proc.Exited() {
 		return true
 	}
@@ -615,7 +635,7 @@ func (pm *ProcessManager) KillAll(ctx context.Context) {
 		pm.mu.Lock()
 		info, exists := pm.processes[id]
 		pm.mu.Unlock()
-		if exists && !info.Proc.Exited() {
+		if exists && info.Proc != nil && !info.Proc.Exited() {
 			info.Proc.Kill(syscall.SIGTERM)
 		}
 	}
@@ -626,7 +646,7 @@ func (pm *ProcessManager) KillAll(ctx context.Context) {
 		pm.mu.Lock()
 		info, exists := pm.processes[id]
 		pm.mu.Unlock()
-		if exists {
+		if exists && info.Proc != nil {
 			wg.Add(1)
 			go func(proc Process) {
 				defer wg.Done()
@@ -641,7 +661,7 @@ func (pm *ProcessManager) KillAll(ctx context.Context) {
 		pm.mu.Lock()
 		info, exists := pm.processes[id]
 		pm.mu.Unlock()
-		if exists && !info.Proc.Exited() {
+		if exists && info.Proc != nil && !info.Proc.Exited() {
 			info.Proc.Kill(syscall.SIGKILL)
 		}
 	}
@@ -682,6 +702,10 @@ func (pm *ProcessManager) ToProcessStates() []ProcessState {
 
 	states := make([]ProcessState, 0, len(pm.processes))
 	for taskID, info := range pm.processes {
+		if info.Proc == nil {
+			// Reservation placeholder — nothing to persist yet.
+			continue
+		}
 		s := ProcessState{
 			TaskID:   taskID,
 			Task:     info.Task,
@@ -705,7 +729,7 @@ func (pm *ProcessManager) CreateTaskResult(taskID string, status CompletionStatu
 	info, exists := pm.processes[taskID]
 	pm.mu.Unlock()
 
-	if !exists {
+	if !exists || info.Proc == nil {
 		return nil
 	}
 

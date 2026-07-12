@@ -71,8 +71,16 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	return nil
 }
 
+// targetAliases maps user-facing alternate names to canonical target IDs.
+var targetAliases = map[string]string{
+	"claude-code": "claude",
+}
+
 // getTarget finds a target by ID
 func getTarget(targetID string) Target {
+	if canonical, ok := targetAliases[targetID]; ok {
+		targetID = canonical
+	}
 	targets := GetAvailableTargets()
 	for _, target := range targets {
 		if target.ID() == targetID {

@@ -29,5 +29,6 @@ func GetAvailableTargets() []Target {
 	return []Target{
 		NewOpenCodeTarget(),
 		NewPiTarget(),
+		NewClaudeTarget(),
 	}
 }

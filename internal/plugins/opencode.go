@@ -112,7 +112,7 @@ func (t *OpenCodeTarget) Install(opts InstallOptions) error {
 			header := generateHeader(relPath)
 			content = append([]byte(header), content...)
 		} else if isMarkdownFile(relPath) {
-			content = addMarkdownHeader(content, relPath)
+			content = addMarkdownHeader(content, generateMarkdownHeader(relPath))
 		}
 
 		existingContent, readErr := os.ReadFile(destPath)
@@ -242,12 +242,12 @@ func isMarkdownFile(path string) bool {
 	return filepath.Ext(path) == ".md"
 }
 
-// addMarkdownHeader inserts the generated header without hiding YAML frontmatter.
-// OpenCode requires component markdown files such as SKILL.md to start with
+// addMarkdownHeader inserts the given header without hiding YAML frontmatter.
+// Targets require component markdown files such as SKILL.md to start with
 // frontmatter, so generated comments must be placed after the closing delimiter
 // when frontmatter is present.
-func addMarkdownHeader(content []byte, filename string) []byte {
-	header := []byte(generateMarkdownHeader(filename))
+func addMarkdownHeader(content []byte, headerText string) []byte {
+	header := []byte(headerText)
 	frontmatterEnd := yamlFrontmatterEnd(content)
 	if frontmatterEnd == 0 {
 		return append(header, content...)

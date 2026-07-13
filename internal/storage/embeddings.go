@@ -181,6 +181,29 @@ func (s *StorageLayer) EmbeddingStatus(ctx context.Context, note *NoteRow) (stri
 	return "current", nil
 }
 
+// SyncNoteEmbeddingMetadata refreshes the filterable metadata columns
+// (project_id, type, status, feature_id, priority) on a note's existing
+// embedding chunks and bumps embedding_indexed_at, without touching the
+// vectors. Used after metadata-only entry updates: the embedded text is
+// unchanged, so regenerating vectors would be a wasted round-trip to the
+// embedding API, but semantic search pre-filters on these columns and must
+// see the new values. No-op for notes that have no embeddings.
+func (s *StorageLayer) SyncNoteEmbeddingMetadata(ctx context.Context, note *NoteRow) error {
+	if note == nil {
+		return nil
+	}
+	_, err := s.db.ExecContext(ctx, `
+		UPDATE note_embeddings_meta
+		SET project_id = ?, type = ?, status = ?, feature_id = ?, priority = ?,
+			embedding_indexed_at = datetime('now')
+		WHERE note_id = ?
+	`, note.ProjectID, note.Type, note.Status, note.FeatureID, note.Priority, note.ID)
+	if err != nil {
+		return fmt.Errorf("sync note embedding metadata: %w", err)
+	}
+	return nil
+}
+
 // DeleteNoteEmbeddings deletes all embeddings and metadata for a given note_id.
 // Both tables must be explicitly deleted since they reference notes, not each other.
 func (s *StorageLayer) DeleteNoteEmbeddings(ctx context.Context, noteID int64) error {

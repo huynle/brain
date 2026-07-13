@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -32,6 +33,9 @@ type BrainServiceImpl struct {
 	indexer         *indexer.Indexer
 	bus             events.Bus
 	embeddingClient EmbeddingClient
+
+	embedWG    sync.WaitGroup // tracks in-flight background embedding refreshes
+	embedLocks sync.Map       // path → *sync.Mutex; serializes refreshes per entry
 }
 
 // NewBrainService creates a new BrainServiceImpl.
@@ -704,8 +708,10 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	fm := &doc.Frontmatter
 	body := doc.Body
 
-	// Capture pre-update state for event derivation
+	// Capture pre-update state for event derivation and for deciding whether
+	// embeddings must be regenerated (only body changes affect the vectors).
 	oldStatus := fm.Status
+	originalBody := doc.Body
 
 	// Apply field updates
 	if req.Title != nil {
@@ -1018,8 +1024,15 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if err := s.indexer.IndexFile(row.Path); err != nil {
 		return nil, fmt.Errorf("re-index file %q: %w", row.Path, err)
 	}
-	if err := s.indexEmbeddingsForEntry(ctx, row.Path); err != nil {
-		return nil, fmt.Errorf("re-embed file %q: %w", row.Path, err)
+	// Only regenerate embeddings when the embedded text could have changed
+	// (body edits or attachment links — attachment-derived text feeds the
+	// embedding source). Metadata-only updates just mirror the new filter
+	// values onto the existing embedding rows. Both run in the background so
+	// the write returns without waiting on the embedding API.
+	if body != originalBody || req.Attachments != nil {
+		s.scheduleEmbeddingRefresh(row.Path)
+	} else {
+		s.scheduleEmbeddingMetadataSync(row.Path)
 	}
 
 	// Restore preserved runtime fields into the re-indexed metadata
@@ -1484,6 +1497,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 
 	fm := &doc.Frontmatter
 	body := doc.Body
+	originalBody := doc.Body
 
 	// Apply durable field changes to frontmatter
 	if v, ok := fields["status"]; ok {
@@ -1662,8 +1676,13 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	if err := s.indexer.IndexFile(row.Path); err != nil {
 		return fmt.Errorf("re-index file %q: %w", row.Path, err)
 	}
-	if err := s.indexEmbeddingsForEntry(ctx, row.Path); err != nil {
-		return fmt.Errorf("re-embed file %q: %w", row.Path, err)
+	// Body changes (append/note fields) need re-embedding; frontmatter-only
+	// changes just mirror new filter values onto the existing embedding rows.
+	// Both run in the background, serialized per-path.
+	if body != originalBody {
+		s.scheduleEmbeddingRefresh(row.Path)
+	} else {
+		s.scheduleEmbeddingMetadataSync(row.Path)
 	}
 
 	// Restore preserved runtime fields into the re-indexed metadata
@@ -1739,6 +1758,97 @@ func (s *BrainServiceImpl) indexEmbeddingsForEntry(ctx context.Context, path str
 	}
 	_, err = s.indexer.IndexEmbeddingsWithOptions(ctx, s.embeddingClient, indexer.EmbeddingIndexOptions{Path: path})
 	return err
+}
+
+// embeddingRefreshTimeout bounds a single background embedding operation.
+const embeddingRefreshTimeout = 2 * time.Minute
+
+// pathLock returns the per-path mutex that serializes all embedding-index
+// writes (both full refreshes and metadata-only syncs) for one entry. Sharing
+// a single lock across both operations is what keeps a metadata sync from
+// landing inside a refresh's delete→upsert gap, where its UPDATE would match
+// zero rows and be silently lost. The mutex is created on first use and kept
+// for the process lifetime (bounded by the number of distinct entry paths).
+func (s *BrainServiceImpl) pathLock(path string) *sync.Mutex {
+	mu, _ := s.embedLocks.LoadOrStore(path, &sync.Mutex{})
+	return mu.(*sync.Mutex)
+}
+
+// scheduleEmbeddingRefresh regenerates a note's embeddings in the background.
+// Embedding calls take seconds against remote APIs, so running them inside
+// the request path pushes writes past client timeouts — and a client
+// disconnect cancels the request context mid-embed even though the entry
+// write already persisted, surfacing an error for a successful mutation.
+// The refresh runs on a detached context, serialized per-path against other
+// refreshes and metadata syncs so their DB writes cannot interleave. Failures
+// are logged; the embeddings backfill can recover them.
+func (s *BrainServiceImpl) scheduleEmbeddingRefresh(path string) {
+	if s.embeddingClient == nil {
+		return
+	}
+	s.embedWG.Add(1)
+	go func() {
+		defer s.embedWG.Done()
+		lock := s.pathLock(path)
+		lock.Lock()
+		defer lock.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), embeddingRefreshTimeout)
+		defer cancel()
+		if err := s.indexEmbeddingsForEntry(ctx, path); err != nil {
+			slog.Warn("background embedding refresh failed", "path", path, "error", err)
+		}
+	}()
+}
+
+// scheduleEmbeddingMetadataSync mirrors a metadata-only change (status,
+// priority, …) onto the note's existing embedding rows so filtered semantic
+// search keeps seeing current values. The embedded text is unchanged, so no
+// vectors are regenerated — just a single local UPDATE instead of an embedding
+// API round-trip.
+//
+// It runs in the background under the SAME per-path lock as
+// scheduleEmbeddingRefresh, for two reasons:
+//   - Serializing against refreshes means the sync can never land inside a
+//     refresh's delete→upsert window (where SyncNoteEmbeddingMetadata's UPDATE
+//     would match zero rows and be silently dropped, leaving the filter
+//     columns permanently diverged from the entry).
+//   - Reading the note fresh under the lock means the last write for a path
+//     always reflects the latest committed entry state, so the embedding
+//     metadata converges regardless of how refreshes and syncs interleave.
+//
+// Backgrounding keeps the request off the lock, which a refresh may hold for
+// the duration of an embedding API call. Failures are logged, not returned:
+// the entry write already persisted, and embedding metadata is derived state.
+func (s *BrainServiceImpl) scheduleEmbeddingMetadataSync(path string) {
+	if s.embeddingClient == nil {
+		return
+	}
+	s.embedWG.Add(1)
+	go func() {
+		defer s.embedWG.Done()
+		lock := s.pathLock(path)
+		lock.Lock()
+		defer lock.Unlock()
+		ctx, cancel := context.WithTimeout(context.Background(), embeddingRefreshTimeout)
+		defer cancel()
+		row, err := s.storage.GetNoteByPath(ctx, path)
+		if err != nil || row == nil {
+			if err != nil {
+				slog.Warn("embedding metadata sync: note lookup failed", "path", path, "error", err)
+			}
+			return
+		}
+		if err := s.storage.SyncNoteEmbeddingMetadata(ctx, row); err != nil {
+			slog.Warn("failed to sync embedding metadata", "path", path, "error", err)
+		}
+	}()
+}
+
+// WaitForPendingEmbeddings blocks until every background embedding refresh and
+// metadata sync scheduled so far has finished. Used by tests; also suitable
+// for a bounded drain on graceful shutdown.
+func (s *BrainServiceImpl) WaitForPendingEmbeddings() {
+	s.embedWG.Wait()
 }
 
 // AttachmentDerivedTextChanged refreshes semantic embeddings for entries linked

@@ -178,6 +178,8 @@ func TestSaveAndUpdate_ReembedChangedEntry(t *testing.T) {
 	if _, err := svc.Update(ctx, entry.ID, types.UpdateEntryRequest{Content: &newContent}); err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
+	// Content changes re-embed in the background; wait before asserting.
+	svc.WaitForPendingEmbeddings()
 	status, err = store.EmbeddingStatus(ctx, note)
 	if err != nil {
 		t.Fatalf("EmbeddingStatus after update failed: %v", err)

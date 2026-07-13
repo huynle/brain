@@ -462,6 +462,109 @@ func TestDeleteNoteEmbeddings_NoteDelete(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// SyncNoteEmbeddingMetadata Tests
+// ---------------------------------------------------------------------------
+
+func TestSyncNoteEmbeddingMetadata_UpdatesColumnsWithoutTouchingVectors(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStorage(t)
+
+	note := sampleNote("projects/test/sync.md", "sync01", "Sync Note")
+	inserted, err := store.InsertNote(ctx, note)
+	if err != nil {
+		t.Fatalf("failed to insert note: %v", err)
+	}
+
+	records := []EmbeddingRecord{
+		sampleEmbeddingRecord(inserted.ID, 0, 8),
+		sampleEmbeddingRecord(inserted.ID, 1, 8),
+	}
+	if err := store.UpsertNoteEmbeddings(ctx, records); err != nil {
+		t.Fatalf("UpsertNoteEmbeddings failed: %v", err)
+	}
+
+	// Backdate embedding_indexed_at so the sync's bump is observable.
+	if _, err := store.db.ExecContext(ctx,
+		`UPDATE note_embeddings_meta SET embedding_indexed_at = '2020-01-01 00:00:00' WHERE note_id = ?`,
+		inserted.ID,
+	); err != nil {
+		t.Fatalf("failed to backdate embedding_indexed_at: %v", err)
+	}
+
+	// Simulate a metadata-only entry update: same note, new filter values.
+	projectID := "other-project"
+	typ := "task"
+	status := "completed"
+	featureID := "feat-2"
+	priority := "low"
+	inserted.ProjectID = &projectID
+	inserted.Type = &typ
+	inserted.Status = &status
+	inserted.FeatureID = &featureID
+	inserted.Priority = &priority
+
+	if err := store.SyncNoteEmbeddingMetadata(ctx, inserted); err != nil {
+		t.Fatalf("SyncNoteEmbeddingMetadata failed: %v", err)
+	}
+
+	// Every chunk's metadata reflects the new values and a fresh timestamp.
+	for chunk := 0; chunk <= 1; chunk++ {
+		var gotProject, gotType, gotStatus, gotFeature, gotPriority, gotIndexedAt string
+		err := store.db.QueryRowContext(ctx,
+			`SELECT project_id, type, status, feature_id, priority, embedding_indexed_at
+			 FROM note_embeddings_meta WHERE note_id = ? AND chunk_index = ?`,
+			inserted.ID, chunk,
+		).Scan(&gotProject, &gotType, &gotStatus, &gotFeature, &gotPriority, &gotIndexedAt)
+		if err != nil {
+			t.Fatalf("failed to query metadata for chunk %d: %v", chunk, err)
+		}
+		if gotProject != projectID || gotType != typ || gotStatus != status ||
+			gotFeature != featureID || gotPriority != priority {
+			t.Errorf("chunk %d metadata = (%q, %q, %q, %q, %q), want (%q, %q, %q, %q, %q)",
+				chunk, gotProject, gotType, gotStatus, gotFeature, gotPriority,
+				projectID, typ, status, featureID, priority)
+		}
+		if gotIndexedAt <= "2020-01-01 00:00:00" {
+			t.Errorf("chunk %d embedding_indexed_at = %q, expected it to be bumped", chunk, gotIndexedAt)
+		}
+	}
+
+	// Vectors are untouched.
+	for chunk, rec := range records {
+		retrieved, err := store.GetNoteEmbedding(ctx, inserted.ID, chunk)
+		if err != nil {
+			t.Fatalf("GetNoteEmbedding failed for chunk %d: %v", chunk, err)
+		}
+		if len(retrieved) != len(rec.Vector) {
+			t.Fatalf("chunk %d vector length = %d, want %d", chunk, len(retrieved), len(rec.Vector))
+		}
+		for i := range rec.Vector {
+			if math.Abs(float64(retrieved[i]-rec.Vector[i])) > 1e-6 {
+				t.Errorf("chunk %d vector[%d] = %f, want %f", chunk, i, retrieved[i], rec.Vector[i])
+			}
+		}
+	}
+}
+
+func TestSyncNoteEmbeddingMetadata_NoEmbeddingsIsNoop(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStorage(t)
+
+	note := sampleNote("projects/test/sync-none.md", "sync02", "No Embeddings")
+	inserted, err := store.InsertNote(ctx, note)
+	if err != nil {
+		t.Fatalf("failed to insert note: %v", err)
+	}
+
+	if err := store.SyncNoteEmbeddingMetadata(ctx, inserted); err != nil {
+		t.Fatalf("SyncNoteEmbeddingMetadata on note without embeddings failed: %v", err)
+	}
+	if err := store.SyncNoteEmbeddingMetadata(ctx, nil); err != nil {
+		t.Fatalf("SyncNoteEmbeddingMetadata(nil) failed: %v", err)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // packFloat32s / unpack Tests
 // ---------------------------------------------------------------------------
 

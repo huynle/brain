@@ -179,6 +179,14 @@ func (c *InitCommand) Execute() error {
 				return fmt.Errorf("failed to load reference config: %w", err)
 			}
 
+			if configExists {
+				backupPath, err := config.BackupConfigFile(configPath)
+				if err != nil {
+					return fmt.Errorf("failed to back up config.toml: %w", err)
+				}
+				fmt.Fprintf(out, "Backup saved: %s\n", backupPath)
+			}
+
 			if err := os.WriteFile(configPath, configContent, 0644); err != nil {
 				return fmt.Errorf("failed to write config.toml: %w", err)
 			}
@@ -248,9 +256,30 @@ func (c *ConfigCommand) Execute() error {
 		if flags.Print {
 			return printDefaultConfigYAML(out)
 		}
-		path, err := config.WriteDefaultConfig(flags.Force)
+		// Never touch an existing config without an explicit --force, and
+		// with --force show the user exactly what they are about to lose.
+		configPath := getConfigPath()
+		existing, readErr := os.ReadFile(configPath)
+		if readErr == nil {
+			if !flags.Force {
+				return fmt.Errorf("config file already exists: %s (use --force to overwrite; a timestamped .bak will be saved alongside it)", configPath)
+			}
+			fmt.Fprintf(out, "⚠️  Overwriting existing config: %s\n", configPath)
+			if defaults, err := config.DefaultConfigYAML(); err == nil {
+				if diff := diffLines(string(existing), string(defaults)); len(diff) > 0 {
+					fmt.Fprintf(out, "Changes (- current, + default):\n")
+					for _, line := range diff {
+						fmt.Fprintf(out, "  %s\n", line)
+					}
+				}
+			}
+		}
+		path, backupPath, err := config.WriteDefaultConfig(flags.Force)
 		if err != nil {
 			return err
+		}
+		if backupPath != "" {
+			fmt.Fprintf(out, "Backup saved: %s\n", backupPath)
 		}
 		fmt.Fprintf(out, "Wrote config file: %s\n", path)
 		return nil

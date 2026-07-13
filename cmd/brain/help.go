@@ -241,6 +241,17 @@ NOTES:
   - Hosted/domain deployments should set runner.brain_api_url or BRAIN_API_URL
     explicitly when the runner must connect through the public domain.
 
+LOGGING:
+  - In both foreground and daemon mode the server appends slog output to
+    server.log_file (default: $XDG_STATE_HOME/brain-api/brain-api.log),
+    so 'brain api logs -f' works either way. Foreground mode also prints
+    to the terminal.
+  - The log file rotates automatically when it exceeds
+    server.log_max_size_mb (default 100), keeping server.log_max_backups
+    rotated files (default 5) as <log_file>.1 .. .N.
+  - SIGHUP makes a daemonized server reopen the log file (for external
+    rotation tools like logrotate).
+
 EXAMPLES:
   brain api start
   brain api start --runner
@@ -311,6 +322,8 @@ FLAGS:
   -n, --lines <n>                Number of lines to show (default: 100)
   --since <duration>             Filter by recency (e.g. 30m, 2h, 1d)
   --level <level>                Filter by level: debug|info|warn|error
+  --log-file <path>              Log file to read (default: server.log_file);
+                                 match this to 'api start --log-file'
   -h, --help                     Show this help
 
 EXAMPLES:

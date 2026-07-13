@@ -3,6 +3,8 @@ package apiserver
 import (
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"log/slog"
 	"net/http"
 	"os"
@@ -28,11 +30,15 @@ import (
 
 // ServerOptions holds configuration for running the Brain API server.
 type ServerOptions struct {
-	Host            string
-	Port            int
-	BrainDir        string
-	EnableAuth      bool
-	LogLevel        string
+	Host       string
+	Port       int
+	BrainDir   string
+	EnableAuth bool
+	LogLevel   string
+	// LogWriter, when set, receives all slog output instead of os.Stderr.
+	// Callers use it to direct server logs to the configured log_file so
+	// `brain api logs` works regardless of how the server was started.
+	LogWriter       io.Writer
 	CORSOrigin      string
 	OAuthPIN        string
 	JWTSecret       string
@@ -72,7 +78,11 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	default:
 		logLevel = slog.LevelInfo
 	}
-	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+	logOut := io.Writer(os.Stderr)
+	if opts.LogWriter != nil {
+		logOut = opts.LogWriter
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(logOut, &slog.HandlerOptions{
 		Level: logLevel,
 	})))
 
@@ -96,6 +106,14 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 		// Heartbeats at 15s intervals keep SSE connections alive and detect dead clients.
 		WriteTimeout: 0,
 		IdleTimeout:  120 * time.Second,
+		// Route net/http's own diagnostics (connection errors, recovered
+		// per-request panics) through the same writer as slog. Otherwise they
+		// go to os.Stderr, which in daemon mode is an inherited fd on the log
+		// file that strands on the rotated backup after the writer rotates.
+		// Note: unrecovered Go *runtime* panics still write fd 2 directly and
+		// bypass this — but such a panic terminates the daemon, so no further
+		// rotation occurs and the trace remains in the active file.
+		ErrorLog: log.New(logOut, "", log.LstdFlags),
 	}
 
 	// Start server in background

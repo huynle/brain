@@ -294,7 +294,7 @@ func (c *StartCommand) Execute() error {
 	}
 
 	// Default: run in foreground
-	return c.startForeground(pidFile)
+	return c.startForeground(pidFile, logFile)
 }
 
 func (c *StartCommand) daemonArgs(logFile string) []string {
@@ -354,22 +354,29 @@ func (c *StartCommand) startDaemon(pidFile, logFile string) error {
 }
 
 // startForeground runs the API server in the current process.
-func (c *StartCommand) startForeground(pidFile string) error {
+func (c *StartCommand) startForeground(pidFile, logFile string) error {
 	opts := apiserver.ServerOptions{
-		Port:         c.Config.Server.Port,
-		Host:         c.Config.Server.Host,
-		BrainDir:     c.Config.Server.BrainDir,
-		EnableAuth:   c.Config.Server.EnableAuth,
-		LogLevel:     c.Config.Server.LogLevel,
-		CORSOrigin:   c.Config.Server.CORSOrigin,
-		OAuthPIN:     c.Config.Server.OAuthPIN,
-		JWTSecret:    c.Config.Server.JWTSecret,
-		TaskDefaults: c.Config.Server.TaskDefaults,
-		Embedding:    c.Config.Server.Embedding,
-		Attachments:  c.Config.Server.Attachments,
+		Port:            c.Config.Server.Port,
+		Host:            c.Config.Server.Host,
+		BrainDir:        c.Config.Server.BrainDir,
+		EnableAuth:      c.Config.Server.EnableAuth,
+		LogLevel:        c.Config.Server.LogLevel,
+		CORSOrigin:      c.Config.Server.CORSOrigin,
+		OAuthPIN:        c.Config.Server.OAuthPIN,
+		JWTSecret:       c.Config.Server.JWTSecret,
+		TaskDefaults:    c.Config.Server.TaskDefaults,
+		FeatureCheckout: c.Config.Server.FeatureCheckout,
+		Embedding:       c.Config.Server.Embedding,
+		Attachments:     c.Config.Server.Attachments,
 
 		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
 		Assistant:            c.Config.Server.Assistant,
+	}
+
+	// Tee slog to the terminal and the configured log file so
+	// `brain api logs -f` works against a foreground server too.
+	if logWriter := openServerLogWriter(c.Config, logFile); logWriter != nil {
+		opts.LogWriter = io.MultiWriter(os.Stderr, logWriter)
 	}
 
 	// Create context with signal handling for graceful shutdown
@@ -384,6 +391,7 @@ func (c *StartCommand) startForeground(pidFile string) error {
 	}
 
 	fmt.Printf("Starting Brain API server on %s:%d\n", opts.Host, opts.Port)
+	fmt.Printf("Logs: %s\n", logFile)
 	if c.Flags.Runner {
 		project, runnerCfg := embeddedRunnerConfig(c.Config, opts, embeddedRunnerFlags{
 			RunnerProject: c.Flags.RunnerProject,

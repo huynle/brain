@@ -134,6 +134,8 @@ type ServerConfig struct {
 	TLSKey          string                `yaml:"tls_key"`
 	PIDFile         string                `yaml:"pid_file"`
 	LogFile         string                `yaml:"log_file"`
+	LogMaxSizeMB    int                   `yaml:"log_max_size_mb"` // rotate log_file above this size (default 100)
+	LogMaxBackups   int                   `yaml:"log_max_backups"` // rotated backups to keep (default 5)
 	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
 	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
 	Embedding       EmbeddingConfig       `yaml:"embedding"`

@@ -350,7 +350,7 @@ func TestStartCommandForegroundWithRunnerUsesCombinedLifecycle(t *testing.T) {
 		Config: cfg,
 		Flags:  &LifecycleFlags{Runner: true, RunnerProject: "brain"},
 	}
-	if err := cmd.startForeground(cfg.Server.PIDFile); err != nil {
+	if err := cmd.startForeground(cfg.Server.PIDFile, filepath.Join(tmpDir, "brain-api.log")); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !runnerCalled {

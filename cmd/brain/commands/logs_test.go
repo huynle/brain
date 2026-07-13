@@ -5,9 +5,29 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+// syncBuffer is a goroutine-safe bytes.Buffer for use with followLogs, which
+// writes from a background goroutine while the test reads.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
 
 func TestLogsCommand_Since(t *testing.T) {
 	// Create temp log file with timestamped entries
@@ -161,4 +181,60 @@ func TestLogsCommand_InvalidSince(t *testing.T) {
 	if !strings.Contains(err.Error(), "invalid duration") {
 		t.Errorf("unexpected error message: %v", err)
 	}
+}
+
+// TestLogsCommand_FollowTailsAppends is the regression test for the bug where
+// `brain api logs -f` reused a single bufio.Scanner that latched EOF and never
+// surfaced lines appended after the reader caught up.
+func TestLogsCommand_FollowTailsAppends(t *testing.T) {
+	tmpDir := t.TempDir()
+	logFile := filepath.Join(tmpDir, "test.log")
+	if err := os.WriteFile(logFile, []byte("existing line\n"), 0644); err != nil {
+		t.Fatalf("failed to write log file: %v", err)
+	}
+
+	f, err := os.Open(logFile)
+	if err != nil {
+		t.Fatalf("failed to open log file: %v", err)
+	}
+	defer f.Close()
+
+	out := &syncBuffer{}
+	cmd := &LogsCommand{
+		Config: &UnifiedConfig{},
+		Flags:  &LogsFlags{Follow: true, Lines: 100},
+		Out:    out,
+	}
+
+	// followLogs blocks forever; run it in a goroutine (it leaks, which is fine
+	// for a unit test — it is blocked on a file read and dies with the process).
+	go cmd.followLogs(f, 0)
+
+	// Let it show existing content and reach EOF, then append after EOF — the
+	// exact ordering that latched the old Scanner.
+	waitForOutput(t, out, "existing line")
+
+	af, err := os.OpenFile(logFile, os.O_APPEND|os.O_WRONLY, 0644)
+	if err != nil {
+		t.Fatalf("failed to reopen for append: %v", err)
+	}
+	if _, err := af.WriteString("appended after eof\n"); err != nil {
+		t.Fatalf("append failed: %v", err)
+	}
+	af.Close()
+
+	waitForOutput(t, out, "appended after eof")
+}
+
+// waitForOutput polls the buffer until it contains want or the deadline passes.
+func waitForOutput(t *testing.T, out *syncBuffer, want string) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if strings.Contains(out.String(), want) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %q in follow output; got: %q", want, out.String())
 }

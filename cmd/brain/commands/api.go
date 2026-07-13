@@ -3,6 +3,7 @@ package commands
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -36,7 +37,6 @@ type UnifiedConfig struct {
 		LogFile         string
 		LogMaxSize      int // MB
 		LogMaxBackups   int
-		LogMaxAge       int // days
 		TaskDefaults    config.TaskDefaultsConfig
 		FeatureCheckout config.FeatureCheckoutConfig
 		Embedding       config.EmbeddingConfig
@@ -115,6 +115,11 @@ func (c *APICommand) Execute() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	// Open the configured log file so slog output lands there in every mode
+	// and `brain api logs -f` works. Falls back to stderr-only on failure.
+	logFile := resolveLogFile(c.Config, c.Flags.LogFile)
+	logWriter := openServerLogWriter(c.Config, logFile)
+
 	// If daemon mode, handle daemonization
 	if c.Flags.Daemon {
 		pidFile := c.Config.Server.PIDFile
@@ -122,26 +127,51 @@ func (c *APICommand) Execute() error {
 			pidFile = defaultPIDFile()
 		}
 
-		logFile := c.Flags.LogFile
-		if logFile == "" {
-			logFile = c.Config.Server.LogFile
+		// The parent already redirected this process's stdout/stderr to the
+		// log file; route slog through the rotating writer only, so lines
+		// are not duplicated and rotation keeps working.
+		if logWriter != nil {
+			opts.LogWriter = logWriter
 		}
-		if logFile == "" {
-			logFile = defaultLogFile()
-		}
-
-		return daemonizeServer(ctx, opts, pidFile, logFile, c.Config, lifecycleFlagsFromAPIFlags(c.Flags))
+		return daemonizeServer(ctx, opts, pidFile, logWriter, c.Config, lifecycleFlagsFromAPIFlags(c.Flags))
 	}
 
-	// Otherwise run in foreground
+	// Otherwise run in foreground: tee slog to the terminal and the log file.
+	if logWriter != nil {
+		opts.LogWriter = io.MultiWriter(os.Stderr, logWriter)
+	}
 	fmt.Printf("Starting Brain API server on %s:%d\n", opts.Host, opts.Port)
+	fmt.Printf("Logs: %s\n", logFile)
 	return runServerWithOptionalRunner(ctx, c.Config, opts, lifecycleFlagsFromAPIFlags(c.Flags))
 }
 
-// daemonizeServer handles daemon mode for the server with SIGHUP log rotation.
+// resolveLogFile returns the effective server log path: flag > config > default.
+func resolveLogFile(cfg *UnifiedConfig, flagLogFile string) string {
+	if flagLogFile != "" {
+		return flagLogFile
+	}
+	if cfg.Server.LogFile != "" {
+		return cfg.Server.LogFile
+	}
+	return defaultLogFile()
+}
+
+// openServerLogWriter opens a size-rotating writer for the server log file.
+// Returns nil (with a warning) if the file cannot be opened, in which case
+// the server logs to stderr only.
+func openServerLogWriter(cfg *UnifiedConfig, logFile string) *lifecycle.RotatingWriter {
+	w, err := lifecycle.NewRotatingWriter(logFile, cfg.Server.LogMaxSize, cfg.Server.LogMaxBackups)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: cannot open log file %s: %v (logging to stderr only)\n", logFile, err)
+		return nil
+	}
+	return w
+}
+
+// daemonizeServer handles daemon mode for the server with SIGHUP log reopen.
 // In daemon mode, we write the PID file when the server starts and setup signal handlers.
 // The StartCommand is responsible for the actual fork/detach via lifecycle.Daemonize.
-func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile, logFile string, cfg *UnifiedConfig, flags LifecycleFlags) error {
+func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile string, logWriter *lifecycle.RotatingWriter, cfg *UnifiedConfig, flags LifecycleFlags) error {
 	// Check if already running (skip if the PID file contains our own PID,
 	// which happens when the parent wrote it before we started)
 	if pid, err := lifecycle.ReadPID(pidFile); err == nil {
@@ -166,33 +196,29 @@ func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile,
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
-	// Get log rotation config
-	maxSizeMB := cfg.Server.LogMaxSize
-	if maxSizeMB == 0 {
-		maxSizeMB = 100 // Default 100MB
-	}
-	maxBackups := cfg.Server.LogMaxBackups
-	if maxBackups == 0 {
-		maxBackups = 5 // Default 5 backups
-	}
-
-	// Setup signal handlers with log rotation on SIGHUP
+	// Setup signal handlers. Size-based rotation happens automatically in
+	// the rotating writer; SIGHUP reopens the file so external rotation
+	// (e.g. logrotate moving the file) doesn't strand writes on the old inode.
 	_ = lifecycle.SetupSignalHandler(ctx, lifecycle.SignalHandlerOptions{
 		OnShutdown: func() {
 			slog.Info("received shutdown signal")
 			cancel()
 		},
 		OnReload: func() {
-			slog.Info("received SIGHUP, rotating logs")
-			// Rotate logs
-			if err := lifecycle.RotateLogs(logFile, int64(maxSizeMB), maxBackups); err != nil {
-				slog.Error("failed to rotate logs", "error", err)
-			} else {
-				slog.Info("log rotation complete")
+			slog.Info("received SIGHUP, reopening log file")
+			if logWriter == nil {
+				return
+			}
+			if err := logWriter.Reopen(); err != nil {
+				slog.Error("failed to reopen log file", "error", err)
 			}
 		},
 	})
 
+	logFile := "(stderr)"
+	if logWriter != nil {
+		logFile = logWriter.Path()
+	}
 	fmt.Printf("Starting Brain API server on %s:%d (PID %d)\n", opts.Host, opts.Port, os.Getpid())
 	fmt.Printf("Logs: %s\n", logFile)
 	fmt.Printf("PID file: %s\n", pidFile)

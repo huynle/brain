@@ -83,9 +83,13 @@ func fixConfig(brainDir string, dryRun bool, force bool) error {
 	configPath := filepath.Join(dataDir, "config.toml")
 
 	// Check if file exists
-	if _, err := os.Stat(configPath); err == nil && !force {
-		// File exists and no force flag, skip
-		return nil
+	configExists := false
+	if _, err := os.Stat(configPath); err == nil {
+		if !force {
+			// File exists and no force flag, skip
+			return nil
+		}
+		configExists = true
 	}
 
 	// Ensure data directory exists
@@ -97,6 +101,14 @@ func fixConfig(brainDir string, dryRun bool, force bool) error {
 	content, err := assets.GetReferenceConfig()
 	if err != nil {
 		return fmt.Errorf("failed to load reference config: %w", err)
+	}
+
+	// A forced restore over an existing config must not silently clobber a
+	// hand-edited file — snapshot it to a timestamped .bak first.
+	if configExists {
+		if _, err := config.BackupConfigFile(configPath); err != nil {
+			return fmt.Errorf("failed to back up existing config: %w", err)
+		}
 	}
 
 	// Write config

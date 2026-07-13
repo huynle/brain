@@ -396,7 +396,7 @@ func TestWriteConfig(t *testing.T) {
 	cfg.Server.Port = 9999
 	cfg.Server.Host = "test-host"
 
-	err := writeConfig(configPath, &cfg)
+	_, err := writeConfig(configPath, &cfg)
 	if err != nil {
 		t.Fatalf("writeConfig() error = %v", err)
 	}
@@ -436,7 +436,7 @@ func TestWriteConfigInvalidPath(t *testing.T) {
 	cfg := defaultConfig()
 	invalidPath := "/root/cannot-write-here/config.yaml"
 
-	err := writeConfig(invalidPath, &cfg)
+	_, err := writeConfig(invalidPath, &cfg)
 	if err == nil {
 		t.Error("writeConfig() with invalid path should return error, got nil")
 	}
@@ -457,7 +457,7 @@ func TestWriteLoadRoundTrip(t *testing.T) {
 	original.MCP.APIURL = "http://roundtrip:8888"
 
 	// Write it
-	if err := writeConfig(configPath, &original); err != nil {
+	if _, err := writeConfig(configPath, &original); err != nil {
 		t.Fatalf("writeConfig() error = %v", err)
 	}
 
@@ -485,6 +485,219 @@ func TestWriteLoadRoundTrip(t *testing.T) {
 	}
 	if loaded.MCP.APIURL != original.MCP.APIURL {
 		t.Errorf("Round-trip MCP.APIURL = %q, want %q", loaded.MCP.APIURL, original.MCP.APIURL)
+	}
+}
+
+// =============================================================================
+// Backup / overwrite-safety Tests
+// =============================================================================
+
+// TestBackupConfigFile_NonExistentReturnsEmpty verifies backing up a missing
+// file is a no-op that returns "" without error.
+func TestBackupConfigFile_NonExistentReturnsEmpty(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+	backup, err := BackupConfigFile(path)
+	if err != nil {
+		t.Fatalf("BackupConfigFile() error = %v", err)
+	}
+	if backup != "" {
+		t.Fatalf("expected empty backup path for missing file, got %q", backup)
+	}
+}
+
+// TestBackupConfigFile_CopiesContentWithRestrictivePerms verifies the backup
+// preserves the original bytes and is written owner-only (0600) so config
+// secrets are not left world-readable in the backup copy.
+func TestBackupConfigFile_CopiesContentWithRestrictivePerms(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	original := []byte("runner:\n  api_token: super-secret\n")
+	if err := os.WriteFile(path, original, 0o644); err != nil {
+		t.Fatalf("write original: %v", err)
+	}
+
+	backup, err := BackupConfigFile(path)
+	if err != nil {
+		t.Fatalf("BackupConfigFile() error = %v", err)
+	}
+	if backup == "" {
+		t.Fatal("expected a backup path, got empty")
+	}
+
+	got, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(got) != string(original) {
+		t.Fatalf("backup content mismatch:\n got: %q\nwant: %q", got, original)
+	}
+
+	info, err := os.Stat(backup)
+	if err != nil {
+		t.Fatalf("stat backup: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("backup perms = %o, want 0600", perm)
+	}
+}
+
+// TestBackupConfigFile_MultipleBackupsDoNotCollide verifies that two backups of
+// the same file yield two distinct, existing files (collision suffix handling).
+func TestBackupConfigFile_MultipleBackupsDoNotCollide(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	if err := os.WriteFile(path, []byte("v: 1\n"), 0o644); err != nil {
+		t.Fatalf("write original: %v", err)
+	}
+
+	first, err := BackupConfigFile(path)
+	if err != nil {
+		t.Fatalf("first BackupConfigFile() error = %v", err)
+	}
+	second, err := BackupConfigFile(path)
+	if err != nil {
+		t.Fatalf("second BackupConfigFile() error = %v", err)
+	}
+
+	if first == second {
+		t.Fatalf("expected distinct backup paths, both were %q", first)
+	}
+	for _, p := range []string{first, second} {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("expected backup %q to exist: %v", p, err)
+		}
+	}
+}
+
+// TestWriteConfig_BacksUpExistingFile verifies writeConfig snapshots the prior
+// file to a timestamped backup before overwriting it, and returns that path.
+func TestWriteConfig_BacksUpExistingFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	prior := []byte("server:\n  host: pre-existing\n")
+	if err := os.WriteFile(path, prior, 0o644); err != nil {
+		t.Fatalf("write prior config: %v", err)
+	}
+
+	cfg := defaultConfig()
+	backup, err := writeConfig(path, &cfg)
+	if err != nil {
+		t.Fatalf("writeConfig() error = %v", err)
+	}
+	if backup == "" {
+		t.Fatal("expected writeConfig to report a backup path when overwriting")
+	}
+
+	backupContent, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(backupContent) != string(prior) {
+		t.Fatalf("backup should hold prior contents, got:\n%s", backupContent)
+	}
+}
+
+// TestWriteConfig_NoBackupWhenAbsent verifies writeConfig does not create a
+// backup (empty return) when the destination did not previously exist.
+func TestWriteConfig_NoBackupWhenAbsent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "brain", "config.yaml")
+	cfg := defaultConfig()
+	backup, err := writeConfig(path, &cfg)
+	if err != nil {
+		t.Fatalf("writeConfig() error = %v", err)
+	}
+	if backup != "" {
+		t.Fatalf("expected no backup for fresh write, got %q", backup)
+	}
+}
+
+// TestWriteDefaultConfig_RefusesWithoutForce verifies the guard leaves an
+// existing config untouched and creates no backup when force is false.
+func TestWriteDefaultConfig_RefusesWithoutForce(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	configPath := filepath.Join(configHome, "brain", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	original := []byte("server:\n  host: keep\n")
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	path, backup, err := WriteDefaultConfig(false)
+	if err == nil {
+		t.Fatal("expected WriteDefaultConfig(false) to refuse overwriting existing config")
+	}
+	if path != configPath {
+		t.Fatalf("returned path = %q, want %q", path, configPath)
+	}
+	if backup != "" {
+		t.Fatalf("expected no backup on refusal, got %q", backup)
+	}
+
+	got, _ := os.ReadFile(configPath)
+	if string(got) != string(original) {
+		t.Fatalf("existing config should be unchanged, got:\n%s", got)
+	}
+	if backups, _ := filepath.Glob(configPath + ".bak-*"); len(backups) != 0 {
+		t.Fatalf("expected no backup files on refusal, found: %v", backups)
+	}
+}
+
+// TestWriteDefaultConfig_WritesWhenMissing verifies a fresh write when no
+// config exists reports no backup.
+func TestWriteDefaultConfig_WritesWhenMissing(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	path, backup, err := WriteDefaultConfig(false)
+	if err != nil {
+		t.Fatalf("WriteDefaultConfig() error = %v", err)
+	}
+	if backup != "" {
+		t.Fatalf("expected no backup when config was missing, got %q", backup)
+	}
+	if !fileExists(path) {
+		t.Fatalf("expected config written at %q", path)
+	}
+}
+
+// TestWriteDefaultConfig_ForceBacksUpAndOverwrites verifies that forcing over an
+// existing config preserves the prior contents in a backup and installs defaults.
+func TestWriteDefaultConfig_ForceBacksUpAndOverwrites(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	configPath := filepath.Join(configHome, "brain", "config.yaml")
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	original := []byte("runner:\n  brain_api_url: https://prod.example\n  api_token: keepme\n")
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatalf("write existing: %v", err)
+	}
+
+	path, backup, err := WriteDefaultConfig(true)
+	if err != nil {
+		t.Fatalf("WriteDefaultConfig(true) error = %v", err)
+	}
+	if path != configPath {
+		t.Fatalf("returned path = %q, want %q", path, configPath)
+	}
+	if backup == "" {
+		t.Fatal("expected a backup path when forcing over existing config")
+	}
+
+	backupContent, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(backupContent) != string(original) {
+		t.Fatalf("backup should preserve prior production config, got:\n%s", backupContent)
+	}
+
+	newContent, _ := os.ReadFile(configPath)
+	if string(newContent) == string(original) {
+		t.Fatal("expected config to be overwritten with defaults")
 	}
 }
 

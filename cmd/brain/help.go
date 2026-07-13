@@ -509,10 +509,13 @@ SUBCOMMANDS:
 FLAGS:
   --print                        Print default config YAML instead of writing
   -f, --force                    Overwrite existing config.yaml with init
+                                 (prints a diff and saves a timestamped .bak first)
 
 DESCRIPTION:
   Without a subcommand, prints resolved server, runner, and MCP settings.
   Use defaults/init to inspect or create ~/.config/brain/config.yaml safely.
+  init never touches an existing config.yaml unless --force is given; a
+  forced overwrite always writes config.yaml.bak-<timestamp> alongside it.
 
 EXAMPLES:
   brain config

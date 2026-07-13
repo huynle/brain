@@ -60,6 +60,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -325,14 +326,41 @@ func DefaultConfigYAML() ([]byte, error) {
 }
 
 // WriteDefaultConfig writes the default configuration to the unified config path.
-// It refuses to overwrite an existing file unless force is true.
-func WriteDefaultConfig(force bool) (string, error) {
-	path := getUnifiedConfigPath()
+// It refuses to overwrite an existing file unless force is true. When force
+// replaces an existing file, a timestamped .bak copy is written alongside it
+// first and its path is returned as backupPath ("" when nothing existed).
+func WriteDefaultConfig(force bool) (path string, backupPath string, err error) {
+	path = getUnifiedConfigPath()
 	if fileExists(path) && !force {
-		return path, fmt.Errorf("config file already exists: %s", path)
+		return path, "", fmt.Errorf("config file already exists: %s (use --force to overwrite; a timestamped .bak will be saved alongside it)", path)
 	}
 	cfg := defaultConfig()
-	return path, writeConfig(path, &cfg)
+	backupPath, err = writeConfig(path, &cfg)
+	return path, backupPath, err
+}
+
+// BackupConfigFile copies an existing file to a timestamped sibling
+// (<path>.bak-YYYYMMDD-HHMMSS) and returns the backup path. It returns ""
+// without error when path does not exist. If the backup name is already
+// taken (two backups within the same second), a numeric suffix is appended.
+// The backup is written with 0600 permissions since configs may hold tokens.
+func BackupConfigFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	base := fmt.Sprintf("%s.bak-%s", path, time.Now().Format("20060102-150405"))
+	backupPath := base
+	for i := 2; fileExists(backupPath); i++ {
+		backupPath = fmt.Sprintf("%s.%d", base, i)
+	}
+	if err := os.WriteFile(backupPath, data, 0600); err != nil {
+		return "", err
+	}
+	return backupPath, nil
 }
 
 // getConfigHome returns the XDG config directory, with fallback to ~/.config.
@@ -414,22 +442,33 @@ func loadConfigFile(path string, cfg *UnifiedConfig) error {
 	return yaml.Unmarshal(data, cfg)
 }
 
-// writeConfig writes the config to a YAML file, creating parent directories if needed.
-func writeConfig(path string, cfg *UnifiedConfig) error {
+// writeConfig writes the config to a YAML file, creating parent directories if
+// needed. If the destination already exists, a timestamped .bak copy is written
+// first so no caller can silently clobber a live config; the backup path is
+// returned ("" when the destination did not exist).
+func writeConfig(path string, cfg *UnifiedConfig) (string, error) {
 	// Create parent directory if needed
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
+		return "", err
 	}
 
 	// Marshal config to YAML
 	data, err := yaml.Marshal(cfg)
 	if err != nil {
-		return err
+		return "", err
+	}
+
+	backupPath, err := BackupConfigFile(path)
+	if err != nil {
+		return "", fmt.Errorf("backup existing config: %w", err)
 	}
 
 	// Write to file
-	return os.WriteFile(path, data, 0644)
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return backupPath, err
+	}
+	return backupPath, nil
 }
 
 // migrateConfig migrates a legacy runner config to the unified config format.
@@ -510,7 +549,7 @@ func migrateConfig(legacyPath, unifiedPath string, cfg *UnifiedConfig) error {
 	}
 
 	// Write unified config
-	if err := writeConfig(unifiedPath, cfg); err != nil {
+	if _, err := writeConfig(unifiedPath, cfg); err != nil {
 		return err
 	}
 

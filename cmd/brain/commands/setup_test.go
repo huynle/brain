@@ -529,3 +529,135 @@ func TestConfigCommand_InitPrintDoesNotWriteConfig(t *testing.T) {
 		t.Fatalf("expected init --print not to write config file, stat error: %v", err)
 	}
 }
+
+// TestConfigCommand_InitRefuseDoesNotCreateBackup verifies that a refused
+// overwrite (existing config, no --force) leaves no backup artifacts behind:
+// the guard must trip before anything is written.
+func TestConfigCommand_InitRefuseDoesNotCreateBackup(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	configDir := filepath.Join(configHome, "brain")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	if err := os.WriteFile(configPath, []byte("server:\n  port: 9999\n"), 0o644); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+
+	cmd := &ConfigCommand{Subcommand: "init", Out: &bytes.Buffer{}}
+	if err := cmd.Execute(); err == nil {
+		t.Fatal("expected init to refuse overwriting existing config")
+	}
+
+	backups, _ := filepath.Glob(configPath + ".bak-*")
+	if len(backups) != 0 {
+		t.Fatalf("expected no backup files on refused overwrite, found: %v", backups)
+	}
+}
+
+// TestConfigCommand_InitForceBacksUpAndWarns verifies that a forced overwrite
+// of an existing config (1) saves the prior contents to a timestamped .bak,
+// (2) prints a warning + a diff, and (3) writes the new default config.
+func TestConfigCommand_InitForceBacksUpAndWarns(t *testing.T) {
+	configHome := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", configHome)
+
+	configDir := filepath.Join(configHome, "brain")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	configPath := filepath.Join(configDir, "config.yaml")
+	original := []byte("server:\n  host: keep-me-safe\n  port: 9999\n")
+	if err := os.WriteFile(configPath, original, 0o644); err != nil {
+		t.Fatalf("write existing config: %v", err)
+	}
+
+	var out bytes.Buffer
+	cmd := &ConfigCommand{
+		Subcommand: "init",
+		Flags:      &ConfigFlags{Force: true},
+		Out:        &out,
+	}
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	// A timestamped backup preserving the ORIGINAL contents must exist.
+	backups, _ := filepath.Glob(configPath + ".bak-*")
+	if len(backups) != 1 {
+		t.Fatalf("expected exactly one backup file, found: %v", backups)
+	}
+	backupContent, err := os.ReadFile(backups[0])
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(backupContent) != string(original) {
+		t.Fatalf("backup should preserve original contents, got:\n%s", string(backupContent))
+	}
+
+	// The live config must now be the fresh default (original values gone).
+	newContent, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read new config: %v", err)
+	}
+	if strings.Contains(string(newContent), "keep-me-safe") {
+		t.Fatalf("expected config to be overwritten with defaults, still had original host:\n%s", string(newContent))
+	}
+	if !strings.Contains(string(newContent), "model: text-embedding-3-small") {
+		t.Fatalf("expected overwritten config to contain defaults, got:\n%s", string(newContent))
+	}
+
+	// Output must warn, show the backup path, and show a diff.
+	output := out.String()
+	for _, want := range []string{"Overwriting existing config", "Backup saved:", backups[0], "Changes ("} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("expected output to contain %q, got:\n%s", want, output)
+		}
+	}
+}
+
+// TestInitCommand_Execute_ForceBacksUpConfigToml verifies that re-running
+// `brain init --force` over an existing config.toml preserves the prior file
+// as a timestamped backup before overwriting it.
+func TestInitCommand_Execute_ForceBacksUpConfigToml(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := &UnifiedConfig{}
+	cfg.Server.BrainDir = tmpDir
+
+	// First run to create config.toml.
+	cmd1 := &InitCommand{Config: cfg, Flags: &InitFlags{}, Out: &bytes.Buffer{}}
+	if err := cmd1.Execute(); err != nil {
+		t.Fatalf("first Execute() error = %v", err)
+	}
+
+	configTomlPath := filepath.Join(tmpDir, ".brain-data", "config.toml")
+	sentinel := []byte("# hand-edited config, do not lose\n")
+	if err := os.WriteFile(configTomlPath, sentinel, 0o644); err != nil {
+		t.Fatalf("modify config.toml: %v", err)
+	}
+
+	// Second run with --force must back up before overwriting.
+	var out bytes.Buffer
+	cmd2 := &InitCommand{Config: cfg, Flags: &InitFlags{Force: true}, Out: &out}
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("second Execute() error = %v", err)
+	}
+
+	backups, _ := filepath.Glob(configTomlPath + ".bak-*")
+	if len(backups) != 1 {
+		t.Fatalf("expected exactly one config.toml backup, found: %v", backups)
+	}
+	backupContent, err := os.ReadFile(backups[0])
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(backupContent) != string(sentinel) {
+		t.Fatalf("backup should preserve hand-edited contents, got:\n%s", string(backupContent))
+	}
+	if !strings.Contains(out.String(), "Backup saved:") {
+		t.Fatalf("expected output to mention backup, got:\n%s", out.String())
+	}
+}

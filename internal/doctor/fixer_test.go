@@ -241,6 +241,19 @@ func TestFixConfig(t *testing.T) {
 		if string(content) == customContent {
 			t.Error("existing config should be overwritten with force flag")
 		}
+
+		// A forced overwrite must preserve the prior file as a timestamped backup.
+		backups, _ := filepath.Glob(configPath + ".bak-*")
+		if len(backups) != 1 {
+			t.Fatalf("expected exactly one backup after forced overwrite, found: %v", backups)
+		}
+		backupContent, readErr := os.ReadFile(backups[0])
+		if readErr != nil {
+			t.Fatalf("cannot read backup: %v", readErr)
+		}
+		if string(backupContent) != customContent {
+			t.Errorf("backup should preserve original content, got: %q", string(backupContent))
+		}
 	})
 
 	t.Run("dry run does not create file", func(t *testing.T) {

@@ -13,10 +13,11 @@ import (
 
 // LogsFlags holds flags for the logs command.
 type LogsFlags struct {
-	Follow bool   // Follow log output (like tail -f)
-	Lines  int    // Number of lines to show
-	Since  string // Show logs since duration (e.g., "1h", "30m", "2d")
-	Level  string // Filter by log level (debug, info, warn, error)
+	Follow  bool   // Follow log output (like tail -f)
+	Lines   int    // Number of lines to show
+	Since   string // Show logs since duration (e.g., "1h", "30m", "2d")
+	Level   string // Filter by log level (debug, info, warn, error)
+	LogFile string // Log file path override (matches `api start --log-file`)
 }
 
 // LogsCommand displays server logs.
@@ -32,11 +33,9 @@ func (c *LogsCommand) Type() string {
 
 func (c *LogsCommand) Execute() error {
 	c.Out = getWriter(c.Out)
-	// Determine log file path
-	logFile := c.Config.Server.LogFile
-	if logFile == "" {
-		logFile = defaultLogFile()
-	}
+	// Determine log file path with the same precedence as the writer
+	// (flag > config > default) so the reader and server agree.
+	logFile := resolveLogFile(c.Config, c.Flags.LogFile)
 
 	// Check if log file exists
 	if _, err := os.Stat(logFile); os.IsNotExist(err) {
@@ -124,19 +123,32 @@ func (c *LogsCommand) followLogs(f *os.File, since time.Duration) error {
 		cutoff = time.Now().Add(-since)
 	}
 
-	// Then watch for new lines
-	scanner := bufio.NewScanner(f)
+	// Then watch for new lines. A bufio.Reader is used rather than a
+	// bufio.Scanner: once a Scanner's Scan() returns false at EOF it latches
+	// and never resumes, so it would never surface lines appended after the
+	// reader caught up. A bufio.Reader re-reads the underlying file on each
+	// ReadString, so appends are picked up. A partial line (no trailing
+	// newline yet) is held until the rest arrives.
+	reader := bufio.NewReader(f)
+	var partial strings.Builder
 	for {
-		if scanner.Scan() {
-			line := scanner.Text()
-
-			// Apply filters
-			if c.shouldShowLine(line, cutoff) {
-				fmt.Fprintln(c.Out, line)
+		chunk, err := reader.ReadString('\n')
+		if err != nil {
+			// EOF (or an incomplete final line): stash what we have and wait
+			// for more to be appended.
+			partial.WriteString(chunk)
+			if err != io.EOF {
+				return fmt.Errorf("failed to read log file: %w", err)
 			}
-		} else {
-			// No new data, sleep briefly
 			time.Sleep(100 * time.Millisecond)
+			continue
+		}
+
+		line := strings.TrimRight(partial.String()+chunk, "\n")
+		partial.Reset()
+
+		if c.shouldShowLine(line, cutoff) {
+			fmt.Fprintln(c.Out, line)
 		}
 	}
 }

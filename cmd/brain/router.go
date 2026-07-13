@@ -577,6 +577,12 @@ func defaultConfig() *UnifiedConfig {
 		if ucfg.Server.LogFile != "" {
 			cfg.Server.LogFile = ucfg.Server.LogFile
 		}
+		if ucfg.Server.LogMaxSizeMB != 0 {
+			cfg.Server.LogMaxSize = ucfg.Server.LogMaxSizeMB
+		}
+		if ucfg.Server.LogMaxBackups != 0 {
+			cfg.Server.LogMaxBackups = ucfg.Server.LogMaxBackups
+		}
 		// Bool fields: always apply from config (can't distinguish zero from "not set")
 		cfg.Server.EnableAuth = ucfg.Server.EnableAuth
 		// CORS and OAuth
@@ -682,6 +688,8 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.JWTSecret = cfg.Server.JWTSecret
 	cmdCfg.Server.PIDFile = cfg.Server.PIDFile
 	cmdCfg.Server.LogFile = cfg.Server.LogFile
+	cmdCfg.Server.LogMaxSize = cfg.Server.LogMaxSize
+	cmdCfg.Server.LogMaxBackups = cfg.Server.LogMaxBackups
 	cmdCfg.Server.TLS.Enabled = cfg.Server.TLS.Enabled
 	cmdCfg.Server.TLS.CertPath = cfg.Server.TLS.CertPath
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
@@ -859,6 +867,7 @@ func parseLogsCommand(args []string) (Command, error) {
 	lines := 100
 	since := ""
 	level := ""
+	logFile := ""
 	for i, arg := range args {
 		if arg == "-f" || arg == "--follow" {
 			followFlag = true
@@ -872,15 +881,19 @@ func parseLogsCommand(args []string) (Command, error) {
 		if arg == "--level" && i+1 < len(args) {
 			level = args[i+1]
 		}
+		if arg == "--log-file" && i+1 < len(args) {
+			logFile = args[i+1]
+		}
 	}
 
 	return &commands.LogsCommand{
 		Config: convertToCommandsConfig(cfg),
 		Flags: &commands.LogsFlags{
-			Follow: followFlag,
-			Lines:  lines,
-			Since:  since,
-			Level:  level,
+			Follow:  followFlag,
+			Lines:   lines,
+			Since:   since,
+			Level:   level,
+			LogFile: logFile,
 		},
 		Out: nil, // Will use os.Stdout in Execute if nil
 	}, nil

@@ -270,6 +270,8 @@ type UnifiedConfig struct {
 		}
 		PIDFile         string
 		LogFile         string
+		LogMaxSize      int // MB
+		LogMaxBackups   int
 		TaskDefaults    uconfig.TaskDefaultsConfig
 		FeatureCheckout uconfig.FeatureCheckoutConfig
 		Embedding       uconfig.EmbeddingConfig

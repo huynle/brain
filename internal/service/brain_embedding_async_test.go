@@ -327,7 +327,7 @@ func TestPatchEntry_MetadataOnly_Returns200Fast(t *testing.T) {
 	if err != nil {
 		t.Fatalf("PATCH failed after %v: %v", elapsed, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("PATCH status = %d, want 200", resp.StatusCode)

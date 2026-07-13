@@ -197,7 +197,7 @@ func TestLogsCommand_FollowTailsAppends(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to open log file: %v", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	out := &syncBuffer{}
 	cmd := &LogsCommand{
@@ -208,7 +208,7 @@ func TestLogsCommand_FollowTailsAppends(t *testing.T) {
 
 	// followLogs blocks forever; run it in a goroutine (it leaks, which is fine
 	// for a unit test — it is blocked on a file read and dies with the process).
-	go cmd.followLogs(f, 0)
+	go func() { _ = cmd.followLogs(f, 0) }()
 
 	// Let it show existing content and reach EOF, then append after EOF — the
 	// exact ordering that latched the old Scanner.
@@ -221,7 +221,7 @@ func TestLogsCommand_FollowTailsAppends(t *testing.T) {
 	if _, err := af.WriteString("appended after eof\n"); err != nil {
 		t.Fatalf("append failed: %v", err)
 	}
-	af.Close()
+	_ = af.Close()
 
 	waitForOutput(t, out, "appended after eof")
 }

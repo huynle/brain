@@ -148,7 +148,7 @@ func (c *LogsCommand) followLogs(f *os.File, since time.Duration) error {
 		partial.Reset()
 
 		if c.shouldShowLine(line, cutoff) {
-			fmt.Fprintln(c.Out, line)
+			_, _ = fmt.Fprintln(c.Out, line)
 		}
 	}
 }

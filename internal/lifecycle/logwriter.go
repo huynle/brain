@@ -131,7 +131,7 @@ func (w *RotatingWriter) open() error {
 	}
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return fmt.Errorf("failed to stat log file: %w", err)
 	}
 	w.file = f

@@ -19,7 +19,7 @@ func newTestWriter(t *testing.T, path string, maxBytes int64, maxBackups int) *R
 		t.Fatalf("NewRotatingWriter failed: %v", err)
 	}
 	w.maxBytes = maxBytes
-	t.Cleanup(func() { w.Close() })
+	t.Cleanup(func() { _ = w.Close() })
 	return w
 }
 
@@ -34,7 +34,7 @@ func TestRotatingWriter_AppendsToExistingFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRotatingWriter failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	if _, err := w.Write([]byte("new line\n")); err != nil {
 		t.Fatalf("Write failed: %v", err)
@@ -57,7 +57,7 @@ func TestRotatingWriter_CreatesDirectory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewRotatingWriter failed: %v", err)
 	}
-	defer w.Close()
+	defer func() { _ = w.Close() }()
 
 	if _, err := w.Write([]byte("hello\n")); err != nil {
 		t.Fatalf("Write failed: %v", err)

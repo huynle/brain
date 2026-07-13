@@ -184,7 +184,7 @@ func (c *InitCommand) Execute() error {
 				if err != nil {
 					return fmt.Errorf("failed to back up config.toml: %w", err)
 				}
-				fmt.Fprintf(out, "Backup saved: %s\n", backupPath)
+				_, _ = fmt.Fprintf(out, "Backup saved: %s\n", backupPath)
 			}
 
 			if err := os.WriteFile(configPath, configContent, 0644); err != nil {
@@ -264,12 +264,12 @@ func (c *ConfigCommand) Execute() error {
 			if !flags.Force {
 				return fmt.Errorf("config file already exists: %s (use --force to overwrite; a timestamped .bak will be saved alongside it)", configPath)
 			}
-			fmt.Fprintf(out, "⚠️  Overwriting existing config: %s\n", configPath)
+			_, _ = fmt.Fprintf(out, "⚠️  Overwriting existing config: %s\n", configPath)
 			if defaults, err := config.DefaultConfigYAML(); err == nil {
 				if diff := diffLines(string(existing), string(defaults)); len(diff) > 0 {
-					fmt.Fprintf(out, "Changes (- current, + default):\n")
+					_, _ = fmt.Fprintf(out, "Changes (- current, + default):\n")
 					for _, line := range diff {
-						fmt.Fprintf(out, "  %s\n", line)
+						_, _ = fmt.Fprintf(out, "  %s\n", line)
 					}
 				}
 			}
@@ -279,9 +279,9 @@ func (c *ConfigCommand) Execute() error {
 			return err
 		}
 		if backupPath != "" {
-			fmt.Fprintf(out, "Backup saved: %s\n", backupPath)
+			_, _ = fmt.Fprintf(out, "Backup saved: %s\n", backupPath)
 		}
-		fmt.Fprintf(out, "Wrote config file: %s\n", path)
+		_, _ = fmt.Fprintf(out, "Wrote config file: %s\n", path)
 		return nil
 	default:
 		return fmt.Errorf("unknown config subcommand: %q", c.Subcommand)

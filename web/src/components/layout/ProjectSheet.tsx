@@ -15,7 +15,7 @@ import {
   summarizeTriggerResults,
 } from "../../lib/api";
 import { fuzzyScore } from "../../lib/fuzzy";
-import { useLive } from "../../lib/sse";
+import { useLive, type ProjectLive } from "../../lib/sse";
 import type { Task } from "../../lib/types";
 import { BottomSheet } from "./BottomSheet";
 import { Modal } from "../common/Modal";
@@ -61,6 +61,21 @@ function areAutomationsPaused(project: string, status?: RunnerStatus): boolean {
   return project === ALL_PROJECTS
     ? status.automationsPaused
     : !!status.automationPausedProjects?.includes(project);
+}
+
+function countInProgress(
+  project: string,
+  liveProjects: Record<string, ProjectLive>,
+): number {
+  const collect = (tasks: Task[]) =>
+    tasks.reduce((n, t) => n + (t.status === "in_progress" ? 1 : 0), 0);
+  if (project === ALL_PROJECTS) {
+    return Object.values(liveProjects).reduce(
+      (n, s) => n + collect(s.tasks),
+      0,
+    );
+  }
+  return collect(liveProjects[project]?.tasks ?? []);
 }
 
 // Searchable project picker. Opened by the status-bar project name or the
@@ -365,6 +380,8 @@ export function ProjectSheet() {
           const project = row.project;
           const taskPaused = isTaskPaused(project, statusQ.data);
           const automationPaused = areAutomationsPaused(project, statusQ.data);
+          const inFlight = taskPaused ? countInProgress(project, liveProjects) : 0;
+          const pausedRunning = taskPaused && inFlight > 0;
           const isProject = row.kind === "project";
           const isAllProjects = project === ALL_PROJECTS;
           const allPaused = taskPaused && automationPaused;
@@ -380,8 +397,20 @@ export function ProjectSheet() {
             >
               <span
                 className="proj-dot"
-                style={{ color: taskPaused ? "var(--red)" : "var(--green)" }}
-                title={taskPaused ? "tasks paused" : "tasks running"}
+                style={{
+                  color: pausedRunning
+                    ? "var(--yellow)"
+                    : taskPaused
+                      ? "var(--red)"
+                      : "var(--green)",
+                }}
+                title={
+                  pausedRunning
+                    ? `tasks paused - ${inFlight} in flight`
+                    : taskPaused
+                      ? "tasks paused"
+                      : "tasks running"
+                }
               >
                 {isProject && project === active ? "●" : "○"}
               </span>

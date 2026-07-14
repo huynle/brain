@@ -314,6 +314,12 @@ export function TasksView() {
 
   const cursorRow = rows[cursor];
   const detailTask = cursorRow?.kind === "task" ? cursorRow.task : null;
+  // Feature-header selection surfaces an aggregated Detail body so users can
+  // scan the feature's shared config at a glance without opening the Feature
+  // Settings modal (`s`). Undefined when the cursor is on a task row.
+  const detailFeature = cursorRow?.kind === "header"
+    ? { feature: cursorRow.feature, label: cursorRow.label, tasks: tasksByFeature.get(cursorRow.feature) ?? [] }
+    : null;
 
   const setAllFeatureCollapsed = (value: boolean) => {
     setCollapseDefault(value);
@@ -892,6 +898,18 @@ export function TasksView() {
               >
                 {detailTask ? (
                   <DetailBody task={detailTask} onEditMeta={() => setEditMeta(detailTask)} onEditContent={() => setEditContent(detailTask)} />
+                ) : detailFeature ? (
+                  <FeatureDetailBody
+                    feature={detailFeature.feature}
+                    label={detailFeature.label}
+                    tasks={detailFeature.tasks}
+                    mergeReady={detailFeature.feature !== UNGROUPED && mergeReadySet.has(detailFeature.feature)}
+                    onOpenSettings={
+                      detailFeature.feature === UNGROUPED || detailFeature.tasks.length === 0
+                        ? undefined
+                        : () => setFeatureMeta({ feature: detailFeature.feature, tasks: detailFeature.tasks })
+                    }
+                  />
                 ) : (
                   <span className="faint">No task selected.</span>
                 )}
@@ -1058,6 +1076,186 @@ function Field({ l, v, color }: { l: string; v?: string; color?: string }) {
     <div className="detail-field">
       <span className="dl">{l}</span>
       <span className="dv" style={color ? { color } : undefined}>{v}</span>
+    </div>
+  );
+}
+
+// Read-only aggregate view for a feature header row. Mirrors the fields the
+// Feature Settings modal edits (`s`) so users can eyeball shared config
+// without opening the modal. A value is shown only when every task in the
+// feature carries the same non-empty value — otherwise the field renders
+// "mixed" so callers know a Feature-Settings apply-all would overwrite
+// per-task differences.
+function FeatureDetailBody({
+  feature,
+  label,
+  tasks,
+  mergeReady,
+  onOpenSettings,
+}: {
+  feature: string;
+  label: string;
+  tasks: Task[];
+  mergeReady: boolean;
+  onOpenSettings?: () => void;
+}) {
+  const isUngrouped = feature === UNGROUPED;
+  const total = tasks.length;
+
+  // Aggregate status breakdown so the feature card doubles as a mini
+  // dashboard for the group (ready / active / blocked / done / etc.).
+  const statusCounts = tasks.reduce<Record<string, number>>((acc, t) => {
+    acc[t.status] = (acc[t.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  const readyCount = tasks.filter(isReadyTask).length;
+  const waitingCount = (statusCounts.pending ?? 0) + (statusCounts.active ?? 0) - readyCount;
+  const activeCount = (statusCounts.in_progress ?? 0);
+  const doneCount = (statusCounts.completed ?? 0) + (statusCounts.validated ?? 0);
+  const blockedCount = (statusCounts.blocked ?? 0);
+  const cancelledCount = (statusCounts.cancelled ?? 0) + (statusCounts.archived ?? 0) + (statusCounts.superseded ?? 0);
+  const draftCount = (statusCounts.draft ?? 0);
+
+  // Uniform-value helpers: a shared field is reported only when every task
+  // has the same non-empty value. Any divergence surfaces as "mixed" so the
+  // user knows this group is not internally consistent for that field.
+  function sharedString(pick: (t: Task) => string | undefined): string | undefined {
+    let seen: string | undefined;
+    for (const t of tasks) {
+      const v = (pick(t) ?? "").toString().trim();
+      if (!v) continue;
+      if (seen === undefined) seen = v;
+      else if (seen !== v) return "mixed";
+    }
+    return seen;
+  }
+  function sharedBool(pick: (t: Task) => boolean | undefined): string | undefined {
+    let seen: boolean | undefined;
+    let anyDefined = false;
+    for (const t of tasks) {
+      const v = pick(t);
+      if (v === undefined) continue;
+      anyDefined = true;
+      if (seen === undefined) seen = v;
+      else if (seen !== v) return "mixed";
+    }
+    return anyDefined && seen !== undefined ? String(seen) : undefined;
+  }
+  function sharedList(pick: (t: Task) => string[] | undefined): string | undefined {
+    let seen: string | undefined;
+    for (const t of tasks) {
+      const raw = pick(t);
+      if (!raw || raw.length === 0) continue;
+      const key = [...raw].sort().join(",");
+      if (seen === undefined) seen = key;
+      else if (seen !== key) return "mixed";
+    }
+    return seen;
+  }
+
+  // Feature-level fields (feature_priority, feature_schedule, ...) live on
+  // every task in the group; we surface the shared value or "mixed".
+  const featurePriority = sharedString((t) => t.feature_priority);
+  const featureDependsOn = sharedList((t) => t.feature_depends_on);
+  const featureSchedule = sharedString((t) => t.feature_schedule);
+  const featureStartsAt = sharedString((t) => t.feature_starts_at);
+  const featureExpiresAt = sharedString((t) => t.feature_expires_at);
+  const featureRunOnceAt = sharedString((t) => t.feature_run_once_at);
+  const featureTimezone = sharedString((t) => t.feature_timezone);
+
+  // Task-level fields the Feature Settings modal can bulk-apply. These are
+  // useful for spotting drift within a feature.
+  const agent = sharedString((t) => t.agent);
+  const model = sharedString((t) => t.model);
+  const executor = sharedString((t) => t.executor);
+  const executionMode = sharedString((t) => t.execution_mode);
+  const targetWorkdir = sharedString((t) => t.target_workdir || t.workdir);
+  const gitBranch = sharedString((t) => t.git_branch);
+  const mergeTargetBranch = sharedString((t) => t.merge_target_branch);
+  const mergePolicy = sharedString((t) => t.merge_policy);
+  const mergeStrategy = sharedString((t) => t.merge_strategy);
+  const openPRBeforeMerge = sharedBool((t) => t.open_pr_before_merge);
+  const completeOnIdle = sharedBool((t) => t.complete_on_idle);
+  const priority = sharedString((t) => t.priority);
+  const schedule = sharedString((t) => t.schedule);
+  const scheduleEnabled = sharedBool((t) => t.schedule_enabled);
+  const timezone = sharedString((t) => t.timezone);
+  const projectId = sharedString((t) => t.projectId);
+
+  const statusChips: Array<{ label: string; count: number; color?: string }> = [
+    { label: "ready", count: readyCount, color: "var(--green)" },
+    { label: "waiting", count: waitingCount, color: "var(--yellow)" },
+    { label: "active", count: activeCount, color: "var(--blue)" },
+    { label: "blocked", count: blockedCount, color: "var(--red)" },
+    { label: "done", count: doneCount, color: "var(--fg-faint)" },
+    { label: "draft", count: draftCount, color: "var(--purple)" },
+    { label: "cancelled", count: cancelledCount, color: "var(--fg-faint)" },
+  ].filter((s) => s.count > 0);
+
+  return (
+    <div>
+      <div style={{ fontWeight: 700, marginBottom: 4 }}>
+        <span style={{ color: "var(--purple)" }}>⊞ </span>
+        {isUngrouped ? "Ungrouped" : label}
+      </div>
+      <Field l="Feature" v={isUngrouped ? undefined : feature} color="var(--teal)" />
+      <Field l="Tasks" v={String(total)} />
+      {projectId && <Field l="Project" v={projectId} />}
+      {mergeReady && (
+        <div className="detail-field">
+          <span className="dl">Merge</span>
+          <span className="dv" style={{ color: "var(--purple)", fontWeight: 700 }}>⇡ ready</span>
+        </div>
+      )}
+
+      {statusChips.length > 0 && (
+        <>
+          <div className="detail-section">Status</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 10px", marginTop: 2 }}>
+            {statusChips.map((s) => (
+              <span key={s.label} style={{ color: s.color }}>
+                {s.count} {s.label}
+              </span>
+            ))}
+          </div>
+        </>
+      )}
+
+      {!isUngrouped && (
+        <>
+          <div className="detail-section">Feature settings</div>
+          <Field l="Priority" v={featurePriority} />
+          <Field l="Depends on" v={featureDependsOn} />
+          <Field l="Schedule" v={featureSchedule} />
+          <Field l="Starts at" v={featureStartsAt} />
+          <Field l="Expires at" v={featureExpiresAt} />
+          <Field l="Run once at" v={featureRunOnceAt} />
+          <Field l="Timezone" v={featureTimezone} />
+        </>
+      )}
+
+      <div className="detail-section">Task settings (shared)</div>
+      <Field l="Task priority" v={priority} />
+      <Field l="Agent" v={agent} />
+      <Field l="Model" v={model} />
+      <Field l="Executor" v={executor} />
+      <Field l="Execution" v={executionMode} />
+      <Field l="Workdir" v={targetWorkdir} />
+      <Field l="Branch" v={gitBranch} />
+      <Field l="Merge target" v={mergeTargetBranch} />
+      <Field l="Merge policy" v={mergePolicy} />
+      <Field l="Merge strategy" v={mergeStrategy} />
+      <Field l="Open PR first" v={openPRBeforeMerge} />
+      <Field l="Complete on idle" v={completeOnIdle} />
+      <Field l="Schedule" v={schedule} />
+      <Field l="Schedule enabled" v={scheduleEnabled} />
+      <Field l="Timezone" v={timezone} />
+
+      {onOpenSettings && (
+        <div className="btn-row" style={{ marginTop: 8 }}>
+          <button className="btn sm" onClick={onOpenSettings}>s · feature settings</button>
+        </div>
+      )}
     </div>
   );
 }

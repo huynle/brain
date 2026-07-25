@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Brain PWA — Multi-Project Dashboard v2</title>
+  <link rel="stylesheet" href="./panes-v2.css" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- Toast area -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Right-click context menu (portal) -->
+  <div id="ctxmenu" class="ctxmenu" role="menu" hidden></div>
+
+  <!-- Mobile long-press bottom sheet (portal) -->
+  <div id="sheet-scrim" class="sheet-scrim" hidden></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div id="sheet-body"></div>
+  </div>
+
+  <!-- Drag overlay ghost -->
+  <div id="drag-ghost" class="drag-ghost" hidden></div>
+
+  <!-- Modal (task/feature/automation/settings/runner detail) -->
+  <div id="modal-scrim" class="modal-scrim" hidden></div>
+  <div id="modal" class="modal" role="dialog" aria-modal="true" hidden>
+    <div class="modal-head">
+      <div id="modal-title" class="modal-title">Title</div>
+      <button id="modal-close" class="modal-close" title="Close">×</button>
+    </div>
+    <div id="modal-body" class="modal-body"></div>
+    <div id="modal-foot" class="modal-foot"></div>
+  </div>
+
+  <!-- Info banner -->
+  <div id="banner" class="banner">
+    <span class="banner-text"><strong>Wireframe v2</strong> · Multi-project dashboard · Left sidebar sessions ·
+    Overview grid · Drag any card/pane · Live streaming logs</span>
+    <button id="reset-btn" title="Reset workspace">Reset</button>
+    <button id="toggle-mobile-btn" title="Toggle mobile mode">Mobile</button>
+    <button id="toggle-stream-btn" title="Pause/resume live log stream">Pause stream</button>
+  </div>
+
+  <script type="module" src="./panes-v2.js"></script>
+</body>
+</html>

@@ -17,6 +17,7 @@ import { buildTaskTree } from "./tasks/tree";
 import { MetadataModal } from "./tasks/MetadataModal";
 import { BatchMetadataModal } from "./tasks/BatchMetadataModal";
 import { FeatureMetadataModal } from "./tasks/FeatureMetadataModal";
+import { FeatureActionsModal } from "./tasks/FeatureActionsModal";
 import { Panel } from "../components/layout/Panel";
 import { TaskSessionPane } from "../components/layout/TaskSessionPane";
 import { SessionModal } from "../components/layout/SessionModal";
@@ -185,7 +186,6 @@ export function TasksView() {
   const toggleSortDir = useScope((s) => s.toggleSortDir);
   const setCounts = useScope((s) => s.setCounts);
   const drillStack = useScope((s) => s.stack);
-  const pushFrame = useScope((s) => s.push);
   const featureFrame = [...drillStack].reverse().find((f) => f.view === "tasks" && f.kind === "feature");
   const [searchOpen, setSearchOpen] = useState(false);
   // Completed tasks are visible by default so users can see recently
@@ -205,6 +205,7 @@ export function TasksView() {
   const [editContent, setEditContent] = useState<Task | null>(null);
   const [batchMeta, setBatchMeta] = useState<Task[] | null>(null);
   const [featureMeta, setFeatureMeta] = useState<{ feature: string; tasks: Task[] } | null>(null);
+  const [featureActions, setFeatureActions] = useState<{ feature: string; project: string; tasks: Task[] } | null>(null);
   const [confirmDel, setConfirmDel] = useState<Task[] | null>(null);
   const [composing, setComposing] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -248,7 +249,7 @@ export function TasksView() {
       // Flat history, newest completion first (completed_at, modified fallback).
       const done = [...list].sort((a, b) => completionMs(b) - completionMs(a));
       const flatRows: Row[] = done.map((t) => ({ kind: "task", task: t, lead: "", inCycle: false }));
-      return { rows: flatRows, taskList: done, featureKeys: [], tasksByFeature: new Map() };
+      return { rows: flatRows, taskList: done, featureKeys: [], tasksByFeature: new Map<string, Task[]>() };
     }
     const groups = groupByFeature(list, mode === "done" ? "completed" : activeProject === ALL_PROJECTS ? featureSort : "name", sortDir);
     const r: Row[] = [];
@@ -444,12 +445,27 @@ export function TasksView() {
       "tasks.toggleLogs": () => toggleLogs(),
       "tasks.enter": () => {
         const row = rows[cursor];
-        // Enter DESCENDS (k9s): a feature header pushes a drill frame that
-        // scopes the view to that feature (Esc pops back). Collapse
-        // toggling lives on Space.
+        // Enter on a feature header opens the Feature Actions modal
+        // (state-aware actions: review/merge, force merge, blocked inspector).
+        // UNGROUPED has no feature-scoped actions, so Enter there falls
+        // through to the collapse toggle. Enter on a task row opens the
+        // session modal.
         if (row?.kind === "header") {
-          pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
-          nav.setCursor(scope, 0);
+          if (row.feature === UNGROUPED) {
+            setCollapsed((c) => ({
+              ...c,
+              [row.feature]: !(c[row.feature] ?? collapseDefault),
+            }));
+            return;
+          }
+          const featureTasks = tasksByFeature.get(row.feature) ?? [];
+          const sample = featureTasks.find((t) => t.projectId);
+          if (!sample?.projectId) return;
+          setFeatureActions({
+            feature: row.feature,
+            project: sample.projectId,
+            tasks: featureTasks,
+          });
         } else if (row?.kind === "task") openTaskSession(row.task);
       },
       "tasks.select": () => {
@@ -785,7 +801,7 @@ export function TasksView() {
                     const ts = tasksByFeature.get(row.feature) ?? [];
                     if (row.feature !== UNGROUPED && ts.length) setFeatureMeta({ feature: row.feature, tasks: ts });
                   }}
-                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "s opens feature settings · x runs feature · Enter/Space toggles collapse"}
+                  title={row.feature === UNGROUPED ? "Enter/Space toggles collapse" : "Enter opens feature actions · Space toggles collapse · s opens feature settings · x runs feature"}
                 >
                   <span className="htri">{(collapsed[row.feature] ?? collapseDefault) ? "▸" : "▾"}</span>
                   {row.label}
@@ -799,21 +815,6 @@ export function TasksView() {
                       );
                     })()}
                   </span>
-                  {row.feature !== UNGROUPED && (
-                    <button
-                      type="button"
-                      className="feature-drill"
-                      title="Open this feature scoped (Enter)"
-                      aria-label={`Drill into feature ${row.feature}`}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        pushFrame({ kind: "feature", id: row.feature, label: row.label, view: "tasks" });
-                        nav.setCursor(scope, 0);
-                      }}
-                    >
-                      »
-                    </button>
-                  )}
                   {featureSample?.projectId && (
                     <button
                       type="button"
@@ -955,6 +956,15 @@ export function TasksView() {
           project={activeProject}
           tasks={featureMeta.tasks}
           onClose={() => setFeatureMeta(null)}
+          onDone={() => nav.clearSelect()}
+        />
+      )}
+      {featureActions && (
+        <FeatureActionsModal
+          feature={featureActions.feature}
+          project={featureActions.project}
+          tasks={featureActions.tasks}
+          onClose={() => setFeatureActions(null)}
           onDone={() => nav.clearSelect()}
         />
       )}

@@ -173,12 +173,19 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// ─── Indexer ────────────────────────────────────────────────────
 	idx := indexer.NewIndexer(opts.BrainDir, store)
 
-	// Run incremental index on startup (fast for unchanged files)
-	slog.Info("indexing brain directory", "dir", opts.BrainDir)
-	result, err := idx.IndexChanged()
-	if err != nil {
-		slog.Warn("indexing failed, continuing with stale index", "error", err)
-	} else {
+	// Run incremental index in the background so it does NOT block HTTP
+	// server startup. On large .brain directories (60k+ files) a full scan
+	// takes 15+ seconds, and callers like the embedded runner wait on
+	// /health with a bounded deadline (see cmd/brain/commands/lifecycle.go).
+	// The previous SQLite index remains valid for reads while the re-scan
+	// runs; new/changed/deleted files just show up a few seconds late.
+	go func() {
+		slog.Info("indexing brain directory", "dir", opts.BrainDir)
+		result, err := idx.IndexChanged()
+		if err != nil {
+			slog.Warn("indexing failed, continuing with stale index", "error", err)
+			return
+		}
 		slog.Info("indexing complete",
 			"added", result.Added,
 			"updated", result.Updated,
@@ -187,7 +194,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 			"errors", len(result.Errors),
 			"duration", result.Duration,
 		)
-	}
+	}()
 
 	// ─── Build Config ───────────────────────────────────────────────
 	corsOrigin := opts.CORSOrigin

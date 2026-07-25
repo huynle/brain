@@ -623,3 +623,32 @@ export type Health = {
   embedding?: { enabled?: boolean; ready?: boolean; [k: string]: unknown };
   [k: string]: unknown;
 };
+
+// FeatureCheckoutOptions mirrors internal/types/types.go FeatureCheckoutOptions.
+// Passed to POST /api/v1/tasks/{projectId}/features/{featureId}/checkout.
+export interface FeatureCheckoutOptions {
+  execution_branch?: string;
+  merge_target_branch?: string;
+  /** "prompt_only" | "auto_pr" | "auto_merge" */
+  merge_policy?: string;
+  /** "squash" | "merge" | "rebase" */
+  merge_strategy?: string;
+  /** "keep" | "delete" */
+  remote_branch_policy?: string;
+  open_pr_before_merge?: boolean;
+  /** "worktree" | "current_branch" */
+  execution_mode?: string;
+  /** "ai" (default) | "simple" */
+  checkout_mode?: string;
+}
+
+// CheckoutFeatureResult mirrors internal/types/types.go CheckoutFeatureResult.
+export interface CheckoutFeatureResult {
+  created: boolean;
+  generatedKey: string;
+  task?: {
+    id?: string;
+    path?: string;
+    [k: string]: unknown;
+  };
+}

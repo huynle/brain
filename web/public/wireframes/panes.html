@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Brain PWA — Dockable Panes Wireframe</title>
+  <link rel="stylesheet" href="./panes.css" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <!-- Toast area -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- Right-click context menu (portal) -->
+  <div id="ctxmenu" class="ctxmenu" role="menu" hidden></div>
+
+  <!-- Mobile long-press bottom sheet (portal) -->
+  <div id="sheet-scrim" class="sheet-scrim" hidden></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div id="sheet-body"></div>
+  </div>
+
+  <!-- Drag overlay ghost -->
+  <div id="drag-ghost" class="drag-ghost" hidden></div>
+
+  <!-- Info banner -->
+  <div id="banner" class="banner">
+    <strong>Wireframe</strong> · Drag pane headers · Right-click tasks/rows for context menu ·
+    Long-press pane title on mobile · Splitters draggable · State persists to localStorage
+    <button id="reset-btn" title="Reset workspace">Reset</button>
+    <button id="toggle-mobile-btn" title="Toggle mobile mode">Mobile</button>
+  </div>
+
+  <script type="module" src="./panes.js"></script>
+</body>
+</html>

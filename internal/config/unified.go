@@ -60,6 +60,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -214,7 +215,139 @@ type PluginsConfig struct {
 	ClaudeCodePath string `yaml:"claude_code_path"`
 }
 
-// defaultConfig returns a UnifiedConfig with sensible defaults.
+// UnifiedConfigPath is the public alias for getUnifiedConfigPath — the
+// resolved on-disk location of the unified config, respecting
+// XDG_CONFIG_HOME.
+func UnifiedConfigPath() string {
+	return getUnifiedConfigPath()
+}
+
+// Validate performs cross-field integrity checks that the yaml
+// unmarshaler can't catch (empty required fields, out-of-range
+// numeric fields, malformed URLs, mutually-exclusive flags, etc.).
+//
+// It's called by both LoadConfig on startup and the API server on
+// PUT /api/v1/config so a bad edit surfaces as a 400 before it hits
+// disk. Errors are aggregated into a single wrapped message so the
+// UI can render every failure at once.
+func (c *UnifiedConfig) Validate() error {
+	var errs []string
+
+	// Server section --------------------------------------------------
+	if c.Server.Port <= 0 || c.Server.Port > 65535 {
+		errs = append(errs, fmt.Sprintf("server.port must be 1..65535 (got %d)", c.Server.Port))
+	}
+	if strings.TrimSpace(c.Server.Host) == "" {
+		errs = append(errs, "server.host is required")
+	}
+	if strings.TrimSpace(c.Server.BrainDir) == "" {
+		errs = append(errs, "server.brain_dir is required")
+	}
+	if c.Server.LogLevel != "" {
+		switch c.Server.LogLevel {
+		case "debug", "info", "warn", "error":
+			// ok
+		default:
+			errs = append(errs, fmt.Sprintf("server.log_level must be one of debug|info|warn|error (got %q)", c.Server.LogLevel))
+		}
+	}
+	if c.Server.LogMaxSizeMB < 0 {
+		errs = append(errs, "server.log_max_size_mb must be >= 0")
+	}
+	if c.Server.LogMaxBackups < 0 {
+		errs = append(errs, "server.log_max_backups must be >= 0")
+	}
+	// TLS pair — either both or neither.
+	if (c.Server.TLSCert == "") != (c.Server.TLSKey == "") {
+		errs = append(errs, "server.tls_cert and server.tls_key must both be set or both empty")
+	}
+
+	// Task defaults enums.
+	if c.Server.TaskDefaults.ExecutionMode != "" {
+		switch c.Server.TaskDefaults.ExecutionMode {
+		case "worktree", "current_branch":
+		default:
+			errs = append(errs, fmt.Sprintf("server.task_defaults.execution_mode must be worktree|current_branch (got %q)", c.Server.TaskDefaults.ExecutionMode))
+		}
+	}
+	if c.Server.TaskDefaults.MergePolicy != "" {
+		switch c.Server.TaskDefaults.MergePolicy {
+		case "prompt_only", "auto_pr", "auto_merge":
+		default:
+			errs = append(errs, fmt.Sprintf("server.task_defaults.merge_policy must be prompt_only|auto_pr|auto_merge (got %q)", c.Server.TaskDefaults.MergePolicy))
+		}
+	}
+	if c.Server.TaskDefaults.MergeStrategy != "" {
+		switch c.Server.TaskDefaults.MergeStrategy {
+		case "squash", "merge", "rebase":
+		default:
+			errs = append(errs, fmt.Sprintf("server.task_defaults.merge_strategy must be squash|merge|rebase (got %q)", c.Server.TaskDefaults.MergeStrategy))
+		}
+	}
+	if c.Server.TaskDefaults.RemoteBranchPolicy != "" {
+		switch c.Server.TaskDefaults.RemoteBranchPolicy {
+		case "keep", "delete":
+		default:
+			errs = append(errs, fmt.Sprintf("server.task_defaults.remote_branch_policy must be keep|delete (got %q)", c.Server.TaskDefaults.RemoteBranchPolicy))
+		}
+	}
+	if c.Server.TaskDefaults.Executor != "" {
+		switch c.Server.TaskDefaults.Executor {
+		case "opencode", "pi", "script":
+		default:
+			errs = append(errs, fmt.Sprintf("server.task_defaults.executor must be opencode|pi|script (got %q)", c.Server.TaskDefaults.Executor))
+		}
+	}
+
+	// Embedding sanity when enabled.
+	if c.Server.Embedding.Enabled {
+		if c.Server.Embedding.Dim <= 0 {
+			errs = append(errs, "server.embedding.dim must be > 0 when embedding is enabled")
+		}
+		if c.Server.Embedding.BatchSize <= 0 {
+			errs = append(errs, "server.embedding.batch_size must be > 0 when embedding is enabled")
+		}
+		if c.Server.Embedding.TimeoutMs <= 0 {
+			errs = append(errs, "server.embedding.timeout_ms must be > 0 when embedding is enabled")
+		}
+	}
+	if c.Server.Assistant.Enabled && c.Server.Assistant.TimeoutMs <= 0 {
+		errs = append(errs, "server.assistant.timeout_ms must be > 0 when assistant is enabled")
+	}
+
+	// Runner section --------------------------------------------------
+	if strings.TrimSpace(c.Runner.BrainAPIURL) == "" {
+		errs = append(errs, "runner.brain_api_url is required")
+	}
+	if c.Runner.MaxParallel < 1 {
+		errs = append(errs, "runner.max_parallel must be >= 1")
+	}
+	if c.Runner.PollInterval < 1 {
+		errs = append(errs, "runner.poll_interval must be >= 1 (seconds)")
+	}
+	if c.Runner.TaskPollInterval < 1 {
+		errs = append(errs, "runner.task_poll_interval must be >= 1 (seconds)")
+	}
+	if c.Runner.APITimeout < 100 {
+		errs = append(errs, "runner.api_timeout must be >= 100 (milliseconds)")
+	}
+	if c.Runner.MaxTotalProcesses < 1 {
+		errs = append(errs, "runner.max_total_processes must be >= 1")
+	}
+	if c.Runner.MemoryThresholdPercent < 0 || c.Runner.MemoryThresholdPercent > 100 {
+		errs = append(errs, "runner.memory_threshold_percent must be 0..100")
+	}
+	if len(c.Runner.IncludeProjects) > 0 && len(c.Runner.ExcludeProjects) > 0 {
+		// Not an error — include+exclude can coexist (exclude wins) — but
+		// warn via aggregated info. Skip for now; UI handles the guidance.
+	}
+
+	if len(errs) == 0 {
+		return nil
+	}
+	return fmt.Errorf("config invalid: %s", strings.Join(errs, "; "))
+}
+
 // All paths respect XDG Base Directory environment variables:
 //   - XDG_STATE_HOME: PID files, runner state (default ~/.local/state)
 //   - BRAIN_DIR: brain data directory (default ~/.brain)

@@ -603,6 +603,19 @@ func defaultConfig() *UnifiedConfig {
 		cfg.Server.AttachmentExtraction = ucfg.Server.AttachmentExtraction
 		cfg.Server.Assistant = ucfg.Server.Assistant
 
+		// TLS from unified config. The unified schema uses flat `tls_cert` /
+		// `tls_key` YAML keys; map into the router's nested TLS struct.
+		// Enabled is implicit: TLS is on iff both cert + key are set.
+		if ucfg.Server.TLSCert != "" {
+			cfg.Server.TLS.CertPath = ucfg.Server.TLSCert
+		}
+		if ucfg.Server.TLSKey != "" {
+			cfg.Server.TLS.KeyPath = ucfg.Server.TLSKey
+		}
+		if cfg.Server.TLS.CertPath != "" && cfg.Server.TLS.KeyPath != "" {
+			cfg.Server.TLS.Enabled = true
+		}
+
 		// TUI keybindings
 		if len(ucfg.TUI.KeyBindings) > 0 {
 			cfg.TUI.KeyBindings = ucfg.TUI.KeyBindings

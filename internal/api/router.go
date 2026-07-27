@@ -108,6 +108,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
 				r.Get("/config/task-defaults", TaskDefaultsHandler(cfg.TaskDefaults))
+				if o.configHandler != nil {
+					r.Get("/config", o.configHandler.HandleGet)
+					r.Get("/config/schema", o.configHandler.HandleGetSchema)
+				}
+			})
+
+			// ─── Config write (admin:* scope) ────────────────────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.configHandler != nil {
+					r.Put("/config", o.configHandler.HandlePut)
+				}
 			})
 
 			// ─── Health & Stats (read:* scope) ──────────────────
@@ -707,12 +719,21 @@ type routerOptions struct {
 	validator      TokenValidator
 	rateLimiter    *RateLimiter
 	embeddingReady bool
+	configHandler  *ConfigHandler
 }
 
 // WithHandler returns a router option that wires the given Handler.
 func WithHandler(h *Handler) func(*routerOptions) {
 	return func(o *routerOptions) {
 		o.handler = h
+	}
+}
+
+// WithConfigHandler wires the read/write config endpoints
+// (GET/PUT /api/v1/config, GET /api/v1/config/schema).
+func WithConfigHandler(ch *ConfigHandler) func(*routerOptions) {
+	return func(o *routerOptions) {
+		o.configHandler = ch
 	}
 }
 

@@ -5,6 +5,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { registerSW } from "virtual:pwa-register";
 import { App } from "./App";
 import { useUI } from "./store/ui";
+
+// Wireframe CSS ported verbatim — flat classnames (`.topbar`, `.pcard`,
+// `.pcard-head`, `.runner-row`, etc). No `.p2-*` scope wrapper.
 import "./styles/global.css";
 
 // Register the service worker and poll for new builds (every 30s) so a long-open

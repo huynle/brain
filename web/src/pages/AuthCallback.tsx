@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { Loading } from "../components/common/states";
+import { Loading } from "../components/common/Loading";
 
 export function AuthCallback() {
   const [params] = useSearchParams();

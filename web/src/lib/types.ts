@@ -104,6 +104,19 @@ export interface Task {
   merge_policy?: string;
   merge_strategy?: string;
   open_pr_before_merge?: boolean;
+  /**
+   * Merge-request URL for the task's feature branch. Optional — the
+   * server does not yet populate it in Phase 5. The in-flight
+   * `mr-status` feature will introduce a first-class URL on
+   * merge_request entries; until then, `lib/features.extractPrUrl`
+   * also falls back to a regex scan of `content`.
+   */
+  mr_url?: string;
+  /**
+   * Compat alias for `mr_url`. Server code paths that use the longer
+   * name are tolerated by the client.
+   */
+  merge_request_url?: string;
 
   feature_id?: string;
   feature_priority?: string;

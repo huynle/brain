@@ -101,6 +101,9 @@ func (c *APICommand) Execute() error {
 
 		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
 		Assistant:            c.Config.Server.Assistant,
+
+		TLSCert: c.Config.Server.TLS.CertPath,
+		TLSKey:  c.Config.Server.TLS.KeyPath,
 	}
 
 	// Flags override config

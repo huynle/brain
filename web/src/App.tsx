@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { Route, Routes } from "react-router-dom";
 import { useAuth } from "./lib/auth";
-import { Loading } from "./components/common/states";
+import { Loading } from "./components/common/Loading";
 import { Toasts } from "./components/common/Toasts";
 import { UpdateBanner } from "./components/common/UpdateBanner";
 import { Login } from "./pages/Login";
@@ -31,5 +31,7 @@ export function App() {
 function Gate({ status }: { status: ReturnType<typeof useAuth.getState>["status"] }) {
   if (status === "loading") return <Loading label="Connecting to Brain…" />;
   if (status === "needs-login") return <Login />;
+  // Authenticated. Panes-v2 is the default and only dashboard as of Phase 9.
+  // Any path renders the Dashboard — deep-links from earlier builds still work.
   return <Dashboard />;
 }

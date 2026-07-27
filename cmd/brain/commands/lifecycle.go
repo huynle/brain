@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -91,9 +92,24 @@ func runServerWithOptionalRunner(ctx context.Context, cfg *UnifiedConfig, opts a
 func waitForAPIHealth(ctx context.Context, apiURL string) error {
 	healthURL := strings.TrimRight(apiURL, "/") + "/health"
 	client := &http.Client{Timeout: 500 * time.Millisecond}
-	deadline := time.NewTimer(15 * time.Second)
+	// The API server does synchronous indexing at startup. With ~70k
+	// entries that takes ~15-20s on typical hardware; on cold caches
+	// or spinning disks it's slower. A 15s deadline was too tight —
+	// the runner would fail before /health ever came up. Bumped to
+	// 90s so ordinary startups always succeed, and expose an env-var
+	// override for CI or larger installations.
+	//
+	// If the API genuinely fails to bind we still hit the ticker path
+	// forever until deadline, so the upper bound is real.
+	deadlineSeconds := 90
+	if v := os.Getenv("BRAIN_HEALTH_WAIT_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			deadlineSeconds = n
+		}
+	}
+	deadline := time.NewTimer(time.Duration(deadlineSeconds) * time.Second)
 	defer deadline.Stop()
-	ticker := time.NewTicker(100 * time.Millisecond)
+	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
@@ -113,7 +129,7 @@ func waitForAPIHealth(ctx context.Context, apiURL string) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return fmt.Errorf("timed out waiting for Brain API at %s", healthURL)
+			return fmt.Errorf("timed out waiting for Brain API at %s (after %ds; set BRAIN_HEALTH_WAIT_SECONDS to override)", healthURL, deadlineSeconds)
 		case <-ticker.C:
 		}
 	}
@@ -371,6 +387,13 @@ func (c *StartCommand) startForeground(pidFile, logFile string) error {
 
 		AttachmentExtraction: c.Config.Server.AttachmentExtraction,
 		Assistant:            c.Config.Server.Assistant,
+
+		// TLS is optional. When both cert + key are set the server runs
+		// HTTPS with HTTP/2 auto-enabled by net/http. Browsers only speak
+		// h2 over TLS, which is required for the panes-v2 dashboard to
+		// keep more than 6 SSE streams alive concurrently.
+		TLSCert: c.Config.Server.TLS.CertPath,
+		TLSKey:  c.Config.Server.TLS.KeyPath,
 	}
 
 	// Tee slog to the terminal and the configured log file so

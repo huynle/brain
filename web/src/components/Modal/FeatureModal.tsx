@@ -75,6 +75,14 @@ export function FeatureModal(): JSX.Element {
       footer={
         <>
           <button
+            onClick={() =>
+              openModal("feature-actions", { projectId, featureId })
+            }
+            title="Manual checkout / force-merge / run blocked-inspector for this feature"
+          >
+            Actions…
+          </button>
+          <button
             onClick={() => {
               close();
               openFeatureDrawer(projectId, featureId);

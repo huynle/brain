@@ -18,6 +18,7 @@ import { useModal } from "../../store/modal";
 import { RunnerModal } from "./RunnerModal";
 import { TaskModal } from "./TaskModal";
 import { FeatureModal } from "./FeatureModal";
+import { FeatureActionsModal } from "./FeatureActionsModal";
 import { AutomationModal } from "./AutomationModal";
 import { SettingsModal } from "./SettingsModal";
 
@@ -31,6 +32,8 @@ export function ModalHost(): JSX.Element | null {
       return <TaskModal />;
     case "feature":
       return <FeatureModal />;
+    case "feature-actions":
+      return <FeatureActionsModal />;
     case "automation":
       return <AutomationModal />;
     case "settings":

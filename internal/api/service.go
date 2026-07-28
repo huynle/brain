@@ -259,6 +259,12 @@ type TaskService interface {
 
 	// TriggerTask manually triggers a scheduled task.
 	TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
+
+	// ResumeTask flips an abandoned task back to pending, cleaning up its
+	// stale claim + acked dispatch lease, and stamps resume_requested so the
+	// runner will re-spawn it with IsResume=true. See service.TaskServiceImpl
+	// for the full contract; opts may be nil.
+	ResumeTask(ctx context.Context, projectId, taskId string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error)
 }
 
 // RunnerService defines the interface for runner control operations.

@@ -41,6 +41,7 @@ type mockTaskService struct {
 	assignFeatureFunc    func(ctx context.Context, projectId, featureId string, req types.FeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
 	clearFeatureFunc     func(ctx context.Context, projectId, featureId string, req types.ClearFeatureAssignmentRequest) (*types.FeatureAssignmentResponse, error)
 	triggerTaskFunc      func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
+	resumeTaskFunc       func(ctx context.Context, projectId, taskId string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error)
 	dispatchTaskFunc     func(ctx context.Context, projectId, taskId, runnerID string) (*types.DispatchResponse, error)
 	getTaskFunc          func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
 }
@@ -190,6 +191,13 @@ func (m *mockTaskService) TriggerTask(ctx context.Context, projectId, taskId str
 		return m.triggerTaskFunc(ctx, projectId, taskId)
 	}
 	return nil, fmt.Errorf("triggerTaskFunc not set")
+}
+
+func (m *mockTaskService) ResumeTask(ctx context.Context, projectId, taskId string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error) {
+	if m.resumeTaskFunc != nil {
+		return m.resumeTaskFunc(ctx, projectId, taskId, opts)
+	}
+	return nil, fmt.Errorf("resumeTaskFunc not set")
 }
 
 func (m *mockTaskService) DispatchTask(ctx context.Context, projectId, taskId, runnerID string) (*types.DispatchResponse, error) {

@@ -797,6 +797,58 @@ func (h *Handler) HandleTriggerTask(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleResumeTask handles POST /tasks/{projectId}/{taskId}/resume.
+//
+// Flips an abandoned task back to pending so the runner re-spawns it with the
+// IsResume prompt template. Body is JSON {force?: bool}; empty body is fine
+// and Force defaults to false. Returns 200 with ResumeTaskResult on success,
+// including the no-op case (Resumed=false + Reason). Emits
+// EventTaskResumeRequested when the resume actually took effect so the PWA
+// gets an immediate SSE hint independently of the derived task.status_changed
+// event that MergeMetadata may or may not surface.
+func (h *Handler) HandleResumeTask(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+
+	var req types.ResumeTaskOptions
+	// Empty body is fine — Force defaults to false. Only fail on malformed JSON.
+	if r.ContentLength > 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+			return
+		}
+	}
+
+	resp, err := h.tasks.ResumeTask(r.Context(), projectId, taskId, &req)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	// Only emit the event when the resume actually took effect. Idempotent
+	// no-ops (task already pending, terminal status, not-abandoned-without-
+	// force) don't warrant a new fire.
+	if resp != nil && resp.Resumed {
+		evt := types.NewEvent(types.EventTaskResumeRequested, types.EventSourceAPI)
+		evt.ProjectID = projectId
+		evt.TaskID = taskId
+		evt.TaskPath = fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
+		if resp.AbandonReason != "" {
+			evt.Metadata = map[string]string{
+				"abandon_reason": resp.AbandonReason,
+				"prior_status":   resp.PriorStatus,
+			}
+		}
+		h.emitEvent(r.Context(), evt)
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleRunTask handles POST /tasks/{projectId}/{taskId}/run.
 //
 // This is the user-explicit "run this task now" path used by the PWA "x"

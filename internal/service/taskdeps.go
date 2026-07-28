@@ -238,6 +238,8 @@ func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 		Trigger:             task.Trigger,
 		Action:              task.Action,
 		Retry:               task.Retry,
+		ResumeRequested:     task.ResumeRequested,
+		ResumeRequestedAt:   task.ResumeRequestedAt,
 	}
 }
 

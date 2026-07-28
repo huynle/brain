@@ -366,6 +366,13 @@ type BrainEntry struct {
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
 
+	// Resume-abandoned-tasks flow. ResumeRequested is set by POST /resume and
+	// read by the runner at claim time to route through the IsResume prompt
+	// template. Runtime-only fields — never in on-disk frontmatter, preserved
+	// across re-index via service.runtimeKeys.
+	ResumeRequested   bool   `json:"resume_requested,omitempty"`
+	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
+
 	// Backlinks (populated on GET)
 	Backlinks []BacklinkEntry `json:"backlinks,omitempty"`
 }
@@ -1055,6 +1062,13 @@ type ResolvedTask struct {
 	// PWA renders a Resume affordance.
 	IsAbandoned   bool   `json:"is_abandoned,omitempty"`
 	AbandonReason string `json:"abandon_reason,omitempty"`
+
+	// ResumeRequested is the durable flag written by POST /resume. The runner
+	// reads this at claim time and passes IsResume=true to the executor's
+	// prompt builder, then clears the flag via PATCH so re-polls don't loop-
+	// resume the same task forever.
+	ResumeRequested   bool   `json:"resume_requested,omitempty"`
+	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
 }
 
 // TaskStats holds aggregate task statistics.
@@ -1280,6 +1294,26 @@ type CheckoutFeatureResult struct {
 	Created      bool                 `json:"created"`
 	GeneratedKey string               `json:"generatedKey"`
 	Task         *CreateEntryResponse `json:"task,omitempty"`
+}
+
+// ResumeTaskOptions is the request body for POST /tasks/{project}/{task}/resume.
+// Force=true bypasses the IsAbandoned gate — required to resume a task whose
+// runtime state still looks live (unexpired claim on an online runner).
+type ResumeTaskOptions struct {
+	Force bool `json:"force,omitempty"`
+}
+
+// ResumeTaskResult is the outcome of a resume request. When Resumed=false the
+// call was a no-op and Reason names why (idempotent replay, not-abandoned, or
+// terminal status). Callers should surface Reason to the user rather than
+// treating this as an error.
+type ResumeTaskResult struct {
+	TaskID             string `json:"task_id"`
+	Resumed            bool   `json:"resumed"`
+	PriorStatus        string `json:"prior_status,omitempty"`
+	PriorSessionsCount int    `json:"prior_sessions_count,omitempty"`
+	AbandonReason      string `json:"abandon_reason,omitempty"`
+	Reason             string `json:"reason,omitempty"` // populated when Resumed=false
 }
 
 // RunnerStatusResponse is the response for GET /tasks/runner/status.

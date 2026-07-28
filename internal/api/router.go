@@ -522,6 +522,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/{taskId}/trigger", o.handler.HandleTriggerTask)
 							r.Post("/{taskId}/dispatch", o.handler.HandleDispatchTask)
 							r.Post("/{taskId}/run", o.handler.HandleRunTask)
+							r.Post("/{taskId}/resume", o.handler.HandleResumeTask)
 						} else {
 							r.Post("/features/{featureId}/checkout", notImplemented)
 							r.Put("/features/{featureId}/assignment", notImplemented)

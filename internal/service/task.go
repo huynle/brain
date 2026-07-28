@@ -1448,26 +1448,6 @@ func (s *TaskServiceImpl) triggerAdHocTask(ctx context.Context, task *types.Brai
 	}, nil
 }
 
-// ResumeTaskOptions carries the tunables for ResumeTask. Force=true bypasses
-// the IsAbandoned gate — required to resume a task whose runtime state suggests
-// it's still live (unexpired claim on an online runner).
-type ResumeTaskOptions struct {
-	Force bool `json:"force,omitempty"`
-}
-
-// ResumeTaskResult is the outcome of a resume request. When Resumed=false the
-// call was a no-op and Reason names why (idempotent replay, not-abandoned, or
-// terminal status). Callers should surface Reason to the user rather than
-// treating this as an error.
-type ResumeTaskResult struct {
-	TaskID             string `json:"task_id"`
-	Resumed            bool   `json:"resumed"`
-	PriorStatus        string `json:"prior_status,omitempty"`
-	PriorSessionsCount int    `json:"prior_sessions_count,omitempty"`
-	AbandonReason      string `json:"abandon_reason,omitempty"`
-	Reason             string `json:"reason,omitempty"` // populated when Resumed=false
-}
-
 // ResumeTask flips an abandoned task back to pending so the runner can re-claim
 // and spawn it with IsResume=true. Idempotent: calling twice on a task already
 // pending with resume_requested=true returns Resumed=false with an explanatory
@@ -1485,9 +1465,9 @@ type ResumeTaskResult struct {
 // The status flip goes through storage.MergeMetadata — matching triggerAdHocTask.
 // Frontmatter sync to the .md file is a follow-up concern (pre-existing pattern
 // in this file uses MergeMetadata directly for status changes).
-func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID string, opts *ResumeTaskOptions) (*ResumeTaskResult, error) {
+func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error) {
 	if opts == nil {
-		opts = &ResumeTaskOptions{}
+		opts = &types.ResumeTaskOptions{}
 	}
 
 	// Load the task via the enriched GetTask path so we get IsAbandoned +
@@ -1500,7 +1480,7 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 		return nil, fmt.Errorf("resume: task not found: %s/%s", projectID, taskID)
 	}
 
-	result := &ResumeTaskResult{
+	result := &types.ResumeTaskResult{
 		TaskID:             taskID,
 		PriorStatus:        task.Status,
 		PriorSessionsCount: len(task.Sessions),
@@ -1754,6 +1734,14 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	}
 	if v, ok := metaString(meta, "target_workdir"); ok {
 		entry.TargetWorkdir = v
+	}
+
+	// Resume-abandoned-tasks flow. Both are runtime-only (not in frontmatter).
+	if v, ok := metaBool(meta, "resume_requested"); ok {
+		entry.ResumeRequested = v
+	}
+	if v, ok := metaString(meta, "resume_requested_at"); ok {
+		entry.ResumeRequestedAt = v
 	}
 	if v, ok := metaString(meta, "executor"); ok {
 		entry.Executor = v

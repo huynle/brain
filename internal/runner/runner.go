@@ -1660,6 +1660,26 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		RuntimeDefaultModel: tr.getDefaultModel(),
 	}
 
+	// Resume-abandoned-tasks flow: if the task carries resume_requested from
+	// POST /resume, propagate it into IsResume so the executor's prompt
+	// template tells the agent to look for prior progress. Clear the flag
+	// eagerly (single PATCH before spawn) so if the spawn crashes the runner
+	// doesn't loop-resume forever on the next poll. If the PATCH fails we
+	// still spawn with IsResume=true — the worst case is a duplicate resume
+	// hint on the next attempt, which is preferable to silently dropping it.
+	if task.ResumeRequested {
+		spawnOpts.IsResume = true
+		if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+			"resume_requested": false,
+		}); err != nil {
+			slog.Warn("resume: failed to clear resume_requested flag (continuing spawn)",
+				"project", projectID, "task_id", task.ID, "error", err)
+		} else {
+			slog.Info("resume: consuming resume_requested flag, spawning with IsResume=true",
+				"project", projectID, "task_id", task.ID)
+		}
+	}
+
 	// Start log streamer if enabled
 	var logStreamer *LogStreamer
 	if tr.config.LogStreaming {
@@ -2166,6 +2186,19 @@ func (tr *TaskRunner) tryReapOrphan(ctx context.Context, projectID string, entry
 	current, err := tr.client.GetEntry(ctx, taskPath)
 	if err == nil && current != nil && current.Status != "in_progress" {
 		// Race: someone else terminalized it. Release and move on.
+		_ = tr.client.ReleaseTask(ctx, projectID, taskID, tr.runnerID)
+		return false
+	}
+
+	// Resume-vs-reaper race: if a user clicked Resume between our list and
+	// our claim, current.Status would still be pending (caught above) — but
+	// if they clicked Resume while we already held the claim, they may have
+	// set resume_requested=true on a still-in_progress task. Honor the user's
+	// intent: release the claim and skip. The runner's normal claim path will
+	// pick this task up on its next poll and route it through IsResume=true.
+	if current != nil && current.ResumeRequested {
+		slog.Info("orphan reaper: task has resume_requested=true, skipping reap",
+			"project", projectID, "task_id", taskID)
 		_ = tr.client.ReleaseTask(ctx, projectID, taskID, tr.runnerID)
 		return false
 	}

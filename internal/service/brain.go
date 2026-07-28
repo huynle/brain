@@ -999,6 +999,8 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
+		"resume_requested", "resume_requested_at",
+		"abandoned_at", "abandoned_reason",
 	}
 	userTouched := updateRequestTouchedFields(req)
 	var preservedFields map[string]interface{}
@@ -1652,6 +1654,8 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
+		"resume_requested", "resume_requested_at",
+		"abandoned_at", "abandoned_reason",
 	}
 	var preservedFields map[string]interface{}
 	if row.Metadata != "" && row.Metadata != "{}" {

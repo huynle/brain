@@ -1047,6 +1047,14 @@ type ResolvedTask struct {
 	DispatchLease       *DispatchLease    `json:"dispatch_lease,omitempty"`
 	PlacementReasons    []PlacementReason `json:"placement_reasons,omitempty"`
 	LastPlacementReason *PlacementReason  `json:"last_placement_reason,omitempty"`
+
+	// Abandonment surface for the resume-abandoned-tasks flow. Derived
+	// server-side from task_claims + runners.status + reaper metadata by
+	// enrichAbandonmentState — never written directly by clients. When
+	// IsAbandoned is true, AbandonReason names the underlying cause and the
+	// PWA renders a Resume affordance.
+	IsAbandoned   bool   `json:"is_abandoned,omitempty"`
+	AbandonReason string `json:"abandon_reason,omitempty"`
 }
 
 // TaskStats holds aggregate task statistics.

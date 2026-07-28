@@ -77,6 +77,16 @@ var AllowedMetadataUpdateFields = map[string]bool{
 	"last_reconcile": true, // goal_service: reconcile audit trail
 	"exit_code":      true, // runner script executor: process exit code
 	"script_output":  true, // runner script executor: captured output tail
+
+	// (4) Task-runtime lifecycle fields for the resume-abandoned-tasks flow.
+	// These are read/written by the runner (resume_requested → IsResume prompt)
+	// and by the orphan reaper / lifecycle-sweep reconciler (abandoned_*
+	// stamps let the API surface abandonment without grepping body text).
+	// Kept out of durableMetadataFields so they never touch on-disk frontmatter.
+	"resume_requested":    true, // set by /resume endpoint, cleared by runner on spawn
+	"resume_requested_at": true, // RFC3339 timestamp for audit
+	"abandoned_at":        true, // RFC3339 timestamp set by reaper / reconciler
+	"abandoned_reason":    true, // enum: runner_orphan | runner_offline | claim_expired | no_claim
 }
 
 // HandleCreateEntry handles POST /entries.

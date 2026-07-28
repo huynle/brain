@@ -77,6 +77,24 @@ func isExpired(claim *storage.TaskClaimRow) bool {
 	return time.Now().UnixMilli() > claim.ExpiresAt
 }
 
+// Abandonment reason codes surfaced on ResolvedTask.AbandonReason. The set is
+// intentionally narrow — every value corresponds to an underlying signal
+// produced by an existing background job (StartClaimCleanup, RunLifecycleSweep,
+// reapOrphanedTasks) so no new sweeper is introduced by the resume feature.
+const (
+	AbandonReasonNoClaim       = "no_claim"       // status=in_progress but no task_claims row (never claimed or already cleaned)
+	AbandonReasonClaimExpired  = "claim_expired"  // claim exists but expires_at < now
+	AbandonReasonRunnerOffline = "runner_offline" // claim exists, unexpired, but runner status is offline/stale
+	AbandonReasonOrphanReaped  = "orphan_reaped"  // reapOrphanedTasks transitioned this task to blocked
+)
+
+// OrphanReaperMarker is the exact note text the runner-side orphan reaper
+// appends when it transitions a stale in_progress task to blocked. Extracted
+// as a constant so the reaper (runner.go) and the enrichAbandonmentState
+// grep-fallback here cannot drift silently. If this text ever changes, both
+// call sites update together.
+const OrphanReaperMarker = "*Marked blocked by runner orphan reaper"
+
 // ListProjects scans <brainDir>/projects/ for subdirectories containing a task/ subfolder.
 func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
 	projectsDir := filepath.Join(s.config.BrainDir, "projects")
@@ -121,6 +139,9 @@ func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*type
 	if err := s.enrichDispatchDiagnostics(ctx, projectId, result.Tasks); err != nil {
 		return nil, err
 	}
+	if err := s.enrichAbandonmentState(ctx, projectId, result.Tasks); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -146,6 +167,80 @@ func (s *TaskServiceImpl) enrichDispatchDiagnostics(ctx context.Context, project
 		if len(reasons) > 0 {
 			task.PlacementReasons = reasons
 			task.LastPlacementReason = &task.PlacementReasons[len(task.PlacementReasons)-1]
+		}
+	}
+	return nil
+}
+
+// enrichAbandonmentState derives IsAbandoned + AbandonReason on each task
+// from signals produced by existing background jobs. No new sweeper. The
+// definition of "abandoned":
+//
+//   - status="in_progress" AND (no claim | claim expired | claim's runner offline)
+//   - status="blocked" AND body contains the orphan-reaper marker
+//
+// Everything else — pending, active, completed, cancelled, agent-self-blocked —
+// is NOT abandoned and gets no Resume affordance.
+//
+// Runner-status cache: one runner lookup per unique runner_id across the task
+// list, not per task, so a project with 100 tasks claimed by 3 runners does
+// 3 lookups, not 100.
+func (s *TaskServiceImpl) enrichAbandonmentState(ctx context.Context, projectID string, tasks []types.ResolvedTask) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	runnerStatus := make(map[string]string) // runnerID → status; "" means "not looked up yet"
+	nowMs := time.Now().UnixMilli()
+
+	for i := range tasks {
+		task := &tasks[i]
+		if task.Status != "in_progress" && task.Status != "blocked" {
+			continue // fast-path: only these two statuses can be abandoned
+		}
+
+		if task.Status == "blocked" {
+			// The orphan reaper is the only path that legitimately sets
+			// blocked-with-abandonment. Agent-self-blocked and user-blocked
+			// tasks stay non-resumable — the Blocked Task Inspector automation
+			// covers those.
+			if strings.Contains(task.Content, OrphanReaperMarker) {
+				task.IsAbandoned = true
+				task.AbandonReason = AbandonReasonOrphanReaped
+			}
+			continue
+		}
+
+		// status == "in_progress" — three sub-cases from the claim state.
+		claim, err := s.storage.GetClaim(ctx, projectID, task.ID)
+		if err != nil {
+			return fmt.Errorf("get claim for %s: %w", task.ID, err)
+		}
+		if claim == nil {
+			task.IsAbandoned = true
+			task.AbandonReason = AbandonReasonNoClaim
+			continue
+		}
+		if claim.ExpiresAt < nowMs {
+			task.IsAbandoned = true
+			task.AbandonReason = AbandonReasonClaimExpired
+			continue
+		}
+		// Claim is unexpired — but the runner might still be dead (heartbeat
+		// stopped before the claim naturally expired). Check runner status.
+		status, seen := runnerStatus[claim.RunnerID]
+		if !seen {
+			runner, err := s.storage.GetRunner(ctx, claim.RunnerID)
+			if err != nil {
+				return fmt.Errorf("get runner %s: %w", claim.RunnerID, err)
+			}
+			if runner != nil {
+				status = runner.Status
+			}
+			runnerStatus[claim.RunnerID] = status
+		}
+		if status == "offline" || status == "stale" {
+			task.IsAbandoned = true
+			task.AbandonReason = AbandonReasonRunnerOffline
 		}
 	}
 	return nil
@@ -1351,6 +1446,122 @@ func (s *TaskServiceImpl) triggerAdHocTask(ctx context.Context, task *types.Brai
 		Triggered: true,
 		Reason:    fmt.Sprintf("reset task from %q to pending", task.Status),
 	}, nil
+}
+
+// ResumeTaskOptions carries the tunables for ResumeTask. Force=true bypasses
+// the IsAbandoned gate — required to resume a task whose runtime state suggests
+// it's still live (unexpired claim on an online runner).
+type ResumeTaskOptions struct {
+	Force bool `json:"force,omitempty"`
+}
+
+// ResumeTaskResult is the outcome of a resume request. When Resumed=false the
+// call was a no-op and Reason names why (idempotent replay, not-abandoned, or
+// terminal status). Callers should surface Reason to the user rather than
+// treating this as an error.
+type ResumeTaskResult struct {
+	TaskID             string `json:"task_id"`
+	Resumed            bool   `json:"resumed"`
+	PriorStatus        string `json:"prior_status,omitempty"`
+	PriorSessionsCount int    `json:"prior_sessions_count,omitempty"`
+	AbandonReason      string `json:"abandon_reason,omitempty"`
+	Reason             string `json:"reason,omitempty"` // populated when Resumed=false
+}
+
+// ResumeTask flips an abandoned task back to pending so the runner can re-claim
+// and spawn it with IsResume=true. Idempotent: calling twice on a task already
+// pending with resume_requested=true returns Resumed=false with an explanatory
+// Reason instead of an error.
+//
+// Cleanup side effects (defense in depth against the various stuck states):
+//   - Deletes any lingering task_claims row (may already be gone via
+//     StartClaimCleanup or ReleaseAllByRunner).
+//   - Clears any dispatch lease still in acked state (the SIGKILL-leaves-acked
+//     path noted in the design research).
+//   - Writes metadata.resume_requested=true + resume_requested_at=now. The
+//     runner reads resume_requested at claim time and passes IsResume=true to
+//     the executor's prompt builder, then clears the flag.
+//
+// The status flip goes through storage.MergeMetadata — matching triggerAdHocTask.
+// Frontmatter sync to the .md file is a follow-up concern (pre-existing pattern
+// in this file uses MergeMetadata directly for status changes).
+func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID string, opts *ResumeTaskOptions) (*ResumeTaskResult, error) {
+	if opts == nil {
+		opts = &ResumeTaskOptions{}
+	}
+
+	// Load the task via the enriched GetTask path so we get IsAbandoned +
+	// AbandonReason computed the same way every other caller sees them.
+	task, err := s.GetTask(ctx, projectID, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
+	if task == nil {
+		return nil, fmt.Errorf("resume: task not found: %s/%s", projectID, taskID)
+	}
+
+	result := &ResumeTaskResult{
+		TaskID:             taskID,
+		PriorStatus:        task.Status,
+		PriorSessionsCount: len(task.Sessions),
+		AbandonReason:      task.AbandonReason,
+	}
+
+	// Idempotency: if the task is already pending with resume_requested=true,
+	// a previous ResumeTask call succeeded and the runner just hasn't claimed
+	// it yet. Silently no-op instead of duplicating cleanup work.
+	if task.Status == "pending" {
+		// We don't have metadata.resume_requested surfaced on ResolvedTask, so
+		// we can't distinguish "already resumed" from "was already pending" here
+		// without re-reading storage. Report as skipped either way — the caller
+		// gets a truthful "already pending" signal.
+		result.Reason = "task is already pending; nothing to resume"
+		return result, nil
+	}
+
+	// Terminal statuses are outside the resume gate — user should use Trigger.
+	switch task.Status {
+	case "completed", "validated", "cancelled", "superseded", "archived":
+		if !opts.Force {
+			result.Reason = fmt.Sprintf("task status %q is terminal; use trigger to re-run", task.Status)
+			return result, nil
+		}
+	}
+
+	// Abandonment gate. Force bypasses.
+	if !task.IsAbandoned && !opts.Force {
+		result.Reason = fmt.Sprintf("task is not abandoned (status=%q); use trigger or force=true", task.Status)
+		return result, nil
+	}
+
+	// Cleanup: delete claim + acked dispatch lease. Both are best-effort;
+	// downstream sweepers will eventually clean these up too. We do them here
+	// so the runner sees a clean slate on re-claim.
+	if claim, err := s.storage.GetClaim(ctx, projectID, taskID); err == nil && claim != nil {
+		if _, err := s.storage.ReleaseClaim(ctx, projectID, taskID, claim.RunnerID); err != nil {
+			slog.Debug("resume: release claim failed (continuing)",
+				"project", projectID, "task_id", taskID, "error", err)
+		}
+	}
+	if _, err := s.storage.ClearDispatchLease(ctx, projectID, taskID); err != nil {
+		slog.Debug("resume: clear dispatch lease failed (continuing)",
+			"project", projectID, "task_id", taskID, "error", err)
+	}
+
+	// Apply the state change. Status goes to pending so the runner picks it up
+	// on the next poll; resume_requested is the flag the runner reads at claim
+	// time to route through the IsResume=true prompt template.
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.storage.MergeMetadata(ctx, task.Path, map[string]interface{}{
+		"status":              "pending",
+		"resume_requested":    true,
+		"resume_requested_at": now,
+	}); err != nil {
+		return nil, fmt.Errorf("resume: update metadata: %w", err)
+	}
+
+	result.Resumed = true
+	return result, nil
 }
 
 // countCompletedRuns counts runs with terminal-ish statuses.

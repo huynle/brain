@@ -53,6 +53,11 @@ const (
 	EventTaskStatusChanged = "task.status_changed"
 	EventTaskTriggered     = "task.triggered"
 	EventTaskIdleDetected  = "task.idle_detected"
+	// EventTaskResumeRequested fires when POST /resume sets a task's
+	// resume_requested flag and flips its status back to pending. Distinct
+	// from EventTaskStatusChanged so consumers can distinguish user-initiated
+	// resume from the automatic claim-renewal-fail reset path.
+	EventTaskResumeRequested = "task.resume_requested"
 
 	// Feature lifecycle events.
 	EventFeatureStarted   = "feature.started"
@@ -83,6 +88,7 @@ var AllEventTypes = []string{
 	EventTaskClaimed, EventTaskClaimRejected, EventTaskStarted, EventTaskCompleted,
 	EventTaskFailed, EventTaskBlocked, EventTaskCancelled, EventTaskReleased,
 	EventTaskStatusChanged, EventTaskTriggered, EventTaskIdleDetected,
+	EventTaskResumeRequested,
 	EventFeatureStarted, EventFeatureCompleted, EventFeatureBlocked, EventFeatureProgress,
 	EventFeatureEnabled, EventFeatureDisabled,
 	EventEntryCreated, EventEntryUpdated, EventEntryDeleted,

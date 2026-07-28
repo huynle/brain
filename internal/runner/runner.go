@@ -2170,11 +2170,29 @@ func (tr *TaskRunner) tryReapOrphan(ctx context.Context, projectID string, entry
 		return false
 	}
 
-	note := "\n\n---\n*Marked blocked by runner orphan reaper: task was left in `in_progress` after a previous runner exited without finalizing it. The original child process is no longer running.*\n"
+	// OrphanReaperNoteText is the exact body-append text used to mark a task
+	// as reaped. Mirrored by service.OrphanReaperMarker (as a prefix substring)
+	// so the API-side enrichAbandonmentState can classify the task without
+	// grepping this whole sentence. If you change either constant, change both.
+	const orphanReaperNoteText = "*Marked blocked by runner orphan reaper: task was left in `in_progress` after a previous runner exited without finalizing it. The original child process is no longer running.*"
+	note := "\n\n---\n" + orphanReaperNoteText + "\n"
 	if appendErr := tr.client.AppendToTask(ctx, taskPath, note); appendErr != nil {
 		slog.Debug("orphan reaper: append note failed",
 			"project", projectID, "task_id", taskID, "error", appendErr)
 		// Continue — the status update is the important part.
+	}
+
+	// Stamp durable abandonment metadata so the API's enrichAbandonmentState
+	// can classify this task as abandoned via a JSON field lookup instead of
+	// scanning body text. This is best-effort — a failure here does not block
+	// the status transition below. The grep-fallback on the marker note keeps
+	// enrichment correct even if this metadata write fails.
+	if metaErr := tr.client.UpdateMetadata(ctx, taskPath, map[string]interface{}{
+		"abandoned_at":     time.Now().UTC().Format(time.RFC3339),
+		"abandoned_reason": "runner_orphan",
+	}); metaErr != nil {
+		slog.Debug("orphan reaper: metadata stamp failed",
+			"project", projectID, "task_id", taskID, "error", metaErr)
 	}
 
 	if statusErr := tr.client.UpdateTaskStatus(ctx, taskPath, "blocked"); statusErr != nil {

@@ -69,17 +69,25 @@ export function AssistantPanel(): JSX.Element | null {
     const ac = new AbortController();
     abortRef.current = ac;
     try {
-      const stream = await assistantChatStream(
+      let acc = "";
+      await assistantChatStream(
         { message: prompt.trim() },
+        (event) => {
+          if (event.type === "delta" && event.delta) {
+            acc += event.delta;
+            setReply(acc);
+            return;
+          }
+          if (event.type === "done") {
+            setReply(event.reply || acc);
+            return;
+          }
+          if (event.type === "error") {
+            throw new Error(event.error || "Assistant stream failed");
+          }
+        },
         ac.signal,
       );
-      let acc = "";
-      for await (const chunk of stream) {
-        if (chunk.type === "text") {
-          acc += chunk.content;
-          setReply(acc);
-        }
-      }
     } catch (err) {
       const msg =
         err instanceof ApiError

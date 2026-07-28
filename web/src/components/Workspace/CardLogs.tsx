@@ -25,7 +25,7 @@ function levelClass(line: string): "err" | "ok" | "wrn" | "" {
   return "";
 }
 
-function levelLabel(line: string, cls: string): string {
+function levelLabel(cls: string): string {
   if (cls === "err") return "ERR";
   if (cls === "wrn") return "WARN";
   if (cls === "ok") return "OK";
@@ -79,7 +79,7 @@ export function CardLogs({ projectId }: CardLogsProps): JSX.Element {
             >
               <span className="ts">{ts}</span>
               <span className="lvl">
-                {levelLabel(r.line.content ?? "", cls) ||
+                {levelLabel(cls) ||
                   r.line.level ||
                   "INFO"}
               </span>

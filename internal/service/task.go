@@ -1487,15 +1487,14 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 		AbandonReason:      task.AbandonReason,
 	}
 
-	// Idempotency: if the task is already pending with resume_requested=true,
-	// a previous ResumeTask call succeeded and the runner just hasn't claimed
-	// it yet. Silently no-op instead of duplicating cleanup work.
-	if task.Status == "pending" {
-		// We don't have metadata.resume_requested surfaced on ResolvedTask, so
-		// we can't distinguish "already resumed" from "was already pending" here
-		// without re-reading storage. Report as skipped either way — the caller
-		// gets a truthful "already pending" signal.
-		result.Reason = "task is already pending; nothing to resume"
+	// Idempotency + un-stuck: distinguish "already resumed and waiting for the
+	// runner to claim" from "was already pending WITHOUT the flag" (which the
+	// user may reasonably want to force through — e.g. an auto-reset via
+	// claim-renewal-fail left the task pending with no resume hint). If the
+	// flag is already set: idempotent no-op. If not: fall through to the full
+	// resume path so the flag gets stamped and the runner routes via IsResume.
+	if task.Status == "pending" && task.ResumeRequested {
+		result.Reason = "resume already requested; runner will pick up on next poll"
 		return result, nil
 	}
 
@@ -1508,8 +1507,9 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 		}
 	}
 
-	// Abandonment gate. Force bypasses.
-	if !task.IsAbandoned && !opts.Force {
+	// Abandonment gate. Force bypasses (but does NOT override the live-claim
+	// safety check below).
+	if !task.IsAbandoned && !opts.Force && task.Status != "pending" {
 		result.Reason = fmt.Sprintf("task is not abandoned (status=%q); use trigger or force=true", task.Status)
 		return result, nil
 	}
@@ -1517,7 +1517,24 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 	// Cleanup: delete claim + acked dispatch lease. Both are best-effort;
 	// downstream sweepers will eventually clean these up too. We do them here
 	// so the runner sees a clean slate on re-claim.
+	//
+	// SAFETY: before releasing the claim, re-check the claim's runner status.
+	// If a live runner has claimed this task since enrichAbandonmentState ran
+	// (the atomic claim upsert would have evicted an expired claim, then the
+	// live runner grabbed a fresh one), releasing that claim here would enable
+	// a second runner to claim the same task → concurrent double-execution.
+	// Refuse in that case, even with force=true. The user must abort the live
+	// runner out-of-band before resuming — force only bypasses the IsAbandoned
+	// gate, never the live-claim safety.
 	if claim, err := s.storage.GetClaim(ctx, projectID, taskID); err == nil && claim != nil {
+		runner, rerr := s.storage.GetRunner(ctx, claim.RunnerID)
+		if rerr == nil && runner != nil && runner.Status == "online" {
+			result.Reason = fmt.Sprintf(
+				"task is claimed by online runner %q since enrichment view; abort that runner or wait for its lease to lapse before resuming",
+				claim.RunnerID,
+			)
+			return result, nil
+		}
 		if _, err := s.storage.ReleaseClaim(ctx, projectID, taskID, claim.RunnerID); err != nil {
 			slog.Debug("resume: release claim failed (continuing)",
 				"project", projectID, "task_id", taskID, "error", err)
@@ -1541,6 +1558,13 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 	}
 
 	result.Resumed = true
+	slog.Info("resume: task resumed",
+		"project", projectID, "task_id", taskID,
+		"prior_status", result.PriorStatus,
+		"abandon_reason", result.AbandonReason,
+		"prior_sessions_count", result.PriorSessionsCount,
+		"force", opts.Force,
+	)
 	return result, nil
 }
 

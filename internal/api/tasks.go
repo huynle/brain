@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -812,8 +813,11 @@ func (h *Handler) HandleResumeTask(w http.ResponseWriter, r *http.Request) {
 
 	var req types.ResumeTaskOptions
 	// Empty body is fine — Force defaults to false. Only fail on malformed JSON.
-	if r.ContentLength > 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	// Use `!= 0` (not `> 0`) so chunked bodies (Transfer-Encoding: chunked ⇒
+	// ContentLength == -1) are still decoded. io.EOF from a genuinely empty
+	// body is benign.
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
 			return
 		}
@@ -821,7 +825,10 @@ func (h *Handler) HandleResumeTask(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.tasks.ResumeTask(r.Context(), projectId, taskId, &req)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
+		// Map both wrapped ErrNotFound (canonical) AND string-contains "not
+		// found" (from service methods that don't yet wrap the sentinel) to
+		// 404 so clients can distinguish gone-from-under-us from real errors.
+		if errors.Is(err, ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
 			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
 			return
 		}
@@ -829,21 +836,44 @@ func (h *Handler) HandleResumeTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only emit the event when the resume actually took effect. Idempotent
+	// Only emit events when the resume actually took effect. Idempotent
 	// no-ops (task already pending, terminal status, not-abandoned-without-
-	// force) don't warrant a new fire.
+	// force, still-claimed) don't warrant new fires.
 	if resp != nil && resp.Resumed {
+		taskPath := fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
+
+		// EventTaskResumeRequested — user-initiated event distinct from the
+		// automatic claim-renewal-fail reset path. Populate Metadata if
+		// either PriorStatus or AbandonReason has a value (force+terminal
+		// case has PriorStatus but no AbandonReason; typical case has both).
 		evt := types.NewEvent(types.EventTaskResumeRequested, types.EventSourceAPI)
 		evt.ProjectID = projectId
 		evt.TaskID = taskId
-		evt.TaskPath = fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
-		if resp.AbandonReason != "" {
-			evt.Metadata = map[string]string{
-				"abandon_reason": resp.AbandonReason,
-				"prior_status":   resp.PriorStatus,
+		evt.TaskPath = taskPath
+		if resp.AbandonReason != "" || resp.PriorStatus != "" {
+			evt.Metadata = map[string]string{}
+			if resp.AbandonReason != "" {
+				evt.Metadata["abandon_reason"] = resp.AbandonReason
+			}
+			if resp.PriorStatus != "" {
+				evt.Metadata["prior_status"] = resp.PriorStatus
 			}
 		}
 		h.emitEvent(r.Context(), evt)
+
+		// Also emit EventTaskStatusChanged. ResumeTask uses storage.MergeMetadata
+		// directly (matching TriggerTask), which bypasses the PATCH-entries event
+		// pipeline. Without this second emit, the PWA never learns the status
+		// flipped to pending until the runner claims and status_changed fires
+		// again — several seconds of stale UI. Payload mirrors what the entries
+		// pipeline would have produced.
+		statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+		statusEvt.ProjectID = projectId
+		statusEvt.TaskID = taskId
+		statusEvt.TaskPath = taskPath
+		statusEvt.FromStatus = resp.PriorStatus
+		statusEvt.ToStatus = "pending"
+		h.emitEvent(r.Context(), statusEvt)
 	}
 
 	WriteJSON(w, http.StatusOK, resp)

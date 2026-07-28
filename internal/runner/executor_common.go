@@ -299,8 +299,24 @@ func CommonBuildPrompt(task *types.ResolvedTask, isResume bool) string {
 	header := buildTaskAssignmentHeader(task, isResume)
 
 	// If direct_prompt is set, prepend the identity header and use the
-	// user's instruction verbatim afterwards.
+	// user's instruction verbatim afterwards. When this is a resume, also
+	// prepend a short preamble so the agent doesn't lose the "check for
+	// prior progress" guidance that the templated path delivers. Without
+	// this, IsResume=true on a direct_prompt task would silently degrade
+	// to a fresh re-run of the raw prompt.
 	if task.DirectPrompt != "" {
+		if isResume {
+			resumePreamble := "## Resume\n" +
+				"You were previously running this task and were interrupted. Before executing " +
+				"the instruction below:\n" +
+				"1. Load the brain-runner-queue skill.\n" +
+				"2. Use `brain_recall` on the brain path in the header to read prior progress notes.\n" +
+				"3. Inspect the workspace / git state for partial work.\n" +
+				"4. Continue from where you left off; only restart from scratch if you cannot tell " +
+				"what was done.\n" +
+				"5. Note in your final summary that this was a resumed task."
+			return header + "\n\n" + resumePreamble + "\n\n" + task.DirectPrompt
+		}
 		return header + "\n\n" + task.DirectPrompt
 	}
 

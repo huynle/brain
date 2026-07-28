@@ -1662,22 +1662,12 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 
 	// Resume-abandoned-tasks flow: if the task carries resume_requested from
 	// POST /resume, propagate it into IsResume so the executor's prompt
-	// template tells the agent to look for prior progress. Clear the flag
-	// eagerly (single PATCH before spawn) so if the spawn crashes the runner
-	// doesn't loop-resume forever on the next poll. If the PATCH fails we
-	// still spawn with IsResume=true — the worst case is a duplicate resume
-	// hint on the next attempt, which is preferable to silently dropping it.
+	// template tells the agent to look for prior progress. NOTE: the flag is
+	// cleared AFTER a successful Spawn (see below). Clearing it here would
+	// silently drop the user's resume intent when the spawn subsequently
+	// fails, leaving the task in blocked with resume_requested=false.
 	if task.ResumeRequested {
 		spawnOpts.IsResume = true
-		if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
-			"resume_requested": false,
-		}); err != nil {
-			slog.Warn("resume: failed to clear resume_requested flag (continuing spawn)",
-				"project", projectID, "task_id", task.ID, "error", err)
-		} else {
-			slog.Info("resume: consuming resume_requested flag, spawning with IsResume=true",
-				"project", projectID, "task_id", task.ID)
-		}
 	}
 
 	// Start log streamer if enabled
@@ -1715,7 +1705,37 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		// the orphan reaper. Symmetric with the workdir-failure branch
 		// above. A human or the Blocked Task Inspector can then address it.
 		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "blocked")
+		// If we consumed a resume intent, the spawn failure means we never
+		// actually resumed. Best-effort re-stamp the flag so a subsequent
+		// Trigger or Resume from the user picks up the resume prompt path
+		// again. Failure to re-stamp is logged but not fatal.
+		if task.ResumeRequested {
+			if metaErr := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+				"resume_requested": true,
+			}); metaErr != nil {
+				slog.Warn("resume: failed to re-stamp resume_requested after spawn failure",
+					"project", projectID, "task_id", task.ID, "error", metaErr)
+			}
+		}
 		return fmt.Errorf("spawn task: %w", err)
+	}
+
+	// Spawn succeeded — NOW clear the resume_requested flag so a re-poll after
+	// the task completes doesn't route the next dispatch through IsResume=true
+	// again. If the clear fails, log and continue: the executor is already
+	// running with IsResume=true, and the next dispatch (if any) would just
+	// route through IsResume again — a duplicate prompt is preferable to
+	// blocking spawn completion.
+	if task.ResumeRequested {
+		if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+			"resume_requested": false,
+		}); err != nil {
+			slog.Warn("resume: failed to clear resume_requested flag post-spawn (continuing)",
+				"project", projectID, "task_id", task.ID, "error", err)
+		} else {
+			slog.Info("resume: consumed resume_requested flag, spawned with IsResume=true",
+				"project", projectID, "task_id", task.ID)
+		}
 	}
 
 	// Build running task record
@@ -2226,6 +2246,25 @@ func (tr *TaskRunner) tryReapOrphan(ctx context.Context, projectID string, entry
 	}); metaErr != nil {
 		slog.Debug("orphan reaper: metadata stamp failed",
 			"project", projectID, "task_id", taskID, "error", metaErr)
+	}
+
+	// TOCTOU close: between our earlier resume-guard re-read and the status
+	// flip below, a POST /resume request could have committed status=pending
+	// + resume_requested=true. Re-read one more time. If the task is no
+	// longer in_progress OR resume_requested is now true, the user's intent
+	// takes precedence and we bail without touching status. The append+
+	// metadata writes above are additive/informational, so leaving them
+	// applied does no harm — they document that the reaper considered this
+	// task abandoned even though the user beat us to it.
+	preFlip, err := tr.client.GetEntry(ctx, taskPath)
+	if err == nil && preFlip != nil {
+		if preFlip.Status != "in_progress" || preFlip.ResumeRequested {
+			slog.Info("orphan reaper: TOCTOU re-read detected concurrent state change, skipping status flip",
+				"project", projectID, "task_id", taskID,
+				"current_status", preFlip.Status, "resume_requested", preFlip.ResumeRequested)
+			_ = tr.client.ReleaseTask(ctx, projectID, taskID, tr.runnerID)
+			return false
+		}
 	}
 
 	if statusErr := tr.client.UpdateTaskStatus(ctx, taskPath, "blocked"); statusErr != nil {

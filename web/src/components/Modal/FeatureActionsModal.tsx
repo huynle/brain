@@ -167,7 +167,11 @@ export function FeatureActionsModal(): JSX.Element {
   return (
     <Modal
       title={`Feature: ${featureId}`}
-      onClose={close}
+      onClose={
+        // Esc semantics per view: in confirmForce return to menu (matches
+        // the "Esc = No" hint); anywhere else close the whole modal.
+        view === "confirmForce" ? () => setView("menu") : close
+      }
       footer={
         view === "menu" ? (
           <>

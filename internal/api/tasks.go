@@ -7,12 +7,49 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
 )
+
+// smallBodyMaxBytes caps optional JSON bodies for /resume + /run endpoints
+// whose only content is a shape like {"force": bool}. 4 KiB is plenty and
+// prevents an attacker from streaming megabytes of garbage into the decoder.
+const smallBodyMaxBytes = 4 << 10 // 4 KiB
+
+// safePathParam validates chi URL params before they reach filepath.Join,
+// slog fields, or storage lookups. Bounded set: letters, digits, dots,
+// dashes, underscores. Length capped at 128. Empty is rejected.
+var safePathParamRE = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
+
+func validatePathParam(name, value string) error {
+	if !safePathParamRE.MatchString(value) {
+		return fmt.Errorf("invalid %s: must match [a-zA-Z0-9._-]{1,128}", name)
+	}
+	return nil
+}
+
+// decodeOptionalSmallJSON decodes an optional request body into dst.
+// Zero-length or absent body is treated as "use defaults" and returns nil.
+// Unknown JSON fields are rejected (typo-shaped attacks / API drift).
+// The body is capped at smallBodyMaxBytes so a bad client can't OOM us.
+func decodeOptionalSmallJSON(w http.ResponseWriter, r *http.Request, dst interface{}) error {
+	if r.Body == nil || r.ContentLength == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBodyMaxBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
 
 // parseTaskFilterOptions extracts optional TaskFilterOptions from query parameters.
 // Returns nil if no filter parameters are present (backward compatible).
@@ -810,17 +847,19 @@ func (h *Handler) HandleTriggerTask(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleResumeTask(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")
 	taskId := chi.URLParam(r, "taskId")
+	if err := validatePathParam("projectId", projectId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+	if err := validatePathParam("taskId", taskId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
 
 	var req types.ResumeTaskOptions
-	// Empty body is fine — Force defaults to false. Only fail on malformed JSON.
-	// Use `!= 0` (not `> 0`) so chunked bodies (Transfer-Encoding: chunked ⇒
-	// ContentLength == -1) are still decoded. io.EOF from a genuinely empty
-	// body is benign.
-	if r.Body != nil && r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
-			return
-		}
+	if err := decodeOptionalSmallJSON(w, r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
 	}
 
 	resp, err := h.tasks.ResumeTask(r.Context(), projectId, taskId, &req)
@@ -889,13 +928,19 @@ func (h *Handler) HandleResumeTask(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleResumeFeature(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")
 	featureId := chi.URLParam(r, "featureId")
+	if err := validatePathParam("projectId", projectId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+	if err := validatePathParam("featureId", featureId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
 
 	var req types.ResumeTaskOptions
-	if r.Body != nil && r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
-			return
-		}
+	if err := decodeOptionalSmallJSON(w, r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
 	}
 
 	resp, err := h.tasks.ResumeFeature(r.Context(), projectId, featureId, &req)
@@ -1061,13 +1106,15 @@ func (h *Handler) HandleRunProject(w http.ResponseWriter, r *http.Request) {
 	}
 
 	projectId := chi.URLParam(r, "projectId")
+	if err := validatePathParam("projectId", projectId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
 
 	var req types.RunProjectRequest
-	if r.Body != nil && r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
-			return
-		}
+	if err := decodeOptionalSmallJSON(w, r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
 	}
 
 	resp, err := h.runProject.RunProjectNow(r.Context(), projectId, req.Force)

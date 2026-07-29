@@ -52,6 +52,13 @@ const FOCUSABLE =
 
 function firstFocusable(root: HTMLElement | null): HTMLElement | null {
   if (!root) return null;
+  // Modal children can opt out of the natural DOM-order fallback by tagging
+  // a primary action with data-autofocus="true". This is how TaskActions
+  // Modal + FeatureActionsModal keep keyboard-users from landing on the ×
+  // close button (which lives in .modal-head, rendered before the primary
+  // action). Preferred over the DOM-order default; fall back if unset.
+  const preferred = root.querySelector<HTMLElement>('[data-autofocus="true"]');
+  if (preferred && !preferred.hasAttribute("disabled")) return preferred;
   return root.querySelector<HTMLElement>(FOCUSABLE);
 }
 

@@ -106,7 +106,12 @@ export function TaskActionsModal(): JSX.Element {
           )}
         </>
       }
-      onClose={close}
+      onClose={
+        // Esc in the confirmForce view should return to the menu, not blow
+        // away the whole modal — otherwise the "Esc = No" hint lies. Only
+        // the menu view lets Esc close the modal entirely.
+        view === "confirmForce" ? () => setView("menu") : close
+      }
       footer={
         view === "menu" ? (
           <>

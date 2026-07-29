@@ -1221,6 +1221,7 @@ func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID str
 		shortID := strings.TrimSuffix(entry.Name(), ".md")
 		tasks = append(tasks, types.BrainEntry{
 			ID:            shortID,
+			Status:        doc.Frontmatter.Status,
 			Generated:     generated,
 			GeneratedKind: doc.Frontmatter.GeneratedKind,
 		})
@@ -1508,8 +1509,12 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 	}
 
 	// Abandonment gate. Force bypasses (but does NOT override the live-claim
-	// safety check below).
-	if !task.IsAbandoned && !opts.Force && task.Status != "pending" {
+	// safety check below). For pending tasks specifically, force is
+	// REQUIRED — regular pending tasks aren't in scope for Resume; a batch
+	// endpoint calling ResumeTask on every task should NOT silently stamp
+	// the resume flag on incidental pending tasks. Force+pending = "un-stick"
+	// (TestResumeTask_StuckPendingUnstuck).
+	if !task.IsAbandoned && !opts.Force {
 		result.Reason = fmt.Sprintf("task is not abandoned (status=%q); use trigger or force=true", task.Status)
 		return result, nil
 	}
@@ -1613,6 +1618,13 @@ func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureI
 	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
 	if err != nil {
 		return nil, fmt.Errorf("resume feature: enumerate tasks: %w", err)
+	}
+	// 404 signal: an unknown feature yields zero tasks. Distinguish this
+	// from "feature exists with all-completed tasks (nothing to resume)"
+	// by requiring the caller to bring at least one task. The handler's
+	// string-contains "not found" mapping catches this.
+	if len(featureTasks) == 0 {
+		return nil, fmt.Errorf("resume feature: not found — feature %q has no tasks in project %q", sanitizedFeatureID, sanitizedProjectID)
 	}
 
 	result := &types.ResumeFeatureResult{

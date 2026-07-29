@@ -25,10 +25,16 @@ const LIFECYCLE_TONE = {
   merged: { tone: "merged", label: "merged" },
 } as const;
 
-function taskGlyph(status: Task["status"]): {
+function taskGlyph(status: Task["status"], isAbandoned = false): {
   glyph: string;
   cls: string;
 } {
+  // Abandoned tasks override the status glyph with a "⟳" (recovery) marker
+  // in amber. Distinct from ✕ (blocked) and ▸ (in-progress) so a user
+  // scanning the row can spot resumable work without opening the modal.
+  if (isAbandoned) {
+    return { glyph: "⟳", cls: "abandoned" };
+  }
   switch (status) {
     case "in_progress":
       return { glyph: "▸", cls: "busy" };
@@ -164,7 +170,7 @@ export function CardTasks({
               <span className="prog">{pct}%</span>
             </div>
             {items.map((t) => {
-              const { glyph, cls } = taskGlyph(t.status);
+              const { glyph, cls } = taskGlyph(t.status, !!t.is_abandoned);
               return (
                 <div
                   key={t.id}

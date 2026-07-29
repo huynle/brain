@@ -753,6 +753,9 @@ body.sidebar-collapsed #app {
 .trow .glyph.busy { color: #f4b23a; }
 .trow .glyph.ok   { color: #6fca7d; }
 .trow .glyph.blk  { color: #d96060; }
+/* Abandoned glyph: amber-orange matching .life-badge.abandoned so the
+ * "needs resume" signal is consistent across chip and glyph. */
+.trow .glyph.abandoned { color: #e08c3a; }
 /* CardAutomations renders the leading glyph as a real <button> so the
  * user can click it to pause / enable the automation. Give it a subtle
  * hover cue so it reads as clickable without introducing a chip-style

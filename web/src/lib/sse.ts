@@ -1,6 +1,15 @@
-// Real-time layer. One long-lived fetch stream per active project consumes
-// server-sent-events frames and pushes task snapshots, runner updates, and
-// runner logs into a zustand store the UI reads from.
+// Real-time layer. One long-lived multiplexed fetch stream consumes
+// server-sent-events frames for every subscribed project and pushes task
+// snapshots, runner updates, and runner logs into a zustand store the UI
+// reads from.
+//
+// Why one stream, not N?
+//   Chrome caps HTTP/1.1 at 6 concurrent connections per origin. With one
+//   stream per project on a dashboard listing 30+ projects, the browser
+//   stalled all subsequent /api/* fetches (automations, entries, task
+//   metadata) forever, queued behind long-lived streams that never close.
+//   The multiplexed stream (backed by GET /tasks/stream?projects=a,b,c on
+//   the server) collapses that fanout to a single socket.
 //
 // Why fetch-stream instead of EventSource?
 //   1. EventSource cannot set an Authorization header, forcing us to pass
@@ -9,15 +18,15 @@
 //   2. AbortController gives deterministic teardown without waiting on
 //      EventSource's internal buffering.
 //
-// NOTE — the browser tab favicon spins while any of these fetch streams
-// are in-flight. This is Chrome's correct behavior: it reports "network
+// NOTE — the browser tab favicon spins while the fetch stream is
+// in-flight. This is Chrome's correct behavior: it reports "network
 // activity in progress" as long as pending requests exist. Both EventSource
 // and fetch-stream trip it; only WebSocket (post-upgrade) is exempt. We
 // intentionally accept the spinner as the honest indicator that the
 // dashboard is streaming live data — the alternatives (polling for tasks
 // / feature status / runner logs) lose the real-time feel that's the
-// whole point of the panes-v2 shell. Users learn to ignore it, and
-// Firefox/Safari handle the indicator more gracefully than Chrome does.
+// whole point of the panes-v2 shell. With one multiplexed stream instead
+// of 30, at least the spinner represents ONE request, not 30.
 //
 // If we ever migrate to WebSocket (would need matching backend upgrade
 // handler + framing), the spinner goes away because post-upgrade WS
@@ -28,8 +37,10 @@
 //   data: <json>\n
 //   \n
 //
-// We stream bytes through TextDecoderStream and parse frames by splitting
-// on the blank-line separator.
+// Every project-scoped event carries a `projectId` field in its data
+// payload (see internal/types/types.go SSEEventData). We stream bytes
+// through TextDecoderStream, parse frames by splitting on the blank-line
+// separator, and demux to the right project slice by that field.
 
 import { create } from "zustand";
 import { useAuth } from "./auth";
@@ -153,16 +164,43 @@ export function parseSSEFrame(block: string): SSEFrame | null {
 }
 
 // ─── Stream manager ──────────────────────────────────────────────
+//
+// Design note — Aug 2026 rewrite. The original manager opened one
+// long-lived fetch stream PER project. On dashboards with 30+ projects
+// that saturated Chrome's HTTP/1.1 per-origin socket pool (6/origin) and
+// stalled every subsequent /api/* fetch (automations, entries, task
+// metadata) indefinitely — the automation pane sat "Loading…" forever
+// because its GET was queued behind streams that never close.
+//
+// Now the manager opens ONE multi-project stream against
+// /api/v1/tasks/stream?projects=a,b,c and demuxes frames by the
+// projectId field the backend stamps on every SSEEventData payload.
+// Runner-lifecycle events carry no projectId; we route them to the
+// global runners slice via useLive.setRunners.
 
-class Stream {
+// Extract projectId from an SSE frame's parsed data payload. The backend
+// stamps every project-scoped event with SSEEventData.projectId (the
+// JSON field is "projectId" — see internal/types/types.go). Returns null
+// for runner-lifecycle events that legitimately carry no project scope.
+function projectIdOf(data: unknown): string | null {
+  if (data && typeof data === "object" && "projectId" in data) {
+    const v = (data as { projectId?: unknown }).projectId;
+    if (typeof v === "string" && v) return v;
+  }
+  return null;
+}
+
+class MultiStream {
   private controller: AbortController | null = null;
   private closed = false;
   private retry = 0;
   private timer: number | null = null;
-  private projectId: string;
+  private projectIds: string[];
 
-  constructor(projectId: string) {
-    this.projectId = projectId;
+  constructor(projectIds: string[]) {
+    // Sort so a stable set of projects produces a stable URL (matters
+    // for HTTP caching / debug clarity, not correctness).
+    this.projectIds = [...projectIds].sort();
   }
 
   start(): void {
@@ -171,58 +209,92 @@ class Stream {
   }
 
   private url(): string {
-    return `/api/v1/tasks/${encodeURIComponent(this.projectId)}/stream`;
+    const qs = this.projectIds.map(encodeURIComponent).join(",");
+    return `/api/v1/tasks/stream?projects=${qs}`;
   }
 
+  /**
+   * Route a parsed frame to useLive. The stream carries events for many
+   * projects on one connection, so we read the projectId out of the
+   * frame's data payload instead of using a hardcoded per-stream field
+   * (as the old per-project Stream did).
+   */
   private handleFrame(frame: SSEFrame): void {
     const live = useLive.getState();
+
+    let payload: unknown = null;
+    if (frame.data) {
+      try {
+        payload = JSON.parse(frame.data);
+      } catch {
+        return; // malformed frame — drop
+      }
+    }
+
     switch (frame.event) {
-      case "connected":
+      case "connected": {
+        // Fired once per project on stream open. Each project flips its
+        // own ProjectLive.connected flag; we also reset retry on any
+        // successful connected frame (the first one on a fresh
+        // connection is enough).
         this.retry = 0;
-        live.setProject(this.projectId, { connected: true, error: null });
-        break;
-      case "tasks_snapshot":
-        try {
-          const d = JSON.parse(frame.data) as SSETasksSnapshot;
-          live.setProject(this.projectId, {
-            tasks: d.tasks || [],
-            stats: d.stats,
-            cycles: d.cycles,
-            connected: true,
-            error: null,
-          });
-        } catch {
-          /* ignore malformed */
+        const pid = projectIdOf(payload);
+        if (pid) {
+          live.setProject(pid, { connected: true, error: null });
         }
         break;
-      case "runners_update":
-        try {
-          const d = JSON.parse(frame.data) as SSERunnersUpdate;
-          live.setRunners(d.runners || []);
-        } catch {
-          /* ignore */
-        }
+      }
+      case "heartbeat":
+        // No-op; connection liveness is implicit in the reader loop.
         break;
-      case "runner_log":
-        try {
-          const d = JSON.parse(frame.data) as SSERunnerLog;
-          if (d.lines?.length) {
-            live.appendLogs(
-              this.projectId,
-              d.taskId,
-              d.runnerId,
-              d.lines,
-            );
-          }
-        } catch {
-          /* ignore */
-        }
+      case "tasks_snapshot": {
+        const d = payload as SSETasksSnapshot | null;
+        if (!d) break;
+        const pid = projectIdOf(d);
+        if (!pid) break;
+        live.setProject(pid, {
+          tasks: d.tasks || [],
+          stats: d.stats,
+          cycles: d.cycles,
+          connected: true,
+          error: null,
+        });
         break;
+      }
+      case "runners_update": {
+        const d = payload as SSERunnersUpdate | null;
+        if (d?.runners) live.setRunners(d.runners);
+        break;
+      }
+      case "runner_registered":
+      case "runner_offline":
+        // Delta events on the runner-lifecycle topic. The backend still
+        // emits full runners_update snapshots too, so we don't need to
+        // reconcile deltas here — a snapshot will follow. Kept as an
+        // explicit no-op so an unknown-event log line doesn't imply
+        // these are dropped by accident.
+        break;
+      case "runner_log": {
+        const d = payload as SSERunnerLog | null;
+        if (!d?.lines?.length) break;
+        // runner_log carries projectId in its own field, not in
+        // SSEEventData. Fall back to the payload's projectId if the
+        // envelope one is missing.
+        const pid =
+          projectIdOf(d) ??
+          (typeof (d as { projectId?: unknown }).projectId === "string"
+            ? (d as { projectId: string }).projectId
+            : null);
+        if (!pid) break;
+        live.appendLogs(pid, d.taskId, d.runnerId, d.lines);
+        break;
+      }
     }
   }
 
   private async open(): Promise<void> {
     if (this.closed) return;
+    if (this.projectIds.length === 0) return;
 
     const controller = new AbortController();
     this.controller = controller;
@@ -243,7 +315,7 @@ class Stream {
       });
 
       if (!res.ok || !res.body) {
-        throw new Error(`stream ${this.projectId}: HTTP ${res.status}`);
+        throw new Error(`stream: HTTP ${res.status}`);
       }
 
       const reader = res.body
@@ -255,10 +327,6 @@ class Stream {
         const { done, value } = await reader.read();
         if (done) break;
         buffer += value;
-        // SSE frames are separated by \n\n (or \r\n\r\n). Pull as
-        // many complete frames as possible out of the buffer on each
-        // read.
-        // eslint-disable-next-line no-constant-condition
         while (true) {
           const lf = buffer.indexOf("\n\n");
           const crlf = buffer.indexOf("\r\n\r\n");
@@ -280,18 +348,24 @@ class Stream {
       }
     } catch (err) {
       if ((err as { name?: string })?.name === "AbortError") return;
-      useLive
-        .getState()
-        .setProject(this.projectId, {
+      // On error, mark ALL subscribed projects as disconnected — the
+      // failure isn't scoped to any one of them.
+      const live = useLive.getState();
+      for (const pid of this.projectIds) {
+        live.setProject(pid, {
           connected: false,
           error: (err as Error).message ?? String(err),
         });
+      }
     }
 
-    // Normal end-of-stream OR error → schedule reconnect if not closed.
     this.controller = null;
     if (this.closed) return;
-    useLive.getState().setProject(this.projectId, { connected: false });
+    // Mark all as disconnected on normal end-of-stream too, then retry.
+    const live = useLive.getState();
+    for (const pid of this.projectIds) {
+      live.setProject(pid, { connected: false });
+    }
     this.retry = Math.min(this.retry + 1, 5);
     const delay = Math.min(1000 * 2 ** this.retry, 15000);
     this.timer = window.setTimeout(() => void this.open(), delay);
@@ -309,38 +383,48 @@ class Stream {
 }
 
 class StreamManager {
-  private streams = new Map<string, Stream>();
+  private stream: MultiStream | null = null;
+  private currentIds: string[] = [];
 
-  /** Open streams for exactly these projects; close any others. */
+  /** Open a single multiplexed stream for exactly these projects. */
   sync(projectIds: string[]): void {
-    const wanted = new Set(projectIds);
-    for (const [id, s] of this.streams) {
-      if (!wanted.has(id)) {
-        s.stop();
-        this.streams.delete(id);
-        useLive.getState().reset(id);
-      }
+    const wanted = [...projectIds].sort();
+    if (
+      this.stream &&
+      wanted.length === this.currentIds.length &&
+      wanted.every((id, i) => id === this.currentIds[i])
+    ) {
+      // No change; keep existing stream alive.
+      return;
     }
-    for (const id of wanted) {
-      if (!this.streams.has(id)) {
-        const s = new Stream(id);
-        this.streams.set(id, s);
-        s.start();
-      }
+    // Tear down projects that are leaving so their ProjectLive slots
+    // don't linger with stale connected=true.
+    const dropping = this.currentIds.filter((id) => !wanted.includes(id));
+    for (const id of dropping) useLive.getState().reset(id);
+
+    this.stream?.stop();
+    this.currentIds = wanted;
+    if (wanted.length === 0) {
+      this.stream = null;
+      return;
     }
+    this.stream = new MultiStream(wanted);
+    this.stream.start();
   }
 
-  /** Tear down and reopen all (e.g. after token change or manual refresh). */
+  /** Tear down and reopen (e.g. after token change or manual refresh). */
   restartAll(): void {
-    const ids = [...this.streams.keys()];
-    for (const [, s] of this.streams) s.stop();
-    this.streams.clear();
+    const ids = this.currentIds;
+    this.stream?.stop();
+    this.stream = null;
+    this.currentIds = [];
     this.sync(ids);
   }
 
   stopAll(): void {
-    for (const [, s] of this.streams) s.stop();
-    this.streams.clear();
+    this.stream?.stop();
+    this.stream = null;
+    this.currentIds = [];
   }
 }
 

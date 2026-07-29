@@ -381,8 +381,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
 					if o.handler != nil && o.handler.tasks != nil {
 						r.Get("/", o.handler.HandleListProjects)
+						// Multi-project SSE: /tasks/stream?projects=a,b,c or
+						// ?projects=all. Registered at the /tasks level so it
+						// sits BEFORE /{projectId}/stream in the tree — Chi
+						// prefers the static "stream" segment over the
+						// {projectId} placeholder anyway, but keeping them in
+						// clearly different scopes makes the intent obvious.
+						r.Get("/stream", o.handler.HandleMultiSSEStream)
 					} else {
 						r.Get("/", notImplemented)
+						r.Get("/stream", notImplemented)
 					}
 				})
 

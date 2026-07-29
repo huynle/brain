@@ -24,6 +24,9 @@ import type {
   OpencodeInstance,
   SpawnInstanceSpec,
   ProjectListResponse,
+  ResumeFeatureResult,
+  ResumeTaskOptions,
+  ResumeTaskResult,
   RunnerListResponse,
   RunnerStatusResponse,
   SearchRequest,
@@ -423,6 +426,58 @@ export const checkoutFeature = (
       body: opts ?? {},
     },
   );
+
+// Resume an abandoned task via POST /tasks/{project}/{task}/resume. The server
+// flips the task back to pending, stamps resume_requested, and the runner will
+// re-spawn it with IsResume=true on its next poll. Returns Resumed=false with
+// an explanatory Reason when the call is a well-formed no-op (task already
+// resumed, terminal, or not abandoned without force).
+export const resumeTask = (
+  projectId: string,
+  taskId: string,
+  opts?: ResumeTaskOptions,
+) =>
+  api<ResumeTaskResult>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/resume`,
+    {
+      method: "POST",
+      body: opts ?? {},
+    },
+  );
+
+// Batch-resume every abandoned task in a feature. Per-task outcomes are in
+// result.results — non-abandoned tasks appear as skipped entries with a
+// reason string, so callers can render partial-failure state without a
+// second round-trip.
+export const resumeFeature = (
+  projectId: string,
+  featureId: string,
+  opts?: ResumeTaskOptions,
+) =>
+  api<ResumeFeatureResult>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/resume`,
+    {
+      method: "POST",
+      body: opts ?? {},
+    },
+  );
+
+// One-line toast summary of a batch resume. Mirrors summarizeTriggerResults
+// style so calling code can reuse the same UX pattern.
+export const summarizeResumeResults = (r: ResumeFeatureResult): string => {
+  if (r.total_resumed === 0 && r.total_skipped === 0) {
+    return "No tasks in feature";
+  }
+  if (r.total_resumed === 0) {
+    return `No tasks resumed (${r.total_skipped} skipped)`;
+  }
+  if (r.total_skipped === 0) {
+    const s = r.total_resumed === 1 ? "" : "s";
+    return `Resumed ${r.total_resumed} task${s}`;
+  }
+  const s = r.total_resumed === 1 ? "" : "s";
+  return `Resumed ${r.total_resumed} task${s} · ${r.total_skipped} skipped`;
+};
 
 // Run the Blocked Task Inspector once for a feature without leaving a
 // recurring monitor behind. Creates a one-shot task via POST /entries.

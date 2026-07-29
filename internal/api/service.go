@@ -265,6 +265,12 @@ type TaskService interface {
 	// runner will re-spawn it with IsResume=true. See service.TaskServiceImpl
 	// for the full contract; opts may be nil.
 	ResumeTask(ctx context.Context, projectId, taskId string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error)
+
+	// ResumeFeature fans out ResumeTask across every task in a feature. Non-
+	// abandoned tasks appear in Results as skipped entries with a Reason,
+	// so the caller can treat this as "resume everything you can in this
+	// feature" without pre-filtering. opts may be nil.
+	ResumeFeature(ctx context.Context, projectId, featureId string, opts *types.ResumeTaskOptions) (*types.ResumeFeatureResult, error)
 }
 
 // RunnerService defines the interface for runner control operations.

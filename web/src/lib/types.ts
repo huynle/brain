@@ -170,6 +170,56 @@ export interface Task {
   dispatch_lease?: DispatchLease;
   placement_reasons?: PlacementReason[];
   last_placement_reason?: PlacementReason;
+
+  // Abandonment surface for the resume-abandoned-tasks flow. Derived
+  // server-side from task_claims + runners.status + reaper metadata by
+  // enrichAbandonmentState — never written by clients. When is_abandoned
+  // is true, abandon_reason names the underlying cause and the PWA
+  // renders a Resume affordance.
+  is_abandoned?: boolean;
+  abandon_reason?: AbandonReason;
+
+  // Runtime lifecycle flags for resume. resume_requested is set by
+  // POST /resume and consumed by the runner at claim time.
+  resume_requested?: boolean;
+  resume_requested_at?: string;
+}
+
+/** Discriminant on the underlying signal that flagged the task as abandoned.
+ *  Keep in sync with service.AbandonReason* constants in Go. */
+export type AbandonReason =
+  | "no_claim"
+  | "claim_expired"
+  | "runner_offline"
+  | "orphan_reaped";
+
+/** Body for POST /tasks/{project}/{task}/resume and
+ *  POST /tasks/{project}/features/{feature}/resume. */
+export interface ResumeTaskOptions {
+  /** Bypass the is_abandoned gate. Does NOT override the live-claim safety
+   *  check — a resume against a task claimed by an online runner is refused
+   *  even with force=true. */
+  force?: boolean;
+}
+
+/** Response from POST /resume (single task). Resumed=false means the call
+ *  was a well-formed no-op — reason tells the user why. */
+export interface ResumeTaskResult {
+  task_id: string;
+  resumed: boolean;
+  prior_status?: string;
+  prior_sessions_count?: number;
+  abandon_reason?: AbandonReason | "";
+  reason?: string;
+}
+
+/** Response from POST /features/{feature}/resume. Batch summary + per-task
+ *  outcomes. total_resumed + total_skipped equals results.length. */
+export interface ResumeFeatureResult {
+  feature_id: string;
+  total_resumed: number;
+  total_skipped: number;
+  results: ResumeTaskResult[];
 }
 
 export interface DispatchLease {

@@ -879,6 +879,74 @@ func (h *Handler) HandleResumeTask(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleResumeFeature handles POST /tasks/{projectId}/features/{featureId}/resume.
+//
+// Fans out ResumeTask across every task in the feature. Body is JSON
+// {force?: bool}; empty body defaults Force=false. Response is a batch
+// summary — per-task results include Reason for skipped tasks so callers
+// can render partial-failure state without a second round-trip. Force applies
+// uniformly to every task in the feature (not per-task).
+func (h *Handler) HandleResumeFeature(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	featureId := chi.URLParam(r, "featureId")
+
+	var req types.ResumeTaskOptions
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+			return
+		}
+	}
+
+	resp, err := h.tasks.ResumeFeature(r.Context(), projectId, featureId, &req)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			WriteError(w, http.StatusNotFound, "Not Found", "feature not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	// Emit an event per actually-resumed task so PWA SSE consumers refresh
+	// individual task rows. The batch-level event is intentionally NOT emitted
+	// — the per-task events + feature-progress recomputation give downstream
+	// clients enough signal without a new event type.
+	if resp != nil {
+		for _, tr := range resp.Results {
+			if !tr.Resumed {
+				continue
+			}
+			taskPath := fmt.Sprintf("projects/%s/task/%s.md", projectId, tr.TaskID)
+
+			evt := types.NewEvent(types.EventTaskResumeRequested, types.EventSourceAPI)
+			evt.ProjectID = projectId
+			evt.TaskID = tr.TaskID
+			evt.TaskPath = taskPath
+			if tr.AbandonReason != "" || tr.PriorStatus != "" {
+				evt.Metadata = map[string]string{}
+				if tr.AbandonReason != "" {
+					evt.Metadata["abandon_reason"] = tr.AbandonReason
+				}
+				if tr.PriorStatus != "" {
+					evt.Metadata["prior_status"] = tr.PriorStatus
+				}
+			}
+			h.emitEvent(r.Context(), evt)
+
+			statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+			statusEvt.ProjectID = projectId
+			statusEvt.TaskID = tr.TaskID
+			statusEvt.TaskPath = taskPath
+			statusEvt.FromStatus = tr.PriorStatus
+			statusEvt.ToStatus = "pending"
+			h.emitEvent(r.Context(), statusEvt)
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleRunTask handles POST /tasks/{projectId}/{taskId}/run.
 //
 // This is the user-explicit "run this task now" path used by the PWA "x"

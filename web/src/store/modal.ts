@@ -19,6 +19,7 @@ import { create } from "zustand";
 export type ModalKind =
   | "runner"
   | "task"
+  | "task-actions"
   | "feature"
   | "feature-actions"
   | "automation"

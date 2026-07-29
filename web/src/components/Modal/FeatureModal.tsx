@@ -45,6 +45,11 @@ export function FeatureModal(): JSX.Element {
     [tasks, featureId],
   );
 
+  const abandonedCount = useMemo(
+    () => featureTasks.filter((t) => t.is_abandoned).length,
+    [featureTasks],
+  );
+
   if (!feature) {
     return (
       <Modal
@@ -96,6 +101,24 @@ export function FeatureModal(): JSX.Element {
         </>
       }
     >
+      {abandonedCount > 0 && (
+        <div
+          role="status"
+          className="life-badge abandoned"
+          style={{
+            display: "block",
+            marginBottom: 12,
+            padding: "6px 10px",
+            fontSize: 12,
+            lineHeight: 1.4,
+          }}
+        >
+          {abandonedCount === 1
+            ? "1 task in this feature looks abandoned"
+            : `${abandonedCount} tasks in this feature look abandoned`}
+          {" — click Actions… to resume."}
+        </div>
+      )}
       <div className="kv-grid">
         <div className="k">Project</div>
         <div className="v">{projectId}</div>

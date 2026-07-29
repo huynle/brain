@@ -14,7 +14,7 @@
  */
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Modal } from "../common/Modal";
-import { checkoutFeature, runBlockedInspectorNow } from "../../lib/api";
+import { checkoutFeature, resumeFeature, runBlockedInspectorNow, summarizeResumeResults } from "../../lib/api";
 import { useLive } from "../../lib/sse";
 import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
@@ -128,6 +128,23 @@ export function FeatureActionsModal(): JSX.Element {
     }
   }
 
+  async function resumeAbandoned() {
+    setBusy(true);
+    try {
+      const result = await resumeFeature(projectId, featureId, { force: false });
+      const kind = result.total_resumed > 0 ? "success" : "info";
+      toast(summarizeResumeResults(result), kind);
+      close();
+    } catch (err) {
+      toast(
+        `Resume failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const summary = `${state.taskCount} task${state.taskCount === 1 ? "" : "s"} · ${state.readyCount} ready · ${state.incompleteCount} incomplete`;
 
   return (
@@ -223,6 +240,15 @@ export function FeatureActionsModal(): JSX.Element {
                 disabled={busy}
                 label="Run blocked-task inspector now"
                 sub="One-shot: creates a pending task that runs and completes on idle. Does not leave a recurring monitor."
+              />
+            )}
+            {state.hasResumableTasks && (
+              <ActionButton
+                title="Fans out ResumeTask across every abandoned task in this feature."
+                onClick={() => void resumeAbandoned()}
+                disabled={busy}
+                label={`Resume ${state.resumableCount} abandoned task${state.resumableCount === 1 ? "" : "s"}`}
+                sub="Flips each abandoned task back to pending with a resume hint. Skips tasks that are not abandoned."
               />
             )}
           </div>

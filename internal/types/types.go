@@ -1316,6 +1316,19 @@ type ResumeTaskResult struct {
 	Reason             string `json:"reason,omitempty"` // populated when Resumed=false
 }
 
+// ResumeFeatureResult is the response for POST /features/{featureId}/resume.
+// Each task in the feature gets its own ResumeTaskResult in Results.
+// TotalResumed / TotalSkipped are convenience counters — the sum of the two
+// equals len(Results). A single task that errored during processing is
+// reported as a skipped result with Reason describing the error, so partial
+// failures don't fail the whole batch.
+type ResumeFeatureResult struct {
+	FeatureID     string             `json:"feature_id"`
+	TotalResumed  int                `json:"total_resumed"`
+	TotalSkipped  int                `json:"total_skipped"`
+	Results       []ResumeTaskResult `json:"results"`
+}
+
 // RunnerStatusResponse is the response for GET /tasks/runner/status.
 type RunnerStatusResponse struct {
 	Running                  bool     `json:"running"`

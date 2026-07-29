@@ -1568,6 +1568,80 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 	return result, nil
 }
 
+// ResumeFeature fans out ResumeTask across every task in the feature, gathering
+// per-task outcomes into a single response. Non-abandoned tasks appear as
+// skipped results with an explanatory Reason — the batch does NOT fail if some
+// tasks are unresumable, so callers can invoke this optimistically ("resume
+// everything you can in this feature") without pre-filtering.
+//
+// Errors from individual ResumeTask calls (unlike no-op skips) are converted
+// into skipped results with the error text in Reason. The overall call only
+// returns an error for setup failures (feature enumeration, storage failure).
+func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureID string, opts *types.ResumeTaskOptions) (*types.ResumeFeatureResult, error) {
+	if opts == nil {
+		opts = &types.ResumeTaskOptions{}
+	}
+	sanitizedProjectID := strings.TrimSpace(projectID)
+	sanitizedFeatureID := strings.TrimSpace(featureID)
+	if sanitizedProjectID == "" {
+		return nil, fmt.Errorf("resume feature: projectID is required")
+	}
+	if sanitizedFeatureID == "" {
+		return nil, fmt.Errorf("resume feature: featureID is required")
+	}
+
+	// Enumerate feature tasks. Uses the same filesystem helper CheckoutFeature
+	// uses so we stay consistent with how features are grouped.
+	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
+	if err != nil {
+		return nil, fmt.Errorf("resume feature: enumerate tasks: %w", err)
+	}
+
+	result := &types.ResumeFeatureResult{
+		FeatureID: sanitizedFeatureID,
+		Results:   make([]types.ResumeTaskResult, 0, len(featureTasks)),
+	}
+
+	for _, task := range featureTasks {
+		if task.ID == "" {
+			continue
+		}
+		taskResult, err := s.ResumeTask(ctx, sanitizedProjectID, task.ID, opts)
+		if err != nil {
+			// Per-task failure → skipped result with error in Reason so the
+			// caller sees partial failures without the whole batch failing.
+			slog.Warn("resume feature: per-task ResumeTask failed",
+				"project", sanitizedProjectID,
+				"feature", sanitizedFeatureID,
+				"task_id", task.ID,
+				"error", err,
+			)
+			result.Results = append(result.Results, types.ResumeTaskResult{
+				TaskID:  task.ID,
+				Resumed: false,
+				Reason:  fmt.Sprintf("resume error: %v", err),
+			})
+			result.TotalSkipped++
+			continue
+		}
+		result.Results = append(result.Results, *taskResult)
+		if taskResult.Resumed {
+			result.TotalResumed++
+		} else {
+			result.TotalSkipped++
+		}
+	}
+
+	slog.Info("resume feature: batch complete",
+		"project", sanitizedProjectID,
+		"feature", sanitizedFeatureID,
+		"total_resumed", result.TotalResumed,
+		"total_skipped", result.TotalSkipped,
+		"force", opts.Force,
+	)
+	return result, nil
+}
+
 // countCompletedRuns counts runs with terminal-ish statuses.
 // Mirrors countRuns in internal/runner/schedule.go.
 func countCompletedRuns(runs []types.CronRun) int {

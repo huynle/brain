@@ -40,10 +40,46 @@ export function TaskModal(): JSX.Element {
 
   return (
     <Modal
-      title={task.title || task.id}
+      title={
+        <>
+          {task.title || task.id}
+          {task.is_abandoned && (
+            <span
+              className="life-badge abandoned"
+              style={{ marginLeft: 8 }}
+              title={
+                task.abandon_reason
+                  ? `Abandoned (${task.abandon_reason})`
+                  : "Abandoned"
+              }
+            >
+              abandoned
+            </span>
+          )}
+          {task.resume_requested && !task.is_abandoned && (
+            <span
+              className="life-badge"
+              style={{ marginLeft: 8 }}
+              title="Resume requested; runner will pick up on next poll"
+            >
+              resume pending
+            </span>
+          )}
+        </>
+      }
       onClose={close}
       footer={
         <>
+          {(task.is_abandoned || task.resume_requested) && (
+            <button
+              onClick={() =>
+                openModal("task-actions", { projectId, taskId: task.id })
+              }
+              title="Manual resume for abandoned tasks (opens the Task Actions dialog)"
+            >
+              Actions…
+            </button>
+          )}
           <button
             onClick={() => {
               close();

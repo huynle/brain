@@ -717,6 +717,11 @@ body.sidebar-collapsed #app {
 .life-badge.finished { color: #6fca7d; border-color: #6fca7d55; background: #6fca7d11; }
 .life-badge.mr { color: #6a8bff; border-color: #6a8bff55; background: #6a8bff11; }
 .life-badge.merged { color: #b98cff; border-color: #b98cff55; background: #b98cff11; }
+/* Abandoned tasks — amber-orange to signal "needs attention, has a recovery
+ * path". Distinct enough from .blocked (red = error/dead-end) and .active
+ * (yellow = healthy in-flight). Reuses the same border/background alpha
+ * pattern so it slots into the palette without introducing a new tone. */
+.life-badge.abandoned { color: #e08c3a; border-color: #e08c3a55; background: #e08c3a11; }
 .feat-head .age {
   flex: 0 0 auto;
   color: #6b757e;

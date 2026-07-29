@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -1587,6 +1588,24 @@ var terminalStatuses = map[string]bool{
 	"archived":   true,
 }
 
+// resumeFeatureInFlight guards ResumeFeature against a concurrent second
+// call on the same feature racing through the same task set. Two Resume
+// clicks during PWA lag or a webhook + user click both firing would
+// otherwise emit duplicate task.resume_requested + task.status_changed
+// events. The lock is per-feature (project|feature key) so different
+// features can resume in parallel; only same-feature calls serialize.
+//
+// Uses sync.Map + sync.Mutex to avoid pre-allocating a Mutex per feature.
+// Fast path: LoadOrStore returns an existing Mutex; slow path creates one.
+var resumeFeatureInFlight sync.Map // key "proj|feature" → *sync.Mutex
+
+// resumeFeatureMaxResults caps ResumeFeatureResult.Results before the
+// handler serializes it. A feature with 5000 tasks would otherwise produce
+// a multi-MB JSON response fully buffered in memory. Callers that need to
+// audit per-task outcomes past this cap can page via /tasks?feature_id=X
+// and use the aggregate Total* counters as the source of truth.
+const resumeFeatureMaxResults = 200
+
 // ResumeFeature fans out ResumeTask across every task in the feature, gathering
 // per-task outcomes into a single response. Non-abandoned tasks appear as
 // skipped results with an explanatory Reason — the batch does NOT fail if some
@@ -1611,6 +1630,20 @@ func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureI
 	}
 	if sanitizedFeatureID == "" {
 		return nil, fmt.Errorf("resume feature: featureID is required")
+	}
+
+	// Per-feature in-flight lock: two concurrent POSTs to /resume for the
+	// same feature would otherwise both enumerate the same task list and
+	// emit duplicate events. Serialize on (project, feature). Different
+	// features still run in parallel. LoadOrStore is atomic; the mutex is
+	// GC'd naturally once no goroutine references the sync.Map key —
+	// acceptable memory profile for a bounded feature namespace.
+	lockKey := sanitizedProjectID + "|" + sanitizedFeatureID
+	mu, _ := resumeFeatureInFlight.LoadOrStore(lockKey, &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
+	defer mu.(*sync.Mutex).Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	// Enumerate feature tasks. Uses the same filesystem helper CheckoutFeature
@@ -1684,6 +1717,13 @@ func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureI
 		} else {
 			result.TotalSkipped++
 		}
+	}
+
+	// Bound response size for large features. Aggregate counters remain
+	// accurate; only the per-task detail array is truncated. Callers that
+	// need the full audit fall back to querying tasks?feature_id=X.
+	if len(result.Results) > resumeFeatureMaxResults {
+		result.Results = result.Results[:resumeFeatureMaxResults]
 	}
 
 	slog.Info("resume feature: batch complete",

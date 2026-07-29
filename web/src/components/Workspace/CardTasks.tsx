@@ -9,9 +9,11 @@
 import { useMemo } from "react";
 import { useModal } from "../../store/modal";
 import { useWorkspace } from "../../store/workspace";
+import { useUI } from "../../store/ui";
 import { useRunners } from "../../hooks/useRunners";
 import { useContextMenu } from "../common/ContextMenu";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
+import { runOrTriggerTask, summarizeTriggerResults } from "../../lib/api";
 import type { Task } from "../../lib/types";
 import type { DerivedFeature } from "../../lib/features";
 
@@ -60,6 +62,7 @@ export function CardTasks({
   features,
 }: CardTasksProps): JSX.Element {
   const openModal = useModal((s) => s.open);
+  const toast = useUI((s) => s.toast);
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
   const openInFocus = useWorkspace((s) => s.openInFocus);
@@ -171,12 +174,36 @@ export function CardTasks({
                   }
                   onContextMenu={(e) => {
                     e.preventDefault();
-                    ctx.open(e.clientX, e.clientY, [
+                    const items: Array<{
+                      id: string;
+                      label: string;
+                      onClick: () => void;
+                    }> = [
                       {
                         id: "modal",
                         label: "Task details",
                         onClick: () =>
                           openModal("task", { projectId, taskId: t.id }),
+                      },
+                      {
+                        id: "run",
+                        label: "Run task now",
+                        onClick: async () => {
+                          try {
+                            const r = await runOrTriggerTask(
+                              projectId,
+                              t.id,
+                              false,
+                            );
+                            const { message, kind } = summarizeTriggerResults([r]);
+                            toast(message, kind);
+                          } catch (err) {
+                            toast(
+                              `Run failed: ${err instanceof Error ? err.message : String(err)}`,
+                              "error",
+                            );
+                          }
+                        },
                       },
                       {
                         id: "focus-detail",
@@ -198,7 +225,25 @@ export function CardTasks({
                             `Logs ${t.id.slice(0, 8)}`,
                           ),
                       },
-                    ]);
+                    ];
+                    // Surface Resume as a context-menu item when the task
+                    // looks resumable — otherwise the affordance is buried
+                    // two clicks deep in TaskModal → Actions… for the
+                    // exact case (abandoned task) where users need it fast.
+                    if (t.is_abandoned || t.resume_requested) {
+                      items.push({
+                        id: "resume",
+                        label: t.is_abandoned
+                          ? "Resume abandoned task"
+                          : "Resume (already requested)",
+                        onClick: () =>
+                          openModal("task-actions", {
+                            projectId,
+                            taskId: t.id,
+                          }),
+                      });
+                    }
+                    ctx.open(e.clientX, e.clientY, items);
                   }}
                   draggable
                   onDragStart={(e) =>

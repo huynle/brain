@@ -1217,6 +1217,27 @@ type RunFeatureResponse struct {
 	CascadeActive   bool              `json:"cascadeActive,omitempty"`
 }
 
+// RunProjectRequest is the body for POST /tasks/:projectId/run.
+type RunProjectRequest struct {
+	Force bool `json:"force,omitempty"`
+}
+
+// RunProjectResponse is the response for POST /tasks/:projectId/run — a
+// project-scoped fanout that runs every ready feature in the project. The
+// server iterates the feature-ready list and calls RunFeatureNow per feature.
+// Features that had no ready tasks appear in the results with a reason;
+// aggregated dispatch counts summarize the batch. Non-fatal per-feature
+// errors surface as skipped entries so partial success doesn't fail the batch.
+type RunProjectResponse struct {
+	ProjectID           string                `json:"projectId"`
+	FeaturesConsidered  int                   `json:"featuresConsidered"`
+	FeaturesDispatched  int                   `json:"featuresDispatched"`
+	FeaturesSkipped     int                   `json:"featuresSkipped"`
+	TotalTasksDispatched int                  `json:"totalTasksDispatched"`
+	Results             []RunFeatureResponse `json:"results,omitempty"`
+	Reason              string                `json:"reason,omitempty"`
+}
+
 // ClaimStatusResponse is the response for GET /tasks/:projectId/:taskId/claim-status.
 type ClaimStatusResponse struct {
 	TaskID    string `json:"taskId"`

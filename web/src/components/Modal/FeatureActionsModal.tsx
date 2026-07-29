@@ -14,7 +14,7 @@
  */
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import { Modal } from "../common/Modal";
-import { checkoutFeature, resumeFeature, runBlockedInspectorNow, summarizeResumeResults } from "../../lib/api";
+import { checkoutFeature, resumeFeature, runFeature, runBlockedInspectorNow, summarizeResumeResults, summarizeRunFeatureResult } from "../../lib/api";
 import { useLive } from "../../lib/sse";
 import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
@@ -145,6 +145,23 @@ export function FeatureActionsModal(): JSX.Element {
     }
   }
 
+  async function runNow() {
+    setBusy(true);
+    try {
+      const result = await runFeature(projectId, featureId, false);
+      const { message, kind } = summarizeRunFeatureResult(result);
+      toast(message, kind);
+      close();
+    } catch (err) {
+      toast(
+        `Run feature failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const summary = `${state.taskCount} task${state.taskCount === 1 ? "" : "s"} · ${state.readyCount} ready · ${state.incompleteCount} incomplete`;
 
   return (
@@ -251,6 +268,13 @@ export function FeatureActionsModal(): JSX.Element {
                 sub="Flips each abandoned task back to pending with a resume hint. Skips tasks that are not abandoned."
               />
             )}
+            <ActionButton
+              title="Push-dispatch every ready task in this feature (up to runner capacity); queues the rest for the feature-scoped cascade."
+              onClick={() => void runNow()}
+              disabled={busy}
+              label="Run feature now"
+              sub="Dispatches ready tasks immediately. Cascade continues as slots free — even while the project is paused."
+            />
           </div>
         </div>
       )}

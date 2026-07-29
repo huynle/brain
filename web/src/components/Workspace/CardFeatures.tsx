@@ -8,9 +8,11 @@
  */
 import { useModal } from "../../store/modal";
 import { useWorkspace } from "../../store/workspace";
+import { useUI } from "../../store/ui";
 import { useRunners } from "../../hooks/useRunners";
 import { useContextMenu } from "../common/ContextMenu";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
+import { runFeature, summarizeRunFeatureResult } from "../../lib/api";
 import type { DerivedFeature } from "../../lib/features";
 
 const LIFECYCLE_TONE = {
@@ -39,6 +41,7 @@ export function CardFeatures({
   const openModal = useModal((s) => s.open);
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
+  const toast = useUI((s) => s.toast);
   const mergedExpanded = useWorkspace(
     (s) => s.mergedExpanded[projectId] ?? false,
   );
@@ -101,7 +104,11 @@ export function CardFeatures({
               }}
               onContextMenu={(e) => {
                 e.preventDefault();
-                ctx.open(e.clientX, e.clientY, [
+                const items: Array<{
+                  id: string;
+                  label: string;
+                  onClick: () => void;
+                }> = [
                   {
                     id: "meta",
                     label: "Feature details",
@@ -109,25 +116,54 @@ export function CardFeatures({
                       openModal("feature", { projectId, featureId: f.id }),
                   },
                   {
+                    id: "run",
+                    label: "Run feature now",
+                    onClick: async () => {
+                      try {
+                        const r = await runFeature(projectId, f.id, false);
+                        const { message, kind } = summarizeRunFeatureResult(r);
+                        toast(message, kind);
+                      } catch (err) {
+                        toast(
+                          `Run feature failed: ${err instanceof Error ? err.message : String(err)}`,
+                          "error",
+                        );
+                      }
+                    },
+                  },
+                  {
                     id: "plan",
                     label: "Open plan drawer",
                     onClick: () => openFeatureDrawer(projectId, f.id),
                   },
-                  ...(f.prUrl
-                    ? [
-                        {
-                          id: "mr",
-                          label: "Open merge request",
-                          onClick: () =>
-                            window.open(
-                              f.prUrl,
-                              "_blank",
-                              "noopener,noreferrer",
-                            ),
-                        },
-                      ]
-                    : []),
-                ]);
+                ];
+                // Resume as a first-class context-menu action when the
+                // feature has any abandoned tasks. Opens the FeatureActions
+                // modal at the menu view where Resume is one click away.
+                if ((f.resumableCount ?? 0) > 0) {
+                  items.push({
+                    id: "resume",
+                    label: `Resume ${f.resumableCount} abandoned task${f.resumableCount === 1 ? "" : "s"}`,
+                    onClick: () =>
+                      openModal("feature-actions", {
+                        projectId,
+                        featureId: f.id,
+                      }),
+                  });
+                }
+                if (f.prUrl) {
+                  items.push({
+                    id: "mr",
+                    label: "Open merge request",
+                    onClick: () =>
+                      window.open(
+                        f.prUrl,
+                        "_blank",
+                        "noopener,noreferrer",
+                      ),
+                  });
+                }
+                ctx.open(e.clientX, e.clientY, items);
               }}
             >
               <span className="name">{f.name}</span>

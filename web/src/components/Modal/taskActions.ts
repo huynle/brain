@@ -58,6 +58,23 @@ export function computeTaskResumeState(task: Task | null | undefined): TaskResum
     };
   }
 
+  // Stuck-pending recovery: the runner can auto-reset a task to pending on
+  // claim-renewal failure (runner.go renewClaims 404 → pending). Such tasks
+  // don't carry is_abandoned=true (no claim to enrich from) and don't carry
+  // resume_requested (never went through /resume). The server explicitly
+  // supports resuming these with force=true (see
+  // TestResumeTask_StuckPendingUnstuck). Surface a Force affordance so the
+  // user can flip it back with the resume prompt.
+  if (task.status === "pending" && !task.resume_requested) {
+    return {
+      showResume: true,
+      canResumeCleanly: false,
+      alreadyResumed: false,
+      reasonHint: "Task is pending but was not started via Resume",
+      forceHint: "Force stamps the resume flag so the next runner spawn uses IsResume=true",
+    };
+  }
+
   // Non-abandoned tasks in a state that permits force. Terminal statuses are
   // out — trigger is the right button for those. In-progress with a live claim
   // is out — force wouldn't help (server would refuse the live-claim safety).

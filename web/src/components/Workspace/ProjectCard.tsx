@@ -12,8 +12,10 @@ import { useState, useMemo } from "react";
 import { useLive } from "../../lib/sse";
 import { useWorkspace } from "../../store/workspace";
 import { useModal } from "../../store/modal";
+import { useUI } from "../../store/ui";
 import { deriveFeatures, type DerivedFeature } from "../../lib/features";
 import { useContextMenu } from "../common/ContextMenu";
+import { runProject, summarizeRunProjectResult } from "../../lib/api";
 import { CardTasks } from "./CardTasks";
 import { CardFeatures } from "./CardFeatures";
 import { CardAutomations } from "./CardAutomations";
@@ -72,6 +74,7 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const openModal = useModal((s) => s.open);
   const hideProject = useWorkspace((s) => s.hideProject);
+  const toast = useUI((s) => s.toast);
 
   const stats = useMemo(() => statsFor(tasks), [tasks]);
   const features = useMemo(
@@ -109,7 +112,43 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
       data-project={projectId}
       style={{ maxHeight: 460 }}
     >
-      <div className="pcard-head">
+      <div
+        className="pcard-head"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          ctx.open(e.clientX, e.clientY, [
+            {
+              id: "run-project",
+              label: "Run all ready features",
+              onClick: async () => {
+                try {
+                  const r = await runProject(projectId, false);
+                  toast(
+                    summarizeRunProjectResult(r),
+                    r.totalTasksDispatched > 0 ? "success" : "info",
+                  );
+                } catch (err) {
+                  toast(
+                    `Run project failed: ${err instanceof Error ? err.message : String(err)}`,
+                    "error",
+                  );
+                }
+              },
+            },
+            {
+              id: "focus-tasks",
+              label: "Open task list in focus",
+              onClick: () =>
+                openInFocus("task-detail", { projectId }, projectId),
+            },
+            {
+              id: "hide",
+              label: "Hide from workspace",
+              onClick: () => hideProject(projectId),
+            },
+          ]);
+        }}
+      >
         <span
           className={`dot ${!hasSnapshot ? "" : stats.active ? "busy" : "on"}`}
           title={!hasSnapshot ? "connecting…" : connected ? "live" : "reconnecting"}

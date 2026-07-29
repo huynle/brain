@@ -173,6 +173,14 @@ type RunFeatureService interface {
 	RunFeatureNow(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error)
 }
 
+// RunProjectService backs POST /tasks/{projectId}/run — fans out RunFeatureNow
+// across every ready feature in a project. Optional capability (mirrors
+// RunFeatureService); when nil the handler returns 501 so the PWA can fall
+// back gracefully. In production satisfied by *service.SchedulerService.
+type RunProjectService interface {
+	RunProjectNow(ctx context.Context, projectID string, force bool) (*types.RunProjectResponse, error)
+}
+
 // SchedulerVisibilityService exposes persisted scheduler placement artifacts.
 type SchedulerVisibilityService interface {
 	GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error)

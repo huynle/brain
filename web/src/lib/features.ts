@@ -76,6 +76,11 @@ export interface DerivedFeature {
    *  order so drag-drop assignment in a later phase can address a
    *  stable list. */
   ownerTaskIds: string[];
+  /** Number of tasks in this feature currently flagged is_abandoned
+   *  by the server (offline-runner claim, expired lease, orphan
+   *  reaped). Used by CardFeatures + FeatureModal to surface the
+   *  Resume affordance. Zero when nothing is resumable. */
+  resumableCount: number;
 }
 
 /**
@@ -122,6 +127,7 @@ function deriveOne(
   let validated = 0;
   let blocked = 0;
   let active = 0; // pending + in_progress
+  let resumable = 0;
   let prUrl: string | undefined;
   let mergePolicy: string | undefined;
   const ownerTaskIds: string[] = [];
@@ -146,6 +152,7 @@ function deriveOne(
         active++;
         break;
     }
+    if (t.is_abandoned) resumable++;
     if (!prUrl) {
       const url = extractPrUrl(t);
       if (url) prUrl = url;
@@ -182,6 +189,7 @@ function deriveOne(
     mergePolicy,
     prUrl,
     ownerTaskIds,
+    resumableCount: resumable,
   };
 }
 

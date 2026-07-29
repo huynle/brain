@@ -462,6 +462,51 @@ export const resumeFeature = (
     },
   );
 
+/** Response from POST /tasks/{project}/run — fans out RunFeatureNow across
+ *  every ready feature in the project. Skipped features (no ready tasks)
+ *  show up in results with a reason and count in featuresSkipped. */
+export interface RunProjectResponse {
+  projectId: string;
+  featuresConsidered: number;
+  featuresDispatched: number;
+  featuresSkipped: number;
+  totalTasksDispatched: number;
+  results?: RunFeatureResponse[];
+  reason?: string;
+}
+
+// runProject dispatches every ready feature in the project in one call.
+// Convenience over calling /features/{f}/run repeatedly from the client;
+// server iterates and calls RunFeatureNow per feature. Returns 501 if the
+// backend isn't wired for project-level runs — callers should gracefully
+// fall back to per-feature dispatch.
+export const runProject = (projectId: string, force = false) =>
+  api<RunProjectResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/run`,
+    {
+      method: "POST",
+      body: { force },
+    },
+  );
+
+// One-line toast summary of a project-scoped run. Mirrors
+// summarizeRunFeatureResult style so calling code can reuse the pattern.
+export const summarizeRunProjectResult = (r: RunProjectResponse): string => {
+  if (r.featuresConsidered === 0) {
+    return r.reason === "no_ready_tasks"
+      ? "No ready tasks in project"
+      : "No features to run";
+  }
+  if (r.featuresDispatched === 0) {
+    return `Nothing dispatched (${r.featuresSkipped} feature${r.featuresSkipped === 1 ? "" : "s"} skipped)`;
+  }
+  const fs = r.featuresDispatched === 1 ? "" : "s";
+  const ts = r.totalTasksDispatched === 1 ? "" : "s";
+  const skipped =
+    r.featuresSkipped > 0 ? ` · ${r.featuresSkipped} feature${r.featuresSkipped === 1 ? "" : "s"} skipped` : "";
+  return `Dispatched ${r.totalTasksDispatched} task${ts} across ${r.featuresDispatched} feature${fs}${skipped}`;
+};
+
 // One-line toast summary of a batch resume. Mirrors summarizeTriggerResults
 // style so calling code can reuse the same UX pattern.
 export const summarizeResumeResults = (r: ResumeFeatureResult): string => {

@@ -1568,11 +1568,29 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 	return result, nil
 }
 
+// terminalStatuses is the set of statuses that ResumeFeature refuses to
+// touch during a batch — even when force=true. Force is meant to bypass
+// the "not abandoned" abandonment gate for individual tasks (e.g. blocked
+// tasks with no reaper marker); it must NOT resurrect work that already
+// reached a terminal state. Per-task terminal resumes still work via the
+// single-task endpoint's force path if the caller genuinely means it.
+var terminalStatuses = map[string]bool{
+	"completed":  true,
+	"validated":  true,
+	"cancelled":  true,
+	"superseded": true,
+	"archived":   true,
+}
+
 // ResumeFeature fans out ResumeTask across every task in the feature, gathering
 // per-task outcomes into a single response. Non-abandoned tasks appear as
 // skipped results with an explanatory Reason — the batch does NOT fail if some
 // tasks are unresumable, so callers can invoke this optimistically ("resume
 // everything you can in this feature") without pre-filtering.
+//
+// Force semantics at batch level: bypasses the abandonment gate for tasks
+// whose runtime state doesn't automatically qualify, but explicitly does NOT
+// bypass the terminal-status gate. See terminalStatuses above.
 //
 // Errors from individual ResumeTask calls (unlike no-op skips) are converted
 // into skipped results with the error text in Reason. The overall call only
@@ -1606,6 +1624,30 @@ func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureI
 		if task.ID == "" {
 			continue
 		}
+		// Terminal-status guard — the safety net against a batch force
+		// silently resurrecting historically-completed work. This runs
+		// BEFORE ResumeTask because ResumeTask.force bypasses the terminal
+		// gate at the single-task level (that's an intentional escape
+		// hatch for direct API/curl use, not for batch fanout).
+		if terminalStatuses[task.Status] {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, ctxErr
+			}
+			result.Results = append(result.Results, types.ResumeTaskResult{
+				TaskID:      task.ID,
+				Resumed:     false,
+				PriorStatus: task.Status,
+				Reason:      fmt.Sprintf("terminal_status_excluded_from_batch (%s)", task.Status),
+			})
+			result.TotalSkipped++
+			continue
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// Bail early on client disconnect / cancellation. Preserves
+			// results gathered so far and surfaces the cancellation to
+			// the caller.
+			return result, ctxErr
+		}
 		taskResult, err := s.ResumeTask(ctx, sanitizedProjectID, task.ID, opts)
 		if err != nil {
 			// Per-task failure → skipped result with error in Reason so the
@@ -1619,7 +1661,7 @@ func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureI
 			result.Results = append(result.Results, types.ResumeTaskResult{
 				TaskID:  task.ID,
 				Resumed: false,
-				Reason:  fmt.Sprintf("resume error: %v", err),
+				Reason:  "internal_error",
 			})
 			result.TotalSkipped++
 			continue

@@ -440,6 +440,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithSchedulerVisibilityService(store),
 		api.WithRunTaskService(schedulerSvc),
 		api.WithRunFeatureService(schedulerSvc),
+		api.WithRunProjectService(schedulerSvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),

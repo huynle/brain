@@ -520,6 +520,9 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/features/{featureId}/assignment/clear", o.handler.HandleClearFeatureAssignment)
 							r.Post("/features/{featureId}/run", o.handler.HandleRunFeature)
 							r.Post("/features/{featureId}/resume", o.handler.HandleResumeFeature)
+							// Project-level fanout: run every ready feature in this project.
+							// Distinct from /features/{featureId}/run — no featureId path segment.
+							r.Post("/run", o.handler.HandleRunProject)
 							r.Post("/{taskId}/trigger", o.handler.HandleTriggerTask)
 							r.Post("/{taskId}/dispatch", o.handler.HandleDispatchTask)
 							r.Post("/{taskId}/run", o.handler.HandleRunTask)
@@ -530,6 +533,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/features/{featureId}/assignment/clear", notImplemented)
 							r.Post("/features/{featureId}/run", notImplemented)
 							r.Post("/features/{featureId}/resume", notImplemented)
+							r.Post("/run", notImplemented)
 							r.Post("/{taskId}/trigger", notImplemented)
 							r.Post("/{taskId}/dispatch", notImplemented)
 							r.Post("/{taskId}/run", notImplemented)

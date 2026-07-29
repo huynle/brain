@@ -1,12 +1,15 @@
 /**
  * TaskModal — wireframe-parity.
  */
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Modal } from "../common/Modal";
 import { useModal } from "../../store/modal";
 import { useWorkspace } from "../../store/workspace";
 import { useLive } from "../../lib/sse";
+import { useUI } from "../../store/ui";
+import { runOrTriggerTask, summarizeTriggerResults } from "../../lib/api";
 import type { Task } from "../../lib/types";
+import { computeTaskResumeState } from "./taskActions";
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
 
@@ -15,6 +18,8 @@ export function TaskModal(): JSX.Element {
   const openModal = useModal((s) => s.open);
   const close = useModal((s) => s.close);
   const openInFocus = useWorkspace((s) => s.openInFocus);
+  const toast = useUI((s) => s.toast);
+  const [running, setRunning] = useState(false);
 
   const taskId =
     (target?.taskId as string | undefined) ??
@@ -27,6 +32,7 @@ export function TaskModal(): JSX.Element {
     () => tasks.find((t) => t.id === taskId),
     [tasks, taskId],
   );
+  const resumeState = useMemo(() => computeTaskResumeState(task), [task]);
 
   if (!task) {
     return (
@@ -70,16 +76,41 @@ export function TaskModal(): JSX.Element {
       onClose={close}
       footer={
         <>
-          {(task.is_abandoned || task.resume_requested) && (
+          {resumeState.showResume && (
             <button
               onClick={() =>
                 openModal("task-actions", { projectId, taskId: task.id })
               }
-              title="Manual resume for abandoned tasks (opens the Task Actions dialog)"
+              title={
+                resumeState.canResumeCleanly
+                  ? "Resume this task (opens the Task Actions dialog)"
+                  : "Force resume — bypasses the abandonment gate (opens confirm dialog)"
+              }
             >
               Actions…
             </button>
           )}
+          <button
+            disabled={running}
+            onClick={async () => {
+              setRunning(true);
+              try {
+                const r = await runOrTriggerTask(projectId, task.id, false);
+                const { message, kind } = summarizeTriggerResults([r]);
+                toast(message, kind);
+              } catch (err) {
+                toast(
+                  `Run failed: ${err instanceof Error ? err.message : String(err)}`,
+                  "error",
+                );
+              } finally {
+                setRunning(false);
+              }
+            }}
+            title="Push-dispatch this task to a ready runner now (falls back to trigger)"
+          >
+            {running ? "Running…" : "Run now"}
+          </button>
           <button
             onClick={() => {
               close();

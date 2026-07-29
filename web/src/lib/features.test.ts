@@ -293,5 +293,6 @@ function mkFeat(id: string, lifecycle: DerivedFeature["lifecycle"]): DerivedFeat
     lifecycle,
     taskCount: { total: 0, completed: 0, blocked: 0, active: 0 },
     ownerTaskIds: [],
+    resumableCount: 0,
   };
 }

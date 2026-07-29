@@ -1043,6 +1043,46 @@ func (h *Handler) HandleRunFeature(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleRunProject handles POST /tasks/{projectId}/run — fans out
+// RunFeatureNow across every ready feature in the project. Idempotent-safe:
+// features with no ready tasks appear in the results with a reason and
+// nothing else happens for them; features that ARE ready dispatch their
+// next task(s) per RunFeatureNow's normal contract.
+//
+// Body: {force?: bool} — Force applies uniformly to every feature dispatch.
+// Response: RunProjectResponse with aggregate counts + per-feature results.
+//
+// Returns 501 when the RunProjectService is not configured so PWA can fall
+// back gracefully (e.g. iterate features and call /run per feature).
+func (h *Handler) HandleRunProject(w http.ResponseWriter, r *http.Request) {
+	if h.runProject == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "run-project service is not configured")
+		return
+	}
+
+	projectId := chi.URLParam(r, "projectId")
+
+	var req types.RunProjectRequest
+	if r.Body != nil && r.ContentLength != 0 {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+			return
+		}
+	}
+
+	resp, err := h.runProject.RunProjectNow(r.Context(), projectId, req.Force)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			WriteError(w, http.StatusNotFound, "Not Found", "project not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandlePauseProject handles POST /tasks/runner/pause/{projectId}.
 func (h *Handler) HandlePauseProject(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")

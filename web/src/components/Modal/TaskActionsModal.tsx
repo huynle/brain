@@ -112,6 +112,7 @@ export function TaskActionsModal(): JSX.Element {
         // the menu view lets Esc close the modal entirely.
         view === "confirmForce" ? () => setView("menu") : close
       }
+      refocusKey={view}
       footer={
         view === "menu" ? (
           <>

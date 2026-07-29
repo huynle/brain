@@ -172,6 +172,7 @@ export function FeatureActionsModal(): JSX.Element {
         // the "Esc = No" hint); anywhere else close the whole modal.
         view === "confirmForce" ? () => setView("menu") : close
       }
+      refocusKey={view}
       footer={
         view === "menu" ? (
           <>

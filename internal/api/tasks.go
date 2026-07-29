@@ -15,6 +15,13 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
+// resumeFeatureMaxResults caps ResumeFeatureResult.Results in the HTTP
+// response body. Kept as a handler-local constant to avoid a service
+// import (service is the source of truth for the computed batch, but the
+// wire-level cap is a handler concern — service produces the full loop,
+// handler emits SSE from the full slice, THEN truncates for the body).
+const resumeFeatureMaxResults = 200
+
 // smallBodyMaxBytes caps optional JSON bodies for /resume + /run endpoints
 // whose only content is a shape like {"force": bool}. 4 KiB is plenty and
 // prevents an attacker from streaming megabytes of garbage into the decoder.
@@ -954,8 +961,11 @@ func (h *Handler) HandleResumeFeature(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Emit an event per actually-resumed task so PWA SSE consumers refresh
-	// individual task rows. The batch-level event is intentionally NOT emitted
-	// — the per-task events + feature-progress recomputation give downstream
+	// individual task rows. Emission runs on the FULL Results slice BEFORE
+	// the response-size cap below — otherwise tasks 201+ would silently
+	// miss their SSE update and users would see stale rows until manual
+	// refresh. The batch-level event is intentionally NOT emitted — the
+	// per-task events + feature-progress recomputation give downstream
 	// clients enough signal without a new event type.
 	if resp != nil {
 		for _, tr := range resp.Results {
@@ -986,6 +996,17 @@ func (h *Handler) HandleResumeFeature(w http.ResponseWriter, r *http.Request) {
 			statusEvt.FromStatus = tr.PriorStatus
 			statusEvt.ToStatus = "pending"
 			h.emitEvent(r.Context(), statusEvt)
+		}
+
+		// Now cap Results for the response body. Wire in the Truncated
+		// + TotalResults hints so clients know the audit trail is partial
+		// and where to look for the rest. Aggregate TotalResumed/
+		// TotalSkipped are already correct because they were computed over
+		// the full loop in the service.
+		if len(resp.Results) > resumeFeatureMaxResults {
+			resp.TotalResults = len(resp.Results)
+			resp.Truncated = true
+			resp.Results = resp.Results[:resumeFeatureMaxResults]
 		}
 	}
 

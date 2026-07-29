@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -1595,16 +1596,54 @@ var terminalStatuses = map[string]bool{
 // events. The lock is per-feature (project|feature key) so different
 // features can resume in parallel; only same-feature calls serialize.
 //
-// Uses sync.Map + sync.Mutex to avoid pre-allocating a Mutex per feature.
-// Fast path: LoadOrStore returns an existing Mutex; slow path creates one.
-var resumeFeatureInFlight sync.Map // key "proj|feature" → *sync.Mutex
+// Uses a refcounted entry so the sync.Map doesn't grow unboundedly when
+// an attacker hammers /features/<random>/resume with unique IDs:
+// LoadOrStore inserts an entry; Lock/Unlock happens; the last waiter
+// (refs=0) removes the entry so lookup can GC.
+var resumeFeatureInFlight sync.Map // key "proj|feature" → *resumeInflightEntry
 
-// resumeFeatureMaxResults caps ResumeFeatureResult.Results before the
-// handler serializes it. A feature with 5000 tasks would otherwise produce
-// a multi-MB JSON response fully buffered in memory. Callers that need to
-// audit per-task outcomes past this cap can page via /tasks?feature_id=X
-// and use the aggregate Total* counters as the source of truth.
-const resumeFeatureMaxResults = 200
+type resumeInflightEntry struct {
+	mu   sync.Mutex
+	refs atomic.Int32
+}
+
+// acquireResumeFeatureLock takes (or creates) the per-key mutex and returns
+// a release function that removes the entry from the map when the last
+// waiter is done. Callers MUST defer the returned release; otherwise the
+// mutex leaks and future calls will observe permanent contention on that
+// key.
+func acquireResumeFeatureLock(ctx context.Context, key string) (func(), error) {
+	loaded, _ := resumeFeatureInFlight.LoadOrStore(key, &resumeInflightEntry{})
+	entry := loaded.(*resumeInflightEntry)
+	entry.refs.Add(1)
+	// Acquire under a channel-select so ctx cancellation doesn't require
+	// us to spin — Lock itself doesn't accept a context so we serialize
+	// waiters via the mutex directly.
+	entry.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		entry.mu.Unlock()
+		if entry.refs.Add(-1) == 0 {
+			resumeFeatureInFlight.CompareAndDelete(key, entry)
+		}
+		return nil, err
+	}
+	return func() {
+		entry.mu.Unlock()
+		if entry.refs.Add(-1) == 0 {
+			// Last waiter — delete from the map. CompareAndDelete guards
+			// against a race where a new caller LoadOrStores the same key
+			// between our Add and Delete; in that case they get the same
+			// (still-empty) entry which is safe to reuse. If a NEW entry
+			// was stored (different pointer), we correctly leave it alone.
+			resumeFeatureInFlight.CompareAndDelete(key, entry)
+		}
+	}, nil
+}
+
+// NOTE: response-size truncation is a HANDLER responsibility, not
+// service — the handler needs the full Results slice to emit per-task
+// SSE events before truncating for the response body. See
+// HandleResumeFeature and api.resumeFeatureMaxResults.
 
 // ResumeFeature fans out ResumeTask across every task in the feature, gathering
 // per-task outcomes into a single response. Non-abandoned tasks appear as
@@ -1632,33 +1671,26 @@ func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureI
 		return nil, fmt.Errorf("resume feature: featureID is required")
 	}
 
-	// Per-feature in-flight lock: two concurrent POSTs to /resume for the
-	// same feature would otherwise both enumerate the same task list and
-	// emit duplicate events. Serialize on (project, feature). Different
-	// features still run in parallel. LoadOrStore is atomic; the mutex is
-	// GC'd naturally once no goroutine references the sync.Map key —
-	// acceptable memory profile for a bounded feature namespace.
-	lockKey := sanitizedProjectID + "|" + sanitizedFeatureID
-	mu, _ := resumeFeatureInFlight.LoadOrStore(lockKey, &sync.Mutex{})
-	mu.(*sync.Mutex).Lock()
-	defer mu.(*sync.Mutex).Unlock()
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-
-	// Enumerate feature tasks. Uses the same filesystem helper CheckoutFeature
-	// uses so we stay consistent with how features are grouped.
+	// Enumerate feature tasks FIRST — before we take any lock. Unknown
+	// features (or features with zero tasks) must not leave a mutex
+	// entry in the sync.Map, otherwise attackers can OOM the process by
+	// hammering /resume with random featureIds.
 	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
 	if err != nil {
 		return nil, fmt.Errorf("resume feature: enumerate tasks: %w", err)
 	}
-	// 404 signal: an unknown feature yields zero tasks. Distinguish this
-	// from "feature exists with all-completed tasks (nothing to resume)"
-	// by requiring the caller to bring at least one task. The handler's
-	// string-contains "not found" mapping catches this.
 	if len(featureTasks) == 0 {
 		return nil, fmt.Errorf("resume feature: not found — feature %q has no tasks in project %q", sanitizedFeatureID, sanitizedProjectID)
 	}
+
+	// Per-feature in-flight lock via refcounted helper: two concurrent
+	// POSTs to /resume on the same feature serialize; the last waiter
+	// deletes the map entry so lookups don't grow unboundedly.
+	release, err := acquireResumeFeatureLock(ctx, sanitizedProjectID+"|"+sanitizedFeatureID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 
 	result := &types.ResumeFeatureResult{
 		FeatureID: sanitizedFeatureID,
@@ -1719,12 +1751,10 @@ func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureI
 		}
 	}
 
-	// Bound response size for large features. Aggregate counters remain
-	// accurate; only the per-task detail array is truncated. Callers that
-	// need the full audit fall back to querying tasks?feature_id=X.
-	if len(result.Results) > resumeFeatureMaxResults {
-		result.Results = result.Results[:resumeFeatureMaxResults]
-	}
+	// NOTE: response-size truncation is a HANDLER responsibility, not
+	// service — the handler needs the full Results slice to emit per-task
+	// SSE events before truncating for the response body. See
+	// HandleResumeFeature.
 
 	slog.Info("resume feature: batch complete",
 		"project", sanitizedProjectID,

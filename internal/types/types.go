@@ -1339,15 +1339,25 @@ type ResumeTaskResult struct {
 
 // ResumeFeatureResult is the response for POST /features/{featureId}/resume.
 // Each task in the feature gets its own ResumeTaskResult in Results.
-// TotalResumed / TotalSkipped are convenience counters — the sum of the two
-// equals len(Results). A single task that errored during processing is
-// reported as a skipped result with Reason describing the error, so partial
-// failures don't fail the whole batch.
+// TotalResumed / TotalSkipped are convenience counters — computed over
+// the full loop and NOT bounded by any client-side cap on Results. When
+// the per-task detail list is truncated for response-size reasons,
+// Truncated is set to true and TotalResults carries the pre-truncation
+// count; clients that need the complete audit trail fall back to
+// GET /tasks?feature_id=X. A single task that errored during processing
+// is reported as a skipped result with Reason describing the error, so
+// partial failures don't fail the whole batch.
 type ResumeFeatureResult struct {
-	FeatureID     string             `json:"feature_id"`
-	TotalResumed  int                `json:"total_resumed"`
-	TotalSkipped  int                `json:"total_skipped"`
-	Results       []ResumeTaskResult `json:"results"`
+	FeatureID    string             `json:"feature_id"`
+	TotalResumed int                `json:"total_resumed"`
+	TotalSkipped int                `json:"total_skipped"`
+	Results      []ResumeTaskResult `json:"results"`
+	// Truncated is true when Results was capped below its natural length.
+	// TotalResumed / TotalSkipped remain authoritative regardless.
+	Truncated bool `json:"truncated,omitempty"`
+	// TotalResults is len(Results) before any client-side cap. Populated
+	// only when Truncated=true so callers know how much detail was dropped.
+	TotalResults int `json:"total_results,omitempty"`
 }
 
 // RunnerStatusResponse is the response for GET /tasks/runner/status.

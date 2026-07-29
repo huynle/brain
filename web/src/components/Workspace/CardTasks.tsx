@@ -282,7 +282,7 @@ export function CardTasks({
             <span className="age">{orphanTasks.length} tasks</span>
           </div>
           {orphanTasks.map((t) => {
-            const { glyph, cls } = taskGlyph(t.status);
+            const { glyph, cls } = taskGlyph(t.status, !!t.is_abandoned);
             return (
               <div
                 key={t.id}

@@ -32,6 +32,12 @@ export interface ModalProps {
   className?: string;
   closeOnScrimClick?: boolean;
   closeOnEscape?: boolean;
+  /** Change this value to force the modal to re-run firstFocusable and
+   *  refocus the primary action. Useful for multi-view modals
+   *  (menu → confirmForce) where the primary button changes across views;
+   *  without this, focus stays on whatever was focused when the modal
+   *  first mounted. Optional — modals with a single view can omit it. */
+  refocusKey?: string;
 }
 
 export function handleModalKeyDown(
@@ -73,6 +79,7 @@ export function Modal({
   className,
   closeOnScrimClick = true,
   closeOnEscape = true,
+  refocusKey,
 }: ModalProps): JSX.Element | null {
   const scrimRef = useRef<HTMLDivElement | null>(null);
   const dialogRef = useRef<HTMLDivElement | null>(null);
@@ -88,7 +95,8 @@ export function Modal({
     return () => {
       if (opener && opener.isConnected) opener.focus({ preventScroll: true });
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refocusKey]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

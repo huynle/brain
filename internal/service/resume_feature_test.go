@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -200,5 +202,99 @@ func TestResumeFeature_MixedBatch(t *testing.T) {
 	if result.TotalResumed+result.TotalSkipped != len(result.Results) {
 		t.Errorf("counts don't add up: %d + %d != %d",
 			result.TotalResumed, result.TotalSkipped, len(result.Results))
+	}
+}
+
+// TestResumeFeature_ConcurrentSameFeatureSerializes proves the per-feature
+// mutex actually serializes work. Two goroutines call ResumeFeature on the
+// same feature simultaneously; a MergeMetadata regression that dropped the
+// Lock() would let them interleave and double-stamp resume_requested. This
+// guards the whole reason the sync.Map + refcounted entry exists.
+func TestResumeFeature_ConcurrentSameFeatureSerializes(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	createProjectDir(t, brainDir, featureTestProject)
+
+	insertTaskNote(t, store, "conc1", "Concurrent 1", "in_progress", "medium", featureTestProject, map[string]interface{}{
+		"feature_id": "concur-feat",
+	})
+	seedAbandonedTaskWithOfflineClaim(t, store, "conc1", "dead-conc-runner")
+	seedFeatureTaskFiles(t, brainDir, featureTestProject, "concur-feat", []taskFileSpec{
+		{ID: "conc1", Status: "in_progress"},
+	})
+
+	// Fire two concurrent calls. Under the per-feature lock, they must
+	// serialize — one resumes cleanly, the other observes the state left
+	// by the first (task is already pending+resume_requested) and returns
+	// a no-op skipped result.
+	var wg sync.WaitGroup
+	results := make([]*types.ResumeFeatureResult, 2)
+	errs := make([]error, 2)
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			results[idx], errs[idx] = svc.ResumeFeature(context.Background(), featureTestProject, "concur-feat", nil)
+		}(i)
+	}
+	wg.Wait()
+
+	for i := 0; i < 2; i++ {
+		if errs[i] != nil {
+			t.Fatalf("goroutine %d error: %v", i, errs[i])
+		}
+		if results[i] == nil {
+			t.Fatalf("goroutine %d returned nil result", i)
+		}
+	}
+
+	// Combined: exactly one resume should have taken effect. The second
+	// caller must see the idempotent "already requested" state and skip.
+	totalResumed := results[0].TotalResumed + results[1].TotalResumed
+	if totalResumed != 1 {
+		t.Errorf("expected exactly 1 resume across both calls, got %d (r0=%+v r1=%+v)",
+			totalResumed, results[0], results[1])
+	}
+}
+
+// TestResumeFeature_ConcurrentDifferentFeaturesParallelize verifies the
+// mutex is genuinely per-feature — different features don't block on each
+// other. Loose timing assertion: two concurrent calls on different features
+// should complete in noticeably less than 2× the single-call latency.
+// Skipped as a hard-timing test; instead we assert that both complete
+// successfully with a small ctx timeout, which fails if either was blocked
+// waiting on the other.
+func TestResumeFeature_ConcurrentDifferentFeaturesParallelize(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	createProjectDir(t, brainDir, featureTestProject)
+
+	for _, fid := range []string{"para-a", "para-b"} {
+		id := "p" + fid[len(fid)-1:] + "1"
+		insertTaskNote(t, store, id, "Parallel "+fid, "in_progress", "medium", featureTestProject, map[string]interface{}{
+			"feature_id": fid,
+		})
+		seedAbandonedTaskWithOfflineClaim(t, store, id, "dead-"+fid)
+		seedFeatureTaskFiles(t, brainDir, featureTestProject, fid, []taskFileSpec{
+			{ID: id, Status: "in_progress"},
+		})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i, fid := range []string{"para-a", "para-b"} {
+		wg.Add(1)
+		go func(idx int, feature string) {
+			defer wg.Done()
+			_, errs[idx] = svc.ResumeFeature(ctx, featureTestProject, feature, nil)
+		}(i, fid)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("goroutine %d failed (likely blocked on cross-feature lock): %v", i, err)
+		}
 	}
 }

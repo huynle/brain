@@ -4,14 +4,59 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/huynle/brain-api/internal/types"
 )
+
+// resumeFeatureMaxResults caps ResumeFeatureResult.Results in the HTTP
+// response body. Kept as a handler-local constant to avoid a service
+// import (service is the source of truth for the computed batch, but the
+// wire-level cap is a handler concern — service produces the full loop,
+// handler emits SSE from the full slice, THEN truncates for the body).
+const resumeFeatureMaxResults = 200
+
+// smallBodyMaxBytes caps optional JSON bodies for /resume + /run endpoints
+// whose only content is a shape like {"force": bool}. 4 KiB is plenty and
+// prevents an attacker from streaming megabytes of garbage into the decoder.
+const smallBodyMaxBytes = 4 << 10 // 4 KiB
+
+// safePathParam validates chi URL params before they reach filepath.Join,
+// slog fields, or storage lookups. Bounded set: letters, digits, dots,
+// dashes, underscores. Length capped at 128. Empty is rejected.
+var safePathParamRE = regexp.MustCompile(`^[a-zA-Z0-9._-]{1,128}$`)
+
+func validatePathParam(name, value string) error {
+	if !safePathParamRE.MatchString(value) {
+		return fmt.Errorf("invalid %s: must match [a-zA-Z0-9._-]{1,128}", name)
+	}
+	return nil
+}
+
+// decodeOptionalSmallJSON decodes an optional request body into dst.
+// Zero-length or absent body is treated as "use defaults" and returns nil.
+// Unknown JSON fields are rejected (typo-shaped attacks / API drift).
+// The body is capped at smallBodyMaxBytes so a bad client can't OOM us.
+func decodeOptionalSmallJSON(w http.ResponseWriter, r *http.Request, dst interface{}) error {
+	if r.Body == nil || r.ContentLength == 0 {
+		return nil
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, smallBodyMaxBytes))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
 
 // parseTaskFilterOptions extracts optional TaskFilterOptions from query parameters.
 // Returns nil if no filter parameters are present (backward compatible).
@@ -797,6 +842,177 @@ func (h *Handler) HandleTriggerTask(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleResumeTask handles POST /tasks/{projectId}/{taskId}/resume.
+//
+// Flips an abandoned task back to pending so the runner re-spawns it with the
+// IsResume prompt template. Body is JSON {force?: bool}; empty body is fine
+// and Force defaults to false. Returns 200 with ResumeTaskResult on success,
+// including the no-op case (Resumed=false + Reason). Emits
+// EventTaskResumeRequested when the resume actually took effect so the PWA
+// gets an immediate SSE hint independently of the derived task.status_changed
+// event that MergeMetadata may or may not surface.
+func (h *Handler) HandleResumeTask(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+	if err := validatePathParam("projectId", projectId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+	if err := validatePathParam("taskId", taskId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+
+	var req types.ResumeTaskOptions
+	if err := decodeOptionalSmallJSON(w, r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	resp, err := h.tasks.ResumeTask(r.Context(), projectId, taskId, &req)
+	if err != nil {
+		// Map both wrapped ErrNotFound (canonical) AND string-contains "not
+		// found" (from service methods that don't yet wrap the sentinel) to
+		// 404 so clients can distinguish gone-from-under-us from real errors.
+		if errors.Is(err, ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	// Only emit events when the resume actually took effect. Idempotent
+	// no-ops (task already pending, terminal status, not-abandoned-without-
+	// force, still-claimed) don't warrant new fires.
+	if resp != nil && resp.Resumed {
+		taskPath := fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
+
+		// EventTaskResumeRequested — user-initiated event distinct from the
+		// automatic claim-renewal-fail reset path. Populate Metadata if
+		// either PriorStatus or AbandonReason has a value (force+terminal
+		// case has PriorStatus but no AbandonReason; typical case has both).
+		evt := types.NewEvent(types.EventTaskResumeRequested, types.EventSourceAPI)
+		evt.ProjectID = projectId
+		evt.TaskID = taskId
+		evt.TaskPath = taskPath
+		if resp.AbandonReason != "" || resp.PriorStatus != "" {
+			evt.Metadata = map[string]string{}
+			if resp.AbandonReason != "" {
+				evt.Metadata["abandon_reason"] = resp.AbandonReason
+			}
+			if resp.PriorStatus != "" {
+				evt.Metadata["prior_status"] = resp.PriorStatus
+			}
+		}
+		h.emitEvent(r.Context(), evt)
+
+		// Also emit EventTaskStatusChanged. ResumeTask uses storage.MergeMetadata
+		// directly (matching TriggerTask), which bypasses the PATCH-entries event
+		// pipeline. Without this second emit, the PWA never learns the status
+		// flipped to pending until the runner claims and status_changed fires
+		// again — several seconds of stale UI. Payload mirrors what the entries
+		// pipeline would have produced.
+		statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+		statusEvt.ProjectID = projectId
+		statusEvt.TaskID = taskId
+		statusEvt.TaskPath = taskPath
+		statusEvt.FromStatus = resp.PriorStatus
+		statusEvt.ToStatus = "pending"
+		h.emitEvent(r.Context(), statusEvt)
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleResumeFeature handles POST /tasks/{projectId}/features/{featureId}/resume.
+//
+// Fans out ResumeTask across every task in the feature. Body is JSON
+// {force?: bool}; empty body defaults Force=false. Response is a batch
+// summary — per-task results include Reason for skipped tasks so callers
+// can render partial-failure state without a second round-trip. Force applies
+// uniformly to every task in the feature (not per-task).
+func (h *Handler) HandleResumeFeature(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	featureId := chi.URLParam(r, "featureId")
+	if err := validatePathParam("projectId", projectId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+	if err := validatePathParam("featureId", featureId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+
+	var req types.ResumeTaskOptions
+	if err := decodeOptionalSmallJSON(w, r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	resp, err := h.tasks.ResumeFeature(r.Context(), projectId, featureId, &req)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			WriteError(w, http.StatusNotFound, "Not Found", "feature not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	// Emit an event per actually-resumed task so PWA SSE consumers refresh
+	// individual task rows. Emission runs on the FULL Results slice BEFORE
+	// the response-size cap below — otherwise tasks 201+ would silently
+	// miss their SSE update and users would see stale rows until manual
+	// refresh. The batch-level event is intentionally NOT emitted — the
+	// per-task events + feature-progress recomputation give downstream
+	// clients enough signal without a new event type.
+	if resp != nil {
+		for _, tr := range resp.Results {
+			if !tr.Resumed {
+				continue
+			}
+			taskPath := fmt.Sprintf("projects/%s/task/%s.md", projectId, tr.TaskID)
+
+			evt := types.NewEvent(types.EventTaskResumeRequested, types.EventSourceAPI)
+			evt.ProjectID = projectId
+			evt.TaskID = tr.TaskID
+			evt.TaskPath = taskPath
+			if tr.AbandonReason != "" || tr.PriorStatus != "" {
+				evt.Metadata = map[string]string{}
+				if tr.AbandonReason != "" {
+					evt.Metadata["abandon_reason"] = tr.AbandonReason
+				}
+				if tr.PriorStatus != "" {
+					evt.Metadata["prior_status"] = tr.PriorStatus
+				}
+			}
+			h.emitEvent(r.Context(), evt)
+
+			statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+			statusEvt.ProjectID = projectId
+			statusEvt.TaskID = tr.TaskID
+			statusEvt.TaskPath = taskPath
+			statusEvt.FromStatus = tr.PriorStatus
+			statusEvt.ToStatus = "pending"
+			h.emitEvent(r.Context(), statusEvt)
+		}
+
+		// Now cap Results for the response body. Wire in the Truncated
+		// + TotalResults hints so clients know the audit trail is partial
+		// and where to look for the rest. Aggregate TotalResumed/
+		// TotalSkipped are already correct because they were computed over
+		// the full loop in the service.
+		if len(resp.Results) > resumeFeatureMaxResults {
+			resp.TotalResults = len(resp.Results)
+			resp.Truncated = true
+			resp.Results = resp.Results[:resumeFeatureMaxResults]
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleRunTask handles POST /tasks/{projectId}/{taskId}/run.
 //
 // This is the user-explicit "run this task now" path used by the PWA "x"
@@ -886,6 +1102,48 @@ func (h *Handler) HandleRunFeature(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.runFeature.RunFeatureNow(r.Context(), projectId, featureId, req.Force)
 	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleRunProject handles POST /tasks/{projectId}/run — fans out
+// RunFeatureNow across every ready feature in the project. Idempotent-safe:
+// features with no ready tasks appear in the results with a reason and
+// nothing else happens for them; features that ARE ready dispatch their
+// next task(s) per RunFeatureNow's normal contract.
+//
+// Body: {force?: bool} — Force applies uniformly to every feature dispatch.
+// Response: RunProjectResponse with aggregate counts + per-feature results.
+//
+// Returns 501 when the RunProjectService is not configured so PWA can fall
+// back gracefully (e.g. iterate features and call /run per feature).
+func (h *Handler) HandleRunProject(w http.ResponseWriter, r *http.Request) {
+	if h.runProject == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "run-project service is not configured")
+		return
+	}
+
+	projectId := chi.URLParam(r, "projectId")
+	if err := validatePathParam("projectId", projectId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+
+	var req types.RunProjectRequest
+	if err := decodeOptionalSmallJSON(w, r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+
+	resp, err := h.runProject.RunProjectNow(r.Context(), projectId, req.Force)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			WriteError(w, http.StatusNotFound, "Not Found", "project not found")
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}

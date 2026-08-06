@@ -7,7 +7,9 @@ import { API_V1 } from "./config";
 import { useAuth } from "./auth";
 import type {
   BrainEntry,
+  CheckoutFeatureResult,
   DispatchLease,
+  FeatureCheckoutOptions,
   GoalAuditResponse,
   GoalListResponse,
   GoalProgressResponse,
@@ -22,6 +24,9 @@ import type {
   OpencodeInstance,
   SpawnInstanceSpec,
   ProjectListResponse,
+  ResumeFeatureResult,
+  ResumeTaskOptions,
+  ResumeTaskResult,
   RunnerListResponse,
   RunnerStatusResponse,
   SearchRequest,
@@ -287,6 +292,81 @@ export const runFeature = (projectId: string, featureId: string, force = false) 
     },
   );
 
+// ─── Feature assignment (Phase 8) ─────────────────────────────────
+//
+// Backend handlers live at internal/api/tasks.go:
+//   PUT  /api/v1/tasks/{projectId}/features/{featureId}/assignment
+//        body: { runner_id: string, intent: "assign"|"reassign", force?: bool }
+//   POST /api/v1/tasks/{projectId}/features/{featureId}/assignment/clear
+//        body: { intent: "clear" }
+//
+// Assignment mutations emit `runners_update` SSE events on the runners
+// lifecycle topic (see task ivwx9a8t), so successful writes reconcile
+// automatically. Callers should still optimistically update local state
+// for snappy UI and roll back on error.
+//
+// Intent semantics (from internal/api/runners_test.go):
+//   - First-time assign     → intent: "assign"   → 200 OK
+//   - Assign when already assigned to same runner → intent: "assign" → 200
+//     (idempotent)
+//   - Assign when already assigned to a *different* runner without
+//     "reassign" intent → 409 Conflict
+//   - To reassign, pass intent: "reassign"
+//
+// The client-side wrappers below default to `intent: "assign"` for the
+// first call and let callers pass `reassign` explicitly. We do NOT try
+// to guess the intent from local optimistic state — a 409 from the
+// server is the signal to escalate.
+
+export interface FeatureAssignmentResponse {
+  project_id: string;
+  feature_id: string;
+  runner_id?: string;
+  previous_runner?: string;
+  source: string;
+  status: string;
+  assigned_at?: string;
+  updated_at?: string;
+}
+
+export interface AssignFeatureOptions {
+  /** "assign" (default) for first-time or same-runner idempotent writes,
+   *  "reassign" when moving a feature from one runner to another. */
+  intent?: "assign" | "reassign";
+  /** Force reassignment past server-side conflicts. Rarely needed. */
+  force?: boolean;
+}
+
+export const assignFeatureToRunner = (
+  projectId: string,
+  featureId: string,
+  runnerId: string,
+  options: AssignFeatureOptions = {},
+) =>
+  api<FeatureAssignmentResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/assignment`,
+    {
+      method: "PUT",
+      body: {
+        runner_id: runnerId,
+        intent: options.intent ?? "assign",
+        ...(options.force ? { force: true } : {}),
+      },
+    },
+  );
+
+export const clearFeatureAssignment = (
+  projectId: string,
+  featureId: string,
+) =>
+  api<FeatureAssignmentResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/assignment/clear`,
+    {
+      method: "POST",
+      body: { intent: "clear" },
+    },
+  );
+
 // Format a RunFeatureResponse into a toast message. Mirrors
 // summarizeTriggerResults' shape so callers can drop this straight into the
 // toast notification system.
@@ -330,6 +410,190 @@ function humanizeRunFeatureReason(r: RunFeatureResponse): string {
       return r.detail ? `${r.reason}: ${r.detail}` : r.reason;
   }
 }
+
+// Create a feature checkout task via POST /features/{featureId}/checkout.
+// The server creates a task that runs the feature-checkout automation (AI or
+// simple mode based on opts.checkout_mode). Empty opts uses server defaults.
+export const checkoutFeature = (
+  projectId: string,
+  featureId: string,
+  opts?: FeatureCheckoutOptions,
+) =>
+  api<CheckoutFeatureResult>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/checkout`,
+    {
+      method: "POST",
+      body: opts ?? {},
+    },
+  );
+
+// Resume an abandoned task via POST /tasks/{project}/{task}/resume. The server
+// flips the task back to pending, stamps resume_requested, and the runner will
+// re-spawn it with IsResume=true on its next poll. Returns Resumed=false with
+// an explanatory Reason when the call is a well-formed no-op (task already
+// resumed, terminal, or not abandoned without force).
+export const resumeTask = (
+  projectId: string,
+  taskId: string,
+  opts?: ResumeTaskOptions,
+) =>
+  api<ResumeTaskResult>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/resume`,
+    {
+      method: "POST",
+      body: opts ?? {},
+    },
+  );
+
+// Batch-resume every abandoned task in a feature. Per-task outcomes are in
+// result.results — non-abandoned tasks appear as skipped entries with a
+// reason string, so callers can render partial-failure state without a
+// second round-trip.
+export const resumeFeature = (
+  projectId: string,
+  featureId: string,
+  opts?: ResumeTaskOptions,
+) =>
+  api<ResumeFeatureResult>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/resume`,
+    {
+      method: "POST",
+      body: opts ?? {},
+    },
+  );
+
+/** Response from POST /tasks/{project}/run — fans out RunFeatureNow across
+ *  every ready feature in the project. Skipped features (no ready tasks)
+ *  show up in results with a reason and count in featuresSkipped. */
+export interface RunProjectResponse {
+  projectId: string;
+  featuresConsidered: number;
+  featuresDispatched: number;
+  featuresSkipped: number;
+  totalTasksDispatched: number;
+  results?: RunFeatureResponse[];
+  reason?: string;
+}
+
+// runProject dispatches every ready feature in the project in one call.
+// Convenience over calling /features/{f}/run repeatedly from the client;
+// server iterates and calls RunFeatureNow per feature. Returns 501 if the
+// backend isn't wired for project-level runs — callers should gracefully
+// fall back to per-feature dispatch.
+export const runProject = (projectId: string, force = false) =>
+  api<RunProjectResponse>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/run`,
+    {
+      method: "POST",
+      body: { force },
+    },
+  );
+
+// One-line toast summary of a project-scoped run. Mirrors
+// summarizeRunFeatureResult style so calling code can reuse the pattern.
+export const summarizeRunProjectResult = (r: RunProjectResponse): string => {
+  if (r.featuresConsidered === 0) {
+    return r.reason === "no_ready_tasks"
+      ? "No ready tasks in project"
+      : "No features to run";
+  }
+  if (r.featuresDispatched === 0) {
+    return `Nothing dispatched (${r.featuresSkipped} feature${r.featuresSkipped === 1 ? "" : "s"} skipped)`;
+  }
+  const fs = r.featuresDispatched === 1 ? "" : "s";
+  const ts = r.totalTasksDispatched === 1 ? "" : "s";
+  const skipped =
+    r.featuresSkipped > 0 ? ` · ${r.featuresSkipped} feature${r.featuresSkipped === 1 ? "" : "s"} skipped` : "";
+  return `Dispatched ${r.totalTasksDispatched} task${ts} across ${r.featuresDispatched} feature${fs}${skipped}`;
+};
+
+// One-line toast summary of a batch resume. Mirrors summarizeTriggerResults
+// style so calling code can reuse the same UX pattern.
+export const summarizeResumeResults = (r: ResumeFeatureResult): string => {
+  if (r.total_resumed === 0 && r.total_skipped === 0) {
+    return "No tasks in feature";
+  }
+  if (r.total_resumed === 0) {
+    return `No tasks resumed (${r.total_skipped} skipped)`;
+  }
+  if (r.total_skipped === 0) {
+    const s = r.total_resumed === 1 ? "" : "s";
+    return `Resumed ${r.total_resumed} task${s}`;
+  }
+  const s = r.total_resumed === 1 ? "" : "s";
+  return `Resumed ${r.total_resumed} task${s} · ${r.total_skipped} skipped`;
+};
+
+// Run the Blocked Task Inspector once for a feature without leaving a
+// recurring monitor behind. Creates a one-shot task via POST /entries.
+// The prompt mirrors the server-side blocked-inspector template for feature
+// scope (see internal/service/monitor_prompts.go buildBlockedInspectorPrompt).
+export const runBlockedInspectorNow = (projectId: string, featureId: string) => {
+  const directPrompt = `You are the **Blocked Task Inspector** — an automated agent that checks for blocked tasks in feature ${featureId} of project ${projectId} and attempts to unblock them.
+
+## Scope
+
+feature ${featureId} in project ${projectId}
+
+## Workflow
+
+Call brain_tasks({ project: "${projectId}", feature_id: "${featureId}", status: "blocked" }) to find all blocked tasks for this feature.
+
+For each blocked task found, follow these steps in order:
+
+### Step 1: Read the Task
+Call brain_task_get({ taskId: "<id>" }) to get the full task content, status, and any appended notes.
+
+### Step 2: Check Session History
+Use session tools to find error context from the agent that was working on this task.
+
+### Step 3: Classify the Block
+
+| Classification | Indicators |
+|---|---|
+| **Worktree setup failure** | Task never started, no session history, worktree errors |
+| **Idle detection timeout** | Session shows agent went idle |
+| **Process crash** | Session ends abruptly, exit codes in runner logs |
+| **Agent self-block** | Task has a blocked note from brain_update |
+| **Dependency block** | Task depends on blocked/incomplete tasks |
+
+### Step 4: Attempt Resolution
+
+**Worktree setup failure:** Reset to pending via brain_update({ path: "<task-path>", status: "pending" })
+**Idle timeout (process dead):** Reset to pending, append context from session history
+**Process crash:** Reset to pending, append crash context
+**Agent self-block:** Do NOT auto-reset. Log analysis only.
+**Dependency block:** Log analysis, check if upstream task can be unblocked first.
+
+### Step 5: Log Actions
+Append a summary of what you found and did to your own task via brain_update({ path: "<your-task-path>", append: "..." }).
+
+## Safety Rules
+
+1. **NEVER change the status of draft tasks**
+2. **NEVER inspect or modify your own task's status**
+3. **NEVER force-unblock agent self-blocks** — respect intentional blocks
+4. **Limit actions per run to 5** — process at most 5 blocked tasks
+5. **Be conservative** — when in doubt, log analysis but do NOT take action`;
+
+  return createEntry({
+    type: "task",
+    title: `Blocked Task Inspector: ${featureId} (once)`,
+    content: `## One-shot Blocked Task Inspector\n\nManually triggered from the PWA feature actions modal.\nScope: feature ${featureId} in project ${projectId}\n\nRuns once via direct_prompt then completes on idle.`,
+    project: projectId,
+    feature_id: featureId,
+    status: "pending",
+    execution_mode: "current_branch",
+    complete_on_idle: true,
+    direct_prompt: directPrompt,
+    tags: [
+      "inspector",
+      "monitoring",
+      "manual-oneshot",
+      `monitor:blocked-inspector:feature:${featureId}:${projectId}:oneshot`,
+    ],
+  });
+};
 
 // Fetch the current dispatch lease for a task. Returns 404 when none is
 // active — callers should treat that as "not currently dispatched" rather
@@ -925,3 +1189,62 @@ export const updateGoal = (goalId: string, patch: UpdateGoalRequest) =>
 
 export const runGoal = (goalId: string) =>
   api(`/api/v1/goals/${encodeURIComponent(goalId)}/run`, { method: "POST" });
+
+// ─── Server configuration (~/.config/brain/config.yaml) ────────────
+
+/**
+ * ConfigField describes one editable field returned by
+ * `GET /api/v1/config/schema`. See internal/api/config_schema.go for
+ * the source of truth.
+ */
+export interface ConfigField {
+  path: string;
+  kind:
+    | "string"
+    | "int"
+    | "bool"
+    | "duration_ms"
+    | "string_array"
+    | "enum"
+    | "secret"
+    | "path"
+    | "url";
+  section: string;
+  label: string;
+  help?: string;
+  enum?: string[];
+  requires_restart?: boolean;
+  secret?: boolean;
+  required?: boolean;
+}
+
+/**
+ * The full config document. Deliberately typed as a nested object of
+ * unknowns because the file's structure is deep and changes over
+ * time; the schema endpoint tells the UI what to render, and the
+ * server validates on PUT.
+ */
+export type ServerConfig = Record<string, unknown>;
+
+export interface ConfigGetResponse {
+  config: ServerConfig;
+  path: string;
+}
+
+export interface ConfigUpdateResponse {
+  hot_reloaded: string[];
+  requires_restart: string[];
+  backup_path: string;
+}
+
+export const getServerConfig = () =>
+  api<ConfigGetResponse>("/api/v1/config");
+
+export const getConfigSchema = () =>
+  api<{ fields: ConfigField[] }>("/api/v1/config/schema");
+
+export const updateServerConfig = (cfg: ServerConfig) =>
+  api<ConfigUpdateResponse>("/api/v1/config", {
+    method: "PUT",
+    body: { config: cfg },
+  });

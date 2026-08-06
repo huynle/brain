@@ -52,6 +52,8 @@ action:
 
     ### Step 4: Attempt Resolution
 
+    **Reaper-orphaned tasks (defer to Resume):** If the task metadata carries `abandoned_reason: runner_orphan`, the runner orphan reaper has already marked it. The user-facing Resume flow (POST /tasks/{project}/{id}/resume) is the intended recovery path for these — the PWA surfaces a Resume button when `is_abandoned=true`. Log analysis only; do NOT reset-to-pending. This avoids racing the user's Resume click and losing their resume_requested intent.
+
     **Worktree setup failure:** Reset to pending via update({ path: "<task-path>", status: "pending" })
     **Idle timeout (process dead):** Reset to pending, append context from session history
     **Process crash:** Reset to pending, append crash context
@@ -66,8 +68,9 @@ action:
     1. **NEVER change the status of draft tasks**
     2. **NEVER inspect or modify your own task's status**
     3. **NEVER force-unblock agent self-blocks** — respect intentional blocks
-    4. **Limit actions per run to 5** — process at most 5 blocked tasks
-    5. **Be conservative** — when in doubt, log analysis but do NOT take action
+    4. **NEVER reset reaper-orphaned tasks** — tasks with `abandoned_reason: runner_orphan` are the Resume flow's territory; log-only for those
+    5. **Limit actions per run to 5** — process at most 5 blocked tasks
+    6. **Be conservative** — when in doubt, log analysis but do NOT take action
 enabled: true
 max_runs: 0
 ---
@@ -90,5 +93,6 @@ Runs when a task transitions to blocked and attempts to unblock it by analyzing 
 
 - Never modifies draft tasks
 - Never force-unblocks intentional agent self-blocks
+- **Never resets reaper-orphaned tasks** — those carry `abandoned_reason: runner_orphan` metadata and are handled by the user-initiated Resume flow (`POST /tasks/{project}/{id}/resume` from the PWA). Log analysis only for these.
 - Processes at most 5 blocked tasks per run
 - Conservative by default — logs analysis rather than taking risky actions

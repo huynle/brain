@@ -173,6 +173,14 @@ type RunFeatureService interface {
 	RunFeatureNow(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error)
 }
 
+// RunProjectService backs POST /tasks/{projectId}/run — fans out RunFeatureNow
+// across every ready feature in a project. Optional capability (mirrors
+// RunFeatureService); when nil the handler returns 501 so the PWA can fall
+// back gracefully. In production satisfied by *service.SchedulerService.
+type RunProjectService interface {
+	RunProjectNow(ctx context.Context, projectID string, force bool) (*types.RunProjectResponse, error)
+}
+
 // SchedulerVisibilityService exposes persisted scheduler placement artifacts.
 type SchedulerVisibilityService interface {
 	GetDispatchLease(ctx context.Context, projectID, taskID string) (*types.DispatchLease, error)
@@ -259,6 +267,18 @@ type TaskService interface {
 
 	// TriggerTask manually triggers a scheduled task.
 	TriggerTask(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
+
+	// ResumeTask flips an abandoned task back to pending, cleaning up its
+	// stale claim + acked dispatch lease, and stamps resume_requested so the
+	// runner will re-spawn it with IsResume=true. See service.TaskServiceImpl
+	// for the full contract; opts may be nil.
+	ResumeTask(ctx context.Context, projectId, taskId string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error)
+
+	// ResumeFeature fans out ResumeTask across every task in a feature. Non-
+	// abandoned tasks appear in Results as skipped entries with a Reason,
+	// so the caller can treat this as "resume everything you can in this
+	// feature" without pre-filtering. opts may be nil.
+	ResumeFeature(ctx context.Context, projectId, featureId string, opts *types.ResumeTaskOptions) (*types.ResumeFeatureResult, error)
 }
 
 // RunnerService defines the interface for runner control operations.

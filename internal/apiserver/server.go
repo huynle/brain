@@ -2,6 +2,8 @@ package apiserver
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"io"
 	"log"
@@ -49,6 +51,13 @@ type ServerOptions struct {
 
 	AttachmentExtraction config.AttachmentExtractionConfig
 	Assistant            config.AssistantConfig
+
+	// TLSCert / TLSKey, when both set, cause the server to run TLS via
+	// ListenAndServeTLS. Go's net/http auto-enables HTTP/2 on TLS servers
+	// through the h2 package's implicit registration, so no separate http2
+	// wiring is needed. When either is empty, the server runs plain HTTP/1.1.
+	TLSCert string
+	TLSKey  string
 }
 
 const defaultAttachmentMaxUploadSizeBytes int64 = 100 * 1024 * 1024
@@ -61,6 +70,40 @@ func normalizeAttachmentConfig(brainDir string, cfg config.AttachmentConfig) con
 		cfg.MaxUploadSizeBytes = defaultAttachmentMaxUploadSizeBytes
 	}
 	return cfg
+}
+
+// trustSelfSignedCertForLoopback adds the server's own TLS cert to
+// http.DefaultTransport's root pool so in-process HTTP clients (the embedded
+// runner, MCP dispatcher, health checkers) can validate the connection to
+// https://localhost. Without this every one of those callers would need
+// individually-configured InsecureSkipVerify, which is easy to get wrong and
+// hard to audit. Scoped to loopback hosts on the assumption that a real
+// deployment either uses a public CA cert or configures each client's trust
+// store out-of-band; the panes-v2 dev loop is the target use case.
+func trustSelfSignedCertForLoopback(certPath, host string) error {
+	if host != "" && host != "localhost" && host != "127.0.0.1" && host != "::1" {
+		return nil
+	}
+	pemBytes, err := os.ReadFile(certPath)
+	if err != nil {
+		return fmt.Errorf("read tls cert: %w", err)
+	}
+	rootCAs, err := x509.SystemCertPool()
+	if err != nil || rootCAs == nil {
+		rootCAs = x509.NewCertPool()
+	}
+	if !rootCAs.AppendCertsFromPEM(pemBytes) {
+		return fmt.Errorf("no PEM certs in %s", certPath)
+	}
+	tr, ok := http.DefaultTransport.(*http.Transport)
+	if !ok {
+		return fmt.Errorf("http.DefaultTransport is not *http.Transport (got %T)", http.DefaultTransport)
+	}
+	if tr.TLSClientConfig == nil {
+		tr.TLSClientConfig = &tls.Config{}
+	}
+	tr.TLSClientConfig.RootCAs = rootCAs
+	return nil
 }
 
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
@@ -118,16 +161,40 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 
 	// Start server in background
 	errCh := make(chan error, 1)
+	tlsEnabled := opts.TLSCert != "" && opts.TLSKey != ""
+	if tlsEnabled {
+		if err := trustSelfSignedCertForLoopback(opts.TLSCert, opts.Host); err != nil {
+			slog.Warn("failed to trust server cert for in-process clients; runner/MCP calls to loopback https may fail with x509 errors",
+				"err", err, "cert", opts.TLSCert)
+		}
+	}
 	go func() {
+		scheme := "http"
+		if tlsEnabled {
+			scheme = "https"
+		}
 		slog.Info("starting brain-api",
 			"addr", addr,
+			"scheme", scheme,
 			"brain_dir", opts.BrainDir,
 			"db_path", dbPath,
 			"auth_enabled", opts.EnableAuth,
 			"oauth_enabled", true,
 			"cors_origin", corsOrigin,
+			"tls", tlsEnabled,
 		)
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		var err error
+		if tlsEnabled {
+			// Go's net/http registers h2 via golang.org/x/net/http2 when the
+			// server has a non-nil TLSConfig or is started via *TLS(); h2 is
+			// negotiated through ALPN. Browsers only speak h2 over TLS, which
+			// is why plain HTTP hits the 6-conn-per-origin cap for our SSE
+			// streams. See docs/panes-v2-followups.md.
+			err = srv.ListenAndServeTLS(opts.TLSCert, opts.TLSKey)
+		} else {
+			err = srv.ListenAndServe()
+		}
+		if err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
@@ -173,12 +240,19 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// ─── Indexer ────────────────────────────────────────────────────
 	idx := indexer.NewIndexer(opts.BrainDir, store)
 
-	// Run incremental index on startup (fast for unchanged files)
-	slog.Info("indexing brain directory", "dir", opts.BrainDir)
-	result, err := idx.IndexChanged()
-	if err != nil {
-		slog.Warn("indexing failed, continuing with stale index", "error", err)
-	} else {
+	// Run incremental index in the background so it does NOT block HTTP
+	// server startup. On large .brain directories (60k+ files) a full scan
+	// takes 15+ seconds, and callers like the embedded runner wait on
+	// /health with a bounded deadline (see cmd/brain/commands/lifecycle.go).
+	// The previous SQLite index remains valid for reads while the re-scan
+	// runs; new/changed/deleted files just show up a few seconds late.
+	go func() {
+		slog.Info("indexing brain directory", "dir", opts.BrainDir)
+		result, err := idx.IndexChanged()
+		if err != nil {
+			slog.Warn("indexing failed, continuing with stale index", "error", err)
+			return
+		}
 		slog.Info("indexing complete",
 			"added", result.Added,
 			"updated", result.Updated,
@@ -187,7 +261,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 			"errors", len(result.Errors),
 			"duration", result.Duration,
 		)
-	}
+	}()
 
 	// ─── Build Config ───────────────────────────────────────────────
 	corsOrigin := opts.CORSOrigin
@@ -366,6 +440,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithSchedulerVisibilityService(store),
 		api.WithRunTaskService(schedulerSvc),
 		api.WithRunFeatureService(schedulerSvc),
+		api.WithRunProjectService(schedulerSvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),
 		api.WithHub(hub),
@@ -404,6 +479,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithHandler(handler),
 		api.WithDualAuth(store, store),
 		api.WithEmbeddingReady(!cfg.Embedding.Enabled || embeddingClient != nil),
+		api.WithConfigHandler(api.NewConfigHandler("", newHotReloader())),
 	}
 	if rateLimiter != nil {
 		routerOpts = append(routerOpts, api.WithRateLimiter(rateLimiter))
@@ -422,7 +498,18 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	oauth.RegisterRoutes(router, oauthHandler)
 
 	// ─── MCP Streamable HTTP Transport ──────────────────────────────
-	mcpClient := mcppkg.NewAPIClient(fmt.Sprintf("http://localhost:%d", opts.Port))
+	// The in-process MCP handler makes API calls back to this same server
+	// (e.g. brain_stats -> GET /api/v1/entries). When TLS is on those
+	// callbacks must use https://; otherwise the plain-HTTP request hits
+	// the TLS listener and returns 400 Bad Request. The self-signed cert
+	// is already installed into http.DefaultTransport's root pool by
+	// trustSelfSignedCertForLoopback earlier in RunServer, so the client
+	// validates cleanly without InsecureSkipVerify.
+	mcpScheme := "http"
+	if opts.TLSCert != "" && opts.TLSKey != "" {
+		mcpScheme = "https"
+	}
+	mcpClient := mcppkg.NewAPIClient(fmt.Sprintf("%s://localhost:%d", mcpScheme, opts.Port))
 	mcpHTTP := mcppkg.NewHTTPHandler(mcpClient)
 	authValidator := &api.CompositeValidator{
 		APIValidator:   store,

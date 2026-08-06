@@ -56,6 +56,23 @@ Fold rule across a feature's tasks: any `checkout_mode:"simple"` → simple path
 
 The simple script honors the `git -c merge.ff=true` invariant (see `feature-checkout/SKILL.md`) so it works regardless of user `merge.ff` gitconfig. It uses `feature_id` as the source branch name and cannot recover from merge conflicts — use AI mode for anything non-trivial.
 
+### Abandonment + Resume model
+
+When a runner dies mid-task, or when a task's claim lease expires without renewal, the task's `status` stays stuck at `in_progress` while nothing is actually running it. The abandonment surface makes that recoverable without introducing new sweepers.
+
+**Detection (read-only, derived at API-response time):**
+- `enrichAbandonmentState` in `internal/service/task.go` runs alongside `enrichDispatchDiagnostics` for every task in a `GET /tasks` response. It cross-references `task_claims` (from `StartClaimCleanup`), the owning runner's `runners.status` (from `RunLifecycleSweep`), and the reaper marker note text / metadata (from `reapOrphanedTasks`) to derive two fields on `ResolvedTask`:
+  - `is_abandoned bool`
+  - `abandon_reason string` — one of `no_claim | claim_expired | runner_offline | orphan_reaped`
+- No new sweeper is introduced. Every signal is produced by an existing background job; enrichment just reads them together.
+
+**Recovery (`POST /api/v1/tasks/{project}/{taskId}/resume`):**
+- Validates `is_abandoned` (unless `force: true`), refuses to release a claim held by an online runner (live-claim safety — force does NOT override this), stamps `metadata.resume_requested=true`, flips `status` to `pending`. Emits `EventTaskResumeRequested` + `EventTaskStatusChanged`.
+- The runner reads `resume_requested` in `claimAndSpawnWithWorkdir` and passes `IsResume=true` into the executor's prompt builder (`CommonBuildPrompt`). The flag is cleared after a *successful* `Spawn`; on Spawn-error rollback it is best-effort re-stamped so the intent survives a retry.
+- `POST /api/v1/tasks/{project}/features/{featureId}/resume` fans out across every task in a feature; per-task outcomes come back in `ResumeFeatureResult.results` (skipped entries include a `reason` so partial failures don't fail the batch).
+- Idempotent: a resume on a task already `pending+resume_requested=true` returns `Resumed=false` with an explanatory `Reason` and skips cleanup work.
+- The orphan reaper (`tryReapOrphan`) skips tasks with `resume_requested=true` and re-reads the task immediately before its status flip, so a Resume that races with a reaper doesn't get silently reverted.
+
 ### Storage Layer (`internal/storage/`)
 - `entries.go` - Entry storage operations
 - `search.go` - Full-text search indexing

@@ -10,6 +10,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -77,6 +79,24 @@ func isExpired(claim *storage.TaskClaimRow) bool {
 	return time.Now().UnixMilli() > claim.ExpiresAt
 }
 
+// Abandonment reason codes surfaced on ResolvedTask.AbandonReason. The set is
+// intentionally narrow — every value corresponds to an underlying signal
+// produced by an existing background job (StartClaimCleanup, RunLifecycleSweep,
+// reapOrphanedTasks) so no new sweeper is introduced by the resume feature.
+const (
+	AbandonReasonNoClaim       = "no_claim"       // status=in_progress but no task_claims row (never claimed or already cleaned)
+	AbandonReasonClaimExpired  = "claim_expired"  // claim exists but expires_at < now
+	AbandonReasonRunnerOffline = "runner_offline" // claim exists, unexpired, but runner status is offline/stale
+	AbandonReasonOrphanReaped  = "orphan_reaped"  // reapOrphanedTasks transitioned this task to blocked
+)
+
+// OrphanReaperMarker is the exact note text the runner-side orphan reaper
+// appends when it transitions a stale in_progress task to blocked. Extracted
+// as a constant so the reaper (runner.go) and the enrichAbandonmentState
+// grep-fallback here cannot drift silently. If this text ever changes, both
+// call sites update together.
+const OrphanReaperMarker = "*Marked blocked by runner orphan reaper"
+
 // ListProjects scans <brainDir>/projects/ for subdirectories containing a task/ subfolder.
 func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
 	projectsDir := filepath.Join(s.config.BrainDir, "projects")
@@ -121,6 +141,9 @@ func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*type
 	if err := s.enrichDispatchDiagnostics(ctx, projectId, result.Tasks); err != nil {
 		return nil, err
 	}
+	if err := s.enrichAbandonmentState(ctx, projectId, result.Tasks); err != nil {
+		return nil, err
+	}
 	return result, nil
 }
 
@@ -146,6 +169,80 @@ func (s *TaskServiceImpl) enrichDispatchDiagnostics(ctx context.Context, project
 		if len(reasons) > 0 {
 			task.PlacementReasons = reasons
 			task.LastPlacementReason = &task.PlacementReasons[len(task.PlacementReasons)-1]
+		}
+	}
+	return nil
+}
+
+// enrichAbandonmentState derives IsAbandoned + AbandonReason on each task
+// from signals produced by existing background jobs. No new sweeper. The
+// definition of "abandoned":
+//
+//   - status="in_progress" AND (no claim | claim expired | claim's runner offline)
+//   - status="blocked" AND body contains the orphan-reaper marker
+//
+// Everything else — pending, active, completed, cancelled, agent-self-blocked —
+// is NOT abandoned and gets no Resume affordance.
+//
+// Runner-status cache: one runner lookup per unique runner_id across the task
+// list, not per task, so a project with 100 tasks claimed by 3 runners does
+// 3 lookups, not 100.
+func (s *TaskServiceImpl) enrichAbandonmentState(ctx context.Context, projectID string, tasks []types.ResolvedTask) error {
+	if len(tasks) == 0 {
+		return nil
+	}
+	runnerStatus := make(map[string]string) // runnerID → status; "" means "not looked up yet"
+	nowMs := time.Now().UnixMilli()
+
+	for i := range tasks {
+		task := &tasks[i]
+		if task.Status != "in_progress" && task.Status != "blocked" {
+			continue // fast-path: only these two statuses can be abandoned
+		}
+
+		if task.Status == "blocked" {
+			// The orphan reaper is the only path that legitimately sets
+			// blocked-with-abandonment. Agent-self-blocked and user-blocked
+			// tasks stay non-resumable — the Blocked Task Inspector automation
+			// covers those.
+			if strings.Contains(task.Content, OrphanReaperMarker) {
+				task.IsAbandoned = true
+				task.AbandonReason = AbandonReasonOrphanReaped
+			}
+			continue
+		}
+
+		// status == "in_progress" — three sub-cases from the claim state.
+		claim, err := s.storage.GetClaim(ctx, projectID, task.ID)
+		if err != nil {
+			return fmt.Errorf("get claim for %s: %w", task.ID, err)
+		}
+		if claim == nil {
+			task.IsAbandoned = true
+			task.AbandonReason = AbandonReasonNoClaim
+			continue
+		}
+		if claim.ExpiresAt < nowMs {
+			task.IsAbandoned = true
+			task.AbandonReason = AbandonReasonClaimExpired
+			continue
+		}
+		// Claim is unexpired — but the runner might still be dead (heartbeat
+		// stopped before the claim naturally expired). Check runner status.
+		status, seen := runnerStatus[claim.RunnerID]
+		if !seen {
+			runner, err := s.storage.GetRunner(ctx, claim.RunnerID)
+			if err != nil {
+				return fmt.Errorf("get runner %s: %w", claim.RunnerID, err)
+			}
+			if runner != nil {
+				status = runner.Status
+			}
+			runnerStatus[claim.RunnerID] = status
+		}
+		if status == "offline" || status == "stale" {
+			task.IsAbandoned = true
+			task.AbandonReason = AbandonReasonRunnerOffline
 		}
 	}
 	return nil
@@ -1126,6 +1223,7 @@ func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID str
 		shortID := strings.TrimSuffix(entry.Name(), ".md")
 		tasks = append(tasks, types.BrainEntry{
 			ID:            shortID,
+			Status:        doc.Frontmatter.Status,
 			Generated:     generated,
 			GeneratedKind: doc.Frontmatter.GeneratedKind,
 		})
@@ -1353,6 +1451,321 @@ func (s *TaskServiceImpl) triggerAdHocTask(ctx context.Context, task *types.Brai
 	}, nil
 }
 
+// ResumeTask flips an abandoned task back to pending so the runner can re-claim
+// and spawn it with IsResume=true. Idempotent: calling twice on a task already
+// pending with resume_requested=true returns Resumed=false with an explanatory
+// Reason instead of an error.
+//
+// Cleanup side effects (defense in depth against the various stuck states):
+//   - Deletes any lingering task_claims row (may already be gone via
+//     StartClaimCleanup or ReleaseAllByRunner).
+//   - Clears any dispatch lease still in acked state (the SIGKILL-leaves-acked
+//     path noted in the design research).
+//   - Writes metadata.resume_requested=true + resume_requested_at=now. The
+//     runner reads resume_requested at claim time and passes IsResume=true to
+//     the executor's prompt builder, then clears the flag.
+//
+// The status flip goes through storage.MergeMetadata — matching triggerAdHocTask.
+// Frontmatter sync to the .md file is a follow-up concern (pre-existing pattern
+// in this file uses MergeMetadata directly for status changes).
+func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error) {
+	if opts == nil {
+		opts = &types.ResumeTaskOptions{}
+	}
+
+	// Load the task via the enriched GetTask path so we get IsAbandoned +
+	// AbandonReason computed the same way every other caller sees them.
+	task, err := s.GetTask(ctx, projectID, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
+	if task == nil {
+		return nil, fmt.Errorf("resume: task not found: %s/%s", projectID, taskID)
+	}
+
+	result := &types.ResumeTaskResult{
+		TaskID:             taskID,
+		PriorStatus:        task.Status,
+		PriorSessionsCount: len(task.Sessions),
+		AbandonReason:      task.AbandonReason,
+	}
+
+	// Idempotency + un-stuck: distinguish "already resumed and waiting for the
+	// runner to claim" from "was already pending WITHOUT the flag" (which the
+	// user may reasonably want to force through — e.g. an auto-reset via
+	// claim-renewal-fail left the task pending with no resume hint). If the
+	// flag is already set: idempotent no-op. If not: fall through to the full
+	// resume path so the flag gets stamped and the runner routes via IsResume.
+	if task.Status == "pending" && task.ResumeRequested {
+		result.Reason = "resume already requested; runner will pick up on next poll"
+		return result, nil
+	}
+
+	// Terminal statuses are outside the resume gate — user should use Trigger.
+	switch task.Status {
+	case "completed", "validated", "cancelled", "superseded", "archived":
+		if !opts.Force {
+			result.Reason = fmt.Sprintf("task status %q is terminal; use trigger to re-run", task.Status)
+			return result, nil
+		}
+	}
+
+	// Abandonment gate. Force bypasses (but does NOT override the live-claim
+	// safety check below). For pending tasks specifically, force is
+	// REQUIRED — regular pending tasks aren't in scope for Resume; a batch
+	// endpoint calling ResumeTask on every task should NOT silently stamp
+	// the resume flag on incidental pending tasks. Force+pending = "un-stick"
+	// (TestResumeTask_StuckPendingUnstuck).
+	if !task.IsAbandoned && !opts.Force {
+		result.Reason = fmt.Sprintf("task is not abandoned (status=%q); use trigger or force=true", task.Status)
+		return result, nil
+	}
+
+	// Cleanup: delete claim + acked dispatch lease. Both are best-effort;
+	// downstream sweepers will eventually clean these up too. We do them here
+	// so the runner sees a clean slate on re-claim.
+	//
+	// SAFETY: before releasing the claim, re-check the claim's runner status.
+	// If a live runner has claimed this task since enrichAbandonmentState ran
+	// (the atomic claim upsert would have evicted an expired claim, then the
+	// live runner grabbed a fresh one), releasing that claim here would enable
+	// a second runner to claim the same task → concurrent double-execution.
+	// Refuse in that case, even with force=true. The user must abort the live
+	// runner out-of-band before resuming — force only bypasses the IsAbandoned
+	// gate, never the live-claim safety.
+	if claim, err := s.storage.GetClaim(ctx, projectID, taskID); err == nil && claim != nil {
+		runner, rerr := s.storage.GetRunner(ctx, claim.RunnerID)
+		if rerr == nil && runner != nil && runner.Status == "online" {
+			result.Reason = fmt.Sprintf(
+				"task is claimed by online runner %q since enrichment view; abort that runner or wait for its lease to lapse before resuming",
+				claim.RunnerID,
+			)
+			return result, nil
+		}
+		if _, err := s.storage.ReleaseClaim(ctx, projectID, taskID, claim.RunnerID); err != nil {
+			slog.Debug("resume: release claim failed (continuing)",
+				"project", projectID, "task_id", taskID, "error", err)
+		}
+	}
+	if _, err := s.storage.ClearDispatchLease(ctx, projectID, taskID); err != nil {
+		slog.Debug("resume: clear dispatch lease failed (continuing)",
+			"project", projectID, "task_id", taskID, "error", err)
+	}
+
+	// Apply the state change. Status goes to pending so the runner picks it up
+	// on the next poll; resume_requested is the flag the runner reads at claim
+	// time to route through the IsResume=true prompt template.
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := s.storage.MergeMetadata(ctx, task.Path, map[string]interface{}{
+		"status":              "pending",
+		"resume_requested":    true,
+		"resume_requested_at": now,
+	}); err != nil {
+		return nil, fmt.Errorf("resume: update metadata: %w", err)
+	}
+
+	result.Resumed = true
+	slog.Info("resume: task resumed",
+		"project", projectID, "task_id", taskID,
+		"prior_status", result.PriorStatus,
+		"abandon_reason", result.AbandonReason,
+		"prior_sessions_count", result.PriorSessionsCount,
+		"force", opts.Force,
+	)
+	return result, nil
+}
+
+// terminalStatuses is the set of statuses that ResumeFeature refuses to
+// touch during a batch — even when force=true. Force is meant to bypass
+// the "not abandoned" abandonment gate for individual tasks (e.g. blocked
+// tasks with no reaper marker); it must NOT resurrect work that already
+// reached a terminal state. Per-task terminal resumes still work via the
+// single-task endpoint's force path if the caller genuinely means it.
+var terminalStatuses = map[string]bool{
+	"completed":  true,
+	"validated":  true,
+	"cancelled":  true,
+	"superseded": true,
+	"archived":   true,
+}
+
+// resumeFeatureInFlight guards ResumeFeature against a concurrent second
+// call on the same feature racing through the same task set. Two Resume
+// clicks during PWA lag or a webhook + user click both firing would
+// otherwise emit duplicate task.resume_requested + task.status_changed
+// events. The lock is per-feature (project|feature key) so different
+// features can resume in parallel; only same-feature calls serialize.
+//
+// Uses a refcounted entry so the sync.Map doesn't grow unboundedly when
+// an attacker hammers /features/<random>/resume with unique IDs:
+// LoadOrStore inserts an entry; Lock/Unlock happens; the last waiter
+// (refs=0) removes the entry so lookup can GC.
+var resumeFeatureInFlight sync.Map // key "proj|feature" → *resumeInflightEntry
+
+type resumeInflightEntry struct {
+	mu   sync.Mutex
+	refs atomic.Int32
+}
+
+// acquireResumeFeatureLock takes (or creates) the per-key mutex and returns
+// a release function that removes the entry from the map when the last
+// waiter is done. Callers MUST defer the returned release; otherwise the
+// mutex leaks and future calls will observe permanent contention on that
+// key.
+func acquireResumeFeatureLock(ctx context.Context, key string) (func(), error) {
+	loaded, _ := resumeFeatureInFlight.LoadOrStore(key, &resumeInflightEntry{})
+	entry := loaded.(*resumeInflightEntry)
+	entry.refs.Add(1)
+	// Acquire under a channel-select so ctx cancellation doesn't require
+	// us to spin — Lock itself doesn't accept a context so we serialize
+	// waiters via the mutex directly.
+	entry.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		entry.mu.Unlock()
+		if entry.refs.Add(-1) == 0 {
+			resumeFeatureInFlight.CompareAndDelete(key, entry)
+		}
+		return nil, err
+	}
+	return func() {
+		entry.mu.Unlock()
+		if entry.refs.Add(-1) == 0 {
+			// Last waiter — delete from the map. CompareAndDelete guards
+			// against a race where a new caller LoadOrStores the same key
+			// between our Add and Delete; in that case they get the same
+			// (still-empty) entry which is safe to reuse. If a NEW entry
+			// was stored (different pointer), we correctly leave it alone.
+			resumeFeatureInFlight.CompareAndDelete(key, entry)
+		}
+	}, nil
+}
+
+// NOTE: response-size truncation is a HANDLER responsibility, not
+// service — the handler needs the full Results slice to emit per-task
+// SSE events before truncating for the response body. See
+// HandleResumeFeature and api.resumeFeatureMaxResults.
+
+// ResumeFeature fans out ResumeTask across every task in the feature, gathering
+// per-task outcomes into a single response. Non-abandoned tasks appear as
+// skipped results with an explanatory Reason — the batch does NOT fail if some
+// tasks are unresumable, so callers can invoke this optimistically ("resume
+// everything you can in this feature") without pre-filtering.
+//
+// Force semantics at batch level: bypasses the abandonment gate for tasks
+// whose runtime state doesn't automatically qualify, but explicitly does NOT
+// bypass the terminal-status gate. See terminalStatuses above.
+//
+// Errors from individual ResumeTask calls (unlike no-op skips) are converted
+// into skipped results with the error text in Reason. The overall call only
+// returns an error for setup failures (feature enumeration, storage failure).
+func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureID string, opts *types.ResumeTaskOptions) (*types.ResumeFeatureResult, error) {
+	if opts == nil {
+		opts = &types.ResumeTaskOptions{}
+	}
+	sanitizedProjectID := strings.TrimSpace(projectID)
+	sanitizedFeatureID := strings.TrimSpace(featureID)
+	if sanitizedProjectID == "" {
+		return nil, fmt.Errorf("resume feature: projectID is required")
+	}
+	if sanitizedFeatureID == "" {
+		return nil, fmt.Errorf("resume feature: featureID is required")
+	}
+
+	// Enumerate feature tasks FIRST — before we take any lock. Unknown
+	// features (or features with zero tasks) must not leave a mutex
+	// entry in the sync.Map, otherwise attackers can OOM the process by
+	// hammering /resume with random featureIds.
+	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
+	if err != nil {
+		return nil, fmt.Errorf("resume feature: enumerate tasks: %w", err)
+	}
+	if len(featureTasks) == 0 {
+		return nil, fmt.Errorf("resume feature: not found — feature %q has no tasks in project %q", sanitizedFeatureID, sanitizedProjectID)
+	}
+
+	// Per-feature in-flight lock via refcounted helper: two concurrent
+	// POSTs to /resume on the same feature serialize; the last waiter
+	// deletes the map entry so lookups don't grow unboundedly.
+	release, err := acquireResumeFeatureLock(ctx, sanitizedProjectID+"|"+sanitizedFeatureID)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
+	result := &types.ResumeFeatureResult{
+		FeatureID: sanitizedFeatureID,
+		Results:   make([]types.ResumeTaskResult, 0, len(featureTasks)),
+	}
+
+	for _, task := range featureTasks {
+		if task.ID == "" {
+			continue
+		}
+		// Terminal-status guard — the safety net against a batch force
+		// silently resurrecting historically-completed work. This runs
+		// BEFORE ResumeTask because ResumeTask.force bypasses the terminal
+		// gate at the single-task level (that's an intentional escape
+		// hatch for direct API/curl use, not for batch fanout).
+		if terminalStatuses[task.Status] {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return result, ctxErr
+			}
+			result.Results = append(result.Results, types.ResumeTaskResult{
+				TaskID:      task.ID,
+				Resumed:     false,
+				PriorStatus: task.Status,
+				Reason:      fmt.Sprintf("terminal_status_excluded_from_batch (%s)", task.Status),
+			})
+			result.TotalSkipped++
+			continue
+		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			// Bail early on client disconnect / cancellation. Preserves
+			// results gathered so far and surfaces the cancellation to
+			// the caller.
+			return result, ctxErr
+		}
+		taskResult, err := s.ResumeTask(ctx, sanitizedProjectID, task.ID, opts)
+		if err != nil {
+			// Per-task failure → skipped result with error in Reason so the
+			// caller sees partial failures without the whole batch failing.
+			slog.Warn("resume feature: per-task ResumeTask failed",
+				"project", sanitizedProjectID,
+				"feature", sanitizedFeatureID,
+				"task_id", task.ID,
+				"error", err,
+			)
+			result.Results = append(result.Results, types.ResumeTaskResult{
+				TaskID:  task.ID,
+				Resumed: false,
+				Reason:  "internal_error",
+			})
+			result.TotalSkipped++
+			continue
+		}
+		result.Results = append(result.Results, *taskResult)
+		if taskResult.Resumed {
+			result.TotalResumed++
+		} else {
+			result.TotalSkipped++
+		}
+	}
+
+	// NOTE: response-size truncation is a HANDLER responsibility, not
+	// service — the handler needs the full Results slice to emit per-task
+	// SSE events before truncating for the response body. See
+	// HandleResumeFeature.
+
+	slog.Info("resume feature: batch complete",
+		"project", sanitizedProjectID,
+		"feature", sanitizedFeatureID,
+		"total_resumed", result.TotalResumed,
+		"total_skipped", result.TotalSkipped,
+		"force", opts.Force,
+	)
+	return result, nil
+}
+
 // countCompletedRuns counts runs with terminal-ish statuses.
 // Mirrors countRuns in internal/runner/schedule.go.
 func countCompletedRuns(runs []types.CronRun) int {
@@ -1543,6 +1956,14 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	}
 	if v, ok := metaString(meta, "target_workdir"); ok {
 		entry.TargetWorkdir = v
+	}
+
+	// Resume-abandoned-tasks flow. Both are runtime-only (not in frontmatter).
+	if v, ok := metaBool(meta, "resume_requested"); ok {
+		entry.ResumeRequested = v
+	}
+	if v, ok := metaString(meta, "resume_requested_at"); ok {
+		entry.ResumeRequestedAt = v
 	}
 	if v, ok := metaString(meta, "executor"); ok {
 		entry.Executor = v

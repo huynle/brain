@@ -366,6 +366,13 @@ type BrainEntry struct {
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
 
+	// Resume-abandoned-tasks flow. ResumeRequested is set by POST /resume and
+	// read by the runner at claim time to route through the IsResume prompt
+	// template. Runtime-only fields — never in on-disk frontmatter, preserved
+	// across re-index via service.runtimeKeys.
+	ResumeRequested   bool   `json:"resume_requested,omitempty"`
+	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
+
 	// Backlinks (populated on GET)
 	Backlinks []BacklinkEntry `json:"backlinks,omitempty"`
 }
@@ -1047,6 +1054,21 @@ type ResolvedTask struct {
 	DispatchLease       *DispatchLease    `json:"dispatch_lease,omitempty"`
 	PlacementReasons    []PlacementReason `json:"placement_reasons,omitempty"`
 	LastPlacementReason *PlacementReason  `json:"last_placement_reason,omitempty"`
+
+	// Abandonment surface for the resume-abandoned-tasks flow. Derived
+	// server-side from task_claims + runners.status + reaper metadata by
+	// enrichAbandonmentState — never written directly by clients. When
+	// IsAbandoned is true, AbandonReason names the underlying cause and the
+	// PWA renders a Resume affordance.
+	IsAbandoned   bool   `json:"is_abandoned,omitempty"`
+	AbandonReason string `json:"abandon_reason,omitempty"`
+
+	// ResumeRequested is the durable flag written by POST /resume. The runner
+	// reads this at claim time and passes IsResume=true to the executor's
+	// prompt builder, then clears the flag via PATCH so re-polls don't loop-
+	// resume the same task forever.
+	ResumeRequested   bool   `json:"resume_requested,omitempty"`
+	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
 }
 
 // TaskStats holds aggregate task statistics.
@@ -1195,6 +1217,27 @@ type RunFeatureResponse struct {
 	CascadeActive   bool              `json:"cascadeActive,omitempty"`
 }
 
+// RunProjectRequest is the body for POST /tasks/:projectId/run.
+type RunProjectRequest struct {
+	Force bool `json:"force,omitempty"`
+}
+
+// RunProjectResponse is the response for POST /tasks/:projectId/run — a
+// project-scoped fanout that runs every ready feature in the project. The
+// server iterates the feature-ready list and calls RunFeatureNow per feature.
+// Features that had no ready tasks appear in the results with a reason;
+// aggregated dispatch counts summarize the batch. Non-fatal per-feature
+// errors surface as skipped entries so partial success doesn't fail the batch.
+type RunProjectResponse struct {
+	ProjectID           string                `json:"projectId"`
+	FeaturesConsidered  int                   `json:"featuresConsidered"`
+	FeaturesDispatched  int                   `json:"featuresDispatched"`
+	FeaturesSkipped     int                   `json:"featuresSkipped"`
+	TotalTasksDispatched int                  `json:"totalTasksDispatched"`
+	Results             []RunFeatureResponse `json:"results,omitempty"`
+	Reason              string                `json:"reason,omitempty"`
+}
+
 // ClaimStatusResponse is the response for GET /tasks/:projectId/:taskId/claim-status.
 type ClaimStatusResponse struct {
 	TaskID    string `json:"taskId"`
@@ -1272,6 +1315,49 @@ type CheckoutFeatureResult struct {
 	Created      bool                 `json:"created"`
 	GeneratedKey string               `json:"generatedKey"`
 	Task         *CreateEntryResponse `json:"task,omitempty"`
+}
+
+// ResumeTaskOptions is the request body for POST /tasks/{project}/{task}/resume.
+// Force=true bypasses the IsAbandoned gate — required to resume a task whose
+// runtime state still looks live (unexpired claim on an online runner).
+type ResumeTaskOptions struct {
+	Force bool `json:"force,omitempty"`
+}
+
+// ResumeTaskResult is the outcome of a resume request. When Resumed=false the
+// call was a no-op and Reason names why (idempotent replay, not-abandoned, or
+// terminal status). Callers should surface Reason to the user rather than
+// treating this as an error.
+type ResumeTaskResult struct {
+	TaskID             string `json:"task_id"`
+	Resumed            bool   `json:"resumed"`
+	PriorStatus        string `json:"prior_status,omitempty"`
+	PriorSessionsCount int    `json:"prior_sessions_count,omitempty"`
+	AbandonReason      string `json:"abandon_reason,omitempty"`
+	Reason             string `json:"reason,omitempty"` // populated when Resumed=false
+}
+
+// ResumeFeatureResult is the response for POST /features/{featureId}/resume.
+// Each task in the feature gets its own ResumeTaskResult in Results.
+// TotalResumed / TotalSkipped are convenience counters — computed over
+// the full loop and NOT bounded by any client-side cap on Results. When
+// the per-task detail list is truncated for response-size reasons,
+// Truncated is set to true and TotalResults carries the pre-truncation
+// count; clients that need the complete audit trail fall back to
+// GET /tasks?feature_id=X. A single task that errored during processing
+// is reported as a skipped result with Reason describing the error, so
+// partial failures don't fail the whole batch.
+type ResumeFeatureResult struct {
+	FeatureID    string             `json:"feature_id"`
+	TotalResumed int                `json:"total_resumed"`
+	TotalSkipped int                `json:"total_skipped"`
+	Results      []ResumeTaskResult `json:"results"`
+	// Truncated is true when Results was capped below its natural length.
+	// TotalResumed / TotalSkipped remain authoritative regardless.
+	Truncated bool `json:"truncated,omitempty"`
+	// TotalResults is len(Results) before any client-side cap. Populated
+	// only when Truncated=true so callers know how much detail was dropped.
+	TotalResults int `json:"total_results,omitempty"`
 }
 
 // RunnerStatusResponse is the response for GET /tasks/runner/status.

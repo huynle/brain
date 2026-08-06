@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Brain PWA — Multi-Project Dashboard</title>
+  <link rel="stylesheet" href="./dashboard.css" />
+</head>
+<body>
+  <div id="app"></div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="ctxmenu" class="ctxmenu" role="menu" hidden></div>
+  <div id="sheet-scrim" class="sheet-scrim" hidden></div>
+  <div id="sheet" class="sheet" role="dialog" aria-modal="true" hidden>
+    <div class="sheet-handle" aria-hidden="true"></div>
+    <div id="sheet-body"></div>
+  </div>
+  <div id="drag-ghost" class="drag-ghost" hidden></div>
+
+  <div id="banner" class="banner">
+    <strong>Wireframe v2</strong> · Multi-project dashboard ·
+    Drag project card headers to reorder ·
+    Click a task to steer it in the right rail
+    <button id="reset-btn" title="Reset workspace">Reset</button>
+    <button id="toggle-density-btn" title="Toggle card density">Density</button>
+    <button id="toggle-mobile-btn" title="Toggle mobile mode">Mobile</button>
+  </div>
+
+  <script type="module" src="./dashboard.js"></script>
+</body>
+</html>

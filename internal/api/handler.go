@@ -26,6 +26,7 @@ type Handler struct {
 	schedulerViews SchedulerVisibilityService
 	runTask        RunTaskService
 	runFeature     RunFeatureService
+	runProject     RunProjectService
 	bridge         BridgeService
 	hub            *realtime.Hub
 	logBuffer      *logbuffer.Buffer
@@ -196,5 +197,15 @@ func WithRunTaskService(s RunTaskService) HandlerOption {
 func WithRunFeatureService(s RunFeatureService) HandlerOption {
 	return func(h *Handler) {
 		h.runFeature = s
+	}
+}
+
+// WithRunProjectService sets the RunProjectService used by HandleRunProject.
+// When unset, POST /tasks/{project}/run returns 501 Not Implemented so the
+// PWA can fall back gracefully (project-run is a batch convenience over the
+// per-feature endpoint that IS wired).
+func WithRunProjectService(s RunProjectService) HandlerOption {
+	return func(h *Handler) {
+		h.runProject = s
 	}
 }

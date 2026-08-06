@@ -1,257 +1,187 @@
-import { useEffect, useRef, useState } from "react";
-import { isEditableTarget } from "../../lib/keyboard";
+/**
+ * Modal — wireframe-parity port.
+ *
+ * DOM (matches wireframe panes-v2.css):
+ *   .modal-scrim
+ *   .modal
+ *     .modal-head (title + close)
+ *     .modal-tabs (optional)
+ *     .modal-body
+ *     .modal-foot (optional)
+ *
+ * Portaled to document.body. Escape closes; scrim-click closes;
+ * body scroll is locked while open; focus is trapped loosely.
+ */
+import React, { useEffect, useRef } from "react";
+import { createPortal } from "react-dom";
+
+export interface ModalTab {
+  id: string;
+  label: React.ReactNode;
+  disabled?: boolean;
+}
+
+export interface ModalProps {
+  title: React.ReactNode;
+  onClose: () => void;
+  children?: React.ReactNode;
+  footer?: React.ReactNode;
+  tabs?: ModalTab[];
+  activeTab?: string;
+  onTabChange?: (id: string) => void;
+  className?: string;
+  closeOnScrimClick?: boolean;
+  closeOnEscape?: boolean;
+  /** Change this value to force the modal to re-run firstFocusable and
+   *  refocus the primary action. Useful for multi-view modals
+   *  (menu → confirmForce) where the primary button changes across views;
+   *  without this, focus stays on whatever was focused when the modal
+   *  first mounted. Optional — modals with a single view can omit it. */
+  refocusKey?: string;
+}
+
+export function handleModalKeyDown(
+  e: KeyboardEvent | React.KeyboardEvent,
+  onClose: () => void,
+  closeOnEscape = true,
+): void {
+  if (!closeOnEscape) return;
+  if (e.key === "Escape") {
+    e.preventDefault();
+    onClose();
+  }
+}
+
+const FOCUSABLE =
+  'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]),' +
+  ' textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function firstFocusable(root: HTMLElement | null): HTMLElement | null {
+  if (!root) return null;
+  // Modal children can opt out of the natural DOM-order fallback by tagging
+  // a primary action with data-autofocus="true". This is how TaskActions
+  // Modal + FeatureActionsModal keep keyboard-users from landing on the ×
+  // close button (which lives in .modal-head, rendered before the primary
+  // action). Preferred over the DOM-order default; fall back if unset.
+  const preferred = root.querySelector<HTMLElement>('[data-autofocus="true"]');
+  if (preferred && !preferred.hasAttribute("disabled")) return preferred;
+  return root.querySelector<HTMLElement>(FOCUSABLE);
+}
 
 export function Modal({
   title,
   onClose,
   children,
   footer,
+  tabs,
+  activeTab,
+  onTabChange,
   className,
-  onEdit,
-  storageKey,
-}: {
-  title: string;
-  onClose: () => void;
-  children: React.ReactNode;
-  footer?: React.ReactNode;
-  /** Extra class on the dialog, e.g. "sheet-wide" for a larger editor modal. */
-  className?: string;
-  /** Optional action wired to the modal-level edit shortcut (`e`). */
-  onEdit?: () => void;
-  /** Stable preference key for remembering modal size on this browser. */
-  storageKey?: string;
-}) {
-  const backdropRef = useRef<HTMLDivElement>(null);
-  const bodyRef = useRef<HTMLDivElement>(null);
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const modalStorageKey = storageKey ?? modalPreferenceKey(title, className);
-  const [expanded, setExpanded] = useState(() => readExpandedPreference(modalStorageKey));
+  closeOnScrimClick = true,
+  closeOnEscape = true,
+  refocusKey,
+}: ModalProps): JSX.Element | null {
+  const scrimRef = useRef<HTMLDivElement | null>(null);
+  const dialogRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    // Remember what had focus so it can be restored on close — without this
-    // a keyboard-driven flow (j/k to a row, open a modal, q to close) dumps
-    // focus on <body> and the next keystroke goes nowhere.
-    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    const dialog = dialogRef.current;
-    const focusables = getFocusableElements(dialog);
-    const preferred = dialog?.querySelector<HTMLElement>('[data-autofocus="true"]');
-    const target = preferred || focusables[0] || dialog;
+    const opener =
+      typeof document !== "undefined" &&
+      document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+    const target = firstFocusable(dialogRef.current) ?? dialogRef.current;
     target?.focus({ preventScroll: true });
     return () => {
       if (opener && opener.isConnected) opener.focus({ preventScroll: true });
     };
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refocusKey]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const modals = Array.from(document.querySelectorAll(".modal-backdrop"));
-      if (modals[modals.length - 1] !== backdropRef.current) return;
-
-      if (e.key === "Tab") {
-        const focusables = getFocusableElements(dialogRef.current);
-        if (focusables.length === 0) {
-          e.preventDefault();
-          return;
-        }
-        const first = focusables[0];
-        const last = focusables[focusables.length - 1];
-        if (e.shiftKey && document.activeElement === first) {
-          e.preventDefault();
-          last.focus();
-          return;
-        }
-        if (!e.shiftKey && document.activeElement === last) {
-          e.preventDefault();
-          first.focus();
-          return;
-        }
+      const modals =
+        typeof document !== "undefined"
+          ? document.querySelectorAll(".modal-scrim")
+          : [];
+      if (modals.length && modals[modals.length - 1] !== scrimRef.current)
         return;
-      }
-
-      if (e.key === "Escape") {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-
-      if (isEditableTarget(e.target) || e.metaKey || e.altKey) return;
-
-      if (e.key === "q") {
-        e.preventDefault();
-        onClose();
-        return;
-      }
-
-      if (e.key === "m") {
-        e.preventDefault();
-        toggleExpanded();
-        return;
-      }
-
-      if (e.key === "e" && onEdit) {
-        e.preventDefault();
-        onEdit();
-        return;
-      }
-
-      const body = bodyRef.current;
-      if (!body) return;
-
-      const line = 48;
-      const page = Math.max(line, body.clientHeight * 0.75);
-      let top: number | null = null;
-
-      switch (e.key) {
-        case "j":
-        case "ArrowDown":
-          top = body.scrollTop + line;
-          break;
-        case "k":
-        case "ArrowUp":
-          top = body.scrollTop - line;
-          break;
-        case "d":
-          if (e.ctrlKey) top = body.scrollTop + page;
-          break;
-        case "u":
-          if (e.ctrlKey) top = body.scrollTop - page;
-          break;
-        case "g":
-          top = 0;
-          break;
-        case "G":
-          top = body.scrollHeight;
-          break;
-        default:
-          return;
-      }
-
-      if (top === null) return;
-      e.preventDefault();
-      body.scrollTo({ top });
+      handleModalKeyDown(e, onClose, closeOnEscape);
     };
     window.addEventListener("keydown", onKey);
-    document.body.style.overflow = "hidden";
+    const prev =
+      typeof document !== "undefined" ? document.body.style.overflow : "";
+    if (typeof document !== "undefined")
+      document.body.style.overflow = "hidden";
     return () => {
       window.removeEventListener("keydown", onKey);
-      document.body.style.overflow = "";
+      if (typeof document !== "undefined")
+        document.body.style.overflow = prev;
     };
-  }, [modalStorageKey, onClose, onEdit]);
+  }, [onClose, closeOnEscape]);
 
-  function toggleExpanded() {
-    setExpanded((v) => {
-      const next = !v;
-      writeExpandedPreference(modalStorageKey, next);
-      return next;
-    });
-  }
+  const modalCls = ["modal", className].filter(Boolean).join(" ");
 
-  const sheetClass = ["sheet", className, expanded ? "sheet-expanded" : ""]
-    .filter(Boolean)
-    .join(" ");
-
-  return (
-    <div
-      ref={backdropRef}
-      className="modal-backdrop"
-      onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
-      }}
-    >
-      <div ref={dialogRef} className={sheetClass} role="dialog" aria-modal="true" aria-label={title} tabIndex={-1}>
-        <div className="sheet-header">
-          <h2>{title}</h2>
+  const contents = (
+    <>
+      <div
+        ref={scrimRef}
+        className="modal-scrim"
+        onMouseDown={(e) => {
+          if (closeOnScrimClick && e.target === e.currentTarget) onClose();
+        }}
+      />
+      <div
+        ref={dialogRef}
+        className={modalCls}
+        role="dialog"
+        aria-modal="true"
+        aria-label={typeof title === "string" ? title : undefined}
+        tabIndex={-1}
+      >
+        <div className="modal-head">
+          <div className="modal-title">{title}</div>
           <button
-            className="icon-btn"
-            onClick={toggleExpanded}
-            aria-label={expanded ? "restore window" : "expand window"}
-            title={expanded ? "Restore (m)" : "Expand (m)"}
+            type="button"
+            className="modal-close"
+            onClick={onClose}
+            aria-label="Close"
+            title="Close (Esc)"
           >
-            {expanded ? "▢" : "□"}
-          </button>
-          <button className="icon-btn" onClick={onClose} aria-label="close" title="Close (q)">
-            ✕
+            ×
           </button>
         </div>
-        <div ref={bodyRef} className="sheet-body">{children}</div>
-        {footer && <div className="sheet-footer">{footer}</div>}
+
+        {tabs && tabs.length > 0 && (
+          <div className="modal-tabs" role="tablist">
+            {tabs.map((t) => (
+              <button
+                type="button"
+                key={t.id}
+                className={
+                  "modal-tab " + (t.id === activeTab ? "active" : "")
+                }
+                role="tab"
+                aria-selected={t.id === activeTab}
+                disabled={t.disabled}
+                onClick={() => {
+                  if (!t.disabled && onTabChange) onTabChange(t.id);
+                }}
+                style={{ border: 0, background: "transparent" }}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div className="modal-body">{children}</div>
+
+        {footer && <div className="modal-foot">{footer}</div>}
       </div>
-    </div>
+    </>
   );
-}
 
-const MODAL_SIZE_PREF_PREFIX = "brain.modal.expanded.";
-
-function modalPreferenceKey(title: string, className?: string): string {
-  const stableTitle = title.replace(/ · .*/, "");
-  const stableClass = className?.trim().split(/\s+/).sort().join(".") || "default";
-  return stableClass + "." + stableTitle.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-}
-
-function readExpandedPreference(key: string): boolean {
-  try {
-    return localStorage.getItem(MODAL_SIZE_PREF_PREFIX + key) === "1";
-  } catch {
-    return false;
-  }
-}
-
-function writeExpandedPreference(key: string, expanded: boolean) {
-  try {
-    localStorage.setItem(MODAL_SIZE_PREF_PREFIX + key, expanded ? "1" : "0");
-  } catch {
-    // Storage can be unavailable in private/restricted contexts; the modal still works.
-  }
-}
-
-function getFocusableElements(root: HTMLElement | null): HTMLElement[] {
-  if (!root) return [];
-  return Array.from(
-    root.querySelectorAll<HTMLElement>(
-      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
-    ),
-  ).filter((el) => el.offsetParent !== null && !el.hasAttribute("disabled") && el.tabIndex !== -1);
-}
-
-export function ConfirmDialog({
-  title,
-  message,
-  confirmLabel = "Confirm",
-  danger,
-  onConfirm,
-  onClose,
-  busy,
-}: {
-  title: string;
-  message: React.ReactNode;
-  confirmLabel?: string;
-  danger?: boolean;
-  onConfirm: () => void;
-  onClose: () => void;
-  busy?: boolean;
-}) {
-  return (
-    <Modal
-      title={title}
-      onClose={onClose}
-      footer={
-        <>
-          <button className="btn ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button
-            className={`btn ${danger ? "danger" : "primary"}`}
-            style={{ marginLeft: "auto" }}
-            onClick={onConfirm}
-            disabled={busy}
-            data-autofocus="true"
-          >
-            {busy ? "Working…" : confirmLabel}
-          </button>
-        </>
-      }
-    >
-      <div style={{ color: "var(--fg-dim)" }}>{message}</div>
-    </Modal>
-  );
+  if (typeof document === "undefined") return contents;
+  return createPortal(contents, document.body);
 }

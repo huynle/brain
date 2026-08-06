@@ -104,6 +104,19 @@ export interface Task {
   merge_policy?: string;
   merge_strategy?: string;
   open_pr_before_merge?: boolean;
+  /**
+   * Merge-request URL for the task's feature branch. Optional — the
+   * server does not yet populate it in Phase 5. The in-flight
+   * `mr-status` feature will introduce a first-class URL on
+   * merge_request entries; until then, `lib/features.extractPrUrl`
+   * also falls back to a regex scan of `content`.
+   */
+  mr_url?: string;
+  /**
+   * Compat alias for `mr_url`. Server code paths that use the longer
+   * name are tolerated by the client.
+   */
+  merge_request_url?: string;
 
   feature_id?: string;
   feature_priority?: string;
@@ -157,6 +170,56 @@ export interface Task {
   dispatch_lease?: DispatchLease;
   placement_reasons?: PlacementReason[];
   last_placement_reason?: PlacementReason;
+
+  // Abandonment surface for the resume-abandoned-tasks flow. Derived
+  // server-side from task_claims + runners.status + reaper metadata by
+  // enrichAbandonmentState — never written by clients. When is_abandoned
+  // is true, abandon_reason names the underlying cause and the PWA
+  // renders a Resume affordance.
+  is_abandoned?: boolean;
+  abandon_reason?: AbandonReason;
+
+  // Runtime lifecycle flags for resume. resume_requested is set by
+  // POST /resume and consumed by the runner at claim time.
+  resume_requested?: boolean;
+  resume_requested_at?: string;
+}
+
+/** Discriminant on the underlying signal that flagged the task as abandoned.
+ *  Keep in sync with service.AbandonReason* constants in Go. */
+export type AbandonReason =
+  | "no_claim"
+  | "claim_expired"
+  | "runner_offline"
+  | "orphan_reaped";
+
+/** Body for POST /tasks/{project}/{task}/resume and
+ *  POST /tasks/{project}/features/{feature}/resume. */
+export interface ResumeTaskOptions {
+  /** Bypass the is_abandoned gate. Does NOT override the live-claim safety
+   *  check — a resume against a task claimed by an online runner is refused
+   *  even with force=true. */
+  force?: boolean;
+}
+
+/** Response from POST /resume (single task). Resumed=false means the call
+ *  was a well-formed no-op — reason tells the user why. */
+export interface ResumeTaskResult {
+  task_id: string;
+  resumed: boolean;
+  prior_status?: string;
+  prior_sessions_count?: number;
+  abandon_reason?: AbandonReason | "";
+  reason?: string;
+}
+
+/** Response from POST /features/{feature}/resume. Batch summary + per-task
+ *  outcomes. total_resumed + total_skipped equals results.length. */
+export interface ResumeFeatureResult {
+  feature_id: string;
+  total_resumed: number;
+  total_skipped: number;
+  results: ResumeTaskResult[];
 }
 
 export interface DispatchLease {
@@ -623,3 +686,32 @@ export type Health = {
   embedding?: { enabled?: boolean; ready?: boolean; [k: string]: unknown };
   [k: string]: unknown;
 };
+
+// FeatureCheckoutOptions mirrors internal/types/types.go FeatureCheckoutOptions.
+// Passed to POST /api/v1/tasks/{projectId}/features/{featureId}/checkout.
+export interface FeatureCheckoutOptions {
+  execution_branch?: string;
+  merge_target_branch?: string;
+  /** "prompt_only" | "auto_pr" | "auto_merge" */
+  merge_policy?: string;
+  /** "squash" | "merge" | "rebase" */
+  merge_strategy?: string;
+  /** "keep" | "delete" */
+  remote_branch_policy?: string;
+  open_pr_before_merge?: boolean;
+  /** "worktree" | "current_branch" */
+  execution_mode?: string;
+  /** "ai" (default) | "simple" */
+  checkout_mode?: string;
+}
+
+// CheckoutFeatureResult mirrors internal/types/types.go CheckoutFeatureResult.
+export interface CheckoutFeatureResult {
+  created: boolean;
+  generatedKey: string;
+  task?: {
+    id?: string;
+    path?: string;
+    [k: string]: unknown;
+  };
+}

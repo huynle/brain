@@ -1,8 +1,8 @@
 {
   "projectId": "test-project",
   "status": "stopped",
-  "startedAt": "2026-07-07T12:15:30.688118-06:00",
-  "updatedAt": "2026-07-07T12:15:30.804135-06:00",
+  "startedAt": "2026-07-08T15:12:29.183745-06:00",
+  "updatedAt": "2026-07-08T15:12:29.288965-06:00",
   "runningTasks": null,
   "stats": {
     "completed": 0,
@@ -78,6 +78,7 @@
     "hooks_dir": "",
     "hook_timeout": 0,
     "heartbeat_interval": 0,
+    "project_refresh_interval": 0,
     "log_streaming": false,
     "capabilities": null,
     "dispatch_push": false,

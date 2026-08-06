@@ -108,6 +108,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))
 				r.Get("/config/task-defaults", TaskDefaultsHandler(cfg.TaskDefaults))
+				if o.configHandler != nil {
+					r.Get("/config", o.configHandler.HandleGet)
+					r.Get("/config/schema", o.configHandler.HandleGetSchema)
+				}
+			})
+
+			// ─── Config write (admin:* scope) ────────────────────
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.configHandler != nil {
+					r.Put("/config", o.configHandler.HandlePut)
+				}
 			})
 
 			// ─── Health & Stats (read:* scope) ──────────────────
@@ -369,8 +381,16 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
 					if o.handler != nil && o.handler.tasks != nil {
 						r.Get("/", o.handler.HandleListProjects)
+						// Multi-project SSE: /tasks/stream?projects=a,b,c or
+						// ?projects=all. Registered at the /tasks level so it
+						// sits BEFORE /{projectId}/stream in the tree — Chi
+						// prefers the static "stream" segment over the
+						// {projectId} placeholder anyway, but keeping them in
+						// clearly different scopes makes the intent obvious.
+						r.Get("/stream", o.handler.HandleMultiSSEStream)
 					} else {
 						r.Get("/", notImplemented)
+						r.Get("/stream", notImplemented)
 					}
 				})
 
@@ -507,17 +527,25 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Put("/features/{featureId}/assignment", o.handler.HandleAssignFeatureToRunner)
 							r.Post("/features/{featureId}/assignment/clear", o.handler.HandleClearFeatureAssignment)
 							r.Post("/features/{featureId}/run", o.handler.HandleRunFeature)
+							r.Post("/features/{featureId}/resume", o.handler.HandleResumeFeature)
+							// Project-level fanout: run every ready feature in this project.
+							// Distinct from /features/{featureId}/run — no featureId path segment.
+							r.Post("/run", o.handler.HandleRunProject)
 							r.Post("/{taskId}/trigger", o.handler.HandleTriggerTask)
 							r.Post("/{taskId}/dispatch", o.handler.HandleDispatchTask)
 							r.Post("/{taskId}/run", o.handler.HandleRunTask)
+							r.Post("/{taskId}/resume", o.handler.HandleResumeTask)
 						} else {
 							r.Post("/features/{featureId}/checkout", notImplemented)
 							r.Put("/features/{featureId}/assignment", notImplemented)
 							r.Post("/features/{featureId}/assignment/clear", notImplemented)
 							r.Post("/features/{featureId}/run", notImplemented)
+							r.Post("/features/{featureId}/resume", notImplemented)
+							r.Post("/run", notImplemented)
 							r.Post("/{taskId}/trigger", notImplemented)
 							r.Post("/{taskId}/dispatch", notImplemented)
 							r.Post("/{taskId}/run", notImplemented)
+							r.Post("/{taskId}/resume", notImplemented)
 						}
 					})
 				})
@@ -707,12 +735,21 @@ type routerOptions struct {
 	validator      TokenValidator
 	rateLimiter    *RateLimiter
 	embeddingReady bool
+	configHandler  *ConfigHandler
 }
 
 // WithHandler returns a router option that wires the given Handler.
 func WithHandler(h *Handler) func(*routerOptions) {
 	return func(o *routerOptions) {
 		o.handler = h
+	}
+}
+
+// WithConfigHandler wires the read/write config endpoints
+// (GET/PUT /api/v1/config, GET /api/v1/config/schema).
+func WithConfigHandler(ch *ConfigHandler) func(*routerOptions) {
+	return func(o *routerOptions) {
+		o.configHandler = ch
 	}
 }
 

@@ -203,14 +203,128 @@ export const updateEntryRaw = (path: string, content: string) =>
     rawBody: content,
   });
 
-export const deleteEntry = (path: string) =>
+// Delete a single entry. `force` bypasses the server's live-claim guard,
+// which refuses (409) to delete a task an online runner is executing.
+export const deleteEntry = (path: string, force = false) =>
   api<unknown>(`/api/v1/entries/${encodeEntryPath(path)}`, {
     method: "DELETE",
-    query: { confirm: "true" },
+    query: force ? { confirm: "true", force: "true" } : { confirm: "true" },
   });
 
 export const setTaskStatus = (task: Task, status: string) =>
   updateEntry(task.path, { status });
+
+// ─── Bulk operations ───────────────────────────────────────────────
+
+export interface BulkFilter {
+  feature_id?: string;
+  project?: string;
+  type?: string;
+  status?: string;
+  priority?: string;
+  tags?: string[];
+}
+
+export interface BulkResultRow {
+  path: string;
+  id: string;
+  title: string;
+  /** "ok" | "error" */
+  status: string;
+  error?: string;
+}
+
+export interface BulkUpdateResponse {
+  updated: number;
+  failed: number;
+  total: number;
+  dry_run: boolean;
+  results: BulkResultRow[];
+  /** True when the filter matched more entries than the 100 cap allows. */
+  truncated?: boolean;
+  /** How many entries matched before the cap. */
+  matched_total?: number;
+}
+
+export interface BulkDeleteResponse {
+  deleted: number;
+  failed: number;
+  total: number;
+  dry_run: boolean;
+  results: BulkResultRow[];
+  truncated?: boolean;
+  matched_total?: number;
+}
+
+/**
+ * Apply one set of updates to every entry matching a filter.
+ *
+ * Always run with `dry_run: true` first for anything user-initiated: the
+ * response reports `truncated` when the filter matched more than the
+ * server's 100-entry cap, which is the difference between "updated the
+ * feature" and "updated the first 100 tasks of the feature and said
+ * nothing".
+ */
+export const bulkUpdate = (
+  filter: BulkFilter,
+  updates: Record<string, unknown>,
+  opts: { dryRun?: boolean; limit?: number } = {},
+) =>
+  api<BulkUpdateResponse>("/api/v1/entries/bulk-update", {
+    method: "POST",
+    body: {
+      filter,
+      updates,
+      ...(opts.dryRun ? { dry_run: true } : {}),
+      ...(opts.limit ? { limit: opts.limit } : {}),
+    },
+  });
+
+/**
+ * Delete every entry matching a filter.
+ *
+ * The server rejects an unconstrained filter, so callers must always pin
+ * at least project + feature_id. `force` bypasses the live-claim guard,
+ * which otherwise fails the whole request (409) if any target is being
+ * executed by an online runner.
+ */
+export const bulkDelete = (
+  filter: BulkFilter,
+  opts: { dryRun?: boolean; limit?: number; force?: boolean } = {},
+) =>
+  api<BulkDeleteResponse>("/api/v1/entries/bulk-delete", {
+    method: "POST",
+    query: opts.force ? { force: "true" } : undefined,
+    body: {
+      filter,
+      ...(opts.dryRun ? { dry_run: true } : {}),
+      ...(opts.limit ? { limit: opts.limit } : {}),
+    },
+  });
+
+/** Set one status across every task in a feature. */
+export const setFeatureStatus = (
+  projectId: string,
+  featureId: string,
+  status: string,
+  opts: { dryRun?: boolean } = {},
+) =>
+  bulkUpdate(
+    { project: projectId, feature_id: featureId, type: "task" },
+    { status },
+    opts,
+  );
+
+/** Delete every task in a feature. */
+export const deleteFeatureTasks = (
+  projectId: string,
+  featureId: string,
+  opts: { dryRun?: boolean; force?: boolean } = {},
+) =>
+  bulkDelete(
+    { project: projectId, feature_id: featureId, type: "task" },
+    opts,
+  );
 
 export interface TriggerResponse {
   success: boolean;

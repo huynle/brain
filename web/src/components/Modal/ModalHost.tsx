@@ -22,6 +22,8 @@ import { FeatureModal } from "./FeatureModal";
 import { FeatureActionsModal } from "./FeatureActionsModal";
 import { AutomationModal } from "./AutomationModal";
 import { SettingsModal } from "./SettingsModal";
+import { StatusPickerModal } from "./StatusPickerModal";
+import { MetadataModal } from "./MetadataModal";
 
 export function ModalHost(): JSX.Element | null {
   const kind = useModal((s) => s.kind);
@@ -33,10 +35,18 @@ export function ModalHost(): JSX.Element | null {
       return <TaskModal />;
     case "task-actions":
       return <TaskActionsModal />;
+    case "task-status":
+      return <StatusPickerModal mode="task" />;
+    case "task-metadata":
+      return <MetadataModal mode="task" />;
     case "feature":
       return <FeatureModal />;
     case "feature-actions":
       return <FeatureActionsModal />;
+    case "feature-status":
+      return <StatusPickerModal mode="feature" />;
+    case "feature-metadata":
+      return <MetadataModal mode="feature" />;
     case "automation":
       return <AutomationModal />;
     case "settings":

@@ -14,6 +14,7 @@ import { useWorkspace } from "../../store/workspace";
 import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
 import { deriveFeatures, type DerivedFeature } from "../../lib/features";
+import { useMergeRequests } from "../../hooks/useMergeRequests";
 import { useContextMenu } from "../common/ContextMenu";
 import { runProject, summarizeRunProjectResult } from "../../lib/api";
 import { CardTasks } from "./CardTasks";
@@ -77,9 +78,11 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   const toast = useUI((s) => s.toast);
 
   const stats = useMemo(() => statsFor(tasks), [tasks]);
+  // Brain-native MRs fold into lifecycle (see lib/mergeRequests).
+  const { openByProject } = useMergeRequests();
   const features = useMemo(
-    () => deriveFeatures(tasks, projectId),
-    [tasks, projectId],
+    () => deriveFeatures(tasks, projectId, openByProject.get(projectId)),
+    [tasks, projectId, openByProject],
   );
   const health = useMemo(
     () => healthFor(stats, features),

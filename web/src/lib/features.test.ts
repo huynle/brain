@@ -21,6 +21,7 @@ import {
   deriveFeatures,
   sortFeatures,
   extractPrUrl,
+  buildFeatureForest,
   type DerivedFeature,
 } from "./features";
 import type { Task } from "./types";
@@ -282,9 +283,118 @@ test("sortFeatures: within the same lifecycle bucket, sorts by id", () => {
   );
 });
 
+// ─── feature dependencies ──────────────────────────────────────────
+
+test("deriveFeatures: dependsOn comes from feature_depends_on", () => {
+  const feats = deriveFeatures(
+    [
+      mkTask({ id: "t1", feature_id: "api", feature_depends_on: ["schema"] }),
+      mkTask({ id: "t2", feature_id: "api", feature_depends_on: ["schema"] }),
+    ],
+    "proj",
+  );
+  assert.deepEqual(feats[0].dependsOn, ["schema"]);
+});
+
+test("deriveFeatures: dependsOn defaults to empty, never undefined", () => {
+  const feats = deriveFeatures([mkTask({ id: "t1", feature_id: "api" })], "proj");
+  assert.deepEqual(feats[0].dependsOn, []);
+});
+
+test("deriveFeatures: first non-empty feature_depends_on wins", () => {
+  // A task edited in isolation can disagree with its siblings; we take
+  // the first non-empty rather than unioning, matching the TUI.
+  const feats = deriveFeatures(
+    [
+      mkTask({ id: "t1", feature_id: "api" }),
+      mkTask({ id: "t2", feature_id: "api", feature_depends_on: ["schema"] }),
+      mkTask({ id: "t3", feature_id: "api", feature_depends_on: ["other"] }),
+    ],
+    "proj",
+  );
+  assert.deepEqual(feats[0].dependsOn, ["schema"]);
+});
+
+test("deriveFeatures: a feature depending on itself drops the self-ref", () => {
+  const feats = deriveFeatures(
+    [mkTask({ id: "t1", feature_id: "api", feature_depends_on: ["api"] })],
+    "proj",
+  );
+  assert.deepEqual(feats[0].dependsOn, []);
+});
+
+test("buildFeatureForest: dependent features nest under their dependency", () => {
+  const roots = buildFeatureForest([
+    mkFeat("schema", "finished"),
+    mkFeat("api", "in-progress", ["schema"]),
+    mkFeat("ui", "in-progress", ["api"]),
+  ]);
+  assert.deepEqual(
+    roots.map((r) => r.id),
+    ["schema"],
+  );
+  assert.deepEqual(
+    roots[0].children.map((c) => c.id),
+    ["api"],
+  );
+  assert.deepEqual(
+    roots[0].children[0].children.map((c) => c.id),
+    ["ui"],
+  );
+});
+
+test("buildFeatureForest: two features sharing a dependency both nest", () => {
+  const roots = buildFeatureForest([
+    mkFeat("schema", "finished"),
+    mkFeat("api", "in-progress", ["schema"]),
+    mkFeat("docs", "in-progress", ["schema"]),
+  ]);
+  assert.equal(roots.length, 1);
+  assert.deepEqual(
+    roots[0].children.map((c) => c.id),
+    ["api", "docs"],
+  );
+});
+
+test("buildFeatureForest: a filtered-out dependency leaves the dependent a root", () => {
+  // CardFeatures hides merged features by default; a feature that
+  // depends on a hidden one must still render, not disappear.
+  const roots = buildFeatureForest([mkFeat("api", "in-progress", ["merged-schema"])]);
+  assert.deepEqual(
+    roots.map((r) => r.id),
+    ["api"],
+  );
+});
+
+test("buildFeatureForest: root order follows the input order", () => {
+  // Callers pipe through sortFeatures first, so input order is the
+  // canonical lifecycle ordering.
+  const roots = buildFeatureForest([
+    mkFeat("z", "blocked"),
+    mkFeat("a", "in-progress"),
+  ]);
+  assert.deepEqual(
+    roots.map((r) => r.id),
+    ["z", "a"],
+  );
+});
+
+test("buildFeatureForest: a dependency cycle renders both as flagged roots", () => {
+  const roots = buildFeatureForest([
+    mkFeat("a", "in-progress", ["b"]),
+    mkFeat("b", "in-progress", ["a"]),
+  ]);
+  assert.equal(roots.length, 2);
+  assert.ok(roots.every((r) => r.inCycle));
+});
+
 // ─── helpers ───────────────────────────────────────────────────────
 
-function mkFeat(id: string, lifecycle: DerivedFeature["lifecycle"]): DerivedFeature {
+function mkFeat(
+  id: string,
+  lifecycle: DerivedFeature["lifecycle"],
+  dependsOn: string[] = [],
+): DerivedFeature {
   return {
     id,
     projectId: "proj",
@@ -294,5 +404,49 @@ function mkFeat(id: string, lifecycle: DerivedFeature["lifecycle"]): DerivedFeat
     taskCount: { total: 0, completed: 0, blocked: 0, active: 0 },
     ownerTaskIds: [],
     resumableCount: 0,
+    dependsOn,
   };
 }
+
+// ─── Brain-native MR fold ──────────────────────────────────────────
+
+test("deriveFeatures: an open Brain-native MR flips lifecycle to mr-open", () => {
+  const feats = deriveFeatures(
+    [mkTask({ id: "t1", feature_id: "api", status: "completed" })],
+    "proj",
+    new Set(["api"]),
+  );
+  assert.equal(feats[0].lifecycle, "mr-open");
+});
+
+test("deriveFeatures: merged still trumps an open MR entry", () => {
+  // All tasks validated = merged; a stale MR entry must not regress it.
+  const feats = deriveFeatures(
+    [mkTask({ id: "t1", feature_id: "api", status: "validated" })],
+    "proj",
+    new Set(["api"]),
+  );
+  assert.equal(feats[0].lifecycle, "merged");
+});
+
+test("deriveFeatures: MR set only affects the named feature", () => {
+  const feats = deriveFeatures(
+    [
+      mkTask({ id: "t1", feature_id: "api", status: "pending" }),
+      mkTask({ id: "t2", feature_id: "ui", status: "pending" }),
+    ],
+    "proj",
+    new Set(["api"]),
+  );
+  const byId = Object.fromEntries(feats.map((f) => [f.id, f.lifecycle]));
+  assert.equal(byId.api, "mr-open");
+  assert.equal(byId.ui, "in-progress");
+});
+
+test("deriveFeatures: omitting the MR set preserves previous behavior", () => {
+  const feats = deriveFeatures(
+    [mkTask({ id: "t1", feature_id: "api", status: "completed" })],
+    "proj",
+  );
+  assert.equal(feats[0].lifecycle, "finished");
+});

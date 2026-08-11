@@ -6,9 +6,13 @@
  */
 import { useMemo } from "react";
 import { Modal } from "../common/Modal";
+import { ActionBar } from "../common/ActionBar";
 import { useModal } from "../../store/modal";
-import { useWorkspace } from "../../store/workspace";
 import { useLive } from "../../lib/sse";
+import { useActionRunner } from "../../hooks/useActionRunner";
+import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
+import { useMergeRequests } from "../../hooks/useMergeRequests";
+import { buildFeatureActions } from "../../lib/actions/featureActions";
 import { deriveFeatures } from "../../lib/features";
 import type { Task } from "../../lib/types";
 
@@ -26,7 +30,6 @@ export function FeatureModal(): JSX.Element {
   const target = useModal((s) => s.target);
   const openModal = useModal((s) => s.open);
   const close = useModal((s) => s.close);
-  const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
 
   const featureId =
     (target?.featureId as string | undefined) ??
@@ -35,14 +38,27 @@ export function FeatureModal(): JSX.Element {
   const projectId = (target?.projectId as string | undefined) ?? "";
 
   const tasks = useLive((s) => s.projects[projectId]?.tasks) ?? EMPTY_TASKS;
+  const { openByProject } = useMergeRequests();
   const feature = useMemo(
-    () => deriveFeatures(tasks, projectId).find((f) => f.id === featureId),
-    [tasks, projectId, featureId],
+    () =>
+      deriveFeatures(tasks, projectId, openByProject.get(projectId)).find(
+        (f) => f.id === featureId,
+      ),
+    [tasks, projectId, featureId, openByProject],
   );
 
   const featureTasks = useMemo(
     () => tasks.filter((t) => t.feature_id === featureId),
     [tasks, featureId],
+  );
+
+  const featureCtx = useFeatureActionContext(projectId);
+  const runner = useActionRunner();
+  // Built unconditionally so hook order stays stable across the
+  // not-found early return.
+  const actions = useMemo(
+    () => (feature ? buildFeatureActions(feature, featureCtx) : []),
+    [feature, featureCtx],
   );
 
   const abandonedCount = useMemo(
@@ -79,25 +95,17 @@ export function FeatureModal(): JSX.Element {
       onClose={close}
       footer={
         <>
-          <button
-            onClick={() =>
-              openModal("feature-actions", { projectId, featureId })
-            }
-            title="Manual checkout / force-merge / run blocked-inspector for this feature"
-          >
-            Actions…
-          </button>
-          <button
-            onClick={() => {
-              close();
-              openFeatureDrawer(projectId, featureId);
-            }}
-          >
-            Open drawer
-          </button>
+          {/* Shared registry — same verbs the row menu and touch sheet
+              offer, so the three surfaces cannot drift apart. */}
+          <ActionBar
+            actions={actions}
+            onRun={runner.run}
+            primary={["run", "resume", "checkout"]}
+          />
           <button className="primary" onClick={close}>
             Done
           </button>
+          {runner.dialog}
         </>
       }
     >
@@ -116,7 +124,7 @@ export function FeatureModal(): JSX.Element {
           {abandonedCount === 1
             ? "1 task in this feature looks abandoned"
             : `${abandonedCount} tasks in this feature look abandoned`}
-          {" — click Actions… to resume."}
+          {" — use Resume below to recover them."}
         </div>
       )}
       <div className="kv-grid">

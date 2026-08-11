@@ -38,6 +38,7 @@
  * Tasks without a `feature_id` (undefined or empty string) are
  * skipped entirely — the caller's project-level views handle those.
  */
+import { buildDepForest, type DepNode } from "./depTree";
 import type { Task } from "./types";
 
 export type FeatureLifecycle =
@@ -81,6 +82,17 @@ export interface DerivedFeature {
    *  reaped). Used by CardFeatures + FeatureModal to surface the
    *  Resume affordance. Zero when nothing is resumable. */
   resumableCount: number;
+  /** Feature ids this feature depends on, from the first task in the
+   *  group carrying a non-empty `feature_depends_on`.
+   *
+   *  `feature_depends_on` is a feature-level field replicated onto
+   *  every task's frontmatter, so in a well-formed feature all tasks
+   *  agree and "first non-empty" is exact. When they disagree (a task
+   *  edited in isolation) we take the first rather than unioning, so
+   *  the tree matches what the TUI draws — see
+   *  `internal/tui/featuregroup.go`, which reads `featureTasks[0]`.
+   *  Empty when the feature has no declared dependencies. */
+  dependsOn: string[];
 }
 
 /**
@@ -94,6 +106,14 @@ export interface DerivedFeature {
 export function deriveFeatures(
   tasks: readonly Task[],
   projectId: string,
+  /**
+   * Feature ids with an open Brain-native merge_request entry (see
+   * `lib/mergeRequests`). An `auto_pr` checkout produces such an entry
+   * rather than a GitHub/GitLab URL, so without this input a reviewed
+   * feature stayed "in-progress" forever and the MR OPEN column never
+   * moved. Optional: callers that don't display lifecycle can omit it.
+   */
+  openMRs?: ReadonlySet<string>,
 ): DerivedFeature[] {
   // Bucketed collector keyed by feature_id. Preserves insertion
   // order so the result is deterministic on identical input, which
@@ -112,7 +132,13 @@ export function deriveFeatures(
 
   const out: DerivedFeature[] = [];
   for (const [fid, bucketTasks] of groups) {
-    out.push(deriveOne(fid, bucketTasks, projectId));
+    const f = deriveOne(fid, bucketTasks, projectId);
+    // Brain-native MR fold. Merged still trumps — a feature whose tasks
+    // are all validated is done, whatever stale MR entry remains.
+    if (f.lifecycle !== "merged" && openMRs?.has(fid)) {
+      f.lifecycle = "mr-open";
+    }
+    out.push(f);
   }
   return out;
 }
@@ -130,6 +156,7 @@ function deriveOne(
   let resumable = 0;
   let prUrl: string | undefined;
   let mergePolicy: string | undefined;
+  let dependsOn: string[] | undefined;
   const ownerTaskIds: string[] = [];
 
   for (const t of tasks) {
@@ -158,6 +185,12 @@ function deriveOne(
       if (url) prUrl = url;
     }
     if (!mergePolicy && t.merge_policy) mergePolicy = t.merge_policy;
+    if (!dependsOn && t.feature_depends_on && t.feature_depends_on.length > 0) {
+      // Drop self-references and blanks here rather than in the tree
+      // builder, so every consumer of `dependsOn` sees clean data.
+      const clean = t.feature_depends_on.filter((d) => !!d && d !== featureId);
+      if (clean.length > 0) dependsOn = clean;
+    }
   }
 
   const progress = total > 0 ? completed / total : 0;
@@ -190,6 +223,7 @@ function deriveOne(
     prUrl,
     ownerTaskIds,
     resumableCount: resumable,
+    dependsOn: dependsOn ?? [],
   };
 }
 
@@ -215,6 +249,26 @@ export function sortFeatures(feats: DerivedFeature[]): DerivedFeature[] {
     const dr = rank[a.lifecycle] - rank[b.lifecycle];
     if (dr !== 0) return dr;
     return a.id.localeCompare(b.id);
+  });
+}
+
+/**
+ * Build the feature dependency forest from `feature_depends_on`.
+ *
+ * Root ordering follows the caller's array order, so piping through
+ * {@link sortFeatures} first keeps the canonical blocked → in-progress
+ * → mr-open → finished → merged sequence at every level of the tree.
+ *
+ * Features whose dependency is not in the input (a merged feature the
+ * user has collapsed, or one that lives in another project) stay roots
+ * — the tree never hides a feature because its parent was filtered out.
+ */
+export function buildFeatureForest(
+  features: readonly DerivedFeature[],
+): DepNode<DerivedFeature>[] {
+  return buildDepForest(features, {
+    id: (f) => f.id,
+    deps: (f) => f.dependsOn,
   });
 }
 

@@ -220,6 +220,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					if o.handler != nil {
 						r.Post("/", o.handler.HandleCreateEntry)
 						r.Post("/bulk-update", o.handler.HandleBulkUpdate)
+						r.Post("/bulk-delete", o.handler.HandleBulkDelete)
 						if o.handler.attachments != nil {
 							r.Post("/{id}/attachments", o.handler.HandleAttachEntryAttachment)
 							r.Delete("/{id}/attachments/{attachmentID}", o.handler.HandleDetachEntryAttachment)
@@ -233,6 +234,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					} else {
 						r.Post("/", notImplemented)
 						r.Post("/bulk-update", notImplemented)
+						r.Post("/bulk-delete", notImplemented)
 						r.Post("/*", notImplemented)
 						r.Patch("/*", notImplemented)
 						r.Delete("/*", notImplemented)

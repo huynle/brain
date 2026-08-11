@@ -519,7 +519,54 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		h.emitEvent(r.Context(), statusEvt)
 	}
 
+	// Outside the status-changed gate on purpose: finalization is
+	// idempotent (re-writing the same terminal status is a no-op), and
+	// gating it on oldStatus/event wiring would silently skip it in
+	// deployments without an event service.
+	if entry.Type == "task" && req.Status != nil {
+		h.finalizeAutomationRun(r.Context(), entry, *req.Status)
+	}
+
 	WriteJSON(w, http.StatusOK, entry)
+}
+
+// finalizeAutomationRun closes the audit loop on an automation-generated
+// task. createRunAudit writes the automation_run entry as "queued" when the
+// task is dispatched, and until now NOTHING ever updated it — every run in
+// history still says queued, so the audit trail could not answer "did this
+// automation's work actually succeed?". That blindness is how a checkout
+// agent that produced no artifacts still looked fine in the record.
+//
+// Called from both task-status paths (entry PATCH and metadata merge), so
+// runner completions, PWA edits, and MCP updates all close their run.
+// Best-effort: a failed audit update must never fail the status change
+// that triggered it.
+func (h *Handler) finalizeAutomationRun(ctx context.Context, entry *types.BrainEntry, newStatus string) {
+	if entry == nil || entry.Type != "task" || entry.AutomationRunID == "" {
+		return
+	}
+	var runStatus string
+	switch newStatus {
+	case "completed", "validated":
+		runStatus = "completed"
+	case "blocked":
+		runStatus = "blocked"
+	case "cancelled", "superseded", "archived":
+		runStatus = "cancelled"
+	default:
+		// Non-terminal (pending/in_progress/active/draft): the run is
+		// still open; leave it queued.
+		return
+	}
+	if _, err := h.brain.Update(ctx, entry.AutomationRunID, types.UpdateEntryRequest{
+		Status: &runStatus,
+	}); err != nil {
+		slog.Warn("finalize automation run failed",
+			"run_id", entry.AutomationRunID,
+			"task_id", entry.ID,
+			"status", runStatus,
+			"error", err)
+	}
 }
 
 // HandleUpdateOrMetadata dispatches PATCH /entries/* to either HandleUpdateEntry
@@ -630,6 +677,13 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		h.emitEvent(r.Context(), statusEvt)
 	}
 
+	// See HandleUpdateEntry: idempotent, deliberately un-gated.
+	if entry.Type == "task" {
+		if _, ok := fields["status"]; ok {
+			h.finalizeAutomationRun(r.Context(), entry, entry.Status)
+		}
+	}
+
 	if h.events != nil && entry.Type == "task" && entry.FeatureID != "" {
 		if _, ok := fields["status"]; ok {
 			h.events.CheckFeatureCompletion(r.Context(), projectID, entry.FeatureID, entry.ID)
@@ -654,10 +708,25 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Recall entry before deletion for event metadata.
-	var deletedEntry *types.BrainEntry
-	if h.events != nil {
-		deletedEntry, _ = h.brain.Recall(r.Context(), id)
+	// Recall the entry up front: needed for the live-claim guard below and
+	// for event metadata after the row is gone.
+	deletedEntry, _ := h.brain.Recall(r.Context(), id)
+
+	// Live-claim safety. Deleting a task that a runner is actively executing
+	// orphans the process — it keeps working, then fails writing results back
+	// to an entry that no longer exists. Refuse, and name the runner so the
+	// user knows what to abort. `force=true` is the deliberate override.
+	//
+	// Only a claim held by an ONLINE runner blocks; a crashed runner's stale
+	// claim is exactly what users are trying to clean up here.
+	if deletedEntry != nil && deletedEntry.Type == "task" && r.URL.Query().Get("force") != "true" {
+		if blocked, runnerID := h.taskHasLiveClaim(r, deletedEntry); blocked {
+			WriteError(w, http.StatusConflict, "Conflict", fmt.Sprintf(
+				"task %q is being executed by online runner %q; abort that runner or retry with force=true",
+				deletedEntry.ID, runnerID,
+			))
+			return
+		}
 	}
 
 	err := h.brain.Delete(r.Context(), id)
@@ -688,6 +757,214 @@ func (h *Handler) HandleDeleteEntry(w http.ResponseWriter, r *http.Request) {
 	h.emitEvent(r.Context(), evt)
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// taskHasLiveClaim reports whether a task entry is currently being executed
+// by an online runner, returning the runner id when so.
+//
+// Fails open in every uncertain case — no task service wired, no project on
+// the path, a storage error — because a guard that blocks deletion whenever
+// it cannot reach the registry is worse than one that occasionally lets a
+// racing delete through. The runner tolerates its task disappearing; a user
+// unable to delete anything during a registry blip does not.
+func (h *Handler) taskHasLiveClaim(r *http.Request, entry *types.BrainEntry) (bool, string) {
+	if h.tasks == nil || entry == nil {
+		return false, ""
+	}
+	projectID := entry.ProjectID
+	if projectID == "" {
+		projectID = extractProjectID(entry.Path)
+	}
+	if projectID == "" || entry.ID == "" {
+		return false, ""
+	}
+	claim, err := h.tasks.GetLiveClaim(r.Context(), projectID, entry.ID)
+	if err != nil || claim == nil {
+		return false, ""
+	}
+	return claim.Live, claim.RunnerID
+}
+
+// HandleBulkDelete handles POST /entries/bulk-delete.
+//
+// Mirrors HandleBulkUpdate: same strict unknown-field rejection, same
+// filter shape, same dry-run contract. Deleting a whole feature is the
+// motivating case — doing it as N client-side DELETEs is N round trips
+// with no shared cap and no coherent partial-failure report.
+func (h *Handler) HandleBulkDelete(w http.ResponseWriter, r *http.Request) {
+	raw, err := io.ReadAll(r.Body)
+	if err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "Failed to read request body")
+		return
+	}
+
+	if unknown := findUnknownBulkDeleteFields(raw); len(unknown) > 0 {
+		WriteError(w, http.StatusBadRequest, "Bad Request",
+			fmt.Sprintf("unknown fields: %s", strings.Join(unknown, ", ")))
+		return
+	}
+
+	var req types.BulkDeleteRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
+		return
+	}
+
+	hasFilter := req.Filter != nil
+	hasPaths := len(req.Paths) > 0
+
+	var details []types.ValidationDetail
+	if !hasFilter && !hasPaths {
+		details = append(details, types.ValidationDetail{
+			Field:   "filter/paths",
+			Message: "must provide either 'filter' or 'paths', not neither",
+		})
+	}
+	if hasFilter && hasPaths {
+		details = append(details, types.ValidationDetail{
+			Field:   "filter/paths",
+			Message: "must provide either 'filter' or 'paths', not both",
+		})
+	}
+	// An unconstrained filter would match the entire brain. Require at
+	// least one narrowing field — deleting everything must never be one
+	// forgotten key away.
+	if hasFilter && bulkDeleteFilterIsEmpty(req.Filter) {
+		details = append(details, types.ValidationDetail{
+			Field:   "filter",
+			Message: "filter must constrain at least one field (e.g. project, feature_id)",
+		})
+	}
+	if len(details) > 0 {
+		WriteJSON(w, http.StatusUnprocessableEntity, types.ErrorResponse{
+			Error:   "Validation Error",
+			Message: "Invalid request",
+			Details: details,
+		})
+		return
+	}
+
+	// Live-claim guard, applied per target before anything is removed.
+	// Dry runs skip it — a preview should surface what is blocked, not
+	// refuse to render. Live runs fail the whole request so the user
+	// deals with the running task first rather than being left with a
+	// half-deleted feature.
+	if !req.DryRun && r.URL.Query().Get("force") != "true" {
+		preview, perr := h.brain.BulkDelete(r.Context(), types.BulkDeleteRequest{
+			Filter: req.Filter,
+			Paths:  req.Paths,
+			DryRun: true,
+			Limit:  req.Limit,
+		})
+		if perr == nil && preview != nil {
+			for _, res := range preview.Results {
+				if res.Status != "ok" {
+					continue
+				}
+				entry, rerr := h.brain.Recall(r.Context(), res.Path)
+				if rerr != nil || entry == nil || entry.Type != "task" {
+					continue
+				}
+				if blocked, runnerID := h.taskHasLiveClaim(r, entry); blocked {
+					WriteError(w, http.StatusConflict, "Conflict", fmt.Sprintf(
+						"task %q is being executed by online runner %q; abort that runner or retry with force=true",
+						entry.ID, runnerID,
+					))
+					return
+				}
+			}
+		}
+	}
+
+	resp, err := h.brain.BulkDelete(r.Context(), req)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	if !req.DryRun {
+		seen := make(map[string]bool)
+		for _, result := range resp.Results {
+			if result.Status != "ok" {
+				continue
+			}
+			projectID := extractProjectID(result.Path)
+			if projectID != "" && !seen[projectID] {
+				seen[projectID] = true
+				h.notifyProjectChanged(r, result.Path, "task")
+			}
+
+			evt := types.NewEvent(types.EventEntryDeleted, types.EventSourceAPI)
+			evt.ProjectID = projectID
+			evt.TaskPath = result.Path
+			evt.TaskID = result.ID
+			evt.Metadata = map[string]string{
+				"bulk":  "true",
+				"title": result.Title,
+			}
+			h.emitEvent(r.Context(), evt)
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// bulkDeleteFilterIsEmpty reports whether a filter would match everything.
+func bulkDeleteFilterIsEmpty(f *types.BulkUpdateFilter) bool {
+	if f == nil {
+		return true
+	}
+	return f.FeatureID == nil &&
+		f.Project == nil &&
+		f.Type == nil &&
+		f.Status == nil &&
+		f.Priority == nil &&
+		len(f.Tags) == 0 &&
+		f.GeneratedBy == nil &&
+		f.GeneratedKey == nil &&
+		f.Agent == nil &&
+		f.Executor == nil &&
+		f.ExecutionMode == nil
+}
+
+// bulkDeleteRequestFields is the set of top-level JSON keys accepted on a
+// BulkDeleteRequest.
+var bulkDeleteRequestFields = map[string]struct{}{
+	"filter":  {},
+	"paths":   {},
+	"dry_run": {},
+	"limit":   {},
+}
+
+// findUnknownBulkDeleteFields mirrors findUnknownBulkUpdateFields: a typo in
+// a filter key must fail loudly rather than widen the match. Getting that
+// wrong on a delete is unrecoverable.
+func findUnknownBulkDeleteFields(raw []byte) []string {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err != nil {
+		return nil // malformed JSON is reported by the caller's decode
+	}
+
+	var unknown []string
+	for k, v := range top {
+		if _, ok := bulkDeleteRequestFields[k]; !ok {
+			unknown = append(unknown, k)
+			continue
+		}
+		if k == "filter" {
+			var filter map[string]json.RawMessage
+			if err := json.Unmarshal(v, &filter); err != nil {
+				continue
+			}
+			for fk := range filter {
+				if _, ok := bulkUpdateFilterFields[fk]; !ok {
+					unknown = append(unknown, "filter."+fk)
+				}
+			}
+		}
+	}
+	sort.Strings(unknown)
+	return unknown
 }
 
 // HandleBulkUpdate handles POST /entries/bulk-update.

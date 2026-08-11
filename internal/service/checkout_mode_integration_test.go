@@ -34,44 +34,6 @@ import (
 // fold.
 // -----------------------------------------------------------------------------
 
-// materializeBuiltInAutomationsInProject copies template automations into a
-// project scope so AutomationService.HandleEvent picks them up for events
-// with that ProjectID. Mirrors the pattern from
-// builtin_feature_checkout_simple_test.go.
-func materializeBuiltInAutomationsInProject(t *testing.T, brain *BrainServiceImpl, project string) {
-	t.Helper()
-	ctx := context.Background()
-
-	autos, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Status: "active", Limit: 100})
-	if err != nil {
-		t.Fatalf("List automations: %v", err)
-	}
-	for _, tmpl := range autos.Entries {
-		generated := true
-		_, err := brain.Save(ctx, types.CreateEntryRequest{
-			Type:               "automation",
-			Title:              tmpl.Title,
-			Content:            tmpl.Content,
-			Status:             "active",
-			Project:            project,
-			Trigger:            tmpl.Trigger,
-			Action:             tmpl.Action,
-			ExecutionMode:      tmpl.ExecutionMode,
-			TargetWorkdir:      tmpl.TargetWorkdir,
-			MergeTargetBranch:  tmpl.MergeTargetBranch,
-			MergePolicy:        tmpl.MergePolicy,
-			MergeStrategy:      tmpl.MergeStrategy,
-			RemoteBranchPolicy: tmpl.RemoteBranchPolicy,
-			OpenPRBeforeMerge:  tmpl.OpenPRBeforeMerge,
-			Generated:          &generated,
-			GeneratedBy:        tmpl.GeneratedBy,
-		})
-		if err != nil {
-			t.Fatalf("materialize automation in project: %v", err)
-		}
-	}
-}
-
 // registerBothBuiltInCheckoutAutomations installs the AI and simple built-in
 // feature-checkout automations. Kept as a helper so both sub-tests share
 // exactly the same setup (any drift would be a bug in the test, not the code).
@@ -139,9 +101,10 @@ func TestCheckoutMode_EndToEndFromFeatureCompletionToDispatch(t *testing.T) {
 			brain, _, _ := newTestBrainService(t)
 			ctx := context.Background()
 
-			// 1. Register both built-in automations and materialize into project scope.
+			// 1. Register both built-in automations — globally, exactly as the
+			// server does. No per-project copies exist in production, and
+			// making them here would hide a global entry that matches nothing.
 			registerBothBuiltInCheckoutAutomations(t, brain)
-			materializeBuiltInAutomationsInProject(t, brain, "brain")
 
 			// 2. Wire EventService + hub with a FeatureTaskLister returning
 			//    two tasks in the target feature, both carrying the checkout_mode

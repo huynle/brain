@@ -386,37 +386,11 @@ func TestBuiltInFeatureCheckoutAutomationCreatesFeatureCheckoutTask(t *testing.T
 		t.Fatalf("EnsureBuiltInFeatureCheckoutAutomation failed: %v", err)
 	}
 
-	templates, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Status: "active", Limit: 10})
-	if err != nil {
-		t.Fatalf("List built-in automation templates failed: %v", err)
-	}
-	if len(templates.Entries) != 1 {
-		t.Fatalf("expected one built-in automation template, got %d", len(templates.Entries))
-	}
-	template := templates.Entries[0]
-	generated := true
-	_, err = brain.Save(ctx, types.CreateEntryRequest{
-		Type:               "automation",
-		Title:              template.Title,
-		Content:            template.Content,
-		Status:             "active",
-		Project:            "brain",
-		Trigger:            template.Trigger,
-		Action:             template.Action,
-		ExecutionMode:      template.ExecutionMode,
-		TargetWorkdir:      template.TargetWorkdir,
-		MergeTargetBranch:  template.MergeTargetBranch,
-		MergePolicy:        template.MergePolicy,
-		MergeStrategy:      template.MergeStrategy,
-		RemoteBranchPolicy: template.RemoteBranchPolicy,
-		OpenPRBeforeMerge:  template.OpenPRBeforeMerge,
-		Generated:          &generated,
-		GeneratedBy:        template.GeneratedBy,
-	})
-	if err != nil {
-		t.Fatalf("Save project-scoped built-in automation failed: %v", err)
-	}
-
+	// No per-project copy is made here on purpose. The server registers this
+	// automation exactly once, globally (apiserver.Start), and nothing
+	// materializes per-project copies. This test previously hand-created one
+	// and asserted against it, which hid the fact that the real global entry
+	// matched nothing — see the project:"*" filter in builtInCheckoutFilter.
 	automation := NewAutomationService(brain)
 	if err := automation.HandleEvent(ctx, types.Event{
 		ID:        "evt-feature-complete",

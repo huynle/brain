@@ -35,6 +35,11 @@ type BrainService interface {
 	// BulkUpdate applies updates to multiple entries in a single request.
 	BulkUpdate(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
 
+	// BulkDelete removes multiple entries in a single request, selected by
+	// the same filter shape BulkUpdate accepts. Not transactional — see the
+	// per-entry Results list on the response.
+	BulkDelete(ctx context.Context, req types.BulkDeleteRequest) (*types.BulkDeleteResponse, error)
+
 	// UpdateMetadata merges fields into the entry's metadata JSON in SQLite.
 	// Used for runtime state (sessions, claims) without filesystem access.
 	UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error)
@@ -240,6 +245,16 @@ type TaskService interface {
 
 	// GetClaimStatus returns the claim status of a task.
 	GetClaimStatus(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
+
+	// GetLiveClaim reports whether a task is held by a claim that is both
+	// unexpired and owned by an online runner — i.e. work genuinely in
+	// flight, as opposed to the abandoned claims the resume flow recovers.
+	//
+	// Destructive handlers use this to refuse mutating a running task.
+	// Implementations that cannot determine runner liveness should return
+	// Live=false rather than an error, so the guard fails open on a
+	// degraded registry instead of blocking all deletes.
+	GetLiveClaim(ctx context.Context, projectId, taskId string) (*types.LiveClaim, error)
 
 	// GetMultiTaskStatus returns status of multiple tasks, with optional long-polling.
 	GetMultiTaskStatus(ctx context.Context, projectId string, req types.MultiTaskStatusRequest) (*types.MultiTaskStatusResponse, error)

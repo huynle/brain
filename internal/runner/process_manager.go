@@ -518,12 +518,29 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 	}
 
 	// Process exited but task file didn't update to completion.
-	slog.Info("process exited", "task_id", taskID, "exit_code", info.Proc.ExitCode())
+	exitCode := info.Proc.ExitCode()
+	slog.Info("process exited", "task_id", taskID, "exit_code", exitCode)
+
+	// A KNOWN non-zero exit is never a success signal, whatever the
+	// executor: a script that failed its merge, an `opencode run` that died
+	// on an auth or model error, a pi process that panicked. The
+	// CompleteOnIdle shortcut below exists because PID-tracked tmux
+	// processes report -1 (unknowable) — it was never meant to launder
+	// genuine failures into completions, which is how a checkout agent
+	// dying on startup used to complete its task and let the feature
+	// proceed as if reviewed.
+	if exitCode > 0 {
+		slog.Warn("task process exited non-zero; marking crashed",
+			"task_id", taskID, "exit_code", exitCode,
+			"executor", info.Task.ExecutorType)
+		return CompletionCrashed
+	}
 
 	// For complete_on_idle tasks (e.g. direct_prompt), process exit means the
 	// agent finished the prompt and the TUI closed — treat as completed.
 	// Note: PidProcess always returns ExitCode() == -1 since we can't determine
-	// the real exit code for PID-tracked tmux processes, so we accept any exit.
+	// the real exit code for PID-tracked tmux processes, so we accept that
+	// unknown exit here.
 	if info.Task.CompleteOnIdle {
 		return CompletionCompleted
 	}

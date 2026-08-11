@@ -242,6 +242,16 @@ func automationMatchesEvent(automation types.BrainEntry, evt types.Event) bool {
 	if automation.Trigger == nil || automation.Action == nil {
 		return false
 	}
+	// Goal automations are driven by the goal reconcile loop, not by generic
+	// task generation. They are stored as automation entries with an event
+	// trigger, so without this they matched here too and every goal trigger
+	// produced TWO tasks: the reconcile engine's (correctly keyed
+	// "goal:<id>:<state>" and deduped) and a bare duplicate from this path
+	// with no generated_key at all — so nothing ever deduped it and a
+	// long-lived goal accumulated redundant work on every task completion.
+	if isGoalAutomation(automation) {
+		return false
+	}
 	switch automation.Trigger.Type {
 	case "event":
 		return automationMatchesNamedEvent(automation, evt)
@@ -252,6 +262,14 @@ func automationMatchesEvent(automation types.BrainEntry, evt types.Event) bool {
 	default:
 		return false
 	}
+}
+
+// isGoalAutomation reports whether an entry is a goal rather than an ordinary
+// automation. Either marker is enough: GeneratedBy is what the goal builder
+// stamps, and a non-nil Goal config identifies hand-written or migrated
+// entries that predate it.
+func isGoalAutomation(entry types.BrainEntry) bool {
+	return entry.GeneratedBy == types.GoalGeneratedBy || entry.Goal != nil
 }
 
 func automationMatchesNamedEvent(automation types.BrainEntry, evt types.Event) bool {
@@ -273,7 +291,7 @@ func automationMatchesWebhook(automation types.BrainEntry, evt types.Event) bool
 	if !globalAutomationMatchesProjectEvent(automation, evt) {
 		return false
 	}
-	if evt.Type != "webhook.received" {
+	if evt.Type != types.EventWebhookReceived {
 		return false
 	}
 	if automation.ProjectID != "" && automation.ProjectID != evt.ProjectID {
@@ -323,13 +341,26 @@ func matchAutomationFilters(filters map[string]string, evt types.Event) bool {
 		if key == "project" {
 			actual = evt.ProjectID
 		}
-		// Phase 3: belt-and-suspenders default for checkout_mode. Feature
-		// completion events published via CheckFeatureCompletion always
-		// carry checkout_mode in metadata, but raw events from other code
-		// paths (or older persisted events replayed after upgrade) may not.
-		// Treat missing/empty checkout_mode as "ai" so the AI built-in
-		// automation still matches its default target audience.
+		// checkout_mode default, with one deliberate exception.
+		//
+		// CheckFeatureCompletion is the authority on feature completion: it
+		// reads every task in the feature, folds their checkout_mode, and
+		// always stamps the result. An API-sourced event missing the field
+		// is therefore a pre-fold legacy event, and defaulting it to "ai"
+		// keeps those working after an upgrade.
+		//
+		// A RUNNER-sourced feature.completed is a different animal. The
+		// runner's feature tracker emits its own completion signal from a
+		// local view of the tasks it happens to be executing, and never
+		// folds anything. Treating that absence as "ai" meant every feature
+		// completion fired the AI checkout *in addition to* the correctly
+		// folded one — two checkout agents racing to merge the same
+		// feature, and a project configured for deterministic merges
+		// silently getting an LLM one anyway.
 		if key == "checkout_mode" && actual == "" {
+			if evt.Source == types.EventSourceRunner {
+				return false
+			}
 			actual = "ai"
 		}
 		if !types.MatchFilterValue(actual, expr) {
@@ -392,6 +423,19 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	executor := firstNonEmpty(automation.Executor, automation.Action.Executor)
 	executionMode := firstNonEmpty(automation.ExecutionMode, automation.Action.ExecutionMode)
 	targetWorkdir := firstNonEmpty(automation.TargetWorkdir, automation.Action.TargetWorkdir)
+
+	// A global automation has one workdir for every project it serves, which
+	// cannot be right for more than one of them. The built-in feature
+	// checkout is exactly this shape: registered once, then expected to run
+	// git in whichever repo the completed feature was built in. Fall back to
+	// the feature's own tasks, which do know their repo.
+	//
+	// Without this the generated checkout task inherited nothing, defaulted
+	// to /tmp, and died on "not a git repository" — the feature was built
+	// but never merged.
+	if targetWorkdir == "" && evt.FeatureID != "" {
+		targetWorkdir = s.workdirFromFeatureTasks(ctx, project, evt.FeatureID)
+	}
 	req := types.CreateEntryRequest{
 		Type:           "task",
 		Title:          fmt.Sprintf("Automation: %s", automation.ID),
@@ -409,6 +453,22 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		SessionMode:    automation.Action.SessionMode,
 		CompleteOnIdle: automationCompleteOnIdle(automation.Action.CompleteOnIdle),
 		TargetWorkdir:  targetWorkdir,
+
+		// Git / merge settings flow from the automation entry onto the task
+		// it generates. Without this the built-in feature-checkout task knew
+		// its merge target only as prose inside the prompt — the structured
+		// fields the executor actually reads when merging were empty, so an
+		// automated checkout could not land the branch it was created to
+		// land. Anything left unset on the automation stays unset here and
+		// falls back to task_defaults downstream, as before.
+		Workdir:            automation.Workdir,
+		GitRemote:          automation.GitRemote,
+		MergeTargetBranch:  automation.MergeTargetBranch,
+		MergePolicy:        automation.MergePolicy,
+		MergeStrategy:      automation.MergeStrategy,
+		RemoteBranchPolicy: automation.RemoteBranchPolicy,
+		OpenPRBeforeMerge:  automation.OpenPRBeforeMerge,
+		CheckoutMode:       automation.CheckoutMode,
 	}
 
 	if types.NormalizeAutomationActionType(automation.Action.Type) == types.AutomationActionScript {
@@ -450,6 +510,44 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		}
 	}
 	return taskResp.ID, nil
+}
+
+// workdirFromFeatureTasks returns the repo a feature's work happened in, by
+// reading the tasks that make up the feature.
+//
+// Prefers target_workdir (the repo root the runner was pointed at) over
+// workdir (which may be a worktree path specific to one task). Returns ""
+// when nothing is set, leaving the caller's existing defaults in play.
+//
+// Generated tasks are skipped: a previous automation's task carries the
+// fallback we are trying to compute, so including them would let a bad
+// value (e.g. /tmp) propagate to every later checkout.
+func (s *AutomationService) workdirFromFeatureTasks(ctx context.Context, project, featureID string) string {
+	if s == nil || s.brain == nil || project == "" || featureID == "" {
+		return ""
+	}
+	resp, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		Project:   project,
+		FeatureID: featureID,
+		Limit:     100,
+	})
+	if err != nil || resp == nil {
+		return ""
+	}
+	var workdirFallback string
+	for _, t := range resp.Entries {
+		if t.Generated != nil && *t.Generated {
+			continue
+		}
+		if t.TargetWorkdir != "" {
+			return t.TargetWorkdir
+		}
+		if workdirFallback == "" && t.Workdir != "" {
+			workdirFallback = t.Workdir
+		}
+	}
+	return workdirFallback
 }
 
 func automationCompleteOnIdle(value *bool) *bool {

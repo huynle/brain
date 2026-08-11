@@ -800,6 +800,36 @@ func (s *TaskServiceImpl) GetClaimStatus(ctx context.Context, projectId, taskId 
 	}, nil
 }
 
+// GetLiveClaim reports whether a task is actively held by a live runner.
+//
+// "Live" means all three of: a claim row exists, it has not expired, and
+// the owning runner is currently online. Anything less is precisely the
+// abandoned case — a crashed runner's claim, or a lease nobody renewed —
+// which the resume flow is designed to recover, and which must therefore
+// NOT block a destructive operation.
+//
+// Mirrors the live-claim safety check in ResumeTask; both exist so that
+// "is someone actually running this right now?" has one answer.
+func (s *TaskServiceImpl) GetLiveClaim(ctx context.Context, projectId, taskId string) (*types.LiveClaim, error) {
+	claim, err := s.storage.GetClaim(ctx, projectId, taskId)
+	if err != nil {
+		return nil, fmt.Errorf("storage get claim: %w", err)
+	}
+	if claim == nil || isExpired(claim) {
+		return &types.LiveClaim{Live: false}, nil
+	}
+
+	// A claim we cannot attribute to an online runner is treated as not
+	// live: failing open here keeps a degraded runner registry from
+	// blocking every delete in the system.
+	runner, rerr := s.storage.GetRunner(ctx, claim.RunnerID)
+	if rerr != nil || runner == nil || runner.Status != "online" {
+		return &types.LiveClaim{Live: false}, nil
+	}
+
+	return &types.LiveClaim{Live: true, RunnerID: claim.RunnerID}, nil
+}
+
 // DispatchTask creates a lease-compatible direct dispatch for a target runner.
 // Dispatch pre-claims and leases have a shorter 60-second expiry to allow quick recovery if the runner doesn't respond.
 func (s *TaskServiceImpl) DispatchTask(ctx context.Context, projectId, taskId, targetRunnerId string) (*types.DispatchResponse, error) {
@@ -1918,6 +1948,15 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	}
 	if v, ok := metaBool(meta, "open_pr_before_merge"); ok {
 		entry.OpenPRBeforeMerge = &v
+	}
+	// checkout_mode selects which feature-checkout automation handles this
+	// task's feature when it completes ("ai" prompt vs "simple" deterministic
+	// squash-merge). It is written to frontmatter and indexed, but was never
+	// read back here — so CheckFeatureCompletion's fold always saw "" and
+	// defaulted every feature to the AI path. The simple path was
+	// unreachable no matter what a user configured.
+	if v, ok := metaString(meta, "checkout_mode"); ok {
+		entry.CheckoutMode = v
 	}
 	if v, ok := metaString(meta, "execution_mode"); ok {
 		entry.ExecutionMode = v

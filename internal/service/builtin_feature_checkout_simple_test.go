@@ -183,40 +183,13 @@ func TestBuiltinFeatureCheckoutDispatch_SimpleEventOnlyMatchesSimpleAutomation(t
 		t.Fatalf("ensure simple automation: %v", err)
 	}
 
-	// Project-scope both templates so HandleEvent's project-match logic
-	// picks them up for the event's project (mirrors how server startup
-	// materializes the built-in templates in each user project).
-	autos, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Status: "active", Limit: 100})
-	if err != nil {
-		t.Fatalf("List automations: %v", err)
-	}
-	for _, tmpl := range autos.Entries {
-		generated := true
-		_, err := brain.Save(ctx, types.CreateEntryRequest{
-			Type:               "automation",
-			Title:              tmpl.Title,
-			Content:            tmpl.Content,
-			Status:             "active",
-			Project:            "brain",
-			Trigger:            tmpl.Trigger,
-			Action:             tmpl.Action,
-			ExecutionMode:      tmpl.ExecutionMode,
-			TargetWorkdir:      tmpl.TargetWorkdir,
-			MergeTargetBranch:  tmpl.MergeTargetBranch,
-			MergePolicy:        tmpl.MergePolicy,
-			MergeStrategy:      tmpl.MergeStrategy,
-			RemoteBranchPolicy: tmpl.RemoteBranchPolicy,
-			OpenPRBeforeMerge:  tmpl.OpenPRBeforeMerge,
-			Generated:          &generated,
-			GeneratedBy:        tmpl.GeneratedBy,
-		})
-		if err != nil {
-			t.Fatalf("materialize automation in project: %v", err)
-		}
-	}
+	// Deliberately NO per-project copies: the server registers these two
+	// built-ins once, globally, and nothing materializes per-project
+	// versions. Copying them here is what previously masked the fact that
+	// the real global entries matched no event at all.
 
 	automationSvc := NewAutomationService(brain)
-	err = automationSvc.HandleEvent(ctx, types.Event{
+	err := automationSvc.HandleEvent(ctx, types.Event{
 		ID:        "evt-simple",
 		Type:      types.EventFeatureCompleted,
 		Source:    types.EventSourceAPI,
@@ -269,37 +242,10 @@ func TestBuiltinFeatureCheckoutDispatch_AIEventOnlyMatchesAIAutomation(t *testin
 		t.Fatalf("ensure simple automation: %v", err)
 	}
 
-	autos, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Status: "active", Limit: 100})
-	if err != nil {
-		t.Fatalf("List automations: %v", err)
-	}
-	for _, tmpl := range autos.Entries {
-		generated := true
-		_, err := brain.Save(ctx, types.CreateEntryRequest{
-			Type:               "automation",
-			Title:              tmpl.Title,
-			Content:            tmpl.Content,
-			Status:             "active",
-			Project:            "brain",
-			Trigger:            tmpl.Trigger,
-			Action:             tmpl.Action,
-			ExecutionMode:      tmpl.ExecutionMode,
-			TargetWorkdir:      tmpl.TargetWorkdir,
-			MergeTargetBranch:  tmpl.MergeTargetBranch,
-			MergePolicy:        tmpl.MergePolicy,
-			MergeStrategy:      tmpl.MergeStrategy,
-			RemoteBranchPolicy: tmpl.RemoteBranchPolicy,
-			OpenPRBeforeMerge:  tmpl.OpenPRBeforeMerge,
-			Generated:          &generated,
-			GeneratedBy:        tmpl.GeneratedBy,
-		})
-		if err != nil {
-			t.Fatalf("materialize automation in project: %v", err)
-		}
-	}
+	// No per-project copies — see the note in the simple-dispatch test above.
 
 	automationSvc := NewAutomationService(brain)
-	err = automationSvc.HandleEvent(ctx, types.Event{
+	err := automationSvc.HandleEvent(ctx, types.Event{
 		ID:        "evt-ai",
 		Type:      types.EventFeatureCompleted,
 		Source:    types.EventSourceAPI,
@@ -350,39 +296,12 @@ func TestBuiltinFeatureCheckoutDispatch_MissingCheckoutModeMatchesAI(t *testing.
 		t.Fatalf("ensure simple automation: %v", err)
 	}
 
-	autos, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Status: "active", Limit: 100})
-	if err != nil {
-		t.Fatalf("List automations: %v", err)
-	}
-	for _, tmpl := range autos.Entries {
-		generated := true
-		_, err := brain.Save(ctx, types.CreateEntryRequest{
-			Type:               "automation",
-			Title:              tmpl.Title,
-			Content:            tmpl.Content,
-			Status:             "active",
-			Project:            "brain",
-			Trigger:            tmpl.Trigger,
-			Action:             tmpl.Action,
-			ExecutionMode:      tmpl.ExecutionMode,
-			TargetWorkdir:      tmpl.TargetWorkdir,
-			MergeTargetBranch:  tmpl.MergeTargetBranch,
-			MergePolicy:        tmpl.MergePolicy,
-			MergeStrategy:      tmpl.MergeStrategy,
-			RemoteBranchPolicy: tmpl.RemoteBranchPolicy,
-			OpenPRBeforeMerge:  tmpl.OpenPRBeforeMerge,
-			Generated:          &generated,
-			GeneratedBy:        tmpl.GeneratedBy,
-		})
-		if err != nil {
-			t.Fatalf("materialize automation in project: %v", err)
-		}
-	}
+	// No per-project copies — see the note in the simple-dispatch test above.
 
 	automationSvc := NewAutomationService(brain)
 	// Event with NO checkout_mode metadata (simulates a raw event from a
 	// pre-Phase-3 source or a code path that bypasses CheckFeatureCompletion).
-	err = automationSvc.HandleEvent(ctx, types.Event{
+	err := automationSvc.HandleEvent(ctx, types.Event{
 		ID:        "evt-nometa",
 		Type:      types.EventFeatureCompleted,
 		Source:    types.EventSourceAPI,
@@ -402,5 +321,230 @@ func TestBuiltinFeatureCheckoutDispatch_MissingCheckoutModeMatchesAI(t *testing.
 	}
 	if tasks.Entries[0].Executor == "script" {
 		t.Errorf("missing checkout_mode should default to AI (not script), got executor=%q", tasks.Entries[0].Executor)
+	}
+}
+
+// ─── Publish-before-delete ─────────────────────────────────────────
+//
+// Deleting the remote source branch while the merge exists only locally
+// destroys the only shared copy of the work: the remote loses the feature
+// branch and never gains the commit. Verified live against a real GitHub
+// repo before the fix — remote main stayed at the initial commit while the
+// feature branch was deleted.
+
+func simpleScript(t *testing.T, cfg BuiltInFeatureCheckoutSimpleConfig) string {
+	t.Helper()
+	return buildSimpleFeatureCheckoutScript(cfg)
+}
+
+func TestSimpleCheckoutScript_PushesTargetBranch(t *testing.T) {
+	script := simpleScript(t, BuiltInFeatureCheckoutSimpleConfig{MergeTargetBranch: "main"})
+	if !strings.Contains(script, `git push origin "${TARGET_BRANCH}"`) {
+		t.Errorf("script never pushes the target branch:\n%s", script)
+	}
+}
+
+// The push must happen after the merge commit; pushing first would publish
+// nothing.
+func TestSimpleCheckoutScript_PushesAfterCommit(t *testing.T) {
+	script := simpleScript(t, BuiltInFeatureCheckoutSimpleConfig{MergeTargetBranch: "main"})
+	commitAt := strings.Index(script, "git commit -m")
+	pushAt := strings.Index(script, `git push origin "${TARGET_BRANCH}"`)
+	if commitAt < 0 || pushAt < 0 {
+		t.Fatal("script missing commit or push")
+	}
+	if pushAt < commitAt {
+		t.Error("push happens before the merge commit")
+	}
+}
+
+// A repo with no remote must still work — the local-only case is valid.
+func TestSimpleCheckoutScript_TolerantOfMissingRemote(t *testing.T) {
+	script := simpleScript(t, BuiltInFeatureCheckoutSimpleConfig{MergeTargetBranch: "main"})
+	if !strings.Contains(script, "git remote get-url origin") {
+		t.Errorf("script does not check for a remote before pushing:\n%s", script)
+	}
+	if !strings.Contains(script, "leaving ${TARGET_BRANCH} local-only") {
+		t.Errorf("script has no local-only branch:\n%s", script)
+	}
+}
+
+// The whole point: remote deletion is gated on a successful push.
+func TestSimpleCheckoutScript_RemoteDeleteGatedOnPush(t *testing.T) {
+	script := simpleScript(t, BuiltInFeatureCheckoutSimpleConfig{
+		MergeTargetBranch:  "main",
+		RemoteBranchPolicy: "delete",
+	})
+	if !strings.Contains(script, `if [ "${PUSHED_TARGET}" != "yes" ]`) {
+		t.Errorf("remote deletion is not gated on a successful push:\n%s", script)
+	}
+	gateAt := strings.Index(script, `PUSHED_TARGET`)
+	deleteAt := strings.Index(script, "git push origin --delete")
+	if gateAt < 0 || deleteAt < 0 {
+		t.Fatal("script missing gate or delete")
+	}
+	if deleteAt < gateAt {
+		t.Error("remote delete appears before the push gate is established")
+	}
+}
+
+// With no deletion policy there is nothing to gate, but the push must
+// still happen.
+func TestSimpleCheckoutScript_KeepPolicyStillPushes(t *testing.T) {
+	script := simpleScript(t, BuiltInFeatureCheckoutSimpleConfig{
+		MergeTargetBranch:  "main",
+		RemoteBranchPolicy: "keep",
+	})
+	if !strings.Contains(script, `git push origin "${TARGET_BRANCH}"`) {
+		t.Error("keep policy dropped the target push")
+	}
+	if strings.Contains(script, "git push origin --delete") {
+		t.Error("keep policy still emits a remote delete")
+	}
+}
+
+// The existing guardrails must survive the restructure.
+func TestSimpleCheckoutScript_KeepsExistingGuardrails(t *testing.T) {
+	script := simpleScript(t, BuiltInFeatureCheckoutSimpleConfig{
+		MergeTargetBranch:  "release",
+		RemoteBranchPolicy: "delete",
+	})
+	// Finding-7 invariant: survives a user gitconfig of merge.ff=no.
+	if !strings.Contains(script, "git -c merge.ff=true merge --squash") {
+		t.Error("lost the merge.ff=true invariant")
+	}
+	// Never delete the target or a default branch.
+	if !strings.Contains(script, `[ "${SOURCE_BRANCH}" != "${TARGET_BRANCH}" ]`) {
+		t.Error("lost the target-branch deletion guardrail")
+	}
+	if !strings.Contains(script, `[ "${SOURCE_BRANCH}" != "main" ]`) {
+		t.Error("lost the main-branch deletion guardrail")
+	}
+	if !strings.Contains(script, "set -euo pipefail") {
+		t.Error("lost fail-fast; a conflict would no longer stop the script")
+	}
+}
+
+// ─── Action migration ──────────────────────────────────────────────
+//
+// The script is generated wholly from config and code, never authored by
+// the user. An entry written by an older build keeps running that older
+// script forever unless Ensure rewrites it — which is exactly how the
+// missing `git push` survived a code fix.
+
+func TestEnsureBuiltInFeatureCheckoutSimple_MigratesStaleScript(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// An entry carrying a script from an older build.
+	global := true
+	if _, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type: "automation", Title: "Built-in feature checkout (simple/script)",
+		Content: "legacy", Status: "active", Global: &global,
+		GeneratedBy: BuiltInFeatureCheckoutSimpleGeneratedBy,
+		Trigger: &types.TriggerConfig{
+			Type: "event", Event: types.EventFeatureCompleted,
+			OncePer: "feature_id",
+			Filter:  builtInCheckoutFilter("simple"),
+		},
+		Action: &types.AutomationAction{
+			Type:    types.AutomationActionScript,
+			Command: "#!/usr/bin/env bash\necho old script with no push\n",
+		},
+	}); err != nil {
+		t.Fatalf("save legacy: %v", err)
+	}
+
+	// Restart-equivalent.
+	if err := EnsureBuiltInFeatureCheckoutSimpleAutomation(ctx, brain, BuiltInFeatureCheckoutSimpleConfig{
+		Enabled:            true,
+		MergeTargetBranch:  "main",
+		RemoteBranchPolicy: "delete",
+	}); err != nil {
+		t.Fatalf("ensure: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var found bool
+	for _, e := range resp.Entries {
+		if e.GeneratedBy != BuiltInFeatureCheckoutSimpleGeneratedBy {
+			continue
+		}
+		found = true
+		if e.Action == nil {
+			t.Fatal("action missing after migration")
+		}
+		if !strings.Contains(e.Action.Command, `git push origin "${TARGET_BRANCH}"`) {
+			t.Errorf("stale script survived the restart; it will never publish a merge:\n%s", e.Action.Command)
+		}
+		if strings.Contains(e.Action.Command, "old script with no push") {
+			t.Error("legacy script was not replaced")
+		}
+	}
+	if !found {
+		t.Fatal("built-in entry disappeared")
+	}
+}
+
+// Migration must not duplicate the entry.
+func TestEnsureBuiltInFeatureCheckoutSimple_MigrationDoesNotDuplicate(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	cfg := BuiltInFeatureCheckoutSimpleConfig{
+		Enabled: true, MergeTargetBranch: "main", RemoteBranchPolicy: "delete",
+	}
+	for i := 0; i < 3; i++ {
+		if err := EnsureBuiltInFeatureCheckoutSimpleAutomation(ctx, brain, cfg); err != nil {
+			t.Fatalf("ensure #%d: %v", i, err)
+		}
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 20})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	count := 0
+	for _, e := range resp.Entries {
+		if e.GeneratedBy == BuiltInFeatureCheckoutSimpleGeneratedBy {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("simple built-ins = %d, want 1", count)
+	}
+}
+
+// Changing the configured merge target must reach the stored script, or the
+// automation keeps merging into the old branch.
+func TestEnsureBuiltInFeatureCheckoutSimple_MigratesOnTargetBranchChange(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	if err := EnsureBuiltInFeatureCheckoutSimpleAutomation(ctx, brain, BuiltInFeatureCheckoutSimpleConfig{
+		Enabled: true, MergeTargetBranch: "main",
+	}); err != nil {
+		t.Fatalf("ensure v1: %v", err)
+	}
+	if err := EnsureBuiltInFeatureCheckoutSimpleAutomation(ctx, brain, BuiltInFeatureCheckoutSimpleConfig{
+		Enabled: true, MergeTargetBranch: "release/v2",
+	}); err != nil {
+		t.Fatalf("ensure v2: %v", err)
+	}
+
+	resp, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 10})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	for _, e := range resp.Entries {
+		if e.GeneratedBy != BuiltInFeatureCheckoutSimpleGeneratedBy {
+			continue
+		}
+		if !strings.Contains(e.Action.Command, "release/v2") {
+			t.Errorf("stored script still targets the old branch:\n%s", e.Action.Command)
+		}
 	}
 }

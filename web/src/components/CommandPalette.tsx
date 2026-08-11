@@ -12,6 +12,11 @@ import { useModal } from "../store/modal";
 import { useProjects } from "../hooks/useProjects";
 import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
+import { useActionRunner } from "../hooks/useActionRunner";
+import { useTaskActionContextFactory } from "../hooks/useTaskActionContext";
+import { useFeatureActionContextFactory } from "../hooks/useFeatureActionContext";
+import { buildTaskActions } from "../lib/actions/taskActions";
+import { buildFeatureActions } from "../lib/actions/featureActions";
 import { deriveFeatures } from "../lib/features";
 import type { Task } from "../lib/types";
 
@@ -21,6 +26,16 @@ interface Command {
   hint?: string;
   action: () => void;
 }
+
+/**
+ * Which verbs earn a palette entry.
+ *
+ * Not all of them: the palette lists every task and feature, so each id
+ * added here multiplies the command count. These are the ones worth
+ * reaching without touching the mouse. Navigation verbs are excluded —
+ * the plain "Task: X" entry already goes there.
+ */
+const PALETTE_VERBS = new Set(["run", "resume", "cancel", "status", "delete"]);
 
 export function CommandPalette(): JSX.Element | null {
   const open = useWorkspace((s) => s.commandOpen);
@@ -39,6 +54,10 @@ export function CommandPalette(): JSX.Element | null {
   const openModal = useModal((s) => s.open);
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
+  const taskCtxFor = useTaskActionContextFactory();
+  const featureCtxFor = useFeatureActionContextFactory();
+  const runner = useActionRunner();
+  const runAction = runner.run;
 
   useEffect(() => {
     if (open) {
@@ -102,19 +121,44 @@ export function CommandPalette(): JSX.Element | null {
       });
       const tasks = liveProjects[pid]?.tasks ?? ([] as Task[]);
       const feats = deriveFeatures(tasks, pid);
+      const featureCtx = featureCtxFor(pid);
+      const taskCtx = taskCtxFor(pid);
+
       for (const f of feats.slice(0, 20)) {
         cmds.push({
           id: `feat:${pid}:${f.id}`,
           label: `Feature: ${f.name} (${pid})`,
           action: () => openFeatureDrawer(pid, f.id),
         });
+        // Verbs, not just navigation. Previously the palette could only
+        // take you somewhere — for a keyboard-first user this is the
+        // natural home for "run it" and "cancel it".
+        for (const a of buildFeatureActions(f, featureCtx)) {
+          if (!PALETTE_VERBS.has(a.id)) continue;
+          cmds.push({
+            id: `feat-act:${pid}:${f.id}:${a.id}`,
+            label: `${a.label} — feature ${f.name} (${pid})`,
+            hint: a.disabledReason || undefined,
+            action: () => runAction(a),
+          });
+        }
       }
+
       for (const t of tasks.slice(0, 20)) {
         cmds.push({
           id: `task:${pid}:${t.id}`,
           label: `Task: ${t.title || t.id} (${pid})`,
           action: () => openModal("task", { projectId: pid, taskId: t.id }),
         });
+        for (const a of buildTaskActions(t, taskCtx)) {
+          if (!PALETTE_VERBS.has(a.id)) continue;
+          cmds.push({
+            id: `task-act:${pid}:${t.id}:${a.id}`,
+            label: `${a.label} — ${t.title || t.id} (${pid})`,
+            hint: a.disabledReason || undefined,
+            action: () => runAction(a),
+          });
+        }
       }
     }
 
@@ -146,6 +190,9 @@ export function CommandPalette(): JSX.Element | null {
     openModal,
     openFeatureDrawer,
     openInFocus,
+    taskCtxFor,
+    featureCtxFor,
+    runAction,
   ]);
 
   const filtered = useMemo(() => {
@@ -160,7 +207,10 @@ export function CommandPalette(): JSX.Element | null {
     setSelected(0);
   }, [query]);
 
-  if (!open) return null;
+  // The confirm dialog has to outlive the palette: running a destructive
+  // command closes the palette, and if the dialog lived inside the `open`
+  // guard it would unmount before the user could confirm.
+  if (!open) return runner.dialog;
   if (typeof document === "undefined") return null;
 
   const run = (cmd: Command) => {
@@ -168,7 +218,7 @@ export function CommandPalette(): JSX.Element | null {
     cmd.action();
   };
 
-  return createPortal(
+  const palette = createPortal(
     <div
       className="palette-scrim"
       onMouseDown={(e) => {
@@ -231,5 +281,12 @@ export function CommandPalette(): JSX.Element | null {
       </div>
     </div>,
     document.body,
+  );
+
+  return (
+    <>
+      {runner.dialog}
+      {palette}
+    </>
   );
 }

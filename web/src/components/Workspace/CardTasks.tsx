@@ -5,15 +5,31 @@
  *   .feat[state]
  *     .feat-head (caret · name · life-badge · age · assign-chip · progress bar · % text)
  *     .trow × N (glyph · name · status · id)
+ *
+ * Within a feature the rows form a dependency tree rather than a flat
+ * list: a task that depends on another renders indented beneath it, so
+ * a plan reads top-down in execution order. Features whose tasks have
+ * no dependencies look exactly as they did before — the forest is then
+ * all roots. See `lib/taskTree` for the edge rules.
+ *
+ * Every row's verbs come from `lib/actions` via `useRowActions`, so
+ * right-click, long-press and keyboard all offer the identical set —
+ * including the ungrouped "No feature" rows, which previously had no
+ * action affordance at all.
  */
 import { useMemo } from "react";
 import { useModal } from "../../store/modal";
 import { useWorkspace } from "../../store/workspace";
-import { useUI } from "../../store/ui";
 import { useRunners } from "../../hooks/useRunners";
-import { useContextMenu } from "../common/ContextMenu";
+import { useRowActions } from "../../hooks/useRowActions";
+import { useTaskActionContext } from "../../hooks/useTaskActionContext";
+import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
+import { DepGuide } from "../common/DepGuide";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
-import { runOrTriggerTask, summarizeTriggerResults } from "../../lib/api";
+import { buildTaskActions } from "../../lib/actions/taskActions";
+import { buildFeatureActions } from "../../lib/actions/featureActions";
+import { buildTaskForest } from "../../lib/taskTree";
+import { flattenDepForest, type DepRow } from "../../lib/depTree";
 import type { Task } from "../../lib/types";
 import type { DerivedFeature } from "../../lib/features";
 
@@ -56,6 +72,10 @@ function featStateClass(f: DerivedFeature): string {
   return "busy";
 }
 
+/** Bucket key for tasks with no feature_id. Not a legal feature id, so
+ *  it cannot collide with a real one. */
+const NO_FEATURE = "__nofeat__";
+
 export interface CardTasksProps {
   projectId: string;
   tasks: readonly Task[];
@@ -68,41 +88,96 @@ export function CardTasks({
   features,
 }: CardTasksProps): JSX.Element {
   const openModal = useModal((s) => s.open);
-  const toast = useUI((s) => s.toast);
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
-  const openInFocus = useWorkspace((s) => s.openInFocus);
   const { runners } = useRunners();
-  const ctx = useContextMenu();
 
-  // Group tasks by feature_id (using DerivedFeature order).
-  const byFeat = useMemo(() => {
-    const m = new Map<string, Task[]>();
+  const taskCtx = useTaskActionContext(projectId);
+  const featureCtx = useFeatureActionContext(projectId);
+  const { rowProps, overlays } = useRowActions();
+
+  // Group tasks by feature_id (using DerivedFeature order), then turn
+  // each bucket into dependency-ordered rows. Dependency edges are
+  // resolved per bucket, so a cross-feature dep does not drag a task
+  // out of its own feature — it simply stays a root here and shows up
+  // in the feature-level tree on the Features tab instead.
+  const rowsByFeat = useMemo(() => {
+    const buckets = new Map<string, Task[]>();
     for (const t of tasks) {
-      const key = t.feature_id ?? "__nofeat__";
-      const arr = m.get(key);
+      const key = t.feature_id ?? NO_FEATURE;
+      const arr = buckets.get(key);
       if (arr) arr.push(t);
-      else m.set(key, [t]);
+      else buckets.set(key, [t]);
+    }
+    const m = new Map<string, DepRow<Task>[]>();
+    for (const [key, bucket] of buckets) {
+      m.set(key, flattenDepForest(buildTaskForest(bucket)));
     }
     return m;
   }, [tasks]);
 
-  const orphanTasks = byFeat.get("__nofeat__") ?? [];
+  const orphanRows = rowsByFeat.get(NO_FEATURE) ?? [];
+
+  /** One task row, identical whether it sits under a feature or not. */
+  const renderTaskRow = (row: DepRow<Task>) => {
+    const t = row.node.item;
+    const { glyph, cls } = taskGlyph(t.status, !!t.is_abandoned);
+    const label = t.title || t.id;
+    const actions = buildTaskActions(t, taskCtx);
+
+    return (
+      <div
+        key={t.id}
+        className="trow"
+        {...rowProps(actions, label, () =>
+          openModal("task", { projectId, taskId: t.id }),
+        )}
+        onClick={() => openModal("task", { projectId, taskId: t.id })}
+        draggable
+        onDragStart={(e) =>
+          beginDrag(e, {
+            source: "task-row",
+            kind: "task-detail",
+            target: { projectId, taskId: t.id },
+            title: label,
+          })
+        }
+        onDragEnd={endDrag}
+      >
+        <span className={`glyph ${cls}`}>{glyph}</span>
+        <span className="name">
+          <DepGuide
+            prefix={row.prefix}
+            inCycle={row.node.inCycle}
+            extraDeps={row.node.extraDeps}
+            extraLabel="tasks"
+          />
+          {label}
+        </span>
+        <span className="status">{t.status}</span>
+        <span className="id">{t.id.slice(0, 6)}</span>
+      </div>
+    );
+  };
 
   return (
     <div>
       {features.map((f) => {
-        const items = byFeat.get(f.id) ?? [];
+        const rows = rowsByFeat.get(f.id) ?? [];
         const stateClass = featStateClass(f);
         const tone = LIFECYCLE_TONE[f.lifecycle];
         const runnerId = featureAssignments[f.id];
         const runner = runners.find((r) => r.runner_id === runnerId);
         const pct = Math.round(f.progress * 100);
+        const featureActions = buildFeatureActions(f, featureCtx);
 
         return (
           <div key={f.id} className={`feat ${stateClass}`}>
             <div
               className="feat-head"
+              {...rowProps(featureActions, f.name, () =>
+                openFeatureDrawer(projectId, f.id),
+              )}
               draggable
               onDragStart={(e) =>
                 beginDrag(e, {
@@ -123,25 +198,6 @@ export function CardTasks({
                 )
                   return;
                 openFeatureDrawer(projectId, f.id);
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                ctx.open(e.clientX, e.clientY, [
-                  {
-                    id: "meta",
-                    label: "Feature details",
-                    onClick: () =>
-                      openModal("feature", {
-                        projectId,
-                        featureId: f.id,
-                      }),
-                  },
-                  {
-                    id: "plan",
-                    label: "Open plan drawer",
-                    onClick: () => openFeatureDrawer(projectId, f.id),
-                  },
-                ]);
               }}
             >
               <span className="caret">▾</span>
@@ -169,145 +225,30 @@ export function CardTasks({
               </span>
               <span className="prog">{pct}%</span>
             </div>
-            {items.map((t) => {
-              const { glyph, cls } = taskGlyph(t.status, !!t.is_abandoned);
-              return (
-                <div
-                  key={t.id}
-                  className="trow"
-                  onClick={() =>
-                    openModal("task", { projectId, taskId: t.id })
-                  }
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    const items: Array<{
-                      id: string;
-                      label: string;
-                      onClick: () => void;
-                    }> = [
-                      {
-                        id: "modal",
-                        label: "Task details",
-                        onClick: () =>
-                          openModal("task", { projectId, taskId: t.id }),
-                      },
-                      {
-                        id: "run",
-                        label: "Run task now",
-                        onClick: async () => {
-                          try {
-                            const r = await runOrTriggerTask(
-                              projectId,
-                              t.id,
-                              false,
-                            );
-                            const { message, kind } = summarizeTriggerResults([r]);
-                            toast(message, kind);
-                          } catch (err) {
-                            toast(
-                              `Run failed: ${err instanceof Error ? err.message : String(err)}`,
-                              "error",
-                            );
-                          }
-                        },
-                      },
-                      {
-                        id: "focus-detail",
-                        label: "Open in focus pane",
-                        onClick: () =>
-                          openInFocus(
-                            "task-detail",
-                            { projectId, taskId: t.id },
-                            t.title || t.id,
-                          ),
-                      },
-                      {
-                        id: "focus-logs",
-                        label: "Open logs in focus pane",
-                        onClick: () =>
-                          openInFocus(
-                            "logs",
-                            { projectId, taskId: t.id },
-                            `Logs ${t.id.slice(0, 8)}`,
-                          ),
-                      },
-                    ];
-                    // Surface Resume as a context-menu item when the task
-                    // looks resumable — otherwise the affordance is buried
-                    // two clicks deep in TaskModal → Actions… for the
-                    // exact case (abandoned task) where users need it fast.
-                    if (t.is_abandoned || t.resume_requested) {
-                      items.push({
-                        id: "resume",
-                        label: t.is_abandoned
-                          ? "Resume abandoned task"
-                          : "Resume (already requested)",
-                        onClick: () =>
-                          openModal("task-actions", {
-                            projectId,
-                            taskId: t.id,
-                          }),
-                      });
-                    }
-                    ctx.open(e.clientX, e.clientY, items);
-                  }}
-                  draggable
-                  onDragStart={(e) =>
-                    beginDrag(e, {
-                      source: "task-row",
-                      kind: "task-detail",
-                      target: { projectId, taskId: t.id },
-                      title: t.title || t.id,
-                    })
-                  }
-                  onDragEnd={endDrag}
-                >
-                  <span className={`glyph ${cls}`}>{glyph}</span>
-                  <span className="name">{t.title || t.id}</span>
-                  <span className="status">{t.status}</span>
-                  <span className="id">{t.id.slice(0, 6)}</span>
-                </div>
-              );
-            })}
+            {rows.map(renderTaskRow)}
           </div>
         );
       })}
 
-      {orphanTasks.length > 0 && (
+      {orphanRows.length > 0 && (
         <div className="feat">
           <div className="feat-head">
             <span className="name" style={{ color: "#6b757e" }}>
               No feature
             </span>
-            <span className="age">{orphanTasks.length} tasks</span>
+            <span className="age">{orphanRows.length} tasks</span>
           </div>
-          {orphanTasks.map((t) => {
-            const { glyph, cls } = taskGlyph(t.status, !!t.is_abandoned);
-            return (
-              <div
-                key={t.id}
-                className="trow"
-                onClick={() =>
-                  openModal("task", { projectId, taskId: t.id })
-                }
-              >
-                <span className={`glyph ${cls}`}>{glyph}</span>
-                <span className="name">{t.title || t.id}</span>
-                <span className="status">{t.status}</span>
-                <span className="id">{t.id.slice(0, 6)}</span>
-              </div>
-            );
-          })}
+          {orphanRows.map(renderTaskRow)}
         </div>
       )}
 
-      {features.length === 0 && orphanTasks.length === 0 && (
+      {features.length === 0 && orphanRows.length === 0 && (
         <div style={{ color: "#6b757e", fontSize: 11, padding: "6px 0" }}>
           No tasks yet.
         </div>
       )}
 
-      {ctx.menu}
+      {overlays}
     </div>
   );
 }

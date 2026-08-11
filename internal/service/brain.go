@@ -1192,12 +1192,16 @@ func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 			req.Filter.Executor != nil ||
 			req.Filter.ExecutionMode != nil
 
-		listLimit := limit
-		if hasPostFilters {
+		// Fetch one past the cap so we can tell "exactly at the cap" from
+		// "more than the cap" and report Truncated honestly. A dry run
+		// fetches the wide set instead, because its whole job is to tell
+		// the caller how many entries a live run would touch.
+		listLimit := limit + 1
+		if hasPostFilters || req.DryRun {
 			// Fetch a wider candidate set so we can filter down accurately.
 			// 500 is a compromise: large enough to cover typical automation
 			// batches without pulling the whole DB.
-			listLimit = 500
+			listLimit = bulkCandidateFetchLimit
 		}
 
 		listReq := types.ListEntriesRequest{
@@ -1261,7 +1265,17 @@ func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 		}
 	}
 
-	// 4. Cap results at limit.
+	// 4. Cap results at limit, remembering what we had to drop. Filter mode
+	// only — in explicit mode the caller named the entries, so there is no
+	// "matched" population to under-report.
+	matchedTotal := 0
+	truncated := false
+	if hasFilter {
+		matchedTotal = len(targets)
+		if matchedTotal > limit {
+			truncated = true
+		}
+	}
 	if len(targets) > limit {
 		targets = targets[:limit]
 	}
@@ -1288,9 +1302,11 @@ func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 			})
 		}
 		return &types.BulkUpdateResponse{
-			Total:   len(results),
-			DryRun:  true,
-			Results: results,
+			Total:        len(results),
+			DryRun:       true,
+			Results:      results,
+			Truncated:    truncated,
+			MatchedTotal: matchedTotal,
 		}, nil
 	}
 
@@ -1321,11 +1337,191 @@ func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 
 	// 7. Return aggregate response.
 	return &types.BulkUpdateResponse{
-		Updated: updated,
-		Failed:  failed,
-		Total:   len(results),
-		DryRun:  false,
-		Results: results,
+		Updated:      updated,
+		Failed:       failed,
+		Total:        len(results),
+		DryRun:       false,
+		Results:      results,
+		Truncated:    truncated,
+		MatchedTotal: matchedTotal,
+	}, nil
+}
+
+// bulkCandidateFetchLimit bounds how many entries a filtered bulk operation
+// pulls from storage before applying in-memory filters and the safety cap.
+// Large enough to cover realistic automation batches and to make a dry-run
+// count meaningful, small enough not to page in the whole database.
+const bulkCandidateFetchLimit = 500
+
+// BulkDelete deletes entries matched by a filter, or a list of explicit
+// paths. It mirrors BulkUpdate's contract exactly — same filter type, same
+// safety cap, same dry-run semantics, same per-entry result list — so that
+// a caller (and the UI rendering the outcome) can treat the two uniformly.
+//
+// Deletion is per-entry and not transactional: a failure partway through
+// leaves earlier deletions applied. The per-entry Results list is the
+// contract for that — callers must surface failures rather than assuming
+// all-or-nothing.
+func (s *BrainServiceImpl) BulkDelete(ctx context.Context, req types.BulkDeleteRequest) (*types.BulkDeleteResponse, error) {
+	hasFilter := req.Filter != nil
+	hasPaths := len(req.Paths) > 0
+	if hasFilter && hasPaths {
+		return nil, fmt.Errorf("cannot specify both filter and paths")
+	}
+	if !hasFilter && !hasPaths {
+		return nil, fmt.Errorf("must specify either filter or paths")
+	}
+
+	limit := req.Limit
+	if limit <= 0 || limit > 100 {
+		limit = 100
+	}
+
+	var paths []string
+
+	if hasFilter {
+		hasPostFilters := req.Filter.GeneratedBy != nil ||
+			req.Filter.GeneratedKey != nil ||
+			req.Filter.Agent != nil ||
+			req.Filter.Executor != nil ||
+			req.Filter.ExecutionMode != nil
+
+		listLimit := limit + 1
+		if hasPostFilters || req.DryRun {
+			listLimit = bulkCandidateFetchLimit
+		}
+
+		listReq := types.ListEntriesRequest{Limit: listLimit}
+		if req.Filter.FeatureID != nil {
+			listReq.FeatureID = *req.Filter.FeatureID
+		}
+		if req.Filter.Project != nil {
+			listReq.Project = *req.Filter.Project
+		}
+		if req.Filter.Type != nil {
+			listReq.Type = *req.Filter.Type
+		}
+		if req.Filter.Status != nil {
+			listReq.Status = *req.Filter.Status
+		}
+		if req.Filter.Priority != nil {
+			listReq.Priority = *req.Filter.Priority
+		}
+		if len(req.Filter.Tags) > 0 {
+			listReq.Tags = strings.Join(req.Filter.Tags, ",")
+		}
+
+		listResp, err := s.List(ctx, listReq)
+		if err != nil {
+			return nil, fmt.Errorf("filter query: %w", err)
+		}
+
+		for _, entry := range listResp.Entries {
+			if req.Filter.GeneratedBy != nil && entry.GeneratedBy != *req.Filter.GeneratedBy {
+				continue
+			}
+			if req.Filter.GeneratedKey != nil && entry.GeneratedKey != *req.Filter.GeneratedKey {
+				continue
+			}
+			if req.Filter.Agent != nil && entry.Agent != *req.Filter.Agent {
+				continue
+			}
+			if req.Filter.Executor != nil && entry.Executor != *req.Filter.Executor {
+				continue
+			}
+			if req.Filter.ExecutionMode != nil && entry.ExecutionMode != *req.Filter.ExecutionMode {
+				continue
+			}
+			paths = append(paths, entry.Path)
+		}
+	} else {
+		paths = append(paths, req.Paths...)
+	}
+
+	matchedTotal := 0
+	truncated := false
+	if hasFilter {
+		matchedTotal = len(paths)
+		if matchedTotal > limit {
+			truncated = true
+		}
+	}
+	if len(paths) > limit {
+		paths = paths[:limit]
+	}
+
+	// Dry run: resolve each target so the caller can show exactly what
+	// would be removed, then return without deleting anything.
+	if req.DryRun {
+		results := make([]types.BulkUpdateResult, 0, len(paths))
+		for _, p := range paths {
+			row, err := s.resolveEntry(ctx, p)
+			if err != nil || row == nil {
+				results = append(results, types.BulkUpdateResult{
+					Path:   p,
+					Status: "error",
+					Error:  "entry not found",
+				})
+				continue
+			}
+			results = append(results, types.BulkUpdateResult{
+				Path:   row.Path,
+				ID:     row.ShortID,
+				Title:  row.Title,
+				Status: "ok",
+			})
+		}
+		return &types.BulkDeleteResponse{
+			Total:        len(results),
+			DryRun:       true,
+			Results:      results,
+			Truncated:    truncated,
+			MatchedTotal: matchedTotal,
+		}, nil
+	}
+
+	results := make([]types.BulkUpdateResult, 0, len(paths))
+	deleted := 0
+	failed := 0
+
+	for _, p := range paths {
+		// Resolve before deleting so the result row can carry the id and
+		// title — after deletion there is nothing left to look them up
+		// from, and a bare path is poor material for a UI error list.
+		var id, title string
+		if row, err := s.resolveEntry(ctx, p); err == nil && row != nil {
+			id = row.ShortID
+			title = row.Title
+		}
+
+		if err := s.Delete(ctx, p); err != nil {
+			failed++
+			results = append(results, types.BulkUpdateResult{
+				Path:   p,
+				ID:     id,
+				Title:  title,
+				Status: "error",
+				Error:  err.Error(),
+			})
+			continue
+		}
+		deleted++
+		results = append(results, types.BulkUpdateResult{
+			Path:   p,
+			ID:     id,
+			Title:  title,
+			Status: "ok",
+		})
+	}
+
+	return &types.BulkDeleteResponse{
+		Deleted:      deleted,
+		Failed:       failed,
+		Total:        len(results),
+		DryRun:       false,
+		Results:      results,
+		Truncated:    truncated,
+		MatchedTotal: matchedTotal,
 	}, nil
 }
 

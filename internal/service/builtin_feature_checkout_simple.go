@@ -57,17 +57,55 @@ func EnsureBuiltInFeatureCheckoutSimpleAutomation(ctx context.Context, brain *Br
 		return nil
 	}
 
+	desiredTrigger := &types.TriggerConfig{
+		Type:    "event",
+		Event:   types.EventFeatureCompleted,
+		OncePer: "feature_id",
+		Filter:  builtInCheckoutFilter("simple"),
+	}
+
+	scriptCommand := buildSimpleFeatureCheckoutScript(cfg)
+
 	existing, err := brain.List(ctx, types.ListEntriesRequest{Type: "automation", Limit: 1000})
 	if err != nil {
 		return fmt.Errorf("list automations: %w", err)
 	}
 	for _, entry := range existing.Entries {
-		if entry.GeneratedBy == BuiltInFeatureCheckoutSimpleGeneratedBy {
-			return nil
+		if entry.GeneratedBy != BuiltInFeatureCheckoutSimpleGeneratedBy {
+			continue
 		}
+		// Migrate the stored entry toward the shape this build wants.
+		//
+		// Both halves matter. The trigger migration revives entries written
+		// before the project wildcard. The ACTION migration matters just as
+		// much: the script is generated wholly from config and code, never
+		// authored by the user, so an entry created by an older build keeps
+		// running an older script forever — a fix to the script would never
+		// reach any existing install. That is exactly how the missing
+		// `git push` survived: the code was fixed, the stored automation was
+		// not.
+		update := types.UpdateEntryRequest{}
+		changed := false
+		if triggerNeedsCheckoutMigration(entry.Trigger, "simple") {
+			update.Trigger = desiredTrigger
+			changed = true
+		}
+		if entry.Action == nil || entry.Action.Command != scriptCommand {
+			update.Action = &types.AutomationAction{
+				Type:          types.AutomationActionScript,
+				Command:       scriptCommand,
+				ExecutionMode: "current_branch",
+				TargetWorkdir: cfg.TargetWorkdir,
+			}
+			changed = true
+		}
+		if changed {
+			if _, err := brain.Update(ctx, entry.Path, update); err != nil {
+				return fmt.Errorf("migrate built-in feature checkout simple automation: %w", err)
+			}
+		}
+		return nil
 	}
-
-	scriptCommand := buildSimpleFeatureCheckoutScript(cfg)
 
 	_, err = brain.Save(ctx, types.CreateEntryRequest{
 		Type:        "automation",
@@ -77,12 +115,7 @@ func EnsureBuiltInFeatureCheckoutSimpleAutomation(ctx context.Context, brain *Br
 		Global:      serviceBoolPtr(true),
 		Generated:   serviceBoolPtr(true),
 		GeneratedBy: BuiltInFeatureCheckoutSimpleGeneratedBy,
-		Trigger: &types.TriggerConfig{
-			Type:    "event",
-			Event:   types.EventFeatureCompleted,
-			OncePer: "feature_id",
-			Filter:  map[string]string{"checkout_mode": "simple"},
-		},
+		Trigger:     desiredTrigger,
 		Action: &types.AutomationAction{
 			Type:          types.AutomationActionScript,
 			Command:       scriptCommand,
@@ -127,9 +160,16 @@ func buildSimpleFeatureCheckoutScript(cfg BuiltInFeatureCheckoutSimpleConfig) st
 
 	remoteBlock := "# Remote branch deletion skipped (RemoteBranchPolicy != delete).\n"
 	if cfg.RemoteBranchPolicy == "delete" {
+		// PUSHED_TARGET gates this block. Deleting the remote source branch
+		// while the merge exists only locally destroys the only shared copy
+		// of the work: the remote loses the feature branch and never gains
+		// the commit. Only delete once the target is safely on the remote.
 		remoteBlock = `# Remote branch deletion (RemoteBranchPolicy=delete).
-# Guardrail: never delete the merge target or default branches.
-if [ "${SOURCE_BRANCH}" != "${TARGET_BRANCH}" ] && [ "${SOURCE_BRANCH}" != "main" ] && [ "${SOURCE_BRANCH}" != "master" ]; then
+# Guardrails: never delete the merge target or default branches, and never
+# delete anything unless the merge has actually reached the remote.
+if [ "${PUSHED_TARGET}" != "yes" ]; then
+  echo "[feature-checkout-simple] target not pushed; keeping remote ${SOURCE_BRANCH} so the work is not orphaned"
+elif [ "${SOURCE_BRANCH}" != "${TARGET_BRANCH}" ] && [ "${SOURCE_BRANCH}" != "main" ] && [ "${SOURCE_BRANCH}" != "master" ]; then
   echo "[feature-checkout-simple] deleting remote origin/${SOURCE_BRANCH} (best-effort)"
   git push origin --delete "${SOURCE_BRANCH}" || echo "[feature-checkout-simple] remote delete failed or branch already gone (non-fatal)"
 fi
@@ -177,6 +217,20 @@ git checkout "${TARGET_BRANCH}"
 echo "[feature-checkout-simple] squash-merging ${SOURCE_BRANCH} into ${TARGET_BRANCH}"
 git -c merge.ff=true merge --squash "${SOURCE_BRANCH}"
 git commit -m "feat(${FEATURE_ID}): squash merge from ${SOURCE_BRANCH}"
+
+# Publish the merge. Without this the feature only ever landed in one local
+# clone: another runner, another machine, or a fresh checkout would never see
+# it, and orchestration that assumes the target branch moved would build on
+# work that is not there. A push failure is fatal — continuing would delete
+# the source branch below and strand the commit locally.
+PUSHED_TARGET=no
+if git remote get-url origin >/dev/null 2>&1; then
+  echo "[feature-checkout-simple] pushing ${TARGET_BRANCH} to origin"
+  git push origin "${TARGET_BRANCH}"
+  PUSHED_TARGET=yes
+else
+  echo "[feature-checkout-simple] no origin remote; leaving ${TARGET_BRANCH} local-only"
+fi
 
 # Idempotent worktree cleanup: only attempt removal if it exists.
 if [ -d "${WORKTREE_PATH}" ]; then

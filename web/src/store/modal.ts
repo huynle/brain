@@ -20,8 +20,12 @@ export type ModalKind =
   | "runner"
   | "task"
   | "task-actions"
+  | "task-status"
+  | "task-metadata"
   | "feature"
   | "feature-actions"
+  | "feature-status"
+  | "feature-metadata"
   | "automation"
   | "settings"
   | null;

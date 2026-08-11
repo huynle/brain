@@ -13,6 +13,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useProjects } from "../../hooks/useProjects";
 import { useLive } from "../../lib/sse";
 import { useRunners } from "../../hooks/useRunners";
+import { useMergeRequests } from "../../hooks/useMergeRequests";
 import { useWorkspace } from "../../store/workspace";
 import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
@@ -97,16 +98,23 @@ export function OverviewGrid(): JSX.Element {
     [projectIds, hiddenSet, liveProjects, statusFilter],
   );
 
+  // Brain-native merge requests: an auto_pr checkout produces a
+  // merge_request ENTRY, not a URL on a task — without this input the
+  // MR OPEN column never moves for AI-checked-out features.
+  // `openByProject` is the query's stable data reference, so the memo
+  // below only recomputes when the MR set actually changes.
+  const { openByProject } = useMergeRequests();
+
   // Derive every feature across VISIBLE projects for the shared panels.
   const allDerived = useMemo(() => {
     const out: Array<DerivedFeature & { projectId: string }> = [];
     for (const pid of visibleProjectIds) {
       const tasks = liveProjects[pid]?.tasks ?? [];
-      const feats = deriveFeatures(tasks, pid);
+      const feats = deriveFeatures(tasks, pid, openByProject.get(pid));
       for (const f of feats) out.push(f);
     }
     return out;
-  }, [visibleProjectIds, liveProjects]);
+  }, [visibleProjectIds, liveProjects, openByProject]);
 
   // Group by lifecycle for the flow-board.
   const byLifecycle: Record<

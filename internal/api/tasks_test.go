@@ -33,6 +33,7 @@ type mockTaskService struct {
 	rejectDispatchFunc   func(ctx context.Context, projectId, taskId, runnerId, leaseId string, reason types.DispatchRejectReason) (*types.DispatchRejectResponse, error)
 	releaseDispatchFunc  func(ctx context.Context, projectId, taskId, runnerId string) (*types.DispatchReleaseResponse, error)
 	getClaimStatusFunc   func(ctx context.Context, projectId, taskId string) (*types.ClaimStatusResponse, error)
+	getLiveClaimFunc     func(ctx context.Context, projectId, taskId string) (*types.LiveClaim, error)
 	getMultiTaskStatusFn func(ctx context.Context, projectId string, req types.MultiTaskStatusRequest) (*types.MultiTaskStatusResponse, error)
 	getFeaturesFunc      func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
 	getReadyFeaturesFunc func(ctx context.Context, projectId string) (*types.FeatureListResponse, error)
@@ -136,6 +137,16 @@ func (m *mockTaskService) GetClaimStatus(ctx context.Context, projectId, taskId 
 		return m.getClaimStatusFunc(ctx, projectId, taskId)
 	}
 	return nil, fmt.Errorf("getClaimStatusFunc not set")
+}
+
+// GetLiveClaim defaults to "not live" rather than erroring: the delete
+// guard fails open, so a mock that errors would mask a real regression by
+// making the guard look correctly permissive for the wrong reason.
+func (m *mockTaskService) GetLiveClaim(ctx context.Context, projectId, taskId string) (*types.LiveClaim, error) {
+	if m.getLiveClaimFunc != nil {
+		return m.getLiveClaimFunc(ctx, projectId, taskId)
+	}
+	return &types.LiveClaim{Live: false}, nil
 }
 
 func (m *mockTaskService) GetMultiTaskStatus(ctx context.Context, projectId string, req types.MultiTaskStatusRequest) (*types.MultiTaskStatusResponse, error) {

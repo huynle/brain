@@ -18,7 +18,10 @@ import { create } from "zustand";
 
 export interface Toast {
   id: number;
-  kind: "info" | "success" | "error";
+  // "warning" covers the partial outcome a bulk fan-out can produce —
+  // "7 of 9 updated" is neither a success nor an error, and rendering it
+  // as either misleads.
+  kind: "info" | "success" | "error" | "warning";
   message: string;
   action?: {
     label: string;

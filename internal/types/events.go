@@ -72,6 +72,21 @@ const (
 	EventEntryUpdated = "entry.updated"
 	EventEntryDeleted = "entry.deleted"
 
+	// EventWebhookReceived is what a webhook-triggered automation matches on
+	// (see automationMatchesWebhook). It carries the inbound path in
+	// metadata["webhook_path"].
+	//
+	// The type existed only as a bare string in the matcher, was absent from
+	// AllEventTypes, and had no producer — so the whole webhook trigger type
+	// was unreachable: you could create the automation, but nothing could
+	// ever emit an event it would match, and posting one to /events was
+	// rejected as an invalid type. Declaring it here makes the documented
+	// trigger usable through the authenticated events endpoint.
+	//
+	// Note there is still no public unauthenticated webhook receiver; an
+	// integration posts this event via POST /api/v1/events like any other.
+	EventWebhookReceived = "webhook.received"
+
 	// Remote-control audit events.
 	EventControlPromptSent          = "control.prompt_sent"
 	EventControlPermissionResponded = "control.permission_responded"
@@ -92,6 +107,7 @@ var AllEventTypes = []string{
 	EventFeatureStarted, EventFeatureCompleted, EventFeatureBlocked, EventFeatureProgress,
 	EventFeatureEnabled, EventFeatureDisabled,
 	EventEntryCreated, EventEntryUpdated, EventEntryDeleted,
+	EventWebhookReceived,
 	EventControlPromptSent, EventControlPermissionResponded,
 	EventControlInstanceSpawned, EventControlInstanceKilled,
 }

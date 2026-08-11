@@ -1,15 +1,15 @@
 /**
  * TaskModal — wireframe-parity.
  */
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { Modal } from "../common/Modal";
+import { ActionBar } from "../common/ActionBar";
 import { useModal } from "../../store/modal";
-import { useWorkspace } from "../../store/workspace";
 import { useLive } from "../../lib/sse";
-import { useUI } from "../../store/ui";
-import { runOrTriggerTask, summarizeTriggerResults } from "../../lib/api";
+import { useActionRunner } from "../../hooks/useActionRunner";
+import { useTaskActionContext } from "../../hooks/useTaskActionContext";
+import { buildTaskActions } from "../../lib/actions/taskActions";
 import type { Task } from "../../lib/types";
-import { computeTaskResumeState } from "./taskActions";
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
 
@@ -17,9 +17,6 @@ export function TaskModal(): JSX.Element {
   const target = useModal((s) => s.target);
   const openModal = useModal((s) => s.open);
   const close = useModal((s) => s.close);
-  const openInFocus = useWorkspace((s) => s.openInFocus);
-  const toast = useUI((s) => s.toast);
-  const [running, setRunning] = useState(false);
 
   const taskId =
     (target?.taskId as string | undefined) ??
@@ -32,7 +29,15 @@ export function TaskModal(): JSX.Element {
     () => tasks.find((t) => t.id === taskId),
     [tasks, taskId],
   );
-  const resumeState = useMemo(() => computeTaskResumeState(task), [task]);
+
+  const taskCtx = useTaskActionContext(projectId);
+  const runner = useActionRunner();
+  // Built unconditionally so the hook order is stable across the
+  // not-found early return below.
+  const actions = useMemo(
+    () => (task ? buildTaskActions(task, taskCtx) : []),
+    [task, taskCtx],
+  );
 
   if (!task) {
     return (
@@ -76,68 +81,13 @@ export function TaskModal(): JSX.Element {
       onClose={close}
       footer={
         <>
-          {resumeState.showResume && (
-            <button
-              onClick={() =>
-                openModal("task-actions", { projectId, taskId: task.id })
-              }
-              title={
-                resumeState.canResumeCleanly
-                  ? "Resume this task (opens the Task Actions dialog)"
-                  : "Force resume — bypasses the abandonment gate (opens confirm dialog)"
-              }
-            >
-              Actions…
-            </button>
-          )}
-          <button
-            disabled={running}
-            onClick={async () => {
-              setRunning(true);
-              try {
-                const r = await runOrTriggerTask(projectId, task.id, false);
-                const { message, kind } = summarizeTriggerResults([r]);
-                toast(message, kind);
-              } catch (err) {
-                toast(
-                  `Run failed: ${err instanceof Error ? err.message : String(err)}`,
-                  "error",
-                );
-              } finally {
-                setRunning(false);
-              }
-            }}
-            title="Push-dispatch this task to a ready runner now (falls back to trigger)"
-          >
-            {running ? "Running…" : "Run now"}
-          </button>
-          <button
-            onClick={() => {
-              close();
-              openInFocus(
-                "logs",
-                { projectId, taskId: task.id },
-                `Logs ${task.id.slice(0, 8)}`,
-              );
-            }}
-          >
-            Open logs in focus
-          </button>
-          <button
-            onClick={() => {
-              close();
-              openInFocus(
-                "task-detail",
-                { projectId, taskId: task.id },
-                task.title || task.id,
-              );
-            }}
-          >
-            Open in focus pane
-          </button>
+          {/* Every verb comes from the shared registry, so this footer,
+              the row context menu and the touch sheet cannot drift. */}
+          <ActionBar actions={actions} onRun={runner.run} />
           <button className="primary" onClick={close}>
             Done
           </button>
+          {runner.dialog}
         </>
       }
     >

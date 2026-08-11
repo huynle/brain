@@ -5,15 +5,26 @@
  * head (name · life-badge · age · assign-chip · progress bar) plus
  * a description row and meta row (id · state · age · runner-warn ·
  * priority · checkout · target-branch).
+ *
+ * Features that declare `feature_depends_on` render as a tree: a
+ * feature nests under the feature it waits on, so a multi-feature
+ * build reads top-down in the order it can actually execute. With no
+ * declared dependencies the tree is all roots and the list looks
+ * exactly as it did before.
+ *
+ * Verbs come from `lib/actions/featureActions` via `useRowActions`, so
+ * right-click, long-press and keyboard offer the same set.
  */
-import { useModal } from "../../store/modal";
+import { useMemo } from "react";
 import { useWorkspace } from "../../store/workspace";
-import { useUI } from "../../store/ui";
 import { useRunners } from "../../hooks/useRunners";
-import { useContextMenu } from "../common/ContextMenu";
+import { useRowActions } from "../../hooks/useRowActions";
+import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
+import { DepGuide } from "../common/DepGuide";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
-import { runFeature, summarizeRunFeatureResult } from "../../lib/api";
-import type { DerivedFeature } from "../../lib/features";
+import { buildFeatureActions } from "../../lib/actions/featureActions";
+import { buildFeatureForest, type DerivedFeature } from "../../lib/features";
+import { flattenDepForest } from "../../lib/depTree";
 
 const LIFECYCLE_TONE = {
   "in-progress": { tone: "active", label: "active" },
@@ -38,21 +49,28 @@ export function CardFeatures({
   projectId,
   features,
 }: CardFeaturesProps): JSX.Element {
-  const openModal = useModal((s) => s.open);
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
-  const toast = useUI((s) => s.toast);
   const mergedExpanded = useWorkspace(
     (s) => s.mergedExpanded[projectId] ?? false,
   );
   const toggleMergedExpanded = useWorkspace((s) => s.toggleMergedExpanded);
   const { runners } = useRunners();
-  const ctx = useContextMenu();
+
+  const featureCtx = useFeatureActionContext(projectId);
+  const { rowProps, overlays } = useRowActions();
 
   const merged = features.filter((f) => f.lifecycle === "merged");
-  const visible = mergedExpanded
-    ? features
-    : features.filter((f) => f.lifecycle !== "merged");
+
+  // Tree is built from the *visible* set, so collapsing the merged
+  // bucket promotes anything that depended on a merged feature to a
+  // root rather than hiding it along with its parent.
+  const rows = useMemo(() => {
+    const visible = mergedExpanded
+      ? features
+      : features.filter((f) => f.lifecycle !== "merged");
+    return flattenDepForest(buildFeatureForest(visible));
+  }, [features, mergedExpanded]);
 
   if (features.length === 0) {
     return (
@@ -64,21 +82,33 @@ export function CardFeatures({
 
   return (
     <div>
-      {visible.map((f) => {
+      {rows.map((row) => {
+        const f = row.node.item;
         const tone = LIFECYCLE_TONE[f.lifecycle];
         const runnerId = featureAssignments[f.id];
         const runner = runners.find((r) => r.runner_id === runnerId);
         const pct = Math.round(f.progress * 100);
         const stateClass = featStateClass(f);
+        const actions = buildFeatureActions(f, featureCtx);
 
         return (
           <div
             key={f.id}
             className={`feat ${stateClass}`}
-            style={{ marginBottom: 8, cursor: "pointer" }}
+            style={{
+              marginBottom: 8,
+              cursor: "pointer",
+              // Indent nested features so the tree reads at a glance.
+              // The guide glyphs carry the exact structure; this just
+              // gives each level a visible step.
+              marginLeft: row.depth > 0 ? row.depth * 12 : undefined,
+            }}
           >
             <div
               className="feat-head"
+              {...rowProps(actions, f.name, () =>
+                openFeatureDrawer(projectId, f.id),
+              )}
               draggable
               onDragStart={(e) =>
                 beginDrag(e, {
@@ -102,71 +132,16 @@ export function CardFeatures({
                   return;
                 openFeatureDrawer(projectId, f.id);
               }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                const items: Array<{
-                  id: string;
-                  label: string;
-                  onClick: () => void;
-                }> = [
-                  {
-                    id: "meta",
-                    label: "Feature details",
-                    onClick: () =>
-                      openModal("feature", { projectId, featureId: f.id }),
-                  },
-                  {
-                    id: "run",
-                    label: "Run feature now",
-                    onClick: async () => {
-                      try {
-                        const r = await runFeature(projectId, f.id, false);
-                        const { message, kind } = summarizeRunFeatureResult(r);
-                        toast(message, kind);
-                      } catch (err) {
-                        toast(
-                          `Run feature failed: ${err instanceof Error ? err.message : String(err)}`,
-                          "error",
-                        );
-                      }
-                    },
-                  },
-                  {
-                    id: "plan",
-                    label: "Open plan drawer",
-                    onClick: () => openFeatureDrawer(projectId, f.id),
-                  },
-                ];
-                // Resume as a first-class context-menu action when the
-                // feature has any abandoned tasks. Opens the FeatureActions
-                // modal at the menu view where Resume is one click away.
-                if ((f.resumableCount ?? 0) > 0) {
-                  items.push({
-                    id: "resume",
-                    label: `Resume ${f.resumableCount} abandoned task${f.resumableCount === 1 ? "" : "s"}`,
-                    onClick: () =>
-                      openModal("feature-actions", {
-                        projectId,
-                        featureId: f.id,
-                      }),
-                  });
-                }
-                if (f.prUrl) {
-                  items.push({
-                    id: "mr",
-                    label: "Open merge request",
-                    onClick: () =>
-                      window.open(
-                        f.prUrl,
-                        "_blank",
-                        "noopener,noreferrer",
-                      ),
-                  });
-                }
-                ctx.open(e.clientX, e.clientY, items);
-              }}
             >
-              <span className="name">{f.name}</span>
+              <span className="name">
+                <DepGuide
+                  prefix={row.prefix}
+                  inCycle={row.node.inCycle}
+                  extraDeps={row.node.extraDeps}
+                  extraLabel="features"
+                />
+                {f.name}
+              </span>
               <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
               {runner ? (
                 <span
@@ -193,6 +168,12 @@ export function CardFeatures({
               }}
             >
               {f.id} · {f.taskCount.total} tasks
+              {f.dependsOn.length > 0 && (
+                <span title={`Waits on: ${f.dependsOn.join(", ")}`}>
+                  {" · waits on "}
+                  {f.dependsOn.join(", ")}
+                </span>
+              )}
               {f.prUrl && (
                 <>
                   {" · "}
@@ -228,7 +209,7 @@ export function CardFeatures({
         </button>
       )}
 
-      {ctx.menu}
+      {overlays}
     </div>
   );
 }

@@ -817,6 +817,60 @@ type BulkUpdateResponse struct {
 	Total   int                `json:"total"`
 	DryRun  bool               `json:"dry_run"`
 	Results []BulkUpdateResult `json:"results"`
+
+	// Truncated is true when the filter matched more entries than the
+	// safety cap allowed us to touch. Historically this truncation was
+	// silent, so a caller updating a >100-task feature saw a success
+	// response having mutated only the first 100. Callers should treat
+	// Truncated=true on a dry run as "do not proceed; narrow the filter".
+	Truncated bool `json:"truncated,omitempty"`
+
+	// MatchedTotal is how many entries the filter matched before the cap
+	// was applied. On a dry run this is exact up to the candidate fetch
+	// limit; on a live run it is a lower bound (we stop counting shortly
+	// past the cap). Zero in explicit-entries mode, where no matching
+	// happens.
+	MatchedTotal int `json:"matched_total,omitempty"`
+}
+
+// BulkDeleteRequest mirrors BulkUpdateRequest for deletions. Filter mode
+// selects entries the same way; explicit mode takes concrete paths.
+// Exactly one of Filter / Paths must be set.
+//
+// There is deliberately no "updates" analogue: deletion has no payload.
+type BulkDeleteRequest struct {
+	Filter *BulkUpdateFilter `json:"filter,omitempty"`
+	Paths  []string          `json:"paths,omitempty"`
+	DryRun bool              `json:"dry_run,omitempty"`
+	Limit  int               `json:"limit,omitempty"` // default 100, max 100
+}
+
+// BulkDeleteResponse is the response for POST /entries/bulk-delete.
+// Deleted/Failed/Total/Results mirror the bulk-update shape so clients can
+// render both with one component.
+type BulkDeleteResponse struct {
+	Deleted int                `json:"deleted"`
+	Failed  int                `json:"failed"`
+	Total   int                `json:"total"`
+	DryRun  bool               `json:"dry_run"`
+	Results []BulkUpdateResult `json:"results"`
+
+	// See BulkUpdateResponse for semantics.
+	Truncated    bool `json:"truncated,omitempty"`
+	MatchedTotal int  `json:"matched_total,omitempty"`
+}
+
+// LiveClaim describes an active runner claim on a task. Returned by
+// TaskLivenessService so callers can refuse destructive operations on work
+// that is genuinely in flight.
+type LiveClaim struct {
+	// Live is true only when a claim exists, has not expired, AND the
+	// owning runner is currently online. A claim held by an offline or
+	// crashed runner is not live — that is exactly the abandoned case
+	// the resume flow exists to recover.
+	Live bool `json:"live"`
+	// RunnerID owning the claim. Empty when Live is false.
+	RunnerID string `json:"runnerId,omitempty"`
 }
 
 // ListEntriesRequest holds query parameters for GET /entries.

@@ -770,6 +770,42 @@ button.glyph:focus-visible {
 .trow .status { color: #9098a1; font-size: 10px; text-align: right; }
 .trow .id { color: #4b545c; font-size: 10px; text-align: right; }
 
+/* Dependency-tree guides (CardTasks + CardFeatures).
+ *
+ * The prefix is box-drawing text from `flattenDepForest`, so it must
+ * render in a monospace face at a fixed advance width or the vertical
+ * guides between rows will not line up. `white-space: pre` keeps the
+ * trailing spaces in "│ " and "  " intact. */
+.dep-guide {
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  white-space: pre;
+  color: #3a424a;
+  margin-right: 3px;
+  user-select: none;
+}
+/* Cycle marker — magenta, matching the TUI's ColorMagenta "↺". A cycle
+ * is a data problem the user has to break, not a status, so it does not
+ * reuse any of the lifecycle tones. */
+.dep-cycle {
+  color: #b98cff;
+  margin-right: 3px;
+  font-weight: 600;
+}
+/* "+N" — this row has N further dependencies beyond the one that
+ * placed it (the other edges of a diamond). Deliberately quiet: it is
+ * a hint that the tree is a projection of a DAG, not a call to act. */
+.dep-extra {
+  color: #6b757e;
+  font-size: 9.5px;
+  border: 1px solid #2a2f35;
+  border-radius: 3px;
+  padding: 0 3px;
+  margin-right: 4px;
+  vertical-align: 1px;
+}
+body[data-theme="light"] .dep-guide { color: #b7bec6; }
+body[data-theme="light"] .dep-extra { color: #6b757e; border-color: #d8dde2; }
+
 /* Live-log mini window inside a card body */
 .log-mini {
   background: #0a0c0e; border: 1px solid #1a1e22; border-radius: 4px;
@@ -1018,6 +1054,39 @@ button.glyph:focus-visible {
 .sheet .row:hover { background: #1e2833; }
 .sheet .row .icon { width: 24px; text-align: center; }
 
+/* ActionSheet — the touch rendering of an ActionDescriptor list.
+ *
+ * Rows are deliberately tall (44px min): this is the only path to these
+ * verbs on a phone, so a mis-tap costs the user the whole gesture. */
+.sheet-title {
+  font-size: 12px; color: #9098a1; padding: 0 8px 8px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.sheet-group { border-top: 1px solid #22272c; padding: 4px 0; }
+.sheet-group:first-of-type { border-top: 0; }
+.sheet-item {
+  display: block; width: 100%; text-align: left;
+  min-height: 44px; padding: 10px 8px;
+  border: 0; border-radius: 6px; background: transparent;
+  color: #eaedef; font-size: 14px; font-family: inherit;
+}
+.sheet-item:active { background: #1e2833; }
+.sheet-item.danger { color: #d96060; }
+.sheet-item:disabled { color: #4b545c; }
+.sheet-item-label { display: block; }
+/* Touch has no hover, so a disabled row's reason has to be visible
+ * inline — a title attribute would never be seen. */
+.sheet-item-reason {
+  display: block; margin-top: 2px;
+  font-size: 11px; color: #6b757e; white-space: normal;
+}
+.sheet-cancel {
+  display: block; width: 100%; margin-top: 10px;
+  min-height: 44px; padding: 10px;
+  background: #1a1e22; border: 1px solid #2a2f35; border-radius: 8px;
+  color: #9098a1; font-size: 14px; font-family: inherit;
+}
+
 .toast {
   position: fixed; top: 44px; left: 50%; transform: translate(-50%, -10px);
   background: #12161a; border: 1px solid #2a2f35; border-radius: 6px;
@@ -1025,6 +1094,11 @@ button.glyph:focus-visible {
   pointer-events: none; font-size: 12px;
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
+/* Kind tones. Warning exists for the partial outcome a bulk fan-out
+ * produces — "7 of 9 updated" must not read as a clean success. */
+.toast.success { border-color: #6fca7d55; color: #a9e3b3; }
+.toast.warning { border-color: #d2992255; color: #e8c274; }
+.toast.error   { border-color: #d9606055; color: #eda1a1; }
 
 .drag-ghost {
   position: fixed; z-index: 1300; pointer-events: none;

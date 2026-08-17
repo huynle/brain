@@ -10,10 +10,18 @@
  * Footers have limited room, so only the primary groups render as
  * buttons; the rest stay one click away behind "More…". Disabled actions
  * keep their reason as a tooltip rather than disappearing.
+ *
+ * "More…" is device-aware: on desktop it opens a compact context menu
+ * anchored to the button (the same menu right-click shows on rows); the
+ * full-width bottom sheet — correct for thumbs, comically wide on a
+ * monitor — is reserved for touch.
  */
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { ActionSheet } from "./ActionSheet";
+import { useContextMenu } from "./ContextMenu";
+import { useIsMobile } from "../../hooks/useIsMobile";
+import { toMenuItems } from "../../hooks/useRowActions";
 import { isEnabled, type ActionDescriptor } from "../../lib/actions/types";
 
 export interface ActionBarProps {
@@ -32,7 +40,10 @@ export function ActionBar({
   onRun,
   primary = ["run", "resume"],
 }: ActionBarProps): JSX.Element {
-  const [showMore, setShowMore] = useState(false);
+  const [showSheet, setShowSheet] = useState(false);
+  const moreRef = useRef<HTMLButtonElement | null>(null);
+  const ctx = useContextMenu();
+  const isMobile = useIsMobile();
 
   const byId = new Map(actions.map((a) => [a.id, a]));
   const primaryActions = primary
@@ -41,10 +52,22 @@ export function ActionBar({
   const primaryIds = new Set(primaryActions.map((a) => a.id));
   const rest = actions.filter((a) => !primaryIds.has(a.id));
 
+  const openMore = () => {
+    if (isMobile) {
+      setShowSheet(true);
+      return;
+    }
+    const rect = moreRef.current?.getBoundingClientRect();
+    // Anchor above-left of the button; ContextMenu clamps to viewport.
+    ctx.open(rect?.left ?? 0, rect?.top ?? 0, toMenuItems(rest, onRun));
+  };
+
   return (
     <>
       {rest.length > 0 && (
-        <button onClick={() => setShowMore(true)}>More…</button>
+        <button ref={moreRef} onClick={openMore}>
+          More…
+        </button>
       )}
       {primaryActions.map((a) => {
         const enabled = isEnabled(a);
@@ -61,15 +84,13 @@ export function ActionBar({
         );
       })}
 
-      {showMore && (
-        // Reuses the touch sheet on desktop too: a modal footer has no
-        // room for a positioned context menu, and the sheet already
-        // renders disabled reasons inline where they are readable.
+      {ctx.menu}
+      {showSheet && (
         <ActionSheet
           title="More actions"
           actions={rest}
           onSelect={onRun}
-          onClose={() => setShowMore(false)}
+          onClose={() => setShowSheet(false)}
         />
       )}
     </>

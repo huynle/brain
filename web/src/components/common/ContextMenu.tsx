@@ -39,6 +39,9 @@ export interface ContextMenuItem {
   shortcut?: React.ReactNode;
   danger?: boolean;
   disabled?: boolean;
+  /** Tooltip (title attr) — used for disabled reasons, so a greyed item
+   *  explains itself on hover the way the sheet's subtitle does. */
+  tooltip?: string;
   /** Optional: render as a group header instead of a clickable item. */
   section?: boolean;
   /** Optional: render as a horizontal separator instead of an item. */
@@ -183,6 +186,7 @@ export function ContextMenu({
             type="button"
             role="menuitem"
             disabled={item.disabled}
+            title={item.tooltip || undefined}
             style={item.danger ? { color: "#d96060" } : undefined}
             onClick={() => {
               item.onClick?.();

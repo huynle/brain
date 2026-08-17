@@ -13,6 +13,9 @@ import { useActionRunner } from "../../hooks/useActionRunner";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
 import { useGoals, useGoalProgress } from "../../hooks/useGoals";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
+import { useRowActions } from "../../hooks/useRowActions";
+import { useTaskActionContext } from "../../hooks/useTaskActionContext";
+import { buildTaskActions } from "../../lib/actions/taskActions";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
 import { goalStatusLabel } from "../../lib/actions/goalActions";
 import { deriveFeatures } from "../../lib/features";
@@ -122,6 +125,10 @@ export function FeatureModal(): JSX.Element {
   );
 
   const featureCtx = useFeatureActionContext(projectId);
+  const taskCtx = useTaskActionContext(projectId);
+  // Right-click / long-press / keyboard verbs on the modal's task rows —
+  // the same registry the cards use, so the modal is not a dead end.
+  const { rowProps, overlays } = useRowActions();
   const { forFeature } = useGoals();
   const featureGoals = forFeature(projectId, featureId);
   const runner = useActionRunner();
@@ -282,6 +289,9 @@ export function FeatureModal(): JSX.Element {
           <div
             key={t.id}
             className="trow"
+            {...rowProps(buildTaskActions(t, taskCtx), t.title || t.id, () =>
+              openModal("task", { projectId, taskId: t.id }),
+            )}
             onClick={() =>
               openModal("task", { projectId, taskId: t.id })
             }
@@ -293,6 +303,7 @@ export function FeatureModal(): JSX.Element {
           </div>
         ))}
       </div>
+      {overlays}
 
       <h4 style={{ margin: "12px 0 6px", color: "#f4b23a", fontSize: 11 }}>
         Goals ({featureGoals.length})

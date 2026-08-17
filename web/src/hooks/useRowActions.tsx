@@ -86,8 +86,9 @@ export interface UseRowActionsAPI {
   overlays: JSX.Element;
 }
 
-/** Convert descriptors into ContextMenu items, preserving group separators. */
-function toMenuItems(
+/** Convert descriptors into ContextMenu items, preserving group separators.
+ *  Exported so ActionBar's desktop "More…" menu renders the identical list. */
+export function toMenuItems(
   actions: readonly ActionDescriptor[],
   run: (a: ActionDescriptor) => void,
 ): ContextMenuItem[] {
@@ -102,6 +103,9 @@ function toMenuItems(
         // rather than hiding it in a help overlay nobody opens.
         label: a.key ? `${a.label}  (${a.key})` : a.label,
         disabled: !isEnabled(a),
+        // A greyed item must explain itself — the sheet shows the reason
+        // as a subtitle; the menu shows it on hover.
+        tooltip: a.disabledReason || undefined,
         danger: a.danger,
         onClick: () => run(a),
       });

@@ -15,6 +15,7 @@ import { useCallback, useState } from "react";
 import { ConfirmDialog } from "../components/common/ConfirmDialog";
 import { useUI } from "../store/ui";
 import { isEnabled, type ActionDescriptor } from "../lib/actions/types";
+import { ForceDeclinedError } from "../lib/actions/forceRetry";
 
 export interface ActionRunner {
   /** Invoke an action, routing through confirmation when it asks for it. */
@@ -58,6 +59,12 @@ export function useActionRunner(): ActionRunner {
       }
 
       void execute(action).catch((err) => {
+        // Declining the force pass is a cancellation, not a failure — an
+        // error toast for "you said no" would train people to ignore red.
+        if (err instanceof ForceDeclinedError) {
+          toast(err.message, "info");
+          return;
+        }
         toast(
           `${action.label} failed: ${err instanceof Error ? err.message : String(err)}`,
           "error",
@@ -75,8 +82,18 @@ export function useActionRunner(): ActionRunner {
       onConfirm={async () => {
         // Errors propagate to ConfirmDialog, which shows them inline and
         // keeps itself open — a failed destructive action should not
-        // vanish behind a toast the user may miss.
-        await execute(pending);
+        // vanish behind a toast the user may miss. A declined force pass
+        // is the exception: the user chose to stop, so close quietly.
+        try {
+          await execute(pending);
+        } catch (err) {
+          if (err instanceof ForceDeclinedError) {
+            setPending(null);
+            toast(err.message, "info");
+            return;
+          }
+          throw err;
+        }
         setPending(null);
       }}
     />

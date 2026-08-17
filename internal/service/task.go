@@ -1606,11 +1606,13 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 }
 
 // terminalStatuses is the set of statuses that ResumeFeature refuses to
-// touch during a batch — even when force=true. Force is meant to bypass
-// the "not abandoned" abandonment gate for individual tasks (e.g. blocked
-// tasks with no reaper marker); it must NOT resurrect work that already
-// reached a terminal state. Per-task terminal resumes still work via the
-// single-task endpoint's force path if the caller genuinely means it.
+// touch during a batch WITHOUT force. A plain batch resume ("resume
+// everything abandoned in this feature") must never resurrect work that
+// already reached a terminal state. With force=true the batch delegates to
+// ResumeTask, which honors force for terminal statuses exactly like the
+// single-task endpoint — parity, so a batch force isn't weaker than N
+// single-task forces. The live-claim safety inside ResumeTask remains
+// absolute either way.
 var terminalStatuses = map[string]bool{
 	"completed":  true,
 	"validated":  true,
@@ -1682,8 +1684,10 @@ func acquireResumeFeatureLock(ctx context.Context, key string) (func(), error) {
 // everything you can in this feature") without pre-filtering.
 //
 // Force semantics at batch level: bypasses the abandonment gate for tasks
-// whose runtime state doesn't automatically qualify, but explicitly does NOT
-// bypass the terminal-status gate. See terminalStatuses above.
+// whose runtime state doesn't automatically qualify, AND the terminal-status
+// batch exclusion (per-task ResumeTask already honors terminal+force, so the
+// batch matches the single-task endpoint). Live-claim refusal inside
+// ResumeTask stays absolute regardless of force. See terminalStatuses above.
 //
 // Errors from individual ResumeTask calls (unlike no-op skips) are converted
 // into skipped results with the error text in Reason. The overall call only
@@ -1731,12 +1735,13 @@ func (s *TaskServiceImpl) ResumeFeature(ctx context.Context, projectID, featureI
 		if task.ID == "" {
 			continue
 		}
-		// Terminal-status guard — the safety net against a batch force
-		// silently resurrecting historically-completed work. This runs
-		// BEFORE ResumeTask because ResumeTask.force bypasses the terminal
-		// gate at the single-task level (that's an intentional escape
-		// hatch for direct API/curl use, not for batch fanout).
-		if terminalStatuses[task.Status] {
+		// Terminal-status guard — the safety net against a plain batch
+		// resume silently resurrecting historically-completed work. Runs
+		// BEFORE ResumeTask so the skip reason is explicit about the batch
+		// exclusion. Force bypasses it: the task then flows through
+		// ResumeTask, whose own force path handles terminal statuses the
+		// same way the single-task endpoint does.
+		if !opts.Force && terminalStatuses[task.Status] {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return result, ctxErr
 			}

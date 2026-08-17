@@ -8,11 +8,14 @@ import { useAuth } from "./auth";
 import type {
   BrainEntry,
   CheckoutFeatureResult,
+  CreateGoalRequest,
   DispatchLease,
   FeatureCheckoutOptions,
   GoalAuditResponse,
   GoalListResponse,
   GoalProgressResponse,
+  GoalReconcileAudit,
+  GoalSummary,
   Health,
   InstanceListResponse,
   ListEntriesResponse,
@@ -268,7 +271,7 @@ export interface BulkDeleteResponse {
 export const bulkUpdate = (
   filter: BulkFilter,
   updates: Record<string, unknown>,
-  opts: { dryRun?: boolean; limit?: number } = {},
+  opts: { dryRun?: boolean; limit?: number; force?: boolean } = {},
 ) =>
   api<BulkUpdateResponse>("/api/v1/entries/bulk-update", {
     method: "POST",
@@ -277,6 +280,9 @@ export const bulkUpdate = (
       updates,
       ...(opts.dryRun ? { dry_run: true } : {}),
       ...(opts.limit ? { limit: opts.limit } : {}),
+      // `force` bypasses the live-claim guard, which otherwise 409s the
+      // request when any target is being executed by an online runner.
+      ...(opts.force ? { force: true } : {}),
     },
   });
 
@@ -294,11 +300,14 @@ export const bulkDelete = (
 ) =>
   api<BulkDeleteResponse>("/api/v1/entries/bulk-delete", {
     method: "POST",
+    // force travels in the body (current server) AND as a query param
+    // (older builds read only the query) — harmless to send both.
     query: opts.force ? { force: "true" } : undefined,
     body: {
       filter,
       ...(opts.dryRun ? { dry_run: true } : {}),
       ...(opts.limit ? { limit: opts.limit } : {}),
+      ...(opts.force ? { force: true } : {}),
     },
   });
 
@@ -307,7 +316,7 @@ export const setFeatureStatus = (
   projectId: string,
   featureId: string,
   status: string,
-  opts: { dryRun?: boolean } = {},
+  opts: { dryRun?: boolean; force?: boolean } = {},
 ) =>
   bulkUpdate(
     { project: projectId, feature_id: featureId, type: "task" },
@@ -1276,11 +1285,23 @@ export const embedBackfill = (body: {
 
 // ─── Goals ───────────────────────────────────────────────────────
 
-export const listGoals = () =>
-  api<GoalListResponse>("/api/v1/goals").then((r) => r.goals || []);
+/**
+ * List goal automations. Without `status` the server returns its default
+ * set (active + blocked + completed; archived hidden). Pass
+ * `status: "archived"` for archived only, `"all"` for everything, or an
+ * exact status for a single-status match.
+ */
+export const listGoals = (params?: {
+  project?: string;
+  feature_id?: string;
+  status?: string;
+}) =>
+  api<GoalListResponse>("/api/v1/goals", { query: params }).then(
+    (r) => r.goals || [],
+  );
 
-export const createGoal = (body: import("./types").CreateGoalRequest) =>
-  api<import("./types").GoalSummary>("/api/v1/goals", {
+export const createGoal = (body: CreateGoalRequest) =>
+  api<GoalSummary>("/api/v1/goals", {
     method: "POST",
     body,
   });
@@ -1296,13 +1317,34 @@ export const goalAudit = (goalId: string, limit = 10) =>
   });
 
 export const updateGoal = (goalId: string, patch: UpdateGoalRequest) =>
-  api(`/api/v1/goals/${encodeURIComponent(goalId)}`, {
+  api<GoalSummary>(`/api/v1/goals/${encodeURIComponent(goalId)}`, {
     method: "PATCH",
     body: patch,
   });
 
+/** Manual reconcile; the response is the audit record it produced. */
 export const runGoal = (goalId: string) =>
-  api(`/api/v1/goals/${encodeURIComponent(goalId)}/run`, { method: "POST" });
+  api<GoalReconcileAudit>(`/api/v1/goals/${encodeURIComponent(goalId)}/run`, {
+    method: "POST",
+  });
+
+export const deleteGoal = (goalId: string) =>
+  api<{ success: boolean; goal_id: string }>(
+    `/api/v1/goals/${encodeURIComponent(goalId)}`,
+    { method: "DELETE" },
+  );
+
+// Lifecycle wrappers — status mapping mirrors the MCP goal_pause /
+// goal_resume / goal_archive tools (internal/mcp/goal_tools.go):
+// pause=blocked, resume=active, archive=archived.
+export const pauseGoal = (goalId: string) =>
+  updateGoal(goalId, { status: "blocked" });
+
+export const resumeGoal = (goalId: string) =>
+  updateGoal(goalId, { status: "active" });
+
+export const archiveGoal = (goalId: string) =>
+  updateGoal(goalId, { status: "archived" });
 
 // ─── Server configuration (~/.config/brain/config.yaml) ────────────
 

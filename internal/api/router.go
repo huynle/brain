@@ -323,10 +323,12 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					if o.handler != nil && o.handler.goalService != nil {
 						r.Post("/", o.handler.HandleCreateGoal)
 						r.Patch("/{goalId}", o.handler.HandleUpdateGoal)
+						r.Delete("/{goalId}", o.handler.HandleDeleteGoal)
 						r.Post("/{goalId}/run", o.handler.HandleRunGoal)
 					} else {
 						r.Post("/", notImplemented)
 						r.Patch("/{goalId}", notImplemented)
+						r.Delete("/{goalId}", notImplemented)
 						r.Post("/{goalId}/run", notImplemented)
 					}
 				})

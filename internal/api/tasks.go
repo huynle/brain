@@ -731,12 +731,16 @@ func (h *Handler) HandleCheckoutFeature(w http.ResponseWriter, r *http.Request) 
 	projectId := chi.URLParam(r, "projectId")
 	featureId := chi.URLParam(r, "featureId")
 
+	// Strict decode: a malformed (or typo'd — unknown fields are rejected)
+	// non-empty body must fail loudly instead of silently falling back to
+	// defaults. The old swallow-and-default behavior meant a typo produced
+	// a checkout task with an unintended merge policy. Empty/absent body
+	// still means "use defaults".
 	var opts types.FeatureCheckoutOptions
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&opts); err != nil {
-			// Allow empty body - use defaults
-			opts = types.FeatureCheckoutOptions{}
-		}
+	if err := decodeOptionalSmallJSON(w, r, &opts); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request",
+			fmt.Sprintf("invalid checkout options body: %v", err))
+		return
 	}
 
 	result, err := h.tasks.CheckoutFeature(r.Context(), projectId, featureId, &opts)

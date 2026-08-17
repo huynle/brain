@@ -23,12 +23,14 @@
  * tasks is precisely the failure this avoids.
  */
 import type { DerivedFeature } from "../features";
-import type { TaskStatus } from "../types";
+import type { ResumeFeatureResult, TaskStatus } from "../types";
 import { STATUS_LABELS } from "./taskActions";
 import type { ActionDescriptor } from "./types";
 
 export interface FeatureActionContext {
   runFeature: (feature: DerivedFeature) => Promise<void>;
+  /** Batch-resumes every abandoned task in the feature, directly. */
+  resumeFeature: (feature: DerivedFeature) => Promise<void>;
   /** Opens the status picker for a feature-wide change. */
   openStatusPicker: (feature: DerivedFeature) => void;
   /** Applies a status to every task in the feature (preview then commit). */
@@ -43,6 +45,18 @@ export interface FeatureActionContext {
   openPlan: (feature: DerivedFeature) => void;
   openDetails: (feature: DerivedFeature) => void;
   openMetadata: (feature: DerivedFeature) => void;
+  /** Opens the runner-assignment modal (ModalKind "feature-assign"). */
+  openAssignRunner: (feature: DerivedFeature) => void;
+  /** Clears the feature's runner assignment on the server. */
+  clearRunnerAssignment: (feature: DerivedFeature) => Promise<void>;
+  /**
+   * Runner currently assigned to the feature, if the client knows of one.
+   * Sync lookup — the builder uses it to disable "Clear assignment" with a
+   * reason instead of letting it no-op.
+   */
+  assignedRunner: (feature: DerivedFeature) => string | undefined;
+  /** Opens the goal-create modal prefilled with this feature's scope. */
+  openGoalCreate: (feature: DerivedFeature) => void;
 }
 
 /** Statuses in which a feature's tasks are all finished, one way or another. */
@@ -75,6 +89,15 @@ export function checkoutBlockedReason(feature: DerivedFeature): string {
   return "";
 }
 
+/** Why a feature cannot be resumed, or "" when it can. */
+export function resumeFeatureBlockedReason(feature: DerivedFeature): string {
+  if (feature.taskCount.total === 0) return "Feature has no tasks";
+  if (feature.resumableCount === 0) {
+    return "No abandoned tasks — nothing to resume";
+  }
+  return "";
+}
+
 /**
  * Count of tasks a feature-wide mutation would touch. Callers show this in
  * the confirm dialog; the server's dry run is the authority, but this gives
@@ -102,17 +125,22 @@ export function buildFeatureActions(
     run: () => ctx.runFeature(feature),
   });
 
-  if (feature.resumableCount > 0) {
-    actions.push({
-      id: "resume",
-      label: `Resume ${feature.resumableCount} abandoned ${
-        feature.resumableCount === 1 ? "task" : "tasks"
-      }`,
-      group: "run",
-      key: "r",
-      run: async () => ctx.openResume(feature),
-    });
-  }
+  // Always present (disabled-never-hidden); executes directly rather than
+  // detouring through FeatureActionsModal — the modal remains reachable via
+  // "Review & merge…" for the checkout workflow, but resume is one gesture.
+  actions.push({
+    id: "resume",
+    label:
+      feature.resumableCount > 0
+        ? `Resume ${feature.resumableCount} abandoned ${
+            feature.resumableCount === 1 ? "task" : "tasks"
+          }`
+        : "Resume abandoned tasks",
+    group: "run",
+    key: "r",
+    disabledReason: resumeFeatureBlockedReason(feature),
+    run: () => ctx.resumeFeature(feature),
+  });
 
   actions.push({
     id: "checkout",
@@ -156,6 +184,34 @@ export function buildFeatureActions(
     group: "edit",
     key: "e",
     run: async () => ctx.openMetadata(feature),
+  });
+
+  // Runner assignment. Assign opens the picker modal (choosing a runner
+  // needs a list, which a menu row cannot show); clear acts directly.
+  const assigned = ctx.assignedRunner(feature);
+  actions.push({
+    id: "assign",
+    label: assigned ? `Assign runner… (now ${assigned})` : "Assign runner…",
+    group: "edit",
+    key: "g",
+    run: async () => ctx.openAssignRunner(feature),
+  });
+  actions.push({
+    id: "unassign",
+    label: "Clear runner assignment",
+    group: "edit",
+    disabledReason: assigned ? "" : "No runner assigned",
+    run: () => ctx.clearRunnerAssignment(feature),
+  });
+
+  // Goals attach to a feature by scope, not by mutation — creating one is
+  // always possible, even on a settled feature (a goal can watch a merged
+  // feature for regressions).
+  actions.push({
+    id: "set-goal",
+    label: "Set goal…",
+    group: "edit",
+    run: async () => ctx.openGoalCreate(feature),
   });
 
   // ─── navigate ───────────────────────────────────────────────────
@@ -220,6 +276,51 @@ export function buildFeatureStatusActions(
     },
     run: () => ctx.setStatusForAll(feature, status),
   }));
+}
+
+/**
+ * Summarise a batch resume for a toast: counts plus the top skip reasons,
+ * so "Resumed 0 · 5 skipped" is never the whole story. Skip reasons come
+ * back per task; we bucket identical strings and show the two most common.
+ */
+export function summarizeResumeOutcome(r: ResumeFeatureResult): {
+  message: string;
+  kind: "success" | "info" | "warning";
+} {
+  if (r.total_resumed === 0 && r.total_skipped === 0) {
+    return { message: "No tasks in feature", kind: "info" };
+  }
+
+  const parts: string[] = [];
+  if (r.total_resumed > 0) {
+    parts.push(
+      `Resumed ${r.total_resumed} task${r.total_resumed === 1 ? "" : "s"}`,
+    );
+  } else {
+    parts.push("No tasks resumed");
+  }
+  if (r.total_skipped > 0) {
+    parts.push(`${r.total_skipped} skipped`);
+  }
+
+  // Top skip reasons, most common first. Ties break on first-seen order,
+  // which is deterministic on identical input.
+  const counts = new Map<string, number>();
+  for (const row of r.results ?? []) {
+    if (row.resumed || !row.reason) continue;
+    counts.set(row.reason, (counts.get(row.reason) ?? 0) + 1);
+  }
+  const top = [...counts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 2)
+    .map(([reason, n]) => (n > 1 ? `${n}× ${reason}` : reason));
+  if (top.length > 0) parts.push(`(${top.join("; ")})`);
+
+  return {
+    message: parts.join(" · "),
+    kind:
+      r.total_resumed === 0 ? "info" : r.total_skipped > 0 ? "warning" : "success",
+  };
 }
 
 /**

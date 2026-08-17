@@ -544,21 +544,50 @@ export interface SearchResponse {
 
 // ─── Goals / automations ─────────────────────────────────────────
 
+/**
+ * Goal lifecycle statuses and what the PATCH verbs map them to:
+ *   active    — reconciling (resume)
+ *   blocked   — paused; events ignored until resumed (pause)
+ *   completed — criteria met; reactivate by setting active
+ *   archived  — hidden from the default list (archive)
+ */
+export type GoalStatus = "active" | "blocked" | "completed" | "archived";
+
+/** Mirrors Go types.GoalSteering (internal/types/automation.go). */
+export interface GoalSteering {
+  /** Nil/omitted means enabled — steering is on by default. */
+  enabled?: boolean;
+  /** 0/omitted defaults to 15 minutes server-side. */
+  cooldown_minutes?: number;
+}
+
 export interface GoalConfig {
   id: string;
   criteria?: string;
   validation?: string;
   workdir?: string;
   trigger_source?: string;
+  /** Scopes the goal to a single task; takes precedence over feature scope. */
+  task_id?: string;
   complete_statuses?: string[];
   blocked_statuses?: string[];
+  steering?: GoalSteering;
 }
 
+/** Mirrors Go types.AutomationAction (internal/types/automation.go). */
 export interface AutomationAction {
-  session_mode?: string;
+  type?: string; // "prompt" | "script" | "update" | "http"
+  direct_prompt?: string;
+  command?: string;
   agent?: string;
   model?: string;
   executor?: string;
+  target_workdir?: string;
+  execution_mode?: string;
+  session_mode?: string;
+  complete_on_idle?: boolean;
+  timeout?: string;
+  requires_capability?: string;
   [k: string]: unknown;
 }
 
@@ -590,11 +619,11 @@ export interface GoalListResponse {
   count: number;
 }
 
+/** Mirrors Go types.LinkedTaskSnapshot: fields are `id`, not `task_id`. */
 export interface LinkedTaskSnapshot {
-  task_id: string;
-  title?: string;
-  status?: string;
-  [k: string]: unknown;
+  id: string;
+  title: string;
+  status: string;
 }
 
 export interface GoalProgressResponse {
@@ -602,6 +631,7 @@ export interface GoalProgressResponse {
   entry_id: string;
   project?: string;
   feature_id?: string;
+  task_id?: string;
   feature_status: string;
   total: number;
   pending: number;
@@ -611,6 +641,14 @@ export interface GoalProgressResponse {
   tasks: LinkedTaskSnapshot[];
 }
 
+/** Reconcile outcomes; "steer" means live sessions were nudged (noop+prompt). */
+export type GoalReconcileDecision =
+  | "complete"
+  | "block"
+  | "need_work"
+  | "noop"
+  | "steer";
+
 export interface GoalReconcileAudit {
   timestamp: string;
   goal_id: string;
@@ -618,10 +656,13 @@ export interface GoalReconcileAudit {
   feature_id?: string;
   triggering_event: string;
   event_id?: string;
-  decision: "complete" | "block" | "need_work" | "noop" | string;
+  decision: GoalReconcileDecision | string;
   reason: string;
   linked_tasks?: LinkedTaskSnapshot[];
   generated_task_id?: string;
+  /** Populated when decision is "steer". */
+  sessions_steered?: number;
+  sessions_skipped?: number;
 }
 
 export interface GoalAuditResponse {
@@ -637,8 +678,10 @@ export interface UpdateGoalRequest {
   validation?: string;
   workdir?: string;
   trigger_source?: string;
+  task_id?: string;
   complete_statuses?: string[];
   blocked_statuses?: string[];
+  steering?: GoalSteering;
   action?: AutomationAction;
 }
 
@@ -647,7 +690,8 @@ export interface CreateGoalRequest {
   feature_id?: string;
   title: string;
   content?: string;
-  config: GoalConfig; // requires a non-empty `id`
+  // `config.id` may be empty — the server derives one from the title.
+  config: GoalConfig;
   action: AutomationAction; // requires a non-empty `type`
 }
 

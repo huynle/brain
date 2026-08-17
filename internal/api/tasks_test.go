@@ -1450,6 +1450,114 @@ func TestHandleCheckoutFeature(t *testing.T) {
 	}
 }
 
+// Malformed non-empty bodies must be rejected, not silently replaced with
+// defaults — the old swallow-and-default behavior turned a typo into a
+// checkout task with an unintended merge policy.
+func TestHandleCheckoutFeature_MalformedBodyRejected(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"truncated JSON", `{"merge_policy": "auto_pr"`},
+		{"not JSON at all", `merge_policy=auto_pr`},
+		{"typo'd field name", `{"merge_polcy": "auto_pr"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			called := false
+			taskMock := &mockTaskService{
+				checkoutFeatureFunc: func(_ context.Context, _, _ string, _ *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error) {
+					called = true
+					return &types.CheckoutFeatureResult{Created: true}, nil
+				},
+			}
+			router := newTaskTestRouter(taskMock, &mockRunnerService{})
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			resp, err := http.Post(srv.URL+"/tasks/my-project/features/auth-system/checkout",
+				"application/json", bytes.NewReader([]byte(tt.body)))
+			if err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			defer resp.Body.Close()
+
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400", resp.StatusCode)
+			}
+			if called {
+				t.Error("checkout ran despite a malformed body")
+			}
+			var body types.ErrorResponse
+			_ = json.NewDecoder(resp.Body).Decode(&body)
+			if body.Message == "" {
+				t.Error("expected a non-empty error message explaining the bad body")
+			}
+		})
+	}
+}
+
+// An explicitly empty body (not just a nil one) still means "use defaults".
+func TestHandleCheckoutFeature_EmptyBodyUsesDefaults(t *testing.T) {
+	var gotOpts *types.FeatureCheckoutOptions
+	taskMock := &mockTaskService{
+		checkoutFeatureFunc: func(_ context.Context, _, _ string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error) {
+			gotOpts = opts
+			return &types.CheckoutFeatureResult{Created: true}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/my-project/features/auth-system/checkout",
+		"application/json", bytes.NewReader(nil))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for an empty body", resp.StatusCode)
+	}
+	if gotOpts == nil || *gotOpts != (types.FeatureCheckoutOptions{}) {
+		t.Errorf("opts = %+v, want zero-value defaults", gotOpts)
+	}
+}
+
+// A well-formed body must reach the service intact.
+func TestHandleCheckoutFeature_ValidBodyPassedThrough(t *testing.T) {
+	var gotOpts *types.FeatureCheckoutOptions
+	taskMock := &mockTaskService{
+		checkoutFeatureFunc: func(_ context.Context, _, _ string, opts *types.FeatureCheckoutOptions) (*types.CheckoutFeatureResult, error) {
+			gotOpts = opts
+			return &types.CheckoutFeatureResult{Created: true}, nil
+		},
+	}
+	router := newTaskTestRouter(taskMock, &mockRunnerService{})
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/tasks/my-project/features/auth-system/checkout",
+		"application/json",
+		bytes.NewReader([]byte(`{"merge_policy":"auto_merge","checkout_mode":"simple"}`)))
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if gotOpts == nil {
+		t.Fatal("opts never reached the service")
+	}
+	if gotOpts.MergePolicy != "auto_merge" || gotOpts.CheckoutMode != "simple" {
+		t.Errorf("opts = %+v, want merge_policy=auto_merge checkout_mode=simple", gotOpts)
+	}
+}
+
 // =============================================================================
 // Trigger Task Tests
 // =============================================================================

@@ -24,10 +24,12 @@ type mockGoalService struct {
 	runFunc      func(ctx context.Context, goalID string) (*types.GoalReconcileAudit, error)
 	progressFunc func(ctx context.Context, goalID string) (*types.GoalProgressResponse, error)
 	auditFunc    func(ctx context.Context, goalID string, limit int) ([]types.GoalReconcileAudit, error)
+	deleteFunc   func(ctx context.Context, goalID string) error
 
 	// Captured args for assertions.
 	lastProject   string
 	lastFeatureID string
+	lastStatus    string
 	lastGoalID    string
 	lastLimit     int
 }
@@ -54,6 +56,22 @@ func (m *mockGoalService) ListGoals(ctx context.Context, project, featureID stri
 		return m.listFunc(ctx, project, featureID)
 	}
 	return []types.GoalSummary{{EntryID: "entry-1", GoalID: "g1", Status: "active"}}, nil
+}
+
+// ListGoalsFiltered implements the optional goalStatusLister extension so the
+// handler's status pass-through can be asserted.
+func (m *mockGoalService) ListGoalsFiltered(ctx context.Context, project, featureID, status string) ([]types.GoalSummary, error) {
+	m.lastStatus = status
+	return m.ListGoals(ctx, project, featureID)
+}
+
+// DeleteGoal implements the optional goalDeleter extension.
+func (m *mockGoalService) DeleteGoal(ctx context.Context, goalID string) error {
+	m.lastGoalID = goalID
+	if m.deleteFunc != nil {
+		return m.deleteFunc(ctx, goalID)
+	}
+	return nil
 }
 
 func (m *mockGoalService) RunGoal(ctx context.Context, goalID string) (*types.GoalReconcileAudit, error) {
@@ -95,6 +113,7 @@ func newGoalTestRouter() (*chi.Mux, *mockGoalService) {
 	r.Get("/goals", h.HandleListGoals)
 	r.Post("/goals", h.HandleCreateGoal)
 	r.Patch("/goals/{goalId}", h.HandleUpdateGoal)
+	r.Delete("/goals/{goalId}", h.HandleDeleteGoal)
 	r.Post("/goals/{goalId}/run", h.HandleRunGoal)
 	r.Get("/goals/{goalId}/progress", h.HandleGoalProgress)
 	r.Get("/goals/{goalId}/audit", h.HandleGoalAudit)
@@ -246,6 +265,25 @@ func TestHandleListGoals_Success(t *testing.T) {
 	}
 }
 
+func TestHandleListGoals_StatusPassthrough(t *testing.T) {
+	router, gs := newGoalTestRouter()
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/goals?status=archived")
+	if err != nil {
+		t.Fatalf("GET /goals?status=archived failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if gs.lastStatus != "archived" {
+		t.Errorf("status passed = %q, want archived", gs.lastStatus)
+	}
+}
+
 func TestHandleListGoals_NilService(t *testing.T) {
 	h := NewHandler(&mockBrainService{})
 	r := chi.NewRouter()
@@ -391,6 +429,79 @@ func TestHandleGoalAudit_InvalidLimit(t *testing.T) {
 
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+	}
+}
+
+// =============================================================================
+// DELETE /goals/{goalId}
+// =============================================================================
+
+func TestHandleDeleteGoal_Success(t *testing.T) {
+	router, gs := newGoalTestRouter()
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/goals/g1", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE /goals/g1 failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)
+	}
+	if gs.lastGoalID != "g1" {
+		t.Errorf("goalID passed = %q, want g1", gs.lastGoalID)
+	}
+	var result map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if success, _ := result["success"].(bool); !success {
+		t.Errorf("success = %v, want true", result["success"])
+	}
+	if result["goal_id"] != "g1" {
+		t.Errorf("goal_id = %v, want g1", result["goal_id"])
+	}
+}
+
+func TestHandleDeleteGoal_NotFound(t *testing.T) {
+	router, gs := newGoalTestRouter()
+	gs.deleteFunc = func(ctx context.Context, goalID string) error {
+		return types.ErrGoalNotFound
+	}
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/goals/missing", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE /goals/missing failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusNotFound)
+	}
+}
+
+func TestHandleDeleteGoal_NilService(t *testing.T) {
+	h := NewHandler(&mockBrainService{})
+	r := chi.NewRouter()
+	r.Delete("/goals/{goalId}", h.HandleDeleteGoal)
+	srv := httptest.NewServer(r)
+	defer srv.Close()
+
+	req, _ := http.NewRequest(http.MethodDelete, srv.URL+"/goals/g1", nil)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE /goals/g1 failed: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotImplemented {
+		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusNotImplemented)
 	}
 }
 

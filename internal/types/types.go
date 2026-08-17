@@ -799,6 +799,12 @@ type BulkUpdateRequest struct {
 	Entries []BulkUpdateEntry   `json:"entries,omitempty"`
 	DryRun  bool                `json:"dry_run,omitempty"`
 	Limit   int                 `json:"limit,omitempty"` // default 100, max 100
+
+	// Force bypasses the live-claim guard: without it, a live run that
+	// would touch a task currently being executed by an online runner is
+	// refused with 409. Only the handler reads this; the service layer
+	// ignores it.
+	Force bool `json:"force,omitempty"`
 }
 
 // BulkUpdateResult represents the outcome of a single entry update.
@@ -843,6 +849,11 @@ type BulkDeleteRequest struct {
 	Paths  []string          `json:"paths,omitempty"`
 	DryRun bool              `json:"dry_run,omitempty"`
 	Limit  int               `json:"limit,omitempty"` // default 100, max 100
+
+	// Force bypasses the live-claim guard (see BulkUpdateRequest.Force).
+	// An explicit "force" key in the body wins over the legacy ?force=true
+	// query param. Only the handler reads this.
+	Force bool `json:"force,omitempty"`
 }
 
 // BulkDeleteResponse is the response for POST /entries/bulk-delete.

@@ -15,13 +15,15 @@ import {
   buildFeatureStatusActions,
   cancelFeatureBlockedReason,
   checkoutBlockedReason,
+  resumeFeatureBlockedReason,
   runFeatureBlockedReason,
   summarizeBulkResult,
+  summarizeResumeOutcome,
   type FeatureActionContext,
 } from "./featureActions";
 import { isEnabled } from "./types";
 import type { DerivedFeature } from "../features";
-import type { TaskStatus } from "../types";
+import type { ResumeFeatureResult, TaskStatus } from "../types";
 
 function mkFeature(over: Partial<DerivedFeature> = {}): DerivedFeature {
   return {
@@ -38,10 +40,11 @@ function mkFeature(over: Partial<DerivedFeature> = {}): DerivedFeature {
   };
 }
 
-function recorder() {
+function recorder(over: Partial<FeatureActionContext> = {}) {
   const calls: string[] = [];
   const ctx: FeatureActionContext = {
     runFeature: async (f) => void calls.push(`run:${f.id}`),
+    resumeFeature: async (f) => void calls.push(`resume-direct:${f.id}`),
     openStatusPicker: (f) => void calls.push(`picker:${f.id}`),
     setStatusForAll: async (f, s) => void calls.push(`status:${f.id}:${s}`),
     deleteFeature: async (f) => void calls.push(`delete:${f.id}`),
@@ -50,6 +53,11 @@ function recorder() {
     openPlan: (f) => void calls.push(`plan:${f.id}`),
     openDetails: (f) => void calls.push(`details:${f.id}`),
     openMetadata: (f) => void calls.push(`metadata:${f.id}`),
+    openAssignRunner: (f) => void calls.push(`assign:${f.id}`),
+    clearRunnerAssignment: async (f) => void calls.push(`unassign:${f.id}`),
+    assignedRunner: () => undefined,
+    openGoalCreate: (f) => void calls.push(`goal-create:${f.id}`),
+    ...over,
   };
   return { calls, ctx };
 }
@@ -65,16 +73,29 @@ test("every core feature verb is present", () => {
   const ids = buildFeatureActions(mkFeature(), ctx).map((a) => a.id);
   for (const expected of [
     "run",
+    "resume",
     "checkout",
     "status",
     "cancel",
     "metadata",
+    "assign",
+    "unassign",
+    "set-goal",
     "plan",
     "details",
     "delete",
   ]) {
     assert.ok(ids.includes(expected), `missing action: ${expected}`);
   }
+});
+
+test("set-goal is always enabled and routes to openGoalCreate", async () => {
+  const { calls, ctx } = recorder();
+  // Even a merged feature can take a goal (watch for regressions).
+  const action = byId(mkFeature({ lifecycle: "merged" }), ctx).get("set-goal")!;
+  assert.equal(action.disabledReason ?? "", "");
+  await action.run();
+  assert.deepEqual(calls, ["goal-create:checkout-flow"]);
 });
 
 // ─── run ───────────────────────────────────────────────────────────
@@ -110,18 +131,70 @@ test("run routes to runFeature", async () => {
 
 // ─── resume ────────────────────────────────────────────────────────
 
-test("resume appears only when tasks are abandoned, and states the count", () => {
+test("resume is always present — disabled with a reason at zero, never hidden", () => {
+  // Disabled-never-hidden: a user who resumed tasks yesterday must find
+  // the verb today, with the reason it cannot run.
   const { ctx } = recorder();
-  assert.equal(byId(mkFeature(), ctx).has("resume"), false);
+  const resume = byId(mkFeature(), ctx).get("resume");
+  assert.ok(resume, "resume verb missing at resumableCount=0");
+  assert.equal(isEnabled(resume), false);
+  assert.match(resume.disabledReason ?? "", /no abandoned tasks/i);
+});
 
-  const withAbandoned = byId(mkFeature({ resumableCount: 3 }), ctx);
-  assert.match(withAbandoned.get("resume")!.label, /3 abandoned tasks/);
+test("resume is enabled and states the count when tasks are abandoned", () => {
+  const { ctx } = recorder();
+  const resume = byId(mkFeature({ resumableCount: 3 }), ctx).get("resume")!;
+  assert.equal(isEnabled(resume), true);
+  assert.match(resume.label, /3 abandoned tasks/);
 });
 
 test("resume label is singular for one abandoned task", () => {
   const { ctx } = recorder();
   const actions = byId(mkFeature({ resumableCount: 1 }), ctx);
   assert.match(actions.get("resume")!.label, /1 abandoned task\b/);
+});
+
+test("resume executes directly instead of opening the actions modal", async () => {
+  const { calls, ctx } = recorder();
+  await byId(mkFeature({ resumableCount: 2 }), ctx).get("resume")!.run();
+  assert.deepEqual(calls, ["resume-direct:checkout-flow"]);
+});
+
+test("resumeFeatureBlockedReason covers the empty feature too", () => {
+  assert.match(
+    resumeFeatureBlockedReason(
+      mkFeature({ taskCount: { total: 0, completed: 0, blocked: 0, active: 0 } }),
+    ),
+    /no tasks/i,
+  );
+});
+
+// ─── runner assignment ─────────────────────────────────────────────
+
+test("assign opens the runner picker", async () => {
+  const { calls, ctx } = recorder();
+  await byId(mkFeature(), ctx).get("assign")!.run();
+  assert.deepEqual(calls, ["assign:checkout-flow"]);
+});
+
+test("assign names the current runner when one is assigned", () => {
+  const { ctx } = recorder({ assignedRunner: () => "amos-1" });
+  assert.match(byId(mkFeature(), ctx).get("assign")!.label, /amos-1/);
+});
+
+test("clear assignment is disabled with a reason when nothing is assigned", () => {
+  const { ctx } = recorder();
+  const unassign = byId(mkFeature(), ctx).get("unassign")!;
+  assert.equal(isEnabled(unassign), false);
+  assert.match(unassign.disabledReason ?? "", /no runner assigned/i);
+});
+
+test("clear assignment routes to clearRunnerAssignment when assigned", async () => {
+  const { calls, ctx } = recorder({ assignedRunner: () => "amos-1" });
+  const unassign = byId(mkFeature(), ctx).get("unassign")!;
+  assert.equal(isEnabled(unassign), true);
+  await unassign.run();
+  assert.deepEqual(calls, ["unassign:checkout-flow"]);
 });
 
 // ─── cancel vs delete ──────────────────────────────────────────────
@@ -263,6 +336,63 @@ test("summarizeBulkResult: partial failure names both counts", () => {
 test("summarizeBulkResult: total failure is an error", () => {
   const r = summarizeBulkResult({ ok: 0, failed: 3, total: 3 });
   assert.equal(r.kind, "error");
+});
+
+test("summarizeResumeOutcome: clean resume is a success with the count", () => {
+  const r = summarizeResumeOutcome({
+    feature_id: "f",
+    total_resumed: 3,
+    total_skipped: 0,
+    results: [],
+  });
+  assert.equal(r.kind, "success");
+  assert.match(r.message, /Resumed 3 tasks/);
+});
+
+test("summarizeResumeOutcome: skips surface the top reasons, bucketed", () => {
+  const result: ResumeFeatureResult = {
+    feature_id: "f",
+    total_resumed: 1,
+    total_skipped: 3,
+    results: [
+      { task_id: "a", resumed: true },
+      { task_id: "b", resumed: false, reason: "task is not abandoned" },
+      { task_id: "c", resumed: false, reason: "task is not abandoned" },
+      { task_id: "d", resumed: false, reason: "terminal status" },
+    ],
+  };
+  const r = summarizeResumeOutcome(result);
+  assert.equal(r.kind, "warning");
+  assert.match(r.message, /Resumed 1 task\b/);
+  assert.match(r.message, /3 skipped/);
+  assert.match(r.message, /2× task is not abandoned/);
+  assert.match(r.message, /terminal status/);
+});
+
+test("summarizeResumeOutcome: nothing resumed is informational, not silent", () => {
+  const r = summarizeResumeOutcome({
+    feature_id: "f",
+    total_resumed: 0,
+    total_skipped: 2,
+    results: [
+      { task_id: "a", resumed: false, reason: "already resumed" },
+      { task_id: "b", resumed: false, reason: "already resumed" },
+    ],
+  });
+  assert.equal(r.kind, "info");
+  assert.match(r.message, /No tasks resumed/);
+  assert.match(r.message, /2× already resumed/);
+});
+
+test("summarizeResumeOutcome: empty feature", () => {
+  const r = summarizeResumeOutcome({
+    feature_id: "f",
+    total_resumed: 0,
+    total_skipped: 0,
+    results: [],
+  });
+  assert.equal(r.kind, "info");
+  assert.match(r.message, /no tasks in feature/i);
 });
 
 test("summarizeBulkResult: truncation is surfaced, not swallowed", () => {

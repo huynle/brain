@@ -384,11 +384,22 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	automationSvc.SetPauseChecker(runnerSvc)
 	go automationSvc.Start(ctx, eventHub)
 
+	// ─── Runner Bridge Hub (remote control) ────────────────────────
+	// Created before the goal service so the goal steerer can reuse the same
+	// in-process control plumbing (instance registry + bridge proxy).
+	bridgeHub := bridge.NewHub(hub)
+
 	// ─── Goal Reconcile Handler ────────────────────────────────────
 	// GoalService subscribes to the EventHub and drives the deterministic
 	// in-process reconcile for goal automations when their linked task/feature
-	// lifecycle events fire.
-	goalSvc := service.NewGoalService(brainSvc, taskSvc, store)
+	// lifecycle events fire (plus a periodic re-check ticker). The steerer
+	// nudges live agent sessions toward the goal while work is in progress;
+	// the pause checker suppresses generation/steering while automations are
+	// paused, mirroring AutomationService.
+	goalSvc := service.NewGoalService(brainSvc, taskSvc, store,
+		service.WithGoalSteerer(newBridgeGoalSteerer(runnerRegistrySvc, bridgeHub)),
+		service.WithGoalPauseChecker(runnerSvc),
+	)
 	assistantSvc := api.NewAssistantService(api.AssistantServiceOptions{
 		Enabled:   cfg.Assistant.Enabled,
 		Provider:  cfg.Assistant.Provider,
@@ -417,9 +428,6 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	triggerSvc := service.NewTriggerService(triggerStore)
 	triggerDispatcher := realtime.NewTriggerDispatcher(eventHub, triggerSvc)
 	go triggerDispatcher.Start(ctx)
-
-	// ─── Runner Bridge Hub (remote control) ────────────────────────
-	bridgeHub := bridge.NewHub(hub)
 
 	// ─── Log Buffer ─────────────────────────────────────────────────
 	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)

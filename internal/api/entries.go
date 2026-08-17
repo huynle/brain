@@ -848,8 +848,11 @@ func (h *Handler) HandleBulkDelete(w http.ResponseWriter, r *http.Request) {
 	// Dry runs skip it — a preview should surface what is blocked, not
 	// refuse to render. Live runs fail the whole request so the user
 	// deals with the running task first rather than being left with a
-	// half-deleted feature.
-	if !req.DryRun && r.URL.Query().Get("force") != "true" {
+	// half-deleted feature. Force comes from the body ("force": true),
+	// falling back to the legacy ?force=true query param when the body
+	// doesn't mention it — body wins when both are present.
+	force := resolveBulkForce(raw, req.Force, r.URL.Query().Get("force") == "true")
+	if !req.DryRun && !force {
 		preview, perr := h.brain.BulkDelete(r.Context(), types.BulkDeleteRequest{
 			Filter: req.Filter,
 			Paths:  req.Paths,
@@ -909,6 +912,21 @@ func (h *Handler) HandleBulkDelete(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// resolveBulkForce picks the effective force flag for a bulk endpoint. An
+// explicit "force" key in the body is authoritative — including "force":
+// false, which must not be overridden by a stray query param. Only when the
+// body says nothing does the legacy ?force=true query param (bulk-delete's
+// original spelling) apply.
+func resolveBulkForce(raw []byte, bodyForce, queryForce bool) bool {
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &top); err == nil {
+		if _, present := top["force"]; present {
+			return bodyForce
+		}
+	}
+	return queryForce
+}
+
 // bulkDeleteFilterIsEmpty reports whether a filter would match everything.
 func bulkDeleteFilterIsEmpty(f *types.BulkUpdateFilter) bool {
 	if f == nil {
@@ -934,6 +952,7 @@ var bulkDeleteRequestFields = map[string]struct{}{
 	"paths":   {},
 	"dry_run": {},
 	"limit":   {},
+	"force":   {},
 }
 
 // findUnknownBulkDeleteFields mirrors findUnknownBulkUpdateFields: a typo in
@@ -968,6 +987,10 @@ func findUnknownBulkDeleteFields(raw []byte) []string {
 }
 
 // HandleBulkUpdate handles POST /entries/bulk-update.
+//
+// Live runs are refused with 409 when any target task is being executed by
+// an online runner, unless the body sets "force": true. See the live-claim
+// guard below and HandleBulkDelete for the matching delete semantics.
 func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 	// Read the raw body so we can (a) do strict field validation up front and
 	// (b) still decode into the typed request afterwards. Strict decoding
@@ -1047,6 +1070,43 @@ func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Live-claim guard, mirroring HandleBulkDelete: ANY live update touching
+	// a task currently being executed by an online runner fails the whole
+	// request with 409. Deliberately not limited to status flips — a metadata
+	// or content rewrite under a running task races the runner's own writes
+	// just as badly, and one rule ("don't mutate what a live runner holds")
+	// is easier to reason about than a per-field allowlist. Dry runs skip the
+	// guard (a preview should surface what is blocked, not refuse to render);
+	// body force bypasses it. Fails open on uncertainty exactly like delete —
+	// see taskHasLiveClaim.
+	if !req.DryRun && !req.Force {
+		preview, perr := h.brain.BulkUpdate(r.Context(), types.BulkUpdateRequest{
+			Filter:  req.Filter,
+			Updates: req.Updates,
+			Entries: req.Entries,
+			DryRun:  true,
+			Limit:   req.Limit,
+		})
+		if perr == nil && preview != nil {
+			for _, res := range preview.Results {
+				if res.Status != "ok" {
+					continue
+				}
+				entry, rerr := h.brain.Recall(r.Context(), res.Path)
+				if rerr != nil || entry == nil || entry.Type != "task" {
+					continue
+				}
+				if blocked, runnerID := h.taskHasLiveClaim(r, entry); blocked {
+					WriteError(w, http.StatusConflict, "Conflict", fmt.Sprintf(
+						"task %q is being executed by online runner %q; abort that runner or retry with force=true",
+						entry.ID, runnerID,
+					))
+					return
+				}
+			}
+		}
+	}
+
 	resp, err := h.brain.BulkUpdate(r.Context(), req)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
@@ -1096,6 +1156,7 @@ var bulkUpdateRequestFields = map[string]struct{}{
 	"entries": {},
 	"dry_run": {},
 	"limit":   {},
+	"force":   {},
 }
 
 // bulkUpdateFilterFields is the set of top-level JSON keys accepted on a
@@ -1733,15 +1794,23 @@ func fmGoalConfigToType(g *frontmatter.GoalConfig) *types.GoalConfig {
 	if g == nil {
 		return nil
 	}
-	return &types.GoalConfig{
+	cfg := &types.GoalConfig{
 		ID:               g.ID,
 		Criteria:         g.Criteria,
 		Validation:       g.Validation,
 		Workdir:          g.Workdir,
+		TaskID:           g.TaskID,
 		TriggerSource:    g.TriggerSource,
 		CompleteStatuses: g.CompleteStatuses,
 		BlockedStatuses:  g.BlockedStatuses,
 	}
+	if g.Steering != nil {
+		cfg.Steering = &types.GoalSteering{
+			Enabled:         g.Steering.Enabled,
+			CooldownMinutes: g.Steering.CooldownMinutes,
+		}
+	}
+	return cfg
 }
 
 func attachmentRefsFromFM(refs []frontmatter.AttachmentReference) []types.AttachmentReference {

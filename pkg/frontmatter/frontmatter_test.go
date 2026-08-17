@@ -2105,6 +2105,7 @@ func TestGenerate_WithTrigger(t *testing.T) {
 // =============================================================================
 
 func TestRoundTrip_GoalConfig(t *testing.T) {
+	steeringOff := false
 	fm := &Frontmatter{
 		Title:  "Round Trip Goal",
 		Type:   "automation",
@@ -2115,8 +2116,13 @@ func TestRoundTrip_GoalConfig(t *testing.T) {
 			Validation:       "run integration suite",
 			Workdir:          "/work/dir",
 			TriggerSource:    "both",
+			TaskID:           "task-abc123",
 			CompleteStatuses: []string{"completed", "validated"},
 			BlockedStatuses:  []string{"blocked", "cancelled"},
+			Steering: &GoalSteering{
+				Enabled:         &steeringOff,
+				CooldownMinutes: 30,
+			},
 		},
 	}
 
@@ -2162,6 +2168,49 @@ func TestRoundTrip_GoalConfig(t *testing.T) {
 		if goal.BlockedStatuses[i] != v {
 			t.Errorf("goal.blocked_statuses[%d] = %q, want %q", i, goal.BlockedStatuses[i], v)
 		}
+	}
+	if goal.TaskID != fm.Goal.TaskID {
+		t.Errorf("goal.task_id = %q, want %q", goal.TaskID, fm.Goal.TaskID)
+	}
+	if goal.Steering == nil {
+		t.Fatal("goal.steering should not be nil after round-trip")
+	}
+	if goal.Steering.Enabled == nil || *goal.Steering.Enabled != false {
+		t.Errorf("goal.steering.enabled = %v, want false", goal.Steering.Enabled)
+	}
+	if goal.Steering.CooldownMinutes != 30 {
+		t.Errorf("goal.steering.cooldown_minutes = %d, want 30", goal.Steering.CooldownMinutes)
+	}
+}
+
+func TestRoundTrip_GoalConfig_NoSteeringOmitted(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Goal Without Steering",
+		Type:   "automation",
+		Status: "active",
+		Goal:   &GoalConfig{ID: "bare-goal"},
+	}
+
+	serialized := Serialize(fm)
+	if strings.Contains(serialized, "steering") {
+		t.Errorf("serialized YAML should omit steering when nil, got:\n%s", serialized)
+	}
+	if strings.Contains(serialized, "task_id") {
+		t.Errorf("serialized YAML should omit task_id when empty, got:\n%s", serialized)
+	}
+
+	doc, err := Parse("---\n" + serialized + "---\n\nBody")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doc.Frontmatter.Goal == nil {
+		t.Fatal("goal should not be nil after round-trip")
+	}
+	if doc.Frontmatter.Goal.Steering != nil {
+		t.Errorf("goal.steering = %+v, want nil", doc.Frontmatter.Goal.Steering)
+	}
+	if doc.Frontmatter.Goal.TaskID != "" {
+		t.Errorf("goal.task_id = %q, want empty", doc.Frontmatter.Goal.TaskID)
 	}
 }
 

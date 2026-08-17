@@ -24,6 +24,7 @@ func TestRegisterGoalTools_CountNamesHandlersDescriptions(t *testing.T) {
 		"goal_run",
 		"goal_progress",
 		"goal_audit",
+		"goal_delete",
 	}
 	if len(s.tools) != len(expected) {
 		t.Fatalf("expected %d goal tools registered, got %d", len(expected), len(s.tools))
@@ -55,15 +56,16 @@ func TestGoalToolSchemas(t *testing.T) {
 		required []string
 		props    []string
 	}{
-		{"goal_create", []string{"project", "title"}, []string{"project", "feature_id", "title", "content", "goal_id", "criteria", "validation", "workdir", "trigger_source", "complete_statuses", "blocked_statuses", "action_type", "direct_prompt", "command", "agent", "model", "executor", "target_workdir", "execution_mode", "session_mode", "complete_on_idle", "timeout", "requires_capability", "config", "action"}},
-		{"goal_list", nil, []string{"project", "feature_id"}},
-		{"goal_update", []string{"goal_id"}, []string{"goal_id", "title", "content", "status", "criteria", "validation", "workdir", "trigger_source", "complete_statuses", "blocked_statuses", "action_type", "direct_prompt", "command", "agent", "model", "executor", "target_workdir", "execution_mode", "session_mode", "complete_on_idle", "timeout", "requires_capability", "action"}},
+		{"goal_create", []string{"project", "title"}, []string{"project", "feature_id", "title", "content", "goal_id", "criteria", "validation", "workdir", "trigger_source", "task_id", "complete_statuses", "blocked_statuses", "steering_enabled", "steering_cooldown_minutes", "action_type", "direct_prompt", "command", "agent", "model", "executor", "target_workdir", "execution_mode", "session_mode", "complete_on_idle", "timeout", "requires_capability", "config", "action"}},
+		{"goal_list", nil, []string{"project", "feature_id", "status"}},
+		{"goal_update", []string{"goal_id"}, []string{"goal_id", "title", "content", "status", "criteria", "validation", "workdir", "trigger_source", "task_id", "complete_statuses", "blocked_statuses", "steering_enabled", "steering_cooldown_minutes", "action_type", "direct_prompt", "command", "agent", "model", "executor", "target_workdir", "execution_mode", "session_mode", "complete_on_idle", "timeout", "requires_capability", "action"}},
 		{"goal_pause", []string{"goal_id"}, []string{"goal_id"}},
 		{"goal_resume", []string{"goal_id"}, []string{"goal_id"}},
 		{"goal_archive", []string{"goal_id"}, []string{"goal_id"}},
 		{"goal_run", []string{"goal_id"}, []string{"goal_id"}},
 		{"goal_progress", []string{"goal_id"}, []string{"goal_id"}},
 		{"goal_audit", []string{"goal_id"}, []string{"goal_id", "limit"}},
+		{"goal_delete", []string{"goal_id"}, []string{"goal_id"}},
 	}
 
 	for _, tt := range tests {
@@ -348,6 +350,7 @@ func TestGoalTools_ValidationErrors(t *testing.T) {
 		{"goal_run", map[string]any{}, "goal_id"},
 		{"goal_progress", map[string]any{}, "goal_id"},
 		{"goal_audit", map[string]any{}, "goal_id"},
+		{"goal_delete", map[string]any{}, "goal_id"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -359,5 +362,90 @@ func TestGoalTools_ValidationErrors(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+func TestBrainGoalCreate_TaskScopeAndSteering(t *testing.T) {
+	var capturedBody map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+			t.Fatalf("decode body: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"entry_id": "entry-1", "goal_id": "g-task", "title": "Task goal", "project": "brain", "status": "active"})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterGoalTools(s, client)
+
+	_, err := s.tools["goal_create"].handler(context.Background(), map[string]any{
+		"project": "brain", "title": "Task goal", "goal_id": "g-task",
+		"task_id":                   "task-42",
+		"steering_enabled":          false,
+		"steering_cooldown_minutes": float64(45),
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	config := capturedBody["config"].(map[string]any)
+	if config["task_id"] != "task-42" {
+		t.Errorf("config.task_id = %v, want task-42", config["task_id"])
+	}
+	steering, ok := config["steering"].(map[string]any)
+	if !ok {
+		t.Fatalf("config.steering missing: %#v", config)
+	}
+	if steering["enabled"] != false {
+		t.Errorf("steering.enabled = %v, want false", steering["enabled"])
+	}
+	if steering["cooldown_minutes"] != float64(45) {
+		t.Errorf("steering.cooldown_minutes = %v, want 45", steering["cooldown_minutes"])
+	}
+}
+
+func TestBrainGoalList_StatusQuery(t *testing.T) {
+	var capturedStatus string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		capturedStatus = r.URL.Query().Get("status")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"goals": []map[string]any{}, "count": 0})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterGoalTools(s, client)
+	if _, err := s.tools["goal_list"].handler(context.Background(), map[string]any{"status": "archived"}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if capturedStatus != "archived" {
+		t.Errorf("status query = %q, want archived", capturedStatus)
+	}
+}
+
+func TestBrainGoalDelete_Request(t *testing.T) {
+	var captured string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		captured = r.Method + " " + r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"success": true, "goal_id": "goal-123"})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	client := NewAPIClient(server.URL)
+	RegisterGoalTools(s, client)
+	result, err := s.tools["goal_delete"].handler(context.Background(), map[string]any{"goal_id": "goal-123"})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if captured != "DELETE /api/v1/goals/goal-123" {
+		t.Errorf("request = %q, want DELETE /api/v1/goals/goal-123", captured)
+	}
+	if !strings.Contains(result, "Goal deleted") || !strings.Contains(result, "goal-123") {
+		t.Errorf("unexpected result: %s", result)
 	}
 }

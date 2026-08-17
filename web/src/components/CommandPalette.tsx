@@ -13,10 +13,13 @@ import { useProjects } from "../hooks/useProjects";
 import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
 import { useActionRunner } from "../hooks/useActionRunner";
+import { useGoals } from "../hooks/useGoals";
+import { useGoalActionContext } from "../hooks/useGoalActionContext";
 import { useTaskActionContextFactory } from "../hooks/useTaskActionContext";
 import { useFeatureActionContextFactory } from "../hooks/useFeatureActionContext";
 import { buildTaskActions } from "../lib/actions/taskActions";
 import { buildFeatureActions } from "../lib/actions/featureActions";
+import { buildGoalActions } from "../lib/actions/goalActions";
 import { deriveFeatures } from "../lib/features";
 import type { Task } from "../lib/types";
 
@@ -35,7 +38,17 @@ interface Command {
  * reaching without touching the mouse. Navigation verbs are excluded —
  * the plain "Task: X" entry already goes there.
  */
-const PALETTE_VERBS = new Set(["run", "resume", "cancel", "status", "delete"]);
+const PALETTE_VERBS = new Set([
+  "run",
+  "resume",
+  "cancel",
+  "status",
+  "delete",
+  "checkout",
+  "metadata",
+  "abort",
+  "assign",
+]);
 
 export function CommandPalette(): JSX.Element | null {
   const open = useWorkspace((s) => s.commandOpen);
@@ -56,6 +69,8 @@ export function CommandPalette(): JSX.Element | null {
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
   const taskCtxFor = useTaskActionContextFactory();
   const featureCtxFor = useFeatureActionContextFactory();
+  const { byProject: goalsByProject } = useGoals();
+  const goalCtx = useGoalActionContext();
   const runner = useActionRunner();
   const runAction = runner.run;
 
@@ -144,6 +159,29 @@ export function CommandPalette(): JSX.Element | null {
         }
       }
 
+      // Goals: open + run-now only. The full verb matrix stays behind
+      // the goal modal — like features, each id here multiplies the
+      // command count by the goal count.
+      for (const g of (goalsByProject.get(pid) ?? []).slice(0, 20)) {
+        cmds.push({
+          id: `goal:${pid}:${g.goal_id}`,
+          label: `Goal: ${g.title || g.goal_id} (${pid})`,
+          action: () =>
+            openModal("goal", { goalId: g.goal_id, projectId: pid }),
+        });
+        const runNow = buildGoalActions(g, goalCtx).find(
+          (a) => a.id === "run",
+        );
+        if (runNow) {
+          cmds.push({
+            id: `goal-act:${pid}:${g.goal_id}:run`,
+            label: `${runNow.label} — goal ${g.title || g.goal_id} (${pid})`,
+            hint: runNow.disabledReason || undefined,
+            action: () => runAction(runNow),
+          });
+        }
+      }
+
       for (const t of tasks.slice(0, 20)) {
         cmds.push({
           id: `task:${pid}:${t.id}`,
@@ -192,6 +230,8 @@ export function CommandPalette(): JSX.Element | null {
     openInFocus,
     taskCtxFor,
     featureCtxFor,
+    goalsByProject,
+    goalCtx,
     runAction,
   ]);
 

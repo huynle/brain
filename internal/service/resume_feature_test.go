@@ -56,24 +56,25 @@ Test task body.
 
 const featureTestProject = "resume-feat-proj"
 
-// TestResumeFeature_TerminalTasksExcludedFromBatch is the regression
-// test for the critical batch-force bug: POST /features/{f}/resume with
-// force=true must NOT resurrect completed/validated/cancelled/superseded/
-// archived tasks. Each terminal task should appear as a skipped result
-// with a reason containing "terminal_status_excluded_from_batch".
+// TestResumeFeature_TerminalTasksExcludedFromBatch guards the non-force
+// batch semantics: a plain POST /features/{f}/resume must NOT resurrect
+// completed/validated/cancelled/superseded/archived tasks. Each terminal
+// task should appear as a skipped result with a reason containing
+// "terminal_status_excluded_from_batch". (With force=true the exclusion is
+// bypassed for parity with the single-task endpoint — see
+// TestResumeFeature_ForceResumesTerminalTasks.)
 func TestResumeFeature_TerminalTasksExcludedFromBatch(t *testing.T) {
 	svc, store, brainDir := newTestTaskService(t)
 	createProjectDir(t, brainDir, featureTestProject)
 
 	// Seed one task per terminal status + one legitimately abandoned task.
-	// Force=true. Expected: 5 terminal tasks skipped with the guard
-	// reason, 1 abandoned task resumed.
+	// No force. Expected: 5 terminal tasks skipped with the guard reason,
+	// 1 abandoned task resumed.
 	terminalStatusList := []string{"completed", "validated", "cancelled", "superseded", "archived"}
-	for i, status := range terminalStatusList {
+	for _, status := range terminalStatusList {
 		insertTaskNote(t, store, "term-"+status, "Terminal "+status, status, "medium", featureTestProject, map[string]interface{}{
 			"feature_id": "batch-feat",
 		})
-		_ = i
 	}
 	insertTaskNote(t, store, "resumable1", "Resumable", "in_progress", "medium", featureTestProject, map[string]interface{}{
 		"feature_id": "batch-feat",
@@ -94,7 +95,7 @@ func TestResumeFeature_TerminalTasksExcludedFromBatch(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	result, err := svc.ResumeFeature(ctx, featureTestProject, "batch-feat", &types.ResumeTaskOptions{Force: true})
+	result, err := svc.ResumeFeature(ctx, featureTestProject, "batch-feat", nil)
 	if err != nil {
 		t.Fatalf("ResumeFeature: %v", err)
 	}
@@ -118,8 +119,8 @@ func TestResumeFeature_TerminalTasksExcludedFromBatch(t *testing.T) {
 	}
 
 	// Verify each terminal task's status is UNCHANGED. This is the
-	// critical safety property — a batch force must never revert historic
-	// terminal state.
+	// critical safety property — a plain batch resume must never revert
+	// historic terminal state.
 	tasks, err := svc.GetTasks(ctx, featureTestProject)
 	if err != nil {
 		t.Fatalf("GetTasks: %v", err)
@@ -132,8 +133,107 @@ func TestResumeFeature_TerminalTasksExcludedFromBatch(t *testing.T) {
 		id := "term-" + status
 		got := statusByID[id]
 		if got != status {
-			t.Errorf("terminal task %s: status = %q, want %q (batch force must not resurrect)", id, got, status)
+			t.Errorf("terminal task %s: status = %q, want %q (plain batch must not resurrect)", id, got, status)
 		}
+	}
+}
+
+// TestResumeFeature_ForceResumesTerminalTasks — force parity with the
+// single-task endpoint: POST /features/{f}/resume with force=true bypasses
+// the terminal-status batch exclusion and flows terminal tasks through
+// ResumeTask's own terminal+force path, resuming them.
+func TestResumeFeature_ForceResumesTerminalTasks(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	createProjectDir(t, brainDir, featureTestProject)
+
+	insertTaskNote(t, store, "fterm001", "Force Terminal", "completed", "medium", featureTestProject, map[string]interface{}{
+		"feature_id": "force-feat",
+	})
+	seedFeatureTaskFiles(t, brainDir, featureTestProject, "force-feat", []taskFileSpec{
+		{ID: "fterm001", Status: "completed"},
+	})
+
+	ctx := context.Background()
+	result, err := svc.ResumeFeature(ctx, featureTestProject, "force-feat", &types.ResumeTaskOptions{Force: true})
+	if err != nil {
+		t.Fatalf("ResumeFeature: %v", err)
+	}
+
+	if result.TotalResumed != 1 {
+		t.Fatalf("expected the terminal task to resume under force, got total_resumed=%d (results: %+v)",
+			result.TotalResumed, result.Results)
+	}
+	if len(result.Results) != 1 || !result.Results[0].Resumed {
+		t.Fatalf("expected a single resumed result, got %+v", result.Results)
+	}
+	if result.Results[0].PriorStatus != "completed" {
+		t.Errorf("PriorStatus = %q, want completed", result.Results[0].PriorStatus)
+	}
+
+	// Side effect: status flipped to pending with resume_requested stamped.
+	tasks, err := svc.GetTasks(ctx, featureTestProject)
+	if err != nil {
+		t.Fatalf("GetTasks: %v", err)
+	}
+	for _, task := range tasks.Tasks {
+		if task.ID != "fterm001" {
+			continue
+		}
+		if task.Status != "pending" {
+			t.Errorf("post-resume status = %q, want pending", task.Status)
+		}
+		if !task.ResumeRequested {
+			t.Error("post-resume resume_requested = false, want true")
+		}
+	}
+}
+
+// TestResumeFeature_LiveClaimRefusedEvenWithForce — the live-claim safety
+// inside ResumeTask is absolute: a batch force must not release a claim
+// held by an ONLINE runner (that would enable concurrent double-execution).
+func TestResumeFeature_LiveClaimRefusedEvenWithForce(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	createProjectDir(t, brainDir, featureTestProject)
+
+	insertTaskNote(t, store, "flive001", "Live Task", "in_progress", "medium", featureTestProject, map[string]interface{}{
+		"feature_id": "live-feat",
+	})
+	insertRunnerForTaskSelectionTest(t, store, "live-batch-runner", []string{"opencode"}, nil)
+	ok, _, err := store.ClaimTask(context.Background(), featureTestProject, "flive001", "live-batch-runner", 10*time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("ClaimTask setup failed: err=%v ok=%v", err, ok)
+	}
+	seedFeatureTaskFiles(t, brainDir, featureTestProject, "live-feat", []taskFileSpec{
+		{ID: "flive001", Status: "in_progress"},
+	})
+
+	ctx := context.Background()
+	result, err := svc.ResumeFeature(ctx, featureTestProject, "live-feat", &types.ResumeTaskOptions{Force: true})
+	if err != nil {
+		t.Fatalf("ResumeFeature: %v", err)
+	}
+
+	if result.TotalResumed != 0 {
+		t.Errorf("expected 0 resumed with a live claim, got %d (results: %+v)",
+			result.TotalResumed, result.Results)
+	}
+	if len(result.Results) != 1 {
+		t.Fatalf("expected a single result, got %+v", result.Results)
+	}
+	if result.Results[0].Resumed {
+		t.Error("live-claimed task was resumed despite force (double-execution risk)")
+	}
+	if !containsFold(result.Results[0].Reason, "online runner") {
+		t.Errorf("Reason = %q, want mention of the online runner holding the claim", result.Results[0].Reason)
+	}
+
+	// The live runner's claim must still be intact.
+	claim, err := store.GetClaim(context.Background(), featureTestProject, "flive001")
+	if err != nil {
+		t.Fatalf("GetClaim: %v", err)
+	}
+	if claim == nil || claim.RunnerID != "live-batch-runner" {
+		t.Errorf("live runner's claim was disturbed: %+v", claim)
 	}
 }
 

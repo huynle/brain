@@ -45,6 +45,10 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
  * implementations; tests supply recorders.
  */
 export interface TaskActionContext {
+  /** Toggle this task in the multi-select scope (SelectionBar verbs). */
+  toggleSelect: (task: Task) => void;
+  /** Whether the task is currently in the multi-select scope. */
+  isSelected: (task: Task) => boolean;
   runTask: (task: Task) => Promise<void>;
   setStatus: (task: Task, status: TaskStatus) => Promise<void>;
   deleteTask: (task: Task) => Promise<void>;
@@ -146,6 +150,15 @@ export function buildTaskActions(
 ): ActionDescriptor[] {
   const actions: ActionDescriptor[] = [];
   const resume = computeTaskResumeState(task);
+
+  // ─── select ─────────────────────────────────────────────────────
+  actions.push({
+    id: "select",
+    label: ctx.isSelected(task) ? "Deselect" : "Select",
+    group: "select",
+    key: "v",
+    run: async () => ctx.toggleSelect(task),
+  });
 
   // ─── run ────────────────────────────────────────────────────────
   const runBlocked = runBlockedReason(task);

@@ -28,6 +28,10 @@ import { STATUS_LABELS } from "./taskActions";
 import type { ActionDescriptor } from "./types";
 
 export interface FeatureActionContext {
+  /** Toggle this feature in the multi-select scope (SelectionBar verbs). */
+  toggleSelect: (feature: DerivedFeature) => void;
+  /** Whether the feature is currently in the multi-select scope. */
+  isSelected: (feature: DerivedFeature) => boolean;
   runFeature: (feature: DerivedFeature) => Promise<void>;
   /** Batch-resumes every abandoned task in the feature, directly. */
   resumeFeature: (feature: DerivedFeature) => Promise<void>;
@@ -114,6 +118,15 @@ export function buildFeatureActions(
   const actions: ActionDescriptor[] = [];
   const n = affectedTaskCount(feature);
   const plural = n === 1 ? "task" : "tasks";
+
+  // ─── select ─────────────────────────────────────────────────────
+  actions.push({
+    id: "select",
+    label: ctx.isSelected(feature) ? "Deselect" : "Select",
+    group: "select",
+    key: "v",
+    run: async () => ctx.toggleSelect(feature),
+  });
 
   // ─── run ────────────────────────────────────────────────────────
   actions.push({

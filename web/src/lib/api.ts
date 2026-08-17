@@ -311,6 +311,28 @@ export const bulkDelete = (
     },
   });
 
+/**
+ * Delete an explicit list of entries by path (multi-select delete).
+ *
+ * The server treats `paths` as the exact work list — filter and paths are
+ * mutually exclusive — and applies the same live-claim guard: any target
+ * being executed by an online runner fails the request with 409 unless
+ * `force`. Callers chunk to the 100-entry cap (`chunkPaths`).
+ */
+export const bulkDeletePaths = (
+  paths: readonly string[],
+  opts: { dryRun?: boolean; force?: boolean } = {},
+) =>
+  api<BulkDeleteResponse>("/api/v1/entries/bulk-delete", {
+    method: "POST",
+    query: opts.force ? { force: "true" } : undefined,
+    body: {
+      paths,
+      ...(opts.dryRun ? { dry_run: true } : {}),
+      ...(opts.force ? { force: true } : {}),
+    },
+  });
+
 /** Set one status across every task in a feature. */
 export const setFeatureStatus = (
   projectId: string,

@@ -33,6 +33,19 @@ import {
   type ActionDescriptor,
 } from "../lib/actions/types";
 
+/**
+ * The row's Select verb, when it has one that is enabled. Long-press runs
+ * this directly (marking the row and entering selection mode) instead of
+ * opening the action sheet — hover does not exist on touch, so the
+ * checkbox reveal needs a first-class gesture. Rows without a Select verb
+ * (goals, automations) keep the sheet on long-press.
+ */
+export function selectActionOf(
+  actions: readonly ActionDescriptor[],
+): ActionDescriptor | undefined {
+  return actions.find((a) => a.id === "select" && isEnabled(a));
+}
+
 export interface RowActionProps {
   onContextMenu: (e: React.MouseEvent) => void;
   onKeyDown: (e: React.KeyboardEvent) => void;
@@ -58,6 +71,16 @@ export interface UseRowActionsAPI {
     actions: readonly ActionDescriptor[],
     label: string,
     onActivate?: () => void,
+    opts?: {
+      /**
+       * When true (a card in selection mode passes its selActive flag),
+       * plain taps on touch devices toggle the row's selection instead
+       * of opening detail — long-press the first row, then tap through
+       * the rest. Desktop clicks keep opening detail; the visible
+       * checkboxes are the toggle surface there.
+       */
+      tapSelects?: boolean;
+    },
   ) => RowActionProps;
   /** Render once per consumer, at the end of its tree. */
   overlays: JSX.Element;
@@ -120,8 +143,16 @@ export function useRowActions(): UseRowActionsAPI {
       actions: readonly ActionDescriptor[],
       label: string,
       onActivate?: () => void,
+      opts?: { tapSelects?: boolean },
     ): RowActionProps => {
-      const press = createLongPressHandlers(() => openSheet(label, actions));
+      const selectAction = selectActionOf(actions);
+      // Long-press: the selection gesture on touch. Sheet remains the
+      // fallback for rows with no Select verb; every other verb stays
+      // reachable through the row's detail modal ActionBar.
+      const press = createLongPressHandlers(() => {
+        if (selectAction) runner.run(selectAction);
+        else openSheet(label, actions);
+      });
 
       const openMenuAt = (x: number, y: number) => {
         // Touch devices get the sheet; a context menu positioned under a
@@ -175,7 +206,18 @@ export function useRowActions(): UseRowActionsAPI {
         onTouchMove: press.onTouchMove as (e: React.TouchEvent) => void,
         onTouchEnd: press.onTouchEnd,
         onTouchCancel: press.onTouchCancel,
-        onClickCapture: press.onClickCapture as (e: React.MouseEvent) => void,
+        onClickCapture: (e: React.MouseEvent) => {
+          // Selection mode on touch: taps toggle instead of opening
+          // detail, so extending a selection is tap-tap-tap rather than
+          // long-press each time.
+          if (opts?.tapSelects && isMobile && selectAction) {
+            e.preventDefault();
+            e.stopPropagation();
+            runner.run(selectAction);
+            return;
+          }
+          (press.onClickCapture as (e: React.MouseEvent) => void)(e);
+        },
       };
     },
     [ctx, isMobile, openSheet, runner],

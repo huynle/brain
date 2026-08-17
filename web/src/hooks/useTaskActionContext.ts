@@ -19,6 +19,7 @@
 import { useMemo } from "react";
 
 import { useModal } from "../store/modal";
+import { useSelection } from "../store/selection";
 import { useWorkspace } from "../store/workspace";
 import { useUI } from "../store/ui";
 import {
@@ -53,6 +54,16 @@ export function useTaskActionContextFactory(): (
 
   return useMemo(
     () => (projectId: string) => ({
+      // getState() (not a hook subscription): builders run on every row
+      // render, and the row components subscribe to the selection store
+      // themselves — the label stays fresh without a stale closure.
+      toggleSelect: (task: Task) =>
+        useSelection.getState().toggleTask(projectId, task.id),
+      isSelected: (task: Task) => {
+        const s = useSelection.getState();
+        return s.projectId === projectId && s.taskIds.has(task.id);
+      },
+
       runTask: async (task: Task) => {
         const r = await withForceRetry(
           (force) => runOrTriggerTask(projectId, task.id, force),

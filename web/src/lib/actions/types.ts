@@ -32,9 +32,18 @@
  */
 
 /** Visual/semantic grouping. Renderers order groups exactly like this. */
-export type ActionGroup = "run" | "state" | "edit" | "navigate" | "danger";
+export type ActionGroup =
+  | "select"
+  | "run"
+  | "state"
+  | "edit"
+  | "navigate"
+  | "danger";
 
 export const ACTION_GROUP_ORDER: readonly ActionGroup[] = [
+  // Selection first: marking rows is the cheapest, most reversible verb,
+  // and surfacing it at the top teaches the multi-select affordance.
+  "select",
   "run",
   "state",
   "edit",

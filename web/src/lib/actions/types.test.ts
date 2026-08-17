@@ -41,6 +41,7 @@ test("sortActions puts groups in canonical order", () => {
     mk("del", "danger"),
     mk("go", "navigate"),
     mk("run", "run"),
+    mk("sel", "select"),
     mk("edit", "edit"),
     mk("state", "state"),
   ]);

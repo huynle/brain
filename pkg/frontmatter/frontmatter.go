@@ -135,13 +135,22 @@ type AutomationRetry struct {
 // GoalConfig holds goal-specific configuration (frontmatter representation).
 // Mirrors internal/types.GoalConfig for the frontmatter package boundary.
 type GoalConfig struct {
-	ID               string   `yaml:"id" json:"id"`
-	Criteria         string   `yaml:"criteria,omitempty" json:"criteria,omitempty"`
-	Validation       string   `yaml:"validation,omitempty" json:"validation,omitempty"`
-	Workdir          string   `yaml:"workdir,omitempty" json:"workdir,omitempty"`
-	TriggerSource    string   `yaml:"trigger_source,omitempty" json:"trigger_source,omitempty"`
-	CompleteStatuses []string `yaml:"complete_statuses,omitempty" json:"complete_statuses,omitempty"`
-	BlockedStatuses  []string `yaml:"blocked_statuses,omitempty" json:"blocked_statuses,omitempty"`
+	ID               string        `yaml:"id" json:"id"`
+	Criteria         string        `yaml:"criteria,omitempty" json:"criteria,omitempty"`
+	Validation       string        `yaml:"validation,omitempty" json:"validation,omitempty"`
+	Workdir          string        `yaml:"workdir,omitempty" json:"workdir,omitempty"`
+	TriggerSource    string        `yaml:"trigger_source,omitempty" json:"trigger_source,omitempty"`
+	TaskID           string        `yaml:"task_id,omitempty" json:"task_id,omitempty"`
+	CompleteStatuses []string      `yaml:"complete_statuses,omitempty" json:"complete_statuses,omitempty"`
+	BlockedStatuses  []string      `yaml:"blocked_statuses,omitempty" json:"blocked_statuses,omitempty"`
+	Steering         *GoalSteering `yaml:"steering,omitempty" json:"steering,omitempty"`
+}
+
+// GoalSteering configures live-session steering for a goal (frontmatter
+// representation). Mirrors internal/types.GoalSteering.
+type GoalSteering struct {
+	Enabled         *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	CooldownMinutes int   `yaml:"cooldown_minutes,omitempty" json:"cooldown_minutes,omitempty"`
 }
 
 // Frontmatter holds all known brain entry frontmatter fields.
@@ -411,7 +420,7 @@ var knownFields = map[string]bool{
 	"remote_branch_policy": true, "open_pr_before_merge": true,
 	"execution_mode": true, "complete_on_idle": true, "target_workdir": true,
 	"executor": true, "extensions": true,
-	"checkout_mode": true,
+	"checkout_mode":         true,
 	"user_original_request": true, "direct_prompt": true,
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,

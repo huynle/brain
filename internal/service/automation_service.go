@@ -132,6 +132,14 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 		if automation.Trigger == nil || automation.Action == nil || automation.Trigger.Type != "cron" {
 			continue
 		}
+		// Goal automations are driven exclusively by the goal reconcile loop
+		// (see automationMatchesEvent for the event-path guard). Without this
+		// a Goal!=nil entry carrying a cron trigger would double-dispatch:
+		// once through the reconcile engine and once through this generic
+		// task-generation path.
+		if isGoalAutomation(automation) {
+			continue
+		}
 		if s.isAutomationPaused(automation, types.Event{}) {
 			_, err := s.createRunAudit(ctx, automationRunAudit{
 				automation: automation,

@@ -56,6 +56,16 @@ Fold rule across a feature's tasks: any `checkout_mode:"simple"` → simple path
 
 The simple script honors the `git -c merge.ff=true` invariant (see `feature-checkout/SKILL.md`) so it works regardless of user `merge.ff` gitconfig. It uses `feature_id` as the source branch name and cannot recover from merge conflicts — use AI mode for anything non-trivial.
 
+### Goal subsystem (check + steer loop)
+
+A goal is an `automation` BrainEntry with `Goal *GoalConfig` (`generated_by: brain-goal`, tags `[goal, goal:<id>]`). Scope resolution: `task_id` → that one task; else `feature_id` → the feature's tasks; else the whole project. Core: `internal/service/goal_service.go` (+ `goal_api.go`, `goal_automation.go`, `goal_steering.go`), HTTP in `internal/api/goals.go` (CRUD incl. `DELETE /goals/{id}`, `?status=` listing), steerer wiring in `internal/apiserver/goal_steerer.go`.
+
+- **Reconcile** is deterministic over linked-task statuses (`decideReconcile`): no tasks → `need_work` (generates one task, deduped on `goal:<id>:need_work`); all complete → `complete` (flips the goal entry to `completed`; reactivate via PATCH `status=active`); any in-progress → steer-or-noop; blocked → `block`. Per-goal mutex serializes event/ticker/manual callers.
+- **Cadence**: event-driven (`task.status_changed`, `feature.completed` — the latter matches WITHOUT `to_status`, which feature events never carry) plus a periodic ticker (`goalReconcileInterval`, 5m).
+- **Steering**: when linked work is in progress and `steering` is enabled (default on, cooldown 15m, persisted as `last_steered_at`), the reconcile injects a "## Goal check-in" prompt (title + criteria + validation + self-assess instruction) into each live session via the same in-process plumbing as the control API (`prompt_async`). OpenCode-only; pi instances are skipped as unsupported. Audit decision `steer` with steered/skipped counts. Nil steerer or runner-pause ⇒ silently skipped.
+- **Lookups are status-agnostic** (`findGoalByID` searches all statuses) so pause (`blocked`) → resume (`active`) round-trips; only event dispatch and the ticker filter to `active`.
+- **Known limitation**: `complete` is status-based, not criteria-verified — a task that completes without actually meeting the goal criteria still completes the goal. A criteria-validation task on the complete path is the designed next step. Also `opencode run` exits when its current turn ends, so a steered agent must act on the injection within that turn.
+
 ### Abandonment + Resume model
 
 When a runner dies mid-task, or when a task's claim lease expires without renewal, the task's `status` stays stuck at `in_progress` while nothing is actually running it. The abandonment surface makes that recoverable without introducing new sweepers.

@@ -294,6 +294,11 @@ type RunningTask struct {
 	RunID           string    `json:"runId,omitempty"`
 	FeatureID       string    `json:"featureId,omitempty"`
 	GeneratedBy     string    `json:"generatedBy,omitempty"`
+	// BusyHoldSince marks when the run process was first observed exited
+	// while the attached OpenCode session still reported busy — a steered
+	// (injected) turn finishing its work on the serve process. Completion
+	// is held until the session idles or the hold window lapses.
+	BusyHoldSince time.Time `json:"busyHoldSince,omitempty"`
 }
 
 // TaskResultStatus enumerates possible outcomes of a task execution.

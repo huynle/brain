@@ -106,11 +106,55 @@ type GoalConfig struct {
 	// TriggerSource controls which events the goal reacts to
 	// (task | feature | both). Defaults to both.
 	TriggerSource string `json:"trigger_source,omitempty" yaml:"trigger_source,omitempty"`
+	// TaskID scopes the goal to a single task. When set it takes precedence
+	// over the entry's feature scope: linked-task resolution and the trigger
+	// filter both narrow to this one task (in any feature).
+	TaskID string `json:"task_id,omitempty" yaml:"task_id,omitempty"`
 	// CompleteStatuses are task statuses that count toward goal completion.
 	CompleteStatuses []string `json:"complete_statuses,omitempty" yaml:"complete_statuses,omitempty"`
 	// BlockedStatuses are task statuses that mark the goal as blocked
 	// (tracked separately so the reconcile loop can surface blocked work).
 	BlockedStatuses []string `json:"blocked_statuses,omitempty" yaml:"blocked_statuses,omitempty"`
+	// Steering configures live-session steering: when linked work is
+	// in_progress, the reconcile loop nudges the running agent sessions
+	// toward the goal instead of idling. Nil means steering enabled with
+	// defaults.
+	Steering *GoalSteering `json:"steering,omitempty" yaml:"steering,omitempty"`
+}
+
+// DefaultGoalSteeringCooldownMinutes is the minimum interval between steering
+// prompt injections for a goal when no explicit cooldown is configured.
+const DefaultGoalSteeringCooldownMinutes = 15
+
+// GoalSteering configures live-session steering for a goal.
+type GoalSteering struct {
+	// Enabled toggles steering. Nil defaults to true so goals steer live
+	// sessions out of the box; set false to opt out.
+	Enabled *bool `json:"enabled,omitempty" yaml:"enabled,omitempty"`
+	// CooldownMinutes is the minimum interval between steering injections
+	// per goal. 0 defaults to DefaultGoalSteeringCooldownMinutes.
+	CooldownMinutes int `json:"cooldown_minutes,omitempty" yaml:"cooldown_minutes,omitempty"`
+}
+
+// SteeringEnabled reports whether steering is on for this goal config.
+// A nil GoalSteering (or nil Enabled) means enabled.
+func (g *GoalConfig) SteeringEnabled() bool {
+	if g == nil {
+		return false
+	}
+	if g.Steering == nil || g.Steering.Enabled == nil {
+		return true
+	}
+	return *g.Steering.Enabled
+}
+
+// SteeringCooldownMinutes returns the effective steering cooldown in minutes,
+// applying the default when unset or non-positive.
+func (g *GoalConfig) SteeringCooldownMinutes() int {
+	if g == nil || g.Steering == nil || g.Steering.CooldownMinutes <= 0 {
+		return DefaultGoalSteeringCooldownMinutes
+	}
+	return g.Steering.CooldownMinutes
 }
 
 // NormalizedTriggerSource returns the effective trigger source, defaulting
@@ -151,6 +195,10 @@ const (
 	ReconcileNeedWork ReconcileDecision = "need_work"
 	// ReconcileNoop means work is already in progress; nothing to do.
 	ReconcileNoop ReconcileDecision = "noop"
+	// ReconcileSteer means work was in progress and the reconcile loop
+	// steered the live agent session(s) toward the goal (a noop that
+	// additionally injected steering prompts).
+	ReconcileSteer ReconcileDecision = "steer"
 )
 
 // LinkedTaskSnapshot is a serializable snapshot of a goal's linked task,
@@ -173,6 +221,12 @@ type GoalReconcileAudit struct {
 	Reason          string               `json:"reason"`
 	LinkedTasks     []LinkedTaskSnapshot `json:"linked_tasks"`
 	GeneratedTaskID string               `json:"generated_task_id,omitempty"`
+	// SessionsSteered / SessionsSkipped report steering outcomes when
+	// Decision is ReconcileSteer: how many in-progress tasks' live sessions
+	// received a steering prompt vs. were skipped (no live session,
+	// unsupported executor, or send failure).
+	SessionsSteered int `json:"sessions_steered,omitempty"`
+	SessionsSkipped int `json:"sessions_skipped,omitempty"`
 }
 
 // CreateGoalRequest is the input for creating a goal automation over the API.
@@ -195,8 +249,10 @@ type UpdateGoalRequest struct {
 	Validation       *string           `json:"validation,omitempty"`
 	Workdir          *string           `json:"workdir,omitempty"`
 	TriggerSource    *string           `json:"trigger_source,omitempty"`
+	TaskID           *string           `json:"task_id,omitempty"`
 	CompleteStatuses *[]string         `json:"complete_statuses,omitempty"`
 	BlockedStatuses  *[]string         `json:"blocked_statuses,omitempty"`
+	Steering         *GoalSteering     `json:"steering,omitempty"`
 	Action           *AutomationAction `json:"action,omitempty"`
 }
 
@@ -219,6 +275,7 @@ type GoalProgressResponse struct {
 	EntryID       string               `json:"entry_id"`
 	Project       string               `json:"project,omitempty"`
 	FeatureID     string               `json:"feature_id,omitempty"`
+	TaskID        string               `json:"task_id,omitempty"`
 	FeatureStatus string               `json:"feature_status"`
 	Total         int                  `json:"total"`
 	Pending       int                  `json:"pending"`

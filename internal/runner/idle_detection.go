@@ -12,6 +12,17 @@ import (
 // Short timeout to avoid blocking the poll loop.
 var opcodeStatusClient = &http.Client{Timeout: 5 * time.Second}
 
+// steerHoldMax bounds how long completion (and serve-process teardown) is
+// held for an attachable OpenCode task whose driver exited while the
+// session still reports busy — i.e. an injected/steered turn is finishing
+// its work on the serve process. Package-level var so tests can shrink it.
+var steerHoldMax = 10 * time.Minute
+
+// sessionStatusForPort is the status probe used by the steered-turn hold
+// (completion gate + serve teardown). Indirected so tests can stub session
+// busy/idle without a real OpenCode server on localhost.
+var sessionStatusForPort = checkOpencodeStatus
+
 // checkOpencodeStatus queries the OpenCode HTTP API to check if it's idle or busy.
 // The /session/status endpoint returns a map of session IDs to statuses.
 // An empty map {} means all sessions are idle. Sessions that are busy appear in the map.

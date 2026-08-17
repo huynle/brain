@@ -97,6 +97,7 @@ func BuildGoalAutomation(in GoalInput) (types.BrainEntry, error) {
 // sets defaulted when unset.
 func normalizeGoalConfig(cfg types.GoalConfig) types.GoalConfig {
 	cfg.TriggerSource = cfg.NormalizedTriggerSource()
+	cfg.TaskID = strings.TrimSpace(cfg.TaskID)
 	if len(cfg.CompleteStatuses) == 0 {
 		cfg.CompleteStatuses = append([]string(nil), defaultCompleteStatuses...)
 	}
@@ -107,19 +108,37 @@ func normalizeGoalConfig(cfg types.GoalConfig) types.GoalConfig {
 }
 
 // buildGoalTrigger constructs the multi-event TriggerConfig for a goal based
-// on its trigger source and status configuration.
+// on its scope (task > feature > project), trigger source, and status
+// configuration.
+//
+// Scope: a task-scoped goal (cfg.TaskID set) filters on task_id and does NOT
+// also filter on feature_id — the single task is the scope, whatever feature
+// it lives in. Otherwise a feature-scoped goal filters on feature_id, and a
+// featureless goal filters on project only.
+//
+// to_status: the status gate only applies to task.status_changed events;
+// feature.completed events never carry ToStatus (see event_service /
+// feature_tracker emitters), so a feature-only trigger omits the filter
+// entirely — with it, the trigger could never fire. For source "both" the
+// filter is kept for the task event and goalMatchesEvent (the authoritative
+// live matcher) skips it for events that carry no status.
 func buildGoalTrigger(featureID, project string, cfg *types.GoalConfig) *types.TriggerConfig {
-	events := goalTriggerEvents(cfg.NormalizedTriggerSource())
+	source := cfg.NormalizedTriggerSource()
+	events := goalTriggerEvents(source)
 
 	filter := map[string]string{}
-	if featureID != "" {
+	if cfg.TaskID != "" {
+		filter["task_id"] = cfg.TaskID
+	} else if featureID != "" {
 		filter["feature_id"] = featureID
 	}
 	if project != "" {
 		filter["project_id"] = project
 	}
-	if expr := goalStatusFilter(cfg); expr != "" {
-		filter["to_status"] = expr
+	if source != types.GoalTriggerSourceFeature {
+		if expr := goalStatusFilter(cfg); expr != "" {
+			filter["to_status"] = expr
+		}
 	}
 	if len(filter) == 0 {
 		filter = nil

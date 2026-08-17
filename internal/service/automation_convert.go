@@ -64,15 +64,23 @@ func goalConfigToFM(g *types.GoalConfig) *frontmatter.GoalConfig {
 	if g == nil {
 		return nil
 	}
-	return &frontmatter.GoalConfig{
+	out := &frontmatter.GoalConfig{
 		ID:               g.ID,
 		Criteria:         g.Criteria,
 		Validation:       g.Validation,
 		Workdir:          g.Workdir,
 		TriggerSource:    g.TriggerSource,
+		TaskID:           g.TaskID,
 		CompleteStatuses: g.CompleteStatuses,
 		BlockedStatuses:  g.BlockedStatuses,
 	}
+	if g.Steering != nil {
+		out.Steering = &frontmatter.GoalSteering{
+			Enabled:         g.Steering.Enabled,
+			CooldownMinutes: g.Steering.CooldownMinutes,
+		}
+	}
+	return out
 }
 
 // fmTriggerToType converts a frontmatter AutomationTrigger to a domain AutomationTrigger.

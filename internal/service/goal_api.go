@@ -33,9 +33,25 @@ type GoalProgressResponse = types.GoalProgressResponse
 
 // CreateGoal builds a goal automation entry from the request and persists it via
 // the brain service, returning a summary of the created goal.
+//
+// When Config.ID is empty the server derives a slug from the title (lowercase,
+// [a-z0-9-], dashes collapsed) and de-dupes it against existing goal IDs with
+// -2/-3… suffixes. Creation fails only when both the ID and the title are
+// empty.
 func (s *GoalService) CreateGoal(ctx context.Context, req CreateGoalRequest) (*GoalSummary, error) {
 	if s == nil || s.brain == nil {
 		return nil, fmt.Errorf("goal create: brain service is nil")
+	}
+
+	if strings.TrimSpace(req.Config.ID) == "" {
+		if strings.TrimSpace(req.Title) == "" {
+			return nil, fmt.Errorf("goal create: goal id and title are both empty")
+		}
+		id, err := s.generateGoalID(ctx, req.Title)
+		if err != nil {
+			return nil, fmt.Errorf("goal create: generate goal id: %w", err)
+		}
+		req.Config.ID = id
 	}
 
 	entry, err := BuildGoalAutomation(GoalInput{
@@ -82,6 +98,33 @@ func (s *GoalService) CreateGoal(ctx context.Context, req CreateGoalRequest) (*G
 	}, nil
 }
 
+// generateGoalID derives a unique goal id from a title: slugified, then
+// de-duped against existing goal IDs (any status) with -2/-3… suffixes.
+func (s *GoalService) generateGoalID(ctx context.Context, title string) (string, error) {
+	base := goalV1Slug(title)
+
+	existing, err := s.listGoalEntries(ctx, "")
+	if err != nil {
+		return "", err
+	}
+	taken := make(map[string]bool, len(existing))
+	for _, g := range existing {
+		if g.Goal != nil && g.Goal.ID != "" {
+			taken[g.Goal.ID] = true
+		}
+	}
+
+	if !taken[base] {
+		return base, nil
+	}
+	for i := 2; ; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		if !taken[candidate] {
+			return candidate, nil
+		}
+	}
+}
+
 // UpdateGoalRequest is the input for updating an existing goal automation.
 // Provided fields are merged onto the existing entry's goal config/action; nil
 // fields are left unchanged. The goal's trigger is rebuilt from the merged
@@ -116,11 +159,18 @@ func (s *GoalService) UpdateGoal(ctx context.Context, goalID string, req UpdateG
 	if req.TriggerSource != nil {
 		cfg.TriggerSource = *req.TriggerSource
 	}
+	if req.TaskID != nil {
+		cfg.TaskID = *req.TaskID
+	}
 	if req.CompleteStatuses != nil {
 		cfg.CompleteStatuses = *req.CompleteStatuses
 	}
 	if req.BlockedStatuses != nil {
 		cfg.BlockedStatuses = *req.BlockedStatuses
+	}
+	if req.Steering != nil {
+		steering := *req.Steering
+		cfg.Steering = &steering
 	}
 
 	// Merge action.
@@ -190,20 +240,49 @@ func (s *GoalService) UpdateGoal(ctx context.Context, goalID string, req UpdateG
 	}, nil
 }
 
-// ListGoals returns active goal automation summaries, optionally filtered by
+// defaultGoalListStatuses is the status set returned by goal listing when no
+// explicit status filter is given: everything a user still cares about.
+// Archived goals are hidden unless requested (?status=archived or all).
+var defaultGoalListStatuses = map[string]bool{
+	"active":    true,
+	"blocked":   true,
+	"completed": true,
+}
+
+// ListGoals returns goal automation summaries with the default status set
+// (active + blocked + completed; archived hidden), optionally filtered by
 // project and/or feature ID.
 func (s *GoalService) ListGoals(ctx context.Context, project, featureID string) ([]GoalSummary, error) {
+	return s.ListGoalsFiltered(ctx, project, featureID, "")
+}
+
+// ListGoalsFiltered returns goal automation summaries filtered by project,
+// feature ID, and status. Status semantics:
+//
+//	""         -> default set (active, blocked, completed; archived hidden)
+//	"all"      -> every status
+//	"<status>" -> exact match (e.g. "archived", "blocked")
+func (s *GoalService) ListGoalsFiltered(ctx context.Context, project, featureID, status string) ([]GoalSummary, error) {
 	if s == nil || s.brain == nil {
 		return nil, fmt.Errorf("goal list: brain service is nil")
 	}
 
-	goals, err := s.listActiveGoals(ctx)
+	status = strings.TrimSpace(strings.ToLower(status))
+	queryStatus := status
+	if status == "" || status == "all" {
+		queryStatus = ""
+	}
+
+	goals, err := s.listGoalEntries(ctx, queryStatus)
 	if err != nil {
 		return nil, fmt.Errorf("goal list: %w", err)
 	}
 
 	out := make([]GoalSummary, 0, len(goals))
 	for _, g := range goals {
+		if status == "" && !defaultGoalListStatuses[g.Status] {
+			continue
+		}
 		if project != "" && g.ProjectID != project {
 			continue
 		}
@@ -218,6 +297,23 @@ func (s *GoalService) ListGoals(ctx context.Context, project, featureID string) 
 	})
 
 	return out, nil
+}
+
+// DeleteGoal permanently deletes the goal automation entry identified by its
+// goal ID (any status). Returns ErrGoalNotFound for unknown goals.
+func (s *GoalService) DeleteGoal(ctx context.Context, goalID string) error {
+	if s == nil || s.brain == nil {
+		return fmt.Errorf("goal delete: brain service is nil")
+	}
+
+	goal, err := s.findGoalByID(ctx, goalID)
+	if err != nil {
+		return err
+	}
+	if err := s.brain.Delete(ctx, goal.ID); err != nil {
+		return fmt.Errorf("goal delete: %w", err)
+	}
+	return nil
 }
 
 // RunGoal triggers a manual reconcile for the goal identified by goalID and
@@ -251,12 +347,9 @@ func (s *GoalService) GoalProgress(ctx context.Context, goalID string) (*GoalPro
 		return nil, err
 	}
 
-	var tasks []types.ResolvedTask
-	if s.tasks != nil {
-		tasks, err = s.tasks.GetTasksByFeature(ctx, goal.ProjectID, goal.FeatureID)
-		if err != nil {
-			return nil, fmt.Errorf("goal progress: list tasks: %w", err)
-		}
+	tasks, err := s.linkedTasksForGoal(ctx, *goal)
+	if err != nil {
+		return nil, fmt.Errorf("goal progress: list tasks: %w", err)
 	}
 
 	stats := computeTaskStats(tasks)
@@ -265,6 +358,7 @@ func (s *GoalService) GoalProgress(ctx context.Context, goalID string) (*GoalPro
 		EntryID:       goal.ID,
 		Project:       goal.ProjectID,
 		FeatureID:     goal.FeatureID,
+		TaskID:        goalTaskScope(goal.Goal),
 		FeatureStatus: ComputeFeatureStatus(tasks),
 		Total:         stats.Total,
 		Pending:       stats.Pending,
@@ -312,13 +406,17 @@ func (s *GoalService) GoalAuditHistory(ctx context.Context, goalID string, limit
 	return out, nil
 }
 
-// findGoalByID locates an active goal automation entry by its goal ID.
+// findGoalByID locates a goal automation entry by its goal ID, regardless of
+// entry status. Status-agnostic lookup is what makes the lifecycle work:
+// paused (blocked), completed, and archived goals must remain reachable so
+// they can be resumed, re-run, inspected, or deleted. Event dispatch stays
+// active-only via listActiveGoals.
 func (s *GoalService) findGoalByID(ctx context.Context, goalID string) (*types.BrainEntry, error) {
 	goalID = strings.TrimSpace(goalID)
 	if goalID == "" {
 		return nil, fmt.Errorf("goal: missing goal id")
 	}
-	goals, err := s.listActiveGoals(ctx)
+	goals, err := s.listGoalEntries(ctx, "")
 	if err != nil {
 		return nil, fmt.Errorf("goal: list goals: %w", err)
 	}

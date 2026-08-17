@@ -286,8 +286,13 @@ func TestReconcile_NeedWork_GeneratesTask(t *testing.T) {
 	if tasks[0].GeneratedKey == "" {
 		t.Errorf("generated task GeneratedKey is empty")
 	}
-	if tasks[0].DirectPrompt != "do the goal work" {
-		t.Errorf("generated task DirectPrompt = %q, want %q", tasks[0].DirectPrompt, "do the goal work")
+	// The generated prompt is the action prompt plus a composed "## Goal"
+	// section (see buildGoalTaskPrompt); the action prompt must lead it.
+	if !strings.HasPrefix(tasks[0].DirectPrompt, "do the goal work") {
+		t.Errorf("generated task DirectPrompt = %q, want prefix %q", tasks[0].DirectPrompt, "do the goal work")
+	}
+	if !strings.Contains(tasks[0].DirectPrompt, "## Goal") {
+		t.Errorf("generated task DirectPrompt missing goal section: %q", tasks[0].DirectPrompt)
 	}
 }
 

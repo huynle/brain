@@ -472,10 +472,23 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	// Tie the server's lifetime to the driver process: when the run process
 	// exits (completion, kill, crash, or runner shutdown), tear the server
 	// down. Cleanup() is a redundant idempotent safety net.
+	//
+	// One exception: an injected prompt (goal steering, control-plane send)
+	// runs its turn ON the serve process, and the driver's own turn ending
+	// does not mean that turn is done. After a clean driver exit, wait for
+	// the session to go idle (bounded by steerHoldMax) before killing the
+	// server, so steered work isn't torn down mid-flight. This mirrors the
+	// completion hold in ProcessManager.CheckCompletion.
 	driver := res.Proc
 	go func() {
 		for !driver.Exited() {
 			time.Sleep(time.Second)
+		}
+		if driver.ExitCode() == 0 {
+			deadline := time.Now().Add(steerHoldMax)
+			for time.Now().Before(deadline) && sessionStatusForPort(port) == "busy" {
+				time.Sleep(2 * time.Second)
+			}
 		}
 		e.killServeProc(task.ID)
 	}()

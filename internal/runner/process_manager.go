@@ -471,6 +471,33 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 
 	procExited := info.Proc.Exited()
 
+	// Steered-turn hold: for attachable OpenCode tasks the tracked process
+	// is the `opencode run` driver, but an injected prompt (goal steering,
+	// control-plane send) runs its own turn on the persistent serve
+	// process. If the driver exited cleanly while the session still
+	// reports busy, that turn is mid-flight — completing now would tear
+	// the serve process down under it. Hold completion until the session
+	// idles, bounded by steerHoldMax so a wedged session can't pin the
+	// task forever. Checked before every completion path below.
+	if procExited && info.Proc.ExitCode() == 0 && info.Task.OpencodePort > 0 {
+		if sessionStatusForPort(info.Task.OpencodePort) == "busy" {
+			pm.mu.Lock()
+			if info.Task.BusyHoldSince.IsZero() {
+				info.Task.BusyHoldSince = time.Now()
+			}
+			held := time.Since(info.Task.BusyHoldSince)
+			pm.mu.Unlock()
+			if held < steerHoldMax {
+				slog.Info("driver exited but session busy; holding completion for in-flight turn",
+					"task_id", taskID, "port", info.Task.OpencodePort,
+					"held", held.Round(time.Second))
+				return CompletionRunning
+			}
+			slog.Warn("session still busy after hold window; completing anyway",
+				"task_id", taskID, "held", held.Round(time.Second))
+		}
+	}
+
 	// If process has exited and we're not checking task file
 	if procExited && !checkTaskFile {
 		if info.Proc.ExitCode() == 0 {

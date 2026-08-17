@@ -289,6 +289,85 @@ func TestHandleBulkDelete_ForceOverridesLiveClaim(t *testing.T) {
 	}
 }
 
+// Force in the body works like the legacy query param — no query string
+// needed. This also proves "force" is an accepted body field, not rejected
+// by the strict unknown-field check.
+func TestHandleBulkDelete_BodyForceOverridesLiveClaim(t *testing.T) {
+	liveRun := false
+	brain := &mockBrainService{
+		bulkDeleteFunc: func(_ context.Context, req types.BulkDeleteRequest) (*types.BulkDeleteResponse, error) {
+			if !req.DryRun {
+				liveRun = true
+			}
+			return &types.BulkDeleteResponse{Deleted: 1, Total: 1}, nil
+		},
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{ID: "a", Type: "task", ProjectID: "p"}, nil
+		},
+	}
+	tasks := &mockTaskService{
+		getLiveClaimFunc: func(_ context.Context, _, _ string) (*types.LiveClaim, error) {
+			return &types.LiveClaim{Live: true, RunnerID: "runner-7"}, nil
+		},
+	}
+	srv := httptest.NewServer(newBulkDeleteRouter(brain, tasks))
+	defer srv.Close()
+
+	resp := bdPostJSON(t, srv, "/entries/bulk-delete", map[string]any{
+		"filter": map[string]any{"feature_id": "f"},
+		"force":  true,
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 with force in body", resp.StatusCode)
+	}
+	if !liveRun {
+		t.Error("body force did not reach the live delete")
+	}
+}
+
+// An explicit "force": false in the body is authoritative — a stray
+// ?force=true query param must not override it.
+func TestHandleBulkDelete_BodyForceFalseBeatsQueryTrue(t *testing.T) {
+	brain := &mockBrainService{
+		bulkDeleteFunc: func(_ context.Context, req types.BulkDeleteRequest) (*types.BulkDeleteResponse, error) {
+			if !req.DryRun {
+				t.Error("live run reached the service despite body force=false")
+			}
+			return &types.BulkDeleteResponse{
+				DryRun: true,
+				Total:  1,
+				Results: []types.BulkUpdateResult{
+					{Path: "projects/p/task/a.md", ID: "a", Status: "ok"},
+				},
+			}, nil
+		},
+		recallFunc: func(_ context.Context, _ string) (*types.BrainEntry, error) {
+			return &types.BrainEntry{
+				ID: "a", Path: "projects/p/task/a.md", Type: "task", ProjectID: "p",
+			}, nil
+		},
+	}
+	tasks := &mockTaskService{
+		getLiveClaimFunc: func(_ context.Context, _, _ string) (*types.LiveClaim, error) {
+			return &types.LiveClaim{Live: true, RunnerID: "runner-7"}, nil
+		},
+	}
+	srv := httptest.NewServer(newBulkDeleteRouter(brain, tasks))
+	defer srv.Close()
+
+	resp := bdPostJSON(t, srv, "/entries/bulk-delete?force=true", map[string]any{
+		"filter": map[string]any{"feature_id": "f"},
+		"force":  false,
+	})
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body force=false wins over query)", resp.StatusCode)
+	}
+}
+
 // ─── Single-entry delete guard ─────────────────────────────────────
 
 func TestHandleDeleteEntry_BlocksWhenClaimIsLive(t *testing.T) {

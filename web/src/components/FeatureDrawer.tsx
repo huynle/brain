@@ -4,13 +4,28 @@
  * Right-side slide-in showing feature detail, tasks, and links.
  * Opened via `useWorkspace.openFeatureDrawer(pid, fid)`; closed via
  * the × button or Esc.
+ *
+ * The header carries the full feature verb set via `useRowActions`
+ * (right-click / long-press / keyboard), same as CardFeatures rows.
+ * The assign buttons call the real assignment API — they used to write
+ * only the local zustand mirror, which looked assigned while the server
+ * was never told.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useWorkspace } from "../store/workspace";
 import { useModal } from "../store/modal";
+import { useUI } from "../store/ui";
 import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
+import { useRowActions } from "../hooks/useRowActions";
+import { useFeatureActionContext } from "../hooks/useFeatureActionContext";
+import {
+  ApiError,
+  assignFeatureToRunner,
+  clearFeatureAssignment,
+} from "../lib/api";
+import { buildFeatureActions } from "../lib/actions/featureActions";
 import { deriveFeatures } from "../lib/features";
 import type { Task } from "../lib/types";
 
@@ -28,9 +43,15 @@ export function FeatureDrawer(): JSX.Element | null {
   const drawer = useWorkspace((s) => s.featureDrawer);
   const close = useWorkspace((s) => s.closeFeatureDrawer);
   const assignFeature = useWorkspace((s) => s.assignFeature);
+  const unassignFeature = useWorkspace((s) => s.unassignFeature);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
   const openModal = useModal((s) => s.open);
+  const toast = useUI((s) => s.toast);
   const { runners } = useRunners();
+  const [assignBusy, setAssignBusy] = useState(false);
+
+  const featureCtx = useFeatureActionContext(drawer?.projectId ?? "");
+  const { rowProps, overlays } = useRowActions();
 
   // Guard against returning a fresh [] on every render when no drawer
   // is open — that triggers zustand "getSnapshot should be cached"
@@ -71,10 +92,77 @@ export function FeatureDrawer(): JSX.Element | null {
   const runnerId = featureAssignments[feature.id];
   const runner = runners.find((r) => r.runner_id === runnerId);
   const featureTasks = tasks.filter((t) => t.feature_id === feature.id);
+  const actions = buildFeatureActions(feature, featureCtx);
+
+  /** Assign for real: server first-class, local mirror for optimism. */
+  const doAssign = async (targetRunnerId: string) => {
+    if (targetRunnerId === runnerId) return;
+    setAssignBusy(true);
+    const previous = runnerId;
+    assignFeature(feature.id, targetRunnerId);
+    try {
+      const intent = previous ? "reassign" : "assign";
+      try {
+        await assignFeatureToRunner(
+          drawer.projectId,
+          feature.id,
+          targetRunnerId,
+          { intent },
+        );
+      } catch (err) {
+        // The local mirror can lag the server. A 409 on "assign" means
+        // the server has it assigned elsewhere — the click named the
+        // runner the user wants, so escalate to reassign once.
+        if (
+          intent === "assign" &&
+          err instanceof ApiError &&
+          err.status === 409
+        ) {
+          await assignFeatureToRunner(
+            drawer.projectId,
+            feature.id,
+            targetRunnerId,
+            { intent: "reassign" },
+          );
+        } else {
+          throw err;
+        }
+      }
+      toast(`Assigned ${feature.id} → ${targetRunnerId}`, "success");
+    } catch (err) {
+      if (previous) assignFeature(feature.id, previous);
+      else unassignFeature(feature.id);
+      toast(
+        `Assign failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    } finally {
+      setAssignBusy(false);
+    }
+  };
+
+  const doClear = async () => {
+    if (!runnerId) return;
+    setAssignBusy(true);
+    const previous = runnerId;
+    unassignFeature(feature.id);
+    try {
+      await clearFeatureAssignment(drawer.projectId, feature.id);
+      toast(`Cleared runner assignment for ${feature.id}`, "success");
+    } catch (err) {
+      assignFeature(feature.id, previous);
+      toast(
+        `Clear failed: ${err instanceof Error ? err.message : String(err)}`,
+        "error",
+      );
+    } finally {
+      setAssignBusy(false);
+    }
+  };
 
   return createPortal(
     <aside className="feature-drawer">
-      <div className="drawer-head">
+      <div className="drawer-head" {...rowProps(actions, feature.name)}>
         <div>
           <div className="drawer-kicker">
             {drawer.projectId} · {feature.id}
@@ -156,7 +244,8 @@ export function FeatureDrawer(): JSX.Element | null {
             .map((r) => (
               <button
                 key={r.runner_id}
-                onClick={() => assignFeature(feature.id, r.runner_id)}
+                onClick={() => void doAssign(r.runner_id)}
+                disabled={assignBusy}
                 style={{
                   background: r.runner_id === runnerId ? "#f4b23a22" : undefined,
                   color: r.runner_id === runnerId ? "#f4b23a" : undefined,
@@ -168,6 +257,11 @@ export function FeatureDrawer(): JSX.Element | null {
                 {r.runner_id}
               </button>
             ))}
+          {runnerId && (
+            <button onClick={() => void doClear()} disabled={assignBusy}>
+              Clear
+            </button>
+          )}
         </div>
       </div>
 
@@ -194,6 +288,8 @@ export function FeatureDrawer(): JSX.Element | null {
           </div>
         ))}
       </div>
+
+      {overlays}
     </aside>,
     document.body,
   );

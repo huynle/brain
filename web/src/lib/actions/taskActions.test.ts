@@ -10,9 +10,11 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
 import {
+  abortBlockedReason,
   buildStatusActions,
   buildTaskActions,
   deleteBlockedReason,
+  knownRunnerId,
   runBlockedReason,
   statusChangeBlockedReason,
   TERMINAL_STATUSES,
@@ -39,11 +41,13 @@ function recorder() {
     runTask: async (t) => void calls.push(`run:${t.id}`),
     setStatus: async (t, s) => void calls.push(`status:${t.id}:${s}`),
     deleteTask: async (t) => void calls.push(`delete:${t.id}`),
+    abortTask: async (t) => void calls.push(`abort:${t.id}`),
     openResume: (t) => void calls.push(`resume:${t.id}`),
     openDetails: (t) => void calls.push(`details:${t.id}`),
     openLogs: (t) => void calls.push(`logs:${t.id}`),
     openMetadata: (t) => void calls.push(`metadata:${t.id}`),
     openStatusPicker: (t) => void calls.push(`picker:${t.id}`),
+    openGoalCreate: (t) => void calls.push(`goal-create:${t.id}`),
   };
   return { calls, ctx };
 }
@@ -63,12 +67,22 @@ test("every core verb is present for an ordinary pending task", () => {
     "status",
     "cancel",
     "metadata",
+    "set-goal",
     "details",
     "logs",
     "delete",
   ]) {
     assert.ok(ids.includes(expected), `missing action: ${expected}`);
   }
+});
+
+test("set-goal is always enabled and routes to openGoalCreate", async () => {
+  const { calls, ctx } = recorder();
+  // Even a completed task can take a goal — the goal keeps validating it.
+  const action = byId(mkTask({ status: "completed" }), ctx).get("set-goal")!;
+  assert.equal(action.disabledReason ?? "", "");
+  await action.run();
+  assert.deepEqual(calls, ["goal-create:t1"]);
 });
 
 test("unavailable verbs are disabled, never dropped", () => {
@@ -218,6 +232,102 @@ test("delete routes to deleteTask", async () => {
   const { calls, ctx } = recorder();
   await byId(mkTask(), ctx).get("delete")!.run();
   assert.deepEqual(calls, ["delete:t1"]);
+});
+
+// ─── abort ─────────────────────────────────────────────────────────
+
+/** A running task with a live dispatch lease. */
+function mkRunningTask(over: Partial<Task> = {}): Task {
+  return mkTask({
+    status: "in_progress",
+    dispatch_lease: {
+      leaseId: "l1",
+      project_id: "p",
+      task_id: "t1",
+      assigned_runner_id: "amos-1",
+      assigned_machine_id: "m1",
+      state: "acked",
+      pushed_at: 1,
+      expires_at: 2,
+    },
+    ...over,
+  });
+}
+
+test("abort is present and enabled for a running task with a known runner", () => {
+  const { ctx } = recorder();
+  const abort = byId(mkRunningTask(), ctx).get("abort");
+  assert.ok(abort, "abort verb missing");
+  assert.equal(isEnabled(abort), true);
+});
+
+test("abort is disabled — never hidden — for a non-running task", () => {
+  const { ctx } = recorder();
+  const abort = byId(mkTask({ status: "pending" }), ctx).get("abort");
+  assert.ok(abort, "abort must render disabled, not disappear");
+  assert.equal(isEnabled(abort), false);
+  assert.match(abort.disabledReason ?? "", /only a running task/i);
+});
+
+test("abort on an abandoned task points at Resume instead", () => {
+  const reason = abortBlockedReason(
+    mkRunningTask({ is_abandoned: true }),
+  );
+  assert.match(reason, /abandoned/i);
+  assert.match(reason, /resume/i);
+});
+
+test("abort is disabled when no runner is known", () => {
+  const reason = abortBlockedReason(mkTask({ status: "in_progress" }));
+  assert.match(reason, /no runner/i);
+});
+
+test("abort requires confirmation that says the status stays put", () => {
+  const { ctx } = recorder();
+  const abort = byId(mkRunningTask(), ctx).get("abort")!;
+  assert.ok(abort.confirm, "abort must confirm");
+  assert.match(abort.confirm.body, /keeps its current status/i);
+  assert.equal(abort.danger, true);
+});
+
+test("abort routes to abortTask", async () => {
+  const { calls, ctx } = recorder();
+  await byId(mkRunningTask(), ctx).get("abort")!.run();
+  assert.deepEqual(calls, ["abort:t1"]);
+});
+
+test("delete's blocked reason points at the abort verb, which exists", () => {
+  // Regression: the copy used to reference a "Force delete" affordance
+  // that was never built.
+  const reason = deleteBlockedReason(mkRunningTask());
+  assert.match(reason, /abort runner execution/i);
+});
+
+// ─── knownRunnerId ─────────────────────────────────────────────────
+
+test("knownRunnerId prefers the dispatch lease", () => {
+  const task = mkRunningTask({
+    sessions: {
+      s1: { timestamp: "2026-08-11T00:00:00Z", runner_id: "older-runner" },
+    },
+  });
+  assert.equal(knownRunnerId(task), "amos-1");
+});
+
+test("knownRunnerId falls back to the most recent session's runner", () => {
+  const task = mkTask({
+    status: "in_progress",
+    sessions: {
+      s1: { timestamp: "2026-08-10T00:00:00Z", runner_id: "old-runner" },
+      s2: { timestamp: "2026-08-11T00:00:00Z", runner_id: "new-runner" },
+      s3: { timestamp: "2026-08-12T00:00:00Z" }, // no runner recorded
+    },
+  });
+  assert.equal(knownRunnerId(task), "new-runner");
+});
+
+test("knownRunnerId is undefined when nothing recorded a runner", () => {
+  assert.equal(knownRunnerId(mkTask()), undefined);
 });
 
 // ─── navigation + edit ─────────────────────────────────────────────

@@ -15,14 +15,16 @@ import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
 import { deriveFeatures, type DerivedFeature } from "../../lib/features";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
-import { useContextMenu } from "../common/ContextMenu";
+import { useRowActions } from "../../hooks/useRowActions";
 import { runProject, summarizeRunProjectResult } from "../../lib/api";
+import { buildProjectActions } from "../../lib/actions/projectActions";
 import { CardTasks } from "./CardTasks";
 import { CardFeatures } from "./CardFeatures";
 import { CardAutomations } from "./CardAutomations";
+import { CardGoals } from "./CardGoals";
 import type { Task } from "../../lib/types";
 
-type TabKey = "tasks" | "features" | "automations";
+type TabKey = "tasks" | "features" | "goals" | "automations";
 
 interface ProjectStats {
   active: number;
@@ -71,7 +73,7 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   const tasks = projectLive?.tasks ?? EMPTY_TASKS;
   const connected = projectLive?.connected ?? false;
   const hasSnapshot = projectLive !== undefined && projectLive.tasks !== undefined;
-  const ctx = useContextMenu();
+  const { rowProps, overlays } = useRowActions();
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const openModal = useModal((s) => s.open);
   const hideProject = useWorkspace((s) => s.hideProject);
@@ -109,6 +111,29 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
     else openInFocus("task-detail", { projectId }, projectId);
   };
 
+  // Project-level verbs come from the registry like everything else, so
+  // the card header answers right-click, long-press AND the keyboard —
+  // the old hand-rolled ContextMenu covered only the first.
+  const projectActions = useMemo(
+    () =>
+      buildProjectActions(
+        projectId,
+        {
+          runProject: async (pid) => {
+            const r = await runProject(pid, false);
+            toast(
+              summarizeRunProjectResult(r),
+              r.totalTasksDispatched > 0 ? "success" : "info",
+            );
+          },
+          openTaskList: (pid) => openInFocus("task-detail", { projectId: pid }, pid),
+          hideProject: (pid) => hideProject(pid),
+        },
+        { taskCount: tasks.length },
+      ),
+    [projectId, tasks.length, toast, openInFocus, hideProject],
+  );
+
   return (
     <div
       className="pcard"
@@ -117,40 +142,7 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
     >
       <div
         className="pcard-head"
-        onContextMenu={(e) => {
-          e.preventDefault();
-          ctx.open(e.clientX, e.clientY, [
-            {
-              id: "run-project",
-              label: "Run all ready features",
-              onClick: async () => {
-                try {
-                  const r = await runProject(projectId, false);
-                  toast(
-                    summarizeRunProjectResult(r),
-                    r.totalTasksDispatched > 0 ? "success" : "info",
-                  );
-                } catch (err) {
-                  toast(
-                    `Run project failed: ${err instanceof Error ? err.message : String(err)}`,
-                    "error",
-                  );
-                }
-              },
-            },
-            {
-              id: "focus-tasks",
-              label: "Open task list in focus",
-              onClick: () =>
-                openInFocus("task-detail", { projectId }, projectId),
-            },
-            {
-              id: "hide",
-              label: "Hide from workspace",
-              onClick: () => hideProject(projectId),
-            },
-          ]);
-        }}
+        {...rowProps(projectActions, projectId)}
       >
         <span
           className={`dot ${!hasSnapshot ? "" : stats.active ? "busy" : "on"}`}
@@ -242,6 +234,12 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
           Features
         </button>
         <button
+          className={tab === "goals" ? "active" : ""}
+          onClick={() => setTab("goals")}
+        >
+          Goals
+        </button>
+        <button
           className={tab === "automations" ? "active" : ""}
           onClick={() => setTab("automations")}
         >
@@ -264,10 +262,11 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
         {tab === "features" && (
           <CardFeatures projectId={projectId} features={features} />
         )}
+        {tab === "goals" && <CardGoals projectId={projectId} />}
         {tab === "automations" && <CardAutomations projectId={projectId} />}
       </div>
 
-      {ctx.menu}
+      {overlays}
     </div>
   );
 }

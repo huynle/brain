@@ -48,12 +48,16 @@ export interface TaskActionContext {
   runTask: (task: Task) => Promise<void>;
   setStatus: (task: Task, status: TaskStatus) => Promise<void>;
   deleteTask: (task: Task) => Promise<void>;
+  /** Tells the runner holding this task to abort its execution. */
+  abortTask: (task: Task) => Promise<void>;
   openResume: (task: Task) => void;
   openDetails: (task: Task) => void;
   openLogs: (task: Task) => void;
   openMetadata: (task: Task) => void;
   /** Open the status picker; separate from applying a status. */
   openStatusPicker: (task: Task) => void;
+  /** Opens the goal-create modal prefilled with this task's scope. */
+  openGoalCreate: (task: Task) => void;
 }
 
 /**
@@ -65,7 +69,39 @@ export interface TaskActionContext {
  */
 export function deleteBlockedReason(task: Task): string {
   if (task.status === "in_progress" && !task.is_abandoned) {
-    return "Task is running — abort the runner first, or use Force delete";
+    return 'Task is running — use "Abort runner execution" first';
+  }
+  return "";
+}
+
+/**
+ * The runner the client believes is executing this task. The dispatch
+ * lease (populated by the server's enrichDispatchDiagnostics on task-list
+ * responses) is authoritative; when a snapshot predates the enrichment we
+ * fall back to the most recent session's recorded runner.
+ */
+export function knownRunnerId(task: Task): string | undefined {
+  const leased = task.dispatch_lease?.assigned_runner_id;
+  if (leased) return leased;
+  let best: { ts: string; id: string } | undefined;
+  for (const s of Object.values(task.sessions ?? {})) {
+    if (!s.runner_id) continue;
+    // ISO timestamps compare correctly as strings.
+    if (!best || s.timestamp > best.ts) best = { ts: s.timestamp, id: s.runner_id };
+  }
+  return best?.id;
+}
+
+/** Why a task's execution cannot be aborted right now, or "" when it can. */
+export function abortBlockedReason(task: Task): string {
+  if (task.status !== "in_progress") {
+    return `Task is ${task.status} — only a running task can be aborted`;
+  }
+  if (task.is_abandoned) {
+    return "Task is abandoned — nothing is executing it. Use Resume instead";
+  }
+  if (!knownRunnerId(task)) {
+    return "No runner is known to hold this task — check the dispatch lease";
   }
   return "";
 }
@@ -169,6 +205,26 @@ export function buildTaskActions(
     run: () => ctx.setStatus(task, "cancelled"),
   });
 
+  // Abort is the missing half of cancel: cancel flips the STATUS while the
+  // runner keeps going; abort stops the RUNNER while the status stays. The
+  // confirm copy says exactly that so nobody expects one to do both.
+  actions.push({
+    id: "abort",
+    label: "Abort runner execution",
+    group: "state",
+    key: "a",
+    danger: true,
+    disabledReason: abortBlockedReason(task),
+    confirm: {
+      title: "Abort the runner's execution?",
+      body:
+        `The runner holding "${task.title || task.id}" will be told to abort its session. ` +
+        `The task keeps its current status — cancel it, resume it, or re-run it afterwards.`,
+      confirmLabel: "Abort execution",
+    },
+    run: () => ctx.abortTask(task),
+  });
+
   // ─── edit ───────────────────────────────────────────────────────
   actions.push({
     id: "metadata",
@@ -176,6 +232,15 @@ export function buildTaskActions(
     group: "edit",
     key: "e",
     run: async () => ctx.openMetadata(task),
+  });
+
+  // Always available: a goal can watch a task in any status (a completed
+  // task's goal keeps validating it against its criteria).
+  actions.push({
+    id: "set-goal",
+    label: "Set goal…",
+    group: "edit",
+    run: async () => ctx.openGoalCreate(task),
   });
 
   // ─── navigate ───────────────────────────────────────────────────

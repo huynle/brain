@@ -11,10 +11,12 @@ import { useModal } from "../../store/modal";
 import { useLive } from "../../lib/sse";
 import { useActionRunner } from "../../hooks/useActionRunner";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
+import { useGoals, useGoalProgress } from "../../hooks/useGoals";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
+import { goalStatusLabel } from "../../lib/actions/goalActions";
 import { deriveFeatures } from "../../lib/features";
-import type { Task } from "../../lib/types";
+import type { GoalSummary, Task } from "../../lib/types";
 
 const LIFECYCLE_TONE = {
   "in-progress": { tone: "active", label: "active" },
@@ -25,6 +27,73 @@ const LIFECYCLE_TONE = {
 } as const;
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
+
+/** life-badge tone for a goal status (same classes CardGoals uses). */
+function goalTone(status: string): string {
+  switch (status) {
+    case "active":
+      return "active";
+    case "blocked":
+      return "blocked";
+    case "completed":
+      return "finished";
+    default:
+      return "";
+  }
+}
+
+/**
+ * One goal row with its tiny progress readout. A child component so the
+ * per-goal progress query is a hook call per row, not a hook in a loop.
+ */
+function GoalRow({
+  goal,
+  onOpen,
+}: {
+  goal: GoalSummary;
+  onOpen: () => void;
+}): JSX.Element {
+  const { progress } = useGoalProgress(goal.goal_id);
+  const pct =
+    progress && progress.total > 0
+      ? Math.round((progress.completed / progress.total) * 100)
+      : 0;
+  return (
+    <div className="trow" onClick={onOpen} title={goal.title}>
+      <span className="glyph">◎</span>
+      <span className="name">{goal.title || goal.goal_id}</span>
+      <span
+        className={`life-badge ${goalTone(goal.status)}`}
+        style={{ marginRight: 6 }}
+      >
+        {goalStatusLabel(goal.status)}
+      </span>
+      <span
+        className="bar"
+        style={{
+          width: 60,
+          height: 4,
+          background: "#22272c",
+          borderRadius: 2,
+          overflow: "hidden",
+          flex: "0 0 auto",
+        }}
+        title={
+          progress ? `${progress.completed}/${progress.total} tasks` : undefined
+        }
+      >
+        <i
+          style={{
+            display: "block",
+            height: "100%",
+            width: `${pct}%`,
+            background: "#6fca7d",
+          }}
+        />
+      </span>
+    </div>
+  );
+}
 
 export function FeatureModal(): JSX.Element {
   const target = useModal((s) => s.target);
@@ -53,6 +122,8 @@ export function FeatureModal(): JSX.Element {
   );
 
   const featureCtx = useFeatureActionContext(projectId);
+  const { forFeature } = useGoals();
+  const featureGoals = forFeature(projectId, featureId);
   const runner = useActionRunner();
   // Built unconditionally so hook order stays stable across the
   // not-found early return.
@@ -221,6 +292,35 @@ export function FeatureModal(): JSX.Element {
             <span className="id">{t.id.slice(0, 6)}</span>
           </div>
         ))}
+      </div>
+
+      <h4 style={{ margin: "12px 0 6px", color: "#f4b23a", fontSize: 11 }}>
+        Goals ({featureGoals.length})
+      </h4>
+      <div>
+        {featureGoals.length === 0 && (
+          <div style={{ color: "#6b757e", fontSize: 11 }}>
+            No goals watching this feature.
+          </div>
+        )}
+        {featureGoals.map((g) => (
+          <GoalRow
+            key={g.goal_id}
+            goal={g}
+            onOpen={() =>
+              openModal("goal", { goalId: g.goal_id, projectId })
+            }
+          />
+        ))}
+        <button
+          className="id"
+          style={{ marginTop: 4, padding: "1px 6px", fontSize: 10 }}
+          onClick={() =>
+            openModal("goal-create", { project: projectId, featureId })
+          }
+        >
+          Add goal
+        </button>
       </div>
     </Modal>
   );

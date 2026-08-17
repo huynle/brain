@@ -14,9 +14,12 @@ import { useProjects } from "../../hooks/useProjects";
 import { useLive } from "../../lib/sse";
 import { useRunners } from "../../hooks/useRunners";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
+import { useRowActions } from "../../hooks/useRowActions";
+import { useFeatureActionContextFactory } from "../../hooks/useFeatureActionContext";
 import { useWorkspace } from "../../store/workspace";
 import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
+import { buildFeatureActions } from "../../lib/actions/featureActions";
 import {
   deriveFeatures,
   type DerivedFeature,
@@ -50,6 +53,16 @@ export function OverviewGrid(): JSX.Element {
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const toast = useUI((s) => s.toast);
+
+  // Feature rows here span projects, so the factory form supplies a
+  // context per row's own project. One useRowActions instance serves the
+  // whole grid — its overlays render once at the end.
+  const featureCtxFor = useFeatureActionContextFactory();
+  const { rowProps, overlays } = useRowActions();
+  const featureRowProps = (f: DerivedFeature & { projectId: string }) =>
+    rowProps(buildFeatureActions(f, featureCtxFor(f.projectId)), f.name, () =>
+      openModal("feature", { projectId: f.projectId, featureId: f.id }),
+    );
 
   const projectIds = projects ?? [];
   const hiddenSet = useMemo(
@@ -203,7 +216,11 @@ export function OverviewGrid(): JSX.Element {
             const runner = runners.find((r) => r.runner_id === runnerId);
             const tone = LIFECYCLE_TONE[f.lifecycle];
             return (
-              <div key={`${f.projectId}:${f.id}`} className="wc-row">
+              <div
+                key={`${f.projectId}:${f.id}`}
+                className="wc-row"
+                {...featureRowProps(f)}
+              >
                 <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
                 <span className="wc-feature">{f.name}</span>
                 <span className="wc-meta">
@@ -262,6 +279,7 @@ export function OverviewGrid(): JSX.Element {
                 <div
                   key={`${f.projectId}:${f.id}`}
                   className="rq-item"
+                  {...featureRowProps(f)}
                   onClick={() =>
                     openModal("feature", {
                       projectId: f.projectId,
@@ -307,6 +325,7 @@ export function OverviewGrid(): JSX.Element {
                   <button
                     key={`${f.projectId}:${f.id}`}
                     className="lane-card"
+                    {...featureRowProps(f)}
                     onClick={() =>
                       openModal("feature", {
                         projectId: f.projectId,
@@ -350,6 +369,8 @@ export function OverviewGrid(): JSX.Element {
           </div>
         </div>
       )}
+
+      {overlays}
     </div>
   );
 }

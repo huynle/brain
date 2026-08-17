@@ -20,12 +20,14 @@ import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
 import { useRowActions } from "../hooks/useRowActions";
 import { useFeatureActionContext } from "../hooks/useFeatureActionContext";
+import { useTaskActionContext } from "../hooks/useTaskActionContext";
 import {
   ApiError,
   assignFeatureToRunner,
   clearFeatureAssignment,
 } from "../lib/api";
 import { buildFeatureActions } from "../lib/actions/featureActions";
+import { buildTaskActions } from "../lib/actions/taskActions";
 import { deriveFeatures } from "../lib/features";
 import type { Task } from "../lib/types";
 
@@ -51,6 +53,7 @@ export function FeatureDrawer(): JSX.Element | null {
   const [assignBusy, setAssignBusy] = useState(false);
 
   const featureCtx = useFeatureActionContext(drawer?.projectId ?? "");
+  const taskCtx = useTaskActionContext(drawer?.projectId ?? "");
   const { rowProps, overlays } = useRowActions();
 
   // Guard against returning a fresh [] on every render when no drawer
@@ -276,6 +279,12 @@ export function FeatureDrawer(): JSX.Element | null {
           <div
             key={t.id}
             className="drawer-task"
+            {...rowProps(buildTaskActions(t, taskCtx), t.title || t.id, () =>
+              openModal("task", {
+                projectId: drawer.projectId,
+                taskId: t.id,
+              }),
+            )}
             onClick={() =>
               openModal("task", {
                 projectId: drawer.projectId,

@@ -1855,3 +1855,100 @@ body[data-theme="light"] .assistant-card.primary { background: #fff7e8 !importan
 body[data-theme="light"] .assistant-head h3 { color: #17202a !important; }
 body[data-theme="light"] .assistant-card p { color: #64717e !important; }
 body[data-theme="light"] .assistant-card textarea { background: #fff !important; color: #17202a !important; border-color: #c8d0d8 !important; }
+
+/* ─── multi-select (SelectionBar + row checkboxes) ───────────────────
+ *
+ * Zero-clutter rule: rows look exactly as they always did until the
+ * user shows selection intent. The checkbox lives in the SAME slot as
+ * the row's status glyph / feature caret (`.glyph-slot`) and swaps in
+ * on row hover or keyboard focus; `boxed` (React-driven: the row is
+ * marked, or the project has an active selection) pins it visible so
+ * selection mode reads at a glance. No extra column, no layout shift.
+ */
+.glyph-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 12px;
+}
+.glyph-slot .selbox {
+  width: 11px;
+  height: 11px;
+  border: 1px solid #4a545e;
+  border-radius: 2px;
+  cursor: pointer;
+  position: relative;
+  display: none;
+}
+.trow:hover .glyph-slot .selbox,
+.trow:focus-within .glyph-slot .selbox,
+.feat-head:hover .glyph-slot .selbox,
+.feat-head:focus-within .glyph-slot .selbox,
+.glyph-slot.boxed .selbox {
+  display: inline-block;
+}
+.trow:hover .glyph-slot .glyph,
+.trow:focus-within .glyph-slot .glyph,
+.feat-head:hover .glyph-slot .caret,
+.feat-head:focus-within .glyph-slot .caret,
+.glyph-slot.boxed .glyph,
+.glyph-slot.boxed .caret {
+  display: none;
+}
+.selbox:hover { border-color: #f4b23a; }
+.selbox.on { background: #f4b23a; border-color: #f4b23a; }
+.selbox.on::after {
+  content: "✓";
+  position: absolute;
+  inset: 0;
+  color: #12161a;
+  font-size: 9px;
+  line-height: 11px;
+  text-align: center;
+}
+.trow.marked { background: #241c0e; }
+.feat-head.marked { background: #241c0e; border-radius: 3px; }
+
+.selection-bar {
+  position: fixed;
+  left: 50%;
+  bottom: 34px;
+  transform: translateX(-50%);
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px;
+  background: #1a1e22;
+  border: 1px solid #3a434c;
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+  font-size: 12px;
+}
+.selection-bar .sel-count { color: #f4b23a; font-weight: 600; }
+.selection-bar button {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px solid #3a434c;
+  background: #22272c;
+  color: #eaedef;
+  cursor: pointer;
+}
+.selection-bar button.danger {
+  border-color: #d96060;
+  color: #d96060;
+}
+.selection-bar button.danger:hover:not(:disabled) {
+  background: #d96060;
+  color: #12161a;
+}
+.selection-bar button:disabled { opacity: 0.5; cursor: default; }
+body[data-theme="light"] .selection-bar {
+  background: #ffffff;
+  border-color: #c8d0d8;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
+}
+body[data-theme="light"] .selection-bar button { background: #f2f5f8; color: #17202a; }
+body[data-theme="light"] .trow.marked,
+body[data-theme="light"] .feat-head.marked { background: #fff2d8; }

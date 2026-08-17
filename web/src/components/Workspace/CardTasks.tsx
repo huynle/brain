@@ -19,6 +19,7 @@
  */
 import { useMemo } from "react";
 import { useModal } from "../../store/modal";
+import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useRunners } from "../../hooks/useRunners";
 import { useRowActions } from "../../hooks/useRowActions";
@@ -96,6 +97,19 @@ export function CardTasks({
   const featureCtx = useFeatureActionContext(projectId);
   const { rowProps, overlays } = useRowActions();
 
+  // Subscribed (not getState) so checkboxes and the "marked" tint react
+  // to every toggle, from any surface — checkbox, `v` key, or menu.
+  const selProjectId = useSelection((s) => s.projectId);
+  const selTaskIds = useSelection((s) => s.taskIds);
+  const selFeatureIds = useSelection((s) => s.featureIds);
+  const toggleTaskSel = useSelection((s) => s.toggleTask);
+  const toggleFeatureSel = useSelection((s) => s.toggleFeature);
+  const selScoped = selProjectId === projectId;
+  // Selection mode: once anything in this project is marked, every row
+  // shows its checkbox. Until then boxes appear only on hover/focus.
+  const selActive =
+    selScoped && (selTaskIds.size > 0 || selFeatureIds.size > 0);
+
   // Group tasks by feature_id (using DerivedFeature order), then turn
   // each bucket into dependency-ordered rows. Dependency edges are
   // resolved per bucket, so a cross-feature dep does not drag a task
@@ -124,15 +138,22 @@ export function CardTasks({
     const { glyph, cls } = taskGlyph(t.status, !!t.is_abandoned);
     const label = t.title || t.id;
     const actions = buildTaskActions(t, taskCtx);
+    const marked = selScoped && selTaskIds.has(t.id);
 
     return (
       <div
         key={t.id}
-        className="trow"
-        {...rowProps(actions, label, () =>
-          openModal("task", { projectId, taskId: t.id }),
+        className={`trow${marked ? " marked" : ""}`}
+        {...rowProps(
+          actions,
+          label,
+          () => openModal("task", { projectId, taskId: t.id }),
+          { tapSelects: selActive },
         )}
-        onClick={() => openModal("task", { projectId, taskId: t.id })}
+        onClick={(e) => {
+          if ((e.target as HTMLElement).closest(".selbox")) return;
+          openModal("task", { projectId, taskId: t.id });
+        }}
         draggable
         onDragStart={(e) =>
           beginDrag(e, {
@@ -144,7 +165,22 @@ export function CardTasks({
         }
         onDragEnd={endDrag}
       >
-        <span className={`glyph ${cls}`}>{glyph}</span>
+        {/* Checkbox and status glyph share one grid cell; CSS swaps them
+            on hover/focus, and `boxed` pins the checkbox while marked or
+            in selection mode. Keeps the 4-column row layout intact. */}
+        <span className={`glyph-slot${marked || selActive ? " boxed" : ""}`}>
+          <span
+            className={`selbox${marked ? " on" : ""}`}
+            role="checkbox"
+            aria-checked={marked}
+            aria-label={`Select ${label}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              toggleTaskSel(projectId, t.id);
+            }}
+          />
+          <span className={`glyph ${cls}`}>{glyph}</span>
+        </span>
         <span className="name">
           <DepGuide
             prefix={row.prefix}
@@ -170,13 +206,17 @@ export function CardTasks({
         const runner = runners.find((r) => r.runner_id === runnerId);
         const pct = Math.round(f.progress * 100);
         const featureActions = buildFeatureActions(f, featureCtx);
+        const featMarked = selScoped && selFeatureIds.has(f.id);
 
         return (
           <div key={f.id} className={`feat ${stateClass}`}>
             <div
-              className="feat-head"
-              {...rowProps(featureActions, f.name, () =>
-                openFeatureDrawer(projectId, f.id),
+              className={`feat-head${featMarked ? " marked" : ""}`}
+              {...rowProps(
+                featureActions,
+                f.name,
+                () => openFeatureDrawer(projectId, f.id),
+                { tapSelects: selActive },
               )}
               draggable
               onDragStart={(e) =>
@@ -194,13 +234,31 @@ export function CardTasks({
               onDragEnd={endDrag}
               onClick={(e) => {
                 if (
-                  (e.target as HTMLElement).closest("button, .caret, .assign-chip")
+                  (e.target as HTMLElement).closest(
+                    "button, .caret, .assign-chip, .selbox",
+                  )
                 )
                   return;
                 openFeatureDrawer(projectId, f.id);
               }}
             >
-              <span className="caret">▾</span>
+              {/* The caret's slot doubles as the feature checkbox on
+                  hover/selection — no extra column, no layout shift. */}
+              <span
+                className={`glyph-slot${featMarked || selActive ? " boxed" : ""}`}
+              >
+                <span
+                  className={`selbox${featMarked ? " on" : ""}`}
+                  role="checkbox"
+                  aria-checked={featMarked}
+                  aria-label={`Select feature ${f.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleFeatureSel(projectId, f.id);
+                  }}
+                />
+                <span className="caret">▾</span>
+              </span>
               <span className="name">{f.name}</span>
               <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
               {runner ? (

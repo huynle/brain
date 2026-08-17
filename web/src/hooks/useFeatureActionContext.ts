@@ -18,6 +18,7 @@
 import { useMemo } from "react";
 
 import { useModal } from "../store/modal";
+import { useSelection } from "../store/selection";
 import { useWorkspace } from "../store/workspace";
 import { useUI } from "../store/ui";
 import {
@@ -78,6 +79,16 @@ export function useFeatureActionContextFactory(): (
       };
 
       return {
+        // getState() (not a hook subscription): builders run on every row
+        // render, and the row components subscribe to the selection store
+        // themselves — the label stays fresh without a stale closure.
+        toggleSelect: (feature: DerivedFeature) =>
+          useSelection.getState().toggleFeature(projectId, feature.id),
+        isSelected: (feature: DerivedFeature) => {
+          const s = useSelection.getState();
+          return s.projectId === projectId && s.featureIds.has(feature.id);
+        },
+
         runFeature: async (feature: DerivedFeature) => {
           const r = await withForceRetry(
             (force) => runFeature(projectId, feature.id, force),

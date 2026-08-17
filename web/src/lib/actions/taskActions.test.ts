@@ -38,6 +38,8 @@ function mkTask(over: Partial<Task> = {}): Task {
 function recorder() {
   const calls: string[] = [];
   const ctx: TaskActionContext = {
+    toggleSelect: (t) => void calls.push(`select:${t.id}`),
+    isSelected: () => false,
     runTask: async (t) => void calls.push(`run:${t.id}`),
     setStatus: async (t, s) => void calls.push(`status:${t.id}:${s}`),
     deleteTask: async (t) => void calls.push(`delete:${t.id}`),

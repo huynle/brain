@@ -16,6 +16,7 @@
  * right-click, long-press and keyboard offer the same set.
  */
 import { useMemo } from "react";
+import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useRunners } from "../../hooks/useRunners";
 import { useRowActions } from "../../hooks/useRowActions";
@@ -60,6 +61,17 @@ export function CardFeatures({
   const featureCtx = useFeatureActionContext(projectId);
   const { rowProps, overlays } = useRowActions();
 
+  // Subscribed so checkboxes react to toggles from any surface.
+  const selProjectId = useSelection((s) => s.projectId);
+  const selFeatureIds = useSelection((s) => s.featureIds);
+  const toggleFeatureSel = useSelection((s) => s.toggleFeature);
+  const selScoped = selProjectId === projectId;
+  const selTaskIds = useSelection((s) => s.taskIds);
+  // Selection mode: once anything in this project is marked, every row
+  // shows its checkbox. Until then boxes appear only on hover/focus.
+  const selActive =
+    selScoped && (selTaskIds.size > 0 || selFeatureIds.size > 0);
+
   const merged = features.filter((f) => f.lifecycle === "merged");
 
   // Tree is built from the *visible* set, so collapsing the merged
@@ -90,6 +102,7 @@ export function CardFeatures({
         const pct = Math.round(f.progress * 100);
         const stateClass = featStateClass(f);
         const actions = buildFeatureActions(f, featureCtx);
+        const marked = selScoped && selFeatureIds.has(f.id);
 
         return (
           <div
@@ -105,9 +118,12 @@ export function CardFeatures({
             }}
           >
             <div
-              className="feat-head"
-              {...rowProps(actions, f.name, () =>
-                openFeatureDrawer(projectId, f.id),
+              className={`feat-head${marked ? " marked" : ""}`}
+              {...rowProps(
+                actions,
+                f.name,
+                () => openFeatureDrawer(projectId, f.id),
+                { tapSelects: selActive },
               )}
               draggable
               onDragStart={(e) =>
@@ -126,13 +142,29 @@ export function CardFeatures({
               onClick={(e) => {
                 if (
                   (e.target as HTMLElement).closest(
-                    "button, .caret, .assign-chip, a",
+                    "button, .caret, .assign-chip, a, .selbox",
                   )
                 )
                   return;
                 openFeatureDrawer(projectId, f.id);
               }}
             >
+              {/* Reserved 12px slot: empty until hover/selection, then
+                  the checkbox materializes — content never shifts. */}
+              <span
+                className={`glyph-slot${marked || selActive ? " boxed" : ""}`}
+              >
+                <span
+                  className={`selbox${marked ? " on" : ""}`}
+                  role="checkbox"
+                  aria-checked={marked}
+                  aria-label={`Select feature ${f.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleFeatureSel(projectId, f.id);
+                  }}
+                />
+              </span>
               <span className="name">
                 <DepGuide
                   prefix={row.prefix}

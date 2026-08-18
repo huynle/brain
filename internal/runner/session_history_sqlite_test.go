@@ -22,7 +22,7 @@ func newFixtureDB(t *testing.T) *sql.DB {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { db.Close() })
+	t.Cleanup(func() { _ = db.Close() })
 	for _, stmt := range []string{
 		`CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL)`,
 		`CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, session_id TEXT NOT NULL, time_created INTEGER, time_updated INTEGER, data TEXT NOT NULL)`,
@@ -185,7 +185,7 @@ func TestSQLiteReadOnlyDSNDoesNotCreateDB(t *testing.T) {
 		if _, qerr := db.Query(`SELECT 1`); qerr == nil {
 			t.Error("expected read-only open of a missing db to fail")
 		}
-		db.Close()
+		_ = db.Close()
 	}
 	if _, err := os.Stat(dbPath); !os.IsNotExist(err) {
 		t.Fatalf("mode=ro open created the db file, stat err = %v", err)

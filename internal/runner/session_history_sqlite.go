@@ -19,6 +19,35 @@ import (
 // returns, so the transcript can be reassembled into the same
 // GET /session/:id/message shape as readSessionHistory produces.
 
+// sessionRow is one (key, JSON data) row from the message or part table.
+type sessionRow struct {
+	id   string
+	data string
+}
+
+// querySessionRows runs a two-column (id, data) query for one session and
+// drains it, owning the rows' lifecycle so callers can't leak them.
+func querySessionRows(db *sql.DB, query, sessionID, what string) ([]sessionRow, error) {
+	rows, err := db.Query(query, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("query %s: %w", what, err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := []sessionRow{}
+	for rows.Next() {
+		var r sessionRow
+		if err := rows.Scan(&r.id, &r.data); err != nil {
+			return nil, fmt.Errorf("scan %s: %w", what, err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read %s: %w", what, err)
+	}
+	return out, nil
+}
+
 // opencodeDBPath returns the path to OpenCode's SQLite database.
 func opencodeDBPath() (string, error) {
 	dataDir, err := opencodeDataDir()
@@ -47,58 +76,28 @@ func readSessionHistorySQLite(sessionID string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open opencode db: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
-	type msgRow struct {
-		id   string
-		data string
-	}
-	msgRows, err := db.Query(
+	msgs, err := querySessionRows(db,
 		`SELECT id, data FROM message WHERE session_id = ? ORDER BY time_created, id`,
-		sessionID,
-	)
+		sessionID, "messages")
 	if err != nil {
-		return nil, fmt.Errorf("query messages: %w", err)
+		return nil, err
 	}
-	msgs := []msgRow{}
-	for msgRows.Next() {
-		var m msgRow
-		if err := msgRows.Scan(&m.id, &m.data); err != nil {
-			msgRows.Close()
-			return nil, fmt.Errorf("scan message: %w", err)
-		}
-		msgs = append(msgs, m)
-	}
-	if err := msgRows.Err(); err != nil {
-		msgRows.Close()
-		return nil, fmt.Errorf("read messages: %w", err)
-	}
-	msgRows.Close()
 	if len(msgs) == 0 {
 		return nil, fmt.Errorf("session %s not found on this runner", sessionID)
 	}
 
-	partsByMsg := make(map[string][]json.RawMessage)
-	partRows, err := db.Query(
+	parts, err := querySessionRows(db,
 		`SELECT message_id, data FROM part WHERE session_id = ? ORDER BY time_created, id`,
-		sessionID,
-	)
+		sessionID, "parts")
 	if err != nil {
-		return nil, fmt.Errorf("query parts: %w", err)
+		return nil, err
 	}
-	for partRows.Next() {
-		var msgID, data string
-		if err := partRows.Scan(&msgID, &data); err != nil {
-			partRows.Close()
-			return nil, fmt.Errorf("scan part: %w", err)
-		}
-		partsByMsg[msgID] = append(partsByMsg[msgID], json.RawMessage(data))
+	partsByMsg := make(map[string][]json.RawMessage)
+	for _, p := range parts {
+		partsByMsg[p.id] = append(partsByMsg[p.id], json.RawMessage(p.data))
 	}
-	if err := partRows.Err(); err != nil {
-		partRows.Close()
-		return nil, fmt.Errorf("read parts: %w", err)
-	}
-	partRows.Close()
 
 	out := make([]messageWithParts, 0, len(msgs))
 	for _, m := range msgs {

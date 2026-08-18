@@ -289,7 +289,8 @@ func (h *Handler) HandleControlAbort(w http.ResponseWriter, r *http.Request) {
 
 // HandleControlPermission handles
 // POST .../sessions/{sessionId}/permissions/{permissionId}
-// with body {response: "allow"|"deny", remember?: "once"|"always"}.
+// with body {response: "once"|"always"|"reject"} — OpenCode's own
+// permission vocabulary; the body is proxied to the instance untouched.
 func (h *Handler) HandleControlPermission(w http.ResponseWriter, r *http.Request) {
 	body, ok := readControlBody(w, r, false)
 	if !ok {

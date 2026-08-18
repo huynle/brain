@@ -30,8 +30,10 @@ type GoalInput struct {
 }
 
 // defaultCompleteStatuses are the task statuses that count toward completion
-// when a goal does not specify its own CompleteStatuses.
-var defaultCompleteStatuses = []string{"completed", "validated"}
+// when a goal does not specify its own CompleteStatuses. Archived counts:
+// it means "settled", so archiving a done task must not make an active goal
+// see incomplete work and regenerate it.
+var defaultCompleteStatuses = []string{"completed", "validated", "archived"}
 
 // defaultBlockedStatuses are the task statuses tracked as "blocked" when a
 // goal does not specify its own BlockedStatuses.

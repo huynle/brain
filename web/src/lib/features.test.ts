@@ -450,3 +450,94 @@ test("deriveFeatures: omitting the MR set preserves previous behavior", () => {
   );
   assert.equal(feats[0].lifecycle, "finished");
 });
+
+// ─── archived exclusion ────────────────────────────────────────────
+// Mirrors the server rule: archived counts toward nothing.
+
+test("deriveFeatures: archived + completed still derives finished with full progress", () => {
+  const out = deriveFeatures(
+    [
+      mkTask({ id: "1", status: "completed", feature_id: "auth" }),
+      mkTask({ id: "2", status: "archived", feature_id: "auth" }),
+    ],
+    "proj",
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0]!.lifecycle, "finished");
+  assert.equal(out[0]!.progress, 1);
+  assert.equal(out[0]!.taskCount.total, 1);
+  assert.equal(out[0]!.taskCount.completed, 1);
+});
+
+test("deriveFeatures: archived + validated still derives merged", () => {
+  const out = deriveFeatures(
+    [
+      mkTask({ id: "1", status: "validated", feature_id: "auth" }),
+      mkTask({ id: "2", status: "archived", feature_id: "auth" }),
+    ],
+    "proj",
+  );
+  assert.equal(out[0]!.lifecycle, "merged");
+  assert.equal(out[0]!.progress, 1);
+});
+
+test("deriveFeatures: an all-archived feature derives no feature at all", () => {
+  // It leaves the lanes entirely — same as the server computing status
+  // "archived" for the feature.
+  const out = deriveFeatures(
+    [
+      mkTask({ id: "1", status: "archived", feature_id: "auth" }),
+      mkTask({ id: "2", status: "archived", feature_id: "auth" }),
+      mkTask({ id: "3", status: "pending", feature_id: "ui" }),
+    ],
+    "proj",
+  );
+  assert.deepEqual(
+    out.map((f) => f.id),
+    ["ui"],
+  );
+});
+
+test("deriveFeatures: archived tasks are absent from ownerTaskIds", () => {
+  const out = deriveFeatures(
+    [
+      mkTask({ id: "a1", status: "pending", feature_id: "auth" }),
+      mkTask({ id: "a2", status: "archived", feature_id: "auth" }),
+    ],
+    "proj",
+  );
+  assert.deepEqual(out[0]!.ownerTaskIds, ["a1"]);
+});
+
+test("deriveFeatures: an archived abandoned task does not count as resumable", () => {
+  const out = deriveFeatures(
+    [
+      mkTask({ id: "1", status: "pending", feature_id: "auth" }),
+      mkTask({
+        id: "2",
+        status: "archived",
+        feature_id: "auth",
+        is_abandoned: true,
+      }),
+    ],
+    "proj",
+  );
+  assert.equal(out[0]!.resumableCount, 0);
+});
+
+test("deriveFeatures: an archived task's PR URL does not surface", () => {
+  const out = deriveFeatures(
+    [
+      mkTask({ id: "1", status: "pending", feature_id: "auth" }),
+      mkTask({
+        id: "2",
+        status: "archived",
+        feature_id: "auth",
+        mr_url: "https://github.com/acme/foo/pull/9",
+      }),
+    ],
+    "proj",
+  );
+  assert.equal(out[0]!.prUrl, undefined);
+  assert.equal(out[0]!.lifecycle, "in-progress");
+});

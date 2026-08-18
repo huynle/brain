@@ -567,6 +567,7 @@ body.sidebar-collapsed #app {
 .flow-lane.mr .lane-head b { color: #6a8bff; }
 .flow-lane.merged .lane-head b { color: #b98cff; }
 .lane-items { display: flex; flex-direction: column; gap: 4px; padding: 6px; min-height: 58px; }
+.lane-items.expanded { max-height: 40vh; overflow-y: auto; }
 .lane-card {
   display: flex; flex-direction: column; align-items: stretch; gap: 2px;
   border: 1px solid #1f252b;
@@ -578,7 +579,12 @@ body.sidebar-collapsed #app {
 .lane-card:hover { background: #171d23; border-color: #2a3540; }
 .lane-name { color: #eaedef; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10.5px; }
 .lane-meta { color: #6b757e; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 9.5px; }
-.lane-more { color: #6b757e; font-size: 10px; padding: 2px 4px; }
+.lane-more {
+  color: #6b757e; font-size: 10px; padding: 2px 4px;
+  background: none; border: none; border-radius: 0;
+  text-align: left; cursor: pointer;
+}
+.lane-more:hover { color: #eaedef; background: none; }
 
 /* Project card */
 .pcard {

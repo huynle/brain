@@ -4,7 +4,7 @@
  * DOM:
  *   .sidebar
  *     .sb-top (title + collapse)
- *     .sb-filters (status filters: All / Active / Ready / Blocked / Done)
+ *     .sb-filters (status filters: All / Active / Ready / Blocked / Done / Archived)
  *     .sb-section (Projects)
  *     .sb-section (Sessions)
  *     .sb-section (Runners)
@@ -38,6 +38,7 @@ export function Sidebar(): JSX.Element {
     let ready = 0;
     let blocked = 0;
     let completed = 0;
+    let archived = 0;
     for (const p of projects ?? []) {
       const live = liveProjects[p];
       if (!live) continue;
@@ -47,9 +48,10 @@ export function Sidebar(): JSX.Element {
         else if (t.status === "blocked") blocked++;
         else if (t.status === "completed" || t.status === "validated")
           completed++;
+        else if (t.status === "archived") archived++;
       }
     }
-    return { active, ready, blocked, completed };
+    return { active, ready, blocked, completed, archived };
   }, [projects, liveProjects]);
 
   if (collapsed) {
@@ -89,6 +91,7 @@ export function Sidebar(): JSX.Element {
             { key: "ready", label: "Ready", count: totals.ready },
             { key: "blocked", label: "Blocked", count: totals.blocked },
             { key: "done", label: "Done", count: totals.completed },
+            { key: "archived", label: "Archived", count: totals.archived },
           ] as Array<{ key: StatusFilter; label: string; count: number | null }>
         ).map((c) => (
           <button

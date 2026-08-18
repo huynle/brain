@@ -9,7 +9,7 @@
  *   5. `.pcard` × N — project cards
  *   6. `.empty-state` — fallback
  */
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useProjects } from "../../hooks/useProjects";
 import { useLive } from "../../lib/sse";
 import { useRunners } from "../../hooks/useRunners";
@@ -25,6 +25,7 @@ import {
   type DerivedFeature,
   type FeatureLifecycle,
 } from "../../lib/features";
+import { laneVisible } from "../../lib/lane";
 import { ProjectCard } from "./ProjectCard";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
 import type { Task } from "../../lib/types";
@@ -53,6 +54,12 @@ export function OverviewGrid(): JSX.Element {
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const toast = useUI((s) => s.toast);
+
+  // Per-lane expansion for the flow-board, keyed by lifecycle. Ephemeral
+  // on purpose — live buffers reset on reload per wireframe rules.
+  const [expandedLanes, setExpandedLanes] = useState<Record<string, boolean>>(
+    {},
+  );
 
   // Feature rows here span projects, so the factory form supplies a
   // context per row's own project. One useRowActions instance serves the
@@ -314,14 +321,16 @@ export function OverviewGrid(): JSX.Element {
         ).map(([key, laneClass]) => {
           const items = byLifecycle[key];
           const tone = LIFECYCLE_TONE[key];
+          const expanded = !!expandedLanes[key];
+          const { visible, hiddenCount } = laneVisible(items, expanded);
           return (
             <div key={key} className={`flow-lane ${laneClass}`}>
               <div className="lane-head">
                 <span>{tone.label}</span>
                 <b>{items.length}</b>
               </div>
-              <div className="lane-items">
-                {items.slice(0, 4).map((f) => (
+              <div className={`lane-items${expanded ? " expanded" : ""}`}>
+                {visible.map((f) => (
                   <button
                     key={`${f.projectId}:${f.id}`}
                     className="lane-card"
@@ -339,10 +348,19 @@ export function OverviewGrid(): JSX.Element {
                     </span>
                   </button>
                 ))}
-                {items.length > 4 && (
-                  <span className="lane-more">
-                    +{items.length - 4} more
-                  </span>
+                {(hiddenCount > 0 || expanded) && (
+                  <button
+                    type="button"
+                    className="lane-more"
+                    onClick={() =>
+                      setExpandedLanes((prev) => ({
+                        ...prev,
+                        [key]: !prev[key],
+                      }))
+                    }
+                  >
+                    {expanded ? "Show less" : `+${hiddenCount} more`}
+                  </button>
                 )}
               </div>
             </div>

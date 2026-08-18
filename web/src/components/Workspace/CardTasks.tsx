@@ -91,6 +91,11 @@ export function CardTasks({
   const openModal = useModal((s) => s.open);
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
+  const archivedExpanded = useWorkspace(
+    (s) => s.archivedExpanded[projectId] ?? false,
+  );
+  const toggleArchivedExpanded = useWorkspace((s) => s.toggleArchivedExpanded);
+  const statusFilter = useWorkspace((s) => s.statusFilter);
   const { runners } = useRunners();
 
   const taskCtx = useTaskActionContext(projectId);
@@ -110,6 +115,19 @@ export function CardTasks({
   const selActive =
     selScoped && (selTaskIds.size > 0 || selFeatureIds.size > 0);
 
+  // Archived tasks leave the default rows entirely (mirroring the server
+  // rule that they count toward nothing) and collect in a fold at the
+  // bottom, modeled on the merged-features fold in CardFeatures. The
+  // sidebar "Archived" filter forces the fold open — the user asked to
+  // see exactly these rows.
+  const archivedTasks = useMemo(
+    () => tasks.filter((t) => t.status === "archived"),
+    [tasks],
+  );
+  const archivedForced = statusFilter === "archived";
+  const showArchived =
+    archivedTasks.length > 0 && (archivedExpanded || archivedForced);
+
   // Group tasks by feature_id (using DerivedFeature order), then turn
   // each bucket into dependency-ordered rows. Dependency edges are
   // resolved per bucket, so a cross-feature dep does not drag a task
@@ -118,6 +136,7 @@ export function CardTasks({
   const rowsByFeat = useMemo(() => {
     const buckets = new Map<string, Task[]>();
     for (const t of tasks) {
+      if (t.status === "archived") continue; // rendered in the fold below
       const key = t.feature_id ?? NO_FEATURE;
       const arr = buckets.get(key);
       if (arr) arr.push(t);
@@ -131,6 +150,14 @@ export function CardTasks({
   }, [tasks]);
 
   const orphanRows = rowsByFeat.get(NO_FEATURE) ?? [];
+
+  // Archived rows keep their dependency ordering but render in one flat
+  // group: an all-archived feature derives no DerivedFeature (it left the
+  // lanes), so there is no per-feature header to hang them under.
+  const archivedRows = useMemo(
+    () => flattenDepForest(buildTaskForest(archivedTasks)),
+    [archivedTasks],
+  );
 
   /** One task row, identical whether it sits under a feature or not. */
   const renderTaskRow = (row: DepRow<Task>) => {
@@ -300,11 +327,46 @@ export function CardTasks({
         </div>
       )}
 
-      {features.length === 0 && orphanRows.length === 0 && (
-        <div style={{ color: "#6b757e", fontSize: 11, padding: "6px 0" }}>
-          No tasks yet.
+      {showArchived && (
+        <div className="feat done">
+          <div className="feat-head">
+            <span className="name" style={{ color: "#6b757e" }}>
+              Archived
+            </span>
+            <span className="age">{archivedTasks.length} tasks</span>
+          </div>
+          {archivedRows.map(renderTaskRow)}
         </div>
       )}
+
+      {/* Same dashed expander as the merged-features fold. Hidden while
+          the sidebar filter forces the rows open — a toggle that cannot
+          take effect would just lie. */}
+      {archivedTasks.length > 0 && !archivedForced && (
+        <button
+          onClick={() => toggleArchivedExpanded(projectId)}
+          style={{
+            border: "1px dashed #22272c",
+            padding: "5px 8px",
+            width: "100%",
+            textAlign: "left",
+            color: "#6b757e",
+            fontSize: 11,
+            marginTop: 6,
+          }}
+        >
+          {archivedExpanded ? "▾" : "▸"} {archivedTasks.length} archived task
+          {archivedTasks.length === 1 ? "" : "s"}
+        </button>
+      )}
+
+      {features.length === 0 &&
+        orphanRows.length === 0 &&
+        archivedTasks.length === 0 && (
+          <div style={{ color: "#6b757e", fontSize: 11, padding: "6px 0" }}>
+            No tasks yet.
+          </div>
+        )}
 
       {overlays}
     </div>

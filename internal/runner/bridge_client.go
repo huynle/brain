@@ -729,6 +729,9 @@ func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
 		}
 		// Fall through to on-disk read if the live server can't answer.
 	}
+	if body, err := readSessionHistorySQLite(sessionID); err == nil {
+		return body, nil
+	}
 	if body, err := readSessionHistory(sessionID); err == nil {
 		return body, nil
 	}

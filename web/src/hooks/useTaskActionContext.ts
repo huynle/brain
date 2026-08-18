@@ -19,10 +19,12 @@
 import { useMemo } from "react";
 
 import { useModal } from "../store/modal";
+import { useSelection } from "../store/selection";
 import { useWorkspace } from "../store/workspace";
 import { useUI } from "../store/ui";
 import {
   controlAbortTask,
+  controlSpawnInstance,
   deleteEntry,
   getDispatchLease,
   runOrTriggerTask,
@@ -36,7 +38,9 @@ import {
 } from "../lib/actions/taskActions";
 import { withForceRetry } from "../lib/actions/forceRetry";
 import { forceConfirmFor } from "../lib/actions/forceConfirm";
-import type { Task, TaskStatus } from "../lib/types";
+import { liveSessionRef } from "../lib/sessionRef";
+import { useSessions } from "./useSessions";
+import type { SessionRef, Task, TaskStatus } from "../lib/types";
 
 /**
  * Factory form, for callers that span several projects at once (the
@@ -49,10 +53,25 @@ export function useTaskActionContextFactory(): (
   const openModal = useModal((s) => s.open);
   const closeModal = useModal((s) => s.close);
   const openInFocus = useWorkspace((s) => s.openInFocus);
+  const openSessionRef = useWorkspace((s) => s.openSessionRef);
+  const setSteerIntent = useWorkspace((s) => s.setSteerIntent);
   const toast = useUI((s) => s.toast);
+  // Instance registry for the live-session query. Poll-backed (8s); the
+  // context memo refreshes with it so verb gates track instance state.
+  const { allInstances } = useSessions();
 
   return useMemo(
     () => (projectId: string) => ({
+      // getState() (not a hook subscription): builders run on every row
+      // render, and the row components subscribe to the selection store
+      // themselves — the label stays fresh without a stale closure.
+      toggleSelect: (task: Task) =>
+        useSelection.getState().toggleTask(projectId, task.id),
+      isSelected: (task: Task) => {
+        const s = useSelection.getState();
+        return s.projectId === projectId && s.taskIds.has(task.id);
+      },
+
       runTask: async (task: Task) => {
         const r = await withForceRetry(
           (force) => runOrTriggerTask(projectId, task.id, force),
@@ -157,8 +176,62 @@ export function useTaskActionContextFactory(): (
           `Logs ${task.id.slice(0, 8)}`,
         );
       },
+
+      liveSessionRef: (task: Task) =>
+        liveSessionRef({ id: task.id, projectId }, allInstances),
+      openSession: (_task: Task, ref: SessionRef) => {
+        closeModal();
+        openSessionRef(ref);
+      },
+      openTranscript: (_task: Task, ref: SessionRef) => {
+        closeModal();
+        openSessionRef(ref);
+      },
+      openSteer: (_task: Task, ref: SessionRef) => {
+        closeModal();
+        setSteerIntent(true);
+        openSessionRef(ref);
+      },
+
+      continueSession: async (task: Task, ref: SessionRef) => {
+        if (ref.mode !== "history") return;
+        const title = `continue: ${task.title || task.id}`;
+        const spawn = (workdir: string) =>
+          controlSpawnInstance(ref.runner_id, { workdir, title });
+
+        const primary = ref.workdir ?? task.workdir ?? "";
+        let instance;
+        try {
+          instance = (await spawn(primary)).instance;
+        } catch (err) {
+          // Worktree-mode workdirs are force-removed at feature checkout —
+          // the common case for merged tasks, so fall back to the task's
+          // own configured workdir when the recorded one is gone.
+          const fallback =
+            task.workdir && task.workdir !== primary ? task.workdir : undefined;
+          const msg = String((err as Error)?.message ?? err);
+          if (fallback && /workdir/i.test(msg)) {
+            instance = (await spawn(fallback)).instance;
+            toast(
+              `Original worktree was removed — continued from ${fallback} instead; ` +
+                "file references in the old session may not resolve.",
+              "warning",
+            );
+          } else {
+            throw err;
+          }
+        }
+        closeModal();
+        openSessionRef({
+          mode: "live",
+          runner_id: ref.runner_id,
+          instance_id: instance.instance_id,
+          session_id: ref.session_id,
+        });
+        toast("Session reopened — send a message to continue.", "success");
+      },
     }),
-    [openModal, closeModal, openInFocus, toast],
+    [openModal, closeModal, openInFocus, openSessionRef, setSteerIntent, toast, allInstances],
   );
 }
 

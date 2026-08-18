@@ -431,6 +431,28 @@ export interface OcPermission {
   [k: string]: unknown;
 }
 
+/**
+ * How a session surface is addressed. `live` points at a running
+ * instance (transcript + events reachable through it); `history`
+ * addresses a session with no instance — the transcript comes from the
+ * instance-independent history endpoint on the recorded runner.
+ */
+export type SessionRef =
+  | {
+      mode: "live";
+      runner_id: string;
+      instance_id: string;
+      session_id?: string;
+    }
+  | {
+      mode: "history";
+      runner_id: string;
+      session_id: string;
+      task_id?: string;
+      project_id?: string;
+      workdir?: string;
+    };
+
 export interface OcEvent {
   type: string;
   properties?: Record<string, unknown> & {

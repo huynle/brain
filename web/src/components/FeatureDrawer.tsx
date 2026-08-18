@@ -20,12 +20,14 @@ import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
 import { useRowActions } from "../hooks/useRowActions";
 import { useFeatureActionContext } from "../hooks/useFeatureActionContext";
+import { useTaskActionContext } from "../hooks/useTaskActionContext";
 import {
   ApiError,
   assignFeatureToRunner,
   clearFeatureAssignment,
 } from "../lib/api";
 import { buildFeatureActions } from "../lib/actions/featureActions";
+import { buildTaskActions } from "../lib/actions/taskActions";
 import { deriveFeatures } from "../lib/features";
 import type { Task } from "../lib/types";
 
@@ -49,8 +51,13 @@ export function FeatureDrawer(): JSX.Element | null {
   const toast = useUI((s) => s.toast);
   const { runners } = useRunners();
   const [assignBusy, setAssignBusy] = useState(false);
+  // Archived-tasks fold. Local (not the persisted per-project toggle):
+  // the drawer is transient and scoped to one feature, so a sticky
+  // cross-feature expansion would surprise more than it helps.
+  const [archivedOpen, setArchivedOpen] = useState(false);
 
   const featureCtx = useFeatureActionContext(drawer?.projectId ?? "");
+  const taskCtx = useTaskActionContext(drawer?.projectId ?? "");
   const { rowProps, overlays } = useRowActions();
 
   // Guard against returning a fresh [] on every render when no drawer
@@ -91,8 +98,34 @@ export function FeatureDrawer(): JSX.Element | null {
   const tone = LIFECYCLE_TONE[feature.lifecycle];
   const runnerId = featureAssignments[feature.id];
   const runner = runners.find((r) => r.runner_id === runnerId);
-  const featureTasks = tasks.filter((t) => t.feature_id === feature.id);
+  // Archived members fold away, matching the derived feature (which no
+  // longer counts them) and the CardTasks archived fold.
+  const memberTasks = tasks.filter((t) => t.feature_id === feature.id);
+  const featureTasks = memberTasks.filter((t) => t.status !== "archived");
+  const archivedTasks = memberTasks.filter((t) => t.status === "archived");
   const actions = buildFeatureActions(feature, featureCtx);
+
+  const renderTaskRow = (t: Task) => (
+    <div
+      key={t.id}
+      className="drawer-task"
+      {...rowProps(buildTaskActions(t, taskCtx), t.title || t.id, () =>
+        openModal("task", {
+          projectId: drawer.projectId,
+          taskId: t.id,
+        }),
+      )}
+      onClick={() =>
+        openModal("task", {
+          projectId: drawer.projectId,
+          taskId: t.id,
+        })
+      }
+    >
+      <span>{t.status}</span>
+      <b>{t.title || t.id}</b>
+    </div>
+  );
 
   /** Assign for real: server first-class, local mirror for optimism. */
   const doAssign = async (targetRunnerId: string) => {
@@ -272,21 +305,25 @@ export function FeatureDrawer(): JSX.Element | null {
             No tasks yet.
           </div>
         )}
-        {featureTasks.map((t) => (
-          <div
-            key={t.id}
-            className="drawer-task"
-            onClick={() =>
-              openModal("task", {
-                projectId: drawer.projectId,
-                taskId: t.id,
-              })
-            }
+        {featureTasks.map(renderTaskRow)}
+        {archivedTasks.length > 0 && (
+          <button
+            onClick={() => setArchivedOpen((v) => !v)}
+            style={{
+              border: "1px dashed #22272c",
+              padding: "5px 8px",
+              width: "100%",
+              textAlign: "left",
+              color: "#6b757e",
+              fontSize: 11,
+              marginTop: 6,
+            }}
           >
-            <span>{t.status}</span>
-            <b>{t.title || t.id}</b>
-          </div>
-        ))}
+            {archivedOpen ? "▾" : "▸"} {archivedTasks.length} archived task
+            {archivedTasks.length === 1 ? "" : "s"}
+          </button>
+        )}
+        {archivedOpen && archivedTasks.map(renderTaskRow)}
       </div>
 
       {overlays}

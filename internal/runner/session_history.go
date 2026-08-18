@@ -20,9 +20,9 @@ import (
 // {info, parts} ordered oldest-first — so the browser renders it identically
 // to a live transcript.
 
-// opencodeStorageDir returns OpenCode's on-disk storage directory, resolved the
-// same way OpenCode does (XDG_DATA_HOME or ~/.local/share, then /opencode).
-func opencodeStorageDir() (string, error) {
+// opencodeDataDir returns OpenCode's data directory, resolved the same way
+// OpenCode does (XDG_DATA_HOME or ~/.local/share, then /opencode).
+func opencodeDataDir() (string, error) {
 	dataHome := os.Getenv("XDG_DATA_HOME")
 	if dataHome == "" {
 		home, err := os.UserHomeDir()
@@ -31,7 +31,17 @@ func opencodeStorageDir() (string, error) {
 		}
 		dataHome = filepath.Join(home, ".local", "share")
 	}
-	return filepath.Join(dataHome, "opencode", "storage"), nil
+	return filepath.Join(dataHome, "opencode"), nil
+}
+
+// opencodeStorageDir returns OpenCode's on-disk storage directory (pre-1.x
+// file-per-message layout).
+func opencodeStorageDir() (string, error) {
+	dataDir, err := opencodeDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dataDir, "storage"), nil
 }
 
 // messageWithParts is the GET /session/:id/message element shape.

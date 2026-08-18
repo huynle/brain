@@ -551,7 +551,21 @@ func (h *Handler) finalizeAutomationRun(ctx context.Context, entry *types.BrainE
 		runStatus = "completed"
 	case "blocked":
 		runStatus = "blocked"
-	case "cancelled", "superseded", "archived":
+	case "cancelled", "superseded":
+		runStatus = "cancelled"
+	case "archived":
+		// Archive settles a task without changing its outcome. A run that
+		// already finalized keeps its audit record — archiving a completed
+		// task must not rewrite a completed run to cancelled. Only a
+		// still-open (queued) run is closed as cancelled: archiving
+		// unfinished work doubles as retiring it. Recall failure falls
+		// through to finalize, matching the best-effort contract.
+		if run, err := h.brain.Recall(ctx, entry.AutomationRunID); err == nil {
+			switch run.Status {
+			case "completed", "blocked", "cancelled":
+				return
+			}
+		}
 		runStatus = "cancelled"
 	default:
 		// Non-terminal (pending/in_progress/active/draft): the run is

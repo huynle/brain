@@ -1,7 +1,7 @@
 // Task-status filter helpers.
 //
-// The sidebar chip row (All / Active / Ready / Blocked / Done) drives a
-// `StatusFilter` value in the workspace store. Both the sidebar Projects
+// The sidebar chip row (All / Active / Ready / Blocked / Done / Archived)
+// drives a `StatusFilter` value in the workspace store. Both the sidebar Projects
 // list and the workspace overview grid narrow their project rows/cards to
 // projects matching the current filter — a project matches iff at least
 // one of its tasks has the corresponding status.
@@ -33,6 +33,8 @@ export function taskMatchesStatusFilter(
       return task.status === "blocked";
     case "done":
       return task.status === "completed" || task.status === "validated";
+    case "archived":
+      return task.status === "archived";
   }
 }
 

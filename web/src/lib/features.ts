@@ -37,6 +37,11 @@
  *
  * Tasks without a `feature_id` (undefined or empty string) are
  * skipped entirely — the caller's project-level views handle those.
+ *
+ * Archived tasks are likewise skipped, mirroring the server's stats
+ * rule: they count toward nothing — not totals, not progress, not
+ * lifecycle, not `ownerTaskIds`. A feature whose tasks are ALL
+ * archived therefore derives no feature at all and leaves the lanes.
  */
 import { buildDepForest, type DepNode } from "./depTree";
 import type { Task } from "./types";
@@ -122,6 +127,7 @@ export function deriveFeatures(
   for (const t of tasks) {
     const fid = t.feature_id;
     if (!fid) continue; // filter out unassigned tasks
+    if (t.status === "archived") continue; // archived counts toward nothing
     let bucket = groups.get(fid);
     if (!bucket) {
       bucket = [];

@@ -48,10 +48,16 @@ type FeatureDependencyResult struct {
 	} `json:"stats"`
 }
 
-// computeTaskStats computes task statistics for a feature.
+// computeTaskStats computes task statistics for a feature. Archived tasks
+// are settled-and-shelved: they are excluded from Total and every bucket so
+// they neither deflate progress ratios nor resurrect a finished feature.
 func computeTaskStats(tasks []types.ResolvedTask) FeatureTaskStats {
-	stats := FeatureTaskStats{Total: len(tasks)}
+	stats := FeatureTaskStats{}
 	for _, task := range tasks {
+		if task.Status == "archived" {
+			continue
+		}
+		stats.Total++
 		switch task.Status {
 		case "pending":
 			stats.Pending++
@@ -69,7 +75,8 @@ func computeTaskStats(tasks []types.ResolvedTask) FeatureTaskStats {
 // ComputeFeatureStatus computes feature status from constituent task statuses.
 //
 // Rules:
-//   - All completed -> completed
+//   - All archived -> archived
+//   - All completed (ignoring archived) -> completed
 //   - Any in_progress -> in_progress
 //   - Any blocked (and no in_progress) -> blocked
 //   - Otherwise -> pending
@@ -80,6 +87,11 @@ func ComputeFeatureStatus(tasks []types.ResolvedTask) string {
 
 	stats := computeTaskStats(tasks)
 
+	if stats.Total == 0 {
+		// Tasks exist but all are archived: the feature is shelved, not
+		// pending — "pending" would resurrect it as active work.
+		return "archived"
+	}
 	if stats.Completed == stats.Total {
 		return "completed"
 	}
@@ -220,8 +232,8 @@ func classifyFeature(
 		return "blocked", nil, nil
 	}
 
-	// Feature already completed - no classification needed
-	if feature.Status == "completed" {
+	// Feature already settled (completed or archived) - no classification needed
+	if feature.Status == "completed" || feature.Status == "archived" {
 		return "ready", nil, nil
 	}
 
@@ -339,11 +351,11 @@ func SortFeaturesByPriority(features []*ComputedFeature) []*ComputedFeature {
 }
 
 // GetReadyFeatures returns features that are ready to execute (all dependencies satisfied).
-// Excludes completed features. Sorted by priority.
+// Excludes completed and archived features. Sorted by priority.
 func GetReadyFeatures(features []*ComputedFeature) []*ComputedFeature {
 	var ready []*ComputedFeature
 	for _, f := range features {
-		if f.Classification == "ready" && f.Status != "completed" {
+		if f.Classification == "ready" && f.Status != "completed" && f.Status != "archived" {
 			ready = append(ready, f)
 		}
 	}

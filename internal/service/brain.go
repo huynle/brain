@@ -1550,13 +1550,18 @@ var completionStatuses = map[string]bool{
 // Returns (newValue, true) when the field should be written: an RFC3339
 // timestamp on entering a completion status, "" on leaving one (reopen).
 // Moving between completion statuses (completed→validated) keeps the
-// original stamp, so returns changed=false.
+// original stamp, so returns changed=false. Archiving also keeps whatever
+// stamp exists: archive means "settled", not "un-completed", so a
+// completed→archived transition preserves completed_at while a
+// pending→archived transition never mints one.
 func completionStamp(oldStatus, newStatus string) (string, bool) {
 	wasDone := completionStatuses[oldStatus]
 	isDone := completionStatuses[newStatus]
 	switch {
 	case isDone && !wasDone:
 		return types.TimeNowUTC().Format(time.RFC3339), true
+	case newStatus == "archived":
+		return "", false
 	case !isDone && wasDone:
 		return "", true
 	default:

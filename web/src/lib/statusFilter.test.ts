@@ -33,6 +33,21 @@ test("taskMatchesStatusFilter: done matches completed AND validated", () => {
   assert.equal(taskMatchesStatusFilter({ status: "in_progress" }, "done"), false);
 });
 
+test("taskMatchesStatusFilter: archived matches archived only", () => {
+  assert.equal(taskMatchesStatusFilter({ status: "archived" }, "archived"), true);
+  assert.equal(taskMatchesStatusFilter({ status: "completed" }, "archived"), false);
+  assert.equal(taskMatchesStatusFilter({ status: "validated" }, "archived"), false);
+  assert.equal(taskMatchesStatusFilter({}, "archived"), false);
+});
+
+test("taskMatchesStatusFilter: done does NOT match archived (Done stays completed+validated)", () => {
+  assert.equal(taskMatchesStatusFilter({ status: "archived" }, "done"), false);
+});
+
+test("taskMatchesStatusFilter: all matches archived", () => {
+  assert.equal(taskMatchesStatusFilter({ status: "archived" }, "all"), true);
+});
+
 test("projectMatchesStatusFilter: all matches every project including empty", () => {
   assert.equal(projectMatchesStatusFilter([], "all"), true);
   assert.equal(projectMatchesStatusFilter([{ status: "in_progress" }], "all"), true);
@@ -43,6 +58,21 @@ test("projectMatchesStatusFilter: empty project never matches specific filter", 
   assert.equal(projectMatchesStatusFilter([], "blocked"), false);
   assert.equal(projectMatchesStatusFilter([], "ready"), false);
   assert.equal(projectMatchesStatusFilter([], "done"), false);
+  assert.equal(projectMatchesStatusFilter([], "archived"), false);
+});
+
+test("projectMatchesStatusFilter: archived matches iff a task is archived", () => {
+  assert.equal(
+    projectMatchesStatusFilter(
+      [{ status: "pending" }, { status: "archived" }],
+      "archived",
+    ),
+    true,
+  );
+  assert.equal(
+    projectMatchesStatusFilter([{ status: "completed" }], "archived"),
+    false,
+  );
 });
 
 test("projectMatchesStatusFilter: matches iff at least one task has the status", () => {

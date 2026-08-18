@@ -26,6 +26,7 @@
  */
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
+import type { SessionRef } from "../lib/types";
 import {
   addLeafAtEdge,
   newLeafNode,
@@ -51,15 +52,26 @@ export type SidebarSectionKey = "projects" | "sessions" | "runners";
 
 /**
  * Task-status filter driven by the sidebar chips (All / Active / Ready /
- * Blocked / Done). Applied to both the sidebar Projects list AND the
- * workspace overview grid — a project is included iff it has at least one
- * task with a matching status. `all` disables the filter entirely.
+ * Blocked / Done / Archived). Applied to both the sidebar Projects list AND
+ * the workspace overview grid — a project is included iff it has at least
+ * one task with a matching status. `all` disables the filter entirely.
  */
-export type StatusFilter = "all" | "active" | "ready" | "blocked" | "done";
+export type StatusFilter =
+  | "all"
+  | "active"
+  | "ready"
+  | "blocked"
+  | "done"
+  | "archived";
 
 export interface WorkspaceState {
   view: WorkspaceView;
   focusSessionId?: string;
+  /** Session-view target when addressed by SessionRef (history mode or
+   *  a fully-resolved live ref). Mutually exclusive with
+   *  `focusSessionId`, which remains the instance-id fast path used by
+   *  the sidebar/MobileNav live rows. */
+  focusSessionRef?: SessionRef | null;
   dockTree: DockNode | null;
   /** Last leaf a user interacted with — used as the default drop
    *  target when they invoke `openInFocus` from a non-drag path
@@ -83,6 +95,9 @@ export interface WorkspaceState {
   /** Per-project expansion state for the "N merged features" fold
    *  in CardFeatures. Missing key = collapsed (default). */
   mergedExpanded: Record<string, boolean>;
+  /** Per-project expansion state for the "N archived tasks" fold
+   *  in CardTasks. Missing key = collapsed (default). */
+  archivedExpanded: Record<string, boolean>;
   /** Explicitly-hidden project ids. Anything NOT in this set is
    *  visible in the overview grid + sidebar Projects section. */
   hiddenProjects: string[];
@@ -94,6 +109,13 @@ export interface WorkspaceState {
   // ─── actions: view ────────────────────────────────────────────
   setView(v: WorkspaceView): void;
   setFocusSession(id: string | undefined): void;
+  /** Open the session view addressed by a SessionRef (history refs and
+   *  task-verb entry points; live rows keep using setFocusSession). */
+  openSessionRef(ref: SessionRef): void;
+  /** One-shot "focus the composer" intent, set by the Steer verb and
+   *  consumed (cleared) by the composer on mount. Ephemeral. */
+  steerIntent: boolean;
+  setSteerIntent(v: boolean): void;
   toggleSidebarSection(k: SidebarSectionKey): void;
   toggleSidebarCollapsed(): void;
   setAssistantOpen(open: boolean): void;
@@ -109,6 +131,7 @@ export interface WorkspaceState {
   assignFeature(featureId: string, runnerId: string): void;
   unassignFeature(featureId: string): void;
   toggleMergedExpanded(projectId: string): void;
+  toggleArchivedExpanded(projectId: string): void;
   hideProject(projectId: string): void;
   showProject(projectId: string): void;
   toggleProjectVisibility(projectId: string): void;
@@ -185,6 +208,7 @@ export const useWorkspace = create<WorkspaceState>()(
     (set, get) => ({
       view: "overview",
       focusSessionId: undefined,
+      focusSessionRef: null,
       dockTree: null,
       lastFocusLeafId: null,
       sidebarSection: { projects: true, sessions: true, runners: true },
@@ -197,6 +221,7 @@ export const useWorkspace = create<WorkspaceState>()(
       streaming: false,
       featureAssignments: {},
       mergedExpanded: {},
+      archivedExpanded: {},
       hiddenProjects: [],
       statusFilter: "all" as StatusFilter,
 
@@ -205,8 +230,19 @@ export const useWorkspace = create<WorkspaceState>()(
       setFocusSession: (id) =>
         set((s) => ({
           focusSessionId: id,
+          focusSessionRef: null,
           view: id ? "session" : s.view,
         })),
+
+      openSessionRef: (ref) =>
+        set({
+          focusSessionRef: ref,
+          focusSessionId: undefined,
+          view: "session",
+        }),
+
+      steerIntent: false,
+      setSteerIntent: (v) => set({ steerIntent: v }),
 
       toggleSidebarSection: (k) =>
         set((s) => ({
@@ -261,6 +297,14 @@ export const useWorkspace = create<WorkspaceState>()(
           mergedExpanded: {
             ...s.mergedExpanded,
             [projectId]: !s.mergedExpanded[projectId],
+          },
+        })),
+
+      toggleArchivedExpanded: (projectId) =>
+        set((s) => ({
+          archivedExpanded: {
+            ...s.archivedExpanded,
+            [projectId]: !s.archivedExpanded[projectId],
           },
         })),
 
@@ -382,11 +426,13 @@ export const useWorkspace = create<WorkspaceState>()(
       partialize: (s) => ({
         view: s.view,
         focusSessionId: s.focusSessionId,
+        focusSessionRef: s.focusSessionRef,
         sidebarSection: s.sidebarSection,
         sidebarCollapsed: s.sidebarCollapsed,
         theme: s.theme,
         featureAssignments: s.featureAssignments,
         mergedExpanded: s.mergedExpanded,
+        archivedExpanded: s.archivedExpanded,
         hiddenProjects: s.hiddenProjects,
         statusFilter: s.statusFilter,
         dockTree: s.dockTree,

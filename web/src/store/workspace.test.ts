@@ -43,6 +43,9 @@ function resetStore() {
     mobile: INITIAL.mobile,
     streaming: INITIAL.streaming,
     featureAssignments: { ...INITIAL.featureAssignments },
+    mergedExpanded: {},
+    archivedExpanded: {},
+    statusFilter: "all",
   });
 }
 
@@ -178,6 +181,46 @@ test("workspace: unassignFeature on a missing key is a no-op", () => {
   resetStore();
   useWorkspace.getState().unassignFeature("does-not-exist");
   assert.deepEqual(useWorkspace.getState().featureAssignments, {});
+});
+
+// ─── archived fold + filter ──────────────────────────────────────────
+
+test("workspace: archivedExpanded starts empty (collapsed by default)", () => {
+  resetStore();
+  assert.deepEqual(useWorkspace.getState().archivedExpanded, {});
+});
+
+test("workspace: toggleArchivedExpanded flips one project's fold", () => {
+  resetStore();
+  useWorkspace.getState().toggleArchivedExpanded("p1");
+  assert.equal(useWorkspace.getState().archivedExpanded["p1"], true);
+  useWorkspace.getState().toggleArchivedExpanded("p1");
+  assert.equal(useWorkspace.getState().archivedExpanded["p1"], false);
+});
+
+test("workspace: toggleArchivedExpanded leaves other projects untouched", () => {
+  resetStore();
+  useWorkspace.getState().toggleArchivedExpanded("p1");
+  useWorkspace.getState().toggleArchivedExpanded("p2");
+  useWorkspace.getState().toggleArchivedExpanded("p1");
+  const m = useWorkspace.getState().archivedExpanded;
+  assert.equal(m["p1"], false);
+  assert.equal(m["p2"], true);
+});
+
+test("workspace: archived and merged folds are independent maps", () => {
+  resetStore();
+  useWorkspace.getState().toggleArchivedExpanded("p1");
+  assert.deepEqual(useWorkspace.getState().mergedExpanded, {});
+  useWorkspace.getState().toggleMergedExpanded("p1");
+  assert.equal(useWorkspace.getState().archivedExpanded["p1"], true);
+  assert.equal(useWorkspace.getState().mergedExpanded["p1"], true);
+});
+
+test("workspace: setStatusFilter accepts archived", () => {
+  resetStore();
+  useWorkspace.getState().setStatusFilter("archived");
+  assert.equal(useWorkspace.getState().statusFilter, "archived");
 });
 
 // ─── dock tree actions (Phase 7) ──────────────────────────────────────

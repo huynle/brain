@@ -11,6 +11,7 @@ import { test } from "node:test";
 
 import {
   affectedTaskCount,
+  archiveFeatureBlockedReason,
   buildFeatureActions,
   buildFeatureStatusActions,
   cancelFeatureBlockedReason,
@@ -79,6 +80,7 @@ test("every core feature verb is present", () => {
     "checkout",
     "status",
     "cancel",
+    "archive",
     "metadata",
     "assign",
     "unassign",
@@ -256,6 +258,71 @@ test("delete is disabled for an empty feature", () => {
     ctx,
   ).get("delete")!;
   assert.equal(isEnabled(del), false);
+});
+
+// ─── archive ───────────────────────────────────────────────────────
+
+for (const lifecycle of ["finished", "merged"] as const) {
+  test(`archive is enabled for a ${lifecycle} feature`, () => {
+    const { ctx } = recorder();
+    const f = mkFeature({
+      lifecycle,
+      taskCount: { total: 4, completed: 4, blocked: 0, active: 0 },
+    });
+    assert.equal(archiveFeatureBlockedReason(f), "");
+    assert.equal(isEnabled(byId(f, ctx).get("archive")!), true);
+  });
+}
+
+for (const lifecycle of ["in-progress", "blocked", "mr-open"] as const) {
+  test(`archive is disabled — never hidden — for a ${lifecycle} feature`, () => {
+    const { ctx } = recorder();
+    const archive = byId(mkFeature({ lifecycle }), ctx).get("archive");
+    assert.ok(archive, "archive must render disabled, not disappear");
+    assert.equal(isEnabled(archive), false);
+    assert.equal(
+      archive.disabledReason,
+      "Feature has active work — archive is for settled features",
+    );
+  });
+}
+
+test("archive is disabled for an empty feature", () => {
+  assert.match(
+    archiveFeatureBlockedReason(
+      mkFeature({
+        lifecycle: "finished",
+        taskCount: { total: 0, completed: 0, blocked: 0, active: 0 },
+      }),
+    ),
+    /no tasks/i,
+  );
+});
+
+test("archive confirms the blast radius at the reversible tier — no typing", () => {
+  const { ctx } = recorder();
+  const archive = byId(mkFeature({ lifecycle: "finished" }), ctx).get(
+    "archive",
+  )!;
+  assert.ok(archive.confirm, "archive must confirm");
+  assert.equal(archive.confirm.typeToConfirm, undefined);
+  assert.match(archive.confirm.body, /All 4 tasks/);
+  assert.match(archive.confirm.body, /reversible/i);
+  assert.match(archive.confirm.body, /Archived filter/);
+});
+
+test("archive routes to setStatusForAll archived", async () => {
+  const { calls, ctx } = recorder();
+  await byId(mkFeature({ lifecycle: "merged" }), ctx).get("archive")!.run();
+  assert.deepEqual(calls, ["status:checkout-flow:archived"]);
+});
+
+test("archive sits in the state group directly after cancel", () => {
+  const { ctx } = recorder();
+  const actions = buildFeatureActions(mkFeature(), ctx);
+  const ids = actions.map((a) => a.id);
+  assert.equal(ids.indexOf("archive"), ids.indexOf("cancel") + 1);
+  assert.equal(actions[ids.indexOf("archive")]!.group, "state");
 });
 
 // ─── checkout ──────────────────────────────────────────────────────

@@ -11,6 +11,7 @@ import { test } from "node:test";
 
 import {
   abortBlockedReason,
+  archiveBlockedReason,
   buildStatusActions,
   buildTaskActions,
   deleteBlockedReason,
@@ -35,7 +36,7 @@ function mkTask(over: Partial<Task> = {}): Task {
 }
 
 /** Records what each action asked for, without performing anything. */
-function recorder() {
+function recorder(over: Partial<TaskActionContext> = {}) {
   const calls: string[] = [];
   const ctx: TaskActionContext = {
     toggleSelect: (t) => void calls.push(`select:${t.id}`),
@@ -50,6 +51,18 @@ function recorder() {
     openMetadata: (t) => void calls.push(`metadata:${t.id}`),
     openStatusPicker: (t) => void calls.push(`picker:${t.id}`),
     openGoalCreate: (t) => void calls.push(`goal-create:${t.id}`),
+    liveSessionRef: () => undefined,
+    openSession: (t) => void calls.push(`watch:${t.id}`),
+    openTranscript: (t, ref) =>
+      void calls.push(
+        `transcript:${t.id}:${ref.mode === "history" ? ref.session_id : "?"}`,
+      ),
+    openSteer: (t) => void calls.push(`steer:${t.id}`),
+    continueSession: async (t, ref) =>
+      void calls.push(
+        `continue:${t.id}:${ref.mode === "history" ? ref.session_id : "?"}`,
+      ),
+    ...over,
   };
   return { calls, ctx };
 }
@@ -68,6 +81,7 @@ test("every core verb is present for an ordinary pending task", () => {
     "run",
     "status",
     "cancel",
+    "archive",
     "metadata",
     "set-goal",
     "details",
@@ -198,6 +212,103 @@ test("cancelling a pending task needs no confirmation", () => {
   const { ctx } = recorder();
   const cancel = byId(mkTask({ status: "pending" }), ctx).get("cancel")!;
   assert.equal(cancel.confirm, undefined);
+});
+
+// ─── archive / unarchive ───────────────────────────────────────────
+
+const SETTLED_STATUSES: TaskStatus[] = [
+  "completed",
+  "validated",
+  "cancelled",
+  "superseded",
+];
+
+for (const status of SETTLED_STATUSES) {
+  test(`archive is enabled for settled status ${status}`, () => {
+    const { ctx } = recorder();
+    const archive = byId(mkTask({ status }), ctx).get("archive");
+    assert.ok(archive, `archive verb missing for ${status}`);
+    assert.equal(isEnabled(archive), true);
+  });
+}
+
+for (const status of [
+  "draft",
+  "pending",
+  "active",
+  "in_progress",
+  "blocked",
+] as TaskStatus[]) {
+  test(`archive is disabled — never hidden — for unsettled status ${status}`, () => {
+    const { ctx } = recorder();
+    const archive = byId(mkTask({ status }), ctx).get("archive");
+    assert.ok(archive, `archive must render disabled, not disappear`);
+    assert.equal(isEnabled(archive), false);
+    assert.equal(
+      archive.disabledReason,
+      `Task is ${status} — archive is for settled work`,
+    );
+  });
+}
+
+test("archive routes to setStatus archived", async () => {
+  const { calls, ctx } = recorder();
+  await byId(mkTask({ status: "completed" }), ctx).get("archive")!.run();
+  assert.deepEqual(calls, ["status:t1:archived"]);
+});
+
+test("archive confirms at the reversible tier and points at the Archived filter", () => {
+  const { ctx } = recorder();
+  const archive = byId(mkTask({ status: "completed" }), ctx).get("archive")!;
+  assert.ok(archive.confirm, "archive must confirm");
+  assert.equal(archive.confirm.typeToConfirm, undefined);
+  assert.match(
+    archive.confirm.body,
+    /restore it later from the Archived filter\.$/,
+  );
+});
+
+test("archive sits in the state group directly after cancel", () => {
+  const { ctx } = recorder();
+  const actions = buildTaskActions(mkTask({ status: "completed" }), ctx);
+  const ids = actions.map((a) => a.id);
+  assert.equal(ids.indexOf("archive"), ids.indexOf("cancel") + 1);
+  assert.equal(actions[ids.indexOf("archive")]!.group, "state");
+});
+
+test("an archived task offers Unarchive instead of Archive", () => {
+  // The one sanctioned exception to disabled-never-hidden: the pair reads
+  // as a single toggle, like the conditional Resume.
+  const { ctx } = recorder();
+  const actions = byId(mkTask({ status: "archived" }), ctx);
+  assert.equal(actions.has("archive"), false);
+  const un = actions.get("unarchive");
+  assert.ok(un, "unarchive verb missing on an archived task");
+  assert.equal(un.label, "Unarchive");
+  assert.equal(un.group, "state");
+  assert.equal(un.confirm, undefined);
+  assert.equal(isEnabled(un), true);
+});
+
+test("unarchive routes to setStatus completed", async () => {
+  const { calls, ctx } = recorder();
+  await byId(mkTask({ status: "archived" }), ctx).get("unarchive")!.run();
+  assert.deepEqual(calls, ["status:t1:completed"]);
+});
+
+test("unarchive is absent on a non-archived task", () => {
+  const { ctx } = recorder();
+  assert.equal(
+    byId(mkTask({ status: "completed" }), ctx).has("unarchive"),
+    false,
+  );
+});
+
+test("archiveBlockedReason names an already-archived task", () => {
+  assert.match(
+    archiveBlockedReason(mkTask({ status: "archived" })),
+    /already archived/i,
+  );
 });
 
 // ─── delete ────────────────────────────────────────────────────────
@@ -408,4 +519,164 @@ test("picking a status routes to setStatus with that status", async () => {
   const actions = buildStatusActions(mkTask(), ctx);
   await actions.find((a) => a.id === "status:completed")!.run();
   assert.deepEqual(calls, ["status:t1:completed"]);
+});
+
+// ─── watch / transcript (session verbs) ─────────────────────────────
+
+const LIVE_REF = {
+  mode: "live" as const,
+  runner_id: "r1",
+  instance_id: "i1",
+  session_id: "ses_live",
+};
+
+const RECORDED = {
+  sessions: {
+    ses_old: { timestamp: "2026-08-01T00:00:00Z", runner_id: "r1" },
+    ses_new: { timestamp: "2026-08-10T00:00:00Z", runner_id: "r2" },
+  },
+};
+
+test("watch: enabled for a running opencode task with a live session", () => {
+  const { ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+  const a = byId(mkTask({ status: "in_progress" }), ctx).get("watch")!;
+  assert.equal(isEnabled(a), true);
+});
+
+test("watch: disabled with reason for pi executor", () => {
+  const { ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+  const a = byId(mkTask({ status: "in_progress", executor: "pi" }), ctx).get(
+    "watch",
+  )!;
+  assert.match(a.disabledReason ?? "", /Executor is pi/);
+});
+
+test("watch: disabled for non-running statuses", () => {
+  const { ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+  for (const status of ["pending", "completed", "blocked"] as const) {
+    const a = byId(mkTask({ status }), ctx).get("watch")!;
+    assert.match(a.disabledReason ?? "", /only a running task/);
+  }
+});
+
+test("watch: disabled when no live instance is found", () => {
+  const { ctx } = recorder({ liveSessionRef: () => undefined });
+  const a = byId(mkTask({ status: "in_progress" }), ctx).get("watch")!;
+  assert.match(a.disabledReason ?? "", /Runner is offline/);
+});
+
+test("watch: routes to openSession", async () => {
+  const { calls, ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+  await byId(mkTask({ status: "in_progress" }), ctx).get("watch")!.run();
+  assert.deepEqual(calls, ["watch:t1"]);
+});
+
+test("transcript: enabled when sessions are recorded; newest is default", async () => {
+  const { calls, ctx } = recorder();
+  const a = byId(mkTask({ status: "completed", ...RECORDED }), ctx).get(
+    "transcript",
+  )!;
+  assert.equal(isEnabled(a), true);
+  await a.run();
+  assert.deepEqual(calls, ["transcript:t1:ses_new"]);
+});
+
+test("transcript: disabled with pi-specific reason when pi and nothing recorded", () => {
+  const { ctx } = recorder();
+  const a = byId(mkTask({ status: "completed", executor: "pi" }), ctx).get(
+    "transcript",
+  )!;
+  assert.match(a.disabledReason ?? "", /recorded for OpenCode tasks only/);
+});
+
+test("transcript: disabled with discovery hint when nothing recorded", () => {
+  const { ctx } = recorder();
+  const a = byId(mkTask({ status: "completed" }), ctx).get("transcript")!;
+  assert.match(a.disabledReason ?? "", /discovery may have failed/);
+});
+
+test("transcript: recorded sessions win even on a pi-labeled task", () => {
+  // A task that ran on opencode then was retried on pi keeps its recorded
+  // sessions readable.
+  const { ctx } = recorder();
+  const a = byId(
+    mkTask({ status: "completed", executor: "pi", ...RECORDED }),
+    ctx,
+  ).get("transcript")!;
+  assert.equal(isEnabled(a), true);
+});
+
+// ─── steer / continue (session verbs) ───────────────────────────────
+
+test("steer: enabled for a running opencode task and routes to openSteer", async () => {
+  const { calls, ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+  const a = byId(mkTask({ status: "in_progress" }), ctx).get("steer")!;
+  assert.equal(isEnabled(a), true);
+  await a.run();
+  assert.deepEqual(calls, ["steer:t1"]);
+});
+
+test("steer: shares the watch gate (pi / not running / no instance)", () => {
+  const { ctx } = recorder({ liveSessionRef: () => undefined });
+  const a = byId(mkTask({ status: "in_progress" }), ctx).get("steer")!;
+  assert.match(a.disabledReason ?? "", /Runner is offline/);
+  const pi = byId(
+    mkTask({ status: "in_progress", executor: "pi" }),
+    recorder({ liveSessionRef: () => LIVE_REF }).ctx,
+  ).get("steer")!;
+  assert.match(pi.disabledReason ?? "", /Executor is pi/);
+});
+
+test("continue: enabled for a settled task with a recorded workdir", async () => {
+  const { calls, ctx } = recorder();
+  const task = mkTask({
+    status: "completed",
+    sessions: {
+      ses_a: { timestamp: "2026-08-01T00:00:00Z", runner_id: "r1", workdir: "/w" },
+    },
+  });
+  const a = byId(task, ctx).get("continue")!;
+  assert.equal(isEnabled(a), true);
+  assert.ok(a.confirm, "continue must confirm (it spawns an instance)");
+  assert.match(a.confirm!.body, /r1/);
+  assert.match(a.confirm!.body, /\/w/);
+  await a.run();
+  assert.deepEqual(calls, ["continue:t1:ses_a"]);
+});
+
+test("continue: running task is steered instead", () => {
+  const { ctx } = recorder();
+  const a = byId(
+    mkTask({
+      status: "in_progress",
+      sessions: { s: { timestamp: "t", runner_id: "r1", workdir: "/w" } },
+    }),
+    ctx,
+  ).get("continue")!;
+  assert.match(a.disabledReason ?? "", /steer the live session instead/);
+});
+
+test("continue: falls back to the task workdir; blocked when neither exists", () => {
+  const { ctx } = recorder();
+  const noSessionWorkdir = mkTask({
+    status: "completed",
+    workdir: "/repo",
+    sessions: { s: { timestamp: "t", runner_id: "r1" } },
+  });
+  assert.equal(isEnabled(byId(noSessionWorkdir, ctx).get("continue")!), true);
+
+  const nowhere = mkTask({
+    status: "completed",
+    sessions: { s: { timestamp: "t", runner_id: "r1" } },
+  });
+  assert.match(
+    byId(nowhere, ctx).get("continue")!.disabledReason ?? "",
+    /No workdir recorded/,
+  );
+});
+
+test("continue: no recorded sessions reuses the transcript reason", () => {
+  const { ctx } = recorder();
+  const a = byId(mkTask({ status: "completed" }), ctx).get("continue")!;
+  assert.match(a.disabledReason ?? "", /discovery may have failed/);
 });

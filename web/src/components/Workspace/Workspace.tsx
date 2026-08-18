@@ -17,9 +17,12 @@ import { SelectionBar } from "../common/SelectionBar";
 export function Workspace(): JSX.Element {
   const view = useWorkspace((s) => s.view);
   const focusSessionId = useWorkspace((s) => s.focusSessionId);
+  const focusSessionRef = useWorkspace((s) => s.focusSessionRef);
 
   let inner: JSX.Element;
-  if (view === "session" && focusSessionId) {
+  if (view === "session" && focusSessionRef) {
+    inner = <SessionFull sref={focusSessionRef} />;
+  } else if (view === "session" && focusSessionId) {
     inner = <SessionFull instanceId={focusSessionId} />;
   } else if (view === "focus") {
     inner = <FocusPanes />;

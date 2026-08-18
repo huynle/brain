@@ -269,11 +269,12 @@ func (s *EventServiceImpl) CheckFeatureCompletion(ctx context.Context, projectID
 		return
 	}
 
-	// Count completed/validated tasks
+	// Count settled tasks. Archived counts as done: archive shelves finished
+	// work without un-completing it, so it must not shrink feature progress.
 	completed := 0
 	total := len(tasks)
 	for _, t := range tasks {
-		if t.Status == "completed" || t.Status == "validated" {
+		if t.Status == "completed" || t.Status == "validated" || t.Status == "archived" {
 			completed++
 		}
 	}

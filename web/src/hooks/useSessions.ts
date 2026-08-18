@@ -29,12 +29,18 @@ export interface UseSessionsResult {
 }
 
 /**
- * A session is a runnable OpenCode instance attached to a task —
- * kind "task" and status starting|busy. Idle instances are hidden
- * because they typically represent recently-completed work; the
- * sidebar section is meant to show "what's live right now."
+ * A session is a runnable OpenCode instance worth listing as live:
+ *
+ *   • task instances while running (starting|busy) — idle task
+ *     instances are hidden because they typically represent
+ *     recently-completed work; the sidebar shows "what's live".
+ *   • ad-hoc instances in ANY non-exited status. These are user-spawned
+ *     (chiefly session continuations), and an idle continuation is a
+ *     session waiting for the user's next message — hiding it between
+ *     turns would make it unreachable.
  */
 export function isLiveTaskSession(inst: OpencodeInstance): boolean {
+  if (inst.kind === "adhoc") return inst.status !== "exited";
   if (inst.kind !== "task") return false;
   return inst.status === "starting" || inst.status === "busy";
 }

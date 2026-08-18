@@ -87,6 +87,15 @@ export function cancelFeatureBlockedReason(feature: DerivedFeature): string {
   return "";
 }
 
+/** Why a feature cannot be archived, or "" when it can. */
+export function archiveFeatureBlockedReason(feature: DerivedFeature): string {
+  if (feature.taskCount.total === 0) return "Feature has no tasks";
+  if (!SETTLED_LIFECYCLES.has(feature.lifecycle)) {
+    return "Feature has active work — archive is for settled features";
+  }
+  return "";
+}
+
 /** Why a feature cannot be checked out, or "" when it can. */
 export function checkoutBlockedReason(feature: DerivedFeature): string {
   if (feature.taskCount.total === 0) return "Feature has no tasks";
@@ -188,6 +197,25 @@ export function buildFeatureActions(
       confirmLabel: "Cancel feature",
     },
     run: () => ctx.setStatusForAll(feature, "cancelled"),
+  });
+
+  actions.push({
+    id: "archive",
+    label: "Archive feature",
+    group: "state",
+    disabledReason: archiveFeatureBlockedReason(feature),
+    // Reversible (each task can be unarchived), so confirm without
+    // type-to-confirm — same weight as cancel.
+    confirm: {
+      title: `Archive ${feature.name}?`,
+      body:
+        `All ${n} ${plural} in this feature will be set to archived. ` +
+        `The feature leaves the lanes and its tasks stop counting toward ` +
+        `progress. This is reversible — restore the tasks later from the ` +
+        `Archived filter.`,
+      confirmLabel: "Archive feature",
+    },
+    run: () => ctx.setStatusForAll(feature, "archived"),
   });
 
   // ─── edit ───────────────────────────────────────────────────────

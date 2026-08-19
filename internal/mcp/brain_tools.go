@@ -2130,6 +2130,27 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 // backlinks
 // =============================================================================
 
+// graphEntry is the subset of BrainEntry the graph tools render.
+type graphEntry struct {
+	ID    string `json:"id"`
+	Path  string `json:"path"`
+	Title string `json:"title"`
+	Type  string `json:"type"`
+}
+
+// fetchGraph calls one of the /entries/{id}/(backlinks|outlinks|related)
+// endpoints. They return a BARE BrainEntry array (not {entries,total}),
+// and their routes only carry a single path segment — so slash paths
+// must be escaped into one segment (the server resolves short IDs,
+// exact paths, and titles).
+func fetchGraph(ctx context.Context, client *APIClient, path, kind string, params map[string]string) ([]graphEntry, error) {
+	var entries []graphEntry
+	if err := client.Request(ctx, "GET", "/entries/"+url.PathEscape(path)+"/"+kind, nil, params, &entries); err != nil {
+		return nil, err
+	}
+	return entries, nil
+}
+
 func registerBrainBacklinks(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "backlinks",
@@ -2137,38 +2158,30 @@ func registerBrainBacklinks(s *Server, client *APIClient) {
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"path": {Type: "string", Description: "Path to the target note"},
+				"path": {Type: "string", Description: "Path to the target note (entry path or 8-char ID)"},
 			},
 			Required: []string{"path"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		path := StringArg(args, "path", "")
 
-		var resp struct {
-			Entries []struct {
-				ID    string `json:"id"`
-				Path  string `json:"path"`
-				Title string `json:"title"`
-				Type  string `json:"type"`
-			} `json:"entries"`
-			Total int `json:"total"`
-		}
-		if err := client.Request(ctx, "GET", "/entries/"+path+"/backlinks", nil, nil, &resp); err != nil {
+		entries, err := fetchGraph(ctx, client, path, "backlinks", nil)
+		if err != nil {
 			return "", err
 		}
 
-		if len(resp.Entries) == 0 {
+		if len(entries) == 0 {
 			return fmt.Sprintf("No backlinks found for: %s", path), nil
 		}
 
 		lines := []string{
 			fmt.Sprintf("## Backlinks to: %s", path),
 			"",
-			fmt.Sprintf("Found %d entries linking to this note:", resp.Total),
+			fmt.Sprintf("Found %d entries linking to this note:", len(entries)),
 			"",
 		}
 
-		for _, e := range resp.Entries {
+		for _, e := range entries {
 			lines = append(lines, fmt.Sprintf("- **%s** (`%s`) - %s", e.Title, e.Path, e.Type))
 		}
 
@@ -2194,31 +2207,23 @@ func registerBrainOutlinks(s *Server, client *APIClient) {
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		path := StringArg(args, "path", "")
 
-		var resp struct {
-			Entries []struct {
-				ID    string `json:"id"`
-				Path  string `json:"path"`
-				Title string `json:"title"`
-				Type  string `json:"type"`
-			} `json:"entries"`
-			Total int `json:"total"`
-		}
-		if err := client.Request(ctx, "GET", "/entries/"+path+"/outlinks", nil, nil, &resp); err != nil {
+		entries, err := fetchGraph(ctx, client, path, "outlinks", nil)
+		if err != nil {
 			return "", err
 		}
 
-		if len(resp.Entries) == 0 {
+		if len(entries) == 0 {
 			return fmt.Sprintf("No outlinks found from: %s", path), nil
 		}
 
 		lines := []string{
 			fmt.Sprintf("## Outlinks from: %s", path),
 			"",
-			fmt.Sprintf("Found %d entries linked from this note:", resp.Total),
+			fmt.Sprintf("Found %d entries linked from this note:", len(entries)),
 			"",
 		}
 
-		for _, e := range resp.Entries {
+		for _, e := range entries {
 			lines = append(lines, fmt.Sprintf("- **%s** (`%s`) - %s", e.Title, e.Path, e.Type))
 		}
 
@@ -2248,31 +2253,23 @@ func registerBrainRelated(s *Server, client *APIClient) {
 			"limit": fmt.Sprintf("%d", IntArg(args, "limit", 10)),
 		}
 
-		var resp struct {
-			Entries []struct {
-				ID    string `json:"id"`
-				Path  string `json:"path"`
-				Title string `json:"title"`
-				Type  string `json:"type"`
-			} `json:"entries"`
-			Total int `json:"total"`
-		}
-		if err := client.Request(ctx, "GET", "/entries/"+path+"/related", nil, params, &resp); err != nil {
+		entries, err := fetchGraph(ctx, client, path, "related", params)
+		if err != nil {
 			return "", err
 		}
 
-		if len(resp.Entries) == 0 {
+		if len(entries) == 0 {
 			return fmt.Sprintf("No related entries found for: %s", path), nil
 		}
 
 		lines := []string{
 			fmt.Sprintf("## Related to: %s", path),
 			"",
-			fmt.Sprintf("Found %d entries sharing links:", resp.Total),
+			fmt.Sprintf("Found %d entries sharing links:", len(entries)),
 			"",
 		}
 
-		for _, e := range resp.Entries {
+		for _, e := range entries {
 			lines = append(lines, fmt.Sprintf("- **%s** (`%s`) - %s", e.Title, e.Path, e.Type))
 		}
 

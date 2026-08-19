@@ -7,6 +7,9 @@
  *     are replayed to the stateless server through the `history` field)
  *   • Quick actions
  *   • Context summary
+ *
+ * Conversation state lives in useAssistantChat (persisted to localStorage),
+ * so the thread survives closing the panel and page reloads.
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -16,6 +19,10 @@ import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
 import { useUI } from "../store/ui";
 import { deriveFeatures } from "../lib/features";
+import {
+  useAssistantChat,
+  type AssistantToolChip,
+} from "../store/assistantChat";
 import {
   assistantChatStream,
   ApiError,
@@ -34,20 +41,10 @@ const LIFECYCLE_LABELS: Record<string, string> = {
 // strips tool payloads already; this just bounds prompt growth on long chats.
 const HISTORY_REPLAY_LIMIT = 40;
 
-interface ToolChip {
-  id: string;
-  name: string;
-  args: string;
-  tier: string;
-  status: string; // "running" until a tool_result lands
-}
-
-interface ChatTurn {
-  role: "user" | "assistant";
-  content: string;
-  tools: ToolChip[];
-  streaming?: boolean;
-}
+// Module-level so an in-flight stream stays stoppable across panel
+// close/reopen (the portal unmounts but the request keeps running and
+// writes into the store).
+let activeAbort: AbortController | null = null;
 
 export function AssistantPanel(): JSX.Element | null {
   const open = useWorkspace((s) => s.assistantOpen);
@@ -60,12 +57,8 @@ export function AssistantPanel(): JSX.Element | null {
   const toast = useUI((s) => s.toast);
 
   const [prompt, setPrompt] = useState("");
-  const [turns, setTurns] = useState<ChatTurn[]>([]);
-  const [busy, setBusy] = useState(false);
-  const abortRef = useRef<AbortController | null>(null);
-  // Compact replay history for the stateless server (survives across sends,
-  // not across panel close/reopen — the transcript state carries both).
-  const historyRef = useRef<AssistantHistoryMessage[]>([]);
+  const turns = useAssistantChat((s) => s.turns);
+  const busy = useAssistantChat((s) => s.busy);
   const threadRef = useRef<HTMLDivElement | null>(null);
 
   const attention = useMemo(() => {
@@ -97,38 +90,26 @@ export function AssistantPanel(): JSX.Element | null {
   if (typeof document === "undefined") return null;
 
   const clearChat = () => {
-    abortRef.current?.abort();
-    historyRef.current = [];
-    setTurns([]);
+    activeAbort?.abort();
+    useAssistantChat.getState().clear();
   };
 
   const send = async () => {
     const message = prompt.trim();
     if (!message || busy) return;
-    setBusy(true);
     setPrompt("");
-    setTurns((t) => [
-      ...t,
-      { role: "user", content: message, tools: [] },
-      { role: "assistant", content: "", tools: [], streaming: true },
-    ]);
+    const chat = useAssistantChat.getState();
+    chat.beginTurn(message);
 
     const ac = new AbortController();
-    abortRef.current = ac;
+    activeAbort = ac;
     let acc = "";
-    const tools: ToolChip[] = [];
-
-    const patchAssistant = (patch: Partial<ChatTurn>) =>
-      setTurns((t) => {
-        const next = t.slice();
-        const last = next[next.length - 1];
-        if (last?.role === "assistant") next[next.length - 1] = { ...last, ...patch };
-        return next;
-      });
+    const tools: AssistantToolChip[] = [];
+    const patchAssistant = chat.patchAssistant;
 
     try {
       await assistantChatStream(
-        { message, history: historyRef.current.slice(-HISTORY_REPLAY_LIMIT) },
+        { message, history: chat.history.slice(-HISTORY_REPLAY_LIMIT) },
         (event) => {
           if (event.type === "delta" && event.delta) {
             acc += event.delta;
@@ -176,24 +157,23 @@ export function AssistantPanel(): JSX.Element | null {
             : `Assistant error: ${(err as Error).message}`;
       if (msg) toast(msg, "error");
     } finally {
-      setBusy(false);
-      abortRef.current = null;
-      patchAssistant({ streaming: false, content: acc });
+      if (activeAbort === ac) activeAbort = null;
+      patchAssistant({ content: acc });
 
       // Record the finished turn in the replay history. Tool calls are
       // flattened into one assistant tool_calls message followed by its tool
       // results — the pairing shape replayHistory on the server requires.
       // Only answered calls are kept (unanswered ones would be dropped
       // server-side anyway).
-      historyRef.current.push({ role: "user", content: message });
+      const entries: AssistantHistoryMessage[] = [{ role: "user", content: message }];
       const answered = tools.filter((c) => c.status !== "running");
       if (answered.length > 0) {
-        historyRef.current.push({
+        entries.push({
           role: "assistant",
           tool_calls: answered.map((c) => ({ id: c.id, name: c.name, arguments: c.args })),
         });
         for (const c of answered) {
-          historyRef.current.push({
+          entries.push({
             role: "tool",
             tool_call_id: c.id,
             name: c.name,
@@ -201,7 +181,8 @@ export function AssistantPanel(): JSX.Element | null {
           });
         }
       }
-      if (acc) historyRef.current.push({ role: "assistant", content: acc });
+      if (acc) entries.push({ role: "assistant", content: acc });
+      useAssistantChat.getState().finishTurn(entries);
     }
   };
 
@@ -306,7 +287,7 @@ export function AssistantPanel(): JSX.Element | null {
             {busy ? "Sending…" : "Send  ⌘↵"}
           </button>
           {busy && (
-            <button onClick={() => abortRef.current?.abort()}>Stop</button>
+            <button onClick={() => activeAbort?.abort()}>Stop</button>
           )}
         </div>
       </div>

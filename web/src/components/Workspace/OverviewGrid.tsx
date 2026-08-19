@@ -27,6 +27,7 @@ import {
 } from "../../lib/features";
 import { laneVisible } from "../../lib/lane";
 import { ProjectCard } from "./ProjectCard";
+import { EntriesPreview } from "./EntriesPreview";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
 import type { Task } from "../../lib/types";
 
@@ -52,7 +53,7 @@ export function OverviewGrid(): JSX.Element {
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const openModal = useModal((s) => s.open);
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
-  const openInFocus = useWorkspace((s) => s.openInFocus);
+  const setView = useWorkspace((s) => s.setView);
   const toast = useUI((s) => s.toast);
 
   // Per-lane expansion for the flow-board, keyed by lifecycle. Ephemeral
@@ -193,7 +194,7 @@ export function OverviewGrid(): JSX.Element {
           >
             Run next ready feature
           </button>
-          <button onClick={() => openInFocus("browser", { url: "" }, "Brain")}>
+          <button onClick={() => setView("entries")}>
             Open Brain entries
           </button>
         </div>
@@ -367,6 +368,9 @@ export function OverviewGrid(): JSX.Element {
           );
         })}
       </div>
+
+      {/* Brain memory carousel */}
+      <EntriesPreview />
 
       {/* Project cards (visible only) */}
       {visibleProjectIds.map((pid) => (

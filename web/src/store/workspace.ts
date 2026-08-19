@@ -46,7 +46,7 @@ export type { DockNode, DockLeaf, Edge } from "../lib/dock";
 /** Versioned localStorage key. Bump the suffix on breaking schema changes. */
 export const WORKSPACE_STORAGE_KEY = "panes-v2:workspace:v1";
 
-export type WorkspaceView = "overview" | "focus" | "session";
+export type WorkspaceView = "overview" | "focus" | "session" | "entries";
 
 export type SidebarSectionKey = "projects" | "sessions" | "runners";
 
@@ -186,7 +186,8 @@ function coerceDockTree(raw: unknown): DockNode | null {
       l.kind !== "logs" &&
       l.kind !== "session" &&
       l.kind !== "runners" &&
-      l.kind !== "browser"
+      l.kind !== "browser" &&
+      l.kind !== "entry"
     )
       return null;
     if (typeof l.title !== "string") return null;
@@ -512,6 +513,12 @@ function defaultLeafTitle(
       } catch {
         return "Browser";
       }
+    }
+    case "entry": {
+      const path = target.path as string | undefined;
+      if (!path) return "Entry";
+      const base = path.split("/").pop() || path;
+      return base.replace(/\.md$/, "");
     }
     default:
       return "Pane";

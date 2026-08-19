@@ -711,13 +711,15 @@ func TestBrainStats_Handler(t *testing.T) {
 }
 
 func TestBrainBacklinks_Handler(t *testing.T) {
+	// The graph endpoints return a BARE BrainEntry array (not
+	// {entries,total}), and their routes carry a single path segment —
+	// a slash path must arrive escaped into one segment.
+	var gotURI string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotURI = r.URL.RequestURI()
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"entries": []map[string]any{
-				{"id": "xyz", "path": "p/summary/xyz.md", "title": "Linking Entry", "type": "summary"},
-			},
-			"total": 1,
+		json.NewEncoder(w).Encode([]map[string]any{
+			{"id": "xyz", "path": "p/summary/xyz.md", "title": "Linking Entry", "type": "summary"},
 		})
 	}))
 	defer server.Close()
@@ -734,11 +736,17 @@ func TestBrainBacklinks_Handler(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 
+	if !strings.Contains(gotURI, "/entries/projects%2Ftest%2Fplan%2Fabc.md/backlinks") {
+		t.Errorf("request should escape the path into one segment, got: %s", gotURI)
+	}
 	if !strings.Contains(result, "Linking Entry") {
 		t.Errorf("result should contain entry title, got: %s", result)
 	}
 	if !strings.Contains(result, "Backlinks") {
 		t.Errorf("result should contain 'Backlinks', got: %s", result)
+	}
+	if !strings.Contains(result, "Found 1 entries") {
+		t.Errorf("result should count from the array length, got: %s", result)
 	}
 }
 

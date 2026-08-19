@@ -24,7 +24,7 @@
 // ─── types ────────────────────────────────────────────────────────────
 
 export interface DockLeaf {
-  kind: "task-detail" | "logs" | "session" | "runners" | "browser";
+  kind: "task-detail" | "logs" | "session" | "runners" | "browser" | "entry";
   target: Record<string, unknown>;
   title: string;
 }

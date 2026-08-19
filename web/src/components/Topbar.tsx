@@ -48,6 +48,12 @@ export function Topbar(): JSX.Element {
         >
           Focus
         </button>
+        <button
+          className={view === "entries" ? "active" : ""}
+          onClick={() => setView("entries")}
+        >
+          Entries
+        </button>
       </div>
       <div className="search" onClick={() => setCommandOpen(true)}>
         <span style={{ color: "#6b757e" }}>⌕</span>

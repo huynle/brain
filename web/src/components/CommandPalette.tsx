@@ -98,6 +98,12 @@ export function CommandPalette(): JSX.Element | null {
         action: () => setView("focus"),
       },
       {
+        id: "view-entries",
+        label: "Go to Entries (Brain memory)",
+        hint: "Enter",
+        action: () => setView("entries"),
+      },
+      {
         id: "toggle-sidebar",
         label: "Toggle sidebar",
         action: toggleSidebar,

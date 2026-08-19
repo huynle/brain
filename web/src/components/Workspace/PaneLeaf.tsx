@@ -29,6 +29,7 @@ import { LogsLeaf } from "./leaves/LogsLeaf";
 import { SessionLeaf } from "./leaves/SessionLeaf";
 import { RunnersLeaf } from "./leaves/RunnersLeaf";
 import { BrowserLeaf } from "./leaves/BrowserLeaf";
+import { EntryLeaf } from "./leaves/EntryLeaf";
 
 export function PaneLeaf({
   id,
@@ -188,6 +189,8 @@ function LeafContent({ leaf }: { leaf: DockLeaf }): JSX.Element {
       return <RunnersLeaf target={leaf.target} />;
     case "browser":
       return <BrowserLeaf target={leaf.target} />;
+    case "entry":
+      return <EntryLeaf target={leaf.target} />;
     default:
       return (
         <div style={{ color: "var(--p2-fg-faint)" }}>
@@ -203,6 +206,7 @@ function isLeafKind(kind: DragPayload["kind"]): kind is DockLeaf["kind"] {
     kind === "logs" ||
     kind === "session" ||
     kind === "runners" ||
-    kind === "browser"
+    kind === "browser" ||
+    kind === "entry"
   );
 }

@@ -130,8 +130,13 @@ export const useAssistantChat = create<AssistantChatState>()(
           busy: true,
           turns: [
             ...s.turns,
-            { role: "user", content: userContent, tools: [] },
-            { role: "assistant", content: "", tools: [], streaming: true },
+            { role: "user" as const, content: userContent, tools: [] },
+            {
+              role: "assistant" as const,
+              content: "",
+              tools: [],
+              streaming: true,
+            },
           ].slice(-MAX_TURNS),
         })),
 

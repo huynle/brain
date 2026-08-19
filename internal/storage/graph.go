@@ -58,13 +58,18 @@ func (s *StorageLayer) GetOutlinks(ctx context.Context, path string) ([]*NoteRow
 }
 
 // GetRelated finds notes sharing link targets (co-citation) with the given path.
-// Two notes are related if they both link to the same target_path.
+// Two notes are related if they link to the same resolved target, or to the
+// same raw target_path when unresolved (path hrefs and bare short-ID hrefs to
+// the same note co-cite via target_id).
 // Excludes the source note itself. Returns a non-nil empty slice if none found.
 func (s *StorageLayer) GetRelated(ctx context.Context, path string, limit int) ([]*NoteRow, error) {
 	query := `SELECT DISTINCT ` + noteColumnsAliased + ` FROM notes n
 		WHERE n.id IN (
 			SELECT l2.source_id FROM links l1
-			JOIN links l2 ON l1.target_path = l2.target_path
+			JOIN links l2 ON (
+				(l1.target_id IS NOT NULL AND l1.target_id = l2.target_id)
+				OR l1.target_path = l2.target_path
+			)
 			WHERE l1.source_id = (SELECT id FROM notes WHERE path = ?)
 			  AND l2.source_id != l1.source_id
 		) AND n.path != ?

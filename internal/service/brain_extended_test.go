@@ -995,3 +995,46 @@ Sibling text.`
 		t.Error("should not contain sibling section content")
 	}
 }
+
+func TestGraphEndpoints_ResolveShortID(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	target, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "walkthrough",
+		Title:   "Link Target",
+		Content: "I am linked to.",
+	})
+	if err != nil {
+		t.Fatalf("Save target failed: %v", err)
+	}
+
+	if _, err = svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "summary",
+		Title:   "Link Source",
+		Content: "See [Link Target](" + target.Path + ") for details.",
+	}); err != nil {
+		t.Fatalf("Save source failed: %v", err)
+	}
+
+	// The HTTP graph routes only carry a single path segment, so the PWA
+	// addresses these by 8-char short ID. Resolution must work for both.
+	for _, ident := range []string{target.ID, target.Path} {
+		backs, err := svc.GetBacklinks(ctx, ident)
+		if err != nil {
+			t.Fatalf("GetBacklinks(%q) failed: %v", ident, err)
+		}
+		if len(backs) != 1 || backs[0].Title != "Link Source" {
+			t.Errorf("GetBacklinks(%q) = %d results, want the source entry", ident, len(backs))
+		}
+	}
+
+	// Unknown identifiers stay empty, not an error.
+	backs, err := svc.GetBacklinks(ctx, "zzzzzzzz")
+	if err != nil {
+		t.Fatalf("GetBacklinks(unknown) failed: %v", err)
+	}
+	if len(backs) != 0 {
+		t.Errorf("GetBacklinks(unknown) = %d results, want 0", len(backs))
+	}
+}

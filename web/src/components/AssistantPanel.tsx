@@ -61,6 +61,16 @@ export function AssistantPanel(): JSX.Element | null {
   const busy = useAssistantChat((s) => s.busy);
   const threadRef = useRef<HTMLDivElement | null>(null);
 
+  // Reserve layout space for the panel on desktop (see `body.assistant-open`
+  // rules in global.css) so it docks beside the workspace instead of
+  // overlapping it. Mobile keeps the slide-over behavior.
+  useEffect(() => {
+    document.body.classList.toggle("assistant-open", open);
+    return () => {
+      document.body.classList.remove("assistant-open");
+    };
+  }, [open]);
+
   const attention = useMemo(() => {
     const out: Array<{ projectId: string; featureId: string; name: string; lifecycle: string }> = [];
     for (const pid of projects ?? []) {

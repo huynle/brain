@@ -1,7 +1,9 @@
 /**
  * RunnerModal — wireframe-parity.
  *
- * Three tabs: Overview / Shell (mock, backend blocked on 4mymbjen) / Logs.
+ * Four tabs: Overview / Processes / Shell (mock, backend blocked on
+ * 4mymbjen) / Logs. Processes lists the runner's executor processes
+ * (instances) with the task each is running and a per-process log.
  */
 import { useMemo } from "react";
 import { Modal, type ModalTab } from "../common/Modal";
@@ -10,9 +12,11 @@ import { useLive } from "../../lib/sse";
 import { useRunners } from "../../hooks/useRunners";
 import type { RunnerInfo } from "../../lib/types";
 import { MockShell } from "../MockShell";
+import { RunnerProcesses } from "../RunnerProcesses";
 
 const TABS: ModalTab[] = [
   { id: "overview", label: "Overview" },
+  { id: "processes", label: "Processes" },
   { id: "shell", label: "Shell" },
   { id: "logs", label: "Logs" },
 ];
@@ -169,6 +173,13 @@ export function RunnerModal(): JSX.Element {
               </>
             )}
         </div>
+      )}
+
+      {tab === "processes" && (
+        <RunnerProcesses
+          runnerId={runner.runner_id}
+          initialInstanceId={target?.instanceId as string | undefined}
+        />
       )}
 
       {tab === "shell" && (

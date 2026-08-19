@@ -40,8 +40,9 @@ type PiRPCProcess struct {
 	exitCode int
 	idle     bool // true after agent_end received
 
-	events chan PiEvent  // buffered channel of parsed events
-	done   chan struct{} // closed when process exits
+	events   chan PiEvent  // buffered channel of parsed events
+	readDone chan struct{} // closed when readLoop has drained stdout (EOF)
+	done     chan struct{} // closed when process exits
 }
 
 // piPromptRequest is the JSON structure written to stdin for prompts.
@@ -78,12 +79,13 @@ func NewPiRPCProcess(cmd *exec.Cmd) (*PiRPCProcess, error) {
 	}
 
 	p := &PiRPCProcess{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: stdout,
-		pid:    cmd.Process.Pid,
-		events: make(chan PiEvent, 256),
-		done:   make(chan struct{}),
+		cmd:      cmd,
+		stdin:    stdin,
+		stdout:   stdout,
+		pid:      cmd.Process.Pid,
+		events:   make(chan PiEvent, 256),
+		readDone: make(chan struct{}),
+		done:     make(chan struct{}),
 	}
 
 	// Launch reader goroutine for stdout JSONL parsing
@@ -264,6 +266,7 @@ func (p *PiRPCProcess) Done() <-chan struct{} {
 // readLoop reads lines from stdout and parses them as JSONL events.
 // Malformed lines are logged and skipped. Runs until stdout is closed (EOF).
 func (p *PiRPCProcess) readLoop() {
+	defer close(p.readDone)
 	defer close(p.events)
 
 	scanner := bufio.NewScanner(p.stdout)
@@ -325,7 +328,15 @@ func (p *PiRPCProcess) readLoop() {
 }
 
 // waitLoop calls cmd.Wait() and updates exit status when the process exits.
+//
+// It first waits for readLoop to hit EOF: cmd.Wait() closes the stdout pipe,
+// and calling it while the scanner is still draining races the reader against
+// the close — on a fast exit the trailing events (including agent_end) are
+// silently lost. os/exec documents that Wait must not be called before all
+// pipe reads have completed. EOF arrives when the process exits, so this does
+// not delay exit detection.
 func (p *PiRPCProcess) waitLoop() {
+	<-p.readDone
 	err := p.cmd.Wait()
 
 	p.mu.Lock()

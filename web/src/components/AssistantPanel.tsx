@@ -7,7 +7,7 @@
  *   • Quick actions
  *   • Context summary
  */
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useWorkspace } from "../store/workspace";
 import { useProjects } from "../hooks/useProjects";
@@ -39,6 +39,16 @@ export function AssistantPanel(): JSX.Element | null {
   const [reply, setReply] = useState("");
   const [busy, setBusy] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Reserve layout space for the panel on desktop (see `body.assistant-open`
+  // rules in global.css) so it docks beside the workspace instead of
+  // overlapping it. Mobile keeps the slide-over behavior.
+  useEffect(() => {
+    document.body.classList.toggle("assistant-open", open);
+    return () => {
+      document.body.classList.remove("assistant-open");
+    };
+  }, [open]);
 
   const attention = useMemo(() => {
     const out: Array<{ projectId: string; featureId: string; name: string; lifecycle: string }> = [];

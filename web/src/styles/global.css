@@ -1808,12 +1808,13 @@ body[data-theme="light"] .palette-scrim { background: rgba(238, 241, 244, 0.72);
 
 
 /* ---------- assistant panel ---------- */
+:root { --assistant-panel-w: min(390px, 92vw); }
 .assistant-panel {
   position: fixed;
   top: 40px;
   right: 0;
   bottom: 24px;
-  width: min(390px, 92vw);
+  width: var(--assistant-panel-w);
   z-index: 75;
   background: #12161a;
   border-left: 1px solid #2a2f35;
@@ -1824,6 +1825,9 @@ body[data-theme="light"] .palette-scrim { background: rgba(238, 241, 244, 0.72);
   overflow: auto;
   padding: 12px;
 }
+/* Desktop: dock the panel — the workspace gives up the panel's width so
+ * content is pushed aside, not covered. Mobile keeps the slide-over. */
+body.assistant-open:not(.mobile) .workspace { margin-right: var(--assistant-panel-w); }
 .assistant-head { display: flex; gap: 8px; align-items: flex-start; }
 .assistant-kicker { color: #6b757e; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
 .assistant-head h3 { margin: 2px 0 0; font-size: 15px; color: #eaedef; }

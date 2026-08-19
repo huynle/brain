@@ -12,6 +12,7 @@ import { useWorkspace } from "../../store/workspace";
 import { OverviewGrid } from "./OverviewGrid";
 import { FocusPanes } from "./FocusPanes";
 import { SessionFull } from "./SessionFull";
+import { EntriesBrowser } from "./EntriesBrowser";
 import { SelectionBar } from "../common/SelectionBar";
 
 export function Workspace(): JSX.Element {
@@ -26,6 +27,8 @@ export function Workspace(): JSX.Element {
     inner = <SessionFull instanceId={focusSessionId} />;
   } else if (view === "focus") {
     inner = <FocusPanes />;
+  } else if (view === "entries") {
+    inner = <EntriesBrowser />;
   } else {
     inner = <OverviewGrid />;
   }

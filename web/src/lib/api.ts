@@ -1297,6 +1297,43 @@ export const getEntry = (path: string) =>
 export const search = (req: SearchRequest) =>
   api<SearchResponse>("/api/v1/search", { method: "POST", body: req });
 
+// ─── Entry graph (backlinks / outlinks / related) ────────────────
+// The graph routes address entries by 8-char short id (single path
+// segment) and return bare BrainEntry arrays. Go serializes empty
+// results as JSON null, so coerce.
+
+export const getBacklinks = (id: string) =>
+  api<BrainEntry[] | null>(
+    `/api/v1/entries/${encodeURIComponent(id)}/backlinks`,
+  ).then((r) => r || []);
+
+export const getOutlinks = (id: string) =>
+  api<BrainEntry[] | null>(
+    `/api/v1/entries/${encodeURIComponent(id)}/outlinks`,
+  ).then((r) => r || []);
+
+export const getRelated = (id: string, limit = 10) =>
+  api<BrainEntry[] | null>(
+    `/api/v1/entries/${encodeURIComponent(id)}/related`,
+    { query: { limit } },
+  ).then((r) => r || []);
+
+// ─── Brain stats (entry counts by type) ──────────────────────────
+
+export interface BrainStats {
+  totalEntries: number;
+  globalEntries: number;
+  projectEntries: number;
+  byType: Record<string, number>;
+  orphanCount?: number;
+  staleCount?: number;
+}
+
+export const getBrainStats = (project?: string, global?: boolean) =>
+  api<BrainStats>("/api/v1/stats", {
+    query: global ? { global: "true" } : project ? { project } : undefined,
+  });
+
 export const embedBackfill = (body: {
   project?: string;
   force?: boolean;

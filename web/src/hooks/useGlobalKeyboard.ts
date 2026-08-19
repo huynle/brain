@@ -6,6 +6,7 @@
  * ⌘B / Ctrl+B — toggle sidebar
  * ⌘1 / Ctrl+1 — go to Overview
  * ⌘2 / Ctrl+2 — go to Focus
+ * ⌘3 / Ctrl+3 — go to Entries
  * Esc — close open drawer/palette/modal (handled by respective components)
  *
  * Shortcuts are suppressed when focus is inside an <input>, <textarea>,
@@ -27,6 +28,7 @@ export function useGlobalKeyboard(): void {
     const onKey = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey;
       if (!mod) return;
+      if (e.defaultPrevented) return;
       if (isTypingContext(e.target)) return;
 
       switch (e.key.toLowerCase()) {
@@ -49,6 +51,10 @@ export function useGlobalKeyboard(): void {
         case "2":
           e.preventDefault();
           useWorkspace.getState().setView("focus");
+          break;
+        case "3":
+          e.preventDefault();
+          useWorkspace.getState().setView("entries");
           break;
       }
     };

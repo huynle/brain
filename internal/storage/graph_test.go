@@ -454,3 +454,42 @@ func TestGetOrphans_AllNotesAreOrphans(t *testing.T) {
 		t.Errorf("GetOrphans: got %d notes, want 2", len(got))
 	}
 }
+
+func TestGetRelated_CoCitationAcrossHrefStyles(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	target := sampleNote("projects/test/plan/shared.md", "shr12345", "Shared Target")
+	if _, err := s.InsertNote(ctx, target); err != nil {
+		t.Fatalf("InsertNote (target) failed: %v", err)
+	}
+	a := sampleNote("projects/test/plan/via-path.md", "vpa12345", "Via Path")
+	if _, err := s.InsertNote(ctx, a); err != nil {
+		t.Fatalf("InsertNote (a) failed: %v", err)
+	}
+	b := sampleNote("projects/test/plan/via-id.md", "vid12345", "Via ID")
+	if _, err := s.InsertNote(ctx, b); err != nil {
+		t.Fatalf("InsertNote (b) failed: %v", err)
+	}
+
+	// a links by full path; b links by bare short ID. Both resolve to the
+	// same target_id, so they must co-cite even though target_path differs.
+	if err := s.SetLinks(ctx, a.Path, []LinkInput{
+		{TargetPath: "projects/test/plan/shared.md", Href: "projects/test/plan/shared.md"},
+	}); err != nil {
+		t.Fatalf("SetLinks (a) failed: %v", err)
+	}
+	if err := s.SetLinks(ctx, b.Path, []LinkInput{
+		{TargetPath: "shr12345", Href: "shr12345"},
+	}); err != nil {
+		t.Fatalf("SetLinks (b) failed: %v", err)
+	}
+
+	related, err := s.GetRelated(ctx, a.Path, 10)
+	if err != nil {
+		t.Fatalf("GetRelated failed: %v", err)
+	}
+	if len(related) != 1 || related[0].Path != b.Path {
+		t.Errorf("GetRelated(a) = %+v, want [via-id]", related)
+	}
+}

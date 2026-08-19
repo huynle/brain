@@ -104,6 +104,12 @@ func (s *StorageLayer) InsertNote(ctx context.Context, note *NoteRow) (*NoteRow,
 	if err != nil {
 		return nil, fmt.Errorf("read back inserted note: %w", err)
 	}
+
+	// Repair links that were indexed before this note existed and are
+	// still dangling on its path or short ID.
+	if err := s.ResolveLinksTo(ctx, inserted.ID, inserted.Path, inserted.ShortID); err != nil {
+		return nil, err
+	}
 	return inserted, nil
 }
 

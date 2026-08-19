@@ -295,3 +295,124 @@ func TestGetLinks_NoteNotFound(t *testing.T) {
 		t.Fatal("expected error for nonexistent note, got nil")
 	}
 }
+
+func TestSetLinks_TargetResolution_ShortID(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	source := sampleNote("projects/test/plan/idsource.md", "ids12345", "ID Source")
+	if _, err := s.InsertNote(ctx, source); err != nil {
+		t.Fatalf("InsertNote (source) failed: %v", err)
+	}
+	target := sampleNote("projects/test/plan/idtarget.md", "idt12345", "ID Target")
+	insertedTarget, err := s.InsertNote(ctx, target)
+	if err != nil {
+		t.Fatalf("InsertNote (target) failed: %v", err)
+	}
+
+	// The API's link formatter emits "[Title](idt12345)" — bare short ID.
+	err = s.SetLinks(ctx, "projects/test/plan/idsource.md", []LinkInput{
+		{TargetPath: "idt12345", Href: "idt12345"},
+		{TargetPath: "idt12345.md", Href: "idt12345.md"},
+	})
+	if err != nil {
+		t.Fatalf("SetLinks failed: %v", err)
+	}
+
+	got, err := s.GetLinks(ctx, "projects/test/plan/idsource.md")
+	if err != nil {
+		t.Fatalf("GetLinks failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d links, want 2", len(got))
+	}
+	for i, l := range got {
+		if l.TargetID == nil {
+			t.Fatalf("link[%d]: expected TargetID resolved via short ID, got nil", i)
+		}
+		if *l.TargetID != insertedTarget.ID {
+			t.Errorf("link[%d].TargetID = %d, want %d", i, *l.TargetID, insertedTarget.ID)
+		}
+	}
+
+	// Short-ID-resolved links must show up as backlinks of the target.
+	backs, err := s.GetBacklinks(ctx, "projects/test/plan/idtarget.md")
+	if err != nil {
+		t.Fatalf("GetBacklinks failed: %v", err)
+	}
+	if len(backs) != 1 || backs[0].Path != "projects/test/plan/idsource.md" {
+		t.Errorf("GetBacklinks = %+v, want the ID source note", backs)
+	}
+}
+
+func TestShortIDFromHref(t *testing.T) {
+	cases := map[string]string{
+		"n8eox9v4":                     "n8eox9v4",
+		"n8eox9v4.md":                  "n8eox9v4",
+		"projects/x/plan/n8eox9v4.md":  "",
+		"https://example.com/aaaaaaaa": "",
+		"UPPERCASE":                    "",
+		"short":                        "",
+		"toolongid9":                   "",
+		"#anchor12":                    "",
+	}
+	for in, want := range cases {
+		if got := shortIDFromHref(in); got != want {
+			t.Errorf("shortIDFromHref(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestInsertNote_RepairsDanglingLinks(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	// Source is indexed FIRST, with links to a target that doesn't exist
+	// yet (WalkDir order during a bulk reindex).
+	source := sampleNote("projects/test/plan/early.md", "ear12345", "Early Source")
+	if _, err := s.InsertNote(ctx, source); err != nil {
+		t.Fatalf("InsertNote (source) failed: %v", err)
+	}
+	err := s.SetLinks(ctx, "projects/test/plan/early.md", []LinkInput{
+		{TargetPath: "projects/test/plan/late.md", Href: "projects/test/plan/late.md"},
+		{TargetPath: "lat12345", Href: "lat12345"},
+	})
+	if err != nil {
+		t.Fatalf("SetLinks failed: %v", err)
+	}
+
+	// Both links dangle until the target is inserted.
+	links, err := s.GetLinks(ctx, "projects/test/plan/early.md")
+	if err != nil {
+		t.Fatalf("GetLinks failed: %v", err)
+	}
+	for i, l := range links {
+		if l.TargetID != nil {
+			t.Fatalf("link[%d]: expected dangling before target insert", i)
+		}
+	}
+
+	// Inserting the target repairs both hrefs.
+	target := sampleNote("projects/test/plan/late.md", "lat12345", "Late Target")
+	insertedTarget, err := s.InsertNote(ctx, target)
+	if err != nil {
+		t.Fatalf("InsertNote (target) failed: %v", err)
+	}
+	links, err = s.GetLinks(ctx, "projects/test/plan/early.md")
+	if err != nil {
+		t.Fatalf("GetLinks failed: %v", err)
+	}
+	for i, l := range links {
+		if l.TargetID == nil || *l.TargetID != insertedTarget.ID {
+			t.Errorf("link[%d]: expected repaired TargetID %d, got %v", i, insertedTarget.ID, l.TargetID)
+		}
+	}
+
+	backs, err := s.GetBacklinks(ctx, "projects/test/plan/late.md")
+	if err != nil {
+		t.Fatalf("GetBacklinks failed: %v", err)
+	}
+	if len(backs) != 1 || backs[0].Path != "projects/test/plan/early.md" {
+		t.Errorf("GetBacklinks after repair = %+v, want the early source", backs)
+	}
+}

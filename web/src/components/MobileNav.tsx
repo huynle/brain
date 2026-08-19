@@ -29,6 +29,12 @@ export function MobileNav(): JSX.Element {
       >
         Focus
       </span>
+      <span
+        className={`pill ${view === "entries" ? "active" : ""}`}
+        onClick={() => setView("entries")}
+      >
+        Entries
+      </span>
       {sessions
         .filter((s) => s.status === "busy" || s.status === "starting")
         .map((s) => (

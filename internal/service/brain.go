@@ -2764,30 +2764,60 @@ func computeMovedPath(oldPath, targetProject string) (string, error) {
 // Graph Operations
 // =============================================================================
 
-// GetBacklinks finds entries that link TO the given path.
+// resolveGraphPath resolves a graph-endpoint identifier (8-char short ID,
+// exact path, or title — the HTTP routes only carry single-segment values,
+// so short IDs are the common case) to the note's canonical path, which is
+// what the storage link queries match on.
+func (s *BrainServiceImpl) resolveGraphPath(ctx context.Context, pathOrID string) (string, error) {
+	row, err := s.resolveEntry(ctx, pathOrID)
+	if err != nil {
+		return "", err
+	}
+	if row == nil {
+		// Preserve the previous behavior for unknown identifiers: the
+		// storage queries simply match nothing and return empty.
+		return pathOrID, nil
+	}
+	return row.Path, nil
+}
+
+// GetBacklinks finds entries that link TO the given entry (by path or short ID).
 func (s *BrainServiceImpl) GetBacklinks(ctx context.Context, path string) ([]types.BrainEntry, error) {
-	noteRows, err := s.storage.GetBacklinks(ctx, path)
+	resolved, err := s.resolveGraphPath(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("get backlinks: %w", err)
+	}
+	noteRows, err := s.storage.GetBacklinks(ctx, resolved)
 	if err != nil {
 		return nil, fmt.Errorf("get backlinks: %w", err)
 	}
 	return noteRowsToBrainEntries(noteRows), nil
 }
 
-// GetOutlinks finds entries linked BY the given path.
+// GetOutlinks finds entries linked BY the given entry (by path or short ID).
 func (s *BrainServiceImpl) GetOutlinks(ctx context.Context, path string) ([]types.BrainEntry, error) {
-	noteRows, err := s.storage.GetOutlinks(ctx, path)
+	resolved, err := s.resolveGraphPath(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("get outlinks: %w", err)
+	}
+	noteRows, err := s.storage.GetOutlinks(ctx, resolved)
 	if err != nil {
 		return nil, fmt.Errorf("get outlinks: %w", err)
 	}
 	return noteRowsToBrainEntries(noteRows), nil
 }
 
-// GetRelated finds entries sharing link targets (co-citation) with the given path.
+// GetRelated finds entries sharing link targets (co-citation) with the
+// given entry (by path or short ID).
 func (s *BrainServiceImpl) GetRelated(ctx context.Context, path string, limit int) ([]types.BrainEntry, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	noteRows, err := s.storage.GetRelated(ctx, path, limit)
+	resolved, err := s.resolveGraphPath(ctx, path)
+	if err != nil {
+		return nil, fmt.Errorf("get related: %w", err)
+	}
+	noteRows, err := s.storage.GetRelated(ctx, resolved, limit)
 	if err != nil {
 		return nil, fmt.Errorf("get related: %w", err)
 	}

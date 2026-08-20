@@ -233,6 +233,15 @@ type TaskRunner struct {
 	//     runner_paused until the next manual pause/resume.
 	//
 	// Effective pause = local OR server (see IsPaused / the dispatch gate).
+	//
+	// runnerPaused is a THIRD, orthogonal axis: the runner-scoped dial set
+	// by PUT /runners/{runnerId}/pause (SSE command with scope="runner").
+	// It deliberately lives outside the project maps above, because those
+	// are replaced wholesale by syncServerPauseState from GetRunnerStatus —
+	// which only reports *project* pauses. Filing a runner pause in
+	// serverTasksPaused[""] (the old behavior) meant it evaporated on the
+	// very next poll tick and the runner resumed acking pushed dispatches.
+	// It reconciles against its own registry row instead.
 	pauseMu                  sync.RWMutex
 	pauseCache               map[string]bool
 	allPaused                bool
@@ -240,6 +249,7 @@ type TaskRunner struct {
 	automationPausedProjects map[string]bool
 	serverTasksPaused        map[string]bool
 	serverAutosPaused        map[string]bool
+	runnerPaused             bool
 	enabledFeatures          map[string]bool // features toggled on via TUI "x" key
 
 	// Event handlers (protected by eventMu)
@@ -785,6 +795,12 @@ func (tr *TaskRunner) fetchServerPauseState(ctx context.Context) (map[string]boo
 // failure the previous snapshot is kept: SSE events keep applying on top
 // of it, and "unknown" must not be read as "everything resumed".
 func (tr *TaskRunner) syncServerPauseState(ctx context.Context) {
+	// The runner-scoped dial reconciles independently of the project
+	// snapshot: it lives on this runner's registry row, not in
+	// project_pause_state, and a failure to read one must not skip the
+	// other.
+	tr.syncRunnerPauseState(ctx)
+
 	tasksPaused, automationsPaused, ok := tr.fetchServerPauseState(ctx)
 	if !ok {
 		return
@@ -793,6 +809,57 @@ func (tr *TaskRunner) syncServerPauseState(ctx context.Context) {
 	tr.serverTasksPaused = tasksPaused
 	tr.serverAutosPaused = automationsPaused
 	tr.pauseMu.Unlock()
+}
+
+// syncRunnerPauseState reconciles the runner-scoped pause dial against this
+// runner's own registry row, healing SSE pause/resume events lost across a
+// stream reconnect and picking up a pause set while the runner was down. On
+// fetch failure the current dial is kept — "unknown" is not "resumed".
+func (tr *TaskRunner) syncRunnerPauseState(ctx context.Context) {
+	paused, ok := tr.fetchRunnerPauseState(ctx)
+	if !ok {
+		return
+	}
+	tr.pauseMu.Lock()
+	changed := tr.runnerPaused != paused
+	tr.runnerPaused = paused
+	tr.pauseMu.Unlock()
+	if !changed {
+		return
+	}
+	slog.Info("runner pause dial reconciled from server",
+		"runner_id", tr.runnerID, "paused", paused)
+	if paused {
+		tr.emitEvent(RunnerEvent{Type: EventAllPaused})
+	} else {
+		tr.emitEvent(RunnerEvent{Type: EventAllResumed})
+		tr.wake()
+	}
+}
+
+// fetchRunnerPauseState reads the runner-scoped pause flag from this runner's
+// registry record. The second return is false when the state could not be
+// read (no client, a client that predates GetRunner, or an HTTP error), in
+// which case callers must keep whatever they already had.
+func (tr *TaskRunner) fetchRunnerPauseState(ctx context.Context) (bool, bool) {
+	if tr.client == nil || tr.runnerID == "" {
+		return false, false
+	}
+	fetcher, ok := tr.client.(interface {
+		GetRunner(context.Context, string) (*types.RunnerInfo, error)
+	})
+	if !ok {
+		return false, false
+	}
+	info, err := fetcher.GetRunner(ctx, tr.runnerID)
+	if err != nil {
+		tr.logger.Printf("get runner pause state failed: %v", err)
+		return false, false
+	}
+	if info == nil {
+		return false, false
+	}
+	return info.Paused, true
 }
 
 // serverPausedFor returns true when the server has either paused all tasks
@@ -888,11 +955,23 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 	// every poll tick (syncServerPauseState), so a missed event heals
 	// within one poll interval.
 	tr.pauseMu.RLock()
+	runnerPaused := tr.runnerPaused
 	paused := tr.allPaused || tr.pauseCache[cmd.ProjectID] ||
 		serverPausedFor(tr.serverTasksPaused, cmd.ProjectID)
 	automationsPausedForProject := tr.automationsPaused || tr.automationPausedProjects[cmd.ProjectID] ||
 		serverPausedFor(tr.serverAutosPaused, cmd.ProjectID)
 	tr.pauseMu.RUnlock()
+	// A runner-scoped pause is absolute: no automation carve-out (that
+	// exists to keep a project's automations flowing while its manual tasks
+	// are paused — meaningless when the whole runner is meant to be idle)
+	// and no force override (the scheduler already treats a paused runner as
+	// ineligible, so a forced dispatch arriving here means something is out
+	// of sync, not that the user picked this runner). Reject before
+	// reserving a slot so nothing needs unwinding.
+	if runnerPaused {
+		tr.rejectDispatch(ctx, cmd, leaseID, "runner_paused", "runner is paused")
+		return
+	}
 	if paused && cmd.Force {
 		slog.Info("force-dispatch bypassing pause",
 			"task_id", cmd.TaskID,
@@ -1252,6 +1331,15 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 	// failure) and read the cached maps, so pause state delivered via SSE
 	// commands survives a transient GetRunnerStatus error.
 	tr.syncServerPauseState(ctx)
+
+	// 4a. A runner-scoped pause stops the poll path outright — no per-project
+	// carve-outs, no enabled-feature exception. The reconcile above ran first
+	// so a resume still lands on the very next tick.
+	if tr.IsRunnerPaused() {
+		tr.emitPollComplete()
+		return
+	}
+
 	tr.pauseMu.RLock()
 	allPaused := tr.allPaused
 	automationsPaused := tr.automationsPaused
@@ -2729,6 +2817,10 @@ func (tr *TaskRunner) cleanupTaskTmux(task RunningTask) {
 //   "" or "all"     → both tasks and automations
 //   "tasks"         → task-pause gate only (dispatch gate)
 //   "automations"   → automation-pause gate only (carve-out)
+//   "runner"        → this runner as a whole; ProjectID is ignored and the
+//                     dial is kept out of the project maps entirely, since
+//                     those are reconciled from GetRunnerStatus (project
+//                     state) and would wipe it on the next poll tick
 //
 // pause=true applies the pause; pause=false applies the resume.
 func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
@@ -2740,6 +2832,26 @@ func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
 	verb := "paused"
 	if !pause {
 		verb = "resumed"
+	}
+
+	// scope="runner" is the runner-scoped dial (PUT /runners/{id}/pause).
+	// It is NOT project state: routing it into serverTasksPaused would put
+	// it in the map syncServerPauseState replaces from GetRunnerStatus on
+	// every poll tick, and GetRunnerStatus only ever reports project pauses
+	// — so the pause would silently lift within one interval. It gets its
+	// own field, reconciled from this runner's registry row.
+	if scope == PauseScopeRunner {
+		tr.pauseMu.Lock()
+		tr.runnerPaused = pause
+		tr.pauseMu.Unlock()
+		tr.wake()
+		if pause {
+			tr.emitEvent(RunnerEvent{Type: EventAllPaused})
+		} else {
+			tr.emitEvent(RunnerEvent{Type: EventAllResumed})
+		}
+		slog.Info("runner "+verb+" via SSE command", "scope", scope, "runner_id", tr.runnerID)
+		return
 	}
 
 	// SSE pause/resume commands broadcast server-side state, so pauses land
@@ -2903,7 +3015,7 @@ func (tr *TaskRunner) canStartAutomationTask(ctx context.Context, task *types.Re
 func (tr *TaskRunner) IsPaused(projectID string) bool {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
-	if tr.allPaused || tr.serverTasksPaused[""] {
+	if tr.runnerPaused || tr.allPaused || tr.serverTasksPaused[""] {
 		return true
 	}
 	return tr.pauseCache[projectID] || tr.serverTasksPaused[projectID]
@@ -2913,7 +3025,16 @@ func (tr *TaskRunner) IsPaused(projectID string) bool {
 func (tr *TaskRunner) IsAllPaused() bool {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
-	return tr.allPaused || tr.serverTasksPaused[""]
+	return tr.runnerPaused || tr.allPaused || tr.serverTasksPaused[""]
+}
+
+// IsRunnerPaused reports the runner-scoped pause dial, set through
+// PUT /runners/{runnerId}/pause. It is independent of every project dial: a
+// paused runner accepts no work at all, automation-generated included.
+func (tr *TaskRunner) IsRunnerPaused() bool {
+	tr.pauseMu.RLock()
+	defer tr.pauseMu.RUnlock()
+	return tr.runnerPaused
 }
 
 // =============================================================================

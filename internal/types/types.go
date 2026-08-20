@@ -1541,6 +1541,12 @@ type SpawnInstanceSpec struct {
 }
 
 // RunnerInfo is the API-level runner representation with computed status.
+//
+// Paused is the runner-scoped pause dial, owned by the API server and toggled
+// through PUT /runners/{runnerId}/pause|resume. It is NOT reported by the
+// runner on registration or heartbeat — a runner must never be able to resume
+// itself by restarting. The scheduler treats a paused runner as ineligible for
+// dispatch, and the runner reconciles its own dial against this field.
 type RunnerInfo struct {
 	RunnerID           string                      `json:"runner_id"`
 	MachineID          string                      `json:"machine_id,omitempty"`
@@ -1555,6 +1561,7 @@ type RunnerInfo struct {
 	Resources          map[string]interface{}      `json:"resources,omitempty"`
 	Capacity           map[string]interface{}      `json:"capacity,omitempty"`
 	Draining           bool                        `json:"draining,omitempty"`
+	Paused             bool                        `json:"paused,omitempty"`
 	MaxParallel        int                         `json:"max_parallel"`
 	ActiveTasks        int                         `json:"active_tasks,omitempty"`
 	FeatureIDs         string                      `json:"feature_ids,omitempty"`

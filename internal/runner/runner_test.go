@@ -98,6 +98,12 @@ type mockClient struct {
 	runnerStatus    *types.RunnerStatusResponse
 	runnerStatusErr error
 
+	// runnerRecord backs GetRunner — the registry row the runner reconciles
+	// its runner-scoped pause dial against. nil means "the client could not
+	// determine it", which callers must treat as unknown, not as resumed.
+	runnerRecord    *types.RunnerInfo
+	runnerRecordErr error
+
 	// healthBlockCh, when set, makes CheckHealth block on the channel until
 	// it is closed or a value is sent. Used to simulate a wedged HTTP call
 	// inside poll() so tests can prove that other goroutines (dispatch
@@ -283,6 +289,15 @@ func (m *mockClient) GetRunnerStatus(ctx context.Context) (*types.RunnerStatusRe
 		return &types.RunnerStatusResponse{Running: true}, nil
 	}
 	return m.runnerStatus, nil
+}
+
+func (m *mockClient) GetRunner(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.runnerRecordErr != nil {
+		return nil, m.runnerRecordErr
+	}
+	return m.runnerRecord, nil
 }
 
 func (m *mockClient) UpdateTaskStatus(ctx context.Context, taskPath, status string) error {

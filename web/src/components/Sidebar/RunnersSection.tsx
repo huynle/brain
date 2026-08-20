@@ -220,6 +220,12 @@ export function RunnersSection(): JSX.Element {
                 onClick: () =>
                   openModal("runner", { id: r.runner_id }, "overview"),
               },
+              {
+                id: "processes",
+                label: "View processes",
+                onClick: () =>
+                  openModal("runner", { id: r.runner_id }, "processes"),
+              },
               { id: "sep-1", separator: true },
               {
                 id: "clear",

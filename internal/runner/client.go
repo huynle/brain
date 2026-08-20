@@ -1673,7 +1673,7 @@ func (c *APIClient) GetRunner(ctx context.Context, runnerID string) (*types.Runn
 	if err != nil {
 		return nil, fmt.Errorf("get runner: %w", err)
 	}
-	defer resp.Body.Close()
+	defer resp.Body.Close() //nolint:errcheck // matches every other method here
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, c.readError(resp)

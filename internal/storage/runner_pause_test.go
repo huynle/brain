@@ -137,7 +137,7 @@ func TestRunnerPause_SurvivesDeregisterAndReregister(t *testing.T) {
 // Upgrading an existing database must add the pause table without losing rows.
 func TestRunnerPauseState_MigrationFromV22(t *testing.T) {
 	db := openMemoryDB(t)
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if _, err := db.Exec(createSchemaVersionTable); err != nil {
 		t.Fatalf("create schema_version: %v", err)

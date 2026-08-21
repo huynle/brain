@@ -37,6 +37,9 @@ import { useQuery } from "@tanstack/react-query";
 import { getTaskLogs, listRunnerInstances } from "../lib/api";
 import { useLive } from "../lib/sse";
 import { useModal } from "../store/modal";
+import { useRowActions } from "../hooks/useRowActions";
+import { useSessionActionContext } from "../hooks/useSessionActionContext";
+import { buildSessionActions } from "../lib/actions/sessionActions";
 import { useSessionTranscript } from "../hooks/useSessionTranscript";
 import { Transcript } from "./Session/Transcript";
 import { Composer } from "./Session/Composer";
@@ -398,6 +401,10 @@ export function RunnerProcesses({
   initialInstanceId,
 }: RunnerProcessesProps): JSX.Element {
   const openModal = useModal((s) => s.open);
+  // Same verb registry as the sidebar session rows — right-click,
+  // long-press and keyboard on a process row offer the identical set.
+  const actionCtx = useSessionActionContext();
+  const { rowProps, overlays } = useRowActions();
   const q = useQuery({
     queryKey: ["v2", "runner-instances", runnerId],
     queryFn: () => listRunnerInstances(runnerId),
@@ -464,7 +471,16 @@ export function RunnerProcesses({
           <div
             key={p.instance_id}
             className={`proc-row${p.instance_id === selected ? " sel" : ""}`}
-            onClick={() => setSelected(p.instance_id)}
+            {...rowProps(buildSessionActions(p, actionCtx), procTitle(p), () =>
+              setSelected(p.instance_id),
+            )}
+            onClick={(e) => {
+              // The task chip inside the row stops propagation itself;
+              // this guard covers any future inner buttons the same way
+              // the automation rows do.
+              if ((e.target as HTMLElement).closest("button")) return;
+              setSelected(p.instance_id);
+            }}
           >
             <span className={`dot ${instanceDot(p.status)}`} />
             <div className="proc-body">
@@ -523,6 +539,7 @@ export function RunnerProcesses({
           )}
         </div>
       )}
+      {overlays}
     </div>
   );
 }

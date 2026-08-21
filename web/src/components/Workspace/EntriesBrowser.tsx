@@ -15,8 +15,14 @@
  * Keyboard (k9s parity): j/k or arrows move the list selection,
  * `c` pins the selected entry for compare, `/` focuses search,
  * Esc clears the search.
+ *
+ * Row verbs (pin / archive / copy path / delete…) come from
+ * `lib/actions/entryActions` via `useRowActions`, so right-click,
+ * long-press and row-focus keys offer the identical set. The row click
+ * and the inline pin button remain one-click shortcuts to the same
+ * store effects.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ErrorState } from "../common/ErrorState";
 import { Loading } from "../common/Loading";
 import { EntryReader } from "./EntryReader";
@@ -28,6 +34,12 @@ import {
   useEntryList,
   useEntrySearch,
 } from "../../hooks/useEntries";
+import { useEntryActionContext } from "../../hooks/useEntryActionContext";
+import { useRowActions } from "../../hooks/useRowActions";
+import {
+  buildEntryActions,
+  type EntryActionTarget,
+} from "../../lib/actions/entryActions";
 import { useEntriesStore } from "../../store/entries";
 import { relativeTime } from "../../lib/format";
 import {
@@ -66,6 +78,10 @@ interface RowItem {
   type: string;
   sub: string;
   subTitle?: string;
+  /** Entry identity/status for the action builders — both the list
+   *  (BrainEntry) and search (SearchResult) sources carry them. */
+  id?: string;
+  status?: string;
 }
 
 export function EntriesBrowser(): JSX.Element {
@@ -111,6 +127,15 @@ export function EntriesBrowser(): JSX.Element {
     return () => window.clearTimeout(t);
   }, [inputValue, setQuery]);
 
+  // Row context-menu wiring. "Open" here is what a row click already
+  // does: select the entry into the reader pane.
+  const openRow = useCallback(
+    (t: EntryActionTarget) => selectEntry(t.path),
+    [selectEntry],
+  );
+  const entryCtx = useEntryActionContext(openRow);
+  const { rowProps, overlays } = useRowActions();
+
   const rows: RowItem[] = useMemo(() => {
     if (searching) {
       return searchRes.results.map((r) => ({
@@ -119,6 +144,8 @@ export function EntriesBrowser(): JSX.Element {
         type: r.type,
         sub: (r.snippet || "").replace(/\s+/g, " ").trim(),
         subTitle: r.path,
+        id: r.id,
+        status: r.status,
       }));
     }
     return list.entries.map((e) => ({
@@ -129,6 +156,8 @@ export function EntriesBrowser(): JSX.Element {
         .filter(Boolean)
         .join(" · "),
       subTitle: excerptOf(e.content || ""),
+      id: e.id,
+      status: e.status,
     }));
   }, [searching, searchRes.results, list.entries]);
 
@@ -229,6 +258,15 @@ export function EntriesBrowser(): JSX.Element {
               (r.path === selectedPath ? " selected" : "") +
               (comparePins.includes(r.path) ? " pinned" : "")
             }
+            {...rowProps(
+              buildEntryActions(
+                r,
+                { pinned: comparePins.includes(r.path) },
+                entryCtx,
+              ),
+              r.title,
+              () => selectEntry(r.path),
+            )}
             onClick={() => selectEntry(r.path)}
             title={r.subTitle || r.path}
           >
@@ -421,6 +459,7 @@ export function EntriesBrowser(): JSX.Element {
           {!mobile && <div className="entries-detail">{detail}</div>}
         </div>
       )}
+      {overlays}
     </div>
   );
 }

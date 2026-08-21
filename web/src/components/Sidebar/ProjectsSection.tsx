@@ -12,7 +12,11 @@
 import { useState } from "react";
 import { useWorkspace } from "../../store/workspace";
 import { useProjects } from "../../hooks/useProjects";
+import { useRowActions } from "../../hooks/useRowActions";
 import { useLive } from "../../lib/sse";
+import { useUI } from "../../store/ui";
+import { runProject, summarizeRunProjectResult } from "../../lib/api";
+import { buildProjectActions } from "../../lib/actions/projectActions";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
@@ -51,10 +55,13 @@ export function ProjectsSection(): JSX.Element {
   const hiddenProjects = useWorkspace((s) => s.hiddenProjects);
   const showProject = useWorkspace((s) => s.showProject);
   const hideProject = useWorkspace((s) => s.hideProject);
+  const openInFocus = useWorkspace((s) => s.openInFocus);
+  const toast = useUI((s) => s.toast);
   const { data: projects, isLoading, error, refetch } = useProjects();
   const liveProjects = useLive((s) => s.projects);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
+  const { rowProps, overlays } = useRowActions();
 
   const hiddenSet = new Set(hiddenProjects);
   // "Visible" means (a) not user-hidden AND (b) matches the current
@@ -89,17 +96,37 @@ export function ProjectsSection(): JSX.Element {
           ).length;
           const ready = tasks.filter((t) => t.status === "pending").length;
           const blocked = tasks.filter((t) => t.status === "blocked").length;
+          // Right-click used to hide the project outright — a menu-less
+          // shortcut nobody could predict. Now it opens the same verb
+          // set as the project card header (run / open in focus / hide),
+          // with the × button as the one-click hide it always was.
+          const actions = buildProjectActions(
+            pid,
+            {
+              runProject: async (p) => {
+                const r = await runProject(p, false);
+                toast(
+                  summarizeRunProjectResult(r),
+                  r.totalTasksDispatched > 0 ? "success" : "info",
+                );
+              },
+              openTaskList: (p) =>
+                openInFocus("task-detail", { projectId: p }, p),
+              hideProject: (p) => hideProject(p),
+            },
+            { taskCount: tasks.length },
+          );
           return (
             <div
               key={pid}
               className="proj-row"
+              {...rowProps(actions, pid, () => {
+                setView("overview");
+                setTimeout(() => focusProjectCard(pid), 30);
+              })}
               onClick={() => {
                 setView("overview");
                 setTimeout(() => focusProjectCard(pid), 30);
-              }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                hideProject(pid);
               }}
               title={pid}
             >
@@ -217,6 +244,7 @@ export function ProjectsSection(): JSX.Element {
         </span>
       </div>
       {expanded && <div className="sb-list">{rows}</div>}
+      {overlays}
     </div>
   );
 }

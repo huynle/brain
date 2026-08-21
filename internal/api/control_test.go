@@ -622,7 +622,7 @@ func TestControlExec_StreamsOutputAndEndsOnExit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exec request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -673,7 +673,7 @@ func execStreamBody(t *testing.T, srv *httptest.Server, body string) string {
 	if err != nil {
 		t.Fatalf("exec request: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("exec stream never terminated: %v", err)
@@ -867,7 +867,7 @@ func TestControlExec_SignalsRunnerOnClientDisconnect(t *testing.T) {
 	line, err := bufio.NewReader(resp.Body).ReadString('\n')
 	if err != nil || !strings.Contains(line, "started") {
 		cancel()
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("first SSE line = %q err=%v, want the started event", line, err)
 	}
 
@@ -917,7 +917,7 @@ func TestControlExec_AuditEvent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exec request: %v", err)
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
 
 	if events.rejectErr != nil {

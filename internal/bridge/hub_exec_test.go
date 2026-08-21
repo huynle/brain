@@ -49,7 +49,7 @@ func newExecTestHub(t *testing.T) (*Hub, *realtime.Hub, *fakeRunner) {
 	if err != nil {
 		t.Fatalf("dial bridge: %v", err)
 	}
-	t.Cleanup(func() { ws.Close(websocket.StatusNormalClosure, "test over") })
+	t.Cleanup(func() { _ = ws.Close(websocket.StatusNormalClosure, "test over") })
 
 	fr := &fakeRunner{t: t, ws: ws, ctx: ctx}
 	go fr.ackLoop()
@@ -91,7 +91,7 @@ func (fr *fakeRunner) send(f Frame) {
 func (fr *fakeRunner) die() {
 	fr.writeMu.Lock()
 	defer fr.writeMu.Unlock()
-	fr.ws.CloseNow()
+	_ = fr.ws.CloseNow()
 }
 
 func waitFor(t *testing.T, timeout time.Duration, cond func() bool, what string) {

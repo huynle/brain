@@ -1016,8 +1016,8 @@ func (bc *BridgeClient) startExec(f bridge.Frame) error {
 	}
 	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
-		stdoutR.Close()
-		stdoutW.Close()
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
 		cancel()
 		bc.finishExec(f.ExecID)
 		return fmt.Errorf("create stderr pipe: %w", err)
@@ -1026,17 +1026,17 @@ func (bc *BridgeClient) startExec(f bridge.Frame) error {
 	cmd.Stderr = stderrW
 
 	if err := cmd.Start(); err != nil {
-		stdoutR.Close()
-		stdoutW.Close()
-		stderrR.Close()
-		stderrW.Close()
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
 		cancel()
 		bc.finishExec(f.ExecID)
 		return fmt.Errorf("start command: %w", err)
 	}
 	// The child owns the write ends now.
-	stdoutW.Close()
-	stderrW.Close()
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
 
 	pgid, pgErr := syscall.Getpgid(cmd.Process.Pid)
 	if pgErr != nil || pgid <= 0 {
@@ -1067,8 +1067,8 @@ func (bc *BridgeClient) runExec(
 	timeout time.Duration,
 ) {
 	defer cancel()
-	defer stdoutR.Close()
-	defer stderrR.Close()
+	defer func() { _ = stdoutR.Close() }()
+	defer func() { _ = stderrR.Close() }()
 
 	var once sync.Once
 	sendExit := func(code int, reason string) {
@@ -1118,8 +1118,8 @@ func (bc *BridgeClient) runExec(
 	select {
 	case <-drained:
 	case <-time.After(execDrainGrace):
-		stdoutR.Close()
-		stderrR.Close()
+		_ = stdoutR.Close()
+		_ = stderrR.Close()
 		<-drained
 	}
 

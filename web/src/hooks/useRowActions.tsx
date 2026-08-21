@@ -81,6 +81,15 @@ export interface UseRowActionsAPI {
        * cursor. Unmarked rows keep their own menu.
        */
       selectionActions?: readonly ActionDescriptor[];
+      /**
+       * Touch equivalent of shift-click: long-press on an UNMARKED row
+       * ranges from the selection anchor to this row (and with no
+       * anchor yet, selects just this row — which is exactly what the
+       * old long-press-to-mark did, plus it seeds the anchor). Marked
+       * rows are unaffected: their long-press opens the selection
+       * sheet above.
+       */
+      onRangeSelect?: () => void;
     },
   ) => RowActionProps;
   /** Render once per consumer, at the end of its tree. */
@@ -148,7 +157,10 @@ export function useRowActions(): UseRowActionsAPI {
       actions: readonly ActionDescriptor[],
       label: string,
       onActivate?: () => void,
-      opts?: { selectionActions?: readonly ActionDescriptor[] },
+      opts?: {
+        selectionActions?: readonly ActionDescriptor[];
+        onRangeSelect?: () => void;
+      },
     ): RowActionProps => {
       const selectAction = selectActionOf(actions);
       // A marked row's menu surfaces act on the whole selection.
@@ -159,11 +171,14 @@ export function useRowActions(): UseRowActionsAPI {
       const menuActions = selectionActions ?? actions;
       const menuLabel = selectionActions ? "Selection" : label;
       // Long-press: the selection gesture on touch. On a marked row it
-      // opens the selection sheet (the touch right-click); elsewhere it
-      // marks the row, with the full sheet as fallback for rows that
-      // have no Select verb.
+      // opens the selection sheet (the touch right-click); on an
+      // unmarked row it ranges from the anchor — the touch shift-click
+      // (with no anchor that degrades to marking just this row, the
+      // old behavior plus the anchor seed). The full sheet remains the
+      // fallback for rows with neither.
       const press = createLongPressHandlers(() => {
         if (selectionActions) openSheet(menuLabel, selectionActions);
+        else if (opts?.onRangeSelect) opts.onRangeSelect();
         else if (selectAction) runner.run(selectAction);
         else openSheet(label, actions);
       });

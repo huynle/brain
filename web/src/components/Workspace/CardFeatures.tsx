@@ -140,6 +140,9 @@ export function CardFeatures({
             : () => openFeatureDrawer(projectId, f.id),
           {
             selectionActions: marked ? selectionActions ?? undefined : undefined,
+            // Long-press = the touch shift-click.
+            onRangeSelect: () =>
+              rangeFeatureSel(projectId, orderedFeatureIds, f.id),
           },
         );
 

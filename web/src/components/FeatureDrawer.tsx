@@ -151,7 +151,12 @@ export function FeatureDrawer(): JSX.Element | null {
               projectId: drawer.projectId,
               taskId: t.id,
             }),
-      { selectionActions: marked ? selectionActions ?? undefined : undefined },
+      {
+        selectionActions: marked ? selectionActions ?? undefined : undefined,
+        // Long-press = the touch shift-click.
+        onRangeSelect: () =>
+          rangeTaskSel(drawer.projectId, orderedTaskIds, t.id),
+      },
     );
 
     return (

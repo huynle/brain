@@ -217,7 +217,11 @@ export function CardTasks({
       selActive
         ? () => toggleTaskSel(projectId, t.id)
         : () => openModal("task", { projectId, taskId: t.id }),
-      { selectionActions: marked ? selectionActions ?? undefined : undefined },
+      {
+        selectionActions: marked ? selectionActions ?? undefined : undefined,
+        // Long-press = the touch shift-click.
+        onRangeSelect: () => rangeTaskSel(projectId, orderedTaskIds, t.id),
+      },
     );
 
     return (
@@ -324,6 +328,9 @@ export function CardTasks({
             selectionActions: featMarked
               ? selectionActions ?? undefined
               : undefined,
+            // Long-press = the touch shift-click.
+            onRangeSelect: () =>
+              rangeFeatureSel(projectId, orderedFeatureIds, f.id),
           },
         );
 

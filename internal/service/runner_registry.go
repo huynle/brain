@@ -94,6 +94,15 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 		return nil, fmt.Errorf("register runner: %w", err)
 	}
 
+	// The pause dial lives in runner_pause_state, not on the runners row,
+	// so registration cannot clear an operator's pause (nor can the
+	// deregister that `brain runner stop` performs). Read it back so the
+	// registration response reflects reality rather than the zero value on
+	// the row we just built.
+	if stored, err := s.storage.GetRunner(ctx, req.RunnerID); err == nil && stored != nil {
+		row.Paused = stored.Paused
+	}
+
 	return rowToRunnerInfo(row), nil
 }
 
@@ -195,6 +204,25 @@ func (s *RunnerRegistryServiceImpl) GetRunner(ctx context.Context, runnerID stri
 func (s *RunnerRegistryServiceImpl) UpdateConfig(ctx context.Context, runnerID string, maxParallel int) error {
 	if err := s.storage.UpdateRunnerMaxParallel(ctx, runnerID, maxParallel); err != nil {
 		return fmt.Errorf("update config: %w", err)
+	}
+	return nil
+}
+
+// SetPaused writes the runner-scoped pause dial toggled by
+// PUT /runners/{runnerId}/pause|resume.
+//
+// This is what makes a runner pause stick. The SSE command the handler
+// publishes alongside it only reaches a runner that is connected right now;
+// this state is read by the scheduler on every tick (ListRunners ->
+// runnerEligibleForTask) and by the runner itself when it reconciles, so the
+// pause survives SSE reconnects, runner restarts, and deregistration.
+func (s *RunnerRegistryServiceImpl) SetPaused(ctx context.Context, runnerID string, paused bool) error {
+	found, err := s.storage.SetRunnerPaused(ctx, runnerID, paused)
+	if err != nil {
+		return fmt.Errorf("set runner paused: %w", err)
+	}
+	if !found {
+		return api.ErrNotFound
 	}
 	return nil
 }
@@ -525,6 +553,7 @@ func rowToRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
 		Resources:      row.Resources,
 		Capacity:       row.Capacity,
 		Draining:       row.Draining,
+		Paused:         row.Paused,
 		MaxParallel:    row.MaxParallel,
 		ActiveTasks:    activeTasks,
 		FeatureIDs:     row.FeatureIDs,

@@ -618,6 +618,14 @@ func runnerEligibleForTask(task types.ResolvedTask, projectID string, runner typ
 	if runner.Draining {
 		return "runner draining", false
 	}
+	// Runner-scoped pause (PUT /runners/{runnerId}/pause). Unlike the
+	// per-project dials handled by shouldSkipTask, this one has no
+	// automation carve-out and no force override: a paused runner is simply
+	// not a placement candidate, so RunTaskNow / RunFeatureNow route around
+	// it instead of pushing leases it will only reject.
+	if runner.Paused {
+		return "runner paused", false
+	}
 	if !runnerAllowsProject(runner, projectID) {
 		return "project not allowed", false
 	}

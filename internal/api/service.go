@@ -404,6 +404,11 @@ type RunnerRegistryService interface {
 	// UpdateConfig updates a runner's max_parallel configuration and persists it to the database.
 	UpdateConfig(ctx context.Context, runnerID string, maxParallel int) error
 
+	// SetPaused persists the runner-scoped pause dial. A paused runner is
+	// ineligible for push dispatch; the flag is server-owned and survives
+	// SSE reconnects, runner restarts, and deregistration.
+	SetPaused(ctx context.Context, runnerID string, paused bool) error
+
 	// UpdateAffinity updates a runner's feature affinity.
 	UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error
 

@@ -500,6 +500,27 @@ const (
 	CommandFeatureToggle RunnerCommandType = "feature_toggle"
 )
 
+// Pause command scopes carried on CommandPause/CommandResume payloads.
+//
+// The project scopes below are broadcast by the per-project pause dials and
+// are reconciled against GetRunnerStatus. PauseScopeRunner is the
+// runner-scoped dial (PUT /runners/{runnerId}/pause) and is reconciled
+// against the runner's own registry row instead — see TaskRunner.runnerPaused
+// for why conflating the two silently un-paused runners.
+const (
+	// PauseScopeTasks affects a project's non-automation tasks.
+	PauseScopeTasks = "tasks"
+
+	// PauseScopeAutomations affects a project's automation-generated tasks.
+	PauseScopeAutomations = "automations"
+
+	// PauseScopeAll affects both project dials.
+	PauseScopeAll = "all"
+
+	// PauseScopeRunner affects this runner as a whole, regardless of project.
+	PauseScopeRunner = "runner"
+)
+
 // RunnerCommand represents a server-pushed command received via the runner SSE stream.
 type RunnerCommand struct {
 	Type RunnerCommandType `json:"type"`

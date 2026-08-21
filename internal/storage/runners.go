@@ -9,6 +9,20 @@ import (
 	"time"
 )
 
+// runnerSelectWithPause is the shared runner projection.
+//
+// RunnerRow.Paused is LEFT JOINed from runner_pause_state (no row = not
+// paused) rather than kept as a `runners` column, because the runners row is
+// DELETEd on deregister — and `brain runner stop` deregisters. A column would
+// mean a routine stop/start silently resumed a runner an operator had paused.
+// Writes go through SetRunnerPaused; registration never touches it.
+const runnerSelectWithPause = `SELECT r.runner_id, r.machine_id, r.hostname, r.labels, r.executors,
+        r.capabilities, r.dispatch_push, r.workspace_roots, r.projects, r.resources, r.capacity,
+        r.draining, COALESCE(p.paused, 0), r.max_parallel, r.feature_ids, r.registered_at,
+        r.last_heartbeat, r.status
+ FROM runners r
+ LEFT JOIN runner_pause_state p ON p.runner_id = r.runner_id`
+
 // RunnerRow represents a row in the runners table.
 type RunnerRow struct {
 	RunnerID       string                 `json:"runner_id"`
@@ -23,6 +37,7 @@ type RunnerRow struct {
 	Resources      map[string]interface{} `json:"resources"`
 	Capacity       map[string]interface{} `json:"capacity"`
 	Draining       bool                   `json:"draining"`
+	Paused         bool                   `json:"paused"` // joined from runner_pause_state, not a column here
 	MaxParallel    int                    `json:"max_parallel"`
 	FeatureIDs     string                 `json:"feature_ids"`
 	RegisteredAt   int64                  `json:"registered_at"`  // Unix milliseconds
@@ -102,13 +117,10 @@ func (s *StorageLayer) GetRunner(ctx context.Context, runnerID string) (*RunnerR
 	var labelsJSON, executorsJSON, capabilitiesJSON, workspaceRootsJSON, projectsJSON, resourcesJSON, capacityJSON string
 
 	err := s.db.QueryRowContext(ctx,
-		`SELECT runner_id, machine_id, hostname, labels, executors, capabilities, dispatch_push,
-		        workspace_roots, projects, resources, capacity, draining, max_parallel,
-		        feature_ids, registered_at, last_heartbeat, status
-		 FROM runners WHERE runner_id = ?`,
+		runnerSelectWithPause+" WHERE r.runner_id = ?",
 		runnerID,
 	).Scan(&r.RunnerID, &r.MachineID, &r.Hostname, &labelsJSON, &executorsJSON, &capabilitiesJSON, &r.DispatchPush,
-		&workspaceRootsJSON, &projectsJSON, &resourcesJSON, &capacityJSON, &r.Draining,
+		&workspaceRootsJSON, &projectsJSON, &resourcesJSON, &capacityJSON, &r.Draining, &r.Paused,
 		&r.MaxParallel, &r.FeatureIDs, &r.RegisteredAt, &r.LastHeartbeat,
 		&r.Status)
 
@@ -138,10 +150,7 @@ func (s *StorageLayer) GetRunner(ctx context.Context, runnerID string) (*RunnerR
 // ListRunners returns all runners ordered by registered_at descending (newest first).
 func (s *StorageLayer) ListRunners(ctx context.Context) ([]RunnerRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT runner_id, machine_id, hostname, labels, executors, capabilities, dispatch_push,
-		        workspace_roots, projects, resources, capacity, draining, max_parallel,
-		        feature_ids, registered_at, last_heartbeat, status
-		 FROM runners ORDER BY registered_at DESC`,
+		runnerSelectWithPause+" ORDER BY r.registered_at DESC",
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list runners: %w", err)
@@ -154,10 +163,7 @@ func (s *StorageLayer) ListRunners(ctx context.Context) ([]RunnerRow, error) {
 // ListRunnersByStatus returns runners filtered by status.
 func (s *StorageLayer) ListRunnersByStatus(ctx context.Context, status string) ([]RunnerRow, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT runner_id, machine_id, hostname, labels, executors, capabilities, dispatch_push,
-		        workspace_roots, projects, resources, capacity, draining, max_parallel,
-		        feature_ids, registered_at, last_heartbeat, status
-		 FROM runners WHERE status = ? ORDER BY registered_at DESC`,
+		runnerSelectWithPause+" WHERE r.status = ? ORDER BY r.registered_at DESC",
 		status,
 	)
 	if err != nil {
@@ -349,6 +355,40 @@ func (s *StorageLayer) ExpireStaleRunners(ctx context.Context, threshold time.Du
 	return count, nil
 }
 
+// SetRunnerPaused writes the runner-scoped pause dial. Returns false when no
+// such runner is registered.
+//
+// This is the durable half of PUT /runners/{runnerId}/pause. The SSE command
+// published alongside it is only a fast path: the scheduler reads this state
+// (joined into ListRunners) to decide eligibility, so a runner that is
+// offline, mid SSE-reconnect, or restarted still stays paused. The row is
+// keyed by runner_id and deliberately survives deregistration — `brain runner
+// stop` deletes the runners row, and an operator's pause must outlive that.
+func (s *StorageLayer) SetRunnerPaused(ctx context.Context, runnerID string, paused bool) (bool, error) {
+	if runnerID == "" {
+		return false, fmt.Errorf("runner id is required")
+	}
+	var known string
+	err := s.db.QueryRowContext(ctx, "SELECT runner_id FROM runners WHERE runner_id = ?", runnerID).Scan(&known)
+	if err == sql.ErrNoRows {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("set runner paused (lookup): %w", err)
+	}
+	if _, err := s.db.ExecContext(ctx, `
+		INSERT INTO runner_pause_state (runner_id, paused, updated_at)
+		VALUES (?, ?, ?)
+		ON CONFLICT(runner_id) DO UPDATE SET
+		  paused = excluded.paused,
+		  updated_at = excluded.updated_at`,
+		runnerID, boolToInt(paused), time.Now().UnixMilli(),
+	); err != nil {
+		return false, fmt.Errorf("set runner paused: %w", err)
+	}
+	return true, nil
+}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -361,7 +401,7 @@ func scanRunners(rows *sql.Rows) ([]RunnerRow, error) {
 		var labelsJSON, executorsJSON, capabilitiesJSON, workspaceRootsJSON, projectsJSON, resourcesJSON, capacityJSON string
 
 		if err := rows.Scan(&r.RunnerID, &r.MachineID, &r.Hostname, &labelsJSON, &executorsJSON, &capabilitiesJSON, &r.DispatchPush,
-			&workspaceRootsJSON, &projectsJSON, &resourcesJSON, &capacityJSON, &r.Draining,
+			&workspaceRootsJSON, &projectsJSON, &resourcesJSON, &capacityJSON, &r.Draining, &r.Paused,
 			&r.MaxParallel, &r.FeatureIDs, &r.RegisteredAt, &r.LastHeartbeat,
 			&r.Status); err != nil {
 			return nil, fmt.Errorf("scan runner: %w", err)

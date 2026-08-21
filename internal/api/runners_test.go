@@ -28,6 +28,7 @@ type mockRunnerRegistryService struct {
 	getRunnerFunc      func(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
 	updateConfigFunc   func(ctx context.Context, runnerID string, maxParallel int) error
 	updateAffinityFunc func(ctx context.Context, runnerID string, featureIDs []string) error
+	setPausedFunc      func(ctx context.Context, runnerID string, paused bool) error
 
 	upsertInstanceFunc   func(ctx context.Context, runnerID string, inst types.OpencodeInstance) error
 	deleteInstanceFunc   func(ctx context.Context, runnerID, instanceID string) error
@@ -79,6 +80,13 @@ func (m *mockRunnerRegistryService) GetRunner(ctx context.Context, runnerID stri
 func (m *mockRunnerRegistryService) UpdateConfig(ctx context.Context, runnerID string, maxParallel int) error {
 	if m.updateConfigFunc != nil {
 		return m.updateConfigFunc(ctx, runnerID, maxParallel)
+	}
+	return nil
+}
+
+func (m *mockRunnerRegistryService) SetPaused(ctx context.Context, runnerID string, paused bool) error {
+	if m.setPausedFunc != nil {
+		return m.setPausedFunc(ctx, runnerID, paused)
 	}
 	return nil
 }

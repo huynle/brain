@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 22
+const CurrentSchemaVersion = 23
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -252,6 +252,13 @@ CREATE TABLE IF NOT EXISTS project_pause_state (
   updated_at INTEGER NOT NULL
 );`
 
+const createRunnerPauseStateTable = `
+CREATE TABLE IF NOT EXISTS runner_pause_state (
+  runner_id TEXT PRIMARY KEY,
+  paused INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL
+);`
+
 const createProjectPlacementTable = `
 CREATE TABLE IF NOT EXISTS project_placement (
   project_id TEXT PRIMARY KEY,
@@ -429,6 +436,7 @@ var createIndexes = []string{
 	"CREATE INDEX IF NOT EXISTS idx_project_placement_affinity ON project_placement(affinity);",
 	"CREATE INDEX IF NOT EXISTS idx_project_pause_state_tasks ON project_pause_state(tasks_paused);",
 	"CREATE INDEX IF NOT EXISTS idx_project_pause_state_automations ON project_pause_state(automations_paused);",
+	"CREATE INDEX IF NOT EXISTS idx_runner_pause_state_paused ON runner_pause_state(paused);",
 	// OAuth indexes
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_auth_codes(client_id);",
 	"CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_expires ON oauth_auth_codes(expires_at);",
@@ -887,6 +895,24 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 23 {
+		// v23: persist the runner-scoped pause dial.
+		//
+		// It lives in its own table rather than as a `runners` column
+		// because the runners row is DELETED on deregister — and
+		// `brain runner stop` deregisters. A column would mean a routine
+		// stop/start silently resumed a runner an operator had paused.
+		// Keyed by runner_id, which is stable across restarts.
+		if _, err := db.Exec(createRunnerPauseStateTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v23 (runner_pause_state table): %w", err)
+			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_runner_pause_state_paused ON runner_pause_state(paused)"); err != nil {
+			return fmt.Errorf("migrate v23 (runner_pause_state index): %w", err)
+		}
+	}
+
 	if ver < 21 {
 		// v21: add stable lease IDs to dispatch leases for ack/reject validation.
 		if exists, err := tableExists(db, "task_dispatch_leases"); err != nil {
@@ -1070,6 +1096,7 @@ func InitSchema(db *sql.DB) error {
 		createOpencodeInstancesTable,
 		createProjectPlacementTable,
 		createProjectPauseStateTable,
+		createRunnerPauseStateTable,
 		createWebhooksTable,
 		createWebhookDeliveriesTable,
 		createNoteEmbeddingsMetaTable,

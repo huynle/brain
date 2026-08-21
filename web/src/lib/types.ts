@@ -307,6 +307,10 @@ export interface RunnerInfo {
   version?: string;
   machine_id?: string;
   bridge_connected?: boolean;
+  // Runner-scoped pause dial (PUT /runners/{runnerId}/pause|resume).
+  // Omitted by the API when false. A paused runner stays "online" but the
+  // scheduler will not place any dispatch on it.
+  paused?: boolean;
 }
 
 export interface FeatureAssignment {

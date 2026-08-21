@@ -872,7 +872,7 @@ func TestControlExec_SignalsRunnerOnClientDisconnect(t *testing.T) {
 	}
 
 	cancel()
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	deadline := time.Now().Add(2 * time.Second)
 	for {
@@ -918,7 +918,7 @@ func TestControlExec_AuditEvent(t *testing.T) {
 		t.Fatalf("exec request: %v", err)
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if events.rejectErr != nil {
 		t.Fatalf("audit event rejected by EventService: %v", events.rejectErr)

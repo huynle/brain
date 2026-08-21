@@ -49,6 +49,12 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 	if cfg.Opencode.Bin == "" {
 		cfg.Opencode.Bin = "opencode"
 	}
+	// StateDir feeds filepath.Join for state, prompt, output-log and runner-script
+	// paths. Leaving it empty makes every one of those relative to the process
+	// working directory, so resolve the default explicitly.
+	if cfg.StateDir == "" {
+		cfg.StateDir = runner.DefaultStateDir()
+	}
 	// Allow env var override for opencode binary
 	if bin := os.Getenv("OPENCODE_BIN"); bin != "" {
 		cfg.Opencode.Bin = bin
@@ -208,6 +214,12 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	}
 	if cfg.Opencode.Bin == "" {
 		cfg.Opencode.Bin = "opencode"
+	}
+	// StateDir feeds filepath.Join for state, prompt, output-log and runner-script
+	// paths. Leaving it empty makes every one of those relative to the process
+	// working directory, so resolve the default explicitly.
+	if cfg.StateDir == "" {
+		cfg.StateDir = runner.DefaultStateDir()
 	}
 	// Allow env var override for opencode binary
 	if bin := os.Getenv("OPENCODE_BIN"); bin != "" {

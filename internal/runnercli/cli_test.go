@@ -3,6 +3,7 @@ package runnercli
 import (
 	"context"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -19,6 +20,11 @@ func TestRunTaskRunner_BasicStartStop(t *testing.T) {
 			BrainAPIURL: "http://localhost:3333",
 			MaxParallel: 1,
 			WorkDir:     t.TempDir(),
+			// StateDir/LogDir must be temp dirs: the runner writes state, PID and
+			// running-task files there, and an empty value would resolve relative
+			// to the package directory and dirty the repo.
+			StateDir: t.TempDir(),
+			LogDir:   t.TempDir(),
 		},
 	}
 
@@ -68,6 +74,8 @@ func TestRunTUI_BasicStartStop(t *testing.T) {
 			BrainAPIURL: "http://localhost:3333",
 			MaxParallel: 1,
 			WorkDir:     t.TempDir(),
+			StateDir:    t.TempDir(),
+			LogDir:      t.TempDir(),
 		},
 	}
 
@@ -170,4 +178,68 @@ func TestRunnerOptions_FullConfigPassthrough(t *testing.T) {
 	if opts.Config.Opencode.Bin != "/usr/local/bin/opencode" {
 		t.Errorf("Opencode.Bin lost: got %q", opts.Config.Opencode.Bin)
 	}
+}
+
+// TestRunTaskRunner_EmptyStateDirDoesNotWriteToCwd is a regression guard: an
+// unset StateDir used to be joined into relative paths, so the runner dropped
+// runner-<project>.json / .pid into whatever directory the process ran from —
+// under `go test` that is the package directory, which dirtied the repo.
+func TestRunTaskRunner_EmptyStateDirDoesNotWriteToCwd(t *testing.T) {
+	stateHome := t.TempDir()
+	t.Setenv("XDG_STATE_HOME", stateHome)
+
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	before := dirEntries(t, cwd)
+
+	opts := RunnerOptions{
+		Projects:    []string{"test-project"},
+		Mode:        "headless",
+		StartPaused: false,
+		Config: runner.RunnerConfig{
+			BrainAPIURL: "http://localhost:3333",
+			MaxParallel: 1,
+			WorkDir:     t.TempDir(),
+			LogDir:      t.TempDir(),
+			// StateDir deliberately left empty — it must resolve to a default.
+		},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+
+	if err := RunTaskRunner(ctx, opts); err != nil &&
+		err != context.DeadlineExceeded && err != context.Canceled {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	for name := range dirEntries(t, cwd) {
+		if _, existed := before[name]; !existed {
+			t.Errorf("runner wrote %q into the working directory; StateDir should default outside the repo", name)
+		}
+	}
+
+	// And it should have landed under the resolved default instead.
+	want := filepath.Join(stateHome, "brain-runner")
+	if got := runner.DefaultStateDir(); got != want {
+		t.Errorf("DefaultStateDir() = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(filepath.Join(want, "runner-test-project.json")); err != nil {
+		t.Errorf("expected runner state under %s: %v", want, err)
+	}
+}
+
+func dirEntries(t *testing.T, dir string) map[string]struct{} {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("readdir %s: %v", dir, err)
+	}
+	names := make(map[string]struct{}, len(entries))
+	for _, e := range entries {
+		names[e.Name()] = struct{}{}
+	}
+	return names
 }

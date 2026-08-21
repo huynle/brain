@@ -351,35 +351,38 @@ func (h *Handler) HandleUpdateRunnerConfig(w http.ResponseWriter, r *http.Reques
 	})
 }
 
-// HandlePauseRunner handles PUT /runners/{runnerId}/pause — pause a runner via SSE command.
+// runnerPauseScopePayload is the SSE payload for runner-scoped pause and
+// resume commands.
+//
+// The scope matters: without it the runner cannot tell a runner pause from a
+// *global project* pause, files it under its per-project snapshot, and then
+// wipes it on the next reconcile tick (that snapshot is replaced wholesale
+// from GetRunnerStatus, which only ever reports project pauses). Runners see
+// scope="runner" and route it to their own dial instead.
+var runnerPauseScopePayload = map[string]any{"scope": "runner"}
+
+// HandlePauseRunner handles PUT /runners/{runnerId}/pause — pause a runner.
+//
+// The pause is persisted first (runner_pause_state); the SSE command is only
+// a fast path so a connected runner stops immediately. Persistence is what
+// actually stops work: the scheduler skips paused runners when placing
+// dispatch leases, and a runner that was offline, mid-reconnect, or restarted
+// picks the pause up when it reconciles.
 func (h *Handler) HandlePauseRunner(w http.ResponseWriter, r *http.Request) {
-	runnerID := chi.URLParam(r, "runnerId")
-
-	if _, err := h.runnerRegistry.GetRunner(r.Context(), runnerID); err != nil {
-		if errors.Is(err, ErrNotFound) {
-			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("runner %q not found", runnerID))
-			return
-		}
-		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
-		return
-	}
-
-	slog.Info("runner pause requested", "runner_id", runnerID)
-
-	if h.hub != nil {
-		h.hub.PublishRunnerCommand(runnerID, "pause", nil)
-	}
-
-	WriteJSON(w, http.StatusOK, map[string]any{
-		"runnerId": runnerID,
-		"action":   "pause",
-		"success":  true,
-	})
+	h.setRunnerPaused(w, r, true)
 }
 
-// HandleResumeRunner handles PUT /runners/{runnerId}/resume — resume a runner via SSE command.
+// HandleResumeRunner handles PUT /runners/{runnerId}/resume — resume a runner.
 func (h *Handler) HandleResumeRunner(w http.ResponseWriter, r *http.Request) {
+	h.setRunnerPaused(w, r, false)
+}
+
+func (h *Handler) setRunnerPaused(w http.ResponseWriter, r *http.Request, paused bool) {
 	runnerID := chi.URLParam(r, "runnerId")
+	action := "resume"
+	if paused {
+		action = "pause"
+	}
 
 	if _, err := h.runnerRegistry.GetRunner(r.Context(), runnerID); err != nil {
 		if errors.Is(err, ErrNotFound) {
@@ -390,15 +393,27 @@ func (h *Handler) HandleResumeRunner(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	slog.Info("runner resume requested", "runner_id", runnerID)
+	slog.Info("runner "+action+" requested", "runner_id", runnerID)
+
+	// Persist before publishing. Reporting success for a pause that was
+	// never recorded is what let a "paused" runner keep acking dispatches.
+	if err := h.runnerRegistry.SetPaused(r.Context(), runnerID, paused); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("runner %q not found", runnerID))
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
 
 	if h.hub != nil {
-		h.hub.PublishRunnerCommand(runnerID, "resume", nil)
+		h.hub.PublishRunnerCommand(runnerID, action, runnerPauseScopePayload)
 	}
 
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"runnerId": runnerID,
-		"action":   "resume",
+		"action":   action,
+		"paused":   paused,
 		"success":  true,
 	})
 }

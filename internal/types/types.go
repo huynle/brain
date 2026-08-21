@@ -1294,13 +1294,13 @@ type RunProjectRequest struct {
 // aggregated dispatch counts summarize the batch. Non-fatal per-feature
 // errors surface as skipped entries so partial success doesn't fail the batch.
 type RunProjectResponse struct {
-	ProjectID           string                `json:"projectId"`
-	FeaturesConsidered  int                   `json:"featuresConsidered"`
-	FeaturesDispatched  int                   `json:"featuresDispatched"`
-	FeaturesSkipped     int                   `json:"featuresSkipped"`
+	ProjectID            string               `json:"projectId"`
+	FeaturesConsidered   int                  `json:"featuresConsidered"`
+	FeaturesDispatched   int                  `json:"featuresDispatched"`
+	FeaturesSkipped      int                  `json:"featuresSkipped"`
 	TotalTasksDispatched int                  `json:"totalTasksDispatched"`
-	Results             []RunFeatureResponse `json:"results,omitempty"`
-	Reason              string                `json:"reason,omitempty"`
+	Results              []RunFeatureResponse `json:"results,omitempty"`
+	Reason               string               `json:"reason,omitempty"`
 }
 
 // ClaimStatusResponse is the response for GET /tasks/:projectId/:taskId/claim-status.
@@ -1511,6 +1511,30 @@ type OpencodeInstance struct {
 	BridgeConnected    bool `json:"bridge_connected,omitempty"`
 }
 
+// ExecOutcome is the API-side record of one runner-shell command: the loss
+// accounting for its output fan-out plus, once Done, how the command ended.
+//
+// It exists because the SSE handler cannot trust the fan-out to carry the
+// terminal exec_exit frame — a slow browser can drop it, and a runner that
+// dies never sends one. The handler polls this record so the stream always
+// ends, and reports Dropped* so truncation is never silent.
+type ExecOutcome struct {
+	// Done is true once the command's fate is known: the runner reported an
+	// exit, or its bridge connection dropped mid-command.
+	Done     bool   `json:"done"`
+	ExitCode int    `json:"exit_code"`
+	Error    string `json:"error,omitempty"`
+
+	// DroppedChunks / DroppedBytes count exec_data frames the fan-out could
+	// not deliver, i.e. output missing from the user's transcript.
+	DroppedChunks int `json:"dropped_chunks,omitempty"`
+	DroppedBytes  int `json:"dropped_bytes,omitempty"`
+}
+
+// ExecExitUnknown is the exit code reported when a command's real status
+// could never be determined (its runner vanished mid-command).
+const ExecExitUnknown = -1
+
 // Instance kinds.
 const (
 	InstanceKindTask  = "task"
@@ -1541,6 +1565,12 @@ type SpawnInstanceSpec struct {
 }
 
 // RunnerInfo is the API-level runner representation with computed status.
+//
+// Paused is the runner-scoped pause dial, owned by the API server and toggled
+// through PUT /runners/{runnerId}/pause|resume. It is NOT reported by the
+// runner on registration or heartbeat — a runner must never be able to resume
+// itself by restarting. The scheduler treats a paused runner as ineligible for
+// dispatch, and the runner reconciles its own dial against this field.
 type RunnerInfo struct {
 	RunnerID           string                      `json:"runner_id"`
 	MachineID          string                      `json:"machine_id,omitempty"`
@@ -1555,6 +1585,7 @@ type RunnerInfo struct {
 	Resources          map[string]interface{}      `json:"resources,omitempty"`
 	Capacity           map[string]interface{}      `json:"capacity,omitempty"`
 	Draining           bool                        `json:"draining,omitempty"`
+	Paused             bool                        `json:"paused,omitempty"`
 	MaxParallel        int                         `json:"max_parallel"`
 	ActiveTasks        int                         `json:"active_tasks,omitempty"`
 	FeatureIDs         string                      `json:"feature_ids,omitempty"`

@@ -13,11 +13,12 @@ import { useActionRunner } from "../../hooks/useActionRunner";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
 import { useGoals, useGoalProgress } from "../../hooks/useGoals";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
-import { useRowActions } from "../../hooks/useRowActions";
+import { useRowActions, type RowActionProps } from "../../hooks/useRowActions";
 import { useTaskActionContext } from "../../hooks/useTaskActionContext";
+import { useGoalActionContext } from "../../hooks/useGoalActionContext";
 import { buildTaskActions } from "../../lib/actions/taskActions";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
-import { goalStatusLabel } from "../../lib/actions/goalActions";
+import { buildGoalActions, goalStatusLabel } from "../../lib/actions/goalActions";
 import { deriveFeatures } from "../../lib/features";
 import type { GoalSummary, Task } from "../../lib/types";
 
@@ -52,9 +53,14 @@ function goalTone(status: string): string {
 function GoalRow({
   goal,
   onOpen,
+  actionProps,
 }: {
   goal: GoalSummary;
   onOpen: () => void;
+  /** Built by the parent's useRowActions so the goal verbs ride the
+   *  modal's shared overlays — right-click, long-press and keyboard,
+   *  same registry as CardGoals rows. */
+  actionProps: RowActionProps;
 }): JSX.Element {
   const { progress } = useGoalProgress(goal.goal_id);
   const pct =
@@ -62,7 +68,7 @@ function GoalRow({
       ? Math.round((progress.completed / progress.total) * 100)
       : 0;
   return (
-    <div className="trow" onClick={onOpen} title={goal.title}>
+    <div className="trow" {...actionProps} onClick={onOpen} title={goal.title}>
       <span className="glyph">◎</span>
       <span className="name">{goal.title || goal.goal_id}</span>
       <span
@@ -126,6 +132,7 @@ export function FeatureModal(): JSX.Element {
 
   const featureCtx = useFeatureActionContext(projectId);
   const taskCtx = useTaskActionContext(projectId);
+  const goalCtx = useGoalActionContext();
   // Right-click / long-press / keyboard verbs on the modal's task rows —
   // the same registry the cards use, so the modal is not a dead end.
   const { rowProps, overlays } = useRowActions();
@@ -321,6 +328,11 @@ export function FeatureModal(): JSX.Element {
             onOpen={() =>
               openModal("goal", { goalId: g.goal_id, projectId })
             }
+            actionProps={rowProps(
+              buildGoalActions(g, goalCtx),
+              g.title || g.goal_id,
+              () => openModal("goal", { goalId: g.goal_id, projectId }),
+            )}
           />
         ))}
         <button

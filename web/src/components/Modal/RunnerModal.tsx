@@ -1,9 +1,10 @@
 /**
  * RunnerModal — wireframe-parity.
  *
- * Four tabs: Overview / Processes / Shell (mock, backend blocked on
- * 4mymbjen) / Logs. Processes lists the runner's executor processes
- * (instances) with the task each is running and a per-process log.
+ * Four tabs: Overview / Processes / Shell / Logs. Processes lists the
+ * runner's executor processes (instances) with the task each is running
+ * and a per-process log. Shell is a real streaming terminal on the
+ * runner host (POST .../exec, see components/RunnerShell.tsx).
  */
 import { useMemo } from "react";
 import { Modal, type ModalTab } from "../common/Modal";
@@ -11,8 +12,10 @@ import { useModal } from "../../store/modal";
 import { useLive } from "../../lib/sse";
 import { useRunners } from "../../hooks/useRunners";
 import type { RunnerInfo } from "../../lib/types";
-import { MockShell } from "../MockShell";
+import { RunnerShell } from "../RunnerShell";
 import { RunnerProcesses } from "../RunnerProcesses";
+import { TerminalText } from "../common/TerminalText";
+import { clockTime } from "../../lib/format";
 
 const TABS: ModalTab[] = [
   { id: "overview", label: "Overview" },
@@ -182,26 +185,7 @@ export function RunnerModal(): JSX.Element {
         />
       )}
 
-      {tab === "shell" && (
-        <div>
-          <div
-            style={{
-              padding: "6px 8px",
-              background: "#f4b23a22",
-              border: "1px solid #f4b23a",
-              borderRadius: 4,
-              color: "#f4b23a",
-              fontSize: 11,
-              marginBottom: 8,
-            }}
-          >
-            ⚠ Mock shell. Real ad-hoc shell backend is blocked on RBAC
-            (Brain task <code>4mymbjen</code>). Commands here run
-            client-side against synthetic data.
-          </div>
-          <MockShell runner={runner} />
-        </div>
-      )}
+      {tab === "shell" && <RunnerShell runner={runner} />}
 
       {tab === "logs" && (
         <div className="log-mini" style={{ height: 340 }}>
@@ -215,15 +199,19 @@ export function RunnerModal(): JSX.Element {
                 No log lines yet.
               </div>
             )}
+            {/*
+              Same pipeline as the Processes tab: these lines share the
+              `.log-mini` grid, which now WRAPS its message column, so raw
+              escape residue and CR spinner frames the old ellipsis clipped
+              to one row would otherwise expand into dozens.
+            */}
             {runnerLogs.map((r) => (
               <div key={r.seq} className="l">
-                <span className="ts">
-                  {r.line.timestamp
-                    ? new Date(r.line.timestamp).toLocaleTimeString()
-                    : ""}
-                </span>
+                <span className="ts">{clockTime(r.line.timestamp)}</span>
                 <span className="lvl">{r.line.level || "INFO"}</span>
-                <span className="msg">{r.line.content}</span>
+                <span className="msg">
+                  <TerminalText text={r.line.content} />
+                </span>
               </div>
             ))}
           </div>

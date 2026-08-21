@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,6 +14,22 @@ import (
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/types"
 )
+
+// appendNumberedLines seeds the buffer for my-project/task-123 with n lines
+// named line-0 … line-(n-1), so a test can tell head from tail.
+func appendNumberedLines(n int) func(lb *logbuffer.Buffer) {
+	return func(lb *logbuffer.Buffer) {
+		lines := make([]types.LogLine, n)
+		for i := range lines {
+			lines[i] = types.LogLine{
+				Timestamp: "2025-01-01T00:00:00Z",
+				Level:     "info",
+				Content:   fmt.Sprintf("line-%d", i),
+			}
+		}
+		lb.Append("my-project", "task-123", lines)
+	}
+}
 
 func newLogTestRouter(lb *logbuffer.Buffer, hub *realtime.Hub) *chi.Mux {
 	h := NewHandler(&mockBrainService{}, WithLogBuffer(lb), WithHub(hub))
@@ -181,6 +198,120 @@ func TestHandleGetLogs(t *testing.T) {
 				}
 				if result.Limit != 4 {
 					t.Errorf("expected limit=4, got %d", result.Limit)
+				}
+			},
+		},
+		{
+			// Regression: a limit with no offset used to return the OLDEST
+			// `limit` lines, so a long-running task showed a stale prefix and
+			// the newest output existed only in the live SSE tail.
+			name:       "limit without offset returns the newest lines",
+			setup:      appendNumberedLines(250),
+			query:      "?limit=10",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				result := decodeJSON[types.LogQueryResponse](t, resp)
+				if result.Total != 250 {
+					t.Errorf("expected total=250, got %d", result.Total)
+				}
+				if len(result.Lines) != 10 {
+					t.Fatalf("expected 10 lines, got %d", len(result.Lines))
+				}
+				if result.Offset != 240 {
+					t.Errorf("expected offset=240 (tail start), got %d", result.Offset)
+				}
+				if result.Limit != 10 {
+					t.Errorf("expected limit=10, got %d", result.Limit)
+				}
+				// Oldest→newest ordering preserved within the tail window.
+				for i, line := range result.Lines {
+					want := fmt.Sprintf("line-%d", 240+i)
+					if line.Content != want {
+						t.Fatalf("line %d: expected %q, got %q", i, want, line.Content)
+					}
+				}
+			},
+		},
+		{
+			name:       "no limit and no offset returns the newest default page",
+			setup:      appendNumberedLines(250),
+			query:      "",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				result := decodeJSON[types.LogQueryResponse](t, resp)
+				if len(result.Lines) != 100 {
+					t.Fatalf("expected 100 lines (default limit), got %d", len(result.Lines))
+				}
+				if result.Offset != 150 {
+					t.Errorf("expected offset=150, got %d", result.Offset)
+				}
+				if result.Lines[0].Content != "line-150" {
+					t.Errorf("expected first='line-150', got %q", result.Lines[0].Content)
+				}
+				if result.Lines[99].Content != "line-249" {
+					t.Errorf("expected last='line-249', got %q", result.Lines[99].Content)
+				}
+			},
+		},
+		{
+			// Explicit offset keeps head-indexed pagination — offset 0 is the
+			// oldest retained line, not the tail.
+			name:       "explicit offset=0 pages from the oldest retained line",
+			setup:      appendNumberedLines(250),
+			query:      "?offset=0&limit=10",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				result := decodeJSON[types.LogQueryResponse](t, resp)
+				if result.Total != 250 {
+					t.Errorf("expected total=250, got %d", result.Total)
+				}
+				if result.Offset != 0 {
+					t.Errorf("expected offset=0, got %d", result.Offset)
+				}
+				if len(result.Lines) != 10 {
+					t.Fatalf("expected 10 lines, got %d", len(result.Lines))
+				}
+				if result.Lines[0].Content != "line-0" {
+					t.Errorf("expected first='line-0', got %q", result.Lines[0].Content)
+				}
+				if result.Lines[9].Content != "line-9" {
+					t.Errorf("expected last='line-9', got %q", result.Lines[9].Content)
+				}
+			},
+		},
+		{
+			name:       "explicit mid-buffer offset returns that window",
+			setup:      appendNumberedLines(250),
+			query:      "?offset=100&limit=5",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				result := decodeJSON[types.LogQueryResponse](t, resp)
+				if result.Offset != 100 {
+					t.Errorf("expected offset=100, got %d", result.Offset)
+				}
+				if len(result.Lines) != 5 {
+					t.Fatalf("expected 5 lines, got %d", len(result.Lines))
+				}
+				if result.Lines[0].Content != "line-100" {
+					t.Errorf("expected first='line-100', got %q", result.Lines[0].Content)
+				}
+			},
+		},
+		{
+			name:       "explicit offset beyond total returns empty window",
+			setup:      appendNumberedLines(10),
+			query:      "?offset=500&limit=10",
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				result := decodeJSON[types.LogQueryResponse](t, resp)
+				if result.Total != 10 {
+					t.Errorf("expected total=10, got %d", result.Total)
+				}
+				if len(result.Lines) != 0 {
+					t.Errorf("expected 0 lines, got %d", len(result.Lines))
+				}
+				if result.Offset != 500 {
+					t.Errorf("expected offset=500 echoed back, got %d", result.Offset)
 				}
 			},
 		},

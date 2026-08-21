@@ -24,6 +24,8 @@ import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
 import { DepGuide } from "../common/DepGuide";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
+import { buildSelectionActions } from "../../lib/actions/selectionActions";
+import { isRangeKey } from "../../lib/selection";
 import { buildFeatureForest, type DerivedFeature } from "../../lib/features";
 import { flattenDepForest } from "../../lib/depTree";
 
@@ -65,12 +67,30 @@ export function CardFeatures({
   const selProjectId = useSelection((s) => s.projectId);
   const selFeatureIds = useSelection((s) => s.featureIds);
   const toggleFeatureSel = useSelection((s) => s.toggleFeature);
+  const rangeFeatureSel = useSelection((s) => s.rangeFeature);
+  const requestVerb = useSelection((s) => s.requestVerb);
+  const clearSel = useSelection((s) => s.clear);
   const selScoped = selProjectId === projectId;
   const selTaskIds = useSelection((s) => s.taskIds);
   // Selection mode: once anything in this project is marked, every row
   // shows its checkbox. Until then boxes appear only on hover/focus.
   const selActive =
     selScoped && (selTaskIds.size > 0 || selFeatureIds.size > 0);
+
+  // The whole-selection verbs marked rows offer on right-click /
+  // long-press / `m` instead of their own menu.
+  const selCount = selScoped ? selTaskIds.size + selFeatureIds.size : 0;
+  const selectionActions = useMemo(
+    () =>
+      selCount > 0
+        ? buildSelectionActions({
+            count: selCount,
+            requestVerb,
+            clearSelection: clearSel,
+          })
+        : null,
+    [selCount, requestVerb, clearSel],
+  );
 
   const merged = features.filter((f) => f.lifecycle === "merged");
 
@@ -83,6 +103,13 @@ export function CardFeatures({
       : features.filter((f) => f.lifecycle !== "merged");
     return flattenDepForest(buildFeatureForest(visible));
   }, [features, mergedExpanded]);
+
+  // Visual order of the rendered rows, for shift-click ranges. Derived
+  // from `rows` so a collapsed merged bucket is out of range reach.
+  const orderedFeatureIds = useMemo(
+    () => rows.map((row) => row.node.item.id),
+    [rows],
+  );
 
   if (features.length === 0) {
     return (
@@ -103,6 +130,21 @@ export function CardFeatures({
         const stateClass = featStateClass(f);
         const actions = buildFeatureActions(f, featureCtx);
         const marked = selScoped && selFeatureIds.has(f.id);
+        const rp = rowProps(
+          actions,
+          f.name,
+          // Selection mode is modal: Enter toggles like a click, it
+          // does not open the drawer.
+          selActive
+            ? () => toggleFeatureSel(projectId, f.id)
+            : () => openFeatureDrawer(projectId, f.id),
+          {
+            selectionActions: marked ? selectionActions ?? undefined : undefined,
+            // Long-press = the touch shift-click.
+            onRangeSelect: () =>
+              rangeFeatureSel(projectId, orderedFeatureIds, f.id),
+          },
+        );
 
         return (
           <div
@@ -119,12 +161,17 @@ export function CardFeatures({
           >
             <div
               className={`feat-head${marked ? " marked" : ""}`}
-              {...rowProps(
-                actions,
-                f.name,
-                () => openFeatureDrawer(projectId, f.id),
-                { tapSelects: selActive },
-              )}
+              {...rp}
+              onKeyDown={(e) => {
+                // Shift+V ranges from the anchor — keyboard parity
+                // with shift-click for rows focused via Tab.
+                if (isRangeKey(e)) {
+                  e.preventDefault();
+                  rangeFeatureSel(projectId, orderedFeatureIds, f.id);
+                  return;
+                }
+                rp.onKeyDown(e);
+              }}
               draggable
               onDragStart={(e) =>
                 beginDrag(e, {
@@ -146,7 +193,29 @@ export function CardFeatures({
                   )
                 )
                   return;
+                // Shift-click anywhere on the head is a selection
+                // gesture, not an open: range from the anchor, or
+                // start a selection here.
+                if (e.shiftKey) {
+                  rangeFeatureSel(projectId, orderedFeatureIds, f.id);
+                  return;
+                }
+                // Selection mode is modal: clicks toggle, never open.
+                if (selActive) {
+                  toggleFeatureSel(projectId, f.id);
+                  return;
+                }
                 openFeatureDrawer(projectId, f.id);
+              }}
+              // Shift-click would otherwise extend the browser's text
+              // selection across the rows before our click handler
+              // runs. The explicit focus() keeps what preventDefault
+              // suppresses: accelerators target the last-clicked row.
+              onMouseDown={(e) => {
+                if (e.shiftKey) {
+                  e.preventDefault();
+                  e.currentTarget.focus();
+                }
               }}
             >
               {/* Reserved 12px slot: empty until hover/selection, then
@@ -161,7 +230,9 @@ export function CardFeatures({
                   aria-label={`Select feature ${f.name}`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    toggleFeatureSel(projectId, f.id);
+                    if (e.shiftKey)
+                      rangeFeatureSel(projectId, orderedFeatureIds, f.id);
+                    else toggleFeatureSel(projectId, f.id);
                   }}
                 />
               </span>

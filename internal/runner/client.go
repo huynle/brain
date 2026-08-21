@@ -1467,8 +1467,9 @@ func (c *APIClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerI
 	return nil
 }
 
-// GetTaskLogs fetches the persisted log lines for a task (historical + current),
-// newest-bounded by limit. Used by the TUI logs pane to show stored output for
+// GetTaskLogs fetches the persisted log lines for a task (historical + current).
+// It sends no offset, so the server returns the NEWEST limit lines (the tail),
+// ordered oldest→newest. Used by the TUI logs pane to show stored output for
 // completed tasks, not just the live SSE stream.
 func (c *APIClient) GetTaskLogs(ctx context.Context, projectID, taskID string, limit int) (*types.LogQueryResponse, error) {
 	path := fmt.Sprintf("/api/v1/tasks/%s/%s/logs?limit=%d", projectID, taskID, limit)
@@ -1664,6 +1665,26 @@ func (c *APIClient) ShutdownRunner(ctx context.Context, runnerID string, reason 
 		return c.readError(resp)
 	}
 	return nil
+}
+
+// GetRunner returns one runner's registry record, including the
+// server-owned `paused` dial that the runner reconciles against.
+func (c *APIClient) GetRunner(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
+	resp, err := c.doRequest(ctx, http.MethodGet, "/api/v1/runners/"+url.PathEscape(runnerID), nil)
+	if err != nil {
+		return nil, fmt.Errorf("get runner: %w", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // matches every other method here
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, c.readError(resp)
+	}
+
+	var info types.RunnerInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return nil, fmt.Errorf("decode runner: %w", err)
+	}
+	return &info, nil
 }
 
 // GetRunnerStatus returns the current runner status including pause state.

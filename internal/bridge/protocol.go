@@ -33,6 +33,21 @@ const (
 	FrameKill          = "kill"           // api → runner: kill ad-hoc instance
 	FrameAbortTask     = "abort_task"     // api → runner: abort task instance and reset pending
 	FrameHistory       = "history"        // api → runner: fetch a session transcript (no live instance needed)
+
+	// Runner shell. exec_start is correlated (answered by a res frame that
+	// acks the spawn); output afterwards arrives as uncorrelated exec_data
+	// pushes tagged with the same ExecID, terminated by exactly one
+	// exec_exit.
+	FrameExecStart  = "exec_start"  // api → runner: start a shell command
+	FrameExecSignal = "exec_signal" // api → runner: signal a running command
+	FrameExecData   = "exec_data"   // runner → api: output chunk
+	FrameExecExit   = "exec_exit"   // runner → api: command finished
+)
+
+// Exec stream names carried on Frame.Stream for exec_data frames.
+const (
+	ExecStreamStdout = "stdout"
+	ExecStreamStderr = "stderr"
 )
 
 // Limits enforced on both sides of the tunnel.
@@ -46,6 +61,18 @@ const (
 	MaxInFlight = 64
 	// DefaultTimeoutMs is the default per-request timeout when none is given.
 	DefaultTimeoutMs = 30_000
+
+	// ExecDefaultTimeoutMs bounds how long a shell command may run before
+	// the runner kills it. Shell commands are interactive, so this is much
+	// longer than a proxied request timeout.
+	ExecDefaultTimeoutMs = 15 * 60 * 1000 // 15 min
+	// ExecMaxTimeoutMs is the ceiling a caller may request.
+	ExecMaxTimeoutMs = 60 * 60 * 1000 // 1 hour
+	// ExecMaxCommandBytes caps the command line accepted over the wire.
+	ExecMaxCommandBytes = 64 << 10 // 64 KB
+	// ExecChunkBytes is the read buffer for command output; each read
+	// becomes one exec_data frame, so this also bounds frame size.
+	ExecChunkBytes = 16 << 10 // 16 KB
 )
 
 // Frame is the single wire format for all bridge messages.
@@ -77,6 +104,18 @@ type Frame struct {
 
 	// spawn
 	Spec *types.SpawnInstanceSpec `json:"spec,omitempty"`
+
+	// exec_start / exec_signal / exec_data / exec_exit
+	ExecID  string `json:"exec_id,omitempty"`
+	Command string `json:"command,omitempty"`
+	Workdir string `json:"workdir,omitempty"`
+	// ExecTimeoutMs is the command's own budget, distinct from TimeoutMs
+	// (which bounds how long the API waits for the spawn ack).
+	ExecTimeoutMs int    `json:"exec_timeout_ms,omitempty"`
+	Stream        string `json:"stream,omitempty"`    // ExecStreamStdout | ExecStreamStderr
+	Chunk         string `json:"chunk,omitempty"`     // raw output bytes for this frame
+	ExitCode      int    `json:"exit_code,omitempty"` // exec_exit; absent means 0
+	Signal        string `json:"signal,omitempty"`    // exec_signal: "int" | "term" | "kill"
 }
 
 // allowedRoute is one entry of the proxied-endpoint allowlist. Pattern

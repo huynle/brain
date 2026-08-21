@@ -60,8 +60,12 @@ func (b *Buffer) Append(projectId, taskId string, lines []types.LogLine) int {
 	return len(lines)
 }
 
-// Query returns log lines for a task with offset/limit pagination.
-// Returns the lines, total count, and the actual offset used.
+// Query returns log lines for a task with head-indexed offset/limit pagination:
+// the window starts at offset lines from the OLDEST retained line.
+// Returns the lines (ordered oldest→newest) and the total retained count.
+//
+// Callers that supply only a limit almost always mean the newest lines, not the
+// oldest — use Tail for that.
 func (b *Buffer) Query(projectId, taskId string, offset, limit int) ([]types.LogLine, int) {
 	key := taskKey(projectId, taskId)
 
@@ -88,4 +92,38 @@ func (b *Buffer) Query(projectId, taskId string, offset, limit int) ([]types.Log
 	copy(result, lines[offset:end])
 
 	return result, total
+}
+
+// Tail returns the NEWEST limit log lines for a task, still ordered
+// oldest→newest within the returned window. It returns the lines, the total
+// retained count, and the offset of the first returned line within the retained
+// window (0 when the buffer holds fewer lines than the limit), so callers can
+// report a truthful offset and page backwards from the tail.
+//
+// This is the semantic a caller means when it passes a limit and no offset:
+// "show me the end of the log". The ring evicts oldest-first, so Query(0, limit)
+// on a long-running task returns a stale prefix instead.
+func (b *Buffer) Tail(projectId, taskId string, limit int) ([]types.LogLine, int, int) {
+	key := taskKey(projectId, taskId)
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	lines := b.tasks[key]
+	total := len(lines)
+
+	if limit <= 0 || total == 0 {
+		return nil, total, 0
+	}
+
+	offset := total - limit
+	if offset < 0 {
+		offset = 0
+	}
+
+	// Return a copy to avoid data races
+	result := make([]types.LogLine, total-offset)
+	copy(result, lines[offset:total])
+
+	return result, total, offset
 }

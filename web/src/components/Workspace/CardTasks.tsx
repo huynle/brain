@@ -29,6 +29,8 @@ import { DepGuide } from "../common/DepGuide";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
 import { buildTaskActions } from "../../lib/actions/taskActions";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
+import { buildSelectionActions } from "../../lib/actions/selectionActions";
+import { isRangeKey } from "../../lib/selection";
 import { buildTaskForest } from "../../lib/taskTree";
 import { flattenDepForest, type DepRow } from "../../lib/depTree";
 import type { Task } from "../../lib/types";
@@ -109,11 +111,30 @@ export function CardTasks({
   const selFeatureIds = useSelection((s) => s.featureIds);
   const toggleTaskSel = useSelection((s) => s.toggleTask);
   const toggleFeatureSel = useSelection((s) => s.toggleFeature);
+  const rangeTaskSel = useSelection((s) => s.rangeTask);
+  const rangeFeatureSel = useSelection((s) => s.rangeFeature);
+  const requestVerb = useSelection((s) => s.requestVerb);
+  const clearSel = useSelection((s) => s.clear);
   const selScoped = selProjectId === projectId;
   // Selection mode: once anything in this project is marked, every row
   // shows its checkbox. Until then boxes appear only on hover/focus.
   const selActive =
     selScoped && (selTaskIds.size > 0 || selFeatureIds.size > 0);
+
+  // The whole-selection verbs marked rows offer on right-click /
+  // long-press / `m` instead of their own menu.
+  const selCount = selScoped ? selTaskIds.size + selFeatureIds.size : 0;
+  const selectionActions = useMemo(
+    () =>
+      selCount > 0
+        ? buildSelectionActions({
+            count: selCount,
+            requestVerb,
+            clearSelection: clearSel,
+          })
+        : null,
+    [selCount, requestVerb, clearSel],
+  );
 
   // Archived tasks leave the default rows entirely (mirroring the server
   // rule that they count toward nothing) and collect in a fold at the
@@ -159,6 +180,28 @@ export function CardTasks({
     [archivedTasks],
   );
 
+  // Visual order of every task row on screen, for shift-click ranges.
+  // Must mirror the render exactly: features in list order, then the
+  // "No feature" bucket, then the archived fold only while it is open —
+  // a range never reaches into rows the user cannot see.
+  const orderedTaskIds = useMemo(() => {
+    const ids: string[] = [];
+    for (const f of features) {
+      for (const row of rowsByFeat.get(f.id) ?? []) ids.push(row.node.item.id);
+    }
+    for (const row of rowsByFeat.get(NO_FEATURE) ?? [])
+      ids.push(row.node.item.id);
+    if (showArchived)
+      for (const row of archivedRows) ids.push(row.node.item.id);
+    return ids;
+  }, [features, rowsByFeat, showArchived, archivedRows]);
+
+  // Feature headers range over the headers only, in their render order.
+  const orderedFeatureIds = useMemo(
+    () => features.map((f) => f.id),
+    [features],
+  );
+
   /** One task row, identical whether it sits under a feature or not. */
   const renderTaskRow = (row: DepRow<Task>) => {
     const t = row.node.item;
@@ -166,20 +209,60 @@ export function CardTasks({
     const label = t.title || t.id;
     const actions = buildTaskActions(t, taskCtx);
     const marked = selScoped && selTaskIds.has(t.id);
+    const rp = rowProps(
+      actions,
+      label,
+      // Selection mode is modal: Enter toggles like a click, it does
+      // not open detail.
+      selActive
+        ? () => toggleTaskSel(projectId, t.id)
+        : () => openModal("task", { projectId, taskId: t.id }),
+      {
+        selectionActions: marked ? selectionActions ?? undefined : undefined,
+        // Long-press = the touch shift-click.
+        onRangeSelect: () => rangeTaskSel(projectId, orderedTaskIds, t.id),
+      },
+    );
 
     return (
       <div
         key={t.id}
         className={`trow${marked ? " marked" : ""}`}
-        {...rowProps(
-          actions,
-          label,
-          () => openModal("task", { projectId, taskId: t.id }),
-          { tapSelects: selActive },
-        )}
+        {...rp}
+        onKeyDown={(e) => {
+          // Shift+V ranges from the anchor — keyboard parity with
+          // shift-click for rows focused via Tab.
+          if (isRangeKey(e)) {
+            e.preventDefault();
+            rangeTaskSel(projectId, orderedTaskIds, t.id);
+            return;
+          }
+          rp.onKeyDown(e);
+        }}
         onClick={(e) => {
           if ((e.target as HTMLElement).closest(".selbox")) return;
+          // Shift-click anywhere on the row is a selection gesture, not
+          // an open: range from the anchor, or start a selection here.
+          if (e.shiftKey) {
+            rangeTaskSel(projectId, orderedTaskIds, t.id);
+            return;
+          }
+          // Selection mode is modal: clicks toggle, they never open.
+          if (selActive) {
+            toggleTaskSel(projectId, t.id);
+            return;
+          }
           openModal("task", { projectId, taskId: t.id });
+        }}
+        // Shift-click would otherwise extend the browser's text
+        // selection across the rows before our click handler runs. The
+        // explicit focus() keeps what preventDefault suppresses: row
+        // accelerators must target the row that was last clicked.
+        onMouseDown={(e) => {
+          if (e.shiftKey) {
+            e.preventDefault();
+            e.currentTarget.focus();
+          }
         }}
         draggable
         onDragStart={(e) =>
@@ -203,7 +286,8 @@ export function CardTasks({
             aria-label={`Select ${label}`}
             onClick={(e) => {
               e.stopPropagation();
-              toggleTaskSel(projectId, t.id);
+              if (e.shiftKey) rangeTaskSel(projectId, orderedTaskIds, t.id);
+              else toggleTaskSel(projectId, t.id);
             }}
           />
           <span className={`glyph ${cls}`}>{glyph}</span>
@@ -234,17 +318,35 @@ export function CardTasks({
         const pct = Math.round(f.progress * 100);
         const featureActions = buildFeatureActions(f, featureCtx);
         const featMarked = selScoped && selFeatureIds.has(f.id);
+        const rpHead = rowProps(
+          featureActions,
+          f.name,
+          selActive
+            ? () => toggleFeatureSel(projectId, f.id)
+            : () => openFeatureDrawer(projectId, f.id),
+          {
+            selectionActions: featMarked
+              ? selectionActions ?? undefined
+              : undefined,
+            // Long-press = the touch shift-click.
+            onRangeSelect: () =>
+              rangeFeatureSel(projectId, orderedFeatureIds, f.id),
+          },
+        );
 
         return (
           <div key={f.id} className={`feat ${stateClass}`}>
             <div
               className={`feat-head${featMarked ? " marked" : ""}`}
-              {...rowProps(
-                featureActions,
-                f.name,
-                () => openFeatureDrawer(projectId, f.id),
-                { tapSelects: selActive },
-              )}
+              {...rpHead}
+              onKeyDown={(e) => {
+                if (isRangeKey(e)) {
+                  e.preventDefault();
+                  rangeFeatureSel(projectId, orderedFeatureIds, f.id);
+                  return;
+                }
+                rpHead.onKeyDown(e);
+              }}
               draggable
               onDragStart={(e) =>
                 beginDrag(e, {
@@ -266,7 +368,21 @@ export function CardTasks({
                   )
                 )
                   return;
+                if (e.shiftKey) {
+                  rangeFeatureSel(projectId, orderedFeatureIds, f.id);
+                  return;
+                }
+                if (selActive) {
+                  toggleFeatureSel(projectId, f.id);
+                  return;
+                }
                 openFeatureDrawer(projectId, f.id);
+              }}
+              onMouseDown={(e) => {
+                if (e.shiftKey) {
+                  e.preventDefault();
+                  e.currentTarget.focus();
+                }
               }}
             >
               {/* The caret's slot doubles as the feature checkbox on
@@ -281,7 +397,9 @@ export function CardTasks({
                   aria-label={`Select feature ${f.name}`}
                   onClick={(e) => {
                     e.stopPropagation();
-                    toggleFeatureSel(projectId, f.id);
+                    if (e.shiftKey)
+                      rangeFeatureSel(projectId, orderedFeatureIds, f.id);
+                    else toggleFeatureSel(projectId, f.id);
                   }}
                 />
                 <span className="caret">▾</span>

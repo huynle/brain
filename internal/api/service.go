@@ -404,6 +404,11 @@ type RunnerRegistryService interface {
 	// UpdateConfig updates a runner's max_parallel configuration and persists it to the database.
 	UpdateConfig(ctx context.Context, runnerID string, maxParallel int) error
 
+	// SetPaused persists the runner-scoped pause dial. A paused runner is
+	// ineligible for push dispatch; the flag is server-owned and survives
+	// SSE reconnects, runner restarts, and deregistration.
+	SetPaused(ctx context.Context, runnerID string, paused bool) error
+
 	// UpdateAffinity updates a runner's feature affinity.
 	UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error
 
@@ -461,6 +466,26 @@ type BridgeService interface {
 
 	// PendingPermissions returns raw permission events awaiting a response.
 	PendingPermissions(runnerID, instanceID string) []json.RawMessage
+
+	// StartExec asks a runner to run a shell command and stream its output.
+	// It returns once the process is spawned; output arrives asynchronously
+	// on realtime topic exec:{runnerID}:{execID}, so callers must subscribe
+	// to that topic before calling this.
+	StartExec(ctx context.Context, runnerID, execID, command, workdir string, timeoutMs int) error
+
+	// SignalExec delivers a signal ("int", "term", "kill") to a running exec.
+	SignalExec(ctx context.Context, runnerID, execID, signal string) error
+
+	// ExecOutcome reports what the bridge knows about an exec: whether it has
+	// ended (and how), plus how much of its output the realtime fan-out
+	// dropped. The bool is false once the exec is no longer tracked. Both the
+	// terminal event and the output ride a lossy fan-out, so this is the
+	// authority the streaming handler falls back on.
+	ExecOutcome(runnerID, execID string) (types.ExecOutcome, bool)
+
+	// ReleaseExec drops the bridge's record of an exec. The streaming handler
+	// calls it when it is done so per-command state cannot accumulate.
+	ReleaseExec(runnerID, execID string)
 }
 
 // ClientContextService resolves Brain client workspace context into project context.

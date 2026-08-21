@@ -16,6 +16,9 @@ import {
   describeSelection,
   EMPTY_SELECTION,
   isEmptySelection,
+  isRangeKey,
+  selectFeatureRange,
+  selectTaskRange,
   selectionCount,
   toggleFeature,
   toggleTask,
@@ -65,6 +68,93 @@ test("counts and emptiness", () => {
   s = toggleFeature(s, "p", "f");
   assert.equal(selectionCount(s), 2);
   assert.equal(isEmptySelection(s), false);
+});
+
+// ─── shift-click ranges ────────────────────────────────────────────
+
+const ORDER = ["t1", "t2", "t3", "t4", "t5"];
+
+test("task range selects the inclusive span in visual order", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t2");
+  s = selectTaskRange(s, "p", ORDER, "t2", "t4");
+  assert.deepEqual([...s.taskIds].sort(), ["t2", "t3", "t4"]);
+});
+
+test("task range works upward — target before the anchor", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t4");
+  s = selectTaskRange(s, "p", ORDER, "t4", "t1");
+  assert.deepEqual([...s.taskIds].sort(), ["t1", "t2", "t3", "t4"]);
+});
+
+test("marks outside the span survive a range select", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t5");
+  s = toggleTask(s, "p", "t1");
+  s = selectTaskRange(s, "p", ORDER, "t1", "t2");
+  assert.deepEqual([...s.taskIds].sort(), ["t1", "t2", "t5"]);
+});
+
+test("shift-click on a SELECTED target deselects the span", () => {
+  // Select everything, then shift-click back up the list: the range
+  // gesture is symmetric — deselecting works the same way selecting
+  // does, decided by the target row's current state.
+  let s = toggleTask(EMPTY_SELECTION, "p", "t1");
+  s = selectTaskRange(s, "p", ORDER, "t1", "t5"); // all selected
+  s = selectTaskRange(s, "p", ORDER, "t5", "t2"); // t2..t5 deselect
+  assert.deepEqual([...s.taskIds], ["t1"]);
+});
+
+test("deselect span tolerates unselected rows inside it", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t1");
+  s = toggleTask(s, "p", "t4"); // t1, t4 selected; t2, t3 not
+  s = selectTaskRange(s, "p", ORDER, "t1", "t4"); // target t4 selected → deselect t1..t4
+  assert.deepEqual([...s.taskIds], []);
+});
+
+test("missing or stale anchor falls back to a plain toggle of the target", () => {
+  let s = selectTaskRange(EMPTY_SELECTION, "p", ORDER, null, "t3");
+  assert.deepEqual([...s.taskIds], ["t3"]);
+  // Anchor id no longer in the visible order (filtered out, deleted).
+  s = selectTaskRange(s, "p", ORDER, "gone", "t5");
+  assert.deepEqual([...s.taskIds].sort(), ["t3", "t5"]);
+  // Selected target + no anchor: the toggle deselects it, matching
+  // what a one-row range would do.
+  s = selectTaskRange(s, "p", ORDER, null, "t3");
+  assert.deepEqual([...s.taskIds], ["t5"]);
+});
+
+test("range into a different project restarts the scope at the target", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p1", "t1");
+  s = selectTaskRange(s, "p2", ORDER, "t1", "t4");
+  assert.equal(s.projectId, "p2");
+  assert.deepEqual([...s.taskIds], ["t4"]);
+});
+
+test("feature range mirrors task range and leaves tasks alone", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t1");
+  s = toggleFeature(s, "p", "f1");
+  s = selectFeatureRange(s, "p", ["f1", "f2", "f3"], "f1", "f3");
+  assert.deepEqual([...s.featureIds].sort(), ["f1", "f2", "f3"]);
+  assert.deepEqual([...s.taskIds], ["t1"]);
+  // And the symmetric deselect: target f1 is selected → span clears.
+  s = selectFeatureRange(s, "p", ["f1", "f2", "f3"], "f3", "f1");
+  assert.deepEqual([...s.featureIds], []);
+  assert.deepEqual([...s.taskIds], ["t1"]);
+});
+
+test("isRangeKey matches shift+V and nothing else", () => {
+  const ev = (over: Partial<Parameters<typeof isRangeKey>[0]>) => ({
+    key: "V",
+    shiftKey: true,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    ...over,
+  });
+  assert.equal(isRangeKey(ev({})), true);
+  assert.equal(isRangeKey(ev({ key: "v", shiftKey: false })), false);
+  assert.equal(isRangeKey(ev({ metaKey: true })), false);
+  assert.equal(isRangeKey(ev({ ctrlKey: true })), false);
+  assert.equal(isRangeKey(ev({ key: "A" })), false);
 });
 
 // ─── delete planning ───────────────────────────────────────────────

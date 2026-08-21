@@ -1,3 +1,4 @@
+import { toPlainText } from "./ansi";
 import type { Priority, TaskStatus } from "./types";
 
 /** CSS color variable for a task status. */
@@ -102,22 +103,38 @@ export function relativeTime(iso?: string): string {
   return fmt(Math.floor(mo / 12), "y");
 }
 
+/**
+ * Plain-text form of a log line: carriage-return overwrites resolved,
+ * every escape sequence removed.
+ *
+ * Delegates to lib/ansi. The hand-rolled version this replaced ran a
+ * second, UNANCHORED pass — `/\[(?:\d{1,3};)*\d{1,3}[A-Za-z]/` — which
+ * matched any bracketed digits followed by a letter and so deleted real
+ * content (`sleep[5s]`, `v[1beta]`, `[404m]`). Every pattern in lib/ansi
+ * starts at a real ESC, so ordinary bracketed text is left alone.
+ *
+ * Prefer `parseAnsi` when the surface can render styled spans — colour
+ * in agent output is information, not noise.
+ */
 export function cleanLogContent(content?: string): string {
-  if (!content) return "";
-  return content
-    .replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "")
-    .replace(/\[(?:\d{1,3};)*\d{1,3}[A-Za-z]/g, "");
+  return toPlainText(content);
 }
 
-export function clockTime(iso?: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
+/**
+ * Log-line clock: fixed-width 24-hour HH:MM:SS, local time.
+ *
+ * Deliberately NOT `toLocaleTimeString()`. A 12-hour locale renders
+ * "12:04:31 PM" — around 69px at the log grids' 10.5px monospace, wider
+ * than their fixed 54px (46px on mobile) timestamp track, so it
+ * overpaints the level column beside it. Every log surface shares this
+ * one formatter so the column width holds in every locale.
+ */
+export function clockTime(ts?: string | number): string {
+  if (ts === undefined || ts === null || ts === "") return "";
+  const d = new Date(ts);
   if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleTimeString([], {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  });
+  const pad = (n: number): string => String(n).padStart(2, "0");
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
 export function logLevelColor(level: string): string {

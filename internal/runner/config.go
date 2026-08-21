@@ -34,6 +34,15 @@ func xdgStateHome() string {
 	return filepath.Join(homeDir, ".local", "state")
 }
 
+// DefaultStateDir returns the default runner state directory:
+// $XDG_STATE_HOME/brain-runner (falling back to ~/.local/state/brain-runner).
+// Callers that build a RunnerConfig without going through LoadConfig should use
+// this to fill an empty StateDir — otherwise every state, prompt, output-log and
+// runner-script path becomes relative and lands in the process working directory.
+func DefaultStateDir() string {
+	return filepath.Join(xdgStateHome(), "brain-runner")
+}
+
 // DefaultConfigPath returns the primary config file path.
 // Respects XDG_CONFIG_HOME: $XDG_CONFIG_HOME/brain/config.yaml
 func DefaultConfigPath() string {
@@ -152,7 +161,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		PollInterval:              getEnvIntOrDefault("RUNNER_POLL_INTERVAL", firstNonZero(fileCfg.PollInterval, 30)),
 		TaskPollInterval:          getEnvIntOrDefault("RUNNER_TASK_POLL_INTERVAL", firstNonZero(fileCfg.TaskPollInterval, 5)),
 		MaxParallel:               getEnvIntOrDefault("RUNNER_MAX_PARALLEL", firstNonZero(fileCfg.MaxParallel, 2)),
-		StateDir:                  getEnvOrDefault("RUNNER_STATE_DIR", firstNonEmpty(fileCfg.StateDir, filepath.Join(xdgStateHome(), "brain-runner"))),
+		StateDir:                  getEnvOrDefault("RUNNER_STATE_DIR", firstNonEmpty(fileCfg.StateDir, DefaultStateDir())),
 		LogDir:                    getEnvOrDefault("RUNNER_LOG_DIR", firstNonEmpty(fileCfg.LogDir, filepath.Join(homeDir, ".local", "log"))),
 		WorkDir:                   getEnvOrDefault("RUNNER_WORK_DIR", firstNonEmpty(fileCfg.WorkDir, homeDir)),
 		RepoCacheDir:              expandTilde(getEnvOrDefault("RUNNER_REPO_CACHE_DIR", firstNonEmpty(fileCfg.RepoCacheDir, filepath.Join(homeDir, ".cache", "brain", "repos"))), homeDir),

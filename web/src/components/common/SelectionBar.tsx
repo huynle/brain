@@ -15,7 +15,7 @@
  * committed as per-path status updates plus the per-source-status
  * feature baton.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useLive } from "../../lib/sse";
 import { useSelection } from "../../store/selection";
@@ -75,6 +75,8 @@ export function SelectionBar(): JSX.Element | null {
   const taskIds = useSelection((s) => s.taskIds);
   const featureIds = useSelection((s) => s.featureIds);
   const clear = useSelection((s) => s.clear);
+  const verbRequest = useSelection((s) => s.verbRequest);
+  const consumeVerbRequest = useSelection((s) => s.consumeVerbRequest);
   const toast = useUI((s) => s.toast);
 
   const tasks =
@@ -107,6 +109,25 @@ export function SelectionBar(): JSX.Element | null {
     const toArchive = affected.filter((t) => t.status !== "archived").length;
     return { allSettled, toArchive };
   }, [tasks, taskIds, featureIds]);
+
+  // The selection context menu (lib/actions/selectionActions) posts
+  // archive/delete requests into the store; this bar owns the preview
+  // and confirm ladders, so it consumes them here. The ref carries the
+  // current render's handlers across the early return below — the
+  // request can only originate from a marked row, so the bar is
+  // guaranteed to be mounted and rendered when one arrives.
+  const verbHandlersRef = useRef<{
+    archive: () => void;
+    del: () => void;
+  } | null>(null);
+  useEffect(() => {
+    if (!verbRequest) return;
+    consumeVerbRequest();
+    const h = verbHandlersRef.current;
+    if (!h) return;
+    if (verbRequest === "archive") h.archive();
+    else h.del();
+  }, [verbRequest, consumeVerbRequest]);
 
   if (!projectId || count === 0) return null;
 
@@ -280,6 +301,25 @@ export function SelectionBar(): JSX.Element | null {
     } else {
       toast(`Archived ${ok} task${ok === 1 ? "" : "s"}`, "success");
     }
+  };
+
+  // Current-render closures for the context-menu requests: the same
+  // gate and flows as the bar's own buttons, including the disabled
+  // Archive's explanation (a menu can't grey a verb it already fired,
+  // so the gate answers with the tooltip's text as a toast).
+  verbHandlersRef.current = {
+    archive: () => {
+      if (busy) return;
+      if (!archiveGate.allSettled) {
+        toast("Only settled tasks can be archived", "warning");
+        return;
+      }
+      previewArchive();
+    },
+    del: () => {
+      if (busy) return;
+      void previewDelete();
+    },
   };
 
   return (

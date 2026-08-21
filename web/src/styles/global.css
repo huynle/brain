@@ -2410,6 +2410,7 @@ body[data-theme="light"] .assistant-card textarea { background: #fff !important;
 }
 .trow.marked { background: #241c0e; }
 .feat-head.marked { background: #241c0e; border-radius: 3px; }
+.drawer-task.marked { background: #241c0e; }
 
 .selection-bar {
   position: fixed;
@@ -2453,7 +2454,8 @@ body[data-theme="light"] .selection-bar {
 }
 body[data-theme="light"] .selection-bar button { background: #f2f5f8; color: #17202a; }
 body[data-theme="light"] .trow.marked,
-body[data-theme="light"] .feat-head.marked { background: #fff2d8; }
+body[data-theme="light"] .feat-head.marked,
+body[data-theme="light"] .drawer-task.marked { background: #fff2d8; }
 
 /* ---------- Entries browser (Entries view + reader + compare) ---------- */
 /* Reuses the pre-existing .entries-pane/.entries-toolbar/.entries-split/

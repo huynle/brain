@@ -56,6 +56,91 @@ export function toggleFeature(
   return { ...s, featureIds: toggled(s.featureIds, featureId) };
 }
 
+/**
+ * The row a shift-click ranges from: the last row the user marked
+ * individually (checkbox, tap, or the `v` key). Kind-scoped — a task
+ * anchor only ranges over task rows, a feature anchor over feature
+ * rows — because a mixed span has no meaningful visual order.
+ */
+export interface SelectionAnchor {
+  kind: "task" | "feature";
+  id: string;
+}
+
+/** Ids between anchor and target in `orderedIds`, inclusive, in either
+ *  direction. Null when either endpoint is not in the list (stale
+ *  anchor, filtered-out row) — the caller falls back to a plain toggle. */
+function spanIds(
+  orderedIds: readonly string[],
+  anchorId: string,
+  targetId: string,
+): string[] | null {
+  const a = orderedIds.indexOf(anchorId);
+  const b = orderedIds.indexOf(targetId);
+  if (a === -1 || b === -1) return null;
+  const [lo, hi] = a <= b ? [a, b] : [b, a];
+  return orderedIds.slice(lo, hi + 1);
+}
+
+/**
+ * Shift-click on a task: select every task row between the anchor and
+ * the target, in the card's visual order. Monotonic — rows already
+ * marked stay marked and the span is always added, never toggled off,
+ * matching file-manager convention. With no usable anchor (missing,
+ * stale, wrong kind) it degrades to selecting just the target; a
+ * shift-click can therefore never shrink the selection. Crossing into
+ * a different project restarts the scope, same as a toggle.
+ */
+export function selectTaskRange(
+  s: SelectionSnapshot,
+  projectId: string,
+  orderedIds: readonly string[],
+  anchorId: string | null,
+  targetId: string,
+): SelectionSnapshot {
+  if (s.projectId !== projectId) {
+    return { projectId, taskIds: new Set([targetId]), featureIds: new Set() };
+  }
+  const span =
+    anchorId !== null ? spanIds(orderedIds, anchorId, targetId) : null;
+  const next = new Set(s.taskIds);
+  for (const id of span ?? [targetId]) next.add(id);
+  return { ...s, taskIds: next };
+}
+
+/** Shift-click on a feature header. Same rules as selectTaskRange. */
+export function selectFeatureRange(
+  s: SelectionSnapshot,
+  projectId: string,
+  orderedIds: readonly string[],
+  anchorId: string | null,
+  targetId: string,
+): SelectionSnapshot {
+  if (s.projectId !== projectId) {
+    return { projectId, taskIds: new Set(), featureIds: new Set([targetId]) };
+  }
+  const span =
+    anchorId !== null ? spanIds(orderedIds, anchorId, targetId) : null;
+  const next = new Set(s.featureIds);
+  for (const id of span ?? [targetId]) next.add(id);
+  return { ...s, featureIds: next };
+}
+
+/**
+ * True for the Shift+V chord — the keyboard range gesture on a focused
+ * row. Plain `v` toggles via the row's Select verb; with shift held the
+ * browser reports the key uppercased, so the two never collide.
+ */
+export function isRangeKey(e: {
+  key: string;
+  shiftKey: boolean;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+}): boolean {
+  return e.key === "V" && e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey;
+}
+
 export function selectionCount(s: SelectionSnapshot): number {
   return s.taskIds.size + s.featureIds.size;
 }

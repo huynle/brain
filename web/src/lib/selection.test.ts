@@ -16,6 +16,9 @@ import {
   describeSelection,
   EMPTY_SELECTION,
   isEmptySelection,
+  isRangeKey,
+  selectFeatureRange,
+  selectTaskRange,
   selectionCount,
   toggleFeature,
   toggleTask,
@@ -65,6 +68,84 @@ test("counts and emptiness", () => {
   s = toggleFeature(s, "p", "f");
   assert.equal(selectionCount(s), 2);
   assert.equal(isEmptySelection(s), false);
+});
+
+// ─── shift-click ranges ────────────────────────────────────────────
+
+const ORDER = ["t1", "t2", "t3", "t4", "t5"];
+
+test("task range selects the inclusive span in visual order", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t2");
+  s = selectTaskRange(s, "p", ORDER, "t2", "t4");
+  assert.deepEqual([...s.taskIds].sort(), ["t2", "t3", "t4"]);
+});
+
+test("task range works upward — target before the anchor", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t4");
+  s = selectTaskRange(s, "p", ORDER, "t4", "t1");
+  assert.deepEqual([...s.taskIds].sort(), ["t1", "t2", "t3", "t4"]);
+});
+
+test("range is additive — marks outside the span survive", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t5");
+  s = toggleTask(s, "p", "t1");
+  s = selectTaskRange(s, "p", ORDER, "t1", "t2");
+  assert.deepEqual([...s.taskIds].sort(), ["t1", "t2", "t5"]);
+});
+
+test("range never deselects — a marked row inside the span stays marked", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t3");
+  s = selectTaskRange(s, "p", ORDER, "t3", "t3");
+  assert.deepEqual([...s.taskIds], ["t3"]);
+});
+
+test("missing or stale anchor falls back to selecting the target", () => {
+  let s = selectTaskRange(EMPTY_SELECTION, "p", ORDER, null, "t3");
+  assert.deepEqual([...s.taskIds], ["t3"]);
+  // Anchor id no longer in the visible order (filtered out, deleted).
+  s = selectTaskRange(s, "p", ORDER, "gone", "t5");
+  assert.deepEqual([...s.taskIds].sort(), ["t3", "t5"]);
+});
+
+test("shift-click is monotonic even without a usable anchor", () => {
+  // Target already marked + no anchor: a toggle would deselect it; the
+  // range gesture must never shrink the selection.
+  let s = toggleTask(EMPTY_SELECTION, "p", "t3");
+  s = selectTaskRange(s, "p", ORDER, null, "t3");
+  assert.deepEqual([...s.taskIds], ["t3"]);
+  s = selectFeatureRange(toggleFeature(EMPTY_SELECTION, "p", "f1"), "p", ["f1"], null, "f1");
+  assert.deepEqual([...s.featureIds], ["f1"]);
+});
+
+test("range into a different project restarts the scope at the target", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p1", "t1");
+  s = selectTaskRange(s, "p2", ORDER, "t1", "t4");
+  assert.equal(s.projectId, "p2");
+  assert.deepEqual([...s.taskIds], ["t4"]);
+});
+
+test("feature range mirrors task range and leaves tasks alone", () => {
+  let s = toggleTask(EMPTY_SELECTION, "p", "t1");
+  s = toggleFeature(s, "p", "f1");
+  s = selectFeatureRange(s, "p", ["f1", "f2", "f3"], "f1", "f3");
+  assert.deepEqual([...s.featureIds].sort(), ["f1", "f2", "f3"]);
+  assert.deepEqual([...s.taskIds], ["t1"]);
+});
+
+test("isRangeKey matches shift+V and nothing else", () => {
+  const ev = (over: Partial<Parameters<typeof isRangeKey>[0]>) => ({
+    key: "V",
+    shiftKey: true,
+    metaKey: false,
+    ctrlKey: false,
+    altKey: false,
+    ...over,
+  });
+  assert.equal(isRangeKey(ev({})), true);
+  assert.equal(isRangeKey(ev({ key: "v", shiftKey: false })), false);
+  assert.equal(isRangeKey(ev({ metaKey: true })), false);
+  assert.equal(isRangeKey(ev({ ctrlKey: true })), false);
+  assert.equal(isRangeKey(ev({ key: "A" })), false);
 });
 
 // ─── delete planning ───────────────────────────────────────────────

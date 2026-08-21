@@ -13,6 +13,7 @@ import { useMemo } from "react";
 import { useSessions } from "../../../hooks/useSessions";
 import { useSessionTranscript } from "../../../hooks/useSessionTranscript";
 import { Transcript } from "../../Session/Transcript";
+import { instanceSessionRef } from "../../../lib/sessionRef";
 import type { SessionRef } from "../../../lib/types";
 
 function targetRef(target: Record<string, unknown>): SessionRef | undefined {
@@ -43,11 +44,10 @@ export function SessionLeaf({
     if (!base || base.mode === "history") return base;
     const inst = sessions.find((s) => s.instance_id === base.instance_id);
     if (inst) {
-      const ids = inst.session_ids || [];
-      return {
-        ...base,
-        session_id: base.session_id ?? (ids.length > 0 ? ids[ids.length - 1] : undefined),
-      };
+      // A persisted leaf target names the session the user docked; it
+      // stays pinned, and only a target without one follows the
+      // instance's newest. Shared rule — see lib/sessionRef.
+      return instanceSessionRef(inst, base.session_id);
     }
     if (base.session_id) {
       return { mode: "history", runner_id: base.runner_id, session_id: base.session_id };

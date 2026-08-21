@@ -28,22 +28,67 @@ export function findTaskInstance(
   );
 }
 
+/**
+ * Live session ref for one instance-registry row.
+ *
+ * THE single place a `{mode:"live", …}` ref is constructed — every
+ * surface that addresses a running instance (task drill-downs, the
+ * runner Processes tab, the full session view, docked leaves) goes
+ * through here, so session selection has exactly one implementation.
+ *
+ * `pinnedSessionId` is the session the CALLER was already addressing —
+ * a persisted leaf target or a history ref the user navigated from.
+ * Pinning wins: a view that was opened on a specific session must not
+ * silently jump to a newer one the instance discovers later. With
+ * nothing pinned the newest discovered session wins.
+ */
+export function instanceSessionRef(
+  inst: Pick<OpencodeInstance, "runner_id" | "instance_id" | "session_ids">,
+  pinnedSessionId?: string,
+): SessionRef {
+  const sessionIds = inst.session_ids || [];
+  const latest =
+    sessionIds.length > 0 ? sessionIds[sessionIds.length - 1] : undefined;
+  return {
+    mode: "live",
+    runner_id: inst.runner_id,
+    instance_id: inst.instance_id,
+    // May be absent early in the instance's life (discovery lag) — the
+    // surface shows "starting".
+    session_id: pinnedSessionId || latest,
+  };
+}
+
+/**
+ * Transcript ref for an instance row, honest about the process state:
+ * live while the instance is up, history once it has exited (the
+ * transcript outlives the process). Undefined when the instance exited
+ * before any session was discovered — there is nothing to read.
+ */
+export function instanceTranscriptRef(
+  inst: OpencodeInstance,
+): SessionRef | undefined {
+  if (inst.status !== "exited") return instanceSessionRef(inst);
+  const sessionIds = inst.session_ids || [];
+  const latest = sessionIds.length > 0 ? sessionIds[sessionIds.length - 1] : undefined;
+  if (!latest) return undefined;
+  return {
+    mode: "history",
+    runner_id: inst.runner_id,
+    session_id: latest,
+    task_id: inst.task_id,
+    project_id: inst.project_id,
+    workdir: inst.workdir,
+  };
+}
+
 /** Live session ref for a running task, if its instance is up. */
 export function liveSessionRef(
   task: Pick<Task, "id" | "projectId">,
   instances: readonly OpencodeInstance[],
 ): SessionRef | undefined {
   const inst = findTaskInstance(task, instances);
-  if (!inst) return undefined;
-  const sessionIds = inst.session_ids || [];
-  return {
-    mode: "live",
-    runner_id: inst.runner_id,
-    instance_id: inst.instance_id,
-    // Most recent discovered session wins; may be absent early in the
-    // instance's life (discovery lag) — the surface shows "starting".
-    session_id: sessionIds.length > 0 ? sessionIds[sessionIds.length - 1] : undefined,
-  };
+  return inst ? instanceSessionRef(inst) : undefined;
 }
 
 /**

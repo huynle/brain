@@ -22,11 +22,28 @@ func NewHub() *Hub {
 	}
 }
 
+// DefaultSubscriberBuffer is the queue depth of a subscription made with
+// Subscribe. It suits event streams, where a burst is a handful of small
+// messages; a stream that can burst thousands of frames must ask for its own
+// depth via SubscribeWithCapacity.
+const DefaultSubscriberBuffer = 64
+
 // Subscribe registers a subscriber for the given projectId.
 // Returns a read-only channel and an unsubscribe function.
 // The unsubscribe function is safe to call multiple times.
 func (h *Hub) Subscribe(projectId string) (<-chan SSEMessage, func()) {
-	ch := make(chan SSEMessage, 64)
+	return h.SubscribeWithCapacity(projectId, DefaultSubscriberBuffer)
+}
+
+// SubscribeWithCapacity is Subscribe with an explicit queue depth. Publishing
+// never blocks, so the buffer is the whole defence against a producer that
+// outruns this subscriber: anything that does not fit is dropped. Callers
+// streaming bulk output (the runner shell) size it to their real burst.
+func (h *Hub) SubscribeWithCapacity(projectId string, capacity int) (<-chan SSEMessage, func()) {
+	if capacity < DefaultSubscriberBuffer {
+		capacity = DefaultSubscriberBuffer
+	}
+	ch := make(chan SSEMessage, capacity)
 
 	h.mu.Lock()
 	if h.subscribers[projectId] == nil {
@@ -38,13 +55,16 @@ func (h *Hub) Subscribe(projectId string) (<-chan SSEMessage, func()) {
 	var once sync.Once
 	unsub := func() {
 		once.Do(func() {
+			// Close under the same lock that publish holds while sending,
+			// so "removed from the map" and "closed" are one atomic step
+			// and no publisher can be mid-send on this channel.
 			h.mu.Lock()
 			delete(h.subscribers[projectId], ch)
 			if len(h.subscribers[projectId]) == 0 {
 				delete(h.subscribers, projectId)
 			}
-			h.mu.Unlock()
 			close(ch)
+			h.mu.Unlock()
 		})
 	}
 
@@ -53,18 +73,30 @@ func (h *Hub) Subscribe(projectId string) (<-chan SSEMessage, func()) {
 
 // publish sends a message to all subscribers of the given project.
 // Non-blocking: drops messages if a subscriber's buffer is full.
-func (h *Hub) publish(projectId string, msg SSEMessage) {
+//
+// The read lock is held across the whole fan-out, not just the map lookup.
+// Releasing it early would leave this goroutine ranging over a map that
+// unsubscribe can mutate concurrently (an unrecoverable "concurrent map
+// iteration and map write" fatal error) and sending on a channel that
+// unsubscribe may already have closed. Because every send is non-blocking,
+// holding the lock here is bounded and cannot stall on a slow subscriber.
+// Returns how many subscribers took the message and how many dropped it, so
+// a caller that must not lose data silently (exec output) can account for
+// the loss and tell the user.
+func (h *Hub) publish(projectId string, msg SSEMessage) (delivered, dropped int) {
 	h.mu.RLock()
-	subs := h.subscribers[projectId]
-	h.mu.RUnlock()
+	defer h.mu.RUnlock()
 
-	for ch := range subs {
+	for ch := range h.subscribers[projectId] {
 		select {
 		case ch <- msg:
+			delivered++
 		default:
 			// Drop message if subscriber is slow
+			dropped++
 		}
 	}
+	return delivered, dropped
 }
 
 // PublishProjectDirty sends a project_dirty event to all subscribers of the project.
@@ -96,10 +128,23 @@ func InstanceTopic(runnerID, instanceID string) string {
 	return "instance:" + runnerID + ":" + instanceID
 }
 
+// ExecTopic returns the topic key for one runner-shell command's output
+// stream, namespaced by runner so exec IDs cannot collide across runners.
+func ExecTopic(runnerID, execID string) string {
+	return "exec:" + runnerID + ":" + execID
+}
+
 // Publish sends an arbitrary event to all subscribers of a topic. Used by
 // the bridge hub to fan out instance events to browser SSE streams.
 func (h *Hub) Publish(topic string, event string, data interface{}) {
 	h.publish(topic, SSEMessage{Event: event, Data: data})
+}
+
+// PublishTracked is Publish with delivery accounting: it reports how many
+// subscribers received the event and how many were too far behind to take
+// it. Use it where a dropped message must be surfaced rather than swallowed.
+func (h *Hub) PublishTracked(topic string, event string, data interface{}) (delivered, dropped int) {
+	return h.publish(topic, SSEMessage{Event: event, Data: data})
 }
 
 // RunnerTopic returns the topic key for a runner's SSE stream.

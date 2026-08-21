@@ -92,6 +92,9 @@ const (
 	EventControlPermissionResponded = "control.permission_responded"
 	EventControlInstanceSpawned     = "control.instance_spawned"
 	EventControlInstanceKilled      = "control.instance_killed"
+	// EventControlExecStarted records one runner-shell command. The shell is
+	// unrestricted, so this audit trail is the only record of what ran.
+	EventControlExecStarted = "control.exec_started"
 )
 
 // AllEventTypes enumerates all valid event type strings.
@@ -110,6 +113,7 @@ var AllEventTypes = []string{
 	EventWebhookReceived,
 	EventControlPromptSent, EventControlPermissionResponded,
 	EventControlInstanceSpawned, EventControlInstanceKilled,
+	EventControlExecStarted,
 }
 
 // eventTypeSet is a lookup set for O(1) event type validation.

@@ -32,6 +32,7 @@ type Hub struct {
 
 	mu    sync.Mutex
 	conns map[string]*runnerConn
+	execs map[string]*execState // runnerID|execID → in-flight shell command
 }
 
 // NewHub creates a bridge hub that publishes instance events to rt.
@@ -39,7 +40,26 @@ func NewHub(rt *realtime.Hub) *Hub {
 	return &Hub{
 		rt:    rt,
 		conns: make(map[string]*runnerConn),
+		execs: make(map[string]*execState),
 	}
+}
+
+// execState is the hub's record of one runner-shell command, kept alongside
+// the lossy realtime fan-out so the streaming handler has a second, reliable
+// source for the two things it cannot afford to miss: that the command
+// finished, and that output was lost on the way to the browser.
+//
+// Created by StartExec, dropped by ReleaseExec (the handler's defer), so the
+// map holds at most one entry per in-flight command.
+type execState struct {
+	runnerID      string
+	execID        string
+	conn          *runnerConn // owner; a reconnect installs a different conn
+	done          bool
+	exitCode      int
+	errMsg        string
+	droppedChunks int
+	droppedBytes  int
 }
 
 // instanceLive caches always-on control state per instance so pending
@@ -241,6 +261,178 @@ func (h *Hub) AbortTask(ctx context.Context, runnerID, taskID string) error {
 	return nil
 }
 
+// StartExec asks a runner to start a shell command and stream its output.
+// It returns once the runner has spawned the process (or failed to); output
+// then arrives asynchronously on realtime topic exec:{runnerID}:{execID} as
+// "exec_data" events, terminated by exactly one "exec_exit". Callers must
+// subscribe to that topic BEFORE calling this, or they will miss output.
+func (h *Hub) StartExec(ctx context.Context, runnerID, execID, command, workdir string, timeoutMs int) error {
+	if execID == "" {
+		return errors.New("exec id required")
+	}
+	if command == "" {
+		return errors.New("command required")
+	}
+	if len(command) > ExecMaxCommandBytes {
+		return fmt.Errorf("command too large (max %d bytes)", ExecMaxCommandBytes)
+	}
+	conn := h.conn(runnerID)
+	if conn == nil {
+		return ErrRunnerNotConnected
+	}
+	if timeoutMs <= 0 {
+		timeoutMs = ExecDefaultTimeoutMs
+	}
+	if timeoutMs > ExecMaxTimeoutMs {
+		timeoutMs = ExecMaxTimeoutMs
+	}
+	// Register before the frame goes out: output frames can come back before
+	// roundTrip returns, and they must find a state to account against.
+	h.registerExec(conn, runnerID, execID)
+	res, err := conn.roundTrip(ctx, Frame{
+		Type:    FrameExecStart,
+		ExecID:  execID,
+		Command: command,
+		Workdir: workdir,
+		// The spawn ack is fast; the command's own budget rides in its own
+		// field so the runner enforces it independently of how long we
+		// wait for that ack.
+		TimeoutMs:     DefaultTimeoutMs,
+		ExecTimeoutMs: timeoutMs,
+	})
+	if err != nil {
+		h.ReleaseExec(runnerID, execID)
+		return err
+	}
+	if res.Error != "" {
+		h.ReleaseExec(runnerID, execID)
+		return errors.New(res.Error)
+	}
+	return nil
+}
+
+// execKey namespaces an exec id by its runner.
+func execKey(runnerID, execID string) string { return runnerID + "|" + execID }
+
+// registerExec starts tracking a command. An exec id is server-minted and
+// single-use, so an existing entry is stale state from a refused duplicate
+// and is replaced.
+func (h *Hub) registerExec(conn *runnerConn, runnerID, execID string) {
+	h.mu.Lock()
+	h.execs[execKey(runnerID, execID)] = &execState{
+		runnerID: runnerID, execID: execID, conn: conn,
+	}
+	h.mu.Unlock()
+}
+
+// ExecOutcome returns the hub's record of a command, and whether it is still
+// tracked. Outcome.Done reports whether the command has ended; the Dropped
+// counters are live and may grow while it runs.
+func (h *Hub) ExecOutcome(runnerID, execID string) (types.ExecOutcome, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	st := h.execs[execKey(runnerID, execID)]
+	if st == nil {
+		return types.ExecOutcome{}, false
+	}
+	return types.ExecOutcome{
+		Done:          st.done,
+		ExitCode:      st.exitCode,
+		Error:         st.errMsg,
+		DroppedChunks: st.droppedChunks,
+		DroppedBytes:  st.droppedBytes,
+	}, true
+}
+
+// ReleaseExec drops a command's record. Called by the streaming handler once
+// it has finished with the command, so the map never grows per command.
+func (h *Hub) ReleaseExec(runnerID, execID string) {
+	h.mu.Lock()
+	delete(h.execs, execKey(runnerID, execID))
+	h.mu.Unlock()
+}
+
+// recordExecDrop notes output that the fan-out could not deliver.
+func (h *Hub) recordExecDrop(runnerID, execID string, bytes int) {
+	h.mu.Lock()
+	if st := h.execs[execKey(runnerID, execID)]; st != nil {
+		st.droppedChunks++
+		st.droppedBytes += bytes
+	}
+	h.mu.Unlock()
+}
+
+// finishExec records how a command ended. The first outcome wins: a runner
+// that reports an exit and then drops must not have its exit overwritten by
+// the disconnect.
+func (h *Hub) finishExec(runnerID, execID string, exitCode int, errMsg string) {
+	h.mu.Lock()
+	if st := h.execs[execKey(runnerID, execID)]; st != nil && !st.done {
+		st.done = true
+		st.exitCode = exitCode
+		st.errMsg = errMsg
+	}
+	h.mu.Unlock()
+}
+
+// failExecsForConn ends every command still running on a dropped connection.
+// Without this a SIGKILLed runner leaves its exec streams waiting for an
+// exec_exit that can never arrive.
+func (h *Hub) failExecsForConn(conn *runnerConn, reason string) {
+	var ended []*execState
+
+	h.mu.Lock()
+	for _, st := range h.execs {
+		if st.conn != conn || st.done {
+			continue
+		}
+		st.done = true
+		st.exitCode = types.ExecExitUnknown
+		st.errMsg = reason
+		ended = append(ended, st)
+	}
+	h.mu.Unlock()
+
+	// Publish outside the lock: a live handler unblocks immediately instead
+	// of waiting for its next poll.
+	for _, st := range ended {
+		h.publishExecExit(st.runnerID, st.execID, types.ExecExitUnknown, reason)
+	}
+}
+
+// publishExecExit fans a command's terminal event out to its stream topic.
+func (h *Hub) publishExecExit(runnerID, execID string, exitCode int, errMsg string) {
+	if h.rt == nil {
+		return
+	}
+	h.rt.Publish(realtime.ExecTopic(runnerID, execID), "exec_exit", map[string]any{
+		"exec_id":   execID,
+		"exit_code": exitCode,
+		"error":     errMsg,
+	})
+}
+
+// SignalExec delivers a signal to a running exec ("int", "term" or "kill").
+func (h *Hub) SignalExec(ctx context.Context, runnerID, execID, signal string) error {
+	conn := h.conn(runnerID)
+	if conn == nil {
+		return ErrRunnerNotConnected
+	}
+	res, err := conn.roundTrip(ctx, Frame{
+		Type:      FrameExecSignal,
+		ExecID:    execID,
+		Signal:    signal,
+		TimeoutMs: DefaultTimeoutMs,
+	})
+	if err != nil {
+		return err
+	}
+	if res.Error != "" {
+		return errors.New(res.Error)
+	}
+	return nil
+}
+
 // AcquireStream enables full event forwarding for an instance (refcounted).
 // The returned release function must be called when the subscriber detaches;
 // the last release closes the upstream full stream. Control events keep
@@ -384,7 +576,8 @@ func (c *runnerConn) send(f Frame) error {
 	return c.ws.Write(ctx, websocket.MessageText, b)
 }
 
-// close fails all pending round-trips and closes the socket.
+// close fails all pending round-trips and in-flight execs, then closes the
+// socket.
 func (c *runnerConn) close(reason string) {
 	c.mu.Lock()
 	if c.closed {
@@ -397,6 +590,11 @@ func (c *runnerConn) close(reason string) {
 		delete(c.pending, id)
 	}
 	c.mu.Unlock()
+
+	// A shell command whose runner just vanished will never report an exit;
+	// synthesise one so its stream ends instead of hanging.
+	c.hub.failExecsForConn(c, "runner disconnected: "+reason)
+
 	c.ws.Close(websocket.StatusNormalClosure, reason)
 }
 
@@ -478,6 +676,17 @@ func (c *runnerConn) handleFrame(f Frame) {
 		c.publishEvent(f.InstanceID, "stream_closed", json.RawMessage(
 			fmt.Sprintf(`{"reason":%q}`, f.Reason)))
 
+	case FrameExecData:
+		c.publishExecData(f.ExecID, f.Stream, f.Chunk)
+
+	case FrameExecExit:
+		// Record before publishing: the fan-out may drop this event, and the
+		// recorded outcome is what lets the handler end the stream anyway.
+		if f.ExecID != "" {
+			c.hub.finishExec(c.runnerID, f.ExecID, f.ExitCode, f.Error)
+			c.hub.publishExecExit(c.runnerID, f.ExecID, f.ExitCode, f.Error)
+		}
+
 	default:
 		slog.Debug("bridge: unhandled frame type", "type", f.Type, "runner_id", c.runnerID)
 	}
@@ -488,6 +697,27 @@ func (c *runnerConn) publishEvent(instanceID, event string, data json.RawMessage
 		return
 	}
 	c.hub.rt.Publish(realtime.InstanceTopic(c.runnerID, instanceID), event, data)
+}
+
+// publishExecData fans one chunk of command output out to the HTTP handler
+// streaming that exec. The fan-out is non-blocking by design — this runs on
+// the connection's read loop, and blocking it would stall every other frame
+// for this runner — so a browser that falls too far behind loses the chunk.
+// That loss is counted rather than swallowed: the handler turns it into a
+// visible truncation marker, since a transcript silently missing output is
+// worse than a slow one.
+func (c *runnerConn) publishExecData(execID, stream, chunk string) {
+	if c.hub.rt == nil || execID == "" {
+		return
+	}
+	_, dropped := c.hub.rt.PublishTracked(realtime.ExecTopic(c.runnerID, execID), "exec_data", map[string]any{
+		"exec_id": execID,
+		"stream":  stream,
+		"chunk":   chunk,
+	})
+	if dropped > 0 {
+		c.hub.recordExecDrop(c.runnerID, execID, len(chunk))
+	}
 }
 
 // opencodeEvent is the minimal shape needed to classify control events.

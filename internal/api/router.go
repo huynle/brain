@@ -675,6 +675,12 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Get("/runners/{runnerId}/sessions/{sessionId}/history",
 						o.handler.HandleControlSessionHistory)
 					r.Post("/runners/{runnerId}/tasks/{taskId}/abort", o.handler.HandleControlAbortTask)
+					// Runner shell: an unrestricted command on the runner
+					// host, streamed back as SSE. control:* already implies
+					// code execution there (spawn/prompt), so the scope on
+					// this subtree is the whole authorization story.
+					r.Post("/runners/{runnerId}/exec", o.handler.HandleControlExec)
+					r.Post("/runners/{runnerId}/exec/{execId}/signal", o.handler.HandleControlExecSignal)
 					r.Route("/runners/{runnerId}/instances", func(r chi.Router) {
 						r.Post("/", o.handler.HandleControlSpawn)
 						r.Route("/{instanceId}", func(r chi.Router) {

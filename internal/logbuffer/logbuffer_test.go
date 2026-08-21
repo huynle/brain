@@ -197,6 +197,134 @@ func TestQuery_NegativeOffset(t *testing.T) {
 	}
 }
 
+func TestTail_FewerLinesThanLimit(t *testing.T) {
+	b := New(100)
+	b.Append("proj1", "task1", makeLines("line", 3))
+
+	result, total, offset := b.Tail("proj1", "task1", 10)
+	if total != 3 {
+		t.Errorf("expected total=3, got %d", total)
+	}
+	if offset != 0 {
+		t.Errorf("expected offset=0 when buffer is shorter than limit, got %d", offset)
+	}
+	if len(result) != 3 {
+		t.Fatalf("expected 3 lines, got %d", len(result))
+	}
+	if result[0].Content != "line-0" || result[2].Content != "line-2" {
+		t.Errorf("expected oldest→newest line-0..line-2, got %q..%q",
+			result[0].Content, result[2].Content)
+	}
+}
+
+func TestTail_MoreLinesThanLimit_ReturnsTailNotHead(t *testing.T) {
+	b := New(100)
+	b.Append("proj1", "task1", makeLines("line", 50))
+
+	result, total, offset := b.Tail("proj1", "task1", 10)
+	if total != 50 {
+		t.Errorf("expected total=50, got %d", total)
+	}
+	if offset != 40 {
+		t.Errorf("expected offset=40 (50-10), got %d", offset)
+	}
+	if len(result) != 10 {
+		t.Fatalf("expected 10 lines, got %d", len(result))
+	}
+	// The bug this guards: returning the OLDEST 10 (line-0..line-9).
+	if result[0].Content != "line-40" {
+		t.Errorf("expected first='line-40' (tail), got %q", result[0].Content)
+	}
+	if result[9].Content != "line-49" {
+		t.Errorf("expected last='line-49' (newest), got %q", result[9].Content)
+	}
+	// Ordering contract: oldest→newest within the window.
+	for i := range result {
+		want := fmt.Sprintf("line-%d", 40+i)
+		if result[i].Content != want {
+			t.Fatalf("line %d: expected %q, got %q", i, want, result[i].Content)
+		}
+	}
+}
+
+func TestTail_ExactlyLimit(t *testing.T) {
+	b := New(100)
+	b.Append("proj1", "task1", makeLines("line", 10))
+
+	result, total, offset := b.Tail("proj1", "task1", 10)
+	if total != 10 || offset != 0 || len(result) != 10 {
+		t.Fatalf("expected total=10 offset=0 len=10, got total=%d offset=%d len=%d",
+			total, offset, len(result))
+	}
+	if result[0].Content != "line-0" {
+		t.Errorf("expected first='line-0', got %q", result[0].Content)
+	}
+}
+
+func TestTail_AfterEviction(t *testing.T) {
+	b := New(10)
+	b.Append("proj1", "task1", makeLines("line", 25))
+
+	// Ring holds only the newest 10 (line-15..line-24).
+	result, total, offset := b.Tail("proj1", "task1", 5)
+	if total != 10 {
+		t.Errorf("expected total=10 (ring cap), got %d", total)
+	}
+	if offset != 5 {
+		t.Errorf("expected offset=5 within the retained window, got %d", offset)
+	}
+	if len(result) != 5 {
+		t.Fatalf("expected 5 lines, got %d", len(result))
+	}
+	if result[0].Content != "line-20" || result[4].Content != "line-24" {
+		t.Errorf("expected line-20..line-24, got %q..%q",
+			result[0].Content, result[4].Content)
+	}
+}
+
+func TestTail_NonexistentTask(t *testing.T) {
+	b := New(100)
+
+	result, total, offset := b.Tail("proj1", "nonexistent", 10)
+	if total != 0 || offset != 0 {
+		t.Errorf("expected total=0 offset=0, got total=%d offset=%d", total, offset)
+	}
+	if result != nil {
+		t.Errorf("expected nil result, got %v", result)
+	}
+}
+
+func TestTail_NonPositiveLimit(t *testing.T) {
+	b := New(100)
+	b.Append("proj1", "task1", makeLines("line", 5))
+
+	for _, limit := range []int{0, -1} {
+		result, total, offset := b.Tail("proj1", "task1", limit)
+		if len(result) != 0 {
+			t.Errorf("limit=%d: expected 0 lines, got %d", limit, len(result))
+		}
+		if total != 5 {
+			t.Errorf("limit=%d: expected total=5, got %d", limit, total)
+		}
+		if offset != 0 {
+			t.Errorf("limit=%d: expected offset=0, got %d", limit, offset)
+		}
+	}
+}
+
+func TestTail_ReturnsCopy(t *testing.T) {
+	b := New(100)
+	b.Append("proj1", "task1", makeLines("line", 5))
+
+	result, _, _ := b.Tail("proj1", "task1", 5)
+	result[0].Content = "mutated"
+
+	again, _, _ := b.Tail("proj1", "task1", 5)
+	if again[0].Content != "line-0" {
+		t.Errorf("Tail leaked the underlying slice: got %q", again[0].Content)
+	}
+}
+
 func TestConcurrentAppendQuery(t *testing.T) {
 	b := New(100)
 	var wg sync.WaitGroup

@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"sync"
 	"testing"
 	"time"
 )
@@ -406,5 +407,132 @@ func TestRunnerTopicDoesNotInterfereWithProjectTopics(t *testing.T) {
 		t.Fatalf("project should not receive runner message, got: %+v", msg)
 	case <-time.After(50 * time.Millisecond):
 		// Expected
+	}
+}
+
+// TestPublishRacesUnsubscribe hammers publish against churning subscribers on
+// the same topic. Before publish held its read lock across the fan-out, this
+// reproduced two failures under -race: a "concurrent map iteration and map
+// write" fatal error, and a send on a channel unsubscribe had already closed.
+// The runner-shell exec stream subscribes and unsubscribes per request while
+// output flows, so this is the exact production shape.
+func TestPublishRacesUnsubscribe(t *testing.T) {
+	hub := NewHub()
+	const topic = "exec:runner-1:exec-1"
+
+	done := make(chan struct{})
+	var publishers, subscribers sync.WaitGroup
+
+	for i := 0; i < 4; i++ {
+		publishers.Add(1)
+		go func() {
+			defer publishers.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					hub.Publish(topic, "exec_data", "chunk")
+				}
+			}
+		}()
+	}
+
+	for i := 0; i < 4; i++ {
+		subscribers.Add(1)
+		go func() {
+			defer subscribers.Done()
+			for j := 0; j < 200; j++ {
+				ch, unsub := hub.Subscribe(topic)
+				// Drain a little so the buffer does not simply fill up,
+				// exercising the send path rather than the drop path.
+				select {
+				case <-ch:
+				default:
+				}
+				unsub()
+			}
+		}()
+	}
+
+	subscribers.Wait()
+	close(done)
+	publishers.Wait()
+
+	if got := len(hub.subscribers); got != 0 {
+		t.Fatalf("expected all subscriptions cleaned up, got %d topics", got)
+	}
+}
+
+// A subscription's buffer is the only thing between a burst and lost data:
+// publish never blocks. Bulk streams (runner-shell output) therefore ask for
+// their own depth, and the shared default must not silently cap them.
+func TestSubscribeWithCapacity_AbsorbsBurstTheDefaultWouldDrop(t *testing.T) {
+	hub := NewHub()
+	const topic = "exec:runner-1:exec-1"
+	const burst = DefaultSubscriberBuffer * 8
+
+	deep, unsubDeep := hub.SubscribeWithCapacity(topic, burst)
+	defer unsubDeep()
+	shallow, unsubShallow := hub.Subscribe(topic)
+	defer unsubShallow()
+
+	// Nobody reads while this runs — exactly the case of a browser slower
+	// than the command producing output.
+	for i := 0; i < burst; i++ {
+		hub.Publish(topic, "exec_data", i)
+	}
+
+	if got := len(deep); got != burst {
+		t.Errorf("deep subscriber queued %d of %d messages", got, burst)
+	}
+	if got := len(shallow); got != DefaultSubscriberBuffer {
+		t.Errorf("default subscriber queued %d, want its %d cap", got, DefaultSubscriberBuffer)
+	}
+}
+
+// A capacity below the default is raised to it: no caller gets a subscription
+// shallower than the shared one.
+func TestSubscribeWithCapacity_FloorsAtDefault(t *testing.T) {
+	hub := NewHub()
+	ch, unsub := hub.SubscribeWithCapacity("project-a", 1)
+	defer unsub()
+
+	if got := cap(ch); got != DefaultSubscriberBuffer {
+		t.Errorf("capacity = %d, want the %d floor", got, DefaultSubscriberBuffer)
+	}
+}
+
+// Dropping is unavoidable when a subscriber falls far enough behind, but a
+// caller that must not lose data silently has to be able to see it happen.
+func TestPublishTracked_ReportsDeliveredAndDropped(t *testing.T) {
+	hub := NewHub()
+	const topic = "exec:runner-1:exec-1"
+
+	ch, unsub := hub.Subscribe(topic)
+	defer unsub()
+
+	// Fill the subscriber's buffer exactly.
+	for i := 0; i < DefaultSubscriberBuffer; i++ {
+		delivered, dropped := hub.PublishTracked(topic, "exec_data", i)
+		if delivered != 1 || dropped != 0 {
+			t.Fatalf("message %d: delivered=%d dropped=%d, want 1/0", i, delivered, dropped)
+		}
+	}
+
+	delivered, dropped := hub.PublishTracked(topic, "exec_data", "overflow")
+	if delivered != 0 || dropped != 1 {
+		t.Errorf("overflow: delivered=%d dropped=%d, want 0/1", delivered, dropped)
+	}
+
+	// Draining one slot makes room again.
+	<-ch
+	if delivered, dropped = hub.PublishTracked(topic, "exec_data", "after drain"); delivered != 1 || dropped != 0 {
+		t.Errorf("after drain: delivered=%d dropped=%d, want 1/0", delivered, dropped)
+	}
+
+	// No subscribers is not a drop — there is nobody to lose the message.
+	if delivered, dropped = hub.PublishTracked("exec:runner-1:nobody", "exec_data", "x"); delivered != 0 || dropped != 0 {
+		t.Errorf("unsubscribed topic: delivered=%d dropped=%d, want 0/0", delivered, dropped)
 	}
 }

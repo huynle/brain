@@ -16,8 +16,10 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/coder/websocket"
 	"github.com/huynle/brain-api/internal/bridge"
@@ -51,6 +53,12 @@ type BridgeClient struct {
 	pumps   map[string]context.CancelFunc
 	streams map[string]bool // instanceID → full stream requested
 
+	// execs tracks in-flight runner-shell commands so exec_signal frames can
+	// reach them. Guarded by its own mutex: an exec lives much longer than
+	// any bc.mu critical section and must never contend with instance state.
+	execMu sync.Mutex
+	execs  map[string]*execProcess
+
 	// externalListeners caches the result of `lsof -c opencode -sTCP:LISTEN`
 	// briefly. The audit UI's history fetch falls back to scanning every
 	// localhost OpenCode HTTP server when the session was hosted by a TUI
@@ -75,6 +83,7 @@ func NewBridgeClient(tr *TaskRunner) *BridgeClient {
 		adhoc:   make(map[string]*adhocInstance),
 		pumps:   make(map[string]context.CancelFunc),
 		streams: make(map[string]bool),
+		execs:   make(map[string]*execProcess),
 		httpClient: &http.Client{
 			Timeout: time.Duration(bridge.DefaultTimeoutMs) * time.Millisecond,
 		},
@@ -108,6 +117,7 @@ func (bc *BridgeClient) Start(ctx context.Context) {
 		}
 	}
 	bc.shutdownPumps()
+	bc.shutdownExecs()
 }
 
 // bridgeURL converts the Brain API base URL to the runner's bridge endpoint.
@@ -205,6 +215,10 @@ func (bc *BridgeClient) handleFrame(f bridge.Frame) {
 		go bc.handleAbortTask(f)
 	case bridge.FrameHistory:
 		go bc.handleHistory(f)
+	case bridge.FrameExecStart:
+		go bc.handleExecStart(f)
+	case bridge.FrameExecSignal:
+		go bc.handleExecSignal(f)
 	default:
 		slog.Debug("bridge client: unhandled frame", "type", f.Type)
 	}
@@ -866,6 +880,511 @@ func (bc *BridgeClient) AdhocInstances(hostname string) []types.OpencodeInstance
 		out = append(out, inst)
 	}
 	return out
+}
+
+// ---------------------------------------------------------------------------
+// Runner shell (exec)
+// ---------------------------------------------------------------------------
+
+// execDrainGrace bounds how long the runner keeps reading a finished
+// command's pipes. The child has already exited at that point; the only
+// thing that can still hold the pipe open is a backgrounded grandchild that
+// inherited the fd (`some-daemon &`). Without this bound such a command
+// would never produce an exec_exit and the UI would hang forever.
+const execDrainGrace = 2 * time.Second
+
+// execTimeoutExitCode mirrors coreutils `timeout`: 124 means "killed
+// because it ran out of time", distinct from any code the command itself
+// could return.
+const execTimeoutExitCode = 124
+
+// execUnknownExitCode is reported when the command's status could not be
+// determined at all (a wait error that is not an *exec.ExitError).
+const execUnknownExitCode = -1
+
+// execProcess tracks one running runner-shell command so exec_signal frames
+// can reach it. The process is spawned in its own process group, so signals
+// are delivered to the whole child tree rather than just to bash.
+type execProcess struct {
+	mu     sync.Mutex
+	cmd    *exec.Cmd
+	pgid   int
+	cancel context.CancelFunc
+}
+
+// signal delivers sig to the command's process group, falling back to the
+// direct child if the group send fails.
+func (ep *execProcess) signal(sig syscall.Signal) error {
+	ep.mu.Lock()
+	cmd, pgid := ep.cmd, ep.pgid
+	ep.mu.Unlock()
+	if cmd == nil || cmd.Process == nil {
+		return errors.New("exec has not started yet")
+	}
+	if pgid > 0 {
+		if err := syscall.Kill(-pgid, sig); err == nil {
+			return nil
+		}
+	}
+	return cmd.Process.Signal(sig)
+}
+
+func (bc *BridgeClient) handleExecStart(f bridge.Frame) {
+	if err := bc.startExec(f); err != nil {
+		// Pre-spawn failure: reply with the error and send NO exec_exit —
+		// the API turns this into a plain JSON error before the SSE stream
+		// is opened.
+		if sendErr := bc.sendFrame(bridge.Frame{
+			Type: bridge.FrameRes, ID: f.ID, Error: err.Error(),
+		}); sendErr != nil {
+			slog.Debug("bridge client: failed to send exec_start error", "error", sendErr)
+		}
+		return
+	}
+	// Mandatory ack: the API blocks on this before opening the stream.
+	if err := bc.sendFrame(bridge.Frame{
+		Type: bridge.FrameRes, ID: f.ID, Status: http.StatusOK,
+	}); err != nil {
+		slog.Debug("bridge client: failed to ack exec_start", "error", err)
+	}
+}
+
+// startExec validates and spawns a shell command, then hands its output
+// pipes to background goroutines. It returns only spawn-time errors; once it
+// returns nil the command is running and exactly one exec_exit frame is
+// guaranteed to follow.
+//
+// The shell is deliberately unrestricted: authorization happens once, at the
+// control API route, and there is no command allow/blocklist or workdir
+// confinement here.
+func (bc *BridgeClient) startExec(f bridge.Frame) error {
+	if f.ExecID == "" {
+		return errors.New("exec id is required")
+	}
+	if f.Command == "" {
+		return errors.New("command is required")
+	}
+	if len(f.Command) > bridge.ExecMaxCommandBytes {
+		return fmt.Errorf("command exceeds %d bytes", bridge.ExecMaxCommandBytes)
+	}
+
+	workdir, err := bc.resolveExecWorkdir(f.Workdir)
+	if err != nil {
+		return err
+	}
+
+	// Reserve the ID before spawning so a duplicate exec_start can't race
+	// two processes onto the same stream.
+	ep := &execProcess{}
+	bc.execMu.Lock()
+	if _, exists := bc.execs[f.ExecID]; exists {
+		bc.execMu.Unlock()
+		return fmt.Errorf("exec %q is already running", f.ExecID)
+	}
+	bc.execs[f.ExecID] = ep
+	bc.execMu.Unlock()
+
+	timeout := execTimeout(f.ExecTimeoutMs)
+	ctx, cancel := context.WithCancel(bc.baseContext())
+
+	cmd := exec.CommandContext(ctx, "bash", "-lc", f.Command)
+	cmd.Dir = workdir
+	cmd.Env = bc.execEnv()
+	// Own process group so a signal reaches the whole child tree, matching
+	// how the daemon supervisor spawns processes.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// Context cancellation (runner shutdown) must take the group down too,
+	// not just bash.
+	cmd.Cancel = func() error {
+		err := signalProcessGroup(cmd.Process.Pid, syscall.SIGKILL)
+		if errors.Is(err, syscall.ESRCH) {
+			// Already gone — os/exec treats this as a clean no-op.
+			return os.ErrProcessDone
+		}
+		return err
+	}
+
+	// Explicit os.Pipe rather than cmd.StdoutPipe: os/exec closes the pipes
+	// it owns inside Wait(), which would force us to finish reading before
+	// waiting. With our own pipes the wait and the reads are independent, so
+	// a grandchild holding the fd open can't stop us from reporting the exit.
+	stdoutR, stdoutW, err := os.Pipe()
+	if err != nil {
+		cancel()
+		bc.finishExec(f.ExecID)
+		return fmt.Errorf("create stdout pipe: %w", err)
+	}
+	stderrR, stderrW, err := os.Pipe()
+	if err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		cancel()
+		bc.finishExec(f.ExecID)
+		return fmt.Errorf("create stderr pipe: %w", err)
+	}
+	cmd.Stdout = stdoutW
+	cmd.Stderr = stderrW
+
+	if err := cmd.Start(); err != nil {
+		_ = stdoutR.Close()
+		_ = stdoutW.Close()
+		_ = stderrR.Close()
+		_ = stderrW.Close()
+		cancel()
+		bc.finishExec(f.ExecID)
+		return fmt.Errorf("start command: %w", err)
+	}
+	// The child owns the write ends now.
+	_ = stdoutW.Close()
+	_ = stderrW.Close()
+
+	pgid, pgErr := syscall.Getpgid(cmd.Process.Pid)
+	if pgErr != nil || pgid <= 0 {
+		pgid = cmd.Process.Pid
+	}
+	ep.mu.Lock()
+	ep.cmd = cmd
+	ep.pgid = pgid
+	ep.cancel = cancel
+	ep.mu.Unlock()
+
+	slog.Info("bridge client: exec started",
+		"exec_id", f.ExecID, "workdir", workdir, "pid", cmd.Process.Pid,
+		"timeout", timeout, "command", f.Command)
+
+	go bc.runExec(f.ExecID, ep, cmd, cancel, stdoutR, stderrR, timeout)
+	return nil
+}
+
+// runExec pumps both pipes upstream and reports the command's exit exactly
+// once.
+func (bc *BridgeClient) runExec(
+	execID string,
+	ep *execProcess,
+	cmd *exec.Cmd,
+	cancel context.CancelFunc,
+	stdoutR, stderrR *os.File,
+	timeout time.Duration,
+) {
+	defer cancel()
+	defer func() { _ = stdoutR.Close() }()
+	defer func() { _ = stderrR.Close() }()
+
+	var once sync.Once
+	sendExit := func(code int, reason string) {
+		once.Do(func() {
+			bc.finishExec(execID)
+			if err := bc.sendFrame(bridge.Frame{
+				Type:     bridge.FrameExecExit,
+				ExecID:   execID,
+				ExitCode: code,
+				Error:    reason,
+			}); err != nil {
+				slog.Debug("bridge client: failed to send exec_exit",
+					"exec_id", execID, "error", err)
+			}
+		})
+	}
+	// Belt and braces: the UI waits forever without an exec_exit, so even a
+	// panic on the paths below still terminates the stream.
+	defer sendExit(execUnknownExitCode, "exec terminated unexpectedly")
+
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(timeout, func() {
+		timedOut.Store(true)
+		if err := ep.signal(syscall.SIGKILL); err != nil {
+			slog.Debug("bridge client: exec timeout kill failed",
+				"exec_id", execID, "error", err)
+		}
+	})
+	defer timer.Stop()
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go bc.pumpExecStream(execID, bridge.ExecStreamStdout, stdoutR, &wg)
+	go bc.pumpExecStream(execID, bridge.ExecStreamStderr, stderrR, &wg)
+	drained := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(drained)
+	}()
+
+	waitErr := cmd.Wait()
+	timer.Stop()
+
+	// The process is gone; give any grandchild that inherited the pipes a
+	// short grace period to flush, then close the read ends to unblock the
+	// pumps so exec_exit is never withheld.
+	select {
+	case <-drained:
+	case <-time.After(execDrainGrace):
+		_ = stdoutR.Close()
+		_ = stderrR.Close()
+		<-drained
+	}
+
+	// Note what is deliberately NOT done here: the process group is not
+	// killed when the command ends. A job the caller backgrounded with `&`
+	// therefore outlives its exec, exactly as it would in a terminal (POSIX
+	// has a non-interactive shell's background jobs ignore SIGINT, so Ctrl+C
+	// reaches the foreground process only). That keeps `nohup svc &` usable,
+	// at the cost of a process the shell can no longer address — its exec id
+	// is gone from the registry. The timeout path above is the exception: a
+	// runaway command is a leak, so it SIGKILLs the whole group.
+	code, reason := execExitResult(waitErr)
+	if timedOut.Load() {
+		code = execTimeoutExitCode
+		reason = fmt.Sprintf("command timed out after %s", timeout)
+	}
+	slog.Debug("bridge client: exec finished",
+		"exec_id", execID, "exit_code", code, "error", reason)
+	sendExit(code, reason)
+}
+
+// pumpExecStream forwards output as it arrives — no line buffering, so an
+// interactive command's partial line shows up immediately.
+func (bc *BridgeClient) pumpExecStream(execID, stream string, r io.Reader, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	send := func(b []byte) {
+		if len(b) == 0 {
+			return
+		}
+		// Chunk rides the wire as a JSON string; invalid UTF-8 from a binary
+		// command would otherwise be mangled by json.Marshal.
+		if err := bc.sendFrame(bridge.Frame{
+			Type:   bridge.FrameExecData,
+			ExecID: execID,
+			Stream: stream,
+			Chunk:  strings.ToValidUTF8(string(b), "�"),
+		}); err != nil {
+			slog.Debug("bridge client: failed to send exec_data",
+				"exec_id", execID, "stream", stream, "error", err)
+		}
+	}
+
+	buf := make([]byte, bridge.ExecChunkBytes)
+	// carry holds a multi-byte rune split across two reads so a chunk
+	// boundary never turns valid output into replacement characters.
+	var carry []byte
+	for {
+		n, err := r.Read(buf)
+		if n > 0 {
+			data := buf[:n]
+			if len(carry) > 0 {
+				data = append(carry, data...)
+				carry = nil
+			}
+			if cut := trailingPartialRune(data); cut < len(data) {
+				carry = append([]byte(nil), data[cut:]...)
+				data = data[:cut]
+			}
+			send(data)
+		}
+		if err != nil {
+			send(carry)
+			return
+		}
+	}
+}
+
+func (bc *BridgeClient) handleExecSignal(f bridge.Frame) {
+	res := bridge.Frame{Type: bridge.FrameRes, ID: f.ID, Status: http.StatusOK}
+	if err := bc.signalExec(f.ExecID, f.Signal); err != nil {
+		res.Error = err.Error()
+		res.Status = 0
+	}
+	if err := bc.sendFrame(res); err != nil {
+		slog.Debug("bridge client: failed to reply to exec_signal", "error", err)
+	}
+}
+
+// signalExec delivers a signal to a running exec. The registry entry is NOT
+// removed here — runExec drops it when the process actually exits, so a
+// SIGINT that the command survives leaves it addressable.
+func (bc *BridgeClient) signalExec(execID, name string) error {
+	if execID == "" {
+		return errors.New("exec id is required")
+	}
+	bc.execMu.Lock()
+	ep := bc.execs[execID]
+	bc.execMu.Unlock()
+	if ep == nil {
+		return fmt.Errorf("exec %q is not running", execID)
+	}
+	sig := execSignal(name)
+	if err := ep.signal(sig); err != nil {
+		return fmt.Errorf("signal exec: %w", err)
+	}
+	slog.Info("bridge client: signalled exec", "exec_id", execID, "signal", sig)
+	return nil
+}
+
+// finishExec drops an exec from the registry. Safe to call more than once.
+func (bc *BridgeClient) finishExec(execID string) {
+	bc.execMu.Lock()
+	delete(bc.execs, execID)
+	bc.execMu.Unlock()
+}
+
+// shutdownExecs kills every still-running shell command. Called when the
+// bridge client's context ends so a runner restart doesn't orphan a shell.
+func (bc *BridgeClient) shutdownExecs() {
+	bc.execMu.Lock()
+	procs := make([]*execProcess, 0, len(bc.execs))
+	for _, ep := range bc.execs {
+		procs = append(procs, ep)
+	}
+	bc.execMu.Unlock()
+	for _, ep := range procs {
+		if err := ep.signal(syscall.SIGKILL); err != nil {
+			slog.Debug("bridge client: exec shutdown kill failed", "error", err)
+		}
+		ep.mu.Lock()
+		cancel := ep.cancel
+		ep.mu.Unlock()
+		if cancel != nil {
+			cancel()
+		}
+	}
+}
+
+// resolveExecWorkdir picks the directory a shell command runs in: the
+// requested one, else the runner's configured work dir, else the user's
+// home. There is no allowed-roots restriction on the shell by design.
+func (bc *BridgeClient) resolveExecWorkdir(requested string) (string, error) {
+	dir := strings.TrimSpace(requested)
+	if dir == "" && bc.runner != nil {
+		dir = strings.TrimSpace(bc.runner.config.WorkDir)
+	}
+	if dir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve default workdir: %w", err)
+		}
+		dir = home
+	}
+	if strings.HasPrefix(dir, "~") {
+		if home, err := os.UserHomeDir(); err == nil && home != "" {
+			dir = filepath.Join(home, strings.TrimPrefix(dir, "~"))
+		}
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("workdir: %w", err)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return "", fmt.Errorf("workdir: %w", err)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("workdir %q is not a directory", abs)
+	}
+	return abs, nil
+}
+
+// execEnv mirrors spawnScript's environment handling so a shell command sees
+// the same Brain credentials a script task would.
+func (bc *BridgeClient) execEnv() []string {
+	env := os.Environ()
+	if bc.runner == nil {
+		return env
+	}
+	if url := bc.runner.config.BrainAPIURL; url != "" {
+		env = append(env, "BRAIN_API_URL="+url)
+	}
+	if token := bc.runner.config.APIToken; token != "" {
+		env = append(env, "BRAIN_API_TOKEN="+token)
+	}
+	return env
+}
+
+// execTimeout normalises a requested command budget into a duration.
+func execTimeout(requestedMs int) time.Duration {
+	ms := requestedMs
+	if ms <= 0 {
+		ms = bridge.ExecDefaultTimeoutMs
+	}
+	if ms > bridge.ExecMaxTimeoutMs {
+		ms = bridge.ExecMaxTimeoutMs
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// execSignal maps a wire signal name onto a Unix signal. Unknown names fall
+// back to SIGINT, the least destructive option.
+func execSignal(name string) syscall.Signal {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "term":
+		return syscall.SIGTERM
+	case "kill":
+		return syscall.SIGKILL
+	default:
+		return syscall.SIGINT
+	}
+}
+
+// execExitResult derives the exit code and human reason from cmd.Wait().
+func execExitResult(err error) (int, string) {
+	if err == nil {
+		return 0, ""
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) {
+		if ws, ok := exitErr.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
+			sig := ws.Signal()
+			return 128 + int(sig), fmt.Sprintf("terminated by signal %s", sig)
+		}
+		if code := exitErr.ExitCode(); code >= 0 {
+			return code, ""
+		}
+	}
+	return execUnknownExitCode, err.Error()
+}
+
+// signalProcessGroup sends sig to pid's whole process group, falling back to
+// the single process when the group send fails.
+func signalProcessGroup(pid int, sig syscall.Signal) error {
+	if pid <= 0 {
+		return errors.New("invalid pid")
+	}
+	if pgid, err := syscall.Getpgid(pid); err == nil && pgid > 0 {
+		if err := syscall.Kill(-pgid, sig); err == nil {
+			return nil
+		}
+	}
+	return syscall.Kill(pid, sig)
+}
+
+// trailingPartialRune returns the index where p's trailing incomplete UTF-8
+// sequence begins, or len(p) when p does not end mid-rune.
+func trailingPartialRune(p []byte) int {
+	limit := utf8.UTFMax - 1
+	if len(p) < limit {
+		limit = len(p)
+	}
+	for i := 1; i <= limit; i++ {
+		b := p[len(p)-i]
+		if !utf8.RuneStart(b) {
+			continue
+		}
+		need := 1
+		switch {
+		case b < 0x80:
+			need = 1
+		case b >= 0xF0:
+			need = 4
+		case b >= 0xE0:
+			need = 3
+		case b >= 0xC0:
+			need = 2
+		}
+		if need > i {
+			return len(p) - i
+		}
+		return len(p)
+	}
+	return len(p)
 }
 
 // ---------------------------------------------------------------------------

@@ -1,6 +1,9 @@
 package api
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +30,11 @@ const (
 	controlPromptPerMinute = 30
 	// controlSpawnPerMinute caps ad-hoc spawns per token per minute.
 	controlSpawnPerMinute = 6
+	// controlExecPerMinute caps runner-shell commands per token per minute.
+	// This is an interactive terminal — a person types many short commands
+	// in a burst — so the cap only exists to stop a runaway loop, not to
+	// pace a human.
+	controlExecPerMinute = 240
 )
 
 // actionLimiter is a fixed-window per-key rate limiter for sensitive
@@ -57,6 +65,7 @@ func (l *actionLimiter) allow(key string) bool {
 var (
 	controlPromptLimiter = newActionLimiter(controlPromptPerMinute)
 	controlSpawnLimiter  = newActionLimiter(controlSpawnPerMinute)
+	controlExecLimiter   = newActionLimiter(controlExecPerMinute)
 )
 
 // limiterKey identifies the acting token for rate limiting.
@@ -501,6 +510,348 @@ func (h *Handler) HandleControlEvents(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 		}
 	}
+}
+
+// ─── Runner shell ────────────────────────────────────────────────
+
+// controlExecRequest is the browser-facing runner-shell body.
+type controlExecRequest struct {
+	Command   string `json:"command"`
+	Workdir   string `json:"workdir,omitempty"`
+	TimeoutMs int    `json:"timeout_ms,omitempty"`
+}
+
+// controlExecSignalRequest carries a signal for a running command.
+type controlExecSignalRequest struct {
+	Signal string `json:"signal"`
+}
+
+// Signal vocabulary accepted by the runner's exec handler. Kept as literals
+// rather than importing internal/bridge, which would invert the dependency
+// the BridgeService interface exists to avoid.
+const (
+	execSignalInt  = "int"
+	execSignalTerm = "term"
+	execSignalKill = "kill"
+)
+
+// controlExecAuditCommandMax bounds the command text copied into the audit
+// event so a pasted heredoc cannot bloat the event store.
+const controlExecAuditCommandMax = 512
+
+// SSE event names on an exec stream.
+const (
+	execExitEvent      = "exec_exit"
+	execTruncatedEvent = "exec_truncated"
+)
+
+const (
+	// execStreamBuffer is the queue depth of one exec's realtime
+	// subscription: burst absorption for output produced faster than the
+	// browser reads it.
+	//
+	// Sized as a MEMORY budget, not a message count. Output arrives in
+	// bridge.ExecChunkBytes (16 KB) slices, so the depth is really
+	// execStreamMaxBacklogBytes of retained output, and a stalled stream
+	// pins that much heap for as long as it stays stalled. Nothing caps
+	// concurrent exec streams (the rate limiter bounds starts per minute,
+	// not live streams), so this number is multiplied by every backgrounded
+	// browser tab sitting on a chatty command — which is why it is 8 MB and
+	// not the 64 MB that "never lose a byte under any load" would want.
+	// 8 MB still covers realistic bursts whole; past it, output is dropped
+	// LOUDLY via exec_truncated rather than silently.
+	execStreamMaxBacklogBytes = 8 << 20 // 8 MB
+	execStreamChunkBytes      = 16 << 10
+	execStreamBuffer          = execStreamMaxBacklogBytes / execStreamChunkBytes // 512
+
+	// execWatchdogInterval is how often a live exec stream re-derives whether
+	// its command is still running. It bounds how long the terminal can look
+	// busy after the command actually ended.
+	execWatchdogInterval = 250 * time.Millisecond
+)
+
+// generateExecID mints a server-side ID for one shell command. Client-chosen
+// IDs are not accepted: the ID keys the realtime topic that carries the
+// command's output, so a caller must not be able to guess or reuse another's.
+func generateExecID() string {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		// crypto/rand does not fail in practice; if it ever does, fall back
+		// to a nanosecond stamp rather than serving a predictable ID.
+		return fmt.Sprintf("exec_%x", time.Now().UnixNano())
+	}
+	return "exec_" + hex.EncodeToString(b)
+}
+
+// HandleControlExec handles POST /control/runners/{runnerId}/exec — runs one
+// shell command on the runner host and streams its output back as SSE.
+//
+// The shell is deliberately unrestricted: authorization is the control:*
+// scope on this route and nothing more (control:* already means arbitrary
+// code execution on the runner via spawn/prompt). The command timeout and
+// the audit event are correctness and observability, not gating.
+//
+// Errors raised before the first SSE byte are ordinary JSON errors; once the
+// stream is open every outcome — including the command's own failure — is
+// carried by the exec_exit event.
+func (h *Handler) HandleControlExec(w http.ResponseWriter, r *http.Request) {
+	if !controlExecLimiter.allow(limiterKey(r)) {
+		WriteError(w, http.StatusTooManyRequests, "Too Many Requests", "exec rate limit exceeded")
+		return
+	}
+
+	runnerID := chi.URLParam(r, "runnerId")
+
+	var req controlExecRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.Command) == "" {
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "command", Message: "command is required"},
+		})
+		return
+	}
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", "streaming not supported")
+		return
+	}
+
+	execID := generateExecID()
+
+	// Subscribe to the output topic BEFORE asking the runner to start: a
+	// short command can emit output and exit before StartExec's ack returns,
+	// and anything published without a subscriber is dropped on the floor.
+	//
+	// An exec gets its own deep queue rather than the shared default: the
+	// fan-out never blocks, so the buffer is the only thing standing between
+	// a burst of output and a silently truncated transcript.
+	ch, unsub := h.hub.SubscribeWithCapacity(realtime.ExecTopic(runnerID, execID), execStreamBuffer)
+	defer unsub()
+
+	if err := h.bridge.StartExec(r.Context(), runnerID, execID,
+		req.Command, req.Workdir, req.TimeoutMs); err != nil {
+		writeBridgeError(w, err)
+		return
+	}
+	// The bridge tracks this exec from StartExec onwards; releasing it here
+	// keeps that state bounded by the number of live streams.
+	defer h.bridge.ReleaseExec(runnerID, execID)
+
+	command := req.Command
+	if len(command) > controlExecAuditCommandMax {
+		command = command[:controlExecAuditCommandMax] + "…"
+	}
+	h.emitControlAudit(r, types.EventControlExecStarted, runnerID, "", map[string]string{
+		"exec_id": execID,
+		"workdir": req.Workdir,
+		"command": command,
+	})
+
+	w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache, no-transform")
+	w.Header().Set("Pragma", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	writeSSEEvent(w, "started", map[string]any{
+		"exec_id":   execID,
+		"runner_id": runnerID,
+		"workdir":   req.Workdir,
+	})
+	flusher.Flush()
+
+	heartbeat := time.NewTicker(DefaultHeartbeatInterval)
+	defer heartbeat.Stop()
+	// The terminal exec_exit rides the same droppable fan-out as the output,
+	// and a runner that is killed mid-command never sends one at all. Both
+	// would leave this stream — and the terminal in the browser — running
+	// forever, so its end is also derived from state the bridge records.
+	watchdog := time.NewTicker(execWatchdogInterval)
+	defer watchdog.Stop()
+
+	// Count of dropped chunks already reported to the client, so each loss
+	// is marked once.
+	reportedDrops := 0
+
+	for {
+		select {
+		case <-r.Context().Done():
+			// The browser is gone. Nothing else will ever read this
+			// command's output, so don't leave the process running on the
+			// runner. r.Context() is already cancelled, hence a fresh one.
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			if err := h.bridge.SignalExec(ctx, runnerID, execID, execSignalTerm); err != nil {
+				slog.Warn("control exec: abandoned command not signalled",
+					"runner_id", runnerID, "exec_id", execID, "error", err)
+			}
+			cancel()
+			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			// Exactly one exec_exit is emitted per command; it ends the
+			// stream (and skips the disconnect-signal path above).
+			if h.writeExecMessage(w, flusher, runnerID, execID, msg, &reportedDrops) {
+				return
+			}
+		case <-watchdog.C:
+			// Drain what is already queued first: exec_exit must never
+			// overtake output still sitting in the buffer ahead of it.
+			terminated, closed := h.drainExecBacklog(w, flusher, runnerID, execID, ch, &reportedDrops)
+			if terminated || closed {
+				return
+			}
+			outcome, tracked := h.bridge.ExecOutcome(runnerID, execID)
+			if tracked {
+				// A long-running command reports its losses as they happen
+				// rather than only at exit.
+				h.writeExecTruncation(w, flusher, execID, outcome, &reportedDrops)
+			}
+			switch {
+			case tracked && outcome.Done:
+				// The command finished but its exec_exit was lost on the way
+				// here; the bridge's record still ends the stream.
+			case h.bridge.Connected(runnerID):
+				continue // still running
+			default:
+				outcome = types.ExecOutcome{
+					ExitCode: types.ExecExitUnknown,
+					Error:    "runner disconnected",
+				}
+			}
+			// Drain once more before terminating. The bridge publishes a
+			// command's last chunk and then records its outcome as two steps,
+			// so output can land in the queue in the window between the drain
+			// above and the ExecOutcome read — and that tail is the part the
+			// user actually reads. It arrived intact, so nothing counted it as
+			// dropped: ending the stream without this second drain would
+			// discard it silently.
+			if terminated, closed := h.drainExecBacklog(w, flusher, runnerID, execID, ch, &reportedDrops); terminated || closed {
+				return
+			}
+			writeExecExit(w, execID, outcome)
+			flusher.Flush()
+			return
+		case <-heartbeat.C:
+			writeSSEEvent(w, "heartbeat", map[string]any{
+				"type":      "heartbeat",
+				"timestamp": types.TimeNowUTC().Format(time.RFC3339),
+			})
+			flusher.Flush()
+		}
+	}
+}
+
+// drainExecBacklog writes every exec event already queued, without blocking.
+// terminated reports that the command's exit event was among them; closed
+// reports that the subscription ended.
+func (h *Handler) drainExecBacklog(
+	w http.ResponseWriter, flusher http.Flusher,
+	runnerID, execID string, ch <-chan realtime.SSEMessage, reported *int,
+) (terminated, closed bool) {
+	for {
+		select {
+		case msg, ok := <-ch:
+			if !ok {
+				return false, true
+			}
+			if h.writeExecMessage(w, flusher, runnerID, execID, msg, reported) {
+				return true, false
+			}
+		default:
+			return false, false
+		}
+	}
+}
+
+// writeExecMessage writes one fanned-out exec event and reports whether it
+// was the terminal one.
+func (h *Handler) writeExecMessage(
+	w http.ResponseWriter, flusher http.Flusher,
+	runnerID, execID string, msg realtime.SSEMessage, reported *int,
+) bool {
+	last := msg.Event == execExitEvent
+	if last {
+		// Any loss must be marked before the exit, or a client that stops
+		// reading at exec_exit never learns its transcript is incomplete.
+		if outcome, ok := h.bridge.ExecOutcome(runnerID, execID); ok {
+			h.writeExecTruncation(w, flusher, execID, outcome, reported)
+		}
+	}
+	writeSSEEvent(w, msg.Event, msg.Data)
+	flusher.Flush()
+	return last
+}
+
+// writeExecTruncation emits an explicit marker for output the fan-out could
+// not deliver. Silent truncation is the worst possible outcome here: a user
+// acting on a partial transcript has no way to tell that it is partial.
+// reported carries what has already been announced, so each loss is marked
+// exactly once.
+func (h *Handler) writeExecTruncation(
+	w http.ResponseWriter, flusher http.Flusher, execID string,
+	outcome types.ExecOutcome, reported *int,
+) {
+	if outcome.DroppedChunks <= *reported {
+		return
+	}
+	*reported = outcome.DroppedChunks
+	writeSSEEvent(w, execTruncatedEvent, map[string]any{
+		"exec_id":        execID,
+		"dropped_chunks": outcome.DroppedChunks,
+		"dropped_bytes":  outcome.DroppedBytes,
+	})
+	flusher.Flush()
+}
+
+// writeExecExit emits the terminal event from the bridge's recorded outcome,
+// for the paths where the runner's own exec_exit never reached this handler.
+func writeExecExit(w http.ResponseWriter, execID string, outcome types.ExecOutcome) {
+	writeSSEEvent(w, execExitEvent, map[string]any{
+		"exec_id":   execID,
+		"exit_code": outcome.ExitCode,
+		"error":     outcome.Error,
+	})
+}
+
+// HandleControlExecSignal handles
+// POST /control/runners/{runnerId}/exec/{execId}/signal — delivers ^C
+// ("int"), a polite stop ("term") or a hard kill ("kill") to a running
+// command. Signalling is a separate request because the exec request itself
+// is occupied streaming output.
+func (h *Handler) HandleControlExecSignal(w http.ResponseWriter, r *http.Request) {
+	runnerID := chi.URLParam(r, "runnerId")
+	execID := chi.URLParam(r, "execId")
+	if execID == "" {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "exec id is required")
+		return
+	}
+
+	var req controlExecSignalRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<10)).Decode(&req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	switch req.Signal {
+	case execSignalInt, execSignalTerm, execSignalKill:
+	default:
+		WriteValidationError(w, []types.ValidationDetail{
+			{Field: "signal", Message: `signal must be one of "int", "term", "kill"`},
+		})
+		return
+	}
+
+	if err := h.bridge.SignalExec(r.Context(), runnerID, execID, req.Signal); err != nil {
+		writeBridgeError(w, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]bool{"success": true})
 }
 
 // readControlBody reads a size-capped JSON body for pass-through proxying.

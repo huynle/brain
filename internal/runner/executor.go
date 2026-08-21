@@ -201,7 +201,7 @@ func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, 
 	case "pi":
 		return e.spawnPi(ctx, task, projectID, workdir, promptFile)
 	case "script":
-		return e.spawnScript(ctx, task, projectID, workdir, promptFile)
+		return e.spawnScript(ctx, task, projectID, workdir, promptFile, opts)
 	default:
 		return nil, fmt.Errorf("unknown executor type: %q (valid types: opencode, pi, script)", executorType)
 	}
@@ -281,7 +281,7 @@ func (e *OpenCodeExecutor) spawnPi(ctx context.Context, task *types.ResolvedTask
 //
 // Security: requires ScriptConfig.Enabled, validates against allowed/blocked
 // command lists, enforces workdir restrictions, and applies timeout.
-func (e *OpenCodeExecutor) spawnScript(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string) (*SpawnResult, error) {
+func (e *OpenCodeExecutor) spawnScript(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string, opts SpawnOptions) (*SpawnResult, error) {
 	// 1. Check if scripts are enabled
 	if !e.config.Script.Enabled {
 		return nil, fmt.Errorf("script executor is disabled: set script.enabled=true in runner config to allow script execution")
@@ -321,8 +321,18 @@ func (e *OpenCodeExecutor) spawnScript(ctx context.Context, task *types.Resolved
 	// 7. Build the command
 	cmd := e.CommandFactory("bash", "-c", command)
 	cmd.Dir = workdir
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
+
+	// Tee to the log streamer as well as the file, the same way spawnOpencode
+	// does. Without this a script task's output only ever reaches the on-disk
+	// log, so it is invisible to GET /tasks/{p}/{t}/logs and to the SSE tail —
+	// the Processes view's log pane stays permanently empty for exactly the
+	// executor whose output has nowhere else to be read.
+	output := io.Writer(logFile)
+	if opts.LogWriter != nil {
+		output = io.MultiWriter(logFile, opts.LogWriter)
+	}
+	cmd.Stdout = output
+	cmd.Stderr = output
 
 	// Propagate environment
 	cmd.Env = os.Environ()

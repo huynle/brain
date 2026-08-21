@@ -5,6 +5,7 @@
 
 import { API_V1 } from "./config";
 import { useAuth } from "./auth";
+import { parseSSEFrame } from "./sse";
 import type {
   BrainEntry,
   CheckoutFeatureResult,
@@ -1236,6 +1237,210 @@ export const controlAbortTask = (runnerId: string, taskId: string) =>
 // fetch-based SSE client with header auth and explicit 401 refresh.
 // (The old `controlEventsUrl` ?token= EventSource helper was removed so
 // exactly one auth convention exists for the endpoint.)
+
+// ─── Ad-hoc runner shell (streaming exec) ────────────────────────
+//
+// POST /api/v1/control/runners/{id}/exec answers with text/event-stream
+// (started → exec_data* → exec_exit), so it can't go through api<T>(),
+// which reads one JSON body to completion. It's hand-rolled on the same
+// pattern as lib/instanceStream.ts:
+//   • fetch, not EventSource — EventSource can't POST and can't set an
+//     Authorization header (?token= is worse for auth and for logs)
+//   • an explicit once-through 401 refresh, because api()'s refresh
+//     wrapper doesn't cover hand-rolled streams
+//   • a reader loop over response.body, frames split on the blank line
+//     and parsed by the shared parseSSEFrame
+//
+// Errors raised BEFORE the stream opens (bad request, runner offline,
+// missing scope) come back as normal JSON errors and are rethrown as
+// ApiError. Once the stream is open, failures arrive in-band on the
+// exec_exit frame's `error` field.
+//
+// Unlike the other streams in this app, exec does NOT reconnect: an exec
+// is a single one-shot command, and a silent retry would re-run it.
+
+export interface ExecStartedEvent {
+  exec_id: string;
+  runner_id: string;
+  workdir: string;
+}
+
+export interface ExecDataEvent {
+  exec_id: string;
+  stream: "stdout" | "stderr";
+  chunk: string;
+}
+
+export interface ExecExitEvent {
+  exec_id: string;
+  exit_code: number;
+  error?: string;
+}
+
+/**
+ * Output the server could not deliver. The fan-out from the runner is
+ * non-blocking, so a browser that falls far enough behind loses chunks —
+ * the server counts them and says so rather than letting the transcript go
+ * quietly incomplete.
+ */
+export interface ExecTruncatedEvent {
+  exec_id: string;
+  dropped_chunks: number;
+  dropped_bytes: number;
+}
+
+export interface ControlExecHandlers {
+  onStarted?: (e: ExecStartedEvent) => void;
+  onData?: (e: ExecDataEvent) => void;
+  onTruncated?: (e: ExecTruncatedEvent) => void;
+  onExit?: (e: ExecExitEvent) => void;
+}
+
+export interface ControlExecRequest {
+  command: string;
+  workdir?: string;
+  timeout_ms?: number;
+}
+
+function dispatchExecFrame(
+  frame: { event: string; data: string },
+  handlers: ControlExecHandlers,
+): void {
+  let payload: unknown;
+  try {
+    payload = JSON.parse(frame.data);
+  } catch {
+    return; // malformed frame — drop it rather than killing the stream
+  }
+  if (!payload || typeof payload !== "object") return;
+
+  switch (frame.event) {
+    case "started":
+      handlers.onStarted?.(payload as ExecStartedEvent);
+      break;
+    case "exec_data": {
+      const d = payload as ExecDataEvent;
+      if (typeof d.chunk === "string") {
+        handlers.onData?.({
+          exec_id: d.exec_id,
+          stream: d.stream === "stderr" ? "stderr" : "stdout",
+          chunk: d.chunk,
+        });
+      }
+      break;
+    }
+    case "exec_truncated": {
+      const d = payload as ExecTruncatedEvent;
+      handlers.onTruncated?.({
+        exec_id: d.exec_id,
+        dropped_chunks: Number(d.dropped_chunks) || 0,
+        dropped_bytes: Number(d.dropped_bytes) || 0,
+      });
+      break;
+    }
+    case "exec_exit": {
+      const d = payload as ExecExitEvent;
+      handlers.onExit?.({
+        exec_id: d.exec_id,
+        exit_code: typeof d.exit_code === "number" ? d.exit_code : 0,
+        error: typeof d.error === "string" ? d.error : "",
+      });
+      break;
+    }
+    default:
+      // heartbeat and anything unknown
+      break;
+  }
+}
+
+/**
+ * Run one command on a runner host and stream its output.
+ *
+ * Resolves when the server closes the stream. Rejects with ApiError if
+ * the request fails before the stream opens, and with the fetch's own
+ * AbortError if `signal` fires — callers must catch both (an unhandled
+ * rejection here would otherwise escape into the console).
+ */
+export async function controlExec(
+  runnerId: string,
+  req: ControlExecRequest,
+  handlers: ControlExecHandlers,
+  signal?: AbortSignal,
+): Promise<void> {
+  const url = `/api/v1/control/runners/${encodeURIComponent(runnerId)}/exec`;
+
+  const open = (): Promise<Response> =>
+    fetch(url, {
+      method: "POST",
+      headers: {
+        ...useAuth.getState().authHeader(),
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+        "Cache-Control": "no-cache",
+      },
+      body: JSON.stringify(req),
+      signal,
+    });
+
+  let res = await open();
+  if (res.status === 401) {
+    const refreshed = await useAuth.getState().onUnauthorized();
+    if (refreshed) res = await open();
+  }
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    let message = `${res.status} ${res.statusText}`;
+    try {
+      const parsed = JSON.parse(text);
+      message = parsed.message || parsed.error || parsed.detail || message;
+    } catch {
+      if (text) message = text.slice(0, 300);
+    }
+    throw new ApiError(res.status, message, text);
+  }
+  if (!res.body) {
+    throw new ApiError(res.status, "exec: server sent no stream body");
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      for (;;) {
+        // Accept both LF and CRLF frame separators.
+        const lf = buf.indexOf("\n\n");
+        const crlf = buf.indexOf("\r\n\r\n");
+        if (lf === -1 && crlf === -1) break;
+        const useCrlf = crlf !== -1 && (lf === -1 || crlf < lf);
+        const sep = useCrlf ? crlf : lf;
+        const block = buf.slice(0, sep);
+        buf = buf.slice(sep + (useCrlf ? 4 : 2));
+        const frame = parseSSEFrame(block);
+        if (frame) dispatchExecFrame(frame, handlers);
+      }
+    }
+  } finally {
+    void reader.cancel().catch(() => {});
+  }
+}
+
+/**
+ * Signal a running exec. "int" is Ctrl+C; "term"/"kill" escalate.
+ */
+export const controlExecSignal = (
+  runnerId: string,
+  execId: string,
+  signal: "int" | "term" | "kill" = "int",
+) =>
+  api<{ success: boolean }>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/exec/${encodeURIComponent(execId)}/signal`,
+    { method: "POST", body: { signal } },
+  );
 
 // ─── Brain entries / search ──────────────────────────────────────
 

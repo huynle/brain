@@ -82,14 +82,31 @@ function spanIds(
   return orderedIds.slice(lo, hi + 1);
 }
 
+/** Apply the range verb: the TARGET's current state decides it, the
+ *  way a checkbox column works — shift-click an unselected row and the
+ *  whole span selects; shift-click a selected row and the whole span
+ *  deselects. With no usable span the "range" is just the target, so
+ *  the fallback is an ordinary toggle. */
+function applyRange(
+  selected: ReadonlySet<string>,
+  span: readonly string[] | null,
+  targetId: string,
+): Set<string> {
+  const ids = span ?? [targetId];
+  const next = new Set(selected);
+  if (selected.has(targetId)) for (const id of ids) next.delete(id);
+  else for (const id of ids) next.add(id);
+  return next;
+}
+
 /**
- * Shift-click on a task: select every task row between the anchor and
- * the target, in the card's visual order. Monotonic — rows already
- * marked stay marked and the span is always added, never toggled off,
- * matching file-manager convention. With no usable anchor (missing,
- * stale, wrong kind) it degrades to selecting just the target; a
- * shift-click can therefore never shrink the selection. Crossing into
- * a different project restarts the scope, same as a toggle.
+ * Shift-click on a task: apply the target's toggle to every task row
+ * between the anchor and the target, in the card's visual order.
+ * Symmetric — an unselected target selects the span, a selected
+ * target deselects it — so ranges work the same in both directions.
+ * With no usable anchor (missing, stale, wrong kind) it degrades to a
+ * plain toggle of the target. Crossing into a different project
+ * restarts the scope, same as a toggle.
  */
 export function selectTaskRange(
   s: SelectionSnapshot,
@@ -103,9 +120,7 @@ export function selectTaskRange(
   }
   const span =
     anchorId !== null ? spanIds(orderedIds, anchorId, targetId) : null;
-  const next = new Set(s.taskIds);
-  for (const id of span ?? [targetId]) next.add(id);
-  return { ...s, taskIds: next };
+  return { ...s, taskIds: applyRange(s.taskIds, span, targetId) };
 }
 
 /** Shift-click on a feature header. Same rules as selectTaskRange. */
@@ -121,9 +136,7 @@ export function selectFeatureRange(
   }
   const span =
     anchorId !== null ? spanIds(orderedIds, anchorId, targetId) : null;
-  const next = new Set(s.featureIds);
-  for (const id of span ?? [targetId]) next.add(id);
-  return { ...s, featureIds: next };
+  return { ...s, featureIds: applyRange(s.featureIds, span, targetId) };
 }
 
 /**

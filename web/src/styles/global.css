@@ -817,25 +817,47 @@ body[data-theme="light"] .dep-extra { color: #6b757e; border-color: #d8dde2; }
   background: #0a0c0e; border: 1px solid #1a1e22; border-radius: 4px;
   padding: 4px 6px; font-size: 10.5px; height: 100%; min-height: 120px;
   overflow: hidden;
+  min-width: 0;
   display: flex; flex-direction: column;
 }
-.log-mini .head { display: flex; align-items: center; gap: 6px; padding-bottom: 3px; }
+.log-mini .head { display: flex; align-items: center; gap: 6px; padding-bottom: 3px; flex: 0 0 auto; }
 .log-mini .head .live-dot {
   width: 6px; height: 6px; border-radius: 50%; background: #6fca7d; box-shadow: 0 0 5px #6fca7d;
   animation: pulse 1.4s ease-in-out infinite;
 }
 .log-mini .head .title { color: #9098a1; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-mini .head button { padding: 0 4px; font-size: 10px; }
-.log-mini .body { flex: 1; overflow-y: auto; }
+.log-mini .body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+/*
+ * Log lines WRAP. They used to be `white-space: nowrap` + ellipsis inside
+ * a container with `overflow: hidden`, so every line was clipped to one
+ * row with no horizontal scroll to recover the rest — which is what made
+ * the Processes tab read as "just a command line". The timestamp and
+ * level columns stay fixed and unwrapped; the message column takes the
+ * remaining width (minmax(0,…) so a long unbroken token cannot blow the
+ * grid out) and wraps, breaking mid-token only when it has to.
+ */
 .log-mini .body .l {
-  display: grid; grid-template-columns: 54px 42px 1fr; gap: 4px;
+  display: grid; grid-template-columns: 54px 42px minmax(0, 1fr); gap: 4px;
+  align-items: start;
 }
-.log-mini .body .l .ts  { color: #4b545c; }
-.log-mini .body .l .lvl { color: #9098a1; }
+/*
+ * The fixed columns never wrap AND never bleed: `nowrap` alone let an
+ * over-long value (a 12-hour "12:04:31 PM" timestamp, a "WARNING" level)
+ * paint straight over the column to its right. Content is clipped to the
+ * track; lib/format.clockTime keeps the timestamp inside it to begin with.
+ */
+.log-mini .body .l .ts  { color: #4b545c; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.log-mini .body .l .lvl { color: #9098a1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .log-mini .body .l.err  .lvl { color: #d96060; }
 .log-mini .body .l.ok   .lvl { color: #6fca7d; }
 .log-mini .body .l.wrn  .lvl { color: #f4b23a; }
-.log-mini .body .l .msg { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-mini .body .l .msg {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
 .log-mini .body .l.new  { animation: fadein 400ms ease; }
 @keyframes fadein { from { background: #f4b23a22 } to { background: transparent } }
 
@@ -1407,6 +1429,23 @@ body.mobile .session-view {
 }
 body.mobile .session-view .sidebar-r { display: none; }
 
+/*
+ * Processes tab on a phone: the process list gives up most of its height
+ * to the detail pane (reading the conversation is the point), the
+ * timestamp/level columns shrink so the message column keeps a usable
+ * width, and the chat header wraps instead of squeezing the toggle out.
+ */
+body.mobile .proc-list { max-height: 132px; }
+body.mobile .proc-detail { min-height: 200px; }
+/* 52px is exactly the 8 monospace characters of HH:MM:SS at 10.5px —
+   any narrower and the clipped column eats the seconds. */
+body.mobile .log-mini .body .l { grid-template-columns: 52px 34px minmax(0, 1fr); gap: 3px; }
+body.mobile .proc-chat .hdr { flex-wrap: wrap; row-gap: 4px; }
+body.mobile .proc-chat-sid { max-width: 14ch; }
+body.mobile .proc-chat .composer { flex-wrap: wrap; }
+body.mobile .proc-chat .composer > div:first-child { flex-wrap: wrap; }
+body.mobile .proc-chat .composer input { flex: 1 1 100%; }
+
 /* ---------- Runner row (sidebar) ---------- */
 .runner-row {
   padding: 6px 8px; border-radius: 4px; cursor: pointer;
@@ -1461,8 +1500,28 @@ body.mobile .session-view .sidebar-r { display: none; }
   margin-left: auto;
 }
 
-.proc-split { display: flex; flex-direction: column; gap: 8px; min-height: 0; }
-.proc-list { max-height: 220px; overflow-y: auto; }
+/*
+ * Processes tab split pane.
+ *
+ * `.modal-body` is a flex column scroll container, so the split has to
+ * claim the leftover height itself (`flex: 1 1 auto` + `min-height: 0`)
+ * or the detail pane collapses. The list is `flex: 0 0 auto` so a long
+ * process list can never crush the detail pane to nothing, and the
+ * detail pane is `1 1 auto` with a floor so a short viewport degrades
+ * into a scrolling modal body instead of a sliver.
+ */
+.proc-split {
+  display: flex; flex-direction: column; gap: 8px;
+  flex: 1 1 auto; min-height: 0;
+}
+.proc-list {
+  flex: 0 0 auto;
+  max-height: 220px; min-height: 56px; overflow-y: auto;
+}
+.proc-detail {
+  flex: 1 1 auto; min-height: 240px;
+  display: flex; flex-direction: column; min-width: 0;
+}
 .proc-row {
   display: flex; align-items: flex-start; gap: 8px;
   padding: 6px 8px; margin-bottom: 4px; cursor: pointer; user-select: none;
@@ -1488,8 +1547,56 @@ body.mobile .session-view .sidebar-r { display: none; }
 .proc-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 10px; color: #6b757e; min-width: 0; }
 .proc-meta span { display: inline-flex; align-items: center; min-width: 0; }
 .proc-meta span + span::before { content: "·"; margin-right: 8px; color: #3a4046; }
-.proc-log { height: 300px; }
-.proc-log-empty { color: #6b757e; font-size: 11px; padding: 6px 2px; }
+/* Fills `.proc-detail` rather than pinning a fixed 300px height. */
+.proc-log { flex: 1 1 auto; height: auto; min-height: 0; }
+.proc-log-empty { color: #6b757e; font-size: 11px; padding: 6px 2px; line-height: 1.5; }
+
+/* ---------- Processes tab: chat pane + mode toggle ---------- */
+/*
+ * The chat pane is the session-view grid collapsed to a single column:
+ * header row, transcript row, composer row. It reuses every
+ * `.session-view` rule (message bubbles, roles, composer input) so the
+ * Processes tab and the full Session view stay one visual language.
+ */
+.proc-chat {
+  flex: 1 1 auto; min-height: 0;
+  background: #0e1114;
+  border: 1px solid #22272c; border-radius: 5px;
+  overflow: hidden;
+}
+.proc-chat .hdr { padding: 5px 8px; font-size: 11px; gap: 8px; }
+.proc-chat .stream {
+  border-right: none;
+  padding: 0;
+  display: flex; flex-direction: column;
+  overflow: hidden; min-height: 0;
+}
+.proc-chat .composer { padding: 6px 8px; }
+.proc-chat-mode { color: #f4b23a; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; }
+.proc-chat-delivery {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; color: #6b757e;
+}
+.proc-chat-delivery.live { color: #6fca7d; }
+.proc-chat-sid {
+  font-size: 10px; color: #6b757e;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 22ch; min-width: 0;
+}
+/* Stand-in for the composer when nothing can be delivered. */
+.proc-chat-note { color: #6b757e; font-size: 10.5px; display: block; }
+
+.proc-view-toggle { display: flex; gap: 2px; flex: 0 0 auto; }
+.proc-view-toggle button {
+  background: #12161a; border: 1px solid #2a2f35; color: #9098a1;
+  font-size: 10px; padding: 2px 8px; border-radius: 3px;
+  cursor: pointer; font-family: inherit;
+}
+.proc-view-toggle button:hover:not(:disabled) { color: #eaedef; border-color: #3a4046; }
+.proc-view-toggle button.active {
+  color: #f4b23a; border-color: #f4b23a66; background: #f4b23a12;
+}
+.proc-view-toggle button:disabled { opacity: 0.4; cursor: not-allowed; }
 
 body[data-theme="light"] .proc-mini:hover { background: #e8edf2; }
 body[data-theme="light"] .proc-mini-name { color: #33404c; }
@@ -1498,6 +1605,19 @@ body[data-theme="light"] .proc-row {
 }
 body[data-theme="light"] .proc-row.sel { border-color: #b7791f; background: #b7791f0d; }
 body[data-theme="light"] .proc-title { color: #1b232b; }
+body[data-theme="light"] .proc-chat {
+  background: #ffffff; border-color: #d5dde5;
+}
+body[data-theme="light"] .proc-chat-mode { color: #b7791f; }
+body[data-theme="light"] .proc-view-toggle button {
+  background: #f3f6f9; border-color: #d5dde5; color: #4b5866;
+}
+body[data-theme="light"] .proc-view-toggle button:hover:not(:disabled) {
+  color: #1b232b; border-color: #b7bec6;
+}
+body[data-theme="light"] .proc-view-toggle button.active {
+  color: #b7791f; border-color: #b7791f88; background: #b7791f14;
+}
 .automation-center { display: flex; flex-direction: column; gap: 10px; }
 .auto-project { border: 1px solid #22272c; border-radius: 6px; overflow: hidden; background: #0e1215; }
 .auto-project-head {
@@ -2615,3 +2735,121 @@ body[data-theme="light"] .entry-diff-stats .del,
 body[data-theme="light"] .entry-diff-row.del .sign { color: #b03030; }
 body[data-theme="light"] .entry-diff-body { color: #2b3540; }
 body[data-theme="light"] .entry-compare-tray-pin { border-color: #c6cdd4; color: #3a5db0; }
+
+/* ---------- Runner shell (real streaming terminal) ----------
+ * components/RunnerShell.tsx. These rules were referenced by the
+ * component long before they existed (the old MockShell pointed at a
+ * styles/runner.css that was never written), so the terminal rendered
+ * with the page font, no scroll container, and collapsed whitespace.
+ *
+ * Load-bearing bits:
+ *   • monospace + tabular alignment — command output is column-aligned
+ *   • white-space: pre-wrap on the LINE, so runs of spaces and blank
+ *     lines survive while long lines still wrap inside the modal
+ *   • a bounded, overflow-y:auto body — the component's auto-scroll
+ *     (scrollTop = scrollHeight) is a no-op unless this actually
+ *     overflows */
+.p2-runner-shell {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--p2-border);
+  border-radius: var(--p2-radius-xs);
+  background: #0a0c0e;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.5;
+  font-variant-ligatures: none;
+  tab-size: 4;
+}
+.p2-runner-shell__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--p2-border);
+  background: #101317;
+}
+.p2-runner-shell__title {
+  color: var(--p2-fg-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.p2-runner-shell__status {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  color: var(--p2-accent);
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+.p2-runner-shell__spinner {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--p2-accent);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+.p2-runner-shell__body {
+  height: 340px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 8px;
+  overscroll-behavior: contain;
+}
+.p2-runner-shell__line {
+  /* pre-wrap keeps indentation and internal runs of spaces; break-word
+   * stops an unbroken 400-char path from widening the modal. */
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: break-word;
+  min-height: 1.5em;         /* blank output lines stay visible */
+}
+.p2-runner-shell__prompt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border-top: 1px solid var(--p2-border);
+  background: #101317;
+}
+.p2-runner-shell__prompt-glyph {
+  color: var(--p2-green);
+  flex: none;
+  user-select: none;
+}
+.p2-runner-shell__prompt input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  outline: none;
+  padding: 2px 0;
+  color: var(--p2-fg);
+  font: inherit;
+  caret-color: var(--p2-green);
+}
+.p2-runner-shell__prompt input::placeholder { color: var(--p2-fg-faint); }
+.p2-runner-shell.is-running .p2-runner-shell__prompt-glyph,
+.p2-runner-shell.is-running .p2-runner-shell__prompt input {
+  color: var(--p2-fg-faint);
+  caret-color: transparent;
+}
+
+body.mobile .p2-runner-shell__body { height: 240px; }
+
+/* Light theme: the terminal keeps a paper surface rather than staying a
+ * dark island in a light modal. */
+body[data-theme="light"] .p2-runner-shell {
+  background: #ffffff;
+  border-color: #d5dbe1;
+}
+body[data-theme="light"] .p2-runner-shell__head,
+body[data-theme="light"] .p2-runner-shell__prompt {
+  background: #f2f5f8;
+  border-color: #d5dbe1;
+}

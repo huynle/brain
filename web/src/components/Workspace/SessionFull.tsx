@@ -19,6 +19,7 @@ import { controlKillInstance } from "../../lib/api";
 import { Transcript } from "../Session/Transcript";
 import { Composer } from "../Session/Composer";
 import { PermissionBanner } from "../Session/PermissionBanner";
+import { instanceSessionRef } from "../../lib/sessionRef";
 import type { SessionRef, Task } from "../../lib/types";
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
@@ -86,15 +87,13 @@ export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element
   const effective: SessionRef | undefined = useMemo(() => {
     if (sref?.mode === "history") return sref;
     if (inst) {
-      const ids = inst.session_ids || [];
-      return {
-        mode: "live",
-        runner_id: inst.runner_id,
-        instance_id: inst.instance_id,
-        session_id:
-          (sref?.mode === "live" && sref.session_id) ||
-          (ids.length > 0 ? ids[ids.length - 1] : undefined),
-      };
+      // An explicitly addressed session stays pinned; otherwise the
+      // instance's newest discovered one. Both rules live in
+      // instanceSessionRef so this view cannot drift from the others.
+      return instanceSessionRef(
+        inst,
+        sref?.mode === "live" ? sref.session_id : undefined,
+      );
     }
     if (sref?.mode === "live" && sref.session_id) {
       return { mode: "history", runner_id: sref.runner_id, session_id: sref.session_id };

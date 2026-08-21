@@ -486,11 +486,22 @@ func TestHandleEventStream_ReceivesEvents(t *testing.T) {
 }
 
 func TestHandleEventStream_PassesFilters(t *testing.T) {
+	// Subscribe runs on the server's goroutine and the assertions on this
+	// one, so the capture needs a lock of its own (-race flags the bare
+	// variable).
+	var captureMu sync.Mutex
 	var capturedFilters map[string]string
+	filter := func(key string) string {
+		captureMu.Lock()
+		defer captureMu.Unlock()
+		return capturedFilters[key]
+	}
 
 	es := &mockEventService{
 		subscribeFunc: func(ctx context.Context, filters map[string]string) (<-chan types.Event, func()) {
+			captureMu.Lock()
 			capturedFilters = filters
+			captureMu.Unlock()
 			ch := make(chan types.Event, 1)
 			return ch, func() { close(ch) }
 		},
@@ -514,14 +525,14 @@ func TestHandleEventStream_PassesFilters(t *testing.T) {
 	// Wait for connection to be established.
 	time.Sleep(100 * time.Millisecond)
 
-	if capturedFilters["type"] != "task.*" {
-		t.Errorf("type filter = %q, want %q", capturedFilters["type"], "task.*")
+	if got := filter("type"); got != "task.*" {
+		t.Errorf("type filter = %q, want %q", got, "task.*")
 	}
-	if capturedFilters["project_id"] != "proj-1" {
-		t.Errorf("project_id filter = %q, want %q", capturedFilters["project_id"], "proj-1")
+	if got := filter("project_id"); got != "proj-1" {
+		t.Errorf("project_id filter = %q, want %q", got, "proj-1")
 	}
-	if capturedFilters["feature_id"] != "auth" {
-		t.Errorf("feature_id filter = %q, want %q", capturedFilters["feature_id"], "auth")
+	if got := filter("feature_id"); got != "auth" {
+		t.Errorf("feature_id filter = %q, want %q", got, "auth")
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -235,6 +236,239 @@ func TestBridgeClientAbortTask_KillsProcessAndResetsPending(t *testing.T) {
 	updates := client.getUpdateStatusCalls()
 	if len(updates) != 1 || updates[0].Status != "pending" {
 		t.Fatalf("status updates = %+v, want one pending update", updates)
+	}
+}
+
+// execOutcome is everything one runner-shell command fanned out to the
+// realtime topic the control API streams from.
+type execOutcome struct {
+	stdout   string
+	stderr   string
+	exitCode int
+	exitErr  string
+}
+
+// collectExec drains an exec topic until the terminating exec_exit arrives.
+func collectExec(t *testing.T, ch <-chan realtime.SSEMessage, execID string, timeout time.Duration) execOutcome {
+	t.Helper()
+	var out execOutcome
+	deadline := time.After(timeout)
+	for {
+		select {
+		case msg := <-ch:
+			data, ok := msg.Data.(map[string]any)
+			if !ok {
+				t.Fatalf("exec payload is %T, want map[string]any", msg.Data)
+			}
+			if id, _ := data["exec_id"].(string); id != execID {
+				t.Fatalf("event for exec %q, want %q", id, execID)
+			}
+			switch msg.Event {
+			case "exec_data":
+				chunk, _ := data["chunk"].(string)
+				if stream, _ := data["stream"].(string); stream == bridge.ExecStreamStderr {
+					out.stderr += chunk
+				} else {
+					out.stdout += chunk
+				}
+			case "exec_exit":
+				out.exitCode, _ = data["exit_code"].(int)
+				out.exitErr, _ = data["error"].(string)
+				return out
+			}
+		case <-deadline:
+			t.Fatalf("timed out waiting for exec_exit (stdout=%q stderr=%q)", out.stdout, out.stderr)
+		}
+	}
+}
+
+// TestBridgeExec_EndToEnd drives the runner shell through a real bridge Hub
+// and a real BridgeClient: output must stream back on the exec topic and
+// every command must terminate with exactly one exec_exit.
+func TestBridgeExec_EndToEnd(t *testing.T) {
+	_, opencodePort := fakeOpencode(t)
+	hub, rt, tr, runnerID, _ := newBridgeTestEnv(t, opencodePort)
+
+	// Default workdir comes from runner config when the frame omits one.
+	workdir := t.TempDir()
+	tr.config.WorkDir = workdir
+	if err := os.WriteFile(workdir+"/marker.txt", []byte("in-workdir"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Subscribe to every exec topic up front and hold the subscriptions for
+	// the whole test: realtime.Hub.publish ranges over a topic's subscriber
+	// set after dropping its lock, so unsubscribing while frames are still
+	// in flight trips a pre-existing race in that package.
+	subs := make(map[string]<-chan realtime.SSEMessage)
+	for _, execID := range []string{
+		"exec-ok", "exec-dir", "exec-fail", "exec-utf8", "exec-sig", "exec-baddir",
+	} {
+		ch, unsub := rt.Subscribe(realtime.ExecTopic(runnerID, execID))
+		defer unsub()
+		subs[execID] = ch
+	}
+
+	bc := NewBridgeClient(tr)
+	tr.bridgeClient = bc
+	go bc.Start(ctx)
+	waitFor(t, 5*time.Second, func() bool { return hub.Connected(runnerID) }, "bridge connection")
+
+	t.Run("stdout stderr and exit zero", func(t *testing.T) {
+		ch := subs["exec-ok"]
+
+		if err := hub.StartExec(ctx, runnerID, "exec-ok",
+			`cat marker.txt; printf 'oops' >&2`, "", 0); err != nil {
+			t.Fatalf("StartExec: %v", err)
+		}
+		out := collectExec(t, ch, "exec-ok", 10*time.Second)
+		if !strings.Contains(out.stdout, "in-workdir") {
+			t.Errorf("stdout = %q, want it to contain the workdir marker", out.stdout)
+		}
+		if !strings.Contains(out.stderr, "oops") {
+			t.Errorf("stderr = %q, want it to contain %q", out.stderr, "oops")
+		}
+		if out.exitCode != 0 || out.exitErr != "" {
+			t.Errorf("exit = %d (%q), want 0", out.exitCode, out.exitErr)
+		}
+	})
+
+	t.Run("explicit workdir", func(t *testing.T) {
+		other := t.TempDir()
+		if err := os.WriteFile(other+"/other.txt", []byte("elsewhere"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		ch := subs["exec-dir"]
+
+		if err := hub.StartExec(ctx, runnerID, "exec-dir", "cat other.txt", other, 0); err != nil {
+			t.Fatalf("StartExec: %v", err)
+		}
+		out := collectExec(t, ch, "exec-dir", 10*time.Second)
+		if !strings.Contains(out.stdout, "elsewhere") {
+			t.Errorf("stdout = %q, want it to contain %q", out.stdout, "elsewhere")
+		}
+	})
+
+	t.Run("non-zero exit code", func(t *testing.T) {
+		ch := subs["exec-fail"]
+
+		if err := hub.StartExec(ctx, runnerID, "exec-fail", "exit 7", "", 0); err != nil {
+			t.Fatalf("StartExec: %v", err)
+		}
+		out := collectExec(t, ch, "exec-fail", 10*time.Second)
+		if out.exitCode != 7 {
+			t.Errorf("exit code = %d, want 7", out.exitCode)
+		}
+	})
+
+	t.Run("chunked output stays valid utf8", func(t *testing.T) {
+		ch := subs["exec-utf8"]
+
+		// 40 KB of two-byte runes: more than one ExecChunkBytes read, so a
+		// rune is guaranteed to straddle a chunk boundary.
+		const runes = 20000
+		if err := hub.StartExec(ctx, runnerID, "exec-utf8",
+			`printf 'é%.0s' $(seq 1 20000)`, "", 0); err != nil {
+			t.Fatalf("StartExec: %v", err)
+		}
+		out := collectExec(t, ch, "exec-utf8", 20*time.Second)
+		if out.exitCode != 0 {
+			t.Fatalf("exit = %d (%q), want 0", out.exitCode, out.exitErr)
+		}
+		if got := strings.Count(out.stdout, "é"); got != runes {
+			t.Errorf("got %d é runes, want %d", got, runes)
+		}
+		if strings.Contains(out.stdout, "�") {
+			t.Error("output contains a replacement char: a rune was split across chunks")
+		}
+	})
+
+	t.Run("signal kills the process group", func(t *testing.T) {
+		ch := subs["exec-sig"]
+
+		// A child sleep in the same group: signalling must reach it too, or
+		// the pipes stay open and exec_exit never lands.
+		if err := hub.StartExec(ctx, runnerID, "exec-sig",
+			`printf 'up'; sleep 120 & wait`, "", 0); err != nil {
+			t.Fatalf("StartExec: %v", err)
+		}
+		waitFor(t, 5*time.Second, func() bool {
+			bc.execMu.Lock()
+			defer bc.execMu.Unlock()
+			return bc.execs["exec-sig"] != nil
+		}, "exec registration")
+
+		// A duplicate exec id must be refused while the first is running.
+		if err := hub.StartExec(ctx, runnerID, "exec-sig", "echo dup", "", 0); err == nil {
+			t.Error("expected duplicate exec id to be rejected")
+		}
+
+		if err := hub.SignalExec(ctx, runnerID, "exec-sig", "kill"); err != nil {
+			t.Fatalf("SignalExec: %v", err)
+		}
+		out := collectExec(t, ch, "exec-sig", 10*time.Second)
+		if out.exitCode == 0 {
+			t.Errorf("exit code = 0, want non-zero after a kill (err=%q)", out.exitErr)
+		}
+		if out.exitErr == "" {
+			t.Error("expected an error reason on a signalled exit")
+		}
+		// The registry entry is dropped only when the process actually exits.
+		waitFor(t, 5*time.Second, func() bool {
+			bc.execMu.Lock()
+			defer bc.execMu.Unlock()
+			return bc.execs["exec-sig"] == nil
+		}, "exec registry cleanup")
+	})
+
+	t.Run("bad workdir fails before the stream opens", func(t *testing.T) {
+		ch := subs["exec-baddir"]
+
+		err := hub.StartExec(ctx, runnerID, "exec-baddir", "echo hi",
+			workdir+"/definitely-missing", 0)
+		if err == nil {
+			t.Fatal("expected a missing workdir to be rejected")
+		}
+		// No exec_exit may follow a pre-spawn failure.
+		select {
+		case msg := <-ch:
+			t.Fatalf("unexpected event %q after pre-spawn failure", msg.Event)
+		case <-time.After(300 * time.Millisecond):
+		}
+	})
+
+	t.Run("signal for unknown exec errors", func(t *testing.T) {
+		if err := hub.SignalExec(ctx, runnerID, "exec-nope", "int"); err == nil {
+			t.Error("expected an error signalling an unknown exec")
+		}
+	})
+}
+
+func TestExecHelpers(t *testing.T) {
+	if got := execTimeout(0); got != time.Duration(bridge.ExecDefaultTimeoutMs)*time.Millisecond {
+		t.Errorf("execTimeout(0) = %v, want the default", got)
+	}
+	if got := execTimeout(bridge.ExecMaxTimeoutMs * 10); got != time.Duration(bridge.ExecMaxTimeoutMs)*time.Millisecond {
+		t.Errorf("execTimeout(huge) = %v, want the ceiling", got)
+	}
+	if got := execSignal("term"); got != syscall.SIGTERM {
+		t.Errorf(`execSignal("term") = %v, want SIGTERM`, got)
+	}
+	if got := execSignal("bogus"); got != syscall.SIGINT {
+		t.Errorf(`execSignal("bogus") = %v, want SIGINT`, got)
+	}
+
+	// A two-byte rune split across a read boundary must be held back.
+	full := []byte("aé")
+	if got := trailingPartialRune(full); got != len(full) {
+		t.Errorf("trailingPartialRune(complete) = %d, want %d", got, len(full))
+	}
+	partial := full[:len(full)-1]
+	if got := trailingPartialRune(partial); got != len(partial)-1 {
+		t.Errorf("trailingPartialRune(partial) = %d, want %d", got, len(partial)-1)
 	}
 }
 

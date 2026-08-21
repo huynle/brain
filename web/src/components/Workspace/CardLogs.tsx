@@ -10,6 +10,9 @@
  */
 import { useMemo } from "react";
 import { useLive } from "../../lib/sse";
+import { toPlainText } from "../../lib/ansi";
+import { clockTime } from "../../lib/format";
+import { TerminalText } from "../common/TerminalText";
 
 export interface CardLogsProps {
   projectId: string;
@@ -17,8 +20,13 @@ export interface CardLogsProps {
 
 const MAX_LOG_LINES = 40;
 
+/**
+ * Classify from PLAIN text only. Fed raw terminal output, the substring
+ * search matches inside escape sequences instead of content — an SGR
+ * "OK" is not a success and a colourised word can hide from the match.
+ */
 function levelClass(line: string): "err" | "ok" | "wrn" | "" {
-  const upper = line.toUpperCase();
+  const upper = toPlainText(line).toUpperCase();
   if (upper.includes("ERROR") || upper.includes("FATAL")) return "err";
   if (upper.includes("WARN")) return "wrn";
   if (upper.includes("OK") || upper.includes("SUCCESS")) return "ok";
@@ -30,18 +38,6 @@ function levelLabel(cls: string): string {
   if (cls === "wrn") return "WARN";
   if (cls === "ok") return "OK";
   return "INFO";
-}
-
-function formatTime(ts: number): string {
-  try {
-    const d = new Date(ts);
-    return `${d.getHours().toString().padStart(2, "0")}:${d
-      .getMinutes()
-      .toString()
-      .padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`;
-  } catch {
-    return "";
-  }
 }
 
 export function CardLogs({ projectId }: CardLogsProps): JSX.Element {
@@ -69,9 +65,7 @@ export function CardLogs({ projectId }: CardLogsProps): JSX.Element {
         )}
         {projectLogs.map((r, idx) => {
           const cls = levelClass(r.line.content ?? "");
-          const ts = r.line.timestamp
-            ? formatTime(new Date(r.line.timestamp).getTime())
-            : "";
+          const ts = clockTime(r.line.timestamp);
           return (
             <div
               key={`${r.seq}-${idx}`}
@@ -83,7 +77,9 @@ export function CardLogs({ projectId }: CardLogsProps): JSX.Element {
                   r.line.level ||
                   "INFO"}
               </span>
-              <span className="msg">{r.line.content}</span>
+              <span className="msg">
+                <TerminalText text={r.line.content} />
+              </span>
             </div>
           );
         })}

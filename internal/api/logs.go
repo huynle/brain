@@ -95,21 +95,39 @@ func (h *Handler) HandleGetLogs(w http.ResponseWriter, r *http.Request) {
 	projectId := chi.URLParam(r, "projectId")
 	taskId := chi.URLParam(r, "taskId")
 
-	// Parse pagination params
-	offset := 0
+	// Parse pagination params.
+	//
+	// A request with a limit and NO offset means "the newest limit lines" — the
+	// tail. The buffer is an oldest-evicting ring, so head-indexed paging from 0
+	// would hand back a stale prefix and leave a hole between the fetched history
+	// and the live SSE tail. An explicit offset opts into head-indexed pagination
+	// over the retained window (offset 0 == oldest retained line).
 	limit := 100
-	if v := r.URL.Query().Get("offset"); v != "" {
-		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
-			offset = parsed
-		}
-	}
 	if v := r.URL.Query().Get("limit"); v != "" {
 		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 && parsed <= 1000 {
 			limit = parsed
 		}
 	}
 
-	lines, total := h.logBuffer.Query(projectId, taskId, offset, limit)
+	explicitOffset := -1
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
+			explicitOffset = parsed
+		}
+	}
+
+	var (
+		lines  []types.LogLine
+		total  int
+		offset int
+	)
+	if explicitOffset >= 0 {
+		offset = explicitOffset
+		lines, total = h.logBuffer.Query(projectId, taskId, offset, limit)
+	} else {
+		// offset reported back is where the tail window actually starts.
+		lines, total, offset = h.logBuffer.Tail(projectId, taskId, limit)
+	}
 	if lines == nil {
 		lines = []types.LogLine{}
 	}

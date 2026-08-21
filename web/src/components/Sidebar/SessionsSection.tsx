@@ -6,9 +6,17 @@
  *     .sb-head (▾ Live sessions · N)
  *     .sb-list
  *       .sess-row × N (glyph + name + project + live-dot)
+ *
+ * Verbs come from `lib/actions/sessionActions` via `useRowActions`, so
+ * right-click, long-press and keyboard offer the identical set as the
+ * session card and the runner Processes rows. Plain click keeps its
+ * original meaning: focus the session view.
  */
 import { useWorkspace } from "../../store/workspace";
 import { useSessions } from "../../hooks/useSessions";
+import { useSessionActionContext } from "../../hooks/useSessionActionContext";
+import { useRowActions } from "../../hooks/useRowActions";
+import { buildSessionActions } from "../../lib/actions/sessionActions";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import type { OpencodeInstance } from "../../lib/types";
@@ -27,6 +35,8 @@ export function SessionsSection(): JSX.Element {
   const setFocusSession = useWorkspace((s) => s.setFocusSession);
   const focusSessionId = useWorkspace((s) => s.focusSessionId);
   const { sessions, isLoading, error, refetch } = useSessions();
+  const actionCtx = useSessionActionContext();
+  const { rowProps, overlays } = useRowActions();
 
   const rows = (() => {
     if (isLoading) return <Loading size="sm" label="Loading…" />;
@@ -46,6 +56,9 @@ export function SessionsSection(): JSX.Element {
         <div
           key={s.instance_id}
           className={`sess-row ${active ? "active" : ""}`}
+          {...rowProps(buildSessionActions(s, actionCtx), label, () =>
+            setFocusSession(s.instance_id),
+          )}
           onClick={() => setFocusSession(s.instance_id)}
           title={label}
         >
@@ -73,6 +86,7 @@ export function SessionsSection(): JSX.Element {
         <span className="count">{liveCount}</span>
       </div>
       {expanded && <div className="sb-list">{rows}</div>}
+      {overlays}
     </div>
   );
 }

@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useWorkspace } from "../store/workspace";
 import { useModal } from "../store/modal";
+import { useSelection } from "../store/selection";
 import { useUI } from "../store/ui";
 import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
@@ -27,7 +28,9 @@ import {
   clearFeatureAssignment,
 } from "../lib/api";
 import { buildFeatureActions } from "../lib/actions/featureActions";
+import { buildSelectionActions } from "../lib/actions/selectionActions";
 import { buildTaskActions } from "../lib/actions/taskActions";
+import { isRangeKey } from "../lib/selection";
 import { deriveFeatures } from "../lib/features";
 import type { Task } from "../lib/types";
 
@@ -59,6 +62,17 @@ export function FeatureDrawer(): JSX.Element | null {
   const featureCtx = useFeatureActionContext(drawer?.projectId ?? "");
   const taskCtx = useTaskActionContext(drawer?.projectId ?? "");
   const { rowProps, overlays } = useRowActions();
+
+  // Same selection model as CardTasks: drawer rows carry the Select
+  // verb, so they participate in selection mode and shift-click
+  // ranges — with the drawer's own visible row order.
+  const selProjectId = useSelection((s) => s.projectId);
+  const selTaskIds = useSelection((s) => s.taskIds);
+  const selFeatureIds = useSelection((s) => s.featureIds);
+  const toggleTaskSel = useSelection((s) => s.toggleTask);
+  const rangeTaskSel = useSelection((s) => s.rangeTask);
+  const requestVerb = useSelection((s) => s.requestVerb);
+  const clearSel = useSelection((s) => s.clear);
 
   // Guard against returning a fresh [] on every render when no drawer
   // is open — that triggers zustand "getSnapshot should be cached"
@@ -105,27 +119,87 @@ export function FeatureDrawer(): JSX.Element | null {
   const archivedTasks = memberTasks.filter((t) => t.status === "archived");
   const actions = buildFeatureActions(feature, featureCtx);
 
-  const renderTaskRow = (t: Task) => (
-    <div
-      key={t.id}
-      className="drawer-task"
-      {...rowProps(buildTaskActions(t, taskCtx), t.title || t.id, () =>
-        openModal("task", {
-          projectId: drawer.projectId,
-          taskId: t.id,
-        }),
-      )}
-      onClick={() =>
-        openModal("task", {
-          projectId: drawer.projectId,
-          taskId: t.id,
+  const selScoped = selProjectId === drawer.projectId;
+  const selActive =
+    selScoped && (selTaskIds.size > 0 || selFeatureIds.size > 0);
+  const selCount = selScoped ? selTaskIds.size + selFeatureIds.size : 0;
+  const selectionActions =
+    selCount > 0
+      ? buildSelectionActions({
+          count: selCount,
+          requestVerb,
+          clearSelection: clearSel,
         })
-      }
-    >
-      <span>{t.status}</span>
-      <b>{t.title || t.id}</b>
-    </div>
-  );
+      : null;
+  // Visible drawer rows, for shift-click ranges: members first, then
+  // the archived fold only while it is open.
+  const orderedTaskIds = [
+    ...featureTasks.map((t) => t.id),
+    ...(archivedOpen ? archivedTasks.map((t) => t.id) : []),
+  ];
+
+  const renderTaskRow = (t: Task) => {
+    const marked = selScoped && selTaskIds.has(t.id);
+    const rp = rowProps(
+      buildTaskActions(t, taskCtx),
+      t.title || t.id,
+      // Selection mode is modal: Enter toggles, it does not open.
+      selActive
+        ? () => toggleTaskSel(drawer.projectId, t.id)
+        : () =>
+            openModal("task", {
+              projectId: drawer.projectId,
+              taskId: t.id,
+            }),
+      {
+        selectionActions: marked ? selectionActions ?? undefined : undefined,
+        // Long-press = the touch shift-click.
+        onRangeSelect: () =>
+          rangeTaskSel(drawer.projectId, orderedTaskIds, t.id),
+      },
+    );
+
+    return (
+      <div
+        key={t.id}
+        className={`drawer-task${marked ? " marked" : ""}`}
+        {...rp}
+        onKeyDown={(e) => {
+          if (isRangeKey(e)) {
+            e.preventDefault();
+            rangeTaskSel(drawer.projectId, orderedTaskIds, t.id);
+            return;
+          }
+          rp.onKeyDown(e);
+        }}
+        onClick={(e) => {
+          // Same gestures as CardTasks rows: shift ranges, selection
+          // mode toggles, a plain click opens detail.
+          if (e.shiftKey) {
+            rangeTaskSel(drawer.projectId, orderedTaskIds, t.id);
+            return;
+          }
+          if (selActive) {
+            toggleTaskSel(drawer.projectId, t.id);
+            return;
+          }
+          openModal("task", {
+            projectId: drawer.projectId,
+            taskId: t.id,
+          });
+        }}
+        onMouseDown={(e) => {
+          if (e.shiftKey) {
+            e.preventDefault();
+            e.currentTarget.focus();
+          }
+        }}
+      >
+        <span>{t.status}</span>
+        <b>{t.title || t.id}</b>
+      </div>
+    );
+  };
 
   /** Assign for real: server first-class, local mirror for optimism. */
   const doAssign = async (targetRunnerId: string) => {

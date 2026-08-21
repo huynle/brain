@@ -6,13 +6,24 @@
  * rows for its processes. Clicking a runner opens the runner modal;
  * clicking a process opens the modal on the Processes tab with that
  * process's log preselected.
+ *
+ * Runner rows carry the same verb set as the sidebar's Runners section
+ * (`lib/actions/runnerActions` via `useRowActions`), so right-click,
+ * long-press and keyboard behave identically in both places.
  */
 import { useMemo } from "react";
 import { useRunners } from "../../../hooks/useRunners";
+import { useRunnerActionContext } from "../../../hooks/useRunnerActionContext";
+import { useRowActions } from "../../../hooks/useRowActions";
 import { useSessions } from "../../../hooks/useSessions";
 import { useModal } from "../../../store/modal";
+import { useWorkspace } from "../../../store/workspace";
 import { Loading } from "../../common/Loading";
 import { ErrorState } from "../../common/ErrorState";
+import {
+  buildRunnerActions,
+  combineRunnerAssignments,
+} from "../../../lib/actions/runnerActions";
 import {
   groupInstancesByRunner,
   instanceDot,
@@ -36,6 +47,12 @@ export function RunnersLeaf(_props: {
   const { runners, isLoading, error, refetch } = useRunners();
   const { allInstances } = useSessions();
   const open = useModal((s) => s.open);
+  // The optimistic drag map keeps the menu's assignment count in step
+  // with the sidebar mid-drag, and with what clearAssignments will
+  // actually clear.
+  const featureAssignments = useWorkspace((s) => s.featureAssignments);
+  const runnerCtx = useRunnerActionContext();
+  const { rowProps, overlays } = useRowActions();
 
   const byRunner = useMemo(
     () =>
@@ -60,10 +77,17 @@ export function RunnersLeaf(_props: {
     <div>
       {runners.map((r) => {
         const procs = byRunner[r.runner_id] ?? [];
+        const actions = buildRunnerActions(r, runnerCtx, {
+          assignmentCount: combineRunnerAssignments(r, featureAssignments)
+            .length,
+        });
         return (
           <div key={r.runner_id} className="runner-group">
             <div
               className="runner-row"
+              {...rowProps(actions, r.runner_id, () =>
+                open("runner", { id: r.runner_id }),
+              )}
               onClick={() => open("runner", { id: r.runner_id })}
             >
               <span className={`dot ${runnerDot(r.status)}`} />
@@ -105,6 +129,7 @@ export function RunnersLeaf(_props: {
           </div>
         );
       })}
+      {overlays}
     </div>
   );
 }

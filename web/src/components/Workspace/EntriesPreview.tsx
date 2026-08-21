@@ -5,9 +5,19 @@
  * Shows the most recently updated knowledge entries as cards; clicking
  * one opens it in the Entries view. Hidden entirely while the store has
  * no knowledge entries so fresh installs don't render an empty shell.
+ *
+ * Card verbs come from `lib/actions/entryActions` via `useRowActions` —
+ * the same matrix as the Entries browser rows, with "open" meaning this
+ * surface's existing click (select + switch to the Entries view).
  */
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { useEntryList } from "../../hooks/useEntries";
+import { useEntryActionContext } from "../../hooks/useEntryActionContext";
+import { useRowActions } from "../../hooks/useRowActions";
+import {
+  buildEntryActions,
+  type EntryActionTarget,
+} from "../../lib/actions/entryActions";
 import { useEntriesStore } from "../../store/entries";
 import { useWorkspace } from "../../store/workspace";
 import { relativeTime } from "../../lib/format";
@@ -18,6 +28,7 @@ const PREVIEW_COUNT = 8;
 export function EntriesPreview(): JSX.Element | null {
   const setView = useWorkspace((s) => s.setView);
   const selectEntry = useEntriesStore((s) => s.selectEntry);
+  const comparePins = useEntriesStore((s) => s.comparePins);
 
   const { entries } = useEntryList({
     typeFilter: "knowledge",
@@ -34,6 +45,17 @@ export function EntriesPreview(): JSX.Element | null {
     setView("entries");
   };
 
+  // Card context-menu wiring; "open" is the card's existing click.
+  const openTarget = useCallback(
+    (t: EntryActionTarget) => {
+      selectEntry(t.path);
+      setView("entries");
+    },
+    [selectEntry, setView],
+  );
+  const entryCtx = useEntryActionContext(openTarget);
+  const { rowProps, overlays } = useRowActions();
+
   if (recent.length === 0) return null;
 
   return (
@@ -49,6 +71,15 @@ export function EntriesPreview(): JSX.Element | null {
           <div
             key={e.path}
             className="entry-card"
+            {...rowProps(
+              buildEntryActions(
+                e,
+                { pinned: comparePins.includes(e.path) },
+                entryCtx,
+              ),
+              e.title || e.path,
+              () => openEntry(e.path),
+            )}
             onClick={() => openEntry(e.path)}
             title={e.path}
           >
@@ -63,6 +94,7 @@ export function EntriesPreview(): JSX.Element | null {
           </div>
         ))}
       </div>
+      {overlays}
     </div>
   );
 }

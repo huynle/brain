@@ -73,13 +73,23 @@ export interface UseRowActionsAPI {
     onActivate?: () => void,
     opts?: {
       /**
-       * When true (a card in selection mode passes its selActive flag),
-       * plain taps on touch devices toggle the row's selection instead
-       * of opening detail — long-press the first row, then tap through
-       * the rest. Desktop clicks keep opening detail; the visible
-       * checkboxes are the toggle surface there.
+       * The selection-wide verbs (lib/actions/selectionActions). A card
+       * passes them for rows that are MARKED while selection mode is
+       * active: right-click, long-press and the `m` key then offer the
+       * verbs for the whole selection instead of the row's own — the
+       * gesture targets "everything I marked", not the row under the
+       * cursor. Unmarked rows keep their own menu.
        */
-      tapSelects?: boolean;
+      selectionActions?: readonly ActionDescriptor[];
+      /**
+       * Touch equivalent of shift-click: long-press on an UNMARKED row
+       * ranges from the selection anchor to this row (and with no
+       * anchor yet, selects just this row — which is exactly what the
+       * old long-press-to-mark did, plus it seeds the anchor). Marked
+       * rows are unaffected: their long-press opens the selection
+       * sheet above.
+       */
+      onRangeSelect?: () => void;
     },
   ) => RowActionProps;
   /** Render once per consumer, at the end of its tree. */
@@ -147,22 +157,37 @@ export function useRowActions(): UseRowActionsAPI {
       actions: readonly ActionDescriptor[],
       label: string,
       onActivate?: () => void,
-      opts?: { tapSelects?: boolean },
+      opts?: {
+        selectionActions?: readonly ActionDescriptor[];
+        onRangeSelect?: () => void;
+      },
     ): RowActionProps => {
       const selectAction = selectActionOf(actions);
-      // Long-press: the selection gesture on touch. Sheet remains the
-      // fallback for rows with no Select verb; every other verb stays
-      // reachable through the row's detail modal ActionBar.
+      // A marked row's menu surfaces act on the whole selection.
+      const selectionActions =
+        opts?.selectionActions && opts.selectionActions.length > 0
+          ? opts.selectionActions
+          : null;
+      const menuActions = selectionActions ?? actions;
+      const menuLabel = selectionActions ? "Selection" : label;
+      // Long-press: the selection gesture on touch. On a marked row it
+      // opens the selection sheet (the touch right-click); on an
+      // unmarked row it ranges from the anchor — the touch shift-click
+      // (with no anchor that degrades to marking just this row, the
+      // old behavior plus the anchor seed). The full sheet remains the
+      // fallback for rows with neither.
       const press = createLongPressHandlers(() => {
-        if (selectAction) runner.run(selectAction);
+        if (selectionActions) openSheet(menuLabel, selectionActions);
+        else if (opts?.onRangeSelect) opts.onRangeSelect();
+        else if (selectAction) runner.run(selectAction);
         else openSheet(label, actions);
       });
 
       const openMenuAt = (x: number, y: number) => {
         // Touch devices get the sheet; a context menu positioned under a
         // fingertip is unusable.
-        if (isMobile) openSheet(label, actions);
-        else ctx.open(x, y, toMenuItems(actions, runner.run));
+        if (isMobile) openSheet(menuLabel, menuActions);
+        else ctx.open(x, y, toMenuItems(menuActions, runner.run));
       };
 
       return {
@@ -211,15 +236,6 @@ export function useRowActions(): UseRowActionsAPI {
         onTouchEnd: press.onTouchEnd,
         onTouchCancel: press.onTouchCancel,
         onClickCapture: (e: React.MouseEvent) => {
-          // Selection mode on touch: taps toggle instead of opening
-          // detail, so extending a selection is tap-tap-tap rather than
-          // long-press each time.
-          if (opts?.tapSelects && isMobile && selectAction) {
-            e.preventDefault();
-            e.stopPropagation();
-            runner.run(selectAction);
-            return;
-          }
           (press.onClickCapture as (e: React.MouseEvent) => void)(e);
         },
       };

@@ -6,11 +6,22 @@
  * The leading glyph doubles as the enable/pause toggle -- clicking it
  * flips `status` between "active" and "archived" without needing a
  * separate button. Body click still opens the automation modal.
+ *
+ * Verbs come from `lib/actions/automationActions` via `useRowActions`,
+ * so right-click, long-press and keyboard offer the identical set —
+ * same registry pattern as tasks, features and goals. The inline
+ * glyph toggle and Run button remain as one-click shortcuts to the
+ * same context effects.
  */
 import { useAutomations } from "../../hooks/useAutomations";
+import { useAutomationActionContext } from "../../hooks/useAutomationActionContext";
+import { useRowActions } from "../../hooks/useRowActions";
+import { useActionRunner } from "../../hooks/useActionRunner";
 import { useModal } from "../../store/modal";
-import { useUI } from "../../store/ui";
-import { executeAutomation, updateEntry, ApiError } from "../../lib/api";
+import {
+  buildAutomationActions,
+  isEnabledAutomation,
+} from "../../lib/actions/automationActions";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 
@@ -24,7 +35,9 @@ export function CardAutomations({
   const { automations, isLoading, error, refetch } =
     useAutomations(projectId);
   const openModal = useModal((s) => s.open);
-  const toast = useUI((s) => s.toast);
+  const ctx = useAutomationActionContext(projectId);
+  const { rowProps, overlays } = useRowActions();
+  const runner = useActionRunner();
 
   if (isLoading) return <Loading size="sm" label="Loading automations…" />;
   if (error) return <ErrorState error={error} onRetry={refetch} />;
@@ -36,81 +49,46 @@ export function CardAutomations({
     );
   }
 
-  const doRun = async (a: (typeof automations)[number]) => {
-    try {
-      // executeAutomation expects the entry path (e.g.
-      // "projects/x/automation/y.md"), not the short id.
-      await executeAutomation(a.path, projectId);
-      toast(`Ran ${a.title || a.id}`, "success");
-      refetch();
-    } catch (err) {
-      const msg =
-        err instanceof ApiError
-          ? `Run failed: ${err.message}`
-          : `Run failed: ${(err as Error).message ?? "unknown"}`;
-      toast(msg, "error");
-    }
-  };
-
-  // Toggle an automation between active <-> archived. The trigger
-  // dispatcher only fires automations whose entry status is "active"
-  // (see internal/service/goal_automation.go and each Ensure*Automation
-  // reconciler), so "archived" is the clean off state -- event and cron
-  // ticks continue firing other automations, the paused one just no-ops
-  // on match. Built-in automations survive the toggle across restarts:
-  // Ensure...() only recreates a built-in when NONE with its GeneratedBy
-  // marker exists, regardless of status.
-  const doToggle = async (a: (typeof automations)[number]) => {
-    const enabled = a.status === "active";
-    const nextStatus = enabled ? "archived" : "active";
-    try {
-      await updateEntry(a.path, { status: nextStatus });
-      toast(
-        enabled
-          ? `Paused ${a.title || a.id}`
-          : `Enabled ${a.title || a.id}`,
-        "success",
-      );
-      refetch();
-    } catch (err) {
-      const msg =
-        err instanceof ApiError
-          ? `Toggle failed: ${err.message}`
-          : `Toggle failed: ${(err as Error).message ?? "unknown"}`;
-      toast(msg, "error");
-    }
-  };
-
   return (
     <div>
       {automations.map((a) => {
-        const enabled = a.status === "active";
+        const enabled = isEnabledAutomation(a);
         const errored = a.status === "blocked";
-        // Glyph doubles as the toggle:
+        const name = a.title || a.id;
+        const actions = buildAutomationActions(a, ctx);
+        const byId = new Map(actions.map((act) => [act.id, act]));
+        // The glyph is a one-click shortcut for the state pair: pause
+        // when enabled (or errored — stops the retry loop), enable
+        // when paused. Routing through the runner keeps toasts and
+        // error handling identical to the menu's.
+        const toggleAction = enabled || errored ? byId.get("pause") : byId.get("enable");
+        const runAction = byId.get("run");
+
+        // Glyph legend:
         //   ✓ (green .ok)   = active / click to pause
         //   ○ (muted)       = archived / paused / click to enable
-        //   ✕ (red .blk)    = errored -- keep the visual for signal;
-        //                     clicking still routes through doToggle
-        //                     so an operator can flip it to archived
-        //                     to stop the retry loop, or back to active
-        //                     after fixing the underlying issue.
+        //   ✕ (red .blk)    = errored — clicking pauses to stop the
+        //                     retry loop; re-enable from the menu (or
+        //                     click again) after fixing the cause.
         const glyph = enabled ? "✓" : errored ? "✕" : "○";
         const glyphKind = enabled ? "ok" : errored ? "blk" : "";
         const glyphTitle = enabled
           ? "Enabled — click to pause (sets status to archived; triggers stop firing)"
           : errored
-            ? "Errored — click to archive and stop retries, or fix the underlying issue and click again to re-enable"
+            ? "Errored — click to pause and stop retries; re-enable after fixing the underlying issue"
             : "Paused — click to re-enable (sets status back to active)";
+
         return (
           <div
             key={a.id}
             className="trow"
-            onClick={() =>
-              openModal("automation", {
-                projectId,
-                automationId: a.id,
-              })
-            }
+            {...rowProps(actions, name, () =>
+              openModal("automation", { projectId, automationId: a.id }),
+            )}
+            onClick={(e) => {
+              if ((e.target as HTMLElement).closest("button")) return;
+              openModal("automation", { projectId, automationId: a.id });
+            }}
             title={a.title}
             style={enabled ? undefined : { opacity: 0.55 }}
           >
@@ -119,7 +97,7 @@ export function CardAutomations({
               className={`glyph ${glyphKind}`}
               onClick={(e) => {
                 e.stopPropagation();
-                void doToggle(a);
+                if (toggleAction) runner.run(toggleAction);
               }}
               title={glyphTitle}
               aria-pressed={enabled}
@@ -137,14 +115,14 @@ export function CardAutomations({
             >
               {glyph}
             </button>
-            <span className="name">{a.title || a.id}</span>
+            <span className="name">{name}</span>
             <span className="status">{a.trigger?.type || "manual"}</span>
             <button
               className="id"
               style={{ padding: "0 4px", fontSize: 10 }}
               onClick={(e) => {
                 e.stopPropagation();
-                void doRun(a);
+                if (runAction) runner.run(runAction);
               }}
               title="Run now"
             >
@@ -153,6 +131,8 @@ export function CardAutomations({
           </div>
         );
       })}
+      {overlays}
+      {runner.dialog}
     </div>
   );
 }

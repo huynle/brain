@@ -8,13 +8,19 @@
  * Used by the Entries browser detail pane, the `entry` focus-pane
  * leaf, and (in `compact` mode, sans graph footer) the Compare view.
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Chip } from "../common/Chip";
 import { Dot, type DotVariant } from "../common/Dot";
 import { ErrorState } from "../common/ErrorState";
 import { Loading } from "../common/Loading";
 import { EntryMarkdown } from "./EntryMarkdown";
 import { useEntry, useEntryGraph } from "../../hooks/useEntries";
+import { useEntryActionContext } from "../../hooks/useEntryActionContext";
+import { useRowActions } from "../../hooks/useRowActions";
+import {
+  buildEntryActions,
+  type EntryActionTarget,
+} from "../../lib/actions/entryActions";
 import { useEntriesStore } from "../../store/entries";
 import { useWorkspace } from "../../store/workspace";
 import { useUI } from "../../store/ui";
@@ -265,6 +271,16 @@ function GraphSection({
   items: BrainEntry[];
   onOpenEntry: (ref: string) => void;
 }): JSX.Element {
+  const comparePins = useEntriesStore((s) => s.comparePins);
+  // "Open" follows the link the same way a row click does — through the
+  // surface's onOpenEntry prop, which differs between the browser pane,
+  // the focus-pane leaf, and Compare.
+  const openTarget = useCallback(
+    (t: EntryActionTarget) => onOpenEntry(t.path),
+    [onOpenEntry],
+  );
+  const entryCtx = useEntryActionContext(openTarget);
+  const { rowProps, overlays } = useRowActions();
   return (
     <div className="entry-graph-section">
       <div className="entry-graph-label">{label}</div>
@@ -272,6 +288,17 @@ function GraphSection({
         <div
           key={e.path}
           className="entry-graph-row"
+          {...rowProps(
+            // "link" surface: these rows are references into the graph,
+            // not the entry's management surface — open/pin/copy only.
+            buildEntryActions(
+              e,
+              { pinned: comparePins.includes(e.path), surface: "link" },
+              entryCtx,
+            ),
+            e.title || e.path,
+            () => onOpenEntry(e.path),
+          )}
           onClick={() => onOpenEntry(e.path)}
           title={e.path}
         >
@@ -279,6 +306,7 @@ function GraphSection({
           <span className="entry-graph-title">{e.title || e.path}</span>
         </div>
       ))}
+      {overlays}
     </div>
   );
 }

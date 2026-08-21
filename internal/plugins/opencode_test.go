@@ -126,11 +126,21 @@ func TestOpenCodeTarget_Install_CopiesPluginFiles(t *testing.T) {
 
 	// Check that representative agent/skill/command files were installed.
 	// Top-level plugin/*.ts files are no longer shipped (Brain tools moved
-	// to the brain MCP stdio server).
+	// to the brain MCP stdio server), but the tdd-enforcement plugin and its
+	// bun-shim dependency DO ship under plugin/ and tool/lib/ so the tdd-dev
+	// agent (dispatched by the brain-runner-queue skill on Route B/C) has a
+	// working tdd_gate tool.
 	expectedFiles := []string{
 		"agent/brain-planner.md",
+		"agent/tdd-dev.md",
 		"command/do.md",
 		"skill/brain-memory/SKILL.md",
+		"skill/test-driven-development/SKILL.md",
+		"skill/root-cause-tracing/SKILL.md",
+		"skill/root-cause-tracing/find-polluter.sh",
+		"skill/verification-before-completion/SKILL.md",
+		"plugin/tdd-enforcement.ts",
+		"tool/lib/bun-shim.ts",
 	}
 	for _, rel := range expectedFiles {
 		filePath := filepath.Join(configPath, rel)

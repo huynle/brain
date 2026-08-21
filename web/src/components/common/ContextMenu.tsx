@@ -147,10 +147,20 @@ export function ContextMenu({
         onClose();
       }
     };
-    window.addEventListener("keydown", onKey);
-    window.addEventListener("mousedown", onDown);
-    window.addEventListener("contextmenu", onCtx);
+    // Attach one task later, not synchronously: React flushes this
+    // effect during the discrete contextmenu event that OPENED the
+    // menu, so the same still-bubbling event would reach these window
+    // listeners and dismiss the menu the instant it appeared (it
+    // flashed for one frame and closed — synthetic events in tests
+    // finish bubbling before effects flush, which is why only real
+    // right-clicks ever hit this).
+    const attach = window.setTimeout(() => {
+      window.addEventListener("keydown", onKey);
+      window.addEventListener("mousedown", onDown);
+      window.addEventListener("contextmenu", onCtx);
+    }, 0);
     return () => {
+      window.clearTimeout(attach);
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("contextmenu", onCtx);

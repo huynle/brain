@@ -1063,6 +1063,9 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	if normalizedOpts.RemoteBranchPolicy != "" {
 		fm.RemoteBranchPolicy = normalizedOpts.RemoteBranchPolicy
 	}
+	if normalizedOpts.CheckoutMode != "" {
+		fm.CheckoutMode = normalizedOpts.CheckoutMode
+	}
 	if normalizedOpts.ExecutionMode != "" {
 		fm.ExecutionMode = normalizedOpts.ExecutionMode
 	}
@@ -1115,8 +1118,17 @@ func normalizeFeatureCheckoutOptions(opts *types.FeatureCheckoutOptions) *types.
 		MergePolicy:        strings.TrimSpace(opts.MergePolicy),
 		MergeStrategy:      strings.TrimSpace(opts.MergeStrategy),
 		RemoteBranchPolicy: strings.TrimSpace(opts.RemoteBranchPolicy),
+		CheckoutMode:       strings.TrimSpace(opts.CheckoutMode),
 		ExecutionMode:      strings.TrimSpace(opts.ExecutionMode),
 		OpenPRBeforeMerge:  opts.OpenPRBeforeMerge,
+	}
+
+	// Unlike the entries API, the checkout endpoint decodes options straight
+	// off the request body with no enum validation, so an unrecognized mode
+	// would otherwise be persisted into frontmatter and then silently behave
+	// as "ai" at fold time. Drop it instead of writing a value we'd ignore.
+	if !types.IsValidCheckoutMode(normalized.CheckoutMode) {
+		normalized.CheckoutMode = ""
 	}
 
 	// Apply defaults

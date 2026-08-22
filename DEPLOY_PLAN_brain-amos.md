@@ -85,7 +85,7 @@ Persistent data (583MB) at `/home/huy/docs/brain` is a bind mount and is preserv
 - Container: `brain-api`, image `brain-api-brain-api:latest` (30.5MB, built 2026-06-12), `restart: unless-stopped`, runs as `1000:1000`, exposes `3333/tcp` (not host-published).
 - Compose project dir: `/docker/amos/brain-api/` (compose file `docker-compose.yml`).
 - Networks: `brain-api_default` (172.19.0.2) AND `traefik-public` (172.18.0.14).
-- Health: container `GET /` → 200; `/api/v1/tasks` → 401 (auth working); public `https://brain.huynle.com/` → 200.
+- Health: canonical route is `GET /api/v1/health` → 200, unauthenticated (confirmed 2026-08-22; the June discovery pass missed it). Secondary: container `GET /` → 200; `/api/v1/tasks` → 401 (auth working); public `https://brain.huynle.com/` → 200.
 - RestartCount=1; logs show a prior goroutine panic then a clean restart (worth watching).
 
 ### Data persistence (CRITICAL to preserve)
@@ -129,9 +129,9 @@ Persistent data (583MB) at `/home/huy/docs/brain` is a bind mount and is preserv
 
 | Item | Note |
 |------|------|
-| `just deploy` recipe | PARTIALLY STALE: health-checks `/api/v1/health` (returns 404 here) and `deploy-token` calls `bun run src/cli/brain.ts` (TS-era). Use manual compose flow, not `just deploy`. |
+| `just deploy` recipe | PARTIALLY STALE: `deploy-token` calls `bun run src/cli/brain.ts` (TS-era). Use manual compose flow, not `just deploy`. (Its `/api/v1/health` check was fine — see the Health endpoint row; the June claim that this route 404s was wrong.) |
 | `DEPLOYMENT.md` | STALE (TS→Go cutover doc). Claims OAUTH_PIN "not supported", but live logs show `oauth_enabled=true` and `.env` has OAUTH_PIN. OAuth IS active now. |
-| Health endpoint | `/health` and `/api/v1/health` = 404. Use **`GET /`** (200) as the health signal, or `/api/v1/tasks` (401 = up+auth). GUESS: there may be a better health route — confirm. |
+| Health endpoint | ✅ RESOLVED 2026-08-22 — the June entry was half wrong. **`GET /api/v1/health` is the canonical health route: 200, unauthenticated**, registered at `internal/api/router.go:42` (`HealthHandler`). It returns `{"status":"healthy","timestamp":...,"embedding":{...}}`, so it also reports embedding provider/model readiness. Bare **`/health` really is 404** (no such route) — that is the half the June note got right. `GET /` (200) and `/api/v1/tasks` (401) remain valid secondary signals. |
 | DNS public value | A=174.16.129.45 seen via Tailscale MagicDNS. Assumed = WAN IP via cloudflare-ddns. Not independently confirmed against Cloudflare dashboard. |
 | Tailscale offline | amos is off Tailscale. If you expected to deploy remotely (off-LAN), that path is currently broken. |
 | Prior panic | Container RestartCount=1 with a goroutine stack trace in logs before clean start. Cause unknown — GUESS it self-recovered. |
@@ -150,7 +150,7 @@ Persistent data (583MB) at `/home/huy/docs/brain` is a bind mount and is preserv
 ```bash
 $AMOS "docker ps --filter name=brain-api --format '{{.Names}} {{.Status}}'"
 $AMOS "df -h / | tail -1"
-curl -s -o /dev/null -w 'public: %{http_code}\n' https://brain.huynle.com/
+curl -s -o /dev/null -w 'public /api/v1/health -> %{http_code}\n' https://brain.huynle.com/api/v1/health
 git -C /Users/huy/projects/brain-api/.worktrees/dev status --short
 git -C /Users/huy/projects/brain-api/.worktrees/dev rev-parse --short HEAD
 ```
@@ -209,15 +209,26 @@ $AMOS "docker logs brain-api --tail 30"
 
 # Container-level health (port not host-published; use container IP)
 BIP=$($AMOS "docker inspect brain-api --format '{{(index .NetworkSettings.Networks \"traefik-public\").IPAddress}}'")
-$AMOS "curl -s -m 5 -o /dev/null -w 'container / -> %{http_code}\n' http://$BIP:3333/"
-$AMOS "curl -s -m 5 -o /dev/null -w 'container /api/v1/tasks -> %{http_code}\n' http://$BIP:3333/api/v1/tasks"  # expect 401
+$AMOS "curl -s -m 5 -o /dev/null -w 'container /api/v1/health -> %{http_code}\n' http://$BIP:3333/api/v1/health"  # expect 200
+$AMOS "curl -s -m 5 -o /dev/null -w 'container / -> %{http_code}\n' http://$BIP:3333/"                            # expect 200
+$AMOS "curl -s -m 5 -o /dev/null -w 'container /api/v1/tasks -> %{http_code}\n' http://$BIP:3333/api/v1/tasks"    # expect 401
+
+# Health body also reports embedding readiness — check status is "ready", not "error"
+$AMOS "curl -s -m 5 http://$BIP:3333/api/v1/health"
+# → {"status":"healthy","timestamp":"...","embedding":{"enabled":true,"status":"ready","provider":"openrouter","model":"text-embedding-3-small"}}
 
 # Public end-to-end (from laptop)
-curl -s -o /dev/null -w 'public https -> %{http_code}\n' https://brain.huynle.com/   # expect 200
+curl -s -o /dev/null -w 'public /api/v1/health -> %{http_code}\n' https://brain.huynle.com/api/v1/health  # expect 200
+curl -s -o /dev/null -w 'public / -> %{http_code}\n' https://brain.huynle.com/                            # expect 200
+curl -s -o /dev/null -w 'public /api/v1/tasks -> %{http_code}\n' https://brain.huynle.com/api/v1/tasks    # expect 401
 
-# Confirm entry count survived (data integrity)
-$AMOS "docker exec brain-api sh -c 'wc -l < /dev/null'"  # placeholder; prefer an authed API call or DB row count
-$AMOS "sqlite3 /home/huy/docs/brain/.brain-data/brain.db 'select count(*) from notes;'" 2>/dev/null || echo "verify via API"
+# Confirm entry count survived (data integrity) — compare against the Phase 2 backup count
+$AMOS "sqlite3 /home/huy/docs/brain/.brain-data/brain.db 'select count(*) from notes;'"
+# A live system keeps writing, so expect this to be >= the backup count, never lower.
+
+# No panics / errors since restart
+$AMOS "docker logs brain-api --since 10m 2>&1 | grep -iE 'panic|level=ERROR|fatal'"   # expect no output
+$AMOS "docker inspect brain-api --format 'RestartCount={{.RestartCount}} Status={{.State.Status}}'"  # expect 0 / running
 ```
 
 ### Phase 6 — Rollback (if verify fails)
@@ -229,7 +240,7 @@ $AMOS "docker tag brain-api-brain-api:pre-deploy-<ts> brain-api-brain-api:latest
 # If data corrupted: stop container, restore tarball:
 #   $AMOS "cd /home/huy/docs && mv brain brain.bad && tar -xzf /home/huy/brain-backup-<ts>.tar.gz"
 $AMOS "docker logs brain-api --tail 20"
-curl -s -o /dev/null -w 'public: %{http_code}\n' https://brain.huynle.com/
+curl -s -o /dev/null -w 'public /api/v1/health -> %{http_code}\n' https://brain.huynle.com/api/v1/health
 ```
 
 ---
@@ -239,6 +250,7 @@ curl -s -o /dev/null -w 'public: %{http_code}\n' https://brain.huynle.com/
 1. **Tailscale**: amos is offline on TS. OK to proceed over LAN only? Or bring TS back first?
 2. **Syncthing**: Pause sync on the brain folder during deploy to avoid DB sync-conflicts? (recommended)
 3. **Scope**: Deploy committed `HEAD` (5fe83c3) only — OK? The dirty `bin/brain` is excluded (good).
-4. **Health route**: Is there a canonical health endpoint other than `/` (which returns 200)? `/health` is 404.
+4. ~~**Health route**: Is there a canonical health endpoint other than `/` (which returns 200)? `/health` is 404.~~
+   ✅ ANSWERED 2026-08-22: yes — `GET /api/v1/health`, 200 and unauthenticated. Bare `/health` is 404. See the Health endpoint row in FLAGGED DISCREPANCIES.
 5. **Prior panic**: Investigate the goroutine panic (RestartCount=1) before redeploy, or proceed?
 6. **Build location**: Confirm build-on-amos (current convention) vs. build-locally-and-transfer-image.

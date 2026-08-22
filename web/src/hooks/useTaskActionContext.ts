@@ -62,6 +62,11 @@ export function useTaskActionContextFactory(): (
 
   return useMemo(
     () => (projectId: string) => ({
+      // The row's primary Open: the task modal. Distinct from openDetails
+      // below, which opens the focus pane rather than the modal.
+      openModal: (task: Task) =>
+        openModal("task", { projectId, taskId: task.id }),
+
       // getState() (not a hook subscription): builders run on every row
       // render, and the row components subscribe to the selection store
       // themselves — the label stays fresh without a stale closure.

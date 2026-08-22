@@ -70,6 +70,12 @@ export function CardFeatures({
   const rangeFeatureSel = useSelection((s) => s.rangeFeature);
   const requestVerb = useSelection((s) => s.requestVerb);
   const clearSel = useSelection((s) => s.clear);
+  // The single "active" row (plain single-click select-only highlight),
+  // separate from the checkbox multi-select. `selActiveRow` is the
+  // active-row record; do NOT confuse with `selActive` (multi-select mode
+  // boolean) computed below.
+  const selActiveRow = useSelection((s) => s.active);
+  const setActive = useSelection((s) => s.setActive);
   const selScoped = selProjectId === projectId;
   const selTaskIds = useSelection((s) => s.taskIds);
   // Selection mode: once anything in this project is marked, every row
@@ -130,6 +136,12 @@ export function CardFeatures({
         const stateClass = featStateClass(f);
         const actions = buildFeatureActions(f, featureCtx);
         const marked = selScoped && selFeatureIds.has(f.id);
+        // Single-click select-only highlight — one active row at a time,
+        // independent of the checkbox multi-select.
+        const isActive =
+          selActiveRow?.projectId === projectId &&
+          selActiveRow.kind === "feature" &&
+          selActiveRow.id === f.id;
         const rp = rowProps(
           actions,
           f.name,
@@ -160,7 +172,7 @@ export function CardFeatures({
             }}
           >
             <div
-              className={`feat-head${marked ? " marked" : ""}`}
+              className={`feat-head${marked ? " marked" : ""}${isActive ? " active" : ""}`}
               {...rp}
               onKeyDown={(e) => {
                 // Shift+V ranges from the anchor — keyboard parity
@@ -205,6 +217,18 @@ export function CardFeatures({
                   toggleFeatureSel(projectId, f.id);
                   return;
                 }
+                // Plain single-click: select-only highlight. Double-click
+                // / Enter open the drawer.
+                setActive(projectId, "feature", f.id);
+              }}
+              onDoubleClick={(e) => {
+                if (
+                  (e.target as HTMLElement).closest(
+                    "button, .caret, .assign-chip, a, .selbox",
+                  )
+                )
+                  return;
+                if (selActive) return;
                 openFeatureDrawer(projectId, f.id);
               }}
               // Shift-click would otherwise extend the browser's text

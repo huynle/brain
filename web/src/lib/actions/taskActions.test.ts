@@ -39,6 +39,7 @@ function mkTask(over: Partial<Task> = {}): Task {
 function recorder(over: Partial<TaskActionContext> = {}) {
   const calls: string[] = [];
   const ctx: TaskActionContext = {
+    openModal: (t) => void calls.push(`open:${t.id}`),
     toggleSelect: (t) => void calls.push(`select:${t.id}`),
     isSelected: () => false,
     runTask: async (t) => void calls.push(`run:${t.id}`),
@@ -90,6 +91,30 @@ test("every core verb is present for an ordinary pending task", () => {
   ]) {
     assert.ok(ids.includes(expected), `missing action: ${expected}`);
   }
+});
+
+// ─── open (context-menu Open verb) ──────────────────────────────────
+
+test("open is the very first action, in the select group", () => {
+  const { ctx } = recorder();
+  const actions = buildTaskActions(mkTask(), ctx);
+  assert.equal(actions[0].id, "open", "Open must render first");
+  assert.equal(actions[0].label, "Open");
+  assert.equal(actions[0].group, "select");
+});
+
+test("open is always enabled and routes to openModal", async () => {
+  const { calls, ctx } = recorder();
+  const open = byId(mkTask({ status: "completed" }), ctx).get("open")!;
+  assert.equal(open.disabledReason ?? "", "");
+  await open.run();
+  assert.deepEqual(calls, ["open:t1"]);
+});
+
+test("open sits ahead of select in the select group", () => {
+  const { ctx } = recorder();
+  const ids = buildTaskActions(mkTask(), ctx).map((a) => a.id);
+  assert.ok(ids.indexOf("open") < ids.indexOf("select"), "Open before Select");
 });
 
 test("set-goal is always enabled and routes to openGoalCreate", async () => {

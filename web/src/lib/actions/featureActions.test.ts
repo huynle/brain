@@ -44,6 +44,7 @@ function mkFeature(over: Partial<DerivedFeature> = {}): DerivedFeature {
 function recorder(over: Partial<FeatureActionContext> = {}) {
   const calls: string[] = [];
   const ctx: FeatureActionContext = {
+    openDrawer: (f) => void calls.push(`open:${f.id}`),
     toggleSelect: (f) => void calls.push(`select:${f.id}`),
     isSelected: () => false,
     runFeature: async (f) => void calls.push(`run:${f.id}`),
@@ -100,6 +101,40 @@ test("set-goal is always enabled and routes to openGoalCreate", async () => {
   assert.equal(action.disabledReason ?? "", "");
   await action.run();
   assert.deepEqual(calls, ["goal-create:checkout-flow"]);
+});
+
+// ─── open (context-menu Open verb) ──────────────────────────────────
+
+test("open is the very first feature action, in the select group", () => {
+  const { ctx } = recorder();
+  const actions = buildFeatureActions(mkFeature(), ctx);
+  assert.equal(actions[0].id, "open", "Open must render first");
+  assert.equal(actions[0].label, "Open");
+  assert.equal(actions[0].group, "select");
+});
+
+test("open is always enabled and routes to openDrawer", async () => {
+  const { calls, ctx } = recorder();
+  const open = byId(mkFeature({ lifecycle: "merged" }), ctx).get("open")!;
+  assert.equal(open.disabledReason ?? "", "");
+  await open.run();
+  assert.deepEqual(calls, ["open:checkout-flow"]);
+});
+
+test("open sits ahead of select in the select group", () => {
+  const { ctx } = recorder();
+  const ids = buildFeatureActions(mkFeature(), ctx).map((a) => a.id);
+  assert.ok(ids.indexOf("open") < ids.indexOf("select"), "Open before Select");
+});
+
+test("open does not replace Feature details or the plan drawer verb", () => {
+  // The new Open verb is additive: the existing navigate-group verbs
+  // (plan drawer + feature details) must survive.
+  const { ctx } = recorder();
+  const ids = buildFeatureActions(mkFeature(), ctx).map((a) => a.id);
+  assert.ok(ids.includes("plan"), "plan drawer verb dropped");
+  assert.ok(ids.includes("details"), "feature details verb dropped");
+  assert.ok(ids.includes("open"), "open verb missing");
 });
 
 // ─── run ───────────────────────────────────────────────────────────

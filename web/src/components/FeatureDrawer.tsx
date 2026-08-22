@@ -1,17 +1,23 @@
 /**
- * FeatureDrawer — wireframe-parity port of `renderFeatureDrawer`.
+ * FeatureDrawer — right-side slide-in that hosts EITHER a feature or a
+ * task, driven by the `drawer` discriminated union in the workspace
+ * store.
  *
- * Right-side slide-in showing feature detail, tasks, and links.
- * Opened via `useWorkspace.openFeatureDrawer(pid, fid)`; closed via
- * the × button or Esc.
+ * - Feature mode (double-click a feature) is the original wireframe
+ *   port: feature detail, assign, and the member task list.
+ * - Task mode (double-click / Enter a task row) shows the same KV
+ *   metadata grid + Content body the Task modal renders, with a
+ *   "Full detail" button that opens the full Task modal — so the modal
+ *   stays reachable while the drawer is the default detail surface.
  *
- * The header carries the full feature verb set via `useRowActions`
- * (right-click / long-press / keyboard), same as CardFeatures rows.
- * The assign buttons call the real assignment API — they used to write
- * only the local zustand mirror, which looked assigned while the server
- * was never told.
+ * The aside is drag-resizable from its LEFT edge; the chosen width is
+ * persisted (`drawerWidth` in the store) and applied via a CSS var.
+ *
+ * Hook discipline: EVERY hook runs unconditionally at the top (guarding
+ * on `drawer` being null), and only the RENDERED JSX branches on
+ * `drawer.kind`. No conditional hook calls.
  */
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useWorkspace } from "../store/workspace";
 import { useModal } from "../store/modal";
@@ -32,6 +38,7 @@ import { buildSelectionActions } from "../lib/actions/selectionActions";
 import { buildTaskActions } from "../lib/actions/taskActions";
 import { isRangeKey } from "../lib/selection";
 import { deriveFeatures } from "../lib/features";
+import { TaskKvGrid } from "./Modal/TaskKvGrid";
 import type { Task } from "../lib/types";
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
@@ -45,8 +52,10 @@ const LIFECYCLE_TONE = {
 } as const;
 
 export function FeatureDrawer(): JSX.Element | null {
-  const drawer = useWorkspace((s) => s.featureDrawer);
+  const drawer = useWorkspace((s) => s.drawer);
   const close = useWorkspace((s) => s.closeFeatureDrawer);
+  const drawerWidth = useWorkspace((s) => s.drawerWidth);
+  const setDrawerWidth = useWorkspace((s) => s.setDrawerWidth);
   const assignFeature = useWorkspace((s) => s.assignFeature);
   const unassignFeature = useWorkspace((s) => s.unassignFeature);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
@@ -59,8 +68,9 @@ export function FeatureDrawer(): JSX.Element | null {
   // cross-feature expansion would surprise more than it helps.
   const [archivedOpen, setArchivedOpen] = useState(false);
 
-  const featureCtx = useFeatureActionContext(drawer?.projectId ?? "");
-  const taskCtx = useTaskActionContext(drawer?.projectId ?? "");
+  const projectId = drawer?.projectId ?? "";
+  const featureCtx = useFeatureActionContext(projectId);
+  const taskCtx = useTaskActionContext(projectId);
   const { rowProps, overlays } = useRowActions();
 
   // Same selection model as CardTasks: drawer rows carry the Select
@@ -91,15 +101,138 @@ export function FeatureDrawer(): JSX.Element | null {
     return () => window.removeEventListener("keydown", onKey);
   }, [drawer, close]);
 
+  // ─── left-edge drag-resize ────────────────────────────────────────
+  const resizerRef = useRef<HTMLDivElement | null>(null);
+  const startResize = useCallback(
+    (e: React.PointerEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      const handle = e.currentTarget;
+      try {
+        handle.setPointerCapture(e.pointerId);
+      } catch {
+        /* jsdom / non-capturing envs — safe to ignore */
+      }
+      document.body.classList.add("drawer-resizing");
+      handle.classList.add("dragging");
+
+      const onMove = (ev: PointerEvent) => {
+        // The drawer is anchored to the right edge, so its width is the
+        // distance from the pointer to the viewport's right edge.
+        setDrawerWidth(window.innerWidth - ev.clientX);
+      };
+      const onUp = (ev: PointerEvent) => {
+        try {
+          handle.releasePointerCapture(ev.pointerId);
+        } catch {
+          /* ignore */
+        }
+        document.body.classList.remove("drawer-resizing");
+        handle.classList.remove("dragging");
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [setDrawerWidth],
+  );
+
+  // Belt-and-braces cleanup: if the drawer unmounts mid-drag, drop the
+  // body class so the page doesn't get stuck with col-resize / no-select.
+  useEffect(() => {
+    return () => {
+      if (typeof document !== "undefined") {
+        document.body.classList.remove("drawer-resizing");
+      }
+    };
+  }, []);
+
   if (!drawer) return null;
   if (typeof document === "undefined") return null;
 
+  const asideStyle = { ["--drawer-w" as never]: `${drawerWidth}px` } as React.CSSProperties;
+  const Resizer = (
+    <div
+      ref={resizerRef}
+      className="drawer-resizer"
+      onPointerDown={startResize}
+    />
+  );
+
+  // ─── task mode ────────────────────────────────────────────────────
+  if (drawer.kind === "task") {
+    const task = tasks.find((t) => t.id === drawer.taskId);
+
+    if (!task) {
+      return createPortal(
+        <aside className="feature-drawer" style={asideStyle}>
+          {Resizer}
+          <button className="drawer-close" onClick={close}>
+            ×
+          </button>
+          <div style={{ padding: 20 }}>Task not found.</div>
+        </aside>,
+        document.body,
+      );
+    }
+
+    const taskActions = buildTaskActions(task, taskCtx);
+
+    return createPortal(
+      <aside className="feature-drawer" style={asideStyle}>
+        {Resizer}
+        <div className="drawer-head" {...rowProps(taskActions, task.title || task.id)}>
+          <div>
+            <div className="drawer-kicker">
+              {drawer.projectId} · {task.id}
+            </div>
+            <h3>{task.title || task.id}</h3>
+          </div>
+          <button className="drawer-close" onClick={close}>
+            ×
+          </button>
+        </div>
+
+        <div className="drawer-actions">
+          <button
+            className="primary"
+            onClick={() =>
+              openModal("task", {
+                projectId: drawer.projectId,
+                taskId: task.id,
+              })
+            }
+          >
+            Full detail
+          </button>
+        </div>
+
+        <div className="drawer-section">
+          <h4>Details</h4>
+          <TaskKvGrid task={task} projectId={drawer.projectId} />
+        </div>
+
+        {task.content && (
+          <div className="drawer-section">
+            <h4 className="modal-content-heading">Content</h4>
+            <pre className="modal-content-pre">{task.content}</pre>
+          </div>
+        )}
+
+        {overlays}
+      </aside>,
+      document.body,
+    );
+  }
+
+  // ─── feature mode ─────────────────────────────────────────────────
   const derived = deriveFeatures(tasks, drawer.projectId);
   const feature = derived.find((f) => f.id === drawer.featureId);
 
   if (!feature) {
     return createPortal(
-      <aside className="feature-drawer">
+      <aside className="feature-drawer" style={asideStyle}>
+        {Resizer}
         <button className="drawer-close" onClick={close}>
           ×
         </button>
@@ -268,7 +401,8 @@ export function FeatureDrawer(): JSX.Element | null {
   };
 
   return createPortal(
-    <aside className="feature-drawer">
+    <aside className="feature-drawer" style={asideStyle}>
+      {Resizer}
       <div className="drawer-head" {...rowProps(actions, feature.name)}>
         <div>
           <div className="drawer-kicker">

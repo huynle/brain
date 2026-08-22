@@ -64,6 +64,31 @@ export type StatusFilter =
   | "done"
   | "archived";
 
+/**
+ * Discriminated union describing what the right-side drawer is showing.
+ * A `feature` drawer renders feature detail + its task list; a `task`
+ * drawer renders the same KV metadata + Content body the Task modal
+ * shows. `null` = closed. Kept transient (not persisted), matching the
+ * prior `featureDrawer` behavior.
+ */
+export type DrawerState =
+  | { kind: "feature"; projectId: string; featureId: string }
+  | { kind: "task"; projectId: string; taskId: string };
+
+/**
+ * Clamp a requested drawer width (px) into a usable range. Pure so the
+ * store's `setDrawerWidth` and the resize handler both funnel through
+ * one testable rule. Defaults to [300, 900].
+ */
+export function clampDrawerWidth(
+  px: number,
+  min = 300,
+  max = 900,
+): number {
+  if (!Number.isFinite(px)) return min;
+  return Math.min(max, Math.max(min, px));
+}
+
 export interface WorkspaceState {
   view: WorkspaceView;
   focusSessionId?: string;
@@ -85,8 +110,10 @@ export interface WorkspaceState {
   assistantOpen: boolean;
   /** Command palette open (⌘K). */
   commandOpen: boolean;
-  /** Feature drawer open + which feature it's showing. */
-  featureDrawer: { projectId: string; featureId: string } | null;
+  /** Right-side drawer: open + what it's showing (feature OR task). */
+  drawer: DrawerState | null;
+  /** Persisted drawer width in px, clamped via `clampDrawerWidth`. */
+  drawerWidth: number;
   /** User theme preference. `system` follows `prefers-color-scheme`. */
   theme: "dark" | "light" | "system";
   mobile: boolean;
@@ -123,7 +150,9 @@ export interface WorkspaceState {
   setCommandOpen(open: boolean): void;
   toggleCommand(): void;
   openFeatureDrawer(projectId: string, featureId: string): void;
+  openTaskDrawer(projectId: string, taskId: string): void;
   closeFeatureDrawer(): void;
+  setDrawerWidth(px: number): void;
   setTheme(t: "dark" | "light" | "system"): void;
   cycleTheme(): void;
   setMobile(m: boolean): void;
@@ -216,7 +245,8 @@ export const useWorkspace = create<WorkspaceState>()(
       sidebarCollapsed: false,
       assistantOpen: false,
       commandOpen: false,
-      featureDrawer: null,
+      drawer: null,
+      drawerWidth: 430,
       theme: "dark",
       mobile: false,
       streaming: false,
@@ -260,8 +290,11 @@ export const useWorkspace = create<WorkspaceState>()(
       toggleCommand: () => set((s) => ({ commandOpen: !s.commandOpen })),
 
       openFeatureDrawer: (projectId, featureId) =>
-        set({ featureDrawer: { projectId, featureId } }),
-      closeFeatureDrawer: () => set({ featureDrawer: null }),
+        set({ drawer: { kind: "feature", projectId, featureId } }),
+      openTaskDrawer: (projectId, taskId) =>
+        set({ drawer: { kind: "task", projectId, taskId } }),
+      closeFeatureDrawer: () => set({ drawer: null }),
+      setDrawerWidth: (px) => set({ drawerWidth: clampDrawerWidth(px) }),
 
       setTheme: (theme) => set({ theme }),
       cycleTheme: () =>
@@ -438,6 +471,7 @@ export const useWorkspace = create<WorkspaceState>()(
         statusFilter: s.statusFilter,
         dockTree: s.dockTree,
         lastFocusLeafId: s.lastFocusLeafId,
+        drawerWidth: s.drawerWidth,
       }),
       storage: createJSONStorage(() => safeStorage() ?? noopStorage),
       version: 1,

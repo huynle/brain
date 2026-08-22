@@ -192,6 +192,36 @@ export function resolveProcessView(
   return defaultProcessView(inst);
 }
 
+/**
+ * Which detail layout the full-page session view should render.
+ *
+ * SessionFull is addressed either by a live instance id (sidebar/mobile
+ * rows) or a SessionRef (history entry points). Its detail area has
+ * three shapes, and the choice is a pure function of two booleans so it
+ * can be unit-tested without React:
+ *
+ *   instance  — an OpencodeInstance row is in hand; render the runner's
+ *               ProcessChat/ProcessRawLog panes (toggle + transcript +
+ *               steer composer), exactly like the Processes tab.
+ *   history   — no live instance, but an effective (history) ref exists;
+ *               render the read-only transcript. No composer — the
+ *               process is gone.
+ *   not-found — nothing addressable; show the "session not found" guard.
+ *
+ * An instance always wins: ProcessChat needs the full instance object,
+ * and having one means the session is live/known.
+ */
+export type SessionFullDetailMode = "instance" | "history" | "not-found";
+
+export function sessionFullDetailMode(input: {
+  hasInstance: boolean;
+  hasEffectiveRef: boolean;
+}): SessionFullDetailMode {
+  if (input.hasInstance) return "instance";
+  if (input.hasEffectiveRef) return "history";
+  return "not-found";
+}
+
 /** Log-level CSS class from a log line (mirrors CardLogs heuristics). */
 export function logLevelClass(line: LogLine): "err" | "wrn" | "ok" | "" {
   const lvl = (line.level || "").toUpperCase();

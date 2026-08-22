@@ -1260,6 +1260,41 @@ body[data-theme="light"] .p2-browser-iframe { border-color: #d5dde5; }
   padding: 6px 10px; font-size: 12px;
 }
 
+/* ---------- SessionFull: reuse the runner's Chat/Raw-log panes ----------
+ * The full-page session view drops the trailing composer row of the base
+ * grid: it now hosts the runner's ProcessChat/ProcessRawLog in its main
+ * cell, and ProcessChat carries its OWN composer + steer note. Only the
+ * breadcrumb header (.hdr) and the right metadata panel (.sidebar-r) stay
+ * SessionFull's own chrome. */
+.session-view.session-full {
+  grid-template-rows: auto 1fr;
+}
+.session-full .session-full-main {
+  grid-row: 2;
+  grid-column: 1;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid #22272c;
+}
+.session-full .sidebar-r {
+  grid-row: 2;
+  grid-column: 2;
+}
+/* The nested proc-chat/proc-log already lives inside SessionFull's framed
+ * main cell, so strip its standalone border/radius to avoid a double frame
+ * and let it fill the cell. */
+.session-full .session-full-main .proc-chat {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+.session-full .session-full-main .proc-log {
+  height: 100%;
+}
+
 /* ---------- status bar ---------- */
 .statusbar {
   grid-area: statusbar;
@@ -2137,7 +2172,9 @@ body[data-theme="light"] .modal {
   top: 40px;
   right: 0;
   bottom: 24px;
-  width: min(430px, 92vw);
+  width: var(--drawer-w, 430px);
+  max-width: 92vw;
+  min-width: 300px;
   z-index: 70;
   background: #12161a;
   border-left: 1px solid #2a2f35;
@@ -2148,6 +2185,17 @@ body[data-theme="light"] .modal {
   padding: 12px;
   gap: 10px;
 }
+.drawer-resizer {
+  position: absolute;
+  left: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 1;
+}
+.drawer-resizer:hover, .drawer-resizer.dragging { background: #f4b23a55; }
+body.drawer-resizing { user-select: none; cursor: col-resize; }
 .drawer-head { display: flex; gap: 8px; align-items: flex-start; }
 .drawer-kicker { color: #6b757e; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
 .drawer-head h3 { margin: 2px 0 0; font-size: 15px; color: #eaedef; }
@@ -2411,6 +2459,12 @@ body[data-theme="light"] .assistant-card textarea { background: #fff !important;
 .trow.marked { background: #241c0e; }
 .feat-head.marked { background: #241c0e; border-radius: 3px; }
 .drawer-task.marked { background: #241c0e; }
+/* Single-click "active" row highlight. Selected-blue vocabulary from
+   .trow.sel, kept apart from the amber .marked multi-select tint so a
+   single active row never looks like a checkbox selection. Feature
+   heads match .feat-head.marked's rounding. */
+.trow.active { background: #1e2833; color: #f4b23a; }
+.feat-head.active { background: #1e2833; color: #f4b23a; border-radius: 3px; }
 
 .selection-bar {
   position: fixed;
@@ -2456,6 +2510,11 @@ body[data-theme="light"] .selection-bar button { background: #f2f5f8; color: #17
 body[data-theme="light"] .trow.marked,
 body[data-theme="light"] .feat-head.marked,
 body[data-theme="light"] .drawer-task.marked { background: #fff2d8; }
+/* Light-theme active row: a soft blue wash, the selected-blue analogue
+   of the amber .marked light tint above — distinct from it and legible
+   on the light surface. */
+body[data-theme="light"] .trow.active,
+body[data-theme="light"] .feat-head.active { background: #dbe7f5; color: #17202a; }
 
 /* ---------- Entries browser (Entries view + reader + compare) ---------- */
 /* Reuses the pre-existing .entries-pane/.entries-toolbar/.entries-split/

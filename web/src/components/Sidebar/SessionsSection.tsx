@@ -9,14 +9,22 @@
  *
  * Verbs come from `lib/actions/sessionActions` via `useRowActions`, so
  * right-click, long-press and keyboard offer the identical set as the
- * session card and the runner Processes rows. Plain click keeps its
- * original meaning: focus the session view.
+ * session card and the runner Processes rows. Plain click opens the
+ * session view.
+ *
+ * The click builds a live SessionRef from the instance row we already
+ * hold (openSessionRef(instanceSessionRef(s))) instead of only handing
+ * SessionFull an instance-id string. That makes SessionFull's live flag
+ * and header correct immediately — without waiting for the global
+ * instances poll to re-resolve the row — so the "· transcript" false
+ * state and the missing steer box are gone.
  */
 import { useWorkspace } from "../../store/workspace";
 import { useSessions } from "../../hooks/useSessions";
 import { useSessionActionContext } from "../../hooks/useSessionActionContext";
 import { useRowActions } from "../../hooks/useRowActions";
 import { buildSessionActions } from "../../lib/actions/sessionActions";
+import { instanceSessionRef } from "../../lib/sessionRef";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import type { OpencodeInstance } from "../../lib/types";
@@ -32,11 +40,14 @@ function sessionLabel(inst: OpencodeInstance): string {
 export function SessionsSection(): JSX.Element {
   const expanded = useWorkspace((s) => s.sidebarSection.sessions);
   const toggle = useWorkspace((s) => s.toggleSidebarSection);
-  const setFocusSession = useWorkspace((s) => s.setFocusSession);
+  const openSessionRef = useWorkspace((s) => s.openSessionRef);
   const focusSessionId = useWorkspace((s) => s.focusSessionId);
+  const focusSessionRef = useWorkspace((s) => s.focusSessionRef);
   const { sessions, isLoading, error, refetch } = useSessions();
   const actionCtx = useSessionActionContext();
   const { rowProps, overlays } = useRowActions();
+
+  const open = (s: OpencodeInstance) => openSessionRef(instanceSessionRef(s));
 
   const rows = (() => {
     if (isLoading) return <Loading size="sm" label="Loading…" />;
@@ -49,17 +60,21 @@ export function SessionsSection(): JSX.Element {
       );
     }
     return sessions.map((s) => {
-      const active = focusSessionId === s.instance_id;
+      // A row is active whether it was opened by the legacy instance-id
+      // fast path or by the new live-ref path (openSessionRef sets
+      // focusSessionRef and clears focusSessionId).
+      const active =
+        focusSessionId === s.instance_id ||
+        (focusSessionRef?.mode === "live" &&
+          focusSessionRef.instance_id === s.instance_id);
       const label = sessionLabel(s);
       const isLive = s.status === "busy" || s.status === "starting";
       return (
         <div
           key={s.instance_id}
           className={`sess-row ${active ? "active" : ""}`}
-          {...rowProps(buildSessionActions(s, actionCtx), label, () =>
-            setFocusSession(s.instance_id),
-          )}
-          onClick={() => setFocusSession(s.instance_id)}
+          {...rowProps(buildSessionActions(s, actionCtx), label, () => open(s))}
+          onClick={() => open(s)}
           title={label}
         >
           <span className="glyph">{isLive ? "▸" : "○"}</span>

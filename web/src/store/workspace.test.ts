@@ -18,7 +18,11 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { useWorkspace, WORKSPACE_STORAGE_KEY } from "./workspace";
+import {
+  useWorkspace,
+  WORKSPACE_STORAGE_KEY,
+  clampDrawerWidth,
+} from "./workspace";
 
 // ─── setup ────────────────────────────────────────────────────────────
 
@@ -46,6 +50,8 @@ function resetStore() {
     mergedExpanded: {},
     archivedExpanded: {},
     statusFilter: "all",
+    drawer: null,
+    drawerWidth: 430,
   });
 }
 
@@ -319,4 +325,91 @@ test("workspace: moveLeaf on empty tree is a no-op", () => {
   resetStore();
   useWorkspace.getState().moveLeaf("nope", "also-nope", "center");
   assert.equal(useWorkspace.getState().dockTree, null);
+});
+
+// ─── drawer: clampDrawerWidth (pure helper) ────────────────────────────
+
+test("workspace: clampDrawerWidth passes through an in-range value", () => {
+  assert.equal(clampDrawerWidth(500), 500);
+});
+
+test("workspace: clampDrawerWidth floors below the minimum (300)", () => {
+  assert.equal(clampDrawerWidth(120), 300);
+  assert.equal(clampDrawerWidth(-40), 300);
+});
+
+test("workspace: clampDrawerWidth caps above the maximum (900)", () => {
+  assert.equal(clampDrawerWidth(2000), 900);
+});
+
+test("workspace: clampDrawerWidth honors explicit bounds", () => {
+  assert.equal(clampDrawerWidth(50, 100, 200), 100);
+  assert.equal(clampDrawerWidth(999, 100, 200), 200);
+  assert.equal(clampDrawerWidth(150, 100, 200), 150);
+});
+
+// ─── drawer: open/close union state ────────────────────────────────────
+
+test("workspace: drawer is null initially", () => {
+  resetStore();
+  assert.equal(useWorkspace.getState().drawer, null);
+});
+
+test("workspace: openFeatureDrawer sets a feature-kind drawer", () => {
+  resetStore();
+  useWorkspace.getState().openFeatureDrawer("proj-a", "feat-1");
+  assert.deepEqual(useWorkspace.getState().drawer, {
+    kind: "feature",
+    projectId: "proj-a",
+    featureId: "feat-1",
+  });
+});
+
+test("workspace: openTaskDrawer sets a task-kind drawer", () => {
+  resetStore();
+  useWorkspace.getState().openTaskDrawer("proj-a", "task-9");
+  assert.deepEqual(useWorkspace.getState().drawer, {
+    kind: "task",
+    projectId: "proj-a",
+    taskId: "task-9",
+  });
+});
+
+test("workspace: openTaskDrawer replaces an open feature drawer", () => {
+  resetStore();
+  useWorkspace.getState().openFeatureDrawer("proj-a", "feat-1");
+  useWorkspace.getState().openTaskDrawer("proj-b", "task-2");
+  assert.deepEqual(useWorkspace.getState().drawer, {
+    kind: "task",
+    projectId: "proj-b",
+    taskId: "task-2",
+  });
+});
+
+test("workspace: closeFeatureDrawer clears the drawer regardless of kind", () => {
+  resetStore();
+  useWorkspace.getState().openTaskDrawer("proj-a", "task-9");
+  useWorkspace.getState().closeFeatureDrawer();
+  assert.equal(useWorkspace.getState().drawer, null);
+});
+
+// ─── drawer: width state + setter clamp ────────────────────────────────
+
+test("workspace: drawerWidth defaults to 430", () => {
+  resetStore();
+  assert.equal(useWorkspace.getState().drawerWidth, 430);
+});
+
+test("workspace: setDrawerWidth stores an in-range width", () => {
+  resetStore();
+  useWorkspace.getState().setDrawerWidth(560);
+  assert.equal(useWorkspace.getState().drawerWidth, 560);
+});
+
+test("workspace: setDrawerWidth clamps to the [300, 900] range", () => {
+  resetStore();
+  useWorkspace.getState().setDrawerWidth(50);
+  assert.equal(useWorkspace.getState().drawerWidth, 300);
+  useWorkspace.getState().setDrawerWidth(5000);
+  assert.equal(useWorkspace.getState().drawerWidth, 900);
 });

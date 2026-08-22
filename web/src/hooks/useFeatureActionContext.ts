@@ -347,6 +347,11 @@ export function useFeatureActionContextFactory(): (
           openModal("feature", { projectId, featureId: feature.id }),
         openPlan: (feature: DerivedFeature) =>
           openFeatureDrawer(projectId, feature.id),
+        // The row's primary Open verb: the feature drawer. Same target as
+        // openPlan, named plainly ("Open" rather than "Open plan drawer")
+        // so the top-of-menu verb reads as the row's default action.
+        openDrawer: (feature: DerivedFeature) =>
+          openFeatureDrawer(projectId, feature.id),
       };
     },
     [

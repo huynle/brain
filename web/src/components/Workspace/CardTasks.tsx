@@ -18,7 +18,6 @@
  * action affordance at all.
  */
 import { useMemo } from "react";
-import { useModal } from "../../store/modal";
 import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useRunners } from "../../hooks/useRunners";
@@ -90,8 +89,8 @@ export function CardTasks({
   tasks,
   features,
 }: CardTasksProps): JSX.Element {
-  const openModal = useModal((s) => s.open);
   const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
+  const openTaskDrawer = useWorkspace((s) => s.openTaskDrawer);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
   const archivedExpanded = useWorkspace(
     (s) => s.archivedExpanded[projectId] ?? false,
@@ -115,6 +114,12 @@ export function CardTasks({
   const rangeFeatureSel = useSelection((s) => s.rangeFeature);
   const requestVerb = useSelection((s) => s.requestVerb);
   const clearSel = useSelection((s) => s.clear);
+  // The single "active" row (plain single-click select-only highlight),
+  // separate from the checkbox multi-select above. `selActiveRow` is the
+  // active-row record; do NOT confuse with `selActive` (multi-select mode
+  // boolean) computed below.
+  const selActiveRow = useSelection((s) => s.active);
+  const setActive = useSelection((s) => s.setActive);
   const selScoped = selProjectId === projectId;
   // Selection mode: once anything in this project is marked, every row
   // shows its checkbox. Until then boxes appear only on hover/focus.
@@ -209,6 +214,13 @@ export function CardTasks({
     const label = t.title || t.id;
     const actions = buildTaskActions(t, taskCtx);
     const marked = selScoped && selTaskIds.has(t.id);
+    // Single-click select-only highlight — one active row at a time,
+    // independent of the checkbox multi-select. Never toggles on
+    // selActive: the active state is set directly by a plain click.
+    const isActive =
+      selActiveRow?.projectId === projectId &&
+      selActiveRow.kind === "task" &&
+      selActiveRow.id === t.id;
     const rp = rowProps(
       actions,
       label,
@@ -216,7 +228,7 @@ export function CardTasks({
       // not open detail.
       selActive
         ? () => toggleTaskSel(projectId, t.id)
-        : () => openModal("task", { projectId, taskId: t.id }),
+        : () => openTaskDrawer(projectId, t.id),
       {
         selectionActions: marked ? selectionActions ?? undefined : undefined,
         // Long-press = the touch shift-click.
@@ -227,7 +239,7 @@ export function CardTasks({
     return (
       <div
         key={t.id}
-        className={`trow${marked ? " marked" : ""}`}
+        className={`trow${marked ? " marked" : ""}${isActive ? " active" : ""}`}
         {...rp}
         onKeyDown={(e) => {
           // Shift+V ranges from the anchor — keyboard parity with
@@ -252,7 +264,16 @@ export function CardTasks({
             toggleTaskSel(projectId, t.id);
             return;
           }
-          openModal("task", { projectId, taskId: t.id });
+          // Plain single-click: select-only highlight. Does NOT open the
+          // modal — double-click / Enter do that.
+          setActive(projectId, "task", t.id);
+        }}
+        onDoubleClick={(e) => {
+          if ((e.target as HTMLElement).closest(".selbox")) return;
+          // A double-click in multi-select mode must not open — mirror
+          // the click guards.
+          if (selActive) return;
+          openTaskDrawer(projectId, t.id);
         }}
         // Shift-click would otherwise extend the browser's text
         // selection across the rows before our click handler runs. The
@@ -318,6 +339,11 @@ export function CardTasks({
         const pct = Math.round(f.progress * 100);
         const featureActions = buildFeatureActions(f, featureCtx);
         const featMarked = selScoped && selFeatureIds.has(f.id);
+        // Single-click select-only highlight for the feature head.
+        const featIsActive =
+          selActiveRow?.projectId === projectId &&
+          selActiveRow.kind === "feature" &&
+          selActiveRow.id === f.id;
         const rpHead = rowProps(
           featureActions,
           f.name,
@@ -337,7 +363,7 @@ export function CardTasks({
         return (
           <div key={f.id} className={`feat ${stateClass}`}>
             <div
-              className={`feat-head${featMarked ? " marked" : ""}`}
+              className={`feat-head${featMarked ? " marked" : ""}${featIsActive ? " active" : ""}`}
               {...rpHead}
               onKeyDown={(e) => {
                 if (isRangeKey(e)) {
@@ -376,6 +402,18 @@ export function CardTasks({
                   toggleFeatureSel(projectId, f.id);
                   return;
                 }
+                // Plain single-click: select-only highlight. Double-click
+                // / Enter open the drawer.
+                setActive(projectId, "feature", f.id);
+              }}
+              onDoubleClick={(e) => {
+                if (
+                  (e.target as HTMLElement).closest(
+                    "button, .caret, .assign-chip, .selbox",
+                  )
+                )
+                  return;
+                if (selActive) return;
                 openFeatureDrawer(projectId, f.id);
               }}
               onMouseDown={(e) => {

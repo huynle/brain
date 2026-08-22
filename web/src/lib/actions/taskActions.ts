@@ -46,6 +46,10 @@ export const STATUS_LABELS: Record<TaskStatus, string> = {
  * implementations; tests supply recorders.
  */
 export interface TaskActionContext {
+  /** Open the task modal — the row's double-click / Enter target and the
+   *  context-menu "Open" verb. Distinct from openDetails, which opens the
+   *  focus pane rather than the modal. */
+  openModal: (task: Task) => void;
   /** Toggle this task in the multi-select scope (SelectionBar verbs). */
   toggleSelect: (task: Task) => void;
   /** Whether the task is currently in the multi-select scope. */
@@ -232,6 +236,16 @@ export function buildTaskActions(
   const resume = computeTaskResumeState(task);
 
   // ─── select ─────────────────────────────────────────────────────
+  // "Open" leads the menu: it is the row's primary gesture (double-click
+  // / Enter open the modal), so the context menu surfaces the same verb
+  // first. Kept in the "select" group so it renders ahead of everything
+  // else, just before the multi-select toggle.
+  actions.push({
+    id: "open",
+    label: "Open",
+    group: "select",
+    run: async () => ctx.openModal(task),
+  });
   actions.push({
     id: "select",
     label: ctx.isSelected(task) ? "Deselect" : "Select",

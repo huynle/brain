@@ -15,6 +15,7 @@ import {
   logLevelClass,
   mergeTaskLogs,
   resolveProcessView,
+  sessionFullDetailMode,
   sortProcesses,
 } from "./processes";
 import type { LogLine, OpencodeInstance } from "./types";
@@ -239,5 +240,33 @@ test("mergeTaskLogs: equal timestamps keep historical first and do not reorder",
   assert.deepEqual(
     merged.map((l) => l.content),
     ["h1", "h2", "v1"],
+  );
+});
+
+// ─── SessionFull detail-mode decision ────────────────────────────
+
+test("sessionFullDetailMode: an instance in hand renders the runner panes", () => {
+  assert.equal(
+    sessionFullDetailMode({ hasInstance: true, hasEffectiveRef: true }),
+    "instance",
+  );
+  // An instance always wins even if the effective ref were somehow absent.
+  assert.equal(
+    sessionFullDetailMode({ hasInstance: true, hasEffectiveRef: false }),
+    "instance",
+  );
+});
+
+test("sessionFullDetailMode: no instance but a ref is history-only (read-only)", () => {
+  assert.equal(
+    sessionFullDetailMode({ hasInstance: false, hasEffectiveRef: true }),
+    "history",
+  );
+});
+
+test("sessionFullDetailMode: nothing addressable is not-found", () => {
+  assert.equal(
+    sessionFullDetailMode({ hasInstance: false, hasEffectiveRef: false }),
+    "not-found",
   );
 });

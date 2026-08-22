@@ -28,6 +28,11 @@ import { STATUS_LABELS } from "./taskActions";
 import type { ActionDescriptor } from "./types";
 
 export interface FeatureActionContext {
+  /** Open the feature drawer — the row's double-click / Enter target and
+   *  the context-menu "Open" verb. A distinct, clearly-named alias for the
+   *  same drawer `openPlan` opens, so the primary Open verb reads plainly
+   *  rather than as "Open plan drawer". */
+  openDrawer: (feature: DerivedFeature) => void;
   /** Toggle this feature in the multi-select scope (SelectionBar verbs). */
   toggleSelect: (feature: DerivedFeature) => void;
   /** Whether the feature is currently in the multi-select scope. */
@@ -129,6 +134,16 @@ export function buildFeatureActions(
   const plural = n === 1 ? "task" : "tasks";
 
   // ─── select ─────────────────────────────────────────────────────
+  // "Open" leads the menu: the row's primary gesture (double-click /
+  // Enter open the drawer), surfaced first in the context menu too.
+  // Distinct from the navigate-group "Open plan drawer" verb, which
+  // stays put — this is the plain, top-of-menu Open.
+  actions.push({
+    id: "open",
+    label: "Open",
+    group: "select",
+    run: async () => ctx.openDrawer(feature),
+  });
   actions.push({
     id: "select",
     label: ctx.isSelected(feature) ? "Deselect" : "Select",

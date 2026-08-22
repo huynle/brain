@@ -95,7 +95,7 @@ function procMeta(inst: OpencodeInstance, now: number): string[] {
 }
 
 /** Chat / Raw-log switch, shown in both panes' headers. */
-function ViewToggle({
+export function ViewToggle({
   view,
   onView,
   chatEnabled,
@@ -158,7 +158,7 @@ function DeliveryPill({
  * Chat pane — the session transcript for the selected process, plus a
  * composer that injects a prompt into the agent while it runs.
  */
-function ProcessChat({
+export function ProcessChat({
   inst,
   toggle,
 }: {
@@ -275,7 +275,7 @@ function ProcessChat({
 }
 
 /** Raw stdout pane for one selected process. */
-function ProcessRawLog({
+export function ProcessRawLog({
   inst,
   toggle,
 }: {

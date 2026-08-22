@@ -25,8 +25,39 @@ import {
 /** Bulk verbs the selection context menu can request. */
 export type SelectionVerb = "archive" | "delete";
 
+/**
+ * The single "active" row — the lightweight highlight a plain
+ * single-click sets. Deliberately SEPARATE from the multi-select
+ * scope (taskIds/featureIds): a plain click should select-only, not
+ * flip a checkbox or enter selection mode. One row is active at a
+ * time, across both kinds.
+ */
+export interface ActiveRow {
+  projectId: string;
+  kind: "task" | "feature";
+  id: string;
+}
+
 interface SelectionStore extends SelectionSnapshot {
   anchor: SelectionAnchor | null;
+  /**
+   * The one row a plain single-click highlighted. Null until a click
+   * sets it; cleared by `clear()` alongside the selection scope.
+   * Independent of the checkbox multi-select so single-click select
+   * never toggles a checkbox.
+   */
+  active: ActiveRow | null;
+  /**
+   * Set the active row. Idempotent by design — clicking the same row
+   * again keeps it active, so a single-click reliably SELECTs and
+   * never toggles the highlight off. Replaces any previous active row
+   * (one active at a time).
+   */
+  setActive: (
+    projectId: string,
+    kind: "task" | "feature",
+    id: string,
+  ) => void;
   /**
    * A bulk verb requested from a row's selection context menu.
    * SelectionBar owns the preview/confirm ladders for these verbs, so
@@ -58,6 +89,10 @@ export const useSelection = create<SelectionStore>((set) => ({
   ...EMPTY_SELECTION,
   anchor: null,
   verbRequest: null,
+  active: null,
+
+  setActive: (projectId, kind, id) =>
+    set({ active: { projectId, kind, id } }),
 
   requestVerb: (verb) => set({ verbRequest: verb }),
   consumeVerbRequest: () => set({ verbRequest: null }),
@@ -94,5 +129,6 @@ export const useSelection = create<SelectionStore>((set) => ({
       ),
       anchor: { kind: "feature", id: featureId },
     })),
-  clear: () => set({ ...EMPTY_SELECTION, anchor: null, verbRequest: null }),
+  clear: () =>
+    set({ ...EMPTY_SELECTION, anchor: null, verbRequest: null, active: null }),
 }));

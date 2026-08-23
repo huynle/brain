@@ -2561,6 +2561,96 @@ func TestHandleBulkUpdate(t *testing.T) {
 			},
 		},
 		{
+			// A typo'd UPDATE field is worse than a typo'd filter field: an
+			// unknown filter narrows the selection and shows up as
+			// "matched 0", but an unknown update key was silently dropped
+			// while the response still reported the entries as updated —
+			// a success report over a write that never happened.
+			name: "bad request - unknown updates field",
+			body: map[string]any{
+				"filter": map[string]any{
+					"project": "proj",
+				},
+				"updates": map[string]any{
+					"agnet": "tdd-dev",
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				t.Fatal("service must not be called when unknown updates fields are present")
+				return nil, nil
+			},
+			wantStatus: http.StatusBadRequest,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if !strings.Contains(body.Message, "unknown fields") {
+					t.Errorf("message = %q, want to contain %q", body.Message, "unknown fields")
+				}
+				if !strings.Contains(body.Message, "updates.agnet") {
+					t.Errorf("message = %q, want to name the offending key as %q", body.Message, "updates.agnet")
+				}
+			},
+		},
+		{
+			// Same guard for explicit-entries mode, which routes through a
+			// different branch of the request body.
+			name: "bad request - unknown updates field in entries mode",
+			body: map[string]any{
+				"entries": []any{
+					map[string]any{
+						"path":    "projects/proj/task/a.md",
+						"updates": map[string]any{"exectuor": "pi"},
+					},
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				t.Fatal("service must not be called when unknown updates fields are present")
+				return nil, nil
+			},
+			wantStatus: http.StatusBadRequest,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.ErrorResponse](t, resp)
+				if !strings.Contains(body.Message, "entries[0].updates.exectuor") {
+					t.Errorf("message = %q, want to name the offending key with its index", body.Message)
+				}
+			},
+		},
+		{
+			// The execution fields are the whole reason to bulk-edit tasks,
+			// and the MCP tool description claimed for years that only six
+			// editorial fields were accepted. Pin that they get through, so
+			// nobody "tidies" the validator back down to that six.
+			name: "success - execution fields are accepted in updates",
+			body: map[string]any{
+				"filter": map[string]any{
+					"project": "proj",
+				},
+				"updates": map[string]any{
+					"agent":          "tdd-dev",
+					"model":          "anthropic/claude-sonnet-4-20250514",
+					"executor":       "opencode",
+					"execution_mode": "worktree",
+					"target_workdir": "/tmp/x",
+					"git_branch":     "feat",
+					"depends_on":     []string{"abc12345"},
+					"feature_id":     "f1",
+					"merge_policy":   "auto_pr",
+				},
+			},
+			mockBulkUpdate: func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error) {
+				if req.Updates == nil || req.Updates.Agent == nil || *req.Updates.Agent != "tdd-dev" {
+					t.Errorf("agent did not survive decode: %+v", req.Updates)
+				}
+				return &types.BulkUpdateResponse{Updated: 1, Total: 1}, nil
+			},
+			wantStatus: http.StatusOK,
+			checkBody: func(t *testing.T, resp *http.Response) {
+				body := decodeJSON[types.BulkUpdateResponse](t, resp)
+				if body.Updated != 1 {
+					t.Errorf("updated = %d, want 1", body.Updated)
+				}
+			},
+		},
+		{
 			// Regression guard: existing valid filters keep working after DisallowUnknownFields.
 			name: "success - valid filter still works (regression guard)",
 			body: map[string]any{

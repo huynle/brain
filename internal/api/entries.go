@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -1189,9 +1190,42 @@ var bulkUpdateFilterFields = map[string]struct{}{
 	"execution_mode": {},
 }
 
+// updateEntryRequestFields is the set of JSON keys accepted inside an
+// "updates" object.
+//
+// Derived by reflection from types.UpdateEntryRequest rather than
+// hand-listed. The hand-listed maps above are what drifted: the MCP
+// bulk_update description advertised six fields for years while the
+// endpoint accepted every field on UpdateEntryRequest, because nothing
+// tied the two together. A reflected set cannot fall out of sync with
+// the struct it guards.
+var updateEntryRequestFields = func() map[string]struct{} {
+	fields := make(map[string]struct{})
+	t := reflect.TypeOf(types.UpdateEntryRequest{})
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("json")
+		if tag == "" || tag == "-" {
+			continue
+		}
+		if name, _, _ := strings.Cut(tag, ","); name != "" {
+			fields[name] = struct{}{}
+		}
+	}
+	return fields
+}()
+
 // findUnknownBulkUpdateFields returns a sorted-by-appearance list of unknown
-// JSON keys in the bulk-update request body, checking both top-level fields
-// and nested filter fields. It's tolerant of malformed JSON at deeper levels:
+// JSON keys in the bulk-update request body, checking top-level fields,
+// nested filter fields, and the update payloads in both filter mode
+// ("updates") and explicit mode ("entries[].updates").
+//
+// Covering the update payloads matters more than covering the filter: an
+// unknown filter key narrows a selection and typically shows up as
+// "matched 0", whereas an unknown update key is silently dropped and the
+// response still reports the entries as updated. That is a success
+// report over a write that did not happen.
+//
+// It's tolerant of malformed JSON at deeper levels:
 // if a section is not a JSON object, it's simply skipped (the typed decode
 // step will produce the appropriate error).
 func findUnknownBulkUpdateFields(body []byte) []string {
@@ -1214,6 +1248,33 @@ func findUnknownBulkUpdateFields(body []byte) []string {
 			for k := range filter {
 				if _, ok := bulkUpdateFilterFields[k]; !ok {
 					unknown = append(unknown, "filter."+k)
+				}
+			}
+		}
+	}
+
+	checkUpdates := func(raw json.RawMessage, prefix string) {
+		var updates map[string]json.RawMessage
+		if err := json.Unmarshal(raw, &updates); err != nil {
+			return
+		}
+		for k := range updates {
+			if _, ok := updateEntryRequestFields[k]; !ok {
+				unknown = append(unknown, prefix+k)
+			}
+		}
+	}
+
+	if rawUpdates, ok := top["updates"]; ok && len(rawUpdates) > 0 {
+		checkUpdates(rawUpdates, "updates.")
+	}
+
+	if rawEntries, ok := top["entries"]; ok && len(rawEntries) > 0 {
+		var entries []map[string]json.RawMessage
+		if err := json.Unmarshal(rawEntries, &entries); err == nil {
+			for i, entry := range entries {
+				if rawU, ok := entry["updates"]; ok && len(rawU) > 0 {
+					checkUpdates(rawU, fmt.Sprintf("entries[%d].updates.", i))
 				}
 			}
 		}

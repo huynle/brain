@@ -866,7 +866,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 				"status":     {Type: "string", Enum: types.EntryStatuses, Description: "Filter by status"},
 				"feature_id": {Type: "string", Description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"},
 				"tags":       {Type: "array", Items: &Property{Type: "string"}, Description: "Filter by tags (OR logic - matches entries with any of the specified tags)"},
-				"limit":      {Type: "number", Description: "Maximum results (default: 10)"},
+				"limit":      {Type: "number", Description: "Maximum results (default: 20, per defaultSearchLimit in internal/storage/search.go)"},
 				"global":     {Type: "boolean", Description: "Search only global entries"},
 				"strategy":   {Type: "string", Enum: []string{"fts", "exact", "like", "semantic", "hybrid"}, Description: "Search strategy: 'fts' (default), 'exact', 'like', 'semantic' (embedding), or 'hybrid' (combined)"},
 			},
@@ -892,7 +892,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 			return fmt.Sprintf("No entries found matching %q", args["query"]), nil
 		}
 
-		lines := []string{fmt.Sprintf("Found %d entries:\n", resp.Total)}
+		lines := []string{foundLine("entries", resp.Total, IntArg(args, "limit", 0), 20)}
 		for _, r := range resp.Results {
 			lines = append(lines, fmt.Sprintf("- **%s** (%s) - %s", r.Title, r.Path, r.Type))
 			if r.Snippet != "" {
@@ -923,7 +923,7 @@ Filename filtering supports:
 				"status":     {Type: "string", Enum: types.EntryStatuses, Description: "Filter by status"},
 				"feature_id": {Type: "string", Description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"},
 				"tags":       {Type: "array", Items: &Property{Type: "string"}, Description: "Filter by tags (OR logic - matches entries with any of the specified tags)"},
-				"limit":      {Type: "number", Description: "Maximum entries to return (default: 20)"},
+				"limit":      {Type: "number", Description: "Maximum entries to return (default: 100, per defaultListLimit in internal/storage/list.go)"},
 				"global":     {Type: "boolean", Description: "List only global entries"},
 				"sort_by":    {Type: "string", Enum: []string{"created", "modified", "priority"}, Description: "Sort order"},
 				"filename":   {Type: "string", Description: "Filter by filename/ID (supports wildcards: abc*, *def, abc*def)"},
@@ -979,7 +979,7 @@ Filename filtering supports:
 			return "No entries found", nil
 		}
 
-		lines := []string{fmt.Sprintf("Found %d entries:\n", resp.Total)}
+		lines := []string{foundLine("entries", resp.Total, IntArg(args, "limit", 0), 100)}
 		for _, e := range resp.Entries {
 			lines = append(lines, fmt.Sprintf("- **%s** (%s) - %s | %s", e.Title, e.Path, e.Type, e.Status))
 		}
@@ -1583,7 +1583,15 @@ Examples:
 			Failed  int  `json:"failed"`
 			Total   int  `json:"total"`
 			DryRun  bool `json:"dry_run"`
-			Results []struct {
+			// types.BulkUpdateResponse documents Truncated as "do not
+			// proceed; narrow the filter" and MatchedTotal as how many
+			// entries the filter really matched. Neither was decoded, so a
+			// filter matching 500 entries reported "Total matched: 100"
+			// with no hint that 400 were left untouched — reviving exactly
+			// the silent truncation those fields were added to end.
+			Truncated    bool `json:"truncated,omitempty"`
+			MatchedTotal int  `json:"matched_total,omitempty"`
+			Results      []struct {
 				Path   string `json:"path"`
 				ID     string `json:"id"`
 				Title  string `json:"title"`
@@ -1610,6 +1618,24 @@ Examples:
 			"",
 		}
 
+		if resp.Truncated {
+			matched := "more than the safety cap allows"
+			if resp.MatchedTotal > 0 {
+				matched = fmt.Sprintf("%d", resp.MatchedTotal)
+			}
+			if resp.DryRun {
+				lines = append(lines,
+					fmt.Sprintf("> 🛑 TRUNCATED — the filter matches %s entries but only %d fit under the safety cap.", matched, resp.Total),
+					"> Do not proceed: narrow the filter, or the live run will silently leave the rest untouched.",
+					"")
+			} else {
+				lines = append(lines,
+					fmt.Sprintf("> 🛑 TRUNCATED — the filter matched %s entries; only the first %d were changed.", matched, resp.Total),
+					"> The remainder are UNMODIFIED. Narrow the filter and run again to finish.",
+					"")
+			}
+		}
+
 		// Never report a bare "Updated: N" over fields the guard removed.
 		// The write partly did not happen, and the caller cannot see that
 		// from the counts alone.
@@ -1625,7 +1651,14 @@ Examples:
 			lines = append(lines, "### Results")
 			for _, r := range resp.Results {
 				if r.Status == "ok" {
-					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — updated", r.Title, r.Path))
+					// A dry run mutates nothing. Labelling its rows
+					// "updated" reads as a completed write, which is the
+					// opposite of what a preview is for.
+					verb := "updated"
+					if resp.DryRun {
+						verb = "would update"
+					}
+					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — %s", r.Title, r.Path, verb))
 				} else {
 					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — error: %s", r.Title, r.Path, r.Error))
 				}
@@ -1634,6 +1667,26 @@ Examples:
 
 		return strings.Join(lines, "\n"), nil
 	})
+}
+
+// foundLine renders a result count without implying it is a grand total.
+//
+// The API's Total is len(entries) for the returned page, so "Found 3
+// entries" against a project holding 931 is not a small inaccuracy — it is
+// the wrong answer to "how many are there". Producing the real number needs
+// a COUNT(*) the storage layer does not currently do, but a page that came
+// back exactly full is a dependable sign that more exist, and saying so is
+// both honest and actionable.
+func foundLine(noun string, count, requestedLimit, defaultLimit int) string {
+	effective := requestedLimit
+	if effective <= 0 {
+		effective = defaultLimit
+	}
+	if count >= effective {
+		return fmt.Sprintf("Found %d %s (page is full at limit %d — there are likely more; raise 'limit' or narrow the filters):\n",
+			count, noun, effective)
+	}
+	return fmt.Sprintf("Found %d %s:\n", count, noun)
 }
 
 // =============================================================================

@@ -2854,3 +2854,114 @@ func TestBrainBulkUpdate_AllDefaultsExplainsItself(t *testing.T) {
 		t.Errorf("error still claims no updates were specified, got: %v", err)
 	}
 }
+
+// TestFoundLine_DisclosesAFullPage pins that a full page is not reported as
+// a grand total.
+//
+// BrainServiceImpl.List sets Total = len(entries) for the page it returns
+// (internal/service/brain.go), so list(limit:3) against a project holding
+// 931 entries answered "Found 3 entries" — not a rounding error but the
+// wrong answer to "how many are there".
+func TestFoundLine_DisclosesAFullPage(t *testing.T) {
+	full := foundLine("entries", 3, 3, 100)
+	if !strings.Contains(full, "page is full at limit 3") {
+		t.Errorf("a full page must disclose that more may exist, got: %s", full)
+	}
+	if !strings.Contains(full, "raise 'limit'") {
+		t.Errorf("disclosure should be actionable, got: %s", full)
+	}
+
+	partial := foundLine("entries", 2, 3, 100)
+	if strings.Contains(partial, "page is full") {
+		t.Errorf("a partial page is a complete answer and must not warn, got: %s", partial)
+	}
+
+	// limit omitted → the documented default applies.
+	atDefault := foundLine("entries", 100, 0, 100)
+	if !strings.Contains(atDefault, "page is full at limit 100") {
+		t.Errorf("an omitted limit should fall back to the default, got: %s", atDefault)
+	}
+}
+
+// TestSearchAndListLimitDefaults_MatchStorage pins the documented defaults
+// against the storage constants. Both were wrong, in opposite directions:
+// search advertised 10 and delivers 20; list advertised 20 and delivers 100.
+func TestSearchAndListLimitDefaults_MatchStorage(t *testing.T) {
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient("http://127.0.0.1:1"))
+
+	for tool, want := range map[string]string{
+		"search": "default: 20",
+		"list":   "default: 100",
+	} {
+		desc := s.tools[tool].tool.InputSchema.Properties["limit"].Description
+		if !strings.Contains(desc, want) {
+			t.Errorf("%s limit description = %q, want to contain %q", tool, desc, want)
+		}
+	}
+}
+
+// TestBrainBulkUpdate_SurfacesTruncation pins that the safety signal the API
+// already sends reaches the caller.
+//
+// types.BulkUpdateResponse documents Truncated as "do not proceed; narrow
+// the filter", and MatchedTotal as the real match count. Neither was
+// decoded, so a filter matching 500 entries reported "Total matched: 100"
+// with no hint that 400 went untouched — reviving the silent truncation
+// those fields exist to prevent.
+func TestBrainBulkUpdate_SurfacesTruncation(t *testing.T) {
+	newServerReturning := func(dryRun bool) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"total": 100, "updated": 100, "failed": 0,
+				"dry_run": dryRun, "truncated": true, "matched_total": 500,
+				"results": []map[string]any{
+					{"path": "projects/p/task/a.md", "title": "One", "status": "ok"},
+				},
+			})
+		}))
+	}
+
+	t.Run("dry run says do not proceed", func(t *testing.T) {
+		srv := newServerReturning(true)
+		defer srv.Close()
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["bulk_update"].handler(context.Background(), map[string]any{
+			"filter": map[string]any{"project": "p"}, "updates": map[string]any{"status": "completed"},
+			"dry_run": true,
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "TRUNCATED") || !strings.Contains(out, "500") {
+			t.Errorf("truncation and the real match count must be surfaced:\n%s", out)
+		}
+		if !strings.Contains(out, "Do not proceed") {
+			t.Errorf("dry run should tell the caller not to proceed:\n%s", out)
+		}
+		if !strings.Contains(out, "would update") {
+			t.Errorf("a dry run changes nothing; rows must not claim otherwise:\n%s", out)
+		}
+	})
+
+	t.Run("live run says the remainder is unmodified", func(t *testing.T) {
+		srv := newServerReturning(false)
+		defer srv.Close()
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["bulk_update"].handler(context.Background(), map[string]any{
+			"filter": map[string]any{"project": "p"}, "updates": map[string]any{"status": "completed"},
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "UNMODIFIED") {
+			t.Errorf("a truncated live run must say the remainder was not changed:\n%s", out)
+		}
+		if strings.Contains(out, "would update") {
+			t.Errorf("a live run did update; rows must not hedge:\n%s", out)
+		}
+	})
+}

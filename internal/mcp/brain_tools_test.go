@@ -2571,7 +2571,16 @@ func TestBrainStale_Handler_ForwardsProject(t *testing.T) {
 		}
 		gotProject = r.URL.Query().Get("project")
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "total": 0})
+		// A BARE array, which is what health_extended.go writes for both
+		// /stale and /orphans. This fixture used to send an
+		// {entries,total} envelope the server has never produced, so the
+		// test passed against a mock shaped like the buggy decode struct
+		// while the real tool failed on every call.
+		//
+		// NOTE: /entries genuinely does use {entries,total}
+		// (types.ListEntriesResponse) — the list tool's fixture is correct
+		// and must stay as it is.
+		_ = json.NewEncoder(w).Encode([]types.BrainEntry{})
 	}))
 	defer srv.Close()
 
@@ -2600,7 +2609,16 @@ func TestBrainOrphans_Handler_ForwardsProject(t *testing.T) {
 		}
 		gotProject = r.URL.Query().Get("project")
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "total": 0})
+		// A BARE array, which is what health_extended.go writes for both
+		// /stale and /orphans. This fixture used to send an
+		// {entries,total} envelope the server has never produced, so the
+		// test passed against a mock shaped like the buggy decode struct
+		// while the real tool failed on every call.
+		//
+		// NOTE: /entries genuinely does use {entries,total}
+		// (types.ListEntriesResponse) — the list tool's fixture is correct
+		// and must stay as it is.
+		_ = json.NewEncoder(w).Encode([]types.BrainEntry{})
 	}))
 	defer srv.Close()
 
@@ -2964,4 +2982,53 @@ func TestBrainBulkUpdate_SurfacesTruncation(t *testing.T) {
 			t.Errorf("a live run did update; rows must not hedge:\n%s", out)
 		}
 	})
+}
+
+// TestStaleAndOrphans_DecodeBareArrays pins the two graph-health tools
+// against the shape their endpoints actually return.
+//
+// GET /stale and GET /orphans both WriteJSON a bare []types.BrainEntry
+// (internal/api/health_extended.go). Both tools decoded an {entries,total}
+// envelope instead, so every single invocation returned
+// "decode response: json: cannot unmarshal array into Go value of
+// type struct{...}" — they had never worked. GetStale/GetOrphans build
+// their slices with make(...,0,n), so there is no null-response path where
+// the old code could accidentally have succeeded.
+//
+// The pre-existing tests passed because their mocks emitted the envelope
+// the buggy struct expected. A fixture built from the real type is the only
+// kind that can catch this.
+func TestStaleAndOrphans_DecodeBareArrays(t *testing.T) {
+	entries := []types.BrainEntry{
+		{ID: "aaa11111", Path: "projects/p/note/a.md", Title: "Alpha", Type: "note", LastVerified: "2026-01-01"},
+		{ID: "bbb22222", Path: "projects/p/note/b.md", Title: "Beta", Type: "note"},
+	}
+
+	for _, tc := range []struct{ tool, path string }{
+		{"stale", "/api/v1/stale"},
+		{"orphans", "/api/v1/orphans"},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.path {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(entries)
+			}))
+			defer srv.Close()
+
+			s := NewServer()
+			RegisterBrainTools(s, NewAPIClient(srv.URL))
+			out, err := s.tools[tc.tool].handler(context.Background(), map[string]any{"project": "p"})
+			if err != nil {
+				t.Fatalf("%s failed to decode a bare array: %v", tc.tool, err)
+			}
+			for _, want := range []string{"Alpha", "Beta"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s did not render %q:\n%s", tc.tool, want, out)
+				}
+			}
+		})
+	}
 }

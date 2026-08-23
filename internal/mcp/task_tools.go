@@ -354,26 +354,28 @@ If no ready tasks, shows current queue state.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		proj := ResolveProject(args)
 
-		var nextResp struct {
-			Task *struct {
-				ID             string   `json:"id"`
-				Path           string   `json:"path"`
-				Title          string   `json:"title"`
-				Status         string   `json:"status"`
-				Priority       string   `json:"priority"`
-				Classification string   `json:"classification"`
-				ResolvedDeps   []string `json:"resolved_deps"`
-				WaitingOn      []string `json:"waiting_on"`
-				BlockedBy      []string `json:"blocked_by"`
-			} `json:"task"`
-			Message string `json:"message"`
-		}
-		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj)+"/next", nil, nil, &nextResp); err != nil {
+		// GET /tasks/{project}/next writes a BARE ResolvedTask
+		// (internal/api/tasks.go:174) — there is no {"task": ...} envelope
+		// and no "message" field.
+		//
+		// A bare object decodes into an enveloped struct without error: it
+		// is an object matching an object, so nothing fails. The "task" key
+		// is simply never present, Task stays nil, and the tool reported
+		// "No ready tasks available" for a queue full of ready work — a
+		// confident wrong answer rather than a visible failure, which is
+		// why it could survive unnoticed.
+		//
+		// The 404 branch below is also unreachable: GetNext
+		// (internal/service/task.go) does not return ErrNotFound, so an
+		// empty queue arrives as a 200 with a zero-valued task. Treat an
+		// empty ID as "nothing ready".
+		var nextTask types.ResolvedTask
+		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj)+"/next", nil, nil, &nextTask); err != nil {
 			return "", err
 		}
 
 		// No ready task available
-		if nextResp.Task == nil {
+		if nextTask.ID == "" {
 			// Get stats for context
 			var statsResp struct {
 				Tasks []struct {
@@ -437,7 +439,7 @@ Current state:
 Use tasks to see the full task list and dependency status.`, waiting, depBlocked, statusBlocked, completed), nil
 		}
 
-		task := nextResp.Task
+		task := nextTask
 
 		// Get full entry content
 		var entry struct {

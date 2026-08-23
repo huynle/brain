@@ -490,12 +490,16 @@ func TestBrainTaskNext_Handler(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.URL.Path == "/api/v1/tasks/test-project/next" {
-			json.NewEncoder(w).Encode(map[string]any{
-				"task": map[string]any{
-					"id": "abc12345", "path": "projects/test/task/abc12345.md",
-					"title": "Next Task", "status": "pending", "priority": "high",
-					"classification": "ready", "resolved_deps": []string{"dep1"},
-				},
+			// A BARE ResolvedTask, which is what api/tasks.go:174 writes.
+			// This fixture used to wrap it in {"task": ...} — an envelope
+			// the server has never sent. The mock and the hand-rolled
+			// decode struct agreed with each other and were both wrong
+			// about the server, so the test passed while the tool reported
+			// "No ready tasks available" for a queue full of ready work.
+			json.NewEncoder(w).Encode(types.ResolvedTask{
+				ID: "abc12345", Path: "projects/test/task/abc12345.md",
+				Title: "Next Task", Status: "pending", Priority: "high",
+				Classification: "ready", ResolvedDeps: []string{"dep1"},
 			})
 			return
 		}

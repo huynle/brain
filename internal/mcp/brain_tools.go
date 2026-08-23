@@ -2157,38 +2157,40 @@ func registerBrainStale(s *Server, client *APIClient) {
 			params["project"] = v
 		}
 
-		var resp struct {
-			Entries []struct {
-				ID                string `json:"id"`
-				Path              string `json:"path"`
-				Title             string `json:"title"`
-				Type              string `json:"type"`
-				DaysSinceVerified *int   `json:"daysSinceVerified"`
-			} `json:"entries"`
-			Total int `json:"total"`
-		}
+		// GET /stale writes a BARE array of BrainEntry
+		// (internal/api/health_extended.go:76). Decoding it into an
+		// {entries,total} envelope is an unmarshal error, which api_client
+		// turns into a hard failure — so this tool returned
+		// "cannot unmarshal array into Go value of type struct{...}" on
+		// EVERY call and had done since it was written. GetStale builds its
+		// slice with make(...,0,n), so there is no null-response path where
+		// it could accidentally work.
+		//
+		// The old struct also carried a phantom daysSinceVerified; the real
+		// field is last_verified, and the underscore defeats Go's
+		// case-insensitive key fallback.
+		var resp []types.BrainEntry
 		if err := client.Request(ctx, "GET", "/stale", nil, params, &resp); err != nil {
 			return "", err
 		}
 
-		if len(resp.Entries) == 0 {
+		if len(resp) == 0 {
 			return fmt.Sprintf("No stale entries found (all verified within %d days)", days), nil
 		}
 
 		lines := []string{
 			fmt.Sprintf("## Stale Entries (not verified in %d days)", days),
 			"",
-			fmt.Sprintf("Found %d entries needing verification:", resp.Total),
-			"",
+			foundLine("entries needing verification", len(resp), IntArg(args, "limit", 0), 100),
 		}
 
-		for _, e := range resp.Entries {
-			daysSince := "never"
-			if e.DaysSinceVerified != nil {
-				daysSince = fmt.Sprintf("%d days ago", *e.DaysSinceVerified)
+		for _, e := range resp {
+			lastVerified := e.LastVerified
+			if lastVerified == "" {
+				lastVerified = "never"
 			}
 			lines = append(lines, fmt.Sprintf("- **%s**", e.Title))
-			lines = append(lines, fmt.Sprintf("  `%s` | Last verified: %s", e.Path, daysSince))
+			lines = append(lines, fmt.Sprintf("  `%s` | Last verified: %s", e.Path, lastVerified))
 		}
 
 		lines = append(lines, "")
@@ -2225,20 +2227,18 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 			params["project"] = v
 		}
 
-		var resp struct {
-			Entries []struct {
-				ID    string `json:"id"`
-				Path  string `json:"path"`
-				Title string `json:"title"`
-				Type  string `json:"type"`
-			} `json:"entries"`
-			Total int `json:"total"`
-		}
+		// GET /orphans writes a BARE array of BrainEntry
+		// (internal/api/health_extended.go:47), exactly like /stale. Same
+		// unmarshal error, same hard failure on every call. fetchGraph two
+		// hundred lines below already carries the comment "They return a
+		// BARE BrainEntry array (not {entries,total})" — the knowledge was
+		// in this file and these two sites never received it.
+		var resp []types.BrainEntry
 		if err := client.Request(ctx, "GET", "/orphans", nil, params, &resp); err != nil {
 			return "", err
 		}
 
-		if len(resp.Entries) == 0 {
+		if len(resp) == 0 {
 			typeFilter := ""
 			if v := StringArg(args, "type", ""); v != "" {
 				typeFilter = fmt.Sprintf(" of type %q", v)
@@ -2254,11 +2254,10 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 		lines := []string{
 			fmt.Sprintf("## Orphan Entries%s", typeLabel),
 			"",
-			fmt.Sprintf("Found %d entries with no incoming links:", resp.Total),
-			"",
+			foundLine("entries with no incoming links", len(resp), IntArg(args, "limit", 0), 100),
 		}
 
-		for _, e := range resp.Entries {
+		for _, e := range resp {
 			lines = append(lines, fmt.Sprintf("- **%s** (`%s`) - %s", e.Title, e.Path, e.Type))
 		}
 

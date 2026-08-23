@@ -408,3 +408,107 @@ func TestSearchQuality_Strategies(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Natural-language queries: punctuation and long phrases
+// ---------------------------------------------------------------------------
+
+// TestSearchQuality_PunctuationIsNotSyntax pins that ordinary punctuation in
+// a query is searched for, not parsed.
+//
+// FTS5 reads `:` as a column filter, so `once_per: cooldown` used to reach
+// SQLite as `no such column: once_per`, and the error was swallowed into an
+// empty result. Live against the real store, `once_per cooldown` returned 5
+// entries and `once_per: cooldown` returned 0 — one character apart.
+func TestSearchQuality_PunctuationIsNotSyntax(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	seedSearchNotes(t, s)
+
+	plain, err := s.SearchNotes(ctx, "Go performance", nil)
+	if err != nil {
+		t.Fatalf("plain query errored: %v", err)
+	}
+	if len(plain) == 0 {
+		t.Fatal("fixture problem: expected the plain query to match something")
+	}
+
+	for _, q := range []string{
+		"Go: performance",
+		"Go, performance",
+		"Go/performance",
+		"Go. performance",
+	} {
+		t.Run(q, func(t *testing.T) {
+			got, err := s.SearchNotes(ctx, q, nil)
+			if err != nil {
+				t.Fatalf("search %q errored: %v", q, err)
+			}
+			if len(got) == 0 {
+				t.Errorf("search %q returned nothing; punctuation was parsed as syntax rather than searched for", q)
+			}
+		})
+	}
+}
+
+// TestSearchQuality_LongQueryFallsBackToOr pins that adding words cannot
+// silently take a query to zero.
+//
+// FTS5 joins bare terms with implicit AND, so each extra word can only
+// remove results — and agents write long descriptive queries. When the AND
+// pass finds nothing, the OR pass supplies recall instead of silence.
+func TestSearchQuality_LongQueryFallsBackToOr(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	seedSearchNotes(t, s)
+
+	// No single document contains all of these; several contain some.
+	got, err := s.SearchNotes(ctx, "Go TypeScript Rust SQLite migration architecture", nil)
+	if err != nil {
+		t.Fatalf("long query errored: %v", err)
+	}
+	if len(got) == 0 {
+		t.Fatal("long descriptive query returned nothing; the OR fallback did not engage")
+	}
+}
+
+// TestSearchQuality_ExpressionSyntaxStillWorks pins the power-user escape
+// hatch: deliberate FTS5 expressions must not be quoted into literals.
+func TestSearchQuality_ExpressionSyntaxStillWorks(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	seedSearchNotes(t, s)
+
+	got, err := s.SearchNotes(ctx, `"TypeScript"`, nil)
+	if err != nil {
+		t.Fatalf("quoted-phrase query errored: %v", err)
+	}
+	if len(got) == 0 {
+		t.Error(`explicit phrase query "TypeScript" returned nothing`)
+	}
+
+	orGot, err := s.SearchNotes(ctx, "Rust OR SQLite", nil)
+	if err != nil {
+		t.Fatalf("OR expression errored: %v", err)
+	}
+	if len(orGot) == 0 {
+		t.Error("explicit OR expression returned nothing")
+	}
+}
+
+// TestSearchQuality_MalformedExpressionDegradesToWords pins that a
+// deliberate expression that fails to parse falls back to a literal word
+// search rather than to silence.
+func TestSearchQuality_MalformedExpressionDegradesToWords(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	seedSearchNotes(t, s)
+
+	got, err := s.SearchNotes(ctx, `"TypeScript`, nil) // unterminated quote
+	if err != nil {
+		t.Fatalf("malformed expression errored: %v", err)
+	}
+	if len(got) == 0 {
+		t.Error("malformed expression returned nothing; it should degrade to searching for the words")
+	}
+}

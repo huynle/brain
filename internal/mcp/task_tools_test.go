@@ -3,10 +3,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // =============================================================================
@@ -102,10 +105,28 @@ func TestBrainTasks_Schema(t *testing.T) {
 		}
 	}
 
-	// Check classification enum
+	// Check classification enum by CONTENT, not count. A bare length
+	// assertion fails on any deliberate addition while saying nothing about
+	// whether the right values are present.
+	//
+	// not_pending is in the list because the renderer groups it: without it
+	// in the enum, the one bucket holding ~99% of a mature project's tasks
+	// was unreachable by filter.
 	classProp := tool.InputSchema.Properties["classification"]
-	if len(classProp.Enum) != 3 {
-		t.Errorf("classification enum has %d values, want 3", len(classProp.Enum))
+	wantClassifications := map[string]bool{
+		"ready": false, "waiting": false, "blocked": false, "not_pending": false,
+	}
+	for _, v := range classProp.Enum {
+		if _, ok := wantClassifications[v]; !ok {
+			t.Errorf("classification enum has unexpected value %q", v)
+			continue
+		}
+		wantClassifications[v] = true
+	}
+	for v, seen := range wantClassifications {
+		if !seen {
+			t.Errorf("classification enum missing %q", v)
+		}
 	}
 }
 
@@ -1769,5 +1790,153 @@ func TestTaskToolsDoNotOverlapBrainTools(t *testing.T) {
 
 	if taskToolCount != 14 {
 		t.Errorf("expected 14 new task tools (no overlap), got %d new tools", taskToolCount)
+	}
+}
+
+// TestBrainTasks_DecodesServerPayload feeds the handler a payload shaped by
+// types.TaskListResponse and asserts the rendered output reflects it.
+//
+// Nothing exercised this handler against a realistic payload, so four field
+// mismatches sat undetected: DependsOn was tagged `dependsOn` and typed as a
+// struct array (wire: `depends_on`, []string), Completed did not exist on
+// TaskStats at all, Cycles was a struct array (wire: [][]string), and
+// status_blocked/not_pending were dropped. Every one failed silently, and
+// the first printed "Dependencies: none" on every task ever listed.
+func TestBrainTasks_DecodesServerPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.TaskListResponse{
+			Tasks: []types.ResolvedTask{
+				{ID: "aaa11111", Title: "Ready with deps", Status: "pending", Classification: "ready", DependsOn: []string{"ddd44444"}},
+				{ID: "bbb22222", Title: "Waiting one", Status: "pending", Classification: "waiting", DependsOn: []string{"aaa11111", "ddd44444"}},
+				{ID: "ccc33333", Title: "Finished one", Status: "completed", Classification: "not_pending"},
+			},
+			Count: 3,
+			Stats: &types.TaskStats{Total: 3, Ready: 1, Waiting: 1, NotPending: 1},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(server.URL))
+	out, err := s.tools["tasks"].handler(context.Background(), map[string]any{"project": "p"})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if strings.Contains(out, "Dependencies: none") {
+		t.Errorf("a task with depends_on rendered as having none:\n%s", out)
+	}
+	if !strings.Contains(out, "ddd44444") {
+		t.Errorf("dependency id missing from output:\n%s", out)
+	}
+	if !strings.Contains(out, "not_pending") {
+		t.Errorf("not_pending counter missing from stats:\n%s", out)
+	}
+	if strings.Contains(out, "completed") && strings.Contains(out, "| 0 not_pending") {
+		t.Errorf("not_pending counted zero despite a not_pending task:\n%s", out)
+	}
+	if !strings.Contains(out, "Finished one") {
+		t.Errorf("not_pending task was never rendered:\n%s", out)
+	}
+}
+
+// TestBrainTasks_CyclesDoNotBreakTheTool pins that a dependency cycle
+// renders. Cycles was typed as a struct array against a [][]string wire
+// field, and the API client turns an unmarshal error into a hard failure —
+// so the tool broke completely exactly when a cycle existed.
+func TestBrainTasks_CyclesDoNotBreakTheTool(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.TaskListResponse{
+			Tasks:  []types.ResolvedTask{{ID: "aaa11111", Title: "In a cycle", Status: "pending", Classification: "blocked"}},
+			Count:  1,
+			Cycles: [][]string{{"aaa11111", "bbb22222", "aaa11111"}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(server.URL))
+	out, err := s.tools["tasks"].handler(context.Background(), map[string]any{"project": "p"})
+	if err != nil {
+		t.Fatalf("a dependency cycle broke the tool entirely: %v", err)
+	}
+	if !strings.Contains(out, "Circular Dependencies Detected") {
+		t.Errorf("cycle not reported:\n%s", out)
+	}
+	if !strings.Contains(out, "aaa11111 -> bbb22222 -> aaa11111") {
+		t.Errorf("cycle path not rendered:\n%s", out)
+	}
+}
+
+// TestBrainTasks_LimitKeepsActionableTasks pins that the limit is spent on
+// actionable buckets first.
+//
+// The limit used to be applied to the raw list, which in a mature project is
+// ~99% finished work — so lowering it discarded exactly the rows the caller
+// wanted. On a real project, limit:10 rendered a stats line and zero tasks.
+func TestBrainTasks_LimitKeepsActionableTasks(t *testing.T) {
+	var tasks []types.ResolvedTask
+	for i := 0; i < 30; i++ {
+		tasks = append(tasks, types.ResolvedTask{
+			ID: fmt.Sprintf("done%04d", i), Title: "Finished", Status: "completed", Classification: "not_pending",
+		})
+	}
+	tasks = append(tasks, types.ResolvedTask{ID: "act00001", Title: "Actionable one", Status: "pending", Classification: "ready"})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.TaskListResponse{Tasks: tasks, Count: len(tasks)})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(server.URL))
+	out, err := s.tools["tasks"].handler(context.Background(), map[string]any{"project": "p", "limit": float64(3)})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(out, "Actionable one") {
+		t.Errorf("the single ready task was truncated away by a low limit:\n%s", out)
+	}
+	if !strings.Contains(out, "Showing 3 of 31") {
+		t.Errorf("truncation was not disclosed:\n%s", out)
+	}
+}
+
+// TestBrainTasks_StatsMatchTheRenderedBody pins that the header describes the
+// same set as the body. The server's Stats block is project-wide, so
+// printing it above a filtered body produced "4 ready | 2 waiting"
+// immediately followed by "No tasks found matching criteria."
+func TestBrainTasks_StatsMatchTheRenderedBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(types.TaskListResponse{
+			Tasks: []types.ResolvedTask{
+				{ID: "aaa11111", Title: "Other feature", Status: "pending", Classification: "ready", FeatureID: "other"},
+			},
+			Count: 1,
+			Stats: &types.TaskStats{Total: 400, Ready: 4, Waiting: 2},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(server.URL))
+	out, err := s.tools["tasks"].handler(context.Background(), map[string]any{
+		"project": "p", "feature_id": "nonexistent",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(out, "No tasks found matching criteria") {
+		t.Fatalf("expected the empty state:\n%s", out)
+	}
+	if strings.Contains(out, "4 ready") {
+		t.Errorf("project-wide stats printed above an empty filtered body:\n%s", out)
+	}
+	if !strings.Contains(out, "0 ready") {
+		t.Errorf("stats should describe the filtered set:\n%s", out)
 	}
 }

@@ -53,7 +53,7 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			Type: "object",
 			Properties: map[string]Property{
 				"status":         {Type: "string", Enum: types.EntryStatuses, Description: "Filter by task status (pending, in_progress, completed, etc.)"},
-				"classification": {Type: "string", Enum: []string{"ready", "waiting", "blocked"}, Description: "Filter by dependency classification"},
+				"classification": {Type: "string", Enum: []string{"ready", "waiting", "blocked", "not_pending"}, Description: "Filter by dependency classification. not_pending covers everything outside the pending dependency graph (completed, cancelled, archived, ...)."},
 				"feature_id":     {Type: "string", Description: "Filter tasks by feature group ID (e.g., 'auth-system', 'dark-mode')"},
 				"limit":          {Type: "number", Description: "Maximum results to return (default: 50)"},
 				"project":        {Type: "string", Description: "Override auto-detected project"},
@@ -62,33 +62,45 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		proj := ResolveProject(args)
 
+		// This struct must mirror types.TaskListResponse / ResolvedTask /
+		// TaskStats. It did not, in four places, and each mismatch failed
+		// silently rather than loudly:
+		//
+		//   - DependsOn was tagged `dependsOn` and typed as a struct array;
+		//     the wire sends `depends_on` as []string. Both wrong, so it
+		//     always decoded empty and every listed task reported
+		//     "Dependencies: none".
+		//   - Completed does not exist on TaskStats at all, so the tool
+		//     printed "0 completed" for projects holding hundreds of
+		//     completed tasks.
+		//   - Cycles is [][]string, not a struct array. The mismatch is an
+		//     unmarshal error, which the API client turns into a hard
+		//     failure — so the tool broke completely exactly when a
+		//     dependency cycle existed, i.e. when it was most needed.
+		//   - status_blocked and not_pending are on the wire and were
+		//     dropped, under a comment claiming the server did not send
+		//     them.
 		var resp struct {
 			Tasks []struct {
-				ID             string `json:"id"`
-				Title          string `json:"title"`
-				Status         string `json:"status"`
-				Priority       string `json:"priority"`
-				FeatureID      string `json:"feature_id"`
-				Classification string `json:"classification"`
-				DependsOn      []struct {
-					ID     string `json:"id"`
-					Title  string `json:"title"`
-					Status string `json:"status"`
-				} `json:"dependsOn"`
-				BlockedBy string `json:"blocked_by_reason"`
+				ID             string   `json:"id"`
+				Title          string   `json:"title"`
+				Status         string   `json:"status"`
+				Priority       string   `json:"priority"`
+				FeatureID      string   `json:"feature_id"`
+				Classification string   `json:"classification"`
+				DependsOn      []string `json:"depends_on"`
+				BlockedBy      string   `json:"blocked_by_reason"`
 			} `json:"tasks"`
 			Count int `json:"count"`
 			Stats *struct {
-				Ready     int `json:"ready"`
-				Waiting   int `json:"waiting"`
-				Blocked   int `json:"blocked"`
-				Completed int `json:"completed"`
-				Total     int `json:"total"`
+				Total         int `json:"total"`
+				Ready         int `json:"ready"`
+				Waiting       int `json:"waiting"`
+				Blocked       int `json:"blocked"`
+				StatusBlocked int `json:"status_blocked"`
+				NotPending    int `json:"not_pending"`
 			} `json:"stats"`
-			Cycles []struct {
-				TaskID string   `json:"taskId"`
-				Cycle  []string `json:"cycle"`
-			} `json:"cycles"`
+			Cycles [][]string `json:"cycles"`
 		}
 		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj), nil, nil, &resp); err != nil {
 			return "", err
@@ -102,18 +114,15 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			Priority       string
 			FeatureID      string
 			Classification string
-			DependsOn      []struct {
-				ID     string `json:"id"`
-				Title  string `json:"title"`
-				Status string `json:"status"`
-			}
-			BlockedBy string
+			DependsOn      []string
+			BlockedBy      string
 		}
 
 		filtered := make([]taskEntry, 0, len(resp.Tasks))
 		statusFilter := StringArg(args, "status", "")
 		classFilter := StringArg(args, "classification", "")
 		featureFilter := StringArg(args, "feature_id", "")
+		filterApplied := statusFilter != "" || classFilter != "" || featureFilter != ""
 
 		for _, t := range resp.Tasks {
 			if statusFilter != "" && t.Status != statusFilter {
@@ -137,13 +146,15 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			})
 		}
 
-		limit := IntArg(args, "limit", 50)
-		if len(filtered) > limit {
-			filtered = filtered[:limit]
-		}
-
-		// Group by classification
-		var ready, waiting, blocked []taskEntry
+		// Classify BEFORE truncating.
+		//
+		// The limit used to be applied to the raw list, which is dominated
+		// by not_pending tasks (a mature project is ~99% completed work).
+		// Lowering the limit to save context therefore discarded exactly
+		// the actionable rows the caller asked for: on a real project,
+		// tasks(limit:10) rendered a stats line and zero tasks, because the
+		// six actionable ones sat at positions 15-20 of 890.
+		var ready, waiting, blocked, notPending []taskEntry
 		for _, t := range filtered {
 			switch t.Classification {
 			case "ready":
@@ -152,44 +163,96 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 				waiting = append(waiting, t)
 			case "blocked":
 				blocked = append(blocked, t)
+			default:
+				// Anything the server did not classify as part of the
+				// pending dependency graph — completed, cancelled,
+				// archived, and so on.
+				notPending = append(notPending, t)
 			}
 		}
+
+		// Spend the limit on the most actionable buckets first, so a small
+		// limit yields the tasks a caller can act on rather than a page of
+		// finished ones.
+		limit := IntArg(args, "limit", 50)
+		remaining := limit
+		takeBucket := func(bucket []taskEntry) []taskEntry {
+			if remaining <= 0 {
+				return nil
+			}
+			if len(bucket) > remaining {
+				bucket = bucket[:remaining]
+			}
+			remaining -= len(bucket)
+			return bucket
+		}
+		ready = takeBucket(ready)
+		waiting = takeBucket(waiting)
+		blocked = takeBucket(blocked)
+		notPending = takeBucket(notPending)
+		shown := len(ready) + len(waiting) + len(blocked) + len(notPending)
 
 		lines := []string{
 			fmt.Sprintf("## Tasks for project: %s", proj),
 			"",
 		}
 
-		// Stats summary.
+		// Stats summary, computed from the SAME set that is rendered below.
+		//
+		// The server's Stats block is project-wide, so printing it above a
+		// filtered body produced flat contradictions — most starkly
+		// "**Stats:** 4 ready | 2 waiting" immediately followed by
+		// "*No tasks found matching criteria.*". Counting the filtered set
+		// keeps the header and the body describing the same thing, and the
+		// project-wide total is appended separately, labelled, when it adds
+		// information.
 		//
 		// Two "blocked" counters are reported separately to disambiguate the
 		// two meanings that previously shared the same word (see task
 		// ghtzzp1x / plan 24urhmtl#Finding-4):
 		//
-		//   - dep_blocked:    dependency classification == "blocked" (comes
-		//                     from the server's Stats.Blocked field, which is
-		//                     computed from t.Classification in taskdeps.go).
-		//   - status_blocked: t.Status == "blocked" (computed locally from
-		//                     the filtered tasks; the server does not
-		//                     currently expose this in TaskStats).
+		//   - dep_blocked:    dependency classification == "blocked".
+		//   - status_blocked: t.Status == "blocked".
 		//
 		// The legacy ambiguous "blocked" counter is intentionally NOT emitted
 		// here. Downstream consumers must migrate to the split counters.
 		// TODO(ghtzzp1x): PWA StatusBar lives outside this repo; when it is
 		// updated, remove any legacy alias handling there too.
-		if resp.Stats != nil {
-			st := resp.Stats
-			statusBlocked := 0
-			for _, t := range filtered {
-				if t.Status == "blocked" {
-					statusBlocked++
-				}
+		depBlocked, statusBlocked, notPendingCount := 0, 0, 0
+		readyCount, waitingCount := 0, 0
+		for _, t := range filtered {
+			switch t.Classification {
+			case "ready":
+				readyCount++
+			case "waiting":
+				waitingCount++
+			case "blocked":
+				depBlocked++
+			default:
+				notPendingCount++
 			}
+			if t.Status == "blocked" {
+				statusBlocked++
+			}
+		}
+
+		statsLine := fmt.Sprintf(
+			"**Stats:** %d ready | %d waiting | %d dep_blocked | %d status_blocked | %d not_pending",
+			readyCount, waitingCount, depBlocked, statusBlocked, notPendingCount,
+		)
+		if filterApplied {
+			statsLine = "**Stats (matching your filters):** " + strings.TrimPrefix(statsLine, "**Stats:** ")
+		}
+		if resp.Stats != nil && resp.Stats.Total != len(filtered) {
+			statsLine += fmt.Sprintf("  ·  project total: %d", resp.Stats.Total)
+		}
+		lines = append(lines, statsLine, "")
+
+		if shown < len(filtered) {
 			lines = append(lines, fmt.Sprintf(
-				"**Stats:** %d ready | %d waiting | %d dep_blocked | %d status_blocked | %d completed",
-				st.Ready, st.Waiting, st.Blocked, statusBlocked, st.Completed,
-			))
-			lines = append(lines, "")
+				"*Showing %d of %d matching tasks (limit %d) — most actionable first.*",
+				shown, len(filtered), limit,
+			), "")
 		}
 
 		// Ready tasks
@@ -199,11 +262,7 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 				priority := priorityLabel(task.Priority)
 				lines = append(lines, fmt.Sprintf("- **%s %s** (`%s`) - %s", priority, task.Title, task.ID, task.Status))
 				if len(task.DependsOn) > 0 {
-					deps := make([]string, len(task.DependsOn))
-					for i, d := range task.DependsOn {
-						deps[i] = fmt.Sprintf("%s (%s)", d.Title, d.Status)
-					}
-					lines = append(lines, fmt.Sprintf("  Dependencies: %s", strings.Join(deps, ", ")))
+					lines = append(lines, fmt.Sprintf("  Dependencies (all met): %s", strings.Join(task.DependsOn, ", ")))
 				} else {
 					lines = append(lines, "  Dependencies: none")
 				}
@@ -218,15 +277,10 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 				priority := priorityLabel(task.Priority)
 				lines = append(lines, fmt.Sprintf("- **%s %s** (`%s`) - %s", priority, task.Title, task.ID, task.Status))
 				if len(task.DependsOn) > 0 {
-					var incomplete []string
-					for _, d := range task.DependsOn {
-						if d.Status != "completed" {
-							incomplete = append(incomplete, fmt.Sprintf("%s (%s)", d.Title, d.Status))
-						}
-					}
-					if len(incomplete) > 0 {
-						lines = append(lines, fmt.Sprintf("  Waiting on: %s", strings.Join(incomplete, ", ")))
-					}
+					// The wire carries dependency IDs only, not their
+					// statuses, so every dep is listed rather than just
+					// the unmet ones. Use task_get on an id for detail.
+					lines = append(lines, fmt.Sprintf("  Depends on: %s", strings.Join(task.DependsOn, ", ")))
 				}
 			}
 			lines = append(lines, "")
@@ -247,16 +301,28 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			lines = append(lines, "")
 		}
 
-		// Cycles warning
-		if len(resp.Cycles) > 0 {
-			lines = append(lines, "### Circular Dependencies Detected")
-			for _, cycle := range resp.Cycles {
-				lines = append(lines, fmt.Sprintf("- Cycle: %s", strings.Join(cycle.Cycle, " -> ")))
+		// Not-pending tasks (completed, cancelled, archived, ...). Rendered
+		// last and only when the limit still has room, so finished work can
+		// never crowd out actionable work.
+		if len(notPending) > 0 {
+			lines = append(lines, "### Not pending (completed / cancelled / archived)")
+			for _, task := range notPending {
+				priority := priorityLabel(task.Priority)
+				lines = append(lines, fmt.Sprintf("- **%s %s** (`%s`) - %s", priority, task.Title, task.ID, task.Status))
 			}
 			lines = append(lines, "")
 		}
 
-		if len(filtered) == 0 {
+		// Cycles warning
+		if len(resp.Cycles) > 0 {
+			lines = append(lines, "### Circular Dependencies Detected")
+			for _, cycle := range resp.Cycles {
+				lines = append(lines, fmt.Sprintf("- Cycle: %s", strings.Join(cycle, " -> ")))
+			}
+			lines = append(lines, "")
+		}
+
+		if shown == 0 {
 			lines = append(lines, "*No tasks found matching criteria.*")
 		}
 

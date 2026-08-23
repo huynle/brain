@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -327,11 +328,12 @@ func TestBrainWebhookCreate_InvalidURL(t *testing.T) {
 		"events": []any{"task.completed"},
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("invalid URL must be reported as a tool error, not a success result")
 	}
-	if !strings.Contains(result, "invalid URL") {
-		t.Errorf("expected 'invalid URL' error, got: %s", result)
+	_ = result
+	if !strings.Contains(err.Error(), "invalid URL") {
+		t.Errorf("error should explain the failure, got: %v", err)
 	}
 }
 
@@ -400,11 +402,12 @@ func TestBrainWebhookCreate_Conflict(t *testing.T) {
 		"events": []any{"task.completed"},
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("a create conflict must be reported as a tool error: nothing was created and no id comes back")
 	}
-	if !strings.Contains(result, "already exists") {
-		t.Errorf("expected 'already exists' message, got: %s", result)
+	_ = result
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("error should explain the failure, got: %v", err)
 	}
 }
 
@@ -578,11 +581,12 @@ func TestBrainWebhookDelete_NotFound(t *testing.T) {
 		"id": "wh_missing",
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("operating on a missing webhook must be reported as a tool error")
 	}
-	if !strings.Contains(result, "not found") {
-		t.Errorf("expected 'not found' message, got: %s", result)
+	_ = result
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error should explain the failure, got: %v", err)
 	}
 }
 
@@ -706,11 +710,12 @@ func TestBrainWebhookToggle_NotFound(t *testing.T) {
 		"enabled": true,
 	})
 
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("operating on a missing webhook must be reported as a tool error")
 	}
-	if !strings.Contains(result, "not found") {
-		t.Errorf("expected 'not found' message, got: %s", result)
+	_ = result
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("error should explain the failure, got: %v", err)
 	}
 }
 
@@ -996,6 +1001,42 @@ func TestWebhookToolsNoCollision(t *testing.T) {
 	for _, name := range webhookTools {
 		if _, ok := s.tools[name]; !ok {
 			t.Errorf("webhook tool %q missing after registering all tool groups", name)
+		}
+	}
+}
+
+// TestWebhookTools_NoErrorStringsReturnedAsSuccess is a source-level guard
+// against the pattern this file used to contain: a handler detecting a
+// failure, formatting it into prose, and returning it with a nil error.
+//
+// server.go sets isError only when the handler returns a non-nil error, so
+// such a result reaches the model as an ordinary success and the agent acts
+// on a failure it cannot see. Returning a real error loses nothing — the
+// message is still delivered as text, just marked as a failure.
+//
+// The check is deliberately narrow: it looks for a returned string literal
+// that announces an error, not for every non-error message. Idempotency
+// notices ("already enabled — nothing to do") are legitimate successes,
+// because the caller's desired end state holds.
+func TestWebhookTools_NoErrorStringsReturnedAsSuccess(t *testing.T) {
+	src, err := os.ReadFile("webhook_tools.go")
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	for i, line := range strings.Split(string(src), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasSuffix(trimmed, "), nil") && !strings.HasSuffix(trimmed, `", nil`) {
+			continue
+		}
+		if !strings.HasPrefix(trimmed, "return ") {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		for _, marker := range []string{"error:", "not found", "invalid ", "already exists", "failed"} {
+			if strings.Contains(lower, marker) {
+				t.Errorf("webhook_tools.go:%d returns a failure as a success result "+
+					"(isError will not be set): %s", i+1, trimmed)
+			}
 		}
 	}
 }

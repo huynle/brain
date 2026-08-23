@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -63,7 +64,7 @@ Example:
 
 		// Validate URL format
 		if _, err := url.ParseRequestURI(webhookURL); err != nil {
-			return fmt.Sprintf("Error: invalid URL %q: %v", webhookURL, err), nil
+			return "", fmt.Errorf("invalid URL %q: %w", webhookURL, err)
 		}
 
 		req := types.CreateWebhookRequest{
@@ -97,7 +98,7 @@ Example:
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "already exists") || strings.Contains(errMsg, "409") {
-				return fmt.Sprintf("Webhook already exists with that URL. Use webhook_list to see existing webhooks."), nil
+				return "", errors.New("webhook already exists with that URL. Use webhook_list to see existing webhooks")
 			}
 			return "", err
 		}
@@ -213,7 +214,7 @@ Use webhook_list to find webhook IDs.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}
@@ -261,7 +262,7 @@ secret, and enabled status. Use webhook_get to inspect the result.`,
 				return "", fmt.Errorf("url must not be empty")
 			}
 			if _, err := url.ParseRequestURI(webhookURL); err != nil {
-				return fmt.Sprintf("Error: invalid URL %q: %v", webhookURL, err), nil
+				return "", fmt.Errorf("invalid URL %q: %w", webhookURL, err)
 			}
 			body["url"] = webhookURL
 		}
@@ -298,10 +299,10 @@ secret, and enabled status. Use webhook_get to inspect the result.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			if strings.Contains(errMsg, "already exists") || strings.Contains(errMsg, "409") {
-				return "Webhook already exists with that URL. Use webhook_list to see existing webhooks.", nil
+				return "", errors.New("webhook already exists with that URL. Use webhook_list to see existing webhooks")
 			}
 			return "", err
 		}
@@ -339,7 +340,7 @@ result, including success, status code, latency, and error details.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}
@@ -385,7 +386,7 @@ and timestamps. Use limit to control how many delivery records are returned.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}
@@ -447,7 +448,7 @@ Use webhook_list to find webhook IDs.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}
@@ -492,7 +493,7 @@ Use webhook_list to find webhook IDs.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}

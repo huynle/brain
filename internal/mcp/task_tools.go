@@ -963,28 +963,49 @@ func registerBrainTaskTrigger(s *Server, client *APIClient) {
 		proj := ResolveProject(args)
 		taskID := StringArgAlias(args, "", "task_id", "taskId")
 
-		var resp struct {
-			TaskID        string `json:"taskId"`
-			Run           any    `json:"run"`
-			Pipeline      []any  `json:"pipeline"`
-			PipelineCount int    `json:"pipelineCount"`
-			Message       string `json:"message"`
-		}
+		// types.TriggerResponse is {success, taskId, triggered, runId,
+		// nextRun, reason}. The hand-rolled struct declared run, pipeline,
+		// pipelineCount and message — none of which exist — and dropped
+		// every field that says what happened.
+		//
+		// That matters because TriggerService has FIVE paths returning
+		// HTTP 200 with Success:true and Triggered:false plus a Reason
+		// (internal/service/task.go:1385,1394,1404,1470,1475 — e.g.
+		// "max_runs reached (3/3)"). All five rendered as an apparent
+		// success carrying nothing but zero-valued phantoms, so "the task
+		// did not run, and here is why" was indistinguishable from "the
+		// task ran".
+		var resp types.TriggerResponse
 		err := client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/"+url.PathEscape(taskID)+"/trigger", nil, nil, &resp)
 		if err != nil {
-			result := map[string]any{
-				"operation": "task_trigger",
-				"project":   proj,
-				"error":     err.Error(),
-			}
-			data, _ := json.MarshalIndent(result, "", "  ")
-			return string(data), nil
+			// Returning the error as a nil-error string would leave isError
+			// unset, so the caller reads a failure as a normal result.
+			return "", err
 		}
 
 		result := map[string]any{
 			"operation": "task_trigger",
 			"project":   proj,
-			"data":      resp,
+			"task_id":   resp.TaskID,
+			"triggered": resp.Triggered,
+		}
+		if resp.Reason != "" {
+			result["reason"] = resp.Reason
+		}
+		if resp.RunID != "" {
+			result["run_id"] = resp.RunID
+		}
+		if resp.NextRun != "" {
+			result["next_run"] = resp.NextRun
+		}
+		if !resp.Triggered {
+			reason := resp.Reason
+			if reason == "" {
+				reason = "the server reported triggered=false without a reason"
+			}
+			result["summary"] = fmt.Sprintf("Task was NOT triggered: %s", reason)
+		} else {
+			result["summary"] = "Task was triggered."
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
 		return string(data), nil

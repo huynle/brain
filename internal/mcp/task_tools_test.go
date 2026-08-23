@@ -1252,17 +1252,17 @@ func TestBrainTaskTrigger_Error(t *testing.T) {
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "nonexistent",
 	})
-	// Trigger returns error as JSON, not as Go error
-	if err != nil {
-		t.Fatalf("handler should not return Go error: %v", err)
+	// An API failure must be signalled as a tool error. Packing it into a
+	// JSON success body leaves isError unset in server.go, so the caller
+	// reads a failure as an ordinary result and acts on it. The old
+	// assertion only described that behaviour; it gave no reason for it,
+	// and this same package returns real errors elsewhere.
+	if err == nil {
+		t.Fatal("a 404 from the trigger endpoint must be reported as a tool error, not a success result")
 	}
-
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		t.Fatalf("result should be valid JSON: %v", err)
-	}
-	if parsed["error"] == nil {
-		t.Error("result should contain error field")
+	_ = result
+	if !strings.Contains(err.Error(), "task not found") {
+		t.Errorf("error should carry the server's message, got: %v", err)
 	}
 }
 
@@ -2089,5 +2089,85 @@ func TestMonitorEnableTools_SendTheRealCreateContract(t *testing.T) {
 				t.Errorf("feature_id = %q, want %q", got.FeatureID, tc.wantFeature)
 			}
 		})
+	}
+}
+
+// TestBrainTaskTrigger_ReportsNotTriggered pins that a task which did not
+// run says so.
+//
+// TriggerService has five paths returning HTTP 200 with Success:true,
+// Triggered:false and a Reason (internal/service/task.go:1385,1394,1404,
+// 1470,1475 — e.g. "max_runs reached (3/3)"). The hand-rolled struct
+// declared run/pipeline/pipelineCount/message, none of which exist, and
+// dropped triggered and reason — so all five rendered as an apparent
+// success carrying only zero values.
+func TestBrainTaskTrigger_ReportsNotTriggered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.TriggerResponse{
+			Success: true, TaskID: "abc12345", Triggered: false,
+			Reason: "max_runs reached (3/3)",
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(srv.URL))
+	out, err := s.tools["task_trigger"].handler(context.Background(), map[string]any{
+		"project": "p", "task_id": "abc12345",
+	})
+	if err != nil {
+		t.Fatalf("a 200 response must not be an error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("result should be valid JSON: %v", err)
+	}
+	if parsed["triggered"] != false {
+		t.Errorf("triggered = %v, want false", parsed["triggered"])
+	}
+	if parsed["reason"] != "max_runs reached (3/3)" {
+		t.Errorf("reason was dropped, got: %v", parsed["reason"])
+	}
+	if summary, _ := parsed["summary"].(string); !strings.Contains(summary, "NOT triggered") {
+		t.Errorf("summary should state the task did not run, got: %v", parsed["summary"])
+	}
+}
+
+// TestBrainAttachmentList_EscapesEntryPath pins that a slash-bearing
+// entry_id reaches GET /entries/{id}/attachments as ONE path segment.
+//
+// entry_id is documented as "entry ID or path". Unescaped, a path fell
+// through to the GET /entries/* wildcard, which returns a BrainEntry —
+// and that decodes cleanly into AttachEntryAttachmentResponse because they
+// share "path" and "attachments". Attachments is include-gated and this
+// call sends no include, so the tool reported "No attachments found for
+// entry." for an entry with many, next to a correct-looking Path.
+func TestBrainAttachmentList_EscapesEntryPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.AttachEntryAttachmentResponse{
+			EntryID: "abc12345", Path: "projects/p/note/a.md",
+			Attachments: []types.AttachmentReference{{ID: "att1", Filename: "a.png"}},
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient(srv.URL))
+	if _, err := s.tools["attachment_list"].handler(context.Background(), map[string]any{
+		"project": "p", "entry_id": "projects/p/note/a.md",
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if strings.Contains(gotPath, "projects/p/note") {
+		t.Errorf("entry path reached the server unescaped and would fall through to the wildcard route: %s", gotPath)
+	}
+	if !strings.HasSuffix(gotPath, "/attachments") {
+		t.Errorf("request did not target the attachments sub-route: %s", gotPath)
 	}
 }

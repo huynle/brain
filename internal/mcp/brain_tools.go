@@ -388,7 +388,7 @@ func registerBrainAttachmentAttach(s *Server, client *APIClient) {
 		}
 
 		var resp types.AttachEntryAttachmentResponse
-		if err := client.Request(ctx, "POST", "/entries/"+entryID+"/attachments", body, map[string]string{"project_id": projectID}, &resp); err != nil {
+		if err := client.Request(ctx, "POST", "/entries/"+url.PathEscape(entryID)+"/attachments", body, map[string]string{"project_id": projectID}, &resp); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Attached attachment %s to entry %s\n\n%s", attachmentID, entryID, formatAttachmentReferences(resp.Attachments)), nil
@@ -418,7 +418,7 @@ func registerBrainAttachmentDetach(s *Server, client *APIClient) {
 			params["role"] = role
 		}
 		var resp types.AttachEntryAttachmentResponse
-		if err := client.Request(ctx, "DELETE", "/entries/"+entryID+"/attachments/"+url.PathEscape(attachmentID), nil, params, &resp); err != nil {
+		if err := client.Request(ctx, "DELETE", "/entries/"+url.PathEscape(entryID)+"/attachments/"+url.PathEscape(attachmentID), nil, params, &resp); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Detached attachment %s from entry %s\n\nRemaining:%s", attachmentID, entryID, formatAttachmentReferences(resp.Attachments)), nil
@@ -438,9 +438,19 @@ func registerBrainAttachmentList(s *Server, client *APIClient) {
 		if projectID == "" {
 			return "", fmt.Errorf("provide 'project' (no ambient project is available)")
 		}
+		// entry_id is documented as "entry ID or path", and the route is
+		// GET /entries/{id}/attachments — a SINGLE path segment. An
+		// unescaped path fell through to the GET /entries/* wildcard
+		// instead, which returns a BrainEntry. That decodes cleanly into
+		// AttachEntryAttachmentResponse because they share "path" and
+		// "attachments", and BrainEntry.Attachments is include-gated and
+		// this call sends no include — so the tool printed "No attachments
+		// found for entry." for an entry with many, alongside a
+		// correct-looking Path. A hard mismatch degrading into a confident
+		// lie. fetchGraph below already escapes for exactly this reason.
 		if entryID := StringArg(args, "entry_id", ""); entryID != "" {
 			var resp types.AttachEntryAttachmentResponse
-			if err := client.Request(ctx, "GET", "/entries/"+entryID+"/attachments", nil, map[string]string{"project_id": projectID}, &resp); err != nil {
+			if err := client.Request(ctx, "GET", "/entries/"+url.PathEscape(entryID)+"/attachments", nil, map[string]string{"project_id": projectID}, &resp); err != nil {
 				return "", err
 			}
 			return formatEntryAttachmentList(projectID, entryID, resp), nil
@@ -1990,7 +2000,7 @@ This is more precise than inject (which uses fuzzy search) - it extracts the exa
 			Level   int    `json:"level"`
 			Line    int    `json:"line"`
 		}
-		if err := client.Request(ctx, "GET", "/entries/"+planId+"/sections/"+encodedTitle, nil, params, &resp); err != nil {
+		if err := client.Request(ctx, "GET", "/entries/"+url.PathEscape(planId)+"/sections/"+encodedTitle, nil, params, &resp); err != nil {
 			return "", err
 		}
 
@@ -2068,7 +2078,7 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 			} `json:"sections"`
 			Total int `json:"total"`
 		}
-		if err := client.Request(ctx, "GET", "/entries/"+entryPath+"/sections", nil, nil, &sectionsResp); err != nil {
+		if err := client.Request(ctx, "GET", "/entries/"+url.PathEscape(entryPath)+"/sections", nil, nil, &sectionsResp); err != nil {
 			return "", err
 		}
 

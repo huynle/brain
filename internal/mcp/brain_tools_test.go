@@ -3032,3 +3032,114 @@ func TestStaleAndOrphans_DecodeBareArrays(t *testing.T) {
 		})
 	}
 }
+
+// TestPhantomFieldTools_RenderRealValues pins four tools that printed
+// zero-valued phantoms as if they were data.
+//
+// Each declared fields absent from the server type, so each rendered a
+// confident constant: "Total sections: 0" for a plan with many, "Line: 0"
+// always, three blank lines for a link, and a blank Version. Fixtures are
+// built from the real types.* values, which is the only shape that can
+// catch this.
+func TestPhantomFieldTools_RenderRealValues(t *testing.T) {
+	t.Run("plan_sections counts the slice", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if strings.HasSuffix(r.URL.Path, "/sections") {
+				_ = json.NewEncoder(w).Encode(types.SectionsResponse{
+					Path: "projects/p/plan/a.md",
+					Sections: []types.SectionHeader{
+						{Title: "Overview", Level: 1},
+						{Title: "Details", Level: 2},
+						{Title: "Risks", Level: 2},
+					},
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{ID: "aaa11111", Path: "projects/p/plan/a.md", Type: "plan"})
+		}))
+		defer srv.Close()
+
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["plan_sections"].handler(context.Background(), map[string]any{
+			"path": "projects/p/plan/a.md",
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "**Total sections:** 3") {
+			t.Errorf("section count came from a phantom Total:\n%s", out)
+		}
+		if strings.Contains(out, "line 0") {
+			t.Errorf("a phantom line number is still rendered:\n%s", out)
+		}
+	})
+
+	t.Run("link renders only the field that exists", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(types.LinkResponse{Link: "[[abc12345]]"})
+		}))
+		defer srv.Close()
+
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["link"].handler(context.Background(), map[string]any{"path": "projects/p/note/a.md"})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "[[abc12345]]") {
+			t.Errorf("link missing:\n%s", out)
+		}
+		for _, blank := range []string{"ID: \n", "Path: \n", "Title: "} {
+			if strings.Contains(out, blank) {
+				t.Errorf("still renders a phantom field as blank data (%q):\n%s", blank, out)
+			}
+		}
+	})
+
+	t.Run("check_connection reports embedding readiness", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(types.HealthResponse{
+				Status: "healthy",
+				Embedding: types.EmbeddingHealthStatus{
+					Enabled: true, Status: "ready", Provider: "openrouter", Model: "text-embedding-3-small",
+				},
+			})
+		}))
+		defer srv.Close()
+
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["check_connection"].handler(context.Background(), map[string]any{})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "ready") || !strings.Contains(out, "openrouter") {
+			t.Errorf("embedding readiness was dropped — an agent cannot tell whether semantic search works:\n%s", out)
+		}
+		if strings.Contains(out, "Version: ") {
+			t.Errorf("still renders the phantom Version field:\n%s", out)
+		}
+	})
+
+	t.Run("check_connection names a disabled embedding provider", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(types.HealthResponse{
+				Status:    "healthy",
+				Embedding: types.EmbeddingHealthStatus{Enabled: false},
+			})
+		}))
+		defer srv.Close()
+
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, _ := s.tools["check_connection"].handler(context.Background(), map[string]any{})
+		if !strings.Contains(out, "disabled") || !strings.Contains(out, "FTS") {
+			t.Errorf("a disabled provider should say semantic search is unavailable:\n%s", out)
+		}
+	})
+}

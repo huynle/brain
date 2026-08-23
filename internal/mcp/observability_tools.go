@@ -179,7 +179,23 @@ func registerBrainAutomationRuns(s *Server, client *APIClient) {
 			Properties: map[string]Property{
 				"project":       {Type: "string", Description: "Filter by project ID"},
 				"automation_id": {Type: "string", Description: "Filter by automation ID"},
-				"status":        {Type: "string", Description: "Filter by status (pending/active/completed/failed)"},
+				// The filter is exact-match SQL, so an advertised value the
+				// server never writes returns "No automation runs found." —
+				// indistinguishable from "this automation never ran".
+				//
+				// Real vocabulary: createRunAudit writes "queued" when a task
+				// is generated and "skipped" for every non-firing evaluation
+				// (paused, dedup, cooldown, max_concurrent); finalizeAutomationRun
+				// (internal/api/entries.go) later writes "completed", "blocked"
+				// or "cancelled" from the generated task's terminal status.
+				// "pending", "active" and "failed" were advertised and are
+				// never produced.
+				"status": {
+					Type: "string",
+					Enum: []string{"queued", "skipped", "completed", "blocked", "cancelled"},
+					Description: "Filter by run status. queued = a task was generated; skipped = evaluated but did not fire " +
+						"(paused, dedup, cooldown, or max_concurrent); completed/blocked/cancelled = the generated task reached that terminal state.",
+				},
 				"limit":         {Type: "number", Description: "Maximum runs to return (default: 100)"},
 			},
 		},

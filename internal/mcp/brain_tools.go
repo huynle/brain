@@ -1883,10 +1883,11 @@ This is useful to:
 			Properties: map[string]Property{},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		var resp struct {
-			Status  string `json:"status"`
-			Version string `json:"version"`
-		}
+		// types.HealthResponse is {status, timestamp, embedding} — there is
+		// no version, so "Version: " printed blank. Embedding was dropped,
+		// and it is the one signal telling an agent whether semantic search
+		// is usable or has silently fallen back to FTS.
+		var resp types.HealthResponse
 		err := client.Request(ctx, "GET", "/health", nil, nil, &resp)
 		if err != nil {
 			return fmt.Sprintf(`Brain API Status: UNAVAILABLE
@@ -1903,13 +1904,27 @@ To check server status:
 Brain tools will not work until the server is running.`, client.baseURL, err), nil
 		}
 
+		// Report embedding readiness. An agent choosing between
+		// strategy:"semantic" and the FTS default has no other way to learn
+		// that the embedding provider is down, and semantic search degrades
+		// quietly rather than erroring.
+		embedding := resp.Embedding.Status
+		if embedding == "" {
+			embedding = "unknown"
+		}
+		if !resp.Embedding.Enabled {
+			embedding = "disabled (semantic search unavailable; searches use FTS)"
+		} else if resp.Embedding.Provider != "" {
+			embedding = fmt.Sprintf("%s (%s / %s)", embedding, resp.Embedding.Provider, resp.Embedding.Model)
+		}
+
 		return fmt.Sprintf(`Brain API Status: CONNECTED
 
 Server URL: %s
-Version: %s
-Status: Ready to use
+Health: %s
+Embeddings: %s
 
-All brain tools (save, recall, search, inject, etc.) are available.`, client.baseURL, resp.Version), nil
+All brain tools (save, recall, search, inject, etc.) are available.`, client.baseURL, resp.Status, embedding), nil
 	})
 }
 
@@ -1940,18 +1955,15 @@ func registerBrainLink(s *Server, client *APIClient) {
 			"withTitle": argAlias(args, "with_title", "withTitle"),
 		}
 
-		var resp struct {
-			Link  string `json:"link"`
-			ID    string `json:"id"`
-			Path  string `json:"path"`
-			Title string `json:"title"`
-		}
+		// types.LinkResponse has exactly one field, Link. ID, Path and
+		// Title never existed, so the output was always three blank lines
+		// presented as data.
+		var resp types.LinkResponse
 		if err := client.Request(ctx, "POST", "/link", body, nil, &resp); err != nil {
 			return "", err
 		}
 
-		return fmt.Sprintf("Link: %s\nID: %s\nPath: %s\nTitle: %s",
-			resp.Link, resp.ID, resp.Path, resp.Title), nil
+		return fmt.Sprintf("Link: %s", resp.Link), nil
 	})
 }
 
@@ -1994,18 +2006,17 @@ This is more precise than inject (which uses fuzzy search) - it extracts the exa
 			params["includeSubsections"] = "false"
 		}
 
-		var resp struct {
-			Title   string `json:"title"`
-			Content string `json:"content"`
-			Level   int    `json:"level"`
-			Line    int    `json:"line"`
-		}
+		// types.SectionContentResponse is {title, content, path,
+		// includeSubsections}. The hand-rolled struct declared level and
+		// line, neither of which exists, so every section rendered
+		// "**Line:** 0".
+		var resp types.SectionContentResponse
 		if err := client.Request(ctx, "GET", "/entries/"+url.PathEscape(planId)+"/sections/"+encodedTitle, nil, params, &resp); err != nil {
 			return "", err
 		}
 
-		return fmt.Sprintf("## Section: %s\n\n**Plan:** %s\n**Line:** %d\n\n---\n\n%s",
-			resp.Title, planId, resp.Line, resp.Content), nil
+		return fmt.Sprintf("## Section: %s\n\n**Plan:** %s\n\n---\n\n%s",
+			resp.Title, planId, resp.Content), nil
 	})
 }
 
@@ -2070,14 +2081,12 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 			}
 		}
 
-		var sectionsResp struct {
-			Sections []struct {
-				Title string `json:"title"`
-				Level int    `json:"level"`
-				Line  int    `json:"line"`
-			} `json:"sections"`
-			Total int `json:"total"`
-		}
+		// types.SectionsResponse is {sections, path}, and SectionHeader is
+		// {title, level}. The hand-rolled struct declared a Total and a
+		// per-section Line, neither of which exists — so a 40-section plan
+		// reported "**Total sections:** 0" and every heading claimed
+		// "(line 0)". Count the slice instead.
+		var sectionsResp types.SectionsResponse
 		if err := client.Request(ctx, "GET", "/entries/"+url.PathEscape(entryPath)+"/sections", nil, nil, &sectionsResp); err != nil {
 			return "", err
 		}
@@ -2095,13 +2104,13 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 			"",
 			fmt.Sprintf("**Path:** %s", entryPath),
 			fmt.Sprintf("**Type:** %s", entryResp.Type),
-			fmt.Sprintf("**Total sections:** %d", sectionsResp.Total),
+			fmt.Sprintf("**Total sections:** %d", len(sectionsResp.Sections)),
 			"",
 		}
 
 		for _, section := range sectionsResp.Sections {
 			indent := strings.Repeat("  ", section.Level-1)
-			lines = append(lines, fmt.Sprintf("%s- %s (line %d)", indent, section.Title, section.Line))
+			lines = append(lines, fmt.Sprintf("%s- %s", indent, section.Title))
 		}
 
 		return strings.Join(lines, "\n"), nil

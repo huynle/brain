@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -232,6 +233,7 @@ func formatFeatureDetail(project string, feature types.Feature) string {
 		lines = append(lines, "", "No tasks in this feature.")
 		return strings.Join(lines, "\n")
 	}
+	lines = append(lines, formatFeatureGitLines(feature.Tasks)...)
 	lines = append(lines, "", "### Tasks")
 	for _, task := range feature.Tasks {
 		lines = append(lines, fmt.Sprintf("- %s (`%s`) - %s/%s", task.Title, task.ID, task.Status, task.Classification))
@@ -243,6 +245,72 @@ func formatFeatureDetail(project string, feature types.Feature) string {
 		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// formatFeatureGitLines renders where a feature's work lives in git and how
+// it is meant to land.
+//
+// ResolvedTask carries nine git and merge fields, and none of them were
+// shown anywhere. An agent asking the entirely ordinary question "what
+// branch is this feature on, and what does it merge into?" got back only
+// title/status/classification, despite the answer already being decoded and
+// in hand.
+//
+// Values are folded across the feature's tasks because the model is one
+// feature, one branch, one merge. Nothing enforces that, though, so when
+// tasks disagree every distinct value is listed and marked — a feature
+// whose tasks name three different merge targets is a checkout that will
+// misbehave in a way nobody can see from the task list.
+func formatFeatureGitLines(tasks []types.ResolvedTask) []string {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	fields := []struct {
+		label string
+		get   func(types.ResolvedTask) string
+	}{
+		{"branch", func(t types.ResolvedTask) string { return t.GitBranch }},
+		{"merges into", func(t types.ResolvedTask) string { return t.MergeTargetBranch }},
+		{"merge policy", func(t types.ResolvedTask) string { return t.MergePolicy }},
+		{"merge strategy", func(t types.ResolvedTask) string { return t.MergeStrategy }},
+		{"remote branch", func(t types.ResolvedTask) string { return t.RemoteBranchPolicy }},
+		{"execution mode", func(t types.ResolvedTask) string { return t.ExecutionMode }},
+		{"workdir", func(t types.ResolvedTask) string { return t.TargetWorkdir }},
+		{"git remote", func(t types.ResolvedTask) string { return t.GitRemote }},
+	}
+
+	var body []string
+	for _, f := range fields {
+		var distinct []string
+		seen := map[string]bool{}
+		for _, t := range tasks {
+			v := strings.TrimSpace(f.get(t))
+			if v == "" || seen[v] {
+				continue
+			}
+			seen[v] = true
+			distinct = append(distinct, v)
+		}
+		switch len(distinct) {
+		case 0:
+			// Nothing set on any task — say so only for the two fields
+			// whose absence actually changes what happens at checkout.
+			if f.label == "branch" || f.label == "merges into" {
+				body = append(body, fmt.Sprintf("- %s: (unset)", f.label))
+			}
+		case 1:
+			body = append(body, fmt.Sprintf("- %s: %s", f.label, distinct[0]))
+		default:
+			sort.Strings(distinct)
+			body = append(body, fmt.Sprintf("- %s: ⚠ tasks disagree — %s", f.label, strings.Join(distinct, ", ")))
+		}
+	}
+
+	if len(body) == 0 {
+		return nil
+	}
+	return append([]string{"", "### Git & merge"}, body...)
 }
 
 func formatFeatureSummaryLines(feature types.Feature) []string {

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 func TestRegisterFeatureTools_CountNamesHandlersDescriptions(t *testing.T) {
@@ -339,5 +341,82 @@ func TestFeatureTools_ValidationErrors(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+// TestFormatFeatureGitLines_ShowsWhereWorkLands pins that a feature reports
+// its branch and merge configuration.
+//
+// ResolvedTask carries nine git/merge fields and feature_get rendered none
+// of them, so "what branch is this feature on and what does it merge into?"
+// — a question anyone orchestrating work has to answer — could not be
+// answered through MCP at all, despite the data being decoded and in hand.
+func TestFormatFeatureGitLines_ShowsWhereWorkLands(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "a", GitBranch: "feat-x", MergeTargetBranch: "main", MergePolicy: "auto_pr", MergeStrategy: "squash", ExecutionMode: "worktree", TargetWorkdir: "/repo"},
+		{ID: "b", GitBranch: "feat-x", MergeTargetBranch: "main", MergePolicy: "auto_pr", MergeStrategy: "squash", ExecutionMode: "worktree", TargetWorkdir: "/repo"},
+	}
+	out := strings.Join(formatFeatureGitLines(tasks), "\n")
+
+	for _, want := range []string{
+		"### Git & merge",
+		"- branch: feat-x",
+		"- merges into: main",
+		"- merge policy: auto_pr",
+		"- merge strategy: squash",
+		"- execution mode: worktree",
+		"- workdir: /repo",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "disagree") {
+		t.Errorf("uniform tasks must not be reported as disagreeing:\n%s", out)
+	}
+}
+
+// TestFormatFeatureGitLines_FlagsDivergence pins the failure this section
+// exists to surface. The model is one feature, one branch, one merge — but
+// nothing enforces it, so tasks can quietly carry different merge targets
+// and the checkout then misbehaves with no visible cause.
+func TestFormatFeatureGitLines_FlagsDivergence(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "a", GitBranch: "feat-x", MergeTargetBranch: "main"},
+		{ID: "b", GitBranch: "feat-x", MergeTargetBranch: "develop"},
+		{ID: "c", GitBranch: "feat-y", MergeTargetBranch: "main"},
+	}
+	out := strings.Join(formatFeatureGitLines(tasks), "\n")
+
+	if !strings.Contains(out, "- branch: ⚠ tasks disagree — feat-x, feat-y") {
+		t.Errorf("branch divergence not flagged:\n%s", out)
+	}
+	if !strings.Contains(out, "- merges into: ⚠ tasks disagree — develop, main") {
+		t.Errorf("merge-target divergence not flagged:\n%s", out)
+	}
+}
+
+// TestFormatFeatureGitLines_ReportsUnsetLandingFields pins that the two
+// fields whose absence changes what happens at checkout are called out,
+// rather than silently omitted like the optional ones.
+func TestFormatFeatureGitLines_ReportsUnsetLandingFields(t *testing.T) {
+	out := strings.Join(formatFeatureGitLines([]types.ResolvedTask{{ID: "a"}}), "\n")
+
+	if !strings.Contains(out, "- branch: (unset)") {
+		t.Errorf("unset branch should be reported:\n%s", out)
+	}
+	if !strings.Contains(out, "- merges into: (unset)") {
+		t.Errorf("unset merge target should be reported:\n%s", out)
+	}
+	if strings.Contains(out, "git remote") {
+		t.Errorf("optional unset fields should stay quiet:\n%s", out)
+	}
+}
+
+// TestFormatFeatureGitLines_EmptyFeature pins that a feature with no tasks
+// renders no git section at all rather than a header over nothing.
+func TestFormatFeatureGitLines_EmptyFeature(t *testing.T) {
+	if got := formatFeatureGitLines(nil); got != nil {
+		t.Errorf("expected no lines for an empty feature, got: %v", got)
 	}
 }

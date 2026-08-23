@@ -1272,10 +1272,17 @@ func TestBrainFeatureReviewEnable_Handler(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 
-		var body map[string]any
+		// Decode into the real request type. Asserting raw JSON keys is what
+		// let this test pass while the tool sent "templateId" and a nested
+		// "scope" — neither of which exists on types.CreateMonitorRequest,
+		// so every call was an HTTP 400.
+		var body types.CreateMonitorRequest
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["templateId"] != "feature-review" {
-			t.Errorf("templateId = %v, want feature-review", body["templateId"])
+		if body.TemplateID != "feature-review" {
+			t.Errorf("template_id = %q, want feature-review", body.TemplateID)
+		}
+		if body.ScopeType != "feature" {
+			t.Errorf("scope_type = %q, want feature (empty means HTTP 400)", body.ScopeType)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1355,10 +1362,17 @@ func TestBrainBlockedInspectorEnable_Handler(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 
-		var body map[string]any
+		// Decode into the real request type. Asserting raw JSON keys is what
+		// let this test pass while the tool sent "templateId" and a nested
+		// "scope" — neither of which exists on types.CreateMonitorRequest,
+		// so every call was an HTTP 400.
+		var body types.CreateMonitorRequest
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["templateId"] != "blocked-inspector" {
-			t.Errorf("templateId = %v, want blocked-inspector", body["templateId"])
+		if body.TemplateID != "blocked-inspector" {
+			t.Errorf("template_id = %q, want blocked-inspector", body.TemplateID)
+		}
+		if body.ScopeType != "feature" {
+			t.Errorf("scope_type = %q, want feature (empty means HTTP 400)", body.ScopeType)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1506,22 +1520,27 @@ func TestBrainDreamEnable_Handler(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 
-		var body map[string]any
+		// Decode into the real request type. Asserting raw JSON keys is what
+		// let this test pass while the tool sent "templateId" and a nested
+		// "scope" — neither of which exists on types.CreateMonitorRequest,
+		// so every call was an HTTP 400.
+		var body types.CreateMonitorRequest
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["templateId"] != "dream" {
-			t.Errorf("templateId = %v, want dream", body["templateId"])
+		if body.TemplateID != "dream" {
+			t.Errorf("template_id = %q, want dream", body.TemplateID)
+		}
+		if body.ScopeType != "project" {
+			t.Errorf("scope_type = %q, want project (empty means HTTP 400)", body.ScopeType)
 		}
 
-		// Verify scope is project-scoped (not feature-scoped)
-		scope, ok := body["scope"].(map[string]any)
-		if !ok {
-			t.Fatal("missing scope in request body")
+		// Verify the monitor is project-scoped, not feature-scoped.
+		// scope_type is already asserted above; this pins the project and
+		// that no feature leaks in.
+		if body.Project != "my-project" {
+			t.Errorf("project = %q, want my-project", body.Project)
 		}
-		if scope["type"] != "project" {
-			t.Errorf("scope.type = %v, want project", scope["type"])
-		}
-		if scope["project"] != "my-project" {
-			t.Errorf("scope.project = %v, want my-project", scope["project"])
+		if body.FeatureID != "" {
+			t.Errorf("feature_id = %q, want empty for a project-scoped monitor", body.FeatureID)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -2005,4 +2024,70 @@ func TestBrainTasksStatus_UsesTheRealResponseType(t *testing.T) {
 			t.Errorf("a returned task must not be listed as missing:\n%s", out)
 		}
 	})
+}
+
+// TestMonitorEnableTools_SendTheRealCreateContract pins all four *_enable
+// tools against types.CreateMonitorRequest by DECODING what they send.
+//
+// POST /monitors takes a flat snake_case body (template_id, project,
+// feature_id, scope_type). All four tools sent camelCase "templateId" plus
+// a nested "scope" object — the shape of DeleteMonitorByScopeRequest, which
+// really is {templateId, scope:{...}} and is what the *_disable tools use.
+// The enable tools were written from the disable contract.
+//
+// Nothing matched: the underscore in template_id defeats Go's
+// case-insensitive key fallback, and "scope" is not a field, so TemplateID
+// and ScopeType arrived empty, both required checks in HandleCreateMonitor
+// fired, and every call returned HTTP 400.
+//
+// Decoding into the real request type is the point — a test asserting raw
+// JSON keys would have happily passed on the wrong contract.
+func TestMonitorEnableTools_SendTheRealCreateContract(t *testing.T) {
+	cases := []struct {
+		tool          string
+		args          map[string]any
+		wantTemplate  string
+		wantScopeType string
+		wantFeature   string
+	}{
+		{"monitor_enable", map[string]any{"template_id": "code-review", "project": "p", "feature_id": "f"}, "code-review", "feature", "f"},
+		{"feature_review_enable", map[string]any{"project": "p", "feature_id": "f"}, "feature-review", "feature", "f"},
+		{"blocked_inspector_enable", map[string]any{"project": "p", "feature_id": "f"}, "blocked-inspector", "feature", "f"},
+		{"dream_enable", map[string]any{"project": "p"}, "dream", "project", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			var got types.CreateMonitorRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Fatalf("decode request into CreateMonitorRequest: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "mon12345", "title": "Monitor"})
+			}))
+			defer srv.Close()
+
+			s := NewServer()
+			RegisterTaskTools(s, NewAPIClient(srv.URL))
+			if _, err := s.tools[tc.tool].handler(context.Background(), tc.args); err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+
+			// These two are what HandleCreateMonitor requires; empty means
+			// a guaranteed 400.
+			if got.TemplateID != tc.wantTemplate {
+				t.Errorf("template_id = %q, want %q (empty means HTTP 400 on every call)", got.TemplateID, tc.wantTemplate)
+			}
+			if got.ScopeType != tc.wantScopeType {
+				t.Errorf("scope_type = %q, want %q (empty means HTTP 400 on every call)", got.ScopeType, tc.wantScopeType)
+			}
+			if got.Project != "p" {
+				t.Errorf("project = %q, want %q", got.Project, "p")
+			}
+			if got.FeatureID != tc.wantFeature {
+				t.Errorf("feature_id = %q, want %q", got.FeatureID, tc.wantFeature)
+			}
+		})
+	}
 }

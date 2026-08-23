@@ -1020,9 +1020,23 @@ func registerBrainMonitorEnable(s *Server, client *APIClient) {
 			"feature_id": featureID,
 		}
 
+		// POST /monitors decodes types.CreateMonitorRequest, which is FLAT
+		// snake_case: template_id, project, feature_id, scope_type. This
+		// sent camelCase "templateId" plus a nested "scope" object — the
+		// shape of DeleteMonitorByScopeRequest, which genuinely IS
+		// {templateId, scope:{...}} and is what the *_disable tools use.
+		// The enable tools were built from the disable contract.
+		//
+		// Nothing matched: the underscore in template_id defeats Go's
+		// case-insensitive key fallback, and "scope" is not a field at all,
+		// so TemplateID and ScopeType both arrived empty, both required
+		// checks in HandleCreateMonitor fired, and these four tools
+		// returned HTTP 400 on every call.
 		body := map[string]any{
-			"templateId": templateID,
-			"scope":      scope,
+			"template_id": templateID,
+			"scope_type":  scope["type"],
+			"project":     scope["project"],
+			"feature_id":  scope["feature_id"],
 		}
 		if schedule := StringArg(args, "schedule", ""); schedule != "" {
 			body["schedule"] = schedule
@@ -1133,9 +1147,23 @@ func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
 			Path  string `json:"path"`
 			Title string `json:"title"`
 		}
+		// POST /monitors decodes types.CreateMonitorRequest, which is FLAT
+		// snake_case: template_id, project, feature_id, scope_type. This
+		// sent camelCase "templateId" plus a nested "scope" object — the
+		// shape of DeleteMonitorByScopeRequest, which genuinely IS
+		// {templateId, scope:{...}} and is what the *_disable tools use.
+		// The enable tools were built from the disable contract.
+		//
+		// Nothing matched: the underscore in template_id defeats Go's
+		// case-insensitive key fallback, and "scope" is not a field at all,
+		// so TemplateID and ScopeType both arrived empty, both required
+		// checks in HandleCreateMonitor fired, and these four tools
+		// returned HTTP 400 on every call.
 		err := client.Request(ctx, "POST", "/monitors", map[string]any{
-			"templateId": "feature-review",
-			"scope":      scope,
+			"template_id": "feature-review",
+			"scope_type":  scope["type"],
+			"project":     scope["project"],
+			"feature_id":  scope["feature_id"],
 		}, nil, &resp)
 
 		if err != nil {
@@ -1226,9 +1254,23 @@ func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
 			"feature_id": featureID,
 		}
 
+		// POST /monitors decodes types.CreateMonitorRequest, which is FLAT
+		// snake_case: template_id, project, feature_id, scope_type. This
+		// sent camelCase "templateId" plus a nested "scope" object — the
+		// shape of DeleteMonitorByScopeRequest, which genuinely IS
+		// {templateId, scope:{...}} and is what the *_disable tools use.
+		// The enable tools were built from the disable contract.
+		//
+		// Nothing matched: the underscore in template_id defeats Go's
+		// case-insensitive key fallback, and "scope" is not a field at all,
+		// so TemplateID and ScopeType both arrived empty, both required
+		// checks in HandleCreateMonitor fired, and these four tools
+		// returned HTTP 400 on every call.
 		body := map[string]any{
-			"templateId": "blocked-inspector",
-			"scope":      scope,
+			"template_id": "blocked-inspector",
+			"scope_type":  scope["type"],
+			"project":     scope["project"],
+			"feature_id":  scope["feature_id"],
 		}
 		if schedule := StringArg(args, "schedule", ""); schedule != "" {
 			body["schedule"] = schedule
@@ -1326,9 +1368,23 @@ func registerBrainDreamEnable(s *Server, client *APIClient) {
 			"project": project,
 		}
 
+		// POST /monitors decodes types.CreateMonitorRequest, which is FLAT
+		// snake_case: template_id, project, feature_id, scope_type. This
+		// sent camelCase "templateId" plus a nested "scope" object — the
+		// shape of DeleteMonitorByScopeRequest, which genuinely IS
+		// {templateId, scope:{...}} and is what the *_disable tools use.
+		// The enable tools were built from the disable contract.
+		//
+		// Nothing matched: the underscore in template_id defeats Go's
+		// case-insensitive key fallback, and "scope" is not a field at all,
+		// so TemplateID and ScopeType both arrived empty, both required
+		// checks in HandleCreateMonitor fired, and these four tools
+		// returned HTTP 400 on every call.
 		body := map[string]any{
-			"templateId": "dream",
-			"scope":      scope,
+			"template_id": "dream",
+			"scope_type":  scope["type"],
+			"project":     scope["project"],
+			"feature_id":  scope["feature_id"],
 		}
 		if schedule := StringArg(args, "schedule", ""); schedule != "" {
 			body["schedule"] = schedule

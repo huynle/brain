@@ -865,18 +865,20 @@ Example - wait for completion:
 			body["timeout"] = timeout
 		}
 
-		var resp struct {
-			Tasks []struct {
-				ID             string `json:"id"`
-				Title          string `json:"title"`
-				Status         string `json:"status"`
-				Priority       string `json:"priority"`
-				Classification string `json:"classification"`
-			} `json:"tasks"`
-			NotFound []string `json:"notFound"`
-			Changed  bool     `json:"changed"`
-			TimedOut bool     `json:"timedOut"`
-		}
+		// Decode the real response type rather than hand-mirroring it.
+		//
+		// The hand-rolled struct declared three fields the server has never
+		// sent — notFound, changed, timedOut — and omitted the one it does:
+		// allCompleted. types.MultiTaskStatusResponse has exactly two
+		// fields, Tasks and AllCompleted.
+		//
+		// The phantoms were not harmless. Being structurally always false,
+		// the status line could only ever take its third branch, so a
+		// wait_for call that genuinely waited and saw its condition met
+		// still reported "Immediate check (no wait)", and the "Not Found"
+		// section was unreachable. Meanwhile allCompleted — the actual
+		// point of a multi-task status check — was thrown away.
+		var resp types.MultiTaskStatusResponse
 		if err := client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/status", body, nil, &resp); err != nil {
 			return "", err
 		}
@@ -886,15 +888,10 @@ Example - wait for completion:
 			"",
 		}
 
-		if resp.TimedOut {
-			lines = append(lines, "**Status:** Timed out waiting for condition")
-			lines = append(lines, "")
-		} else if resp.Changed {
-			lines = append(lines, "**Status:** Condition met")
-			lines = append(lines, "")
+		if resp.AllCompleted {
+			lines = append(lines, "**Status:** All requested tasks are completed", "")
 		} else {
-			lines = append(lines, "**Status:** Immediate check (no wait)")
-			lines = append(lines, "")
+			lines = append(lines, "**Status:** Not all requested tasks are completed", "")
 		}
 
 		// Show task statuses
@@ -908,10 +905,24 @@ Example - wait for completion:
 			lines = append(lines, "")
 		}
 
-		// Show not found tasks
-		if len(resp.NotFound) > 0 {
+		// A requested id the server did not return is one it could not
+		// resolve. The server sends no notFound list, so derive it from the
+		// gap between what was asked for and what came back — previously
+		// this was read from a field that does not exist, so the section
+		// could never render at all.
+		returned := make(map[string]struct{}, len(resp.Tasks))
+		for _, t := range resp.Tasks {
+			returned[t.ID] = struct{}{}
+		}
+		var missing []string
+		for _, id := range taskIDs {
+			if _, ok := returned[id]; !ok {
+				missing = append(missing, id)
+			}
+		}
+		if len(missing) > 0 {
 			lines = append(lines, "### Not Found")
-			for _, id := range resp.NotFound {
+			for _, id := range missing {
 				lines = append(lines, fmt.Sprintf("- `%s` - task not found", id))
 			}
 			lines = append(lines, "")

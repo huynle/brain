@@ -1156,11 +1156,14 @@ func TestBrainTasksStatus_WithNotFound(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"tasks":    []map[string]any{},
-			"notFound": []string{"missing123"},
-			"changed":  false,
-			"timedOut": false,
+		// Mirror what the server actually sends. This fixture used to
+		// return notFound/changed/timedOut, none of which exist on
+		// types.MultiTaskStatusResponse — a mock asserting a contract the
+		// server has never had, which is what let the phantom fields look
+		// real. A requested id simply does not come back in tasks.
+		json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{
+			Tasks:        []types.ResolvedTask{},
+			AllCompleted: false,
 		})
 	}))
 	defer server.Close()
@@ -1939,4 +1942,63 @@ func TestBrainTasks_StatsMatchTheRenderedBody(t *testing.T) {
 	if !strings.Contains(out, "0 ready") {
 		t.Errorf("stats should describe the filtered set:\n%s", out)
 	}
+}
+
+// TestBrainTasksStatus_UsesTheRealResponseType pins tasks_status against
+// types.MultiTaskStatusResponse.
+//
+// The hand-rolled struct declared notFound, changed and timedOut — none of
+// which the server sends — and omitted allCompleted, which it does. Being
+// structurally always false, the phantoms meant the status line could only
+// ever take its third branch: a wait_for call that genuinely waited and saw
+// its condition met still reported "Immediate check (no wait)".
+func TestBrainTasksStatus_UsesTheRealResponseType(t *testing.T) {
+	respond := func(allCompleted bool, ids ...string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var tasks []types.ResolvedTask
+			for _, id := range ids {
+				tasks = append(tasks, types.ResolvedTask{ID: id, Title: "T " + id, Status: "completed"})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{Tasks: tasks, AllCompleted: allCompleted})
+		}))
+	}
+
+	t.Run("allCompleted is reported", func(t *testing.T) {
+		srv := respond(true, "aaa11111")
+		defer srv.Close()
+		s := NewServer()
+		RegisterTaskTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["tasks_status"].handler(context.Background(), map[string]any{
+			"project": "p", "task_ids": []any{"aaa11111"},
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "All requested tasks are completed") {
+			t.Errorf("allCompleted was dropped:\n%s", out)
+		}
+		if strings.Contains(out, "Immediate check (no wait)") {
+			t.Errorf("status line still reports the dead phantom branch:\n%s", out)
+		}
+	})
+
+	t.Run("an unresolved id is reported as not found", func(t *testing.T) {
+		srv := respond(false, "aaa11111") // bbb22222 requested but not returned
+		defer srv.Close()
+		s := NewServer()
+		RegisterTaskTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["tasks_status"].handler(context.Background(), map[string]any{
+			"project": "p", "task_ids": []any{"aaa11111", "bbb22222"},
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "Not Found") || !strings.Contains(out, "bbb22222") {
+			t.Errorf("an id the server could not resolve must be reported:\n%s", out)
+		}
+		if strings.Contains(out, "aaa11111 - task not found") {
+			t.Errorf("a returned task must not be listed as missing:\n%s", out)
+		}
+	})
 }

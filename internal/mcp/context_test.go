@@ -7,19 +7,38 @@ import (
 func TestResolveProjectName(t *testing.T) {
 	tests := []struct {
 		input string
+		repo  bool
 		want  string
 	}{
-		{"projects/brain-api", "brain-api"},
-		{"brain-api", "brain-api"},
-		{"projects/foo/bar", "bar"},
-		{"single", "single"},
-		{"", ""},
+		// Home-relative paths resolve to their last segment.
+		{"projects/brain-api", false, "brain-api"},
+		{"brain-api", false, "brain-api"},
+		{"projects/foo/bar", false, "bar"},
+		{"single", false, "single"},
+		{"", false, ""},
+
+		// An absolute path means makeHomeRelative found no home prefix to
+		// strip, so this is not under the user's home. Without git vouching
+		// for it, the project is unknown and must not be guessed.
+		//
+		// "/app" is the live case: the MCP server runs in a container with
+		// that working directory, and the old unconditional basename
+		// fallback confidently reported the project as "app". Seven
+		// Hindsight entries were written to projects/app/ because of it.
+		{"/app", false, ""},
+		{"/", false, ""},
+		{"/opt/someworkdir", false, ""},
+
+		// Git recognising the directory is what makes the basename
+		// meaningful, so a repo outside home still resolves.
+		{"/opt/checkouts/myrepo", true, "myrepo"},
+		{"/app", true, "app"},
 	}
 
 	for _, tt := range tests {
-		got := resolveProjectName(tt.input)
+		got := resolveProjectName(tt.input, tt.repo)
 		if got != tt.want {
-			t.Errorf("resolveProjectName(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("resolveProjectName(%q, insideRepo=%v) = %q, want %q", tt.input, tt.repo, got, tt.want)
 		}
 	}
 }

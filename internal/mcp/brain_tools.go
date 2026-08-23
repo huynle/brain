@@ -1294,9 +1294,15 @@ func addPresentUpdateFields(body, args map[string]any, keys ...string) {
 var openCodeOptionalDefaults = map[string]any{
 	"priority":             "medium",
 	"feature_priority":     "high",
-	"merge_policy":         "prompt_only",
+	// merge_policy and remote_branch_policy were "prompt_only" and "keep",
+	// which are not the defaults — normalizeFeatureCheckoutOptions in
+	// internal/service/task.go turns an empty value into "auto_merge" and
+	// "delete". Both entries were therefore backwards: the guard discarded
+	// remote_branch_policy:"keep" (a deliberate non-default choice) and
+	// never recognised merge_policy:"auto_merge" (the actual default).
+	"merge_policy":         "auto_merge",
 	"merge_strategy":       "squash",
-	"remote_branch_policy": "keep",
+	"remote_branch_policy": "delete",
 	"execution_mode":       "worktree",
 	"executor":             "opencode",
 	"open_pr_before_merge": false,
@@ -1394,49 +1400,91 @@ func hasFields(value any) bool {
 	return len(obj) > 0
 }
 
-func sanitizeUpdateValue(value any) any {
+// sanitizeUpdateValue applies the defaults guard to a bulk "updates" object
+// and reports which keys it removed.
+//
+// The dropped list used to be discarded here (`clean, _ :=`), so bulk_update
+// could strip fields from every matched entry and still answer "Updated: N"
+// — a success report over a write that partly did not happen. Single update
+// surfaced the same list all along; only the bulk path hid it.
+func sanitizeUpdateValue(value any) (any, []string) {
 	obj, ok := value.(map[string]any)
 	if !ok {
-		return value
+		return value, nil
 	}
-	clean, _ := sanitizeUpdateArgs(obj)
-	return clean
+	clean, dropped := sanitizeUpdateArgs(obj)
+	return clean, dropped
 }
 
-func sanitizeBulkUpdateEntries(value any) any {
+// sanitizeBulkUpdateEntries applies the defaults guard to every entry in
+// explicit mode and returns the union of keys it removed.
+//
+// The guard runs PER ENTRY, so one call can legitimately apply different
+// field sets to different entries. Reporting the union is what makes that
+// visible at all — previously nothing was reported and the response simply
+// claimed every entry was updated.
+func sanitizeBulkUpdateEntries(value any) (any, []string) {
+	var dropped []string
+	sanitizeAll := func(entries []any) any {
+		clean := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			cleanEntry, entryDropped := sanitizeBulkUpdateEntry(entry)
+			clean = append(clean, cleanEntry)
+			dropped = append(dropped, entryDropped...)
+		}
+		return clean
+	}
+
 	switch entries := value.(type) {
 	case []any:
-		clean := make([]any, 0, len(entries))
-		for _, entry := range entries {
-			clean = append(clean, sanitizeBulkUpdateEntry(entry))
-		}
-		return clean
+		return sanitizeAll(entries), dropped
 	case []map[string]any:
-		clean := make([]any, 0, len(entries))
+		asAny := make([]any, 0, len(entries))
 		for _, entry := range entries {
-			clean = append(clean, sanitizeBulkUpdateEntry(entry))
+			asAny = append(asAny, entry)
 		}
-		return clean
+		return sanitizeAll(asAny), dropped
 	default:
-		return value
+		return value, nil
 	}
 }
 
-func sanitizeBulkUpdateEntry(value any) any {
+func sanitizeBulkUpdateEntry(value any) (any, []string) {
 	entry, ok := value.(map[string]any)
 	if !ok {
-		return value
+		return value, nil
 	}
 
+	var dropped []string
 	clean := make(map[string]any, len(entry))
 	for key, field := range entry {
 		if key == "updates" {
-			clean[key] = sanitizeUpdateValue(field)
+			cleaned, fieldDropped := sanitizeUpdateValue(field)
+			clean[key] = cleaned
+			dropped = append(dropped, fieldDropped...)
 			continue
 		}
 		clean[key] = field
 	}
-	return clean
+	return clean, dropped
+}
+
+// dedupeSorted returns the distinct values of in, sorted, for stable output.
+func dedupeSorted(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // =============================================================================
@@ -1475,7 +1523,7 @@ Examples:
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		// Validate: must have either (filter + updates) or entries, not both, not neither
 		filter := sanitizeObjectArg(args["filter"])
-		updates := sanitizeUpdateValue(args["updates"])
+		updates, updatesDropped := sanitizeUpdateValue(args["updates"])
 
 		// Merge the top-level `project` convenience shortcut into filter.project.
 		// The nested value wins if the caller set both, so we don't clobber
@@ -1503,6 +1551,16 @@ Examples:
 			return "", fmt.Errorf("provide either 'filter' + 'updates' (filter mode) or 'entries' (explicit mode)")
 		}
 		if hasFilter && !hasUpdates {
+			// Distinguish "you sent no updates" from "the defaults guard
+			// removed all of them". The second used to surface as the
+			// first, telling a caller who HAD specified updates that they
+			// had not.
+			if len(updatesDropped) > 0 {
+				return "", fmt.Errorf(
+					"every field in 'updates' matched its documented default and was dropped by the autofill guard (%s); "+
+						"to set these values intentionally, update them in separate calls",
+					strings.Join(dedupeSorted(updatesDropped), ", "))
+			}
 			return "", fmt.Errorf("filter mode requires 'updates' to specify what to change")
 		}
 
@@ -1512,8 +1570,11 @@ Examples:
 			body["filter"] = filter
 			body["updates"] = updates
 		}
+		entriesDropped := []string{}
 		if hasEntries {
-			body["entries"] = sanitizeBulkUpdateEntries(args["entries"])
+			cleanEntries, dropped := sanitizeBulkUpdateEntries(args["entries"])
+			body["entries"] = cleanEntries
+			entriesDropped = dropped
 		}
 		body["dry_run"] = BoolArg(args, "dry_run", false)
 
@@ -1547,6 +1608,17 @@ Examples:
 			fmt.Sprintf("- Updated: %d", resp.Updated),
 			fmt.Sprintf("- Failed: %d", resp.Failed),
 			"",
+		}
+
+		// Never report a bare "Updated: N" over fields the guard removed.
+		// The write partly did not happen, and the caller cannot see that
+		// from the counts alone.
+		if allDropped := dedupeSorted(append(append([]string{}, updatesDropped...), entriesDropped...)); len(allDropped) > 0 {
+			lines = append(lines,
+				fmt.Sprintf("> ⚠ Not applied: %s — these matched their documented defaults and were dropped by the autofill guard.",
+					strings.Join(allDropped, ", ")),
+				"> To set them intentionally, update them in separate calls.",
+				"")
 		}
 
 		if len(resp.Results) > 0 {

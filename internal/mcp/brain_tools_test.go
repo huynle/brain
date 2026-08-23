@@ -470,12 +470,12 @@ func TestBrainUpdate_HandlerOmitsOpenCodeOptionalDefaults(t *testing.T) {
 		"target_workdir":       "",
 		"git_branch":           "",
 		"merge_target_branch":  "",
-		"merge_policy":         "prompt_only",
+		"merge_policy":         "auto_merge",
 		"merge_strategy":       "squash",
 		"open_pr_before_merge": false,
 		"execution_mode":       "worktree",
 		"complete_on_idle":     false,
-		"remote_branch_policy": "keep",
+		"remote_branch_policy": "delete",
 		"schedule":             "",
 		"schedule_enabled":     false,
 		"max_runs":             float64(0),
@@ -555,12 +555,12 @@ func TestBrainBulkUpdate_HandlerOmitsOpenCodeOptionalDefaultsInEntryUpdates(t *t
 					"status":               "pending",
 					"priority":             "medium",
 					"feature_priority":     "high",
-					"merge_policy":         "prompt_only",
+					"merge_policy":         "auto_merge",
 					"merge_strategy":       "squash",
 					"open_pr_before_merge": false,
 					"execution_mode":       "worktree",
 					"complete_on_idle":     false,
-					"remote_branch_policy": "keep",
+					"remote_branch_policy": "delete",
 					"schedule_enabled":     false,
 					"max_runs":             float64(0),
 					"executor":             "opencode",
@@ -2757,5 +2757,100 @@ func TestBrainSave_TaskGitBranchExplicitOverridesEverything(t *testing.T) {
 
 	if capturedBody["git_branch"] != "custom-branch" {
 		t.Errorf("git_branch = %v, want %q (explicit arg must override)", capturedBody["git_branch"], "custom-branch")
+	}
+}
+
+// TestOpenCodeOptionalDefaults_MatchServerNormalization pins the defaults
+// table against what the server actually does.
+//
+// Two entries were backwards — merge_policy:"prompt_only" and
+// remote_branch_policy:"keep" — while normalizeFeatureCheckoutOptions in
+// internal/service/task.go turns an empty value into "auto_merge" and
+// "delete". The guard therefore discarded remote_branch_policy:"keep", a
+// deliberate non-default choice, and never recognised the real default.
+func TestOpenCodeOptionalDefaults_MatchServerNormalization(t *testing.T) {
+	for key, want := range map[string]string{
+		"merge_policy":         "auto_merge",
+		"merge_strategy":       "squash",
+		"remote_branch_policy": "delete",
+		"execution_mode":       "worktree",
+	} {
+		got, ok := openCodeOptionalDefaults[key]
+		if !ok {
+			t.Errorf("openCodeOptionalDefaults missing %q", key)
+			continue
+		}
+		if got != want {
+			t.Errorf("openCodeOptionalDefaults[%q] = %v, want %q "+
+				"(must match normalizeFeatureCheckoutOptions in internal/service/task.go)", key, got, want)
+		}
+	}
+}
+
+// TestBrainBulkUpdate_DisclosesDroppedFields pins that bulk_update never
+// answers a bare "Updated: N" over fields the guard removed.
+//
+// sanitizeUpdateValue used to discard the dropped list (`clean, _ :=`), so
+// the fields vanished and the response still claimed success. Single update
+// surfaced the same list all along; only the bulk path hid it.
+func TestBrainBulkUpdate_DisclosesDroppedFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"total": 2, "updated": 2, "failed": 0,
+			"results": []map[string]any{},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient(server.URL))
+
+	out, err := s.tools["bulk_update"].handler(context.Background(), map[string]any{
+		"filter": map[string]any{"project": "p"},
+		"updates": map[string]any{
+			"status":         "completed", // a real change, so the call proceeds
+			"execution_mode": "worktree",
+			"merge_strategy": "squash",
+			"merge_policy":   "auto_merge",
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(out, "Not applied") {
+		t.Errorf("dropped fields were not disclosed:\n%s", out)
+	}
+	for _, field := range []string{"execution_mode", "merge_policy", "merge_strategy"} {
+		if !strings.Contains(out, field) {
+			t.Errorf("dropped field %q not named in the response:\n%s", field, out)
+		}
+	}
+}
+
+// TestBrainBulkUpdate_AllDefaultsExplainsItself pins that the total-drop case
+// says what happened. It used to surface as "filter mode requires 'updates'
+// to specify what to change" — telling a caller who HAD specified updates
+// that they had not.
+func TestBrainBulkUpdate_AllDefaultsExplainsItself(t *testing.T) {
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient("http://127.0.0.1:1"))
+
+	_, err := s.tools["bulk_update"].handler(context.Background(), map[string]any{
+		"filter": map[string]any{"project": "p"},
+		"updates": map[string]any{
+			"execution_mode": "worktree",
+			"merge_strategy": "squash",
+			"merge_policy":   "auto_merge",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected an error when every update field was dropped")
+	}
+	if !strings.Contains(err.Error(), "autofill guard") {
+		t.Errorf("error should explain the guard dropped the fields, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "requires 'updates' to specify what to change") {
+		t.Errorf("error still claims no updates were specified, got: %v", err)
 	}
 }

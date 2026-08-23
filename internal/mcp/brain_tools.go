@@ -1682,11 +1682,29 @@ func registerBrainStats(s *Server, client *APIClient) {
 			return "", err
 		}
 
+		// Label each count by what it actually counts.
+		//
+		// TotalEntries is scoped by the request; GlobalEntries and
+		// ProjectEntries are always the WHOLE-STORE totals for global/
+		// and projects/ respectively, so callers can compare a scoped
+		// result against them (see BrainServiceImpl.GetStats).
+		//
+		// Printed as a bare "Project:" directly under a project-scoped
+		// "Total:", that read as a contradiction — stats(project:"x")
+		// showed "Total: 930 / Project: 67935" — and the larger number
+		// is the one a reader trusts. Name the scope in every line.
+		scopeLabel := "Total (whole store)"
+		if p := params["project"]; p != "" {
+			scopeLabel = fmt.Sprintf("Total (project %s)", p)
+		} else if params["global"] == "true" {
+			scopeLabel = "Total (global entries)"
+		}
+
 		lines := []string{
 			"## Brain Statistics\n",
-			fmt.Sprintf("Total: %d", resp.TotalEntries),
-			fmt.Sprintf("Global: %d", resp.GlobalEntries),
-			fmt.Sprintf("Project: %d", resp.ProjectEntries),
+			fmt.Sprintf("%s: %d", scopeLabel, resp.TotalEntries),
+			fmt.Sprintf("Global entries, all of global/: %d", resp.GlobalEntries),
+			fmt.Sprintf("Project entries, all of projects/ across every project: %d", resp.ProjectEntries),
 			"\n### By Type",
 		}
 

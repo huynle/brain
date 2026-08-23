@@ -708,6 +708,63 @@ func TestBrainStats_Handler(t *testing.T) {
 	if !strings.Contains(result, "Brain Statistics") {
 		t.Errorf("result should contain header, got: %s", result)
 	}
+	if !strings.Contains(result, "Total (whole store): 42") {
+		t.Errorf("unscoped total should name its scope, got: %s", result)
+	}
+}
+
+// TestBrainStats_ScopeLabels pins the scope wording on every count.
+//
+// globalEntries and projectEntries are always WHOLE-STORE totals, even
+// when the request is scoped to one project. Printed as a bare
+// "Project:" under a project-scoped "Total:", they read as a
+// contradiction — a real call returned "Total: 930 / Project: 67935"
+// for a project holding 930 entries, and the larger number is the one
+// a reader trusts. Each line must say what it counts.
+func TestBrainStats_ScopeLabels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"totalEntries":   930,
+			"globalEntries":  25,
+			"projectEntries": 67935,
+			"byType":         map[string]int{"task": 890},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient(server.URL))
+	handler := s.tools["stats"].handler
+
+	t.Run("project scope names the project", func(t *testing.T) {
+		result, err := handler(context.Background(), map[string]any{"project": "brain-api"})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(result, "Total (project brain-api): 930") {
+			t.Errorf("scoped total should name the project, got: %s", result)
+		}
+		if strings.Contains(result, "\nProject: 67935") {
+			t.Errorf("whole-store project count must not render as a bare %q, got: %s", "Project:", result)
+		}
+		if !strings.Contains(result, "across every project: 67935") {
+			t.Errorf("project count should say it spans every project, got: %s", result)
+		}
+		if !strings.Contains(result, "all of global/: 25") {
+			t.Errorf("global count should say it spans all of global/, got: %s", result)
+		}
+	})
+
+	t.Run("global scope names itself", func(t *testing.T) {
+		result, err := handler(context.Background(), map[string]any{"global": true})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(result, "Total (global entries): 930") {
+			t.Errorf("global-scoped total should name its scope, got: %s", result)
+		}
+	})
 }
 
 func TestBrainBacklinks_Handler(t *testing.T) {

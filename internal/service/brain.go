@@ -2560,8 +2560,29 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 		return nil, fmt.Errorf("search for inject: %w", err)
 	}
 
+	// Bound the assembled context. Bodies used to be concatenated whole,
+	// so a default five-entry call against long entries returned tens of
+	// thousands of tokens — spent from the very budget the agent needed to
+	// act on them.
+	//
+	// The budget is split evenly across the matched entries rather than
+	// filled first-come, so one very long entry cannot crowd the rest out
+	// of the window entirely.
+	maxChars := types.DefaultInjectMaxChars
+	if req.MaxChars != nil {
+		maxChars = *req.MaxChars
+		if maxChars == 0 {
+			maxChars = types.DefaultInjectMaxChars
+		}
+	}
+	perEntry := 0
+	if maxChars > 0 && len(rows) > 0 {
+		perEntry = maxChars / len(rows)
+	}
+
 	var contextBuilder strings.Builder
 	entries := make([]types.InjectEntry, 0, len(rows))
+	truncated := false
 
 	for _, row := range rows {
 		entry := NoteRowToBrainEntry(row)
@@ -2571,8 +2592,17 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 		contextBuilder.WriteString(entry.Title)
 		contextBuilder.WriteString("\n")
 		if entry.Content != "" {
-			contextBuilder.WriteString(entry.Content)
-			contextBuilder.WriteString("\n")
+			content := entry.Content
+			if perEntry > 0 && len(content) > perEntry {
+				content = truncateAtBoundary(content, perEntry)
+				truncated = true
+				contextBuilder.WriteString(content)
+				contextBuilder.WriteString(fmt.Sprintf(
+					"\n\n_[truncated — recall %q for the full entry]_\n", entry.Path))
+			} else {
+				contextBuilder.WriteString(content)
+				contextBuilder.WriteString("\n")
+			}
 		}
 		contextBuilder.WriteString("\n")
 
@@ -2585,10 +2615,28 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 	}
 
 	return &types.InjectResponse{
-		Context: strings.TrimSpace(contextBuilder.String()),
-		Entries: entries,
-		Total:   len(entries),
+		Context:   strings.TrimSpace(contextBuilder.String()),
+		Entries:   entries,
+		Total:     len(entries),
+		Truncated: truncated,
 	}, nil
+}
+
+// truncateAtBoundary cuts s to at most limit bytes, preferring the last
+// paragraph or line break so the result ends somewhere readable rather than
+// mid-sentence.
+func truncateAtBoundary(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := s[:limit]
+	if i := strings.LastIndex(cut, "\n\n"); i > limit/2 {
+		return cut[:i]
+	}
+	if i := strings.LastIndex(cut, "\n"); i > limit/2 {
+		return cut[:i]
+	}
+	return cut
 }
 
 // =============================================================================

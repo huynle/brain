@@ -965,6 +965,18 @@ type InjectRequest struct {
 	Type       string `json:"type,omitempty"`
 	Project    string `json:"project,omitempty"`
 	MaxEntries *int   `json:"maxEntries,omitempty"`
+
+	// MaxChars bounds the assembled context. Inject is the load-context
+	// primitive: an agent calls it BEFORE working, so whatever it returns
+	// is spent from the budget the agent then has to think with. It used
+	// to concatenate every matched entry's full body with no cap at all,
+	// so a default five-entry call against long entries could return tens
+	// of thousands of tokens — the tool meant to prepare an agent was the
+	// most expensive one available to it.
+	//
+	// Zero or unset applies DefaultInjectMaxChars. Negative means
+	// unbounded, for callers that genuinely want every byte.
+	MaxChars *int `json:"maxChars,omitempty"`
 }
 
 // InjectEntry is a minimal entry reference in inject responses.
@@ -980,7 +992,18 @@ type InjectResponse struct {
 	Context string        `json:"context"`
 	Entries []InjectEntry `json:"entries"`
 	Total   int           `json:"total"`
+
+	// Truncated reports that at least one entry's body was cut to fit
+	// MaxChars. Callers that need the whole thing should recall the entry
+	// by path rather than re-running inject with a bigger budget.
+	Truncated bool `json:"truncated,omitempty"`
 }
+
+// DefaultInjectMaxChars bounds an inject response when the caller does not
+// choose. Roughly 6k tokens: large enough to carry several substantive
+// entries, small enough that a default call cannot swallow an agent's
+// working context.
+const DefaultInjectMaxChars = 24000
 
 // SectionHeader describes a section heading in a brain entry.
 type SectionHeader struct {

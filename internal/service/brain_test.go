@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"database/sql"
 	"os"
 	"path/filepath"
@@ -2492,5 +2493,85 @@ func TestUpdate_FeatureAllCompleted_DedupKeyPreventsDoubleEmission(t *testing.T)
 		if e.DedupKey == "" {
 			t.Error("expected DedupKey to be set on feature.all_completed event")
 		}
+	}
+}
+
+// TestInject_BoundsAssembledContext pins that inject cannot swallow the
+// caller's working context.
+//
+// Inject is the load-context primitive: an agent calls it BEFORE working,
+// so whatever it returns is spent from the budget it then has to think
+// with. Bodies used to be concatenated whole with no cap, so a default
+// five-entry call against long entries returned tens of thousands of
+// tokens — the tool meant to prepare an agent was the most expensive one
+// available to it. Observed live: max_entries:3 returned ~9k tokens.
+func TestInject_BoundsAssembledContext(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	body := strings.Repeat("lorem ipsum dolor sit amet\n\n", 900) // ~25k chars each
+	for i := 0; i < 3; i++ {
+		if _, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type: "note", Project: "p",
+			Title:   fmt.Sprintf("Bulky note %d", i),
+			Content: body,
+		}); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
+
+	max := 3
+	resp, err := svc.Inject(ctx, types.InjectRequest{Query: "lorem", Project: "p", MaxEntries: &max})
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	if len(resp.Entries) == 0 {
+		t.Fatal("fixture problem: expected the seeded notes to match")
+	}
+
+	if len(resp.Context) > types.DefaultInjectMaxChars+2000 {
+		t.Errorf("context is %d chars, well past the %d default budget",
+			len(resp.Context), types.DefaultInjectMaxChars)
+	}
+	if !resp.Truncated {
+		t.Error("truncation happened but was not reported")
+	}
+	if !strings.Contains(resp.Context, "truncated — recall") {
+		t.Errorf("a cut entry must name itself so the caller can fetch it in full:\n%.400s", resp.Context)
+	}
+
+	// Every match should still be represented — the budget is split, not
+	// spent first-come, so one huge entry cannot crowd the others out.
+	for i := 0; i < len(resp.Entries); i++ {
+		title := fmt.Sprintf("Bulky note %d", i)
+		if !strings.Contains(resp.Context, title) {
+			t.Errorf("%q was crowded out of the budget entirely", title)
+		}
+	}
+}
+
+// TestInject_NegativeMaxCharsIsUnbounded pins the escape hatch for callers
+// that genuinely want every byte.
+func TestInject_NegativeMaxCharsIsUnbounded(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	body := strings.Repeat("alpha beta gamma\n\n", 2000)
+	if _, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type: "note", Project: "p", Title: "Huge", Content: body,
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	unbounded := -1
+	resp, err := svc.Inject(ctx, types.InjectRequest{Query: "alpha", Project: "p", MaxChars: &unbounded})
+	if err != nil {
+		t.Fatalf("inject: %v", err)
+	}
+	if resp.Truncated {
+		t.Error("negative maxChars must not truncate")
+	}
+	if len(resp.Context) < len(body) {
+		t.Errorf("unbounded inject returned %d chars for a %d-char body", len(resp.Context), len(body))
 	}
 }

@@ -1011,12 +1011,18 @@ func registerBrainInject(s *Server, client *APIClient) {
 				"query":       {Type: "string", Description: "What context are you looking for?"},
 				"project":     {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to search across all projects."},
 				"max_entries": {Type: "number", Description: "Maximum entries to include (default: 5)"},
+				"max_chars": {Type: "number", Description: "Bound the total assembled context in characters (default: 24000, roughly 6k tokens). " +
+					"The budget is split evenly across the matched entries, and any entry cut short is marked with its path so you can recall it in full. " +
+					"Pass a negative value for unbounded output."},
 				"type":        {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 			},
 			Required: []string{"query"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		body := map[string]any{"query": args["query"]}
+		if v, ok := args["max_chars"]; ok {
+			body["maxChars"] = v
+		}
 		if v := StringArg(args, "project", ""); v != "" {
 			body["project"] = v
 		}

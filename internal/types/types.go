@@ -907,6 +907,11 @@ type ListEntriesResponse struct {
 	Total   int          `json:"total"`
 	Limit   int          `json:"limit"`
 	Offset  int          `json:"offset"`
+
+	// Truncated reports that a post-fetch filter exhausted its scan window
+	// before filling the requested page. Without it, "no more results" and
+	// "more exist beyond the window I looked at" are the same empty answer.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // MoveResult is the response for POST /entries/:id/move.

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -87,5 +88,56 @@ func TestHandleGetAutomationRunReturnsRunDetail(t *testing.T) {
 	entry := decodeJSON[types.BrainEntry](t, rec.Result())
 	if entry.ID != "run1" || entry.Type != "automation_run" {
 		t.Fatalf("unexpected run detail: %#v", entry)
+	}
+}
+
+// TestListAutomationRuns_FilterFindsRunsBeyondThePage pins that filtering by
+// automation_id searches past the first page.
+//
+// automation_id lives in the run's markdown body, not a column, so it can
+// only be matched after fetching. The handler used to fetch exactly `limit`
+// rows and filter afterwards — asking for the N most recent runs across ALL
+// automations and keeping the few that matched. On a store where
+// automation_run is ~95% of all entries, one automation's runs are almost
+// never in that page, so the query returned nothing while thousands of its
+// runs existed. Indistinguishable from "this automation has never run".
+func TestListAutomationRuns_FilterFindsRunsBeyondThePage(t *testing.T) {
+	// 50 runs for other automations, then the one we want — so a naive
+	// limit=5 fetch would never see it.
+	var entries []types.BrainEntry
+	for i := 0; i < 50; i++ {
+		entries = append(entries, types.BrainEntry{
+			ID: fmt.Sprintf("other%03d", i), Type: "automation_run",
+			Content: "automation_id: someone-else\n",
+		})
+	}
+	entries = append(entries, types.BrainEntry{
+		ID: "wanted01", Type: "automation_run",
+		Content: "automation_id: wanted-automation\n",
+	})
+
+	h := &Handler{brain: &mockBrainService{
+		listFunc: func(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error) {
+			out := entries
+			if req.Limit > 0 && req.Limit < len(out) {
+				out = out[:req.Limit]
+			}
+			return &types.ListEntriesResponse{Entries: out, Total: len(out)}, nil
+		},
+	}}
+
+	req := httptest.NewRequest(http.MethodGet, "/automation-runs?automation_id=wanted-automation&limit=5", nil)
+	rec := httptest.NewRecorder()
+	h.HandleListAutomationRuns(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := decodeJSON[types.ListEntriesResponse](t, rec.Result())
+	if len(body.Entries) != 1 {
+		t.Fatalf("found %d runs; the filter did not look past the first page", len(body.Entries))
+	}
+	if body.Entries[0].ID != "wanted01" {
+		t.Errorf("wrong run returned: %s", body.Entries[0].ID)
 	}
 }

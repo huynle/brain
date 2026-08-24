@@ -427,6 +427,10 @@ func formatAutomationRuns(resp types.ListEntriesResponse, requestedLimit int) st
 	// it as "Total" is badly misleading — the same defect foundLine was
 	// written for on list and search.
 	b.WriteString(foundLine("runs", resp.Total, requestedLimit, 100))
+	if resp.Truncated {
+		b.WriteString("_Filtered by automation_id: the scan window was exhausted before filling the page. " +
+			"Older runs for this automation may exist beyond it._\n")
+	}
 	b.WriteString("\n")
 
 	if len(resp.Entries) == 0 {

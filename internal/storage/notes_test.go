@@ -2,7 +2,10 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -482,5 +485,89 @@ func TestNoteInsert_FTS5Populated(t *testing.T) {
 	}
 	if count != 1 {
 		t.Errorf("FTS5 body match count = %d, want 1", count)
+	}
+}
+
+// TestMergeMetadata_ConcurrentMergesDoNotLoseUpdates is a lost-update
+// regression test.
+//
+// MergeMetadata is a read-modify-write: it SELECTs metadata, merges in Go, then
+// UPDATEs. Without a transaction the two statements do not stay on the same
+// connection — database/sql returns it to the pool in between — so concurrent
+// merges all read the same "before" value and the last writer wins.
+//
+// SetMaxOpenConns(1) does NOT prevent this. It serialises TRANSACTIONS, because
+// a *sql.Tx pins its connection for its lifetime; it does not serialise
+// consecutive statements. Measured before the fix: 50 goroutines merging 50
+// DISTINCT keys left 2. Forty-eight updates silently lost, at production's
+// current setting.
+//
+// The oracle is how many writes survived, which the implementation does not get
+// to define.
+func TestMergeMetadata_ConcurrentMergesDoNotLoseUpdates(t *testing.T) {
+	store := newTestStorage(t)
+	ctx := context.Background()
+
+	typ, status := "note", "active"
+	note, err := store.InsertNote(ctx, &NoteRow{
+		Path: "projects/p/note/merge-race.md", ShortID: "mrg12345",
+		Title: "merge race", Type: &typ, Status: &status, Metadata: "{}",
+	})
+	if err != nil {
+		t.Fatalf("InsertNote: %v", err)
+	}
+
+	const writers = 50
+	var wg sync.WaitGroup
+	errs := make(chan error, writers)
+	for i := 0; i < writers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			if _, err := store.MergeMetadata(ctx, note.Path, map[string]interface{}{
+				fmt.Sprintf("key%02d", i): i,
+			}); err != nil {
+				errs <- err
+			}
+		}(i)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatalf("concurrent MergeMetadata failed: %v", err)
+	}
+
+	got, err := store.GetNoteByPath(ctx, note.Path)
+	if err != nil {
+		t.Fatalf("GetNoteByPath: %v", err)
+	}
+	var final map[string]interface{}
+	if err := json.Unmarshal([]byte(got.Metadata), &final); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+
+	if len(final) != writers {
+		t.Errorf("%d of %d concurrent merges survived — updates were lost", len(final), writers)
+	}
+	for i := 0; i < writers; i++ {
+		if _, ok := final[fmt.Sprintf("key%02d", i)]; !ok {
+			t.Errorf("key%02d was lost", i)
+			break // one example is enough
+		}
+	}
+}
+
+// TestMergeMetadata_MissingPathStillReturnsNilNil guards the not-found contract
+// through the new transactional path: callers rely on (nil, nil) rather than an
+// error for a path that does not exist.
+func TestMergeMetadata_MissingPathStillReturnsNilNil(t *testing.T) {
+	store := newTestStorage(t)
+
+	row, err := store.MergeMetadata(context.Background(), "projects/p/note/nope.md", map[string]interface{}{"a": 1})
+	if err != nil {
+		t.Fatalf("unexpected error for a missing path: %v", err)
+	}
+	if row != nil {
+		t.Errorf("expected nil row for a missing path, got %+v", row)
 	}
 }

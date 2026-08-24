@@ -1379,13 +1379,47 @@ body[data-theme="light"] .p2-browser-iframe { border-color: #d5dde5; }
   color: #9098a1; font-size: 14px; font-family: inherit;
 }
 
-.toast {
-  position: fixed; top: 44px; left: 50%; transform: translate(-50%, -10px);
-  background: #12161a; border: 1px solid #2a2f35; border-radius: 6px;
-  padding: 6px 12px; z-index: 1200; opacity: 0; transition: opacity 120ms, transform 120ms;
-  pointer-events: none; font-size: 12px;
+/* Toasts. The wrap owns the fixed position and stacks its children, so a
+ * second toast queues below the first instead of painting on top of it.
+ *
+ * Visibility here is unconditional, and deliberately so. This rule used to
+ * be `opacity: 0` plus a `.toast.show { opacity: 1 }` toggle — a leftover
+ * from the pre-React wireframe host, which added `show` imperatively. The
+ * React port copied the CSS and not the toggle, so every toast this app
+ * raised painted invisibly for its whole 4s life; "Run feature now" looked
+ * like a dead menu item because its explanation was there and unreadable.
+ *
+ * Nothing about being seen may depend on script or on a frame landing:
+ * measured in a hidden tab, an entrance animation that never gets a start
+ * frame stays pending forever, and with `both` fill that pins the element
+ * to its from-keyframe. So the entrance animates transform only — paused at
+ * its first frame it is a toast 10px too high, never an invisible one. */
+.toast-wrap {
+  position: fixed; top: 44px; left: 50%; transform: translateX(-50%);
+  z-index: 1200; display: flex; flex-direction: column; gap: 6px;
+  align-items: center;
+  /* Click-through overlay; individual toasts opt back in below. */
+  pointer-events: none;
 }
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast {
+  display: flex; align-items: center; gap: 10px;
+  max-width: min(92vw, 560px);
+  background: #12161a; border: 1px solid #2a2f35; border-radius: 6px;
+  padding: 6px 12px; font-size: 12px;
+  /* Click-to-dismiss and the action button both need the pointer back. */
+  pointer-events: auto; cursor: pointer;
+  animation: toast-in 120ms ease-out;
+}
+@keyframes toast-in { from { transform: translateY(-10px) } to { transform: translateY(0) } }
+/* Placement diagnostics ("no eligible runner (runner-a: project not
+ * allowed)") are long by nature — wrap them instead of clipping the half
+ * that says why. */
+.toast-message { overflow-wrap: anywhere; }
+.toast-action {
+  flex: none; padding: 2px 8px; border-radius: 4px;
+  background: #1a1e22; border: 1px solid #2a2f35;
+  color: #eaedef; font-size: 11px; font-family: inherit; cursor: pointer;
+}
 /* Kind tones. Warning exists for the partial outcome a bulk fan-out
  * produces — "7 of 9 updated" must not read as a clean success. */
 .toast.success { border-color: #6fca7d55; color: #a9e3b3; }

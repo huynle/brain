@@ -519,7 +519,8 @@ export const clearFeatureAssignment = (
 export function summarizeRunFeatureResult(
   r: RunFeatureResponse,
 ): { message: string; kind: "info" | "success" } {
-  if (r.dispatched && r.dispatchedCount > 0 && (r.queued?.length ?? 0) === 0) {
+  const queued = r.queued?.length ?? 0;
+  if (r.dispatched && r.dispatchedCount > 0 && queued === 0) {
     return {
       message:
         r.dispatchedCount === 1
@@ -528,14 +529,26 @@ export function summarizeRunFeatureResult(
       kind: "success",
     };
   }
-  if (r.dispatched && (r.queued?.length ?? 0) > 0) {
+  if (r.dispatched && queued > 0) {
     return {
-      message: `Dispatched ${r.dispatchedCount}, queued ${r.queued?.length ?? 0} (auto-dispatch as slots free)`,
+      message: `Dispatched ${r.dispatchedCount}, queued ${queued} (auto-dispatch as slots free)`,
       kind: "success",
     };
   }
   // Nothing dispatched — surface the reason.
   const reasonText = humanizeRunFeatureReason(r);
+  if (queued > 0) {
+    // Queued-but-nothing-dispatched: the server parked every ready task
+    // for the cascade because no runner would take it *right now*. This
+    // used to read "Not triggered: nothing to dispatch", which is how a
+    // whole feature could look like a dead menu item — the actual cause
+    // ("no eligible runner: runner-a: project not allowed") was sitting
+    // unread in `results`. Say what was queued and why nothing moved.
+    return {
+      message: `Queued ${queued} ${queued === 1 ? "task" : "tasks"}, nothing dispatched: ${reasonText}`,
+      kind: "info",
+    };
+  }
   return { message: `Not triggered: ${reasonText}`, kind: "info" };
 }
 
@@ -549,12 +562,35 @@ function humanizeRunFeatureReason(r: RunFeatureResponse): string {
       return "every ready task is already in flight";
     case "scheduler_not_configured":
       return "scheduler not configured on server";
+    // Per-task placement reasons the server promotes to the feature level
+    // when nothing dispatched (internal/service/run_feature.go).
+    case "no_online_runner":
+      return "no runners are online";
+    case "no_eligible_runner":
+      return r.detail
+        ? `no eligible runner (${r.detail})`
+        : "no eligible runner for these tasks";
     case "":
     case undefined:
-      return "nothing to dispatch";
+      // Older servers leave the top-level reason empty when every task was
+      // skipped, so read the cause out of the per-task results instead of
+      // shrugging. Keeps the PWA honest against a backend that has not
+      // been redeployed yet.
+      return firstSkipReason(r.results) ?? "nothing to dispatch";
     default:
       return r.detail ? `${r.reason}: ${r.detail}` : r.reason;
   }
+}
+
+/**
+ * Humanized reason from the first skipped task of a feature run, or
+ * undefined when nothing in `results` explains itself. Reuses the per-task
+ * humanizer so a feature-level toast reads exactly like the single-task one
+ * — including lease owner and expiry for `already_leased`.
+ */
+function firstSkipReason(results?: RunTaskResponse[]): string | undefined {
+  const skipped = results?.find((one) => !one.dispatched && one.reason);
+  return skipped ? humanizeRunReason(skipped) : undefined;
 }
 
 // Create a feature checkout task via POST /features/{featureId}/checkout.

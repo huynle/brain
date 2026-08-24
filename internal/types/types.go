@@ -1295,8 +1295,11 @@ type RunFeatureRequest struct {
 // Results contains one RunTaskResponse per ready task attempted, in the order
 // they were considered. Queued lists task IDs the server is holding for the
 // manual cascade (they did not dispatch this call but will fire as slots free).
-// Reason carries a feature-level token when nothing could be done (e.g.
-// "feature_not_found", "no_ready_tasks", "feature_in_progress").
+// Reason carries a feature-level token when nothing could be done:
+// "feature_not_found", "no_ready_tasks", "feature_in_progress",
+// "scheduler_not_configured", or — promoted from the dominant per-task skip
+// when every ready task was refused placement — "no_online_runner" /
+// "no_eligible_runner", with Detail naming the runner and the refusal.
 type RunFeatureResponse struct {
 	Dispatched      bool              `json:"dispatched"`
 	ProjectID       string            `json:"projectId"`

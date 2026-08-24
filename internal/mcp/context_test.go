@@ -174,3 +174,44 @@ func TestDefaultBaseURL(t *testing.T) {
 		t.Logf("DefaultBaseURL() = %q (may be from env)", got)
 	}
 }
+
+// TestMakeHomeRelative_RootHomeIsNotAPrefix reproduces the live container
+// exactly: HOME=/ and WORKDIR=/app, with no git repository present.
+//
+// A home of "/" is a prefix of every absolute path, so treating it as one made
+// "/app" look home-relative ("app"). resolveProjectName's guard then found no
+// leading slash, concluded the path WAS under home, and let the basename
+// fallback answer "app" — the same invented project name 25c02d5 removed,
+// reached by a different route. Confirmed against production: context_get
+// reported "Project: app" while sitting in a non-repository directory, and
+// seven Hindsight entries had already been misfiled to projects/app/.
+func TestMakeHomeRelative_RootHomeIsNotAPrefix(t *testing.T) {
+	if got := makeHomeRelative("/app", "/"); got != "/app" {
+		t.Errorf("makeHomeRelative(%q, %q) = %q, want it left absolute", "/app", "/", got)
+	}
+	if got := makeHomeRelative("/var/lib/thing", "/"); got != "/var/lib/thing" {
+		t.Errorf("a root home must never make a path look home-relative, got %q", got)
+	}
+	// A real home still works.
+	if got := makeHomeRelative("/Users/huy/projects/brain-api", "/Users/huy"); got != "projects/brain-api" {
+		t.Errorf("makeHomeRelative with a real home = %q, want %q", got, "projects/brain-api")
+	}
+}
+
+// TestResolveProjectName_ContainerWorkdirYieldsNoProject is the end-to-end
+// version: the container's environment must produce "" — "ask the user" — not a
+// confident wrong name. "" is what callers treat as unknown; any non-empty
+// answer here silently files entries into a project nobody chose.
+func TestResolveProjectName_ContainerWorkdirYieldsNoProject(t *testing.T) {
+	// Exactly what the deployed MCP server sees.
+	rel := makeHomeRelative("/app", "/")
+	if got := resolveProjectName(rel, false); got != "" {
+		t.Errorf("resolveProjectName for the container workdir = %q, want \"\" (unknown)", got)
+	}
+
+	// A git repo outside home still resolves — the fix must not make the
+	// legitimate case unknown too.
+	if got := resolveProjectName(makeHomeRelative("/srv/checkouts/orion-ai", "/"), true); got != "orion-ai" {
+		t.Errorf("a repo outside home should still resolve, got %q", got)
+	}
+}

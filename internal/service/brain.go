@@ -2120,6 +2120,18 @@ func (s *BrainServiceImpl) EmbedEntries(ctx context.Context, req types.Embedding
 // =============================================================================
 
 // List returns entries matching the given filters.
+// Bounds for the over-fetch that makes the filename filter see past one SQL
+// page. The filter runs in Go after SQL has already limited by recency, so
+// without over-fetching, a lookup by exact id searched only the newest page.
+const (
+	// listFilterOverfetch is how many candidate rows to scan per row of the
+	// requested page.
+	listFilterOverfetch = 20
+	// listFilterMaxScan caps that scan. notes is the largest table in the
+	// store, so an unbounded walk would trade a wrong answer for a slow one.
+	listFilterMaxScan = 5000
+)
+
 func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error) {
 	opts := &storage.ListOptions{
 		Type:      req.Type,
@@ -2153,6 +2165,28 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 		}
 	}
 
+	// The filename filter runs in Go, AFTER SQL has already applied a LIMIT.
+	// Filtering a page the database picked by recency answers a different
+	// question than the caller asked: list(filename: "abc12345") searched only
+	// the newest 100 entries, so on a store of tens of thousands it returned
+	// "No entries found" for an entry that plainly exists. Same defect as the
+	// automation_runs filter fixed in 73dd98d.
+	//
+	// So when a post-SQL filter is in play, over-fetch and trim. Bounded: an
+	// unbounded walk of the notes table would trade one problem for another.
+	requestedLimit := opts.Limit
+	if requestedLimit <= 0 {
+		requestedLimit = storage.DefaultListLimit
+	}
+	scanLimit := requestedLimit
+	if req.Filename != "" {
+		scanLimit = requestedLimit * listFilterOverfetch
+		if scanLimit > listFilterMaxScan {
+			scanLimit = listFilterMaxScan
+		}
+		opts.Limit = scanLimit
+	}
+
 	rows, err := s.storage.ListNotes(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("list notes: %w", err)
@@ -2160,12 +2194,20 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 
 	// Apply filename filter if specified
 	var filtered []*storage.NoteRow
+	scanExhausted := false
 	if req.Filename != "" {
+		// The scan window is exhausted only if SQL filled it completely; a
+		// short read means we saw every candidate there is.
+		scanExhausted = len(rows) >= scanLimit
 		for _, row := range rows {
 			filename := markdown.ExtractIDFromPath(row.Path)
 			if markdown.MatchesFilenamePattern(filename, req.Filename) {
 				filtered = append(filtered, row)
 			}
+		}
+		if len(filtered) > requestedLimit {
+			filtered = filtered[:requestedLimit]
+			scanExhausted = false // the page is full on its own terms
 		}
 	} else {
 		filtered = rows
@@ -2188,10 +2230,11 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 	total := len(entries)
 
 	return &types.ListEntriesResponse{
-		Entries: entries,
-		Total:   total,
-		Limit:   req.Limit,
-		Offset:  req.Offset,
+		Entries:   entries,
+		Total:     total,
+		Limit:     req.Limit,
+		Offset:    req.Offset,
+		Truncated: scanExhausted,
 	}, nil
 }
 

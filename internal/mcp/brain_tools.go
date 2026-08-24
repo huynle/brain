@@ -991,26 +991,31 @@ Filename filtering supports:
 			params["global"] = fmt.Sprintf("%t", v)
 		}
 
-		var resp struct {
-			Entries []struct {
-				ID       string `json:"id"`
-				Path     string `json:"path"`
-				Title    string `json:"title"`
-				Type     string `json:"type"`
-				Status   string `json:"status"`
-				Priority string `json:"priority"`
-			} `json:"entries"`
-			Total int `json:"total"`
-		}
+		// Decode the real response type. The hand-rolled struct here picked
+		// six fields and silently dropped everything else the server sends —
+		// including Truncated, which is the difference between "there are no
+		// more" and "I stopped looking".
+		var resp types.ListEntriesResponse
 		if err := client.Request(ctx, "GET", "/entries", nil, params, &resp); err != nil {
 			return "", err
 		}
 
 		if len(resp.Entries) == 0 {
+			if resp.Truncated {
+				// A filtered list runs its filter in Go over a bounded scan of
+				// the table. Exhausting that window without a match is not the
+				// same as "no such entry", and saying "No entries found" for it
+				// is how a lookup by exact id used to deny entries that exist.
+				return "No entries matched within the scan window, and the window was exhausted before the search finished — " +
+					"matches may exist beyond it. Narrow the filters (project, type, status) or raise 'limit' and try again.", nil
+			}
 			return "No entries found", nil
 		}
 
 		lines := []string{foundLine("entries", resp.Total, IntArg(args, "limit", 0), 100)}
+		if resp.Truncated {
+			lines = append(lines, "_(scan window exhausted — more matches may exist beyond it; narrow the filters or raise 'limit')_")
+		}
 		for _, e := range resp.Entries {
 			lines = append(lines, fmt.Sprintf("- **%s** (%s) - %s | %s", e.Title, e.Path, e.Type, e.Status))
 		}

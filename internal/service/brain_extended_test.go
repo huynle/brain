@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -1108,5 +1110,98 @@ func TestGraphLookups_ExistingEntryWithNoLinksStaysEmpty(t *testing.T) {
 		if len(out) != 0 {
 			t.Errorf("GetOutlinks(%q) = %d entries, want 0", ident, len(out))
 		}
+	}
+}
+
+// =============================================================================
+// list(filename:) must see past one SQL page
+// =============================================================================
+
+// TestList_FilenameFilterSeesPastTheFirstPage is the regression test for a
+// lookup-by-id that could not find entries which plainly exist. ListNotes
+// applies LIMIT in SQL and the filename filter then runs in Go over that page —
+// so asking for one specific entry searched only the first
+// storage.DefaultListLimit rows. On the live store (~69k entries) that is a
+// guaranteed miss for anything outside the first page, rendered as a confident
+// "No entries found".
+//
+// Same shape as the automation_runs filter fixed in 73dd98d: filter applied
+// after the limit rather than before it.
+//
+// Ordering is pinned by TITLE rather than left to the default modified-DESC.
+// A tight creation loop stamps every entry with the same timestamp, so tie
+// order is arbitrary and the needle can land inside the first page by luck —
+// which made an earlier version of this test pass with the fix disabled.
+func TestList_FilenameFilterSeesPastTheFirstPage(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Haystack sorts before the needle by title, and is larger than one page.
+	for i := 0; i < storage.DefaultListLimit+20; i++ {
+		if _, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type:    "note",
+			Title:   fmt.Sprintf("aaa-haystack-%04d", i),
+			Content: "noise",
+		}); err != nil {
+			t.Fatalf("Save %d failed: %v", i, err)
+		}
+	}
+	needle, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type: "note", Title: "zzz-needle", Content: "find me",
+	})
+	if err != nil {
+		t.Fatalf("Save needle failed: %v", err)
+	}
+
+	req := types.ListEntriesRequest{Filename: needle.ID, SortBy: "title", SortOrder: "asc"}
+
+	// Guard against the test going vacuous: the needle must genuinely sit
+	// outside the first page under this ordering, or it proves nothing.
+	page, err := svc.List(ctx, types.ListEntriesRequest{SortBy: "title", SortOrder: "asc"})
+	if err != nil {
+		t.Fatalf("List (page probe) failed: %v", err)
+	}
+	for _, e := range page.Entries {
+		if e.ID == needle.ID {
+			t.Fatalf("premise broken: the needle is inside the first page of %d, so this test cannot detect the bug", len(page.Entries))
+		}
+	}
+
+	resp, err := svc.List(ctx, req)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("List(filename: %q) returned %d entries, want the one that exists", needle.ID, len(resp.Entries))
+	}
+	if resp.Entries[0].ID != needle.ID {
+		t.Errorf("got entry %s, want %s", resp.Entries[0].ID, needle.ID)
+	}
+}
+
+// TestList_WithoutFilenameFilterKeepsItsPageSize — the over-fetch must apply
+// ONLY when a post-SQL filter needs it. An unfiltered list must still return one
+// page, not a scan-window's worth.
+func TestList_WithoutFilenameFilterKeepsItsPageSize(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	for i := 0; i < 15; i++ {
+		if _, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type: "note", Title: fmt.Sprintf("Entry %d", i), Content: "x",
+		}); err != nil {
+			t.Fatalf("Save %d failed: %v", i, err)
+		}
+	}
+
+	resp, err := svc.List(ctx, types.ListEntriesRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(resp.Entries) != 5 {
+		t.Errorf("List(limit: 5) returned %d entries, want 5", len(resp.Entries))
+	}
+	if resp.Truncated {
+		t.Error("an unfiltered list is not scan-truncated")
 	}
 }

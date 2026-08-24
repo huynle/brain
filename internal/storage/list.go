@@ -6,8 +6,11 @@ import (
 	"strings"
 )
 
-// defaultListLimit is the default number of results returned by ListNotes.
-const defaultListLimit = 100
+// DefaultListLimit is the default number of results returned by ListNotes.
+// Exported because the service layer over-fetches relative to it when a
+// post-SQL filter is in play, and a second hand-copied 100 would be free to
+// drift away from this one.
+const DefaultListLimit = 100
 
 // allowedSortColumns maps user-facing sort names to SQL sort expressions.
 // Values are trusted constants keyed by an allowlist, which prevents SQL
@@ -93,7 +96,7 @@ func (s *StorageLayer) ListNotes(ctx context.Context, opts *ListOptions) ([]*Not
 	query += fmt.Sprintf(" ORDER BY %s %s", sortBy, sortOrder)
 
 	// Pagination.
-	limit := defaultListLimit
+	limit := DefaultListLimit
 	if opts != nil && opts.Limit > 0 {
 		limit = opts.Limit
 	}

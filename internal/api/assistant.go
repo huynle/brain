@@ -89,11 +89,11 @@ type AssistantChatRequest struct {
 //     the model recall it invoked the tool; if it needs the actual data
 //     again, it can re-run the (idempotent, cheap) read tool.
 type AssistantHistoryMessage struct {
-	Role       string                    `json:"role"`
-	Content    string                    `json:"content,omitempty"`
+	Role       string                     `json:"role"`
+	Content    string                     `json:"content,omitempty"`
 	ToolCalls  []AssistantHistoryToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string                    `json:"tool_call_id,omitempty"`
-	Name       string                    `json:"name,omitempty"`
+	ToolCallID string                     `json:"tool_call_id,omitempty"`
+	Name       string                     `json:"name,omitempty"`
 	// Status carries the tool result status (completed/failed/proposed) so
 	// the model knows how a prior call resolved even though the payload is
 	// stripped.

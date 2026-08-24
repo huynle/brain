@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -195,11 +196,18 @@ func TestBrainTasksStatus_Schema(t *testing.T) {
 	if len(waitForProp.Enum) != 2 {
 		t.Errorf("wait_for enum has %d values, want 2", len(waitForProp.Enum))
 	}
-	if !strings.Contains(waitForProp.Description, "'completed' waits until ALL listed tasks are done") {
-		t.Errorf("wait_for description mismatch, got: %s", waitForProp.Description)
-	}
-	if !strings.Contains(waitForProp.Description, "'any' returns on the first status change among them") {
-		t.Errorf("wait_for description mismatch, got: %s", waitForProp.Description)
+	// The description previously promised a wait that nothing implemented -
+	// WaitFor was serialised, decoded, and never read. Now that the client
+	// actually polls, the description says how (interval, timeout, and that the
+	// outcome is always reported) rather than just asserting that it waits.
+	for _, want := range []string{
+		"'completed' polls until ALL listed tasks are completed/validated",
+		"'any' polls until one of them changes status",
+		"states how the wait ended",
+	} {
+		if !strings.Contains(waitForProp.Description, want) {
+			t.Errorf("wait_for description missing %q, got: %s", want, waitForProp.Description)
+		}
 	}
 }
 
@@ -2276,5 +2284,194 @@ func TestTaskGet_ShowsHowTheTaskWillRun(t *testing.T) {
 	// rather than omitting the line.
 	if !strings.Contains(out, "model: (unset") {
 		t.Errorf("an unset model should be stated, not omitted:\n%s", out)
+	}
+}
+
+// withFastTaskWaitPolling shrinks the poll interval for tests that drive the
+// wait loop, so exercising it costs milliseconds rather than seconds.
+func withFastTaskWaitPolling(t *testing.T) {
+	t.Helper()
+	prev := taskWaitPollInterval
+	taskWaitPollInterval = 2 * time.Millisecond
+	t.Cleanup(func() { taskWaitPollInterval = prev })
+}
+
+// TestWaitForTaskCondition_MetOnFirstCheck — the condition already holds, so the
+// wait must not sleep, and must say it did not.
+func TestWaitForTaskCondition_MetOnFirstCheck(t *testing.T) {
+	resp := &types.MultiTaskStatusResponse{AllCompleted: true}
+	calls := 0
+	out := waitForTaskCondition(context.Background(), resp, func() error { calls++; return nil }, "completed", 60000)
+
+	if calls != 0 {
+		t.Errorf("should not re-fetch when already satisfied, got %d calls", calls)
+	}
+	if !strings.Contains(out, "already true on the first check") {
+		t.Errorf("wait outcome = %q", out)
+	}
+}
+
+// TestWaitForTaskCondition_NotFoundFailsFast — waiting on an id that resolves to
+// nothing can never succeed, because the server holds AllCompleted false for it.
+// Burning the full timeout to rediscover that helps nobody.
+func TestWaitForTaskCondition_NotFoundFailsFast(t *testing.T) {
+	resp := &types.MultiTaskStatusResponse{NotFound: []string{"nosuchid"}}
+	calls := 0
+	out := waitForTaskCondition(context.Background(), resp, func() error { calls++; return nil }, "completed", 300000)
+
+	if calls != 0 {
+		t.Errorf("should not poll for an unresolvable id, got %d calls", calls)
+	}
+	if !strings.Contains(out, "can never be met") {
+		t.Errorf("wait outcome = %q", out)
+	}
+}
+
+// TestWaitForTaskCondition_PollsUntilCompleted drives the real loop: the task is
+// in_progress on the first two checks and completed on the third.
+func TestWaitForTaskCondition_PollsUntilCompleted(t *testing.T) {
+	withFastTaskWaitPolling(t)
+	resp := &types.MultiTaskStatusResponse{
+		Tasks: []types.ResolvedTask{{ID: "t1", Status: "in_progress"}},
+	}
+	calls := 0
+	fetch := func() error {
+		calls++
+		if calls >= 2 {
+			*resp = types.MultiTaskStatusResponse{
+				Tasks:        []types.ResolvedTask{{ID: "t1", Status: "completed"}},
+				AllCompleted: true,
+			}
+		}
+		return nil
+	}
+
+	out := waitForTaskCondition(context.Background(), resp, fetch, "completed", 60000)
+
+	if !strings.Contains(out, "condition met") {
+		t.Errorf("wait outcome = %q, want condition met", out)
+	}
+	if !resp.AllCompleted {
+		t.Error("resp must be mutated to the final observed state")
+	}
+}
+
+// TestWaitForTaskCondition_TimeoutIsReportedAsSuch is the honesty guard. A
+// timed-out wait produces a task list that looks much like a satisfied one — the
+// same tasks, one merely unfinished — so the outcome line must distinguish them.
+func TestWaitForTaskCondition_TimeoutIsReportedAsSuch(t *testing.T) {
+	withFastTaskWaitPolling(t)
+	resp := &types.MultiTaskStatusResponse{
+		Tasks: []types.ResolvedTask{{ID: "t1", Status: "in_progress"}},
+	}
+	// Deadline already passed, so the first tick times out.
+	out := waitForTaskCondition(context.Background(), resp, func() error { return nil }, "completed", 1)
+
+	if !strings.Contains(out, "TIMED OUT") {
+		t.Errorf("wait outcome = %q, want a timeout report", out)
+	}
+	if !strings.Contains(out, "last observed") {
+		t.Errorf("a timed-out wait must not present its state as final: %q", out)
+	}
+}
+
+// TestWaitForTaskCondition_AnyNeedsABaseline — "any" means changed relative to
+// when the caller started waiting, so it cannot fire on the very first check.
+func TestWaitForTaskCondition_AnyNeedsABaseline(t *testing.T) {
+	resp := &types.MultiTaskStatusResponse{Tasks: []types.ResolvedTask{{ID: "t1", Status: "pending"}}}
+
+	if ok, _ := taskWaitSatisfied(resp, "any", nil); ok {
+		t.Error("'any' must not be satisfied before a baseline exists")
+	}
+	if ok, why := taskWaitSatisfied(resp, "any", map[string]string{"t1": "in_progress"}); !ok {
+		t.Error("'any' should fire when a status differs from the baseline")
+	} else if !strings.Contains(why, "in_progress") || !strings.Contains(why, "pending") {
+		t.Errorf("reason should name both statuses, got %q", why)
+	}
+}
+
+// TestWaitForTaskCondition_FetchErrorStopsTheWait — a transient failure mid-wait
+// must not be reported as if the condition resolved.
+func TestWaitForTaskCondition_FetchErrorStopsTheWait(t *testing.T) {
+	withFastTaskWaitPolling(t)
+	resp := &types.MultiTaskStatusResponse{Tasks: []types.ResolvedTask{{ID: "t1", Status: "pending"}}}
+	out := waitForTaskCondition(context.Background(), resp, func() error {
+		return fmt.Errorf("connection refused")
+	}, "completed", 60000)
+
+	if !strings.Contains(out, "error re-checking status") || !strings.Contains(out, "connection refused") {
+		t.Errorf("wait outcome = %q, want the error surfaced", out)
+	}
+}
+
+// TestTaskNext_DistinguishesEmptyFromClaimedFromUnknownProject covers the three
+// unrelated situations that all rendered "No ready tasks available." The data to
+// tell them apart was already being fetched.
+func TestTaskNext_DistinguishesEmptyFromClaimedFromUnknownProject(t *testing.T) {
+	tests := []struct {
+		name    string
+		tasks   []map[string]any
+		stats   *types.TaskStats
+		want    []string
+		notWant []string
+	}{
+		{
+			name:  "unknown project has no tasks at all",
+			tasks: nil,
+			stats: &types.TaskStats{},
+			want:  []string{"No tasks at all in project", "mistyped or never-registered project id"},
+			// Must not imply a real but idle queue.
+			notWant: []string{"tasks waiting on dependencies"},
+		},
+		{
+			name:  "ready tasks exist but are claimed or paused",
+			tasks: []map[string]any{{"classification": "ready", "status": "pending"}},
+			stats: &types.TaskStats{Total: 1, Ready: 1},
+			want: []string{
+				"1 task(s) ARE ready",
+				"This is not an empty queue",
+				"runner_status",
+				"task_dispatch_lease",
+			},
+		},
+		{
+			name:  "genuinely nothing runnable",
+			tasks: []map[string]any{{"classification": "waiting", "status": "pending"}},
+			stats: &types.TaskStats{Total: 1, Waiting: 1},
+			want:  []string{"No ready tasks available", "1 tasks waiting on dependencies"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "/next") {
+					// GetNext returns a zero-valued task for "nothing dispatchable".
+					_ = json.NewEncoder(w).Encode(map[string]any{})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"tasks": tt.tasks, "stats": tt.stats})
+			}))
+			defer srv.Close()
+
+			s := NewServer()
+			RegisterTaskTools(s, NewAPIClient(srv.URL))
+			got, err := s.tools["task_next"].handler(context.Background(), map[string]any{"project": "some-project"})
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+
+			for _, w := range tt.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("missing %q:\n%s", w, got)
+				}
+			}
+			for _, nw := range tt.notWant {
+				if strings.Contains(got, nw) {
+					t.Errorf("unexpectedly contains %q:\n%s", nw, got)
+				}
+			}
+		})
 	}
 }

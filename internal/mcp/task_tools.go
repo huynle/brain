@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -393,10 +394,18 @@ If no ready tasks, shows current queue state.`,
 			// tasks tool description and TaskStats doc comment
 			// (task ghtzzp1x / plan 24urhmtl#Finding-4).
 			waiting, depBlocked, statusBlocked, completed := 0, 0, 0, 0
+			ready := 0
 			if statsResp.Stats != nil {
 				waiting = statsResp.Stats.Waiting
 				depBlocked = statsResp.Stats.Blocked
 				statusBlocked = statsResp.Stats.StatusBlocked
+				ready = statsResp.Stats.Ready
+			} else {
+				for _, t := range statsResp.Tasks {
+					if t.Classification == "ready" {
+						ready++
+					}
+				}
 			}
 
 			// types.TaskStats has no Completed field, so this is ALWAYS
@@ -427,6 +436,50 @@ If no ready tasks, shows current queue state.`,
 						statusBlocked++
 					}
 				}
+			}
+
+			// Say WHY nothing came back. "No ready tasks available" was
+			// printed identically for three unrelated situations, and the
+			// data to tell them apart was already in hand:
+			//
+			//   - the project has no tasks at all, which for a mistyped or
+			//     never-registered project id is the whole story. getAllTasks
+			//     does a `path LIKE 'projects/<id>/task%'` query, so a wrong
+			//     id matches nothing and renders as a tidy empty queue.
+			//   - ready tasks exist, but GetNext filtered them out because
+			//     each carries an active dispatch lease
+			//     (filterDispatchReservedTasks) or is held by a pause dial.
+			//     Reporting "0 waiting, 0 blocked, 0 completed" here implies
+			//     an empty queue when the queue is full and moving.
+			//   - genuinely nothing runnable, which is the only case the old
+			//     message actually described.
+			switch {
+			case len(statsResp.Tasks) == 0:
+				return fmt.Sprintf(`No tasks at all in project %q.
+
+This is what a mistyped or never-registered project id looks like: the lookup
+matches on a path prefix, so an unknown project returns an empty queue rather
+than an error. Confirm the id before concluding the queue is empty.
+
+Use tasks(project: "...") to list a project, or check the id you passed.`, proj), nil
+
+			case ready > 0:
+				return fmt.Sprintf(`No task is dispatchable right now, but %d task(s) ARE ready.
+
+They were filtered out because each is already claimed — an active dispatch
+lease held by a runner — or held by a pause dial. This is not an empty queue.
+
+Current state:
+- %d tasks ready but not dispatchable (claimed or paused)
+- %d tasks waiting on dependencies
+- %d tasks dep_blocked (deps unmet / cycle / blocked-by)
+- %d tasks status_blocked (Status == "blocked")
+- %d tasks completed
+
+To see which: runner_status(project: %q) for the pause dials,
+scheduler_status for the per-project skip reason, and
+task_dispatch_lease(task_id) for who holds a given task.`,
+					ready, ready, waiting, depBlocked, statusBlocked, completed, proj), nil
 			}
 
 			return fmt.Sprintf(`No ready tasks available.
@@ -843,7 +896,7 @@ Example - wait for completion:
 			Type: "object",
 			Properties: map[string]Property{
 				"task_ids": {Type: "array", Items: &Property{Type: "string"}, Description: "Array of task IDs (8-char alphanumeric) to check"},
-				"wait_for": {Type: "string", Enum: []string{"completed", "any"}, Description: "Wait condition: 'completed' waits until ALL listed tasks are done, 'any' returns on the first status change among them"},
+				"wait_for": {Type: "string", Enum: []string{"completed", "any"}, Description: "Wait condition: 'completed' polls until ALL listed tasks are completed/validated, 'any' polls until one of them changes status. Polls every 2s until the condition holds or 'timeout' elapses; the response always states how the wait ended (met, timed out, or not started). Returns immediately if any requested id resolves to no task, since that condition can never be met."},
 				"timeout":  {Type: "number", Description: "Max wait time in milliseconds (default: 60000, max: 300000)"},
 				"project":  {Type: "string", Description: "Override auto-detected project"},
 			},
@@ -865,32 +918,48 @@ Example - wait for completion:
 		body := map[string]any{
 			"taskIds": taskIDs,
 		}
-		if waitFor != "" {
-			body["waitFor"] = waitFor
-			body["timeout"] = timeout
-		}
 
 		// Decode the real response type rather than hand-mirroring it.
 		//
 		// The hand-rolled struct declared three fields the server has never
 		// sent — notFound, changed, timedOut — and omitted the one it does:
-		// allCompleted. types.MultiTaskStatusResponse has exactly two
-		// fields, Tasks and AllCompleted.
-		//
-		// The phantoms were not harmless. Being structurally always false,
-		// the status line could only ever take its third branch, so a
-		// wait_for call that genuinely waited and saw its condition met
-		// still reported "Immediate check (no wait)", and the "Not Found"
-		// section was unreachable. Meanwhile allCompleted — the actual
-		// point of a multi-task status check — was thrown away.
+		// allCompleted. The phantoms were not harmless: being structurally
+		// always false, the status line could only take its third branch, so
+		// the "Not Found" section was unreachable and allCompleted — the
+		// actual point of the check — was thrown away.
 		var resp types.MultiTaskStatusResponse
-		if err := client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/status", body, nil, &resp); err != nil {
+		fetch := func() error {
+			resp = types.MultiTaskStatusResponse{}
+			return client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/status", body, nil, &resp)
+		}
+		if err := fetch(); err != nil {
 			return "", err
+		}
+
+		// wait_for is honoured HERE, in the client.
+		//
+		// The schema has always documented a blocking wait — "'completed' waits
+		// until ALL listed tasks are completed/validated", with a timeout and a
+		// worked example — and nothing implemented it. waitFor and timeout were
+		// serialised into the request body, decoded by the API into
+		// MultiTaskStatusRequest, and then never read: `WaitFor` appears
+		// exactly once outside tests, as the struct field declaration. So the
+		// documented gate returned instantly, every time.
+		//
+		// Polling from the client rather than blocking in the handler keeps the
+		// server free of held connections, and the observable contract is the
+		// same one the schema already promised.
+		waitOutcome := ""
+		if waitFor != "" {
+			waitOutcome = waitForTaskCondition(ctx, &resp, fetch, waitFor, timeout)
 		}
 
 		lines := []string{
 			"## Task Status Check",
 			"",
+		}
+		if waitOutcome != "" {
+			lines = append(lines, waitOutcome, "")
 		}
 
 		// AllCompleted is the signal callers gate control flow on ("have my
@@ -1673,4 +1742,93 @@ func nilIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// taskWaitPollInterval is how often a wait_for call re-checks. Task status
+// changes are driven by runners finishing work, so sub-second polling buys
+// nothing and only adds load. A var rather than a const so tests can shrink it
+// instead of paying real seconds to exercise the loop.
+var taskWaitPollInterval = 2 * time.Second
+
+// waitForTaskCondition implements the blocking wait that tasks_status has always
+// documented and never had. It re-fetches through `fetch` until the requested
+// condition holds or the deadline passes, mutating `resp` in place so the caller
+// renders the final observed state, and returns a line describing how the wait
+// ended.
+//
+// Returning WHY the wait stopped matters as much as the wait itself. "Condition
+// met" and "timed out still waiting" produce very similar task lists — the same
+// tasks, one of them merely not finished yet — so a caller that cannot tell them
+// apart is back to guessing, which is the failure this whole effort is about.
+func waitForTaskCondition(ctx context.Context, resp *types.MultiTaskStatusResponse, fetch func() error, waitFor string, timeoutMS int) string {
+	// Waiting on an id that resolves to nothing can never succeed: the server
+	// reports it in NotFound and holds AllCompleted false forever. Burning the
+	// full timeout to rediscover that helps nobody — fail fast and say so.
+	if len(resp.NotFound) > 0 {
+		return fmt.Sprintf("**Wait:** not started — %d requested id(s) resolved to no task, so the condition can never be met.", len(resp.NotFound))
+	}
+
+	if satisfied, why := taskWaitSatisfied(resp, waitFor, nil); satisfied {
+		return "**Wait:** " + why + " (already true on the first check; nothing to wait for)."
+	}
+
+	// For wait_for="any", the baseline is the status set observed right now;
+	// "changed" means changed relative to when the caller started waiting.
+	baseline := taskStatusSnapshot(resp)
+
+	deadline := time.Now().Add(time.Duration(timeoutMS) * time.Millisecond)
+	ticker := time.NewTicker(taskWaitPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "**Wait:** aborted — the request was cancelled before the condition was met."
+		case <-ticker.C:
+			if err := fetch(); err != nil {
+				// A transient failure mid-wait should not be reported as if the
+				// condition resolved. Surface it and stop.
+				return fmt.Sprintf("**Wait:** stopped after an error re-checking status: %v", err)
+			}
+			if len(resp.NotFound) > 0 {
+				return fmt.Sprintf("**Wait:** stopped — %d requested id(s) no longer resolve to a task.", len(resp.NotFound))
+			}
+			if satisfied, why := taskWaitSatisfied(resp, waitFor, baseline); satisfied {
+				return "**Wait:** " + why + "."
+			}
+			if time.Now().After(deadline) {
+				return fmt.Sprintf("**Wait:** TIMED OUT after %dms with the condition still unmet. The state below is the last observed, not a final one.", timeoutMS)
+			}
+		}
+	}
+}
+
+// taskWaitSatisfied evaluates the wait condition. A nil baseline means "first
+// check", where "any" cannot yet be satisfied because nothing has been observed
+// to change from.
+func taskWaitSatisfied(resp *types.MultiTaskStatusResponse, waitFor string, baseline map[string]string) (bool, string) {
+	switch waitFor {
+	case "completed":
+		if resp.AllCompleted {
+			return true, "condition met — all requested tasks are completed or validated"
+		}
+	case "any":
+		if baseline == nil {
+			return false, ""
+		}
+		for _, t := range resp.Tasks {
+			if prev, ok := baseline[t.ID]; ok && prev != t.Status {
+				return true, fmt.Sprintf("condition met — task %s changed from %s to %s", t.ID, prev, t.Status)
+			}
+		}
+	}
+	return false, ""
+}
+
+func taskStatusSnapshot(resp *types.MultiTaskStatusResponse) map[string]string {
+	snap := make(map[string]string, len(resp.Tasks))
+	for _, t := range resp.Tasks {
+		snap[t.ID] = t.Status
+	}
+	return snap
 }

@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -3250,4 +3251,49 @@ func TestRecall_ShowsTaskFieldsWhenPresent(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestUpdateDescription_MatchesTheActualGuardTable pins the description to the
+// table it describes. Commit 64093da corrected openCodeOptionalDefaults and left
+// the hand-written prose behind, so the tool advertised merge_policy:"prompt_only"
+// and remote_branch_policy:"keep" while the guard matched "auto_merge" and
+// "delete" — backwards in both directions, which misleads an agent worse than a
+// merely vague description would. Two independent pre-deploy reviewers found it.
+func TestUpdateDescription_MatchesTheActualGuardTable(t *testing.T) {
+	server := NewServer()
+	RegisterBrainTools(server, NewAPIClient("http://unused"))
+
+	desc := server.tools["update"].tool.Description
+
+	for key, val := range openCodeOptionalDefaults {
+		var want string
+		if s, ok := val.(string); ok {
+			want = fmt.Sprintf("%s: %q", key, s)
+		} else {
+			want = fmt.Sprintf("%s: %v", key, val)
+		}
+		if !strings.Contains(desc, want) {
+			t.Errorf("update description missing %q from openCodeOptionalDefaults:\n%s", want, desc)
+		}
+	}
+
+	// The specific values that were wrong before. Guard against a future edit
+	// reintroducing prose that contradicts the table.
+	for _, stale := range []string{`merge_policy: "prompt_only"`, `remote_branch_policy: "keep"`} {
+		if strings.Contains(desc, stale) {
+			t.Errorf("update description advertises %q, which is not what the guard matches", stale)
+		}
+	}
+}
+
+// TestFormatOptionalDefaults_IsDeterministic guards the tool schema against Go's
+// randomized map iteration: an MCP client that caches or diffs tool definitions
+// should not see the description reshuffle between processes.
+func TestFormatOptionalDefaults_IsDeterministic(t *testing.T) {
+	first := formatOptionalDefaults()
+	for i := 0; i < 50; i++ {
+		if got := formatOptionalDefaults(); got != first {
+			t.Fatalf("formatOptionalDefaults changed between calls (iteration %d):\n%s\nvs\n%s", i, first, got)
+		}
+	}
 }

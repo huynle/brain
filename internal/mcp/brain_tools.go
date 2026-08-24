@@ -1100,7 +1100,7 @@ If both content and append are provided, content replaces the body first, then a
 
 Statuses: draft, pending, active, in_progress, blocked, cancelled, completed, validated, superseded, archived
 
-Note: as a guard against clients that autofill every optional field, when 3 or more optional fields exactly match their documented defaults (priority: "medium", feature_priority: "high", merge_policy: "prompt_only", merge_strategy: "squash", remote_branch_policy: "keep", execution_mode: "worktree", executor: "opencode", open_pr_before_merge: false, complete_on_idle: false, schedule_enabled: false, max_runs: 0, checkout_mode: "ai"), those default-valued fields are ignored and listed in the response. To intentionally set several fields to those exact values, update them in separate calls.`,
+Note: as a guard against clients that autofill every optional field, when 3 or more optional fields exactly match their documented defaults (` + formatOptionalDefaults() + `), those default-valued fields are ignored and listed in the response. To intentionally set several fields to those exact values, update them in separate calls.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -1326,6 +1326,41 @@ func addPresentUpdateFields(body, args map[string]any, keys ...string) {
 			body[key] = v
 		}
 	}
+}
+
+// formatOptionalDefaults renders openCodeOptionalDefaults as the "key: value"
+// list quoted in the update tool's description.
+//
+// The list used to be hand-written prose sitting a couple hundred lines away
+// from the table it described, and commit 64093da corrected the table without
+// touching the prose - so the description advertised merge_policy:"prompt_only"
+// and remote_branch_policy:"keep" while the guard actually matched "auto_merge"
+// and "delete". Both were backwards, which is worse than merely stale: an agent
+// reading it would believe an explicit "auto_merge" was safe from the guard
+// (it is the value that trips it) and that "keep" was a default to avoid (it is
+// a deliberate non-default the guard now passes through). Generating the prose
+// from the map removes the possibility of them disagreeing again.
+//
+// Keys are sorted so the tool description is byte-identical across processes;
+// Go map iteration order is randomized, and an MCP client that caches or diffs
+// tool schemas should not see them churn.
+func formatOptionalDefaults() string {
+	keys := make([]string, 0, len(openCodeOptionalDefaults))
+	for k := range openCodeOptionalDefaults {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		switch v := openCodeOptionalDefaults[k].(type) {
+		case string:
+			parts = append(parts, fmt.Sprintf("%s: %q", k, v))
+		default:
+			parts = append(parts, fmt.Sprintf("%s: %v", k, v))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 var openCodeOptionalDefaults = map[string]any{
@@ -2554,7 +2589,7 @@ func registerBrainAutomationList(s *Server, client *APIClient) {
 
 func registerBrainAutomationTest(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "automation_test",
+		Name: "automation_test",
 		Description: "Dry-run an event against active automations. Reports EVENT-PATTERN matches only — see the caveat in the output. " +
 			"No tasks are created; this is a simulation for debugging automation triggers.",
 		InputSchema: InputSchema{

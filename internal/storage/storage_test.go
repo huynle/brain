@@ -1187,7 +1187,7 @@ func TestNew_PragmasHoldOnEveryConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	db := store.DB()
 	// Lift the cap for this check only. The point is that the pragmas no longer
@@ -1206,7 +1206,7 @@ func TestNew_PragmasHoldOnEveryConnection(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		for _, c := range conns {
-			c.Close()
+			_ = c.Close()
 		}
 	})
 
@@ -1257,7 +1257,7 @@ func TestNewWithDB_KeepsForeignKeysUnderTheConnectionCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	var foreignKeys int
 	if err := store.DB().QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {

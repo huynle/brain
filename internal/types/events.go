@@ -97,6 +97,24 @@ const (
 	EventControlExecStarted = "control.exec_started"
 )
 
+// EventCoverage describes how much history the in-memory event buffer holds.
+//
+// It exists so callers can qualify an empty result. The buffer is fixed-size and
+// starts empty after every restart, while runner.poll_complete alone fills it
+// continuously — so "no events matched" can mean the event never happened, or
+// that it scrolled out, or that the process restarted a minute ago. Those are
+// very different answers and were previously indistinguishable.
+type EventCoverage struct {
+	// Buffered is how many events the ring currently holds.
+	Buffered int `json:"buffered"`
+	// Capacity is the ring size. Buffered == Capacity means the oldest events
+	// are being overwritten and history before Oldest is gone.
+	Capacity int `json:"capacity"`
+	// Oldest is the timestamp of the earliest retained event, empty when the
+	// buffer holds nothing.
+	Oldest string `json:"oldest,omitempty"`
+}
+
 // AllEventTypes enumerates all valid event type strings.
 var AllEventTypes = []string{
 	EventRunnerStarted, EventRunnerStopped,

@@ -236,7 +236,17 @@ func (s *AttachmentServiceImpl) OpenText(ctx context.Context, projectID, attachm
 	}
 	if !isTextualAttachmentContentType(att.ContentType) {
 		_ = stream.Close()
-		return nil, nil, api.ErrNotFound
+		// The attachment EXISTS — it was found, and its blob was opened
+		// successfully. What is missing is extracted text for a binary format
+		// (PDF, image), which is a completely different situation from a
+		// mistyped or deleted attachment id, and previously produced a
+		// byte-identical bare "not found".
+		//
+		// The derived row already records which situation it is. Say so, while
+		// keeping the 404 status the handler and its callers already expect —
+		// writeAttachmentServiceError renders err.Error(), so the detail
+		// reaches the caller without a contract change.
+		return nil, nil, fmt.Errorf("%s: %w", describeExtractionState(att, derived), api.ErrNotFound)
 	}
 	return &att, stream, nil
 }
@@ -1218,4 +1228,39 @@ func attachmentDerivedRowToDTO(row *storage.AttachmentDerivedRow) (types.Attachm
 		Created:     row.CreatedAt,
 		Modified:    row.UpdatedAt,
 	}, nil
+}
+
+// describeExtractionState explains why an attachment that exists has no text to
+// return. Pending, failed, skipped, and never-attempted are four different
+// answers — one is "wait", one is "look at the error", one is "this will never
+// work", one is "extraction is off" — and all four previously rendered as a bare
+// "not found", which reads as "no such attachment".
+func describeExtractionState(att types.Attachment, derived *storage.AttachmentDerivedRow) string {
+	base := fmt.Sprintf("attachment %s (%s, %s) has no extracted text", att.ID, att.Filename, att.ContentType)
+
+	if derived == nil {
+		return base + "; no extraction has been attempted for it (extraction may be disabled, or the attachment predates it)"
+	}
+
+	switch derived.Status {
+	case types.AttachmentExtractionStatusPending:
+		return base + "; extraction is still PENDING — retry shortly"
+	case types.AttachmentExtractionStatusFailed:
+		if derived.Error != "" {
+			return base + "; extraction FAILED: " + derived.Error
+		}
+		return base + "; extraction FAILED with no recorded reason"
+	case types.AttachmentExtractionStatusSkipped:
+		if derived.Error != "" {
+			return base + "; extraction was SKIPPED: " + derived.Error
+		}
+		return base + "; extraction was SKIPPED for this attachment"
+	case types.AttachmentExtractionStatusReady:
+		// Ready but empty: extraction ran and genuinely found no text, which is
+		// a real answer rather than a failure — an image with no legible text,
+		// for instance.
+		return base + "; extraction completed but produced no text"
+	default:
+		return base + fmt.Sprintf("; extraction status is %q", derived.Status)
+	}
 }

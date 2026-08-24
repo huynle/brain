@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -716,5 +718,257 @@ func TestFormatSchedulerStatus_ProjectOrderIsDeterministic(t *testing.T) {
 	}
 	if !contains(first, "**alpha:**") {
 		t.Fatalf("expected sorted output to contain alpha:\n%s", first)
+	}
+}
+
+// TestValidateEventTypeFilter_RejectsTypesTheStreamDoesNotCarry — an
+// unrecognised filter previously produced "Found 0 events: No events found.",
+// byte-identical to a valid filter that genuinely matched nothing. Probed live
+// against production: events_recent(type: "automation.run") returned a clean
+// zero, and there is no automation.* family at all.
+//
+// Named for what the check actually establishes. An earlier name said
+// "NothingEmits", which is the overclaim goal.reconcile disproved — the
+// allowlist knows what the realtime stream carries, not what exists.
+func TestValidateEventTypeFilter_RejectsTypesTheStreamDoesNotCarry(t *testing.T) {
+	for _, bad := range []string{"automation.run", "task.complete", "nonsense", "runner.*"[:7] + "bogus"} {
+		t.Run(bad, func(t *testing.T) {
+			err := validateEventTypeFilter(bad)
+			if err == nil {
+				t.Fatalf("validateEventTypeFilter(%q) = nil, want an error", bad)
+			}
+			// The error has to point somewhere, not just say no.
+			if !strings.Contains(err.Error(), "task.*") {
+				t.Errorf("error should name the known families, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateEventTypeFilter_AcceptsRealTypesAndFamilies guards against the fix
+// turning into a different lie: rejecting filters that DO work.
+func TestValidateEventTypeFilter_AcceptsRealTypesAndFamilies(t *testing.T) {
+	// "*" is the global wildcard: MatchEventPattern returns true for every event
+	// type, and it is the same pattern language webhook Events and automation
+	// Trigger.Event use. The first version of this validator rejected it — the
+	// exact failure this test's name promises to prevent, missed because the
+	// list below enumerated families and exact types and never the wildcard.
+	good := []string{"*", "task.*", "runner.*", "feature.*", "entry.*", "control.*"}
+	// Every exact type must pass too — the allowlist is the source of truth.
+	good = append(good, types.AllEventTypes...)
+
+	for _, f := range good {
+		if err := validateEventTypeFilter(f); err != nil {
+			t.Errorf("validateEventTypeFilter(%q) = %v, want nil", f, err)
+		}
+	}
+}
+
+// TestFormatRecentEvents_EmptyResultStatesItsWindow — a zero count from a
+// volatile in-memory ring is not evidence the event never happened. The ring is
+// empty after every restart and is filled continuously by runner.poll_complete.
+func TestFormatRecentEvents_EmptyResultStatesItsWindow(t *testing.T) {
+	out := formatRecentEvents(nil, 0, types.EventCoverage{
+		Buffered: 3, Capacity: 1000, Oldest: "2026-08-24T15:48:00Z",
+	})
+
+	for _, want := range []string{
+		"No events matched",
+		"Searched 3 buffered event(s)",
+		"ring capacity 1000",
+		"oldest retained: 2026-08-24T15:48:00Z",
+		"starts empty after a restart",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestFormatRecentEvents_FullRingSaysHistoryIsGone — when the ring is saturated,
+// "oldest retained" is not just informational: everything before it is destroyed.
+func TestFormatRecentEvents_FullRingSaysHistoryIsGone(t *testing.T) {
+	out := formatRecentEvents(nil, 0, types.EventCoverage{
+		Buffered: 1000, Capacity: 1000, Oldest: "2026-08-24T15:10:00Z",
+	})
+	if !strings.Contains(out, "ring is FULL") || !strings.Contains(out, "overwritten") {
+		t.Errorf("a saturated ring must say older history is gone:\n%s", out)
+	}
+}
+
+// TestFormatPlacementReasons_EmptyIsGoodNews — this table records REJECTIONS
+// only. recordNoCandidate (internal/service/scheduler.go) is its sole writer and
+// its only Decision value is "no_candidate", so a successful dispatch leaves no
+// row. "No placement decisions recorded" therefore read as "nothing is known"
+// when it actually means "never failed to place" — and sent readers hunting for
+// a fault this table would never have shown them.
+func TestFormatPlacementReasons_EmptyIsGoodNews(t *testing.T) {
+	out := formatPlacementReasons("brain-api", "oanq4y2n", types.PlacementReasonListResponse{})
+
+	if !strings.Contains(out, "never failed to find an eligible runner") {
+		t.Errorf("empty result should read as good news:\n%s", out)
+	}
+	if !strings.Contains(out, "records rejections ONLY") {
+		t.Errorf("must state what the table does and does not hold:\n%s", out)
+	}
+	// It must redirect, not dead-end.
+	for _, want := range []string{"runner_status", "scheduler_status"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("should point at where the real cause lives (%s):\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "No placement decisions recorded") {
+		t.Errorf("stale wording implying nothing was decided:\n%s", out)
+	}
+}
+
+// TestFormatFeatureListTruncation_IsDisclosed — the server returns the complete
+// unpaginated list, so a silent features[:limit] made a truncated view look like
+// the whole project. The per-feature task list has always said "...and N more
+// tasks"; this is the same courtesy one level up.
+func TestFormatFeatureListTruncation_IsDisclosed(t *testing.T) {
+	features := make([]types.Feature, 63)
+	for i := range features {
+		features[i] = types.Feature{
+			FeatureID: fmt.Sprintf("feat-%02d", i),
+			Stats:     &types.TaskStats{Total: 1, Ready: 1},
+		}
+	}
+
+	out := formatFeatureList("Features", "No features found", features, 50)
+
+	for _, want := range []string{"Showing 50 of 63 features", "13 omitted", "Raise 'limit'"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out[:400])
+		}
+	}
+	// And a list that fits must not claim anything was dropped.
+	short := formatFeatureList("Features", "none", features[:5], 50)
+	if strings.Contains(short, "omitted") {
+		t.Errorf("a complete list must not claim truncation:\n%s", short)
+	}
+}
+
+// TestValidateEventTypeFilter_GoalEventsRedirectRatherThanDeny — goal.reconcile
+// is a REAL event type, written on every goal reconcile via store.InsertEvent,
+// but to the durable event_log rather than the realtime ring this tool reads
+// (Ingest rejects it outright, so it can never appear here).
+//
+// The first version told callers "nothing emits it" and listed families without
+// goal.*, so an agent asking "have any goal reconciles happened?" was told the
+// goal family does not exist and never found goal_audit. The answer has to be
+// accurate about WHY, and point somewhere useful.
+func TestValidateEventTypeFilter_GoalEventsRedirectRatherThanDeny(t *testing.T) {
+	for _, f := range []string{"goal.reconcile", "goal.*"} {
+		t.Run(f, func(t *testing.T) {
+			err := validateEventTypeFilter(f)
+			if err == nil {
+				t.Fatalf("validateEventTypeFilter(%q) = nil; it cannot match here and should say so", f)
+			}
+			if strings.Contains(err.Error(), "nothing emits it") {
+				t.Errorf("must not claim nothing emits a continuously-emitted type: %v", err)
+			}
+			for _, want := range []string{"durable event log", "goal_audit"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error should mention %q, got: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateEventTypeFilter_RejectionDoesNotOverclaim — the allowlist is
+// AllEventTypes, which means "carried by the realtime stream", NOT "every real
+// event type". goal.reconcile proved those differ, so the rejection must claim
+// only the former.
+func TestValidateEventTypeFilter_RejectionDoesNotOverclaim(t *testing.T) {
+	err := validateEventTypeFilter("totally.bogus")
+	if err == nil {
+		t.Fatal("expected an error for an unknown type")
+	}
+	if strings.Contains(err.Error(), "nothing emits it") {
+		t.Errorf("rejection overclaims what the allowlist knows: %v", err)
+	}
+	if !strings.Contains(err.Error(), "realtime event stream") {
+		t.Errorf("rejection should scope its claim to the realtime stream: %v", err)
+	}
+	// It must still point somewhere, including the wildcard.
+	if !strings.Contains(err.Error(), `"*"`) {
+		t.Errorf("rejection should mention the global wildcard: %v", err)
+	}
+}
+
+// TestValidateEventTypeFilter_AgreesWithServerMatcher is a DIFFERENTIAL test
+// against types.MatchEventPattern, the matcher the server actually applies.
+//
+// It exists because two regressions got through a hand-written allowlist test in
+// a single afternoon — "*" and goal.reconcile — and both slipped for the same
+// reason: that test's good-list was five hand-written families plus
+// AllEventTypes, so it mirrored the implementation's own universe and could only
+// ever confirm the implementation agreed with itself.
+//
+// The invariant here is derived from the server instead:
+//
+//	if MatchEventPattern(filter, t) is true for ANY ring-eligible type t,
+//	then validateEventTypeFilter(filter) MUST accept it.
+//
+// Rejecting such a filter loses real rows, which is the serious failure. The
+// families are derived from AllEventTypes rather than listed, so a new event
+// family added later is covered automatically — the property this test needed
+// and the old one lacked.
+func TestValidateEventTypeFilter_AgreesWithServerMatcher(t *testing.T) {
+	corpus := []string{
+		"*",
+		".*", "*.*", "task", "task.", "task.bogus", "TASK.*", "Task.Started",
+		" task.* ", "goal.*", "goal.reconcile", "automation.run", "nonsense",
+	}
+	corpus = append(corpus, types.AllEventTypes...)
+	// Every family the real type list implies, derived not hand-written.
+	corpus = append(corpus, eventTypeFamilies()...)
+
+	for _, filter := range corpus {
+		t.Run(filter, func(t *testing.T) {
+			serverWouldMatch := false
+			for _, ringType := range types.AllEventTypes {
+				if types.MatchEventPattern(filter, ringType) {
+					serverWouldMatch = true
+					break
+				}
+			}
+
+			accepted := validateEventTypeFilter(filter) == nil
+
+			if serverWouldMatch && !accepted {
+				t.Errorf("validator rejects %q, but the server matches it against real ring types — this loses rows", filter)
+			}
+			// The converse is intentionally NOT asserted as an error. Rejecting a
+			// filter the server cannot match is the whole point of the validator;
+			// goal.reconcile is deliberately rejected (with a redirect) because it
+			// can never reach the ring, and that costs no data.
+		})
+	}
+}
+
+// TestEventTypeFamilies_CoversEveryRealType guards the derivation the test above
+// depends on: if a new event family appears in AllEventTypes, eventTypeFamilies
+// must surface it, or the error messages will omit it exactly the way they
+// omitted goal.* — and the differential corpus above would silently stop
+// covering it.
+func TestEventTypeFamilies_CoversEveryRealType(t *testing.T) {
+	families := map[string]bool{}
+	for _, f := range eventTypeFamilies() {
+		families[f] = true
+	}
+
+	for _, typ := range types.AllEventTypes {
+		i := strings.Index(typ, ".")
+		if i <= 0 {
+			t.Errorf("event type %q has no family prefix; eventTypeFamilies cannot represent it", typ)
+			continue
+		}
+		want := typ[:i] + ".*"
+		if !families[want] {
+			t.Errorf("event type %q implies family %q, which eventTypeFamilies does not list", typ, want)
+		}
 	}
 }

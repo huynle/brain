@@ -2073,7 +2073,9 @@ func TestBrainAutomationTest_Handler_NoMatch(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 
-	if !strings.Contains(result, "No automations matched") {
+	// Wording narrowed deliberately: the simulation checks the event
+	// pattern only, so it must not claim a whole-matcher verdict.
+	if !strings.Contains(result, "No automation's EVENT PATTERN matched") {
 		t.Errorf("result should indicate no match, got: %s", result)
 	}
 	if !strings.Contains(result, "task.completed") {
@@ -2137,8 +2139,16 @@ func TestBrainAutomationTest_Handler_WithMatch(t *testing.T) {
 	if !strings.Contains(result, "On Task Wildcard") {
 		t.Errorf("result should match wildcard automation, got: %s", result)
 	}
-	if !strings.Contains(result, "2 automation(s) would match") {
+	if !strings.Contains(result, "2 automation(s) match on event pattern") {
 		t.Errorf("result should show 2 matches (not cron), got: %s", result)
+	}
+	// The cron automation is now reported as unsimulated rather than
+	// silently dropped — silence read as "your filter is wrong".
+	if !strings.Contains(result, "were not simulated") {
+		t.Errorf("non-event triggers should be disclosed, got: %s", result)
+	}
+	if !strings.Contains(result, "EVENT PATTERN only") {
+		t.Errorf("result must state what it did not evaluate, got: %s", result)
 	}
 }
 

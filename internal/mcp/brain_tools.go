@@ -2555,11 +2555,13 @@ func registerBrainAutomationList(s *Server, client *APIClient) {
 func registerBrainAutomationTest(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "automation_test",
-		Description: "Dry-run an event against active automations to see which would match. No tasks are created -- this is a simulation for debugging automation triggers.",
+		Description: "Dry-run an event against active automations. Reports EVENT-PATTERN matches only — see the caveat in the output. " +
+			"No tasks are created; this is a simulation for debugging automation triggers.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"event":   {Type: "string", Description: "Event name to simulate (e.g., 'task.completed', 'feature.all_completed')"},
+				"event": {Type: "string", Description: "Event name to simulate (e.g., 'task.completed', 'feature.completed'). " +
+					"Must be a real event type — 'feature.all_completed' is NOT one; it exists only on a dead internal bus and nothing publishes it."},
 				"project": {Type: "string", Description: "Filter automations by project (optional)"},
 			},
 			Required: []string{"event"},
@@ -2589,16 +2591,43 @@ func registerBrainAutomationTest(s *Server, client *APIClient) {
 		}
 
 		matched := 0
+		skippedNonEvent := 0
 		for _, entry := range resp.Entries {
-			if entry.Trigger == nil || entry.Trigger.Type != "event" {
+			if entry.Trigger == nil {
 				continue
 			}
-			if !matchesAutomationEvent(entry.Trigger.Event, eventName) {
+			// Non-event triggers cannot be simulated here at all. They used
+			// to be dropped silently, so an agent debugging a cron or
+			// webhook automation saw "no matches" and concluded its filter
+			// was wrong.
+			if entry.Trigger.Type != "" && entry.Trigger.Type != "event" {
+				skippedNonEvent++
+				continue
+			}
+			// Goal automations are excluded by the real matcher
+			// (isGoalAutomation in automation_service.go), so reporting them
+			// as matching is simply wrong.
+			if entry.GeneratedBy == "brain-goal" || entry.Goal != nil {
+				continue
+			}
+			// The server matches Trigger.Events as well as Trigger.Event.
+			// Checking only the singular reported every multi-event
+			// automation — which includes the default goal shape — as not
+			// matching while it really does.
+			patterns := entry.Trigger.EventPatterns()
+			hit := false
+			for _, pattern := range patterns {
+				if matchesAutomationEvent(pattern, eventName) {
+					hit = true
+					break
+				}
+			}
+			if !hit {
 				continue
 			}
 			matched++
-			lines = append(lines, fmt.Sprintf("**MATCH:** %s (`%s`)", entry.Title, entry.ID))
-			lines = append(lines, fmt.Sprintf("  Trigger: event=%s", entry.Trigger.Event))
+			lines = append(lines, fmt.Sprintf("**EVENT PATTERN MATCHES:** %s (`%s`)", entry.Title, entry.ID))
+			lines = append(lines, fmt.Sprintf("  Trigger: event=%s", strings.Join(patterns, ", ")))
 			if entry.Action != nil {
 				lines = append(lines, fmt.Sprintf("  Action: %s", entry.Action.Type))
 				if entry.Action.DirectPrompt != "" {
@@ -2616,9 +2645,27 @@ func registerBrainAutomationTest(s *Server, client *APIClient) {
 		}
 
 		if matched == 0 {
-			lines = append(lines, fmt.Sprintf("No automations matched event %q (dry-run, no tasks created)", eventName))
+			lines = append(lines, fmt.Sprintf("No automation's EVENT PATTERN matched %q (dry-run, no tasks created)", eventName))
 		} else {
-			lines = append(lines, fmt.Sprintf("---\n%d automation(s) would match (dry-run, no tasks created)", matched))
+			lines = append(lines, fmt.Sprintf("---\n%d automation(s) match on event pattern (dry-run, no tasks created)", matched))
+		}
+
+		// State what was not evaluated. This simulation reimplements only
+		// the event-pattern half of the server's matcher, so a bare "MATCH"
+		// verdict was authoritative-looking and wrong in both directions:
+		// it reported automations whose filters exclude the event, and it
+		// stayed silent about ones it could not evaluate at all. The tool
+		// exists to answer "why did my automation not fire", which is
+		// precisely the question a partial answer misleads on.
+		lines = append(lines,
+			"",
+			"> ⚠ This checks the EVENT PATTERN only. Not evaluated here: trigger filters",
+			"> (project scope, to_status, checkout_mode, ...), once_per dedup, cooldown, and",
+			"> max_concurrent. An automation listed above can still be skipped by any of them.")
+		if skippedNonEvent > 0 {
+			lines = append(lines, fmt.Sprintf(
+				"> %d automation(s) with cron/session/webhook triggers were not simulated — this tool only handles event triggers.",
+				skippedNonEvent))
 		}
 		return strings.Join(lines, "\n"), nil
 	})

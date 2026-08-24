@@ -36,9 +36,10 @@ import {
 /**
  * The row's Select verb, when it has one that is enabled. Long-press runs
  * this directly (marking the row and entering selection mode) instead of
- * opening the action sheet — hover does not exist on touch, so the
- * checkbox reveal needs a first-class gesture. Rows without a Select verb
- * (goals, automations) keep the sheet on long-press.
+ * opening the action sheet — checkboxes never appear on hover or focus,
+ * so entering selection mode needs a first-class gesture on every input
+ * surface. Rows without a Select verb (goals, automations) keep the
+ * sheet on long-press.
  */
 export function selectActionOf(
   actions: readonly ActionDescriptor[],

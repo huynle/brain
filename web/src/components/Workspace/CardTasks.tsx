@@ -122,7 +122,9 @@ export function CardTasks({
   const setActive = useSelection((s) => s.setActive);
   const selScoped = selProjectId === projectId;
   // Selection mode: once anything in this project is marked, every row
-  // shows its checkbox. Until then boxes appear only on hover/focus.
+  // shows its checkbox. Until then no row shows one — hover and focus
+  // deliberately do not reveal it. Entering selection mode is explicit:
+  // the row menu's Select verb, `v`, shift-click, or long-press.
   const selActive =
     selScoped && (selTaskIds.size > 0 || selFeatureIds.size > 0);
 
@@ -296,9 +298,10 @@ export function CardTasks({
         }
         onDragEnd={endDrag}
       >
-        {/* Checkbox and status glyph share one grid cell; CSS swaps them
-            on hover/focus, and `boxed` pins the checkbox while marked or
-            in selection mode. Keeps the 4-column row layout intact. */}
+        {/* Checkbox and status glyph share one grid cell. The glyph holds
+            it unless `boxed` (marked, or selection mode is on) swaps the
+            checkbox in. A plain click reads as colour only — `.active`.
+            Keeps the 4-column row layout intact. */}
         <span className={`glyph-slot${marked || selActive ? " boxed" : ""}`}>
           <span
             className={`selbox${marked ? " on" : ""}`}
@@ -423,8 +426,8 @@ export function CardTasks({
                 }
               }}
             >
-              {/* The caret's slot doubles as the feature checkbox on
-                  hover/selection — no extra column, no layout shift. */}
+              {/* The caret's slot doubles as the feature checkbox once
+                  selection mode is on — no extra column, no shift. */}
               <span
                 className={`glyph-slot${featMarked || selActive ? " boxed" : ""}`}
               >

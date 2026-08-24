@@ -496,7 +496,7 @@ func TestBrainTaskNext_Handler(t *testing.T) {
 			// decode struct agreed with each other and were both wrong
 			// about the server, so the test passed while the tool reported
 			// "No ready tasks available" for a queue full of ready work.
-			json.NewEncoder(w).Encode(types.ResolvedTask{
+			_ = json.NewEncoder(w).Encode(types.ResolvedTask{
 				ID: "abc12345", Path: "projects/test/task/abc12345.md",
 				Title: "Next Task", Status: "pending", Priority: "high",
 				Classification: "ready", ResolvedDeps: []string{"dep1"},
@@ -1165,7 +1165,7 @@ func TestBrainTasksStatus_WithNotFound(t *testing.T) {
 		// types.MultiTaskStatusResponse — a mock asserting a contract the
 		// server has never had, which is what let the phantom fields look
 		// real. A requested id simply does not come back in tasks.
-		json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{
+		_ = json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{
 			Tasks:        []types.ResolvedTask{},
 			AllCompleted: false,
 		})
@@ -1831,7 +1831,7 @@ func TestTaskToolsDoNotOverlapBrainTools(t *testing.T) {
 func TestBrainTasks_DecodesServerPayload(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.TaskListResponse{
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{
 			Tasks: []types.ResolvedTask{
 				{ID: "aaa11111", Title: "Ready with deps", Status: "pending", Classification: "ready", DependsOn: []string{"ddd44444"}},
 				{ID: "bbb22222", Title: "Waiting one", Status: "pending", Classification: "waiting", DependsOn: []string{"aaa11111", "ddd44444"}},
@@ -1874,7 +1874,7 @@ func TestBrainTasks_DecodesServerPayload(t *testing.T) {
 func TestBrainTasks_CyclesDoNotBreakTheTool(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.TaskListResponse{
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{
 			Tasks:  []types.ResolvedTask{{ID: "aaa11111", Title: "In a cycle", Status: "pending", Classification: "blocked"}},
 			Count:  1,
 			Cycles: [][]string{{"aaa11111", "bbb22222", "aaa11111"}},
@@ -1913,7 +1913,7 @@ func TestBrainTasks_LimitKeepsActionableTasks(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.TaskListResponse{Tasks: tasks, Count: len(tasks)})
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{Tasks: tasks, Count: len(tasks)})
 	}))
 	defer server.Close()
 
@@ -1938,7 +1938,7 @@ func TestBrainTasks_LimitKeepsActionableTasks(t *testing.T) {
 func TestBrainTasks_StatsMatchTheRenderedBody(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(types.TaskListResponse{
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{
 			Tasks: []types.ResolvedTask{
 				{ID: "aaa11111", Title: "Other feature", Status: "pending", Classification: "ready", FeatureID: "other"},
 			},
@@ -1983,7 +1983,7 @@ func TestBrainTasksStatus_UsesTheRealResponseType(t *testing.T) {
 				tasks = append(tasks, types.ResolvedTask{ID: id, Title: "T " + id, Status: "completed"})
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{Tasks: tasks, AllCompleted: allCompleted})
+			_ = json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{Tasks: tasks, AllCompleted: allCompleted})
 		}))
 	}
 

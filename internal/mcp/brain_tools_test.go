@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"reflect"
-	"regexp"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -726,7 +726,7 @@ func TestBrainStats_Handler(t *testing.T) {
 func TestBrainStats_ScopeLabels(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"totalEntries":   930,
 			"globalEntries":  25,
 			"projectEntries": 67935,
@@ -2826,7 +2826,7 @@ func TestOpenCodeOptionalDefaults_MatchServerNormalization(t *testing.T) {
 func TestBrainBulkUpdate_DisclosesDroppedFields(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"total": 2, "updated": 2, "failed": 0,
 			"results": []map[string]any{},
 		})
@@ -2943,7 +2943,7 @@ func TestBrainBulkUpdate_SurfacesTruncation(t *testing.T) {
 	newServerReturning := func(dryRun bool) *httptest.Server {
 		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"total": 100, "updated": 100, "failed": 0,
 				"dry_run": dryRun, "truncated": true, "matched_total": 500,
 				"results": []map[string]any{

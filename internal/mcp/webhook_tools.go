@@ -38,7 +38,12 @@ Events use a namespaced taxonomy (e.g., "task.completed", "entry.created").
 Supports glob patterns like "task.*" to match all task events.
 
 Example:
-  webhook_create({ name: "deploy-hook", url: "https://example.com/hook", events: ["task.completed"] })`,
+  webhook_create({ name: "deploy-hook", url: "https://example.com/hook", events: ["task.completed"] })
+
+NOTE: duplicate URLs are NOT rejected. There is no uniqueness check in the
+service and no unique constraint on the column, so creating the same webhook
+twice yields two subscriptions and two deliveries per event. Call webhook_list
+first if you might be re-creating one.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -124,7 +129,8 @@ Example:
 
 		if len(resp.Filter) > 0 {
 			filterParts := make([]string, 0, len(resp.Filter))
-			for k, v := range resp.Filter {
+			for _, k := range sortedKeys(resp.Filter) {
+				v := resp.Filter[k]
 				filterParts = append(filterParts, fmt.Sprintf("%s=%s", k, v))
 			}
 			lines = append(lines, fmt.Sprintf("- **Filter:** %s", strings.Join(filterParts, ", ")))
@@ -183,7 +189,8 @@ Use enabled_only to filter to active webhooks.`,
 			lines = append(lines, fmt.Sprintf("  Events: %s", strings.Join(wh.Events, ", ")))
 			if len(wh.Filter) > 0 {
 				filterParts := make([]string, 0, len(wh.Filter))
-				for k, v := range wh.Filter {
+				for _, k := range sortedKeys(wh.Filter) {
+					v := wh.Filter[k]
 					filterParts = append(filterParts, fmt.Sprintf("%s=%s", k, v))
 				}
 				lines = append(lines, fmt.Sprintf("  Filter: %s", strings.Join(filterParts, ", ")))
@@ -263,7 +270,11 @@ secret, and enabled status. Use webhook_get to inspect the result.`,
 		}
 
 		body := map[string]any{}
-		if name, ok := args["name"].(string); ok {
+		// An explicit empty string passes the type assertion, so this used
+		// to send name:"" and silently blank a webhook's name — while
+		// webhook_create requires one. Treat empty as "not provided",
+		// matching how the other optional fields behave.
+		if name, ok := args["name"].(string); ok && name != "" {
 			body["name"] = name
 		}
 		if webhookURL, ok := args["url"].(string); ok {
@@ -519,6 +530,22 @@ Use webhook_list to find webhook IDs.`,
 // =============================================================================
 // Webhook helper for JSON output
 // =============================================================================
+
+
+// sortedKeys returns a map's keys in sorted order.
+//
+// The webhook renderers iterated Filter directly, and Go randomises map
+// iteration — so the same webhook rendered its filter in a different order
+// on each call, and an agent diffing two listings saw changes that had not
+// happened.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 func formatWebhookConfig(title string, wh types.WebhookResponse) string {
 	status := "enabled"

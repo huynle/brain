@@ -276,7 +276,18 @@ func formatTaskLogs(projectID, taskID string, resp types.LogQueryResponse) strin
 	b.WriteString("## Task Logs\n\n")
 	fmt.Fprintf(&b, "Project: %s\n", projectID)
 	fmt.Fprintf(&b, "Task: %s\n", taskID)
-	fmt.Fprintf(&b, "Total entries: %d\n\n", resp.Total)
+	// LogQueryResponse carries Offset and Limit, and both were dropped.
+	// Total is the size of the WHOLE log while Lines is a window into it,
+	// so printing only Total left a caller unable to tell whether it was
+	// looking at the entire log or the tail of a much longer one — and
+	// unable to work out what to ask for next.
+	fmt.Fprintf(&b, "Total entries: %d\n", resp.Total)
+	if resp.Limit > 0 && resp.Total > len(resp.Lines) {
+		end := resp.Offset + len(resp.Lines)
+		fmt.Fprintf(&b, "Showing entries %d-%d of %d — pass offset=%d for the next page.\n",
+			resp.Offset+1, end, resp.Total, end)
+	}
+	b.WriteString("\n")
 
 	if len(resp.Lines) == 0 {
 		b.WriteString("No log entries found.\n")

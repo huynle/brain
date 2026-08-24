@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"testing"
 )
 
@@ -1159,5 +1160,110 @@ func TestRunnersTable_MigrationFromV5(t *testing.T) {
 	).Scan(&name)
 	if err != nil {
 		t.Fatalf("idx_runners_status not found after migration: %v", err)
+	}
+}
+
+// TestNew_PragmasHoldOnEveryConnection is the guard that makes raising
+// SetMaxOpenConns a safe decision later rather than a silent data-integrity
+// regression.
+//
+// foreign_keys and synchronous are PER-CONNECTION settings. Setting them with
+// db.Exec binds them to whichever pooled connection served that call; every
+// other connection gets SQLite's defaults — foreign_keys OFF. Measured against
+// the driver with a 4-connection pool before this change:
+//
+//	conn 0    -> foreign_keys=1 synchronous=1
+//	conn 1..3 -> foreign_keys=0 synchronous=2
+//
+// Only journal_mode survived, because WAL is persisted in the database file.
+// So the connection cap was load-bearing for CORRECTNESS, and anyone raising it
+// for the obvious performance reason would have quietly turned off foreign key
+// enforcement.
+//
+// The oracle here is SQLite's own PRAGMA readback on each live connection, not
+// a restatement of what the code intends to do.
+func TestNew_PragmasHoldOnEveryConnection(t *testing.T) {
+	store, err := New(filepath.Join(t.TempDir(), "pragmas.db"))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	defer store.Close()
+
+	db := store.DB()
+	// Lift the cap for this check only. The point is that the pragmas no longer
+	// depend on it, so verifying them requires more than one connection to
+	// actually exist.
+	db.SetMaxOpenConns(4)
+
+	ctx := context.Background()
+	var conns []*sql.Conn
+	for i := 0; i < 4; i++ {
+		c, err := db.Conn(ctx)
+		if err != nil {
+			t.Fatalf("open connection %d: %v", i, err)
+		}
+		conns = append(conns, c)
+	}
+	t.Cleanup(func() {
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+
+	for i, c := range conns {
+		var foreignKeys, synchronous, busyTimeout int
+		var journalMode string
+		if err := c.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+			t.Fatalf("conn %d read foreign_keys: %v", i, err)
+		}
+		if err := c.QueryRowContext(ctx, "PRAGMA synchronous").Scan(&synchronous); err != nil {
+			t.Fatalf("conn %d read synchronous: %v", i, err)
+		}
+		if err := c.QueryRowContext(ctx, "PRAGMA journal_mode").Scan(&journalMode); err != nil {
+			t.Fatalf("conn %d read journal_mode: %v", i, err)
+		}
+		if err := c.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&busyTimeout); err != nil {
+			t.Fatalf("conn %d read busy_timeout: %v", i, err)
+		}
+
+		if foreignKeys != 1 {
+			t.Errorf("conn %d: foreign_keys=%d, want 1 — FK enforcement is off on this connection", i, foreignKeys)
+		}
+		if synchronous != 1 {
+			t.Errorf("conn %d: synchronous=%d, want 1 (NORMAL)", i, synchronous)
+		}
+		if journalMode != "wal" {
+			t.Errorf("conn %d: journal_mode=%q, want wal", i, journalMode)
+		}
+		// Without a busy timeout, a pool larger than one fails immediately on
+		// write contention instead of waiting.
+		if busyTimeout <= 0 {
+			t.Errorf("conn %d: busy_timeout=%d, want a positive wait", i, busyTimeout)
+		}
+	}
+}
+
+// TestNewWithDB_KeepsForeignKeysUnderTheConnectionCap covers the other
+// construction path, whose DSN this package does not control. There the
+// db.Exec pragmas are sufficient ONLY because SetMaxOpenConns(1) guarantees a
+// single connection — so if that cap is ever raised, this path needs its own
+// answer, and this test is where that will surface.
+func TestNewWithDB_KeepsForeignKeysUnderTheConnectionCap(t *testing.T) {
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	store, err := NewWithDB(db)
+	if err != nil {
+		t.Fatalf("NewWithDB failed: %v", err)
+	}
+	defer store.Close()
+
+	var foreignKeys int
+	if err := store.DB().QueryRow("PRAGMA foreign_keys").Scan(&foreignKeys); err != nil {
+		t.Fatalf("read foreign_keys: %v", err)
+	}
+	if foreignKeys != 1 {
+		t.Errorf("foreign_keys=%d, want 1", foreignKeys)
 	}
 }

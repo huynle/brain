@@ -192,7 +192,11 @@ func TestBrainFeatureGet_RequestAndFormatting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	for _, want := range []string{"Feature auth-system", "Project: test-project", "Status: waiting", "Ready task", "Waiting task", "waiting_on: task-1"} {
+	// "Status: waiting" became "Dependencies: waiting on other features" — the
+	// single Status line conflated feature-dependency state with whether any task
+	// can actually run, and rendered the word "ready" in a different sense from
+	// the task-level "ready" printed beside it.
+	for _, want := range []string{"Feature auth-system", "Project: test-project", "Dependencies: waiting on other features", "Work: 1 task(s) ready to run", "Ready task", "Waiting task", "waiting_on: task-1"} {
 		if !strings.Contains(result, want) {
 			t.Errorf("result missing %q:\n%s", want, result)
 		}
@@ -418,5 +422,71 @@ func TestFormatFeatureGitLines_ReportsUnsetLandingFields(t *testing.T) {
 func TestFormatFeatureGitLines_EmptyFeature(t *testing.T) {
 	if got := formatFeatureGitLines(nil); got != nil {
 		t.Errorf("expected no lines for an empty feature, got: %v", got)
+	}
+}
+
+// TestFeatureWorkState_DistinguishesFinishedFromUnstarted is the core of the
+// fix. Observed live on brain-api: a feature whose 13 tasks were all completed,
+// one whose 15 were all still draft, and one with genuinely runnable work ALL
+// rendered "Status: ready", because that word reported feature-dependency state
+// while sitting one line above a stats line reading "Ready: 0".
+func TestFeatureWorkState_DistinguishesFinishedFromUnstarted(t *testing.T) {
+	tests := []struct {
+		name  string
+		stats *types.TaskStats
+		want  string
+	}{
+		{"runnable work", &types.TaskStats{Total: 6, Ready: 4, Waiting: 2}, "4 task(s) ready to run"},
+		{"all waiting on deps", &types.TaskStats{Total: 3, Waiting: 3}, "3 waiting on dependencies"},
+		{"blocked", &types.TaskStats{Total: 2, Blocked: 2}, "tasks are blocked"},
+		{"all outside pending", &types.TaskStats{Total: 15, NotPending: 15}, "all 15 task(s) are outside the pending lifecycle"},
+		{"empty feature", &types.TaskStats{}, "no tasks"},
+		{"nil stats", nil, "no tasks"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := featureWorkState(tt.stats); !strings.Contains(got, tt.want) {
+				t.Errorf("featureWorkState = %q, want it to contain %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFeatureStateLines_DependencyStateIsNotCalledReady guards the word
+// collision specifically: "ready" at the feature level meant "dependencies
+// satisfied", the same word the task classification uses for "runnable".
+func TestFeatureStateLines_DependencyStateIsNotCalledReady(t *testing.T) {
+	// Dependencies satisfied, but every task is finished — the case that used to
+	// print a bare "Status: ready" for a feature with nothing left to do.
+	lines := featureStateLines(types.Feature{
+		FeatureID: "done-feature",
+		Ready:     true,
+		Stats:     &types.TaskStats{Total: 13, NotPending: 13},
+	})
+	out := strings.Join(lines, "\n")
+
+	if strings.Contains(out, "Status: ready") {
+		t.Errorf("still labels a finished feature 'ready':\n%s", out)
+	}
+	if !strings.Contains(out, "Dependencies: satisfied") {
+		t.Errorf("dependency state should be named as such:\n%s", out)
+	}
+	if !strings.Contains(out, "outside the pending lifecycle") {
+		t.Errorf("should say there is nothing runnable:\n%s", out)
+	}
+}
+
+// TestFeatureWorkState_AgreesWithTheStatsLine pins the invariant that keeps the
+// summary honest: it is derived only from counts already displayed, so the
+// prose and the numbers beside it cannot contradict each other.
+func TestFeatureWorkState_AgreesWithTheStatsLine(t *testing.T) {
+	stats := &types.TaskStats{Total: 6, Ready: 4, Waiting: 2}
+	feature := types.Feature{FeatureID: "f", Ready: true, Stats: stats}
+
+	out := strings.Join(append(featureStateLines(feature), formatStatsLine(stats)), "\n")
+
+	if !strings.Contains(out, "Work: 4 task(s) ready to run") || !strings.Contains(out, "Ready: 4") {
+		t.Errorf("summary and stats line must report the same number:\n%s", out)
 	}
 }

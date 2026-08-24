@@ -218,16 +218,12 @@ func formatFeatureList(title, empty string, features []types.Feature, limit int)
 }
 
 func formatFeatureDetail(project string, feature types.Feature) string {
-	status := "waiting"
-	if feature.Ready {
-		status = "ready"
-	}
 	lines := []string{
 		fmt.Sprintf("## Feature %s", feature.FeatureID),
 		"",
 		fmt.Sprintf("- Project: %s", project),
-		fmt.Sprintf("- Status: %s", status),
 	}
+	lines = append(lines, featureStateLines(feature)...)
 	lines = append(lines, formatStatsLine(feature.Stats))
 	if len(feature.Tasks) == 0 {
 		lines = append(lines, "", "No tasks in this feature.")
@@ -313,16 +309,65 @@ func formatFeatureGitLines(tasks []types.ResolvedTask) []string {
 	return append([]string{"", "### Git & merge"}, body...)
 }
 
-func formatFeatureSummaryLines(feature types.Feature) []string {
-	status := "waiting"
+// featureStateLines renders a feature's two INDEPENDENT states, which the
+// previous single "- Status: ready" line conflated.
+//
+// types.Feature.Ready is `Classification == "ready"`, meaning the feature's
+// FEATURE-LEVEL DEPENDENCIES are satisfied. It says nothing about whether any
+// task inside can run. Rendering that as the bare word "ready" collided with the
+// task-level classification of the same name — which does mean runnable — and
+// the collision appeared in the same output, one line above a stats line reading
+// "Ready: 0".
+//
+// Observed live on brain-api: a feature whose 13 tasks were all completed, one
+// whose 15 tasks were all still draft, and one with genuinely runnable work all
+// rendered "Status: ready". An agent picking work off that list cannot tell them
+// apart. (feature_ready filters completed/archived out; the plain features list
+// never did.)
+//
+// So dependency state is now named as dependency state, and the actionable
+// question — is there runnable work here — is answered separately from the
+// stats that were already on screen.
+func featureStateLines(feature types.Feature) []string {
+	deps := "waiting on other features"
 	if feature.Ready {
-		status = "ready"
+		deps = "satisfied"
 	}
 	return []string{
-		fmt.Sprintf("### %s", feature.FeatureID),
-		fmt.Sprintf("- Status: %s", status),
-		formatStatsLine(feature.Stats),
+		fmt.Sprintf("- Dependencies: %s", deps),
+		fmt.Sprintf("- Work: %s", featureWorkState(feature.Stats)),
 	}
+}
+
+// featureWorkState summarizes what an agent can actually do with the feature.
+// Deliberately derived only from counts already shown, so the summary and the
+// stats line can never disagree.
+func featureWorkState(stats *types.TaskStats) string {
+	if stats == nil || stats.Total == 0 {
+		return "no tasks"
+	}
+	switch {
+	case stats.Ready > 0:
+		return fmt.Sprintf("%d task(s) ready to run", stats.Ready)
+	case stats.Waiting > 0:
+		return fmt.Sprintf("nothing runnable yet — %d waiting on dependencies", stats.Waiting)
+	case stats.Blocked > 0 || stats.StatusBlocked > 0:
+		return "nothing runnable — tasks are blocked"
+	case stats.NotPending == stats.Total:
+		// Everything is outside the pending lifecycle: finished, cancelled, or
+		// still draft. "Finished" and "not started yet" are opposite situations
+		// that both land here, so do not guess between them — say which bucket
+		// and let the task list below disambiguate.
+		return fmt.Sprintf("nothing runnable — all %d task(s) are outside the pending lifecycle (completed, draft, or cancelled)", stats.Total)
+	default:
+		return "nothing runnable"
+	}
+}
+
+func formatFeatureSummaryLines(feature types.Feature) []string {
+	lines := []string{fmt.Sprintf("### %s", feature.FeatureID)}
+	lines = append(lines, featureStateLines(feature)...)
+	return append(lines, formatStatsLine(feature.Stats))
 }
 
 func formatStatsLine(stats *types.TaskStats) string {

@@ -744,7 +744,12 @@ func TestValidateEventTypeFilter_RejectsTypesNothingEmits(t *testing.T) {
 // TestValidateEventTypeFilter_AcceptsRealTypesAndFamilies guards against the fix
 // turning into a different lie: rejecting filters that DO work.
 func TestValidateEventTypeFilter_AcceptsRealTypesAndFamilies(t *testing.T) {
-	good := []string{"task.*", "runner.*", "feature.*", "entry.*", "control.*"}
+	// "*" is the global wildcard: MatchEventPattern returns true for every event
+	// type, and it is the same pattern language webhook Events and automation
+	// Trigger.Event use. The first version of this validator rejected it — the
+	// exact failure this test's name promises to prevent, missed because the
+	// list below enumerated families and exact types and never the wildcard.
+	good := []string{"*", "task.*", "runner.*", "feature.*", "entry.*", "control.*"}
 	// Every exact type must pass too — the allowlist is the source of truth.
 	good = append(good, types.AllEventTypes...)
 

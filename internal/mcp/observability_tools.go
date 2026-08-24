@@ -599,6 +599,18 @@ func formatSchedulerStatus(status types.SchedulerStatus) string {
 // plausible-but-nonexistent name like "automation.run" (there is no automation.*
 // family at all), read as evidence the thing never happened.
 func validateEventTypeFilter(filter string) error {
+	// The global wildcard. MatchEventPattern (internal/types/events.go)
+	// short-circuits it to true for every event, and it is the documented
+	// pattern language shared with webhook Events and automation Trigger.Event,
+	// so an agent that learned "*" from those surfaces will pass it here.
+	//
+	// The first version of this validator rejected it — on a change whose whole
+	// point is removing confident false negatives, with an error reading
+	// "nothing emits it, so this filter can never match" about the one pattern
+	// that matches everything.
+	if filter == "*" {
+		return nil
+	}
 	if strings.HasSuffix(filter, ".*") {
 		prefix := strings.TrimSuffix(filter, "*")
 		for _, known := range types.AllEventTypes {

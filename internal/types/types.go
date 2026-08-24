@@ -1358,8 +1358,19 @@ type MultiTaskStatusRequest struct {
 
 // MultiTaskStatusResponse is the response for POST /tasks/:projectId/status.
 type MultiTaskStatusResponse struct {
-	Tasks        []ResolvedTask `json:"tasks"`
-	AllCompleted bool           `json:"allCompleted"`
+	Tasks []ResolvedTask `json:"tasks"`
+
+	// AllCompleted reports that every REQUESTED task id resolved to a task and
+	// each is completed or validated. An id that resolves to nothing makes this
+	// false — see NotFound. It previously counted only found tasks, so a single
+	// unresolvable id produced {"tasks":[],"allCompleted":true}: a vacuous
+	// truth on the exact signal callers gate their control flow on.
+	AllCompleted bool `json:"allCompleted"`
+
+	// NotFound lists requested ids that matched no task in the project. Unknown
+	// ids used to be dropped silently, so a caller could not tell a mistyped id
+	// or a wrong-project id from a task that finished.
+	NotFound []string `json:"notFound,omitempty"`
 }
 
 // Feature represents a computed feature grouping of tasks.

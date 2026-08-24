@@ -1131,7 +1131,10 @@ func TestBrainTasksStatus_Handler(t *testing.T) {
 	if !strings.Contains(result, "Task A") {
 		t.Errorf("result should contain task A, got: %s", result)
 	}
-	if !strings.Contains(result, "1/2 tasks completed") {
+	// Denominator is now the REQUESTED count rather than the returned count, so
+	// a request whose ids all fail to resolve reads as "0/N requested" instead of
+	// a clean-looking "0/0". Same numbers here; wording follows the change.
+	if !strings.Contains(result, "1/2 requested tasks completed") {
 		t.Errorf("result should contain summary, got: %s", result)
 	}
 }

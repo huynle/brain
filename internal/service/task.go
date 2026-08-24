@@ -900,25 +900,42 @@ func (s *TaskServiceImpl) GetMultiTaskStatus(ctx context.Context, projectId stri
 		taskMap[t.ID] = t
 	}
 
-	// Collect requested tasks
+	// Collect requested tasks.
+	//
+	// Ids that resolve to nothing are recorded rather than skipped. This is the
+	// gate an orchestrator polls to decide whether spawned subtasks finished, so
+	// a silently-dropped id was answered with "all completed" — vacuously true
+	// for a task that never existed. A mistyped id, an id from another project,
+	// or an archived-away task all took that path.
 	var tasks []types.ResolvedTask
+	var notFound []string
 	allCompleted := true
 	for _, id := range req.TaskIDs {
-		if t, ok := taskMap[id]; ok {
-			tasks = append(tasks, t)
-			if t.Status != "completed" && t.Status != "validated" {
-				allCompleted = false
-			}
+		t, ok := taskMap[id]
+		if !ok {
+			notFound = append(notFound, id)
+			// Cannot assert completion about a task we could not find.
+			allCompleted = false
+			continue
+		}
+		tasks = append(tasks, t)
+		if t.Status != "completed" && t.Status != "validated" {
+			allCompleted = false
 		}
 	}
 
 	if tasks == nil {
 		tasks = []types.ResolvedTask{}
 	}
+	// An empty request asserts nothing, so it completes nothing.
+	if len(req.TaskIDs) == 0 {
+		allCompleted = false
+	}
 
 	return &types.MultiTaskStatusResponse{
 		Tasks:        tasks,
 		AllCompleted: allCompleted,
+		NotFound:     notFound,
 	}, nil
 }
 

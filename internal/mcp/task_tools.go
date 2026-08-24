@@ -893,6 +893,9 @@ Example - wait for completion:
 			"",
 		}
 
+		// AllCompleted is the signal callers gate control flow on ("have my
+		// spawned subtasks finished?"), so it must never be vacuously true. The
+		// server now returns false when any requested id did not resolve.
 		if resp.AllCompleted {
 			lines = append(lines, "**Status:** All requested tasks are completed", "")
 		} else {
@@ -910,37 +913,45 @@ Example - wait for completion:
 			lines = append(lines, "")
 		}
 
-		// A requested id the server did not return is one it could not
-		// resolve. The server sends no notFound list, so derive it from the
-		// gap between what was asked for and what came back — previously
-		// this was read from a field that does not exist, so the section
-		// could never render at all.
-		returned := make(map[string]struct{}, len(resp.Tasks))
-		for _, t := range resp.Tasks {
-			returned[t.ID] = struct{}{}
-		}
-		var missing []string
-		for _, id := range taskIDs {
-			if _, ok := returned[id]; !ok {
-				missing = append(missing, id)
+		// Unresolvable ids. The server now reports these directly; the
+		// derivation from the request/response gap is kept as a fallback so a
+		// newer client against an older server still surfaces them.
+		missing := resp.NotFound
+		if len(missing) == 0 {
+			returned := make(map[string]struct{}, len(resp.Tasks))
+			for _, t := range resp.Tasks {
+				returned[t.ID] = struct{}{}
+			}
+			for _, id := range taskIDs {
+				if _, ok := returned[id]; !ok {
+					missing = append(missing, id)
+				}
 			}
 		}
 		if len(missing) > 0 {
 			lines = append(lines, "### Not Found")
 			for _, id := range missing {
-				lines = append(lines, fmt.Sprintf("- `%s` - task not found", id))
+				lines = append(lines, fmt.Sprintf("- `%s` - no such task in project %s", id, proj))
 			}
-			lines = append(lines, "")
+			lines = append(lines,
+				"",
+				"These ids resolved to nothing, so no claim is made about them. A wrong",
+				"project, a typo, or an archived task all look like this. Not-found ids",
+				"are NOT treated as completed.",
+				"")
 		}
 
-		// Summary
+		// Summary. Denominated by what was REQUESTED, not by what came back:
+		// counting only returned tasks reported "0/0 tasks completed" for a
+		// request whose ids all failed to resolve, which reads like a clean
+		// empty rather than a failed lookup.
 		completed := 0
 		for _, t := range resp.Tasks {
 			if t.Status == "completed" || t.Status == "validated" {
 				completed++
 			}
 		}
-		lines = append(lines, fmt.Sprintf("**Summary:** %d/%d tasks completed", completed, len(resp.Tasks)))
+		lines = append(lines, fmt.Sprintf("**Summary:** %d/%d requested tasks completed", completed, len(taskIDs)))
 
 		return strings.Join(lines, "\n"), nil
 	})
@@ -1483,7 +1494,6 @@ func registerBrainDreamDisable(s *Server, client *APIClient) {
 // Helper types
 // =============================================================================
 
-
 // formatTaskExecutionLines renders how a task will actually run.
 //
 // task_get promises "detailed information about a specific task", and an
@@ -1552,47 +1562,47 @@ func sessionIDsOf(sessions map[string]types.SessionInfo) []string {
 
 // fullTask is used by task_metadata for the complete task representation.
 type fullTask struct {
-	ID                  string   `json:"id"`
-	Title               string   `json:"title"`
-	Path                string   `json:"path"`
-	Status              string   `json:"status"`
-	Priority            string   `json:"priority"`
-	Classification      string   `json:"classification"`
-	RawDependsOn        []string `json:"depends_on"`
-	ResolvedDeps        []string `json:"resolved_deps"`
-	UnresolvedDeps      []string `json:"unresolved_deps"`
-	BlockedBy           []string `json:"blocked_by"`
-	BlockedByReason     string   `json:"blocked_by_reason"`
-	WaitingOn           []string `json:"waiting_on"`
-	InCycle             bool     `json:"in_cycle"`
-	Tags                []string `json:"tags"`
-	Created             string   `json:"created"`
-	Modified            string   `json:"modified"`
-	TargetWorkdir       string   `json:"target_workdir"`
-	Workdir             string   `json:"workdir"`
-	ResolvedWorkdir     string   `json:"resolved_workdir"`
-	GitBranch           string   `json:"git_branch"`
-	GitRemote           string   `json:"git_remote"`
-	Agent               string   `json:"agent"`
-	Model               string   `json:"model"`
-	DirectPrompt        string   `json:"direct_prompt"`
-	MergeTargetBranch   string   `json:"merge_target_branch"`
-	MergePolicy         string   `json:"merge_policy"`
-	MergeStrategy       string   `json:"merge_strategy"`
-	RemoteBranchPolicy  string   `json:"remote_branch_policy"`
-	OpenPRBeforeMerge   *bool    `json:"open_pr_before_merge"`
-	ExecutionMode       string   `json:"execution_mode"`
-	CompleteOnIdle      *bool    `json:"complete_on_idle"`
-	CheckoutMode        string   `json:"checkout_mode,omitempty"`
-	FeatureID           string   `json:"feature_id"`
-	FeaturePriority     string   `json:"feature_priority"`
-	FeatureDependsOn    []string `json:"feature_depends_on"`
+	ID                 string   `json:"id"`
+	Title              string   `json:"title"`
+	Path               string   `json:"path"`
+	Status             string   `json:"status"`
+	Priority           string   `json:"priority"`
+	Classification     string   `json:"classification"`
+	RawDependsOn       []string `json:"depends_on"`
+	ResolvedDeps       []string `json:"resolved_deps"`
+	UnresolvedDeps     []string `json:"unresolved_deps"`
+	BlockedBy          []string `json:"blocked_by"`
+	BlockedByReason    string   `json:"blocked_by_reason"`
+	WaitingOn          []string `json:"waiting_on"`
+	InCycle            bool     `json:"in_cycle"`
+	Tags               []string `json:"tags"`
+	Created            string   `json:"created"`
+	Modified           string   `json:"modified"`
+	TargetWorkdir      string   `json:"target_workdir"`
+	Workdir            string   `json:"workdir"`
+	ResolvedWorkdir    string   `json:"resolved_workdir"`
+	GitBranch          string   `json:"git_branch"`
+	GitRemote          string   `json:"git_remote"`
+	Agent              string   `json:"agent"`
+	Model              string   `json:"model"`
+	DirectPrompt       string   `json:"direct_prompt"`
+	MergeTargetBranch  string   `json:"merge_target_branch"`
+	MergePolicy        string   `json:"merge_policy"`
+	MergeStrategy      string   `json:"merge_strategy"`
+	RemoteBranchPolicy string   `json:"remote_branch_policy"`
+	OpenPRBeforeMerge  *bool    `json:"open_pr_before_merge"`
+	ExecutionMode      string   `json:"execution_mode"`
+	CompleteOnIdle     *bool    `json:"complete_on_idle"`
+	CheckoutMode       string   `json:"checkout_mode,omitempty"`
+	FeatureID          string   `json:"feature_id"`
+	FeaturePriority    string   `json:"feature_priority"`
+	FeatureDependsOn   []string `json:"feature_depends_on"`
 	// ResolvedTask carries Sessions as a map keyed by session id
 	// (json:"sessions"), not a session_ids array. This tag matched nothing,
 	// so task_metadata reported a task as having no sessions however many
 	// it had run.
-	Sessions map[string]types.SessionInfo `json:"sessions"`
-	UserOriginalRequest string   `json:"user_original_request"`
+	Sessions            map[string]types.SessionInfo `json:"sessions"`
+	UserOriginalRequest string                       `json:"user_original_request"`
 }
 
 // =============================================================================

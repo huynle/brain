@@ -1631,11 +1631,36 @@ type RunnerListResponse struct {
 }
 
 // SchedulerResult summarizes one scheduler pass for a project.
+//
+// Skipped is the total. The four SkippedX counters break it down by cause and
+// sum to it. The breakdown matters because the causes have opposite
+// operational meanings: paused work is being held deliberately (and by which
+// of two independent dials), no-candidate work will not run until a runner
+// matches it, and already-leased work is already on its way. A bare total
+// makes "held by a switch I forgot to flip" indistinguishable from "nothing
+// will ever run this" — which are the two most common things an operator
+// opens the scheduler status to tell apart.
 type SchedulerResult struct {
 	ProjectID  string `json:"project_id"`
 	Considered int    `json:"considered"`
 	Dispatched int    `json:"dispatched"`
 	Skipped    int    `json:"skipped"`
+
+	// SkippedTasksPaused / SkippedAutomationsPaused count tasks held by a
+	// pause switch. The two dials are independent (see shouldSkipTask), so
+	// they are counted apart: which one is holding the work is exactly what
+	// tells the operator which switch to flip.
+	SkippedTasksPaused       int `json:"skipped_tasks_paused,omitempty"`
+	SkippedAutomationsPaused int `json:"skipped_automations_paused,omitempty"`
+
+	// SkippedNoCandidate counts tasks that no online runner would accept.
+	// The per-task detail is recorded separately as a placement reason and
+	// is readable via task_placement_reasons.
+	SkippedNoCandidate int `json:"skipped_no_candidate,omitempty"`
+
+	// SkippedAlreadyLeased counts tasks a previous pass already dispatched.
+	// This one is benign: the work is in flight, not stuck.
+	SkippedAlreadyLeased int `json:"skipped_already_leased,omitempty"`
 }
 
 // SchedulerStatus is lightweight scheduler loop state suitable for API exposure.

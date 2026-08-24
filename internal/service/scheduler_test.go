@@ -291,8 +291,8 @@ func TestSchedulerSkipsAutomationGeneratedTasksOnlyForPausedAutomationProject(t 
 // including automation-generated ones — this test locks in the fix.
 func TestSchedulerService_PauseIndependence_TasksPausedAutosOn(t *testing.T) {
 	store := newFakeSchedulerStore()
-	store.paused = true             // tasks: paused
-	store.automationPaused = false  // autos: on
+	store.paused = true            // tasks: paused
+	store.automationPaused = false // autos: on
 	store.tasks = []types.ResolvedTask{
 		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
 		{ID: "automation", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-1"},
@@ -324,8 +324,8 @@ func TestSchedulerService_PauseIndependence_TasksPausedAutosOn(t *testing.T) {
 // automation tasks should be skipped.
 func TestSchedulerService_PauseIndependence_TasksOnAutosPaused(t *testing.T) {
 	store := newFakeSchedulerStore()
-	store.paused = false           // tasks: on
-	store.automationPaused = true  // autos: off (global)
+	store.paused = false          // tasks: on
+	store.automationPaused = true // autos: off (global)
 	store.tasks = []types.ResolvedTask{
 		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
 		{ID: "automation", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-1"},
@@ -519,9 +519,9 @@ type fakeSchedulerStore struct {
 	commands                 []fakeRunnerCommand
 	// activeLeases simulates the persisted state for already_leased / force
 	// scenarios. Keyed by "projectID/taskID".
-	activeLeases  map[string]*storage.DispatchLeaseRow
-	releasedKeys  []string
-	clearedKeys   []string
+	activeLeases map[string]*storage.DispatchLeaseRow
+	releasedKeys []string
+	clearedKeys  []string
 }
 
 type fakeRunnerCommand struct {
@@ -1196,5 +1196,88 @@ func TestRunFeatureNow_HonorsForceFlagOnPerTaskCalls(t *testing.T) {
 	}
 	if payload["force"] != true {
 		t.Fatalf("dispatch payload force = %v, want true (propagated from RunFeatureNow)", payload["force"])
+	}
+}
+
+// TestSchedulerService_SkipBreakdownAttributesEachCause verifies the scheduler
+// records WHY it skipped, not just how many. All three causes are known at the
+// skip site; before this they were summed into one counter and discarded, which
+// left "held by a pause dial" indistinguishable from "no runner will take this"
+// in scheduler_status — the two states an operator most needs to tell apart.
+func TestSchedulerService_SkipBreakdownAttributesEachCause(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.paused = true           // tasks: paused -> holds the manual task
+	store.automationPaused = true // autos: paused -> holds the automation task
+	store.tasks = []types.ResolvedTask{
+		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
+		{ID: "auto", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:a-1"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "r", MachineID: "m", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Skipped != 2 {
+		t.Fatalf("Skipped = %d, want 2; result=%#v", result.Skipped, result)
+	}
+	if result.SkippedTasksPaused != 1 {
+		t.Errorf("SkippedTasksPaused = %d, want 1; result=%#v", result.SkippedTasksPaused, result)
+	}
+	if result.SkippedAutomationsPaused != 1 {
+		t.Errorf("SkippedAutomationsPaused = %d, want 1; result=%#v", result.SkippedAutomationsPaused, result)
+	}
+	if result.SkippedNoCandidate != 0 || result.SkippedAlreadyLeased != 0 {
+		t.Errorf("paused skips must not be attributed to placement or leasing; result=%#v", result)
+	}
+}
+
+// TestSchedulerService_SkipBreakdownNoCandidate covers the second cause: the
+// task is not paused, but no online runner is eligible for it.
+func TestSchedulerService_SkipBreakdownNoCandidate(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "orphan", ProjectID: "proj", Status: "pending", Classification: "ready"},
+	}
+	store.runners = nil // nothing online to accept it
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.SkippedNoCandidate != 1 {
+		t.Errorf("SkippedNoCandidate = %d, want 1; result=%#v", result.SkippedNoCandidate, result)
+	}
+	if result.SkippedTasksPaused != 0 || result.SkippedAutomationsPaused != 0 {
+		t.Errorf("an unplaceable task must not be reported as paused; result=%#v", result)
+	}
+}
+
+// TestSchedulerService_SkipBreakdownSumsToTotal is the invariant that keeps the
+// rendered breakdown honest: whatever mix of causes a pass hits, the parts must
+// account for the whole. A new skip site that forgets its counter fails here.
+func TestSchedulerService_SkipBreakdownSumsToTotal(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.paused = true
+	store.tasks = []types.ResolvedTask{
+		{ID: "held", ProjectID: "proj", Status: "pending", Classification: "ready"},
+		{ID: "unplaceable", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:a-1"},
+	}
+	store.runners = nil
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	accounted := result.SkippedTasksPaused + result.SkippedAutomationsPaused +
+		result.SkippedNoCandidate + result.SkippedAlreadyLeased
+	if accounted != result.Skipped {
+		t.Fatalf("skip causes account for %d of %d skips; result=%#v", accounted, result.Skipped, result)
 	}
 }

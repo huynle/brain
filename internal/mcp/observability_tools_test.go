@@ -613,3 +613,108 @@ func hasSubstring(s, substr string) bool {
 	}
 	return false
 }
+
+// TestFormatSchedulerStatus_SkipBreakdownNamesTheCause locks in the fix for a
+// scheduler_status that reported "Skipped: N" and nothing else. The three skip
+// causes call for three different operator responses — flip a pause dial, fix
+// runner eligibility, or do nothing because the work is already in flight — and
+// collapsing them into one number made the most common question ("why is
+// nothing running?") unanswerable from this tool alone.
+func TestFormatSchedulerStatus_SkipBreakdownNamesTheCause(t *testing.T) {
+	status := types.SchedulerStatus{
+		Started:    true,
+		Running:    true,
+		TotalTicks: 10,
+		LastProjectResults: map[string]types.SchedulerResult{
+			"held": {
+				ProjectID: "held", Considered: 4, Dispatched: 0, Skipped: 4,
+				SkippedTasksPaused: 3, SkippedAutomationsPaused: 1,
+			},
+			"unplaceable": {
+				ProjectID: "unplaceable", Considered: 2, Dispatched: 0, Skipped: 2,
+				SkippedNoCandidate: 2,
+			},
+			"inflight": {
+				ProjectID: "inflight", Considered: 1, Dispatched: 0, Skipped: 1,
+				SkippedAlreadyLeased: 1,
+			},
+		},
+	}
+
+	out := formatSchedulerStatus(status)
+
+	for _, want := range []string{
+		"3 held by tasks-paused",
+		"1 held by automations-paused",
+		"2 no eligible runner",
+		"1 already dispatched by an earlier pass",
+	} {
+		if !contains(out, want) {
+			t.Errorf("expected %q in output:\n%s", want, out)
+		}
+	}
+}
+
+// TestFormatSchedulerStatus_UnaccountedSkipsAreDisclosed guards the invariant
+// that the rendered parts visibly sum to the total. If a future skip site
+// increments Skipped without a matching cause counter, the shortfall must show
+// up as "other" rather than vanishing into a breakdown that silently under-adds.
+func TestFormatSchedulerStatus_UnaccountedSkipsAreDisclosed(t *testing.T) {
+	out := formatSchedulerStatus(types.SchedulerStatus{
+		LastProjectResults: map[string]types.SchedulerResult{
+			"p": {ProjectID: "p", Considered: 5, Skipped: 5, SkippedTasksPaused: 2},
+		},
+	})
+
+	if !contains(out, "2 held by tasks-paused") || !contains(out, "3 other") {
+		t.Errorf("expected the unaccounted remainder to be disclosed, got:\n%s", out)
+	}
+}
+
+// TestFormatSchedulerStatus_OmitsIdleProjectsButSaysSo verifies the noise fix.
+// A live store carries dozens of projects, most of them dead test fixtures that
+// report three zeros forever. They are omitted, but the count is disclosed —
+// silently dropping them would make "project filtered out of this view" look
+// identical to "project no longer exists".
+func TestFormatSchedulerStatus_OmitsIdleProjectsButSaysSo(t *testing.T) {
+	results := map[string]types.SchedulerResult{
+		"busy": {ProjectID: "busy", Considered: 2, Dispatched: 2},
+	}
+	for _, idle := range []string{"dead-fixture-1", "dead-fixture-2", "dead-fixture-3"} {
+		results[idle] = types.SchedulerResult{ProjectID: idle}
+	}
+
+	out := formatSchedulerStatus(types.SchedulerStatus{LastProjectResults: results})
+
+	if !contains(out, "**busy:**") {
+		t.Errorf("expected the active project to be rendered:\n%s", out)
+	}
+	if contains(out, "dead-fixture") {
+		t.Errorf("expected idle projects to be omitted:\n%s", out)
+	}
+	if !contains(out, "3 project(s) omitted") {
+		t.Errorf("expected the omitted count to be disclosed:\n%s", out)
+	}
+}
+
+// TestFormatSchedulerStatus_ProjectOrderIsDeterministic pins the ordering. The
+// renderer used to range directly over the map, so Go's randomized iteration
+// order reshuffled the output on every call — which makes diffing two
+// consecutive reads to see what changed useless.
+func TestFormatSchedulerStatus_ProjectOrderIsDeterministic(t *testing.T) {
+	results := map[string]types.SchedulerResult{}
+	for _, name := range []string{"zeta", "alpha", "mike", "bravo", "yankee", "delta", "kilo", "echo"} {
+		results[name] = types.SchedulerResult{ProjectID: name, Considered: 1, Skipped: 1, SkippedNoCandidate: 1}
+	}
+	status := types.SchedulerStatus{LastProjectResults: results}
+
+	first := formatSchedulerStatus(status)
+	for i := 0; i < 20; i++ {
+		if got := formatSchedulerStatus(status); got != first {
+			t.Fatalf("output changed between calls (iteration %d):\n--- first ---\n%s\n--- got ---\n%s", i, first, got)
+		}
+	}
+	if !contains(first, "**alpha:**") {
+		t.Fatalf("expected sorted output to contain alpha:\n%s", first)
+	}
+}

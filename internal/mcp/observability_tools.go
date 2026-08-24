@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -196,7 +197,7 @@ func registerBrainAutomationRuns(s *Server, client *APIClient) {
 					Description: "Filter by run status. queued = a task was generated; skipped = evaluated but did not fire " +
 						"(paused, dedup, cooldown, or max_concurrent); completed/blocked/cancelled = the generated task reached that terminal state.",
 				},
-				"limit":         {Type: "number", Description: "Maximum runs to return (default: 100)"},
+				"limit": {Type: "number", Description: "Maximum runs to return (default: 100)"},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
@@ -473,6 +474,43 @@ func formatAutomationRun(entry types.BrainEntry) string {
 	return b.String()
 }
 
+// formatSkipBreakdown renders why a pass skipped what it skipped. "Skipped: 4"
+// alone cannot distinguish work being held by a pause switch from work no
+// runner will ever accept from work already dispatched by an earlier pass —
+// three states that call for three different responses. The scheduler knows
+// which is which at the moment it skips, so say so.
+//
+// Counters that are zero are left out, and any remainder the four named causes
+// do not account for is reported as "other" rather than silently dropped, so
+// the parts always visibly sum to the total.
+func formatSkipBreakdown(result types.SchedulerResult) string {
+	if result.Skipped == 0 {
+		return ""
+	}
+	var parts []string
+	if result.SkippedTasksPaused > 0 {
+		parts = append(parts, fmt.Sprintf("%d held by tasks-paused", result.SkippedTasksPaused))
+	}
+	if result.SkippedAutomationsPaused > 0 {
+		parts = append(parts, fmt.Sprintf("%d held by automations-paused", result.SkippedAutomationsPaused))
+	}
+	if result.SkippedNoCandidate > 0 {
+		parts = append(parts, fmt.Sprintf("%d no eligible runner (see task_placement_reasons)", result.SkippedNoCandidate))
+	}
+	if result.SkippedAlreadyLeased > 0 {
+		parts = append(parts, fmt.Sprintf("%d already dispatched by an earlier pass", result.SkippedAlreadyLeased))
+	}
+	accounted := result.SkippedTasksPaused + result.SkippedAutomationsPaused +
+		result.SkippedNoCandidate + result.SkippedAlreadyLeased
+	if remainder := result.Skipped - accounted; remainder > 0 {
+		parts = append(parts, fmt.Sprintf("%d other", remainder))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, ", ") + ")"
+}
+
 func formatSchedulerStatus(status types.SchedulerStatus) string {
 	var b strings.Builder
 	b.WriteString("## Scheduler Status\n\n")
@@ -492,13 +530,37 @@ func formatSchedulerStatus(status types.SchedulerStatus) string {
 	fmt.Fprintf(&b, "- Last expired leases: %d\n", status.LastExpiredLeases)
 
 	if len(status.LastProjectResults) > 0 {
-		b.WriteString("\n### Project Results\n\n")
+		// Only projects that had ready tasks on the last tick carry any
+		// information. Every other project reports three zeros, and on a
+		// store with dozens of projects (many of them long-dead test
+		// fixtures) those zeros bury the handful of lines worth reading.
+		// The omitted count is still disclosed so a project going quiet is
+		// distinguishable from a project being filtered out here.
+		active := make([]string, 0, len(status.LastProjectResults))
+		idle := 0
 		for project, result := range status.LastProjectResults {
+			if result.Considered == 0 {
+				idle++
+				continue
+			}
+			active = append(active, project)
+		}
+		sort.Strings(active)
+
+		b.WriteString("\n### Project Results\n\n")
+		for _, project := range active {
+			result := status.LastProjectResults[project]
 			fmt.Fprintf(&b, "**%s:**\n", project)
 			fmt.Fprintf(&b, "- Considered: %d\n", result.Considered)
 			fmt.Fprintf(&b, "- Dispatched: %d\n", result.Dispatched)
-			fmt.Fprintf(&b, "- Skipped: %d\n", result.Skipped)
+			fmt.Fprintf(&b, "- Skipped: %d%s\n", result.Skipped, formatSkipBreakdown(result))
 			b.WriteString("\n")
+		}
+		if len(active) == 0 {
+			b.WriteString("No project had ready tasks on the last tick.\n\n")
+		}
+		if idle > 0 {
+			fmt.Fprintf(&b, "_%d project(s) omitted: no ready tasks to consider on the last tick._\n", idle)
 		}
 	}
 

@@ -300,13 +300,20 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 
 	reservedSlots := make(map[string]int)
 	for _, task := range tasks {
-		if s.shouldSkipTask(projectID, task) {
+		if skip, reason := s.shouldSkipTask(projectID, task); skip {
 			result.Skipped++
+			switch reason {
+			case skipReasonTasksPaused:
+				result.SkippedTasksPaused++
+			case skipReasonAutomationsPaused:
+				result.SkippedAutomationsPaused++
+			}
 			continue
 		}
 		candidate, reasons := s.selectCandidate(task, projectID, runners, placement, reservedSlots)
 		if candidate == nil {
 			result.Skipped++
+			result.SkippedNoCandidate++
 			if err := s.recordNoCandidate(ctx, projectID, task.ID, reasons); err != nil {
 				return nil, err
 			}
@@ -327,6 +334,7 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 		}
 		if !created {
 			result.Skipped++
+			result.SkippedAlreadyLeased++
 			continue
 		}
 		if s.publisher != nil {
@@ -348,6 +356,13 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 	return result, nil
 }
 
+// Skip reasons returned by shouldSkipTask alongside its boolean. The reason is
+// meaningful only when the boolean is true; it names which pause dial applied.
+const (
+	skipReasonTasksPaused       = "tasks_paused"
+	skipReasonAutomationsPaused = "automations_paused"
+)
+
 // shouldSkipTask decides whether a task should be skipped by the scheduler
 // based on the two independent pause switches:
 //
@@ -361,20 +376,20 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 // execution should not silently halt automation work, and pausing autos
 // should not affect manual tasks. See unit tests in scheduler_test.go
 // (TestSchedulerService_PauseIndependence*).
-func (s *SchedulerService) shouldSkipTask(projectID string, task types.ResolvedTask) bool {
+func (s *SchedulerService) shouldSkipTask(projectID string, task types.ResolvedTask) (bool, string) {
 	if s.pauses == nil {
-		return false
+		return false, ""
 	}
 	isAutomation := strings.HasPrefix(task.GeneratedBy, "automation:")
 	if isAutomation {
 		// Automation tasks respect ONLY the autos-paused switch.
 		if scoped, ok := s.pauses.(schedulerProjectAutomationPauseChecker); ok {
-			return scoped.IsAutomationsPausedForProject(projectID)
+			return scoped.IsAutomationsPausedForProject(projectID), skipReasonAutomationsPaused
 		}
-		return s.pauses.IsAutomationsPaused()
+		return s.pauses.IsAutomationsPaused(), skipReasonAutomationsPaused
 	}
 	// Non-automation (manual/user) tasks respect ONLY the tasks-paused switch.
-	return s.pauses.IsPaused(projectID)
+	return s.pauses.IsPaused(projectID), skipReasonTasksPaused
 }
 
 // RunTaskNow is the user-explicit "run this task now" entry point used by the

@@ -46,10 +46,19 @@ Example:
 				"url":     {Type: "string", Description: "URL to receive webhook POST callbacks"},
 				"events":  {Type: "array", Items: &Property{Type: "string"}, Description: "Event types to subscribe to (e.g., [\"task.completed\", \"entry.*\"])"},
 				"filter":  {Type: "object", Description: "Optional key-value filter (e.g., {\"project\": \"my-project\"})"},
-				"secret":  {Type: "string", Description: "Optional HMAC secret for payload signing (X-Hook-Signature header)"},
+				// The service signs with X-Brain-Signature
+				// (internal/service/webhook_service.go). This said
+				// X-Hook-Signature, so a receiver written from this
+				// description verified a header that never arrives and
+				// rejected every delivery — or, worse, skipped verification
+				// because the header appeared to be missing.
+				"secret": {Type: "string", Description: "Optional HMAC secret for payload signing. Deliveries carry the signature in the X-Brain-Signature header as HMAC-SHA256 of the raw body."},
 				"enabled": {Type: "boolean", Description: "Whether the webhook is active (default: true)"},
 			},
-			Required: []string{"url", "events"},
+			// name is required server-side (internal/api/webhooks.go). Leaving
+			// it out of Required meant the model omitted it and got back a
+			// validation error for a field the schema never said was needed.
+			Required: []string{"name", "url", "events"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		webhookURL := StringArg(args, "url", "")

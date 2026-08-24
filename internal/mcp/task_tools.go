@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -788,7 +789,7 @@ or to inspect its dependency graph details. Complements task_get which returns c
 			"tags":                  emptyIfNil(task.Tags),
 			"created":               task.Created,
 			"modified":              nilIfEmpty(task.Modified),
-			"session_ids":           emptyIfNil(task.SessionIDs),
+			"session_ids":           sessionIDsOf(task.Sessions),
 			"user_original_request": nilIfEmpty(task.UserOriginalRequest),
 		}
 
@@ -1537,6 +1538,18 @@ func formatTaskExecutionLines(task types.ResolvedTask) []string {
 // task_metadata to find out. Alias the real type instead.
 type resolvedTaskWithDeps = types.ResolvedTask
 
+// sessionIDsOf returns the session ids of a task, sorted for stable output.
+// The wire field is a map keyed by id; the previous session_ids array tag
+// matched nothing and always rendered empty.
+func sessionIDsOf(sessions map[string]types.SessionInfo) []string {
+	ids := make([]string, 0, len(sessions))
+	for id := range sessions {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
 // fullTask is used by task_metadata for the complete task representation.
 type fullTask struct {
 	ID                  string   `json:"id"`
@@ -1574,7 +1587,11 @@ type fullTask struct {
 	FeatureID           string   `json:"feature_id"`
 	FeaturePriority     string   `json:"feature_priority"`
 	FeatureDependsOn    []string `json:"feature_depends_on"`
-	SessionIDs          []string `json:"session_ids"`
+	// ResolvedTask carries Sessions as a map keyed by session id
+	// (json:"sessions"), not a session_ids array. This tag matched nothing,
+	// so task_metadata reported a task as having no sessions however many
+	// it had run.
+	Sessions map[string]types.SessionInfo `json:"sessions"`
 	UserOriginalRequest string   `json:"user_original_request"`
 }
 

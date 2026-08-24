@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
+	"regexp"
 	"os"
 	"path/filepath"
 	"strings"
@@ -3142,4 +3144,46 @@ func TestPhantomFieldTools_RenderRealValues(t *testing.T) {
 			t.Errorf("a disabled provider should say semantic search is unavailable:\n%s", out)
 		}
 	})
+}
+
+// TestBulkUpdateDescription_ClaimsOnlyRealFields pins the bulk_update
+// "updates" description against types.UpdateEntryRequest.
+//
+// The description exists because the old one under-claimed — it listed six
+// fields where the endpoint accepts ~55. Fixing that introduced the
+// opposite error: it advertised requires_capability, which lives on
+// BrainEntry and ResolvedTask but NOT on UpdateEntryRequest.
+//
+// That was worse than a stale doc, because the same commit added strict
+// decoding of updates.*. So the description told an agent to send a field
+// the validator then rejected with HTTP 400 — the two halves of one change
+// actively fighting each other.
+//
+// A description is a contract. Check it against the struct, not by eye.
+func TestBulkUpdateDescription_ClaimsOnlyRealFields(t *testing.T) {
+	real := map[string]bool{}
+	rt := reflect.TypeOf(types.UpdateEntryRequest{})
+	for i := 0; i < rt.NumField(); i++ {
+		tag := rt.Field(i).Tag.Get("json")
+		if name, _, _ := strings.Cut(tag, ","); name != "" && name != "-" {
+			real[name] = true
+		}
+	}
+
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient("http://127.0.0.1:1"))
+	desc := s.tools["bulk_update"].tool.InputSchema.Properties["updates"].Description
+
+	// Every snake_case token in the description that looks like a field
+	// name must actually be one.
+	for _, token := range regexp.MustCompile(`\b[a-z]+_[a-z_]+\b`).FindAllString(desc, -1) {
+		switch token {
+		case "bulk_update", "snake_case": // prose, not field names
+			continue
+		}
+		if !real[token] {
+			t.Errorf("description advertises %q, which is not a field on types.UpdateEntryRequest — "+
+				"an agent that believes it gets HTTP 400 from the strict updates.* validator", token)
+		}
+	}
 }

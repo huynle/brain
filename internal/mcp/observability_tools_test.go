@@ -721,12 +721,16 @@ func TestFormatSchedulerStatus_ProjectOrderIsDeterministic(t *testing.T) {
 	}
 }
 
-// TestValidateEventTypeFilter_RejectsTypesNothingEmits — an unrecognised filter
-// previously produced "Found 0 events: No events found.", byte-identical to a
-// valid filter that genuinely matched nothing. Probed live against production:
-// events_recent(type: "automation.run") returned a clean zero, and there is no
-// automation.* event family at all.
-func TestValidateEventTypeFilter_RejectsTypesNothingEmits(t *testing.T) {
+// TestValidateEventTypeFilter_RejectsTypesTheStreamDoesNotCarry — an
+// unrecognised filter previously produced "Found 0 events: No events found.",
+// byte-identical to a valid filter that genuinely matched nothing. Probed live
+// against production: events_recent(type: "automation.run") returned a clean
+// zero, and there is no automation.* family at all.
+//
+// Named for what the check actually establishes. An earlier name said
+// "NothingEmits", which is the overclaim goal.reconcile disproved — the
+// allowlist knows what the realtime stream carries, not what exists.
+func TestValidateEventTypeFilter_RejectsTypesTheStreamDoesNotCarry(t *testing.T) {
 	for _, bad := range []string{"automation.run", "task.complete", "nonsense", "runner.*"[:7] + "bogus"} {
 		t.Run(bad, func(t *testing.T) {
 			err := validateEventTypeFilter(bad)
@@ -842,5 +846,54 @@ func TestFormatFeatureListTruncation_IsDisclosed(t *testing.T) {
 	short := formatFeatureList("Features", "none", features[:5], 50)
 	if strings.Contains(short, "omitted") {
 		t.Errorf("a complete list must not claim truncation:\n%s", short)
+	}
+}
+
+// TestValidateEventTypeFilter_GoalEventsRedirectRatherThanDeny — goal.reconcile
+// is a REAL event type, written on every goal reconcile via store.InsertEvent,
+// but to the durable event_log rather than the realtime ring this tool reads
+// (Ingest rejects it outright, so it can never appear here).
+//
+// The first version told callers "nothing emits it" and listed families without
+// goal.*, so an agent asking "have any goal reconciles happened?" was told the
+// goal family does not exist and never found goal_audit. The answer has to be
+// accurate about WHY, and point somewhere useful.
+func TestValidateEventTypeFilter_GoalEventsRedirectRatherThanDeny(t *testing.T) {
+	for _, f := range []string{"goal.reconcile", "goal.*"} {
+		t.Run(f, func(t *testing.T) {
+			err := validateEventTypeFilter(f)
+			if err == nil {
+				t.Fatalf("validateEventTypeFilter(%q) = nil; it cannot match here and should say so", f)
+			}
+			if strings.Contains(err.Error(), "nothing emits it") {
+				t.Errorf("must not claim nothing emits a continuously-emitted type: %v", err)
+			}
+			for _, want := range []string{"durable event log", "goal_audit"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error should mention %q, got: %v", want, err)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateEventTypeFilter_RejectionDoesNotOverclaim — the allowlist is
+// AllEventTypes, which means "carried by the realtime stream", NOT "every real
+// event type". goal.reconcile proved those differ, so the rejection must claim
+// only the former.
+func TestValidateEventTypeFilter_RejectionDoesNotOverclaim(t *testing.T) {
+	err := validateEventTypeFilter("totally.bogus")
+	if err == nil {
+		t.Fatal("expected an error for an unknown type")
+	}
+	if strings.Contains(err.Error(), "nothing emits it") {
+		t.Errorf("rejection overclaims what the allowlist knows: %v", err)
+	}
+	if !strings.Contains(err.Error(), "realtime event stream") {
+		t.Errorf("rejection should scope its claim to the realtime stream: %v", err)
+	}
+	// It must still point somewhere, including the wildcard.
+	if !strings.Contains(err.Error(), `"*"`) {
+		t.Errorf("rejection should mention the global wildcard: %v", err)
 	}
 }

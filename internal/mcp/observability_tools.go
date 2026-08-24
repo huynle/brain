@@ -611,6 +611,22 @@ func validateEventTypeFilter(filter string) error {
 	if filter == "*" {
 		return nil
 	}
+	// goal.reconcile is a real event type, written on EVERY goal reconcile
+	// (5m ticker plus event-driven) via store.InsertEvent — but to the durable
+	// event_log, not the realtime ring this tool reads. EventServiceImpl.Ingest
+	// rejects it outright, so it can never appear here no matter how long you
+	// look.
+	//
+	// The first version told callers "nothing emits it", which is false about a
+	// type emitted continuously in production, and listed families without
+	// goal.* — so an agent asking "have any goal reconciles happened?" was told
+	// the goal event family does not exist and never found goal_audit. Same
+	// mirror-the-implementation blind spot as the "*" regression: the allowlist
+	// is AllEventTypes, and AllEventTypes means ring-eligible, not real.
+	if filter == types.EventGoalReconcile || strings.HasPrefix(filter, "goal.") {
+		return fmt.Errorf("%q is recorded in the durable event log, not the realtime event stream this tool reads, so it will never appear here — use goal_audit(goal_id) for goal reconcile history", filter)
+	}
+
 	if strings.HasSuffix(filter, ".*") {
 		prefix := strings.TrimSuffix(filter, "*")
 		for _, known := range types.AllEventTypes {
@@ -626,7 +642,12 @@ func validateEventTypeFilter(filter string) error {
 			return nil
 		}
 	}
-	return fmt.Errorf("unknown event type %q — nothing emits it, so this filter can never match. Known families: %s (use e.g. \"task.*\" for a whole family)",
+	// Deliberately does NOT say "nothing emits it". AllEventTypes is the set the
+	// realtime stream carries, which is not the same as the set of real event
+	// types — goal.reconcile is emitted on every reconcile and is absent from
+	// it. Claiming nothing emits an unlisted type overclaims exactly the way
+	// this whole change exists to stop.
+	return fmt.Errorf("%q is not a type carried by the realtime event stream, so this filter cannot match here. Types it does carry: %s (use e.g. \"task.*\" for a whole family, or \"*\" for everything)",
 		filter, strings.Join(eventTypeFamilies(), ", "))
 }
 

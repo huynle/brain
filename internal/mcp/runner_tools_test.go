@@ -3,11 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 func TestRegisterRunnerTools_CountNamesHandlersDescriptions(t *testing.T) {
@@ -126,10 +129,26 @@ func TestRunnerTools_RequestPathsNoBodiesAndFormatting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("status handler error: %v", err)
 	}
-	for _, want := range []string{"Runner Status", "Running: true", "Paused: false", "Paused projects: sandbox", "Automations paused: true", "Automation paused projects: brain"} {
+	// The old assertions pinned "Paused: false" alongside "Paused projects:
+	// sandbox" — this very fixture shows the API's paused flag saying "false"
+	// while a project IS paused, because the flag is any(pausedProjects) built
+	// elsewhere and carries no independent meaning. The renderer now derives
+	// everything from the lists and surfaces the cross-axis asymmetry, which is
+	// the only part of two long lists that informs anything.
+	for _, want := range []string{
+		"Runner Status",
+		"Server running: true",
+		"Projects with task execution paused: 1",
+		"Projects with automation execution paused: 1",
+		"Tasks paused, automations still running: sandbox",
+		"Automations paused, tasks still running: brain",
+	} {
 		if !strings.Contains(status, want) {
 			t.Errorf("status missing %q:\n%s", want, status)
 		}
+	}
+	if strings.Contains(status, "Paused: false") {
+		t.Errorf("status still prints the meaningless global flag:\n%s", status)
 	}
 
 	runners, err := s.tools["runners"].handler(context.Background(), map[string]any{})
@@ -212,5 +231,111 @@ func TestRunnerTools_ValidationErrors(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+// TestFormatRunnerStatus_ProjectScopedAnswer covers the question an agent
+// actually asks — "is this project paused, and on which dial" — which previously
+// required eyeballing two comma-joined lists of dozens of project IDs.
+func TestFormatRunnerStatus_ProjectScopedAnswer(t *testing.T) {
+	status := types.RunnerStatusResponse{
+		Running:                  true,
+		Paused:                   true,
+		PausedProjects:           []string{"brain-api", "tasks-only"},
+		AutomationsPaused:        true,
+		AutomationPausedProjects: []string{"brain-api", "autos-only"},
+	}
+
+	tests := []struct {
+		project string
+		want    []string
+		notWant []string
+	}{
+		{
+			project: "brain-api", // paused on both
+			want:    []string{"Manual/user tasks: PAUSED", "Automation-generated tasks: PAUSED", "nothing dispatches"},
+		},
+		{
+			project: "tasks-only",
+			want:    []string{"Manual/user tasks: PAUSED", "Automation-generated tasks: running", "automation-generated tasks still dispatch"},
+		},
+		{
+			project: "autos-only",
+			want:    []string{"Manual/user tasks: running", "Automation-generated tasks: PAUSED", "manual tasks still dispatch"},
+		},
+		{
+			project: "never-paused",
+			// The important case: not paused, so if work still is not running the
+			// agent must be pointed somewhere else rather than left concluding
+			// "not paused" means "should be running".
+			want:    []string{"not paused on either axis", "scheduler_status"},
+			notWant: []string{"PAUSED"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.project, func(t *testing.T) {
+			out := formatRunnerStatus(status, tt.project)
+			for _, w := range tt.want {
+				if !strings.Contains(out, w) {
+					t.Errorf("missing %q:\n%s", w, out)
+				}
+			}
+			for _, nw := range tt.notWant {
+				if strings.Contains(out, nw) {
+					t.Errorf("unexpectedly contains %q:\n%s", nw, out)
+				}
+			}
+		})
+	}
+}
+
+// TestFormatRunnerStatus_DoesNotClaimAGlobalPause is the regression guard for the
+// finding that motivated this change. RunnerStatusResponse.Paused is built as
+// len(pausedProjects) > 0, so one stale test fixture makes it true while every
+// real project dispatches normally. Rendering it as "- Paused: true" invited the
+// reading "the runner is paused", which was verified false against production.
+func TestFormatRunnerStatus_DoesNotClaimAGlobalPause(t *testing.T) {
+	out := formatRunnerStatus(types.RunnerStatusResponse{
+		Running:           true,
+		Paused:            true, // any() over one dead fixture
+		PausedProjects:    []string{"_test-1772027096679"},
+		AutomationsPaused: false,
+	}, "")
+
+	if strings.Contains(out, "- Paused: true") {
+		t.Errorf("renders the any() flag as a global pause:\n%s", out)
+	}
+	if !strings.Contains(out, "Projects with task execution paused: 1") {
+		t.Errorf("should report the count instead:\n%s", out)
+	}
+	// A project nobody paused must read as running.
+	if got := formatRunnerStatus(types.RunnerStatusResponse{
+		Paused:         true,
+		PausedProjects: []string{"_test-1772027096679"},
+	}, "supernote"); !strings.Contains(got, "not paused on either axis") {
+		t.Errorf("an unpaused project must not inherit the any() flag:\n%s", got)
+	}
+}
+
+// TestCapList_DisclosesWhatItWithheld — a truncated list that looks complete is
+// the same class of lie this whole effort is about.
+func TestCapList_DisclosesWhatItWithheld(t *testing.T) {
+	if got := capList(nil); got != "(none)" {
+		t.Errorf("capList(nil) = %q, want (none)", got)
+	}
+
+	many := make([]string, runnerStatusListCap+5)
+	for i := range many {
+		many[i] = fmt.Sprintf("p%02d", i)
+	}
+	got := capList(many)
+	if !strings.Contains(got, "(+5 more)") {
+		t.Errorf("capList must disclose the withheld count, got: %s", got)
+	}
+
+	exact := many[:runnerStatusListCap]
+	if strings.Contains(capList(exact), "more") {
+		t.Errorf("a list at exactly the cap is complete and must not claim more: %s", capList(exact))
 	}
 }

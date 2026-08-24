@@ -142,8 +142,24 @@ func resolveProjectName(homeRelativePath string, insideRepo bool) string {
 }
 
 // makeHomeRelative converts an absolute path to a home-relative path.
+// makeHomeRelative strips a home-directory prefix, so callers can tell
+// "somewhere under the user's home" from "somewhere else entirely".
+//
+// A home of "/" is ignored, because it is a prefix of EVERY absolute path and
+// would make every path look home-relative — destroying exactly the signal
+// resolveProjectName depends on. That is not hypothetical: the MCP server runs
+// in a container with HOME=/ and WORKDIR=/app, so "/app" became "app", the
+// leading-slash guard in resolveProjectName never fired, and the basename
+// fallback confidently answered "app".
+//
+// That is the same wrong answer 25c02d5 set out to eliminate, arrived at by a
+// different route — verified against the live container, which reported
+// Project: app while sitting in a directory that is not a git repository.
 func makeHomeRelative(path, home string) string {
-	if home != "" && strings.HasPrefix(path, home) {
+	if home == "" || home == "/" {
+		return path
+	}
+	if strings.HasPrefix(path, home) {
 		rel := strings.TrimPrefix(path, home)
 		rel = strings.TrimPrefix(rel, "/")
 		return rel

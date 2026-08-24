@@ -163,19 +163,43 @@ func (s *StorageLayer) GetNoteByTitle(ctx context.Context, title string) (*NoteR
 // It reads the current metadata, merges the provided fields, and writes back.
 // This operates entirely in SQLite without touching the filesystem.
 func (s *StorageLayer) MergeMetadata(ctx context.Context, path string, fields map[string]interface{}) (*NoteRow, error) {
-	// Read current metadata
-	row, err := s.GetNoteByPath(ctx, path)
+	// Read and write inside ONE transaction.
+	//
+	// This is a read-modify-write: the merge happens in Go between a SELECT and
+	// an UPDATE. Without a transaction the two statements do not stay on the
+	// same connection — database/sql returns it to the pool in between — so
+	// concurrent merges read the same "before" value and the last writer wins.
+	//
+	// Measured, not theorised: 50 goroutines merging 50 DISTINCT keys into one
+	// note left 2 keys. Forty-eight updates silently lost, at
+	// SetMaxOpenConns(1), which is production's setting today. The connection
+	// cap serialises TRANSACTIONS, because a *sql.Tx pins its connection for
+	// its lifetime — it does not serialise consecutive statements.
+	//
+	// That matters here beyond bookkeeping: task.go writes resume_requested
+	// through this function, the flag the runner reads at claim time to route a
+	// task through the resume prompt, and the runner CLEARS that flag after a
+	// successful spawn. Two writers, one note, a flag whose loss silently turns
+	// a resume back into an ordinary run.
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("begin merge metadata tx: %w", err)
 	}
-	if row == nil {
+	defer tx.Rollback() //nolint:errcheck
+
+	var currentMetadata string
+	err = tx.QueryRowContext(ctx, "SELECT metadata FROM notes WHERE path = ?", path).Scan(&currentMetadata)
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read metadata: %w", err)
 	}
 
 	// Parse existing metadata
 	existing := make(map[string]interface{})
-	if row.Metadata != "" && row.Metadata != "{}" {
-		if err := json.Unmarshal([]byte(row.Metadata), &existing); err != nil {
+	if currentMetadata != "" && currentMetadata != "{}" {
+		if err := json.Unmarshal([]byte(currentMetadata), &existing); err != nil {
 			existing = make(map[string]interface{})
 		}
 	}
@@ -214,7 +238,24 @@ func (s *StorageLayer) MergeMetadata(ctx context.Context, path string, fields ma
 		}
 	}
 
-	return s.UpdateNote(ctx, path, updates)
+	setClauses, args, err := buildNoteUpdate(updates)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, path)
+
+	rowsAffected, err := execNoteUpdate(ctx, tx, path, setClauses, args)
+	if err != nil {
+		return nil, err
+	}
+	if rowsAffected == 0 {
+		return nil, nil
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit merge metadata: %w", err)
+	}
+
+	return s.GetNoteByPath(ctx, path)
 }
 
 // UpdateNote updates a note by path with the given field updates.
@@ -226,43 +267,61 @@ func (s *StorageLayer) UpdateNote(ctx context.Context, path string, updates map[
 		return s.GetNoteByPath(ctx, path)
 	}
 
-	// Validate all field names against the allowlist.
-	for field := range updates {
-		if !allowedUpdateFields[field] {
-			return nil, fmt.Errorf("field %q is not allowed for update", field)
-		}
+	setClauses, args, err := buildNoteUpdate(updates)
+	if err != nil {
+		return nil, err
 	}
-
-	// Build dynamic SET clause.
-	setClauses := make([]string, 0, len(updates)+1)
-	args := make([]interface{}, 0, len(updates)+1)
-
-	for field, value := range updates {
-		setClauses = append(setClauses, field+" = ?")
-		args = append(args, value)
-	}
-
-	// Always update indexed_at.
-	setClauses = append(setClauses, "indexed_at = datetime('now')")
-
 	// Path is the WHERE condition.
 	args = append(args, path)
 
-	query := "UPDATE notes SET " + strings.Join(setClauses, ", ") + " WHERE path = ?"
-	res, err := s.db.ExecContext(ctx, query, args...)
+	rowsAffected, err := execNoteUpdate(ctx, s.db, path, setClauses, args)
 	if err != nil {
-		return nil, fmt.Errorf("update note: %w", err)
-	}
-
-	rowsAffected, err := res.RowsAffected()
-	if err != nil {
-		return nil, fmt.Errorf("rows affected: %w", err)
+		return nil, err
 	}
 	if rowsAffected == 0 {
 		return nil, nil
 	}
 
 	return s.GetNoteByPath(ctx, path)
+}
+
+// noteExecer is satisfied by both *sql.DB and *sql.Tx, so the UPDATE below can
+// run standalone or inside a caller's transaction without duplicating it.
+type noteExecer interface {
+	ExecContext(ctx context.Context, query string, args ...interface{}) (sql.Result, error)
+}
+
+// execNoteUpdate runs the dynamic UPDATE shared by UpdateNote and
+// MergeMetadata and reports how many rows it touched.
+func execNoteUpdate(ctx context.Context, ex noteExecer, path string, setClauses []string, args []interface{}) (int64, error) {
+	query := "UPDATE notes SET " + strings.Join(setClauses, ", ") + " WHERE path = ?"
+	res, err := ex.ExecContext(ctx, query, args...)
+	if err != nil {
+		return 0, fmt.Errorf("update note: %w", err)
+	}
+	rowsAffected, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("rows affected: %w", err)
+	}
+	return rowsAffected, nil
+}
+
+// buildNoteUpdate validates the field allowlist and builds the SET clause.
+func buildNoteUpdate(updates map[string]interface{}) ([]string, []interface{}, error) {
+	for field := range updates {
+		if !allowedUpdateFields[field] {
+			return nil, nil, fmt.Errorf("field %q is not allowed for update", field)
+		}
+	}
+	setClauses := make([]string, 0, len(updates)+1)
+	args := make([]interface{}, 0, len(updates)+1)
+	for field, value := range updates {
+		setClauses = append(setClauses, field+" = ?")
+		args = append(args, value)
+	}
+	// Always update indexed_at.
+	setClauses = append(setClauses, "indexed_at = datetime('now')")
+	return setClauses, args, nil
 }
 
 // DeleteNote deletes a note by path. Returns true if deleted, false if not found.

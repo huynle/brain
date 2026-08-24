@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -119,18 +120,50 @@ func Logger(next http.Handler) http.Handler {
 			path += "?" + tokenPattern.ReplaceAllString(r.URL.RawQuery, "${1}token=***")
 		}
 
+		// A request the CLIENT abandoned is not a server fault.
+		//
+		// No handler in this package special-cases context.Canceled — they all
+		// map any error to 500 — so when a caller gives up mid-query the
+		// in-flight DB call returns "context canceled", the handler writes a
+		// 500 nobody will ever read, and this middleware logs it at ERROR.
+		//
+		// That is not hypothetical. The store shares ONE connection
+		// (SetMaxOpenConns(1) in internal/storage/storage.go), so every request
+		// arriving during the ~33s synchronous startup reindex of ~70k entries
+		// queues behind the indexer. Observed live after a deploy:
+		//   level=ERROR msg=request path=/api/v1/tasks/chromeuse status=500
+		//   duration=20.009s
+		// The endpoint was fine — the caller had simply timed out at 20s. The
+		// same shape is already documented for PATCH /entries, where the write
+		// PERSISTS and the client still sees a 500.
+		//
+		// Logging these as ERROR poisons the signal anyone uses to judge health:
+		// real 500s get buried among disconnects. They are still recorded, at
+		// WARN, and flagged so they can be told apart at a glance.
+		clientGone := errors.Is(r.Context().Err(), context.Canceled)
+
 		level := slog.LevelDebug
-		if sw.status >= http.StatusInternalServerError {
+		switch {
+		case clientGone:
+			// Deliberately not ERROR regardless of the status written, since
+			// whatever was written went to a connection that is already gone.
+			level = slog.LevelWarn
+		case sw.status >= http.StatusInternalServerError:
 			level = slog.LevelError
-		} else if sw.status >= http.StatusBadRequest {
+		case sw.status >= http.StatusBadRequest:
 			level = slog.LevelWarn
 		}
-		slog.LogAttrs(r.Context(), level, "request",
+
+		attrs := []slog.Attr{
 			slog.String("method", r.Method),
 			slog.String("path", path),
 			slog.Int("status", sw.status),
 			slog.String("duration", duration.String()),
-		)
+		}
+		if clientGone {
+			attrs = append(attrs, slog.Bool("client_disconnected", true))
+		}
+		slog.LogAttrs(r.Context(), level, "request", attrs...)
 	})
 }
 

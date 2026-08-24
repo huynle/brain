@@ -15,6 +15,8 @@ import (
 func RegisterControlTools(s *Server, client *APIClient) {
 	registerBrainRunnerPauseProject(s, client)
 	registerBrainRunnerResumeProject(s, client)
+	registerBrainRunnerPauseProjectAutomations(s, client)
+	registerBrainRunnerResumeProjectAutomations(s, client)
 	registerBrainRunnerPauseAll(s, client)
 	registerBrainRunnerResumeAll(s, client)
 	registerBrainControlSendPrompt(s, client)
@@ -28,10 +30,68 @@ func controlDescription(action string) string {
 	return action + " Side effect: this mutates runner/control state or controls a remote session. Requires the appropriate REST auth scope and explicit identifiers."
 }
 
+// axisNote prefixes the task-axis control tools. The runner has two INDEPENDENT
+// per-project pause dials, and shouldSkipTask (internal/service/scheduler.go)
+// routes by task provenance: automation-generated tasks respect ONLY the
+// automations dial, everything else respects ONLY the tasks dial.
+//
+// These tools move the tasks dial alone, but reported "Paused runner execution
+// for project X" — which reads as "nothing runs for X now". On a project whose
+// work is largely automation-generated that is close to the opposite of what
+// happened. Until now the automations dial had no MCP tool at all, so an agent
+// could not have finished the job even after noticing.
+const axisNote = "Moves the TASKS pause dial only; automation-generated tasks follow a separate dial (see runner_pause_project_automations). "
+
+func automationsStillRunNote(projectID string) string {
+	return "Automation-generated tasks are NOT paused by this call - they follow a separate dial. " +
+		"To stop those too: runner_pause_project_automations(project: \"" + projectID + "\"). " +
+		"Check the resulting state with runner_status(project: \"" + projectID + "\")."
+}
+
+func registerBrainRunnerPauseProjectAutomations(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "runner_pause_project_automations",
+		Description: controlDescription("Pause AUTOMATION-GENERATED task execution for one project. This is the dial that governs tasks created by automations; manual tasks follow runner_pause_project."),
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+		}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := ResolveProjectArg(args)
+		if projectID == "" {
+			return "", fmt.Errorf("project is required")
+		}
+		var resp controlSuccessResponse
+		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/automations/pause/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Paused AUTOMATION-GENERATED task execution for project %s. Success: %t\n\nManual tasks are NOT paused by this call - they follow a separate dial (runner_pause_project).", projectID, resp.Success), nil
+	})
+}
+
+func registerBrainRunnerResumeProjectAutomations(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "runner_resume_project_automations",
+		Description: controlDescription("Resume AUTOMATION-GENERATED task execution for one project."),
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+		}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := ResolveProjectArg(args)
+		if projectID == "" {
+			return "", fmt.Errorf("project is required")
+		}
+		var resp controlSuccessResponse
+		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/automations/resume/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Resumed AUTOMATION-GENERATED task execution for project %s. Success: %t\n\nManual tasks follow a separate dial; if they are still paused, use runner_resume_project.", projectID, resp.Success), nil
+	})
+}
+
 func registerBrainRunnerPauseProject(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "runner_pause_project",
-		Description: controlDescription("Pause task execution for one project."),
+		Description: controlDescription(axisNote + "Pause MANUAL task execution for one project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
 		}},
@@ -44,14 +104,14 @@ func registerBrainRunnerPauseProject(s *Server, client *APIClient) {
 		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/pause/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Paused runner execution for project %s. Success: %t", projectID, resp.Success), nil
+		return fmt.Sprintf("Paused MANUAL task execution for project %s. Success: %t\n\n%s", projectID, resp.Success, automationsStillRunNote(projectID)), nil
 	})
 }
 
 func registerBrainRunnerResumeProject(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "runner_resume_project",
-		Description: controlDescription("Resume task execution for one project."),
+		Description: controlDescription(axisNote + "Resume MANUAL task execution for one project."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project": {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
 		}},
@@ -64,14 +124,14 @@ func registerBrainRunnerResumeProject(s *Server, client *APIClient) {
 		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/resume/"+url.PathEscape(projectID), map[string]any{}, nil, &resp); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Resumed runner execution for project %s. Success: %t", projectID, resp.Success), nil
+		return fmt.Sprintf("Resumed MANUAL task execution for project %s. Success: %t\n\nThe automation dial is separate and is unchanged by this call; use runner_resume_project_automations if automation-generated tasks are also paused.", projectID, resp.Success), nil
 	})
 }
 
 func registerBrainRunnerPauseAll(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "runner_pause_all",
-		Description: controlDescription("Pause task execution for all projects; requires confirm=true."),
+		Description: controlDescription(axisNote + "Pause MANUAL task execution for all projects; requires confirm=true."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"confirm": {Type: "boolean", Description: "Must be true to pause all runner task execution"},
 		}, Required: []string{"confirm"}},
@@ -83,14 +143,14 @@ func registerBrainRunnerPauseAll(s *Server, client *APIClient) {
 		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/pause", map[string]any{}, nil, &resp); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Paused runner execution for all projects. Success: %t", resp.Success), nil
+		return fmt.Sprintf("Paused MANUAL task execution for all projects. Success: %t\n\nAutomation-generated tasks are NOT affected - they follow the separate automations dial.", resp.Success), nil
 	})
 }
 
 func registerBrainRunnerResumeAll(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "runner_resume_all",
-		Description: controlDescription("Resume task execution for all projects; requires confirm=true."),
+		Description: controlDescription(axisNote + "Resume MANUAL task execution for all projects; requires confirm=true."),
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"confirm": {Type: "boolean", Description: "Must be true to resume all runner task execution"},
 		}, Required: []string{"confirm"}},
@@ -102,7 +162,7 @@ func registerBrainRunnerResumeAll(s *Server, client *APIClient) {
 		if err := client.Request(ctx, http.MethodPost, "/tasks/runner/resume", map[string]any{}, nil, &resp); err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Resumed runner execution for all projects. Success: %t", resp.Success), nil
+		return fmt.Sprintf("Resumed MANUAL task execution for all projects. Success: %t\n\nThe automations dial is separate and is unchanged by this call.", resp.Success), nil
 	})
 }
 

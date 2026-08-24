@@ -18,6 +18,8 @@ func TestRegisterControlTools_CountNamesHandlersDescriptions(t *testing.T) {
 	expected := []string{
 		"runner_pause_project",
 		"runner_resume_project",
+		"runner_pause_project_automations",
+		"runner_resume_project_automations",
 		"runner_pause_all",
 		"runner_resume_all",
 		"control_send_prompt",
@@ -113,6 +115,10 @@ func TestControlTools_RequestMethodsPathsBodiesAndFormatting(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"success": true})
 		case "/api/v1/tasks/runner/resume/brain":
 			json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case "/api/v1/tasks/runner/automations/pause/brain":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case "/api/v1/tasks/runner/automations/resume/brain":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		case "/api/v1/tasks/runner/pause":
 			json.NewEncoder(w).Encode(map[string]any{"success": true})
 		case "/api/v1/tasks/runner/resume":
@@ -143,10 +149,17 @@ func TestControlTools_RequestMethodsPathsBodiesAndFormatting(t *testing.T) {
 		args map[string]any
 		want []string
 	}{
-		{"runner_pause_project", map[string]any{"projectId": "brain"}, []string{"Paused runner execution for project brain"}},
-		{"runner_resume_project", map[string]any{"projectId": "brain"}, []string{"Resumed runner execution for project brain"}},
-		{"runner_pause_all", map[string]any{"confirm": true}, []string{"Paused runner execution for all projects"}},
-		{"runner_resume_all", map[string]any{"confirm": true}, []string{"Resumed runner execution for all projects"}},
+		// Each of these moves ONE of two independent dials. The old
+		// expectations ("Paused runner execution for project brain") asserted
+		// the wording that made a tasks-only pause read as a full stop, which
+		// is what this change fixes — so they name the dial now, and say what
+		// the call did NOT do.
+		{"runner_pause_project", map[string]any{"projectId": "brain"}, []string{"Paused MANUAL task execution for project brain", "runner_pause_project_automations"}},
+		{"runner_resume_project", map[string]any{"projectId": "brain"}, []string{"Resumed MANUAL task execution for project brain", "separate"}},
+		{"runner_pause_project_automations", map[string]any{"projectId": "brain"}, []string{"Paused AUTOMATION-GENERATED task execution for project brain", "Manual tasks are NOT paused"}},
+		{"runner_resume_project_automations", map[string]any{"projectId": "brain"}, []string{"Resumed AUTOMATION-GENERATED task execution for project brain"}},
+		{"runner_pause_all", map[string]any{"confirm": true}, []string{"Paused MANUAL task execution for all projects", "Automation-generated tasks are NOT affected"}},
+		{"runner_resume_all", map[string]any{"confirm": true}, []string{"Resumed MANUAL task execution for all projects"}},
 		{"control_send_prompt", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "text": "continue", "agent": "dev", "providerID": "anthropic", "modelID": "claude"}, []string{"Sent prompt to session ses-1", "runner-1", "inst-1"}},
 		{"control_abort_session", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1"}, []string{"Abort requested for session ses-1", "runner-1", "inst-1"}},
 		{"control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "always"}, []string{"Responded always to permission perm-1", "session ses-1"}},
@@ -170,6 +183,8 @@ func TestControlTools_RequestMethodsPathsBodiesAndFormatting(t *testing.T) {
 	want := []recordedRequest{
 		{Method: "POST", Path: "/api/v1/tasks/runner/pause/brain", Body: "{}"},
 		{Method: "POST", Path: "/api/v1/tasks/runner/resume/brain", Body: "{}"},
+		{Method: "POST", Path: "/api/v1/tasks/runner/automations/pause/brain", Body: "{}"},
+		{Method: "POST", Path: "/api/v1/tasks/runner/automations/resume/brain", Body: "{}"},
 		{Method: "POST", Path: "/api/v1/tasks/runner/pause", Body: "{}"},
 		{Method: "POST", Path: "/api/v1/tasks/runner/resume", Body: "{}"},
 		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances/inst-1/sessions/ses-1/prompt", Body: `{"agent":"dev","model":{"modelID":"claude","providerID":"anthropic"},"text":"continue"}`},

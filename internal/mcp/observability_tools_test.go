@@ -897,3 +897,78 @@ func TestValidateEventTypeFilter_RejectionDoesNotOverclaim(t *testing.T) {
 		t.Errorf("rejection should mention the global wildcard: %v", err)
 	}
 }
+
+// TestValidateEventTypeFilter_AgreesWithServerMatcher is a DIFFERENTIAL test
+// against types.MatchEventPattern, the matcher the server actually applies.
+//
+// It exists because two regressions got through a hand-written allowlist test in
+// a single afternoon — "*" and goal.reconcile — and both slipped for the same
+// reason: that test's good-list was five hand-written families plus
+// AllEventTypes, so it mirrored the implementation's own universe and could only
+// ever confirm the implementation agreed with itself.
+//
+// The invariant here is derived from the server instead:
+//
+//	if MatchEventPattern(filter, t) is true for ANY ring-eligible type t,
+//	then validateEventTypeFilter(filter) MUST accept it.
+//
+// Rejecting such a filter loses real rows, which is the serious failure. The
+// families are derived from AllEventTypes rather than listed, so a new event
+// family added later is covered automatically — the property this test needed
+// and the old one lacked.
+func TestValidateEventTypeFilter_AgreesWithServerMatcher(t *testing.T) {
+	corpus := []string{
+		"*",
+		".*", "*.*", "task", "task.", "task.bogus", "TASK.*", "Task.Started",
+		" task.* ", "goal.*", "goal.reconcile", "automation.run", "nonsense",
+	}
+	corpus = append(corpus, types.AllEventTypes...)
+	// Every family the real type list implies, derived not hand-written.
+	corpus = append(corpus, eventTypeFamilies()...)
+
+	for _, filter := range corpus {
+		t.Run(filter, func(t *testing.T) {
+			serverWouldMatch := false
+			for _, ringType := range types.AllEventTypes {
+				if types.MatchEventPattern(filter, ringType) {
+					serverWouldMatch = true
+					break
+				}
+			}
+
+			accepted := validateEventTypeFilter(filter) == nil
+
+			if serverWouldMatch && !accepted {
+				t.Errorf("validator rejects %q, but the server matches it against real ring types — this loses rows", filter)
+			}
+			// The converse is intentionally NOT asserted as an error. Rejecting a
+			// filter the server cannot match is the whole point of the validator;
+			// goal.reconcile is deliberately rejected (with a redirect) because it
+			// can never reach the ring, and that costs no data.
+		})
+	}
+}
+
+// TestEventTypeFamilies_CoversEveryRealType guards the derivation the test above
+// depends on: if a new event family appears in AllEventTypes, eventTypeFamilies
+// must surface it, or the error messages will omit it exactly the way they
+// omitted goal.* — and the differential corpus above would silently stop
+// covering it.
+func TestEventTypeFamilies_CoversEveryRealType(t *testing.T) {
+	families := map[string]bool{}
+	for _, f := range eventTypeFamilies() {
+		families[f] = true
+	}
+
+	for _, typ := range types.AllEventTypes {
+		i := strings.Index(typ, ".")
+		if i <= 0 {
+			t.Errorf("event type %q has no family prefix; eventTypeFamilies cannot represent it", typ)
+			continue
+		}
+		want := typ[:i] + ".*"
+		if !families[want] {
+			t.Errorf("event type %q implies family %q, which eventTypeFamilies does not list", typ, want)
+		}
+	}
+}

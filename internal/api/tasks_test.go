@@ -552,19 +552,29 @@ func TestHandleGetTask_ReturnsTaskWithDefaults(t *testing.T) {
 			name:      "returns 404 for nonexistent task",
 			projectId: "my-project",
 			taskId:    "nonexistent",
+			// Mirrors what TaskServiceImpl.GetTask actually returns: the shared
+			// ErrNotFound sentinel, wrapped with context. It previously returned
+			// bare prose, and this mock reproduced the prose — so the mock and
+			// the handler agreed with each other while both were wrong about
+			// how a not-found should be signalled.
 			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
-				return nil, fmt.Errorf("task %q not found in project %q", taskId, projectId)
+				return nil, fmt.Errorf("task %q not found in project %q: %w", taskId, projectId, ErrNotFound)
 			},
 			wantStatus: http.StatusNotFound,
 		},
 		{
+			// This case asserted 404 while being named "returns 500". The
+			// handler's `if task == nil` fallback caught EVERY error — task is
+			// nil on all of them — so a disk failure was reported to clients as
+			// "task not found". The expectation had been changed to match that
+			// behaviour rather than the name, which is how the bug survived.
 			name:      "service error returns 500",
 			projectId: "my-project",
 			taskId:    "abc12def",
 			mockFn: func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error) {
 				return nil, fmt.Errorf("unexpected disk error")
 			},
-			wantStatus: http.StatusNotFound,
+			wantStatus: http.StatusInternalServerError,
 		},
 	}
 

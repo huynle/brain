@@ -261,7 +261,11 @@ func (s *TaskServiceImpl) GetTask(ctx context.Context, projectId, taskId string)
 			return &task, nil
 		}
 	}
-	return nil, fmt.Errorf("task %q not found in project %q", taskId, projectId)
+	// Wrap the shared sentinel rather than returning bare prose. Two handlers
+	// worked around the unwrapped error by testing `task == nil` — which is true
+	// on EVERY error path, so a storage failure was reported as "task not found"
+	// with a 404. A third call site matched on the string "not found".
+	return nil, fmt.Errorf("task %q not found in project %q: %w", taskId, projectId, api.ErrNotFound)
 }
 
 // applyTaskDefaults fills empty fields on resolved tasks from server-side

@@ -382,14 +382,7 @@ If no ready tasks, shows current queue state.`,
 					Classification string `json:"classification"`
 					Status         string `json:"status"`
 				} `json:"tasks"`
-				Stats *struct {
-					Ready         int `json:"ready"`
-					Waiting       int `json:"waiting"`
-					Blocked       int `json:"blocked"`
-					StatusBlocked int `json:"status_blocked"`
-					Completed     int `json:"completed"`
-					Total         int `json:"total"`
-				} `json:"stats"`
+				Stats *types.TaskStats `json:"stats"`
 			}
 			if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj), nil, nil, &statsResp); err != nil {
 				return "", err
@@ -403,7 +396,17 @@ If no ready tasks, shows current queue state.`,
 				waiting = statsResp.Stats.Waiting
 				depBlocked = statsResp.Stats.Blocked
 				statusBlocked = statsResp.Stats.StatusBlocked
-				completed = statsResp.Stats.Completed
+			}
+
+			// types.TaskStats has no Completed field, so this is ALWAYS
+			// derived. It used to be read from a phantom and then only
+			// corrected inside the StatusBlocked == 0 branch below — so any
+			// project with a status-blocked task reported "0 tasks
+			// completed" no matter how many were done.
+			for _, t := range statsResp.Tasks {
+				if t.Status == "completed" || t.Status == "validated" {
+					completed++
+				}
 			}
 			// Always derive from the tasks array too — the server may not
 			// populate StatusBlocked on older builds, and completed is not
@@ -421,9 +424,6 @@ If no ready tasks, shows current queue state.`,
 					}
 					if t.Status == "blocked" {
 						statusBlocked++
-					}
-					if t.Status == "completed" {
-						completed++
 					}
 				}
 			}

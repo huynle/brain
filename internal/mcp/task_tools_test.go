@@ -2171,3 +2171,47 @@ func TestBrainAttachmentList_EscapesEntryPath(t *testing.T) {
 		t.Errorf("request did not target the attachments sub-route: %s", gotPath)
 	}
 }
+
+// TestBrainTaskNext_CompletedCountSurvivesBlockedTasks pins that the
+// completed tally is derived unconditionally.
+//
+// types.TaskStats has no Completed field, so the value must always come
+// from the tasks array. It used to be read from a phantom and corrected
+// only inside an `if StatusBlocked == 0` branch — so a project containing
+// any status-blocked task reported "0 tasks completed" regardless of how
+// many were done. Found by calling the live tool and noticing the number
+// was right only by luck of that project having no blocked tasks.
+func TestBrainTaskNext_CompletedCountSurvivesBlockedTasks(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/next") {
+			// An empty queue: a zero-valued task, which is what the server
+			// returns since GetNext never raises ErrNotFound.
+			_ = json.NewEncoder(w).Encode(types.ResolvedTask{})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{
+			Tasks: []types.ResolvedTask{
+				{ID: "a1", Status: "completed", Classification: "not_pending"},
+				{ID: "a2", Status: "validated", Classification: "not_pending"},
+				{ID: "b1", Status: "blocked", Classification: "blocked"},
+			},
+			// StatusBlocked is non-zero, which used to skip the derivation.
+			Stats: &types.TaskStats{Total: 3, StatusBlocked: 1, Blocked: 1, NotPending: 2},
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(srv.URL))
+	out, err := s.tools["task_next"].handler(context.Background(), map[string]any{"project": "p"})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(out, "2 tasks completed") {
+		t.Errorf("completed count was suppressed by the presence of a blocked task:\n%s", out)
+	}
+	if !strings.Contains(out, "1 tasks status_blocked") {
+		t.Errorf("status_blocked should still come from the server:\n%s", out)
+	}
+}

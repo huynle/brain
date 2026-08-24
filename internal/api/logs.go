@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -130,6 +132,24 @@ func (h *Handler) HandleGetLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	if lines == nil {
 		lines = []types.LogLine{}
+	}
+
+	// Only when there is nothing to report: distinguish "no logs" from "no such
+	// task". The buffer is keyed on the literal string projectId+":"+taskId, so
+	// an unknown key — a typo, or a real task addressed with the wrong project —
+	// returns zero lines and renders "No log entries found", which is also what
+	// a task that has not started yet looks like. The lookup is confined to the
+	// empty path so a task with logs never pays for it.
+	//
+	// Note the buffer is in-memory and does not survive a restart, so an empty
+	// result for a REAL task still cannot promise the task produced no output.
+	// That is a separate limitation and is not what this check claims to fix.
+	if len(lines) == 0 && total == 0 && h.tasks != nil {
+		if _, err := h.tasks.GetTask(r.Context(), projectId, taskId); errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found",
+				fmt.Sprintf("Task not found: %s in project %s", taskId, projectId))
+			return
+		}
 	}
 
 	WriteJSON(w, http.StatusOK, types.LogQueryResponse{

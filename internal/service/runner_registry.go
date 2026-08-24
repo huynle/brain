@@ -280,6 +280,15 @@ func (s *RunnerRegistryServiceImpl) ListInstances(ctx context.Context, runnerID 
 	if err != nil {
 		return nil, fmt.Errorf("list instances: %w", err)
 	}
+	// Only when there is nothing to report: a deregistered or mistyped runner id
+	// rendered "Total: 0 / No instances found", which is also what an online
+	// runner sitting idle looks like — and those call for opposite responses.
+	// GetRunner already returns api.ErrNotFound, so this just consults it.
+	if len(rows) == 0 {
+		if _, err := s.GetRunner(ctx, runnerID); err != nil {
+			return nil, err
+		}
+	}
 	return instanceListResponse(rows), nil
 }
 

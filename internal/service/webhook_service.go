@@ -7,11 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	api "github.com/huynle/brain-api/internal/api"
@@ -94,9 +94,20 @@ func (s *WebhookServiceImpl) Create(ctx context.Context, req types.CreateWebhook
 func (s *WebhookServiceImpl) Get(ctx context.Context, id string) (*types.WebhookResponse, error) {
 	wh, err := s.store.GetWebhook(ctx, id)
 	if err != nil {
-		return nil, err
+		return nil, translateWebhookNotFound(err)
 	}
 	return webhookToResponse(wh), nil
+}
+
+// translateWebhookNotFound maps the storage sentinel onto the API's, so the
+// not-found branches the handlers already carry become reachable. Before this,
+// a missing webhook surfaced as a 500 — "server fault, try again" — for what is
+// an ordinary client mistake.
+func translateWebhookNotFound(err error) error {
+	if errors.Is(err, storage.ErrWebhookNotFound) {
+		return api.ErrNotFound
+	}
+	return err
 }
 
 // List returns all webhooks, optionally filtered by enabled status.
@@ -161,8 +172,9 @@ func (s *WebhookServiceImpl) Delete(ctx context.Context, id string) error {
 func (s *WebhookServiceImpl) TestDeliver(ctx context.Context, webhookID string, event types.Event) (*types.WebhookDeliveryResponse, error) {
 	wh, err := s.store.GetWebhook(ctx, webhookID)
 	if err != nil {
-		// Check if the error indicates the webhook was not found
-		if strings.Contains(err.Error(), "not found") {
+		// Was strings.Contains(err.Error(), "not found") — a match against
+		// prose that any reworded message would have silently broken.
+		if errors.Is(err, storage.ErrWebhookNotFound) {
 			return nil, api.ErrNotFound
 		}
 		return nil, fmt.Errorf("get webhook: %w", err)
@@ -225,6 +237,16 @@ func (s *WebhookServiceImpl) Deliver(ctx context.Context, event types.Event) err
 
 // ListDeliveries returns recent delivery attempts for a webhook.
 func (s *WebhookServiceImpl) ListDeliveries(ctx context.Context, webhookID string, limit int) ([]types.WebhookDeliveryResponse, error) {
+	// Confirm the webhook exists before reporting on its deliveries. The
+	// deliveries query is a bare `WHERE webhook_id = ?` with no join, so a
+	// deleted or mistyped id returned zero rows and rendered "No deliveries
+	// recorded for webhook X" — indistinguishable from a live webhook that has
+	// never fired, which is exactly the state someone debugging a webhook is
+	// trying to tell apart.
+	if _, err := s.store.GetWebhook(ctx, webhookID); err != nil {
+		return nil, translateWebhookNotFound(err)
+	}
+
 	deliveries, err := s.store.ListDeliveries(ctx, webhookID, limit)
 	if err != nil {
 		return nil, err

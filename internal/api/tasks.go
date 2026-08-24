@@ -185,11 +185,6 @@ func (h *Handler) HandleGetTask(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
 			return
 		}
-		// Check for "not found" string from service layer
-		if task == nil {
-			WriteError(w, http.StatusNotFound, "Not Found", err.Error())
-			return
-		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
@@ -249,10 +244,6 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
-			return
-		}
-		if task == nil {
-			WriteError(w, http.StatusNotFound, "Not Found", err.Error())
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())

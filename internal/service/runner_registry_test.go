@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"reflect"
 	"testing"
 	"time"
 
 	_ "github.com/glebarez/go-sqlite"
+	api "github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
@@ -1378,5 +1380,19 @@ func TestLifecycleSweep_NoEventForOnlineRunner(t *testing.T) {
 		t.Fatalf("should not receive event for online runner, got: %+v", msg)
 	case <-time.After(100 * time.Millisecond):
 		// Expected — no event
+	}
+}
+
+// TestListInstances_UnknownRunnerIsNotFound — storage.ListInstancesByRunner is a
+// bare `WHERE runner_id = ?` with no join to the runners table, so a
+// deregistered or mistyped runner id rendered "Total: 0 / No instances found",
+// which is also what an online runner sitting idle looks like. Those two states
+// call for opposite responses.
+func TestListInstances_UnknownRunnerIsNotFound(t *testing.T) {
+	svc, _ := newTestRunnerRegistryService(t)
+
+	_, err := svc.ListInstances(context.Background(), "runner-does-not-exist")
+	if !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("ListInstances(unknown) error = %v, want api.ErrNotFound", err)
 	}
 }

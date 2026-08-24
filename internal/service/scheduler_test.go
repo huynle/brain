@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -1125,6 +1126,167 @@ func TestRunFeatureNow_CapacityHitQueuesLeftovers(t *testing.T) {
 	}
 	if cascade.registered[0].projectID != "proj" || cascade.registered[0].featureID != "feat" {
 		t.Fatalf("cascade registered %+v, want proj/feat", cascade.registered[0])
+	}
+}
+
+// TestRunFeatureNow_NoEligibleRunnerSurfacesReason is the regression for
+// "Run feature now does nothing": the only online runner does not serve this
+// project, every ready task queues, and the response used to come back with
+// an empty Reason — leaving the PWA to say "nothing to dispatch" while the
+// real cause sat unread in Results[i].Detail.
+func TestRunFeatureNow_NoEligibleRunnerSurfacesReason(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 1,
+			// Runner is up, but it polls other projects only.
+			Projects: []string{"other-project"},
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatal("Dispatched = true, want false (runner does not serve this project)")
+	}
+	if resp.Reason != "no_eligible_runner" {
+		t.Fatalf("Reason = %q, want no_eligible_runner", resp.Reason)
+	}
+	if !strings.Contains(resp.Detail, "project not allowed") {
+		t.Fatalf("Detail = %q, want it to name why the runner was rejected", resp.Detail)
+	}
+	if len(resp.Queued) != 1 {
+		t.Fatalf("Queued = %v, want the task parked for the cascade", resp.Queued)
+	}
+}
+
+// TestRunFeatureNow_NoRunnersOnlineSurfacesReason covers the other promoted
+// reason: an empty runner list is not "every task is already in flight",
+// which is what the old blanket feature_in_progress fallback claimed.
+func TestRunFeatureNow_NoRunnersOnlineSurfacesReason(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = nil
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Reason != "no_online_runner" {
+		t.Fatalf("Reason = %q, want no_online_runner", resp.Reason)
+	}
+	if len(resp.Queued) != 0 {
+		t.Fatalf("Queued = %v, want empty — no cascade tick can conjure a runner", resp.Queued)
+	}
+}
+
+// TestRunFeatureNow_AlreadyLeasedStaysFeatureInProgress pins the reason that
+// existed before promotion: tasks held by a live lease really are in flight,
+// and both the cascade and the PWA already speak feature_in_progress.
+func TestRunFeatureNow_AlreadyLeasedStaysFeatureInProgress(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 2,
+		},
+	}
+	store.activeLeases = map[string]*storage.DispatchLeaseRow{
+		"proj/task-1": {
+			ProjectID: "proj", TaskID: "task-1", LeaseID: "lease-1",
+			AssignedRunnerID: "runner-b", State: storage.DispatchLeaseStatePushed,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Reason != "feature_in_progress" {
+		t.Fatalf("Reason = %q, want feature_in_progress", resp.Reason)
+	}
+}
+
+func TestDominantSkipReason(t *testing.T) {
+	tests := []struct {
+		name       string
+		results    []types.RunTaskResponse
+		wantReason string
+		wantDetail string
+	}{
+		{
+			name:    "no results",
+			results: nil,
+		},
+		{
+			name: "dispatched entries are ignored",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Dispatched: true},
+			},
+		},
+		{
+			name: "single skip wins with its detail",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Reason: "no_eligible_runner", Detail: "runner-a: project not allowed"},
+			},
+			wantReason: "no_eligible_runner",
+			wantDetail: "runner-a: project not allowed",
+		},
+		{
+			name: "majority reason wins over a lone dissenter",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Reason: "already_leased"},
+				{TaskID: "b", Reason: "no_eligible_runner", Detail: "runner-a: at capacity"},
+				{TaskID: "c", Reason: "no_eligible_runner", Detail: "runner-a: at capacity"},
+			},
+			wantReason: "no_eligible_runner",
+			wantDetail: "runner-a: at capacity",
+		},
+		{
+			name: "disagreeing details are counted, not dropped",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Reason: "no_eligible_runner", Detail: "runner-a: project not allowed"},
+				{TaskID: "b", Reason: "no_eligible_runner", Detail: "runner-b: executor not supported"},
+			},
+			wantReason: "no_eligible_runner",
+			wantDetail: "runner-a: project not allowed (+1 other reason(s))",
+		},
+		{
+			name: "ties break on the reason string, deterministically",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Reason: "no_online_runner"},
+				{TaskID: "b", Reason: "already_leased"},
+			},
+			wantReason: "already_leased",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason, detail := dominantSkipReason(tt.results)
+			if reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
+			}
+			if detail != tt.wantDetail {
+				t.Fatalf("detail = %q, want %q", detail, tt.wantDetail)
+			}
+		})
 	}
 }
 

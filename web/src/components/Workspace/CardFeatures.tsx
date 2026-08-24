@@ -79,7 +79,9 @@ export function CardFeatures({
   const selScoped = selProjectId === projectId;
   const selTaskIds = useSelection((s) => s.taskIds);
   // Selection mode: once anything in this project is marked, every row
-  // shows its checkbox. Until then boxes appear only on hover/focus.
+  // shows its checkbox. Until then no row shows one — hover and focus
+  // deliberately do not reveal it. Entering selection mode is explicit:
+  // the row menu's Select verb, `v`, shift-click, or long-press.
   const selActive =
     selScoped && (selTaskIds.size > 0 || selFeatureIds.size > 0);
 
@@ -242,8 +244,8 @@ export function CardFeatures({
                 }
               }}
             >
-              {/* Reserved 12px slot: empty until hover/selection, then
-                  the checkbox materializes — content never shifts. */}
+              {/* Reserved 12px slot: empty until selection mode is on,
+                  then the checkbox materializes — nothing shifts. */}
               <span
                 className={`glyph-slot${marked || selActive ? " boxed" : ""}`}
               >

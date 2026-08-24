@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -1029,12 +1031,82 @@ func TestGraphEndpoints_ResolveShortID(t *testing.T) {
 		}
 	}
 
-	// Unknown identifiers stay empty, not an error.
-	backs, err := svc.GetBacklinks(ctx, "zzzzzzzz")
-	if err != nil {
-		t.Fatalf("GetBacklinks(unknown) failed: %v", err)
+	// Unknown identifiers are now reported as not-found rather than as an
+	// empty result. This block previously asserted the opposite: when short-ID
+	// resolution was added, the not-found path was deliberately left alone to
+	// keep that change narrow, and this assertion pinned that carry-over. It
+	// was never the intended contract — all three HTTP handlers already had an
+	// ErrNotFound -> 404 branch waiting for it. Fuller coverage of both
+	// directions lives in TestGraphLookups_UnknownIdentifierIsNotFound.
+	if _, err := svc.GetBacklinks(ctx, "zzzzzzzz"); !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("GetBacklinks(unknown) error = %v, want api.ErrNotFound", err)
 	}
-	if len(backs) != 0 {
-		t.Errorf("GetBacklinks(unknown) = %d results, want 0", len(backs))
+}
+
+// =============================================================================
+// Graph lookups: missing entry vs. unlinked entry
+// =============================================================================
+
+// TestGraphLookups_UnknownIdentifierIsNotFound locks in the distinction between
+// "this entry has no links" and "this entry does not exist". Unknown
+// identifiers used to be passed through to the storage queries, which matched
+// nothing and returned an empty slice — so a typo'd path or a stale ID produced
+// a confident "no backlinks found", the same answer a real but unlinked entry
+// gives. The HTTP handlers have always had an ErrNotFound -> 404 branch for
+// exactly this; it was unreachable.
+func TestGraphLookups_UnknownIdentifierIsNotFound(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Both an ID-shaped identifier and a path-shaped one, since the two take
+	// different routes through resolveEntry.
+	for _, ident := range []string{"zzzznope", "projects/nope/plan/missing.md"} {
+		t.Run(ident, func(t *testing.T) {
+			if _, err := svc.GetBacklinks(ctx, ident); !errors.Is(err, api.ErrNotFound) {
+				t.Errorf("GetBacklinks(%q) error = %v, want api.ErrNotFound", ident, err)
+			}
+			if _, err := svc.GetOutlinks(ctx, ident); !errors.Is(err, api.ErrNotFound) {
+				t.Errorf("GetOutlinks(%q) error = %v, want api.ErrNotFound", ident, err)
+			}
+			if _, err := svc.GetRelated(ctx, ident, 10); !errors.Is(err, api.ErrNotFound) {
+				t.Errorf("GetRelated(%q) error = %v, want api.ErrNotFound", ident, err)
+			}
+		})
+	}
+}
+
+// TestGraphLookups_ExistingEntryWithNoLinksStaysEmpty is the other half of the
+// pair. Making unknown identifiers an error must NOT turn a legitimately
+// unlinked entry into one — that empty result is a real answer.
+func TestGraphLookups_ExistingEntryWithNoLinksStaysEmpty(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "plan",
+		Title:   "Genuinely Unlinked",
+		Content: "Nothing links here and this links nowhere.",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// By path and by short ID — both must resolve and both must be empty,
+	// not errors.
+	for _, ident := range []string{saved.Path, saved.ID} {
+		back, err := svc.GetBacklinks(ctx, ident)
+		if err != nil {
+			t.Fatalf("GetBacklinks(%q) unexpected error: %v", ident, err)
+		}
+		if len(back) != 0 {
+			t.Errorf("GetBacklinks(%q) = %d entries, want 0", ident, len(back))
+		}
+		out, err := svc.GetOutlinks(ctx, ident)
+		if err != nil {
+			t.Fatalf("GetOutlinks(%q) unexpected error: %v", ident, err)
+		}
+		if len(out) != 0 {
+			t.Errorf("GetOutlinks(%q) = %d entries, want 0", ident, len(out))
+		}
 	}
 }

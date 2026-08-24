@@ -2816,15 +2816,23 @@ func computeMovedPath(oldPath, targetProject string) (string, error) {
 // exact path, or title — the HTTP routes only carry single-segment values,
 // so short IDs are the common case) to the note's canonical path, which is
 // what the storage link queries match on.
+//
+// Returns api.ErrNotFound when the identifier names no entry, so callers can
+// distinguish "no links" from "no such entry".
 func (s *BrainServiceImpl) resolveGraphPath(ctx context.Context, pathOrID string) (string, error) {
 	row, err := s.resolveEntry(ctx, pathOrID)
 	if err != nil {
 		return "", err
 	}
 	if row == nil {
-		// Preserve the previous behavior for unknown identifiers: the
-		// storage queries simply match nothing and return empty.
-		return pathOrID, nil
+		// An identifier that resolves to nothing used to be passed straight
+		// through to the storage queries, which matched nothing and returned
+		// an empty slice. That made "this entry has no links" and "this entry
+		// does not exist" the same answer — so a typo'd path or a stale ID
+		// read as a confident "not linked to anything". All three HTTP
+		// handlers already map ErrNotFound to a 404 with an "Entry not found"
+		// message; that branch was simply unreachable until now.
+		return "", fmt.Errorf("%q: %w", pathOrID, api.ErrNotFound)
 	}
 	return row.Path, nil
 }

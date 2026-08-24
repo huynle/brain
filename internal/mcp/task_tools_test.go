@@ -2475,3 +2475,64 @@ func TestTaskNext_DistinguishesEmptyFromClaimedFromUnknownProject(t *testing.T) 
 		})
 	}
 }
+
+// TestTasksStatus_MidWaitFailureDoesNotFabricateMissingTasks drives the REAL
+// handler end to end, through the real fetch closure, against a server that
+// succeeds once and then fails.
+//
+// The unit test above (TestWaitForTaskCondition_FetchErrorStopsTheWait) passed a
+// stub that never touched resp, so it asserted only the outcome string and could
+// not see that the real closure zeroed the response before issuing its request.
+// A failed poll therefore left the response empty, and the renderer listed EVERY
+// requested id as "no such task in project X" — a successful tool result
+// asserting the caller's tasks do not exist, on the exact signal an orchestrator
+// gates control flow on. Stubbing the thing under test hid the bug in it.
+func TestTasksStatus_MidWaitFailureDoesNotFabricateMissingTasks(t *testing.T) {
+	withFastTaskWaitPolling(t)
+
+	var polls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		if polls > 1 {
+			// Anything non-2xx: a redeploy 503, a proxy 502, an expired token.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "Service Unavailable", "message": "redeploying"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{
+			Tasks: []types.ResolvedTask{
+				{ID: "aaa11111", Title: "Task A", Status: "completed"},
+				{ID: "bbb22222", Title: "Task B", Status: "in_progress"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(srv.URL))
+	got, err := s.tools["tasks_status"].handler(context.Background(), map[string]any{
+		"project":  "p",
+		"task_ids": []any{"aaa11111", "bbb22222"},
+		"wait_for": "completed",
+		"timeout":  60000,
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	// The tasks exist. Nothing may claim otherwise.
+	if strings.Contains(got, "Not Found") || strings.Contains(got, "no such task") {
+		t.Errorf("a failed poll fabricated missing tasks:\n%s", got)
+	}
+	// The last good state must survive, including the task that was completed.
+	for _, want := range []string{"Task A", "Task B", "2 requested tasks completed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q — last good state was not preserved:\n%s", want, got)
+		}
+	}
+	// And the interruption must be disclosed, not silently swallowed.
+	if !strings.Contains(got, "error re-checking status") {
+		t.Errorf("the stopped wait must be disclosed:\n%s", got)
+	}
+}

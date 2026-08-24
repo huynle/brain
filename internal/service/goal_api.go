@@ -371,9 +371,15 @@ func (s *GoalService) GoalProgress(ctx context.Context, goalID string) (*GoalPro
 
 // Bounds for the over-fetch that lets goal-scoped audit filtering see past
 // other goals' reconcile traffic.
+//
+// goalAuditMaxScan matches storage.GetEventsByType's own cap. An earlier value
+// of 5000 was simply unreachable — that method clamps any limit above 1000 — so
+// the constant and its comment described a window four times wider than the
+// query could ever return. Naming the real bound keeps the two from disagreeing;
+// if the storage cap moves, this is the line to move with it.
 const (
 	goalAuditOverfetch = 40
-	goalAuditMaxScan   = 5000
+	goalAuditMaxScan   = 1000
 )
 
 // GoalAuditHistory returns the reconcile audit history for a goal, newest
@@ -408,6 +414,8 @@ func (s *GoalService) GoalAuditHistory(ctx context.Context, goalID string, limit
 	// covered well under a day — and a goal that last reconciled before that
 	// reported no history at all. Same filter-after-limit shape as the
 	// automation_runs and list(filename:) fixes; bounded for the same reason.
+	// The effective window is 1000 rows, which is where GetEventsByType clamps
+	// regardless of what we ask for.
 	scan := limit * goalAuditOverfetch
 	if scan > goalAuditMaxScan {
 		scan = goalAuditMaxScan

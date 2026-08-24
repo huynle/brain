@@ -928,9 +928,24 @@ Example - wait for completion:
 		// the "Not Found" section was unreachable and allCompleted — the
 		// actual point of the check — was thrown away.
 		var resp types.MultiTaskStatusResponse
+		// Decode into a scratch value and publish only on success.
+		//
+		// This closure originally zeroed resp before issuing the request, so a
+		// failed poll mid-wait left it at the zero value — and the renderer
+		// below, seeing no returned tasks, listed EVERY requested id under
+		// "no such task in project X". A 503 during a redeploy, an expiring
+		// token, or one network blip therefore turned into a SUCCESSFUL tool
+		// result asserting the caller's tasks do not exist, on precisely the
+		// signal an orchestrator gates control flow on. Keeping the last good
+		// state means a stopped wait reports real data alongside an explicit
+		// note that it stopped.
 		fetch := func() error {
-			resp = types.MultiTaskStatusResponse{}
-			return client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/status", body, nil, &resp)
+			var next types.MultiTaskStatusResponse
+			if err := client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/status", body, nil, &next); err != nil {
+				return err
+			}
+			resp = next
+			return nil
 		}
 		if err := fetch(); err != nil {
 			return "", err

@@ -2263,11 +2263,38 @@ func metaStringSlice(meta map[string]interface{}, key string) ([]string, bool) {
 }
 
 // computedFeatureToFeature converts a ComputedFeature to a types.Feature.
+//
+// The two stat types speak different taxonomies and must not be mapped by
+// field name. FeatureTaskStats counts STATUS (pending, in_progress,
+// completed, blocked); types.TaskStats counts dependency CLASSIFICATION
+// (ready, waiting, blocked, status_blocked, not_pending).
+//
+// They were bridged with Ready: f.TaskStats.Pending, which is wrong — a
+// pending task whose dependencies are unmet is waiting, not ready. Waiting,
+// StatusBlocked and NotPending were never set at all, so they read as zero.
+// Live, a feature holding 4 ready and 2 waiting tasks reported
+// "Ready: 6 | Waiting: 0", and a feature of 15 drafts reported
+// "Not pending: 0" while listing fifteen not_pending tasks.
+//
+// Counting classification directly is also what makes features/feature_get
+// agree with the tasks tool, which classifies the same way.
 func computedFeatureToFeature(f *ComputedFeature) types.Feature {
-	stats := &types.TaskStats{
-		Total:   f.TaskStats.Total,
-		Ready:   f.TaskStats.Pending,
-		Blocked: f.TaskStats.Blocked,
+	stats := &types.TaskStats{}
+	for _, task := range f.Tasks {
+		stats.Total++
+		switch task.Classification {
+		case "ready":
+			stats.Ready++
+		case "waiting":
+			stats.Waiting++
+		case "blocked":
+			stats.Blocked++
+		default:
+			stats.NotPending++
+		}
+		if task.Status == "blocked" {
+			stats.StatusBlocked++
+		}
 	}
 
 	return types.Feature{

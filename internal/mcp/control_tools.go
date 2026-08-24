@@ -178,8 +178,17 @@ func registerBrainControlPermission(s *Server, client *APIClient) {
 			"instance_id":   {Type: "string", Description: "Remote instance ID"},
 			"session_id":    {Type: "string", Description: "Session ID"},
 			"permission_id": {Type: "string", Description: "Permission request ID"},
-			"response":      {Type: "string", Enum: []string{"allow", "deny"}, Description: "Permission response"},
-			"remember":      {Type: "string", Enum: []string{"once", "always"}, Description: "Optional memory duration"},
+			// OpenCode's own permission vocabulary, proxied untouched by
+			// HandleControlPermission: {"response": "once"|"always"|"reject"}.
+			//
+			// This used to offer response {allow,deny} plus a separate
+			// remember {once,always}. Neither response value is valid on the
+			// wire, "once" and "always" ARE the response — misfiled into a
+			// parameter the request shape does not have — and "reject" could
+			// not be expressed at all. So the tool could neither grant a
+			// permission nor deny one.
+			"response": {Type: "string", Enum: []string{"once", "always", "reject"},
+				Description: "Permission response: 'once' allows this request only, 'always' allows it and remembers, 'reject' denies it."},
 		}, Required: []string{"runner_id", "instance_id", "session_id", "permission_id", "response"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		ids, ok := requireControlSessionIDs(args)
@@ -191,14 +200,12 @@ func registerBrainControlPermission(s *Server, client *APIClient) {
 			return "", fmt.Errorf("permission_id is required")
 		}
 		response := StringArg(args, "response", "")
-		if response != "allow" && response != "deny" {
-			return "", fmt.Errorf("response must be allow or deny")
+		switch response {
+		case "once", "always", "reject":
+		default:
+			return "", fmt.Errorf("response must be once, always, or reject")
 		}
-		remember := StringArg(args, "remember", "")
-		if remember != "" && remember != "once" && remember != "always" {
-			return "", fmt.Errorf("remember must be once or always")
-		}
-		body := controlPermissionBody{Response: response, Remember: remember}
+		body := controlPermissionBody{Response: response}
 		var resp controlSuccessResponse
 		path := controlSessionPath(ids.runnerID, ids.instanceID, ids.sessionID) + "/permissions/" + url.PathEscape(permissionID)
 		if err := client.Request(ctx, http.MethodPost, path, body, nil, &resp); err != nil {
@@ -303,8 +310,10 @@ type controlPromptModel struct {
 	ProviderID string `json:"providerID"`
 }
 
+// controlPermissionBody is proxied to the OpenCode instance untouched, so
+// it must carry exactly OpenCode's vocabulary. The former Remember field
+// was not part of that shape and was silently ignored downstream.
 type controlPermissionBody struct {
-	Remember string `json:"remember,omitempty"`
 	Response string `json:"response"`
 }
 

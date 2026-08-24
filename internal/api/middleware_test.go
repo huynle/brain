@@ -1365,3 +1365,70 @@ func (h *hijackableRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h.hijacked = true
 	return nil, nil, nil
 }
+
+// TestLogger_ClientDisconnectIsNotAServerError covers the phantom-500 case.
+//
+// No handler in this package special-cases context.Canceled — they all map any
+// error to 500 — so a caller that gives up mid-query causes the in-flight DB
+// call to return "context canceled", the handler to write a 500 nobody reads,
+// and this middleware to log ERROR. Observed live after a deploy:
+//
+//	level=ERROR msg=request path=/api/v1/tasks/chromeuse status=500 duration=20.009s
+//
+// The endpoint was healthy; the caller had timed out while the request queued
+// behind the ~33s startup reindex (the store shares one connection). Recording
+// that as a server error buries real 500s.
+func TestLogger_ClientDisconnectIsNotAServerError(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	// A handler that behaves exactly as the real ones do when the caller goes
+	// away: the context is cancelled, so it writes a 500.
+	handler := Logger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		<-r.Context().Done()
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", r.Context().Err().Error())
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest("GET", "/api/v1/tasks/some-project", nil).WithContext(ctx)
+	cancel()
+
+	handler.ServeHTTP(httptest.NewRecorder(), req)
+
+	logged := buf.String()
+	if !strings.Contains(logged, "client_disconnected=true") {
+		t.Errorf("a cancelled request should be flagged as a disconnect:\n%s", logged)
+	}
+	if strings.Contains(logged, "level=ERROR") {
+		t.Errorf("a client disconnect must not be logged as a server error:\n%s", logged)
+	}
+	if !strings.Contains(logged, "level=WARN") {
+		t.Errorf("it should still be recorded, at WARN:\n%s", logged)
+	}
+}
+
+// TestLogger_RealServerErrorStillLogsAsError is the other half. Downgrading
+// disconnects must not downgrade genuine faults — that would trade a noisy
+// signal for a silent one.
+func TestLogger_RealServerErrorStillLogsAsError(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	handler := Logger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", "disk on fire")
+	}))
+
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/api/v1/tasks/p", nil))
+
+	logged := buf.String()
+	if !strings.Contains(logged, "level=ERROR") {
+		t.Errorf("a genuine 500 must still log as ERROR:\n%s", logged)
+	}
+	if strings.Contains(logged, "client_disconnected") {
+		t.Errorf("a live client must not be flagged as disconnected:\n%s", logged)
+	}
+}

@@ -2215,3 +2215,63 @@ func TestBrainTaskNext_CompletedCountSurvivesBlockedTasks(t *testing.T) {
 		t.Errorf("status_blocked should still come from the server:\n%s", out)
 	}
 }
+
+// TestTaskGet_ShowsHowTheTaskWillRun pins that task_get answers "how will
+// this run?" without a second call.
+//
+// resolvedTaskWithDeps was a ten-field hand-rolled subset of
+// types.ResolvedTask, which carries ~60. Everything describing execution —
+// agent, model, executor, execution_mode, target_workdir, git_branch, the
+// merge_* set — arrived on the wire and was discarded, so an agent about to
+// pick up a task had to call task_metadata separately to learn which agent
+// and model it would run under.
+func TestTaskGet_ShowsHowTheTaskWillRun(t *testing.T) {
+	task := types.ResolvedTask{
+		ID: "aaa11111", Title: "Do the thing", Path: "projects/p/task/aaa11111.md",
+		Status: "pending", Priority: "high", Classification: "ready",
+		Agent: "tdd-dev", Executor: "opencode", ExecutionMode: "worktree",
+		TargetWorkdir: "/repo", GitBranch: "feat-x", MergeTargetBranch: "main",
+		MergePolicy: "auto_pr", MergeStrategy: "squash", FeatureID: "feat",
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/entries/") {
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{
+				ID: task.ID, Path: task.Path, Title: task.Title, Status: task.Status,
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{Tasks: []types.ResolvedTask{task}, Count: 1})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(srv.URL))
+	out, err := s.tools["task_get"].handler(context.Background(), map[string]any{
+		"project": "p", "task_id": "aaa11111",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	for _, want := range []string{
+		"### Execution",
+		"- agent: tdd-dev",
+		"- executor: opencode",
+		"- execution mode: worktree",
+		"- workdir: /repo",
+		"- branch: feat-x",
+		"- merges into: main",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in task_get output:\n%s", want, out)
+		}
+	}
+
+	// An unset agent or model changes what picks the work up, so say so
+	// rather than omitting the line.
+	if !strings.Contains(out, "model: (unset") {
+		t.Errorf("an unset model should be stated, not omitted:\n%s", out)
+	}
+}

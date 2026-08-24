@@ -612,6 +612,8 @@ Use this to get detailed information about a specific task including:
 			"",
 		}
 
+		lines = append(lines, formatTaskExecutionLines(*task)...)
+
 		// Dependencies section - look up each dependency ID in the task list for title/status
 		taskLookup := make(map[string]*resolvedTaskWithDeps, len(tasksResp.Tasks))
 		for i := range tasksResp.Tasks {
@@ -1480,19 +1482,60 @@ func registerBrainDreamDisable(s *Server, client *APIClient) {
 // Helper types
 // =============================================================================
 
-// resolvedTaskWithDeps is used by task_get to find tasks and compute dependents.
-type resolvedTaskWithDeps struct {
-	ID             string   `json:"id"`
-	Title          string   `json:"title"`
-	Path           string   `json:"path"`
-	Status         string   `json:"status"`
-	Priority       string   `json:"priority"`
-	Classification string   `json:"classification"`
-	ResolvedDeps   []string `json:"resolved_deps"`
-	WaitingOn      []string `json:"waiting_on"`
-	BlockedBy      []string `json:"blocked_by"`
-	DependsOn      []string `json:"depends_on"`
+
+// formatTaskExecutionLines renders how a task will actually run.
+//
+// task_get promises "detailed information about a specific task", and an
+// agent about to pick one up needs to know which agent and model it runs
+// under, where, on what branch, and how the work lands. All of it is on the
+// wire in ResolvedTask and none of it was shown, so answering "how will this
+// run?" meant a second call to task_metadata.
+//
+// Only fields that are set are rendered — an unset executor means "runner
+// default", which is not worth a line — except agent and model, whose
+// absence changes which agent picks the work up and is worth stating.
+func formatTaskExecutionLines(task types.ResolvedTask) []string {
+	var body []string
+	add := func(label, value string) {
+		if strings.TrimSpace(value) != "" {
+			body = append(body, fmt.Sprintf("- %s: %s", label, value))
+		}
+	}
+
+	agent := task.Agent
+	if agent == "" {
+		agent = "(unset — runner default)"
+	}
+	body = append(body, fmt.Sprintf("- agent: %s", agent))
+	model := task.Model
+	if model == "" {
+		model = "(unset — provider default)"
+	}
+	body = append(body, fmt.Sprintf("- model: %s", model))
+
+	add("executor", task.Executor)
+	add("execution mode", task.ExecutionMode)
+	add("workdir", task.TargetWorkdir)
+	add("branch", task.GitBranch)
+	add("merges into", task.MergeTargetBranch)
+	add("merge policy", task.MergePolicy)
+	add("merge strategy", task.MergeStrategy)
+	add("checkout mode", task.CheckoutMode)
+	add("feature", task.FeatureID)
+
+	return append([]string{"### Execution"}, append(body, "")...)
 }
+
+// resolvedTaskWithDeps is used by task_get to find tasks and compute
+// dependents.
+//
+// It was a hand-rolled ten-field subset of types.ResolvedTask, which carries
+// roughly sixty. Everything describing HOW a task runs — agent, model,
+// executor, execution_mode, target_workdir, git_branch, the merge_* set —
+// was decoded off the wire and thrown away, so task_get could not answer
+// "how will this run?" and an agent had to make a second call to
+// task_metadata to find out. Alias the real type instead.
+type resolvedTaskWithDeps = types.ResolvedTask
 
 // fullTask is used by task_metadata for the complete task representation.
 type fullTask struct {

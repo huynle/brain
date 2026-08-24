@@ -338,6 +338,10 @@ type EventService interface {
 	// Filters are key-value pairs matching event fields (e.g., "project_id", "type").
 	Recent(ctx context.Context, limit int, filters map[string]string) ([]types.Event, error)
 
+	// Coverage reports the window the in-memory event buffer covers, so an
+	// empty Recent result can be qualified rather than read as "never happened".
+	Coverage() types.EventCoverage
+
 	// Subscribe returns a channel of events matching the given filters and
 	// an unsubscribe function. Used by the SSE handler for real-time streaming.
 	Subscribe(ctx context.Context, filters map[string]string) (<-chan types.Event, func())

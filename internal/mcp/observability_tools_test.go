@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -716,5 +718,124 @@ func TestFormatSchedulerStatus_ProjectOrderIsDeterministic(t *testing.T) {
 	}
 	if !contains(first, "**alpha:**") {
 		t.Fatalf("expected sorted output to contain alpha:\n%s", first)
+	}
+}
+
+// TestValidateEventTypeFilter_RejectsTypesNothingEmits — an unrecognised filter
+// previously produced "Found 0 events: No events found.", byte-identical to a
+// valid filter that genuinely matched nothing. Probed live against production:
+// events_recent(type: "automation.run") returned a clean zero, and there is no
+// automation.* event family at all.
+func TestValidateEventTypeFilter_RejectsTypesNothingEmits(t *testing.T) {
+	for _, bad := range []string{"automation.run", "task.complete", "nonsense", "runner.*"[:7] + "bogus"} {
+		t.Run(bad, func(t *testing.T) {
+			err := validateEventTypeFilter(bad)
+			if err == nil {
+				t.Fatalf("validateEventTypeFilter(%q) = nil, want an error", bad)
+			}
+			// The error has to point somewhere, not just say no.
+			if !strings.Contains(err.Error(), "task.*") {
+				t.Errorf("error should name the known families, got: %v", err)
+			}
+		})
+	}
+}
+
+// TestValidateEventTypeFilter_AcceptsRealTypesAndFamilies guards against the fix
+// turning into a different lie: rejecting filters that DO work.
+func TestValidateEventTypeFilter_AcceptsRealTypesAndFamilies(t *testing.T) {
+	good := []string{"task.*", "runner.*", "feature.*", "entry.*", "control.*"}
+	// Every exact type must pass too — the allowlist is the source of truth.
+	good = append(good, types.AllEventTypes...)
+
+	for _, f := range good {
+		if err := validateEventTypeFilter(f); err != nil {
+			t.Errorf("validateEventTypeFilter(%q) = %v, want nil", f, err)
+		}
+	}
+}
+
+// TestFormatRecentEvents_EmptyResultStatesItsWindow — a zero count from a
+// volatile in-memory ring is not evidence the event never happened. The ring is
+// empty after every restart and is filled continuously by runner.poll_complete.
+func TestFormatRecentEvents_EmptyResultStatesItsWindow(t *testing.T) {
+	out := formatRecentEvents(nil, 0, types.EventCoverage{
+		Buffered: 3, Capacity: 1000, Oldest: "2026-08-24T15:48:00Z",
+	})
+
+	for _, want := range []string{
+		"No events matched",
+		"Searched 3 buffered event(s)",
+		"ring capacity 1000",
+		"oldest retained: 2026-08-24T15:48:00Z",
+		"starts empty after a restart",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out)
+		}
+	}
+}
+
+// TestFormatRecentEvents_FullRingSaysHistoryIsGone — when the ring is saturated,
+// "oldest retained" is not just informational: everything before it is destroyed.
+func TestFormatRecentEvents_FullRingSaysHistoryIsGone(t *testing.T) {
+	out := formatRecentEvents(nil, 0, types.EventCoverage{
+		Buffered: 1000, Capacity: 1000, Oldest: "2026-08-24T15:10:00Z",
+	})
+	if !strings.Contains(out, "ring is FULL") || !strings.Contains(out, "overwritten") {
+		t.Errorf("a saturated ring must say older history is gone:\n%s", out)
+	}
+}
+
+// TestFormatPlacementReasons_EmptyIsGoodNews — this table records REJECTIONS
+// only. recordNoCandidate (internal/service/scheduler.go) is its sole writer and
+// its only Decision value is "no_candidate", so a successful dispatch leaves no
+// row. "No placement decisions recorded" therefore read as "nothing is known"
+// when it actually means "never failed to place" — and sent readers hunting for
+// a fault this table would never have shown them.
+func TestFormatPlacementReasons_EmptyIsGoodNews(t *testing.T) {
+	out := formatPlacementReasons("brain-api", "oanq4y2n", types.PlacementReasonListResponse{})
+
+	if !strings.Contains(out, "never failed to find an eligible runner") {
+		t.Errorf("empty result should read as good news:\n%s", out)
+	}
+	if !strings.Contains(out, "records rejections ONLY") {
+		t.Errorf("must state what the table does and does not hold:\n%s", out)
+	}
+	// It must redirect, not dead-end.
+	for _, want := range []string{"runner_status", "scheduler_status"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("should point at where the real cause lives (%s):\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "No placement decisions recorded") {
+		t.Errorf("stale wording implying nothing was decided:\n%s", out)
+	}
+}
+
+// TestFormatFeatureListTruncation_IsDisclosed — the server returns the complete
+// unpaginated list, so a silent features[:limit] made a truncated view look like
+// the whole project. The per-feature task list has always said "...and N more
+// tasks"; this is the same courtesy one level up.
+func TestFormatFeatureListTruncation_IsDisclosed(t *testing.T) {
+	features := make([]types.Feature, 63)
+	for i := range features {
+		features[i] = types.Feature{
+			FeatureID: fmt.Sprintf("feat-%02d", i),
+			Stats:     &types.TaskStats{Total: 1, Ready: 1},
+		}
+	}
+
+	out := formatFeatureList("Features", "No features found", features, 50)
+
+	for _, want := range []string{"Showing 50 of 63 features", "13 omitted", "Raise 'limit'"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q:\n%s", want, out[:400])
+		}
+	}
+	// And a list that fits must not claim anything was dropped.
+	short := formatFeatureList("Features", "none", features[:5], 50)
+	if strings.Contains(short, "omitted") {
+		t.Errorf("a complete list must not claim truncation:\n%s", short)
 	}
 }

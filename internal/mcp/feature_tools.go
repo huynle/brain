@@ -196,11 +196,24 @@ func formatFeatureList(title, empty string, features []types.Feature, limit int)
 	if len(features) == 0 {
 		return fmt.Sprintf("## %s\n\n%s.", title, empty)
 	}
+	// Disclose the cut. The server returns the complete, unpaginated list, so
+	// the information to say "showing 50 of 63" is already in hand — dropping
+	// the rest silently made a truncated view look like the whole project.
+	// The per-feature task list three lines below has always said "...and N
+	// more tasks"; this applies the same courtesy one level up.
+	omitted := 0
 	if len(features) > limit {
+		omitted = len(features) - limit
 		features = features[:limit]
 	}
 
 	lines := []string{fmt.Sprintf("## %s", title), ""}
+	if omitted > 0 {
+		lines = append(lines,
+			fmt.Sprintf("_Showing %d of %d features — %d omitted. Raise 'limit' to see the rest._",
+				limit, limit+omitted, omitted),
+			"")
+	}
 	for _, feature := range features {
 		lines = append(lines, formatFeatureSummaryLines(feature)...)
 		if len(feature.Tasks) > 0 {

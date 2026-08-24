@@ -138,6 +138,15 @@ func generateEventID() string {
 // Recent
 // =============================================================================
 
+// Coverage reports how much history Recent could possibly have searched, so an
+// empty result can be qualified rather than read as "never happened".
+func (s *EventServiceImpl) Coverage() types.EventCoverage {
+	if s == nil || s.hub == nil {
+		return types.EventCoverage{}
+	}
+	return s.hub.Coverage()
+}
+
 // Recent returns recent events from the ring buffer with optional filters.
 // Supported filter keys: "project_id", "type", "source", "feature_id".
 func (s *EventServiceImpl) Recent(_ context.Context, limit int, filters map[string]string) ([]types.Event, error) {

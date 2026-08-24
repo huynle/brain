@@ -96,8 +96,9 @@ func registerBrainTaskDispatchLease(s *Server, client *APIClient) {
 
 func registerBrainTaskPlacementReasons(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "task_placement_reasons",
-		Description: "Get task placement decision history. Shows why runners accepted or rejected this task.",
+		Name: "task_placement_reasons",
+		Description: "Get task placement REJECTION history: the times the scheduler could not find an eligible runner for this task, and which requirements went unmet. " +
+			"Acceptances are NOT recorded — recordNoCandidate is the only writer and it only ever writes 'no_candidate' — so an empty result means the scheduler has never failed to place this task, not that nothing was decided.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -135,7 +136,7 @@ func registerBrainEventsRecent(s *Server, client *APIClient) {
 			Type: "object",
 			Properties: map[string]Property{
 				"limit":      {Type: "number", Description: "Maximum events to return (default: 100, max: 1000)"},
-				"type":       {Type: "string", Description: "Event type filter (e.g. 'task.started', 'task.*')"},
+				"type":       {Type: "string", Description: "Event type filter (e.g. 'task.started', 'task.*'). Validated against the known event types; an unrecognised value is rejected rather than silently matching nothing."},
 				"project_id": {Type: "string", Description: "Filter events by project ID"},
 				"feature_id": {Type: "string", Description: "Filter events by feature ID"},
 				"source":     {Type: "string", Description: "Event source filter ('runner' or 'api')"},
@@ -147,6 +148,14 @@ func registerBrainEventsRecent(s *Server, client *APIClient) {
 			query["limit"] = fmt.Sprintf("%d", limit)
 		}
 		if eventType := StringArg(args, "type", ""); eventType != "" {
+			// Reject a type nothing can ever emit. An unrecognised filter used
+			// to return "Found 0 events: No events found." — identical to a
+			// valid filter that genuinely matched nothing, so a typo, or a
+			// plausible-but-nonexistent name like "automation.run", read as
+			// proof the thing never happened.
+			if err := validateEventTypeFilter(eventType); err != nil {
+				return "", err
+			}
 			query["type"] = eventType
 		}
 		if projectID := StringArg(args, "project_id", ""); projectID != "" {
@@ -160,14 +169,15 @@ func registerBrainEventsRecent(s *Server, client *APIClient) {
 		}
 
 		var resp struct {
-			Events []types.Event `json:"events"`
-			Count  int           `json:"count"`
+			Events   []types.Event       `json:"events"`
+			Count    int                 `json:"count"`
+			Coverage types.EventCoverage `json:"coverage"`
 		}
 		if err := client.Request(ctx, http.MethodGet, "/events/recent", nil, query, &resp); err != nil {
 			return "", err
 		}
 
-		return formatRecentEvents(resp.Events, IntArg(args, "limit", 0)), nil
+		return formatRecentEvents(resp.Events, IntArg(args, "limit", 0), resp.Coverage), nil
 	})
 }
 
@@ -336,10 +346,19 @@ func formatPlacementReasons(projectID, taskID string, resp types.PlacementReason
 	b.WriteString("## Placement Reasons\n\n")
 	fmt.Fprintf(&b, "Project: %s\n", projectID)
 	fmt.Fprintf(&b, "Task: %s\n", taskID)
-	fmt.Fprintf(&b, "Total decisions: %d\n\n", resp.Total)
+	fmt.Fprintf(&b, "Rejections recorded: %d\n\n", resp.Total)
 
 	if len(resp.Reasons) == 0 {
-		b.WriteString("No placement decisions recorded.\n")
+		// Only rejections are ever written here — recordNoCandidate in
+		// internal/service/scheduler.go is the sole writer and its only
+		// Decision value is "no_candidate". So an empty result is the GOOD
+		// case, and calling it "no placement decisions recorded" made it read
+		// as "nothing is known", which sent readers looking for a fault that
+		// this table would never have shown them anyway.
+		b.WriteString("No placement rejections recorded — the scheduler has never failed to find an eligible runner for this task.\n\n")
+		b.WriteString("Note this table records rejections ONLY; a successful dispatch leaves no row here.\n")
+		b.WriteString("If the task is not running, the cause is elsewhere: check runner_status(project:) for the pause dials\n")
+		b.WriteString("and scheduler_status for the per-project skip reason.\n")
 		return b.String()
 	}
 
@@ -366,7 +385,7 @@ func formatPlacementReasons(projectID, taskID string, resp types.PlacementReason
 	return b.String()
 }
 
-func formatRecentEvents(events []types.Event, requestedLimit int) string {
+func formatRecentEvents(events []types.Event, requestedLimit int, cov types.EventCoverage) string {
 	var b strings.Builder
 	b.WriteString("## Recent Events\n\n")
 	// Also a page size: the events endpoint returns at most `limit` rows and
@@ -375,7 +394,12 @@ func formatRecentEvents(events []types.Event, requestedLimit int) string {
 	b.WriteString("\n")
 
 	if len(events) == 0 {
-		b.WriteString("No events found.\n")
+		b.WriteString("No events matched.\n")
+		// An empty result is only as strong as the window it was drawn from,
+		// and this window is small, volatile, and mostly poll heartbeats.
+		if window := formatEventCoverage(cov); window != "" {
+			b.WriteString("\n" + window + "\n")
+		}
 		return b.String()
 	}
 
@@ -565,4 +589,70 @@ func formatSchedulerStatus(status types.SchedulerStatus) string {
 	}
 
 	return b.String()
+}
+
+// validateEventTypeFilter rejects a filter no event can ever match.
+//
+// Supports the documented "task.*" prefix form as well as exact types. An
+// unrecognised value previously produced "Found 0 events: No events found." —
+// byte-identical to a valid filter that matched nothing — so a typo, or a
+// plausible-but-nonexistent name like "automation.run" (there is no automation.*
+// family at all), read as evidence the thing never happened.
+func validateEventTypeFilter(filter string) error {
+	if strings.HasSuffix(filter, ".*") {
+		prefix := strings.TrimSuffix(filter, "*")
+		for _, known := range types.AllEventTypes {
+			if strings.HasPrefix(known, prefix) {
+				return nil
+			}
+		}
+		return fmt.Errorf("no event type starts with %q. Known families: %s",
+			prefix, strings.Join(eventTypeFamilies(), ", "))
+	}
+	for _, known := range types.AllEventTypes {
+		if known == filter {
+			return nil
+		}
+	}
+	return fmt.Errorf("unknown event type %q — nothing emits it, so this filter can never match. Known families: %s (use e.g. \"task.*\" for a whole family)",
+		filter, strings.Join(eventTypeFamilies(), ", "))
+}
+
+// eventTypeFamilies lists the distinct "<family>." prefixes, sorted. Naming the
+// families rather than all ~35 types keeps the error short while still telling
+// the caller where to look.
+func eventTypeFamilies() []string {
+	seen := map[string]struct{}{}
+	var families []string
+	for _, t := range types.AllEventTypes {
+		if i := strings.Index(t, "."); i > 0 {
+			f := t[:i] + ".*"
+			if _, ok := seen[f]; !ok {
+				seen[f] = struct{}{}
+				families = append(families, f)
+			}
+		}
+	}
+	sort.Strings(families)
+	return families
+}
+
+// formatEventCoverage renders the window that was actually searched.
+//
+// The buffer is in-memory, fixed-size, and empty after every restart, while
+// runner.poll_complete fills it continuously — so a zero count says nothing
+// about whether the event happened. Stating the window turns "it never happened"
+// back into "it is not in the last N events I can see".
+func formatEventCoverage(cov types.EventCoverage) string {
+	if cov.Capacity == 0 {
+		return ""
+	}
+	window := fmt.Sprintf("Searched %d buffered event(s) (ring capacity %d)", cov.Buffered, cov.Capacity)
+	if cov.Oldest != "" {
+		window += fmt.Sprintf("; oldest retained: %s", cov.Oldest)
+	}
+	if cov.Buffered >= cov.Capacity {
+		window += ". The ring is FULL, so anything older than that has been overwritten"
+	}
+	return window + ".\nThis buffer is in-memory and starts empty after a restart; it is not a durable event log."
 }

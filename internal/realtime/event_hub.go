@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"sync"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -217,4 +218,18 @@ func matchesFilter(f EventFilter, evt types.Event) bool {
 	}
 
 	return true
+}
+
+// Coverage reports the window the ring buffer currently covers.
+func (h *EventHub) Coverage() types.EventCoverage {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	cov := types.EventCoverage{Buffered: h.count, Capacity: h.cap}
+	if h.count == 0 {
+		return cov
+	}
+	oldest := (h.head - h.count + h.cap) % h.cap
+	cov.Oldest = h.buffer[oldest].Timestamp.UTC().Format(time.RFC3339)
+	return cov
 }

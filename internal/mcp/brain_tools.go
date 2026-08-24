@@ -301,6 +301,14 @@ func registerBrainRecall(s *Server, client *APIClient) {
 			Tags                []string                    `json:"tags"`
 			UserOriginalRequest string                      `json:"user_original_request"`
 			Attachments         []types.AttachmentReference `json:"attachments,omitempty"`
+
+			// Recalling a task without its priority, feature or
+			// dependencies means a second call to task_get for facts that
+			// were already on the wire. Rendered only when set, so a plain
+			// note is not padded with task vocabulary.
+			Priority  string   `json:"priority,omitempty"`
+			FeatureID string   `json:"feature_id,omitempty"`
+			DependsOn []string `json:"depends_on,omitempty"`
 		}
 		params := make(map[string]string)
 		if include := StringSliceArg(args, "include"); len(include) > 0 {
@@ -322,8 +330,21 @@ func registerBrainRecall(s *Server, client *APIClient) {
 
 		attachments := formatAttachmentReferences(resp.Attachments)
 
-		return fmt.Sprintf("## %s\n\nPath: %s\nType: %s\nStatus: %s\nTags: %s%s%s\n\n---\n\n%s",
-			resp.Title, resp.Path, resp.Type, resp.Status, tags, userRequest, attachments, resp.Content), nil
+		// Task-shaped fields, shown only when set so a plain note is not
+		// padded with vocabulary that does not apply to it.
+		var taskFields strings.Builder
+		if resp.Priority != "" {
+			fmt.Fprintf(&taskFields, "\nPriority: %s", resp.Priority)
+		}
+		if resp.FeatureID != "" {
+			fmt.Fprintf(&taskFields, "\nFeature: %s", resp.FeatureID)
+		}
+		if len(resp.DependsOn) > 0 {
+			fmt.Fprintf(&taskFields, "\nDepends on: %s", strings.Join(resp.DependsOn, ", "))
+		}
+
+		return fmt.Sprintf("## %s\n\nPath: %s\nType: %s\nStatus: %s\nTags: %s%s%s%s\n\n---\n\n%s",
+			resp.Title, resp.Path, resp.Type, resp.Status, tags, taskFields.String(), userRequest, attachments, resp.Content), nil
 	})
 }
 
@@ -1014,7 +1035,7 @@ func registerBrainInject(s *Server, client *APIClient) {
 				"max_chars": {Type: "number", Description: "Bound the total assembled context in characters (default: 24000, roughly 6k tokens). " +
 					"The budget is split evenly across the matched entries, and any entry cut short is marked with its path so you can recall it in full. " +
 					"Pass a negative value for unbounded output."},
-				"type":        {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
+				"type": {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 			},
 			Required: []string{"query"},
 		},
@@ -1083,51 +1104,51 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"path":                 {Type: "string", Description: "Path to the entry to update"},
-				"status":               {Type: "string", Enum: types.EntryStatuses, Description: "New status"},
-				"title":                {Type: "string", Description: "New title"},
-				"content":              {Type: "string", Description: "Replace the entry's full body content (markdown). Preserves path, ID, and links. Use 'append' to add to the end instead; if both are set, content is applied first."},
-				"append":               {Type: "string", Description: "Content to append to the end of the entry body"},
-				"note":                 {Type: "string", Description: "Short note to add"},
-				"depends_on":           {Type: "array", Items: &Property{Type: "string"}, Description: "Task dependencies - list of task IDs or titles"},
-				"tags":                 {Type: "array", Items: &Property{Type: "string"}, Description: "Update tags for the entry"},
-				"priority":             {Type: "string", Enum: types.Priorities, Description: "Priority level"},
-				"target_workdir":       {Type: "string", Description: "Explicit working directory override for task execution"},
-				"workdir":              {Type: "string", Description: "Working directory relative to home (e.g., 'orion/orion-ai'). Used together with git_remote to resolve the repo context for execution."},
-				"git_branch":           {Type: "string", Description: "Git branch for the task"},
-				"git_remote":           {Type: "string", Description: "Git remote URL for the task's repo (e.g., 'git@gitlab.example.com:group/project.git'). Used together with workdir to resolve the repo context for execution."},
-				"merge_target_branch":  {Type: "string", Description: "Branch to merge completed work into"},
-				"merge_policy":         {Type: "string", Enum: types.MergePolicies, Description: "Merge behavior at checkout completion"},
-				"merge_strategy":       {Type: "string", Enum: types.MergeStrategies, Description: "Git merge strategy"},
-				"remote_branch_policy": {Type: "string", Enum: types.RemoteBranchPolicies, Description: "Remote branch cleanup after merge"},
-				"open_pr_before_merge": {Type: "boolean", Description: "Require PR before merge"},
-				"execution_mode":       {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
-				"complete_on_idle":     {Type: "boolean", Description: "Mark task as completed when agent becomes idle"},
-				"checkout_mode":        {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation."},
-				"schedule":             {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *')"},
-				"schedule_enabled":     {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
-				"max_runs":             {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."},
-				"run_once_at":          {Type: "string", Description: "RFC3339 timestamp for one-time execution (e.g., '2025-06-15T10:00:00Z'). Task runs once at this time then auto-disables."},
-				"timezone":             {Type: "string", Description: "IANA timezone for schedule interpretation (e.g., 'America/New_York', 'UTC'). Defaults to UTC if not set."},
-				"starts_at":            {Type: "string", Description: "RFC3339 timestamp for when the schedule becomes active. Schedule won't trigger before this time."},
-				"expires_at":           {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
-				"feature_id":           {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
-				"feature_priority":     {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
-				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. Use this for feature-to-feature ordering."},
-				"trigger":              {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
-				"action":               {Type: "object", Description: "Automation action config for automation entries. Common fields: type, title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
-				"retry":                {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
-				"feature_schedule":     {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
-				"feature_starts_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
-				"feature_expires_at":   {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
-				"feature_run_once_at":  {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
-				"feature_timezone":     {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
-				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
+				"path":                  {Type: "string", Description: "Path to the entry to update"},
+				"status":                {Type: "string", Enum: types.EntryStatuses, Description: "New status"},
+				"title":                 {Type: "string", Description: "New title"},
+				"content":               {Type: "string", Description: "Replace the entry's full body content (markdown). Preserves path, ID, and links. Use 'append' to add to the end instead; if both are set, content is applied first."},
+				"append":                {Type: "string", Description: "Content to append to the end of the entry body"},
+				"note":                  {Type: "string", Description: "Short note to add"},
+				"depends_on":            {Type: "array", Items: &Property{Type: "string"}, Description: "Task dependencies - list of task IDs or titles"},
+				"tags":                  {Type: "array", Items: &Property{Type: "string"}, Description: "Update tags for the entry"},
+				"priority":              {Type: "string", Enum: types.Priorities, Description: "Priority level"},
+				"target_workdir":        {Type: "string", Description: "Explicit working directory override for task execution"},
+				"workdir":               {Type: "string", Description: "Working directory relative to home (e.g., 'orion/orion-ai'). Used together with git_remote to resolve the repo context for execution."},
+				"git_branch":            {Type: "string", Description: "Git branch for the task"},
+				"git_remote":            {Type: "string", Description: "Git remote URL for the task's repo (e.g., 'git@gitlab.example.com:group/project.git'). Used together with workdir to resolve the repo context for execution."},
+				"merge_target_branch":   {Type: "string", Description: "Branch to merge completed work into"},
+				"merge_policy":          {Type: "string", Enum: types.MergePolicies, Description: "Merge behavior at checkout completion"},
+				"merge_strategy":        {Type: "string", Enum: types.MergeStrategies, Description: "Git merge strategy"},
+				"remote_branch_policy":  {Type: "string", Enum: types.RemoteBranchPolicies, Description: "Remote branch cleanup after merge"},
+				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
+				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
+				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle"},
+				"checkout_mode":         {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation."},
+				"schedule":              {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *')"},
+				"schedule_enabled":      {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
+				"max_runs":              {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."},
+				"run_once_at":           {Type: "string", Description: "RFC3339 timestamp for one-time execution (e.g., '2025-06-15T10:00:00Z'). Task runs once at this time then auto-disables."},
+				"timezone":              {Type: "string", Description: "IANA timezone for schedule interpretation (e.g., 'America/New_York', 'UTC'). Defaults to UTC if not set."},
+				"starts_at":             {Type: "string", Description: "RFC3339 timestamp for when the schedule becomes active. Schedule won't trigger before this time."},
+				"expires_at":            {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
+				"feature_id":            {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
+				"feature_priority":      {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
+				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. Use this for feature-to-feature ordering."},
+				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
+				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type, title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
+				"retry":                 {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
+				"feature_schedule":      {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
+				"feature_starts_at":     {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
+				"feature_expires_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
+				"feature_run_once_at":   {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
+				"feature_timezone":      {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
+				"direct_prompt":         {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
 				"user_original_request": {Type: "string", Description: "Verbatim user request that motivated this task, preserved for validation during feature checkout"},
-				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
-				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
-				"executor":             {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode', 'pi', or 'script'. Empty = use runner default."},
-				"extensions":           {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
+				"agent":                 {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
+				"model":                 {Type: "string", Description: "Override model (format: 'provider/model-id')"},
+				"executor":              {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode', 'pi', or 'script'. Empty = use runner default."},
+				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
 			},
 			Required: []string{"path"},
 		},
@@ -1308,8 +1329,8 @@ func addPresentUpdateFields(body, args map[string]any, keys ...string) {
 }
 
 var openCodeOptionalDefaults = map[string]any{
-	"priority":             "medium",
-	"feature_priority":     "high",
+	"priority":         "medium",
+	"feature_priority": "high",
 	// merge_policy and remote_branch_policy were "prompt_only" and "keep",
 	// which are not the defaults — normalizeFeatureCheckoutOptions in
 	// internal/service/task.go turns an empty value into "auto_merge" and

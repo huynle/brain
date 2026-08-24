@@ -3187,3 +3187,57 @@ func TestBulkUpdateDescription_ClaimsOnlyRealFields(t *testing.T) {
 		}
 	}
 }
+
+// TestRecall_ShowsTaskFieldsWhenPresent pins that recalling a task surfaces
+// the facts that make it actionable, and that a plain note is not padded
+// with task vocabulary.
+//
+// recall decoded nine fields from a ~60-field BrainEntry, so recalling a
+// task showed no priority, feature or dependencies — facts already on the
+// wire, obtainable only by a second call to task_get.
+func TestRecall_ShowsTaskFieldsWhenPresent(t *testing.T) {
+	serve := func(entry types.BrainEntry) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(entry)
+		}))
+	}
+
+	t.Run("task shows priority, feature and deps", func(t *testing.T) {
+		srv := serve(types.BrainEntry{
+			ID: "aaa11111", Path: "projects/p/task/a.md", Title: "A task", Type: "task",
+			Status: "pending", Priority: "high", FeatureID: "feat-x",
+			DependsOn: []string{"bbb22222", "ccc33333"},
+		})
+		defer srv.Close()
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["recall"].handler(context.Background(), map[string]any{"path": "projects/p/task/a.md"})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		for _, want := range []string{"Priority: high", "Feature: feat-x", "Depends on: bbb22222, ccc33333"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("missing %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("plain note is not padded", func(t *testing.T) {
+		srv := serve(types.BrainEntry{
+			ID: "ddd44444", Path: "projects/p/note/d.md", Title: "A note", Type: "note", Status: "active",
+		})
+		defer srv.Close()
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["recall"].handler(context.Background(), map[string]any{"path": "projects/p/note/d.md"})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		for _, unwanted := range []string{"Priority:", "Feature:", "Depends on:"} {
+			if strings.Contains(out, unwanted) {
+				t.Errorf("note padded with %q:\n%s", unwanted, out)
+			}
+		}
+	})
+}

@@ -166,7 +166,7 @@ func registerBrainEventsRecent(s *Server, client *APIClient) {
 			return "", err
 		}
 
-		return formatRecentEvents(resp.Events), nil
+		return formatRecentEvents(resp.Events, IntArg(args, "limit", 0)), nil
 	})
 }
 
@@ -219,7 +219,7 @@ func registerBrainAutomationRuns(s *Server, client *APIClient) {
 			return "", err
 		}
 
-		return formatAutomationRuns(resp), nil
+		return formatAutomationRuns(resp, IntArg(args, "limit", 0)), nil
 	})
 }
 
@@ -365,10 +365,13 @@ func formatPlacementReasons(projectID, taskID string, resp types.PlacementReason
 	return b.String()
 }
 
-func formatRecentEvents(events []types.Event) string {
+func formatRecentEvents(events []types.Event, requestedLimit int) string {
 	var b strings.Builder
 	b.WriteString("## Recent Events\n\n")
-	fmt.Fprintf(&b, "Total: %d\n\n", len(events))
+	// Also a page size: the events endpoint returns at most `limit` rows and
+	// the ring buffer holds far more.
+	b.WriteString(foundLine("events", len(events), requestedLimit, 100))
+	b.WriteString("\n")
 
 	if len(events) == 0 {
 		b.WriteString("No events found.\n")
@@ -416,10 +419,15 @@ func formatRecentEvents(events []types.Event) string {
 	return b.String()
 }
 
-func formatAutomationRuns(resp types.ListEntriesResponse) string {
+func formatAutomationRuns(resp types.ListEntriesResponse, requestedLimit int) string {
 	var b strings.Builder
 	b.WriteString("## Automation Runs\n\n")
-	fmt.Fprintf(&b, "Total: %d\n\n", resp.Total)
+	// ListEntriesResponse.Total is len(entries) for the returned page, not a
+	// grand total. On a store that is ~95% automation_run entries, printing
+	// it as "Total" is badly misleading — the same defect foundLine was
+	// written for on list and search.
+	b.WriteString(foundLine("runs", resp.Total, requestedLimit, 100))
+	b.WriteString("\n")
 
 	if len(resp.Entries) == 0 {
 		b.WriteString("No automation runs found.\n")

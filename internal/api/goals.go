@@ -211,7 +211,10 @@ func (h *Handler) HandleGoalAudit(w http.ResponseWriter, r *http.Request) {
 
 	history, err := h.goalService.GoalAuditHistory(r.Context(), goalID, limit)
 	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		// writeGoalError maps ErrGoalNotFound to 404. The previous blanket 500
+		// would have reported a missing goal as a server fault; now that the
+		// service actually checks, the mapping has to exist here too.
+		writeGoalError(w, err)
 		return
 	}
 

@@ -369,6 +369,13 @@ func (s *GoalService) GoalProgress(ctx context.Context, goalID string) (*GoalPro
 	}, nil
 }
 
+// Bounds for the over-fetch that lets goal-scoped audit filtering see past
+// other goals' reconcile traffic.
+const (
+	goalAuditOverfetch = 40
+	goalAuditMaxScan   = 5000
+)
+
 // GoalAuditHistory returns the reconcile audit history for a goal, newest
 // first. It reads goal.reconcile events from the event log and filters them to
 // the requested goal ID. A non-positive limit defaults to 50.
@@ -383,8 +390,29 @@ func (s *GoalService) GoalAuditHistory(ctx context.Context, goalID string, limit
 		limit = 50
 	}
 
+	// Confirm the goal exists before reporting on its history. This was the one
+	// goal method that skipped findGoalByID — GoalProgress, RunGoal, UpdateGoal
+	// and DeleteGoal all call it and all surface ErrGoalNotFound — so a typo'd
+	// or deleted goal id rendered "No reconcile audit records found for goal X",
+	// which is exactly what a real goal that has never reconciled looks like.
+	if _, err := s.findGoalByID(ctx, goalID); err != nil {
+		return nil, err
+	}
+
 	// Over-fetch so goal-scoped filtering still satisfies the requested limit.
-	rows, err := s.store.GetEventsByType(ctx, types.EventGoalReconcile, limit*10)
+	//
+	// goal.reconcile events are stored for ALL goals in one stream and filtered
+	// to this goal afterwards, so the window has to be wide enough to reach past
+	// every other goal's traffic. The reconcile ticker fires every 5 minutes per
+	// active goal, so on an instance with a handful of goals the old limit*10
+	// covered well under a day — and a goal that last reconciled before that
+	// reported no history at all. Same filter-after-limit shape as the
+	// automation_runs and list(filename:) fixes; bounded for the same reason.
+	scan := limit * goalAuditOverfetch
+	if scan > goalAuditMaxScan {
+		scan = goalAuditMaxScan
+	}
+	rows, err := s.store.GetEventsByType(ctx, types.EventGoalReconcile, scan)
 	if err != nil {
 		return nil, fmt.Errorf("goal audit: query events: %w", err)
 	}

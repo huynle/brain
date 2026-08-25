@@ -3537,17 +3537,20 @@ func TestTaskRunner_Start_CreatesSSEListener(t *testing.T) {
 		errCh <- tr.Start(ctx)
 	}()
 
-	// Wait for it to start
-	time.Sleep(100 * time.Millisecond)
+	// Stop and wait for Start to return before reading tr.sseListener.
+	// Start writes the field from its own goroutine and there is no lock on
+	// it (Stop() only reads it after <-tr.done, so production is already
+	// ordered). Receiving from errCh is the test's happens-before edge —
+	// reading the field while Start is still running is a data race.
+	// Start has no early-return before the SSE wiring, so by the time it
+	// returns the listener has been created.
+	cancel()
+	<-errCh
 
 	// Verify SSE listener was created (config has BrainAPIURL and projects are set)
 	if tr.sseListener == nil {
 		t.Error("Start() should create SSE listener when BrainAPIURL is set and projects exist")
 	}
-
-	// Stop
-	cancel()
-	<-errCh
 }
 
 func TestTaskRunner_Start_NoSSEListener_WhenNoAPIURL(t *testing.T) {
@@ -3576,15 +3579,15 @@ func TestTaskRunner_Start_NoSSEListener_WhenNoAPIURL(t *testing.T) {
 		errCh <- tr.Start(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for Start to return before reading tr.sseListener — see
+	// TestTaskRunner_Start_CreatesSSEListener for why.
+	cancel()
+	<-errCh
 
 	// Should NOT create SSE listener when no API URL
 	if tr.sseListener != nil {
 		t.Error("Start() should NOT create SSE listener when BrainAPIURL is empty")
 	}
-
-	cancel()
-	<-errCh
 }
 
 func TestTaskRunner_Start_NoSSEListener_WhenNoProjects(t *testing.T) {
@@ -3610,15 +3613,15 @@ func TestTaskRunner_Start_NoSSEListener_WhenNoProjects(t *testing.T) {
 		errCh <- tr.Start(ctx)
 	}()
 
-	time.Sleep(100 * time.Millisecond)
+	// Wait for Start to return before reading tr.sseListener — see
+	// TestTaskRunner_Start_CreatesSSEListener for why.
+	cancel()
+	<-errCh
 
 	// Should NOT create SSE listener when no projects
 	if tr.sseListener != nil {
 		t.Error("Start() should NOT create SSE listener when no projects")
 	}
-
-	cancel()
-	<-errCh
 }
 
 func TestTaskRunner_Stop_StopsSSEListener(t *testing.T) {

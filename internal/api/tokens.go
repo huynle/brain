@@ -44,9 +44,9 @@ func WithTokenService(ts TokenService) HandlerOption {
 
 // ValidScopes defines the recognized token scopes.
 var ValidScopes = map[string]bool{
-	"admin:*":   true, // Full access to all endpoints
-	"runner:*":  true, // Runner operations: claim/release/heartbeat, task read
-	"read:*":    true, // Read-only access to entries and tasks
+	"admin:*":    true, // Full access to all endpoints
+	"runner:*":   true, // Runner operations: claim/release/heartbeat, task read
+	"read:*":     true, // Read-only access to entries and tasks
 	ScopeControl: true, // Remote control: attach to / spawn OpenCode instances
 }
 

@@ -15,8 +15,8 @@ import (
 type fakeVerifier struct{ ok, configured bool }
 
 func (f fakeVerifier) Verify(u, p string) bool { return f.ok }
-func (f fakeVerifier) Configured() bool         { return f.configured }
-func (f fakeVerifier) Username() string         { return "admin" }
+func (f fakeVerifier) Configured() bool        { return f.configured }
+func (f fakeVerifier) Username() string        { return "admin" }
 
 type fakeTokenStore struct {
 	access  map[string]*storage.OAuthAccessToken

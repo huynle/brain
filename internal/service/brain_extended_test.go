@@ -2,10 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -1029,12 +1033,175 @@ func TestGraphEndpoints_ResolveShortID(t *testing.T) {
 		}
 	}
 
-	// Unknown identifiers stay empty, not an error.
-	backs, err := svc.GetBacklinks(ctx, "zzzzzzzz")
-	if err != nil {
-		t.Fatalf("GetBacklinks(unknown) failed: %v", err)
+	// Unknown identifiers are now reported as not-found rather than as an
+	// empty result. This block previously asserted the opposite: when short-ID
+	// resolution was added, the not-found path was deliberately left alone to
+	// keep that change narrow, and this assertion pinned that carry-over. It
+	// was never the intended contract — all three HTTP handlers already had an
+	// ErrNotFound -> 404 branch waiting for it. Fuller coverage of both
+	// directions lives in TestGraphLookups_UnknownIdentifierIsNotFound.
+	if _, err := svc.GetBacklinks(ctx, "zzzzzzzz"); !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("GetBacklinks(unknown) error = %v, want api.ErrNotFound", err)
 	}
-	if len(backs) != 0 {
-		t.Errorf("GetBacklinks(unknown) = %d results, want 0", len(backs))
+}
+
+// =============================================================================
+// Graph lookups: missing entry vs. unlinked entry
+// =============================================================================
+
+// TestGraphLookups_UnknownIdentifierIsNotFound locks in the distinction between
+// "this entry has no links" and "this entry does not exist". Unknown
+// identifiers used to be passed through to the storage queries, which matched
+// nothing and returned an empty slice — so a typo'd path or a stale ID produced
+// a confident "no backlinks found", the same answer a real but unlinked entry
+// gives. The HTTP handlers have always had an ErrNotFound -> 404 branch for
+// exactly this; it was unreachable.
+func TestGraphLookups_UnknownIdentifierIsNotFound(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Both an ID-shaped identifier and a path-shaped one, since the two take
+	// different routes through resolveEntry.
+	for _, ident := range []string{"zzzznope", "projects/nope/plan/missing.md"} {
+		t.Run(ident, func(t *testing.T) {
+			if _, err := svc.GetBacklinks(ctx, ident); !errors.Is(err, api.ErrNotFound) {
+				t.Errorf("GetBacklinks(%q) error = %v, want api.ErrNotFound", ident, err)
+			}
+			if _, err := svc.GetOutlinks(ctx, ident); !errors.Is(err, api.ErrNotFound) {
+				t.Errorf("GetOutlinks(%q) error = %v, want api.ErrNotFound", ident, err)
+			}
+			if _, err := svc.GetRelated(ctx, ident, 10); !errors.Is(err, api.ErrNotFound) {
+				t.Errorf("GetRelated(%q) error = %v, want api.ErrNotFound", ident, err)
+			}
+		})
+	}
+}
+
+// TestGraphLookups_ExistingEntryWithNoLinksStaysEmpty is the other half of the
+// pair. Making unknown identifiers an error must NOT turn a legitimately
+// unlinked entry into one — that empty result is a real answer.
+func TestGraphLookups_ExistingEntryWithNoLinksStaysEmpty(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	saved, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type:    "plan",
+		Title:   "Genuinely Unlinked",
+		Content: "Nothing links here and this links nowhere.",
+	})
+	if err != nil {
+		t.Fatalf("Save failed: %v", err)
+	}
+
+	// By path and by short ID — both must resolve and both must be empty,
+	// not errors.
+	for _, ident := range []string{saved.Path, saved.ID} {
+		back, err := svc.GetBacklinks(ctx, ident)
+		if err != nil {
+			t.Fatalf("GetBacklinks(%q) unexpected error: %v", ident, err)
+		}
+		if len(back) != 0 {
+			t.Errorf("GetBacklinks(%q) = %d entries, want 0", ident, len(back))
+		}
+		out, err := svc.GetOutlinks(ctx, ident)
+		if err != nil {
+			t.Fatalf("GetOutlinks(%q) unexpected error: %v", ident, err)
+		}
+		if len(out) != 0 {
+			t.Errorf("GetOutlinks(%q) = %d entries, want 0", ident, len(out))
+		}
+	}
+}
+
+// =============================================================================
+// list(filename:) must see past one SQL page
+// =============================================================================
+
+// TestList_FilenameFilterSeesPastTheFirstPage is the regression test for a
+// lookup-by-id that could not find entries which plainly exist. ListNotes
+// applies LIMIT in SQL and the filename filter then runs in Go over that page —
+// so asking for one specific entry searched only the first
+// storage.DefaultListLimit rows. On the live store (~69k entries) that is a
+// guaranteed miss for anything outside the first page, rendered as a confident
+// "No entries found".
+//
+// Same shape as the automation_runs filter fixed in 73dd98d: filter applied
+// after the limit rather than before it.
+//
+// Ordering is pinned by TITLE rather than left to the default modified-DESC.
+// A tight creation loop stamps every entry with the same timestamp, so tie
+// order is arbitrary and the needle can land inside the first page by luck —
+// which made an earlier version of this test pass with the fix disabled.
+func TestList_FilenameFilterSeesPastTheFirstPage(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Haystack sorts before the needle by title, and is larger than one page.
+	for i := 0; i < storage.DefaultListLimit+20; i++ {
+		if _, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type:    "note",
+			Title:   fmt.Sprintf("aaa-haystack-%04d", i),
+			Content: "noise",
+		}); err != nil {
+			t.Fatalf("Save %d failed: %v", i, err)
+		}
+	}
+	needle, err := svc.Save(ctx, types.CreateEntryRequest{
+		Type: "note", Title: "zzz-needle", Content: "find me",
+	})
+	if err != nil {
+		t.Fatalf("Save needle failed: %v", err)
+	}
+
+	req := types.ListEntriesRequest{Filename: needle.ID, SortBy: "title", SortOrder: "asc"}
+
+	// Guard against the test going vacuous: the needle must genuinely sit
+	// outside the first page under this ordering, or it proves nothing.
+	page, err := svc.List(ctx, types.ListEntriesRequest{SortBy: "title", SortOrder: "asc"})
+	if err != nil {
+		t.Fatalf("List (page probe) failed: %v", err)
+	}
+	for _, e := range page.Entries {
+		if e.ID == needle.ID {
+			t.Fatalf("premise broken: the needle is inside the first page of %d, so this test cannot detect the bug", len(page.Entries))
+		}
+	}
+
+	resp, err := svc.List(ctx, req)
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(resp.Entries) != 1 {
+		t.Fatalf("List(filename: %q) returned %d entries, want the one that exists", needle.ID, len(resp.Entries))
+	}
+	if resp.Entries[0].ID != needle.ID {
+		t.Errorf("got entry %s, want %s", resp.Entries[0].ID, needle.ID)
+	}
+}
+
+// TestList_WithoutFilenameFilterKeepsItsPageSize — the over-fetch must apply
+// ONLY when a post-SQL filter needs it. An unfiltered list must still return one
+// page, not a scan-window's worth.
+func TestList_WithoutFilenameFilterKeepsItsPageSize(t *testing.T) {
+	svc, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	for i := 0; i < 15; i++ {
+		if _, err := svc.Save(ctx, types.CreateEntryRequest{
+			Type: "note", Title: fmt.Sprintf("Entry %d", i), Content: "x",
+		}); err != nil {
+			t.Fatalf("Save %d failed: %v", i, err)
+		}
+	}
+
+	resp, err := svc.List(ctx, types.ListEntriesRequest{Limit: 5})
+	if err != nil {
+		t.Fatalf("List failed: %v", err)
+	}
+	if len(resp.Entries) != 5 {
+		t.Errorf("List(limit: 5) returned %d entries, want 5", len(resp.Entries))
+	}
+	if resp.Truncated {
+		t.Error("an unfiltered list is not scan-truncated")
 	}
 }

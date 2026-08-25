@@ -517,6 +517,16 @@ func (h *Handler) HandleListRunnerInstances(w http.ResponseWriter, r *http.Reque
 
 	resp, err := h.runnerRegistry.ListInstances(r.Context(), runnerID)
 	if err != nil {
+		// ListInstances now confirms the runner is registered, so ErrNotFound is
+		// reachable here for the first time. Without this branch it fell through
+		// to a 500 — a client mistake reported as a server fault, which tells
+		// callers to retry and trips alerting on a typo. Name the runner too:
+		// a bare "not found" leaves the caller guessing which of the ids in
+		// their request was wrong.
+		if errors.Is(err, ErrNotFound) {
+			WriteError(w, http.StatusNotFound, "Not Found", fmt.Sprintf("Runner not found: %s", runnerID))
+			return
+		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}

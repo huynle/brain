@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 func TestRegisterFeatureTools_CountNamesHandlersDescriptions(t *testing.T) {
@@ -190,7 +192,11 @@ func TestBrainFeatureGet_RequestAndFormatting(t *testing.T) {
 	if err != nil {
 		t.Fatalf("handler error: %v", err)
 	}
-	for _, want := range []string{"Feature auth-system", "Project: test-project", "Status: waiting", "Ready task", "Waiting task", "waiting_on: task-1"} {
+	// "Status: waiting" became "Dependencies: waiting on other features" — the
+	// single Status line conflated feature-dependency state with whether any task
+	// can actually run, and rendered the word "ready" in a different sense from
+	// the task-level "ready" printed beside it.
+	for _, want := range []string{"Feature auth-system", "Project: test-project", "Dependencies: waiting on other features", "Work: 1 task(s) ready to run", "Ready task", "Waiting task", "waiting_on: task-1"} {
 		if !strings.Contains(result, want) {
 			t.Errorf("result missing %q:\n%s", want, result)
 		}
@@ -339,5 +345,148 @@ func TestFeatureTools_ValidationErrors(t *testing.T) {
 				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
 			}
 		})
+	}
+}
+
+// TestFormatFeatureGitLines_ShowsWhereWorkLands pins that a feature reports
+// its branch and merge configuration.
+//
+// ResolvedTask carries nine git/merge fields and feature_get rendered none
+// of them, so "what branch is this feature on and what does it merge into?"
+// — a question anyone orchestrating work has to answer — could not be
+// answered through MCP at all, despite the data being decoded and in hand.
+func TestFormatFeatureGitLines_ShowsWhereWorkLands(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "a", GitBranch: "feat-x", MergeTargetBranch: "main", MergePolicy: "auto_pr", MergeStrategy: "squash", ExecutionMode: "worktree", TargetWorkdir: "/repo"},
+		{ID: "b", GitBranch: "feat-x", MergeTargetBranch: "main", MergePolicy: "auto_pr", MergeStrategy: "squash", ExecutionMode: "worktree", TargetWorkdir: "/repo"},
+	}
+	out := strings.Join(formatFeatureGitLines(tasks), "\n")
+
+	for _, want := range []string{
+		"### Git & merge",
+		"- branch: feat-x",
+		"- merges into: main",
+		"- merge policy: auto_pr",
+		"- merge strategy: squash",
+		"- execution mode: worktree",
+		"- workdir: /repo",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "disagree") {
+		t.Errorf("uniform tasks must not be reported as disagreeing:\n%s", out)
+	}
+}
+
+// TestFormatFeatureGitLines_FlagsDivergence pins the failure this section
+// exists to surface. The model is one feature, one branch, one merge — but
+// nothing enforces it, so tasks can quietly carry different merge targets
+// and the checkout then misbehaves with no visible cause.
+func TestFormatFeatureGitLines_FlagsDivergence(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "a", GitBranch: "feat-x", MergeTargetBranch: "main"},
+		{ID: "b", GitBranch: "feat-x", MergeTargetBranch: "develop"},
+		{ID: "c", GitBranch: "feat-y", MergeTargetBranch: "main"},
+	}
+	out := strings.Join(formatFeatureGitLines(tasks), "\n")
+
+	if !strings.Contains(out, "- branch: ⚠ tasks disagree — feat-x, feat-y") {
+		t.Errorf("branch divergence not flagged:\n%s", out)
+	}
+	if !strings.Contains(out, "- merges into: ⚠ tasks disagree — develop, main") {
+		t.Errorf("merge-target divergence not flagged:\n%s", out)
+	}
+}
+
+// TestFormatFeatureGitLines_ReportsUnsetLandingFields pins that the two
+// fields whose absence changes what happens at checkout are called out,
+// rather than silently omitted like the optional ones.
+func TestFormatFeatureGitLines_ReportsUnsetLandingFields(t *testing.T) {
+	out := strings.Join(formatFeatureGitLines([]types.ResolvedTask{{ID: "a"}}), "\n")
+
+	if !strings.Contains(out, "- branch: (unset)") {
+		t.Errorf("unset branch should be reported:\n%s", out)
+	}
+	if !strings.Contains(out, "- merges into: (unset)") {
+		t.Errorf("unset merge target should be reported:\n%s", out)
+	}
+	if strings.Contains(out, "git remote") {
+		t.Errorf("optional unset fields should stay quiet:\n%s", out)
+	}
+}
+
+// TestFormatFeatureGitLines_EmptyFeature pins that a feature with no tasks
+// renders no git section at all rather than a header over nothing.
+func TestFormatFeatureGitLines_EmptyFeature(t *testing.T) {
+	if got := formatFeatureGitLines(nil); got != nil {
+		t.Errorf("expected no lines for an empty feature, got: %v", got)
+	}
+}
+
+// TestFeatureWorkState_DistinguishesFinishedFromUnstarted is the core of the
+// fix. Observed live on brain-api: a feature whose 13 tasks were all completed,
+// one whose 15 were all still draft, and one with genuinely runnable work ALL
+// rendered "Status: ready", because that word reported feature-dependency state
+// while sitting one line above a stats line reading "Ready: 0".
+func TestFeatureWorkState_DistinguishesFinishedFromUnstarted(t *testing.T) {
+	tests := []struct {
+		name  string
+		stats *types.TaskStats
+		want  string
+	}{
+		{"runnable work", &types.TaskStats{Total: 6, Ready: 4, Waiting: 2}, "4 task(s) ready to run"},
+		{"all waiting on deps", &types.TaskStats{Total: 3, Waiting: 3}, "3 waiting on dependencies"},
+		{"blocked", &types.TaskStats{Total: 2, Blocked: 2}, "tasks are blocked"},
+		{"all outside pending", &types.TaskStats{Total: 15, NotPending: 15}, "all 15 task(s) are outside the pending lifecycle"},
+		{"empty feature", &types.TaskStats{}, "no tasks"},
+		{"nil stats", nil, "no tasks"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := featureWorkState(tt.stats); !strings.Contains(got, tt.want) {
+				t.Errorf("featureWorkState = %q, want it to contain %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// TestFeatureStateLines_DependencyStateIsNotCalledReady guards the word
+// collision specifically: "ready" at the feature level meant "dependencies
+// satisfied", the same word the task classification uses for "runnable".
+func TestFeatureStateLines_DependencyStateIsNotCalledReady(t *testing.T) {
+	// Dependencies satisfied, but every task is finished — the case that used to
+	// print a bare "Status: ready" for a feature with nothing left to do.
+	lines := featureStateLines(types.Feature{
+		FeatureID: "done-feature",
+		Ready:     true,
+		Stats:     &types.TaskStats{Total: 13, NotPending: 13},
+	})
+	out := strings.Join(lines, "\n")
+
+	if strings.Contains(out, "Status: ready") {
+		t.Errorf("still labels a finished feature 'ready':\n%s", out)
+	}
+	if !strings.Contains(out, "Dependencies: satisfied") {
+		t.Errorf("dependency state should be named as such:\n%s", out)
+	}
+	if !strings.Contains(out, "outside the pending lifecycle") {
+		t.Errorf("should say there is nothing runnable:\n%s", out)
+	}
+}
+
+// TestFeatureWorkState_AgreesWithTheStatsLine pins the invariant that keeps the
+// summary honest: it is derived only from counts already displayed, so the
+// prose and the numbers beside it cannot contradict each other.
+func TestFeatureWorkState_AgreesWithTheStatsLine(t *testing.T) {
+	stats := &types.TaskStats{Total: 6, Ready: 4, Waiting: 2}
+	feature := types.Feature{FeatureID: "f", Ready: true, Stats: stats}
+
+	out := strings.Join(append(featureStateLines(feature), formatStatsLine(stats)), "\n")
+
+	if !strings.Contains(out, "Work: 4 task(s) ready to run") || !strings.Contains(out, "Ready: 4") {
+		t.Errorf("summary and stats line must report the same number:\n%s", out)
 	}
 }

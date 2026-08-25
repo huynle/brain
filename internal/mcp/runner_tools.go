@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -21,15 +22,20 @@ func RegisterRunnerTools(s *Server, client *APIClient) {
 
 func registerBrainRunnerStatus(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "runner_status",
-		Description: "Show runner service pause/running status.",
-		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{}},
+		Name: "runner_status",
+		Description: "Show which projects have task execution or automation execution paused. " +
+			"Pass 'project' to get a direct answer for one project. " +
+			"NOTE: the API's top-level paused/automations_paused flags mean 'at least one project is paused', " +
+			"NOT 'everything is paused' - projects absent from the lists dispatch normally.",
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project": {Type: "string", Description: "Report the pause state of this project specifically (e.g. 'brain-api')"},
+		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		var resp types.RunnerStatusResponse
 		if err := client.Request(ctx, http.MethodGet, "/tasks/runner/status", nil, nil, &resp); err != nil {
 			return "", err
 		}
-		return formatRunnerStatus(resp), nil
+		return formatRunnerStatus(resp, StringArg(args, "project", "")), nil
 	})
 }
 
@@ -173,15 +179,126 @@ func filterInstances(instances []types.OpencodeInstance, args map[string]any) []
 	return filtered
 }
 
-func formatRunnerStatus(status types.RunnerStatusResponse) string {
+// runnerStatusListCap bounds how many project IDs are printed per axis. A live
+// store accumulates dead projects (old test fixtures, bare commit hashes), and
+// pause-all writes a row for every one of them, so these lists run to dozens of
+// entries that bury the handful anyone cares about.
+const runnerStatusListCap = 12
+
+// formatRunnerStatus renders the pause dials.
+//
+// The previous rendering printed the API's Paused flag verbatim as
+// "- Paused: true", directly above the list of paused projects. That reads as
+// "the runner is paused" — but the field is built as
+// `Paused: len(pausedProjects) > 0` (internal/service/runner.go), i.e. it is an
+// any() over the very list printed beneath it. One paused test fixture from
+// months ago is enough to make it true while every real project dispatches
+// normally. Verified live: the flag read true while the scheduler was actively
+// considering supernote, which appears in neither pause list.
+//
+// So the flag is not reported as a global switch. What an agent actually needs
+// is "is THIS project paused, and on which axis", which `project` answers
+// directly, plus the cross-axis asymmetries, which are the only part of two
+// near-identical long lists carrying information.
+func formatRunnerStatus(status types.RunnerStatusResponse, project string) string {
+	tasks := make(map[string]bool, len(status.PausedProjects))
+	for _, p := range status.PausedProjects {
+		tasks[p] = true
+	}
+	autos := make(map[string]bool, len(status.AutomationPausedProjects))
+	for _, p := range status.AutomationPausedProjects {
+		autos[p] = true
+	}
+
 	var b strings.Builder
 	b.WriteString("## Runner Status\n\n")
-	fmt.Fprintf(&b, "- Running: %t\n", status.Running)
-	fmt.Fprintf(&b, "- Paused: %t\n", status.Paused)
-	fmt.Fprintf(&b, "- Paused projects: %s\n", formatStringList(status.PausedProjects))
-	fmt.Fprintf(&b, "- Automations paused: %t\n", status.AutomationsPaused)
-	fmt.Fprintf(&b, "- Automation paused projects: %s\n", formatStringList(status.AutomationPausedProjects))
+	fmt.Fprintf(&b, "- Server running: %t\n", status.Running)
+	fmt.Fprintf(&b, "- Projects with task execution paused: %d\n", len(tasks))
+	fmt.Fprintf(&b, "- Projects with automation execution paused: %d\n", len(autos))
+	b.WriteString("\nThese are per-project dials. A project absent from both lists dispatches normally;\n")
+	b.WriteString("there is no single global switch reported here.\n")
+
+	if project != "" {
+		t, a := tasks[project], autos[project]
+		fmt.Fprintf(&b, "\n### %s\n", project)
+		fmt.Fprintf(&b, "- Manual/user tasks: %s\n", pausedWord(t))
+		fmt.Fprintf(&b, "- Automation-generated tasks: %s\n", pausedWord(a))
+		switch {
+		case t && a:
+			b.WriteString("- Effect: nothing dispatches for this project.\n")
+			b.WriteString("- To resume: runner_resume_project, then re-enable automations.\n")
+		case t:
+			b.WriteString("- Effect: automation-generated tasks still dispatch; manual ones do not.\n")
+			b.WriteString("- To resume: runner_resume_project.\n")
+		case a:
+			b.WriteString("- Effect: manual tasks still dispatch; automation-generated ones do not.\n")
+		default:
+			b.WriteString("- Effect: not paused on either axis; ready tasks dispatch.\n")
+			b.WriteString("- If work is still not running, the cause is elsewhere — check scheduler_status\n")
+			b.WriteString("  for the skip reason, and runners for an eligible online runner.\n")
+		}
+		return b.String()
+	}
+
+	// The two axes are independent, so where they DISAGREE is the only part of
+	// two long, near-identical lists that carries information.
+	var tasksOnly, autosOnly []string
+	for p := range tasks {
+		if !autos[p] {
+			tasksOnly = append(tasksOnly, p)
+		}
+	}
+	for p := range autos {
+		if !tasks[p] {
+			autosOnly = append(autosOnly, p)
+		}
+	}
+	sort.Strings(tasksOnly)
+	sort.Strings(autosOnly)
+
+	if len(tasksOnly) > 0 || len(autosOnly) > 0 {
+		b.WriteString("\n### Paused on one axis only\n")
+		if len(tasksOnly) > 0 {
+			fmt.Fprintf(&b, "- Tasks paused, automations still running: %s\n", capList(tasksOnly))
+		}
+		if len(autosOnly) > 0 {
+			fmt.Fprintf(&b, "- Automations paused, tasks still running: %s\n", capList(autosOnly))
+		}
+	}
+
+	both := make([]string, 0, len(tasks))
+	for p := range tasks {
+		if autos[p] {
+			both = append(both, p)
+		}
+	}
+	sort.Strings(both)
+	if len(both) > 0 {
+		fmt.Fprintf(&b, "\n### Fully paused (both axes): %d\n%s\n", len(both), capList(both))
+	}
+
+	b.WriteString("\nPass project=<id> for a direct answer about one project.\n")
 	return b.String()
+}
+
+func pausedWord(p bool) string {
+	if p {
+		return "PAUSED"
+	}
+	return "running"
+}
+
+// capList prints at most runnerStatusListCap ids and says how many it withheld,
+// so a truncated list is never mistaken for a complete one.
+func capList(items []string) string {
+	if len(items) == 0 {
+		return "(none)"
+	}
+	if len(items) <= runnerStatusListCap {
+		return strings.Join(items, ", ")
+	}
+	return fmt.Sprintf("%s, ... (+%d more)",
+		strings.Join(items[:runnerStatusListCap], ", "), len(items)-runnerStatusListCap)
 }
 
 func formatRunnerList(resp types.RunnerListResponse) string {

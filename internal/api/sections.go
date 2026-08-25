@@ -4,13 +4,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-
-	"github.com/go-chi/chi/v5"
 )
 
 // HandleGetSections handles GET /entries/{id}/sections.
 func (h *Handler) HandleGetSections(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
+	id := entryPathParam(r, "id")
 
 	resp, err := h.brain.GetSections(r.Context(), id)
 	if err != nil {
@@ -27,8 +25,11 @@ func (h *Handler) HandleGetSections(w http.ResponseWriter, r *http.Request) {
 
 // HandleGetSection handles GET /entries/{id}/sections/{title}.
 func (h *Handler) HandleGetSection(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	title := chi.URLParam(r, "title")
+	id := entryPathParam(r, "id")
+	// The title is unescaped for the same reason: a full-path id puts this
+	// route into chi's RawPath mode, which leaves EVERY param escaped, so a
+	// section title containing a space arrived as "JWT%20Middleware".
+	title := entryPathParam(r, "title")
 
 	includeSubsections := r.URL.Query().Get("includeSubsections") == "true"
 

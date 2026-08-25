@@ -185,11 +185,6 @@ func (h *Handler) HandleGetTask(w http.ResponseWriter, r *http.Request) {
 			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
 			return
 		}
-		// Check for "not found" string from service layer
-		if task == nil {
-			WriteError(w, http.StatusNotFound, "Not Found", err.Error())
-			return
-		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
@@ -249,10 +244,6 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
-			return
-		}
-		if task == nil {
-			WriteError(w, http.StatusNotFound, "Not Found", err.Error())
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
@@ -1081,8 +1072,10 @@ func (h *Handler) HandleRunTask(w http.ResponseWriter, r *http.Request) {
 // Behaviour:
 //   - 200 with Dispatched=true and a per-task Results array on success.
 //   - 200 with Dispatched=false and Reason ("feature_not_found",
-//     "no_ready_tasks", "feature_in_progress", "scheduler_not_configured")
-//     when nothing dispatched.
+//     "no_ready_tasks", "feature_in_progress", "scheduler_not_configured",
+//     "no_online_runner", "no_eligible_runner") when nothing dispatched. The
+//     last two are the dominant per-task placement refusal promoted to the
+//     feature level, so a caller reading only Reason/Detail still learns why.
 //   - 400 on malformed JSON body.
 //   - 501 Not Implemented when the run-feature service is not wired so PWA
 //     can fall back gracefully.

@@ -149,9 +149,13 @@ func (h *Handler) HandleRecentEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Report the window that was actually searched. Without it a zero count is
+	// silent about whether the buffer holds 1000 events and none matched, or
+	// holds three because the process restarted a minute ago.
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"events": events,
-		"count":  len(events),
+		"events":   events,
+		"count":    len(events),
+		"coverage": h.events.Coverage(),
 	})
 }
 

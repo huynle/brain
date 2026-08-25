@@ -35,9 +35,21 @@ Tools that take an optional 'project' parameter fall back to the project shown h
 			"## MCP Execution Context",
 			"",
 			"### Project (default for tools when 'project' is omitted)",
-			fmt.Sprintf("- Project: %s", execCtx.ProjectID),
-			fmt.Sprintf("- Workdir: %s", execCtx.Workdir),
 		}
+		// An empty ProjectID means detection failed, not that the project is
+		// named "". Say so, because the alternative — guessing from the
+		// working directory basename — is how seven Hindsight entries ended
+		// up in a project called "app".
+		if execCtx.ProjectID == "" {
+			lines = append(lines,
+				"- Project: ⚠ COULD NOT DETERMINE",
+				"  This process is not running inside a recognised git repository under your",
+				"  home directory, so there is no safe default project. Pass 'project'",
+				"  explicitly on every tool call; omitting it will not fall back to a guess.")
+		} else {
+			lines = append(lines, fmt.Sprintf("- Project: %s", execCtx.ProjectID))
+		}
+		lines = append(lines, fmt.Sprintf("- Workdir: %s", execCtx.Workdir))
 		if execCtx.GitRemote != "" {
 			lines = append(lines, fmt.Sprintf("- Git remote: %s", execCtx.GitRemote))
 		}

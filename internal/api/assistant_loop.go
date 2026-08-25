@@ -389,9 +389,9 @@ func summarizeToolResult(result any) any {
 	}
 	// Too big: return a marker instead of the whole thing.
 	return map[string]any{
-		"summary":  "result truncated for streaming; assistant still received full result",
-		"size":     len(b),
-		"preview":  string(b[:800]),
+		"summary": "result truncated for streaming; assistant still received full result",
+		"size":    len(b),
+		"preview": string(b[:800]),
 	}
 }
 

@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -842,5 +843,52 @@ func TestReconcile_AuditFailureAfterTaskCreationWarnsOnly(t *testing.T) {
 	}
 	if tasks := listGeneratedGoalTasks(t, brain, "proj"); len(tasks) != 1 {
 		t.Fatalf("generated task count = %d, want 1", len(tasks))
+	}
+}
+
+// =============================================================================
+// goal_audit: missing goal vs. goal with no history
+// =============================================================================
+
+// TestGoalAuditHistory_UnknownGoalIsNotFound closes the last gap in the goal
+// API's not-found handling. GoalAuditHistory was the ONE goal method that never
+// called findGoalByID — GoalProgress, RunGoal, UpdateGoal and DeleteGoal all do
+// — so a typo'd or deleted goal id rendered "No reconcile audit records found
+// for goal X", which is byte-identical to what a real goal that has simply never
+// reconciled produces.
+func TestGoalAuditHistory_UnknownGoalIsNotFound(t *testing.T) {
+	brain, store, _ := newTestBrainService(t)
+	svc := NewGoalService(brain, &goalScopeTaskLister{}, store)
+
+	_, err := svc.GoalAuditHistory(context.Background(), "no-such-goal", 50)
+	if !errors.Is(err, types.ErrGoalNotFound) {
+		t.Errorf("GoalAuditHistory(unknown) error = %v, want ErrGoalNotFound", err)
+	}
+}
+
+// TestGoalAuditHistory_ExistingGoalWithNoHistoryIsEmptyNotError is the other
+// half: a real goal that has not reconciled yet must still return an empty
+// history rather than an error. Making unknown ids fail must not turn a
+// legitimately empty history into a failure.
+func TestGoalAuditHistory_ExistingGoalWithNoHistoryIsEmptyNotError(t *testing.T) {
+	brain, store, _ := newTestBrainService(t)
+	svc := NewGoalService(brain, &goalScopeTaskLister{}, store)
+
+	created, err := svc.CreateGoal(context.Background(), types.CreateGoalRequest{
+		Project: "proj",
+		Title:   "Ship it",
+		Config:  types.GoalConfig{ID: "ship-it", Criteria: "tests pass"},
+		Action:  types.AutomationAction{Type: "create_task"},
+	})
+	if err != nil {
+		t.Fatalf("CreateGoal failed: %v", err)
+	}
+
+	history, err := svc.GoalAuditHistory(context.Background(), created.GoalID, 50)
+	if err != nil {
+		t.Fatalf("GoalAuditHistory(existing) unexpected error: %v", err)
+	}
+	if len(history) != 0 {
+		t.Errorf("expected empty history for a goal that has not reconciled, got %d", len(history))
 	}
 }

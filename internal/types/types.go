@@ -907,6 +907,11 @@ type ListEntriesResponse struct {
 	Total   int          `json:"total"`
 	Limit   int          `json:"limit"`
 	Offset  int          `json:"offset"`
+
+	// Truncated reports that a post-fetch filter exhausted its scan window
+	// before filling the requested page. Without it, "no more results" and
+	// "more exist beyond the window I looked at" are the same empty answer.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // MoveResult is the response for POST /entries/:id/move.
@@ -965,6 +970,18 @@ type InjectRequest struct {
 	Type       string `json:"type,omitempty"`
 	Project    string `json:"project,omitempty"`
 	MaxEntries *int   `json:"maxEntries,omitempty"`
+
+	// MaxChars bounds the assembled context. Inject is the load-context
+	// primitive: an agent calls it BEFORE working, so whatever it returns
+	// is spent from the budget the agent then has to think with. It used
+	// to concatenate every matched entry's full body with no cap at all,
+	// so a default five-entry call against long entries could return tens
+	// of thousands of tokens — the tool meant to prepare an agent was the
+	// most expensive one available to it.
+	//
+	// Zero or unset applies DefaultInjectMaxChars. Negative means
+	// unbounded, for callers that genuinely want every byte.
+	MaxChars *int `json:"maxChars,omitempty"`
 }
 
 // InjectEntry is a minimal entry reference in inject responses.
@@ -980,7 +997,18 @@ type InjectResponse struct {
 	Context string        `json:"context"`
 	Entries []InjectEntry `json:"entries"`
 	Total   int           `json:"total"`
+
+	// Truncated reports that at least one entry's body was cut to fit
+	// MaxChars. Callers that need the whole thing should recall the entry
+	// by path rather than re-running inject with a bigger budget.
+	Truncated bool `json:"truncated,omitempty"`
 }
+
+// DefaultInjectMaxChars bounds an inject response when the caller does not
+// choose. Roughly 6k tokens: large enough to carry several substantive
+// entries, small enough that a default call cannot swallow an agent's
+// working context.
+const DefaultInjectMaxChars = 24000
 
 // SectionHeader describes a section heading in a brain entry.
 type SectionHeader struct {
@@ -1267,8 +1295,11 @@ type RunFeatureRequest struct {
 // Results contains one RunTaskResponse per ready task attempted, in the order
 // they were considered. Queued lists task IDs the server is holding for the
 // manual cascade (they did not dispatch this call but will fire as slots free).
-// Reason carries a feature-level token when nothing could be done (e.g.
-// "feature_not_found", "no_ready_tasks", "feature_in_progress").
+// Reason carries a feature-level token when nothing could be done:
+// "feature_not_found", "no_ready_tasks", "feature_in_progress",
+// "scheduler_not_configured", or — promoted from the dominant per-task skip
+// when every ready task was refused placement — "no_online_runner" /
+// "no_eligible_runner", with Detail naming the runner and the refusal.
 type RunFeatureResponse struct {
 	Dispatched      bool              `json:"dispatched"`
 	ProjectID       string            `json:"projectId"`
@@ -1330,8 +1361,19 @@ type MultiTaskStatusRequest struct {
 
 // MultiTaskStatusResponse is the response for POST /tasks/:projectId/status.
 type MultiTaskStatusResponse struct {
-	Tasks        []ResolvedTask `json:"tasks"`
-	AllCompleted bool           `json:"allCompleted"`
+	Tasks []ResolvedTask `json:"tasks"`
+
+	// AllCompleted reports that every REQUESTED task id resolved to a task and
+	// each is completed or validated. An id that resolves to nothing makes this
+	// false — see NotFound. It previously counted only found tasks, so a single
+	// unresolvable id produced {"tasks":[],"allCompleted":true}: a vacuous
+	// truth on the exact signal callers gate their control flow on.
+	AllCompleted bool `json:"allCompleted"`
+
+	// NotFound lists requested ids that matched no task in the project. Unknown
+	// ids used to be dropped silently, so a caller could not tell a mistyped id
+	// or a wrong-project id from a task that finished.
+	NotFound []string `json:"notFound,omitempty"`
 }
 
 // Feature represents a computed feature grouping of tasks.
@@ -1603,11 +1645,36 @@ type RunnerListResponse struct {
 }
 
 // SchedulerResult summarizes one scheduler pass for a project.
+//
+// Skipped is the total. The four SkippedX counters break it down by cause and
+// sum to it. The breakdown matters because the causes have opposite
+// operational meanings: paused work is being held deliberately (and by which
+// of two independent dials), no-candidate work will not run until a runner
+// matches it, and already-leased work is already on its way. A bare total
+// makes "held by a switch I forgot to flip" indistinguishable from "nothing
+// will ever run this" — which are the two most common things an operator
+// opens the scheduler status to tell apart.
 type SchedulerResult struct {
 	ProjectID  string `json:"project_id"`
 	Considered int    `json:"considered"`
 	Dispatched int    `json:"dispatched"`
 	Skipped    int    `json:"skipped"`
+
+	// SkippedTasksPaused / SkippedAutomationsPaused count tasks held by a
+	// pause switch. The two dials are independent (see shouldSkipTask), so
+	// they are counted apart: which one is holding the work is exactly what
+	// tells the operator which switch to flip.
+	SkippedTasksPaused       int `json:"skipped_tasks_paused,omitempty"`
+	SkippedAutomationsPaused int `json:"skipped_automations_paused,omitempty"`
+
+	// SkippedNoCandidate counts tasks that no online runner would accept.
+	// The per-task detail is recorded separately as a placement reason and
+	// is readable via task_placement_reasons.
+	SkippedNoCandidate int `json:"skipped_no_candidate,omitempty"`
+
+	// SkippedAlreadyLeased counts tasks a previous pass already dispatched.
+	// This one is benign: the work is in flight, not stuck.
+	SkippedAlreadyLeased int `json:"skipped_already_leased,omitempty"`
 }
 
 // SchedulerStatus is lightweight scheduler loop state suitable for API exposure.

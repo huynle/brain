@@ -3,10 +3,13 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -470,12 +473,12 @@ func TestBrainUpdate_HandlerOmitsOpenCodeOptionalDefaults(t *testing.T) {
 		"target_workdir":       "",
 		"git_branch":           "",
 		"merge_target_branch":  "",
-		"merge_policy":         "prompt_only",
+		"merge_policy":         "auto_merge",
 		"merge_strategy":       "squash",
 		"open_pr_before_merge": false,
 		"execution_mode":       "worktree",
 		"complete_on_idle":     false,
-		"remote_branch_policy": "keep",
+		"remote_branch_policy": "delete",
 		"schedule":             "",
 		"schedule_enabled":     false,
 		"max_runs":             float64(0),
@@ -555,12 +558,12 @@ func TestBrainBulkUpdate_HandlerOmitsOpenCodeOptionalDefaultsInEntryUpdates(t *t
 					"status":               "pending",
 					"priority":             "medium",
 					"feature_priority":     "high",
-					"merge_policy":         "prompt_only",
+					"merge_policy":         "auto_merge",
 					"merge_strategy":       "squash",
 					"open_pr_before_merge": false,
 					"execution_mode":       "worktree",
 					"complete_on_idle":     false,
-					"remote_branch_policy": "keep",
+					"remote_branch_policy": "delete",
 					"schedule_enabled":     false,
 					"max_runs":             float64(0),
 					"executor":             "opencode",
@@ -708,6 +711,63 @@ func TestBrainStats_Handler(t *testing.T) {
 	if !strings.Contains(result, "Brain Statistics") {
 		t.Errorf("result should contain header, got: %s", result)
 	}
+	if !strings.Contains(result, "Total (whole store): 42") {
+		t.Errorf("unscoped total should name its scope, got: %s", result)
+	}
+}
+
+// TestBrainStats_ScopeLabels pins the scope wording on every count.
+//
+// globalEntries and projectEntries are always WHOLE-STORE totals, even
+// when the request is scoped to one project. Printed as a bare
+// "Project:" under a project-scoped "Total:", they read as a
+// contradiction — a real call returned "Total: 930 / Project: 67935"
+// for a project holding 930 entries, and the larger number is the one
+// a reader trusts. Each line must say what it counts.
+func TestBrainStats_ScopeLabels(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"totalEntries":   930,
+			"globalEntries":  25,
+			"projectEntries": 67935,
+			"byType":         map[string]int{"task": 890},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient(server.URL))
+	handler := s.tools["stats"].handler
+
+	t.Run("project scope names the project", func(t *testing.T) {
+		result, err := handler(context.Background(), map[string]any{"project": "brain-api"})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(result, "Total (project brain-api): 930") {
+			t.Errorf("scoped total should name the project, got: %s", result)
+		}
+		if strings.Contains(result, "\nProject: 67935") {
+			t.Errorf("whole-store project count must not render as a bare %q, got: %s", "Project:", result)
+		}
+		if !strings.Contains(result, "across every project: 67935") {
+			t.Errorf("project count should say it spans every project, got: %s", result)
+		}
+		if !strings.Contains(result, "all of global/: 25") {
+			t.Errorf("global count should say it spans all of global/, got: %s", result)
+		}
+	})
+
+	t.Run("global scope names itself", func(t *testing.T) {
+		result, err := handler(context.Background(), map[string]any{"global": true})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(result, "Total (global entries): 930") {
+			t.Errorf("global-scoped total should name its scope, got: %s", result)
+		}
+	})
 }
 
 func TestBrainBacklinks_Handler(t *testing.T) {
@@ -2014,7 +2074,9 @@ func TestBrainAutomationTest_Handler_NoMatch(t *testing.T) {
 		t.Fatalf("handler error: %v", err)
 	}
 
-	if !strings.Contains(result, "No automations matched") {
+	// Wording narrowed deliberately: the simulation checks the event
+	// pattern only, so it must not claim a whole-matcher verdict.
+	if !strings.Contains(result, "No automation's EVENT PATTERN matched") {
 		t.Errorf("result should indicate no match, got: %s", result)
 	}
 	if !strings.Contains(result, "task.completed") {
@@ -2078,8 +2140,16 @@ func TestBrainAutomationTest_Handler_WithMatch(t *testing.T) {
 	if !strings.Contains(result, "On Task Wildcard") {
 		t.Errorf("result should match wildcard automation, got: %s", result)
 	}
-	if !strings.Contains(result, "2 automation(s) would match") {
+	if !strings.Contains(result, "2 automation(s) match on event pattern") {
 		t.Errorf("result should show 2 matches (not cron), got: %s", result)
+	}
+	// The cron automation is now reported as unsimulated rather than
+	// silently dropped — silence read as "your filter is wrong".
+	if !strings.Contains(result, "were not simulated") {
+		t.Errorf("non-event triggers should be disclosed, got: %s", result)
+	}
+	if !strings.Contains(result, "EVENT PATTERN only") {
+		t.Errorf("result must state what it did not evaluate, got: %s", result)
 	}
 }
 
@@ -2514,7 +2584,16 @@ func TestBrainStale_Handler_ForwardsProject(t *testing.T) {
 		}
 		gotProject = r.URL.Query().Get("project")
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "total": 0})
+		// A BARE array, which is what health_extended.go writes for both
+		// /stale and /orphans. This fixture used to send an
+		// {entries,total} envelope the server has never produced, so the
+		// test passed against a mock shaped like the buggy decode struct
+		// while the real tool failed on every call.
+		//
+		// NOTE: /entries genuinely does use {entries,total}
+		// (types.ListEntriesResponse) — the list tool's fixture is correct
+		// and must stay as it is.
+		_ = json.NewEncoder(w).Encode([]types.BrainEntry{})
 	}))
 	defer srv.Close()
 
@@ -2543,7 +2622,16 @@ func TestBrainOrphans_Handler_ForwardsProject(t *testing.T) {
 		}
 		gotProject = r.URL.Query().Get("project")
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]any{"entries": []any{}, "total": 0})
+		// A BARE array, which is what health_extended.go writes for both
+		// /stale and /orphans. This fixture used to send an
+		// {entries,total} envelope the server has never produced, so the
+		// test passed against a mock shaped like the buggy decode struct
+		// while the real tool failed on every call.
+		//
+		// NOTE: /entries genuinely does use {entries,total}
+		// (types.ListEntriesResponse) — the list tool's fixture is correct
+		// and must stay as it is.
+		_ = json.NewEncoder(w).Encode([]types.BrainEntry{})
 	}))
 	defer srv.Close()
 
@@ -2700,5 +2788,512 @@ func TestBrainSave_TaskGitBranchExplicitOverridesEverything(t *testing.T) {
 
 	if capturedBody["git_branch"] != "custom-branch" {
 		t.Errorf("git_branch = %v, want %q (explicit arg must override)", capturedBody["git_branch"], "custom-branch")
+	}
+}
+
+// TestOpenCodeOptionalDefaults_MatchServerNormalization pins the defaults
+// table against what the server actually does.
+//
+// Two entries were backwards — merge_policy:"prompt_only" and
+// remote_branch_policy:"keep" — while normalizeFeatureCheckoutOptions in
+// internal/service/task.go turns an empty value into "auto_merge" and
+// "delete". The guard therefore discarded remote_branch_policy:"keep", a
+// deliberate non-default choice, and never recognised the real default.
+func TestOpenCodeOptionalDefaults_MatchServerNormalization(t *testing.T) {
+	for key, want := range map[string]string{
+		"merge_policy":         "auto_merge",
+		"merge_strategy":       "squash",
+		"remote_branch_policy": "delete",
+		"execution_mode":       "worktree",
+	} {
+		got, ok := openCodeOptionalDefaults[key]
+		if !ok {
+			t.Errorf("openCodeOptionalDefaults missing %q", key)
+			continue
+		}
+		if got != want {
+			t.Errorf("openCodeOptionalDefaults[%q] = %v, want %q "+
+				"(must match normalizeFeatureCheckoutOptions in internal/service/task.go)", key, got, want)
+		}
+	}
+}
+
+// TestBrainBulkUpdate_DisclosesDroppedFields pins that bulk_update never
+// answers a bare "Updated: N" over fields the guard removed.
+//
+// sanitizeUpdateValue used to discard the dropped list (`clean, _ :=`), so
+// the fields vanished and the response still claimed success. Single update
+// surfaced the same list all along; only the bulk path hid it.
+func TestBrainBulkUpdate_DisclosesDroppedFields(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"total": 2, "updated": 2, "failed": 0,
+			"results": []map[string]any{},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient(server.URL))
+
+	out, err := s.tools["bulk_update"].handler(context.Background(), map[string]any{
+		"filter": map[string]any{"project": "p"},
+		"updates": map[string]any{
+			"status":         "completed", // a real change, so the call proceeds
+			"execution_mode": "worktree",
+			"merge_strategy": "squash",
+			"merge_policy":   "auto_merge",
+		},
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(out, "Not applied") {
+		t.Errorf("dropped fields were not disclosed:\n%s", out)
+	}
+	for _, field := range []string{"execution_mode", "merge_policy", "merge_strategy"} {
+		if !strings.Contains(out, field) {
+			t.Errorf("dropped field %q not named in the response:\n%s", field, out)
+		}
+	}
+}
+
+// TestBrainBulkUpdate_AllDefaultsExplainsItself pins that the total-drop case
+// says what happened. It used to surface as "filter mode requires 'updates'
+// to specify what to change" — telling a caller who HAD specified updates
+// that they had not.
+func TestBrainBulkUpdate_AllDefaultsExplainsItself(t *testing.T) {
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient("http://127.0.0.1:1"))
+
+	_, err := s.tools["bulk_update"].handler(context.Background(), map[string]any{
+		"filter": map[string]any{"project": "p"},
+		"updates": map[string]any{
+			"execution_mode": "worktree",
+			"merge_strategy": "squash",
+			"merge_policy":   "auto_merge",
+		},
+	})
+	if err == nil {
+		t.Fatal("expected an error when every update field was dropped")
+	}
+	if !strings.Contains(err.Error(), "autofill guard") {
+		t.Errorf("error should explain the guard dropped the fields, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "requires 'updates' to specify what to change") {
+		t.Errorf("error still claims no updates were specified, got: %v", err)
+	}
+}
+
+// TestFoundLine_DisclosesAFullPage pins that a full page is not reported as
+// a grand total.
+//
+// BrainServiceImpl.List sets Total = len(entries) for the page it returns
+// (internal/service/brain.go), so list(limit:3) against a project holding
+// 931 entries answered "Found 3 entries" — not a rounding error but the
+// wrong answer to "how many are there".
+func TestFoundLine_DisclosesAFullPage(t *testing.T) {
+	full := foundLine("entries", 3, 3, 100)
+	if !strings.Contains(full, "page is full at limit 3") {
+		t.Errorf("a full page must disclose that more may exist, got: %s", full)
+	}
+	if !strings.Contains(full, "raise 'limit'") {
+		t.Errorf("disclosure should be actionable, got: %s", full)
+	}
+
+	partial := foundLine("entries", 2, 3, 100)
+	if strings.Contains(partial, "page is full") {
+		t.Errorf("a partial page is a complete answer and must not warn, got: %s", partial)
+	}
+
+	// limit omitted → the documented default applies.
+	atDefault := foundLine("entries", 100, 0, 100)
+	if !strings.Contains(atDefault, "page is full at limit 100") {
+		t.Errorf("an omitted limit should fall back to the default, got: %s", atDefault)
+	}
+}
+
+// TestSearchAndListLimitDefaults_MatchStorage pins the documented defaults
+// against the storage constants. Both were wrong, in opposite directions:
+// search advertised 10 and delivers 20; list advertised 20 and delivers 100.
+func TestSearchAndListLimitDefaults_MatchStorage(t *testing.T) {
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient("http://127.0.0.1:1"))
+
+	for tool, want := range map[string]string{
+		"search": "default: 20",
+		"list":   "default: 100",
+	} {
+		desc := s.tools[tool].tool.InputSchema.Properties["limit"].Description
+		if !strings.Contains(desc, want) {
+			t.Errorf("%s limit description = %q, want to contain %q", tool, desc, want)
+		}
+	}
+}
+
+// TestBrainBulkUpdate_SurfacesTruncation pins that the safety signal the API
+// already sends reaches the caller.
+//
+// types.BulkUpdateResponse documents Truncated as "do not proceed; narrow
+// the filter", and MatchedTotal as the real match count. Neither was
+// decoded, so a filter matching 500 entries reported "Total matched: 100"
+// with no hint that 400 went untouched — reviving the silent truncation
+// those fields exist to prevent.
+func TestBrainBulkUpdate_SurfacesTruncation(t *testing.T) {
+	newServerReturning := func(dryRun bool) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"total": 100, "updated": 100, "failed": 0,
+				"dry_run": dryRun, "truncated": true, "matched_total": 500,
+				"results": []map[string]any{
+					{"path": "projects/p/task/a.md", "title": "One", "status": "ok"},
+				},
+			})
+		}))
+	}
+
+	t.Run("dry run says do not proceed", func(t *testing.T) {
+		srv := newServerReturning(true)
+		defer srv.Close()
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["bulk_update"].handler(context.Background(), map[string]any{
+			"filter": map[string]any{"project": "p"}, "updates": map[string]any{"status": "completed"},
+			"dry_run": true,
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "TRUNCATED") || !strings.Contains(out, "500") {
+			t.Errorf("truncation and the real match count must be surfaced:\n%s", out)
+		}
+		if !strings.Contains(out, "Do not proceed") {
+			t.Errorf("dry run should tell the caller not to proceed:\n%s", out)
+		}
+		if !strings.Contains(out, "would update") {
+			t.Errorf("a dry run changes nothing; rows must not claim otherwise:\n%s", out)
+		}
+	})
+
+	t.Run("live run says the remainder is unmodified", func(t *testing.T) {
+		srv := newServerReturning(false)
+		defer srv.Close()
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["bulk_update"].handler(context.Background(), map[string]any{
+			"filter": map[string]any{"project": "p"}, "updates": map[string]any{"status": "completed"},
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "UNMODIFIED") {
+			t.Errorf("a truncated live run must say the remainder was not changed:\n%s", out)
+		}
+		if strings.Contains(out, "would update") {
+			t.Errorf("a live run did update; rows must not hedge:\n%s", out)
+		}
+	})
+}
+
+// TestStaleAndOrphans_DecodeBareArrays pins the two graph-health tools
+// against the shape their endpoints actually return.
+//
+// GET /stale and GET /orphans both WriteJSON a bare []types.BrainEntry
+// (internal/api/health_extended.go). Both tools decoded an {entries,total}
+// envelope instead, so every single invocation returned
+// "decode response: json: cannot unmarshal array into Go value of
+// type struct{...}" — they had never worked. GetStale/GetOrphans build
+// their slices with make(...,0,n), so there is no null-response path where
+// the old code could accidentally have succeeded.
+//
+// The pre-existing tests passed because their mocks emitted the envelope
+// the buggy struct expected. A fixture built from the real type is the only
+// kind that can catch this.
+func TestStaleAndOrphans_DecodeBareArrays(t *testing.T) {
+	entries := []types.BrainEntry{
+		{ID: "aaa11111", Path: "projects/p/note/a.md", Title: "Alpha", Type: "note", LastVerified: "2026-01-01"},
+		{ID: "bbb22222", Path: "projects/p/note/b.md", Title: "Beta", Type: "note"},
+	}
+
+	for _, tc := range []struct{ tool, path string }{
+		{"stale", "/api/v1/stale"},
+		{"orphans", "/api/v1/orphans"},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != tc.path {
+					t.Errorf("unexpected path: %s", r.URL.Path)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(entries)
+			}))
+			defer srv.Close()
+
+			s := NewServer()
+			RegisterBrainTools(s, NewAPIClient(srv.URL))
+			out, err := s.tools[tc.tool].handler(context.Background(), map[string]any{"project": "p"})
+			if err != nil {
+				t.Fatalf("%s failed to decode a bare array: %v", tc.tool, err)
+			}
+			for _, want := range []string{"Alpha", "Beta"} {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s did not render %q:\n%s", tc.tool, want, out)
+				}
+			}
+		})
+	}
+}
+
+// TestPhantomFieldTools_RenderRealValues pins four tools that printed
+// zero-valued phantoms as if they were data.
+//
+// Each declared fields absent from the server type, so each rendered a
+// confident constant: "Total sections: 0" for a plan with many, "Line: 0"
+// always, three blank lines for a link, and a blank Version. Fixtures are
+// built from the real types.* values, which is the only shape that can
+// catch this.
+func TestPhantomFieldTools_RenderRealValues(t *testing.T) {
+	t.Run("plan_sections counts the slice", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if strings.HasSuffix(r.URL.Path, "/sections") {
+				_ = json.NewEncoder(w).Encode(types.SectionsResponse{
+					Path: "projects/p/plan/a.md",
+					Sections: []types.SectionHeader{
+						{Title: "Overview", Level: 1},
+						{Title: "Details", Level: 2},
+						{Title: "Risks", Level: 2},
+					},
+				})
+				return
+			}
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{ID: "aaa11111", Path: "projects/p/plan/a.md", Type: "plan"})
+		}))
+		defer srv.Close()
+
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["plan_sections"].handler(context.Background(), map[string]any{
+			"path": "projects/p/plan/a.md",
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "**Total sections:** 3") {
+			t.Errorf("section count came from a phantom Total:\n%s", out)
+		}
+		if strings.Contains(out, "line 0") {
+			t.Errorf("a phantom line number is still rendered:\n%s", out)
+		}
+	})
+
+	t.Run("link renders only the field that exists", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(types.LinkResponse{Link: "[[abc12345]]"})
+		}))
+		defer srv.Close()
+
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["link"].handler(context.Background(), map[string]any{"path": "projects/p/note/a.md"})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "[[abc12345]]") {
+			t.Errorf("link missing:\n%s", out)
+		}
+		for _, blank := range []string{"ID: \n", "Path: \n", "Title: "} {
+			if strings.Contains(out, blank) {
+				t.Errorf("still renders a phantom field as blank data (%q):\n%s", blank, out)
+			}
+		}
+	})
+
+	t.Run("check_connection reports embedding readiness", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(types.HealthResponse{
+				Status: "healthy",
+				Embedding: types.EmbeddingHealthStatus{
+					Enabled: true, Status: "ready", Provider: "openrouter", Model: "text-embedding-3-small",
+				},
+			})
+		}))
+		defer srv.Close()
+
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["check_connection"].handler(context.Background(), map[string]any{})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "ready") || !strings.Contains(out, "openrouter") {
+			t.Errorf("embedding readiness was dropped — an agent cannot tell whether semantic search works:\n%s", out)
+		}
+		if strings.Contains(out, "Version: ") {
+			t.Errorf("still renders the phantom Version field:\n%s", out)
+		}
+	})
+
+	t.Run("check_connection names a disabled embedding provider", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(types.HealthResponse{
+				Status:    "healthy",
+				Embedding: types.EmbeddingHealthStatus{Enabled: false},
+			})
+		}))
+		defer srv.Close()
+
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, _ := s.tools["check_connection"].handler(context.Background(), map[string]any{})
+		if !strings.Contains(out, "disabled") || !strings.Contains(out, "FTS") {
+			t.Errorf("a disabled provider should say semantic search is unavailable:\n%s", out)
+		}
+	})
+}
+
+// TestBulkUpdateDescription_ClaimsOnlyRealFields pins the bulk_update
+// "updates" description against types.UpdateEntryRequest.
+//
+// The description exists because the old one under-claimed — it listed six
+// fields where the endpoint accepts ~55. Fixing that introduced the
+// opposite error: it advertised requires_capability, which lives on
+// BrainEntry and ResolvedTask but NOT on UpdateEntryRequest.
+//
+// That was worse than a stale doc, because the same commit added strict
+// decoding of updates.*. So the description told an agent to send a field
+// the validator then rejected with HTTP 400 — the two halves of one change
+// actively fighting each other.
+//
+// A description is a contract. Check it against the struct, not by eye.
+func TestBulkUpdateDescription_ClaimsOnlyRealFields(t *testing.T) {
+	real := map[string]bool{}
+	rt := reflect.TypeOf(types.UpdateEntryRequest{})
+	for i := 0; i < rt.NumField(); i++ {
+		tag := rt.Field(i).Tag.Get("json")
+		if name, _, _ := strings.Cut(tag, ","); name != "" && name != "-" {
+			real[name] = true
+		}
+	}
+
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient("http://127.0.0.1:1"))
+	desc := s.tools["bulk_update"].tool.InputSchema.Properties["updates"].Description
+
+	// Every snake_case token in the description that looks like a field
+	// name must actually be one.
+	for _, token := range regexp.MustCompile(`\b[a-z]+_[a-z_]+\b`).FindAllString(desc, -1) {
+		switch token {
+		case "bulk_update", "snake_case": // prose, not field names
+			continue
+		}
+		if !real[token] {
+			t.Errorf("description advertises %q, which is not a field on types.UpdateEntryRequest — "+
+				"an agent that believes it gets HTTP 400 from the strict updates.* validator", token)
+		}
+	}
+}
+
+// TestRecall_ShowsTaskFieldsWhenPresent pins that recalling a task surfaces
+// the facts that make it actionable, and that a plain note is not padded
+// with task vocabulary.
+//
+// recall decoded nine fields from a ~60-field BrainEntry, so recalling a
+// task showed no priority, feature or dependencies — facts already on the
+// wire, obtainable only by a second call to task_get.
+func TestRecall_ShowsTaskFieldsWhenPresent(t *testing.T) {
+	serve := func(entry types.BrainEntry) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(entry)
+		}))
+	}
+
+	t.Run("task shows priority, feature and deps", func(t *testing.T) {
+		srv := serve(types.BrainEntry{
+			ID: "aaa11111", Path: "projects/p/task/a.md", Title: "A task", Type: "task",
+			Status: "pending", Priority: "high", FeatureID: "feat-x",
+			DependsOn: []string{"bbb22222", "ccc33333"},
+		})
+		defer srv.Close()
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["recall"].handler(context.Background(), map[string]any{"path": "projects/p/task/a.md"})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		for _, want := range []string{"Priority: high", "Feature: feat-x", "Depends on: bbb22222, ccc33333"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("missing %q:\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("plain note is not padded", func(t *testing.T) {
+		srv := serve(types.BrainEntry{
+			ID: "ddd44444", Path: "projects/p/note/d.md", Title: "A note", Type: "note", Status: "active",
+		})
+		defer srv.Close()
+		s := NewServer()
+		RegisterBrainTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["recall"].handler(context.Background(), map[string]any{"path": "projects/p/note/d.md"})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		for _, unwanted := range []string{"Priority:", "Feature:", "Depends on:"} {
+			if strings.Contains(out, unwanted) {
+				t.Errorf("note padded with %q:\n%s", unwanted, out)
+			}
+		}
+	})
+}
+
+// TestUpdateDescription_MatchesTheActualGuardTable pins the description to the
+// table it describes. Commit 64093da corrected openCodeOptionalDefaults and left
+// the hand-written prose behind, so the tool advertised merge_policy:"prompt_only"
+// and remote_branch_policy:"keep" while the guard matched "auto_merge" and
+// "delete" — backwards in both directions, which misleads an agent worse than a
+// merely vague description would. Two independent pre-deploy reviewers found it.
+func TestUpdateDescription_MatchesTheActualGuardTable(t *testing.T) {
+	server := NewServer()
+	RegisterBrainTools(server, NewAPIClient("http://unused"))
+
+	desc := server.tools["update"].tool.Description
+
+	for key, val := range openCodeOptionalDefaults {
+		var want string
+		if s, ok := val.(string); ok {
+			want = fmt.Sprintf("%s: %q", key, s)
+		} else {
+			want = fmt.Sprintf("%s: %v", key, val)
+		}
+		if !strings.Contains(desc, want) {
+			t.Errorf("update description missing %q from openCodeOptionalDefaults:\n%s", want, desc)
+		}
+	}
+
+	// The specific values that were wrong before. Guard against a future edit
+	// reintroducing prose that contradicts the table.
+	for _, stale := range []string{`merge_policy: "prompt_only"`, `remote_branch_policy: "keep"`} {
+		if strings.Contains(desc, stale) {
+			t.Errorf("update description advertises %q, which is not what the guard matches", stale)
+		}
+	}
+}
+
+// TestFormatOptionalDefaults_IsDeterministic guards the tool schema against Go's
+// randomized map iteration: an MCP client that caches or diffs tool definitions
+// should not see the description reshuffle between processes.
+func TestFormatOptionalDefaults_IsDeterministic(t *testing.T) {
+	first := formatOptionalDefaults()
+	for i := 0; i < 50; i++ {
+		if got := formatOptionalDefaults(); got != first {
+			t.Fatalf("formatOptionalDefaults changed between calls (iteration %d):\n%s\nvs\n%s", i, first, got)
+		}
 	}
 }

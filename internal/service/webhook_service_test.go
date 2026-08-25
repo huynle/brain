@@ -7,6 +7,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	api "github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 
@@ -823,5 +825,59 @@ func TestMatchesEventField(t *testing.T) {
 				t.Errorf("matchesEventField(%q, %q) = %v, want %v", tt.field, tt.value, got, tt.expected)
 			}
 		})
+	}
+}
+
+// TestWebhookDeliveries_UnknownWebhookIsNotFound closes a false negative on the
+// tool people reach for when a webhook seems not to be firing.
+// storage.ListDeliveries is a bare `WHERE webhook_id = ?` with no join, so a
+// deleted or mistyped id returned zero rows and rendered "No deliveries recorded
+// for webhook X" — the same output a live webhook that has never fired produces,
+// which is precisely the distinction being debugged.
+func TestWebhookDeliveries_UnknownWebhookIsNotFound(t *testing.T) {
+	svc := newTestWebhookService(t)
+
+	_, err := svc.ListDeliveries(context.Background(), "wh-does-not-exist", 50)
+	if !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("ListDeliveries(unknown) error = %v, want api.ErrNotFound", err)
+	}
+}
+
+// TestWebhookGet_UnknownWebhookIsNotFound covers the sentinel itself. Storage
+// returned bare prose, so the handler's ErrNotFound -> 404 branch was
+// unreachable and a missing webhook surfaced as a 500 — "server fault, retry"
+// for an ordinary client mistake.
+func TestWebhookGet_UnknownWebhookIsNotFound(t *testing.T) {
+	svc := newTestWebhookService(t)
+
+	_, err := svc.Get(context.Background(), "wh-does-not-exist")
+	if !errors.Is(err, api.ErrNotFound) {
+		t.Errorf("Get(unknown) error = %v, want api.ErrNotFound", err)
+	}
+}
+
+// TestWebhookDeliveries_ExistingWebhookWithNoDeliveriesIsEmpty is the other
+// half: a real webhook that has not fired must still return an empty list, not
+// an error. Making unknown ids fail must not turn a legitimately empty result
+// into a failure — that would move the lie rather than remove it.
+func TestWebhookDeliveries_ExistingWebhookWithNoDeliveriesIsEmpty(t *testing.T) {
+	svc := newTestWebhookService(t)
+	ctx := context.Background()
+
+	wh, err := svc.Create(ctx, types.CreateWebhookRequest{
+		Name:   "test hook",
+		URL:    "https://example.invalid/hook",
+		Events: []string{"task.completed"},
+	})
+	if err != nil {
+		t.Fatalf("Create failed: %v", err)
+	}
+
+	deliveries, err := svc.ListDeliveries(ctx, wh.ID, 50)
+	if err != nil {
+		t.Fatalf("ListDeliveries(existing) unexpected error: %v", err)
+	}
+	if len(deliveries) != 0 {
+		t.Errorf("expected no deliveries for a webhook that never fired, got %d", len(deliveries))
 	}
 }

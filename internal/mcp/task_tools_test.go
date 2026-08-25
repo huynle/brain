@@ -3,10 +3,14 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 // =============================================================================
@@ -102,10 +106,28 @@ func TestBrainTasks_Schema(t *testing.T) {
 		}
 	}
 
-	// Check classification enum
+	// Check classification enum by CONTENT, not count. A bare length
+	// assertion fails on any deliberate addition while saying nothing about
+	// whether the right values are present.
+	//
+	// not_pending is in the list because the renderer groups it: without it
+	// in the enum, the one bucket holding ~99% of a mature project's tasks
+	// was unreachable by filter.
 	classProp := tool.InputSchema.Properties["classification"]
-	if len(classProp.Enum) != 3 {
-		t.Errorf("classification enum has %d values, want 3", len(classProp.Enum))
+	wantClassifications := map[string]bool{
+		"ready": false, "waiting": false, "blocked": false, "not_pending": false,
+	}
+	for _, v := range classProp.Enum {
+		if _, ok := wantClassifications[v]; !ok {
+			t.Errorf("classification enum has unexpected value %q", v)
+			continue
+		}
+		wantClassifications[v] = true
+	}
+	for v, seen := range wantClassifications {
+		if !seen {
+			t.Errorf("classification enum missing %q", v)
+		}
 	}
 }
 
@@ -174,11 +196,18 @@ func TestBrainTasksStatus_Schema(t *testing.T) {
 	if len(waitForProp.Enum) != 2 {
 		t.Errorf("wait_for enum has %d values, want 2", len(waitForProp.Enum))
 	}
-	if !strings.Contains(waitForProp.Description, "'completed' waits until ALL listed tasks are done") {
-		t.Errorf("wait_for description mismatch, got: %s", waitForProp.Description)
-	}
-	if !strings.Contains(waitForProp.Description, "'any' returns on the first status change among them") {
-		t.Errorf("wait_for description mismatch, got: %s", waitForProp.Description)
+	// The description previously promised a wait that nothing implemented -
+	// WaitFor was serialised, decoded, and never read. Now that the client
+	// actually polls, the description says how (interval, timeout, and that the
+	// outcome is always reported) rather than just asserting that it waits.
+	for _, want := range []string{
+		"'completed' polls until ALL listed tasks are completed/validated",
+		"'any' polls until one of them changes status",
+		"states how the wait ended",
+	} {
+		if !strings.Contains(waitForProp.Description, want) {
+			t.Errorf("wait_for description missing %q, got: %s", want, waitForProp.Description)
+		}
 	}
 }
 
@@ -469,12 +498,16 @@ func TestBrainTaskNext_Handler(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if r.URL.Path == "/api/v1/tasks/test-project/next" {
-			json.NewEncoder(w).Encode(map[string]any{
-				"task": map[string]any{
-					"id": "abc12345", "path": "projects/test/task/abc12345.md",
-					"title": "Next Task", "status": "pending", "priority": "high",
-					"classification": "ready", "resolved_deps": []string{"dep1"},
-				},
+			// A BARE ResolvedTask, which is what api/tasks.go:174 writes.
+			// This fixture used to wrap it in {"task": ...} — an envelope
+			// the server has never sent. The mock and the hand-rolled
+			// decode struct agreed with each other and were both wrong
+			// about the server, so the test passed while the tool reported
+			// "No ready tasks available" for a queue full of ready work.
+			_ = json.NewEncoder(w).Encode(types.ResolvedTask{
+				ID: "abc12345", Path: "projects/test/task/abc12345.md",
+				Title: "Next Task", Status: "pending", Priority: "high",
+				Classification: "ready", ResolvedDeps: []string{"dep1"},
 			})
 			return
 		}
@@ -1106,7 +1139,10 @@ func TestBrainTasksStatus_Handler(t *testing.T) {
 	if !strings.Contains(result, "Task A") {
 		t.Errorf("result should contain task A, got: %s", result)
 	}
-	if !strings.Contains(result, "1/2 tasks completed") {
+	// Denominator is now the REQUESTED count rather than the returned count, so
+	// a request whose ids all fail to resolve reads as "0/N requested" instead of
+	// a clean-looking "0/0". Same numbers here; wording follows the change.
+	if !strings.Contains(result, "1/2 requested tasks completed") {
 		t.Errorf("result should contain summary, got: %s", result)
 	}
 }
@@ -1135,11 +1171,14 @@ func TestBrainTasksStatus_WithNotFound(t *testing.T) {
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"tasks":    []map[string]any{},
-			"notFound": []string{"missing123"},
-			"changed":  false,
-			"timedOut": false,
+		// Mirror what the server actually sends. This fixture used to
+		// return notFound/changed/timedOut, none of which exist on
+		// types.MultiTaskStatusResponse — a mock asserting a contract the
+		// server has never had, which is what let the phantom fields look
+		// real. A requested id simply does not come back in tasks.
+		_ = json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{
+			Tasks:        []types.ResolvedTask{},
+			AllCompleted: false,
 		})
 	}))
 	defer server.Close()
@@ -1224,17 +1263,17 @@ func TestBrainTaskTrigger_Error(t *testing.T) {
 	result, err := handler(context.Background(), map[string]any{
 		"taskId": "nonexistent",
 	})
-	// Trigger returns error as JSON, not as Go error
-	if err != nil {
-		t.Fatalf("handler should not return Go error: %v", err)
+	// An API failure must be signalled as a tool error. Packing it into a
+	// JSON success body leaves isError unset in server.go, so the caller
+	// reads a failure as an ordinary result and acts on it. The old
+	// assertion only described that behaviour; it gave no reason for it,
+	// and this same package returns real errors elsewhere.
+	if err == nil {
+		t.Fatal("a 404 from the trigger endpoint must be reported as a tool error, not a success result")
 	}
-
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(result), &parsed); err != nil {
-		t.Fatalf("result should be valid JSON: %v", err)
-	}
-	if parsed["error"] == nil {
-		t.Error("result should contain error field")
+	_ = result
+	if !strings.Contains(err.Error(), "task not found") {
+		t.Errorf("error should carry the server's message, got: %v", err)
 	}
 }
 
@@ -1244,10 +1283,17 @@ func TestBrainFeatureReviewEnable_Handler(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 
-		var body map[string]any
+		// Decode into the real request type. Asserting raw JSON keys is what
+		// let this test pass while the tool sent "templateId" and a nested
+		// "scope" — neither of which exists on types.CreateMonitorRequest,
+		// so every call was an HTTP 400.
+		var body types.CreateMonitorRequest
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["templateId"] != "feature-review" {
-			t.Errorf("templateId = %v, want feature-review", body["templateId"])
+		if body.TemplateID != "feature-review" {
+			t.Errorf("template_id = %q, want feature-review", body.TemplateID)
+		}
+		if body.ScopeType != "feature" {
+			t.Errorf("scope_type = %q, want feature (empty means HTTP 400)", body.ScopeType)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1327,10 +1373,17 @@ func TestBrainBlockedInspectorEnable_Handler(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 
-		var body map[string]any
+		// Decode into the real request type. Asserting raw JSON keys is what
+		// let this test pass while the tool sent "templateId" and a nested
+		// "scope" — neither of which exists on types.CreateMonitorRequest,
+		// so every call was an HTTP 400.
+		var body types.CreateMonitorRequest
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["templateId"] != "blocked-inspector" {
-			t.Errorf("templateId = %v, want blocked-inspector", body["templateId"])
+		if body.TemplateID != "blocked-inspector" {
+			t.Errorf("template_id = %q, want blocked-inspector", body.TemplateID)
+		}
+		if body.ScopeType != "feature" {
+			t.Errorf("scope_type = %q, want feature (empty means HTTP 400)", body.ScopeType)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1478,22 +1531,27 @@ func TestBrainDreamEnable_Handler(t *testing.T) {
 			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 
-		var body map[string]any
+		// Decode into the real request type. Asserting raw JSON keys is what
+		// let this test pass while the tool sent "templateId" and a nested
+		// "scope" — neither of which exists on types.CreateMonitorRequest,
+		// so every call was an HTTP 400.
+		var body types.CreateMonitorRequest
 		json.NewDecoder(r.Body).Decode(&body)
-		if body["templateId"] != "dream" {
-			t.Errorf("templateId = %v, want dream", body["templateId"])
+		if body.TemplateID != "dream" {
+			t.Errorf("template_id = %q, want dream", body.TemplateID)
+		}
+		if body.ScopeType != "project" {
+			t.Errorf("scope_type = %q, want project (empty means HTTP 400)", body.ScopeType)
 		}
 
-		// Verify scope is project-scoped (not feature-scoped)
-		scope, ok := body["scope"].(map[string]any)
-		if !ok {
-			t.Fatal("missing scope in request body")
+		// Verify the monitor is project-scoped, not feature-scoped.
+		// scope_type is already asserted above; this pins the project and
+		// that no feature leaks in.
+		if body.Project != "my-project" {
+			t.Errorf("project = %q, want my-project", body.Project)
 		}
-		if scope["type"] != "project" {
-			t.Errorf("scope.type = %v, want project", scope["type"])
-		}
-		if scope["project"] != "my-project" {
-			t.Errorf("scope.project = %v, want my-project", scope["project"])
+		if body.FeatureID != "" {
+			t.Errorf("feature_id = %q, want empty for a project-scoped monitor", body.FeatureID)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -1769,5 +1827,712 @@ func TestTaskToolsDoNotOverlapBrainTools(t *testing.T) {
 
 	if taskToolCount != 14 {
 		t.Errorf("expected 14 new task tools (no overlap), got %d new tools", taskToolCount)
+	}
+}
+
+// TestBrainTasks_DecodesServerPayload feeds the handler a payload shaped by
+// types.TaskListResponse and asserts the rendered output reflects it.
+//
+// Nothing exercised this handler against a realistic payload, so four field
+// mismatches sat undetected: DependsOn was tagged `dependsOn` and typed as a
+// struct array (wire: `depends_on`, []string), Completed did not exist on
+// TaskStats at all, Cycles was a struct array (wire: [][]string), and
+// status_blocked/not_pending were dropped. Every one failed silently, and
+// the first printed "Dependencies: none" on every task ever listed.
+func TestBrainTasks_DecodesServerPayload(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{
+			Tasks: []types.ResolvedTask{
+				{ID: "aaa11111", Title: "Ready with deps", Status: "pending", Classification: "ready", DependsOn: []string{"ddd44444"}},
+				{ID: "bbb22222", Title: "Waiting one", Status: "pending", Classification: "waiting", DependsOn: []string{"aaa11111", "ddd44444"}},
+				{ID: "ccc33333", Title: "Finished one", Status: "completed", Classification: "not_pending"},
+			},
+			Count: 3,
+			Stats: &types.TaskStats{Total: 3, Ready: 1, Waiting: 1, NotPending: 1},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(server.URL))
+	out, err := s.tools["tasks"].handler(context.Background(), map[string]any{"project": "p"})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if strings.Contains(out, "Dependencies: none") {
+		t.Errorf("a task with depends_on rendered as having none:\n%s", out)
+	}
+	if !strings.Contains(out, "ddd44444") {
+		t.Errorf("dependency id missing from output:\n%s", out)
+	}
+	if !strings.Contains(out, "not_pending") {
+		t.Errorf("not_pending counter missing from stats:\n%s", out)
+	}
+	if strings.Contains(out, "completed") && strings.Contains(out, "| 0 not_pending") {
+		t.Errorf("not_pending counted zero despite a not_pending task:\n%s", out)
+	}
+	if !strings.Contains(out, "Finished one") {
+		t.Errorf("not_pending task was never rendered:\n%s", out)
+	}
+}
+
+// TestBrainTasks_CyclesDoNotBreakTheTool pins that a dependency cycle
+// renders. Cycles was typed as a struct array against a [][]string wire
+// field, and the API client turns an unmarshal error into a hard failure —
+// so the tool broke completely exactly when a cycle existed.
+func TestBrainTasks_CyclesDoNotBreakTheTool(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{
+			Tasks:  []types.ResolvedTask{{ID: "aaa11111", Title: "In a cycle", Status: "pending", Classification: "blocked"}},
+			Count:  1,
+			Cycles: [][]string{{"aaa11111", "bbb22222", "aaa11111"}},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(server.URL))
+	out, err := s.tools["tasks"].handler(context.Background(), map[string]any{"project": "p"})
+	if err != nil {
+		t.Fatalf("a dependency cycle broke the tool entirely: %v", err)
+	}
+	if !strings.Contains(out, "Circular Dependencies Detected") {
+		t.Errorf("cycle not reported:\n%s", out)
+	}
+	if !strings.Contains(out, "aaa11111 -> bbb22222 -> aaa11111") {
+		t.Errorf("cycle path not rendered:\n%s", out)
+	}
+}
+
+// TestBrainTasks_LimitKeepsActionableTasks pins that the limit is spent on
+// actionable buckets first.
+//
+// The limit used to be applied to the raw list, which in a mature project is
+// ~99% finished work — so lowering it discarded exactly the rows the caller
+// wanted. On a real project, limit:10 rendered a stats line and zero tasks.
+func TestBrainTasks_LimitKeepsActionableTasks(t *testing.T) {
+	var tasks []types.ResolvedTask
+	for i := 0; i < 30; i++ {
+		tasks = append(tasks, types.ResolvedTask{
+			ID: fmt.Sprintf("done%04d", i), Title: "Finished", Status: "completed", Classification: "not_pending",
+		})
+	}
+	tasks = append(tasks, types.ResolvedTask{ID: "act00001", Title: "Actionable one", Status: "pending", Classification: "ready"})
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{Tasks: tasks, Count: len(tasks)})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(server.URL))
+	out, err := s.tools["tasks"].handler(context.Background(), map[string]any{"project": "p", "limit": float64(3)})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(out, "Actionable one") {
+		t.Errorf("the single ready task was truncated away by a low limit:\n%s", out)
+	}
+	if !strings.Contains(out, "Showing 3 of 31") {
+		t.Errorf("truncation was not disclosed:\n%s", out)
+	}
+}
+
+// TestBrainTasks_StatsMatchTheRenderedBody pins that the header describes the
+// same set as the body. The server's Stats block is project-wide, so
+// printing it above a filtered body produced "4 ready | 2 waiting"
+// immediately followed by "No tasks found matching criteria."
+func TestBrainTasks_StatsMatchTheRenderedBody(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{
+			Tasks: []types.ResolvedTask{
+				{ID: "aaa11111", Title: "Other feature", Status: "pending", Classification: "ready", FeatureID: "other"},
+			},
+			Count: 1,
+			Stats: &types.TaskStats{Total: 400, Ready: 4, Waiting: 2},
+		})
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(server.URL))
+	out, err := s.tools["tasks"].handler(context.Background(), map[string]any{
+		"project": "p", "feature_id": "nonexistent",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(out, "No tasks found matching criteria") {
+		t.Fatalf("expected the empty state:\n%s", out)
+	}
+	if strings.Contains(out, "4 ready") {
+		t.Errorf("project-wide stats printed above an empty filtered body:\n%s", out)
+	}
+	if !strings.Contains(out, "0 ready") {
+		t.Errorf("stats should describe the filtered set:\n%s", out)
+	}
+}
+
+// TestBrainTasksStatus_UsesTheRealResponseType pins tasks_status against
+// types.MultiTaskStatusResponse.
+//
+// The hand-rolled struct declared notFound, changed and timedOut — none of
+// which the server sends — and omitted allCompleted, which it does. Being
+// structurally always false, the phantoms meant the status line could only
+// ever take its third branch: a wait_for call that genuinely waited and saw
+// its condition met still reported "Immediate check (no wait)".
+func TestBrainTasksStatus_UsesTheRealResponseType(t *testing.T) {
+	respond := func(allCompleted bool, ids ...string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			var tasks []types.ResolvedTask
+			for _, id := range ids {
+				tasks = append(tasks, types.ResolvedTask{ID: id, Title: "T " + id, Status: "completed"})
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{Tasks: tasks, AllCompleted: allCompleted})
+		}))
+	}
+
+	t.Run("allCompleted is reported", func(t *testing.T) {
+		srv := respond(true, "aaa11111")
+		defer srv.Close()
+		s := NewServer()
+		RegisterTaskTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["tasks_status"].handler(context.Background(), map[string]any{
+			"project": "p", "task_ids": []any{"aaa11111"},
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "All requested tasks are completed") {
+			t.Errorf("allCompleted was dropped:\n%s", out)
+		}
+		if strings.Contains(out, "Immediate check (no wait)") {
+			t.Errorf("status line still reports the dead phantom branch:\n%s", out)
+		}
+	})
+
+	t.Run("an unresolved id is reported as not found", func(t *testing.T) {
+		srv := respond(false, "aaa11111") // bbb22222 requested but not returned
+		defer srv.Close()
+		s := NewServer()
+		RegisterTaskTools(s, NewAPIClient(srv.URL))
+		out, err := s.tools["tasks_status"].handler(context.Background(), map[string]any{
+			"project": "p", "task_ids": []any{"aaa11111", "bbb22222"},
+		})
+		if err != nil {
+			t.Fatalf("handler error: %v", err)
+		}
+		if !strings.Contains(out, "Not Found") || !strings.Contains(out, "bbb22222") {
+			t.Errorf("an id the server could not resolve must be reported:\n%s", out)
+		}
+		if strings.Contains(out, "aaa11111 - task not found") {
+			t.Errorf("a returned task must not be listed as missing:\n%s", out)
+		}
+	})
+}
+
+// TestMonitorEnableTools_SendTheRealCreateContract pins all four *_enable
+// tools against types.CreateMonitorRequest by DECODING what they send.
+//
+// POST /monitors takes a flat snake_case body (template_id, project,
+// feature_id, scope_type). All four tools sent camelCase "templateId" plus
+// a nested "scope" object — the shape of DeleteMonitorByScopeRequest, which
+// really is {templateId, scope:{...}} and is what the *_disable tools use.
+// The enable tools were written from the disable contract.
+//
+// Nothing matched: the underscore in template_id defeats Go's
+// case-insensitive key fallback, and "scope" is not a field, so TemplateID
+// and ScopeType arrived empty, both required checks in HandleCreateMonitor
+// fired, and every call returned HTTP 400.
+//
+// Decoding into the real request type is the point — a test asserting raw
+// JSON keys would have happily passed on the wrong contract.
+func TestMonitorEnableTools_SendTheRealCreateContract(t *testing.T) {
+	cases := []struct {
+		tool          string
+		args          map[string]any
+		wantTemplate  string
+		wantScopeType string
+		wantFeature   string
+	}{
+		{"monitor_enable", map[string]any{"template_id": "code-review", "project": "p", "feature_id": "f"}, "code-review", "feature", "f"},
+		{"feature_review_enable", map[string]any{"project": "p", "feature_id": "f"}, "feature-review", "feature", "f"},
+		{"blocked_inspector_enable", map[string]any{"project": "p", "feature_id": "f"}, "blocked-inspector", "feature", "f"},
+		{"dream_enable", map[string]any{"project": "p"}, "dream", "project", ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			var got types.CreateMonitorRequest
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+					t.Fatalf("decode request into CreateMonitorRequest: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "mon12345", "title": "Monitor"})
+			}))
+			defer srv.Close()
+
+			s := NewServer()
+			RegisterTaskTools(s, NewAPIClient(srv.URL))
+			if _, err := s.tools[tc.tool].handler(context.Background(), tc.args); err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+
+			// These two are what HandleCreateMonitor requires; empty means
+			// a guaranteed 400.
+			if got.TemplateID != tc.wantTemplate {
+				t.Errorf("template_id = %q, want %q (empty means HTTP 400 on every call)", got.TemplateID, tc.wantTemplate)
+			}
+			if got.ScopeType != tc.wantScopeType {
+				t.Errorf("scope_type = %q, want %q (empty means HTTP 400 on every call)", got.ScopeType, tc.wantScopeType)
+			}
+			if got.Project != "p" {
+				t.Errorf("project = %q, want %q", got.Project, "p")
+			}
+			if got.FeatureID != tc.wantFeature {
+				t.Errorf("feature_id = %q, want %q", got.FeatureID, tc.wantFeature)
+			}
+		})
+	}
+}
+
+// TestBrainTaskTrigger_ReportsNotTriggered pins that a task which did not
+// run says so.
+//
+// TriggerService has five paths returning HTTP 200 with Success:true,
+// Triggered:false and a Reason (internal/service/task.go:1385,1394,1404,
+// 1470,1475 — e.g. "max_runs reached (3/3)"). The hand-rolled struct
+// declared run/pipeline/pipelineCount/message, none of which exist, and
+// dropped triggered and reason — so all five rendered as an apparent
+// success carrying only zero values.
+func TestBrainTaskTrigger_ReportsNotTriggered(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.TriggerResponse{
+			Success: true, TaskID: "abc12345", Triggered: false,
+			Reason: "max_runs reached (3/3)",
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(srv.URL))
+	out, err := s.tools["task_trigger"].handler(context.Background(), map[string]any{
+		"project": "p", "task_id": "abc12345",
+	})
+	if err != nil {
+		t.Fatalf("a 200 response must not be an error: %v", err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("result should be valid JSON: %v", err)
+	}
+	if parsed["triggered"] != false {
+		t.Errorf("triggered = %v, want false", parsed["triggered"])
+	}
+	if parsed["reason"] != "max_runs reached (3/3)" {
+		t.Errorf("reason was dropped, got: %v", parsed["reason"])
+	}
+	if summary, _ := parsed["summary"].(string); !strings.Contains(summary, "NOT triggered") {
+		t.Errorf("summary should state the task did not run, got: %v", parsed["summary"])
+	}
+}
+
+// TestBrainAttachmentList_EscapesEntryPath pins that a slash-bearing
+// entry_id reaches GET /entries/{id}/attachments as ONE path segment.
+//
+// entry_id is documented as "entry ID or path". Unescaped, a path fell
+// through to the GET /entries/* wildcard, which returns a BrainEntry —
+// and that decodes cleanly into AttachEntryAttachmentResponse because they
+// share "path" and "attachments". Attachments is include-gated and this
+// call sends no include, so the tool reported "No attachments found for
+// entry." for an entry with many, next to a correct-looking Path.
+func TestBrainAttachmentList_EscapesEntryPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.AttachEntryAttachmentResponse{
+			EntryID: "abc12345", Path: "projects/p/note/a.md",
+			Attachments: []types.AttachmentReference{{ID: "att1", Filename: "a.png"}},
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient(srv.URL))
+	if _, err := s.tools["attachment_list"].handler(context.Background(), map[string]any{
+		"project": "p", "entry_id": "projects/p/note/a.md",
+	}); err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	if strings.Contains(gotPath, "projects/p/note") {
+		t.Errorf("entry path reached the server unescaped and would fall through to the wildcard route: %s", gotPath)
+	}
+	if !strings.HasSuffix(gotPath, "/attachments") {
+		t.Errorf("request did not target the attachments sub-route: %s", gotPath)
+	}
+}
+
+// TestBrainTaskNext_CompletedCountSurvivesBlockedTasks pins that the
+// completed tally is derived unconditionally.
+//
+// types.TaskStats has no Completed field, so the value must always come
+// from the tasks array. It used to be read from a phantom and corrected
+// only inside an `if StatusBlocked == 0` branch — so a project containing
+// any status-blocked task reported "0 tasks completed" regardless of how
+// many were done. Found by calling the live tool and noticing the number
+// was right only by luck of that project having no blocked tasks.
+func TestBrainTaskNext_CompletedCountSurvivesBlockedTasks(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "/next") {
+			// An empty queue: a zero-valued task, which is what the server
+			// returns since GetNext never raises ErrNotFound.
+			_ = json.NewEncoder(w).Encode(types.ResolvedTask{})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{
+			Tasks: []types.ResolvedTask{
+				{ID: "a1", Status: "completed", Classification: "not_pending"},
+				{ID: "a2", Status: "validated", Classification: "not_pending"},
+				{ID: "b1", Status: "blocked", Classification: "blocked"},
+			},
+			// StatusBlocked is non-zero, which used to skip the derivation.
+			Stats: &types.TaskStats{Total: 3, StatusBlocked: 1, Blocked: 1, NotPending: 2},
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(srv.URL))
+	out, err := s.tools["task_next"].handler(context.Background(), map[string]any{"project": "p"})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(out, "2 tasks completed") {
+		t.Errorf("completed count was suppressed by the presence of a blocked task:\n%s", out)
+	}
+	if !strings.Contains(out, "1 tasks status_blocked") {
+		t.Errorf("status_blocked should still come from the server:\n%s", out)
+	}
+}
+
+// TestTaskGet_ShowsHowTheTaskWillRun pins that task_get answers "how will
+// this run?" without a second call.
+//
+// resolvedTaskWithDeps was a ten-field hand-rolled subset of
+// types.ResolvedTask, which carries ~60. Everything describing execution —
+// agent, model, executor, execution_mode, target_workdir, git_branch, the
+// merge_* set — arrived on the wire and was discarded, so an agent about to
+// pick up a task had to call task_metadata separately to learn which agent
+// and model it would run under.
+func TestTaskGet_ShowsHowTheTaskWillRun(t *testing.T) {
+	task := types.ResolvedTask{
+		ID: "aaa11111", Title: "Do the thing", Path: "projects/p/task/aaa11111.md",
+		Status: "pending", Priority: "high", Classification: "ready",
+		Agent: "tdd-dev", Executor: "opencode", ExecutionMode: "worktree",
+		TargetWorkdir: "/repo", GitBranch: "feat-x", MergeTargetBranch: "main",
+		MergePolicy: "auto_pr", MergeStrategy: "squash", FeatureID: "feat",
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/v1/entries/") {
+			_ = json.NewEncoder(w).Encode(types.BrainEntry{
+				ID: task.ID, Path: task.Path, Title: task.Title, Status: task.Status,
+			})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(types.TaskListResponse{Tasks: []types.ResolvedTask{task}, Count: 1})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(srv.URL))
+	out, err := s.tools["task_get"].handler(context.Background(), map[string]any{
+		"project": "p", "task_id": "aaa11111",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	for _, want := range []string{
+		"### Execution",
+		"- agent: tdd-dev",
+		"- executor: opencode",
+		"- execution mode: worktree",
+		"- workdir: /repo",
+		"- branch: feat-x",
+		"- merges into: main",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %q in task_get output:\n%s", want, out)
+		}
+	}
+
+	// An unset agent or model changes what picks the work up, so say so
+	// rather than omitting the line.
+	if !strings.Contains(out, "model: (unset") {
+		t.Errorf("an unset model should be stated, not omitted:\n%s", out)
+	}
+}
+
+// withFastTaskWaitPolling shrinks the poll interval for tests that drive the
+// wait loop, so exercising it costs milliseconds rather than seconds.
+func withFastTaskWaitPolling(t *testing.T) {
+	t.Helper()
+	prev := taskWaitPollInterval
+	taskWaitPollInterval = 2 * time.Millisecond
+	t.Cleanup(func() { taskWaitPollInterval = prev })
+}
+
+// TestWaitForTaskCondition_MetOnFirstCheck — the condition already holds, so the
+// wait must not sleep, and must say it did not.
+func TestWaitForTaskCondition_MetOnFirstCheck(t *testing.T) {
+	resp := &types.MultiTaskStatusResponse{AllCompleted: true}
+	calls := 0
+	out := waitForTaskCondition(context.Background(), resp, func() error { calls++; return nil }, "completed", 60000)
+
+	if calls != 0 {
+		t.Errorf("should not re-fetch when already satisfied, got %d calls", calls)
+	}
+	if !strings.Contains(out, "already true on the first check") {
+		t.Errorf("wait outcome = %q", out)
+	}
+}
+
+// TestWaitForTaskCondition_NotFoundFailsFast — waiting on an id that resolves to
+// nothing can never succeed, because the server holds AllCompleted false for it.
+// Burning the full timeout to rediscover that helps nobody.
+func TestWaitForTaskCondition_NotFoundFailsFast(t *testing.T) {
+	resp := &types.MultiTaskStatusResponse{NotFound: []string{"nosuchid"}}
+	calls := 0
+	out := waitForTaskCondition(context.Background(), resp, func() error { calls++; return nil }, "completed", 300000)
+
+	if calls != 0 {
+		t.Errorf("should not poll for an unresolvable id, got %d calls", calls)
+	}
+	if !strings.Contains(out, "can never be met") {
+		t.Errorf("wait outcome = %q", out)
+	}
+}
+
+// TestWaitForTaskCondition_PollsUntilCompleted drives the real loop: the task is
+// in_progress on the first two checks and completed on the third.
+func TestWaitForTaskCondition_PollsUntilCompleted(t *testing.T) {
+	withFastTaskWaitPolling(t)
+	resp := &types.MultiTaskStatusResponse{
+		Tasks: []types.ResolvedTask{{ID: "t1", Status: "in_progress"}},
+	}
+	calls := 0
+	fetch := func() error {
+		calls++
+		if calls >= 2 {
+			*resp = types.MultiTaskStatusResponse{
+				Tasks:        []types.ResolvedTask{{ID: "t1", Status: "completed"}},
+				AllCompleted: true,
+			}
+		}
+		return nil
+	}
+
+	out := waitForTaskCondition(context.Background(), resp, fetch, "completed", 60000)
+
+	if !strings.Contains(out, "condition met") {
+		t.Errorf("wait outcome = %q, want condition met", out)
+	}
+	if !resp.AllCompleted {
+		t.Error("resp must be mutated to the final observed state")
+	}
+}
+
+// TestWaitForTaskCondition_TimeoutIsReportedAsSuch is the honesty guard. A
+// timed-out wait produces a task list that looks much like a satisfied one — the
+// same tasks, one merely unfinished — so the outcome line must distinguish them.
+func TestWaitForTaskCondition_TimeoutIsReportedAsSuch(t *testing.T) {
+	withFastTaskWaitPolling(t)
+	resp := &types.MultiTaskStatusResponse{
+		Tasks: []types.ResolvedTask{{ID: "t1", Status: "in_progress"}},
+	}
+	// Deadline already passed, so the first tick times out.
+	out := waitForTaskCondition(context.Background(), resp, func() error { return nil }, "completed", 1)
+
+	if !strings.Contains(out, "TIMED OUT") {
+		t.Errorf("wait outcome = %q, want a timeout report", out)
+	}
+	if !strings.Contains(out, "last observed") {
+		t.Errorf("a timed-out wait must not present its state as final: %q", out)
+	}
+}
+
+// TestWaitForTaskCondition_AnyNeedsABaseline — "any" means changed relative to
+// when the caller started waiting, so it cannot fire on the very first check.
+func TestWaitForTaskCondition_AnyNeedsABaseline(t *testing.T) {
+	resp := &types.MultiTaskStatusResponse{Tasks: []types.ResolvedTask{{ID: "t1", Status: "pending"}}}
+
+	if ok, _ := taskWaitSatisfied(resp, "any", nil); ok {
+		t.Error("'any' must not be satisfied before a baseline exists")
+	}
+	if ok, why := taskWaitSatisfied(resp, "any", map[string]string{"t1": "in_progress"}); !ok {
+		t.Error("'any' should fire when a status differs from the baseline")
+	} else if !strings.Contains(why, "in_progress") || !strings.Contains(why, "pending") {
+		t.Errorf("reason should name both statuses, got %q", why)
+	}
+}
+
+// TestWaitForTaskCondition_FetchErrorStopsTheWait — a transient failure mid-wait
+// must not be reported as if the condition resolved.
+func TestWaitForTaskCondition_FetchErrorStopsTheWait(t *testing.T) {
+	withFastTaskWaitPolling(t)
+	resp := &types.MultiTaskStatusResponse{Tasks: []types.ResolvedTask{{ID: "t1", Status: "pending"}}}
+	out := waitForTaskCondition(context.Background(), resp, func() error {
+		return fmt.Errorf("connection refused")
+	}, "completed", 60000)
+
+	if !strings.Contains(out, "error re-checking status") || !strings.Contains(out, "connection refused") {
+		t.Errorf("wait outcome = %q, want the error surfaced", out)
+	}
+}
+
+// TestTaskNext_DistinguishesEmptyFromClaimedFromUnknownProject covers the three
+// unrelated situations that all rendered "No ready tasks available." The data to
+// tell them apart was already being fetched.
+func TestTaskNext_DistinguishesEmptyFromClaimedFromUnknownProject(t *testing.T) {
+	tests := []struct {
+		name    string
+		tasks   []map[string]any
+		stats   *types.TaskStats
+		want    []string
+		notWant []string
+	}{
+		{
+			name:  "unknown project has no tasks at all",
+			tasks: nil,
+			stats: &types.TaskStats{},
+			want:  []string{"No tasks at all in project", "mistyped or never-registered project id"},
+			// Must not imply a real but idle queue.
+			notWant: []string{"tasks waiting on dependencies"},
+		},
+		{
+			name:  "ready tasks exist but are claimed or paused",
+			tasks: []map[string]any{{"classification": "ready", "status": "pending"}},
+			stats: &types.TaskStats{Total: 1, Ready: 1},
+			want: []string{
+				"1 task(s) ARE ready",
+				"This is not an empty queue",
+				"runner_status",
+				"task_dispatch_lease",
+			},
+		},
+		{
+			name:  "genuinely nothing runnable",
+			tasks: []map[string]any{{"classification": "waiting", "status": "pending"}},
+			stats: &types.TaskStats{Total: 1, Waiting: 1},
+			want:  []string{"No ready tasks available", "1 tasks waiting on dependencies"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.HasSuffix(r.URL.Path, "/next") {
+					// GetNext returns a zero-valued task for "nothing dispatchable".
+					_ = json.NewEncoder(w).Encode(map[string]any{})
+					return
+				}
+				_ = json.NewEncoder(w).Encode(map[string]any{"tasks": tt.tasks, "stats": tt.stats})
+			}))
+			defer srv.Close()
+
+			s := NewServer()
+			RegisterTaskTools(s, NewAPIClient(srv.URL))
+			got, err := s.tools["task_next"].handler(context.Background(), map[string]any{"project": "some-project"})
+			if err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+
+			for _, w := range tt.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("missing %q:\n%s", w, got)
+				}
+			}
+			for _, nw := range tt.notWant {
+				if strings.Contains(got, nw) {
+					t.Errorf("unexpectedly contains %q:\n%s", nw, got)
+				}
+			}
+		})
+	}
+}
+
+// TestTasksStatus_MidWaitFailureDoesNotFabricateMissingTasks drives the REAL
+// handler end to end, through the real fetch closure, against a server that
+// succeeds once and then fails.
+//
+// The unit test above (TestWaitForTaskCondition_FetchErrorStopsTheWait) passed a
+// stub that never touched resp, so it asserted only the outcome string and could
+// not see that the real closure zeroed the response before issuing its request.
+// A failed poll therefore left the response empty, and the renderer listed EVERY
+// requested id as "no such task in project X" — a successful tool result
+// asserting the caller's tasks do not exist, on the exact signal an orchestrator
+// gates control flow on. Stubbing the thing under test hid the bug in it.
+func TestTasksStatus_MidWaitFailureDoesNotFabricateMissingTasks(t *testing.T) {
+	withFastTaskWaitPolling(t)
+
+	var polls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		if polls > 1 {
+			// Anything non-2xx: a redeploy 503, a proxy 502, an expired token.
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]any{"error": "Service Unavailable", "message": "redeploying"})
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.MultiTaskStatusResponse{
+			Tasks: []types.ResolvedTask{
+				{ID: "aaa11111", Title: "Task A", Status: "completed"},
+				{ID: "bbb22222", Title: "Task B", Status: "in_progress"},
+			},
+		})
+	}))
+	defer srv.Close()
+
+	s := NewServer()
+	RegisterTaskTools(s, NewAPIClient(srv.URL))
+	got, err := s.tools["tasks_status"].handler(context.Background(), map[string]any{
+		"project":  "p",
+		"task_ids": []any{"aaa11111", "bbb22222"},
+		"wait_for": "completed",
+		"timeout":  60000,
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+
+	// The tasks exist. Nothing may claim otherwise.
+	if strings.Contains(got, "Not Found") || strings.Contains(got, "no such task") {
+		t.Errorf("a failed poll fabricated missing tasks:\n%s", got)
+	}
+	// The last good state must survive, including the task that was completed.
+	for _, want := range []string{"Task A", "Task B", "2 requested tasks completed"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q — last good state was not preserved:\n%s", want, got)
+		}
+	}
+	// And the interruption must be disclosed, not silently swallowed.
+	if !strings.Contains(got, "error re-checking status") {
+		t.Errorf("the stopped wait must be disclosed:\n%s", got)
 	}
 }

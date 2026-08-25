@@ -261,7 +261,11 @@ func (s *TaskServiceImpl) GetTask(ctx context.Context, projectId, taskId string)
 			return &task, nil
 		}
 	}
-	return nil, fmt.Errorf("task %q not found in project %q", taskId, projectId)
+	// Wrap the shared sentinel rather than returning bare prose. Two handlers
+	// worked around the unwrapped error by testing `task == nil` — which is true
+	// on EVERY error path, so a storage failure was reported as "task not found"
+	// with a 404. A third call site matched on the string "not found".
+	return nil, fmt.Errorf("task %q not found in project %q: %w", taskId, projectId, api.ErrNotFound)
 }
 
 // applyTaskDefaults fills empty fields on resolved tasks from server-side
@@ -900,25 +904,42 @@ func (s *TaskServiceImpl) GetMultiTaskStatus(ctx context.Context, projectId stri
 		taskMap[t.ID] = t
 	}
 
-	// Collect requested tasks
+	// Collect requested tasks.
+	//
+	// Ids that resolve to nothing are recorded rather than skipped. This is the
+	// gate an orchestrator polls to decide whether spawned subtasks finished, so
+	// a silently-dropped id was answered with "all completed" — vacuously true
+	// for a task that never existed. A mistyped id, an id from another project,
+	// or an archived-away task all took that path.
 	var tasks []types.ResolvedTask
+	var notFound []string
 	allCompleted := true
 	for _, id := range req.TaskIDs {
-		if t, ok := taskMap[id]; ok {
-			tasks = append(tasks, t)
-			if t.Status != "completed" && t.Status != "validated" {
-				allCompleted = false
-			}
+		t, ok := taskMap[id]
+		if !ok {
+			notFound = append(notFound, id)
+			// Cannot assert completion about a task we could not find.
+			allCompleted = false
+			continue
+		}
+		tasks = append(tasks, t)
+		if t.Status != "completed" && t.Status != "validated" {
+			allCompleted = false
 		}
 	}
 
 	if tasks == nil {
 		tasks = []types.ResolvedTask{}
 	}
+	// An empty request asserts nothing, so it completes nothing.
+	if len(req.TaskIDs) == 0 {
+		allCompleted = false
+	}
 
 	return &types.MultiTaskStatusResponse{
 		Tasks:        tasks,
 		AllCompleted: allCompleted,
+		NotFound:     notFound,
 	}, nil
 }
 
@@ -1063,6 +1084,9 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	if normalizedOpts.RemoteBranchPolicy != "" {
 		fm.RemoteBranchPolicy = normalizedOpts.RemoteBranchPolicy
 	}
+	if normalizedOpts.CheckoutMode != "" {
+		fm.CheckoutMode = normalizedOpts.CheckoutMode
+	}
 	if normalizedOpts.ExecutionMode != "" {
 		fm.ExecutionMode = normalizedOpts.ExecutionMode
 	}
@@ -1115,8 +1139,17 @@ func normalizeFeatureCheckoutOptions(opts *types.FeatureCheckoutOptions) *types.
 		MergePolicy:        strings.TrimSpace(opts.MergePolicy),
 		MergeStrategy:      strings.TrimSpace(opts.MergeStrategy),
 		RemoteBranchPolicy: strings.TrimSpace(opts.RemoteBranchPolicy),
+		CheckoutMode:       strings.TrimSpace(opts.CheckoutMode),
 		ExecutionMode:      strings.TrimSpace(opts.ExecutionMode),
 		OpenPRBeforeMerge:  opts.OpenPRBeforeMerge,
+	}
+
+	// Unlike the entries API, the checkout endpoint decodes options straight
+	// off the request body with no enum validation, so an unrecognized mode
+	// would otherwise be persisted into frontmatter and then silently behave
+	// as "ai" at fold time. Drop it instead of writing a value we'd ignore.
+	if !types.IsValidCheckoutMode(normalized.CheckoutMode) {
+		normalized.CheckoutMode = ""
 	}
 
 	// Apply defaults
@@ -2251,11 +2284,38 @@ func metaStringSlice(meta map[string]interface{}, key string) ([]string, bool) {
 }
 
 // computedFeatureToFeature converts a ComputedFeature to a types.Feature.
+//
+// The two stat types speak different taxonomies and must not be mapped by
+// field name. FeatureTaskStats counts STATUS (pending, in_progress,
+// completed, blocked); types.TaskStats counts dependency CLASSIFICATION
+// (ready, waiting, blocked, status_blocked, not_pending).
+//
+// They were bridged with Ready: f.TaskStats.Pending, which is wrong — a
+// pending task whose dependencies are unmet is waiting, not ready. Waiting,
+// StatusBlocked and NotPending were never set at all, so they read as zero.
+// Live, a feature holding 4 ready and 2 waiting tasks reported
+// "Ready: 6 | Waiting: 0", and a feature of 15 drafts reported
+// "Not pending: 0" while listing fifteen not_pending tasks.
+//
+// Counting classification directly is also what makes features/feature_get
+// agree with the tasks tool, which classifies the same way.
 func computedFeatureToFeature(f *ComputedFeature) types.Feature {
-	stats := &types.TaskStats{
-		Total:   f.TaskStats.Total,
-		Ready:   f.TaskStats.Pending,
-		Blocked: f.TaskStats.Blocked,
+	stats := &types.TaskStats{}
+	for _, task := range f.Tasks {
+		stats.Total++
+		switch task.Classification {
+		case "ready":
+			stats.Ready++
+		case "waiting":
+			stats.Waiting++
+		case "blocked":
+			stats.Blocked++
+		default:
+			stats.NotPending++
+		}
+		if task.Status == "blocked" {
+			stats.StatusBlocked++
+		}
 	}
 
 	return types.Feature{

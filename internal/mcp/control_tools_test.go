@@ -18,6 +18,8 @@ func TestRegisterControlTools_CountNamesHandlersDescriptions(t *testing.T) {
 	expected := []string{
 		"runner_pause_project",
 		"runner_resume_project",
+		"runner_pause_project_automations",
+		"runner_resume_project_automations",
 		"runner_pause_all",
 		"runner_resume_all",
 		"control_send_prompt",
@@ -68,7 +70,7 @@ func TestControlToolSchemas(t *testing.T) {
 		{"runner_resume_all", []string{"confirm"}, []string{"confirm"}},
 		{"control_send_prompt", []string{"runner_id", "instance_id", "session_id", "text"}, []string{"runner_id", "instance_id", "session_id", "text", "agent", "provider_id", "model_id"}},
 		{"control_abort_session", []string{"runner_id", "instance_id", "session_id"}, []string{"runner_id", "instance_id", "session_id"}},
-		{"control_permission", []string{"runner_id", "instance_id", "session_id", "permission_id", "response"}, []string{"runner_id", "instance_id", "session_id", "permission_id", "response", "remember"}},
+		{"control_permission", []string{"runner_id", "instance_id", "session_id", "permission_id", "response"}, []string{"runner_id", "instance_id", "session_id", "permission_id", "response"}},
 		{"control_spawn_instance", []string{"runner_id", "workdir"}, []string{"runner_id", "workdir", "agent", "model", "title"}},
 		{"control_kill_instance", []string{"runner_id", "instance_id", "confirm"}, []string{"runner_id", "instance_id", "confirm"}},
 	}
@@ -113,6 +115,10 @@ func TestControlTools_RequestMethodsPathsBodiesAndFormatting(t *testing.T) {
 			json.NewEncoder(w).Encode(map[string]any{"success": true})
 		case "/api/v1/tasks/runner/resume/brain":
 			json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case "/api/v1/tasks/runner/automations/pause/brain":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
+		case "/api/v1/tasks/runner/automations/resume/brain":
+			_ = json.NewEncoder(w).Encode(map[string]any{"success": true})
 		case "/api/v1/tasks/runner/pause":
 			json.NewEncoder(w).Encode(map[string]any{"success": true})
 		case "/api/v1/tasks/runner/resume":
@@ -143,13 +149,20 @@ func TestControlTools_RequestMethodsPathsBodiesAndFormatting(t *testing.T) {
 		args map[string]any
 		want []string
 	}{
-		{"runner_pause_project", map[string]any{"projectId": "brain"}, []string{"Paused runner execution for project brain"}},
-		{"runner_resume_project", map[string]any{"projectId": "brain"}, []string{"Resumed runner execution for project brain"}},
-		{"runner_pause_all", map[string]any{"confirm": true}, []string{"Paused runner execution for all projects"}},
-		{"runner_resume_all", map[string]any{"confirm": true}, []string{"Resumed runner execution for all projects"}},
+		// Each of these moves ONE of two independent dials. The old
+		// expectations ("Paused runner execution for project brain") asserted
+		// the wording that made a tasks-only pause read as a full stop, which
+		// is what this change fixes — so they name the dial now, and say what
+		// the call did NOT do.
+		{"runner_pause_project", map[string]any{"projectId": "brain"}, []string{"Paused MANUAL task execution for project brain", "runner_pause_project_automations"}},
+		{"runner_resume_project", map[string]any{"projectId": "brain"}, []string{"Resumed MANUAL task execution for project brain", "separate"}},
+		{"runner_pause_project_automations", map[string]any{"projectId": "brain"}, []string{"Paused AUTOMATION-GENERATED task execution for project brain", "Manual tasks are NOT paused"}},
+		{"runner_resume_project_automations", map[string]any{"projectId": "brain"}, []string{"Resumed AUTOMATION-GENERATED task execution for project brain"}},
+		{"runner_pause_all", map[string]any{"confirm": true}, []string{"Paused MANUAL task execution for all projects", "Automation-generated tasks are NOT affected"}},
+		{"runner_resume_all", map[string]any{"confirm": true}, []string{"Resumed MANUAL task execution for all projects"}},
 		{"control_send_prompt", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "text": "continue", "agent": "dev", "providerID": "anthropic", "modelID": "claude"}, []string{"Sent prompt to session ses-1", "runner-1", "inst-1"}},
 		{"control_abort_session", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1"}, []string{"Abort requested for session ses-1", "runner-1", "inst-1"}},
-		{"control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "allow", "remember": "once"}, []string{"Responded allow to permission perm-1", "session ses-1"}},
+		{"control_permission", map[string]any{"runnerId": "runner-1", "instanceId": "inst-1", "sessionId": "ses-1", "permissionId": "perm-1", "response": "always"}, []string{"Responded always to permission perm-1", "session ses-1"}},
 		{"control_spawn_instance", map[string]any{"runnerId": "runner-1", "workdir": "/tmp/brain", "agent": "dev", "model": "anthropic/claude", "title": "Scratch"}, []string{"Spawned control instance on runner runner-1", "inst-new", "/tmp/brain"}},
 		{"control_kill_instance", map[string]any{"runnerId": "runner-1", "instanceId": "inst-new", "confirm": true}, []string{"Killed control instance inst-new", "runner-1"}},
 	}
@@ -170,11 +183,13 @@ func TestControlTools_RequestMethodsPathsBodiesAndFormatting(t *testing.T) {
 	want := []recordedRequest{
 		{Method: "POST", Path: "/api/v1/tasks/runner/pause/brain", Body: "{}"},
 		{Method: "POST", Path: "/api/v1/tasks/runner/resume/brain", Body: "{}"},
+		{Method: "POST", Path: "/api/v1/tasks/runner/automations/pause/brain", Body: "{}"},
+		{Method: "POST", Path: "/api/v1/tasks/runner/automations/resume/brain", Body: "{}"},
 		{Method: "POST", Path: "/api/v1/tasks/runner/pause", Body: "{}"},
 		{Method: "POST", Path: "/api/v1/tasks/runner/resume", Body: "{}"},
 		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances/inst-1/sessions/ses-1/prompt", Body: `{"agent":"dev","model":{"modelID":"claude","providerID":"anthropic"},"text":"continue"}`},
 		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances/inst-1/sessions/ses-1/abort", Body: "{}"},
-		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances/inst-1/sessions/ses-1/permissions/perm-1", Body: `{"remember":"once","response":"allow"}`},
+		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances/inst-1/sessions/ses-1/permissions/perm-1", Body: `{"response":"always"}`},
 		{Method: "POST", Path: "/api/v1/control/runners/runner-1/instances", Body: `{"agent":"dev","model":"anthropic/claude","title":"Scratch","workdir":"/tmp/brain"}`},
 		{Method: "DELETE", Path: "/api/v1/control/runners/runner-1/instances/inst-new", Body: ""},
 	}
@@ -209,8 +224,13 @@ func TestControlTools_ValidationAndConfirmation(t *testing.T) {
 		{"runner_resume_all", map[string]any{"confirm": false}, "confirm=true is required"},
 		{"control_send_prompt", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1", "session_id": "ses-1"}, "text is required"},
 		{"control_abort_session", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1"}, "session_id is required"},
-		{"control_permission", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1", "session_id": "ses-1", "permission_id": "perm-1", "response": "maybe"}, "response must be allow or deny"},
-		{"control_permission", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1", "session_id": "ses-1", "permission_id": "perm-1", "response": "allow", "remember": "forever"}, "remember must be once or always"},
+		// OpenCode's vocabulary is {once, always, reject}, proxied
+		// untouched. These cases used to assert {allow, deny} plus a
+		// separate remember field — a contract the wire has never had, so
+		// the tool could neither grant a permission nor deny one, and
+		// "reject" was unreachable.
+		{"control_permission", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1", "session_id": "ses-1", "permission_id": "perm-1", "response": "maybe"}, "response must be once, always, or reject"},
+		{"control_permission", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1", "session_id": "ses-1", "permission_id": "perm-1", "response": "allow"}, "response must be once, always, or reject"},
 		{"control_spawn_instance", map[string]any{"runner_id": "runner-1", "workdir": "relative/path"}, "workdir must be an absolute path"},
 		{"control_kill_instance", map[string]any{"runner_id": "runner-1", "instance_id": "inst-1"}, "confirm=true is required"},
 	}

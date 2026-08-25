@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/url"
 	"sort"
@@ -37,7 +38,12 @@ Events use a namespaced taxonomy (e.g., "task.completed", "entry.created").
 Supports glob patterns like "task.*" to match all task events.
 
 Example:
-  webhook_create({ name: "deploy-hook", url: "https://example.com/hook", events: ["task.completed"] })`,
+  webhook_create({ name: "deploy-hook", url: "https://example.com/hook", events: ["task.completed"] })
+
+NOTE: duplicate URLs are NOT rejected. There is no uniqueness check in the
+service and no unique constraint on the column, so creating the same webhook
+twice yields two subscriptions and two deliveries per event. Call webhook_list
+first if you might be re-creating one.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
@@ -45,10 +51,19 @@ Example:
 				"url":     {Type: "string", Description: "URL to receive webhook POST callbacks"},
 				"events":  {Type: "array", Items: &Property{Type: "string"}, Description: "Event types to subscribe to (e.g., [\"task.completed\", \"entry.*\"])"},
 				"filter":  {Type: "object", Description: "Optional key-value filter (e.g., {\"project\": \"my-project\"})"},
-				"secret":  {Type: "string", Description: "Optional HMAC secret for payload signing (X-Hook-Signature header)"},
+				// The service signs with X-Brain-Signature
+				// (internal/service/webhook_service.go). This said
+				// X-Hook-Signature, so a receiver written from this
+				// description verified a header that never arrives and
+				// rejected every delivery — or, worse, skipped verification
+				// because the header appeared to be missing.
+				"secret": {Type: "string", Description: "Optional HMAC secret for payload signing. Deliveries carry the signature in the X-Brain-Signature header as HMAC-SHA256 of the raw body."},
 				"enabled": {Type: "boolean", Description: "Whether the webhook is active (default: true)"},
 			},
-			Required: []string{"url", "events"},
+			// name is required server-side (internal/api/webhooks.go). Leaving
+			// it out of Required meant the model omitted it and got back a
+			// validation error for a field the schema never said was needed.
+			Required: []string{"name", "url", "events"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		webhookURL := StringArg(args, "url", "")
@@ -63,7 +78,7 @@ Example:
 
 		// Validate URL format
 		if _, err := url.ParseRequestURI(webhookURL); err != nil {
-			return fmt.Sprintf("Error: invalid URL %q: %v", webhookURL, err), nil
+			return "", fmt.Errorf("invalid URL %q: %w", webhookURL, err)
 		}
 
 		req := types.CreateWebhookRequest{
@@ -97,7 +112,7 @@ Example:
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "already exists") || strings.Contains(errMsg, "409") {
-				return fmt.Sprintf("Webhook already exists with that URL. Use webhook_list to see existing webhooks."), nil
+				return "", errors.New("webhook already exists with that URL. Use webhook_list to see existing webhooks")
 			}
 			return "", err
 		}
@@ -114,7 +129,8 @@ Example:
 
 		if len(resp.Filter) > 0 {
 			filterParts := make([]string, 0, len(resp.Filter))
-			for k, v := range resp.Filter {
+			for _, k := range sortedKeys(resp.Filter) {
+				v := resp.Filter[k]
 				filterParts = append(filterParts, fmt.Sprintf("%s=%s", k, v))
 			}
 			lines = append(lines, fmt.Sprintf("- **Filter:** %s", strings.Join(filterParts, ", ")))
@@ -173,7 +189,8 @@ Use enabled_only to filter to active webhooks.`,
 			lines = append(lines, fmt.Sprintf("  Events: %s", strings.Join(wh.Events, ", ")))
 			if len(wh.Filter) > 0 {
 				filterParts := make([]string, 0, len(wh.Filter))
-				for k, v := range wh.Filter {
+				for _, k := range sortedKeys(wh.Filter) {
+					v := wh.Filter[k]
 					filterParts = append(filterParts, fmt.Sprintf("%s=%s", k, v))
 				}
 				lines = append(lines, fmt.Sprintf("  Filter: %s", strings.Join(filterParts, ", ")))
@@ -213,7 +230,7 @@ Use webhook_list to find webhook IDs.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}
@@ -253,7 +270,11 @@ secret, and enabled status. Use webhook_get to inspect the result.`,
 		}
 
 		body := map[string]any{}
-		if name, ok := args["name"].(string); ok {
+		// An explicit empty string passes the type assertion, so this used
+		// to send name:"" and silently blank a webhook's name — while
+		// webhook_create requires one. Treat empty as "not provided",
+		// matching how the other optional fields behave.
+		if name, ok := args["name"].(string); ok && name != "" {
 			body["name"] = name
 		}
 		if webhookURL, ok := args["url"].(string); ok {
@@ -261,7 +282,7 @@ secret, and enabled status. Use webhook_get to inspect the result.`,
 				return "", fmt.Errorf("url must not be empty")
 			}
 			if _, err := url.ParseRequestURI(webhookURL); err != nil {
-				return fmt.Sprintf("Error: invalid URL %q: %v", webhookURL, err), nil
+				return "", fmt.Errorf("invalid URL %q: %w", webhookURL, err)
 			}
 			body["url"] = webhookURL
 		}
@@ -298,10 +319,10 @@ secret, and enabled status. Use webhook_get to inspect the result.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			if strings.Contains(errMsg, "already exists") || strings.Contains(errMsg, "409") {
-				return "Webhook already exists with that URL. Use webhook_list to see existing webhooks.", nil
+				return "", errors.New("webhook already exists with that URL. Use webhook_list to see existing webhooks")
 			}
 			return "", err
 		}
@@ -339,7 +360,7 @@ result, including success, status code, latency, and error details.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}
@@ -385,7 +406,7 @@ and timestamps. Use limit to control how many delivery records are returned.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}
@@ -447,7 +468,7 @@ Use webhook_list to find webhook IDs.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}
@@ -492,7 +513,7 @@ Use webhook_list to find webhook IDs.`,
 		if err != nil {
 			errMsg := err.Error()
 			if strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "404") {
-				return fmt.Sprintf("Webhook not found: %s. Use webhook_list to see existing webhooks.", id), nil
+				return "", fmt.Errorf("webhook not found: %s. Use webhook_list to see existing webhooks", id)
 			}
 			return "", err
 		}
@@ -509,6 +530,22 @@ Use webhook_list to find webhook IDs.`,
 // =============================================================================
 // Webhook helper for JSON output
 // =============================================================================
+
+
+// sortedKeys returns a map's keys in sorted order.
+//
+// The webhook renderers iterated Filter directly, and Go randomises map
+// iteration — so the same webhook rendered its filter in a different order
+// on each call, and an agent diffing two listings saw changes that had not
+// happened.
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
+}
 
 func formatWebhookConfig(title string, wh types.WebhookResponse) string {
 	status := "enabled"

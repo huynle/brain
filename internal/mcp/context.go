@@ -44,9 +44,14 @@ func GetExecutionContext(directory string) ExecutionContext {
 	home, _ := os.UserHomeDir()
 	mainRepoPath := directory
 	var gitRemote, gitBranch string
+	// insideRepo records whether git recognised this directory at all. It is
+	// what separates a real project name from the basename of whatever
+	// directory the process happens to be running in.
+	insideRepo := false
 
 	// Try to get the main worktree path
 	if out, err := gitCommand(directory, "worktree", "list", "--porcelain"); err == nil {
+		insideRepo = true
 		for _, line := range strings.Split(out, "\n") {
 			if strings.HasPrefix(line, "worktree ") {
 				mainRepoPath = strings.TrimPrefix(line, "worktree ")
@@ -83,7 +88,7 @@ func GetExecutionContext(directory string) ExecutionContext {
 	}
 
 	return ExecutionContext{
-		ProjectID: resolveProjectName(workdir),
+		ProjectID: resolveProjectName(workdir, insideRepo),
 		Workdir:   workdir,
 		GitRemote: gitRemote,
 		GitBranch: gitBranch,
@@ -100,7 +105,29 @@ func GetExecutionContext(directory string) ExecutionContext {
 
 // resolveProjectName extracts a short project name from a home-relative path.
 // e.g., "projects/brain-api" → "brain-api", "brain-api" → "brain-api"
-func resolveProjectName(homeRelativePath string) string {
+//
+// insideRepo says whether git recognised the directory. It is the difference
+// between "the last path segment is this project's name" and "the last path
+// segment is whatever directory this process happens to be sitting in".
+//
+// Without it, an unconditional basename fallback answers confidently from
+// anywhere. The MCP server runs in a container whose working directory is
+// /app, which never matches the home prefix, so makeHomeRelative returned it
+// unchanged and this function called the project "app" — with no failure
+// signal. Seven substantive Hindsight entries were written to projects/app/
+// as a result, invisible to anyone searching the project they belong to, and
+// "app" now appears in scheduler_status as a live project.
+//
+// Returns "" when the project cannot be determined. Callers must treat that
+// as "ask the user", never as a name.
+func resolveProjectName(homeRelativePath string, insideRepo bool) string {
+	// Still absolute means makeHomeRelative found no home prefix to strip,
+	// so this path is not under the user's home. Unless git vouched for it
+	// being a repository, we do not know what project it is.
+	if strings.HasPrefix(homeRelativePath, "/") && !insideRepo {
+		return ""
+	}
+
 	segments := strings.Split(homeRelativePath, "/")
 	var filtered []string
 	for _, s := range segments {
@@ -109,14 +136,30 @@ func resolveProjectName(homeRelativePath string) string {
 		}
 	}
 	if len(filtered) == 0 {
-		return homeRelativePath
+		return ""
 	}
 	return filtered[len(filtered)-1]
 }
 
 // makeHomeRelative converts an absolute path to a home-relative path.
+// makeHomeRelative strips a home-directory prefix, so callers can tell
+// "somewhere under the user's home" from "somewhere else entirely".
+//
+// A home of "/" is ignored, because it is a prefix of EVERY absolute path and
+// would make every path look home-relative — destroying exactly the signal
+// resolveProjectName depends on. That is not hypothetical: the MCP server runs
+// in a container with HOME=/ and WORKDIR=/app, so "/app" became "app", the
+// leading-slash guard in resolveProjectName never fired, and the basename
+// fallback confidently answered "app".
+//
+// That is the same wrong answer 25c02d5 set out to eliminate, arrived at by a
+// different route — verified against the live container, which reported
+// Project: app while sitting in a directory that is not a git repository.
 func makeHomeRelative(path, home string) string {
-	if home != "" && strings.HasPrefix(path, home) {
+	if home == "" || home == "/" {
+		return path
+	}
+	if strings.HasPrefix(path, home) {
 		rel := strings.TrimPrefix(path, home)
 		rel = strings.TrimPrefix(rel, "/")
 		return rel

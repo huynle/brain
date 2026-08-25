@@ -985,3 +985,9 @@ func TestControlExecSignal_BridgeError(t *testing.T) {
 		t.Errorf("expected 502, got %d (%s)", rec.Code, rec.Body.String())
 	}
 }
+
+// Coverage satisfies EventService. Returns a plausible full-ring window so the
+// renderer's coverage line is exercised rather than skipped in tests.
+func (m *recordingEventService) Coverage() types.EventCoverage {
+	return types.EventCoverage{Buffered: 10, Capacity: 1000}
+}

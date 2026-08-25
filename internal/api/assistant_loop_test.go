@@ -28,8 +28,8 @@ import (
 // can walk the loop turn by turn.
 type scriptedOpenRouter struct {
 	mu       sync.Mutex
-	turns    []string      // raw SSE body for each successive request
-	seen     [][]byte      // captured request bodies (for assertions)
+	turns    []string // raw SSE body for each successive request
+	seen     [][]byte // captured request bodies (for assertions)
 	callback func(int, []byte)
 }
 

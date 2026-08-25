@@ -3200,3 +3200,44 @@ func TestApplyTaskDefaults_NoGitBranchDerivationForCurrentBranch(t *testing.T) {
 		t.Errorf("GitBranch = %q, want empty (should not derive for current_branch mode)", task.GitBranch)
 	}
 }
+
+// TestGetMultiTaskStatus_UnknownIDIsNotCompletion is the regression test for the
+// most dangerous instance of this codebase's recurring "confident wrong answer"
+// pattern. tasks_status is documented as the gate an orchestrator polls to decide
+// whether spawned subtasks finished. Unknown ids were skipped by the collection
+// loop, and allCompleted started true and was only cleared by a FOUND incomplete
+// task — so a request naming only ids that resolve to nothing returned
+// {"tasks":[],"allCompleted":true}. A mistyped id, an id from another project, or
+// an archived task all told the caller its work was done.
+func TestGetMultiTaskStatus_UnknownIDIsNotCompletion(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	resp, err := svc.GetMultiTaskStatus(ctx, "brain-api", types.MultiTaskStatusRequest{
+		TaskIDs: []string{"nosuchid"},
+	})
+	if err != nil {
+		t.Fatalf("GetMultiTaskStatus failed: %v", err)
+	}
+
+	if resp.AllCompleted {
+		t.Error("allCompleted must be false when a requested id resolves to nothing")
+	}
+	if len(resp.NotFound) != 1 || resp.NotFound[0] != "nosuchid" {
+		t.Errorf("NotFound = %v, want [nosuchid]", resp.NotFound)
+	}
+}
+
+// TestGetMultiTaskStatus_EmptyRequestCompletesNothing — an empty id list asserts
+// nothing, so it must not report universal completion either.
+func TestGetMultiTaskStatus_EmptyRequestCompletesNothing(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+
+	resp, err := svc.GetMultiTaskStatus(context.Background(), "brain-api", types.MultiTaskStatusRequest{})
+	if err != nil {
+		t.Fatalf("GetMultiTaskStatus failed: %v", err)
+	}
+	if resp.AllCompleted {
+		t.Error("an empty request must not report allCompleted")
+	}
+}

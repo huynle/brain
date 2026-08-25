@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -195,11 +196,24 @@ func formatFeatureList(title, empty string, features []types.Feature, limit int)
 	if len(features) == 0 {
 		return fmt.Sprintf("## %s\n\n%s.", title, empty)
 	}
+	// Disclose the cut. The server returns the complete, unpaginated list, so
+	// the information to say "showing 50 of 63" is already in hand — dropping
+	// the rest silently made a truncated view look like the whole project.
+	// The per-feature task list three lines below has always said "...and N
+	// more tasks"; this applies the same courtesy one level up.
+	omitted := 0
 	if len(features) > limit {
+		omitted = len(features) - limit
 		features = features[:limit]
 	}
 
 	lines := []string{fmt.Sprintf("## %s", title), ""}
+	if omitted > 0 {
+		lines = append(lines,
+			fmt.Sprintf("_Showing %d of %d features — %d omitted. Raise 'limit' to see the rest._",
+				limit, limit+omitted, omitted),
+			"")
+	}
 	for _, feature := range features {
 		lines = append(lines, formatFeatureSummaryLines(feature)...)
 		if len(feature.Tasks) > 0 {
@@ -217,21 +231,18 @@ func formatFeatureList(title, empty string, features []types.Feature, limit int)
 }
 
 func formatFeatureDetail(project string, feature types.Feature) string {
-	status := "waiting"
-	if feature.Ready {
-		status = "ready"
-	}
 	lines := []string{
 		fmt.Sprintf("## Feature %s", feature.FeatureID),
 		"",
 		fmt.Sprintf("- Project: %s", project),
-		fmt.Sprintf("- Status: %s", status),
 	}
+	lines = append(lines, featureStateLines(feature)...)
 	lines = append(lines, formatStatsLine(feature.Stats))
 	if len(feature.Tasks) == 0 {
 		lines = append(lines, "", "No tasks in this feature.")
 		return strings.Join(lines, "\n")
 	}
+	lines = append(lines, formatFeatureGitLines(feature.Tasks)...)
 	lines = append(lines, "", "### Tasks")
 	for _, task := range feature.Tasks {
 		lines = append(lines, fmt.Sprintf("- %s (`%s`) - %s/%s", task.Title, task.ID, task.Status, task.Classification))
@@ -245,16 +256,131 @@ func formatFeatureDetail(project string, feature types.Feature) string {
 	return strings.Join(lines, "\n")
 }
 
-func formatFeatureSummaryLines(feature types.Feature) []string {
-	status := "waiting"
+// formatFeatureGitLines renders where a feature's work lives in git and how
+// it is meant to land.
+//
+// ResolvedTask carries nine git and merge fields, and none of them were
+// shown anywhere. An agent asking the entirely ordinary question "what
+// branch is this feature on, and what does it merge into?" got back only
+// title/status/classification, despite the answer already being decoded and
+// in hand.
+//
+// Values are folded across the feature's tasks because the model is one
+// feature, one branch, one merge. Nothing enforces that, though, so when
+// tasks disagree every distinct value is listed and marked — a feature
+// whose tasks name three different merge targets is a checkout that will
+// misbehave in a way nobody can see from the task list.
+func formatFeatureGitLines(tasks []types.ResolvedTask) []string {
+	if len(tasks) == 0 {
+		return nil
+	}
+
+	fields := []struct {
+		label string
+		get   func(types.ResolvedTask) string
+	}{
+		{"branch", func(t types.ResolvedTask) string { return t.GitBranch }},
+		{"merges into", func(t types.ResolvedTask) string { return t.MergeTargetBranch }},
+		{"merge policy", func(t types.ResolvedTask) string { return t.MergePolicy }},
+		{"merge strategy", func(t types.ResolvedTask) string { return t.MergeStrategy }},
+		{"remote branch", func(t types.ResolvedTask) string { return t.RemoteBranchPolicy }},
+		{"execution mode", func(t types.ResolvedTask) string { return t.ExecutionMode }},
+		{"workdir", func(t types.ResolvedTask) string { return t.TargetWorkdir }},
+		{"git remote", func(t types.ResolvedTask) string { return t.GitRemote }},
+	}
+
+	var body []string
+	for _, f := range fields {
+		var distinct []string
+		seen := map[string]bool{}
+		for _, t := range tasks {
+			v := strings.TrimSpace(f.get(t))
+			if v == "" || seen[v] {
+				continue
+			}
+			seen[v] = true
+			distinct = append(distinct, v)
+		}
+		switch len(distinct) {
+		case 0:
+			// Nothing set on any task — say so only for the two fields
+			// whose absence actually changes what happens at checkout.
+			if f.label == "branch" || f.label == "merges into" {
+				body = append(body, fmt.Sprintf("- %s: (unset)", f.label))
+			}
+		case 1:
+			body = append(body, fmt.Sprintf("- %s: %s", f.label, distinct[0]))
+		default:
+			sort.Strings(distinct)
+			body = append(body, fmt.Sprintf("- %s: ⚠ tasks disagree — %s", f.label, strings.Join(distinct, ", ")))
+		}
+	}
+
+	if len(body) == 0 {
+		return nil
+	}
+	return append([]string{"", "### Git & merge"}, body...)
+}
+
+// featureStateLines renders a feature's two INDEPENDENT states, which the
+// previous single "- Status: ready" line conflated.
+//
+// types.Feature.Ready is `Classification == "ready"`, meaning the feature's
+// FEATURE-LEVEL DEPENDENCIES are satisfied. It says nothing about whether any
+// task inside can run. Rendering that as the bare word "ready" collided with the
+// task-level classification of the same name — which does mean runnable — and
+// the collision appeared in the same output, one line above a stats line reading
+// "Ready: 0".
+//
+// Observed live on brain-api: a feature whose 13 tasks were all completed, one
+// whose 15 tasks were all still draft, and one with genuinely runnable work all
+// rendered "Status: ready". An agent picking work off that list cannot tell them
+// apart. (feature_ready filters completed/archived out; the plain features list
+// never did.)
+//
+// So dependency state is now named as dependency state, and the actionable
+// question — is there runnable work here — is answered separately from the
+// stats that were already on screen.
+func featureStateLines(feature types.Feature) []string {
+	deps := "waiting on other features"
 	if feature.Ready {
-		status = "ready"
+		deps = "satisfied"
 	}
 	return []string{
-		fmt.Sprintf("### %s", feature.FeatureID),
-		fmt.Sprintf("- Status: %s", status),
-		formatStatsLine(feature.Stats),
+		fmt.Sprintf("- Dependencies: %s", deps),
+		fmt.Sprintf("- Work: %s", featureWorkState(feature.Stats)),
 	}
+}
+
+// featureWorkState summarizes what an agent can actually do with the feature.
+// Deliberately derived only from counts already shown, so the summary and the
+// stats line can never disagree.
+func featureWorkState(stats *types.TaskStats) string {
+	if stats == nil || stats.Total == 0 {
+		return "no tasks"
+	}
+	switch {
+	case stats.Ready > 0:
+		return fmt.Sprintf("%d task(s) ready to run", stats.Ready)
+	case stats.Waiting > 0:
+		return fmt.Sprintf("nothing runnable yet — %d waiting on dependencies", stats.Waiting)
+	case stats.Blocked > 0 || stats.StatusBlocked > 0:
+		return "nothing runnable — tasks are blocked"
+	case stats.NotPending == stats.Total:
+		// Everything is outside the pending lifecycle: finished, cancelled, or
+		// still draft. "Finished" and "not started yet" are opposite situations
+		// that both land here, so do not guess between them — say which bucket
+		// and let the task list below disambiguate.
+		return fmt.Sprintf("nothing runnable — all %d task(s) are outside the pending lifecycle (completed, draft, or cancelled)", stats.Total)
+	default:
+		return "nothing runnable"
+	}
+}
+
+func formatFeatureSummaryLines(feature types.Feature) []string {
+	lines := []string{fmt.Sprintf("### %s", feature.FeatureID)}
+	lines = append(lines, featureStateLines(feature)...)
+	return append(lines, formatStatsLine(feature.Stats))
 }
 
 func formatStatsLine(stats *types.TaskStats) string {

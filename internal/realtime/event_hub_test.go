@@ -1,6 +1,7 @@
 package realtime
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -443,5 +444,65 @@ func TestReplayIDEvictedReturnsAll(t *testing.T) {
 	events := hub.Replay(ids[0])
 	if len(events) != 3 {
 		t.Fatalf("expected 3 events (all in buffer), got %d", len(events))
+	}
+}
+
+// TestEventHubCoverage_OldestMatchesTheRingAcrossWrap checks Coverage() against
+// the ring's own contents rather than against my arithmetic, at every boundary:
+// under-filled, exactly full, and wrapped past full.
+//
+// Coverage exists so an empty events_recent result can be qualified — "not in
+// the last N events I hold" rather than "never happened" — so if Oldest is wrong
+// the qualification is worse than none: it would name a window the buffer does
+// not actually cover.
+func TestEventHubCoverage_OldestMatchesTheRingAcrossWrap(t *testing.T) {
+	const capacity = 8
+
+	for _, published := range []int{0, 1, capacity - 1, capacity, capacity + 1, capacity*3 + 5} {
+		t.Run(fmt.Sprintf("published=%d", published), func(t *testing.T) {
+			hub := NewEventHubWithCapacity(capacity)
+
+			base := time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC)
+			for i := 0; i < published; i++ {
+				hub.Publish(types.Event{
+					ID:        fmt.Sprintf("evt-%03d", i),
+					Type:      types.EventTaskStarted,
+					Timestamp: base.Add(time.Duration(i) * time.Minute),
+				})
+			}
+
+			cov := hub.Coverage()
+
+			wantBuffered := published
+			if wantBuffered > capacity {
+				wantBuffered = capacity
+			}
+			if cov.Buffered != wantBuffered {
+				t.Errorf("Buffered = %d, want %d", cov.Buffered, wantBuffered)
+			}
+			if cov.Capacity != capacity {
+				t.Errorf("Capacity = %d, want %d", cov.Capacity, capacity)
+			}
+
+			if published == 0 {
+				if cov.Oldest != "" {
+					t.Errorf("Oldest = %q, want empty for an untouched ring", cov.Oldest)
+				}
+				return
+			}
+
+			// Ground truth: whatever Replay says is retained, its first entry is
+			// the oldest. Comparing against the ring's own output rather than
+			// recomputing the index means a wrong index cannot agree with itself.
+			retained := hub.Replay("")
+			if len(retained) != wantBuffered {
+				t.Fatalf("Replay returned %d events, want %d", len(retained), wantBuffered)
+			}
+			want := retained[0].Timestamp.UTC().Format(time.RFC3339)
+			if cov.Oldest != want {
+				t.Errorf("Oldest = %q, want %q (the first retained event, %s)",
+					cov.Oldest, want, retained[0].ID)
+			}
+		})
 	}
 }

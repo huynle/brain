@@ -65,8 +65,8 @@ type ToolCallEvent struct {
 type ToolResultEvent struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
-	Status   string `json:"status"`             // "completed" | "failed" | "proposed"
-	Result   any    `json:"result,omitempty"`   // sanitized/truncated for stream
+	Status   string `json:"status"`           // "completed" | "failed" | "proposed"
+	Result   any    `json:"result,omitempty"` // sanitized/truncated for stream
 	Error    string `json:"error,omitempty"`
 	Proposed bool   `json:"proposed,omitempty"` // true when a destructive call was gated
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 // defaultSearchLimit is the default number of results returned by search.
@@ -44,10 +45,158 @@ func (s *StorageLayer) SearchNotes(ctx context.Context, query string, opts *Sear
 	}
 }
 
+// ftsOperatorTokens are the bare words FTS5 reads as operators rather than
+// as search terms.
+var ftsOperatorTokens = map[string]struct{}{
+	"AND": {}, "OR": {}, "NOT": {}, "NEAR": {},
+}
+
+// looksLikeFTSExpression reports whether a query appears to be deliberate
+// FTS5 syntax rather than natural language.
+//
+// Power users write `foo OR bar`, `"exact phrase"`, and `prefix*`, and
+// that must keep working. Everything else is treated as a bag of words
+// and quoted, because a raw natural-language query is a syntax hazard:
+// FTS5 reads `:` as a column filter, so the entirely reasonable query
+// `once_per: cooldown` becomes `no such column: once_per`.
+func looksLikeFTSExpression(query string) bool {
+	if strings.ContainsAny(query, `"*()^`) {
+		return true
+	}
+	for _, token := range strings.Fields(query) {
+		if _, ok := ftsOperatorTokens[token]; ok {
+			return true
+		}
+		if strings.HasPrefix(token, "NEAR(") {
+			return true
+		}
+	}
+	return false
+}
+
+// ftsWordTokens splits a query into search terms on non-word characters,
+// keeping underscores so identifiers like once_per survive intact.
+//
+// Splitting on punctuation rather than whitespace matters: quoting an
+// unsplit token turns it into an FTS5 *phrase*, so `Go/performance` would
+// require the two words to be adjacent. Someone typing that wants both
+// words, not adjacency — and anyone who genuinely wants a phrase writes
+// quotes, which routes to the passthrough path instead.
+func ftsWordTokens(query string) []string {
+	return strings.FieldsFunc(query, func(r rune) bool {
+		if r == '_' {
+			return false
+		}
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+}
+
+// buildFTSMatchExpr turns a natural-language query into a safe FTS5 MATCH
+// expression by quoting each token and joining them with op ("AND"/"OR").
+//
+// Quoting makes every token a literal, so punctuation an agent naturally
+// types — colons, slashes, dots, parens — can no longer be parsed as FTS5
+// syntax. Returns "" when the query has no usable tokens.
+func buildFTSMatchExpr(query, op string) string {
+	tokens := ftsWordTokens(query)
+	quoted := make([]string, 0, len(tokens))
+	for _, token := range tokens {
+		// Escape embedded quotes per FTS5 string rules ("" is a literal ").
+		quoted = append(quoted, `"`+strings.ReplaceAll(token, `"`, `""`)+`"`)
+	}
+	if len(quoted) == 0 {
+		return ""
+	}
+	return strings.Join(quoted, " "+op+" ")
+}
+
 // searchFTS performs FTS5 full-text search with BM25 ranking.
+//
+// Two behaviours here exist because the naive version failed silently in
+// exactly the cases agents hit most:
+//
+//  1. The query is tokenized and quoted unless it looks like deliberate
+//     FTS5 syntax (see looksLikeFTSExpression).
+//  2. FTS5 joins bare terms with implicit AND, so a long descriptive
+//     query shrinks monotonically toward zero — every added word can only
+//     remove results. When the AND pass finds nothing and more than one
+//     token was supplied, retry with OR. BM25 still ranks documents
+//     matching more terms above those matching one, so precision is kept
+//     where it exists and recall is the fallback rather than silence.
+//
+// A search still never returns an error to the caller — TestSearchQuality_
+// FTSSyntaxErrorReturnsEmpty pins that, and it is the right contract. But
+// "gracefully empty" was doing too much work: a malformed *expression* and
+// a perfectly ordinary phrase both ended in silence. Now a deliberate
+// expression that fails to parse degrades to a literal word search rather
+// than to nothing, and an ordinary phrase can no longer fail to parse at
+// all.
 func (s *StorageLayer) searchFTS(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+	var notes []*NoteRow
+
+	if looksLikeFTSExpression(query) {
+		raw, err := s.ftsMatch(ctx, query, limit, opts)
+		if err == nil {
+			notes = raw
+		} else {
+			// The user meant it as an expression and it did not parse.
+			// Fall back to reading it as words — `"unclosed quote` almost
+			// certainly means the words, not a syntax error.
+			notes = s.ftsMatchWords(ctx, query, limit, opts)
+		}
+	} else {
+		notes = s.ftsMatchWords(ctx, query, limit, opts)
+	}
+
+	markMatchSource(notes, "entry")
+
+	// The attachment path is a LIKE substring match, so it takes the raw
+	// query — FTS5 syntax rules do not apply to it.
+	attachmentMatches, err := s.searchAttachmentDerivedText(ctx, query, limit, opts)
+	if err != nil {
+		return nil, err
+	}
+	return mergeSearchRows(notes, attachmentMatches, limit), nil
+}
+
+// ftsMatchWords searches for the query as a bag of quoted words: all terms
+// first, then any term if that found nothing.
+//
+// FTS5 joins bare terms with implicit AND, so a long descriptive query
+// shrinks monotonically toward zero — every word an agent adds can only
+// remove results, and agents write descriptive queries. The OR retry makes
+// recall the fallback instead of silence. BM25 still ranks documents
+// matching more terms above those matching one, so precision is preserved
+// wherever it actually exists.
+//
+// Never returns an error: quoting makes a syntax error very nearly
+// unreachable, and if one happens anyway the caller's contract is an empty
+// result rather than a failure.
+func (s *StorageLayer) ftsMatchWords(ctx context.Context, query string, limit int, opts *SearchOptions) []*NoteRow {
+	andExpr := buildFTSMatchExpr(query, "AND")
+	if andExpr == "" {
+		return []*NoteRow{}
+	}
+
+	notes, err := s.ftsMatch(ctx, andExpr, limit, opts)
+	if err != nil {
+		return []*NoteRow{}
+	}
+	if len(notes) > 0 || len(ftsWordTokens(query)) < 2 {
+		return notes
+	}
+
+	orNotes, err := s.ftsMatch(ctx, buildFTSMatchExpr(query, "OR"), limit, opts)
+	if err != nil {
+		return notes
+	}
+	return orNotes
+}
+
+// ftsMatch runs one FTS5 MATCH query and returns the ranked rows.
+func (s *StorageLayer) ftsMatch(ctx context.Context, matchExpr string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
 	sql := "SELECT " + noteColumnsAliased + " FROM notes n JOIN notes_fts fts ON n.id = fts.rowid WHERE notes_fts MATCH ?"
-	params := []interface{}{query}
+	params := []interface{}{matchExpr}
 
 	sql, params = appendFilters(sql, params, "n", opts)
 
@@ -56,26 +205,18 @@ func (s *StorageLayer) searchFTS(ctx context.Context, query string, limit int, o
 
 	rows, err := s.db.QueryContext(ctx, sql, params...)
 	if err != nil {
-		// FTS5 syntax errors are caught gracefully — return empty results.
-		return []*NoteRow{}, nil
+		return nil, fmt.Errorf("fts search %q: %w", matchExpr, err)
 	}
 	defer rows.Close()
 
 	notes, err := scanNoteRows(rows)
 	if err != nil {
-		// FTS5 errors can also surface during row iteration — catch gracefully.
-		notes = []*NoteRow{}
+		return nil, fmt.Errorf("fts search %q: %w", matchExpr, err)
 	}
 	if notes == nil {
 		notes = []*NoteRow{}
 	}
-	markMatchSource(notes, "entry")
-
-	attachmentMatches, err := s.searchAttachmentDerivedText(ctx, query, limit, opts)
-	if err != nil {
-		return nil, err
-	}
-	return mergeSearchRows(notes, attachmentMatches, limit), nil
+	return notes, nil
 }
 
 // searchExact performs exact title match OR body LIKE substring search.

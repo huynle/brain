@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -53,7 +55,7 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			Type: "object",
 			Properties: map[string]Property{
 				"status":         {Type: "string", Enum: types.EntryStatuses, Description: "Filter by task status (pending, in_progress, completed, etc.)"},
-				"classification": {Type: "string", Enum: []string{"ready", "waiting", "blocked"}, Description: "Filter by dependency classification"},
+				"classification": {Type: "string", Enum: []string{"ready", "waiting", "blocked", "not_pending"}, Description: "Filter by dependency classification. not_pending covers everything outside the pending dependency graph (completed, cancelled, archived, ...)."},
 				"feature_id":     {Type: "string", Description: "Filter tasks by feature group ID (e.g., 'auth-system', 'dark-mode')"},
 				"limit":          {Type: "number", Description: "Maximum results to return (default: 50)"},
 				"project":        {Type: "string", Description: "Override auto-detected project"},
@@ -62,33 +64,45 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		proj := ResolveProject(args)
 
+		// This struct must mirror types.TaskListResponse / ResolvedTask /
+		// TaskStats. It did not, in four places, and each mismatch failed
+		// silently rather than loudly:
+		//
+		//   - DependsOn was tagged `dependsOn` and typed as a struct array;
+		//     the wire sends `depends_on` as []string. Both wrong, so it
+		//     always decoded empty and every listed task reported
+		//     "Dependencies: none".
+		//   - Completed does not exist on TaskStats at all, so the tool
+		//     printed "0 completed" for projects holding hundreds of
+		//     completed tasks.
+		//   - Cycles is [][]string, not a struct array. The mismatch is an
+		//     unmarshal error, which the API client turns into a hard
+		//     failure — so the tool broke completely exactly when a
+		//     dependency cycle existed, i.e. when it was most needed.
+		//   - status_blocked and not_pending are on the wire and were
+		//     dropped, under a comment claiming the server did not send
+		//     them.
 		var resp struct {
 			Tasks []struct {
-				ID             string `json:"id"`
-				Title          string `json:"title"`
-				Status         string `json:"status"`
-				Priority       string `json:"priority"`
-				FeatureID      string `json:"feature_id"`
-				Classification string `json:"classification"`
-				DependsOn      []struct {
-					ID     string `json:"id"`
-					Title  string `json:"title"`
-					Status string `json:"status"`
-				} `json:"dependsOn"`
-				BlockedBy string `json:"blocked_by_reason"`
+				ID             string   `json:"id"`
+				Title          string   `json:"title"`
+				Status         string   `json:"status"`
+				Priority       string   `json:"priority"`
+				FeatureID      string   `json:"feature_id"`
+				Classification string   `json:"classification"`
+				DependsOn      []string `json:"depends_on"`
+				BlockedBy      string   `json:"blocked_by_reason"`
 			} `json:"tasks"`
 			Count int `json:"count"`
 			Stats *struct {
-				Ready     int `json:"ready"`
-				Waiting   int `json:"waiting"`
-				Blocked   int `json:"blocked"`
-				Completed int `json:"completed"`
-				Total     int `json:"total"`
+				Total         int `json:"total"`
+				Ready         int `json:"ready"`
+				Waiting       int `json:"waiting"`
+				Blocked       int `json:"blocked"`
+				StatusBlocked int `json:"status_blocked"`
+				NotPending    int `json:"not_pending"`
 			} `json:"stats"`
-			Cycles []struct {
-				TaskID string   `json:"taskId"`
-				Cycle  []string `json:"cycle"`
-			} `json:"cycles"`
+			Cycles [][]string `json:"cycles"`
 		}
 		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj), nil, nil, &resp); err != nil {
 			return "", err
@@ -102,18 +116,15 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			Priority       string
 			FeatureID      string
 			Classification string
-			DependsOn      []struct {
-				ID     string `json:"id"`
-				Title  string `json:"title"`
-				Status string `json:"status"`
-			}
-			BlockedBy string
+			DependsOn      []string
+			BlockedBy      string
 		}
 
 		filtered := make([]taskEntry, 0, len(resp.Tasks))
 		statusFilter := StringArg(args, "status", "")
 		classFilter := StringArg(args, "classification", "")
 		featureFilter := StringArg(args, "feature_id", "")
+		filterApplied := statusFilter != "" || classFilter != "" || featureFilter != ""
 
 		for _, t := range resp.Tasks {
 			if statusFilter != "" && t.Status != statusFilter {
@@ -137,13 +148,15 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			})
 		}
 
-		limit := IntArg(args, "limit", 50)
-		if len(filtered) > limit {
-			filtered = filtered[:limit]
-		}
-
-		// Group by classification
-		var ready, waiting, blocked []taskEntry
+		// Classify BEFORE truncating.
+		//
+		// The limit used to be applied to the raw list, which is dominated
+		// by not_pending tasks (a mature project is ~99% completed work).
+		// Lowering the limit to save context therefore discarded exactly
+		// the actionable rows the caller asked for: on a real project,
+		// tasks(limit:10) rendered a stats line and zero tasks, because the
+		// six actionable ones sat at positions 15-20 of 890.
+		var ready, waiting, blocked, notPending []taskEntry
 		for _, t := range filtered {
 			switch t.Classification {
 			case "ready":
@@ -152,44 +165,96 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 				waiting = append(waiting, t)
 			case "blocked":
 				blocked = append(blocked, t)
+			default:
+				// Anything the server did not classify as part of the
+				// pending dependency graph — completed, cancelled,
+				// archived, and so on.
+				notPending = append(notPending, t)
 			}
 		}
+
+		// Spend the limit on the most actionable buckets first, so a small
+		// limit yields the tasks a caller can act on rather than a page of
+		// finished ones.
+		limit := IntArg(args, "limit", 50)
+		remaining := limit
+		takeBucket := func(bucket []taskEntry) []taskEntry {
+			if remaining <= 0 {
+				return nil
+			}
+			if len(bucket) > remaining {
+				bucket = bucket[:remaining]
+			}
+			remaining -= len(bucket)
+			return bucket
+		}
+		ready = takeBucket(ready)
+		waiting = takeBucket(waiting)
+		blocked = takeBucket(blocked)
+		notPending = takeBucket(notPending)
+		shown := len(ready) + len(waiting) + len(blocked) + len(notPending)
 
 		lines := []string{
 			fmt.Sprintf("## Tasks for project: %s", proj),
 			"",
 		}
 
-		// Stats summary.
+		// Stats summary, computed from the SAME set that is rendered below.
+		//
+		// The server's Stats block is project-wide, so printing it above a
+		// filtered body produced flat contradictions — most starkly
+		// "**Stats:** 4 ready | 2 waiting" immediately followed by
+		// "*No tasks found matching criteria.*". Counting the filtered set
+		// keeps the header and the body describing the same thing, and the
+		// project-wide total is appended separately, labelled, when it adds
+		// information.
 		//
 		// Two "blocked" counters are reported separately to disambiguate the
 		// two meanings that previously shared the same word (see task
 		// ghtzzp1x / plan 24urhmtl#Finding-4):
 		//
-		//   - dep_blocked:    dependency classification == "blocked" (comes
-		//                     from the server's Stats.Blocked field, which is
-		//                     computed from t.Classification in taskdeps.go).
-		//   - status_blocked: t.Status == "blocked" (computed locally from
-		//                     the filtered tasks; the server does not
-		//                     currently expose this in TaskStats).
+		//   - dep_blocked:    dependency classification == "blocked".
+		//   - status_blocked: t.Status == "blocked".
 		//
 		// The legacy ambiguous "blocked" counter is intentionally NOT emitted
 		// here. Downstream consumers must migrate to the split counters.
 		// TODO(ghtzzp1x): PWA StatusBar lives outside this repo; when it is
 		// updated, remove any legacy alias handling there too.
-		if resp.Stats != nil {
-			st := resp.Stats
-			statusBlocked := 0
-			for _, t := range filtered {
-				if t.Status == "blocked" {
-					statusBlocked++
-				}
+		depBlocked, statusBlocked, notPendingCount := 0, 0, 0
+		readyCount, waitingCount := 0, 0
+		for _, t := range filtered {
+			switch t.Classification {
+			case "ready":
+				readyCount++
+			case "waiting":
+				waitingCount++
+			case "blocked":
+				depBlocked++
+			default:
+				notPendingCount++
 			}
+			if t.Status == "blocked" {
+				statusBlocked++
+			}
+		}
+
+		statsLine := fmt.Sprintf(
+			"**Stats:** %d ready | %d waiting | %d dep_blocked | %d status_blocked | %d not_pending",
+			readyCount, waitingCount, depBlocked, statusBlocked, notPendingCount,
+		)
+		if filterApplied {
+			statsLine = "**Stats (matching your filters):** " + strings.TrimPrefix(statsLine, "**Stats:** ")
+		}
+		if resp.Stats != nil && resp.Stats.Total != len(filtered) {
+			statsLine += fmt.Sprintf("  ·  project total: %d", resp.Stats.Total)
+		}
+		lines = append(lines, statsLine, "")
+
+		if shown < len(filtered) {
 			lines = append(lines, fmt.Sprintf(
-				"**Stats:** %d ready | %d waiting | %d dep_blocked | %d status_blocked | %d completed",
-				st.Ready, st.Waiting, st.Blocked, statusBlocked, st.Completed,
-			))
-			lines = append(lines, "")
+				"*Showing %d of %d matching tasks (limit %d) — most actionable first.*",
+				shown, len(filtered), limit,
+			), "")
 		}
 
 		// Ready tasks
@@ -199,11 +264,7 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 				priority := priorityLabel(task.Priority)
 				lines = append(lines, fmt.Sprintf("- **%s %s** (`%s`) - %s", priority, task.Title, task.ID, task.Status))
 				if len(task.DependsOn) > 0 {
-					deps := make([]string, len(task.DependsOn))
-					for i, d := range task.DependsOn {
-						deps[i] = fmt.Sprintf("%s (%s)", d.Title, d.Status)
-					}
-					lines = append(lines, fmt.Sprintf("  Dependencies: %s", strings.Join(deps, ", ")))
+					lines = append(lines, fmt.Sprintf("  Dependencies (all met): %s", strings.Join(task.DependsOn, ", ")))
 				} else {
 					lines = append(lines, "  Dependencies: none")
 				}
@@ -218,15 +279,10 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 				priority := priorityLabel(task.Priority)
 				lines = append(lines, fmt.Sprintf("- **%s %s** (`%s`) - %s", priority, task.Title, task.ID, task.Status))
 				if len(task.DependsOn) > 0 {
-					var incomplete []string
-					for _, d := range task.DependsOn {
-						if d.Status != "completed" {
-							incomplete = append(incomplete, fmt.Sprintf("%s (%s)", d.Title, d.Status))
-						}
-					}
-					if len(incomplete) > 0 {
-						lines = append(lines, fmt.Sprintf("  Waiting on: %s", strings.Join(incomplete, ", ")))
-					}
+					// The wire carries dependency IDs only, not their
+					// statuses, so every dep is listed rather than just
+					// the unmet ones. Use task_get on an id for detail.
+					lines = append(lines, fmt.Sprintf("  Depends on: %s", strings.Join(task.DependsOn, ", ")))
 				}
 			}
 			lines = append(lines, "")
@@ -247,16 +303,28 @@ These can overlap; the counts are independent, not mutually exclusive.`,
 			lines = append(lines, "")
 		}
 
-		// Cycles warning
-		if len(resp.Cycles) > 0 {
-			lines = append(lines, "### Circular Dependencies Detected")
-			for _, cycle := range resp.Cycles {
-				lines = append(lines, fmt.Sprintf("- Cycle: %s", strings.Join(cycle.Cycle, " -> ")))
+		// Not-pending tasks (completed, cancelled, archived, ...). Rendered
+		// last and only when the limit still has room, so finished work can
+		// never crowd out actionable work.
+		if len(notPending) > 0 {
+			lines = append(lines, "### Not pending (completed / cancelled / archived)")
+			for _, task := range notPending {
+				priority := priorityLabel(task.Priority)
+				lines = append(lines, fmt.Sprintf("- **%s %s** (`%s`) - %s", priority, task.Title, task.ID, task.Status))
 			}
 			lines = append(lines, "")
 		}
 
-		if len(filtered) == 0 {
+		// Cycles warning
+		if len(resp.Cycles) > 0 {
+			lines = append(lines, "### Circular Dependencies Detected")
+			for _, cycle := range resp.Cycles {
+				lines = append(lines, fmt.Sprintf("- Cycle: %s", strings.Join(cycle, " -> ")))
+			}
+			lines = append(lines, "")
+		}
+
+		if shown == 0 {
 			lines = append(lines, "*No tasks found matching criteria.*")
 		}
 
@@ -288,40 +356,35 @@ If no ready tasks, shows current queue state.`,
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		proj := ResolveProject(args)
 
-		var nextResp struct {
-			Task *struct {
-				ID             string   `json:"id"`
-				Path           string   `json:"path"`
-				Title          string   `json:"title"`
-				Status         string   `json:"status"`
-				Priority       string   `json:"priority"`
-				Classification string   `json:"classification"`
-				ResolvedDeps   []string `json:"resolved_deps"`
-				WaitingOn      []string `json:"waiting_on"`
-				BlockedBy      []string `json:"blocked_by"`
-			} `json:"task"`
-			Message string `json:"message"`
-		}
-		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj)+"/next", nil, nil, &nextResp); err != nil {
+		// GET /tasks/{project}/next writes a BARE ResolvedTask
+		// (internal/api/tasks.go:174) — there is no {"task": ...} envelope
+		// and no "message" field.
+		//
+		// A bare object decodes into an enveloped struct without error: it
+		// is an object matching an object, so nothing fails. The "task" key
+		// is simply never present, Task stays nil, and the tool reported
+		// "No ready tasks available" for a queue full of ready work — a
+		// confident wrong answer rather than a visible failure, which is
+		// why it could survive unnoticed.
+		//
+		// The 404 branch below is also unreachable: GetNext
+		// (internal/service/task.go) does not return ErrNotFound, so an
+		// empty queue arrives as a 200 with a zero-valued task. Treat an
+		// empty ID as "nothing ready".
+		var nextTask types.ResolvedTask
+		if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj)+"/next", nil, nil, &nextTask); err != nil {
 			return "", err
 		}
 
 		// No ready task available
-		if nextResp.Task == nil {
+		if nextTask.ID == "" {
 			// Get stats for context
 			var statsResp struct {
 				Tasks []struct {
 					Classification string `json:"classification"`
 					Status         string `json:"status"`
 				} `json:"tasks"`
-				Stats *struct {
-					Ready         int `json:"ready"`
-					Waiting       int `json:"waiting"`
-					Blocked       int `json:"blocked"`
-					StatusBlocked int `json:"status_blocked"`
-					Completed     int `json:"completed"`
-					Total         int `json:"total"`
-				} `json:"stats"`
+				Stats *types.TaskStats `json:"stats"`
 			}
 			if err := client.Request(ctx, "GET", "/tasks/"+url.PathEscape(proj), nil, nil, &statsResp); err != nil {
 				return "", err
@@ -331,11 +394,29 @@ If no ready tasks, shows current queue state.`,
 			// tasks tool description and TaskStats doc comment
 			// (task ghtzzp1x / plan 24urhmtl#Finding-4).
 			waiting, depBlocked, statusBlocked, completed := 0, 0, 0, 0
+			ready := 0
 			if statsResp.Stats != nil {
 				waiting = statsResp.Stats.Waiting
 				depBlocked = statsResp.Stats.Blocked
 				statusBlocked = statsResp.Stats.StatusBlocked
-				completed = statsResp.Stats.Completed
+				ready = statsResp.Stats.Ready
+			} else {
+				for _, t := range statsResp.Tasks {
+					if t.Classification == "ready" {
+						ready++
+					}
+				}
+			}
+
+			// types.TaskStats has no Completed field, so this is ALWAYS
+			// derived. It used to be read from a phantom and then only
+			// corrected inside the StatusBlocked == 0 branch below — so any
+			// project with a status-blocked task reported "0 tasks
+			// completed" no matter how many were done.
+			for _, t := range statsResp.Tasks {
+				if t.Status == "completed" || t.Status == "validated" {
+					completed++
+				}
 			}
 			// Always derive from the tasks array too — the server may not
 			// populate StatusBlocked on older builds, and completed is not
@@ -354,10 +435,51 @@ If no ready tasks, shows current queue state.`,
 					if t.Status == "blocked" {
 						statusBlocked++
 					}
-					if t.Status == "completed" {
-						completed++
-					}
 				}
+			}
+
+			// Say WHY nothing came back. "No ready tasks available" was
+			// printed identically for three unrelated situations, and the
+			// data to tell them apart was already in hand:
+			//
+			//   - the project has no tasks at all, which for a mistyped or
+			//     never-registered project id is the whole story. getAllTasks
+			//     does a `path LIKE 'projects/<id>/task%'` query, so a wrong
+			//     id matches nothing and renders as a tidy empty queue.
+			//   - ready tasks exist, but GetNext filtered them out because
+			//     each carries an active dispatch lease
+			//     (filterDispatchReservedTasks) or is held by a pause dial.
+			//     Reporting "0 waiting, 0 blocked, 0 completed" here implies
+			//     an empty queue when the queue is full and moving.
+			//   - genuinely nothing runnable, which is the only case the old
+			//     message actually described.
+			switch {
+			case len(statsResp.Tasks) == 0:
+				return fmt.Sprintf(`No tasks at all in project %q.
+
+This is what a mistyped or never-registered project id looks like: the lookup
+matches on a path prefix, so an unknown project returns an empty queue rather
+than an error. Confirm the id before concluding the queue is empty.
+
+Use tasks(project: "...") to list a project, or check the id you passed.`, proj), nil
+
+			case ready > 0:
+				return fmt.Sprintf(`No task is dispatchable right now, but %d task(s) ARE ready.
+
+They were filtered out because each is already claimed — an active dispatch
+lease held by a runner — or held by a pause dial. This is not an empty queue.
+
+Current state:
+- %d tasks ready but not dispatchable (claimed or paused)
+- %d tasks waiting on dependencies
+- %d tasks dep_blocked (deps unmet / cycle / blocked-by)
+- %d tasks status_blocked (Status == "blocked")
+- %d tasks completed
+
+To see which: runner_status(project: %q) for the pause dials,
+scheduler_status for the per-project skip reason, and
+task_dispatch_lease(task_id) for who holds a given task.`,
+					ready, ready, waiting, depBlocked, statusBlocked, completed, proj), nil
 			}
 
 			return fmt.Sprintf(`No ready tasks available.
@@ -371,7 +493,7 @@ Current state:
 Use tasks to see the full task list and dependency status.`, waiting, depBlocked, statusBlocked, completed), nil
 		}
 
-		task := nextResp.Task
+		task := nextTask
 
 		// Get full entry content
 		var entry struct {
@@ -543,6 +665,8 @@ Use this to get detailed information about a specific task including:
 			fmt.Sprintf("**Classification:** %s", task.Classification),
 			"",
 		}
+
+		lines = append(lines, formatTaskExecutionLines(*task)...)
 
 		// Dependencies section - look up each dependency ID in the task list for title/status
 		taskLookup := make(map[string]*resolvedTaskWithDeps, len(tasksResp.Tasks))
@@ -718,7 +842,7 @@ or to inspect its dependency graph details. Complements task_get which returns c
 			"tags":                  emptyIfNil(task.Tags),
 			"created":               task.Created,
 			"modified":              nilIfEmpty(task.Modified),
-			"session_ids":           emptyIfNil(task.SessionIDs),
+			"session_ids":           sessionIDsOf(task.Sessions),
 			"user_original_request": nilIfEmpty(task.UserOriginalRequest),
 		}
 
@@ -772,7 +896,7 @@ Example - wait for completion:
 			Type: "object",
 			Properties: map[string]Property{
 				"task_ids": {Type: "array", Items: &Property{Type: "string"}, Description: "Array of task IDs (8-char alphanumeric) to check"},
-				"wait_for": {Type: "string", Enum: []string{"completed", "any"}, Description: "Wait condition: 'completed' waits until ALL listed tasks are done, 'any' returns on the first status change among them"},
+				"wait_for": {Type: "string", Enum: []string{"completed", "any"}, Description: "Wait condition: 'completed' polls until ALL listed tasks are completed/validated, 'any' polls until one of them changes status. Polls every 2s until the condition holds or 'timeout' elapses; the response always states how the wait ended (met, timed out, or not started). Returns immediately if any requested id resolves to no task, since that condition can never be met."},
 				"timeout":  {Type: "number", Description: "Max wait time in milliseconds (default: 60000, max: 300000)"},
 				"project":  {Type: "string", Description: "Override auto-detected project"},
 			},
@@ -794,41 +918,72 @@ Example - wait for completion:
 		body := map[string]any{
 			"taskIds": taskIDs,
 		}
-		if waitFor != "" {
-			body["waitFor"] = waitFor
-			body["timeout"] = timeout
+
+		// Decode the real response type rather than hand-mirroring it.
+		//
+		// The hand-rolled struct declared three fields the server has never
+		// sent — notFound, changed, timedOut — and omitted the one it does:
+		// allCompleted. The phantoms were not harmless: being structurally
+		// always false, the status line could only take its third branch, so
+		// the "Not Found" section was unreachable and allCompleted — the
+		// actual point of the check — was thrown away.
+		var resp types.MultiTaskStatusResponse
+		// Decode into a scratch value and publish only on success.
+		//
+		// This closure originally zeroed resp before issuing the request, so a
+		// failed poll mid-wait left it at the zero value — and the renderer
+		// below, seeing no returned tasks, listed EVERY requested id under
+		// "no such task in project X". A 503 during a redeploy, an expiring
+		// token, or one network blip therefore turned into a SUCCESSFUL tool
+		// result asserting the caller's tasks do not exist, on precisely the
+		// signal an orchestrator gates control flow on. Keeping the last good
+		// state means a stopped wait reports real data alongside an explicit
+		// note that it stopped.
+		fetch := func() error {
+			var next types.MultiTaskStatusResponse
+			if err := client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/status", body, nil, &next); err != nil {
+				return err
+			}
+			resp = next
+			return nil
+		}
+		if err := fetch(); err != nil {
+			return "", err
 		}
 
-		var resp struct {
-			Tasks []struct {
-				ID             string `json:"id"`
-				Title          string `json:"title"`
-				Status         string `json:"status"`
-				Priority       string `json:"priority"`
-				Classification string `json:"classification"`
-			} `json:"tasks"`
-			NotFound []string `json:"notFound"`
-			Changed  bool     `json:"changed"`
-			TimedOut bool     `json:"timedOut"`
-		}
-		if err := client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/status", body, nil, &resp); err != nil {
-			return "", err
+		// wait_for is honoured HERE, in the client.
+		//
+		// The schema has always documented a blocking wait — "'completed' waits
+		// until ALL listed tasks are completed/validated", with a timeout and a
+		// worked example — and nothing implemented it. waitFor and timeout were
+		// serialised into the request body, decoded by the API into
+		// MultiTaskStatusRequest, and then never read: `WaitFor` appears
+		// exactly once outside tests, as the struct field declaration. So the
+		// documented gate returned instantly, every time.
+		//
+		// Polling from the client rather than blocking in the handler keeps the
+		// server free of held connections, and the observable contract is the
+		// same one the schema already promised.
+		waitOutcome := ""
+		if waitFor != "" {
+			waitOutcome = waitForTaskCondition(ctx, &resp, fetch, waitFor, timeout)
 		}
 
 		lines := []string{
 			"## Task Status Check",
 			"",
 		}
+		if waitOutcome != "" {
+			lines = append(lines, waitOutcome, "")
+		}
 
-		if resp.TimedOut {
-			lines = append(lines, "**Status:** Timed out waiting for condition")
-			lines = append(lines, "")
-		} else if resp.Changed {
-			lines = append(lines, "**Status:** Condition met")
-			lines = append(lines, "")
+		// AllCompleted is the signal callers gate control flow on ("have my
+		// spawned subtasks finished?"), so it must never be vacuously true. The
+		// server now returns false when any requested id did not resolve.
+		if resp.AllCompleted {
+			lines = append(lines, "**Status:** All requested tasks are completed", "")
 		} else {
-			lines = append(lines, "**Status:** Immediate check (no wait)")
-			lines = append(lines, "")
+			lines = append(lines, "**Status:** Not all requested tasks are completed", "")
 		}
 
 		// Show task statuses
@@ -842,23 +997,45 @@ Example - wait for completion:
 			lines = append(lines, "")
 		}
 
-		// Show not found tasks
-		if len(resp.NotFound) > 0 {
-			lines = append(lines, "### Not Found")
-			for _, id := range resp.NotFound {
-				lines = append(lines, fmt.Sprintf("- `%s` - task not found", id))
+		// Unresolvable ids. The server now reports these directly; the
+		// derivation from the request/response gap is kept as a fallback so a
+		// newer client against an older server still surfaces them.
+		missing := resp.NotFound
+		if len(missing) == 0 {
+			returned := make(map[string]struct{}, len(resp.Tasks))
+			for _, t := range resp.Tasks {
+				returned[t.ID] = struct{}{}
 			}
-			lines = append(lines, "")
+			for _, id := range taskIDs {
+				if _, ok := returned[id]; !ok {
+					missing = append(missing, id)
+				}
+			}
+		}
+		if len(missing) > 0 {
+			lines = append(lines, "### Not Found")
+			for _, id := range missing {
+				lines = append(lines, fmt.Sprintf("- `%s` - no such task in project %s", id, proj))
+			}
+			lines = append(lines,
+				"",
+				"These ids resolved to nothing, so no claim is made about them. A wrong",
+				"project, a typo, or an archived task all look like this. Not-found ids",
+				"are NOT treated as completed.",
+				"")
 		}
 
-		// Summary
+		// Summary. Denominated by what was REQUESTED, not by what came back:
+		// counting only returned tasks reported "0/0 tasks completed" for a
+		// request whose ids all failed to resolve, which reads like a clean
+		// empty rather than a failed lookup.
 		completed := 0
 		for _, t := range resp.Tasks {
 			if t.Status == "completed" || t.Status == "validated" {
 				completed++
 			}
 		}
-		lines = append(lines, fmt.Sprintf("**Summary:** %d/%d tasks completed", completed, len(resp.Tasks)))
+		lines = append(lines, fmt.Sprintf("**Summary:** %d/%d requested tasks completed", completed, len(taskIDs)))
 
 		return strings.Join(lines, "\n"), nil
 	})
@@ -884,28 +1061,49 @@ func registerBrainTaskTrigger(s *Server, client *APIClient) {
 		proj := ResolveProject(args)
 		taskID := StringArgAlias(args, "", "task_id", "taskId")
 
-		var resp struct {
-			TaskID        string `json:"taskId"`
-			Run           any    `json:"run"`
-			Pipeline      []any  `json:"pipeline"`
-			PipelineCount int    `json:"pipelineCount"`
-			Message       string `json:"message"`
-		}
+		// types.TriggerResponse is {success, taskId, triggered, runId,
+		// nextRun, reason}. The hand-rolled struct declared run, pipeline,
+		// pipelineCount and message — none of which exist — and dropped
+		// every field that says what happened.
+		//
+		// That matters because TriggerService has FIVE paths returning
+		// HTTP 200 with Success:true and Triggered:false plus a Reason
+		// (internal/service/task.go:1385,1394,1404,1470,1475 — e.g.
+		// "max_runs reached (3/3)"). All five rendered as an apparent
+		// success carrying nothing but zero-valued phantoms, so "the task
+		// did not run, and here is why" was indistinguishable from "the
+		// task ran".
+		var resp types.TriggerResponse
 		err := client.Request(ctx, "POST", "/tasks/"+url.PathEscape(proj)+"/"+url.PathEscape(taskID)+"/trigger", nil, nil, &resp)
 		if err != nil {
-			result := map[string]any{
-				"operation": "task_trigger",
-				"project":   proj,
-				"error":     err.Error(),
-			}
-			data, _ := json.MarshalIndent(result, "", "  ")
-			return string(data), nil
+			// Returning the error as a nil-error string would leave isError
+			// unset, so the caller reads a failure as a normal result.
+			return "", err
 		}
 
 		result := map[string]any{
 			"operation": "task_trigger",
 			"project":   proj,
-			"data":      resp,
+			"task_id":   resp.TaskID,
+			"triggered": resp.Triggered,
+		}
+		if resp.Reason != "" {
+			result["reason"] = resp.Reason
+		}
+		if resp.RunID != "" {
+			result["run_id"] = resp.RunID
+		}
+		if resp.NextRun != "" {
+			result["next_run"] = resp.NextRun
+		}
+		if !resp.Triggered {
+			reason := resp.Reason
+			if reason == "" {
+				reason = "the server reported triggered=false without a reason"
+			}
+			result["summary"] = fmt.Sprintf("Task was NOT triggered: %s", reason)
+		} else {
+			result["summary"] = "Task was triggered."
 		}
 		data, _ := json.MarshalIndent(result, "", "  ")
 		return string(data), nil
@@ -941,9 +1139,23 @@ func registerBrainMonitorEnable(s *Server, client *APIClient) {
 			"feature_id": featureID,
 		}
 
+		// POST /monitors decodes types.CreateMonitorRequest, which is FLAT
+		// snake_case: template_id, project, feature_id, scope_type. This
+		// sent camelCase "templateId" plus a nested "scope" object — the
+		// shape of DeleteMonitorByScopeRequest, which genuinely IS
+		// {templateId, scope:{...}} and is what the *_disable tools use.
+		// The enable tools were built from the disable contract.
+		//
+		// Nothing matched: the underscore in template_id defeats Go's
+		// case-insensitive key fallback, and "scope" is not a field at all,
+		// so TemplateID and ScopeType both arrived empty, both required
+		// checks in HandleCreateMonitor fired, and these four tools
+		// returned HTTP 400 on every call.
 		body := map[string]any{
-			"templateId": templateID,
-			"scope":      scope,
+			"template_id": templateID,
+			"scope_type":  scope["type"],
+			"project":     scope["project"],
+			"feature_id":  scope["feature_id"],
 		}
 		if schedule := StringArg(args, "schedule", ""); schedule != "" {
 			body["schedule"] = schedule
@@ -1054,9 +1266,23 @@ func registerBrainFeatureReviewEnable(s *Server, client *APIClient) {
 			Path  string `json:"path"`
 			Title string `json:"title"`
 		}
+		// POST /monitors decodes types.CreateMonitorRequest, which is FLAT
+		// snake_case: template_id, project, feature_id, scope_type. This
+		// sent camelCase "templateId" plus a nested "scope" object — the
+		// shape of DeleteMonitorByScopeRequest, which genuinely IS
+		// {templateId, scope:{...}} and is what the *_disable tools use.
+		// The enable tools were built from the disable contract.
+		//
+		// Nothing matched: the underscore in template_id defeats Go's
+		// case-insensitive key fallback, and "scope" is not a field at all,
+		// so TemplateID and ScopeType both arrived empty, both required
+		// checks in HandleCreateMonitor fired, and these four tools
+		// returned HTTP 400 on every call.
 		err := client.Request(ctx, "POST", "/monitors", map[string]any{
-			"templateId": "feature-review",
-			"scope":      scope,
+			"template_id": "feature-review",
+			"scope_type":  scope["type"],
+			"project":     scope["project"],
+			"feature_id":  scope["feature_id"],
 		}, nil, &resp)
 
 		if err != nil {
@@ -1147,9 +1373,23 @@ func registerBrainBlockedInspectorEnable(s *Server, client *APIClient) {
 			"feature_id": featureID,
 		}
 
+		// POST /monitors decodes types.CreateMonitorRequest, which is FLAT
+		// snake_case: template_id, project, feature_id, scope_type. This
+		// sent camelCase "templateId" plus a nested "scope" object — the
+		// shape of DeleteMonitorByScopeRequest, which genuinely IS
+		// {templateId, scope:{...}} and is what the *_disable tools use.
+		// The enable tools were built from the disable contract.
+		//
+		// Nothing matched: the underscore in template_id defeats Go's
+		// case-insensitive key fallback, and "scope" is not a field at all,
+		// so TemplateID and ScopeType both arrived empty, both required
+		// checks in HandleCreateMonitor fired, and these four tools
+		// returned HTTP 400 on every call.
 		body := map[string]any{
-			"templateId": "blocked-inspector",
-			"scope":      scope,
+			"template_id": "blocked-inspector",
+			"scope_type":  scope["type"],
+			"project":     scope["project"],
+			"feature_id":  scope["feature_id"],
 		}
 		if schedule := StringArg(args, "schedule", ""); schedule != "" {
 			body["schedule"] = schedule
@@ -1247,9 +1487,23 @@ func registerBrainDreamEnable(s *Server, client *APIClient) {
 			"project": project,
 		}
 
+		// POST /monitors decodes types.CreateMonitorRequest, which is FLAT
+		// snake_case: template_id, project, feature_id, scope_type. This
+		// sent camelCase "templateId" plus a nested "scope" object — the
+		// shape of DeleteMonitorByScopeRequest, which genuinely IS
+		// {templateId, scope:{...}} and is what the *_disable tools use.
+		// The enable tools were built from the disable contract.
+		//
+		// Nothing matched: the underscore in template_id defeats Go's
+		// case-insensitive key fallback, and "scope" is not a field at all,
+		// so TemplateID and ScopeType both arrived empty, both required
+		// checks in HandleCreateMonitor fired, and these four tools
+		// returned HTTP 400 on every call.
 		body := map[string]any{
-			"templateId": "dream",
-			"scope":      scope,
+			"template_id": "dream",
+			"scope_type":  scope["type"],
+			"project":     scope["project"],
+			"feature_id":  scope["feature_id"],
 		}
 		if schedule := StringArg(args, "schedule", ""); schedule != "" {
 			body["schedule"] = schedule
@@ -1324,59 +1578,115 @@ func registerBrainDreamDisable(s *Server, client *APIClient) {
 // Helper types
 // =============================================================================
 
-// resolvedTaskWithDeps is used by task_get to find tasks and compute dependents.
-type resolvedTaskWithDeps struct {
-	ID             string   `json:"id"`
-	Title          string   `json:"title"`
-	Path           string   `json:"path"`
-	Status         string   `json:"status"`
-	Priority       string   `json:"priority"`
-	Classification string   `json:"classification"`
-	ResolvedDeps   []string `json:"resolved_deps"`
-	WaitingOn      []string `json:"waiting_on"`
-	BlockedBy      []string `json:"blocked_by"`
-	DependsOn      []string `json:"depends_on"`
+// formatTaskExecutionLines renders how a task will actually run.
+//
+// task_get promises "detailed information about a specific task", and an
+// agent about to pick one up needs to know which agent and model it runs
+// under, where, on what branch, and how the work lands. All of it is on the
+// wire in ResolvedTask and none of it was shown, so answering "how will this
+// run?" meant a second call to task_metadata.
+//
+// Only fields that are set are rendered — an unset executor means "runner
+// default", which is not worth a line — except agent and model, whose
+// absence changes which agent picks the work up and is worth stating.
+func formatTaskExecutionLines(task types.ResolvedTask) []string {
+	var body []string
+	add := func(label, value string) {
+		if strings.TrimSpace(value) != "" {
+			body = append(body, fmt.Sprintf("- %s: %s", label, value))
+		}
+	}
+
+	agent := task.Agent
+	if agent == "" {
+		agent = "(unset — runner default)"
+	}
+	body = append(body, fmt.Sprintf("- agent: %s", agent))
+	model := task.Model
+	if model == "" {
+		model = "(unset — provider default)"
+	}
+	body = append(body, fmt.Sprintf("- model: %s", model))
+
+	add("executor", task.Executor)
+	add("execution mode", task.ExecutionMode)
+	add("workdir", task.TargetWorkdir)
+	add("branch", task.GitBranch)
+	add("merges into", task.MergeTargetBranch)
+	add("merge policy", task.MergePolicy)
+	add("merge strategy", task.MergeStrategy)
+	add("checkout mode", task.CheckoutMode)
+	add("feature", task.FeatureID)
+
+	return append([]string{"### Execution"}, append(body, "")...)
+}
+
+// resolvedTaskWithDeps is used by task_get to find tasks and compute
+// dependents.
+//
+// It was a hand-rolled ten-field subset of types.ResolvedTask, which carries
+// roughly sixty. Everything describing HOW a task runs — agent, model,
+// executor, execution_mode, target_workdir, git_branch, the merge_* set —
+// was decoded off the wire and thrown away, so task_get could not answer
+// "how will this run?" and an agent had to make a second call to
+// task_metadata to find out. Alias the real type instead.
+type resolvedTaskWithDeps = types.ResolvedTask
+
+// sessionIDsOf returns the session ids of a task, sorted for stable output.
+// The wire field is a map keyed by id; the previous session_ids array tag
+// matched nothing and always rendered empty.
+func sessionIDsOf(sessions map[string]types.SessionInfo) []string {
+	ids := make([]string, 0, len(sessions))
+	for id := range sessions {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // fullTask is used by task_metadata for the complete task representation.
 type fullTask struct {
-	ID                  string   `json:"id"`
-	Title               string   `json:"title"`
-	Path                string   `json:"path"`
-	Status              string   `json:"status"`
-	Priority            string   `json:"priority"`
-	Classification      string   `json:"classification"`
-	RawDependsOn        []string `json:"depends_on"`
-	ResolvedDeps        []string `json:"resolved_deps"`
-	UnresolvedDeps      []string `json:"unresolved_deps"`
-	BlockedBy           []string `json:"blocked_by"`
-	BlockedByReason     string   `json:"blocked_by_reason"`
-	WaitingOn           []string `json:"waiting_on"`
-	InCycle             bool     `json:"in_cycle"`
-	Tags                []string `json:"tags"`
-	Created             string   `json:"created"`
-	Modified            string   `json:"modified"`
-	TargetWorkdir       string   `json:"target_workdir"`
-	Workdir             string   `json:"workdir"`
-	ResolvedWorkdir     string   `json:"resolved_workdir"`
-	GitBranch           string   `json:"git_branch"`
-	GitRemote           string   `json:"git_remote"`
-	Agent               string   `json:"agent"`
-	Model               string   `json:"model"`
-	DirectPrompt        string   `json:"direct_prompt"`
-	MergeTargetBranch   string   `json:"merge_target_branch"`
-	MergePolicy         string   `json:"merge_policy"`
-	MergeStrategy       string   `json:"merge_strategy"`
-	RemoteBranchPolicy  string   `json:"remote_branch_policy"`
-	OpenPRBeforeMerge   *bool    `json:"open_pr_before_merge"`
-	ExecutionMode       string   `json:"execution_mode"`
-	CompleteOnIdle      *bool    `json:"complete_on_idle"`
-	CheckoutMode        string   `json:"checkout_mode,omitempty"`
-	FeatureID           string   `json:"feature_id"`
-	FeaturePriority     string   `json:"feature_priority"`
-	FeatureDependsOn    []string `json:"feature_depends_on"`
-	SessionIDs          []string `json:"session_ids"`
-	UserOriginalRequest string   `json:"user_original_request"`
+	ID                 string   `json:"id"`
+	Title              string   `json:"title"`
+	Path               string   `json:"path"`
+	Status             string   `json:"status"`
+	Priority           string   `json:"priority"`
+	Classification     string   `json:"classification"`
+	RawDependsOn       []string `json:"depends_on"`
+	ResolvedDeps       []string `json:"resolved_deps"`
+	UnresolvedDeps     []string `json:"unresolved_deps"`
+	BlockedBy          []string `json:"blocked_by"`
+	BlockedByReason    string   `json:"blocked_by_reason"`
+	WaitingOn          []string `json:"waiting_on"`
+	InCycle            bool     `json:"in_cycle"`
+	Tags               []string `json:"tags"`
+	Created            string   `json:"created"`
+	Modified           string   `json:"modified"`
+	TargetWorkdir      string   `json:"target_workdir"`
+	Workdir            string   `json:"workdir"`
+	ResolvedWorkdir    string   `json:"resolved_workdir"`
+	GitBranch          string   `json:"git_branch"`
+	GitRemote          string   `json:"git_remote"`
+	Agent              string   `json:"agent"`
+	Model              string   `json:"model"`
+	DirectPrompt       string   `json:"direct_prompt"`
+	MergeTargetBranch  string   `json:"merge_target_branch"`
+	MergePolicy        string   `json:"merge_policy"`
+	MergeStrategy      string   `json:"merge_strategy"`
+	RemoteBranchPolicy string   `json:"remote_branch_policy"`
+	OpenPRBeforeMerge  *bool    `json:"open_pr_before_merge"`
+	ExecutionMode      string   `json:"execution_mode"`
+	CompleteOnIdle     *bool    `json:"complete_on_idle"`
+	CheckoutMode       string   `json:"checkout_mode,omitempty"`
+	FeatureID          string   `json:"feature_id"`
+	FeaturePriority    string   `json:"feature_priority"`
+	FeatureDependsOn   []string `json:"feature_depends_on"`
+	// ResolvedTask carries Sessions as a map keyed by session id
+	// (json:"sessions"), not a session_ids array. This tag matched nothing,
+	// so task_metadata reported a task as having no sessions however many
+	// it had run.
+	Sessions            map[string]types.SessionInfo `json:"sessions"`
+	UserOriginalRequest string                       `json:"user_original_request"`
 }
 
 // =============================================================================
@@ -1447,4 +1757,93 @@ func nilIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// taskWaitPollInterval is how often a wait_for call re-checks. Task status
+// changes are driven by runners finishing work, so sub-second polling buys
+// nothing and only adds load. A var rather than a const so tests can shrink it
+// instead of paying real seconds to exercise the loop.
+var taskWaitPollInterval = 2 * time.Second
+
+// waitForTaskCondition implements the blocking wait that tasks_status has always
+// documented and never had. It re-fetches through `fetch` until the requested
+// condition holds or the deadline passes, mutating `resp` in place so the caller
+// renders the final observed state, and returns a line describing how the wait
+// ended.
+//
+// Returning WHY the wait stopped matters as much as the wait itself. "Condition
+// met" and "timed out still waiting" produce very similar task lists — the same
+// tasks, one of them merely not finished yet — so a caller that cannot tell them
+// apart is back to guessing, which is the failure this whole effort is about.
+func waitForTaskCondition(ctx context.Context, resp *types.MultiTaskStatusResponse, fetch func() error, waitFor string, timeoutMS int) string {
+	// Waiting on an id that resolves to nothing can never succeed: the server
+	// reports it in NotFound and holds AllCompleted false forever. Burning the
+	// full timeout to rediscover that helps nobody — fail fast and say so.
+	if len(resp.NotFound) > 0 {
+		return fmt.Sprintf("**Wait:** not started — %d requested id(s) resolved to no task, so the condition can never be met.", len(resp.NotFound))
+	}
+
+	if satisfied, why := taskWaitSatisfied(resp, waitFor, nil); satisfied {
+		return "**Wait:** " + why + " (already true on the first check; nothing to wait for)."
+	}
+
+	// For wait_for="any", the baseline is the status set observed right now;
+	// "changed" means changed relative to when the caller started waiting.
+	baseline := taskStatusSnapshot(resp)
+
+	deadline := time.Now().Add(time.Duration(timeoutMS) * time.Millisecond)
+	ticker := time.NewTicker(taskWaitPollInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return "**Wait:** aborted — the request was cancelled before the condition was met."
+		case <-ticker.C:
+			if err := fetch(); err != nil {
+				// A transient failure mid-wait should not be reported as if the
+				// condition resolved. Surface it and stop.
+				return fmt.Sprintf("**Wait:** stopped after an error re-checking status: %v", err)
+			}
+			if len(resp.NotFound) > 0 {
+				return fmt.Sprintf("**Wait:** stopped — %d requested id(s) no longer resolve to a task.", len(resp.NotFound))
+			}
+			if satisfied, why := taskWaitSatisfied(resp, waitFor, baseline); satisfied {
+				return "**Wait:** " + why + "."
+			}
+			if time.Now().After(deadline) {
+				return fmt.Sprintf("**Wait:** TIMED OUT after %dms with the condition still unmet. The state below is the last observed, not a final one.", timeoutMS)
+			}
+		}
+	}
+}
+
+// taskWaitSatisfied evaluates the wait condition. A nil baseline means "first
+// check", where "any" cannot yet be satisfied because nothing has been observed
+// to change from.
+func taskWaitSatisfied(resp *types.MultiTaskStatusResponse, waitFor string, baseline map[string]string) (bool, string) {
+	switch waitFor {
+	case "completed":
+		if resp.AllCompleted {
+			return true, "condition met — all requested tasks are completed or validated"
+		}
+	case "any":
+		if baseline == nil {
+			return false, ""
+		}
+		for _, t := range resp.Tasks {
+			if prev, ok := baseline[t.ID]; ok && prev != t.Status {
+				return true, fmt.Sprintf("condition met — task %s changed from %s to %s", t.ID, prev, t.Status)
+			}
+		}
+	}
+	return false, ""
+}
+
+func taskStatusSnapshot(resp *types.MultiTaskStatusResponse) map[string]string {
+	snap := make(map[string]string, len(resp.Tasks))
+	for _, t := range resp.Tasks {
+		snap[t.ID] = t.Status
+	}
+	return snap
 }

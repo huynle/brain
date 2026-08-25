@@ -7,19 +7,38 @@ import (
 func TestResolveProjectName(t *testing.T) {
 	tests := []struct {
 		input string
+		repo  bool
 		want  string
 	}{
-		{"projects/brain-api", "brain-api"},
-		{"brain-api", "brain-api"},
-		{"projects/foo/bar", "bar"},
-		{"single", "single"},
-		{"", ""},
+		// Home-relative paths resolve to their last segment.
+		{"projects/brain-api", false, "brain-api"},
+		{"brain-api", false, "brain-api"},
+		{"projects/foo/bar", false, "bar"},
+		{"single", false, "single"},
+		{"", false, ""},
+
+		// An absolute path means makeHomeRelative found no home prefix to
+		// strip, so this is not under the user's home. Without git vouching
+		// for it, the project is unknown and must not be guessed.
+		//
+		// "/app" is the live case: the MCP server runs in a container with
+		// that working directory, and the old unconditional basename
+		// fallback confidently reported the project as "app". Seven
+		// Hindsight entries were written to projects/app/ because of it.
+		{"/app", false, ""},
+		{"/", false, ""},
+		{"/opt/someworkdir", false, ""},
+
+		// Git recognising the directory is what makes the basename
+		// meaningful, so a repo outside home still resolves.
+		{"/opt/checkouts/myrepo", true, "myrepo"},
+		{"/app", true, "app"},
 	}
 
 	for _, tt := range tests {
-		got := resolveProjectName(tt.input)
+		got := resolveProjectName(tt.input, tt.repo)
 		if got != tt.want {
-			t.Errorf("resolveProjectName(%q) = %q, want %q", tt.input, got, tt.want)
+			t.Errorf("resolveProjectName(%q, insideRepo=%v) = %q, want %q", tt.input, tt.repo, got, tt.want)
 		}
 	}
 }
@@ -153,5 +172,46 @@ func TestDefaultBaseURL(t *testing.T) {
 	if got != "http://localhost:3333" {
 		// May have BRAIN_API_URL set in env, that's ok
 		t.Logf("DefaultBaseURL() = %q (may be from env)", got)
+	}
+}
+
+// TestMakeHomeRelative_RootHomeIsNotAPrefix reproduces the live container
+// exactly: HOME=/ and WORKDIR=/app, with no git repository present.
+//
+// A home of "/" is a prefix of every absolute path, so treating it as one made
+// "/app" look home-relative ("app"). resolveProjectName's guard then found no
+// leading slash, concluded the path WAS under home, and let the basename
+// fallback answer "app" — the same invented project name 25c02d5 removed,
+// reached by a different route. Confirmed against production: context_get
+// reported "Project: app" while sitting in a non-repository directory, and
+// seven Hindsight entries had already been misfiled to projects/app/.
+func TestMakeHomeRelative_RootHomeIsNotAPrefix(t *testing.T) {
+	if got := makeHomeRelative("/app", "/"); got != "/app" {
+		t.Errorf("makeHomeRelative(%q, %q) = %q, want it left absolute", "/app", "/", got)
+	}
+	if got := makeHomeRelative("/var/lib/thing", "/"); got != "/var/lib/thing" {
+		t.Errorf("a root home must never make a path look home-relative, got %q", got)
+	}
+	// A real home still works.
+	if got := makeHomeRelative("/Users/huy/projects/brain-api", "/Users/huy"); got != "projects/brain-api" {
+		t.Errorf("makeHomeRelative with a real home = %q, want %q", got, "projects/brain-api")
+	}
+}
+
+// TestResolveProjectName_ContainerWorkdirYieldsNoProject is the end-to-end
+// version: the container's environment must produce "" — "ask the user" — not a
+// confident wrong name. "" is what callers treat as unknown; any non-empty
+// answer here silently files entries into a project nobody chose.
+func TestResolveProjectName_ContainerWorkdirYieldsNoProject(t *testing.T) {
+	// Exactly what the deployed MCP server sees.
+	rel := makeHomeRelative("/app", "/")
+	if got := resolveProjectName(rel, false); got != "" {
+		t.Errorf("resolveProjectName for the container workdir = %q, want \"\" (unknown)", got)
+	}
+
+	// A git repo outside home still resolves — the fix must not make the
+	// legitimate case unknown too.
+	if got := resolveProjectName(makeHomeRelative("/srv/checkouts/orion-ai", "/"), true); got != "orion-ai" {
+		t.Errorf("a repo outside home should still resolve, got %q", got)
 	}
 }

@@ -294,7 +294,7 @@ func (h *Handler) HandleListEntryAttachments(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	resp, err := h.attachments.ListForEntry(r.Context(), projectID, chi.URLParam(r, "id"))
+	resp, err := h.attachments.ListForEntry(r.Context(), projectID, entryPathParam(r, "id"))
 	if err != nil {
 		writeAttachmentServiceError(w, err)
 		return
@@ -309,7 +309,7 @@ func (h *Handler) HandleAttachEntryAttachment(w http.ResponseWriter, r *http.Req
 		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
 		return
 	}
-	resp, err := h.attachments.Attach(r.Context(), projectID, chi.URLParam(r, "id"), req)
+	resp, err := h.attachments.Attach(r.Context(), projectID, entryPathParam(r, "id"), req)
 	if err != nil {
 		writeAttachmentServiceError(w, err)
 		return
@@ -323,7 +323,7 @@ func (h *Handler) HandleDetachEntryAttachment(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	resp, err := h.attachments.Detach(r.Context(), projectID, chi.URLParam(r, "id"), chi.URLParam(r, "attachmentID"), r.URL.Query().Get("role"))
+	resp, err := h.attachments.Detach(r.Context(), projectID, entryPathParam(r, "id"), entryPathParam(r, "attachmentID"), r.URL.Query().Get("role"))
 	if err != nil {
 		writeAttachmentServiceError(w, err)
 		return

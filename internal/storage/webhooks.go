@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -90,6 +91,15 @@ func (s *StorageLayer) CreateWebhook(ctx context.Context, wh *Webhook) error {
 }
 
 // GetWebhook retrieves a webhook by ID.
+// ErrWebhookNotFound is returned by GetWebhook when no row matches. It exists
+// because the previous bare fmt.Errorf("webhook not found: %s") could only be
+// recognised by string matching — which exactly one caller did
+// (WebhookServiceImpl.TestDeliver), leaving every other caller unable to tell a
+// missing webhook from a database failure. The API handler for webhook_get has
+// carried an ErrNotFound -> 404 branch the whole time; without a sentinel to
+// match, it was unreachable and a missing webhook returned 500.
+var ErrWebhookNotFound = errors.New("webhook not found")
+
 func (s *StorageLayer) GetWebhook(ctx context.Context, id string) (*Webhook, error) {
 	var wh Webhook
 	var eventsJSON, filterJSON string
@@ -101,7 +111,7 @@ func (s *StorageLayer) GetWebhook(ctx context.Context, id string) (*Webhook, err
 	).Scan(&wh.ID, &wh.Name, &wh.URL, &eventsJSON, &filterJSON,
 		&wh.Secret, &enabled, &wh.CreatedAt, &wh.UpdatedAt)
 	if err == sql.ErrNoRows {
-		return nil, fmt.Errorf("webhook not found: %s", id)
+		return nil, fmt.Errorf("webhook %s: %w", id, ErrWebhookNotFound)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query webhook: %w", err)

@@ -758,3 +758,9 @@ func parseEventSSE(t *testing.T, resp *http.Response, count int, timeout time.Du
 
 	return events
 }
+
+// Coverage satisfies EventService. Returns a plausible full-ring window so the
+// renderer's coverage line is exercised rather than skipped in tests.
+func (m *mockEventService) Coverage() types.EventCoverage {
+	return types.EventCoverage{Buffered: 10, Capacity: 1000}
+}

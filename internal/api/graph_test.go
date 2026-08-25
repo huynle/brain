@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -259,5 +260,62 @@ func TestHandleGetRelated(t *testing.T) {
 				tt.checkBody(t, resp)
 			}
 		})
+	}
+}
+
+// TestGraphRoutes_FullPathIdentifierResolves covers the input form the
+// backlinks/outlinks/related tool schemas have always advertised ("entry path or
+// 8-char ID") and which has never actually worked. The routes match one path
+// segment, so a full path arrives percent-encoded; chi does not unescape URL
+// params, so the handler saw "projects%2Fx%2Ftask%2Fabc.md" and matched nothing.
+// The failure was silent — an empty list, indistinguishable from "no links".
+func TestGraphRoutes_FullPathIdentifierResolves(t *testing.T) {
+	const fullPath = "projects/brain-api/task/oanq4y2n.md"
+
+	var seen string
+	mock := &mockBrainService{
+		getBacklinksFunc: func(ctx context.Context, path string) ([]types.BrainEntry, error) {
+			seen = path
+			return []types.BrainEntry{{ID: "src12345", Title: "Link Source"}}, nil
+		},
+	}
+
+	r := newGraphRouter(mock)
+
+	req := httptest.NewRequest("GET", "/entries/"+url.PathEscape(fullPath)+"/backlinks", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if seen != fullPath {
+		t.Errorf("service received %q, want the unescaped %q", seen, fullPath)
+	}
+}
+
+// TestGraphRoutes_ShortIDIsUnchanged is the other half: unescaping must not
+// disturb the bare 8-char ID form, which is what the PWA sends and what every
+// example in the shipped skill uses.
+func TestGraphRoutes_ShortIDIsUnchanged(t *testing.T) {
+	var seen string
+	mock := &mockBrainService{
+		getBacklinksFunc: func(ctx context.Context, path string) ([]types.BrainEntry, error) {
+			seen = path
+			return nil, nil
+		},
+	}
+
+	r := newGraphRouter(mock)
+
+	req := httptest.NewRequest("GET", "/entries/oanq4y2n/backlinks", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", w.Code)
+	}
+	if seen != "oanq4y2n" {
+		t.Errorf("service received %q, want %q", seen, "oanq4y2n")
 	}
 }

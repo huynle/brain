@@ -1379,13 +1379,47 @@ body[data-theme="light"] .p2-browser-iframe { border-color: #d5dde5; }
   color: #9098a1; font-size: 14px; font-family: inherit;
 }
 
-.toast {
-  position: fixed; top: 44px; left: 50%; transform: translate(-50%, -10px);
-  background: #12161a; border: 1px solid #2a2f35; border-radius: 6px;
-  padding: 6px 12px; z-index: 1200; opacity: 0; transition: opacity 120ms, transform 120ms;
-  pointer-events: none; font-size: 12px;
+/* Toasts. The wrap owns the fixed position and stacks its children, so a
+ * second toast queues below the first instead of painting on top of it.
+ *
+ * Visibility here is unconditional, and deliberately so. This rule used to
+ * be `opacity: 0` plus a `.toast.show { opacity: 1 }` toggle — a leftover
+ * from the pre-React wireframe host, which added `show` imperatively. The
+ * React port copied the CSS and not the toggle, so every toast this app
+ * raised painted invisibly for its whole 4s life; "Run feature now" looked
+ * like a dead menu item because its explanation was there and unreadable.
+ *
+ * Nothing about being seen may depend on script or on a frame landing:
+ * measured in a hidden tab, an entrance animation that never gets a start
+ * frame stays pending forever, and with `both` fill that pins the element
+ * to its from-keyframe. So the entrance animates transform only — paused at
+ * its first frame it is a toast 10px too high, never an invisible one. */
+.toast-wrap {
+  position: fixed; top: 44px; left: 50%; transform: translateX(-50%);
+  z-index: 1200; display: flex; flex-direction: column; gap: 6px;
+  align-items: center;
+  /* Click-through overlay; individual toasts opt back in below. */
+  pointer-events: none;
 }
-.toast.show { opacity: 1; transform: translate(-50%, 0); }
+.toast {
+  display: flex; align-items: center; gap: 10px;
+  max-width: min(92vw, 560px);
+  background: #12161a; border: 1px solid #2a2f35; border-radius: 6px;
+  padding: 6px 12px; font-size: 12px;
+  /* Click-to-dismiss and the action button both need the pointer back. */
+  pointer-events: auto; cursor: pointer;
+  animation: toast-in 120ms ease-out;
+}
+@keyframes toast-in { from { transform: translateY(-10px) } to { transform: translateY(0) } }
+/* Placement diagnostics ("no eligible runner (runner-a: project not
+ * allowed)") are long by nature — wrap them instead of clipping the half
+ * that says why. */
+.toast-message { overflow-wrap: anywhere; }
+.toast-action {
+  flex: none; padding: 2px 8px; border-radius: 4px;
+  background: #1a1e22; border: 1px solid #2a2f35;
+  color: #eaedef; font-size: 11px; font-family: inherit; cursor: pointer;
+}
 /* Kind tones. Warning exists for the partial outcome a bulk fan-out
  * produces — "7 of 9 updated" must not read as a clean success. */
 .toast.success { border-color: #6fca7d55; color: #a9e3b3; }
@@ -2409,11 +2443,17 @@ body[data-theme="light"] .assistant-card textarea { background: #fff !important;
 /* ─── multi-select (SelectionBar + row checkboxes) ───────────────────
  *
  * Zero-clutter rule: rows look exactly as they always did until the
- * user shows selection intent. The checkbox lives in the SAME slot as
- * the row's status glyph / feature caret (`.glyph-slot`) and swaps in
- * on row hover or keyboard focus; `boxed` (React-driven: the row is
- * marked, or the project has an active selection) pins it visible so
- * selection mode reads at a glance. No extra column, no layout shift.
+ * user shows selection intent. Hover and keyboard focus deliberately do
+ * NOT reveal the checkbox — merely pointing at a row would otherwise
+ * swap its status glyph for a box the user never asked for. Selection
+ * intent is explicit: the row menu's Select verb, the `v` accelerator,
+ * shift-click, or long-press on touch. Only then does `boxed`
+ * (React-driven: the row is marked, or the project has an active
+ * selection) swap the checkbox into the SAME slot as the status glyph /
+ * feature caret. No extra column, no layout shift.
+ *
+ * Plain click stays checkbox-free entirely: it marks the row "active"
+ * and that reads purely as colour (see `.trow.active` below).
  */
 .glyph-slot {
   display: inline-flex;
@@ -2430,17 +2470,9 @@ body[data-theme="light"] .assistant-card textarea { background: #fff !important;
   position: relative;
   display: none;
 }
-.trow:hover .glyph-slot .selbox,
-.trow:focus-within .glyph-slot .selbox,
-.feat-head:hover .glyph-slot .selbox,
-.feat-head:focus-within .glyph-slot .selbox,
 .glyph-slot.boxed .selbox {
   display: inline-block;
 }
-.trow:hover .glyph-slot .glyph,
-.trow:focus-within .glyph-slot .glyph,
-.feat-head:hover .glyph-slot .caret,
-.feat-head:focus-within .glyph-slot .caret,
 .glyph-slot.boxed .glyph,
 .glyph-slot.boxed .caret {
   display: none;
@@ -2459,12 +2491,33 @@ body[data-theme="light"] .assistant-card textarea { background: #fff !important;
 .trow.marked { background: #241c0e; }
 .feat-head.marked { background: #241c0e; border-radius: 3px; }
 .drawer-task.marked { background: #241c0e; }
-/* Single-click "active" row highlight. Selected-blue vocabulary from
-   .trow.sel, kept apart from the amber .marked multi-select tint so a
-   single active row never looks like a checkbox selection. Feature
-   heads match .feat-head.marked's rounding. */
-.trow.active { background: #1e2833; color: #f4b23a; }
-.feat-head.active { background: #1e2833; color: #f4b23a; border-radius: 3px; }
+/* Single-click "active" row highlight — the primary way a selected task
+   or feature reads, now that nothing swaps a checkbox in. Selected-blue
+   vocabulary from .trow.sel, kept apart from the amber .marked
+   multi-select tint so a single active row never looks like a checkbox
+   selection. The accent rail is an inset shadow, not a border, so the
+   4-column grid never shifts. Feature heads match .feat-head.marked's
+   rounding. */
+.trow.active {
+  background: #1e2f42;
+  color: #dbeaff;
+  box-shadow: inset 2px 0 0 #5aa9e6;
+}
+.trow.active .status { color: #a9c6e4; }
+.trow.active .id { color: #8fb0cd; }
+.trow.active .glyph { color: #a9c6e4; }
+/* Status glyphs keep their own semantic colour on the active row —
+   "this is selected" must not erase "this is running / done / blocked". */
+.trow.active .glyph.busy { color: #f4b23a; }
+.trow.active .glyph.ok { color: #6fca7d; }
+.trow.active .glyph.blk { color: #d96060; }
+.trow.active .glyph.abandoned { color: #e08c3a; }
+.feat-head.active {
+  background: #1e2f42;
+  border-radius: 3px;
+  box-shadow: inset 2px 0 0 #5aa9e6;
+}
+.feat-head.active .name { color: #dbeaff; }
 
 .selection-bar {
   position: fixed;
@@ -2507,14 +2560,28 @@ body[data-theme="light"] .selection-bar {
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.18);
 }
 body[data-theme="light"] .selection-bar button { background: #f2f5f8; color: #17202a; }
+/* `!important` throughout this light-theme selection block: the base
+   `body[data-theme="light"] .trow` rule above paints #ffffff !important,
+   and an important declaration beats a normal one no matter how specific
+   — without it the marked/active tints simply do not paint in light
+   mode, and selection would have no colour to read at all. */
 body[data-theme="light"] .trow.marked,
 body[data-theme="light"] .feat-head.marked,
-body[data-theme="light"] .drawer-task.marked { background: #fff2d8; }
+body[data-theme="light"] .drawer-task.marked { background: #fff2d8 !important; }
 /* Light-theme active row: a soft blue wash, the selected-blue analogue
    of the amber .marked light tint above — distinct from it and legible
    on the light surface. */
 body[data-theme="light"] .trow.active,
-body[data-theme="light"] .feat-head.active { background: #dbe7f5; color: #17202a; }
+body[data-theme="light"] .trow.active:hover,
+body[data-theme="light"] .feat-head.active {
+  background: #dbe7f5 !important;
+  color: #17202a !important;
+  box-shadow: inset 2px 0 0 #2f6fb0 !important;
+}
+body[data-theme="light"] .trow.active .name,
+body[data-theme="light"] .trow.active .status,
+body[data-theme="light"] .trow.active .id,
+body[data-theme="light"] .feat-head.active .name { color: #17202a !important; }
 
 /* ---------- Entries browser (Entries view + reader + compare) ---------- */
 /* Reuses the pre-existing .entries-pane/.entries-toolbar/.entries-split/

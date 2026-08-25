@@ -2,6 +2,7 @@ package realtime
 
 import (
 	"sync"
+	"time"
 
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -22,9 +23,43 @@ type EventFilter struct {
 }
 
 // eventSubscriber holds a subscriber's channel and filter.
+//
+// send/close are serialized by mu so that Publish, which fans out after
+// releasing the hub lock, can never send on a channel that unsubscribe has
+// already closed (which would panic and permanently drop the event).
 type eventSubscriber struct {
 	ch     chan types.Event
 	filter EventFilter
+
+	mu     sync.Mutex
+	closed bool
+}
+
+// send delivers evt unless the subscriber is already closed. Non-blocking:
+// drops the event if the subscriber's buffer is full.
+func (s *eventSubscriber) send(evt types.Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	select {
+	case s.ch <- evt:
+	default:
+		// Drop event for slow subscriber.
+	}
+}
+
+// close closes the channel exactly once. Consumers detect shutdown via the
+// channel's closed state, so the close must actually happen.
+func (s *eventSubscriber) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
+	close(s.ch)
 }
 
 // EventHub stores events in a ring buffer and fans out to
@@ -81,11 +116,7 @@ func (h *EventHub) Publish(evt types.Event) {
 	// Fan out to matching subscribers (outside write lock).
 	for _, sub := range subs {
 		if matchesFilter(sub.filter, evt) {
-			select {
-			case sub.ch <- evt:
-			default:
-				// Drop event for slow subscriber.
-			}
+			sub.send(evt)
 		}
 	}
 }
@@ -109,7 +140,7 @@ func (h *EventHub) Subscribe(filter EventFilter) (<-chan types.Event, func()) {
 			h.mu.Lock()
 			delete(h.subscribers, sub)
 			h.mu.Unlock()
-			close(sub.ch)
+			sub.close()
 		})
 	}
 
@@ -187,4 +218,18 @@ func matchesFilter(f EventFilter, evt types.Event) bool {
 	}
 
 	return true
+}
+
+// Coverage reports the window the ring buffer currently covers.
+func (h *EventHub) Coverage() types.EventCoverage {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	cov := types.EventCoverage{Buffered: h.count, Capacity: h.cap}
+	if h.count == 0 {
+		return cov
+	}
+	oldest := (h.head - h.count + h.cap) % h.cap
+	cov.Oldest = h.buffer[oldest].Timestamp.UTC().Format(time.RFC3339)
+	return cov
 }

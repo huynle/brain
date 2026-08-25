@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -291,8 +292,8 @@ func TestSchedulerSkipsAutomationGeneratedTasksOnlyForPausedAutomationProject(t 
 // including automation-generated ones — this test locks in the fix.
 func TestSchedulerService_PauseIndependence_TasksPausedAutosOn(t *testing.T) {
 	store := newFakeSchedulerStore()
-	store.paused = true             // tasks: paused
-	store.automationPaused = false  // autos: on
+	store.paused = true            // tasks: paused
+	store.automationPaused = false // autos: on
 	store.tasks = []types.ResolvedTask{
 		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
 		{ID: "automation", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-1"},
@@ -324,8 +325,8 @@ func TestSchedulerService_PauseIndependence_TasksPausedAutosOn(t *testing.T) {
 // automation tasks should be skipped.
 func TestSchedulerService_PauseIndependence_TasksOnAutosPaused(t *testing.T) {
 	store := newFakeSchedulerStore()
-	store.paused = false           // tasks: on
-	store.automationPaused = true  // autos: off (global)
+	store.paused = false          // tasks: on
+	store.automationPaused = true // autos: off (global)
 	store.tasks = []types.ResolvedTask{
 		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
 		{ID: "automation", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:auto-1"},
@@ -519,9 +520,9 @@ type fakeSchedulerStore struct {
 	commands                 []fakeRunnerCommand
 	// activeLeases simulates the persisted state for already_leased / force
 	// scenarios. Keyed by "projectID/taskID".
-	activeLeases  map[string]*storage.DispatchLeaseRow
-	releasedKeys  []string
-	clearedKeys   []string
+	activeLeases map[string]*storage.DispatchLeaseRow
+	releasedKeys []string
+	clearedKeys  []string
 }
 
 type fakeRunnerCommand struct {
@@ -1128,6 +1129,167 @@ func TestRunFeatureNow_CapacityHitQueuesLeftovers(t *testing.T) {
 	}
 }
 
+// TestRunFeatureNow_NoEligibleRunnerSurfacesReason is the regression for
+// "Run feature now does nothing": the only online runner does not serve this
+// project, every ready task queues, and the response used to come back with
+// an empty Reason — leaving the PWA to say "nothing to dispatch" while the
+// real cause sat unread in Results[i].Detail.
+func TestRunFeatureNow_NoEligibleRunnerSurfacesReason(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 1,
+			// Runner is up, but it polls other projects only.
+			Projects: []string{"other-project"},
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatal("Dispatched = true, want false (runner does not serve this project)")
+	}
+	if resp.Reason != "no_eligible_runner" {
+		t.Fatalf("Reason = %q, want no_eligible_runner", resp.Reason)
+	}
+	if !strings.Contains(resp.Detail, "project not allowed") {
+		t.Fatalf("Detail = %q, want it to name why the runner was rejected", resp.Detail)
+	}
+	if len(resp.Queued) != 1 {
+		t.Fatalf("Queued = %v, want the task parked for the cascade", resp.Queued)
+	}
+}
+
+// TestRunFeatureNow_NoRunnersOnlineSurfacesReason covers the other promoted
+// reason: an empty runner list is not "every task is already in flight",
+// which is what the old blanket feature_in_progress fallback claimed.
+func TestRunFeatureNow_NoRunnersOnlineSurfacesReason(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = nil
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Reason != "no_online_runner" {
+		t.Fatalf("Reason = %q, want no_online_runner", resp.Reason)
+	}
+	if len(resp.Queued) != 0 {
+		t.Fatalf("Queued = %v, want empty — no cascade tick can conjure a runner", resp.Queued)
+	}
+}
+
+// TestRunFeatureNow_AlreadyLeasedStaysFeatureInProgress pins the reason that
+// existed before promotion: tasks held by a live lease really are in flight,
+// and both the cascade and the PWA already speak feature_in_progress.
+func TestRunFeatureNow_AlreadyLeasedStaysFeatureInProgress(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{
+		{
+			RunnerID: "runner-a", MachineID: "machine-a",
+			Status: types.RunnerStatusOnline, DispatchPush: true,
+			Executors: []string{"opencode"}, MaxParallel: 2,
+		},
+	}
+	store.activeLeases = map[string]*storage.DispatchLeaseRow{
+		"proj/task-1": {
+			ProjectID: "proj", TaskID: "task-1", LeaseID: "lease-1",
+			AssignedRunnerID: "runner-b", State: storage.DispatchLeaseStatePushed,
+		},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Reason != "feature_in_progress" {
+		t.Fatalf("Reason = %q, want feature_in_progress", resp.Reason)
+	}
+}
+
+func TestDominantSkipReason(t *testing.T) {
+	tests := []struct {
+		name       string
+		results    []types.RunTaskResponse
+		wantReason string
+		wantDetail string
+	}{
+		{
+			name:    "no results",
+			results: nil,
+		},
+		{
+			name: "dispatched entries are ignored",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Dispatched: true},
+			},
+		},
+		{
+			name: "single skip wins with its detail",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Reason: "no_eligible_runner", Detail: "runner-a: project not allowed"},
+			},
+			wantReason: "no_eligible_runner",
+			wantDetail: "runner-a: project not allowed",
+		},
+		{
+			name: "majority reason wins over a lone dissenter",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Reason: "already_leased"},
+				{TaskID: "b", Reason: "no_eligible_runner", Detail: "runner-a: at capacity"},
+				{TaskID: "c", Reason: "no_eligible_runner", Detail: "runner-a: at capacity"},
+			},
+			wantReason: "no_eligible_runner",
+			wantDetail: "runner-a: at capacity",
+		},
+		{
+			name: "disagreeing details are counted, not dropped",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Reason: "no_eligible_runner", Detail: "runner-a: project not allowed"},
+				{TaskID: "b", Reason: "no_eligible_runner", Detail: "runner-b: executor not supported"},
+			},
+			wantReason: "no_eligible_runner",
+			wantDetail: "runner-a: project not allowed (+1 other reason(s))",
+		},
+		{
+			name: "ties break on the reason string, deterministically",
+			results: []types.RunTaskResponse{
+				{TaskID: "a", Reason: "no_online_runner"},
+				{TaskID: "b", Reason: "already_leased"},
+			},
+			wantReason: "already_leased",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			reason, detail := dominantSkipReason(tt.results)
+			if reason != tt.wantReason {
+				t.Fatalf("reason = %q, want %q", reason, tt.wantReason)
+			}
+			if detail != tt.wantDetail {
+				t.Fatalf("detail = %q, want %q", detail, tt.wantDetail)
+			}
+		})
+	}
+}
+
 // TestRunFeatureNow_DispatchPayloadAlwaysIncludesForce pins down the same
 // contract as TestRunTaskNow_DispatchPayloadAlwaysIncludesForce but at the
 // feature level: every per-task dispatch published by RunFeatureNow must
@@ -1196,5 +1358,88 @@ func TestRunFeatureNow_HonorsForceFlagOnPerTaskCalls(t *testing.T) {
 	}
 	if payload["force"] != true {
 		t.Fatalf("dispatch payload force = %v, want true (propagated from RunFeatureNow)", payload["force"])
+	}
+}
+
+// TestSchedulerService_SkipBreakdownAttributesEachCause verifies the scheduler
+// records WHY it skipped, not just how many. All three causes are known at the
+// skip site; before this they were summed into one counter and discarded, which
+// left "held by a pause dial" indistinguishable from "no runner will take this"
+// in scheduler_status — the two states an operator most needs to tell apart.
+func TestSchedulerService_SkipBreakdownAttributesEachCause(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.paused = true           // tasks: paused -> holds the manual task
+	store.automationPaused = true // autos: paused -> holds the automation task
+	store.tasks = []types.ResolvedTask{
+		{ID: "manual", ProjectID: "proj", Status: "pending", Classification: "ready"},
+		{ID: "auto", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:a-1"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "r", MachineID: "m", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Skipped != 2 {
+		t.Fatalf("Skipped = %d, want 2; result=%#v", result.Skipped, result)
+	}
+	if result.SkippedTasksPaused != 1 {
+		t.Errorf("SkippedTasksPaused = %d, want 1; result=%#v", result.SkippedTasksPaused, result)
+	}
+	if result.SkippedAutomationsPaused != 1 {
+		t.Errorf("SkippedAutomationsPaused = %d, want 1; result=%#v", result.SkippedAutomationsPaused, result)
+	}
+	if result.SkippedNoCandidate != 0 || result.SkippedAlreadyLeased != 0 {
+		t.Errorf("paused skips must not be attributed to placement or leasing; result=%#v", result)
+	}
+}
+
+// TestSchedulerService_SkipBreakdownNoCandidate covers the second cause: the
+// task is not paused, but no online runner is eligible for it.
+func TestSchedulerService_SkipBreakdownNoCandidate(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "orphan", ProjectID: "proj", Status: "pending", Classification: "ready"},
+	}
+	store.runners = nil // nothing online to accept it
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.SkippedNoCandidate != 1 {
+		t.Errorf("SkippedNoCandidate = %d, want 1; result=%#v", result.SkippedNoCandidate, result)
+	}
+	if result.SkippedTasksPaused != 0 || result.SkippedAutomationsPaused != 0 {
+		t.Errorf("an unplaceable task must not be reported as paused; result=%#v", result)
+	}
+}
+
+// TestSchedulerService_SkipBreakdownSumsToTotal is the invariant that keeps the
+// rendered breakdown honest: whatever mix of causes a pass hits, the parts must
+// account for the whole. A new skip site that forgets its counter fails here.
+func TestSchedulerService_SkipBreakdownSumsToTotal(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.paused = true
+	store.tasks = []types.ResolvedTask{
+		{ID: "held", ProjectID: "proj", Status: "pending", Classification: "ready"},
+		{ID: "unplaceable", ProjectID: "proj", Status: "pending", Classification: "ready", GeneratedBy: "automation:a-1"},
+	}
+	store.runners = nil
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	accounted := result.SkippedTasksPaused + result.SkippedAutomationsPaused +
+		result.SkippedNoCandidate + result.SkippedAlreadyLeased
+	if accounted != result.Skipped {
+		t.Fatalf("skip causes account for %d of %d skips; result=%#v", accounted, result.Skipped, result)
 	}
 }

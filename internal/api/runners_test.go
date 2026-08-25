@@ -1453,3 +1453,32 @@ func TestHandleShutdownRunner_NotFound(t *testing.T) {
 		t.Fatalf("status = %d, want %d\nBody: %s", rec.Code, http.StatusNotFound, rec.Body.String())
 	}
 }
+
+// TestHandleListRunnerInstances_UnknownRunnerIs404 — ListInstances gained a
+// registration check, which made ErrNotFound reachable in this handler for the
+// first time. The handler mapped every error to 500, so a mistyped runner id
+// came back as a server fault: it tells the caller to retry, and it trips
+// alerting on what is an ordinary client mistake.
+func TestHandleListRunnerInstances_UnknownRunnerIs404(t *testing.T) {
+	mock := &mockRunnerRegistryService{
+		listInstancesFunc: func(ctx context.Context, runnerID string) (*types.InstanceListResponse, error) {
+			return nil, ErrNotFound
+		},
+	}
+
+	h := NewHandler(nil, WithRunnerRegistryService(mock))
+	r := chi.NewRouter()
+	r.Get("/runners/{runnerId}/instances", h.HandleListRunnerInstances)
+
+	req := httptest.NewRequest("GET", "/runners/runner-does-not-exist/instances", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+	// A bare "not found" leaves the caller guessing which id was wrong.
+	if !strings.Contains(w.Body.String(), "runner-does-not-exist") {
+		t.Errorf("error should name the runner, got: %s", w.Body.String())
+	}
+}

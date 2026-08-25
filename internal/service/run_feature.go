@@ -30,7 +30,15 @@ import (
 //   - "scheduler_not_configured" — required dependencies missing
 //   - "feature_not_found"        — featureID is empty
 //   - "no_ready_tasks"           — feature has no ready tasks right now
-//   - "feature_in_progress"      — every ready task was already in flight
+//   - "feature_in_progress"      — every ready task was already leased
+//   - "no_online_runner"         — no runners are registered
+//   - "no_eligible_runner"       — runners exist but none can take these
+//     tasks; Detail names the runner and why (project not allowed, executor
+//     unsupported, at capacity, …)
+//
+// The last two are the per-task skip reasons promoted to the response: when
+// nothing dispatched, the whole feature's outcome is the dominant per-task
+// cause, so a caller that only reads Reason/Detail still learns why.
 //
 // Errors are returned only for unexpected infrastructure problems.
 func (s *SchedulerService) RunFeatureNow(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error) {
@@ -179,9 +187,26 @@ func (s *SchedulerService) RunFeatureNow(ctx context.Context, projectID, feature
 	}
 
 	resp.Dispatched = resp.DispatchedCount > 0
-	if !resp.Dispatched && len(resp.Queued) == 0 && resp.SkippedCount > 0 {
-		resp.Reason = "feature_in_progress"
-		resp.Detail = "every ready task was already in flight or otherwise unrunnable"
+	if !resp.Dispatched && resp.SkippedCount > 0 {
+		// Nothing dispatched: promote the dominant per-task skip reason to
+		// the response so callers get a cause, not silence. Leaving Reason
+		// empty here was the bug behind "Run feature now does nothing" —
+		// every task skipped for `no_eligible_runner`, the whole feature
+		// queued, and the PWA had nothing to render but "nothing to
+		// dispatch" while `results[i].detail` held the real answer
+		// ("runner-a: project not allowed").
+		reason, detail := dominantSkipReason(resp.Results)
+		switch reason {
+		case "", "already_leased":
+			// Leases are held by runners actively working the feature, so
+			// this stays the pre-existing in-flight reason (which the
+			// cascade and the PWA both already understand).
+			resp.Reason = "feature_in_progress"
+			resp.Detail = "every ready task was already in flight or otherwise unrunnable"
+		default:
+			resp.Reason = reason
+			resp.Detail = detail
+		}
 	}
 
 	// Register the cascade when there's leftover work that will resolve
@@ -200,4 +225,51 @@ func (s *SchedulerService) RunFeatureNow(ctx context.Context, projectID, feature
 	}
 
 	return resp, nil
+}
+
+// dominantSkipReason picks the per-task skip reason that explains the most
+// tasks in a run, plus a representative Detail for it. Ties break on the
+// reason string so the response is deterministic for a given input.
+//
+// It exists so a caller reading only Reason/Detail — a toast, a log line, an
+// MCP tool result — gets the same answer as one that walks every entry in
+// Results. Dispatched entries and entries without a reason are ignored.
+func dominantSkipReason(results []types.RunTaskResponse) (string, string) {
+	counts := make(map[string]int, len(results))
+	for _, one := range results {
+		if one.Dispatched || one.Reason == "" {
+			continue
+		}
+		counts[one.Reason]++
+	}
+	if len(counts) == 0 {
+		return "", ""
+	}
+
+	reason := ""
+	for candidate, n := range counts {
+		if n > counts[reason] || (n == counts[reason] && candidate < reason) {
+			reason = candidate
+		}
+	}
+
+	// Representative detail: the first one seen for the winning reason, plus
+	// a count when the tasks disagree (two runners, two different excuses).
+	detail := ""
+	distinct := 0
+	seen := make(map[string]bool, len(results))
+	for _, one := range results {
+		if one.Dispatched || one.Reason != reason || one.Detail == "" || seen[one.Detail] {
+			continue
+		}
+		seen[one.Detail] = true
+		distinct++
+		if detail == "" {
+			detail = one.Detail
+		}
+	}
+	if distinct > 1 {
+		detail = fmt.Sprintf("%s (+%d other reason(s))", detail, distinct-1)
+	}
+	return reason, detail
 }

@@ -1386,3 +1386,55 @@ func mustParseAttachmentIDForTest(t *testing.T, id string) int64 {
 	}
 	return parsed
 }
+
+// TestDescribeExtractionState_DistinguishesTheFourCases — an attachment that
+// exists but has no text was reported as a bare "not found", byte-identical to a
+// mistyped or deleted id. Pending, failed, skipped, and never-attempted are four
+// different answers: wait, read the error, this will never work, extraction is
+// off. All four were collapsed.
+func TestDescribeExtractionState_DistinguishesTheFourCases(t *testing.T) {
+	att := types.Attachment{ID: "att123", Filename: "scan.pdf", ContentType: "application/pdf"}
+
+	tests := []struct {
+		name    string
+		derived *storage.AttachmentDerivedRow
+		want    string
+	}{
+		{"never attempted", nil, "no extraction has been attempted"},
+		{"pending", &storage.AttachmentDerivedRow{Status: types.AttachmentExtractionStatusPending}, "still PENDING"},
+		{"failed with reason", &storage.AttachmentDerivedRow{Status: types.AttachmentExtractionStatusFailed, Error: "ocr timeout"}, "FAILED: ocr timeout"},
+		{"failed silently", &storage.AttachmentDerivedRow{Status: types.AttachmentExtractionStatusFailed}, "FAILED with no recorded reason"},
+		{"skipped", &storage.AttachmentDerivedRow{Status: types.AttachmentExtractionStatusSkipped, Error: "type not supported"}, "SKIPPED: type not supported"},
+		{"ready but empty", &storage.AttachmentDerivedRow{Status: types.AttachmentExtractionStatusReady}, "produced no text"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := describeExtractionState(att, tt.derived)
+			if !strings.Contains(got, tt.want) {
+				t.Errorf("describeExtractionState = %q, want it to contain %q", got, tt.want)
+			}
+			// Every variant must identify the attachment, so the caller knows
+			// which one of a batch this is about.
+			if !strings.Contains(got, "att123") || !strings.Contains(got, "scan.pdf") {
+				t.Errorf("should name the attachment: %q", got)
+			}
+		})
+	}
+}
+
+// TestDescribeExtractionState_NeverReadsAsMissing is the point of the change:
+// none of these wordings may suggest the attachment does not exist.
+func TestDescribeExtractionState_NeverReadsAsMissing(t *testing.T) {
+	att := types.Attachment{ID: "att123", Filename: "x.png", ContentType: "image/png"}
+	for _, d := range []*storage.AttachmentDerivedRow{
+		nil,
+		{Status: types.AttachmentExtractionStatusPending},
+		{Status: types.AttachmentExtractionStatusFailed, Error: "boom"},
+	} {
+		got := describeExtractionState(att, d)
+		if !strings.Contains(got, "has no extracted text") {
+			t.Errorf("must say the TEXT is missing, not the attachment: %q", got)
+		}
+	}
+}

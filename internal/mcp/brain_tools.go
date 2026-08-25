@@ -94,8 +94,8 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 				"feature_priority":      {Type: "string", Enum: types.Priorities, Description: "Priority level for the feature group. Determines execution order relative to other features."},
 				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. All tasks in dependent features must complete before this feature's tasks can start. Use this for before-feature orchestration (e.g., feature 'main' depends on feature 'preflight')."},
 				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
-				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type ('create_task' or 'script'), title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
-				"retry":                 {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
+				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type ('create_task' or 'script'), prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
+				"retry":                 {Type: "object", Description: "Automation retry policy. ⚠ CURRENTLY INERT: max_attempts and backoff round-trip through storage but nothing in the task lifecycle reads them — there is no attempt counter — and 'timeout' is not a field at all, so it is dropped at decode. Setting this changes nothing. Tracked for deletion or implementation."},
 				"direct_prompt":         {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow. The prompt is sent verbatim when the task runs."},
 				"agent":                 {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev', 'build')"},
 				"model":                 {Type: "string", Description: "Override model (format: 'provider/model-id', e.g., 'anthropic/claude-sonnet-4-20250514')"},
@@ -301,6 +301,14 @@ func registerBrainRecall(s *Server, client *APIClient) {
 			Tags                []string                    `json:"tags"`
 			UserOriginalRequest string                      `json:"user_original_request"`
 			Attachments         []types.AttachmentReference `json:"attachments,omitempty"`
+
+			// Recalling a task without its priority, feature or
+			// dependencies means a second call to task_get for facts that
+			// were already on the wire. Rendered only when set, so a plain
+			// note is not padded with task vocabulary.
+			Priority  string   `json:"priority,omitempty"`
+			FeatureID string   `json:"feature_id,omitempty"`
+			DependsOn []string `json:"depends_on,omitempty"`
 		}
 		params := make(map[string]string)
 		if include := StringSliceArg(args, "include"); len(include) > 0 {
@@ -322,8 +330,21 @@ func registerBrainRecall(s *Server, client *APIClient) {
 
 		attachments := formatAttachmentReferences(resp.Attachments)
 
-		return fmt.Sprintf("## %s\n\nPath: %s\nType: %s\nStatus: %s\nTags: %s%s%s\n\n---\n\n%s",
-			resp.Title, resp.Path, resp.Type, resp.Status, tags, userRequest, attachments, resp.Content), nil
+		// Task-shaped fields, shown only when set so a plain note is not
+		// padded with vocabulary that does not apply to it.
+		var taskFields strings.Builder
+		if resp.Priority != "" {
+			fmt.Fprintf(&taskFields, "\nPriority: %s", resp.Priority)
+		}
+		if resp.FeatureID != "" {
+			fmt.Fprintf(&taskFields, "\nFeature: %s", resp.FeatureID)
+		}
+		if len(resp.DependsOn) > 0 {
+			fmt.Fprintf(&taskFields, "\nDepends on: %s", strings.Join(resp.DependsOn, ", "))
+		}
+
+		return fmt.Sprintf("## %s\n\nPath: %s\nType: %s\nStatus: %s\nTags: %s%s%s%s\n\n---\n\n%s",
+			resp.Title, resp.Path, resp.Type, resp.Status, tags, taskFields.String(), userRequest, attachments, resp.Content), nil
 	})
 }
 
@@ -388,7 +409,7 @@ func registerBrainAttachmentAttach(s *Server, client *APIClient) {
 		}
 
 		var resp types.AttachEntryAttachmentResponse
-		if err := client.Request(ctx, "POST", "/entries/"+entryID+"/attachments", body, map[string]string{"project_id": projectID}, &resp); err != nil {
+		if err := client.Request(ctx, "POST", "/entries/"+url.PathEscape(entryID)+"/attachments", body, map[string]string{"project_id": projectID}, &resp); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Attached attachment %s to entry %s\n\n%s", attachmentID, entryID, formatAttachmentReferences(resp.Attachments)), nil
@@ -418,7 +439,7 @@ func registerBrainAttachmentDetach(s *Server, client *APIClient) {
 			params["role"] = role
 		}
 		var resp types.AttachEntryAttachmentResponse
-		if err := client.Request(ctx, "DELETE", "/entries/"+entryID+"/attachments/"+url.PathEscape(attachmentID), nil, params, &resp); err != nil {
+		if err := client.Request(ctx, "DELETE", "/entries/"+url.PathEscape(entryID)+"/attachments/"+url.PathEscape(attachmentID), nil, params, &resp); err != nil {
 			return "", err
 		}
 		return fmt.Sprintf("Detached attachment %s from entry %s\n\nRemaining:%s", attachmentID, entryID, formatAttachmentReferences(resp.Attachments)), nil
@@ -438,9 +459,19 @@ func registerBrainAttachmentList(s *Server, client *APIClient) {
 		if projectID == "" {
 			return "", fmt.Errorf("provide 'project' (no ambient project is available)")
 		}
+		// entry_id is documented as "entry ID or path", and the route is
+		// GET /entries/{id}/attachments — a SINGLE path segment. An
+		// unescaped path fell through to the GET /entries/* wildcard
+		// instead, which returns a BrainEntry. That decodes cleanly into
+		// AttachEntryAttachmentResponse because they share "path" and
+		// "attachments", and BrainEntry.Attachments is include-gated and
+		// this call sends no include — so the tool printed "No attachments
+		// found for entry." for an entry with many, alongside a
+		// correct-looking Path. A hard mismatch degrading into a confident
+		// lie. fetchGraph below already escapes for exactly this reason.
 		if entryID := StringArg(args, "entry_id", ""); entryID != "" {
 			var resp types.AttachEntryAttachmentResponse
-			if err := client.Request(ctx, "GET", "/entries/"+entryID+"/attachments", nil, map[string]string{"project_id": projectID}, &resp); err != nil {
+			if err := client.Request(ctx, "GET", "/entries/"+url.PathEscape(entryID)+"/attachments", nil, map[string]string{"project_id": projectID}, &resp); err != nil {
 				return "", err
 			}
 			return formatEntryAttachmentList(projectID, entryID, resp), nil
@@ -866,7 +897,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 				"status":     {Type: "string", Enum: types.EntryStatuses, Description: "Filter by status"},
 				"feature_id": {Type: "string", Description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"},
 				"tags":       {Type: "array", Items: &Property{Type: "string"}, Description: "Filter by tags (OR logic - matches entries with any of the specified tags)"},
-				"limit":      {Type: "number", Description: "Maximum results (default: 10)"},
+				"limit":      {Type: "number", Description: "Maximum results (default: 20, per defaultSearchLimit in internal/storage/search.go)"},
 				"global":     {Type: "boolean", Description: "Search only global entries"},
 				"strategy":   {Type: "string", Enum: []string{"fts", "exact", "like", "semantic", "hybrid"}, Description: "Search strategy: 'fts' (default), 'exact', 'like', 'semantic' (embedding), or 'hybrid' (combined)"},
 			},
@@ -892,7 +923,7 @@ func registerBrainSearch(s *Server, client *APIClient) {
 			return fmt.Sprintf("No entries found matching %q", args["query"]), nil
 		}
 
-		lines := []string{fmt.Sprintf("Found %d entries:\n", resp.Total)}
+		lines := []string{foundLine("entries", resp.Total, IntArg(args, "limit", 0), 20)}
 		for _, r := range resp.Results {
 			lines = append(lines, fmt.Sprintf("- **%s** (%s) - %s", r.Title, r.Path, r.Type))
 			if r.Snippet != "" {
@@ -923,7 +954,7 @@ Filename filtering supports:
 				"status":     {Type: "string", Enum: types.EntryStatuses, Description: "Filter by status"},
 				"feature_id": {Type: "string", Description: "Filter by feature group ID (e.g., 'auth-system', 'dark-mode')"},
 				"tags":       {Type: "array", Items: &Property{Type: "string"}, Description: "Filter by tags (OR logic - matches entries with any of the specified tags)"},
-				"limit":      {Type: "number", Description: "Maximum entries to return (default: 20)"},
+				"limit":      {Type: "number", Description: "Maximum entries to return (default: 100, per defaultListLimit in internal/storage/list.go)"},
 				"global":     {Type: "boolean", Description: "List only global entries"},
 				"sort_by":    {Type: "string", Enum: []string{"created", "modified", "priority"}, Description: "Sort order"},
 				"filename":   {Type: "string", Description: "Filter by filename/ID (supports wildcards: abc*, *def, abc*def)"},
@@ -960,26 +991,31 @@ Filename filtering supports:
 			params["global"] = fmt.Sprintf("%t", v)
 		}
 
-		var resp struct {
-			Entries []struct {
-				ID       string `json:"id"`
-				Path     string `json:"path"`
-				Title    string `json:"title"`
-				Type     string `json:"type"`
-				Status   string `json:"status"`
-				Priority string `json:"priority"`
-			} `json:"entries"`
-			Total int `json:"total"`
-		}
+		// Decode the real response type. The hand-rolled struct here picked
+		// six fields and silently dropped everything else the server sends —
+		// including Truncated, which is the difference between "there are no
+		// more" and "I stopped looking".
+		var resp types.ListEntriesResponse
 		if err := client.Request(ctx, "GET", "/entries", nil, params, &resp); err != nil {
 			return "", err
 		}
 
 		if len(resp.Entries) == 0 {
+			if resp.Truncated {
+				// A filtered list runs its filter in Go over a bounded scan of
+				// the table. Exhausting that window without a match is not the
+				// same as "no such entry", and saying "No entries found" for it
+				// is how a lookup by exact id used to deny entries that exist.
+				return "No entries matched within the scan window, and the window was exhausted before the search finished — " +
+					"matches may exist beyond it. Narrow the filters (project, type, status) or raise 'limit' and try again.", nil
+			}
 			return "No entries found", nil
 		}
 
-		lines := []string{fmt.Sprintf("Found %d entries:\n", resp.Total)}
+		lines := []string{foundLine("entries", resp.Total, IntArg(args, "limit", 0), 100)}
+		if resp.Truncated {
+			lines = append(lines, "_(scan window exhausted — more matches may exist beyond it; narrow the filters or raise 'limit')_")
+		}
 		for _, e := range resp.Entries {
 			lines = append(lines, fmt.Sprintf("- **%s** (%s) - %s | %s", e.Title, e.Path, e.Type, e.Status))
 		}
@@ -1001,12 +1037,18 @@ func registerBrainInject(s *Server, client *APIClient) {
 				"query":       {Type: "string", Description: "What context are you looking for?"},
 				"project":     {Type: "string", Description: "Filter by project ID (e.g., 'orion-ai'). Omit to search across all projects."},
 				"max_entries": {Type: "number", Description: "Maximum entries to include (default: 5)"},
-				"type":        {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
+				"max_chars": {Type: "number", Description: "Bound the total assembled context in characters (default: 24000, roughly 6k tokens). " +
+					"The budget is split evenly across the matched entries, and any entry cut short is marked with its path so you can recall it in full. " +
+					"Pass a negative value for unbounded output."},
+				"type": {Type: "string", Enum: types.EntryTypes, Description: "Filter by entry type"},
 			},
 			Required: []string{"query"},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		body := map[string]any{"query": args["query"]}
+		if v, ok := args["max_chars"]; ok {
+			body["maxChars"] = v
+		}
 		if v := StringArg(args, "project", ""); v != "" {
 			body["project"] = v
 		}
@@ -1063,55 +1105,55 @@ If both content and append are provided, content replaces the body first, then a
 
 Statuses: draft, pending, active, in_progress, blocked, cancelled, completed, validated, superseded, archived
 
-Note: as a guard against clients that autofill every optional field, when 3 or more optional fields exactly match their documented defaults (priority: "medium", feature_priority: "high", merge_policy: "prompt_only", merge_strategy: "squash", remote_branch_policy: "keep", execution_mode: "worktree", executor: "opencode", open_pr_before_merge: false, complete_on_idle: false, schedule_enabled: false, max_runs: 0, checkout_mode: "ai"), those default-valued fields are ignored and listed in the response. To intentionally set several fields to those exact values, update them in separate calls.`,
+Note: as a guard against clients that autofill every optional field, when 3 or more optional fields exactly match their documented defaults (` + formatOptionalDefaults() + `), those default-valued fields are ignored and listed in the response. To intentionally set several fields to those exact values, update them in separate calls.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"path":                 {Type: "string", Description: "Path to the entry to update"},
-				"status":               {Type: "string", Enum: types.EntryStatuses, Description: "New status"},
-				"title":                {Type: "string", Description: "New title"},
-				"content":              {Type: "string", Description: "Replace the entry's full body content (markdown). Preserves path, ID, and links. Use 'append' to add to the end instead; if both are set, content is applied first."},
-				"append":               {Type: "string", Description: "Content to append to the end of the entry body"},
-				"note":                 {Type: "string", Description: "Short note to add"},
-				"depends_on":           {Type: "array", Items: &Property{Type: "string"}, Description: "Task dependencies - list of task IDs or titles"},
-				"tags":                 {Type: "array", Items: &Property{Type: "string"}, Description: "Update tags for the entry"},
-				"priority":             {Type: "string", Enum: types.Priorities, Description: "Priority level"},
-				"target_workdir":       {Type: "string", Description: "Explicit working directory override for task execution"},
-				"workdir":              {Type: "string", Description: "Working directory relative to home (e.g., 'orion/orion-ai'). Used together with git_remote to resolve the repo context for execution."},
-				"git_branch":           {Type: "string", Description: "Git branch for the task"},
-				"git_remote":           {Type: "string", Description: "Git remote URL for the task's repo (e.g., 'git@gitlab.example.com:group/project.git'). Used together with workdir to resolve the repo context for execution."},
-				"merge_target_branch":  {Type: "string", Description: "Branch to merge completed work into"},
-				"merge_policy":         {Type: "string", Enum: types.MergePolicies, Description: "Merge behavior at checkout completion"},
-				"merge_strategy":       {Type: "string", Enum: types.MergeStrategies, Description: "Git merge strategy"},
-				"remote_branch_policy": {Type: "string", Enum: types.RemoteBranchPolicies, Description: "Remote branch cleanup after merge"},
-				"open_pr_before_merge": {Type: "boolean", Description: "Require PR before merge"},
-				"execution_mode":       {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
-				"complete_on_idle":     {Type: "boolean", Description: "Mark task as completed when agent becomes idle"},
-				"checkout_mode":        {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation."},
-				"schedule":             {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *')"},
-				"schedule_enabled":     {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
-				"max_runs":             {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."},
-				"run_once_at":          {Type: "string", Description: "RFC3339 timestamp for one-time execution (e.g., '2025-06-15T10:00:00Z'). Task runs once at this time then auto-disables."},
-				"timezone":             {Type: "string", Description: "IANA timezone for schedule interpretation (e.g., 'America/New_York', 'UTC'). Defaults to UTC if not set."},
-				"starts_at":            {Type: "string", Description: "RFC3339 timestamp for when the schedule becomes active. Schedule won't trigger before this time."},
-				"expires_at":           {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
-				"feature_id":           {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
-				"feature_priority":     {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
-				"feature_depends_on":   {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. Use this for feature-to-feature ordering."},
-				"trigger":              {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
-				"action":               {Type: "object", Description: "Automation action config for automation entries. Common fields: type, title_template, prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
-				"retry":                {Type: "object", Description: "Automation retry policy for automation entries. Common fields: max_attempts, backoff, timeout."},
-				"feature_schedule":     {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
-				"feature_starts_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
-				"feature_expires_at":   {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
-				"feature_run_once_at":  {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
-				"feature_timezone":     {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
-				"direct_prompt":        {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
+				"path":                  {Type: "string", Description: "Path to the entry to update"},
+				"status":                {Type: "string", Enum: types.EntryStatuses, Description: "New status"},
+				"title":                 {Type: "string", Description: "New title"},
+				"content":               {Type: "string", Description: "Replace the entry's full body content (markdown). Preserves path, ID, and links. Use 'append' to add to the end instead; if both are set, content is applied first."},
+				"append":                {Type: "string", Description: "Content to append to the end of the entry body"},
+				"note":                  {Type: "string", Description: "Short note to add"},
+				"depends_on":            {Type: "array", Items: &Property{Type: "string"}, Description: "Task dependencies - list of task IDs or titles"},
+				"tags":                  {Type: "array", Items: &Property{Type: "string"}, Description: "Update tags for the entry"},
+				"priority":              {Type: "string", Enum: types.Priorities, Description: "Priority level"},
+				"target_workdir":        {Type: "string", Description: "Explicit working directory override for task execution"},
+				"workdir":               {Type: "string", Description: "Working directory relative to home (e.g., 'orion/orion-ai'). Used together with git_remote to resolve the repo context for execution."},
+				"git_branch":            {Type: "string", Description: "Git branch for the task"},
+				"git_remote":            {Type: "string", Description: "Git remote URL for the task's repo (e.g., 'git@gitlab.example.com:group/project.git'). Used together with workdir to resolve the repo context for execution."},
+				"merge_target_branch":   {Type: "string", Description: "Branch to merge completed work into"},
+				"merge_policy":          {Type: "string", Enum: types.MergePolicies, Description: "Merge behavior at checkout completion"},
+				"merge_strategy":        {Type: "string", Enum: types.MergeStrategies, Description: "Git merge strategy"},
+				"remote_branch_policy":  {Type: "string", Enum: types.RemoteBranchPolicies, Description: "Remote branch cleanup after merge"},
+				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
+				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
+				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle"},
+				"checkout_mode":         {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation."},
+				"schedule":              {Type: "string", Description: "Cron schedule expression (e.g., '*/5 * * * *')"},
+				"schedule_enabled":      {Type: "boolean", Description: "Whether the schedule is active (default true when schedule exists). Set to false to pause scheduling."},
+				"max_runs":              {Type: "number", Description: "Maximum number of scheduled runs before auto-disabling. Omit or set to 0 for unlimited."},
+				"run_once_at":           {Type: "string", Description: "RFC3339 timestamp for one-time execution (e.g., '2025-06-15T10:00:00Z'). Task runs once at this time then auto-disables."},
+				"timezone":              {Type: "string", Description: "IANA timezone for schedule interpretation (e.g., 'America/New_York', 'UTC'). Defaults to UTC if not set."},
+				"starts_at":             {Type: "string", Description: "RFC3339 timestamp for when the schedule becomes active. Schedule won't trigger before this time."},
+				"expires_at":            {Type: "string", Description: "RFC3339 timestamp for when the schedule expires. Must be after starts_at if both are set."},
+				"feature_id":            {Type: "string", Description: "Feature group identifier (e.g., 'auth-system', 'payment-flow')"},
+				"feature_priority":      {Type: "string", Enum: types.Priorities, Description: "Priority for this feature group"},
+				"feature_depends_on":    {Type: "array", Items: &Property{Type: "string"}, Description: "Feature IDs this feature depends on. Use this for feature-to-feature ordering."},
+				"trigger":               {Type: "object", Description: "Event trigger for inactive/active tasks or automation entries. For post-feature tasks use {event:'feature.completed', filter:{feature_id:'main-feature', project_id:'my-project'}}. Supports type (event, cron, webhook, session), event, schedule, webhook, filter, once_per, cooldown, max_concurrent, ignore_automation_events."},
+				"action":                {Type: "object", Description: "Automation action config for automation entries. Common fields: type, prompt_template, direct_prompt, command, agent, model, executor, target_workdir. Templates support Go syntax with {{.Project}}, {{.ProjectID}}, {{.EventProjectID}}, {{.FeatureID}}, {{.TaskID}}, {{.TaskPath}}, {{.TaskTitle}}, {{.FromStatus}}, {{.ToStatus}}."},
+				"retry":                 {Type: "object", Description: "Automation retry policy. ⚠ CURRENTLY INERT: max_attempts and backoff round-trip through storage but nothing in the task lifecycle reads them — there is no attempt counter — and 'timeout' is not a field at all, so it is dropped at decode. Setting this changes nothing. Tracked for deletion or implementation."},
+				"feature_schedule":      {Type: "string", Description: "Cron schedule for all tasks in this feature group (e.g., '0 2 * * *')"},
+				"feature_starts_at":     {Type: "string", Description: "RFC3339 timestamp for when the feature schedule becomes active"},
+				"feature_expires_at":    {Type: "string", Description: "RFC3339 timestamp for when the feature schedule expires"},
+				"feature_run_once_at":   {Type: "string", Description: "RFC3339 timestamp for one-time execution of all feature tasks"},
+				"feature_timezone":      {Type: "string", Description: "IANA timezone for feature schedule interpretation (e.g., 'America/New_York')"},
+				"direct_prompt":         {Type: "string", Description: "Direct prompt to execute, bypassing default skill workflow"},
 				"user_original_request": {Type: "string", Description: "Verbatim user request that motivated this task, preserved for validation during feature checkout"},
-				"agent":                {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
-				"model":                {Type: "string", Description: "Override model (format: 'provider/model-id')"},
-				"executor":             {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode', 'pi', or 'script'. Empty = use runner default."},
-				"extensions":           {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
+				"agent":                 {Type: "string", Description: "Override agent for this task (e.g., 'explore', 'tdd-dev')"},
+				"model":                 {Type: "string", Description: "Override model (format: 'provider/model-id')"},
+				"executor":              {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode', 'pi', or 'script'. Empty = use runner default."},
+				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
 			},
 			Required: []string{"path"},
 		},
@@ -1291,12 +1333,53 @@ func addPresentUpdateFields(body, args map[string]any, keys ...string) {
 	}
 }
 
+// formatOptionalDefaults renders openCodeOptionalDefaults as the "key: value"
+// list quoted in the update tool's description.
+//
+// The list used to be hand-written prose sitting a couple hundred lines away
+// from the table it described, and commit 64093da corrected the table without
+// touching the prose - so the description advertised merge_policy:"prompt_only"
+// and remote_branch_policy:"keep" while the guard actually matched "auto_merge"
+// and "delete". Both were backwards, which is worse than merely stale: an agent
+// reading it would believe an explicit "auto_merge" was safe from the guard
+// (it is the value that trips it) and that "keep" was a default to avoid (it is
+// a deliberate non-default the guard now passes through). Generating the prose
+// from the map removes the possibility of them disagreeing again.
+//
+// Keys are sorted so the tool description is byte-identical across processes;
+// Go map iteration order is randomized, and an MCP client that caches or diffs
+// tool schemas should not see them churn.
+func formatOptionalDefaults() string {
+	keys := make([]string, 0, len(openCodeOptionalDefaults))
+	for k := range openCodeOptionalDefaults {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		switch v := openCodeOptionalDefaults[k].(type) {
+		case string:
+			parts = append(parts, fmt.Sprintf("%s: %q", k, v))
+		default:
+			parts = append(parts, fmt.Sprintf("%s: %v", k, v))
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
 var openCodeOptionalDefaults = map[string]any{
-	"priority":             "medium",
-	"feature_priority":     "high",
-	"merge_policy":         "prompt_only",
+	"priority":         "medium",
+	"feature_priority": "high",
+	// merge_policy and remote_branch_policy were "prompt_only" and "keep",
+	// which are not the defaults — normalizeFeatureCheckoutOptions in
+	// internal/service/task.go turns an empty value into "auto_merge" and
+	// "delete". Both entries were therefore backwards: the guard discarded
+	// remote_branch_policy:"keep" (a deliberate non-default choice) and
+	// never recognised merge_policy:"auto_merge" (the actual default).
+	"merge_policy":         "auto_merge",
 	"merge_strategy":       "squash",
-	"remote_branch_policy": "keep",
+	"remote_branch_policy": "delete",
 	"execution_mode":       "worktree",
 	"executor":             "opencode",
 	"open_pr_before_merge": false,
@@ -1394,49 +1477,91 @@ func hasFields(value any) bool {
 	return len(obj) > 0
 }
 
-func sanitizeUpdateValue(value any) any {
+// sanitizeUpdateValue applies the defaults guard to a bulk "updates" object
+// and reports which keys it removed.
+//
+// The dropped list used to be discarded here (`clean, _ :=`), so bulk_update
+// could strip fields from every matched entry and still answer "Updated: N"
+// — a success report over a write that partly did not happen. Single update
+// surfaced the same list all along; only the bulk path hid it.
+func sanitizeUpdateValue(value any) (any, []string) {
 	obj, ok := value.(map[string]any)
 	if !ok {
-		return value
+		return value, nil
 	}
-	clean, _ := sanitizeUpdateArgs(obj)
-	return clean
+	clean, dropped := sanitizeUpdateArgs(obj)
+	return clean, dropped
 }
 
-func sanitizeBulkUpdateEntries(value any) any {
+// sanitizeBulkUpdateEntries applies the defaults guard to every entry in
+// explicit mode and returns the union of keys it removed.
+//
+// The guard runs PER ENTRY, so one call can legitimately apply different
+// field sets to different entries. Reporting the union is what makes that
+// visible at all — previously nothing was reported and the response simply
+// claimed every entry was updated.
+func sanitizeBulkUpdateEntries(value any) (any, []string) {
+	var dropped []string
+	sanitizeAll := func(entries []any) any {
+		clean := make([]any, 0, len(entries))
+		for _, entry := range entries {
+			cleanEntry, entryDropped := sanitizeBulkUpdateEntry(entry)
+			clean = append(clean, cleanEntry)
+			dropped = append(dropped, entryDropped...)
+		}
+		return clean
+	}
+
 	switch entries := value.(type) {
 	case []any:
-		clean := make([]any, 0, len(entries))
-		for _, entry := range entries {
-			clean = append(clean, sanitizeBulkUpdateEntry(entry))
-		}
-		return clean
+		return sanitizeAll(entries), dropped
 	case []map[string]any:
-		clean := make([]any, 0, len(entries))
+		asAny := make([]any, 0, len(entries))
 		for _, entry := range entries {
-			clean = append(clean, sanitizeBulkUpdateEntry(entry))
+			asAny = append(asAny, entry)
 		}
-		return clean
+		return sanitizeAll(asAny), dropped
 	default:
-		return value
+		return value, nil
 	}
 }
 
-func sanitizeBulkUpdateEntry(value any) any {
+func sanitizeBulkUpdateEntry(value any) (any, []string) {
 	entry, ok := value.(map[string]any)
 	if !ok {
-		return value
+		return value, nil
 	}
 
+	var dropped []string
 	clean := make(map[string]any, len(entry))
 	for key, field := range entry {
 		if key == "updates" {
-			clean[key] = sanitizeUpdateValue(field)
+			cleaned, fieldDropped := sanitizeUpdateValue(field)
+			clean[key] = cleaned
+			dropped = append(dropped, fieldDropped...)
 			continue
 		}
 		clean[key] = field
 	}
-	return clean
+	return clean, dropped
+}
+
+// dedupeSorted returns the distinct values of in, sorted, for stable output.
+func dedupeSorted(in []string) []string {
+	if len(in) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(in))
+	out := make([]string, 0, len(in))
+	for _, v := range in {
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // =============================================================================
@@ -1467,15 +1592,15 @@ Examples:
 			Properties: map[string]Property{
 				"project": {Type: "string", Description: "Convenience shortcut for filter.project: restrict updates to entries in this project (e.g., 'orion-ai'). Only used in filter mode; explicit-entries mode ignores this. If filter already has a project field, that value wins."},
 				"filter":  {Type: "object", Description: "Filter criteria to select entries. Fields: feature_id (string), project (string), type (string), status (string), tags (string[]), priority (string), generated_by (string), generated_key (string), agent (string), executor (string), execution_mode (string). Unknown filter fields are rejected with HTTP 400 to prevent data-loss from typos. Use with 'updates'."},
-				"updates": {Type: "object", Description: "Updates to apply to matched entries. Fields: status (string), priority (string), tags (string[]), content (string, replaces body), append (string), note (string). Use with 'filter'."},
-				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: { status?, priority?, tags?, content?, append?, note? } }"},
+				"updates": {Type: "object", Description: "Updates to apply to matched entries. Accepts the SAME fields as the 'update' tool, not only the editorial ones — the body decodes into UpdateEntryRequest. Editorial: status, title, content (replaces body), append, note, tags, priority. Execution (the reason to bulk-edit tasks at all): agent, model, executor, execution_mode, target_workdir, workdir, git_branch, git_remote, depends_on, feature_id, feature_priority, feature_depends_on, complete_on_idle, checkout_mode, extensions, direct_prompt. Merge: merge_policy, merge_strategy, merge_target_branch, remote_branch_policy, open_pr_before_merge. Scheduling: schedule, schedule_enabled, timezone, starts_at, expires_at, run_once_at, max_runs. Unknown fields inside 'updates' are rejected with HTTP 400, same as unknown filter fields. Use with 'filter'."},
+				"entries": {Type: "array", Items: &Property{Type: "object"}, Description: "Explicit list of entries to update. Each item: { path: string, updates: {...} }, where updates accepts the same full field set described above — not only status/priority/tags/content/append/note."},
 				"dry_run": {Type: "boolean", Description: "Preview changes without applying (default: false)"},
 			},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		// Validate: must have either (filter + updates) or entries, not both, not neither
 		filter := sanitizeObjectArg(args["filter"])
-		updates := sanitizeUpdateValue(args["updates"])
+		updates, updatesDropped := sanitizeUpdateValue(args["updates"])
 
 		// Merge the top-level `project` convenience shortcut into filter.project.
 		// The nested value wins if the caller set both, so we don't clobber
@@ -1503,6 +1628,16 @@ Examples:
 			return "", fmt.Errorf("provide either 'filter' + 'updates' (filter mode) or 'entries' (explicit mode)")
 		}
 		if hasFilter && !hasUpdates {
+			// Distinguish "you sent no updates" from "the defaults guard
+			// removed all of them". The second used to surface as the
+			// first, telling a caller who HAD specified updates that they
+			// had not.
+			if len(updatesDropped) > 0 {
+				return "", fmt.Errorf(
+					"every field in 'updates' matched its documented default and was dropped by the autofill guard (%s); "+
+						"to set these values intentionally, update them in separate calls",
+					strings.Join(dedupeSorted(updatesDropped), ", "))
+			}
 			return "", fmt.Errorf("filter mode requires 'updates' to specify what to change")
 		}
 
@@ -1512,8 +1647,11 @@ Examples:
 			body["filter"] = filter
 			body["updates"] = updates
 		}
+		entriesDropped := []string{}
 		if hasEntries {
-			body["entries"] = sanitizeBulkUpdateEntries(args["entries"])
+			cleanEntries, dropped := sanitizeBulkUpdateEntries(args["entries"])
+			body["entries"] = cleanEntries
+			entriesDropped = dropped
 		}
 		body["dry_run"] = BoolArg(args, "dry_run", false)
 
@@ -1522,7 +1660,15 @@ Examples:
 			Failed  int  `json:"failed"`
 			Total   int  `json:"total"`
 			DryRun  bool `json:"dry_run"`
-			Results []struct {
+			// types.BulkUpdateResponse documents Truncated as "do not
+			// proceed; narrow the filter" and MatchedTotal as how many
+			// entries the filter really matched. Neither was decoded, so a
+			// filter matching 500 entries reported "Total matched: 100"
+			// with no hint that 400 were left untouched — reviving exactly
+			// the silent truncation those fields were added to end.
+			Truncated    bool `json:"truncated,omitempty"`
+			MatchedTotal int  `json:"matched_total,omitempty"`
+			Results      []struct {
 				Path   string `json:"path"`
 				ID     string `json:"id"`
 				Title  string `json:"title"`
@@ -1549,11 +1695,47 @@ Examples:
 			"",
 		}
 
+		if resp.Truncated {
+			matched := "more than the safety cap allows"
+			if resp.MatchedTotal > 0 {
+				matched = fmt.Sprintf("%d", resp.MatchedTotal)
+			}
+			if resp.DryRun {
+				lines = append(lines,
+					fmt.Sprintf("> 🛑 TRUNCATED — the filter matches %s entries but only %d fit under the safety cap.", matched, resp.Total),
+					"> Do not proceed: narrow the filter, or the live run will silently leave the rest untouched.",
+					"")
+			} else {
+				lines = append(lines,
+					fmt.Sprintf("> 🛑 TRUNCATED — the filter matched %s entries; only the first %d were changed.", matched, resp.Total),
+					"> The remainder are UNMODIFIED. Narrow the filter and run again to finish.",
+					"")
+			}
+		}
+
+		// Never report a bare "Updated: N" over fields the guard removed.
+		// The write partly did not happen, and the caller cannot see that
+		// from the counts alone.
+		if allDropped := dedupeSorted(append(append([]string{}, updatesDropped...), entriesDropped...)); len(allDropped) > 0 {
+			lines = append(lines,
+				fmt.Sprintf("> ⚠ Not applied: %s — these matched their documented defaults and were dropped by the autofill guard.",
+					strings.Join(allDropped, ", ")),
+				"> To set them intentionally, update them in separate calls.",
+				"")
+		}
+
 		if len(resp.Results) > 0 {
 			lines = append(lines, "### Results")
 			for _, r := range resp.Results {
 				if r.Status == "ok" {
-					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — updated", r.Title, r.Path))
+					// A dry run mutates nothing. Labelling its rows
+					// "updated" reads as a completed write, which is the
+					// opposite of what a preview is for.
+					verb := "updated"
+					if resp.DryRun {
+						verb = "would update"
+					}
+					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — %s", r.Title, r.Path, verb))
 				} else {
 					lines = append(lines, fmt.Sprintf("- **%s** (`%s`) — error: %s", r.Title, r.Path, r.Error))
 				}
@@ -1562,6 +1744,26 @@ Examples:
 
 		return strings.Join(lines, "\n"), nil
 	})
+}
+
+// foundLine renders a result count without implying it is a grand total.
+//
+// The API's Total is len(entries) for the returned page, so "Found 3
+// entries" against a project holding 931 is not a small inaccuracy — it is
+// the wrong answer to "how many are there". Producing the real number needs
+// a COUNT(*) the storage layer does not currently do, but a page that came
+// back exactly full is a dependable sign that more exist, and saying so is
+// both honest and actionable.
+func foundLine(noun string, count, requestedLimit, defaultLimit int) string {
+	effective := requestedLimit
+	if effective <= 0 {
+		effective = defaultLimit
+	}
+	if count >= effective {
+		return fmt.Sprintf("Found %d %s (page is full at limit %d — there are likely more; raise 'limit' or narrow the filters):\n",
+			count, noun, effective)
+	}
+	return fmt.Sprintf("Found %d %s:\n", count, noun)
 }
 
 // =============================================================================
@@ -1682,11 +1884,29 @@ func registerBrainStats(s *Server, client *APIClient) {
 			return "", err
 		}
 
+		// Label each count by what it actually counts.
+		//
+		// TotalEntries is scoped by the request; GlobalEntries and
+		// ProjectEntries are always the WHOLE-STORE totals for global/
+		// and projects/ respectively, so callers can compare a scoped
+		// result against them (see BrainServiceImpl.GetStats).
+		//
+		// Printed as a bare "Project:" directly under a project-scoped
+		// "Total:", that read as a contradiction — stats(project:"x")
+		// showed "Total: 930 / Project: 67935" — and the larger number
+		// is the one a reader trusts. Name the scope in every line.
+		scopeLabel := "Total (whole store)"
+		if p := params["project"]; p != "" {
+			scopeLabel = fmt.Sprintf("Total (project %s)", p)
+		} else if params["global"] == "true" {
+			scopeLabel = "Total (global entries)"
+		}
+
 		lines := []string{
 			"## Brain Statistics\n",
-			fmt.Sprintf("Total: %d", resp.TotalEntries),
-			fmt.Sprintf("Global: %d", resp.GlobalEntries),
-			fmt.Sprintf("Project: %d", resp.ProjectEntries),
+			fmt.Sprintf("%s: %d", scopeLabel, resp.TotalEntries),
+			fmt.Sprintf("Global entries, all of global/: %d", resp.GlobalEntries),
+			fmt.Sprintf("Project entries, all of projects/ across every project: %d", resp.ProjectEntries),
 			"\n### By Type",
 		}
 
@@ -1730,10 +1950,11 @@ This is useful to:
 			Properties: map[string]Property{},
 		},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
-		var resp struct {
-			Status  string `json:"status"`
-			Version string `json:"version"`
-		}
+		// types.HealthResponse is {status, timestamp, embedding} — there is
+		// no version, so "Version: " printed blank. Embedding was dropped,
+		// and it is the one signal telling an agent whether semantic search
+		// is usable or has silently fallen back to FTS.
+		var resp types.HealthResponse
 		err := client.Request(ctx, "GET", "/health", nil, nil, &resp)
 		if err != nil {
 			return fmt.Sprintf(`Brain API Status: UNAVAILABLE
@@ -1750,13 +1971,27 @@ To check server status:
 Brain tools will not work until the server is running.`, client.baseURL, err), nil
 		}
 
+		// Report embedding readiness. An agent choosing between
+		// strategy:"semantic" and the FTS default has no other way to learn
+		// that the embedding provider is down, and semantic search degrades
+		// quietly rather than erroring.
+		embedding := resp.Embedding.Status
+		if embedding == "" {
+			embedding = "unknown"
+		}
+		if !resp.Embedding.Enabled {
+			embedding = "disabled (semantic search unavailable; searches use FTS)"
+		} else if resp.Embedding.Provider != "" {
+			embedding = fmt.Sprintf("%s (%s / %s)", embedding, resp.Embedding.Provider, resp.Embedding.Model)
+		}
+
 		return fmt.Sprintf(`Brain API Status: CONNECTED
 
 Server URL: %s
-Version: %s
-Status: Ready to use
+Health: %s
+Embeddings: %s
 
-All brain tools (save, recall, search, inject, etc.) are available.`, client.baseURL, resp.Version), nil
+All brain tools (save, recall, search, inject, etc.) are available.`, client.baseURL, resp.Status, embedding), nil
 	})
 }
 
@@ -1787,18 +2022,15 @@ func registerBrainLink(s *Server, client *APIClient) {
 			"withTitle": argAlias(args, "with_title", "withTitle"),
 		}
 
-		var resp struct {
-			Link  string `json:"link"`
-			ID    string `json:"id"`
-			Path  string `json:"path"`
-			Title string `json:"title"`
-		}
+		// types.LinkResponse has exactly one field, Link. ID, Path and
+		// Title never existed, so the output was always three blank lines
+		// presented as data.
+		var resp types.LinkResponse
 		if err := client.Request(ctx, "POST", "/link", body, nil, &resp); err != nil {
 			return "", err
 		}
 
-		return fmt.Sprintf("Link: %s\nID: %s\nPath: %s\nTitle: %s",
-			resp.Link, resp.ID, resp.Path, resp.Title), nil
+		return fmt.Sprintf("Link: %s", resp.Link), nil
 	})
 }
 
@@ -1841,18 +2073,17 @@ This is more precise than inject (which uses fuzzy search) - it extracts the exa
 			params["includeSubsections"] = "false"
 		}
 
-		var resp struct {
-			Title   string `json:"title"`
-			Content string `json:"content"`
-			Level   int    `json:"level"`
-			Line    int    `json:"line"`
-		}
-		if err := client.Request(ctx, "GET", "/entries/"+planId+"/sections/"+encodedTitle, nil, params, &resp); err != nil {
+		// types.SectionContentResponse is {title, content, path,
+		// includeSubsections}. The hand-rolled struct declared level and
+		// line, neither of which exists, so every section rendered
+		// "**Line:** 0".
+		var resp types.SectionContentResponse
+		if err := client.Request(ctx, "GET", "/entries/"+url.PathEscape(planId)+"/sections/"+encodedTitle, nil, params, &resp); err != nil {
 			return "", err
 		}
 
-		return fmt.Sprintf("## Section: %s\n\n**Plan:** %s\n**Line:** %d\n\n---\n\n%s",
-			resp.Title, planId, resp.Line, resp.Content), nil
+		return fmt.Sprintf("## Section: %s\n\n**Plan:** %s\n\n---\n\n%s",
+			resp.Title, planId, resp.Content), nil
 	})
 }
 
@@ -1917,15 +2148,13 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 			}
 		}
 
-		var sectionsResp struct {
-			Sections []struct {
-				Title string `json:"title"`
-				Level int    `json:"level"`
-				Line  int    `json:"line"`
-			} `json:"sections"`
-			Total int `json:"total"`
-		}
-		if err := client.Request(ctx, "GET", "/entries/"+entryPath+"/sections", nil, nil, &sectionsResp); err != nil {
+		// types.SectionsResponse is {sections, path}, and SectionHeader is
+		// {title, level}. The hand-rolled struct declared a Total and a
+		// per-section Line, neither of which exists — so a 40-section plan
+		// reported "**Total sections:** 0" and every heading claimed
+		// "(line 0)". Count the slice instead.
+		var sectionsResp types.SectionsResponse
+		if err := client.Request(ctx, "GET", "/entries/"+url.PathEscape(entryPath)+"/sections", nil, nil, &sectionsResp); err != nil {
 			return "", err
 		}
 
@@ -1942,13 +2171,13 @@ func registerBrainPlanSections(s *Server, client *APIClient) {
 			"",
 			fmt.Sprintf("**Path:** %s", entryPath),
 			fmt.Sprintf("**Type:** %s", entryResp.Type),
-			fmt.Sprintf("**Total sections:** %d", sectionsResp.Total),
+			fmt.Sprintf("**Total sections:** %d", len(sectionsResp.Sections)),
 			"",
 		}
 
 		for _, section := range sectionsResp.Sections {
 			indent := strings.Repeat("  ", section.Level-1)
-			lines = append(lines, fmt.Sprintf("%s- %s (line %d)", indent, section.Title, section.Line))
+			lines = append(lines, fmt.Sprintf("%s- %s", indent, section.Title))
 		}
 
 		return strings.Join(lines, "\n"), nil
@@ -2014,38 +2243,40 @@ func registerBrainStale(s *Server, client *APIClient) {
 			params["project"] = v
 		}
 
-		var resp struct {
-			Entries []struct {
-				ID                string `json:"id"`
-				Path              string `json:"path"`
-				Title             string `json:"title"`
-				Type              string `json:"type"`
-				DaysSinceVerified *int   `json:"daysSinceVerified"`
-			} `json:"entries"`
-			Total int `json:"total"`
-		}
+		// GET /stale writes a BARE array of BrainEntry
+		// (internal/api/health_extended.go:76). Decoding it into an
+		// {entries,total} envelope is an unmarshal error, which api_client
+		// turns into a hard failure — so this tool returned
+		// "cannot unmarshal array into Go value of type struct{...}" on
+		// EVERY call and had done since it was written. GetStale builds its
+		// slice with make(...,0,n), so there is no null-response path where
+		// it could accidentally work.
+		//
+		// The old struct also carried a phantom daysSinceVerified; the real
+		// field is last_verified, and the underscore defeats Go's
+		// case-insensitive key fallback.
+		var resp []types.BrainEntry
 		if err := client.Request(ctx, "GET", "/stale", nil, params, &resp); err != nil {
 			return "", err
 		}
 
-		if len(resp.Entries) == 0 {
+		if len(resp) == 0 {
 			return fmt.Sprintf("No stale entries found (all verified within %d days)", days), nil
 		}
 
 		lines := []string{
 			fmt.Sprintf("## Stale Entries (not verified in %d days)", days),
 			"",
-			fmt.Sprintf("Found %d entries needing verification:", resp.Total),
-			"",
+			foundLine("entries needing verification", len(resp), IntArg(args, "limit", 0), 100),
 		}
 
-		for _, e := range resp.Entries {
-			daysSince := "never"
-			if e.DaysSinceVerified != nil {
-				daysSince = fmt.Sprintf("%d days ago", *e.DaysSinceVerified)
+		for _, e := range resp {
+			lastVerified := e.LastVerified
+			if lastVerified == "" {
+				lastVerified = "never"
 			}
 			lines = append(lines, fmt.Sprintf("- **%s**", e.Title))
-			lines = append(lines, fmt.Sprintf("  `%s` | Last verified: %s", e.Path, daysSince))
+			lines = append(lines, fmt.Sprintf("  `%s` | Last verified: %s", e.Path, lastVerified))
 		}
 
 		lines = append(lines, "")
@@ -2082,20 +2313,18 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 			params["project"] = v
 		}
 
-		var resp struct {
-			Entries []struct {
-				ID    string `json:"id"`
-				Path  string `json:"path"`
-				Title string `json:"title"`
-				Type  string `json:"type"`
-			} `json:"entries"`
-			Total int `json:"total"`
-		}
+		// GET /orphans writes a BARE array of BrainEntry
+		// (internal/api/health_extended.go:47), exactly like /stale. Same
+		// unmarshal error, same hard failure on every call. fetchGraph two
+		// hundred lines below already carries the comment "They return a
+		// BARE BrainEntry array (not {entries,total})" — the knowledge was
+		// in this file and these two sites never received it.
+		var resp []types.BrainEntry
 		if err := client.Request(ctx, "GET", "/orphans", nil, params, &resp); err != nil {
 			return "", err
 		}
 
-		if len(resp.Entries) == 0 {
+		if len(resp) == 0 {
 			typeFilter := ""
 			if v := StringArg(args, "type", ""); v != "" {
 				typeFilter = fmt.Sprintf(" of type %q", v)
@@ -2111,11 +2340,10 @@ func registerBrainOrphans(s *Server, client *APIClient) {
 		lines := []string{
 			fmt.Sprintf("## Orphan Entries%s", typeLabel),
 			"",
-			fmt.Sprintf("Found %d entries with no incoming links:", resp.Total),
-			"",
+			foundLine("entries with no incoming links", len(resp), IntArg(args, "limit", 0), 100),
 		}
 
-		for _, e := range resp.Entries {
+		for _, e := range resp {
 			lines = append(lines, fmt.Sprintf("- **%s** (`%s`) - %s", e.Title, e.Path, e.Type))
 		}
 
@@ -2366,12 +2594,14 @@ func registerBrainAutomationList(s *Server, client *APIClient) {
 
 func registerBrainAutomationTest(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "automation_test",
-		Description: "Dry-run an event against active automations to see which would match. No tasks are created -- this is a simulation for debugging automation triggers.",
+		Name: "automation_test",
+		Description: "Dry-run an event against active automations. Reports EVENT-PATTERN matches only — see the caveat in the output. " +
+			"No tasks are created; this is a simulation for debugging automation triggers.",
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"event":   {Type: "string", Description: "Event name to simulate (e.g., 'task.completed', 'feature.all_completed')"},
+				"event": {Type: "string", Description: "Event name to simulate (e.g., 'task.completed', 'feature.completed'). " +
+					"Must be a real event type — 'feature.all_completed' is NOT one; it exists only on a dead internal bus and nothing publishes it."},
 				"project": {Type: "string", Description: "Filter automations by project (optional)"},
 			},
 			Required: []string{"event"},
@@ -2401,16 +2631,43 @@ func registerBrainAutomationTest(s *Server, client *APIClient) {
 		}
 
 		matched := 0
+		skippedNonEvent := 0
 		for _, entry := range resp.Entries {
-			if entry.Trigger == nil || entry.Trigger.Type != "event" {
+			if entry.Trigger == nil {
 				continue
 			}
-			if !matchesAutomationEvent(entry.Trigger.Event, eventName) {
+			// Non-event triggers cannot be simulated here at all. They used
+			// to be dropped silently, so an agent debugging a cron or
+			// webhook automation saw "no matches" and concluded its filter
+			// was wrong.
+			if entry.Trigger.Type != "" && entry.Trigger.Type != "event" {
+				skippedNonEvent++
+				continue
+			}
+			// Goal automations are excluded by the real matcher
+			// (isGoalAutomation in automation_service.go), so reporting them
+			// as matching is simply wrong.
+			if entry.GeneratedBy == "brain-goal" || entry.Goal != nil {
+				continue
+			}
+			// The server matches Trigger.Events as well as Trigger.Event.
+			// Checking only the singular reported every multi-event
+			// automation — which includes the default goal shape — as not
+			// matching while it really does.
+			patterns := entry.Trigger.EventPatterns()
+			hit := false
+			for _, pattern := range patterns {
+				if matchesAutomationEvent(pattern, eventName) {
+					hit = true
+					break
+				}
+			}
+			if !hit {
 				continue
 			}
 			matched++
-			lines = append(lines, fmt.Sprintf("**MATCH:** %s (`%s`)", entry.Title, entry.ID))
-			lines = append(lines, fmt.Sprintf("  Trigger: event=%s", entry.Trigger.Event))
+			lines = append(lines, fmt.Sprintf("**EVENT PATTERN MATCHES:** %s (`%s`)", entry.Title, entry.ID))
+			lines = append(lines, fmt.Sprintf("  Trigger: event=%s", strings.Join(patterns, ", ")))
 			if entry.Action != nil {
 				lines = append(lines, fmt.Sprintf("  Action: %s", entry.Action.Type))
 				if entry.Action.DirectPrompt != "" {
@@ -2428,9 +2685,27 @@ func registerBrainAutomationTest(s *Server, client *APIClient) {
 		}
 
 		if matched == 0 {
-			lines = append(lines, fmt.Sprintf("No automations matched event %q (dry-run, no tasks created)", eventName))
+			lines = append(lines, fmt.Sprintf("No automation's EVENT PATTERN matched %q (dry-run, no tasks created)", eventName))
 		} else {
-			lines = append(lines, fmt.Sprintf("---\n%d automation(s) would match (dry-run, no tasks created)", matched))
+			lines = append(lines, fmt.Sprintf("---\n%d automation(s) match on event pattern (dry-run, no tasks created)", matched))
+		}
+
+		// State what was not evaluated. This simulation reimplements only
+		// the event-pattern half of the server's matcher, so a bare "MATCH"
+		// verdict was authoritative-looking and wrong in both directions:
+		// it reported automations whose filters exclude the event, and it
+		// stayed silent about ones it could not evaluate at all. The tool
+		// exists to answer "why did my automation not fire", which is
+		// precisely the question a partial answer misleads on.
+		lines = append(lines,
+			"",
+			"> ⚠ This checks the EVENT PATTERN only. Not evaluated here: trigger filters",
+			"> (project scope, to_status, checkout_mode, ...), once_per dedup, cooldown, and",
+			"> max_concurrent. An automation listed above can still be skipped by any of them.")
+		if skippedNonEvent > 0 {
+			lines = append(lines, fmt.Sprintf(
+				"> %d automation(s) with cron/session/webhook triggers were not simulated — this tool only handles event triggers.",
+				skippedNonEvent))
 		}
 		return strings.Join(lines, "\n"), nil
 	})

@@ -2120,6 +2120,18 @@ func (s *BrainServiceImpl) EmbedEntries(ctx context.Context, req types.Embedding
 // =============================================================================
 
 // List returns entries matching the given filters.
+// Bounds for the over-fetch that makes the filename filter see past one SQL
+// page. The filter runs in Go after SQL has already limited by recency, so
+// without over-fetching, a lookup by exact id searched only the newest page.
+const (
+	// listFilterOverfetch is how many candidate rows to scan per row of the
+	// requested page.
+	listFilterOverfetch = 20
+	// listFilterMaxScan caps that scan. notes is the largest table in the
+	// store, so an unbounded walk would trade a wrong answer for a slow one.
+	listFilterMaxScan = 5000
+)
+
 func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error) {
 	opts := &storage.ListOptions{
 		Type:      req.Type,
@@ -2153,6 +2165,28 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 		}
 	}
 
+	// The filename filter runs in Go, AFTER SQL has already applied a LIMIT.
+	// Filtering a page the database picked by recency answers a different
+	// question than the caller asked: list(filename: "abc12345") searched only
+	// the newest 100 entries, so on a store of tens of thousands it returned
+	// "No entries found" for an entry that plainly exists. Same defect as the
+	// automation_runs filter fixed in 73dd98d.
+	//
+	// So when a post-SQL filter is in play, over-fetch and trim. Bounded: an
+	// unbounded walk of the notes table would trade one problem for another.
+	requestedLimit := opts.Limit
+	if requestedLimit <= 0 {
+		requestedLimit = storage.DefaultListLimit
+	}
+	scanLimit := requestedLimit
+	if req.Filename != "" {
+		scanLimit = requestedLimit * listFilterOverfetch
+		if scanLimit > listFilterMaxScan {
+			scanLimit = listFilterMaxScan
+		}
+		opts.Limit = scanLimit
+	}
+
 	rows, err := s.storage.ListNotes(ctx, opts)
 	if err != nil {
 		return nil, fmt.Errorf("list notes: %w", err)
@@ -2160,12 +2194,20 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 
 	// Apply filename filter if specified
 	var filtered []*storage.NoteRow
+	scanExhausted := false
 	if req.Filename != "" {
+		// The scan window is exhausted only if SQL filled it completely; a
+		// short read means we saw every candidate there is.
+		scanExhausted = len(rows) >= scanLimit
 		for _, row := range rows {
 			filename := markdown.ExtractIDFromPath(row.Path)
 			if markdown.MatchesFilenamePattern(filename, req.Filename) {
 				filtered = append(filtered, row)
 			}
+		}
+		if len(filtered) > requestedLimit {
+			filtered = filtered[:requestedLimit]
+			scanExhausted = false // the page is full on its own terms
 		}
 	} else {
 		filtered = rows
@@ -2188,10 +2230,11 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 	total := len(entries)
 
 	return &types.ListEntriesResponse{
-		Entries: entries,
-		Total:   total,
-		Limit:   req.Limit,
-		Offset:  req.Offset,
+		Entries:   entries,
+		Total:     total,
+		Limit:     req.Limit,
+		Offset:    req.Offset,
+		Truncated: scanExhausted,
 	}, nil
 }
 
@@ -2560,8 +2603,29 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 		return nil, fmt.Errorf("search for inject: %w", err)
 	}
 
+	// Bound the assembled context. Bodies used to be concatenated whole,
+	// so a default five-entry call against long entries returned tens of
+	// thousands of tokens — spent from the very budget the agent needed to
+	// act on them.
+	//
+	// The budget is split evenly across the matched entries rather than
+	// filled first-come, so one very long entry cannot crowd the rest out
+	// of the window entirely.
+	maxChars := types.DefaultInjectMaxChars
+	if req.MaxChars != nil {
+		maxChars = *req.MaxChars
+		if maxChars == 0 {
+			maxChars = types.DefaultInjectMaxChars
+		}
+	}
+	perEntry := 0
+	if maxChars > 0 && len(rows) > 0 {
+		perEntry = maxChars / len(rows)
+	}
+
 	var contextBuilder strings.Builder
 	entries := make([]types.InjectEntry, 0, len(rows))
+	truncated := false
 
 	for _, row := range rows {
 		entry := NoteRowToBrainEntry(row)
@@ -2571,8 +2635,17 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 		contextBuilder.WriteString(entry.Title)
 		contextBuilder.WriteString("\n")
 		if entry.Content != "" {
-			contextBuilder.WriteString(entry.Content)
-			contextBuilder.WriteString("\n")
+			content := entry.Content
+			if perEntry > 0 && len(content) > perEntry {
+				content = truncateAtBoundary(content, perEntry)
+				truncated = true
+				contextBuilder.WriteString(content)
+				contextBuilder.WriteString(fmt.Sprintf(
+					"\n\n_[truncated — recall %q for the full entry]_\n", entry.Path))
+			} else {
+				contextBuilder.WriteString(content)
+				contextBuilder.WriteString("\n")
+			}
 		}
 		contextBuilder.WriteString("\n")
 
@@ -2585,10 +2658,28 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 	}
 
 	return &types.InjectResponse{
-		Context: strings.TrimSpace(contextBuilder.String()),
-		Entries: entries,
-		Total:   len(entries),
+		Context:   strings.TrimSpace(contextBuilder.String()),
+		Entries:   entries,
+		Total:     len(entries),
+		Truncated: truncated,
 	}, nil
+}
+
+// truncateAtBoundary cuts s to at most limit bytes, preferring the last
+// paragraph or line break so the result ends somewhere readable rather than
+// mid-sentence.
+func truncateAtBoundary(s string, limit int) string {
+	if len(s) <= limit {
+		return s
+	}
+	cut := s[:limit]
+	if i := strings.LastIndex(cut, "\n\n"); i > limit/2 {
+		return cut[:i]
+	}
+	if i := strings.LastIndex(cut, "\n"); i > limit/2 {
+		return cut[:i]
+	}
+	return cut
 }
 
 // =============================================================================
@@ -2768,15 +2859,23 @@ func computeMovedPath(oldPath, targetProject string) (string, error) {
 // exact path, or title — the HTTP routes only carry single-segment values,
 // so short IDs are the common case) to the note's canonical path, which is
 // what the storage link queries match on.
+//
+// Returns api.ErrNotFound when the identifier names no entry, so callers can
+// distinguish "no links" from "no such entry".
 func (s *BrainServiceImpl) resolveGraphPath(ctx context.Context, pathOrID string) (string, error) {
 	row, err := s.resolveEntry(ctx, pathOrID)
 	if err != nil {
 		return "", err
 	}
 	if row == nil {
-		// Preserve the previous behavior for unknown identifiers: the
-		// storage queries simply match nothing and return empty.
-		return pathOrID, nil
+		// An identifier that resolves to nothing used to be passed straight
+		// through to the storage queries, which matched nothing and returned
+		// an empty slice. That made "this entry has no links" and "this entry
+		// does not exist" the same answer — so a typo'd path or a stale ID
+		// read as a confident "not linked to anything". All three HTTP
+		// handlers already map ErrNotFound to a 404 with an "Entry not found"
+		// message; that branch was simply unreachable until now.
+		return "", fmt.Errorf("%q: %w", pathOrID, api.ErrNotFound)
 	}
 	return row.Path, nil
 }

@@ -15,6 +15,8 @@ import {
   runnerDotState,
   schedulerHoldNote,
   taskHoldReason,
+  featureGateReason,
+  featureDepWarning,
 } from "./pause";
 import type {
   RunnerInfo,
@@ -49,7 +51,9 @@ function task(over: Partial<Task> = {}): Task {
   };
 }
 
-const status = (over: Partial<RunnerStatusResponse> = {}): RunnerStatusResponse => ({
+const status = (
+  over: Partial<RunnerStatusResponse> = {},
+): RunnerStatusResponse => ({
   running: true,
   paused: false,
   pausedProjects: null,
@@ -197,11 +201,17 @@ test("projectPauseBadges separates the two project dials", () => {
     [],
   );
   assert.deepEqual(
-    [projectPauseBadges(s, "alpha").tasks, projectPauseBadges(s, "alpha").automations],
+    [
+      projectPauseBadges(s, "alpha").tasks,
+      projectPauseBadges(s, "alpha").automations,
+    ],
     [true, false],
   );
   assert.deepEqual(
-    [projectPauseBadges(s, "beta").tasks, projectPauseBadges(s, "beta").automations],
+    [
+      projectPauseBadges(s, "beta").tasks,
+      projectPauseBadges(s, "beta").automations,
+    ],
     [false, true],
   );
   const none = projectPauseBadges(s, "gamma");
@@ -212,7 +222,10 @@ test("projectPauseBadges separates the two project dials", () => {
 // ─── isAutomationTask / isReadyUndispatched ──────────────────────
 
 test("isAutomationTask matches the server's generated_by prefix test", () => {
-  assert.equal(isAutomationTask(task({ generated_by: "automation:goal-x" })), true);
+  assert.equal(
+    isAutomationTask(task({ generated_by: "automation:goal-x" })),
+    true,
+  );
   assert.equal(isAutomationTask(task({ generated_by: "brain-goal" })), false);
   assert.equal(isAutomationTask(task()), false);
 });
@@ -249,7 +262,10 @@ const pausedProject = buildPauseState(
 );
 
 test("taskHoldReason names the project task dial for a manual task", () => {
-  const r = taskHoldReason(task(), { pause: pausedProject, projectId: "alpha" });
+  const r = taskHoldReason(task(), {
+    pause: pausedProject,
+    projectId: "alpha",
+  });
   assert.equal(r!.code, "project_paused");
   assert.match(r!.detail, /TASK dial/);
 });
@@ -264,10 +280,9 @@ test("the project TASK dial does not hold an automation task", () => {
 });
 
 test("the project AUTOMATIONS dial holds only automation tasks", () => {
-  const s = buildPauseState(
-    status({ automationPausedProjects: ["alpha"] }),
-    [runner()],
-  );
+  const s = buildPauseState(status({ automationPausedProjects: ["alpha"] }), [
+    runner(),
+  ]);
   const auto = taskHoldReason(task({ generated_by: "automation:goal-x" }), {
     pause: s,
     projectId: "alpha",
@@ -287,7 +302,9 @@ test("a paused project does not hold tasks in a different project", () => {
 test("fleet-wide runner pause outranks a per-task placement reason", () => {
   const s = buildPauseState(status(), [runner({ paused: true })]);
   const r = taskHoldReason(
-    task({ last_placement_reason: { decision: "no_candidate", reason: "stale" } }),
+    task({
+      last_placement_reason: { decision: "no_candidate", reason: "stale" },
+    }),
     { pause: s, projectId: "alpha" },
   );
   assert.equal(r!.code, "runners_paused");
@@ -408,7 +425,9 @@ test("force notes carry no em-dash of their own", () => {
       projectId: "alpha",
     }),
     forceDispatchNote(
-      buildPauseState(status({ automationPausedProjects: ["alpha"] }), [runner()]),
+      buildPauseState(status({ automationPausedProjects: ["alpha"] }), [
+        runner(),
+      ]),
       { projectId: "alpha", automation: true },
     ),
   ];
@@ -436,10 +455,9 @@ test("force run on a healthy system adds no note", () => {
 });
 
 test("force run notes the automations dial for an automation task", () => {
-  const s = buildPauseState(
-    status({ automationPausedProjects: ["alpha"] }),
-    [runner()],
-  );
+  const s = buildPauseState(status({ automationPausedProjects: ["alpha"] }), [
+    runner(),
+  ]);
   assert.match(
     forceDispatchNote(s, { projectId: "alpha", automation: true })!,
     /automations dial/,
@@ -451,10 +469,9 @@ test("force run notes the automations dial for an automation task", () => {
 test("both a project dial AND the whole fleet paused names both switches", () => {
   // The trap this guards: resuming only the project leaves the task held by
   // the runner dial, with the UI no longer explaining why.
-  const s = buildPauseState(
-    status({ pausedProjects: ["alpha"] }),
-    [runner({ paused: true })],
-  );
+  const s = buildPauseState(status({ pausedProjects: ["alpha"] }), [
+    runner({ paused: true }),
+  ]);
   const r = taskHoldReason(task(), { pause: s, projectId: "alpha" });
   assert.equal(r!.code, "project_paused");
   assert.match(r!.detail, /TASK dial/);
@@ -463,7 +480,10 @@ test("both a project dial AND the whole fleet paused names both switches", () =>
 });
 
 test("the fleet note is absent when runners can still take work", () => {
-  const r = taskHoldReason(task(), { pause: pausedProject, projectId: "alpha" });
+  const r = taskHoldReason(task(), {
+    pause: pausedProject,
+    projectId: "alpha",
+  });
   assert.doesNotMatch(r!.detail, /resume a runner too/i);
 });
 
@@ -502,4 +522,165 @@ test("schedulerHoldNote marks pause-caused holds apart from no-runner ones", () 
     result({ skipped: 2, skipped_tasks_paused: 1, skipped_no_candidate: 1 }),
   );
   assert.equal(mixed!.glyph, "⏸");
+});
+
+// ─── feature-level gating ────────────────────────────────────────
+//
+// applyFeatureGating (internal/service/taskdeps.go) only ever downgrades a
+// "ready" task, so when these fields are set they are the WHOLE reason the
+// task is not running. The blocking party is a feature, which has no row in
+// the task tree — so without a chip the task just sits at "waiting".
+
+const gated = (over: Partial<Task> = {}) =>
+  task({ classification: "waiting", ...over });
+
+test("a feature-gated task explains itself even though it is not 'ready'", () => {
+  // The bug this pins: isReadyUndispatched bails on classification !== "ready",
+  // which would silence every feature-gated task.
+  const t = gated({ waiting_on_features: ["data-pipeline"] });
+  assert.equal(isReadyUndispatched(t), false);
+
+  const hold = taskHoldReason(t, {
+    pause: EMPTY_PAUSE_STATE,
+    projectId: "sandbox-demo",
+  });
+  assert.equal(hold?.code, "waiting_on_features");
+  assert.equal(hold?.short, "waits on data-pipeline");
+});
+
+test("a self-clearing feature wait is neither a dial nor a fault", () => {
+  // ⏸ would send the user hunting for a switch; ⚠ would imply something is
+  // wrong. Upstream work is simply still running.
+  const hold = featureGateReason(gated({ waiting_on_features: ["a"] }));
+  assert.equal(hold?.glyph, "⇢");
+});
+
+test("multiple waited-on features collapse in the chip, not the tooltip", () => {
+  const hold = featureGateReason(
+    gated({ waiting_on_features: ["a", "b", "c"] }),
+  );
+  assert.equal(hold?.short, "waits on 3 features");
+  assert.match(hold!.detail, /"a", "b", and "c"/);
+});
+
+test("a blocked upstream feature reads as a fault, not a wait", () => {
+  const hold = featureGateReason(
+    gated({ classification: "blocked", blocked_by_features: ["upstream"] }),
+  );
+  assert.equal(hold?.code, "feature_blocked");
+  assert.equal(hold?.glyph, "⚠");
+});
+
+test("a dependency cycle is called out as a cycle", () => {
+  // Distinct from a plain block: a cycle never resolves without an edit.
+  const hold = featureGateReason(
+    gated({
+      classification: "blocked",
+      blocked_by_features: ["b"],
+      blocked_by_reason: "feature_circular_dependency",
+    }),
+  );
+  assert.equal(hold?.code, "feature_cycle");
+  assert.match(hold!.detail, /never resolves on its own/);
+});
+
+test("a cycle is detected with an EMPTY blocked_by_features list", () => {
+  // This is the shape the server actually sends. classifyFeature signals a
+  // cycle through InCycle and leaves BlockedByFeatures empty — there is no
+  // single upstream feature to name when members block each other.
+  // Verified live: an A<->B feature cycle produces
+  //   classification=blocked, blocked_by_features=null,
+  //   blocked_by_reason="feature_circular_dependency"
+  // Keying the branch on the list left every task in a cycle with NO chip.
+  const hold = featureGateReason(
+    gated({
+      classification: "blocked",
+      blocked_by_reason: "feature_circular_dependency",
+    }),
+  );
+  assert.equal(hold?.code, "feature_cycle");
+  assert.match(hold!.detail, /leads? back to itself|cycle/);
+});
+
+test("a blocked feature is detected from the reason alone too", () => {
+  const hold = featureGateReason(
+    gated({
+      classification: "blocked",
+      blocked_by_reason: "feature_dependency_blocked",
+    }),
+  );
+  assert.equal(hold?.code, "feature_blocked");
+});
+
+test("blocked outranks waiting when both are set", () => {
+  const hold = featureGateReason(
+    gated({
+      classification: "blocked",
+      blocked_by_features: ["b"],
+      waiting_on_features: ["w"],
+    }),
+  );
+  assert.equal(hold?.code, "feature_blocked");
+});
+
+test("the feature gate is named ahead of a pause dial", () => {
+  // Both are true, but only one is the binding constraint: resuming the
+  // project would not release a feature-gated task.
+  const pause = buildPauseState(
+    {
+      running: true,
+      paused: true,
+      pausedProjects: ["p"],
+      automationsPaused: false,
+      automationPausedProjects: null,
+    },
+    [],
+  );
+  const hold = taskHoldReason(gated({ waiting_on_features: ["upstream"] }), {
+    pause,
+    projectId: "p",
+  });
+  assert.equal(hold?.code, "waiting_on_features");
+});
+
+test("an ungated task is unaffected", () => {
+  assert.equal(featureGateReason(task()), null);
+  // A healthy fleet, so none of the non-feature hold branches fire either.
+  // (EMPTY_PAUSE_STATE would report "no runners" — correctly, but that is a
+  // different hold and would mask what this case is pinning.)
+  const healthy = buildPauseState(
+    {
+      running: true,
+      paused: false,
+      pausedProjects: null,
+      automationsPaused: false,
+      automationPausedProjects: null,
+    },
+    [runner()],
+  );
+  assert.equal(
+    taskHoldReason(task(), { pause: healthy, projectId: "p" }),
+    null,
+  );
+});
+
+test("an unresolved feature dep warns even on a healthy task", () => {
+  // These gate NOTHING, so the task may be running fine — which is exactly
+  // why it needs saying: the ordering the author wrote is not in effect.
+  const t = task({
+    status: "in_progress",
+    unresolved_feature_deps: ["typo-feat"],
+  });
+  const warn = featureDepWarning(t);
+  assert.equal(warn?.short, "unknown feature dep");
+  // Not "feature_blocked": nothing is blocked, the ordering is simply absent.
+  assert.equal(warn?.code, "feature_dep_unresolved");
+  assert.match(warn!.detail, /gate NOTHING/);
+  // and it is NOT reported as a hold, because nothing is held
+  assert.equal(featureGateReason(t), null);
+});
+
+test("no unresolved deps means no warning", () => {
+  assert.equal(featureDepWarning(task()), null);
+  assert.equal(featureDepWarning(task({ unresolved_feature_deps: [] })), null);
 });

@@ -3106,6 +3106,26 @@ body[data-theme="light"] .p2-runner-shell__prompt {
   background: #e08c3a11;
 }
 
+/* A feature gate that is actively clearing itself: upstream work is in
+   flight, nothing is wrong and there is no switch to flip. Muted blue keeps
+   it distinct from both the amber faults above and the pause dials, so a
+   glance can tell "waiting its turn" from "someone stopped this". */
+.hold-chip.waiting_on_features {
+  color: #6f9fd8;
+  border-color: #6f9fd855;
+  background: #6f9fd811;
+}
+/* A blocked upstream feature, a dependency cycle, or a feature_depends_on
+   entry naming a feature that does not exist. None of these clear on their
+   own, so they share the amber fault treatment. */
+.hold-chip.feature_blocked,
+.hold-chip.feature_cycle,
+.hold-chip.feature_dep_unresolved {
+  color: #e08c3a;
+  border-color: #e08c3a55;
+  background: #e08c3a11;
+}
+
 /* ---------- Task modal ---------- */
 .life-badge.held {
   color: var(--pause);

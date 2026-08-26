@@ -272,14 +272,22 @@ export type HoldCode =
   | "automations_paused"
   | "runners_paused"
   | "no_candidate"
-  | "no_runners";
+  | "no_runners"
+  | "waiting_on_features"
+  | "feature_blocked"
+  | "feature_cycle"
+  | "feature_dep_unresolved";
 
 export interface HoldReason {
   code: HoldCode;
   /** Leading marker. ⏸ means a dial someone deliberately flipped; ⚠ means
    *  nobody chose this and it will not clear on its own. Using ⏸ for both
-   *  would send a user looking for a switch that does not exist. */
-  glyph: "⏸" | "⚠";
+   *  would send a user looking for a switch that does not exist.
+   *
+   *  ⇢ is the third case: an ordering constraint that IS clearing itself —
+   *  upstream work is in flight. There is no switch to flip and nothing is
+   *  wrong, so it must read as neither a dial nor a fault. */
+  glyph: "⏸" | "⚠" | "⇢";
   /** Compact chip text for a dense task row. */
   short: string;
   /** Full sentence for a tooltip or the task modal. */
@@ -329,6 +337,19 @@ export function taskHoldReason(
   task: Task,
   ctx: { pause: PauseState; projectId: string },
 ): HoldReason | null {
+  // Feature gating is answered first, and deliberately ahead of the
+  // ready-only guard below.
+  //
+  // isReadyUndispatched skips anything not classified "ready" on the grounds
+  // that "the tree already tells that story". That holds for task-level
+  // depends_on, where the blocking task is a visible row. It does NOT hold
+  // for feature_depends_on: the gate names a FEATURE, the task tree has no
+  // feature row to point at, and the task simply sits at "waiting" forever
+  // with nothing on screen explaining why. That is the same invisible-hold
+  // failure this module exists to remove, arriving through a different door.
+  const featureHold = featureGateReason(task);
+  if (featureHold) return featureHold;
+
   if (!isReadyUndispatched(task)) return null;
   const { pause, projectId } = ctx;
 
@@ -403,6 +424,109 @@ export function taskHoldReason(
   return null;
 }
 
+/**
+ * Why a task is held by its FEATURE's dependencies, or null.
+ *
+ * Set by applyFeatureGating (internal/service/taskdeps.go), which only ever
+ * downgrades a "ready" task — so when these fields are present they are the
+ * whole reason the task is not running, and no task-level story competes.
+ */
+export function featureGateReason(task: Task): HoldReason | null {
+  const blocked = task.blocked_by_features ?? [];
+  const reason = task.blocked_by_reason;
+
+  // Cycle is keyed on the REASON, not on blocked_by_features.
+  //
+  // classifyFeature reports a cycle through InCycle and leaves
+  // BlockedByFeatures EMPTY — there is no single upstream feature to name
+  // when the members block each other. Requiring a non-empty list here left
+  // a genuine A<->B cycle rendering no chip at all: every task stuck
+  // forever with nothing on screen saying why. Verified against the server,
+  // not assumed.
+  if (reason === "feature_circular_dependency") {
+    return {
+      code: "feature_cycle",
+      glyph: "⚠",
+      short: "feature cycle",
+      detail:
+        (blocked.length > 0
+          ? `This task's feature is in a dependency cycle with ${listFeatures(blocked)}. `
+          : "This task's feature is in a feature_depends_on cycle — its " +
+            "dependencies lead back to itself. ") +
+        "A cycle never resolves on its own, and Run now will not override " +
+        "it: break the loop by editing feature_depends_on on one of the " +
+        "features involved.",
+    };
+  }
+
+  if (blocked.length > 0 || reason === "feature_dependency_blocked") {
+    const who =
+      blocked.length > 0 ? listFeatures(blocked) : "an upstream feature";
+    return {
+      code: "feature_blocked",
+      glyph: "⚠",
+      short: "feature blocked",
+      detail:
+        `Held because ${who} ${blocked.length === 1 || blocked.length === 0 ? "is" : "are"} blocked. ` +
+        "This will not clear until that is unblocked — Run now will not " +
+        "override it either, because the gate is part of readiness, not a " +
+        "pause dial.",
+    };
+  }
+
+  const waiting = task.waiting_on_features ?? [];
+  if (waiting.length > 0) {
+    return {
+      code: "waiting_on_features",
+      glyph: "⇢",
+      short: `waits on ${waiting.length === 1 ? waiting[0] : `${waiting.length} features`}`,
+      detail:
+        `Waiting for ${listFeatures(waiting)} to finish. Declared via ` +
+        "feature_depends_on; it releases automatically once that feature " +
+        "completes. Run now does NOT override it — the gate is part of " +
+        'readiness, so forcing returns "task not ready".',
+    };
+  }
+
+  return null;
+}
+
+/**
+ * feature_depends_on entries naming a feature that does not exist.
+ *
+ * Orthogonal to holds: these gate NOTHING (applyFeatureGating reports them
+ * but never acts on them), so the task may be running perfectly well. That is
+ * exactly why it needs surfacing — a typo'd feature dep silently orders
+ * nothing, and the only symptom is work running earlier than intended.
+ */
+export function featureDepWarning(task: Task): HoldReason | null {
+  const unresolved = task.unresolved_feature_deps ?? [];
+  if (unresolved.length === 0) return null;
+  return {
+    // Deliberately NOT feature_blocked: nothing is blocked. The task may be
+    // running. What is wrong is the ordering the author thought they wrote.
+    code: "feature_dep_unresolved",
+    glyph: "⚠",
+    short: "unknown feature dep",
+    detail:
+      `feature_depends_on names ${listFeatures(unresolved)}, which ` +
+      `${unresolved.length === 1 ? "matches" : "match"} no feature in this ` +
+      "project. Unresolved entries gate NOTHING — this task is ordered as " +
+      "if the dependency were not declared. Check for a typo.",
+  };
+}
+
+function listFeatures(ids: string[]): string {
+  if (ids.length === 1) return `"${ids[0]}"`;
+  if (ids.length === 2) return `"${ids[0]}" and "${ids[1]}"`;
+  return (
+    ids
+      .map((f) => `"${f}"`)
+      .slice(0, -1)
+      .join(", ") + `, and "${ids[ids.length - 1]}"`
+  );
+}
+
 function placementShort(reason: PlacementReason): string {
   return reason.decision === "no_candidate" ? "no runner" : reason.decision!;
 }
@@ -468,8 +592,7 @@ export function schedulerHoldNote(
     lines.push(
       `· ${autosPaused} held by the project AUTOMATIONS dial (automation tasks).`,
     );
-  if (noCandidate > 0)
-    lines.push(`· ${noCandidate} had no eligible runner.`);
+  if (noCandidate > 0) lines.push(`· ${noCandidate} had no eligible runner.`);
   if (leased > 0)
     lines.push(`· ${leased} already leased and in flight (not held).`);
 

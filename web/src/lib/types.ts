@@ -160,6 +160,18 @@ export interface Task {
   blocked_by?: string[];
   blocked_by_reason?: string;
   waiting_on?: string[];
+  // Feature-level gating, emitted by applyFeatureGating (service/taskdeps.go).
+  // Distinct from the task-level lists above: these name FEATURES, not tasks,
+  // and the task tree has no row for a feature — so unless they are rendered
+  // the task just sits at "waiting" with nothing explaining why.
+  /** Features that must finish before this task's feature may start. */
+  waiting_on_features?: string[];
+  /** Features that are themselves blocked, blocking this one in turn. */
+  blocked_by_features?: string[];
+  /** feature_depends_on entries that match no known feature. These gate
+   *  NOTHING — a typo silently orders nothing — so they are reported on every
+   *  task in the feature regardless of classification. */
+  unresolved_feature_deps?: string[];
   in_cycle?: boolean;
   resolved_workdir?: string;
 

@@ -561,7 +561,9 @@ type DependentClosure struct {
 // skipped because applyFeatureGating blocks their tasks unconditionally, so
 // enrolling one guarantees a permanent stall.
 func TransitiveDependents(features []*ComputedFeature, root string) DependentClosure {
-	out := DependentClosure{Skipped: map[string]string{}}
+	// Members must never be nil: it serializes as `queued` and the PWA reads
+	// .length on it, where a null is a crash rather than an empty chain.
+	out := DependentClosure{Members: []string{}, Skipped: map[string]string{}}
 	if root == "" || len(features) == 0 {
 		return out
 	}
@@ -597,14 +599,32 @@ func TransitiveDependents(features []*ComputedFeature, root string) DependentClo
 			if !ok {
 				continue
 			}
-			switch {
-			case f.InCycle:
-				out.Skipped[id] = "in_cycle"
-				continue
-			case f.Status == "completed" || f.Status == "archived":
+
+			// A settled feature is SKIPPED but still TRAVERSED.
+			//
+			// It needs no dispatch, but its gate is open, so everything
+			// behind it is exactly the runnable work the request asked
+			// for. Stopping here instead would be fatal rather than
+			// cosmetic: only the root is persisted, so the closure is
+			// recomputed every sweep and a truncated closure IS the
+			// chain. In A <- B <- C the chain would collapse to empty the
+			// moment B completed — and chainSettled, seeing only the root,
+			// would retire it at the exact instant C became dispatchable.
+			if f.Status == "completed" || f.Status == "archived" {
 				out.Skipped[id] = "already_settled"
+				queue = append(queue, id)
 				continue
 			}
+
+			// A cycle member is skipped AND not traversed, which is a
+			// different judgement: applyFeatureGating blocks its tasks
+			// unconditionally, so it can never complete and nothing behind
+			// it can ever become runnable through it.
+			if f.InCycle {
+				out.Skipped[id] = "in_cycle"
+				continue
+			}
+
 			if len(out.Members) >= maxCascadeClosure {
 				out.Truncated = true
 				continue

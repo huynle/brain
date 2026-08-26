@@ -27,6 +27,7 @@ import { useProjectActionContext } from "../../hooks/useProjectActionContext";
 import { projectPauseBadges, schedulerHoldNote } from "../../lib/pause";
 import { CardTasks } from "./CardTasks";
 import { CardFeatures } from "./CardFeatures";
+import { useDependentChainsSync } from "../../hooks/useDependentChains";
 import { CardAutomations } from "./CardAutomations";
 import { CardGoals } from "./CardGoals";
 import type { Task } from "../../lib/types";
@@ -85,6 +86,13 @@ export interface ProjectCardProps {
 
 export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   const [tab, setTab] = useState<TabKey>("tasks");
+  // Poll chain state for the whole card, not just the Features tab.
+  //
+  // The verbs that read it — "Cancel queued dependents" above all — are built
+  // on the default Tasks tab as well. Polling inside CardFeatures meant the
+  // cancel verb was silently absent everywhere except the one tab that
+  // happened to observe the query, with no error and no disabled entry.
+  useDependentChainsSync(projectId);
   const projectLive = useLive((s) => s.projects[projectId]);
   const tasks = projectLive?.tasks ?? EMPTY_TASKS;
   const connected = projectLive?.connected ?? false;

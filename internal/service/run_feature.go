@@ -750,14 +750,15 @@ func (s *SchedulerService) sweepProjectChains(ctx context.Context, projectID str
 
 	dispatched := 0
 	for _, r := range rows {
-		if pausedNow && !r.PausedAtRequest {
-			slog.Info("dependent chain held: project paused after the request",
-				"project_id", projectID, "root_feature_id", r.RootFeatureID)
-			continue
-		}
-
 		closure := TransitiveDependents(features, r.RootFeatureID)
 
+		// Retirement is checked BEFORE the pause hold.
+		//
+		// Held is about not STARTING new work; a chain whose work has all
+		// finished has nothing left to start. Holding first meant a chain
+		// paused after its request could never be retired, so its row — and
+		// the "Running with dependents" badge built from it — outlived the
+		// work indefinitely, and only unpausing could clear it.
 		if s.chainSettled(byID, r.RootFeatureID, closure.Members) {
 			if _, derr := s.roots.DeleteFeatureCascadeRoot(ctx, projectID, r.RootFeatureID); derr != nil {
 				slog.Warn("retire dependent chain failed",
@@ -766,6 +767,12 @@ func (s *SchedulerService) sweepProjectChains(ctx context.Context, projectID str
 				slog.Info("dependent chain complete",
 					"project_id", projectID, "root_feature_id", r.RootFeatureID)
 			}
+			continue
+		}
+
+		if pausedNow && !r.PausedAtRequest {
+			slog.Info("dependent chain held: project paused after the request",
+				"project_id", projectID, "root_feature_id", r.RootFeatureID)
 			continue
 		}
 
@@ -832,7 +839,23 @@ func (s *SchedulerService) chainSettled(byID map[string]*ComputedFeature, root s
 		if !ok {
 			continue
 		}
-		if f.TaskStats.Pending > 0 || f.TaskStats.InProgress > 0 {
+		// Closed test, not an enumeration of live statuses.
+		//
+		// computeTaskStats buckets pending / in_progress / completed+validated
+		// / blocked+cancelled and skips archived — but a "draft" task lands in
+		// Total and NO bucket. Asking "is Pending or InProgress > 0" therefore
+		// read a feature whose work is still in draft as finished, and retired
+		// the chain out from under it: retirement deletes the root row, and
+		// there is no re-enrolment short of the user clicking again.
+		//
+		// Requiring every counted task to be in a terminal bucket fails safe
+		// instead — anything unaccounted for, now or after a future status is
+		// added, keeps the chain alive rather than silently ending it.
+		//
+		// Blocked counts as terminal on purpose: that is where the retry cap
+		// parks a task after max_attempts, and waiting on it would keep the
+		// chain alive forever on work that cannot proceed without a human.
+		if f.TaskStats.Completed+f.TaskStats.Blocked < f.TaskStats.Total {
 			return false
 		}
 	}

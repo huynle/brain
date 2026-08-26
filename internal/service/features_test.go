@@ -753,3 +753,120 @@ func TestClassifyFeature_CompletedIsReadyNotDispatchable(t *testing.T) {
 			"distinguishes dispatchable from settled", f.TaskStats.Pending)
 	}
 }
+
+// A settled feature must be TRAVERSED THROUGH, not treated as a wall.
+//
+// The BFS marks completed/archived features as skipped — correct, they need
+// no dispatch — but it must still expand their dependents, because a settled
+// feature's gate is OPEN and everything behind it is exactly the runnable
+// work the request asked for.
+//
+// Getting this wrong is fatal rather than cosmetic: only the ROOT is
+// persisted, so the closure is recomputed from scratch every sweep. A
+// truncated closure IS the chain. In A <- B <- C, the moment B completes the
+// closure collapses to empty, chainSettled sees only the root, and the chain
+// retires at the exact instant C becomes dispatchable.
+//
+// A two-feature graph cannot catch this, which is why it survived the live
+// demo — the collapse needs a third link.
+func TestTransitiveDependents_TraversesThroughSettledFeatures(t *testing.T) {
+	fs := []*ComputedFeature{
+		feat("a", nil, "completed"),
+		feat("b", []string{"a"}, "completed"),
+		feat("c", []string{"b"}, "pending"),
+		feat("d", []string{"c"}, "pending"),
+	}
+	got := TransitiveDependents(fs, "a")
+
+	if !reflect.DeepEqual(got.Members, []string{"c", "d"}) {
+		t.Fatalf("members = %v, want [c d]: a settled B must not hide C and D",
+			got.Members)
+	}
+	if got.Skipped["b"] != "already_settled" {
+		t.Fatalf("skipped[b] = %q, want already_settled (skipped, but still traversed)",
+			got.Skipped["b"])
+	}
+}
+
+// Members must never be nil: it is serialized as `queued` and consumed as an
+// array by the PWA, where a null crashes the chain badge on `.length`.
+func TestTransitiveDependents_MembersIsNeverNil(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		fs   []*ComputedFeature
+		root string
+	}{
+		{"no dependents", []*ComputedFeature{feat("a", nil, "pending")}, "a"},
+		{"empty graph", nil, "a"},
+		{"unknown root", []*ComputedFeature{feat("a", nil, "pending")}, "zz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := TransitiveDependents(tc.fs, tc.root); got.Members == nil {
+				t.Fatal("Members is nil; it marshals to `queued: null` and the PWA reads .length on it")
+			}
+		})
+	}
+}
+
+// chainSettled must not retire a chain whose work is still in draft.
+//
+// computeTaskStats gives a draft task a Total slot and no bucket, so a check
+// phrased as "Pending or InProgress > 0" reads it as finished. Retirement
+// deletes the persisted root and there is no re-enrolment short of clicking
+// again, so this loses the chain permanently.
+func TestChainSettled_DraftWorkIsNotSettled(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "r1", Status: "completed", FeatureID: "root"},
+		{ID: "d1", Status: "draft", FeatureID: "dep"},
+	}
+	features := ResolveFeatureDependencies(ComputeFeatures(tasks))
+	byID := map[string]*ComputedFeature{}
+	for _, f := range features {
+		byID[f.ID] = f
+	}
+
+	// Guard the premise: draft really is unbucketed.
+	dep := byID["dep"]
+	if dep.TaskStats.Total != 1 || dep.TaskStats.Pending != 0 {
+		t.Fatalf("premise changed: draft now buckets as %+v", dep.TaskStats)
+	}
+
+	s := &SchedulerService{}
+	if s.chainSettled(byID, "root", []string{"dep"}) {
+		t.Fatal("chain retired while a member's work was still in draft")
+	}
+}
+
+func TestChainSettled_TerminalWorkIsSettled(t *testing.T) {
+	// Blocked counts as terminal on purpose: the retry cap parks tasks there,
+	// and waiting on one would keep the chain alive forever.
+	tasks := []types.ResolvedTask{
+		{ID: "r1", Status: "completed", FeatureID: "root"},
+		{ID: "d1", Status: "blocked", FeatureID: "dep"},
+	}
+	features := ResolveFeatureDependencies(ComputeFeatures(tasks))
+	byID := map[string]*ComputedFeature{}
+	for _, f := range features {
+		byID[f.ID] = f
+	}
+	s := &SchedulerService{}
+	if !s.chainSettled(byID, "root", []string{"dep"}) {
+		t.Fatal("chain stayed alive on work that cannot proceed without a human")
+	}
+}
+
+func TestChainSettled_PendingWorkIsNotSettled(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "r1", Status: "completed", FeatureID: "root"},
+		{ID: "d1", Status: "pending", FeatureID: "dep"},
+	}
+	features := ResolveFeatureDependencies(ComputeFeatures(tasks))
+	byID := map[string]*ComputedFeature{}
+	for _, f := range features {
+		byID[f.ID] = f
+	}
+	s := &SchedulerService{}
+	if s.chainSettled(byID, "root", []string{"dep"}) {
+		t.Fatal("chain retired with pending work outstanding")
+	}
+}

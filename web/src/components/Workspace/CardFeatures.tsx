@@ -22,10 +22,7 @@ import { useRunners } from "../../hooks/useRunners";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
 import type { DependentChain } from "../../lib/api";
-import {
-  useDependentChains,
-  useDependentChainsSync,
-} from "../../hooks/useDependentChains";
+import { useDependentChains } from "../../hooks/useDependentChains";
 import { DepGuide } from "../common/DepGuide";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
@@ -47,11 +44,15 @@ const LIFECYCLE_TONE = {
  *  going to run", so it must not be left to inference. */
 function chainRootTitle(c: DependentChain | undefined): string {
   if (!c) return "Running with dependents";
+  // Defensive ?? []: the server omits an empty `queued`, and an older build
+  // could send null. Reading .length on that crashes the whole row rather
+  // than degrading to "nothing queued".
+  const queued = c.queued ?? [];
   const parts = [
-    c.queued.length > 0
-      ? `Running with ${c.queued.length} queued dependent ${
-          c.queued.length === 1 ? "feature" : "features"
-        }: ${c.queued.join(", ")}`
+    queued.length > 0
+      ? `Running with ${queued.length} queued dependent ${
+          queued.length === 1 ? "feature" : "features"
+        }: ${queued.join(", ")}`
       : "Running with dependents; nothing queued behind it",
   ];
   if (c.waitsOnExternal?.length) {
@@ -92,7 +93,12 @@ export function CardFeatures({
   // A chain is a queue the server advances on its own. Without showing it,
   // the feature would be invisible after the click — the toast says "queued
   // 2 features" and then nothing on screen ever mentions them again.
-  useDependentChainsSync(projectId);
+  //
+  // The POLL lives in ProjectCard, not here: this component only mounts on
+  // the Features tab, while the verbs that need chain state (notably "Cancel
+  // queued dependents") are built on the default Tasks tab and the overview
+  // too. Polling only here meant the cancel verb silently vanished on every
+  // surface except this one.
   const chains = useDependentChains(projectId);
   const { rowProps, overlays } = useRowActions();
 

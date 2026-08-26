@@ -130,6 +130,39 @@ export function useFeatureActionContextFactory(): (
             withForceNote(chain ? `${message} · ${chain}` : message, note),
             kind,
           );
+          // Seed the cache, do not merely invalidate.
+          //
+          // invalidateQueries does not create a query that has no observer,
+          // so on a surface that has not polled chains the entry stays
+          // undefined and hasActiveChain reads "no chain" — leaving the user
+          // who just started one with no way to cancel it. Writing the row we
+          // just learned about makes the cancel verb available immediately,
+          // everywhere, and the next poll reconciles it.
+          if (r.dependents) {
+            queryClient.setQueryData<{ chains: DependentChain[] }>(
+              dependentChainsKey(projectId),
+              (prev) => {
+                const others = (prev?.chains ?? []).filter(
+                  (c) => c.rootFeatureId !== feature.id,
+                );
+                return {
+                  chains: [
+                    ...others,
+                    {
+                      projectId,
+                      rootFeatureId: feature.id,
+                      requestedAt: Date.now(),
+                      pausedAtRequest: false,
+                      queued: r.dependents!.queued ?? [],
+                      skipped: r.dependents!.skipped,
+                      waitsOnExternal: r.dependents!.waitsOnExternal,
+                      truncated: r.dependents!.truncated,
+                    },
+                  ],
+                };
+              },
+            );
+          }
           void refreshChains();
         },
 

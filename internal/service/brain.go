@@ -105,6 +105,39 @@ func (s *BrainServiceImpl) checkFeatureCompletion(ctx context.Context, featureID
 // =============================================================================
 
 // Save creates a new brain entry on disk and indexes it.
+// renderRelatedEntries turns the request's relatedEntries into a trailing
+// "## Related" section of wiki-links, or "" when there is nothing to render.
+//
+// The field was declared, advertised by the MCP save tool and documented in
+// SKILL.md, but never read by Save — three linking mechanisms were offered and
+// this one silently did nothing. Writing the links into the body (rather than
+// inserting link rows directly) is what makes them durable: SetLinks rebuilds a
+// note's links from its file on every reindex, so any row not backed by the
+// file would be erased on the next pass.
+//
+// Wiki-link syntax carries all three accepted shapes without the caller having
+// to say which one it used: SetLinks resolves a target by path, then short ID,
+// then title.
+func renderRelatedEntries(entries []string) string {
+	seen := make(map[string]bool, len(entries))
+	var lines []string
+	for _, e := range entries {
+		// Collapse whitespace and drop the characters that would break out of
+		// the [[...]] wrapper.
+		clean := strings.TrimSpace(strings.Join(strings.Fields(e), " "))
+		clean = strings.NewReplacer("[", "", "]", "", "|", "").Replace(clean)
+		if clean == "" || seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		lines = append(lines, "- [["+clean+"]]")
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n## Related\n\n" + strings.Join(lines, "\n") + "\n"
+}
+
 func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
 	// Validate required fields
 	if req.Type == "" {
@@ -232,6 +265,9 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		content.WriteString("\n")
 		content.WriteString(req.Content)
 		content.WriteString("\n")
+	}
+	if related := renderRelatedEntries(req.RelatedEntries); related != "" {
+		content.WriteString(related)
 	}
 
 	// Write file to disk

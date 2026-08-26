@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"regexp"
+	"sort"
 	"strings"
 )
 
@@ -27,9 +28,29 @@ type ExtractedLink struct {
 // ---------------------------------------------------------------------------
 
 // linkRe matches markdown links [text](target).
-// Go's regexp doesn't support lookbehinds, so we match an optional preceding
-// character and then check it isn't '!'.
-var linkRe = regexp.MustCompile(`(^|[^!])\[([^\]]*)\]\(([^)]+)\)`)
+var linkRe = regexp.MustCompile(`\[([^\]]*)\]\(([^)]+)\)`)
+
+// wikiLinkRe matches wiki-links [[target]] and aliased [[target|display]].
+var wikiLinkRe = regexp.MustCompile(`\[\[([^\[\]|]+?)(?:\|([^\[\]]*))?\]\]`)
+
+// isEmbed reports whether the match starting at start is preceded by '!',
+// marking it an image (![alt](src)) or an Obsidian embed (![[target]]).
+//
+// Go's regexp has no lookbehind. These patterns used to carry a leading
+// "(^|[^!])" group to stand in for one, but that group CONSUMES the preceding
+// character, and FindAll does not return overlapping matches — so in
+// "[a](1)[b](2)" the second link's required prefix had already been eaten by
+// the first and it was silently dropped. Checking the byte directly costs
+// nothing and has no such blind spot.
+func isEmbed(s string, start int) bool {
+	return start > 0 && s[start-1] == '!'
+}
+
+// fenceRe matches an opening or closing code fence (``` or ~~~, 3 or more).
+var fenceRe = regexp.MustCompile("^[\t ]*(`{3,}|~{3,})")
+
+// backtickRunRe matches a run of backticks, used to find inline code spans.
+var backtickRunRe = regexp.MustCompile("`+")
 
 // urlPrefixRe matches http:// or https:// at the start of a string.
 var urlPrefixRe = regexp.MustCompile(`^https?://`)
@@ -53,32 +74,43 @@ var (
 // ExtractLinks
 // ---------------------------------------------------------------------------
 
-// ExtractLinks extracts markdown links from body text.
-// Matches [text](target) but NOT ![alt](src) (image links).
-// Each link includes ±50 characters of surrounding context as a snippet.
+// ExtractLinks extracts links from body text, in document order.
+//
+// Two syntaxes are recognised:
+//   - markdown links [text](target), but NOT images ![alt](src)
+//   - wiki-links [[target]] and [[target|display]], but NOT embeds ![[target]]
+//
+// Text inside fenced code blocks and inline code spans is ignored: brain
+// entries routinely document the link syntax itself, and treating those
+// examples as real links pollutes the graph with placeholder targets such as
+// "pattern-id".
+//
+// Each link includes ±50 characters of surrounding context as a snippet. The
+// snippet is taken from the ORIGINAL text, so it still shows code that was
+// masked for the purpose of matching.
 func ExtractLinks(markdown string) []ExtractedLink {
 	if markdown == "" {
 		return nil
 	}
 
-	matches := linkRe.FindAllStringSubmatchIndex(markdown, -1)
-	links := make([]ExtractedLink, 0, len(matches))
+	// Match against a copy with code regions blanked out. maskCode preserves
+	// byte offsets, so every index below is valid in the original string too.
+	searchable := maskCode(markdown)
 
-	for _, loc := range matches {
-		// loc indices: [full_start, full_end, group1_start, group1_end, group2_start, group2_end, group3_start, group3_end]
-		// group1 = preceding char (or empty at start), group2 = title, group3 = href
+	type positioned struct {
+		start int
+		link  ExtractedLink
+	}
+	var found []positioned
 
-		title := markdown[loc[4]:loc[5]]
-		href := markdown[loc[6]:loc[7]]
-
-		// Determine the actual link start (the '[' character).
-		// If group1 matched a character, the link starts after it.
-		linkStart := loc[0]
-		if loc[2] != loc[3] {
-			// group1 matched a non-empty char, link starts at group1_end
-			linkStart = loc[3]
+	// --- markdown links ----------------------------------------------------
+	for _, loc := range linkRe.FindAllStringSubmatchIndex(searchable, -1) {
+		// loc: [full_start, full_end, title_start, title_end, href_start, href_end]
+		if isEmbed(searchable, loc[0]) {
+			continue
 		}
-		linkEnd := loc[1]
+		title := markdown[loc[2]:loc[3]]
+		href := markdown[loc[4]:loc[5]]
 
 		// Classify link type
 		linkType := "markdown"
@@ -88,26 +120,153 @@ func ExtractLinks(markdown string) []ExtractedLink {
 			linkType = "url"
 		}
 
-		// Extract ±50 chars of surrounding context
-		snippetStart := linkStart - 50
-		if snippetStart < 0 {
-			snippetStart = 0
-		}
-		snippetEnd := linkEnd + 50
-		if snippetEnd > len(markdown) {
-			snippetEnd = len(markdown)
-		}
-		snippet := markdown[snippetStart:snippetEnd]
-
-		links = append(links, ExtractedLink{
-			Href:    href,
-			Title:   title,
-			Type:    linkType,
-			Snippet: snippet,
+		found = append(found, positioned{
+			start: loc[0],
+			link: ExtractedLink{
+				Href:    href,
+				Title:   title,
+				Type:    linkType,
+				Snippet: snippetAround(markdown, loc[0], loc[1]),
+			},
 		})
 	}
 
+	// --- wiki-links --------------------------------------------------------
+	for _, loc := range wikiLinkRe.FindAllStringSubmatchIndex(searchable, -1) {
+		// loc: [full_start, full_end, target_start, target_end, alias_start, alias_end]
+		if isEmbed(searchable, loc[0]) {
+			continue
+		}
+		target := strings.TrimSpace(markdown[loc[2]:loc[3]])
+		if target == "" {
+			continue
+		}
+
+		// Display text is the alias when present, otherwise the target itself.
+		display := target
+		if loc[4] != -1 {
+			if alias := strings.TrimSpace(markdown[loc[4]:loc[5]]); alias != "" {
+				display = alias
+			}
+		}
+
+		found = append(found, positioned{
+			start: loc[0],
+			link: ExtractedLink{
+				Href:    target,
+				Title:   display,
+				Type:    "wikilink",
+				Snippet: snippetAround(markdown, loc[0], loc[1]),
+			},
+		})
+	}
+
+	if len(found) == 0 {
+		return []ExtractedLink{}
+	}
+
+	sort.SliceStable(found, func(i, j int) bool { return found[i].start < found[j].start })
+
+	links := make([]ExtractedLink, 0, len(found))
+	for _, f := range found {
+		links = append(links, f.link)
+	}
 	return links
+}
+
+// snippetAround returns the text around [start, end) with ±50 characters of
+// context, clamped to the bounds of s.
+func snippetAround(s string, start, end int) string {
+	from := start - 50
+	if from < 0 {
+		from = 0
+	}
+	to := end + 50
+	if to > len(s) {
+		to = len(s)
+	}
+	return s[from:to]
+}
+
+// maskCode returns a copy of s with the contents of fenced code blocks and
+// inline code spans replaced by spaces. Byte offsets are preserved exactly, so
+// match indices found in the result index the original string as well.
+//
+// Newlines are kept so fence detection stays line-oriented; only the bytes
+// that could form link syntax are blanked.
+func maskCode(s string) string {
+	out := []byte(s)
+
+	blank := func(from, to int) {
+		for i := from; i < to; i++ {
+			if out[i] != '\n' {
+				out[i] = ' '
+			}
+		}
+	}
+
+	var openFence string // non-empty while inside a fenced block
+	pos := 0
+	for pos <= len(s) {
+		lineEnd := strings.IndexByte(s[pos:], '\n')
+		if lineEnd < 0 {
+			lineEnd = len(s)
+		} else {
+			lineEnd += pos
+		}
+		line := s[pos:lineEnd]
+
+		if openFence != "" {
+			// Inside a fence: blank everything, and close on a matching fence.
+			blank(pos, lineEnd)
+			if m := fenceRe.FindStringSubmatch(line); m != nil && isClosingFence(m[1], openFence, line) {
+				openFence = ""
+			}
+		} else if m := fenceRe.FindStringSubmatch(line); m != nil {
+			openFence = m[1]
+			blank(pos, lineEnd)
+		} else {
+			maskInlineCode(s, pos, lineEnd, blank)
+		}
+
+		if lineEnd == len(s) {
+			break
+		}
+		pos = lineEnd + 1
+	}
+
+	return string(out)
+}
+
+// isClosingFence reports whether a fence marker closes a block opened by
+// openFence: same fence character, at least as long, and nothing but
+// whitespace after it.
+func isClosingFence(marker, openFence, line string) bool {
+	if marker[0] != openFence[0] || len(marker) < len(openFence) {
+		return false
+	}
+	rest := line[strings.Index(line, marker)+len(marker):]
+	return strings.TrimSpace(rest) == ""
+}
+
+// maskInlineCode blanks inline code spans within s[from:to]. A run of N
+// backticks opens a span that the next run of exactly N backticks closes; an
+// unclosed run masks nothing, so a stray backtick cannot swallow the line.
+func maskInlineCode(s string, from, to int, blank func(int, int)) {
+	line := s[from:to]
+	runs := backtickRunRe.FindAllStringIndex(line, -1)
+	for i := 0; i < len(runs); i++ {
+		open := runs[i]
+		openLen := open[1] - open[0]
+		for j := i + 1; j < len(runs); j++ {
+			if runs[j][1]-runs[j][0] != openLen {
+				continue
+			}
+			blank(from+open[0], from+runs[j][1])
+			i = j
+			break
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------

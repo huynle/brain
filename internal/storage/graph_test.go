@@ -493,3 +493,230 @@ func TestGetRelated_CoCitationAcrossHrefStyles(t *testing.T) {
 		t.Errorf("GetRelated(a) = %+v, want [via-id]", related)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Orphan / backlink agreement (task 5t174je3)
+//
+// GetOrphans consulted only links.target_id while GetBacklinks matched
+// target_id OR target_path. A note reachable only through an unresolved
+// path-matching link was therefore reported as an orphan and returned a
+// backlink at the same time.
+// ---------------------------------------------------------------------------
+
+// insertDanglingPathLink writes a link row that names targetPath but leaves
+// target_id NULL — the state the two queries used to disagree about.
+func insertDanglingPathLink(t *testing.T, s *StorageLayer, sourceID int64, targetPath string) {
+	t.Helper()
+	_, err := s.db.ExecContext(context.Background(),
+		"INSERT INTO links (source_id, target_path, target_id, title, href, type) VALUES (?, ?, NULL, ?, ?, ?)",
+		sourceID, targetPath, "unresolved", targetPath, LinkTypeMarkdown,
+	)
+	if err != nil {
+		t.Fatalf("insert dangling link: %v", err)
+	}
+}
+
+func TestGetOrphans_ExcludesNotesWithUnresolvedPathBacklink(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	source, err := s.InsertNote(ctx, sampleNote("projects/test/orphan/src.md", "orpsrc01", "Source"))
+	if err != nil {
+		t.Fatalf("insert source: %v", err)
+	}
+	target, err := s.InsertNote(ctx, sampleNote("projects/test/orphan/tgt.md", "orptgt01", "Target"))
+	if err != nil {
+		t.Fatalf("insert target: %v", err)
+	}
+	insertDanglingPathLink(t, s, source.ID, target.Path)
+
+	// The link is visible as a backlink...
+	back, err := s.GetBacklinks(ctx, target.Path)
+	if err != nil {
+		t.Fatalf("GetBacklinks: %v", err)
+	}
+	if len(back) != 1 {
+		t.Fatalf("GetBacklinks returned %d entries, want 1", len(back))
+	}
+
+	// ...so the same note must not also be reported as having none.
+	orphans, err := s.GetOrphans(ctx, &OrphanOptions{Limit: 100})
+	if err != nil {
+		t.Fatalf("GetOrphans: %v", err)
+	}
+	for _, o := range orphans {
+		if o.Path == target.Path {
+			t.Fatalf("%q is listed as an orphan but GetBacklinks returns %d backlink(s)", target.Path, len(back))
+		}
+	}
+}
+
+// The two queries must agree for every note, not just the constructed one.
+func TestGetOrphans_AgreesWithBacklinksForEveryNote(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	g := setupTestGraph(t, s)
+	extra, err := s.InsertNote(ctx, sampleNote("projects/test/graph/e.md", "grphe005", "Note E"))
+	if err != nil {
+		t.Fatalf("insert E: %v", err)
+	}
+	insertDanglingPathLink(t, s, g.A.ID, extra.Path)
+
+	orphans, err := s.GetOrphans(ctx, &OrphanOptions{Limit: 1000})
+	if err != nil {
+		t.Fatalf("GetOrphans: %v", err)
+	}
+	isOrphan := make(map[string]bool, len(orphans))
+	for _, o := range orphans {
+		isOrphan[o.Path] = true
+	}
+
+	for _, n := range []*NoteRow{g.A, g.B, g.C, g.D, extra} {
+		back, err := s.GetBacklinks(ctx, n.Path)
+		if err != nil {
+			t.Fatalf("GetBacklinks(%q): %v", n.Path, err)
+		}
+		if got, want := isOrphan[n.Path], len(back) == 0; got != want {
+			t.Errorf("%q: orphan=%v but backlinks=%d", n.Path, got, len(back))
+		}
+	}
+}
+
+func TestGetStats_OrphanCountMatchesGetOrphans(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	g := setupTestGraph(t, s)
+	extra, err := s.InsertNote(ctx, sampleNote("projects/test/graph/e.md", "grphe006", "Note E"))
+	if err != nil {
+		t.Fatalf("insert E: %v", err)
+	}
+	insertDanglingPathLink(t, s, g.A.ID, extra.Path)
+
+	orphans, err := s.GetOrphans(ctx, &OrphanOptions{Limit: 1000})
+	if err != nil {
+		t.Fatalf("GetOrphans: %v", err)
+	}
+	stats, err := s.GetStats(ctx, nil)
+	if err != nil {
+		t.Fatalf("GetStats: %v", err)
+	}
+	if stats.OrphanCount != len(orphans) {
+		t.Errorf("stats.OrphanCount = %d, GetOrphans returned %d", stats.OrphanCount, len(orphans))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Cross-scope links
+//
+// Every graph fixture lived under projects/test/..., so nothing covered a link
+// crossing the project/global boundary in either direction.
+// ---------------------------------------------------------------------------
+
+func TestGraph_LinksCrossProjectAndGlobalScopes(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	proj, err := s.InsertNote(ctx, noteIn("projects/keep/walkthrough/proj.md", "xsproj01", "Project Entry", "keep"))
+	if err != nil {
+		t.Fatalf("insert project note: %v", err)
+	}
+	glob, err := s.InsertNote(ctx, noteIn("global/learning/glob.md", "xsglob01", "Global Entry", ""))
+	if err != nil {
+		t.Fatalf("insert global note: %v", err)
+	}
+
+	// project → global, by short ID; global → project, by path.
+	if err := s.SetLinks(ctx, proj.Path, []LinkInput{{TargetPath: "xsglob01", Href: "xsglob01", Type: LinkTypeMarkdown}}); err != nil {
+		t.Fatalf("SetLinks project→global: %v", err)
+	}
+	if err := s.SetLinks(ctx, glob.Path, []LinkInput{{TargetPath: proj.Path, Href: proj.Path, Type: LinkTypeMarkdown}}); err != nil {
+		t.Fatalf("SetLinks global→project: %v", err)
+	}
+
+	out, err := s.GetOutlinks(ctx, proj.Path)
+	if err != nil {
+		t.Fatalf("GetOutlinks(project): %v", err)
+	}
+	if len(out) != 1 || out[0].Path != glob.Path {
+		t.Errorf("project outlinks = %+v, want the global entry", out)
+	}
+
+	back, err := s.GetBacklinks(ctx, proj.Path)
+	if err != nil {
+		t.Fatalf("GetBacklinks(project): %v", err)
+	}
+	if len(back) != 1 || back[0].Path != glob.Path {
+		t.Errorf("project backlinks = %+v, want the global entry", back)
+	}
+
+	globOut, err := s.GetOutlinks(ctx, glob.Path)
+	if err != nil {
+		t.Fatalf("GetOutlinks(global): %v", err)
+	}
+	if len(globOut) != 1 || globOut[0].Path != proj.Path {
+		t.Errorf("global outlinks = %+v, want the project entry", globOut)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// v25 migration: invalidate checksums so links get re-extracted once
+// ---------------------------------------------------------------------------
+
+func TestMigrateV25_InvalidatesChecksumsForLinkReextraction(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	withWiki := sampleNote("projects/test/mig/wiki.md", "migwik01", "Has Wiki Link")
+	wikiBody := "Refers to [[Some Other Entry]] in prose."
+	withWiki.Body = &wikiBody
+	if _, err := s.InsertNote(ctx, withWiki); err != nil {
+		t.Fatalf("insert wiki note: %v", err)
+	}
+
+	withLinks, err := s.InsertNote(ctx, sampleNote("projects/test/mig/linked.md", "miglnk01", "Has Links"))
+	if err != nil {
+		t.Fatalf("insert linked note: %v", err)
+	}
+	insertDanglingPathLink(t, s, withLinks.ID, "projects/test/mig/absent.md")
+
+	untouched, err := s.InsertNote(ctx, sampleNote("projects/test/mig/plain.md", "migpln01", "Plain"))
+	if err != nil {
+		t.Fatalf("insert plain note: %v", err)
+	}
+
+	// Pretend the DB predates the fix, then migrate. GetSchemaVersion reads
+	// MAX(version), so the current row has to go, not just be shadowed.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("clear schema version: %v", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (24)"); err != nil {
+		t.Fatalf("set schema version: %v", err)
+	}
+	if err := migrateSchema(s.db); err != nil {
+		t.Fatalf("migrateSchema: %v", err)
+	}
+
+	checksumOf := func(path string) *string {
+		t.Helper()
+		n, err := s.GetNoteByPath(ctx, path)
+		if err != nil {
+			t.Fatalf("GetNoteByPath(%q): %v", path, err)
+		}
+		if n == nil {
+			t.Fatalf("note %q vanished", path)
+		}
+		return n.Checksum
+	}
+
+	if got := checksumOf(withWiki.Path); got != nil {
+		t.Errorf("wiki-link note kept checksum %q; it must be re-indexed", *got)
+	}
+	if got := checksumOf(withLinks.Path); got != nil {
+		t.Errorf("note with existing links kept checksum %q; it must be re-indexed", *got)
+	}
+	if got := checksumOf(untouched.Path); got == nil {
+		t.Error("a note with neither wiki-links nor link rows was needlessly invalidated")
+	}
+}

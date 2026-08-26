@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 24
+const CurrentSchemaVersion = 25
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -947,6 +947,44 @@ func migrateSchema(db *sql.DB) error {
 		}
 		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_feature_cascade_roots_project ON feature_cascade_roots(project_id)"); err != nil {
 			return fmt.Errorf("migrate v24 (feature_cascade_roots index): %w", err)
+		}
+	}
+
+	if ver < 25 {
+		// v25: force a re-extraction of links for the notes whose link rows
+		// this build changes.
+		//
+		// Two fixes landed together: [[wiki-links]] are now parsed at all, and
+		// link syntax inside code fences and inline code is no longer treated
+		// as a link. Neither reaches content already on disk, because the boot
+		// indexer (IndexChanged) skips any file whose checksum still matches
+		// the row — so a brain full of wiki-links would stay unlinked until
+		// each file happened to be edited.
+		//
+		// Nulling the checksum marks a note as "changed" for exactly one pass;
+		// the next IndexChanged re-parses it from disk and rewrites its links
+		// through the normal path. Scoped to the notes that can actually
+		// differ — those containing "[[" and those that already produced link
+		// rows — because the alternative, clearing every checksum, would
+		// re-index the whole brain behind a single SQLite connection and
+		// stall every read for the duration.
+		//
+		// SQLite LIKE has no character-class metacharacters, so '%[[%' is a
+		// literal match for a doubled bracket.
+		notesExist, err := tableExists(db, "notes")
+		if err != nil {
+			return fmt.Errorf("migrate v25 (inspect notes): %w", err)
+		}
+		linksExist, err := tableExists(db, "links")
+		if err != nil {
+			return fmt.Errorf("migrate v25 (inspect links): %w", err)
+		}
+		if notesExist && linksExist {
+			if _, err := db.Exec(`UPDATE notes SET checksum = NULL
+				WHERE body LIKE '%[[%'
+				   OR id IN (SELECT DISTINCT source_id FROM links)`); err != nil {
+				return fmt.Errorf("migrate v25 (invalidate checksums for link re-extraction): %w", err)
+			}
 		}
 	}
 

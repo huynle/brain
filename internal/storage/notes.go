@@ -105,9 +105,9 @@ func (s *StorageLayer) InsertNote(ctx context.Context, note *NoteRow) (*NoteRow,
 		return nil, fmt.Errorf("read back inserted note: %w", err)
 	}
 
-	// Repair links that were indexed before this note existed and are
-	// still dangling on its path or short ID.
-	if err := s.ResolveLinksTo(ctx, inserted.ID, inserted.Path, inserted.ShortID); err != nil {
+	// Repair links that were indexed before this note existed and are still
+	// dangling on its path, short ID, or (for wiki-links) its title.
+	if err := s.ResolveLinksToNote(ctx, inserted.ID, inserted.Path, inserted.ShortID, inserted.Title, inserted.ProjectID); err != nil {
 		return nil, err
 	}
 	return inserted, nil
@@ -129,10 +129,12 @@ func (s *StorageLayer) GetNoteByPath(ctx context.Context, path string) (*NoteRow
 }
 
 // GetNoteByShortID retrieves a note by short_id. Returns nil, nil if not found.
-// Returns the first match (short_id is not unique).
+// short_id is not unique, so the lowest row id wins — an arbitrary choice, but
+// a stable one. Without the ORDER BY, a collision resolved to whichever row
+// SQLite happened to visit first, which could change between queries.
 func (s *StorageLayer) GetNoteByShortID(ctx context.Context, shortID string) (*NoteRow, error) {
 	row := s.db.QueryRowContext(ctx,
-		"SELECT "+noteColumns+" FROM notes WHERE short_id = ? LIMIT 1", shortID,
+		"SELECT "+noteColumns+" FROM notes WHERE short_id = ? ORDER BY id LIMIT 1", shortID,
 	)
 	n, err := scanNoteRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -144,11 +146,32 @@ func (s *StorageLayer) GetNoteByShortID(ctx context.Context, shortID string) (*N
 	return n, nil
 }
 
-// GetNoteByTitle retrieves a note by exact title match. Returns nil, nil if not found.
+// GetNoteByTitle retrieves a note by exact title match. Returns nil, nil if not
+// found. Titles are not unique either; the lowest row id wins.
 func (s *StorageLayer) GetNoteByTitle(ctx context.Context, title string) (*NoteRow, error) {
-	row := s.db.QueryRowContext(ctx,
-		"SELECT "+noteColumns+" FROM notes WHERE title = ? LIMIT 1", title,
-	)
+	return s.GetNoteByTitleScoped(ctx, title, nil)
+}
+
+// GetNoteByTitleScoped retrieves a note by exact title, preferring one that
+// lives in projectID, then a global entry, then anything else. Returns nil, nil
+// if no note carries the title.
+//
+// Titles are not unique across the brain — "Summary" or "Notes" recur in every
+// project — so an unscoped lookup would hand a wiki-link in project A to a
+// same-titled note in project B. Ranking by scope keeps a link pointing at the
+// entry the author could actually see from where they wrote it, and the
+// trailing id keeps the answer stable when the rank ties.
+func (s *StorageLayer) GetNoteByTitleScoped(ctx context.Context, title string, projectID *string) (*NoteRow, error) {
+	query := "SELECT " + noteColumns + ` FROM notes WHERE title = ?
+		ORDER BY
+			CASE
+				WHEN ? IS NOT NULL AND project_id = ? THEN 0
+				WHEN project_id IS NULL THEN 1
+				ELSE 2
+			END,
+			id
+		LIMIT 1`
+	row := s.db.QueryRowContext(ctx, query, title, projectID, projectID)
 	n, err := scanNoteRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

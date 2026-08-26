@@ -172,11 +172,30 @@ func (s *FeatureCascadeService) handleEvent(ctx context.Context, evt types.Event
 		"reason", resp.Reason,
 	)
 
-	// Drain detection: when the feature has no ready tasks left, the
-	// cascade has nothing more to do. "feature_in_progress" still means
-	// work is in flight — keep the cascade alive so the next completion
-	// can re-evaluate.
-	if resp.Reason == "no_ready_tasks" {
+	// Drain detection.
+	//
+	// This used to key on resp.Reason == "no_ready_tasks", which is NOT a
+	// drain signal: it means only that nothing was READY at this instant.
+	// A feature with a fan-in — two tasks running, a third waiting on both
+	// — reports exactly that the moment the FIRST of the two completes,
+	// while it is still mid-flight. The cascade unregistered there, the
+	// second completion then found no cascade, and the third task was
+	// never dispatched. Under a paused project nothing else would pick it
+	// up, so the tail of the feature was silently dropped. Reproduced
+	// live before this fix: fan-in task stranded at ready indefinitely,
+	// then dispatched within a second of resuming the project.
+	//
+	// Outstanding counts tasks that can still produce work (pending or
+	// in_progress), so 0 is an unambiguous "nothing more can come from
+	// this feature". nil means the server could not measure it.
+	switch {
+	case resp.Outstanding != nil && *resp.Outstanding == 0:
+		s.Unregister(evt.ProjectID, evt.FeatureID)
+	case resp.Outstanding == nil && resp.Reason == "no_ready_tasks":
+		// Legacy fallback for a runner implementation without the
+		// feature-task lister wired. Same behaviour as before this fix,
+		// including its bug — but only where we genuinely cannot
+		// measure, never as a zero-value default.
 		s.Unregister(evt.ProjectID, evt.FeatureID)
 	}
 }

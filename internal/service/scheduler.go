@@ -30,6 +30,19 @@ type schedulerProjectLister interface {
 	ListProjects(ctx context.Context) ([]string, error)
 }
 
+// schedulerFeatureTaskLister exposes every task in a feature, not just the
+// ready ones. RunFeatureNow needs it to answer "is this feature finished?",
+// which GetReady structurally cannot: it filters to Classification=="ready",
+// so a feature whose remaining tasks are waiting on an in-flight sibling and
+// a feature that has genuinely drained both come back empty.
+//
+// Optional, asserted from the task service the same way schedulerProjectLister
+// is. *TaskServiceImpl satisfies it; fakes that do not simply leave
+// Outstanding unknown (-1) and the cascade falls back to its old behaviour.
+type schedulerFeatureTaskLister interface {
+	GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error)
+}
+
 type schedulerRunnerRegistry interface {
 	ListRunners(ctx context.Context) ([]types.RunnerInfo, error)
 }
@@ -67,6 +80,7 @@ type schedulerProjectAutomationPauseChecker interface {
 type SchedulerService struct {
 	tasks     schedulerTaskService
 	projects  schedulerProjectLister
+	featTasks schedulerFeatureTaskLister
 	runners   schedulerRunnerRegistry
 	placement schedulerPlacementService
 	leases    schedulerLeaseStore
@@ -125,6 +139,9 @@ func NewSchedulerService(tasks schedulerTaskService, pauses schedulerPauseChecke
 	}
 	if v, ok := tasks.(schedulerProjectLister); ok {
 		svc.projects = v
+	}
+	if v, ok := tasks.(schedulerFeatureTaskLister); ok {
+		svc.featTasks = v
 	}
 	for _, dep := range deps {
 		if v, ok := dep.(schedulerRunnerRegistry); ok {

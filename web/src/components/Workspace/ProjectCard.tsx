@@ -12,12 +12,16 @@ import { useState, useMemo } from "react";
 import { useLive } from "../../lib/sse";
 import { useWorkspace } from "../../store/workspace";
 import { useModal } from "../../store/modal";
-import { useUI } from "../../store/ui";
 import { deriveFeatures, type DerivedFeature } from "../../lib/features";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
 import { useRowActions } from "../../hooks/useRowActions";
-import { runProject, summarizeRunProjectResult } from "../../lib/api";
-import { buildProjectActions } from "../../lib/actions/projectActions";
+import {
+  buildProjectActions,
+  isProjectAutomationsPaused,
+  isProjectTasksPaused,
+} from "../../lib/actions/projectActions";
+import { useProjectActionContext } from "../../hooks/useProjectActionContext";
+import { useRunnerStatus } from "../../hooks/useRunnerStatus";
 import { CardTasks } from "./CardTasks";
 import { CardFeatures } from "./CardFeatures";
 import { CardAutomations } from "./CardAutomations";
@@ -77,7 +81,6 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const openModal = useModal((s) => s.open);
   const hideProject = useWorkspace((s) => s.hideProject);
-  const toast = useUI((s) => s.toast);
 
   const stats = useMemo(() => statsFor(tasks), [tasks]);
   // Brain-native MRs fold into lifecycle (see lib/mergeRequests).
@@ -111,27 +114,23 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
     else openInFocus("task-detail", { projectId }, projectId);
   };
 
+  const projectCtx = useProjectActionContext();
+  const { status: runnerStatus } = useRunnerStatus();
+
   // Project-level verbs come from the registry like everything else, so
   // the card header answers right-click, long-press AND the keyboard —
   // the old hand-rolled ContextMenu covered only the first.
   const projectActions = useMemo(
     () =>
-      buildProjectActions(
-        projectId,
-        {
-          runProject: async (pid) => {
-            const r = await runProject(pid, false);
-            toast(
-              summarizeRunProjectResult(r),
-              r.totalTasksDispatched > 0 ? "success" : "info",
-            );
-          },
-          openTaskList: (pid) => openInFocus("task-detail", { projectId: pid }, pid),
-          hideProject: (pid) => hideProject(pid),
-        },
-        { taskCount: tasks.length },
-      ),
-    [projectId, tasks.length, toast, openInFocus, hideProject],
+      buildProjectActions(projectId, projectCtx, {
+        taskCount: tasks.length,
+        tasksPaused: isProjectTasksPaused(runnerStatus, projectId),
+        automationsPaused: isProjectAutomationsPaused(
+          runnerStatus,
+          projectId,
+        ),
+      }),
+    [projectId, tasks.length, projectCtx, runnerStatus],
   );
 
   return (

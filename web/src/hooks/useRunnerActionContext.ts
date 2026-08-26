@@ -16,11 +16,14 @@
 import { useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
+import { useLive } from "../lib/sse";
 import { useModal } from "../store/modal";
 import { useUI } from "../store/ui";
 import { useWorkspace } from "../store/workspace";
 import {
   clearFeatureAssignment,
+  pauseRunner as apiPauseRunner,
+  resumeRunner as apiResumeRunner,
   shutdownRunner as apiShutdownRunner,
 } from "../lib/api";
 import {
@@ -36,6 +39,19 @@ export function useRunnerActionContext(): RunnerActionContext {
   const assignFeature = useWorkspace((s) => s.assignFeature);
   const unassignFeature = useWorkspace((s) => s.unassignFeature);
   const queryClient = useQueryClient();
+
+  // `useRunners` prefers the live SSE snapshot over the REST query, so
+  // invalidating REST alone leaves a just-paused row rendering its old
+  // dial until the next runners_update snapshot lands. Patch the live
+  // slice too; the next snapshot reconciles it either way.
+  const setRunnerPaused = (runnerId: string, paused: boolean) => {
+    const live = useLive.getState();
+    live.setRunners(
+      live.runners.map((r) =>
+        r.runner_id === runnerId ? { ...r, paused } : r,
+      ),
+    );
+  };
 
   return useMemo(
     () => ({
@@ -86,6 +102,22 @@ export function useRunnerActionContext(): RunnerActionContext {
             "error",
           );
         }
+      },
+
+      pauseRunner: async (r: RunnerInfo) => {
+        await apiPauseRunner(r.runner_id);
+        setRunnerPaused(r.runner_id, true);
+        void queryClient.invalidateQueries({ queryKey: ["v2", "runners"] });
+        // Say what pause actually does. Work already running on this
+        // runner continues to completion — only new dispatch stops.
+        toast(`${r.runner_id} paused — no new dispatch`, "success");
+      },
+
+      resumeRunner: async (r: RunnerInfo) => {
+        await apiResumeRunner(r.runner_id);
+        setRunnerPaused(r.runner_id, false);
+        void queryClient.invalidateQueries({ queryKey: ["v2", "runners"] });
+        toast(`${r.runner_id} resumed`, "success");
       },
 
       shutdownRunner: async (r: RunnerInfo) => {

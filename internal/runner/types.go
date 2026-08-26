@@ -389,8 +389,6 @@ const (
 	EventProjectResumed    RunnerEventType = "project_resumed"
 	EventAllPaused         RunnerEventType = "all_paused"
 	EventAllResumed        RunnerEventType = "all_resumed"
-	EventFeatureEnabled    RunnerEventType = "feature_enabled"
-	EventFeatureDisabled   RunnerEventType = "feature_disabled"
 	EventSessionDiscovered RunnerEventType = "session_discovered"
 	EventTaskClaimed       RunnerEventType = "task_claimed"
 	EventTaskClaimRejected RunnerEventType = "task_claim_rejected"
@@ -435,7 +433,7 @@ type RunnerEvent struct {
 	// Populated for project_paused/resumed events.
 	ProjectID string `json:"projectId,omitempty"`
 
-	// Populated for feature_enabled/disabled events.
+	// Populated for task and feature lifecycle events.
 	FeatureID string `json:"featureId,omitempty"`
 
 	// Populated for session_discovered events.
@@ -509,9 +507,6 @@ const (
 
 	// CommandShutdown signals the runner to initiate graceful shutdown.
 	CommandShutdown RunnerCommandType = "shutdown"
-
-	// CommandFeatureToggle signals the runner to enable/disable a feature.
-	CommandFeatureToggle RunnerCommandType = "feature_toggle"
 )
 
 // Pause command scopes carried on CommandPause/CommandResume payloads.
@@ -582,10 +577,6 @@ type RunnerCommand struct {
 
 	// Populated for shutdown commands.
 	Reason string `json:"reason,omitempty"`
-
-	// Populated for feature_toggle commands.
-	ToggleFeatureID string `json:"featureId,omitempty"`
-	Enabled         *bool  `json:"enabled,omitempty"`
 }
 
 // UnmarshalJSON preserves compatibility with scheduler dispatch payloads that

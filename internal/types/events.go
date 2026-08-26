@@ -64,8 +64,6 @@ const (
 	EventFeatureCompleted = "feature.completed"
 	EventFeatureBlocked   = "feature.blocked"
 	EventFeatureProgress  = "feature.progress"
-	EventFeatureEnabled   = "feature.enabled"
-	EventFeatureDisabled  = "feature.disabled"
 
 	// Entry CRUD events.
 	EventEntryCreated = "entry.created"
@@ -126,7 +124,6 @@ var AllEventTypes = []string{
 	EventTaskStatusChanged, EventTaskTriggered, EventTaskIdleDetected,
 	EventTaskResumeRequested,
 	EventFeatureStarted, EventFeatureCompleted, EventFeatureBlocked, EventFeatureProgress,
-	EventFeatureEnabled, EventFeatureDisabled,
 	EventEntryCreated, EventEntryUpdated, EventEntryDeleted,
 	EventWebhookReceived,
 	EventControlPromptSent, EventControlPermissionResponded,

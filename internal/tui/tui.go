@@ -139,7 +139,6 @@ type Model struct {
 	monitorClient       *MonitorClient  // reusable client for monitor API calls
 
 	// Feature toggle execution state
-	enabledFeatures map[string]bool // features toggled on via x key
 
 	// Content tab state (global Runners/Logs, project Tasks/Brain/Automation)
 	activeContentTab         ContentTab
@@ -355,7 +354,6 @@ func NewModel(cfg Config) Model {
 		metricsCollector:         NewMetricsCollector(),
 		seenFeatureIDs:           make(map[string]bool),
 		monitorClient:            NewMonitorClient(cfg.APIURL, cfg.APIToken),
-		enabledFeatures:          make(map[string]bool),
 		activeAutomationSubTab:   AutomationSubTabAutomations,
 		automationList:           NewAutomationList(),
 		goalAuditByEntry:         make(map[string][]types.GoalReconcileAudit),
@@ -2019,29 +2017,18 @@ func (m Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 						projectID = m.activeProjectID
 					}
 
-					if m.enabledFeatures[featureID] {
-						// DISABLE: remove from enabled set
-						delete(m.enabledFeatures, featureID)
-						m.runnerController.DisableFeature(featureID)
-						m.taskTree.SetEnabledFeatures(m.enabledFeatures)
-						m.setStatusMessage("info", fmt.Sprintf("Feature '%s' disabled", featureID))
-					} else {
-						// ENABLE: add to enabled set + batch-execute ready tasks
-						m.enabledFeatures[featureID] = true
-						m.runnerController.EnableFeature(featureID)
-						m.taskTree.SetEnabledFeatures(m.enabledFeatures)
-
-						// Fire-and-forget batch execution
-						rc := m.runnerController
-						tasksCopy := make([]types.ResolvedTask, len(featureTasks))
-						copy(tasksCopy, featureTasks)
-						pid := projectID
-						fid := featureID
-						return m, func() tea.Msg {
-							ctx := context.Background()
-							started, err := rc.ExecuteFeature(ctx, tasksCopy, pid)
-							return featureExecutedMsg{featureID: fid, started: started, err: err}
-						}
+					// Batch-execute the feature's ready tasks. claimAndSpawn
+					// bypasses the pause dials, so this works while paused —
+					// it is the client-side twin of POST /features/{id}/run.
+					rc := m.runnerController
+					tasksCopy := make([]types.ResolvedTask, len(featureTasks))
+					copy(tasksCopy, featureTasks)
+					pid := projectID
+					fid := featureID
+					return m, func() tea.Msg {
+						ctx := context.Background()
+						started, err := rc.ExecuteFeature(ctx, tasksCopy, pid)
+						return featureExecutedMsg{featureID: fid, started: started, err: err}
 					}
 				}
 				return m, nil
@@ -4273,8 +4260,6 @@ func (m Model) renderBaseView() string {
 		}
 	}
 
-	// EnabledFeatureCount reflects user-toggled features (via x key)
-	m.statusBar.EnabledFeatureCount = len(m.enabledFeatures)
 	// ActiveFeatureCount reflects features with currently running tasks
 	activeFeatures := make(map[string]bool)
 	for _, task := range m.tasks {

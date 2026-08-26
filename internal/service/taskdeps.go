@@ -385,7 +385,7 @@ func ResolveDependencies(tasks []types.BrainEntry) *types.TaskListResponse {
 // ClassifyTask derives classification from task.DependsOn alone, so a task
 // sitting in a feature whose dependency features had not finished still
 // classified "ready" and both dispatch paths — the scheduler's push loop via
-// GetReady and GET /next via GetNextTask/pickHighestPriority — dispatched it
+// GetReady and GET /next via GetReadyTasks/pickHighestPriority — dispatched it
 // immediately. Meanwhile GET /features, which runs the same feature
 // resolution in a parallel report-only pipeline, reported ready:false for it.
 //
@@ -509,58 +509,6 @@ func GetBlockedTasks(result *types.TaskListResponse) []types.ResolvedTask {
 		}
 	}
 	return blocked
-}
-
-// GetNextTask returns the next task to execute with feature-based ordering.
-//
-// Priority order:
-// 1. Tasks in "ready" features (sorted by feature priority)
-// 2. Ungrouped ready tasks (no feature_id)
-//
-// NOTE: this has no production callers. GET /next stopped calling it in
-// 4d228f5 ("feat: filter task selection by runner") in favour of
-// GetReadyTasks + pickHighestPriority, and the scheduler's push loop never
-// called it at all. It is NOT the place to enforce feature_depends_on —
-// restoring it would fix only the poll path and leave push dispatching
-// gated tasks. That gate lives in applyFeatureGating, which every path
-// inherits through ResolveDependencies; what remains here is ordering
-// preference only.
-func GetNextTask(result *types.TaskListResponse) *types.ResolvedTask {
-	allReady := GetReadyTasks(result)
-	if len(allReady) == 0 {
-		return nil
-	}
-
-	// Compute features from all tasks (not just ready ones)
-	features := ComputeFeatures(result.Tasks)
-	if len(features) == 0 {
-		// No features defined, fall back to first ready task
-		return &allReady[0]
-	}
-
-	// Resolve feature dependencies
-	resolvedFeatures := ResolveFeatureDependencies(features)
-
-	// Get ready features sorted by priority
-	readyFeatures := GetReadyFeatures(resolvedFeatures)
-
-	// For each ready feature, find ready tasks within it
-	for _, feature := range readyFeatures {
-		for i := range allReady {
-			if allReady[i].FeatureID == feature.ID {
-				return &allReady[i]
-			}
-		}
-	}
-
-	// Fall back to ungrouped ready tasks (no feature_id)
-	for i := range allReady {
-		if allReady[i].FeatureID == "" {
-			return &allReady[i]
-		}
-	}
-
-	return nil
 }
 
 // GetDownstreamTasks finds all tasks that transitively depend on a given root task.

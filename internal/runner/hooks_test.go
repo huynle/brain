@@ -122,7 +122,7 @@ func TestEventToHookFilenames(t *testing.T) {
 		{"task.cancelled", "pre-task-cancel", "post-task-cancel"},
 		{"task.blocked", "pre-task-block", "post-task-block"},
 		{"runner.started", "pre-runner-start", "post-runner-start"},
-		{"feature.enabled", "pre-feature-enable", "post-feature-enable"},
+		{"feature.completed", "pre-feature-complete", "post-feature-complete"},
 	}
 
 	for _, tt := range tests {

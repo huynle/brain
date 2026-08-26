@@ -614,7 +614,6 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Put("/{runnerId}/resume", o.handler.HandleResumeRunner)
 						r.Put("/{runnerId}/shutdown", o.handler.HandleShutdownRunner)
 						r.Patch("/{runnerId}/config", o.handler.HandleUpdateRunnerConfig)
-						r.Post("/{runnerId}/features/{featureId}/toggle", o.handler.HandleToggleRunnerFeature)
 						r.Put("/{runnerId}/instances/{instanceId}", o.handler.HandleUpsertInstance)
 						r.Delete("/{runnerId}/instances/{instanceId}", o.handler.HandleDeleteInstance)
 						r.Get("/{runnerId}/bridge", o.handler.HandleRunnerBridge)
@@ -627,7 +626,6 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 						r.Put("/{runnerId}/resume", notImplemented)
 						r.Put("/{runnerId}/shutdown", notImplemented)
 						r.Patch("/{runnerId}/config", notImplemented)
-						r.Post("/{runnerId}/features/{featureId}/toggle", notImplemented)
 					}
 				})
 

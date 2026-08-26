@@ -250,7 +250,6 @@ type TaskRunner struct {
 	serverTasksPaused        map[string]bool
 	serverAutosPaused        map[string]bool
 	runnerPaused             bool
-	enabledFeatures          map[string]bool // features toggled on via TUI "x" key
 
 	// Event handlers (protected by eventMu)
 	eventMu  sync.RWMutex
@@ -361,7 +360,6 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		automationPausedProjects: make(map[string]bool),
 		serverTasksPaused:        make(map[string]bool),
 		serverAutosPaused:        make(map[string]bool),
-		enabledFeatures:          make(map[string]bool),
 		logStreamers:             make(map[string]*LogStreamer),
 		wakeCh:                   make(chan struct{}, 1),
 		commandCh:                make(chan RunnerCommand, commandChannelCapacity(opts.Config.MaxParallel)),
@@ -1196,20 +1194,6 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 		}
 		tr.handleDispatchCommand(ctx, cmd)
 
-	case CommandFeatureToggle:
-		if cmd.ToggleFeatureID == "" {
-			slog.Warn("feature_toggle command missing featureId")
-			break
-		}
-		enabled := cmd.Enabled == nil || *cmd.Enabled
-		if enabled {
-			tr.EnableFeature(cmd.ToggleFeatureID)
-		} else {
-			tr.DisableFeature(cmd.ToggleFeatureID)
-		}
-		slog.Info("feature toggled via SSE command",
-			"feature_id", cmd.ToggleFeatureID, "enabled", enabled)
-
 	case CommandShutdown:
 		slog.Info("shutdown command received", "reason", cmd.Reason)
 		tr.emitEvent(RunnerEvent{
@@ -1369,10 +1353,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			break
 		}
 
-		// Skip paused projects (unless features are enabled)
+		// Skip paused projects. Automation tasks are the one carve-out.
 		tr.pauseMu.RLock()
 		paused := tr.pauseCache[projectID]
-		projEnabledIDs := tr.getEnabledFeatureIDsLocked()
 		tr.pauseMu.RUnlock()
 
 		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID] || serverPausedFor(serverAutomationPaused, projectID)
@@ -1415,37 +1398,7 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 				}
 			}
 
-			if len(projEnabledIDs) == 0 {
-				continue // fully paused, no enabled features
-			}
-			// Paused but features enabled: poll only enabled features
-			task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
-				FeatureIDs: projEnabledIDs,
-				Executors:  tr.executorNames(),
-				RunnerID:   tr.runnerID,
-			})
-			if err != nil || task == nil {
-				continue
-			}
-			// Filter by capability match before claiming
-			if !tr.matchesCapabilities(task) {
-				slog.Debug("skipping task (paused/enabled): runner lacks required capabilities",
-					"task_id", task.ID,
-					"project", projectID,
-					"requires", task.RequiresCapability,
-					"runner_capabilities", tr.config.Capabilities,
-				)
-				continue
-			}
-			if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
-				if errors.Is(err, ErrTaskClaimConflict) {
-					continue
-				}
-				tr.logger.Printf("claim and spawn (enabled feature) failed for %s/%s: %v", projectID, task.ID, err)
-				continue
-			}
-			filled++
-			continue
+			continue // paused: nothing but automations may run
 		}
 
 		// Get next task for this project (filtered by feature IDs and executors)
@@ -3043,75 +2996,6 @@ func (tr *TaskRunner) IsRunnerPaused() bool {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
 	return tr.runnerPaused
-}
-
-// =============================================================================
-// Feature Toggle
-// =============================================================================
-
-// EnableFeature adds a feature to the enabled whitelist.
-// When a project is paused, the poll loop will still pick up tasks
-// from enabled features.
-func (tr *TaskRunner) EnableFeature(featureID string) {
-	tr.pauseMu.Lock()
-	tr.enabledFeatures[featureID] = true
-	tr.pauseMu.Unlock()
-
-	tr.emitEvent(RunnerEvent{
-		Type:      EventFeatureEnabled,
-		FeatureID: featureID,
-	})
-}
-
-// DisableFeature removes a feature from the enabled whitelist.
-// Running tasks continue, but no new tasks from this feature
-// will be auto-picked when the project is paused.
-func (tr *TaskRunner) DisableFeature(featureID string) {
-	tr.pauseMu.Lock()
-	delete(tr.enabledFeatures, featureID)
-	tr.pauseMu.Unlock()
-
-	tr.emitEvent(RunnerEvent{
-		Type:      EventFeatureDisabled,
-		FeatureID: featureID,
-	})
-}
-
-// GetEnabledFeatures returns a copy of the enabled features map.
-func (tr *TaskRunner) GetEnabledFeatures() map[string]bool {
-	tr.pauseMu.RLock()
-	defer tr.pauseMu.RUnlock()
-
-	if len(tr.enabledFeatures) == 0 {
-		return nil
-	}
-
-	cp := make(map[string]bool, len(tr.enabledFeatures))
-	for k, v := range tr.enabledFeatures {
-		cp[k] = v
-	}
-	return cp
-}
-
-// getEnabledFeatureIDs returns enabled feature IDs as a slice.
-// Thread-safe — acquires pauseMu internally.
-func (tr *TaskRunner) getEnabledFeatureIDs() []string {
-	tr.pauseMu.RLock()
-	defer tr.pauseMu.RUnlock()
-	return tr.getEnabledFeatureIDsLocked()
-}
-
-// getEnabledFeatureIDsLocked returns enabled feature IDs as a slice.
-// Caller MUST hold pauseMu (at least RLock).
-func (tr *TaskRunner) getEnabledFeatureIDsLocked() []string {
-	if len(tr.enabledFeatures) == 0 {
-		return nil
-	}
-	ids := make([]string, 0, len(tr.enabledFeatures))
-	for id := range tr.enabledFeatures {
-		ids = append(ids, id)
-	}
-	return ids
 }
 
 // =============================================================================

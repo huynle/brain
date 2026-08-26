@@ -1317,6 +1317,16 @@ type RunTaskResponse struct {
 // project is paused. Pause is unconditionally bypassed (mirrors RunTaskRequest).
 type RunFeatureRequest struct {
 	Force bool `json:"force,omitempty"`
+	// IncludeDependents turns a one-shot run into a standing request: run
+	// this feature, and keep running whatever transitively depends on it as
+	// each gate opens.
+	//
+	// Worth knowing before enabling: on an UNPAUSED project the normal
+	// scheduler already dispatches a dependent the moment its gate opens, so
+	// this option earns its keep specifically while a project is paused —
+	// it is "a queued plan that survives pause", not "make dependents run
+	// at all".
+	IncludeDependents bool `json:"includeDependents,omitempty"`
 }
 
 // RunFeatureResponse is the response for POST /tasks/:projectId/features/:featureId/run.
@@ -1359,6 +1369,43 @@ type RunFeatureResponse struct {
 	// future implementation that forgot to set it would silently tell the
 	// cascade to drop the feature.
 	Outstanding *int `json:"outstanding,omitempty"`
+
+	// Dependents is present only when the request asked for them.
+	Dependents *DependentQueue `json:"dependents,omitempty"`
+}
+
+// DependentChain is a standing run-with-dependents request as reported by the
+// API. Queued and the rest are DERIVED at read time from the current graph,
+// never read back from storage — only the root is persisted.
+type DependentChain struct {
+	ProjectID       string            `json:"projectId"`
+	RootFeatureID   string            `json:"rootFeatureId"`
+	RequestedAt     int64             `json:"requestedAt"`
+	PausedAtRequest bool              `json:"pausedAtRequest"`
+	Queued          []string          `json:"queued"`
+	Skipped         map[string]string `json:"skipped,omitempty"`
+	WaitsOnExternal []string          `json:"waitsOnExternal,omitempty"`
+	Truncated       bool              `json:"truncated,omitempty"`
+}
+
+// DependentQueue describes the chain enrolled by a run-with-dependents
+// request, derived fresh from feature_depends_on at the time of the call.
+type DependentQueue struct {
+	// Queued are the transitive dependents now under this request, in
+	// breadth-first order.
+	Queued []string `json:"queued"`
+	// Skipped maps a reachable feature to why it was NOT enrolled
+	// ("in_cycle", "already_settled"). Reported rather than dropped: a
+	// feature the user expected to run and which silently will not is the
+	// failure this whole surface exists to prevent.
+	Skipped map[string]string `json:"skipped,omitempty"`
+	// WaitsOnExternal names features OUTSIDE this chain that a queued member
+	// still waits on. Under a paused project those never run, so the chain
+	// stalls — this is the difference between "waiting its turn" and "never
+	// going to run", and only the graph can tell them apart.
+	WaitsOnExternal []string `json:"waitsOnExternal,omitempty"`
+	// Truncated is set when the chain hit the server's closure cap.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // RunProjectRequest is the body for POST /tasks/:projectId/run.

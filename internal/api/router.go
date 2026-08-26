@@ -446,6 +446,9 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 
 							// Features (read)
 							r.Get("/features", o.handler.HandleGetFeatures)
+							// Read-only: chain membership is derived, so
+							// listing it needs no write authority.
+							r.Get("/chains", o.handler.HandleListDependentChains)
 							r.Get("/features/ready", o.handler.HandleGetReadyFeatures)
 							r.Get("/features/{featureId}", o.handler.HandleGetFeature)
 
@@ -469,6 +472,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/status", notImplemented)
 
 							r.Get("/features", notImplemented)
+							r.Get("/chains", notImplemented)
 							r.Get("/features/ready", notImplemented)
 							r.Get("/features/{featureId}", notImplemented)
 
@@ -531,6 +535,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Put("/features/{featureId}/assignment", o.handler.HandleAssignFeatureToRunner)
 							r.Post("/features/{featureId}/assignment/clear", o.handler.HandleClearFeatureAssignment)
 							r.Post("/features/{featureId}/run", o.handler.HandleRunFeature)
+							r.Delete("/features/{featureId}/run", o.handler.HandleCancelDependentChain)
 							r.Post("/features/{featureId}/resume", o.handler.HandleResumeFeature)
 							// Project-level fanout: run every ready feature in this project.
 							// Distinct from /features/{featureId}/run — no featureId path segment.
@@ -544,6 +549,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Put("/features/{featureId}/assignment", notImplemented)
 							r.Post("/features/{featureId}/assignment/clear", notImplemented)
 							r.Post("/features/{featureId}/run", notImplemented)
+							r.Delete("/features/{featureId}/run", notImplemented)
 							r.Post("/features/{featureId}/resume", notImplemented)
 							r.Post("/run", notImplemented)
 							r.Post("/{taskId}/trigger", notImplemented)

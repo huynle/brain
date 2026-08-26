@@ -723,3 +723,33 @@ func TestTransitiveDependents_EmptyInputs(t *testing.T) {
 		t.Fatalf("members = %v for an empty root", got.Members)
 	}
 }
+
+// A settled feature classifies as "ready" — classifyFeature returns that for
+// completed/archived with the comment "no classification needed". Anything
+// deciding "is there work to dispatch here?" must therefore ALSO check for
+// pending tasks, or it re-dispatches finished features forever.
+//
+// Pinned here because the trap lives in classifyFeature's contract, not in
+// any one caller: the next caller to read Classification alone will hit it.
+func TestClassifyFeature_CompletedIsReadyNotDispatchable(t *testing.T) {
+	tasks := []types.ResolvedTask{
+		{ID: "t1", Status: "completed", FeatureID: "done"},
+	}
+	features := ResolveFeatureDependencies(ComputeFeatures(tasks))
+	if len(features) != 1 {
+		t.Fatalf("features = %d, want 1", len(features))
+	}
+	f := features[0]
+	if f.Status != "completed" {
+		t.Fatalf("status = %q, want completed", f.Status)
+	}
+	if f.Classification != "ready" {
+		t.Fatalf("classification = %q, want ready — if this changed, the "+
+			"TaskStats.Pending guard in sweepProjectChains may no longer be needed",
+			f.Classification)
+	}
+	if f.TaskStats.Pending != 0 {
+		t.Fatalf("pending = %d, want 0 — this is the field that actually "+
+			"distinguishes dispatchable from settled", f.TaskStats.Pending)
+	}
+}

@@ -39,6 +39,24 @@ type schedulerProjectLister interface {
 // Optional, asserted from the task service the same way schedulerProjectLister
 // is. *TaskServiceImpl satisfies it; fakes that do not simply leave
 // Outstanding unknown (-1) and the cascade falls back to its old behaviour.
+// schedulerProjectTaskLister exposes every task in a project, which is what
+// the feature graph is derived from. GetReady cannot serve here: it filters to
+// Classification=="ready", and a dependent chain is made almost entirely of
+// features that are NOT ready yet.
+type schedulerProjectTaskLister interface {
+	GetTasks(ctx context.Context, projectID string) (*types.TaskListResponse, error)
+}
+
+// schedulerCascadeRootStore persists standing run-with-dependents requests.
+// Optional: without it the option still dispatches the root and whatever is
+// already ready, but nothing survives a restart and there is no chain to
+// cancel.
+type schedulerCascadeRootStore interface {
+	UpsertFeatureCascadeRoot(ctx context.Context, projectID, rootFeatureID string, pausedAtRequest bool) error
+	DeleteFeatureCascadeRoot(ctx context.Context, projectID, rootFeatureID string) (bool, error)
+	ListFeatureCascadeRoots(ctx context.Context, projectID string) ([]storage.FeatureCascadeRootRow, error)
+}
+
 type schedulerFeatureTaskLister interface {
 	GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error)
 }
@@ -81,6 +99,8 @@ type SchedulerService struct {
 	tasks     schedulerTaskService
 	projects  schedulerProjectLister
 	featTasks schedulerFeatureTaskLister
+	projTasks schedulerProjectTaskLister
+	roots     schedulerCascadeRootStore
 	runners   schedulerRunnerRegistry
 	placement schedulerPlacementService
 	leases    schedulerLeaseStore
@@ -143,7 +163,13 @@ func NewSchedulerService(tasks schedulerTaskService, pauses schedulerPauseChecke
 	if v, ok := tasks.(schedulerFeatureTaskLister); ok {
 		svc.featTasks = v
 	}
+	if v, ok := tasks.(schedulerProjectTaskLister); ok {
+		svc.projTasks = v
+	}
 	for _, dep := range deps {
+		if v, ok := dep.(schedulerCascadeRootStore); ok {
+			svc.roots = v
+		}
 		if v, ok := dep.(schedulerRunnerRegistry); ok {
 			svc.runners = v
 		} else if v, ok := dep.(interface {

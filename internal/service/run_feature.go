@@ -43,7 +43,45 @@ import (
 //
 // Errors are returned only for unexpected infrastructure problems.
 func (s *SchedulerService) RunFeatureNow(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error) {
+	return s.RunFeatureWithOptions(ctx, projectID, featureID, RunFeatureOptions{Force: force})
+}
+
+// RunFeatureOptions carries the manual-run switches.
+type RunFeatureOptions struct {
+	Force bool
+	// IncludeDependents enrols the transitive dependents of this feature as
+	// a standing request, so each runs as its gate opens.
+	//
+	// The cascade itself must NEVER set this. Propagation re-derives the
+	// chain from the stored root on every sweep; a cascade tick that
+	// re-enrolled would create a second root per member and fan out
+	// combinatorially.
+	IncludeDependents bool
+}
+
+// RunFeatureWithOptions is RunFeatureNow plus the dependent-chain option.
+func (s *SchedulerService) RunFeatureWithOptions(ctx context.Context, projectID, featureID string, opts RunFeatureOptions) (*types.RunFeatureResponse, error) {
+	// opts.Force is accepted for symmetry with RunTaskNow but is not read:
+	// a manual feature run ALWAYS dispatches with force=true (see the
+	// payload built below), because bypassing the project pause dial is the
+	// entire point of running one feature by hand. Noted rather than
+	// removed so the next reader does not go looking for the branch.
 	resp := &types.RunFeatureResponse{ProjectID: projectID, FeatureID: featureID}
+
+	// Enrolment happens BEFORE any early return below.
+	//
+	// The natural moment to say "and queue the chain" is when the root is
+	// already running — every task in flight, nothing ready. That path
+	// returns early with "no_ready_tasks", so enrolling afterwards would
+	// make the option a silent no-op in one of its most common uses.
+	if opts.IncludeDependents && strings.TrimSpace(featureID) != "" {
+		if q, err := s.enrolDependents(ctx, projectID, featureID); err != nil {
+			slog.Warn("enrol dependent chain failed",
+				"project_id", projectID, "feature_id", featureID, "error", err)
+		} else {
+			resp.Dependents = q
+		}
+	}
 
 	if s.runners == nil || s.placement == nil || s.leases == nil {
 		resp.Reason = "scheduler_not_configured"
@@ -311,4 +349,273 @@ func (s *SchedulerService) featureOutstanding(ctx context.Context, projectID, fe
 		}
 	}
 	return &n
+}
+
+// =============================================================================
+// Dependent chains
+// =============================================================================
+
+// projectFeatures resolves the current feature graph for a project.
+func (s *SchedulerService) projectFeatures(ctx context.Context, projectID string) ([]*ComputedFeature, error) {
+	if s.projTasks == nil {
+		return nil, fmt.Errorf("project task lister not wired")
+	}
+	result, err := s.projTasks.GetTasks(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("load tasks for %q: %w", projectID, err)
+	}
+	return ResolveFeatureDependencies(ComputeFeatures(result.Tasks)), nil
+}
+
+// enrolDependents records the standing request and returns the chain it
+// covers, derived from the current graph.
+func (s *SchedulerService) enrolDependents(ctx context.Context, projectID, rootFeatureID string) (*types.DependentQueue, error) {
+	features, err := s.projectFeatures(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	closure := TransitiveDependents(features, rootFeatureID)
+
+	// Persist the ROOT, capturing whether the project's task dial was
+	// already off. Propagation force-dispatches past a pause the user was
+	// already working under; a pause applied LATER stops the chain
+	// spreading into features that have not started. Those two cases are
+	// indistinguishable without this snapshot.
+	if s.roots != nil {
+		pausedNow := s.pauses != nil && s.pauses.IsPaused(projectID)
+		if err := s.roots.UpsertFeatureCascadeRoot(ctx, projectID, rootFeatureID, pausedNow); err != nil {
+			return nil, fmt.Errorf("persist cascade root: %w", err)
+		}
+	}
+
+	q := &types.DependentQueue{
+		Queued:          closure.Members,
+		WaitsOnExternal: closure.External,
+		Truncated:       closure.Truncated,
+	}
+	if len(closure.Skipped) > 0 {
+		q.Skipped = closure.Skipped
+	}
+	return q, nil
+}
+
+// CancelDependentChain drops a standing run-with-dependents request.
+//
+// Reports whether anything was actually cancelled, so a caller can tell
+// "stopped a running chain" from "there was nothing queued" — the latter
+// silently reported as success is how a user concludes cancel is broken.
+func (s *SchedulerService) CancelDependentChain(ctx context.Context, projectID, rootFeatureID string) (bool, error) {
+	if s.roots == nil {
+		return false, fmt.Errorf("cascade root store not wired")
+	}
+	return s.roots.DeleteFeatureCascadeRoot(ctx, projectID, rootFeatureID)
+}
+
+// ListDependentChains returns the standing requests for a project.
+func (s *SchedulerService) ListDependentChains(ctx context.Context, projectID string) ([]types.DependentChain, error) {
+	if s.roots == nil {
+		return nil, nil
+	}
+	rows, err := s.roots.ListFeatureCascadeRoots(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	features, ferr := s.projectFeatures(ctx, projectID)
+	out := make([]types.DependentChain, 0, len(rows))
+	for _, r := range rows {
+		c := types.DependentChain{
+			ProjectID:       r.ProjectID,
+			RootFeatureID:   r.RootFeatureID,
+			RequestedAt:     r.RequestedAt,
+			PausedAtRequest: r.PausedAtRequest,
+		}
+		// The chain is re-derived, never read back from storage, so it
+		// reflects edits to feature_depends_on and features whose tasks
+		// only appeared after the request.
+		if ferr == nil {
+			closure := TransitiveDependents(features, r.RootFeatureID)
+			c.Queued = closure.Members
+			c.WaitsOnExternal = closure.External
+			c.Truncated = closure.Truncated
+			if len(closure.Skipped) > 0 {
+				c.Skipped = closure.Skipped
+			}
+		}
+		out = append(out, c)
+	}
+	return out, nil
+}
+
+// SweepDependentChains advances every standing chain in a project: for each
+// stored root, re-derive the chain and dispatch any member that has become
+// ready.
+//
+// Re-deriving rather than replaying a stored member list is what lets a chain
+// pick up features whose tasks were generated after the request (feature
+// checkout follow-ups, goal work) and drop ones whose dependencies were
+// edited away.
+//
+// Returns the number of features dispatched.
+func (s *SchedulerService) SweepDependentChains(ctx context.Context, projectID string) int {
+	if s.roots == nil {
+		return 0
+	}
+	rows, err := s.roots.ListFeatureCascadeRoots(ctx, projectID)
+	if err != nil {
+		slog.Warn("sweep dependent chains: list roots failed",
+			"project_id", projectID, "error", err)
+		return 0
+	}
+	if len(rows) == 0 {
+		return 0
+	}
+
+	// Group by the row's OWN project, never the parameter.
+	//
+	// The ticker sweeps with an empty projectID meaning "every project",
+	// which the storage layer honours for the LIST — but every call after
+	// that (resolve the graph, check the pause dial, dispatch, retire) is
+	// project-scoped. Using the parameter there passed "" downstream and the
+	// retire failed with "project id and root feature id are required". The
+	// event path masked it because it always carries a real project.
+	byProject := map[string][]storage.FeatureCascadeRootRow{}
+	for _, r := range rows {
+		byProject[r.ProjectID] = append(byProject[r.ProjectID], r)
+	}
+
+	dispatched := 0
+	for proj, projRows := range byProject {
+		dispatched += s.sweepProjectChains(ctx, proj, projRows)
+	}
+	return dispatched
+}
+
+// sweepProjectChains advances every standing chain in ONE project. Resolving
+// the graph once per project rather than once per chain keeps a project with
+// several chains to a single task load.
+func (s *SchedulerService) sweepProjectChains(ctx context.Context, projectID string, rows []storage.FeatureCascadeRootRow) int {
+	features, err := s.projectFeatures(ctx, projectID)
+	if err != nil {
+		slog.Warn("sweep dependent chains: resolve features failed",
+			"project_id", projectID, "error", err)
+		return 0
+	}
+	byID := make(map[string]*ComputedFeature, len(features))
+	for _, f := range features {
+		byID[f.ID] = f
+	}
+
+	// The pause rule, evaluated once per project per sweep.
+	//
+	// A pause the user was ALREADY working under is the isolate workflow —
+	// propagation must cross it, or the option does nothing in the only
+	// situation where it matters. A pause applied AFTER the request is a
+	// deliberate brake: stop spreading into features that have not started.
+	// Work already dispatched is unaffected either way; this gates only NEW
+	// features joining.
+	pausedNow := s.pauses != nil && s.pauses.IsPaused(projectID)
+
+	dispatched := 0
+	for _, r := range rows {
+		if pausedNow && !r.PausedAtRequest {
+			slog.Info("dependent chain held: project paused after the request",
+				"project_id", projectID, "root_feature_id", r.RootFeatureID)
+			continue
+		}
+
+		closure := TransitiveDependents(features, r.RootFeatureID)
+
+		if s.chainSettled(byID, r.RootFeatureID, closure.Members) {
+			if _, derr := s.roots.DeleteFeatureCascadeRoot(ctx, projectID, r.RootFeatureID); derr != nil {
+				slog.Warn("retire dependent chain failed",
+					"project_id", projectID, "root_feature_id", r.RootFeatureID, "error", derr)
+			} else {
+				slog.Info("dependent chain complete",
+					"project_id", projectID, "root_feature_id", r.RootFeatureID)
+			}
+			continue
+		}
+
+		// The ROOT is swept alongside its members.
+		//
+		// TransitiveDependents deliberately excludes the root — it is
+		// dispatched inline by the call that created the chain. But that
+		// only covers the first pass. After a server restart, or when the
+		// root was not yet ready at click time (its own feature_depends_on
+		// unmet, or every task already in flight), nothing would ever
+		// re-dispatch it and the whole chain would sit stranded on its own
+		// root. Verified live: a chain persisted across an API restart
+		// never resumed until the root was included here.
+		for _, id := range append([]string{r.RootFeatureID}, closure.Members...) {
+			f := byID[id]
+			if f == nil {
+				continue
+			}
+			// Pending count FIRST, and it is not redundant with the
+			// classification check below.
+			//
+			// classifyFeature returns "ready" for a feature whose status is
+			// completed or archived — "already settled, no classification
+			// needed". So Classification alone does NOT mean "has work to
+			// dispatch": a finished feature reads ready forever, and this
+			// loop re-dispatched it on every sweep. Observed live as
+			// data-pipeline running a second time after it had completed.
+			if f.TaskStats.Pending == 0 {
+				continue
+			}
+			if f.Classification != "ready" {
+				// Waiting or blocked is not an error: the member is
+				// waiting its turn. Calling RunFeatureNow anyway would
+				// return no_ready_tasks and cost a full project resolve.
+				continue
+			}
+			resp, rerr := s.RunFeatureNow(ctx, projectID, id, true)
+			if rerr != nil {
+				slog.Warn("dependent chain dispatch failed",
+					"project_id", projectID, "root_feature_id", r.RootFeatureID,
+					"feature_id", id, "error", rerr)
+				continue
+			}
+			if resp != nil && resp.Dispatched {
+				dispatched += resp.DispatchedCount
+				slog.Info("dependent chain advanced",
+					"project_id", projectID, "root_feature_id", r.RootFeatureID,
+					"feature_id", id, "dispatched", resp.DispatchedCount)
+			}
+		}
+	}
+	return dispatched
+}
+
+// chainSettled reports whether the root and every member has finished, so the
+// standing request can be retired.
+//
+// A member that is blocked counts as settled: that is where the retry cap
+// parks a task after max_attempts, and waiting on it would keep the chain
+// alive forever on work that cannot proceed without a human.
+func (s *SchedulerService) chainSettled(byID map[string]*ComputedFeature, root string, members []string) bool {
+	for _, id := range append([]string{root}, members...) {
+		f, ok := byID[id]
+		if !ok {
+			continue
+		}
+		if f.TaskStats.Pending > 0 || f.TaskStats.InProgress > 0 {
+			return false
+		}
+	}
+	return true
+}
+
+// RunFeatureWithDependents adapts RunFeatureWithOptions to a primitive
+// signature so internal/api can depend on it without closing the import cycle
+// (internal/service already imports internal/api).
+func (s *SchedulerService) RunFeatureWithDependents(ctx context.Context, projectID, featureID string, force, includeDependents bool) (*types.RunFeatureResponse, error) {
+	return s.RunFeatureWithOptions(ctx, projectID, featureID, RunFeatureOptions{
+		Force:             force,
+		IncludeDependents: includeDependents,
+	})
 }

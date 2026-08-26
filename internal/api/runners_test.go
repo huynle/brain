@@ -149,7 +149,6 @@ func newRunnerTestRouter(mock *mockRunnerRegistryService) *chi.Mux {
 		r.Put("/{runnerId}/pause", h.HandlePauseRunner)
 		r.Put("/{runnerId}/resume", h.HandleResumeRunner)
 		r.Patch("/{runnerId}/config", h.HandleUpdateRunnerConfig)
-		r.Post("/{runnerId}/features/{featureId}/toggle", h.HandleToggleRunnerFeature)
 		r.Get("/{runnerId}/instances", h.HandleListRunnerInstances)
 		r.Put("/{runnerId}/instances/{instanceId}", h.HandleUpsertInstance)
 		r.Delete("/{runnerId}/instances/{instanceId}", h.HandleDeleteInstance)
@@ -978,89 +977,6 @@ func TestHandleUpdateRunnerConfig_NotFound(t *testing.T) {
 
 	if w.Code != http.StatusNotFound {
 		t.Errorf("status = %d, want %d; body = %s", w.Code, http.StatusNotFound, w.Body.String())
-	}
-}
-
-// =============================================================================
-// Tests: POST /runners/{runnerId}/features/{featureId}/toggle
-// =============================================================================
-
-func TestHandleToggleRunnerFeature(t *testing.T) {
-	tests := []struct {
-		name          string
-		runnerID      string
-		featureID     string
-		body          string
-		mockGetRunner func(ctx context.Context, runnerID string) (*types.RunnerInfo, error)
-		wantStatus    int
-		wantSuccess   bool
-	}{
-		{
-			name:      "enable feature",
-			runnerID:  "runner-1",
-			featureID: "feature-1",
-			body:      `{"enabled":true}`,
-			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
-				return &types.RunnerInfo{RunnerID: runnerID}, nil
-			},
-			wantStatus:  http.StatusOK,
-			wantSuccess: true,
-		},
-		{
-			name:      "disable feature",
-			runnerID:  "runner-1",
-			featureID: "feature-1",
-			body:      `{"enabled":false}`,
-			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
-				return &types.RunnerInfo{RunnerID: runnerID}, nil
-			},
-			wantStatus:  http.StatusOK,
-			wantSuccess: true,
-		},
-		{
-			name:       "invalid json",
-			runnerID:   "runner-1",
-			featureID:  "feature-1",
-			body:       `{invalid}`,
-			wantStatus: http.StatusBadRequest,
-		},
-		{
-			name:      "runner not found",
-			runnerID:  "runner-1",
-			featureID: "feature-1",
-			body:      `{"enabled":true}`,
-			mockGetRunner: func(ctx context.Context, runnerID string) (*types.RunnerInfo, error) {
-				return nil, ErrNotFound
-			},
-			wantStatus: http.StatusNotFound,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockRunnerRegistryService{
-				getRunnerFunc: tt.mockGetRunner,
-			}
-			router := newRunnerTestRouter(mock)
-
-			req := httptest.NewRequest(http.MethodPost, "/runners/"+tt.runnerID+"/features/"+tt.featureID+"/toggle", strings.NewReader(tt.body))
-			rec := httptest.NewRecorder()
-			router.ServeHTTP(rec, req)
-
-			if rec.Code != tt.wantStatus {
-				t.Errorf("got status %d, want %d\nBody: %s", rec.Code, tt.wantStatus, rec.Body.String())
-			}
-
-			if tt.wantSuccess {
-				var resp map[string]interface{}
-				if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-					t.Fatalf("failed to unmarshal response: %v", err)
-				}
-				if success, ok := resp["success"].(bool); !ok || !success {
-					t.Errorf("expected success=true, got %v", resp["success"])
-				}
-			}
-		})
 	}
 }
 

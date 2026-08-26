@@ -382,39 +382,6 @@ func TestRegisterEventLogger_TaskReleased(t *testing.T) {
 	}
 }
 
-func TestRegisterEventLogger_FeatureEnabledDisabled(t *testing.T) {
-	buf := captureLog(t, slog.LevelDebug)
-
-	tr := newEventTestRunner(t)
-	RegisterEventLogger(tr)
-
-	tr.emitEvent(RunnerEvent{
-		Type:      EventFeatureEnabled,
-		FeatureID: "feature-review",
-	})
-	tr.emitEvent(RunnerEvent{
-		Type:      EventFeatureDisabled,
-		FeatureID: "feature-inspector",
-	})
-
-	output := buf.String()
-	if !strings.Contains(output, "feature enabled") {
-		t.Errorf("expected 'feature enabled' in log output, got: %s", output)
-	}
-	if !strings.Contains(output, "feature-review") {
-		t.Errorf("expected feature ID in log output, got: %s", output)
-	}
-	if !strings.Contains(output, "feature disabled") {
-		t.Errorf("expected 'feature disabled' in log output, got: %s", output)
-	}
-	if !strings.Contains(output, "feature-inspector") {
-		t.Errorf("expected feature ID in log output, got: %s", output)
-	}
-}
-
-// TestRegisterEventLogger_RunnerID_AllEvents verifies that runner_id is auto-stamped
-// in slog output for EVERY event type. The emitEvent() method on TaskRunner sets
-// RunnerID from the runner's internal ID, so all events should include it.
 func TestRegisterEventLogger_RunnerID_AllEvents(t *testing.T) {
 	exitCode := 0
 
@@ -430,8 +397,6 @@ func TestRegisterEventLogger_RunnerID_AllEvents(t *testing.T) {
 		{Type: EventTaskReleased, TaskID: "t8", ProjectID: "p"},
 		{Type: EventPollComplete, ReadyCount: 1, RunningCount: 0},
 		{Type: EventSessionDiscovered, TaskPath: "path", SessionID: "ses_1"},
-		{Type: EventFeatureEnabled, FeatureID: "f1"},
-		{Type: EventFeatureDisabled, FeatureID: "f2"},
 		{Type: EventProjectPaused, ProjectID: "p"},
 		{Type: EventProjectResumed, ProjectID: "p"},
 		{Type: EventAllPaused},

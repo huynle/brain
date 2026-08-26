@@ -1403,23 +1403,6 @@ func (c *APIClient) UpdateRunnerConfig(ctx context.Context, runnerID string, max
 	return nil
 }
 
-// ToggleRunnerFeature enables or disables a feature on a specific runner.
-func (c *APIClient) ToggleRunnerFeature(ctx context.Context, runnerID, featureID string, enabled bool) error {
-	path := fmt.Sprintf("/api/v1/runners/%s/features/%s/toggle", runnerID, featureID)
-	body := map[string]bool{"enabled": enabled}
-
-	resp, err := c.doJSONRequest(ctx, http.MethodPost, path, body)
-	if err != nil {
-		return fmt.Errorf("toggle runner feature: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return c.readError(resp)
-	}
-	return nil
-}
-
 // UpdateRunnerAffinity updates which features a runner can execute.
 func (c *APIClient) UpdateRunnerAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
 	path := fmt.Sprintf("/api/v1/runners/%s/affinity", runnerID)

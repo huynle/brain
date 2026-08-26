@@ -32,7 +32,9 @@ import type {
   ResumeTaskOptions,
   ResumeTaskResult,
   RunnerListResponse,
+  RunnerPauseResponse,
   RunnerStatusResponse,
+  SchedulerStatus,
   SearchRequest,
   SearchResponse,
   Task,
@@ -1121,8 +1123,20 @@ export const getServerRequests = (since = 0, limit = 500) =>
     { query: { since, limit } },
   ).then((r) => r.requests || []);
 
+// Project-scoped pause dials. Despite the /tasks/runner/ path this endpoint
+// knows nothing about runners: `pausedProjects` is the project task dial and
+// `automationPausedProjects` the project automations dial, and the top-level
+// `paused` / `automationsPaused` booleans are just "is that list non-empty".
+// Runner-scoped pause lives on RunnerInfo.paused from getRunners(). See the
+// FOOTGUN note on RunnerStatusResponse in lib/types.
 export const getRunnerStatus = () =>
   api<RunnerStatusResponse>("/api/v1/tasks/runner/status");
+
+// Scheduler loop state, including per-project skip counts from the last pass.
+// This is the only place the server explains *why* a ready task was not
+// dispatched at project granularity (`last_project_results[project]`).
+export const getSchedulerStatus = () =>
+  api<SchedulerStatus>("/api/v1/scheduler/status");
 
 export const pauseProject = (projectId: string) =>
   api(`/api/v1/tasks/runner/pause/${encodeURIComponent(projectId)}`, {
@@ -1149,6 +1163,25 @@ export const resumeAutomations = (projectId?: string) =>
       ? `/api/v1/tasks/runner/automations/resume/${encodeURIComponent(projectId)}`
       : "/api/v1/tasks/runner/automations/resume",
     { method: "POST" },
+  );
+
+// Runner-scoped pause dial — a THIRD dial, independent of the two project
+// dials above. A paused runner accepts no dispatch for any project; a paused
+// project stops dispatch on every runner. Neither implies the other, and
+// neither is reported by the other's status endpoint: runner pause reads back
+// as the `paused` field on GET /runners, never from /tasks/runner/status.
+//
+// Persisted server-side (runner_pause_state) before the SSE command is
+// published, so the dial survives a runner restart or reconnect.
+export const pauseRunner = (runnerId: string) =>
+  api<RunnerPauseResponse>(
+    `/api/v1/runners/${encodeURIComponent(runnerId)}/pause`,
+    { method: "PUT", body: {} },
+  );
+export const resumeRunner = (runnerId: string) =>
+  api<RunnerPauseResponse>(
+    `/api/v1/runners/${encodeURIComponent(runnerId)}/resume`,
+    { method: "PUT", body: {} },
   );
 
 export const shutdownRunner = (runnerId: string, reason = "manual") =>

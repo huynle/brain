@@ -434,9 +434,6 @@ type TaskTree struct {
 
 	// Viewport state for stable scrolling behavior (shared across task-list views).
 	viewportStart int
-
-	// Feature toggle execution: tracks which features are enabled via x key
-	enabledFeatures map[string]bool
 }
 
 // NewTaskTree creates a new empty TaskTree component.
@@ -1807,17 +1804,6 @@ func (tt *TaskTree) GetSelectedFeatureTasks() []types.ResolvedTask {
 	return nil
 }
 
-// SetEnabledFeatures updates the set of user-toggled enabled features.
-// This is used by the TUI to pass toggle state for visual rendering.
-func (tt *TaskTree) SetEnabledFeatures(enabled map[string]bool) {
-	tt.enabledFeatures = enabled
-}
-
-// GetEnabledFeatures returns the current set of enabled features.
-func (tt *TaskTree) GetEnabledFeatures() map[string]bool {
-	return tt.enabledFeatures
-}
-
 // GetSelectedGroupTasks returns all tasks in the currently selected group header.
 // This handles all group header types: feature headers, [Ungrouped] headers,
 // and terminal section headers (Draft, Inactive). Returns nil if not on a group header.
@@ -2409,26 +2395,20 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 			execIndicator = " ⚡"
 		}
 
-		// Enabled feature indicator (toggled via x key)
-		enabledIndicator := ""
-		if tt.enabledFeatures[feature.ID] {
-			enabledIndicator = " ★"
-		}
-
 		// Stats: [completed/total complete] using original (unfiltered) stats
 		origStats := originalFeatureStats[feature.ID]
 		statsStr := fmt.Sprintf("[%d/%d complete]", origStats.Completed, origStats.Total)
 
-		// Feature header: collapse indicator + enabled indicator + name + execution indicator + stats
+		// Feature header: collapse indicator + name + execution indicator + stats
 		// Status icon is omitted to avoid visual clutter with the → cursor and ▾/▶ collapse icon
 		_ = statusIcon // used only for terminal section sub-features
 		var featureHeader string
 		if feature.Name == "[Ungrouped]" {
-			featureHeader = fmt.Sprintf("%s%s %s%s %s",
-				collapseIndicator, enabledIndicator, feature.Name, execIndicator, statsStr)
+			featureHeader = fmt.Sprintf("%s %s%s %s",
+				collapseIndicator, feature.Name, execIndicator, statsStr)
 		} else {
-			featureHeader = fmt.Sprintf("%s%s Feature: %s%s %s",
-				collapseIndicator, enabledIndicator, feature.Name, execIndicator, statsStr)
+			featureHeader = fmt.Sprintf("%s Feature: %s%s %s",
+				collapseIndicator, feature.Name, execIndicator, statsStr)
 		}
 
 		// Append feature dependency annotation (before style application to avoid breaking selection highlighting)
@@ -2620,17 +2600,11 @@ func (tt *TaskTree) viewFeatureGrouped(width, height int, activeProjectID string
 				}
 				statusIcon, _ := aggregateFeatureStatusIcon(featureTasks)
 
-				// Enabled feature indicator (toggled via x key)
-				enabledIcon := ""
-				if tt.enabledFeatures[featureID] {
-					enabledIcon = " ★"
-				}
-
 				var featureHeader string
 				if featureID == "[Ungrouped]" {
-					featureHeader = fmt.Sprintf("    %s%s %s %s [%d]", collapseIcon, enabledIcon, statusIcon, featureID, len(featureTasks))
+					featureHeader = fmt.Sprintf("    %s %s %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
 				} else {
-					featureHeader = fmt.Sprintf("    %s%s %s Feature: %s [%d]", collapseIcon, enabledIcon, statusIcon, featureID, len(featureTasks))
+					featureHeader = fmt.Sprintf("    %s %s Feature: %s [%d]", collapseIcon, statusIcon, featureID, len(featureTasks))
 				}
 
 				// Append feature dependency annotation for terminal section sub-features

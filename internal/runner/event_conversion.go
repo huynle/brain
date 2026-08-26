@@ -21,8 +21,6 @@ var runnerEventTypeMap = map[RunnerEventType]string{
 	EventShutdown:          types.EventRunnerStopped,
 	EventProjectPaused:     types.EventProjectPaused,
 	EventProjectResumed:    types.EventProjectResumed,
-	EventFeatureEnabled:    types.EventFeatureEnabled,
-	EventFeatureDisabled:   types.EventFeatureDisabled,
 	EventPollComplete:      types.EventRunnerPollComplete,
 	EventStateSaved:        types.EventRunnerStateSaved,
 	EventAllPaused:         types.EventRunnerAllPaused,

@@ -119,7 +119,6 @@ func TestEventTypeConstants(t *testing.T) {
 		"task.failed", "task.blocked", "task.cancelled", "task.released",
 		"task.status_changed", "task.idle_detected",
 		"feature.started", "feature.completed", "feature.blocked", "feature.progress",
-		"feature.enabled", "feature.disabled",
 		"entry.created", "entry.updated", "entry.deleted",
 		// Remote-control audit events must be valid so EventService.Ingest
 		// accepts them (otherwise control.* audit silently no-ops).

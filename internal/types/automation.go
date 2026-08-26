@@ -67,9 +67,12 @@ type AutomationAction struct {
 
 // AutomationRetry defines retry behavior for failed automation actions.
 type AutomationRetry struct {
-	MaxAttempts int    `json:"max_attempts,omitempty" yaml:"max_attempts,omitempty"` // max retry attempts (default: 0 = no retry)
-	Backoff     string `json:"backoff,omitempty" yaml:"backoff,omitempty"`           // fixed, exponential
-	Delay       string `json:"delay,omitempty" yaml:"delay,omitempty"`               // delay between retries (e.g. "30s", "5m")
+	// MaxAttempts caps TOTAL runs of the task, not retries-after-the-first:
+	// 1 means "run once, never retry". 0 leaves it unset, so the runner's
+	// max_task_attempts (default DefaultMaxTaskAttempts) applies.
+	MaxAttempts int    `json:"max_attempts,omitempty" yaml:"max_attempts,omitempty"`
+	Backoff     string `json:"backoff,omitempty" yaml:"backoff,omitempty"` // fixed, exponential
+	Delay       string `json:"delay,omitempty" yaml:"delay,omitempty"`     // delay between retries (e.g. "30s", "5m")
 }
 
 // =============================================================================

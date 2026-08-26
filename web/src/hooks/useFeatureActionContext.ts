@@ -44,6 +44,8 @@ import {
 } from "../lib/actions/bulkBaton";
 import { withForceRetry } from "../lib/actions/forceRetry";
 import { forceConfirmFor } from "../lib/actions/forceConfirm";
+import { forceDispatchNote, withForceNote } from "../lib/pause";
+import { usePauseState } from "./usePauseState";
 import type { DerivedFeature } from "../lib/features";
 import { ALL_STATUSES, type TaskStatus } from "../lib/types";
 
@@ -61,6 +63,9 @@ export function useFeatureActionContextFactory(): (
   const assignFeatureLocal = useWorkspace((s) => s.assignFeature);
   const unassignFeatureLocal = useWorkspace((s) => s.unassignFeature);
   const toast = useUI((s) => s.toast);
+  // Pause dials — "Run feature now" bypasses the project ones by design,
+  // and cannot bypass runner pause at all. Both are worth saying out loud.
+  const { pause } = usePauseState();
 
   return useMemo(
     () => (projectId: string) => {
@@ -100,7 +105,8 @@ export function useFeatureActionContextFactory(): (
             }),
           );
           const { message, kind } = summarizeRunFeatureResult(r);
-          toast(message, kind);
+          const note = forceDispatchNote(pause, { projectId });
+          toast(withForceNote(message, note), kind);
         },
 
         resumeFeature: async (feature: DerivedFeature) => {
@@ -361,6 +367,7 @@ export function useFeatureActionContextFactory(): (
       assignFeatureLocal,
       unassignFeatureLocal,
       toast,
+      pause,
     ],
   );
 }

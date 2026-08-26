@@ -36,6 +36,8 @@ import {
 import { buildFeatureActions } from "../lib/actions/featureActions";
 import { buildSelectionActions } from "../lib/actions/selectionActions";
 import { buildTaskActions } from "../lib/actions/taskActions";
+import { taskHoldReason } from "../lib/pause";
+import { usePauseState } from "../hooks/usePauseState";
 import { isRangeKey } from "../lib/selection";
 import { deriveFeatures } from "../lib/features";
 import { TaskKvGrid } from "./Modal/TaskKvGrid";
@@ -62,6 +64,7 @@ export function FeatureDrawer(): JSX.Element | null {
   const openModal = useModal((s) => s.open);
   const toast = useUI((s) => s.toast);
   const { runners } = useRunners();
+  const { pause } = usePauseState();
   const [assignBusy, setAssignBusy] = useState(false);
   // Archived-tasks fold. Local (not the persisted per-project toggle):
   // the drawer is transient and scoped to one feature, so a sticky
@@ -177,6 +180,12 @@ export function FeatureDrawer(): JSX.Element | null {
     }
 
     const taskActions = buildTaskActions(task, taskCtx);
+    // The drawer is the row's primary click target, so the "why is nothing
+    // happening" answer has to live here too — not only behind Full detail.
+    const hold = taskHoldReason(task, {
+      pause,
+      projectId: drawer.projectId,
+    });
 
     return createPortal(
       <aside className="feature-drawer" style={asideStyle}>
@@ -206,6 +215,17 @@ export function FeatureDrawer(): JSX.Element | null {
             Full detail
           </button>
         </div>
+
+        {hold && (
+          <div className="drawer-section">
+            <div className={`hold-banner ${hold.code}`}>
+              <b>
+                {hold.glyph} Held — not dispatching.
+              </b>{" "}
+              {hold.detail}
+            </div>
+          </div>
+        )}
 
         <div className="drawer-section">
           <h4>Details</h4>

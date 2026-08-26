@@ -8,15 +8,15 @@ import (
 
 // StatusBar displays project name, task stats, and connection status.
 type StatusBar struct {
-	Project             string
-	Connected           bool
-	EmbeddingReady      bool
-	Stats               TaskStats
-	SelectedCount       int
-	Metrics             *ResourceMetrics
-	IsPaused            bool
-	ActiveFeatureCount  int
-	RunnerMetrics       *RunnerMetrics
+	Project            string
+	Connected          bool
+	EmbeddingReady     bool
+	Stats              TaskStats
+	SelectedCount      int
+	Metrics            *ResourceMetrics
+	IsPaused           bool
+	ActiveFeatureCount int
+	RunnerMetrics      *RunnerMetrics
 }
 
 // RunnerMetrics represents aggregate runner statistics.

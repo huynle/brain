@@ -1403,7 +1403,6 @@ func (c *APIClient) UpdateRunnerConfig(ctx context.Context, runnerID string, max
 	return nil
 }
 
-
 // UpdateRunnerAffinity updates which features a runner can execute.
 func (c *APIClient) UpdateRunnerAffinity(ctx context.Context, runnerID string, featureIDs []string) error {
 	path := fmt.Sprintf("/api/v1/runners/%s/affinity", runnerID)

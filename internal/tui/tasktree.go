@@ -434,7 +434,6 @@ type TaskTree struct {
 
 	// Viewport state for stable scrolling behavior (shared across task-list views).
 	viewportStart int
-
 }
 
 // NewTaskTree creates a new empty TaskTree component.

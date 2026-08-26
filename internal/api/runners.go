@@ -545,4 +545,3 @@ func (h *Handler) HandleListAllInstances(w http.ResponseWriter, r *http.Request)
 	h.decorateInstances(resp.Instances)
 	WriteJSON(w, http.StatusOK, resp)
 }
-

@@ -2319,10 +2319,11 @@ func computedFeatureToFeature(f *ComputedFeature) types.Feature {
 	}
 
 	return types.Feature{
-		FeatureID: f.ID,
-		Tasks:     f.Tasks,
-		Ready:     f.Classification == "ready",
-		Stats:     stats,
+		FeatureID:             f.ID,
+		Tasks:                 f.Tasks,
+		Ready:                 f.Classification == "ready",
+		Stats:                 stats,
+		UnresolvedFeatureDeps: f.UnresolvedFeatureDeps,
 	}
 }
 

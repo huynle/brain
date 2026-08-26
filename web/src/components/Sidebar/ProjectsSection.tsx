@@ -5,13 +5,14 @@
  *   .sb-section
  *     .sb-head (▾ Projects · N/M · ＋)
  *     .sb-list
- *       .proj-row × N (dot + name + stats + × close)
+ *       .proj-row × N (dot + name + pause tags + stats + × close)
  *       ▸ Hidden (N)   (collapsed by default)
  *         .proj-row × N hidden — click to restore
  */
 import { useState } from "react";
 import { useWorkspace } from "../../store/workspace";
 import { useProjects } from "../../hooks/useProjects";
+import { usePauseState } from "../../hooks/usePauseState";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useLive } from "../../lib/sse";
 import {
@@ -20,16 +21,20 @@ import {
   isProjectTasksPaused,
 } from "../../lib/actions/projectActions";
 import { useProjectActionContext } from "../../hooks/useProjectActionContext";
-import { useRunnerStatus } from "../../hooks/useRunnerStatus";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
+import { projectPauseBadges } from "../../lib/pause";
 import type { Task } from "../../lib/types";
 
-type Dot = "on" | "busy" | "err" | "";
+type Dot = "on" | "busy" | "paused" | "err" | "";
 
-function projectDot(tasks: readonly Task[]): Dot {
-  if (tasks.length === 0) return "";
+// A paused project outranks its task mix: with the task dial off, "some
+// tasks are pending" and "some tasks are blocked" both reduce to "nothing
+// is going to happen here", and a green dot said the opposite. Tasks still
+// in flight keep the busy dot — pause stops new dispatches, it does not
+// stop a process that is already running.
+function projectDot(tasks: readonly Task[], paused: boolean): Dot {
   let hasBusy = false;
   let hasBlocked = false;
   for (const t of tasks) {
@@ -37,6 +42,8 @@ function projectDot(tasks: readonly Task[]): Dot {
     else if (t.status === "blocked") hasBlocked = true;
   }
   if (hasBusy) return "busy";
+  if (paused) return "paused";
+  if (tasks.length === 0) return "";
   if (hasBlocked) return "err";
   return "on";
 }
@@ -61,7 +68,7 @@ export function ProjectsSection(): JSX.Element {
   const hideProject = useWorkspace((s) => s.hideProject);
   const { data: projects, isLoading, error, refetch } = useProjects();
   const projectCtx = useProjectActionContext();
-  const { status: runnerStatus } = useRunnerStatus();
+  const { pause, isLoading: pauseLoading } = usePauseState();
   const liveProjects = useLive((s) => s.projects);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
@@ -94,10 +101,9 @@ export function ProjectsSection(): JSX.Element {
         {visibleProjectIds.map((pid) => {
           const live = liveProjects[pid];
           const tasks = live?.tasks ?? [];
-          const dot = projectDot(tasks);
-          const active = tasks.filter(
-            (t) => t.status === "in_progress",
-          ).length;
+          const badges = projectPauseBadges(pause, pid);
+          const dot = projectDot(tasks, badges.tasks);
+          const active = tasks.filter((t) => t.status === "in_progress").length;
           const ready = tasks.filter((t) => t.status === "pending").length;
           const blocked = tasks.filter((t) => t.status === "blocked").length;
           // Right-click used to hide the project outright — a menu-less
@@ -105,10 +111,18 @@ export function ProjectsSection(): JSX.Element {
           // set as the project card header (run / the two pause dials /
           // open in focus / hide), with the × button as the one-click
           // hide it always was.
+          //
+          // Dial state comes from usePauseState (all three dials, one
+          // shared poll) rather than a second runner-status query.
           const actions = buildProjectActions(pid, projectCtx, {
             taskCount: tasks.length,
-            tasksPaused: isProjectTasksPaused(runnerStatus, pid),
-            automationsPaused: isProjectAutomationsPaused(runnerStatus, pid),
+            // undefined while loading: unknown must not disable the verb.
+            tasksPaused: pauseLoading
+              ? undefined
+              : isProjectTasksPaused(pause, pid),
+            automationsPaused: pauseLoading
+              ? undefined
+              : isProjectAutomationsPaused(pause, pid),
           });
           return (
             <div
@@ -122,10 +136,32 @@ export function ProjectsSection(): JSX.Element {
                 setView("overview");
                 setTimeout(() => focusProjectCard(pid), 30);
               }}
-              title={pid}
+              title={
+                badges.tasks
+                  ? `${pid} — PAUSED`
+                  : badges.automations
+                    ? `${pid} — automations paused`
+                    : pid
+              }
             >
-              <span className={`dot ${dot}`} />
+              <span
+                className={`dot ${dot}`}
+                title={badges.tasks ? badges.tasksTitle : undefined}
+              />
               <span className="name">{pid}</span>
+              {badges.tasks && (
+                <span className="pause-tag" title={badges.tasksTitle}>
+                  paused
+                </span>
+              )}
+              {badges.automations && (
+                <span
+                  className="pause-tag autos"
+                  title={badges.automationsTitle}
+                >
+                  autos
+                </span>
+              )}
               <span className="stats">
                 {active > 0 && <span className="active">{active}▸</span>}
                 {ready > 0 && <span className="ready">{ready}▪</span>}
@@ -186,17 +222,13 @@ export function ProjectsSection(): JSX.Element {
                   display: "inline-block",
                   width: 12,
                   transition: "transform 100ms",
-                  transform: hiddenExpanded
-                    ? "rotate(0deg)"
-                    : "rotate(-90deg)",
+                  transform: hiddenExpanded ? "rotate(0deg)" : "rotate(-90deg)",
                 }}
               >
                 ▾
               </span>
               Hidden
-              <span
-                style={{ marginLeft: "auto", color: "#4b545c" }}
-              >
+              <span style={{ marginLeft: "auto", color: "#4b545c" }}>
                 {hiddenProjectIds.length}
               </span>
             </div>

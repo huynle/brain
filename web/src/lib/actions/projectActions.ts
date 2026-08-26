@@ -17,7 +17,6 @@
  * rather than one toggle. The third dial in the system — runner-scoped
  * pause — is not a project verb at all and lives in ./runnerActions.
  */
-import type { RunnerStatusResponse } from "../types";
 import type { ActionDescriptor } from "./types";
 
 export interface ProjectActionContext {
@@ -48,30 +47,18 @@ export interface ProjectActionContext {
  * was. The slice arrives as JSON `null` when empty (Go nil slice), hence
  * the guard.
  */
-export function isProjectTasksPaused(
-  status: RunnerStatusResponse | undefined,
-  projectId: string,
-): boolean | undefined {
-  if (!status) return undefined;
-  return (status.pausedProjects ?? []).includes(projectId);
-}
-
-/**
- * Whether THIS project's automation dial is paused. Same rule as above:
- * `automationsPaused` is the any-project rollup, not this project's state.
- */
-export function isProjectAutomationsPaused(
-  status: RunnerStatusResponse | undefined,
-  projectId: string,
-): boolean | undefined {
-  if (!status) return undefined;
-  return (status.automationPausedProjects ?? []).includes(projectId);
-}
+// Pause predicates live in lib/pause.ts, which models all THREE dials
+// (project tasks, project automations, runner) from both sources. This
+// module previously carried its own project-only copies reading
+// the runner-status response directly; they were folded into the richer model
+// during the #35 + #37 merge so the controls and the badges can never
+// disagree about whether a project is paused.
+export { isProjectTasksPaused, isProjectAutomationsPaused } from "../pause";
 
 /**
  * Why a dial cannot be moved to `want`, or "" when it can.
  *
- * `paused === undefined` means the status query has not resolved yet. Like
+ * `paused === undefined` means the pause state has not resolved yet. Like
  * an unknown task count, missing data must not disable a verb — and both
  * endpoints are idempotent, so acting on an unknown state is safe.
  */
@@ -82,9 +69,7 @@ export function pauseDialBlockedReason(
 ): string {
   if (paused === undefined) return "";
   if (paused === want) {
-    return want
-      ? `${what} are already paused`
-      : `${what} are not paused`;
+    return want ? `${what} are already paused` : `${what} are not paused`;
   }
   return "";
 }
@@ -108,8 +93,7 @@ export function buildProjectActions(
       label: "Run all ready features",
       group: "run",
       key: "x",
-      disabledReason:
-        opts.taskCount === 0 ? "Project has no tasks" : "",
+      disabledReason: opts.taskCount === 0 ? "Project has no tasks" : "",
       run: () => ctx.runProject(projectId),
     },
 

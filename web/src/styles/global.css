@@ -748,7 +748,9 @@ body.sidebar-collapsed #app {
 
 .trow {
   display: grid;
-  grid-template-columns: 14px 1fr 78px 40px;
+  /* The status column grows past its 78px floor when a .hold-chip is
+     present; the name column (1fr) gives up the space and ellipsises. */
+  grid-template-columns: 14px 1fr minmax(78px, max-content) 40px;
   gap: 4px; padding: 2px 0 2px 12px;
   font-size: 11px; align-items: center; cursor: pointer;
   border-radius: 3px;
@@ -773,7 +775,11 @@ button.glyph:focus-visible {
   border-radius: 2px;
 }
 .trow .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.trow .status { color: #9098a1; font-size: 10px; text-align: right; }
+.trow .status {
+  color: #9098a1; font-size: 10px; text-align: right;
+  display: flex; align-items: center; justify-content: flex-end; gap: 5px;
+  white-space: nowrap;
+}
 .trow .id { color: #4b545c; font-size: 10px; text-align: right; }
 
 /* Dependency-tree guides (CardTasks + CardFeatures).
@@ -1302,7 +1308,14 @@ body[data-theme="light"] .p2-browser-iframe { border-color: #d5dde5; }
   padding: 3px 10px;
   display: flex; align-items: center; gap: 14px;
   font-size: 10px; color: #6b757e;
+  /* The bar sits in a fixed-height grid row, so it can neither wrap (the
+     second line is clipped) nor push the page wide. Contain the overflow
+     here instead: on a narrow viewport the low-value connectivity counters
+     scroll out of reach and the page stays exactly viewport-wide. */
+  overflow-x: auto;
+  scrollbar-width: none;
 }
+.statusbar::-webkit-scrollbar { display: none; }
 .statusbar .live-dot { width: 6px; height: 6px; border-radius: 50%; background: #6fca7d; box-shadow: 0 0 5px #6fca7d; }
 .statusbar .usage {
   display: inline-flex; align-items: center; gap: 4px;
@@ -1533,6 +1546,13 @@ body.mobile .proc-chat .composer input { flex: 1 1 100%; }
 .runner-name {
   font-size: 12px; color: #eaedef; font-weight: 500;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  /* Flex row so a long runner id ellipsises while the PAUSED tag beside it
+     keeps its full width — the tag is the point of the row when it shows. */
+  display: flex; align-items: center; gap: 6px; min-width: 0;
+}
+.runner-name__id {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  min-width: 0;
 }
 .runner-meta { display: flex; gap: 8px; font-size: 10px; color: #6b757e; }
 .runner-meta span { display: inline-flex; align-items: center; }
@@ -2981,3 +3001,189 @@ body[data-theme="light"] .p2-runner-shell__prompt {
   background: #f2f5f8;
   border-color: #d5dbe1;
 }
+
+/* ============================================================
+   Pause visibility
+   ============================================================
+
+   Three independent dials (project tasks, project automations, runner)
+   share one visual language so a user learns it once:
+
+     slate-blue #6f8fa8  — deliberately held. NOT red: pause is a choice
+                           someone made, not a fault, and painting it in
+                           the error tone would train users to ignore red.
+                           NOT green either — that was the original bug.
+     ⏸ glyph              — present on every pause affordance.
+
+   Automations get the same hue with a dashed border, so "different dial"
+   is legible at a glance without adding a second colour to the palette. */
+
+:root {
+  --pause: #6f8fa8;
+  --pause-dim: #6f8fa855;
+  --pause-wash: #6f8fa811;
+}
+
+/* ---------- Dots ---------- */
+/* A paused runner/project keeps reporting "online". Its dot must not be the
+   same green as one doing work — that equivalence is the whole bug. The
+   hollow ring reads as "present but not participating". */
+.proj-row .dot.paused,
+.runner-row .dot.paused,
+.pcard-head .dot.paused {
+  background: transparent;
+  box-shadow: inset 0 0 0 2px var(--pause);
+}
+
+/* ---------- Inline "paused" tags (sidebar rows) ---------- */
+.pause-tag {
+  flex: 0 0 auto;
+  padding: 0 5px;
+  border: 1px solid var(--pause-dim);
+  border-radius: 3px;
+  background: var(--pause-wash);
+  color: var(--pause);
+  font-size: 9px;
+  line-height: 1.5;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+/* The automations dial is a different switch — dashed border marks it as a
+   sibling of, not the same thing as, the task dial. */
+.pause-tag.autos { border-style: dashed; }
+
+.sb-head .count-paused { color: var(--pause); }
+
+/* ---------- Project card header ---------- */
+.pcard-head .health.paused {
+  color: var(--pause);
+  border-color: var(--pause-dim);
+  background: var(--pause-wash);
+}
+.pcard-head .health.autos-paused {
+  color: var(--pause);
+  border-color: var(--pause-dim);
+  border-style: dashed;
+  background: var(--pause-wash);
+}
+
+/* ---------- Project card hold strip ---------- */
+/* The scheduler's own account of the last pass, sitting where the flow
+   strip does so the two read as one band of project-level facts. */
+.hold-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-top: 1px solid #22272c;
+  background: var(--pause-wash);
+  color: var(--pause);
+  font-size: 10px;
+  cursor: help;
+}
+/* Only-cause-was-no-runner: amber, because no resume will clear it. */
+.hold-strip.warn { background: #e08c3a11; color: #e08c3a; }
+
+/* ---------- Per-task hold chip ---------- */
+.hold-chip {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid var(--pause-dim);
+  border-radius: 3px;
+  background: var(--pause-wash);
+  color: var(--pause);
+  font-size: 9px;
+  line-height: 1.5;
+  cursor: help;
+}
+/* "No eligible runner" and "no runners registered" are not deliberate
+   holds — nobody chose them, and they will not clear on their own. Amber
+   matches .life-badge.abandoned: needs attention, has a fix. */
+.hold-chip.no_candidate,
+.hold-chip.no_runners {
+  color: #e08c3a;
+  border-color: #e08c3a55;
+  background: #e08c3a11;
+}
+
+/* ---------- Task modal ---------- */
+.life-badge.held {
+  color: var(--pause);
+  border-color: var(--pause-dim);
+  background: var(--pause-wash);
+  text-transform: none;
+}
+.life-badge.held.no_candidate,
+.life-badge.held.no_runners {
+  color: #e08c3a;
+  border-color: #e08c3a55;
+  background: #e08c3a11;
+}
+.hold-banner {
+  margin: 0 0 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--pause-dim);
+  border-left-width: 3px;
+  border-radius: 4px;
+  background: var(--pause-wash);
+  color: #9098a1;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-line;
+}
+.hold-banner b { color: var(--pause); }
+.hold-banner.no_candidate,
+.hold-banner.no_runners {
+  border-color: #e08c3a55;
+  background: #e08c3a11;
+}
+.hold-banner.no_candidate b,
+.hold-banner.no_runners b { color: #e08c3a; }
+
+/* ---------- Global statusbar flag ---------- */
+/* The single highest-value indicator in the app: absent when everything
+   can run, present the moment anything is held. `halt` means no runner
+   anywhere will accept a dispatch, so it gets the stronger treatment. */
+.statusbar .pause-flag {
+  padding: 0 6px;
+  border: 1px solid var(--pause-dim);
+  border-radius: 3px;
+  background: var(--pause-wash);
+  color: var(--pause);
+  cursor: help;
+  white-space: nowrap;
+  /* Never shrink: this is the one segment that must survive a narrow bar.
+     It renders immediately after "streaming" (see Statusbar.tsx), ahead of
+     the counters, so the counters are what scroll away instead. */
+  flex: 0 0 auto;
+}
+/* The spacer would otherwise absorb the scroll width and park the flag
+   off-screen on mobile. */
+body.mobile .statusbar .spacer { display: none; }
+.statusbar .pause-flag.halt {
+  color: #e08c3a;
+  border-color: #e08c3a88;
+  background: #e08c3a1a;
+  font-weight: 600;
+}
+
+/* ---------- Light theme ---------- */
+body[data-theme="light"] {
+  --pause: #4a6b85;
+  --pause-dim: #4a6b8566;
+  --pause-wash: #4a6b8514;
+}
+body[data-theme="light"] .hold-banner { color: #48525c; }
+
+/* Command-center runner metric: the headline number turns amber the moment
+   part of the fleet is paused, so "1/1 runners online" can no longer read as
+   a healthy fleet that will in fact accept nothing. */
+.wc-metrics b.wc-metric-warn { color: #e08c3a; }
+.wc-metrics .wc-metric-note { color: var(--pause); cursor: help; }
+/* Pre-existing light-theme gap, fixed here because this surface now carries
+   the paused-runner count: `.wc-metrics b` was only ever given the dark
+   theme's near-white, so every headline metric rendered white-on-white in
+   light mode — which would have left the amber "0/1 paused" as the only
+   legible number in the row. */
+body[data-theme="light"] .wc-metrics b { color: #17202a; }
+body[data-theme="light"] .wc-metrics b.wc-metric-warn { color: #a4610f; }

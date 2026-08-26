@@ -39,6 +39,8 @@ import {
 import { withForceRetry } from "../lib/actions/forceRetry";
 import { forceConfirmFor } from "../lib/actions/forceConfirm";
 import { liveSessionRef } from "../lib/sessionRef";
+import { forceDispatchNote, isAutomationTask, withForceNote } from "../lib/pause";
+import { usePauseState } from "./usePauseState";
 import { useSessions } from "./useSessions";
 import type { SessionRef, Task, TaskStatus } from "../lib/types";
 
@@ -59,6 +61,9 @@ export function useTaskActionContextFactory(): (
   // Instance registry for the live-session query. Poll-backed (8s); the
   // context memo refreshes with it so verb gates track instance state.
   const { allInstances } = useSessions();
+  // Pause dials, so a manual run against a paused system can say what it
+  // did to the pause rather than looking like pause was ignored.
+  const { pause } = usePauseState();
 
   return useMemo(
     () => (projectId: string) => ({
@@ -96,7 +101,15 @@ export function useTaskActionContextFactory(): (
               : null,
         );
         const { message, kind } = summarizeTriggerResults([r]);
-        toast(message, kind);
+        // Run deliberately bypasses the project pause dials (see
+        // SchedulerService.RunTaskNow, which skips shouldSkipTask on
+        // purpose). Naming that keeps an intended override from reading as
+        // a bug — and names the runner dial, which force cannot cross.
+        const note = forceDispatchNote(pause, {
+          projectId,
+          automation: isAutomationTask(task),
+        });
+        toast(withForceNote(message, note), kind);
       },
 
       setStatus: async (task: Task, status: TaskStatus) => {
@@ -236,7 +249,16 @@ export function useTaskActionContextFactory(): (
         toast("Session reopened — send a message to continue.", "success");
       },
     }),
-    [openModal, closeModal, openInFocus, openSessionRef, setSteerIntent, toast, allInstances],
+    [
+      openModal,
+      closeModal,
+      openInFocus,
+      openSessionRef,
+      setSteerIntent,
+      toast,
+      allInstances,
+      pause,
+    ],
   );
 }
 

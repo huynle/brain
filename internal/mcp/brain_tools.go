@@ -122,7 +122,7 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
 				"checkout_mode":         {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation. Only meaningful on task entries whose feature completion triggers a checkout automation."},
-				"related_entries":       {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entry paths to link"},
+				"related_entries":       {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entries to link, each named by title, path, or 8-char ID. Appended to the entry as a \"## Related\" section of wiki-links."},
 			},
 			Required: []string{"type", "title", "content"},
 		},

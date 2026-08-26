@@ -52,9 +52,9 @@ func (s *StorageLayer) GetStats(ctx context.Context, opts *StatsOptions) (*Stats
 	}
 
 	// 3. Orphan count (notes with no incoming links).
-	orphanQuery := `SELECT COUNT(*) FROM notes WHERE id NOT IN (
-		SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL
-	)`
+	// Shares orphanPredicate with GetOrphans — the two used to carry separate
+	// copies of this condition and drifted apart.
+	orphanQuery := `SELECT COUNT(*) FROM notes WHERE ` + orphanPredicate
 	if opts != nil && opts.Path != "" {
 		orphanQuery += " AND path LIKE ?"
 	}

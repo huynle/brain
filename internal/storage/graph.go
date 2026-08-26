@@ -91,12 +91,25 @@ func (s *StorageLayer) GetRelated(ctx context.Context, path string, limit int) (
 	return notes, nil
 }
 
-// GetOrphans finds notes with no incoming links (not referenced by any link's target_id).
+// orphanPredicate is the SQL condition for "no incoming links", written to
+// match GetBacklinks exactly: a note is linked-to if some link resolves to its
+// id OR names its path unresolved.
+//
+// Those two queries used to disagree — orphans consulted only target_id — so an
+// entry with an unresolved but path-matching inbound link was reported as an
+// orphan and simultaneously returned a backlink. Both halves are expressed as
+// NOT IN against an indexed column so the check stays cheap on a large brain.
+// links.target_path is NOT NULL, so neither subquery can poison the NOT IN.
+//
+// It applies to `notes` unaliased; both callers select FROM notes.
+const orphanPredicate = `id NOT IN (SELECT target_id FROM links WHERE target_id IS NOT NULL)
+	AND path NOT IN (SELECT target_path FROM links)`
+
+// GetOrphans finds notes with no incoming links — neither a resolved link
+// pointing at the note's id nor an unresolved one naming its path.
 // Supports optional type filter and limit. Returns a non-nil empty slice if none found.
 func (s *StorageLayer) GetOrphans(ctx context.Context, opts *OrphanOptions) ([]*NoteRow, error) {
-	query := `SELECT ` + noteColumns + ` FROM notes WHERE id NOT IN (
-		SELECT DISTINCT target_id FROM links WHERE target_id IS NOT NULL
-	)`
+	query := `SELECT ` + noteColumns + ` FROM notes WHERE ` + orphanPredicate
 	params := make([]interface{}, 0)
 
 	if opts != nil && opts.Type != "" {

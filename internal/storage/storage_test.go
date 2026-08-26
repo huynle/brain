@@ -697,9 +697,10 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 
 func TestSchemaVersion_IncludesFeatureCascadeRoots(t *testing.T) {
 	// Bumped with each migration. v23 added runner_pause_state, v24 added
-	// feature_cascade_roots, v25 invalidated checksums for link re-extraction.
-	if CurrentSchemaVersion != 25 {
-		t.Errorf("CurrentSchemaVersion = %d, want 25", CurrentSchemaVersion)
+	// feature_cascade_roots, v25 invalidated checksums for link re-extraction,
+	// v26 did the same for HTML comments.
+	if CurrentSchemaVersion != 26 {
+		t.Errorf("CurrentSchemaVersion = %d, want 26", CurrentSchemaVersion)
 	}
 }
 

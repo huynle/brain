@@ -52,6 +52,9 @@ var fenceRe = regexp.MustCompile("^[\t ]*(`{3,}|~{3,})")
 // backtickRunRe matches a run of backticks, used to find inline code spans.
 var backtickRunRe = regexp.MustCompile("`+")
 
+// htmlCommentRe matches an HTML comment, including one spanning lines.
+var htmlCommentRe = regexp.MustCompile(`(?s)<!--.*?-->`)
+
 // urlPrefixRe matches http:// or https:// at the start of a string.
 var urlPrefixRe = regexp.MustCompile(`^https?://`)
 
@@ -80,10 +83,10 @@ var (
 //   - markdown links [text](target), but NOT images ![alt](src)
 //   - wiki-links [[target]] and [[target|display]], but NOT embeds ![[target]]
 //
-// Text inside fenced code blocks and inline code spans is ignored: brain
-// entries routinely document the link syntax itself, and treating those
-// examples as real links pollutes the graph with placeholder targets such as
-// "pattern-id".
+// Text inside fenced code blocks, inline code spans, and HTML comments is
+// ignored: brain entries routinely document the link syntax itself, and
+// treating those examples as real links pollutes the graph with placeholder
+// targets such as "pattern-id".
 //
 // Each link includes ±50 characters of surrounding context as a snippet. The
 // snippet is taken from the ORIGINAL text, so it still shows code that was
@@ -188,9 +191,9 @@ func snippetAround(s string, start, end int) string {
 	return s[from:to]
 }
 
-// maskCode returns a copy of s with the contents of fenced code blocks and
-// inline code spans replaced by spaces. Byte offsets are preserved exactly, so
-// match indices found in the result index the original string as well.
+// maskCode returns a copy of s with the contents of fenced code blocks, inline
+// code spans, and HTML comments replaced by spaces. Byte offsets are preserved
+// exactly, so match indices found in the result index the original string too.
 //
 // Newlines are kept so fence detection stays line-oriented; only the bytes
 // that could form link syntax are blanked.
@@ -204,6 +207,17 @@ func maskCode(s string) string {
 			}
 		}
 	}
+
+	// HTML comments first, and over the whole string rather than line by line:
+	// they span lines, and the plan templates that motivated this keep their
+	// example links commented out ("<!-- Link to patterns: [Name](pattern-id) -->").
+	// Blanking them first also stops a fence or backtick inside a comment from
+	// opening a region. An unterminated "<!--" matches nothing and masks
+	// nothing, the same conservative choice made for an unclosed backtick.
+	for _, loc := range htmlCommentRe.FindAllStringIndex(s, -1) {
+		blank(loc[0], loc[1])
+	}
+	s = string(out)
 
 	var openFence string // non-empty while inside a fenced block
 	pos := 0

@@ -353,6 +353,48 @@ func TestExtractLinks_UnclosedBacktickMasksNothing(t *testing.T) {
 
 // Adjacent links used to lose every one after the first: the "(^|[^!])" prefix
 // group consumed the separating character, and FindAll does not overlap.
+// The plan-template entries in the live brain keep their example links inside
+// HTML comments, which is where the bulk of the placeholder targets came from
+// — not code fences, as first assumed.
+func TestExtractLinks_IgnoresHTMLComments(t *testing.T) {
+	md := "## Patterns to Apply\n\n<!-- Link to patterns: [Pattern Name](pattern-id) -->\n\n## Based On"
+	links := ExtractLinks(md)
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links inside an HTML comment, got %d: %+v", len(links), links)
+	}
+}
+
+func TestExtractLinks_IgnoresMultiLineHTMLComment(t *testing.T) {
+	md := "<!--\n[Pattern Name](pattern-id)\nSee [[Some Title]]\n-->\n[real](abcd1234)"
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d: %+v", len(links), links)
+	}
+	if links[0].Href != "abcd1234" {
+		t.Errorf("href = %q, want %q", links[0].Href, "abcd1234")
+	}
+}
+
+func TestExtractLinks_FindsLinksAroundHTMLComment(t *testing.T) {
+	md := "[before](aaa11111) <!-- [hidden](bbb22222) --> [after](ccc33333)"
+	links := ExtractLinks(md)
+	if len(links) != 2 {
+		t.Fatalf("expected 2 links, got %d: %+v", len(links), links)
+	}
+	if links[0].Href != "aaa11111" || links[1].Href != "ccc33333" {
+		t.Errorf("hrefs = %q/%q, want aaa11111/ccc33333", links[0].Href, links[1].Href)
+	}
+}
+
+// An unterminated "<!--" masks nothing, matching the unclosed-backtick choice.
+func TestExtractLinks_UnterminatedHTMLCommentMasksNothing(t *testing.T) {
+	md := "<!-- oops [the note](abcd1234)"
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d: %+v", len(links), links)
+	}
+}
+
 func TestExtractLinks_AdjacentLinks(t *testing.T) {
 	tests := []struct {
 		name  string

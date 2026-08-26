@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 25
+const CurrentSchemaVersion = 26
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -984,6 +984,37 @@ func migrateSchema(db *sql.DB) error {
 				WHERE body LIKE '%[[%'
 				   OR id IN (SELECT DISTINCT source_id FROM links)`); err != nil {
 				return fmt.Errorf("migrate v25 (invalidate checksums for link re-extraction): %w", err)
+			}
+		}
+	}
+
+	if ver < 26 {
+		// v26: same idea as v25, for HTML comments.
+		//
+		// v25 assumed the placeholder link targets in the graph ("pattern-id",
+		// "entry-id", "report-id") came from fenced code examples. They did
+		// not: the plan-template entries keep their example links inside HTML
+		// comments — "<!-- Link to patterns: [Pattern Name](pattern-id) -->" —
+		// which v25's fence masking never touched, so those rows survived the
+		// v25 backfill unchanged. ExtractLinks now masks comments too, and
+		// these notes need one more re-extraction pass to drop the rows.
+		//
+		// Scoped the same way and to a similar size (443 notes in production
+		// against 72,869), so it stays a short pass rather than a full
+		// re-index behind SQLite's single connection.
+		notesExist, err := tableExists(db, "notes")
+		if err != nil {
+			return fmt.Errorf("migrate v26 (inspect notes): %w", err)
+		}
+		linksExist, err := tableExists(db, "links")
+		if err != nil {
+			return fmt.Errorf("migrate v26 (inspect links): %w", err)
+		}
+		if notesExist && linksExist {
+			if _, err := db.Exec(`UPDATE notes SET checksum = NULL
+				WHERE body LIKE '%<!--%'
+				   OR id IN (SELECT DISTINCT source_id FROM links)`); err != nil {
+				return fmt.Errorf("migrate v26 (invalidate checksums for comment re-extraction): %w", err)
 			}
 		}
 	}

@@ -720,3 +720,47 @@ func TestMigrateV25_InvalidatesChecksumsForLinkReextraction(t *testing.T) {
 		t.Error("a note with neither wiki-links nor link rows was needlessly invalidated")
 	}
 }
+
+func TestMigrateV26_InvalidatesChecksumsForHTMLCommentReextraction(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	withComment := sampleNote("projects/test/mig/tmpl.md", "migcmt01", "Plan Template")
+	commentBody := "## Patterns\n\n<!-- Link to patterns: [Pattern Name](pattern-id) -->\n"
+	withComment.Body = &commentBody
+	if _, err := s.InsertNote(ctx, withComment); err != nil {
+		t.Fatalf("insert commented note: %v", err)
+	}
+
+	plain, err := s.InsertNote(ctx, sampleNote("projects/test/mig/plain2.md", "migpln02", "Plain"))
+	if err != nil {
+		t.Fatalf("insert plain note: %v", err)
+	}
+
+	// A DB that already took v25 must still pick up v26.
+	if _, err := s.db.Exec("DELETE FROM schema_version"); err != nil {
+		t.Fatalf("clear schema version: %v", err)
+	}
+	if _, err := s.db.Exec("INSERT INTO schema_version (version) VALUES (25)"); err != nil {
+		t.Fatalf("set schema version: %v", err)
+	}
+	if err := migrateSchema(s.db); err != nil {
+		t.Fatalf("migrateSchema: %v", err)
+	}
+
+	got, err := s.GetNoteByPath(ctx, withComment.Path)
+	if err != nil {
+		t.Fatalf("GetNoteByPath: %v", err)
+	}
+	if got.Checksum != nil {
+		t.Errorf("note with an HTML comment kept checksum %q; it must be re-indexed", *got.Checksum)
+	}
+
+	untouched, err := s.GetNoteByPath(ctx, plain.Path)
+	if err != nil {
+		t.Fatalf("GetNoteByPath: %v", err)
+	}
+	if untouched.Checksum == nil {
+		t.Error("a note with no HTML comment and no link rows was needlessly invalidated")
+	}
+}

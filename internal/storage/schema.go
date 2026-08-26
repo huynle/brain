@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 23
+const CurrentSchemaVersion = 24
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -257,6 +257,15 @@ CREATE TABLE IF NOT EXISTS runner_pause_state (
   runner_id TEXT PRIMARY KEY,
   paused INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
+);`
+
+const createFeatureCascadeRootsTable = `
+CREATE TABLE IF NOT EXISTS feature_cascade_roots (
+  project_id        TEXT NOT NULL,
+  root_feature_id   TEXT NOT NULL,
+  requested_at      INTEGER NOT NULL,
+  paused_at_request INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id, root_feature_id)
 );`
 
 const createProjectPlacementTable = `
@@ -913,6 +922,34 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 24 {
+		// v24: persist the ROOT of a manual "run feature + dependents"
+		// request.
+		//
+		// Only the root is stored, never the member list. The closure is
+		// derived from feature_depends_on, so a stored member set would go
+		// stale the moment someone edits the graph — and the server would
+		// then be dispatching a chain that no longer matches what is
+		// declared. Re-deriving from the root on every sweep also means a
+		// feature whose tasks are generated mid-run (feature-checkout
+		// follow-ups, goal-generated work) joins the chain instead of being
+		// invisible because it had no tasks at click time.
+		//
+		// paused_at_request captures whether the project's task dial was
+		// already off when the user asked. Propagation force-dispatches
+		// past a pause that was already on — that is the isolate workflow —
+		// but a pause applied AFTER the click stops the chain spreading
+		// into features that have not started.
+		if _, err := db.Exec(createFeatureCascadeRootsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v24 (feature_cascade_roots table): %w", err)
+			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_feature_cascade_roots_project ON feature_cascade_roots(project_id)"); err != nil {
+			return fmt.Errorf("migrate v24 (feature_cascade_roots index): %w", err)
+		}
+	}
+
 	if ver < 21 {
 		// v21: add stable lease IDs to dispatch leases for ack/reject validation.
 		if exists, err := tableExists(db, "task_dispatch_leases"); err != nil {
@@ -1103,6 +1140,7 @@ func InitSchema(db *sql.DB) error {
 		createAttachmentsTable,
 		createEntryAttachmentsTable,
 		createAttachmentDerivedTable,
+		createFeatureCascadeRootsTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

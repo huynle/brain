@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -558,5 +560,166 @@ func TestClearFeatureAssignment_RequiresExplicitIntent(t *testing.T) {
 	}
 	if row != nil {
 		t.Fatalf("assignment should be cleared, got %+v", row)
+	}
+}
+
+// ─── TransitiveDependents ────────────────────────────────────────
+
+// feat builds a ComputedFeature for closure tests. Only the fields the
+// reverse walk reads are set.
+func feat(id string, dependsOn []string, status string) *ComputedFeature {
+	return &ComputedFeature{ID: id, DependsOnFeatures: dependsOn, Status: status}
+}
+
+func TestTransitiveDependents_Chain(t *testing.T) {
+	// A <- B <- C: running A should enrol B then C, in that order, so a
+	// caller dispatching in order never runs C before B.
+	fs := []*ComputedFeature{
+		feat("a", nil, "pending"),
+		feat("b", []string{"a"}, "pending"),
+		feat("c", []string{"b"}, "pending"),
+	}
+	got := TransitiveDependents(fs, "a")
+	if !reflect.DeepEqual(got.Members, []string{"b", "c"}) {
+		t.Fatalf("members = %v, want [b c]", got.Members)
+	}
+}
+
+func TestTransitiveDependents_RootIsNeverAMember(t *testing.T) {
+	fs := []*ComputedFeature{feat("a", nil, "pending"), feat("b", []string{"a"}, "pending")}
+	for _, id := range TransitiveDependents(fs, "a").Members {
+		if id == "a" {
+			t.Fatal("root enrolled as its own dependent; it is dispatched directly")
+		}
+	}
+}
+
+func TestTransitiveDependents_DiamondEnrolsOnce(t *testing.T) {
+	// B and C both depend on A; D depends on both. D must appear exactly
+	// once, or it would be dispatched twice.
+	fs := []*ComputedFeature{
+		feat("a", nil, "pending"),
+		feat("b", []string{"a"}, "pending"),
+		feat("c", []string{"a"}, "pending"),
+		feat("d", []string{"b", "c"}, "pending"),
+	}
+	got := TransitiveDependents(fs, "a")
+	n := 0
+	for _, id := range got.Members {
+		if id == "d" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("d enrolled %d times, want exactly 1 (members=%v)", n, got.Members)
+	}
+}
+
+func TestTransitiveDependents_UnrelatedExcluded(t *testing.T) {
+	fs := []*ComputedFeature{
+		feat("a", nil, "pending"),
+		feat("b", []string{"a"}, "pending"),
+		feat("z", nil, "pending"),
+	}
+	for _, id := range TransitiveDependents(fs, "a").Members {
+		if id == "z" {
+			t.Fatal("enrolled a feature that does not depend on the root")
+		}
+	}
+}
+
+func TestTransitiveDependents_SkipsCycleMembers(t *testing.T) {
+	// applyFeatureGating blocks a cycle member's tasks unconditionally, so
+	// enrolling one guarantees a chain that never finishes.
+	b := feat("b", []string{"a"}, "pending")
+	b.InCycle = true
+	got := TransitiveDependents([]*ComputedFeature{feat("a", nil, "pending"), b}, "a")
+	if len(got.Members) != 0 {
+		t.Fatalf("members = %v, want none", got.Members)
+	}
+	if got.Skipped["b"] != "in_cycle" {
+		t.Fatalf("skipped[b] = %q, want in_cycle — a silent skip is the failure mode here", got.Skipped["b"])
+	}
+}
+
+func TestTransitiveDependents_SkipsSettledFeatures(t *testing.T) {
+	fs := []*ComputedFeature{
+		feat("a", nil, "pending"),
+		feat("b", []string{"a"}, "completed"),
+	}
+	got := TransitiveDependents(fs, "a")
+	if len(got.Members) != 0 {
+		t.Fatalf("members = %v, want none for an already-completed dependent", got.Members)
+	}
+	if got.Skipped["b"] != "already_settled" {
+		t.Fatalf("skipped[b] = %q, want already_settled", got.Skipped["b"])
+	}
+}
+
+func TestTransitiveDependents_ReportsExternalWaits(t *testing.T) {
+	// B is in the chain but also waits on Z, which nobody queued. Under a
+	// paused project Z never runs, so the chain stalls at B — the single
+	// most likely silent failure, hence it must be reported.
+	b := feat("b", []string{"a", "z"}, "pending")
+	b.WaitingOnFeatures = []string{"z"}
+	fs := []*ComputedFeature{feat("a", nil, "pending"), b, feat("z", nil, "pending")}
+
+	got := TransitiveDependents(fs, "a")
+	if !reflect.DeepEqual(got.Members, []string{"b"}) {
+		t.Fatalf("members = %v, want [b]", got.Members)
+	}
+	if !reflect.DeepEqual(got.External, []string{"z"}) {
+		t.Fatalf("external = %v, want [z]", got.External)
+	}
+}
+
+func TestTransitiveDependents_SettledExternalIsNotAnObstacle(t *testing.T) {
+	b := feat("b", []string{"a", "z"}, "pending")
+	b.WaitingOnFeatures = []string{"z"}
+	z := feat("z", nil, "completed")
+	got := TransitiveDependents([]*ComputedFeature{feat("a", nil, "pending"), b, z}, "a")
+	if len(got.External) != 0 {
+		t.Fatalf("external = %v, want none: a completed dependency blocks nothing", got.External)
+	}
+}
+
+func TestTransitiveDependents_TerminatesOnCyclicGraph(t *testing.T) {
+	// Guards against the reverse walk looping forever. Both are marked
+	// InCycle as the real resolver would, so they are skipped, but the walk
+	// itself must still terminate.
+	b := feat("b", []string{"c"}, "pending")
+	c := feat("c", []string{"b"}, "pending")
+	b.InCycle, c.InCycle = true, true
+	done := make(chan DependentClosure, 1)
+	go func() {
+		done <- TransitiveDependents([]*ComputedFeature{feat("a", nil, "pending"), b, c}, "a")
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("TransitiveDependents did not terminate on a cyclic graph")
+	}
+}
+
+func TestTransitiveDependents_TruncatesAndSaysSo(t *testing.T) {
+	fs := []*ComputedFeature{feat("root", nil, "pending")}
+	for i := 0; i < maxCascadeClosure+5; i++ {
+		fs = append(fs, feat(fmt.Sprintf("f%02d", i), []string{"root"}, "pending"))
+	}
+	got := TransitiveDependents(fs, "root")
+	if len(got.Members) != maxCascadeClosure {
+		t.Fatalf("members = %d, want the cap %d", len(got.Members), maxCascadeClosure)
+	}
+	if !got.Truncated {
+		t.Fatal("closure hit the cap without reporting Truncated; silent truncation reads as full coverage")
+	}
+}
+
+func TestTransitiveDependents_EmptyInputs(t *testing.T) {
+	if got := TransitiveDependents(nil, "a"); len(got.Members) != 0 {
+		t.Fatalf("members = %v for a nil graph", got.Members)
+	}
+	if got := TransitiveDependents([]*ComputedFeature{feat("a", nil, "pending")}, ""); len(got.Members) != 0 {
+		t.Fatalf("members = %v for an empty root", got.Members)
 	}
 }

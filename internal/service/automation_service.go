@@ -642,27 +642,27 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 
 	var content strings.Builder
 	content.WriteString("## Automation Run Audit\n\n")
-	content.WriteString(fmt.Sprintf("automation_id: %s\n", audit.automation.ID))
-	content.WriteString(fmt.Sprintf("automation_path: %s\n", audit.automation.Path))
-	content.WriteString(fmt.Sprintf("project: %s\n", audit.project))
-	content.WriteString(fmt.Sprintf("trigger_type: %s\n", triggerType))
+	fmt.Fprintf(&content, "automation_id: %s\n", audit.automation.ID)
+	fmt.Fprintf(&content, "automation_path: %s\n", audit.automation.Path)
+	fmt.Fprintf(&content, "project: %s\n", audit.project)
+	fmt.Fprintf(&content, "trigger_type: %s\n", triggerType)
 	if triggerEvent != "" {
-		content.WriteString(fmt.Sprintf("trigger_event: %s\n", triggerEvent))
+		fmt.Fprintf(&content, "trigger_event: %s\n", triggerEvent)
 	}
 	if audit.evt.ID != "" {
-		content.WriteString(fmt.Sprintf("source_event_id: %s\n", audit.evt.ID))
+		fmt.Fprintf(&content, "source_event_id: %s\n", audit.evt.ID)
 	}
 	if audit.generatedKey != "" {
-		content.WriteString(fmt.Sprintf("dedup_key: %s\n", audit.generatedKey))
+		fmt.Fprintf(&content, "dedup_key: %s\n", audit.generatedKey)
 	}
-	content.WriteString(fmt.Sprintf("started_at: %s\n", started.Format(time.RFC3339)))
-	content.WriteString(fmt.Sprintf("completed_at: %s\n", started.Format(time.RFC3339)))
+	fmt.Fprintf(&content, "started_at: %s\n", started.Format(time.RFC3339))
+	fmt.Fprintf(&content, "completed_at: %s\n", started.Format(time.RFC3339))
 	content.WriteString("duration_ms: 0\n")
 	if audit.skipReason != "" {
-		content.WriteString(fmt.Sprintf("skip_reason: %s\n", audit.skipReason))
+		fmt.Fprintf(&content, "skip_reason: %s\n", audit.skipReason)
 	}
 	if audit.errorText != "" {
-		content.WriteString(fmt.Sprintf("error: %s\n", audit.errorText))
+		fmt.Fprintf(&content, "error: %s\n", audit.errorText)
 	}
 	content.WriteString("\n### Trigger Payload Summary\n")
 	content.WriteString(summarizeAutomationEvent(audit.evt))
@@ -671,7 +671,7 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 		content.WriteString("- none\n")
 	} else {
 		for _, id := range audit.taskIDs {
-			content.WriteString(fmt.Sprintf("- %s\n", id))
+			fmt.Fprintf(&content, "- %s\n", id)
 		}
 	}
 

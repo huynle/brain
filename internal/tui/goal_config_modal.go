@@ -276,7 +276,7 @@ func (m *GoalConfigModal) View() string {
 			valRendered = valueStyle.Render(m.editBuf + "▏")
 		}
 
-		b.WriteString(fmt.Sprintf("%s%s: %s", marker, labelRendered, valRendered))
+		fmt.Fprintf(&b, "%s%s: %s", marker, labelRendered, valRendered)
 		b.WriteString("\n")
 
 		// Render sub-cursor row for focused multi-select fields.

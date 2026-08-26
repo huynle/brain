@@ -276,9 +276,9 @@ func (m *SettingsModal) renderGroupsTab() string {
 
 		// Dim the group name and count if not visible
 		if visible {
-			s.WriteString(fmt.Sprintf("%s %s %s %-14s %s\n", cursor, checkbox, collapseIcon, group, countStr))
+			fmt.Fprintf(&s, "%s %s %s %-14s %s\n", cursor, checkbox, collapseIcon, group, countStr)
 		} else {
-			s.WriteString(fmt.Sprintf("%s %s %s %s\n", cursor, checkbox, collapseIcon, dimStyle.Render(fmt.Sprintf("%-14s %s", group, countStr))))
+			fmt.Fprintf(&s, "%s %s %s %s\n", cursor, checkbox, collapseIcon, dimStyle.Render(fmt.Sprintf("%-14s %s", group, countStr)))
 		}
 	}
 
@@ -305,7 +305,7 @@ func (m *SettingsModal) renderRuntimeTab() string {
 	if m.editMode && m.selectedIndex == 0 {
 		modelDisplay = m.editBuffer + "█" // Show cursor when editing
 	}
-	s.WriteString(fmt.Sprintf("%s Default Model: %s\n", cursor0, modelDisplay))
+	fmt.Fprintf(&s, "%s Default Model: %s\n", cursor0, modelDisplay)
 
 	// Text Wrapping setting (index 1)
 	cursor1 := m.getCursorForRuntimeTab(1)
@@ -313,11 +313,11 @@ func (m *SettingsModal) renderRuntimeTab() string {
 	if !m.settings.TextWrap {
 		wrapCheckbox = "☐"
 	}
-	s.WriteString(fmt.Sprintf("%s %s Text Wrapping\n", cursor1, wrapCheckbox))
+	fmt.Fprintf(&s, "%s %s Text Wrapping\n", cursor1, wrapCheckbox)
 
 	// Log Level setting (index 2)
 	cursor2 := m.getCursorForRuntimeTab(2)
-	s.WriteString(fmt.Sprintf("%s Log Level:\n", cursor2))
+	fmt.Fprintf(&s, "%s Log Level:\n", cursor2)
 
 	// Log level radio buttons
 	logLevels := []string{"error", "info", "debug"}
@@ -330,7 +330,7 @@ func (m *SettingsModal) renderRuntimeTab() string {
 		if m.settings.LogLevel == level {
 			radio = "●"
 		}
-		s.WriteString(fmt.Sprintf("%s %s %s\n", prefix, radio, level))
+		fmt.Fprintf(&s, "%s %s %s\n", prefix, radio, level)
 	}
 
 	// Separator and mode-aware help text
@@ -363,10 +363,10 @@ func (m *SettingsModal) renderMonitorsTab() string {
 	cursor := m.getCursorForMonitorsTab(0)
 	if m.settings.AutoMonitors {
 		onStyle := lipgloss.NewStyle().Foreground(ColorReady).Bold(true)
-		s.WriteString(fmt.Sprintf("%s Auto-create monitors: %s\n", cursor, onStyle.Render("[ON]")))
+		fmt.Fprintf(&s, "%s Auto-create monitors: %s\n", cursor, onStyle.Render("[ON]"))
 	} else {
 		offStyle := lipgloss.NewStyle().Foreground(ColorDim).Bold(true)
-		s.WriteString(fmt.Sprintf("%s Auto-create monitors: %s\n", cursor, offStyle.Render("[OFF]")))
+		fmt.Fprintf(&s, "%s Auto-create monitors: %s\n", cursor, offStyle.Render("[OFF]"))
 	}
 
 	// Sub-description
@@ -414,7 +414,7 @@ func (m *SettingsModal) renderProjectLimits() string {
 		}
 		dimStyle := lipgloss.NewStyle().Foreground(ColorDim)
 		runningStr := dimStyle.Render(fmt.Sprintf("(%d running)", running))
-		s.WriteString(fmt.Sprintf("%s  %s %s %s\n", cursor, proj, limitStr, runningStr))
+		fmt.Fprintf(&s, "%s  %s %s %s\n", cursor, proj, limitStr, runningStr)
 	}
 	return s.String()
 }

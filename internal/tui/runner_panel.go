@@ -164,12 +164,12 @@ func (rp RunnerPanel) ViewDetail(width, height int) string {
 
 	// Status with color
 	statusStyle := rp.statusStyle(runner.Status)
-	b.WriteString(fmt.Sprintf("  Status:        %s\n", statusStyle.Render(string(runner.Status))))
-	b.WriteString(fmt.Sprintf("  Hostname:      %s\n", runner.Hostname))
+	fmt.Fprintf(&b, "  Status:        %s\n", statusStyle.Render(string(runner.Status)))
+	fmt.Fprintf(&b, "  Hostname:      %s\n", runner.Hostname)
 	if runner.MachineID != "" {
-		b.WriteString(fmt.Sprintf("  Machine:       %s\n", runner.MachineID))
+		fmt.Fprintf(&b, "  Machine:       %s\n", runner.MachineID)
 	}
-	b.WriteString(fmt.Sprintf("  Tasks:         %d/%d\n", runner.ActiveTasks, runner.MaxParallel))
+	fmt.Fprintf(&b, "  Tasks:         %d/%d\n", runner.ActiveTasks, runner.MaxParallel)
 	if runner.DispatchPush {
 		b.WriteString("  Dispatch:      push\n")
 	} else {
@@ -180,36 +180,36 @@ func (rp RunnerPanel) ViewDetail(width, height int) string {
 	}
 
 	if len(runner.Projects) > 0 {
-		b.WriteString(fmt.Sprintf("  Projects:      %s\n", strings.Join(runner.Projects, ", ")))
+		fmt.Fprintf(&b, "  Projects:      %s\n", strings.Join(runner.Projects, ", "))
 	}
 	if len(runner.Capabilities) > 0 {
-		b.WriteString(fmt.Sprintf("  Capabilities:  %s\n", strings.Join(runner.Capabilities, ", ")))
+		fmt.Fprintf(&b, "  Capabilities:  %s\n", strings.Join(runner.Capabilities, ", "))
 	}
 	if len(runner.WorkspaceRoots) > 0 {
-		b.WriteString(fmt.Sprintf("  Workspaces:    %s\n", strings.Join(runner.WorkspaceRoots, ", ")))
+		fmt.Fprintf(&b, "  Workspaces:    %s\n", strings.Join(runner.WorkspaceRoots, ", "))
 	}
 	if len(runner.Resources) > 0 {
-		b.WriteString(fmt.Sprintf("  Resources:     %s\n", formatRunnerMap(runner.Resources)))
+		fmt.Fprintf(&b, "  Resources:     %s\n", formatRunnerMap(runner.Resources))
 	}
 	if len(runner.Capacity) > 0 {
-		b.WriteString(fmt.Sprintf("  Capacity:      %s\n", formatRunnerMap(runner.Capacity)))
+		fmt.Fprintf(&b, "  Capacity:      %s\n", formatRunnerMap(runner.Capacity))
 	}
 
 	// Executors
 	if len(runner.Executors) > 0 {
-		b.WriteString(fmt.Sprintf("  Executors:     %s\n", strings.Join(runner.Executors, ", ")))
+		fmt.Fprintf(&b, "  Executors:     %s\n", strings.Join(runner.Executors, ", "))
 	} else {
-		b.WriteString(fmt.Sprintf("  Executors:     %s\n", DimStyle.Render("none")))
+		fmt.Fprintf(&b, "  Executors:     %s\n", DimStyle.Render("none"))
 	}
 
 	// Durable feature assignments
 	if len(runner.FeatureAssignments) > 0 {
-		b.WriteString(fmt.Sprintf("  Assigned:      %s\n", formatRunnerAssignments(runner.FeatureAssignments, true)))
+		fmt.Fprintf(&b, "  Assigned:      %s\n", formatRunnerAssignments(runner.FeatureAssignments, true))
 	}
 
 	// Runner-side feature affinity
 	if runner.FeatureIDs != "" {
-		b.WriteString(fmt.Sprintf("  Affinity:      %s\n", runner.FeatureIDs))
+		fmt.Fprintf(&b, "  Affinity:      %s\n", runner.FeatureIDs)
 	}
 
 	// Labels
@@ -218,19 +218,19 @@ func (rp RunnerPanel) ViewDetail(width, height int) string {
 		for k, v := range runner.Labels {
 			labelParts = append(labelParts, fmt.Sprintf("%s=%s", k, v))
 		}
-		b.WriteString(fmt.Sprintf("  Labels:        %s\n", strings.Join(labelParts, ", ")))
+		fmt.Fprintf(&b, "  Labels:        %s\n", strings.Join(labelParts, ", "))
 	}
 
 	// Timestamps
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  Registered:    %s\n", rp.formatTimestamp(runner.RegisteredAt)))
-	b.WriteString(fmt.Sprintf("  Last Beat:     %s\n", rp.formatTimestamp(runner.LastHeartbeat)))
+	fmt.Fprintf(&b, "  Registered:    %s\n", rp.formatTimestamp(runner.RegisteredAt))
+	fmt.Fprintf(&b, "  Last Beat:     %s\n", rp.formatTimestamp(runner.LastHeartbeat))
 
 	// Uptime
 	if runner.RegisteredAt != "" {
 		if registered, err := time.Parse(time.RFC3339, runner.RegisteredAt); err == nil {
 			uptime := time.Since(registered).Truncate(time.Second)
-			b.WriteString(fmt.Sprintf("  Uptime:        %s\n", uptime.String()))
+			fmt.Fprintf(&b, "  Uptime:        %s\n", uptime.String())
 		}
 	}
 

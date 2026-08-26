@@ -312,20 +312,20 @@ func (c *SaveCommand) buildEditorTemplate() string {
 	var buf bytes.Buffer
 
 	buf.WriteString("---\n")
-	buf.WriteString(fmt.Sprintf("title: %s\n", c.Flags.Title))
-	buf.WriteString(fmt.Sprintf("type: %s\n", c.Flags.Type))
+	fmt.Fprintf(&buf, "title: %s\n", c.Flags.Title)
+	fmt.Fprintf(&buf, "type: %s\n", c.Flags.Type)
 
 	if c.Flags.Tags != "" {
 		buf.WriteString("tags:\n")
 		for _, tag := range strings.Split(c.Flags.Tags, ",") {
 			tag = strings.TrimSpace(tag)
 			if tag != "" {
-				buf.WriteString(fmt.Sprintf("  - %s\n", tag))
+				fmt.Fprintf(&buf, "  - %s\n", tag)
 			}
 		}
 	} else {
 		buf.WriteString("tags:\n")
-		buf.WriteString(fmt.Sprintf("  - %s\n", c.Flags.Type))
+		fmt.Fprintf(&buf, "  - %s\n", c.Flags.Type)
 	}
 
 	status := c.Flags.Status
@@ -336,13 +336,13 @@ func (c *SaveCommand) buildEditorTemplate() string {
 			status = "active"
 		}
 	}
-	buf.WriteString(fmt.Sprintf("status: %s\n", status))
+	fmt.Fprintf(&buf, "status: %s\n", status)
 
 	priority := c.Flags.Priority
 	if priority == "" {
 		priority = "medium"
 	}
-	buf.WriteString(fmt.Sprintf("priority: %s\n", priority))
+	fmt.Fprintf(&buf, "priority: %s\n", priority)
 
 	buf.WriteString("---\n\n")
 	buf.WriteString("<!-- Enter your content below. Save and quit to create the entry. -->\n")

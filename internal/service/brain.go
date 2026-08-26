@@ -2642,8 +2642,8 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 				content = truncateAtBoundary(content, perEntry)
 				truncated = true
 				contextBuilder.WriteString(content)
-				contextBuilder.WriteString(fmt.Sprintf(
-					"\n\n_[truncated — recall %q for the full entry]_\n", entry.Path))
+				fmt.Fprintf(&contextBuilder,
+					"\n\n_[truncated — recall %q for the full entry]_\n", entry.Path)
 			} else {
 				contextBuilder.WriteString(content)
 				contextBuilder.WriteString("\n")

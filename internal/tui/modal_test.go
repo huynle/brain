@@ -640,9 +640,9 @@ func (m *focusableTestModal) View() string {
 	var b strings.Builder
 	for i, item := range m.items {
 		if i == m.focusedIdx {
-			b.WriteString(fmt.Sprintf("→ %s\n", item))
+			fmt.Fprintf(&b, "→ %s\n", item)
 		} else {
-			b.WriteString(fmt.Sprintf("  %s\n", item))
+			fmt.Fprintf(&b, "  %s\n", item)
 		}
 	}
 	return b.String()

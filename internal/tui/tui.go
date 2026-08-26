@@ -3708,7 +3708,7 @@ func (m *Model) automationDetailContent(path, content string) string {
 			if status == "" {
 				status = "unknown"
 			}
-			b.WriteString(fmt.Sprintf("- %s [%s] %s", run.ID, status, run.Title))
+			fmt.Fprintf(&b, "- %s [%s] %s", run.ID, status, run.Title)
 			if run.Modified != "" {
 				b.WriteString(" modified=" + run.Modified)
 			}
@@ -3899,14 +3899,14 @@ func (m *Model) goalReconcileDetailSection(entryID string) string {
 	last := audit[0]
 	var b strings.Builder
 	b.WriteString("\n\n## Last Reconcile\n")
-	b.WriteString(fmt.Sprintf("%s — %s", string(last.Decision), last.Reason))
+	fmt.Fprintf(&b, "%s — %s", string(last.Decision), last.Reason)
 	if last.Timestamp != "" {
 		b.WriteString("\n" + last.Timestamp)
 	}
 
 	b.WriteString("\n\n## Audit\n")
 	for _, a := range audit {
-		b.WriteString(fmt.Sprintf("- %s [%s] %s", a.Timestamp, string(a.Decision), a.Reason))
+		fmt.Fprintf(&b, "- %s [%s] %s", a.Timestamp, string(a.Decision), a.Reason)
 		if a.GeneratedTaskID != "" {
 			b.WriteString(" task=" + a.GeneratedTaskID)
 		}
@@ -4828,7 +4828,7 @@ func renderTaskLogLines(lines []types.LogLine, width, height int) string {
 		if len(level) > 5 {
 			level = level[:5]
 		}
-		b.WriteString(fmt.Sprintf("%s %-5s %s", DimStyle.Render(ts), level, truncateMsg(l.Content, contentWidth)))
+		fmt.Fprintf(&b, "%s %-5s %s", DimStyle.Render(ts), level, truncateMsg(l.Content, contentWidth))
 		if i < len(lines)-1 {
 			b.WriteString("\n")
 		}

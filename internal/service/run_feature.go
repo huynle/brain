@@ -27,17 +27,29 @@ import (
 // shouldSkipTask. The behaviour matches RunTaskNow's documented contract
 // — pause is meant to halt automatic scheduling, not block manual overrides.
 //
+// force reclaims a dispatch lease that was pushed to a runner and never
+// acknowledged. It does NOT touch an acknowledged lease — see
+// reclaimableLease for why that distinction is the whole safety argument.
+//
 // Returned reasons (when Dispatched=false):
 //   - "scheduler_not_configured" — required dependencies missing
 //   - "feature_not_found"        — featureID is empty
-//   - "no_ready_tasks"           — feature has no ready tasks right now
-//   - "feature_in_progress"      — every ready task was already leased
+//   - "no_ready_tasks"           — feature has no ready tasks right now;
+//     Detail and WaitingOnFeatures/BlockedByFeatures name the features it is
+//     gated behind when that is why
+//   - "feature_in_progress"      — a runner acknowledged every ready task
+//     and is working it
+//   - "feature_dispatch_pending" — every ready task is held by a lease that
+//     was pushed and never acknowledged: nothing is running, and the holds
+//     clear on their own when the leases expire
 //   - "no_online_runner"         — no runners are registered
 //   - "no_eligible_runner"       — runners exist but none can take these
 //     tasks; Detail names the runner and why (project not allowed, executor
 //     unsupported, at capacity, …)
+//   - "runner_unreachable"       — placement picked a runner but its command
+//     stream is not connected, so the dispatch was not delivered
 //
-// The last two are the per-task skip reasons promoted to the response: when
+// The last three are the per-task skip reasons promoted to the response: when
 // nothing dispatched, the whole feature's outcome is the dominant per-task
 // cause, so a caller that only reads Reason/Detail still learns why.
 //
@@ -61,11 +73,17 @@ type RunFeatureOptions struct {
 
 // RunFeatureWithOptions is RunFeatureNow plus the dependent-chain option.
 func (s *SchedulerService) RunFeatureWithOptions(ctx context.Context, projectID, featureID string, opts RunFeatureOptions) (*types.RunFeatureResponse, error) {
-	// opts.Force is accepted for symmetry with RunTaskNow but is not read:
-	// a manual feature run ALWAYS dispatches with force=true (see the
-	// payload built below), because bypassing the project pause dial is the
-	// entire point of running one feature by hand. Noted rather than
-	// removed so the next reader does not go looking for the branch.
+	// Two different "forces" meet here, and conflating them is a trap.
+	//
+	// The dispatch PAYLOAD always carries force=true, which is what makes
+	// the runner bypass the project pause dial — the whole point of running
+	// one feature by hand.
+	//
+	// opts.Force is narrower and separate: it reclaims an UNACKNOWLEDGED
+	// dispatch lease (see reclaimableLease below), never an acknowledged
+	// one. It exists so a lease left behind by a command that never reached
+	// its runner does not block an explicit user request.
+	force := opts.Force
 	resp := &types.RunFeatureResponse{ProjectID: projectID, FeatureID: featureID}
 
 	// Enrolment happens BEFORE any early return below.
@@ -94,12 +112,15 @@ func (s *SchedulerService) RunFeatureWithOptions(ctx context.Context, projectID,
 		return resp, nil
 	}
 
-	// Outstanding is computed BEFORE the early return below, because the
+	// The snapshot is taken BEFORE the early return below, because the
 	// early return is exactly the case the cascade misread: "no ready
-	// tasks" is not "feature finished". Unknown (-1) when no feature-task
-	// lister is wired, so callers can tell "nothing left" from "cannot
-	// tell" instead of reading a default 0 as drained.
-	resp.Outstanding = s.featureOutstanding(ctx, projectID, featureID)
+	// tasks" is not "feature finished". Outstanding is nil when no
+	// feature-task lister is wired, so callers can tell "nothing left"
+	// from "cannot tell" instead of reading a default 0 as drained.
+	snap := s.featureTaskSnapshot(ctx, projectID, featureID)
+	resp.Outstanding = snap.Outstanding
+	resp.WaitingOnFeatures = snap.WaitingOn
+	resp.BlockedByFeatures = snap.BlockedBy
 
 	tasks, err := s.tasks.GetReady(ctx, projectID, &api.TaskFilterOptions{FeatureIDs: []string{featureID}})
 	if err != nil {
@@ -107,7 +128,7 @@ func (s *SchedulerService) RunFeatureWithOptions(ctx context.Context, projectID,
 	}
 	if len(tasks) == 0 {
 		resp.Reason = "no_ready_tasks"
-		resp.Detail = "no ready tasks in this feature; check dependencies or in-progress state"
+		resp.Detail = noReadyTasksDetail(snap)
 		if s.cascade != nil {
 			resp.CascadeActive = s.cascade.IsActive(projectID, featureID)
 		}
@@ -183,45 +204,79 @@ func (s *SchedulerService) RunFeatureWithOptions(ctx context.Context, projectID,
 			return nil, fmt.Errorf("create dispatch lease for %s: %w", task.ID, leaseErr)
 		}
 		if !created {
-			// Task is already leased to another runner. Surface the
-			// existing owner so the user can see what's happening, and
-			// queue so the cascade re-evaluates when the lease releases.
+			// Task is already leased. Look the holder up so the user can
+			// see who has it and in what state — "already leased" alone
+			// cannot distinguish a runner working the task from a
+			// dispatch that never got an answer.
 			existing, lookupErr := s.leases.GetDispatchLeaseRow(ctx, projectID, task.ID)
 			if lookupErr != nil {
 				return nil, fmt.Errorf("lookup existing dispatch lease: %w", lookupErr)
 			}
-			one.Reason = "already_leased"
-			one.Detail = "task already has an active dispatch lease"
-			if existing != nil {
-				one.RunnerID = existing.AssignedRunnerID
-				one.LeaseID = existing.LeaseID
-				one.LeaseState = existing.State
-				if existing.ExpiresAt > 0 {
-					one.ExpiresAt = time.UnixMilli(existing.ExpiresAt).UTC().Format(time.RFC3339)
+			if force && reclaimableLease(existing) {
+				lease, created, leaseErr = s.reclaimLease(ctx, projectID, task.ID, existing, candidate, now)
+				if leaseErr != nil {
+					return nil, leaseErr
 				}
 			}
-			resp.Results = append(resp.Results, one)
-			resp.SkippedCount++
-			resp.Queued = append(resp.Queued, task.ID)
-			continue
+			if !created {
+				one.Reason = "already_leased"
+				one.Detail = describeActiveLease(existing)
+				if force && existing != nil && !reclaimableLease(existing) {
+					one.Detail += "; force does not reclaim an acknowledged lease"
+				}
+				if existing != nil {
+					one.RunnerID = existing.AssignedRunnerID
+					one.LeaseID = existing.LeaseID
+					one.LeaseState = existing.State
+					if existing.ExpiresAt > 0 {
+						one.ExpiresAt = time.UnixMilli(existing.ExpiresAt).UTC().Format(time.RFC3339)
+					}
+				}
+				resp.Results = append(resp.Results, one)
+				resp.SkippedCount++
+				// Queue so the cascade re-evaluates when the lease
+				// releases.
+				resp.Queued = append(resp.Queued, task.ID)
+				continue
+			}
+			// Reaching here means created flipped true, which only the
+			// reclaim above can do — so existing is non-nil.
+			slog.Info("reclaimed unacknowledged dispatch lease on forced feature run",
+				"project_id", projectID, "task_id", task.ID,
+				"previous_runner_id", existing.AssignedRunnerID,
+				"previous_lease_id", existing.LeaseID,
+				"runner_id", candidate.RunnerID,
+			)
 		}
 
-		if s.publisher != nil {
-			payload := map[string]any{
-				"taskId":    task.ID,
-				"projectId": projectID,
-				"lease":     lease,
-				"expiresAt": lease.ExpiresAt,
-				// Inline the resolved task so the runner can process
-				// this dispatch without an HTTP round-trip back to
-				// GetReadyTasks.
-				"task": task,
-				// RunFeatureNow is user-initiated, so always tell the
-				// runner this is a manual override — bypassing its pause
-				// gate. See scheduler.go RunTaskNow for the full rationale.
-				"force": true,
-			}
-			s.publisher.PublishRunnerCommand(candidate.RunnerID, "dispatch", payload)
+		payload := map[string]any{
+			"taskId":    task.ID,
+			"projectId": projectID,
+			"lease":     lease,
+			"expiresAt": lease.ExpiresAt,
+			// Inline the resolved task so the runner can process
+			// this dispatch without an HTTP round-trip back to
+			// GetReadyTasks.
+			"task": task,
+			// RunFeatureNow is user-initiated, so always tell the
+			// runner this is a manual override — bypassing its pause
+			// gate. See scheduler.go RunTaskNow for the full rationale.
+			"force": true,
+		}
+		if !s.publishDispatch(candidate.RunnerID, payload) {
+			// The lease is ours and the command is lost. Undo the lease
+			// so this task is not reported — or refused — as in flight
+			// for the rest of its TTL, and say which runner went quiet.
+			s.undoUndeliveredLease(ctx, projectID, task.ID)
+			one.Reason = reasonRunnerUnreachable
+			one.Detail = unreachableDetail(candidate.RunnerID)
+			one.RunnerID = candidate.RunnerID
+			resp.Results = append(resp.Results, one)
+			resp.SkippedCount++
+			// Queue it: a runner whose stream is down is usually
+			// reconnecting, and the cascade re-attempt costs a publish.
+			resp.Queued = append(resp.Queued, task.ID)
+			continue
 		}
 
 		reservedSlots[candidate.RunnerID]++
@@ -247,11 +302,24 @@ func (s *SchedulerService) RunFeatureWithOptions(ctx context.Context, projectID,
 		reason, detail := dominantSkipReason(resp.Results)
 		switch reason {
 		case "", "already_leased":
-			// Leases are held by runners actively working the feature, so
-			// this stays the pre-existing in-flight reason (which the
-			// cascade and the PWA both already understand).
-			resp.Reason = "feature_in_progress"
-			resp.Detail = "every ready task was already in flight or otherwise unrunnable"
+			// "Held by a lease" is two different situations and they used
+			// to flatten into one sentence. A lease a runner acknowledged
+			// means the work is genuinely in flight. A lease that was
+			// pushed and never acknowledged means nothing is running: the
+			// dispatch went out and no answer came back, and the hold
+			// clears itself when the lease expires. Reporting the second
+			// as "every ready task is already in flight" sent users
+			// looking for a process that does not exist.
+			if pending, until := allLeasesAwaitingAck(resp.Results); pending {
+				resp.Reason = "feature_dispatch_pending"
+				resp.Detail = "no task is running: every ready task is held by a dispatch that was never acknowledged"
+				if until != "" {
+					resp.Detail += fmt.Sprintf("; the holds clear by %s and the feature can run again then", until)
+				}
+			} else {
+				resp.Reason = "feature_in_progress"
+				resp.Detail = "every ready task was already in flight or otherwise unrunnable"
+			}
 		default:
 			resp.Reason = reason
 			resp.Detail = detail
@@ -274,6 +342,114 @@ func (s *SchedulerService) RunFeatureWithOptions(ctx context.Context, projectID,
 	}
 
 	return resp, nil
+}
+
+// reclaimableLease decides whether an explicit, user-initiated run may take a
+// dispatch lease away from the runner that holds it.
+//
+// Only an unacknowledged ("pushed") lease qualifies. This is deliberately
+// narrower than RunTaskNow's force, which releases any lease including an
+// acknowledged one, and it is narrower than it first looks like it needs to
+// be — so the reasoning is worth writing down:
+//
+//   - An ACKED lease means the runner told the server it took the work and,
+//     immediately after, claims and spawns it. Reclaiming that races a live
+//     process, and there is prior art for refusing exactly this: the resume
+//     path will not release a claim held by an online runner even under
+//     force (see the Abandonment + Resume section in CLAUDE.md). A user who
+//     really wants to displace running work has task-level force and the
+//     runner-shell for that; the feature-level batch should not do it to a
+//     whole feature at once.
+//
+//   - A PUSHED lease is NOT proof that the runner never got the dispatch.
+//     The runner acks late — after resolving its executor and its workdir,
+//     and workdir resolution can create a git worktree or clone a remote,
+//     which takes real seconds (see CommonResolveWorkdir). "Pushed"
+//     therefore covers both "the command evaporated" and "the runner is
+//     mid-setup". That ambiguity is why reclaiming a pushed lease is gated
+//     behind an explicit force rather than done automatically on every
+//     RunFeatureNow: automatic reclaim would occasionally double-dispatch a
+//     task whose runner was simply slow to prepare.
+//
+// The ordinary case this used to matter for no longer reaches here at all:
+// a dispatch that is not delivered now clears its own lease at publish time
+// (see publishDispatch), so the phantom lease that made "Run feature now"
+// look dead is not created in the first place. force is the backstop for
+// the residue — a command accepted by a stream that then died before the
+// runner read it.
+func reclaimableLease(row *storage.DispatchLeaseRow) bool {
+	return row != nil && row.State == storage.DispatchLeaseStatePushed
+}
+
+// reclaimLease releases an unacknowledged lease and immediately re-creates it
+// for the chosen candidate. Returns the new lease and whether the re-create
+// won; a false means someone else got there first and the caller must fall
+// back to reporting the task as already leased.
+func (s *SchedulerService) reclaimLease(
+	ctx context.Context,
+	projectID, taskID string,
+	existing *storage.DispatchLeaseRow,
+	candidate *types.RunnerInfo,
+	now int64,
+) (*storage.DispatchLeaseRow, bool, error) {
+	if _, err := s.leases.ReleaseDispatchLease(ctx, projectID, taskID, existing.AssignedRunnerID); err != nil {
+		return nil, false, fmt.Errorf("release unacknowledged dispatch lease for %s: %w", taskID, err)
+	}
+	lease, created, err := s.leases.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+		ProjectID:         projectID,
+		TaskID:            taskID,
+		AssignedRunnerID:  candidate.RunnerID,
+		AssignedMachineID: candidate.MachineID,
+		PushedAt:          now,
+		ExpiresAt:         now + s.leaseTTL.Milliseconds(),
+	})
+	if err != nil {
+		return nil, false, fmt.Errorf("recreate dispatch lease after reclaim for %s: %w", taskID, err)
+	}
+	return lease, created, nil
+}
+
+// allLeasesAwaitingAck reports whether every lease blocking this run was
+// pushed and never acknowledged — i.e. nothing is actually running — and the
+// latest expiry among them, so the caller can say when the holds clear.
+//
+// "Every" is the bar on purpose: one acknowledged lease means a runner really
+// is working inside this feature, and "in progress" is then the honest
+// summary even if a sibling task is stuck in limbo.
+func allLeasesAwaitingAck(results []types.RunTaskResponse) (bool, string) {
+	pending := 0
+	latest := ""
+	for _, one := range results {
+		if one.Dispatched || one.Reason != "already_leased" {
+			continue
+		}
+		if one.LeaseState != storage.DispatchLeaseStatePushed {
+			return false, ""
+		}
+		pending++
+		if one.ExpiresAt > latest {
+			latest = one.ExpiresAt
+		}
+	}
+	return pending > 0, latest
+}
+
+// noReadyTasksDetail turns "no ready tasks" into a sentence that answers the
+// question it raises. A feature gated behind another feature used to be told
+// only to "check dependencies", sending the user to go find out something the
+// server already knew: the tasks carry the blocking feature IDs
+// (waiting_on_features / blocked_by_features, see applyFeatureGating).
+func noReadyTasksDetail(snap featureSnapshot) string {
+	switch {
+	case len(snap.BlockedBy) > 0:
+		return fmt.Sprintf("no ready tasks in this feature; it is blocked by feature(s) %s",
+			strings.Join(snap.BlockedBy, ", "))
+	case len(snap.WaitingOn) > 0:
+		return fmt.Sprintf("no ready tasks in this feature; it is waiting on feature(s) %s to complete",
+			strings.Join(snap.WaitingOn, ", "))
+	default:
+		return "no ready tasks in this feature; check dependencies or in-progress state"
+	}
 }
 
 // dominantSkipReason picks the per-task skip reason that explains the most
@@ -323,32 +499,85 @@ func dominantSkipReason(results []types.RunTaskResponse) (string, string) {
 	return reason, detail
 }
 
-// featureOutstanding counts tasks in the feature that can still produce work
-// without a human: status pending or in_progress.
+// featureSnapshot is what one GetTasksByFeature call can tell RunFeatureNow
+// about a feature beyond its ready set.
+type featureSnapshot struct {
+	// Outstanding counts tasks that can still produce work without a
+	// human: status pending or in_progress. nil means "could not
+	// measure" — see RunFeatureResponse.Outstanding for why that must
+	// not collapse to 0.
+	Outstanding *int
+
+	// WaitingOn / BlockedBy name the features this one is gated behind,
+	// folded from the tasks' feature-level dependency state
+	// (applyFeatureGating). They answer the question "no ready tasks"
+	// raises and refuses to answer: ready for what, waiting on whom.
+	WaitingOn []string
+	BlockedBy []string
+}
+
+// featureTaskSnapshot reads every task in the feature — not just the ready
+// ones — and folds them into the facts RunFeatureNow reports.
 //
-// Returns nil when the lister is not wired or the query failed, which
-// callers must treat as "unknown" rather than "drained". Terminal statuses (completed, validated,
-// archived, cancelled) and blocked do not count: blocked is where the retry
-// cap parks a task after max_attempts, and continuing to wait on it would
-// keep a cascade alive forever.
-func (s *SchedulerService) featureOutstanding(ctx context.Context, projectID, featureID string) *int {
+// Terminal statuses (completed, validated, archived, cancelled) and blocked
+// do not count toward Outstanding: blocked is where the retry cap parks a
+// task after max_attempts, and continuing to wait on it would keep a cascade
+// alive forever.
+func (s *SchedulerService) featureTaskSnapshot(ctx context.Context, projectID, featureID string) featureSnapshot {
 	if s.featTasks == nil {
-		return nil
+		return featureSnapshot{}
 	}
 	tasks, err := s.featTasks.GetTasksByFeature(ctx, projectID, featureID)
 	if err != nil {
-		slog.Warn("feature outstanding count failed",
+		slog.Warn("feature task snapshot failed",
 			"project_id", projectID, "feature_id", featureID, "error", err)
-		return nil
+		return featureSnapshot{}
 	}
+	snap := featureSnapshot{}
 	n := 0
+	waiting := newStringSet()
+	blocked := newStringSet()
 	for i := range tasks {
 		switch tasks[i].Status {
 		case "pending", "in_progress":
 			n++
 		}
+		waiting.addAll(tasks[i].WaitingOnFeatures)
+		blocked.addAll(tasks[i].BlockedByFeatures)
 	}
-	return &n
+	snap.Outstanding = &n
+	snap.WaitingOn = waiting.sorted()
+	snap.BlockedBy = blocked.sorted()
+	return snap
+}
+
+// stringSet is a tiny insertion-deduping set with sorted output, so the
+// feature IDs a response carries are stable across calls (map iteration
+// order would make the same hold read differently every refresh).
+type stringSet struct {
+	seen map[string]bool
+}
+
+func newStringSet() *stringSet { return &stringSet{seen: map[string]bool{}} }
+
+func (s *stringSet) addAll(values []string) {
+	for _, v := range values {
+		if v = strings.TrimSpace(v); v != "" {
+			s.seen[v] = true
+		}
+	}
+}
+
+func (s *stringSet) sorted() []string {
+	if len(s.seen) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(s.seen))
+	for v := range s.seen {
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // =============================================================================

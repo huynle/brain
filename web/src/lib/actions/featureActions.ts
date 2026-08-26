@@ -38,6 +38,13 @@ export interface FeatureActionContext {
   /** Whether the feature is currently in the multi-select scope. */
   isSelected: (feature: DerivedFeature) => boolean;
   runFeature: (feature: DerivedFeature) => Promise<void>;
+  /** Runs the feature AND enrols everything that transitively depends on it,
+   *  so each runs as its gate opens. */
+  runFeatureWithDependents: (feature: DerivedFeature) => Promise<void>;
+  /** Cancels a standing chain rooted at this feature. */
+  cancelDependentChain: (feature: DerivedFeature) => Promise<void>;
+  /** Whether a chain rooted here is already running. */
+  hasActiveChain: (feature: DerivedFeature) => boolean;
   /** Batch-resumes every abandoned task in the feature, directly. */
   resumeFeature: (feature: DerivedFeature) => Promise<void>;
   /** Opens the status picker for a feature-wide change. */
@@ -161,6 +168,38 @@ export function buildFeatureActions(
     disabledReason: runFeatureBlockedReason(feature),
     run: () => ctx.runFeature(feature),
   });
+
+  // Opt-in sibling of "Run feature now". A SEPARATE verb rather than a
+  // modifier on the existing one: the default gesture must keep meaning
+  // exactly what it means today, and a chain has a much wider blast radius
+  // than one feature.
+  //
+  // Worth knowing: on an UNPAUSED project the scheduler already dispatches a
+  // dependent the moment its gate opens, so this earns its keep while a
+  // project is paused.
+  // The label carries no count on purpose. The chain is derived server-side
+  // from the CURRENT graph at click time, so any number computed here from
+  // client state would be a guess that can disagree with what actually gets
+  // queued. The toast reports the real figure the moment it is known.
+  actions.push({
+    id: "run-with-dependents",
+    label: "Run feature + dependents",
+    group: "run",
+    key: "X",
+    disabledReason: runFeatureBlockedReason(feature),
+    run: () => ctx.runFeatureWithDependents(feature),
+  });
+
+  // Only offered when there is something to cancel, so the verb list does
+  // not carry a permanently-dead entry for the common case.
+  if (ctx.hasActiveChain(feature)) {
+    actions.push({
+      id: "cancel-chain",
+      label: "Cancel queued dependents",
+      group: "run",
+      run: () => ctx.cancelDependentChain(feature),
+    });
+  }
 
   // Always present (disabled-never-hidden); executes directly rather than
   // detouring through FeatureActionsModal — the modal remains reachable via
@@ -375,7 +414,11 @@ export function summarizeResumeOutcome(r: ResumeFeatureResult): {
   return {
     message: parts.join(" · "),
     kind:
-      r.total_resumed === 0 ? "info" : r.total_skipped > 0 ? "warning" : "success",
+      r.total_resumed === 0
+        ? "info"
+        : r.total_skipped > 0
+          ? "warning"
+          : "success",
   };
 }
 

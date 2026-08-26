@@ -178,6 +178,19 @@ type RunFeatureService interface {
 	RunFeatureNow(ctx context.Context, projectID, featureID string, force bool) (*types.RunFeatureResponse, error)
 }
 
+// DependentChainService backs the run-with-dependents surface. Optional and
+// separate from RunFeatureService so an implementation that only knows how to
+// run one feature keeps satisfying the older interface — widening
+// RunFeatureService would break every existing fake.
+// Primitives rather than a service options struct on purpose: internal/service
+// already imports internal/api, so naming a service type here would close an
+// import cycle.
+type DependentChainService interface {
+	RunFeatureWithDependents(ctx context.Context, projectID, featureID string, force, includeDependents bool) (*types.RunFeatureResponse, error)
+	CancelDependentChain(ctx context.Context, projectID, rootFeatureID string) (bool, error)
+	ListDependentChains(ctx context.Context, projectID string) ([]types.DependentChain, error)
+}
+
 // RunProjectService backs POST /tasks/{projectId}/run — fans out RunFeatureNow
 // across every ready feature in a project. Optional capability (mirrors
 // RunFeatureService); when nil the handler returns 501 so the PWA can fall

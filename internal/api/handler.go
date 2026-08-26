@@ -26,6 +26,7 @@ type Handler struct {
 	schedulerViews SchedulerVisibilityService
 	runTask        RunTaskService
 	runFeature     RunFeatureService
+	depChains      DependentChainService
 	runProject     RunProjectService
 	bridge         BridgeService
 	hub            *realtime.Hub
@@ -197,6 +198,16 @@ func WithRunTaskService(s RunTaskService) HandlerOption {
 func WithRunFeatureService(s RunFeatureService) HandlerOption {
 	return func(h *Handler) {
 		h.runFeature = s
+	}
+}
+
+// WithDependentChainService enables the run-with-dependents surface. When
+// unset, includeDependents on a feature run is ignored (the root still runs)
+// and the chain endpoints return 501, so an older deployment degrades to
+// today's one-shot behaviour rather than failing.
+func WithDependentChainService(s DependentChainService) HandlerOption {
+	return func(h *Handler) {
+		h.depChains = s
 	}
 }
 

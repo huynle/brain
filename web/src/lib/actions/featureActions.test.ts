@@ -48,6 +48,9 @@ function recorder(over: Partial<FeatureActionContext> = {}) {
     toggleSelect: (f) => void calls.push(`select:${f.id}`),
     isSelected: () => false,
     runFeature: async (f) => void calls.push(`run:${f.id}`),
+    runFeatureWithDependents: async (f) => void calls.push(`run-deps:${f.id}`),
+    cancelDependentChain: async (f) => void calls.push(`cancel-chain:${f.id}`),
+    hasActiveChain: () => false,
     resumeFeature: async (f) => void calls.push(`resume-direct:${f.id}`),
     openStatusPicker: (f) => void calls.push(`picker:${f.id}`),
     setStatusForAll: async (f, s) => void calls.push(`status:${f.id}:${s}`),
@@ -195,14 +198,18 @@ test("resume label is singular for one abandoned task", () => {
 
 test("resume executes directly instead of opening the actions modal", async () => {
   const { calls, ctx } = recorder();
-  await byId(mkFeature({ resumableCount: 2 }), ctx).get("resume")!.run();
+  await byId(mkFeature({ resumableCount: 2 }), ctx)
+    .get("resume")!
+    .run();
   assert.deepEqual(calls, ["resume-direct:checkout-flow"]);
 });
 
 test("resumeFeatureBlockedReason covers the empty feature too", () => {
   assert.match(
     resumeFeatureBlockedReason(
-      mkFeature({ taskCount: { total: 0, completed: 0, blocked: 0, active: 0 } }),
+      mkFeature({
+        taskCount: { total: 0, completed: 0, blocked: 0, active: 0 },
+      }),
     ),
     /no tasks/i,
   );
@@ -261,7 +268,10 @@ test("cancel does NOT require typing the feature name", () => {
   // Type-to-confirm is friction reserved for the irreversible. Applying it
   // to a reversible action trains people to type through the real one.
   const { ctx } = recorder();
-  assert.equal(byId(mkFeature(), ctx).get("cancel")!.confirm?.typeToConfirm, undefined);
+  assert.equal(
+    byId(mkFeature(), ctx).get("cancel")!.confirm?.typeToConfirm,
+    undefined,
+  );
 });
 
 test("delete requires typing the feature name", () => {
@@ -275,7 +285,11 @@ test("delete confirmation states the blast radius and points at cancel", () => {
   const del = byId(mkFeature(), ctx).get("delete")!;
   assert.match(del.confirm!.body, /all 4 tasks/i);
   assert.match(del.confirm!.body, /cannot be undone/i);
-  assert.match(del.confirm!.body, /cancel/i, "delete should point at the reversible option");
+  assert.match(
+    del.confirm!.body,
+    /cancel/i,
+    "delete should point at the reversible option",
+  );
 });
 
 test("delete is flagged danger and routes to deleteFeature", async () => {
@@ -348,7 +362,9 @@ test("archive confirms the blast radius at the reversible tier — no typing", (
 
 test("archive routes to setStatusForAll archived", async () => {
   const { calls, ctx } = recorder();
-  await byId(mkFeature({ lifecycle: "merged" }), ctx).get("archive")!.run();
+  await byId(mkFeature({ lifecycle: "merged" }), ctx)
+    .get("archive")!
+    .run();
   assert.deepEqual(calls, ["status:checkout-flow:archived"]);
 });
 
@@ -365,7 +381,9 @@ test("archive sits in the state group directly after cancel", () => {
 test("checkout is blocked for an empty feature", () => {
   assert.match(
     checkoutBlockedReason(
-      mkFeature({ taskCount: { total: 0, completed: 0, blocked: 0, active: 0 } }),
+      mkFeature({
+        taskCount: { total: 0, completed: 0, blocked: 0, active: 0 },
+      }),
     ),
     /no tasks/i,
   );
@@ -395,11 +413,11 @@ test("every feature status entry is confirmed — none applies silently", () => 
   // A feature-wide status change touches everything under it; none of
   // these should fire straight from a menu click.
   const { ctx } = recorder();
-  const actions = buildFeatureStatusActions(
-    mkFeature(),
-    ctx,
-    ["pending", "completed", "blocked"] as TaskStatus[],
-  );
+  const actions = buildFeatureStatusActions(mkFeature(), ctx, [
+    "pending",
+    "completed",
+    "blocked",
+  ] as TaskStatus[]);
   for (const a of actions) {
     assert.ok(a.confirm, `${a.id} applies with no confirmation`);
   }
@@ -407,7 +425,9 @@ test("every feature status entry is confirmed — none applies silently", () => 
 
 test("picking a feature status routes to setStatusForAll", async () => {
   const { calls, ctx } = recorder();
-  const actions = buildFeatureStatusActions(mkFeature(), ctx, ["completed"] as TaskStatus[]);
+  const actions = buildFeatureStatusActions(mkFeature(), ctx, [
+    "completed",
+  ] as TaskStatus[]);
   await actions[0].run();
   assert.deepEqual(calls, ["status:checkout-flow:completed"]);
 });
@@ -512,4 +532,73 @@ test("summarizeBulkResult: truncation is surfaced, not swallowed", () => {
   assert.equal(r.kind, "warning");
   assert.match(r.message, /20 more/);
   assert.match(r.message, /run again/i);
+});
+
+// ─── run with dependents ─────────────────────────────────────────
+
+test("run-with-dependents is a separate verb from run", () => {
+  // A modifier on the existing verb would change what the default gesture
+  // means. A chain has a far wider blast radius than one feature.
+  const { ctx } = recorder();
+  const ids = buildFeatureActions(mkFeature(), ctx).map((a) => a.id);
+  assert.ok(ids.includes("run"), "plain run must stay");
+  assert.ok(ids.includes("run-with-dependents"));
+});
+
+test("run-with-dependents routes to its own effect", async () => {
+  const { ctx, calls } = recorder();
+  const a = buildFeatureActions(mkFeature(), ctx).find(
+    (x) => x.id === "run-with-dependents",
+  )!;
+  await a.run();
+  assert.deepEqual(calls, ["run-deps:checkout-flow"]);
+});
+
+test("run-with-dependents carries no count in its label", () => {
+  // The chain is derived server-side from the CURRENT graph at click time,
+  // so a client-side count would be a guess that can disagree with what is
+  // actually queued. The toast reports the real figure.
+  const { ctx } = recorder();
+  const a = buildFeatureActions(mkFeature(), ctx).find(
+    (x) => x.id === "run-with-dependents",
+  )!;
+  assert.equal(a.label, "Run feature + dependents");
+});
+
+test("run-with-dependents is blocked for the same reasons as run", () => {
+  const { ctx } = recorder();
+  const settled = mkFeature({
+    lifecycle: "merged",
+    taskCount: { total: 4, completed: 4, blocked: 0, active: 0 },
+  });
+  const acts = buildFeatureActions(settled, ctx);
+  const run = acts.find((a) => a.id === "run")!;
+  const deps = acts.find((a) => a.id === "run-with-dependents")!;
+  assert.equal(deps.disabledReason, run.disabledReason);
+});
+
+test("cancel appears only when a chain is actually queued", () => {
+  // A permanently-dead verb in the list teaches users to ignore the list.
+  const withoutChain = recorder();
+  assert.ok(
+    !buildFeatureActions(mkFeature(), withoutChain.ctx).some(
+      (a) => a.id === "cancel-chain",
+    ),
+    "cancel must be absent with no chain",
+  );
+
+  const withChain = recorder({ hasActiveChain: () => true });
+  const a = buildFeatureActions(mkFeature(), withChain.ctx).find(
+    (x) => x.id === "cancel-chain",
+  );
+  assert.ok(a, "cancel must appear once a chain is queued");
+});
+
+test("cancel routes to its own effect", async () => {
+  const { ctx, calls } = recorder({ hasActiveChain: () => true });
+  const a = buildFeatureActions(mkFeature(), ctx).find(
+    (x) => x.id === "cancel-chain",
+  )!;
+  await a.run();
+  assert.deepEqual(calls, ["cancel-chain:checkout-flow"]);
 });

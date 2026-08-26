@@ -45,6 +45,12 @@ type RunnerConfig struct {
 	IncludeProjects           []string           `yaml:"include_projects" json:"include_projects"`
 	AutoMonitors              bool               `yaml:"auto_monitors" json:"auto_monitors"`
 
+	// MaxTaskAttempts caps how many times a task may run before a failure
+	// parks it in "blocked" instead of resetting it to "pending". A per-task
+	// retry.max_attempts overrides this. 0 uses DefaultMaxTaskAttempts; a
+	// negative value restores the old unbounded-retry behaviour.
+	MaxTaskAttempts int `yaml:"max_task_attempts" json:"max_task_attempts"`
+
 	// EnvPassthrough is a list of environment variable names to forward
 	// from the runner process to spawned OpenCode agents.
 	// Defaults: ["BRAIN_API_URL", "BRAIN_API_TOKEN"]
@@ -299,6 +305,14 @@ type RunningTask struct {
 	// (injected) turn finishing its work on the serve process. Completion
 	// is held until the session idles or the hold window lapses.
 	BusyHoldSince time.Time `json:"busyHoldSince,omitempty"`
+
+	// AttemptCount is how many times this task had already failed when this
+	// run started; MaxAttempts is the cap resolved for it at dispatch. Both
+	// ride on the running record so the completion path can choose between
+	// "reset to pending for another try" and "park in blocked" without a
+	// round-trip back to the API.
+	AttemptCount int `json:"attemptCount,omitempty"`
+	MaxAttempts  int `json:"maxAttempts,omitempty"`
 }
 
 // TaskResultStatus enumerates possible outcomes of a task execution.

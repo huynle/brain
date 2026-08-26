@@ -244,6 +244,8 @@ func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 		Retry:               task.Retry,
 		ResumeRequested:     task.ResumeRequested,
 		ResumeRequestedAt:   task.ResumeRequestedAt,
+		AttemptCount:        task.AttemptCount,
+		LastFailedAt:        task.LastFailedAt,
 	}
 }
 

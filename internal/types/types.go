@@ -373,6 +373,14 @@ type BrainEntry struct {
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
 
+	// Failure retry accounting. Runtime-only (not frontmatter): written by
+	// the runner each time a task ends in failure/crash/timeout, reset to
+	// zero on success. A crashed task is reset to "pending" for retry, so
+	// without a counter a task that fails on a guard re-dispatched forever,
+	// every poll interval, holding a runner slot each time.
+	AttemptCount int    `json:"attempt_count,omitempty"`
+	LastFailedAt string `json:"last_failed_at,omitempty"`
+
 	// Backlinks (populated on GET)
 	Backlinks []BacklinkEntry `json:"backlinks,omitempty"`
 }
@@ -1177,6 +1185,13 @@ type ResolvedTask struct {
 	// resume the same task forever.
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
+
+	// AttemptCount is how many times this task has ended in failure. The
+	// runner increments it on each failure and clears it on success; when it
+	// reaches the effective cap the task is parked in "blocked" instead of
+	// being reset to "pending" for another immediate retry.
+	AttemptCount int    `json:"attempt_count,omitempty"`
+	LastFailedAt string `json:"last_failed_at,omitempty"`
 }
 
 // TaskStats holds aggregate task statistics.

@@ -1341,6 +1341,24 @@ type RunFeatureResponse struct {
 	Reason          string            `json:"reason,omitempty"`
 	Detail          string            `json:"detail,omitempty"`
 	CascadeActive   bool              `json:"cascadeActive,omitempty"`
+	// Outstanding counts this feature's tasks still capable of producing
+	// work — status pending or in_progress — at the moment of the call.
+	//
+	// It exists because Reason cannot answer "is this feature finished?".
+	// "no_ready_tasks" means only that nothing was READY right now, which
+	// is equally true of a drained feature and of one whose remaining
+	// tasks are waiting on a sibling that is still running. The cascade
+	// used the reason as a drain signal and dropped features mid-flight
+	// (see FeatureCascadeService.handleEvent). Outstanding is the
+	// unambiguous signal: 0 means nothing more can come from this feature
+	// without a human.
+	//
+	// A POINTER on purpose. nil means "could not measure", and it must be
+	// the zero value: an int whose zero value read as "drained" is the
+	// same shape of trap as the reason token it replaces — any fake or
+	// future implementation that forgot to set it would silently tell the
+	// cascade to drop the feature.
+	Outstanding *int `json:"outstanding,omitempty"`
 }
 
 // RunProjectRequest is the body for POST /tasks/:projectId/run.

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -55,6 +56,13 @@ func (s *SchedulerService) RunFeatureNow(ctx context.Context, projectID, feature
 		return resp, nil
 	}
 
+	// Outstanding is computed BEFORE the early return below, because the
+	// early return is exactly the case the cascade misread: "no ready
+	// tasks" is not "feature finished". Unknown (-1) when no feature-task
+	// lister is wired, so callers can tell "nothing left" from "cannot
+	// tell" instead of reading a default 0 as drained.
+	resp.Outstanding = s.featureOutstanding(ctx, projectID, featureID)
+
 	tasks, err := s.tasks.GetReady(ctx, projectID, &api.TaskFilterOptions{FeatureIDs: []string{featureID}})
 	if err != nil {
 		return nil, fmt.Errorf("load ready tasks for feature %q: %w", featureID, err)
@@ -62,6 +70,9 @@ func (s *SchedulerService) RunFeatureNow(ctx context.Context, projectID, feature
 	if len(tasks) == 0 {
 		resp.Reason = "no_ready_tasks"
 		resp.Detail = "no ready tasks in this feature; check dependencies or in-progress state"
+		if s.cascade != nil {
+			resp.CascadeActive = s.cascade.IsActive(projectID, featureID)
+		}
 		return resp, nil
 	}
 
@@ -272,4 +283,32 @@ func dominantSkipReason(results []types.RunTaskResponse) (string, string) {
 		detail = fmt.Sprintf("%s (+%d other reason(s))", detail, distinct-1)
 	}
 	return reason, detail
+}
+
+// featureOutstanding counts tasks in the feature that can still produce work
+// without a human: status pending or in_progress.
+//
+// Returns nil when the lister is not wired or the query failed, which
+// callers must treat as "unknown" rather than "drained". Terminal statuses (completed, validated,
+// archived, cancelled) and blocked do not count: blocked is where the retry
+// cap parks a task after max_attempts, and continuing to wait on it would
+// keep a cascade alive forever.
+func (s *SchedulerService) featureOutstanding(ctx context.Context, projectID, featureID string) *int {
+	if s.featTasks == nil {
+		return nil
+	}
+	tasks, err := s.featTasks.GetTasksByFeature(ctx, projectID, featureID)
+	if err != nil {
+		slog.Warn("feature outstanding count failed",
+			"project_id", projectID, "feature_id", featureID, "error", err)
+		return nil
+	}
+	n := 0
+	for i := range tasks {
+		switch tasks[i].Status {
+		case "pending", "in_progress":
+			n++
+		}
+	}
+	return &n
 }

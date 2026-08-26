@@ -1359,6 +1359,16 @@ type RunFeatureResponse struct {
 	// future implementation that forgot to set it would silently tell the
 	// cascade to drop the feature.
 	Outstanding *int `json:"outstanding,omitempty"`
+
+	// WaitingOnFeatures / BlockedByFeatures name the features this one is
+	// gated behind, folded from its tasks' feature-level dependency state.
+	// They exist so "no_ready_tasks" stops being a dead end: a feature held
+	// behind another feature can now say which one instead of telling the
+	// caller to go check. Waiting means the dependency is simply not
+	// finished; blocked means it cannot finish (failed dependency or a
+	// dependency cycle). Empty when the hold is not feature-level.
+	WaitingOnFeatures []string `json:"waitingOnFeatures,omitempty"`
+	BlockedByFeatures []string `json:"blockedByFeatures,omitempty"`
 }
 
 // RunProjectRequest is the body for POST /tasks/:projectId/run.
@@ -1728,6 +1738,14 @@ type SchedulerResult struct {
 	// SkippedAlreadyLeased counts tasks a previous pass already dispatched.
 	// This one is benign: the work is in flight, not stuck.
 	SkippedAlreadyLeased int `json:"skipped_already_leased,omitempty"`
+
+	// SkippedRunnerUnreachable counts tasks whose placement succeeded and
+	// whose lease was written, but whose dispatch command reached no live
+	// runner command stream — so the lease was undone again. A non-zero
+	// value means a runner is registered and looks online (its heartbeat is
+	// current) while its SSE stream is down: the tick did everything right
+	// and the work still went nowhere.
+	SkippedRunnerUnreachable int `json:"skipped_runner_unreachable,omitempty"`
 }
 
 // SchedulerStatus is lightweight scheduler loop state suitable for API exposure.

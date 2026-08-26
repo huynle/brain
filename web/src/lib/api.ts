@@ -429,6 +429,13 @@ export interface RunFeatureResponse {
   reason?: string;
   detail?: string;
   cascadeActive?: boolean;
+  /** Features this one is gated behind, from its tasks' feature-level
+   *  dependency state. Present with reason "no_ready_tasks" when that is
+   *  why — so the toast can name the blocker instead of telling the user to
+   *  go check. waiting = the dependency is unfinished; blocked = it cannot
+   *  finish (failed dependency or a cycle). */
+  waitingOnFeatures?: string[];
+  blockedByFeatures?: string[];
 }
 
 export const runFeature = (projectId: string, featureId: string, force = false) =>
@@ -558,10 +565,36 @@ function humanizeRunFeatureReason(r: RunFeatureResponse): string {
   switch (r.reason) {
     case "feature_not_found":
       return "feature not found";
-    case "no_ready_tasks":
+    case "no_ready_tasks": {
+      // Name the blocker when the server knows it. "check dependencies"
+      // sent the user off to look up something the response already
+      // carried (waiting_on_features, added with feature-level gating).
+      const blocked = r.blockedByFeatures ?? [];
+      if (blocked.length) {
+        return `no ready tasks — blocked by ${blocked.join(", ")}`;
+      }
+      const waiting = r.waitingOnFeatures ?? [];
+      if (waiting.length) {
+        return `no ready tasks — waiting on ${waiting.join(", ")}`;
+      }
       return "no ready tasks in this feature (check dependencies)";
+    }
     case "feature_in_progress":
       return "every ready task is already in flight";
+    case "feature_dispatch_pending": {
+      // The reason this exists: a lease stuck in "pushed" is NOT work in
+      // flight. The dispatch went out and nothing came back, so nothing is
+      // running and the hold clears itself when the lease expires. Saying
+      // "already in flight" sent users hunting for a process that did not
+      // exist; say what is true and when it resolves.
+      const clears = relativeFromNow(latestPendingLeaseExpiry(r.results));
+      const tail = clears ? ` (clears ${clears})` : "";
+      return `a previous dispatch is still pending ack — nothing is running${tail}`;
+    }
+    case "runner_unreachable":
+      return r.detail
+        ? `dispatch not delivered (${r.detail})`
+        : "the assigned runner's command stream is not connected";
     case "scheduler_not_configured":
       return "scheduler not configured on server";
     // Per-task placement reasons the server promotes to the feature level
@@ -582,6 +615,23 @@ function humanizeRunFeatureReason(r: RunFeatureResponse): string {
     default:
       return r.detail ? `${r.reason}: ${r.detail}` : r.reason;
   }
+}
+
+/**
+ * Latest expiry among the leases that are holding this feature and have not
+ * been acknowledged. It is what turns "wait" into "wait until when" — the
+ * one piece of information that tells a user to sit still rather than go
+ * looking for a runner to restart.
+ */
+function latestPendingLeaseExpiry(
+  results?: RunTaskResponse[],
+): string | undefined {
+  let latest: string | undefined;
+  for (const one of results ?? []) {
+    if (one.dispatched || one.leaseState !== "pushed" || !one.expiresAt) continue;
+    if (!latest || one.expiresAt > latest) latest = one.expiresAt;
+  }
+  return latest;
 }
 
 /**
@@ -896,14 +946,27 @@ function humanizeRunReason(r: RunTaskResponse): string {
       return "task is not ready (check dependencies)";
     case "already_leased": {
       // Surface the actual lease owner + state so users can tell at a
-      // glance whether to wait, abort, or force-redispatch.
+      // glance whether to wait, abort, or force-redispatch. The two states
+      // are different situations: acked means a runner said it took the
+      // work and is running it; pushed means the dispatch went out and
+      // nothing came back, so nothing is running and the hold expires on
+      // its own. One sentence for both read as "a process exists" either
+      // way, which is exactly the hunt this avoids.
       if (!r.runnerId) return "task already dispatched to a runner";
+      const rel = relativeFromNow(r.expiresAt);
+      if (r.leaseState === "pushed") {
+        const tail = rel ? ` (clears ${rel})` : "";
+        return `pushed to ${r.runnerId}, not acknowledged yet — nothing running${tail}`;
+      }
       const parts: string[] = [r.runnerId];
       if (r.leaseState) parts.push(r.leaseState);
-      const rel = relativeFromNow(r.expiresAt);
       if (rel) parts.push(`expires ${rel}`);
       return `already dispatched to ${parts[0]} (${parts.slice(1).join(", ")})`;
     }
+    case "runner_unreachable":
+      return detail
+        ? `dispatch not delivered (${detail})`
+        : "the assigned runner's command stream is not connected";
     case "scheduler_not_configured":
       return "scheduler not configured on server";
     case "":

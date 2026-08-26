@@ -15,7 +15,6 @@ type StatusBar struct {
 	SelectedCount       int
 	Metrics             *ResourceMetrics
 	IsPaused            bool
-	EnabledFeatureCount int
 	ActiveFeatureCount  int
 	RunnerMetrics       *RunnerMetrics
 }
@@ -81,14 +80,6 @@ func (s StatusBar) renderFirstRow(width int) string {
 		// Show pause symbol when no active features (gray, non-bold to match TS)
 		indicators += lipgloss.NewStyle().Foreground(lipgloss.Color("8")).
 			Render("⏸")
-		if s.EnabledFeatureCount > 0 {
-			suffix := "s"
-			if s.EnabledFeatureCount == 1 {
-				suffix = ""
-			}
-			indicators += lipgloss.NewStyle().Foreground(ColorReady).
-				Render(fmt.Sprintf(" [%d feature%s enabled]", s.EnabledFeatureCount, suffix))
-		}
 		indicators += " "
 	}
 

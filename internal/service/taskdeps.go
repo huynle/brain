@@ -436,49 +436,6 @@ func GetBlockedTasks(result *types.TaskListResponse) []types.ResolvedTask {
 	return blocked
 }
 
-// GetNextTask returns the next task to execute with feature-based ordering.
-//
-// Priority order:
-// 1. Tasks in "ready" features (sorted by feature priority)
-// 2. Ungrouped ready tasks (no feature_id)
-func GetNextTask(result *types.TaskListResponse) *types.ResolvedTask {
-	allReady := GetReadyTasks(result)
-	if len(allReady) == 0 {
-		return nil
-	}
-
-	// Compute features from all tasks (not just ready ones)
-	features := ComputeFeatures(result.Tasks)
-	if len(features) == 0 {
-		// No features defined, fall back to first ready task
-		return &allReady[0]
-	}
-
-	// Resolve feature dependencies
-	resolvedFeatures := ResolveFeatureDependencies(features)
-
-	// Get ready features sorted by priority
-	readyFeatures := GetReadyFeatures(resolvedFeatures)
-
-	// For each ready feature, find ready tasks within it
-	for _, feature := range readyFeatures {
-		for i := range allReady {
-			if allReady[i].FeatureID == feature.ID {
-				return &allReady[i]
-			}
-		}
-	}
-
-	// Fall back to ungrouped ready tasks (no feature_id)
-	for i := range allReady {
-		if allReady[i].FeatureID == "" {
-			return &allReady[i]
-		}
-	}
-
-	return nil
-}
-
 // GetDownstreamTasks finds all tasks that transitively depend on a given root task.
 // Returns the root task followed by dependents in topological order (Kahn's algorithm).
 // Handles cycles gracefully: cycle participants are appended at the end.

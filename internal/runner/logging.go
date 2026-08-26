@@ -94,16 +94,6 @@ func RegisterEventLogger(tr *TaskRunner) {
 				"task_path", event.TaskPath,
 				"session_id", event.SessionID,
 			)
-		case EventFeatureEnabled:
-			slog.Info("feature enabled",
-				"runner_id", event.RunnerID,
-				"feature_id", event.FeatureID,
-			)
-		case EventFeatureDisabled:
-			slog.Info("feature disabled",
-				"runner_id", event.RunnerID,
-				"feature_id", event.FeatureID,
-			)
 		case EventProjectPaused:
 			slog.Info("project paused",
 				"runner_id", event.RunnerID,

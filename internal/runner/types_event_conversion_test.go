@@ -284,40 +284,6 @@ func TestRunnerEvent_ToEvent_ProjectResumed(t *testing.T) {
 	}
 }
 
-func TestRunnerEvent_ToEvent_FeatureEnabled(t *testing.T) {
-	re := RunnerEvent{
-		Type:      EventFeatureEnabled,
-		RunnerID:  "runner-1",
-		FeatureID: "feat-deploy",
-	}
-
-	evt := re.ToEvent()
-
-	if evt.Type != types.EventFeatureEnabled {
-		t.Errorf("Type = %q, want %q", evt.Type, types.EventFeatureEnabled)
-	}
-	if evt.FeatureID != "feat-deploy" {
-		t.Errorf("FeatureID = %q, want %q", evt.FeatureID, "feat-deploy")
-	}
-}
-
-func TestRunnerEvent_ToEvent_FeatureDisabled(t *testing.T) {
-	re := RunnerEvent{
-		Type:      EventFeatureDisabled,
-		RunnerID:  "runner-1",
-		FeatureID: "feat-deploy",
-	}
-
-	evt := re.ToEvent()
-
-	if evt.Type != types.EventFeatureDisabled {
-		t.Errorf("Type = %q, want %q", evt.Type, types.EventFeatureDisabled)
-	}
-	if evt.FeatureID != "feat-deploy" {
-		t.Errorf("FeatureID = %q, want %q", evt.FeatureID, "feat-deploy")
-	}
-}
-
 func TestRunnerEvent_ToEvent_PollComplete(t *testing.T) {
 	re := RunnerEvent{
 		Type:         EventPollComplete,
@@ -409,8 +375,8 @@ func TestRunnerEvent_ToEvent_AllTypesHaveIDs(t *testing.T) {
 		EventTaskStarted, EventTaskCompleted, EventTaskFailed,
 		EventTaskCancelled, EventPollComplete, EventStateSaved,
 		EventShutdown, EventProjectPaused, EventProjectResumed,
-		EventAllPaused, EventAllResumed, EventFeatureEnabled,
-		EventFeatureDisabled, EventSessionDiscovered, EventTaskClaimed,
+		EventAllPaused, EventAllResumed, EventFeatureStarted,
+		EventSessionDiscovered, EventTaskClaimed,
 		EventTaskClaimRejected, EventTaskStatusChanged, EventTaskReleased,
 		EventRunnerStarted,
 	}
@@ -462,9 +428,10 @@ func TestRunnerEvent_ToEvent_FeatureIDFromTask(t *testing.T) {
 }
 
 func TestRunnerEvent_ToEvent_FeatureIDFromEventField(t *testing.T) {
-	// For events like feature_enabled/disabled, FeatureID is directly on RunnerEvent
+	// For feature lifecycle events, FeatureID is directly on RunnerEvent
+	// rather than derived from an attached Task.
 	re := RunnerEvent{
-		Type:      EventFeatureEnabled,
+		Type:      EventFeatureStarted,
 		RunnerID:  "runner-1",
 		FeatureID: "feat-direct",
 	}

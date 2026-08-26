@@ -63,5 +63,8 @@ jobs:
         uses: golangci/golangci-lint-action@v9
         with:
           version: v2.12.2
-          # The codebase carries pre-existing lint debt; gate new code only.
-          only-new-issues: true
+          # The pre-existing lint debt this used to work around is gone (764
+          # findings cleared), so the whole tree is gated, not just the diff.
+          # Keep it that way: `just lint` is the same command with the same
+          # pinned version, so a clean local run means a clean CI run.
+          only-new-issues: false

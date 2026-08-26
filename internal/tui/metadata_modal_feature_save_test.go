@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -13,6 +14,10 @@ import (
 
 // TestMetadataModalFeature_SaveField_UpdatesAllTasks tests that saving a field updates all tasks in the feature.
 func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
+	// The httptest handler runs on net/http connection goroutines, and the
+	// feature save fires its PATCHes in parallel, so this shared state is
+	// touched concurrently by several goroutines plus the test body.
+	var mu sync.Mutex
 	updateCount := 0
 	updatedTasks := make(map[string]bool)
 
@@ -49,6 +54,7 @@ func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
 
 		// Entry PATCH endpoints - track updates
 		if r.Method == http.MethodPatch {
+			mu.Lock()
 			updateCount++
 			// Extract task ID from path
 			if strings.Contains(r.URL.Path, "task1") {
@@ -58,6 +64,7 @@ func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
 			} else if strings.Contains(r.URL.Path, "task3") {
 				updatedTasks["task3"] = true
 			}
+			mu.Unlock()
 
 			// Return success
 			json.NewEncoder(w).Encode(map[string]interface{}{
@@ -104,17 +111,26 @@ func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
 		t.Fatalf("unexpected error: %v", updatedMsg.err)
 	}
 
+	// Snapshot under the lock before asserting.
+	mu.Lock()
+	gotCount := updateCount
+	gotTasks := make(map[string]bool, len(updatedTasks))
+	for id, updated := range updatedTasks {
+		gotTasks[id] = updated
+	}
+	mu.Unlock()
+
 	// Verify all 3 tasks were updated
-	if updateCount != 3 {
-		t.Errorf("updateCount = %d, want 3", updateCount)
+	if gotCount != 3 {
+		t.Errorf("updateCount = %d, want 3", gotCount)
 	}
 
-	if len(updatedTasks) != 3 {
-		t.Errorf("updated %d unique tasks, want 3", len(updatedTasks))
+	if len(gotTasks) != 3 {
+		t.Errorf("updated %d unique tasks, want 3", len(gotTasks))
 	}
 
 	for _, taskID := range []string{"task1", "task2", "task3"} {
-		if !updatedTasks[taskID] {
+		if !gotTasks[taskID] {
 			t.Errorf("task %s was not updated", taskID)
 		}
 	}
@@ -122,6 +138,9 @@ func TestMetadataModalFeature_SaveField_UpdatesAllTasks(t *testing.T) {
 
 // TestMetadataModalFeature_SaveField_ParallelUpdates tests that updates happen in parallel.
 func TestMetadataModalFeature_SaveField_ParallelUpdates(t *testing.T) {
+	// Guards the timing slices: the PATCH handlers run concurrently on
+	// net/http connection goroutines and the test body reads them afterwards.
+	var mu sync.Mutex
 	requestTimes := make([]time.Time, 0)
 	completionTimes := make([]time.Time, 0)
 
@@ -158,9 +177,15 @@ func TestMetadataModalFeature_SaveField_ParallelUpdates(t *testing.T) {
 
 		// Entry PATCH endpoints - simulate slow update
 		if r.Method == http.MethodPatch {
+			mu.Lock()
 			requestTimes = append(requestTimes, time.Now())
+			mu.Unlock()
+
 			time.Sleep(50 * time.Millisecond) // Simulate work
+
+			mu.Lock()
 			completionTimes = append(completionTimes, time.Now())
+			mu.Unlock()
 
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"status": "completed",
@@ -212,10 +237,15 @@ func TestMetadataModalFeature_SaveField_ParallelUpdates(t *testing.T) {
 		t.Errorf("updates took %v, expected parallel execution < 150ms (sequential would be 250ms+)", elapsed)
 	}
 
+	// Snapshot under the lock before asserting.
+	mu.Lock()
+	gotRequestTimes := append([]time.Time(nil), requestTimes...)
+	mu.Unlock()
+
 	// Check that requests started close together (within 50ms window)
-	if len(requestTimes) >= 2 {
-		firstRequest := requestTimes[0]
-		lastRequest := requestTimes[len(requestTimes)-1]
+	if len(gotRequestTimes) >= 2 {
+		firstRequest := gotRequestTimes[0]
+		lastRequest := gotRequestTimes[len(gotRequestTimes)-1]
 		requestSpan := lastRequest.Sub(firstRequest)
 		if requestSpan > 50*time.Millisecond {
 			t.Errorf("request span = %v, want < 50ms for parallel execution", requestSpan)
@@ -304,6 +334,8 @@ func TestMetadataModalFeature_SaveField_ErrorHandling(t *testing.T) {
 
 // TestMetadataModalFeature_SaveField_FeaturePriority tests feature-specific field updates.
 func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
+	// Written from concurrent PATCH handlers, read by the test body.
+	var mu sync.Mutex
 	receivedUpdates := make(map[string]map[string]interface{})
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -338,7 +370,9 @@ func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
 		if r.Method == http.MethodPatch {
 			var updates map[string]interface{}
 			json.NewDecoder(r.Body).Decode(&updates)
+			mu.Lock()
 			receivedUpdates[r.URL.Path] = updates
+			mu.Unlock()
 
 			json.NewEncoder(w).Encode(map[string]interface{}{
 				"featurePriority": updates["featurePriority"],
@@ -380,11 +414,19 @@ func TestMetadataModalFeature_SaveField_FeaturePriority(t *testing.T) {
 		t.Fatalf("unexpected error: %v", updatedMsg.err)
 	}
 
+	// Snapshot under the lock before asserting.
+	mu.Lock()
+	gotUpdates := make(map[string]map[string]interface{}, len(receivedUpdates))
+	for path, updates := range receivedUpdates {
+		gotUpdates[path] = updates
+	}
+	mu.Unlock()
+
 	// Verify both tasks received the feature_priority update
 	// Paths are now URL-encoded (e.g. projects%2Fbrain-api%2Ftask%2Ftask1.md)
 	for _, taskID := range []string{"task1", "task2"} {
 		found := false
-		for path, updates := range receivedUpdates {
+		for path, updates := range gotUpdates {
 			if strings.Contains(path, taskID) {
 				found = true
 				priority, ok := updates["feature_priority"]

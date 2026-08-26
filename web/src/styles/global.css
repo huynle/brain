@@ -3118,6 +3118,27 @@ body[data-theme="light"] .p2-runner-shell__prompt {
 /* A blocked upstream feature, a dependency cycle, or a feature_depends_on
    entry naming a feature that does not exist. None of these clear on their
    own, so they share the amber fault treatment. */
+/* Chain chips. A chain is a QUEUE the server drives on its own — neither a
+   dial someone flipped nor a fault — so it gets its own violet, distinct
+   from the pause slate and the amber faults above. The root and its queued
+   members share a hue because they are one thing; the root is filled to read
+   as "this is the one running". */
+.chain-chip {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid #9b7fd455;
+  border-radius: 3px;
+  background: #9b7fd411;
+  color: #9b7fd4;
+  font-size: 9px;
+  line-height: 1.5;
+  cursor: help;
+}
+.chain-chip.root {
+  border-color: #9b7fd4aa;
+  background: #9b7fd422;
+}
+
 .hold-chip.feature_blocked,
 .hold-chip.feature_cycle,
 .hold-chip.feature_dep_unresolved {

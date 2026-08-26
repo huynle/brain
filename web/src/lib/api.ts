@@ -77,7 +77,10 @@ function buildUrl(path: string, query?: FetchOpts["query"]): string {
 
 async function doFetch(path: string, opts: FetchOpts): Promise<Response> {
   const auth = useAuth.getState();
-  const headers: Record<string, string> = { ...auth.authHeader(), ...opts.headers };
+  const headers: Record<string, string> = {
+    ...auth.authHeader(),
+    ...opts.headers,
+  };
   let body: BodyInit | undefined;
   if (opts.rawBody !== undefined) {
     // Caller supplies the Content-Type via opts.headers (e.g. full-file edits).
@@ -355,10 +358,7 @@ export const deleteFeatureTasks = (
   featureId: string,
   opts: { dryRun?: boolean; force?: boolean } = {},
 ) =>
-  bulkDelete(
-    { project: projectId, feature_id: featureId, type: "task" },
-    opts,
-  );
+  bulkDelete({ project: projectId, feature_id: featureId, type: "task" }, opts);
 
 export interface TriggerResponse {
   success: boolean;
@@ -436,16 +436,107 @@ export interface RunFeatureResponse {
    *  finish (failed dependency or a cycle). */
   waitingOnFeatures?: string[];
   blockedByFeatures?: string[];
+  /** Present only when the request asked for dependents. */
+  dependents?: DependentQueue;
 }
 
-export const runFeature = (projectId: string, featureId: string, force = false) =>
+/** The chain enrolled by a run-with-dependents request. */
+export interface DependentQueue {
+  queued: string[];
+  /** Reachable features deliberately NOT enrolled, mapped to why
+   *  ("in_cycle", "already_settled"). Surfaced rather than dropped: a
+   *  feature the user expected to run and which silently will not is the
+   *  failure this surface exists to prevent. */
+  skipped?: Record<string, string>;
+  /** Features OUTSIDE the chain that a queued member still waits on. Under
+   *  a paused project those never run, so the chain stalls there. */
+  waitsOnExternal?: string[];
+  truncated?: boolean;
+}
+
+/** A standing run-with-dependents request. Membership is derived server-side
+ *  on every read, so it reflects edits to feature_depends_on. */
+export interface DependentChain {
+  projectId: string;
+  rootFeatureId: string;
+  requestedAt: number;
+  /** Whether the project's task dial was already off when the user asked.
+   *  Propagation crosses a pause that was already on; a pause applied later
+   *  holds the chain. */
+  pausedAtRequest: boolean;
+  queued: string[];
+  skipped?: Record<string, string>;
+  waitsOnExternal?: string[];
+  truncated?: boolean;
+}
+
+export const runFeature = (
+  projectId: string,
+  featureId: string,
+  force = false,
+  includeDependents = false,
+) =>
   api<RunFeatureResponse>(
     `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/run`,
     {
       method: "POST",
-      body: { force },
+      body: { force, includeDependents },
     },
   );
+
+/**
+ * Cancel a standing run-with-dependents chain rooted at this feature.
+ *
+ * Cancelling stops NEW features joining. Tasks already dispatched run to
+ * completion — there is no un-dispatch, and the toast must not imply one.
+ */
+export const cancelDependentChain = (projectId: string, featureId: string) =>
+  api<{ cancelled: boolean; detail: string }>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/run`,
+    { method: "DELETE" },
+  );
+
+/** Standing chains for a project. Membership is derived server-side on every
+ *  read, so it reflects edits to feature_depends_on. */
+export const listDependentChains = (projectId: string) =>
+  api<{ chains: DependentChain[] }>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/chains`,
+  );
+
+/**
+ * One line describing what a run-with-dependents call actually set up.
+ *
+ * Reports refusals as prominently as successes: a feature the user expected
+ * to be queued and which silently will not run is the failure this surface
+ * exists to prevent.
+ */
+export function summarizeDependentQueue(q: DependentQueue | undefined): string {
+  if (!q) return "";
+  const parts: string[] = [];
+  const n = q.queued?.length ?? 0;
+  parts.push(
+    n === 0
+      ? "no dependent features to queue"
+      : `queued ${n} dependent ${n === 1 ? "feature" : "features"}`,
+  );
+  if (q.truncated) parts.push("chain truncated at the server limit");
+  const ext = q.waitsOnExternal ?? [];
+  if (ext.length > 0) {
+    // The chain will stall here: under a paused project nothing outside it
+    // runs, so naming the blocker is the difference between "waiting its
+    // turn" and "never going to run".
+    parts.push(`also waits on ${ext.join(", ")}, not part of this run`);
+  }
+  const skipped = Object.entries(q.skipped ?? {});
+  if (skipped.length > 0) {
+    parts.push(
+      skipped
+        .map(([id, why]) => `${id} skipped (${why.replace(/_/g, " ")})`)
+        .join("; "),
+    );
+  }
+  return parts.join(" · ");
+}
 
 // ─── Feature assignment (Phase 8) ─────────────────────────────────
 //
@@ -510,10 +601,7 @@ export const assignFeatureToRunner = (
     },
   );
 
-export const clearFeatureAssignment = (
-  projectId: string,
-  featureId: string,
-) =>
+export const clearFeatureAssignment = (projectId: string, featureId: string) =>
   api<FeatureAssignmentResponse>(
     `/api/v1/tasks/${encodeURIComponent(projectId)}/features/${encodeURIComponent(featureId)}/assignment/clear`,
     {
@@ -525,9 +613,10 @@ export const clearFeatureAssignment = (
 // Format a RunFeatureResponse into a toast message. Mirrors
 // summarizeTriggerResults' shape so callers can drop this straight into the
 // toast notification system.
-export function summarizeRunFeatureResult(
-  r: RunFeatureResponse,
-): { message: string; kind: "info" | "success" } {
+export function summarizeRunFeatureResult(r: RunFeatureResponse): {
+  message: string;
+  kind: "info" | "success";
+} {
   const queued = r.queued?.length ?? 0;
   if (r.dispatched && r.dispatchedCount > 0 && queued === 0) {
     return {
@@ -628,7 +717,8 @@ function latestPendingLeaseExpiry(
 ): string | undefined {
   let latest: string | undefined;
   for (const one of results ?? []) {
-    if (one.dispatched || one.leaseState !== "pushed" || !one.expiresAt) continue;
+    if (one.dispatched || one.leaseState !== "pushed" || !one.expiresAt)
+      continue;
     if (!latest || one.expiresAt > latest) latest = one.expiresAt;
   }
   return latest;
@@ -737,7 +827,9 @@ export const summarizeRunProjectResult = (r: RunProjectResponse): string => {
   const fs = r.featuresDispatched === 1 ? "" : "s";
   const ts = r.totalTasksDispatched === 1 ? "" : "s";
   const skipped =
-    r.featuresSkipped > 0 ? ` · ${r.featuresSkipped} feature${r.featuresSkipped === 1 ? "" : "s"} skipped` : "";
+    r.featuresSkipped > 0
+      ? ` · ${r.featuresSkipped} feature${r.featuresSkipped === 1 ? "" : "s"} skipped`
+      : "";
   return `Dispatched ${r.totalTasksDispatched} task${ts} across ${r.featuresDispatched} feature${fs}${skipped}`;
 };
 
@@ -762,7 +854,10 @@ export const summarizeResumeResults = (r: ResumeFeatureResult): string => {
 // recurring monitor behind. Creates a one-shot task via POST /entries.
 // The prompt mirrors the server-side blocked-inspector template for feature
 // scope (see internal/service/monitor_prompts.go buildBlockedInspectorPrompt).
-export const runBlockedInspectorNow = (projectId: string, featureId: string) => {
+export const runBlockedInspectorNow = (
+  projectId: string,
+  featureId: string,
+) => {
   const directPrompt = `You are the **Blocked Task Inspector** — an automated agent that checks for blocked tasks in feature ${featureId} of project ${projectId} and attempts to unblock them.
 
 ## Scope
@@ -851,7 +946,11 @@ export async function getDispatchLease(
 // recovery action when a runner went silent without clearing its lease.
 // Pairs with runTask(force=true) on the server, but explicit release is
 // useful when the user just wants to clear the lease without redispatching.
-export const releaseDispatchLease = (runnerId: string, projectId: string, taskId: string) =>
+export const releaseDispatchLease = (
+  runnerId: string,
+  projectId: string,
+  taskId: string,
+) =>
   api<{ success: boolean; taskId?: string; runnerId?: string }>(
     `/api/v1/tasks/runners/${encodeURIComponent(runnerId)}/dispatch/release`,
     {
@@ -881,7 +980,10 @@ export async function runOrTriggerTask(
   }
 }
 
-function runResponseToTrigger(r: RunTaskResponse, projectId: string): TriggerResponse {
+function runResponseToTrigger(
+  r: RunTaskResponse,
+  projectId: string,
+): TriggerResponse {
   if (r.dispatched) {
     const detail = r.runnerId ? `dispatched to ${r.runnerId}` : "dispatched";
     return {
@@ -925,10 +1027,13 @@ function relativeFromNow(iso?: string): string | undefined {
   const deltaSec = Math.round((t - Date.now()) / 1000);
   const abs = Math.abs(deltaSec);
   const fmt =
-    abs < 60 ? `${abs}s` :
-    abs < 3600 ? `${Math.round(abs / 60)}m` :
-    abs < 86400 ? `${Math.round(abs / 3600)}h` :
-    `${Math.round(abs / 86400)}d`;
+    abs < 60
+      ? `${abs}s`
+      : abs < 3600
+        ? `${Math.round(abs / 60)}m`
+        : abs < 86400
+          ? `${Math.round(abs / 3600)}h`
+          : `${Math.round(abs / 86400)}d`;
   return deltaSec >= 0 ? `in ${fmt}` : `${fmt} ago`;
 }
 
@@ -939,7 +1044,9 @@ function humanizeRunReason(r: RunTaskResponse): string {
     case "no_online_runner":
       return "no runners are online";
     case "no_eligible_runner":
-      return detail ? `no eligible runner (${detail})` : "no eligible runner for this task";
+      return detail
+        ? `no eligible runner (${detail})`
+        : "no eligible runner for this task";
     case "all_runners_at_capacity":
       return "all runners are at capacity";
     case "task_not_ready":
@@ -980,15 +1087,17 @@ function humanizeRunReason(r: RunTaskResponse): string {
 // Summarize one-or-many TriggerResponse(s) into a user-friendly toast string
 // and severity. The backend distinguishes between "actually triggered" and
 // "no-op with reason" (e.g. task already pending), and we surface both.
-export function summarizeTriggerResults(
-  results: TriggerResponse[],
-): { message: string; kind: "info" | "success" } {
+export function summarizeTriggerResults(results: TriggerResponse[]): {
+  message: string;
+  kind: "info" | "success";
+} {
   const triggered = results.filter((r) => r.triggered);
   const skipped = results.filter((r) => !r.triggered);
 
   if (triggered.length && !skipped.length) {
     return {
-      message: triggered.length === 1 ? "Triggered" : `Triggered ${triggered.length}`,
+      message:
+        triggered.length === 1 ? "Triggered" : `Triggered ${triggered.length}`,
       kind: "success",
     };
   }
@@ -1001,11 +1110,13 @@ export function summarizeTriggerResults(
   // All skipped — show the reason from the first one (or a generic message).
   const reason = skipped[0]?.reason || "no eligible tasks to trigger";
   return {
-    message: skipped.length === 1 ? `Not triggered: ${reason}` : `Skipped ${skipped.length}: ${reason}`,
+    message:
+      skipped.length === 1
+        ? `Not triggered: ${reason}`
+        : `Skipped ${skipped.length}: ${reason}`,
     kind: "info",
   };
 }
-
 
 // ─── Built-in Assistant ──────────────────────────────────────────
 
@@ -1026,7 +1137,12 @@ export interface AssistantAction {
 
 export interface AssistantChatResponse {
   reply: string;
-  executed_actions: { type: string; status: string; result?: unknown; error?: string }[];
+  executed_actions: {
+    type: string;
+    status: string;
+    result?: unknown;
+    error?: string;
+  }[];
   proposed_actions: AssistantAction[];
 }
 
@@ -1088,7 +1204,11 @@ export const assistantChat = (body: {
   attachments?: string[];
   context?: Record<string, string>;
   history?: AssistantHistoryMessage[];
-}) => api<AssistantChatResponse>("/api/v1/assistant/chat", { method: "POST", body });
+}) =>
+  api<AssistantChatResponse>("/api/v1/assistant/chat", {
+    method: "POST",
+    body,
+  });
 
 export interface AssistantStreamEvent {
   type: "delta" | "tool_call" | "tool_result" | "done" | "error" | string;
@@ -1120,7 +1240,8 @@ export async function assistantChatStream(
     headers: { Accept: "application/x-ndjson" },
     signal,
   });
-  if (!res.body) throw new ApiError(0, "Streaming response body is unavailable");
+  if (!res.body)
+    throw new ApiError(0, "Streaming response body is unavailable");
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let pending = "";
@@ -1148,12 +1269,20 @@ export const assistantGoalDraft = (body: {
   attachments?: string[];
   context?: Record<string, string>;
 }) =>
-  api<{ reply: string; draft: AssistantGoalDraft }>("/api/v1/assistant/goal-draft", {
-    method: "POST",
-    body,
-  });
+  api<{ reply: string; draft: AssistantGoalDraft }>(
+    "/api/v1/assistant/goal-draft",
+    {
+      method: "POST",
+      body,
+    },
+  );
 
-export async function uploadAttachment(projectId: string, file: Blob, filename: string, metadata?: Record<string, unknown>) {
+export async function uploadAttachment(
+  projectId: string,
+  file: Blob,
+  filename: string,
+  metadata?: Record<string, unknown>,
+) {
   const form = new FormData();
   form.set("project_id", projectId);
   form.set("file", file, filename);
@@ -1170,7 +1299,9 @@ export async function uploadAttachment(projectId: string, file: Blob, filename: 
     const text = await res.text().catch(() => "");
     throw new ApiError(res.status, text || res.statusText, text);
   }
-  return (await res.json()) as { attachment: { id: string; filename: string; content_type: string } };
+  return (await res.json()) as {
+    attachment: { id: string; filename: string; content_type: string };
+  };
 }
 
 // ─── Runner control ──────────────────────────────────────────────
@@ -1271,7 +1402,11 @@ const controlBase = (runnerId: string, instanceId: string) =>
 export const controlListSessions = (runnerId: string, instanceId: string) =>
   api<OcSession[]>(`${controlBase(runnerId, instanceId)}/sessions`);
 
-export const controlCreateSession = (runnerId: string, instanceId: string, title?: string) =>
+export const controlCreateSession = (
+  runnerId: string,
+  instanceId: string,
+  title?: string,
+) =>
   api<OcSession>(`${controlBase(runnerId, instanceId)}/sessions`, {
     method: "POST",
     body: title ? { title } : {},
@@ -1310,7 +1445,11 @@ export const controlPrompt = (
     { method: "POST", body },
   );
 
-export const controlAbort = (runnerId: string, instanceId: string, sessionId: string) =>
+export const controlAbort = (
+  runnerId: string,
+  instanceId: string,
+  sessionId: string,
+) =>
   api<unknown>(
     `${controlBase(runnerId, instanceId)}/sessions/${encodeURIComponent(sessionId)}/abort`,
     { method: "POST" },
@@ -1328,7 +1467,10 @@ export const controlRespondPermission = (
     { method: "POST", body: { response } },
   );
 
-export const controlPendingPermissions = (runnerId: string, instanceId: string) =>
+export const controlPendingPermissions = (
+  runnerId: string,
+  instanceId: string,
+) =>
   api<{ permissions: OcPermission[]; total: number }>(
     `${controlBase(runnerId, instanceId)}/permissions`,
   );
@@ -1350,14 +1492,19 @@ export const controlSessionHistory = (runnerId: string, sessionId: string) =>
     `/api/v1/control/runners/${encodeURIComponent(runnerId)}/sessions/${encodeURIComponent(sessionId)}/history`,
   );
 
-export const controlSpawnInstance = (runnerId: string, spec: SpawnInstanceSpec) =>
+export const controlSpawnInstance = (
+  runnerId: string,
+  spec: SpawnInstanceSpec,
+) =>
   api<{ success: boolean; instance: OpencodeInstance }>(
     `/api/v1/control/runners/${encodeURIComponent(runnerId)}/instances`,
     { method: "POST", body: spec },
   );
 
 export const controlKillInstance = (runnerId: string, instanceId: string) =>
-  api<{ success: boolean }>(controlBase(runnerId, instanceId), { method: "DELETE" });
+  api<{ success: boolean }>(controlBase(runnerId, instanceId), {
+    method: "DELETE",
+  });
 
 export const controlAbortTask = (runnerId: string, taskId: string) =>
   api<{ success: boolean }>(
@@ -1596,15 +1743,25 @@ export async function listAutomationData(project?: string): Promise<{
   runs: BrainEntry[];
 }> {
   const [scoped, global, tasks, runs] = await Promise.all([
-    listEntries({ type: "automation", limit: 500, ...(project ? { project } : {}) }).then(
-      (r) => r.entries || [],
-    ),
+    listEntries({
+      type: "automation",
+      limit: 500,
+      ...(project ? { project } : {}),
+    }).then((r) => r.entries || []),
     // Built-in automations are global; always include them.
-    listEntries({ type: "automation", global: "true", limit: 500 }).then((r) => r.entries || []),
-    listEntries({ type: "task", limit: 1000, ...(project ? { project } : {}) }).then(
+    listEntries({ type: "automation", global: "true", limit: 500 }).then(
       (r) => r.entries || [],
     ),
-    listEntries({ type: "automation_run", limit: 500, ...(project ? { project } : {}) })
+    listEntries({
+      type: "task",
+      limit: 1000,
+      ...(project ? { project } : {}),
+    }).then((r) => r.entries || []),
+    listEntries({
+      type: "automation_run",
+      limit: 500,
+      ...(project ? { project } : {}),
+    })
       .then((r) => r.entries || [])
       .catch(() => [] as BrainEntry[]),
   ]);
@@ -1787,8 +1944,7 @@ export interface ConfigUpdateResponse {
   backup_path: string;
 }
 
-export const getServerConfig = () =>
-  api<ConfigGetResponse>("/api/v1/config");
+export const getServerConfig = () => api<ConfigGetResponse>("/api/v1/config");
 
 export const getConfigSchema = () =>
   api<{ fields: ConfigField[] }>("/api/v1/config/schema");

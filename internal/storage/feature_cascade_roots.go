@@ -89,7 +89,7 @@ func (s *StorageLayer) ListFeatureCascadeRoots(ctx context.Context, projectID st
 	if err != nil {
 		return nil, fmt.Errorf("list feature cascade roots: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []FeatureCascadeRootRow
 	for rows.Next() {

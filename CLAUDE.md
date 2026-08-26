@@ -66,6 +66,38 @@ A goal is an `automation` BrainEntry with `Goal *GoalConfig` (`generated_by: bra
 - **Lookups are status-agnostic** (`findGoalByID` searches all statuses) so pause (`blocked`) → resume (`active`) round-trips; only event dispatch and the ticker filter to `active`.
 - **Known limitation**: `complete` is status-based, not criteria-verified — a task that completes without actually meeting the goal criteria still completes the goal. A criteria-validation task on the complete path is the designed next step. Also `opencode run` exits when its current turn ends, so a steered agent must act on the injection within that turn.
 
+### Dispatch delivery + lease states
+
+A dispatch is a durable lease row (`task_dispatch_leases`) plus an SSE publish
+to `realtime.RunnerTopic(runnerID)`. The row outlives the publish, so the two
+have to be reconciled at publish time or the lease describes work nobody has.
+
+- **Delivery is checked, not assumed.** `SchedulerService.publishDispatch` uses
+  `Hub.PublishRunnerCommandTracked` and treats `delivered == 0` as a lost
+  command: the lease is cleared immediately (`undoUndeliveredLease`) and the
+  skip is reported as `runner_unreachable`. All three dispatch sites
+  (`ScheduleProject`, `RunTaskNow`, `RunFeatureNow`) do this. A publisher that
+  cannot report delivery counts as delivered — "cannot measure" must never
+  read as "did not arrive". Publisher and deliverer are wired from the same
+  object in `NewSchedulerService`.
+- **`pushed` ≠ in flight.** An `acked` lease means a runner took the work.
+  A `pushed` lease means the dispatch went out and nothing came back. The
+  runner acks LATE — after `ResolveWorkdir`, which can create a worktree or
+  clone a remote — so `pushed` covers both "the command evaporated" and "the
+  runner is mid-setup". That ambiguity is why nothing auto-reclaims a pushed
+  lease, and why a reconnect-driven lease sweep would be wrong: on an API
+  restart the runner's stream drops while its in-flight setup continues, and
+  wiping the lease would abort a spawn that had already paid for a clone.
+- **`force` on `RunFeatureNow` reclaims only unacknowledged leases**
+  (`reclaimableLease`). It never displaces an acked one, matching the resume
+  path's refusal to release a claim held by an online runner. Note
+  `RunTaskNow`'s force is blunter and does release acked leases.
+- **Feature-level reasons distinguish the two**: `feature_in_progress` (a
+  runner acknowledged the work) vs `feature_dispatch_pending` (every blocking
+  lease is unacked — nothing is running, the holds expire on their own).
+  `no_ready_tasks` names the gating feature via
+  `waitingOnFeatures`/`blockedByFeatures` folded from the tasks.
+
 ### Abandonment + Resume model
 
 When a runner dies mid-task, or when a task's claim lease expires without renewal, the task's `status` stays stuck at `in_progress` while nothing is actually running it. The abandonment surface makes that recoverable without introducing new sweepers.

@@ -154,8 +154,27 @@ func RunnerTopic(runnerID string) string {
 }
 
 // PublishRunnerCommand sends a command event to a specific runner's SSE stream.
+// Fire-and-forget; use PublishRunnerCommandTracked when losing the command
+// has to be noticed.
 func (h *Hub) PublishRunnerCommand(runnerID string, command string, payload interface{}) {
-	h.publish(RunnerTopic(runnerID), SSEMessage{
+	h.PublishRunnerCommandTracked(runnerID, command, payload)
+}
+
+// PublishRunnerCommandTracked is PublishRunnerCommand with delivery
+// accounting: it reports how many of the runner's live command streams took
+// the message and how many were too far behind to take it.
+//
+// It exists because a dispatch is not a notification — it hands a runner work
+// that the server has already written a lease row for. When the runner's
+// stream is not connected (it restarted, the API restarted under it, the
+// network blipped) the publish evaporates while the lease stays "pushed"
+// until its TTL runs out, and for that whole window the task reads as
+// dispatched to everything downstream. delivered == 0 is the server's only
+// chance to know that at the moment it happens, so the caller can undo the
+// lease instead of leaving a phantom behind. See
+// SchedulerService.publishDispatch.
+func (h *Hub) PublishRunnerCommandTracked(runnerID string, command string, payload interface{}) (delivered, dropped int) {
+	return h.publish(RunnerTopic(runnerID), SSEMessage{
 		Event: "command",
 		Data: map[string]interface{}{
 			"command": command,

@@ -780,3 +780,19 @@ func (c *stubExecCommand) Execute() error {
 }
 
 func (c *stubExecCommand) Type() string { return "stub-exec" }
+
+// TestDefaultConfig_IndexWatchEnvOverride covers the Docker path: the amos
+// deployment configures the server entirely through env vars, so the index
+// watcher toggle has to be reachable without a config file.
+func TestDefaultConfig_IndexWatchEnvOverride(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+
+	if cfg := defaultConfig(); cfg.Server.IndexWatch.Enabled {
+		t.Fatal("index watch enabled with no config and no env var, want disabled")
+	}
+
+	t.Setenv("BRAIN_INDEX_WATCH", "true")
+	if cfg := defaultConfig(); !cfg.Server.IndexWatch.Enabled {
+		t.Fatal("BRAIN_INDEX_WATCH=true did not enable the index watcher")
+	}
+}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/pkg/cron"
@@ -30,6 +31,7 @@ var _ api.TaskService = (*TaskServiceImpl)(nil)
 type TaskServiceImpl struct {
 	config  *config.Config
 	storage *storage.StorageLayer
+	indexer *indexer.Indexer
 }
 
 // DefaultLeaseDuration is the default lease duration for task claims (10 minutes).
@@ -37,10 +39,17 @@ type TaskServiceImpl struct {
 const DefaultLeaseDuration = 10 * time.Minute
 
 // NewTaskService creates a new TaskServiceImpl.
-func NewTaskService(cfg *config.Config, store *storage.StorageLayer) *TaskServiceImpl {
+//
+// idx is required: CheckoutFeature writes a task file straight to disk, and
+// without an indexer that file would be missing from SQLite (and therefore
+// from search, the link graph, and orphan detection) until the next boot
+// index. It is a constructor argument rather than an option so a caller
+// cannot silently end up with the un-indexed behaviour.
+func NewTaskService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer) *TaskServiceImpl {
 	return &TaskServiceImpl{
 		config:  cfg,
 		storage: store,
+		indexer: idx,
 	}
 }
 
@@ -1110,8 +1119,18 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 		return nil, fmt.Errorf("failed to write checkout task: %w", err)
 	}
 
-	// Build response
+	// Index the file. Every other writer in the codebase does this (see
+	// BrainServiceImpl.Save); skipping it leaves the checkout task invisible
+	// to search, the link graph, and orphan detection until a restart runs
+	// the boot indexer. Returning the error is safe: the idempotency check
+	// above scans the filesystem, not the index, so a retry finds the file
+	// already on disk and reports Created=false instead of duplicating it.
 	relPath := fmt.Sprintf("projects/%s/task/%s", sanitizedProjectID, filename)
+	if err := s.indexer.IndexFile(relPath); err != nil {
+		return nil, fmt.Errorf("index checkout task %q: %w", relPath, err)
+	}
+
+	// Build response
 	result := &types.CheckoutFeatureResult{
 		Created:      true,
 		GeneratedKey: generatedKey,

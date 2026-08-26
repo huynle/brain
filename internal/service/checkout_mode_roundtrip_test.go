@@ -39,7 +39,7 @@ func newTestBrainAndTaskService(t *testing.T) (*BrainServiceImpl, *TaskServiceIm
 	cfg := &config.Config{BrainDir: brainDir}
 	idx := indexer.NewIndexer(brainDir, store)
 
-	return NewBrainService(cfg, store, idx, nil, nil), NewTaskService(cfg, store)
+	return NewBrainService(cfg, store, idx, nil, nil), NewTaskService(cfg, store, idx)
 }
 
 // TestCheckoutMode_SurvivesStorageRoundTrip is the regression test for the

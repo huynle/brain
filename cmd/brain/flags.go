@@ -274,6 +274,7 @@ type UnifiedConfig struct {
 		LogMaxBackups   int
 		TaskDefaults    uconfig.TaskDefaultsConfig
 		FeatureCheckout uconfig.FeatureCheckoutConfig
+		IndexWatch      uconfig.IndexWatchConfig
 		Embedding       uconfig.EmbeddingConfig
 		Attachments     uconfig.AttachmentConfig
 

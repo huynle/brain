@@ -140,6 +140,7 @@ type ServerConfig struct {
 	LogMaxBackups   int                   `yaml:"log_max_backups"` // rotated backups to keep (default 5)
 	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
 	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
+	IndexWatch      IndexWatchConfig      `yaml:"index_watch"`
 	Embedding       EmbeddingConfig       `yaml:"embedding"`
 	Attachments     AttachmentConfig      `yaml:"attachments"`
 
@@ -150,6 +151,26 @@ type ServerConfig struct {
 // FeatureCheckoutConfig controls built-in feature completion checkout automation.
 type FeatureCheckoutConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// IndexWatchConfig controls the filesystem watcher that keeps SQLite in sync
+// with writes to the brain directory that did not go through the API — a git
+// pull into the brain dir, a manual edit, another process. The server indexes
+// once at boot; without the watcher those writes stay invisible to search, the
+// link graph, and orphan detection until the next restart.
+//
+// Off by default: the watcher registers one fsnotify watch per directory, and
+// a large brain dir can exhaust the platform's watch limit (inotify
+// max_user_watches on Linux). Turn it on for interactive/local brain dirs that
+// are edited outside the API.
+type IndexWatchConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// DebounceMs coalesces rapid writes to the same file. 0 uses the
+	// watcher's own default (100ms).
+	DebounceMs int `yaml:"debounce_ms"`
+	// IgnorePatterns are path prefixes skipped in addition to the watcher's
+	// built-in ignores (.brain-data/, .zk/, node_modules/).
+	IgnorePatterns []string `yaml:"ignore_patterns"`
 }
 
 // RunnerConfig holds task runner configuration.

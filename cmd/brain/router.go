@@ -598,6 +598,7 @@ func defaultConfig() *UnifiedConfig {
 		// Thread task defaults from unified config
 		cfg.Server.TaskDefaults = ucfg.Server.TaskDefaults
 		cfg.Server.FeatureCheckout = ucfg.Server.FeatureCheckout
+		cfg.Server.IndexWatch = ucfg.Server.IndexWatch
 		cfg.Server.Embedding = ucfg.Server.Embedding
 		cfg.Server.Attachments = ucfg.Server.Attachments
 		cfg.Server.AttachmentExtraction = ucfg.Server.AttachmentExtraction
@@ -657,6 +658,10 @@ func defaultConfig() *UnifiedConfig {
 		lower := strings.ToLower(v)
 		cfg.Server.FeatureCheckout.Enabled = lower == "true" || lower == "1" || lower == "yes"
 	}
+	if v := os.Getenv("BRAIN_INDEX_WATCH"); v != "" {
+		lower := strings.ToLower(v)
+		cfg.Server.IndexWatch.Enabled = lower == "true" || lower == "1" || lower == "yes"
+	}
 	// Task defaults env var overrides
 	if v := os.Getenv("BRAIN_DEFAULT_AGENT"); v != "" {
 		cfg.Server.TaskDefaults.Agent = v
@@ -708,6 +713,7 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	cmdCfg.Server.TLS.KeyPath = cfg.Server.TLS.KeyPath
 	cmdCfg.Server.TaskDefaults = cfg.Server.TaskDefaults
 	cmdCfg.Server.FeatureCheckout = cfg.Server.FeatureCheckout
+	cmdCfg.Server.IndexWatch = cfg.Server.IndexWatch
 	cmdCfg.Server.Embedding = cfg.Server.Embedding
 	cmdCfg.Server.Attachments = cfg.Server.Attachments
 	cmdCfg.Server.AttachmentExtraction = cfg.Server.AttachmentExtraction

@@ -39,6 +39,7 @@ type UnifiedConfig struct {
 		LogMaxBackups   int
 		TaskDefaults    config.TaskDefaultsConfig
 		FeatureCheckout config.FeatureCheckoutConfig
+		IndexWatch      config.IndexWatchConfig
 		Embedding       config.EmbeddingConfig
 		Attachments     config.AttachmentConfig
 
@@ -96,6 +97,7 @@ func (c *APICommand) Execute() error {
 		JWTSecret:       c.Config.Server.JWTSecret,
 		TaskDefaults:    c.Config.Server.TaskDefaults,
 		FeatureCheckout: c.Config.Server.FeatureCheckout,
+		IndexWatch:      c.Config.Server.IndexWatch,
 		Embedding:       c.Config.Server.Embedding,
 		Attachments:     c.Config.Server.Attachments,
 

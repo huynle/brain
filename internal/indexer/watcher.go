@@ -182,24 +182,18 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 
 	// Only .md files
 	if !strings.HasSuffix(relPath, ".md") {
-		// If a new directory was created, add it to the watcher
+		// If a new directory was created, watch it and everything already
+		// inside it.
 		if event.Has(fsnotify.Create) {
 			info, err := os.Stat(event.Name)
 			if err == nil && info.IsDir() && !fw.shouldIgnoreDir(relPath) {
-				fw.watcher.Add(event.Name)
+				fw.addDirRecursive(event.Name)
 			}
 		}
 		return
 	}
 
-	// Filter: ignore patterns
-	if fw.shouldIgnore(relPath) {
-		return
-	}
-
-	// Filter: temp files (dotfiles or backup files ending with ~)
-	base := filepath.Base(relPath)
-	if strings.HasPrefix(base, ".") || strings.HasSuffix(base, "~") {
+	if !fw.indexableMarkdown(relPath) {
 		return
 	}
 
@@ -216,8 +210,71 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 		}
 	}
 
+	fw.queueChange(relPath, action)
+}
+
+// addDirRecursive watches absDir and every subdirectory under it, and queues
+// any markdown already inside for indexing.
+//
+// A Create event names only the directory that was created, but the OS can
+// populate a whole tree beneath it before the event is handled — `git pull`
+// and `mkdir -p` both outrun the watcher. Adding just the named directory
+// leaves a pulled `projects/foo/note/` subtree unwatched and its files
+// unindexed, which is the exact case this watcher exists to cover.
+//
+// This runs on the event loop goroutine, so a very large new tree delays
+// subsequent events. That is preferable to the alternative of losing the
+// subtree entirely.
+func (fw *FileWatcher) addDirRecursive(absDir string) {
+	_ = filepath.WalkDir(absDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // unreadable entry — skip it, keep walking
+		}
+		relPath, relErr := filepath.Rel(fw.brainDir, path)
+		if relErr != nil {
+			return nil
+		}
+		relPath = filepath.ToSlash(relPath)
+
+		if d.IsDir() {
+			if fw.shouldIgnoreDir(relPath) {
+				return filepath.SkipDir
+			}
+			// Stop() nils fw.watcher, and a walk can still be in flight
+			// after that, so re-check under the lock.
+			fw.mu.Lock()
+			if fw.watcher != nil {
+				_ = fw.watcher.Add(path)
+			}
+			fw.mu.Unlock()
+			return nil
+		}
+
+		if fw.indexableMarkdown(relPath) {
+			fw.queueChange(relPath, "index")
+		}
+		return nil
+	})
+}
+
+// indexableMarkdown reports whether a relative path is markdown the watcher
+// should track — not under an ignore pattern, not a dotfile or editor backup.
+func (fw *FileWatcher) indexableMarkdown(relativePath string) bool {
+	if !strings.HasSuffix(relativePath, ".md") {
+		return false
+	}
+	if fw.shouldIgnore(relativePath) {
+		return false
+	}
+	base := filepath.Base(relativePath)
+	return !strings.HasPrefix(base, ".") && !strings.HasSuffix(base, "~")
+}
+
+// queueChange records a pending action for relativePath and (re)arms the
+// debounce timer.
+func (fw *FileWatcher) queueChange(relativePath, action string) {
 	fw.mu.Lock()
-	fw.pendingChanges[relPath] = action
+	fw.pendingChanges[relativePath] = action
 	fw.scheduleDebouncedFlush()
 	fw.mu.Unlock()
 }
@@ -257,6 +314,14 @@ func (fw *FileWatcher) scheduleDebouncedFlush() {
 // flushPendingChanges processes all accumulated changes.
 func (fw *FileWatcher) flushPendingChanges() {
 	fw.mu.Lock()
+	// A timer that had already fired when Stop() ran would otherwise index
+	// against a store the caller is about to close.
+	if !fw.running {
+		fw.pendingChanges = make(map[string]string)
+		fw.debounceTimer = nil
+		fw.mu.Unlock()
+		return
+	}
 	// Snapshot and clear pending changes
 	changes := make(map[string]string, len(fw.pendingChanges))
 	for k, v := range fw.pendingChanges {

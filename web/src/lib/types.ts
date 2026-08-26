@@ -320,6 +320,19 @@ export interface FeatureAssignment {
   [k: string]: unknown;
 }
 
+/**
+ * Response from PUT /runners/{runnerId}/pause | /resume.
+ *
+ * `paused` echoes the dial's new value, so a caller never has to infer it
+ * from which endpoint it hit.
+ */
+export interface RunnerPauseResponse {
+  runnerId: string;
+  action: "pause" | "resume";
+  paused: boolean;
+  success: boolean;
+}
+
 export interface RunnerListResponse {
   runners: RunnerInfo[];
   total: number;

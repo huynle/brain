@@ -32,6 +32,7 @@ import type {
   ResumeTaskOptions,
   ResumeTaskResult,
   RunnerListResponse,
+  RunnerPauseResponse,
   RunnerStatusResponse,
   SearchRequest,
   SearchResponse,
@@ -1149,6 +1150,25 @@ export const resumeAutomations = (projectId?: string) =>
       ? `/api/v1/tasks/runner/automations/resume/${encodeURIComponent(projectId)}`
       : "/api/v1/tasks/runner/automations/resume",
     { method: "POST" },
+  );
+
+// Runner-scoped pause dial — a THIRD dial, independent of the two project
+// dials above. A paused runner accepts no dispatch for any project; a paused
+// project stops dispatch on every runner. Neither implies the other, and
+// neither is reported by the other's status endpoint: runner pause reads back
+// as the `paused` field on GET /runners, never from /tasks/runner/status.
+//
+// Persisted server-side (runner_pause_state) before the SSE command is
+// published, so the dial survives a runner restart or reconnect.
+export const pauseRunner = (runnerId: string) =>
+  api<RunnerPauseResponse>(
+    `/api/v1/runners/${encodeURIComponent(runnerId)}/pause`,
+    { method: "PUT", body: {} },
+  );
+export const resumeRunner = (runnerId: string) =>
+  api<RunnerPauseResponse>(
+    `/api/v1/runners/${encodeURIComponent(runnerId)}/resume`,
+    { method: "PUT", body: {} },
   );
 
 export const shutdownRunner = (runnerId: string, reason = "manual") =>

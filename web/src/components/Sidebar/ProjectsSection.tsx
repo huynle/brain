@@ -14,9 +14,13 @@ import { useWorkspace } from "../../store/workspace";
 import { useProjects } from "../../hooks/useProjects";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useLive } from "../../lib/sse";
-import { useUI } from "../../store/ui";
-import { runProject, summarizeRunProjectResult } from "../../lib/api";
-import { buildProjectActions } from "../../lib/actions/projectActions";
+import {
+  buildProjectActions,
+  isProjectAutomationsPaused,
+  isProjectTasksPaused,
+} from "../../lib/actions/projectActions";
+import { useProjectActionContext } from "../../hooks/useProjectActionContext";
+import { useRunnerStatus } from "../../hooks/useRunnerStatus";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
@@ -55,9 +59,9 @@ export function ProjectsSection(): JSX.Element {
   const hiddenProjects = useWorkspace((s) => s.hiddenProjects);
   const showProject = useWorkspace((s) => s.showProject);
   const hideProject = useWorkspace((s) => s.hideProject);
-  const openInFocus = useWorkspace((s) => s.openInFocus);
-  const toast = useUI((s) => s.toast);
   const { data: projects, isLoading, error, refetch } = useProjects();
+  const projectCtx = useProjectActionContext();
+  const { status: runnerStatus } = useRunnerStatus();
   const liveProjects = useLive((s) => s.projects);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
@@ -98,24 +102,14 @@ export function ProjectsSection(): JSX.Element {
           const blocked = tasks.filter((t) => t.status === "blocked").length;
           // Right-click used to hide the project outright — a menu-less
           // shortcut nobody could predict. Now it opens the same verb
-          // set as the project card header (run / open in focus / hide),
-          // with the × button as the one-click hide it always was.
-          const actions = buildProjectActions(
-            pid,
-            {
-              runProject: async (p) => {
-                const r = await runProject(p, false);
-                toast(
-                  summarizeRunProjectResult(r),
-                  r.totalTasksDispatched > 0 ? "success" : "info",
-                );
-              },
-              openTaskList: (p) =>
-                openInFocus("task-detail", { projectId: p }, p),
-              hideProject: (p) => hideProject(p),
-            },
-            { taskCount: tasks.length },
-          );
+          // set as the project card header (run / the two pause dials /
+          // open in focus / hide), with the × button as the one-click
+          // hide it always was.
+          const actions = buildProjectActions(pid, projectCtx, {
+            taskCount: tasks.length,
+            tasksPaused: isProjectTasksPaused(runnerStatus, pid),
+            automationsPaused: isProjectAutomationsPaused(runnerStatus, pid),
+          });
           return (
             <div
               key={pid}

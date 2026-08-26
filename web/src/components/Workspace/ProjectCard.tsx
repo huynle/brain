@@ -3,7 +3,8 @@
  *
  * DOM:
  *   .pcard[data-project=pid]
- *     .pcard-head (dot · name · env · health · stats · close)
+ *     .pcard-head (dot · name · env · health · autos-paused · stats · close)
+ *     .hold-strip (why the last scheduler pass dispatched nothing)
  *     .flow-strip (lifecycle pills)
  *     .pcard-tabs (Tasks | Features | More▾ | Focus icon)
  *     .pcard-body → CardTasks | CardFeatures | CardAutomations | CardSession | CardLogs
@@ -15,9 +16,17 @@ import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
 import { deriveFeatures, type DerivedFeature } from "../../lib/features";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
+import { usePauseState } from "../../hooks/usePauseState";
+import { useSchedulerStatus } from "../../hooks/useSchedulerStatus";
 import { useRowActions } from "../../hooks/useRowActions";
 import { runProject, summarizeRunProjectResult } from "../../lib/api";
 import { buildProjectActions } from "../../lib/actions/projectActions";
+import {
+  forceDispatchNote,
+  projectPauseBadges,
+  schedulerHoldNote,
+  withForceNote,
+} from "../../lib/pause";
 import { CardTasks } from "./CardTasks";
 import { CardFeatures } from "./CardFeatures";
 import { CardAutomations } from "./CardAutomations";
@@ -51,10 +60,17 @@ function statsFor(tasks: readonly Task[]): ProjectStats {
   return s;
 }
 
+// Health describes whether the project's WORK is in trouble. Pause describes
+// whether work can move at all, and it outranks every label below: a paused
+// project with clean tasks used to render "healthy" in green, which is the
+// single most misleading thing this card could say. `paused` is passed in
+// rather than read here so the function stays pure and testable.
 function healthFor(
   stats: ProjectStats,
   features: DerivedFeature[],
+  paused: boolean,
 ): { label: string; tone: string } {
+  if (paused) return { label: "paused", tone: "paused" };
   const mr = features.filter((f) => f.lifecycle === "mr-open").length;
   const blocked = features.filter((f) => f.lifecycle === "blocked").length;
   if (blocked > 0 || stats.blocked > 0) return { label: "blocked", tone: "blocked" };
@@ -74,6 +90,8 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   const connected = projectLive?.connected ?? false;
   const hasSnapshot = projectLive !== undefined && projectLive.tasks !== undefined;
   const { rowProps, overlays } = useRowActions();
+  const { pause } = usePauseState();
+  const { resultFor } = useSchedulerStatus();
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const openModal = useModal((s) => s.open);
   const hideProject = useWorkspace((s) => s.hideProject);
@@ -86,10 +104,14 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
     () => deriveFeatures(tasks, projectId, openByProject.get(projectId)),
     [tasks, projectId, openByProject],
   );
+  const badges = projectPauseBadges(pause, projectId);
   const health = useMemo(
-    () => healthFor(stats, features),
-    [stats, features],
+    () => healthFor(stats, features, badges.tasks),
+    [stats, features, badges.tasks],
   );
+  // What the last scheduler pass actually did with this project's tasks —
+  // the server's own account of why nothing moved.
+  const holdNote = schedulerHoldNote(resultFor(projectId));
 
   const lifecycleCounts = useMemo(() => {
     const c = { active: 0, blocked: 0, finished: 0, mr: 0, merged: 0 };
@@ -121,8 +143,13 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
         {
           runProject: async (pid) => {
             const r = await runProject(pid, false);
+            // Run deliberately bypasses the project pause dials (see
+            // SchedulerService.RunTaskNow). Saying so keeps an intentional
+            // override from reading as "pause was silently ignored" —
+            // and names the one dial force CANNOT cross.
+            const note = forceDispatchNote(pause, { projectId: pid });
             toast(
-              summarizeRunProjectResult(r),
+              withForceNote(summarizeRunProjectResult(r), note),
               r.totalTasksDispatched > 0 ? "success" : "info",
             );
           },
@@ -131,7 +158,7 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
         },
         { taskCount: tasks.length },
       ),
-    [projectId, tasks.length, toast, openInFocus, hideProject],
+    [projectId, tasks.length, toast, openInFocus, hideProject, pause],
   );
 
   return (
@@ -149,7 +176,23 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
           title={!hasSnapshot ? "connecting…" : connected ? "live" : "reconnecting"}
         />
         <span className="name">{projectId}</span>
-        <span className={`health ${health.tone}`}>{health.label}</span>
+        <span
+          className={`health ${health.tone}`}
+          title={badges.tasks ? badges.tasksTitle : undefined}
+        >
+          {health.label}
+        </span>
+        {/* The automations dial is a DIFFERENT switch with a different
+            meaning, so it gets its own indicator rather than folding into
+            the health label. Both can be on at once. */}
+        {badges.automations && (
+          <span
+            className="health autos-paused"
+            title={badges.automationsTitle}
+          >
+            autos paused
+          </span>
+        )}
         <span className="spacer" />
         {!hasSnapshot ? (
           <span
@@ -185,6 +228,18 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
           ×
         </button>
       </div>
+
+      {/* The scheduler's own account of the last pass. A project whose tasks
+          sit at ready with nothing running is the case this answers: the
+          server already knew why, it just had no surface here. */}
+      {holdNote && (
+        <div
+          className={`hold-strip ${holdNote.tone}`}
+          title={holdNote.detail}
+        >
+          {holdNote.glyph} {holdNote.short}
+        </div>
+      )}
 
       {(lifecycleCounts.active > 0 ||
         lifecycleCounts.blocked > 0 ||

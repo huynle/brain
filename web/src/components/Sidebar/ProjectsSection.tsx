@@ -5,13 +5,14 @@
  *   .sb-section
  *     .sb-head (▾ Projects · N/M · ＋)
  *     .sb-list
- *       .proj-row × N (dot + name + stats + × close)
+ *       .proj-row × N (dot + name + pause tags + stats + × close)
  *       ▸ Hidden (N)   (collapsed by default)
  *         .proj-row × N hidden — click to restore
  */
 import { useState } from "react";
 import { useWorkspace } from "../../store/workspace";
 import { useProjects } from "../../hooks/useProjects";
+import { usePauseState } from "../../hooks/usePauseState";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useLive } from "../../lib/sse";
 import { useUI } from "../../store/ui";
@@ -20,12 +21,21 @@ import { buildProjectActions } from "../../lib/actions/projectActions";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
+import {
+  forceDispatchNote,
+  projectPauseBadges,
+  withForceNote,
+} from "../../lib/pause";
 import type { Task } from "../../lib/types";
 
-type Dot = "on" | "busy" | "err" | "";
+type Dot = "on" | "busy" | "paused" | "err" | "";
 
-function projectDot(tasks: readonly Task[]): Dot {
-  if (tasks.length === 0) return "";
+// A paused project outranks its task mix: with the task dial off, "some
+// tasks are pending" and "some tasks are blocked" both reduce to "nothing
+// is going to happen here", and a green dot said the opposite. Tasks still
+// in flight keep the busy dot — pause stops new dispatches, it does not
+// stop a process that is already running.
+function projectDot(tasks: readonly Task[], paused: boolean): Dot {
   let hasBusy = false;
   let hasBlocked = false;
   for (const t of tasks) {
@@ -33,6 +43,8 @@ function projectDot(tasks: readonly Task[]): Dot {
     else if (t.status === "blocked") hasBlocked = true;
   }
   if (hasBusy) return "busy";
+  if (paused) return "paused";
+  if (tasks.length === 0) return "";
   if (hasBlocked) return "err";
   return "on";
 }
@@ -58,6 +70,7 @@ export function ProjectsSection(): JSX.Element {
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const toast = useUI((s) => s.toast);
   const { data: projects, isLoading, error, refetch } = useProjects();
+  const { pause } = usePauseState();
   const liveProjects = useLive((s) => s.projects);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
@@ -90,7 +103,8 @@ export function ProjectsSection(): JSX.Element {
         {visibleProjectIds.map((pid) => {
           const live = liveProjects[pid];
           const tasks = live?.tasks ?? [];
-          const dot = projectDot(tasks);
+          const badges = projectPauseBadges(pause, pid);
+          const dot = projectDot(tasks, badges.tasks);
           const active = tasks.filter(
             (t) => t.status === "in_progress",
           ).length;
@@ -105,8 +119,11 @@ export function ProjectsSection(): JSX.Element {
             {
               runProject: async (p) => {
                 const r = await runProject(p, false);
+                // Run bypasses the project pause dials on purpose; say so,
+                // so an intentional override does not read as a bug.
+                const note = forceDispatchNote(pause, { projectId: p });
                 toast(
-                  summarizeRunProjectResult(r),
+                  withForceNote(summarizeRunProjectResult(r), note),
                   r.totalTasksDispatched > 0 ? "success" : "info",
                 );
               },
@@ -128,10 +145,32 @@ export function ProjectsSection(): JSX.Element {
                 setView("overview");
                 setTimeout(() => focusProjectCard(pid), 30);
               }}
-              title={pid}
+              title={
+                badges.tasks
+                  ? `${pid} — PAUSED`
+                  : badges.automations
+                    ? `${pid} — automations paused`
+                    : pid
+              }
             >
-              <span className={`dot ${dot}`} />
+              <span
+                className={`dot ${dot}`}
+                title={badges.tasks ? badges.tasksTitle : undefined}
+              />
               <span className="name">{pid}</span>
+              {badges.tasks && (
+                <span className="pause-tag" title={badges.tasksTitle}>
+                  paused
+                </span>
+              )}
+              {badges.automations && (
+                <span
+                  className="pause-tag autos"
+                  title={badges.automationsTitle}
+                >
+                  autos
+                </span>
+              )}
               <span className="stats">
                 {active > 0 && <span className="active">{active}▸</span>}
                 {ready > 0 && <span className="ready">{ready}▪</span>}

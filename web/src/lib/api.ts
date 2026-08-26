@@ -33,6 +33,7 @@ import type {
   ResumeTaskResult,
   RunnerListResponse,
   RunnerStatusResponse,
+  SchedulerStatus,
   SearchRequest,
   SearchResponse,
   Task,
@@ -1121,8 +1122,20 @@ export const getServerRequests = (since = 0, limit = 500) =>
     { query: { since, limit } },
   ).then((r) => r.requests || []);
 
+// Project-scoped pause dials. Despite the /tasks/runner/ path this endpoint
+// knows nothing about runners: `pausedProjects` is the project task dial and
+// `automationPausedProjects` the project automations dial, and the top-level
+// `paused` / `automationsPaused` booleans are just "is that list non-empty".
+// Runner-scoped pause lives on RunnerInfo.paused from getRunners(). See the
+// FOOTGUN note on RunnerStatusResponse in lib/types.
 export const getRunnerStatus = () =>
   api<RunnerStatusResponse>("/api/v1/tasks/runner/status");
+
+// Scheduler loop state, including per-project skip counts from the last pass.
+// This is the only place the server explains *why* a ready task was not
+// dispatched at project granularity (`last_project_results[project]`).
+export const getSchedulerStatus = () =>
+  api<SchedulerStatus>("/api/v1/scheduler/status");
 
 export const pauseProject = (projectId: string) =>
   api(`/api/v1/tasks/runner/pause/${encodeURIComponent(projectId)}`, {

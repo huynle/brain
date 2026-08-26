@@ -170,7 +170,13 @@ export function OverviewGrid(): JSX.Element {
     [allDerived],
   );
 
-  const onlineRunners = runners.filter((r) => r.status === "online").length;
+  // "Online" here has to mean "can take work". A paused runner heartbeats as
+  // online but refuses every dispatch, so counting it made the command
+  // center's headline metric read 1/1 on a fleet that would run nothing.
+  const onlineRunners = runners.filter(
+    (r) => r.status === "online" && !r.paused,
+  ).length;
+  const pausedRunners = runners.filter((r) => r.paused).length;
 
   return (
     <div className="overview">
@@ -204,10 +210,22 @@ export function OverviewGrid(): JSX.Element {
             <span> executable features</span>
           </div>
           <div>
-            <b>
+            <b className={pausedRunners > 0 ? "wc-metric-warn" : undefined}>
               {onlineRunners}/{runners.length}
             </b>
-            <span> runners online</span>
+            <span>
+              {" "}
+              runners online
+              {pausedRunners > 0 && (
+                <span
+                  className="wc-metric-note"
+                  title={`${pausedRunners} runner${pausedRunners === 1 ? " is" : "s are"} paused and will not accept dispatches`}
+                >
+                  {" "}
+                  · {pausedRunners} paused
+                </span>
+              )}
+            </span>
           </div>
           <div>
             <b>{byLifecycle["mr-open"].length}</b>

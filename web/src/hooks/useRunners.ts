@@ -17,6 +17,12 @@
  *
  * The query polls every 12s to catch runners that come online while
  * SSE is dropped; that mirrors the existing dashboard's cadence.
+ *
+ * NOTE on `poll`: react-query schedules `refetchInterval` PER OBSERVER, and
+ * every observer shares one cache entry. Six mounted components polling at
+ * 12s therefore hit the network every ~2s, not every 12s. Callers that only
+ * need to read the shared snapshot should pass `{ poll: false }`; they still
+ * re-render on every update, they just do not add a timer of their own.
  */
 import { useQuery } from "@tanstack/react-query";
 import { getRunners } from "../lib/api";
@@ -30,12 +36,19 @@ export interface UseRunnersResult {
   refetch: () => void;
 }
 
-export function useRunners(): UseRunnersResult {
+export interface UseRunnersOptions {
+  /** Own a 12s refetch timer. Default true (existing behavior). Pass false
+   *  from hooks that merely read the shared snapshot. */
+  poll?: boolean;
+}
+
+export function useRunners(opts: UseRunnersOptions = {}): UseRunnersResult {
+  const { poll = true } = opts;
   const liveRunners = useLive((s) => s.runners);
   const q = useQuery({
     queryKey: ["v2", "runners"],
     queryFn: getRunners,
-    refetchInterval: 12_000,
+    refetchInterval: poll ? 12_000 : false,
     staleTime: 10_000,
   });
 

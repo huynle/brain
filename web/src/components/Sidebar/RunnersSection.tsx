@@ -6,15 +6,20 @@
  *     .sb-head (▾ Runners · online/total)
  *     .sb-list
  *       .runner-row × N
- *         .dot (on/err)
+ *         .dot (on/busy/paused/err)
  *         .runner-body
- *           .runner-name
+ *           .runner-name (+ .pause-tag when the runner dial is off)
  *           .runner-meta (running/capacity · os · executor)
  *           .runner-assign (chip.mini × N assigned features)
  *
  * Preserves the Phase 8 assignment logic (real backend + optimistic
  * rollback via feature→runner assign/clear APIs) but restyles the
  * row with wireframe classnames.
+ *
+ * The dot is derived by `lib/pause.runnerDotState`, not from `r.status`
+ * alone: a runner paused via PUT /runners/{id}/pause keeps reporting status
+ * "online" — it heartbeats normally, it just refuses placement — so the old
+ * status-only derivation painted it the identical green as one doing work.
  *
  * Verbs come from `lib/actions/runnerActions` via `useRowActions`, so
  * right-click, long-press and keyboard offer the identical set — same
@@ -44,13 +49,8 @@ import {
   clearFeatureAssignment,
   ApiError,
 } from "../../lib/api";
-import type { FeatureAssignment, RunnerInfo } from "../../lib/types";
-
-function runnerDot(status: RunnerInfo["status"]): "on" | "err" | "" {
-  if (status === "online") return "on";
-  if (status === "stale") return "err";
-  return "";
-}
+import { runnerDotState, runnerDotTitle } from "../../lib/pause";
+import type { FeatureAssignment } from "../../lib/types";
 
 export function RunnersSection(): JSX.Element {
   const expanded = useWorkspace((s) => s.sidebarSection.runners);
@@ -125,7 +125,7 @@ export function RunnersSection(): JSX.Element {
     }
     return runners.map((r) => {
       const assignments = combineRunnerAssignments(r, featureAssignments);
-      const dot = runnerDot(r.status);
+      const dot = runnerDotState(r);
       const isDrop = dropTarget === r.runner_id;
       const running = r.active_tasks ?? 0;
       const capacity = r.max_parallel ?? 0;
@@ -165,9 +165,19 @@ export function RunnersSection(): JSX.Element {
             void doAssign(payload, r.runner_id);
           }}
         >
-          <span className={`dot ${dot}`} />
+          <span className={`dot ${dot}`} title={runnerDotTitle(r)} />
           <div className="runner-body">
-            <div className="runner-name">{r.runner_id}</div>
+            <div className="runner-name">
+              {/* The id truncates; the pause tag never does. Without the
+                  inner span the tag rode inside the ellipsised text and a
+                  long runner id would have hidden it entirely. */}
+              <span className="runner-name__id">{r.runner_id}</span>
+              {r.paused && (
+                <span className="pause-tag" title={runnerDotTitle(r)}>
+                  paused
+                </span>
+              )}
+            </div>
             <div className="runner-meta">
               <span>
                 {running}/{capacity}
@@ -205,7 +215,13 @@ export function RunnersSection(): JSX.Element {
     });
   })();
 
-  const onlineCount = runners.filter((r) => r.status === "online").length;
+  // "online" here means online AND able to take work. A paused runner
+  // inflating this count is how "1/1 runners" reassured a user whose only
+  // runner would never accept a dispatch.
+  const onlineCount = runners.filter(
+    (r) => r.status === "online" && !r.paused,
+  ).length;
+  const pausedCount = runners.filter((r) => r.paused).length;
 
   return (
     <div className="sb-section">
@@ -217,6 +233,15 @@ export function RunnersSection(): JSX.Element {
         Runners
         <span className="count">
           {onlineCount}/{runners.length}
+          {pausedCount > 0 && (
+            <span
+              className="count-paused"
+              title={`${pausedCount} runner${pausedCount === 1 ? " is" : "s are"} paused and will not accept dispatches`}
+            >
+              {" "}
+              · {pausedCount} paused
+            </span>
+          )}
         </span>
       </div>
       {expanded && <div className="sb-list">{body}</div>}

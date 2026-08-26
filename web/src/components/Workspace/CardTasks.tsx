@@ -4,7 +4,7 @@
  * Groups tasks by feature. Each feature shows:
  *   .feat[state]
  *     .feat-head (caret · name · life-badge · age · assign-chip · progress bar · % text)
- *     .trow × N (glyph · name · status · id)
+ *     .trow × N (glyph · name · status [+ .hold-chip] · id)
  *
  * Within a feature the rows form a dependency tree rather than a flat
  * list: a task that depends on another renders indented beneath it, so
@@ -21,6 +21,7 @@ import { useMemo } from "react";
 import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useRunners } from "../../hooks/useRunners";
+import { usePauseState } from "../../hooks/usePauseState";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useTaskActionContext } from "../../hooks/useTaskActionContext";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
@@ -30,6 +31,7 @@ import { buildTaskActions } from "../../lib/actions/taskActions";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
 import { buildSelectionActions } from "../../lib/actions/selectionActions";
 import { isRangeKey } from "../../lib/selection";
+import { taskHoldReason } from "../../lib/pause";
 import { buildTaskForest } from "../../lib/taskTree";
 import { flattenDepForest, type DepRow } from "../../lib/depTree";
 import type { Task } from "../../lib/types";
@@ -98,6 +100,7 @@ export function CardTasks({
   const toggleArchivedExpanded = useWorkspace((s) => s.toggleArchivedExpanded);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const { runners } = useRunners();
+  const { pause } = usePauseState();
 
   const taskCtx = useTaskActionContext(projectId);
   const featureCtx = useFeatureActionContext(projectId);
@@ -214,6 +217,10 @@ export function CardTasks({
     const t = row.node.item;
     const { glyph, cls } = taskGlyph(t.status, !!t.is_abandoned);
     const label = t.title || t.id;
+    // Why a task can sit at `ready` forever with nothing happening. Null for
+    // every task that is running, waiting on a dep, or simply not held —
+    // the chip only appears when there is a real answer to give.
+    const hold = taskHoldReason(t, { pause, projectId });
     const actions = buildTaskActions(t, taskCtx);
     const marked = selScoped && selTaskIds.has(t.id);
     // Single-click select-only highlight — one active row at a time,
@@ -325,7 +332,14 @@ export function CardTasks({
           />
           {label}
         </span>
-        <span className="status">{t.status}</span>
+        <span className="status">
+          {t.status}
+          {hold && (
+            <span className={`hold-chip ${hold.code}`} title={hold.detail}>
+              {hold.glyph} {hold.short}
+            </span>
+          )}
+        </span>
         <span className="id">{t.id.slice(0, 6)}</span>
       </div>
     );

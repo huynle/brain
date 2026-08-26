@@ -971,7 +971,9 @@ func (c *EditCommand) Execute() error {
 			fmt.Fprint(out, "Continue? [y/N] ")
 
 			var answer string
-			fmt.Fscan(os.Stdin, &answer)
+			// A read failure leaves answer empty, which is not "y" — the
+			// prompt then cancels, which is the safe default.
+			_, _ = fmt.Fscan(os.Stdin, &answer)
 			answer = strings.TrimSpace(strings.ToLower(answer))
 			if answer != "y" && answer != "yes" {
 				fmt.Fprintln(out, "Cancelled")
@@ -1032,7 +1034,9 @@ func (c *EditCommand) resolveTarget(ctx context.Context, client *runner.APIClien
 			fmt.Fprintf(out, "Are you sure you want to open %d entries? [y/N] ", len(resp.Entries))
 
 			var answer string
-			fmt.Fscan(os.Stdin, &answer)
+			// A read failure leaves answer empty, which is not "y" — the
+			// prompt then cancels, which is the safe default.
+			_, _ = fmt.Fscan(os.Stdin, &answer)
 			answer = strings.TrimSpace(strings.ToLower(answer))
 			if answer != "y" && answer != "yes" {
 				fmt.Fprintln(out, "Cancelled (use --force to skip confirmation)")
@@ -1183,10 +1187,7 @@ func extractBody(content string) string {
 		return content
 	}
 	// Skip past "---\n"
-	body := rest[idx+4:]
-	if strings.HasPrefix(body, "\n") {
-		body = body[1:]
-	}
+	body := strings.TrimPrefix(rest[idx+4:], "\n")
 	return body
 }
 

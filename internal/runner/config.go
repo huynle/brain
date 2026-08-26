@@ -147,11 +147,9 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 
 	// Expand tilde in inline hook script paths.
 	inlineHooks := fileCfg.Hooks.Hooks
-	if inlineHooks != nil {
-		for name, h := range inlineHooks {
-			h.Script = expandTilde(h.Script, homeDir)
-			inlineHooks[name] = h
-		}
+	for name, h := range inlineHooks {
+		h.Script = expandTilde(h.Script, homeDir)
+		inlineHooks[name] = h
 	}
 
 	cfg := RunnerConfig{
@@ -216,15 +214,15 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 			"RUNNER_PROJECT_REFRESH_INTERVAL",
 			firstNonZero(fileCfg.ProjectRefreshInterval, 60),
 		),
-		LogStreaming:      getEnvBoolOrDefault("RUNNER_LOG_STREAMING", defaultLogStreaming(fileCfg.LogStreaming)),
-		Capabilities:      getEnvCSVOrDefault("RUNNER_CAPABILITIES", fileCfg.Capabilities),
-		DispatchPush:      getEnvBoolOrDefault("RUNNER_DISPATCH_PUSH", defaultDispatchPush(fileCfg.DispatchPush, fileHasDispatchPush)),
-		Labels:            getEnvStringMapOrDefault("RUNNER_LABELS", fileCfg.Labels),
-		WorkspaceRoots:    getEnvCSVOrDefault("RUNNER_WORKSPACE_ROOTS", fileCfg.WorkspaceRoots),
-		Resources:         getEnvInterfaceMapOrDefault("RUNNER_RESOURCES", fileCfg.Resources),
-		Capacity:          getEnvInterfaceMapOrDefault("RUNNER_CAPACITY", fileCfg.Capacity),
-		Draining:          getEnvBoolOrDefault("RUNNER_DRAINING", fileCfg.Draining),
-		Passive:           getEnvBoolOrDefault("RUNNER_PASSIVE", fileCfg.Passive),
+		LogStreaming:   getEnvBoolOrDefault("RUNNER_LOG_STREAMING", defaultLogStreaming(fileCfg.LogStreaming)),
+		Capabilities:   getEnvCSVOrDefault("RUNNER_CAPABILITIES", fileCfg.Capabilities),
+		DispatchPush:   getEnvBoolOrDefault("RUNNER_DISPATCH_PUSH", defaultDispatchPush(fileCfg.DispatchPush, fileHasDispatchPush)),
+		Labels:         getEnvStringMapOrDefault("RUNNER_LABELS", fileCfg.Labels),
+		WorkspaceRoots: getEnvCSVOrDefault("RUNNER_WORKSPACE_ROOTS", fileCfg.WorkspaceRoots),
+		Resources:      getEnvInterfaceMapOrDefault("RUNNER_RESOURCES", fileCfg.Resources),
+		Capacity:       getEnvInterfaceMapOrDefault("RUNNER_CAPACITY", fileCfg.Capacity),
+		Draining:       getEnvBoolOrDefault("RUNNER_DRAINING", fileCfg.Draining),
+		Passive:        getEnvBoolOrDefault("RUNNER_PASSIVE", fileCfg.Passive),
 	}
 
 	// Push dispatch is the only fully-supported task delivery mode. The

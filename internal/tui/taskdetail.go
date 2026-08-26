@@ -1037,10 +1037,10 @@ func (td *TaskDetail) renderFeature() string {
 		lines = append(lines, "")
 		lines = append(lines, lipgloss.NewStyle().Underline(true).Render("Dependencies:"))
 		for _, depID := range f.DependsOnFeatures {
-			icon := featureDepStatusIconSimple("pending") // default
-			style := DimStyle
 			// We don't have the dep feature objects directly, but we know if it's in
 			// BlockedByFeatures or WaitingOnFeatures
+			var icon string
+			var style lipgloss.Style
 			if sliceContains(f.BlockedByFeatures, depID) {
 				icon = featureDepStatusIconSimple("blocked")
 				style = lipgloss.NewStyle().Foreground(ColorBlocked)

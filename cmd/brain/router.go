@@ -866,7 +866,8 @@ func parseHealthCommand(args []string) (Command, error) {
 		}
 		if arg == "--timeout" && i+1 < len(args) {
 			// Parse timeout (simplified)
-			fmt.Sscanf(args[i+1], "%d", &timeout)
+			// A malformed value deliberately leaves the default above in place.
+			_, _ = fmt.Sscanf(args[i+1], "%d", &timeout)
 		}
 	}
 
@@ -892,7 +893,8 @@ func parseLogsCommand(args []string) (Command, error) {
 			followFlag = true
 		}
 		if (arg == "-n" || arg == "--lines") && i+1 < len(args) {
-			fmt.Sscanf(args[i+1], "%d", &lines)
+			// A malformed value deliberately leaves the default above in place.
+			_, _ = fmt.Sscanf(args[i+1], "%d", &lines)
 		}
 		if arg == "--since" && i+1 < len(args) {
 			since = args[i+1]

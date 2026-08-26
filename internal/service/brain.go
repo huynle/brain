@@ -3302,23 +3302,3 @@ func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
 		MaxConcurrent:          t.MaxConcurrent,
 	}
 }
-
-// typesTriggerFromFM converts a frontmatter.TriggerConfig to a types.TriggerConfig.
-func typesTriggerFromFM(t *frontmatter.TriggerConfig) *types.TriggerConfig {
-	if t == nil {
-		return nil
-	}
-	return &types.TriggerConfig{
-		Type:                   t.Type,
-		Event:                  t.Event,
-		Events:                 t.Events,
-		Schedule:               t.Schedule,
-		Timezone:               t.Timezone,
-		Filter:                 t.Filter,
-		OncePer:                t.OncePer,
-		Webhook:                t.Webhook,
-		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
-		Cooldown:               t.Cooldown,
-		MaxConcurrent:          t.MaxConcurrent,
-	}
-}

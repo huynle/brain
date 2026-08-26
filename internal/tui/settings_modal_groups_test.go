@@ -288,17 +288,3 @@ func TestSettingsModal_GroupsTabHelpText(t *testing.T) {
 		t.Errorf("Expected help text to contain 'c: collapse', got:\n%s", view)
 	}
 }
-
-// Helper function to check if a string contains a substring
-func containsSubstring(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && indexOfString(s, substr) >= 0
-}
-
-func indexOfString(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}

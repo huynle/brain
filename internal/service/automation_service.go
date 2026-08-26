@@ -234,13 +234,10 @@ func (s *AutomationService) isAutomationPaused(automation types.BrainEntry, evt 
 	}
 	if projectID != "" {
 		if scoped, ok := s.pauseChecker.(automationProjectPauseChecker); ok {
-			if scoped.IsAutomationsPausedForProject(projectID) {
-				return true
-			}
 			// scoped checker already folds global state into its per-project
 			// answer (see RunnerServiceImpl.IsAutomationsPausedForProject),
-			// so a false result means "not paused" and no further check needed.
-			return false
+			// so its result is final — no further global check needed.
+			return scoped.IsAutomationsPausedForProject(projectID)
 		}
 	}
 	return s.pauseChecker.IsAutomationsPaused()
@@ -564,10 +561,6 @@ func automationCompleteOnIdle(value *bool) *bool {
 	}
 	defaultValue := true
 	return &defaultValue
-}
-
-func renderAutomationProjectTemplate(input, project string) string {
-	return renderAutomationTemplate(input, project, types.Event{})
 }
 
 func renderAutomationTemplate(input, project string, evt types.Event) string {

@@ -512,7 +512,9 @@ func (c *APIClient) ClaimTask(ctx context.Context, projectID, taskID, runnerID s
 		var data struct {
 			ClaimedBy string `json:"claimedBy"`
 		}
-		json.NewDecoder(resp.Body).Decode(&data)
+		// Advisory detail only — on a decode failure ClaimedBy stays empty and
+		// the "already claimed" result below is still correct.
+		_ = json.NewDecoder(resp.Body).Decode(&data)
 		return ClaimResult{
 			Success:   false,
 			TaskID:    taskID,
@@ -1769,12 +1771,4 @@ func encodePathComponent(s string) string {
 		parts[i] = url.PathEscape(p)
 	}
 	return strings.Join(parts, "/")
-}
-
-// isUnreserved returns true for RFC 3986 unreserved characters.
-func isUnreserved(c byte) bool {
-	return (c >= 'A' && c <= 'Z') ||
-		(c >= 'a' && c <= 'z') ||
-		(c >= '0' && c <= '9') ||
-		c == '-' || c == '_' || c == '.' || c == '~'
 }

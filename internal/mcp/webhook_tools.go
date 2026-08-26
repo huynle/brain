@@ -2,7 +2,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -47,17 +46,17 @@ first if you might be re-creating one.`,
 		InputSchema: InputSchema{
 			Type: "object",
 			Properties: map[string]Property{
-				"name":    {Type: "string", Description: "Human-readable name for the webhook"},
-				"url":     {Type: "string", Description: "URL to receive webhook POST callbacks"},
-				"events":  {Type: "array", Items: &Property{Type: "string"}, Description: "Event types to subscribe to (e.g., [\"task.completed\", \"entry.*\"])"},
-				"filter":  {Type: "object", Description: "Optional key-value filter (e.g., {\"project\": \"my-project\"})"},
+				"name":   {Type: "string", Description: "Human-readable name for the webhook"},
+				"url":    {Type: "string", Description: "URL to receive webhook POST callbacks"},
+				"events": {Type: "array", Items: &Property{Type: "string"}, Description: "Event types to subscribe to (e.g., [\"task.completed\", \"entry.*\"])"},
+				"filter": {Type: "object", Description: "Optional key-value filter (e.g., {\"project\": \"my-project\"})"},
 				// The service signs with X-Brain-Signature
 				// (internal/service/webhook_service.go). This said
 				// X-Hook-Signature, so a receiver written from this
 				// description verified a header that never arrives and
 				// rejected every delivery — or, worse, skipped verification
 				// because the header appeared to be missing.
-				"secret": {Type: "string", Description: "Optional HMAC secret for payload signing. Deliveries carry the signature in the X-Brain-Signature header as HMAC-SHA256 of the raw body."},
+				"secret":  {Type: "string", Description: "Optional HMAC secret for payload signing. Deliveries carry the signature in the X-Brain-Signature header as HMAC-SHA256 of the raw body."},
 				"enabled": {Type: "boolean", Description: "Whether the webhook is active (default: true)"},
 			},
 			// name is required server-side (internal/api/webhooks.go). Leaving
@@ -531,7 +530,6 @@ Use webhook_list to find webhook IDs.`,
 // Webhook helper for JSON output
 // =============================================================================
 
-
 // sortedKeys returns a map's keys in sorted order.
 //
 // The webhook renderers iterated Filter directly, and Go randomises map
@@ -618,13 +616,4 @@ func webhookLatency(latencyMs *int) string {
 		return "n/a"
 	}
 	return fmt.Sprintf("%dms", *latencyMs)
-}
-
-// webhookToJSON marshals a webhook response to indented JSON for tool output.
-func webhookToJSON(wh types.WebhookResponse) string {
-	data, err := json.MarshalIndent(wh, "", "  ")
-	if err != nil {
-		return fmt.Sprintf("Error marshaling webhook: %v", err)
-	}
-	return string(data)
 }

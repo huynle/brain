@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/huynle/brain-api/internal/types"
 	_ "github.com/glebarez/go-sqlite"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 func localOpenCodeSessionIDForTask(task types.BrainEntry) string {

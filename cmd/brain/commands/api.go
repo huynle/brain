@@ -185,7 +185,8 @@ func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile 
 		}
 		if pid != os.Getpid() {
 			// Clean up stale PID from a dead process
-			lifecycle.ClearPID(pidFile)
+			// Best-effort PID-file cleanup on a shutdown path.
+			_ = lifecycle.ClearPID(pidFile)
 		}
 	}
 
@@ -195,7 +196,8 @@ func daemonizeServer(ctx context.Context, opts apiserver.ServerOptions, pidFile 
 	}
 
 	// Setup cleanup on exit
-	defer lifecycle.ClearPID(pidFile)
+	// Best-effort PID-file cleanup on a shutdown path.
+	defer func() { _ = lifecycle.ClearPID(pidFile) }()
 
 	// Create context for shutdown
 	ctx, cancel := context.WithCancel(ctx)

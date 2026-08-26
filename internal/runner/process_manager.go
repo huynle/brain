@@ -648,7 +648,8 @@ func (pm *ProcessManager) Kill(ctx context.Context, taskID string) bool {
 
 	// Send SIGTERM
 	slog.Info("process kill SIGTERM", "task_id", taskID, "pid", info.Proc.Pid())
-	info.Proc.Kill(syscall.SIGTERM)
+	// Best-effort teardown — the process is being abandoned either way.
+	_ = info.Proc.Kill(syscall.SIGTERM)
 
 	// Wait for exit with timeout
 	if pm.waitForExit(info.Proc, 5*time.Second) {
@@ -657,7 +658,8 @@ func (pm *ProcessManager) Kill(ctx context.Context, taskID string) bool {
 
 	// Force kill if didn't exit
 	slog.Warn("process kill SIGKILL (force)", "task_id", taskID, "pid", info.Proc.Pid())
-	info.Proc.Kill(syscall.SIGKILL)
+	// Best-effort teardown — the process is being abandoned either way.
+	_ = info.Proc.Kill(syscall.SIGKILL)
 	pm.waitForExit(info.Proc, 2*time.Second)
 
 	return info.Proc.Exited()
@@ -680,7 +682,8 @@ func (pm *ProcessManager) KillAll(ctx context.Context) {
 		info, exists := pm.processes[id]
 		pm.mu.Unlock()
 		if exists && info.Proc != nil && !info.Proc.Exited() {
-			info.Proc.Kill(syscall.SIGTERM)
+			// Best-effort teardown — the process is being abandoned either way.
+			_ = info.Proc.Kill(syscall.SIGTERM)
 		}
 	}
 
@@ -706,7 +709,8 @@ func (pm *ProcessManager) KillAll(ctx context.Context) {
 		info, exists := pm.processes[id]
 		pm.mu.Unlock()
 		if exists && info.Proc != nil && !info.Proc.Exited() {
-			info.Proc.Kill(syscall.SIGKILL)
+			// Best-effort teardown — the process is being abandoned either way.
+			_ = info.Proc.Kill(syscall.SIGKILL)
 		}
 	}
 

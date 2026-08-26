@@ -224,10 +224,7 @@ func TestClient_ContextCancellation(t *testing.T) {
 
 	// Channel should eventually close or we should get no more events
 	select {
-	case _, ok := <-ch:
-		if ok {
-			// Got an event — that's fine, drain
-		}
+	case <-ch:
 		// Channel closed or event received — both acceptable
 	case <-time.After(3 * time.Second):
 		t.Fatal("channel not closed after context cancellation")
@@ -258,10 +255,8 @@ func TestClient_Close_StopsConnection(t *testing.T) {
 
 	// Channel should eventually close
 	select {
-	case _, ok := <-ch:
-		if ok {
-			// May get a disconnect event — that's fine
-		}
+	case <-ch:
+		// Closed, or a disconnect event — both acceptable
 	case <-time.After(3 * time.Second):
 		t.Fatal("channel not closed after Close()")
 	}

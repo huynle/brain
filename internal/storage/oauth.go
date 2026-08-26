@@ -272,7 +272,9 @@ func (s *StorageLayer) ConsumeAuthCode(ctx context.Context, codeValue string) (*
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	// Rolling back an already-committed tx returns sql.ErrTxDone; the
+	// commit result above is what callers act on.
+	defer func() { _ = tx.Rollback() }()
 
 	var code OAuthAuthCode
 	var scope, userID sql.NullString
@@ -463,7 +465,9 @@ func (s *StorageLayer) ConsumeRefreshToken(ctx context.Context, tokenValue strin
 	if err != nil {
 		return nil, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback()
+	// Rolling back an already-committed tx returns sql.ErrTxDone; the
+	// commit result above is what callers act on.
+	defer func() { _ = tx.Rollback() }()
 
 	var t OAuthRefreshToken
 	var scope, userID sql.NullString

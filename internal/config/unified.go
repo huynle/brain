@@ -358,10 +358,9 @@ func (c *UnifiedConfig) Validate() error {
 	if c.Runner.MemoryThresholdPercent < 0 || c.Runner.MemoryThresholdPercent > 100 {
 		errs = append(errs, "runner.memory_threshold_percent must be 0..100")
 	}
-	if len(c.Runner.IncludeProjects) > 0 && len(c.Runner.ExcludeProjects) > 0 {
-		// Not an error — include+exclude can coexist (exclude wins) — but
-		// warn via aggregated info. Skip for now; UI handles the guidance.
-	}
+	// Note: include+exclude project filters can coexist (exclude wins), so
+	// that combination is deliberately not validated here. The UI handles the
+	// guidance.
 
 	if len(errs) == 0 {
 		return nil

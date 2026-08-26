@@ -129,7 +129,7 @@ func TestModal_Interface(t *testing.T) {
 	}
 
 	// Test HandleKey
-	handled, cmd := modal.HandleKey("enter")
+	handled, _ := modal.HandleKey("enter")
 	if !handled {
 		t.Error("HandleKey('enter') should be handled")
 	}
@@ -182,8 +182,11 @@ func TestModalManager_OpenClose(t *testing.T) {
 	if !modal.initCalled {
 		t.Error("Modal Init() should be called on Open()")
 	}
-	// Note: testModal.Init() returns nil, so cmd should be nil
-	// If modal returned a real command, Open() would pass it through
+	// testModal.Init() returns nil, and Open() passes the modal's Init cmd
+	// straight through.
+	if cmd != nil {
+		t.Error("Open() should pass through the modal's nil Init() cmd")
+	}
 
 	// Close modal
 	cmd = mgr.Close()
@@ -286,7 +289,7 @@ func TestModalManager_HandleMouse_ComputesLayoutBeforeViewPersists(t *testing.T)
 
 	// Model.View has a value receiver, so rendered content measurements are not
 	// guaranteed to persist back to ModalManager before mouse hit testing.
-	handled, cmd := mgr.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft, X: 31, Y: 14}, 100, 30)
+	handled, cmd := mgr.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 31, Y: 14}, 100, 30)
 
 	if !handled {
 		t.Fatal("expected click on modal content line to be handled")
@@ -307,7 +310,7 @@ func TestModalManager_HandleMouseWheelRoutesToJK(t *testing.T) {
 	modal := newFocusableTestModal(5)
 	mgr.Open(modal)
 
-	handled, cmd := mgr.HandleMouse(tea.MouseMsg{Type: tea.MouseWheelDown, X: 1, Y: 1}, 100, 30)
+	handled, cmd := mgr.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 1, Y: 1}, 100, 30)
 	if !handled {
 		t.Fatal("expected mouse wheel down to be handled by modal j navigation")
 	}
@@ -318,7 +321,7 @@ func TestModalManager_HandleMouseWheelRoutesToJK(t *testing.T) {
 		t.Fatalf("expected wheel down to move focus like j to 1, got %d", modal.focusedIdx)
 	}
 
-	handled, cmd = mgr.HandleMouse(tea.MouseMsg{Type: tea.MouseWheelUp, X: 1, Y: 1}, 100, 30)
+	handled, cmd = mgr.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp, X: 1, Y: 1}, 100, 30)
 	if !handled {
 		t.Fatal("expected mouse wheel up to be handled by modal k navigation")
 	}

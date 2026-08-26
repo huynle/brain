@@ -107,14 +107,14 @@ func (d *DreamViewer) GotoBottom() {
 // ScrollUp scrolls the viewport up by n lines.
 func (d *DreamViewer) ScrollUp(n int) {
 	if d.ready {
-		d.viewport.LineUp(n)
+		d.viewport.ScrollUp(n)
 	}
 }
 
 // ScrollDown scrolls the viewport down by n lines.
 func (d *DreamViewer) ScrollDown(n int) {
 	if d.ready {
-		d.viewport.LineDown(n)
+		d.viewport.ScrollDown(n)
 	}
 }
 

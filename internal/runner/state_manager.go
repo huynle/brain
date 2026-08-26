@@ -56,7 +56,8 @@ func (sm *StateManager) Save(status RunnerStatus, tasks []RunningTask, stats Run
 		return
 	}
 
-	os.WriteFile(sm.stateFile, data, 0o644)
+	// Best-effort: StateManager treats missing or unreadable state as absent.
+	_ = os.WriteFile(sm.stateFile, data, 0o644)
 }
 
 // Load reads the runner state from disk. Returns nil if not found or corrupted.
@@ -87,7 +88,8 @@ func (sm *StateManager) Clear() {
 
 // SavePid writes the runner's process ID to disk.
 func (sm *StateManager) SavePid(pid int) {
-	os.WriteFile(sm.pidFile, []byte(strconv.Itoa(pid)), 0o644)
+	// Best-effort: StateManager treats missing or unreadable state as absent.
+	_ = os.WriteFile(sm.pidFile, []byte(strconv.Itoa(pid)), 0o644)
 }
 
 // LoadPid reads the runner's process ID from disk. Returns nil if not found.
@@ -132,7 +134,8 @@ func (sm *StateManager) SaveRunningTasks(tasks []RunningTask) {
 		return
 	}
 
-	os.WriteFile(sm.runningTasksFile, data, 0o644)
+	// Best-effort: StateManager treats missing or unreadable state as absent.
+	_ = os.WriteFile(sm.runningTasksFile, data, 0o644)
 }
 
 // LoadRunningTasks reads running tasks from disk. Returns empty slice if not found.

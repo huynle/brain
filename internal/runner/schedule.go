@@ -284,7 +284,9 @@ func countRuns(runs []types.CronRun) int {
 // generateRunID creates a unique run ID for a scheduled execution.
 func generateRunID(t time.Time) string {
 	suffix := make([]byte, 3)
-	rand.Read(suffix)
+	// crypto/rand.Read never returns an error as of Go 1.24 — it
+	// panics if the system entropy source fails.
+	_, _ = rand.Read(suffix)
 	return fmt.Sprintf("%s-%s", t.UTC().Format("20060102-1504"), hex.EncodeToString(suffix))
 }
 

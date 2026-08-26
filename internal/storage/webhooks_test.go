@@ -631,9 +631,6 @@ func TestListDeliveries_NullableFields(t *testing.T) {
 	if got.LatencyMs != nil {
 		t.Errorf("LatencyMs should be nil, got %v", got.LatencyMs)
 	}
-	if !got.Success == true {
-		// Success should be false
-	}
 	if got.Success {
 		t.Error("Success should be false")
 	}

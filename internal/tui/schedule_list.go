@@ -15,9 +15,8 @@ type ScheduleList struct {
 	SelectedID string
 	Cursor     int
 
-	tasks          []types.ResolvedTask
-	scrollOffset   int
-	viewportHeight int
+	tasks        []types.ResolvedTask
+	scrollOffset int
 }
 
 // NewScheduleList creates a new empty ScheduleList component.

@@ -18,7 +18,6 @@ const (
 // confirmResultMsg is sent when user confirms or cancels.
 type confirmResultMsg struct {
 	confirmed bool
-	cancelled bool
 }
 
 // ConfirmModal is a modal for confirming an action.

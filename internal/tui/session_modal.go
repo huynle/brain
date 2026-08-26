@@ -20,8 +20,6 @@ type SessionSelectModal struct {
 	selectedIndex int
 	tmuxMode      bool
 	onSelect      func(sessionID string) tea.Msg
-	width         int
-	height        int
 }
 
 // NewSessionSelectModal creates a new session selection modal.

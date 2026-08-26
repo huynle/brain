@@ -47,15 +47,6 @@ type goalAuditLoadedMsg struct {
 	err    error
 }
 
-// goalStatusFieldKind distinguishes the two multi-select status fields.
-type goalStatusFieldKind int
-
-const (
-	goalStatusKindNone goalStatusFieldKind = iota
-	goalStatusKindComplete
-	goalStatusKindBlocked
-)
-
 // GoalConfigModal implements Modal for editing goal automation config.
 type GoalConfigModal struct {
 	goalID    string

@@ -170,10 +170,10 @@ func (m *ModalManager) HandleMouse(msg tea.MouseMsg, screenW, screenH int) (bool
 	if m.activeModal == nil {
 		return false, nil
 	}
-	if msg.Type == tea.MouseWheelDown {
+	switch classifyMouse(msg) {
+	case mouseWheelDown:
 		return m.HandleKey("j")
-	}
-	if msg.Type == tea.MouseWheelUp {
+	case mouseWheelUp:
 		return m.HandleKey("k")
 	}
 
@@ -184,7 +184,7 @@ func (m *ModalManager) HandleMouse(msg tea.MouseMsg, screenW, screenH int) (bool
 	}
 
 	// Only handle left clicks
-	if msg.Type != tea.MouseLeft {
+	if classifyMouse(msg) != mouseLeft {
 		return false, nil
 	}
 

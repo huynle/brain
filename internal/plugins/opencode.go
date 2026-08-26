@@ -291,7 +291,7 @@ func yamlFrontmatterEnd(content []byte) int {
 
 // generateMarkdownHeader creates auto-generated header for markdown files
 func generateMarkdownHeader(filename string) string {
-	return fmt.Sprintf(`<!--
+	return `<!--
 AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
 
 This file was installed by: brain install opencode
@@ -300,7 +300,7 @@ To check status: brain doctor
 Source: https://github.com/huynle/brain-api
 -->
 
-`)
+`
 }
 
 // Uninstall removes all installed brain components.
@@ -356,7 +356,7 @@ func (t *OpenCodeTarget) Validate() error {
 
 // generateHeader creates auto-generated header for plugin files
 func generateHeader(filename string) string {
-	return fmt.Sprintf(`/**
+	return `/**
  * AUTO-GENERATED FILE - DO NOT EDIT DIRECTLY
  * 
  * This file was installed by: brain install opencode
@@ -365,5 +365,5 @@ func generateHeader(filename string) string {
  * Source: https://github.com/huynle/brain-api
  */
 
-`)
+`
 }

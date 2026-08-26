@@ -1314,14 +1314,6 @@ func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID str
 	return tasks, nil
 }
 
-// getString safely extracts a string from a map.
-func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key].(string); ok {
-		return v
-	}
-	return ""
-}
-
 // extractUniqueNonGeneratedTaskIds extracts unique task IDs from non-generated tasks.
 func extractUniqueNonGeneratedTaskIds(tasks []types.BrainEntry) []string {
 	seen := make(map[string]bool)
@@ -1870,7 +1862,9 @@ func countCompletedRuns(runs []types.CronRun) int {
 // Format: YYYYMMDD-HHmm-XXXXXX (6 hex chars).
 func generateTriggerRunID(t time.Time) string {
 	b := make([]byte, 3)
-	rand.Read(b)
+	// crypto/rand.Read never returns an error as of Go 1.24 — it
+	// panics if the system entropy source fails.
+	_, _ = rand.Read(b)
 	return fmt.Sprintf("%s-%s", t.Format("20060102-1504"), hex.EncodeToString(b))
 }
 

@@ -11,16 +11,6 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// namedFormats lists the built-in format names.
-var namedFormats = map[string]bool{
-	"path":  true,
-	"id":    true,
-	"short": true,
-	"full":  true,
-	"json":  true,
-	"jsonl": true,
-}
-
 // OutputConfig controls how brain entries are rendered to stdout.
 type OutputConfig struct {
 	Format    string // Named format or Go template string

@@ -79,21 +79,6 @@ func (rp *RunnerPanel) SelectIndex(idx int) {
 	rp.cursor = idx
 }
 
-// ensureVisible scrolls viewport to keep cursor visible.
-func (rp *RunnerPanel) ensureVisible() {
-	// Each runner takes 1 line in list view
-	visibleLines := rp.height - 3 // header + blank + footer buffer
-	if visibleLines < 1 {
-		visibleLines = 1
-	}
-	if rp.cursor < rp.scrollTop {
-		rp.scrollTop = rp.cursor
-	}
-	if rp.cursor >= rp.scrollTop+visibleLines {
-		rp.scrollTop = rp.cursor - visibleLines + 1
-	}
-}
-
 // SelectedRunner returns the currently selected runner, or nil if none.
 func (rp *RunnerPanel) SelectedRunner() *types.RunnerInfo {
 	if len(rp.runners) == 0 || rp.cursor < 0 || rp.cursor >= len(rp.runners) {

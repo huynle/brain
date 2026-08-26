@@ -1846,6 +1846,8 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		RunID:          latestInProgressRunID(task.Runs),
 		FeatureID:      task.FeatureID,
 		GeneratedBy:    task.GeneratedBy,
+		AttemptCount:   task.AttemptCount,
+		MaxAttempts:    resolveMaxAttempts(task, tr.config),
 	}
 	// Every executor gets an InstanceID so the Runners tab can surface a
 	// "currently running" row for it (issue: script/pi tasks were invisible
@@ -2510,6 +2512,9 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	case CompletionCompleted:
 		apiStatus = "completed"
 		eventType = EventTaskCompleted
+		// Clear any attempt counter left by earlier failed runs so a future
+		// failure starts from zero.
+		tr.clearTaskFailures(ctx, task)
 	case CompletionBlocked:
 		apiStatus = "blocked"
 		eventType = EventTaskFailed
@@ -2517,7 +2522,10 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		apiStatus = "completed" // cancelled tasks are considered done
 		eventType = EventTaskCancelled
 	default:
-		apiStatus = "pending" // failed/crashed/timeout → back to pending for retry
+		// failed/crashed/timeout → retry, but a bounded number of times. This
+		// used to reset to "pending" unconditionally, so a task that failed
+		// deterministically re-dispatched every poll interval forever.
+		apiStatus, _ = tr.recordTaskFailure(ctx, task)
 		eventType = EventTaskFailed
 	}
 

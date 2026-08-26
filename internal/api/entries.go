@@ -88,6 +88,12 @@ var AllowedMetadataUpdateFields = map[string]bool{
 	"resume_requested_at": true, // RFC3339 timestamp for audit
 	"abandoned_at":        true, // RFC3339 timestamp set by reaper / reconciler
 	"abandoned_reason":    true, // enum: runner_orphan | runner_offline | claim_expired | no_claim
+
+	// (5) Bounded-retry accounting, written by the runner on each terminal
+	// run. Runtime-only: a counter in frontmatter would churn the file on
+	// every failure. Preserved across re-index by service.runtimeKeys.
+	"attempt_count":  true, // failures so far; reset to 0 on success
+	"last_failed_at": true, // RFC3339 timestamp of the most recent failure
 }
 
 // HandleCreateEntry handles POST /entries.

@@ -61,6 +61,135 @@ func TestSchedulerChoosesPreferredMachineBeforeLeastBusyRunner(t *testing.T) {
 	}
 }
 
+// TestSchedulerDoesNotDispatchFeatureGatedTask is the push-path regression for
+// feature_depends_on. Live, a task in a feature whose dependency feature had
+// not finished was dispatched on every 5s scheduler tick — the gate existed
+// only in the report-only pipeline behind GET /features, so /features said
+// ready:false while the scheduler pushed the task anyway.
+//
+// This drives the store from raw BrainEntries so GetReady runs the real
+// readiness pipeline. Asserting against hand-built ResolvedTask literals with
+// Classification:"ready" would pass with the gate removed again.
+func TestSchedulerDoesNotDispatchFeatureGatedTask(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.entries = []types.BrainEntry{
+		{
+			ID: "pipeline-1", Path: "projects/proj/task/pipeline-1.md",
+			Title: "Fetch raw records", Type: "task", Status: "pending",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "data-pipeline", FeaturePriority: "high",
+		},
+		{
+			ID: "report-1", Path: "projects/proj/task/report-1.md",
+			Title: "Build summary report", Type: "task", Status: "pending",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "reporting", FeaturePriority: "high",
+			// No task-level depends_on: feature gating is the only thing
+			// that can hold this back.
+			FeatureDependsOn: []string{"data-pipeline"},
+		},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 4},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Considered != 1 {
+		t.Errorf("Considered = %d, want 1 (the gated task must not even reach the scheduler)", result.Considered)
+	}
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1", result.Dispatched)
+	}
+	for _, lease := range store.leases {
+		if lease.TaskID == "report-1" {
+			t.Fatal("scheduler leased report-1: a feature-gated task was dispatched")
+		}
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "pipeline-1" {
+		t.Fatalf("leases = %#v, want only pipeline-1", store.leases)
+	}
+}
+
+// TestSchedulerDispatchesAfterFeatureDependencyCompletes is the other half:
+// the gate must open, not just close. Same fixture with data-pipeline done.
+func TestSchedulerDispatchesAfterFeatureDependencyCompletes(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.entries = []types.BrainEntry{
+		{
+			ID: "pipeline-1", Path: "projects/proj/task/pipeline-1.md",
+			Title: "Fetch raw records", Type: "task", Status: "completed",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "data-pipeline", FeaturePriority: "high",
+		},
+		{
+			ID: "report-1", Path: "projects/proj/task/report-1.md",
+			Title: "Build summary report", Type: "task", Status: "pending",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "reporting", FeaturePriority: "high",
+			FeatureDependsOn: []string{"data-pipeline"},
+		},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 4},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1", result.Dispatched)
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "report-1" {
+		t.Fatalf("leases = %#v, want report-1 dispatched once data-pipeline completed", store.leases)
+	}
+}
+
+// TestSchedulerDispatchesTaskWithUnresolvedFeatureDep pins the deliberate
+// non-enforcement of a dep that names no known feature. It cannot gate —
+// there is nothing to wait for, and a feature whose tasks were deleted or not
+// yet created would deadlock its dependents forever — so it is reported
+// instead. See UnresolvedFeatureDeps.
+func TestSchedulerDispatchesTaskWithUnresolvedFeatureDep(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.entries = []types.BrainEntry{
+		{
+			ID: "report-1", Path: "projects/proj/task/report-1.md",
+			Title: "Build summary report", Type: "task", Status: "pending",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "reporting", FeaturePriority: "high",
+			FeatureDependsOn: []string{"data-pipelien"}, // typo, matches nothing
+		},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 4},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1", result.Dispatched)
+	}
+
+	ready := GetReadyTasks(ResolveDependencies(store.entries))
+	if len(ready) != 1 {
+		t.Fatalf("ready = %d tasks, want 1", len(ready))
+	}
+	if got := ready[0].UnresolvedFeatureDeps; len(got) != 1 || got[0] != "data-pipelien" {
+		t.Errorf("UnresolvedFeatureDeps = %v, want [data-pipelien] so the typo is visible", got)
+	}
+}
+
 func TestSchedulerRecordsNoCandidateForStrictAffinityWithoutChangingTaskStatus(t *testing.T) {
 	store := newFakeSchedulerStore()
 	store.tasks = []types.ResolvedTask{{ID: "task-1", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"}}
@@ -504,8 +633,15 @@ func waitForCondition(timeout time.Duration, fn func() bool) error {
 }
 
 type fakeSchedulerStore struct {
-	tasks                    []types.ResolvedTask
-	tasksByProject           map[string][]types.ResolvedTask
+	tasks          []types.ResolvedTask
+	tasksByProject map[string][]types.ResolvedTask
+	// entries feeds GetReady through the REAL readiness pipeline
+	// (ResolveDependencies + GetReadyTasks) instead of returning
+	// hand-classified literals. Set this whenever the thing under test is
+	// what the scheduler is allowed to see: a literal with
+	// Classification:"ready" asserts nothing about classification, which is
+	// how feature_depends_on went unenforced with the scheduler suite green.
+	entries                  []types.BrainEntry
 	projects                 []string
 	scheduledProjects        []string
 	expireCalls              int
@@ -537,6 +673,9 @@ func newFakeSchedulerStore() *fakeSchedulerStore {
 
 func (f *fakeSchedulerStore) GetReady(ctx context.Context, projectID string, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error) {
 	f.scheduledProjects = append(f.scheduledProjects, projectID)
+	if f.entries != nil {
+		return GetReadyTasks(ResolveDependencies(append([]types.BrainEntry(nil), f.entries...))), nil
+	}
 	if f.tasksByProject != nil {
 		return append([]types.ResolvedTask(nil), f.tasksByProject[projectID]...), nil
 	}

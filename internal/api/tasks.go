@@ -232,6 +232,10 @@ type TaskMetadataResponse struct {
 	DispatchLease       *types.DispatchLease         `json:"dispatch_lease,omitempty"`
 	PlacementReasons    []types.PlacementReason      `json:"placement_reasons,omitempty"`
 	LastPlacementReason *types.PlacementReason       `json:"last_placement_reason,omitempty"`
+	// Feature-level gating (feature_depends_on), mirroring ResolvedTask.
+	BlockedByFeatures     []string `json:"blocked_by_features,omitempty"`
+	WaitingOnFeatures     []string `json:"waiting_on_features,omitempty"`
+	UnresolvedFeatureDeps []string `json:"unresolved_feature_deps,omitempty"`
 }
 
 // HandleGetTaskMetadata handles GET /tasks/{projectId}/{taskId}/metadata.
@@ -288,6 +292,10 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 		DispatchLease:       task.DispatchLease,
 		PlacementReasons:    task.PlacementReasons,
 		LastPlacementReason: task.LastPlacementReason,
+
+		BlockedByFeatures:     task.BlockedByFeatures,
+		WaitingOnFeatures:     task.WaitingOnFeatures,
+		UnresolvedFeatureDeps: task.UnresolvedFeatureDeps,
 	}
 
 	WriteJSON(w, http.StatusOK, resp)

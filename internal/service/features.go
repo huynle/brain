@@ -34,6 +34,12 @@ type ComputedFeature struct {
 	BlockedByFeatures []string             `json:"blocked_by_features"`
 	WaitingOnFeatures []string             `json:"waiting_on_features"`
 	InCycle           bool                 `json:"in_cycle"`
+
+	// UnresolvedFeatureDeps lists depends_on_features entries that match no
+	// known feature. Such a dep gates nothing — dropping it silently is how
+	// a misspelled feature_depends_on became a no-op that also reported
+	// nothing — so it is surfaced here instead.
+	UnresolvedFeatureDeps []string `json:"unresolved_feature_deps"`
 }
 
 // FeatureDependencyResult holds the result of feature dependency resolution.
@@ -120,17 +126,21 @@ func computeHighestPriority(tasks []types.ResolvedTask) string {
 	return highest
 }
 
-// collectFeatureDependencies collects all unique feature dependencies from tasks.
+// collectFeatureDependencies collects all unique feature dependencies from tasks,
+// in first-seen order. Order matters: these IDs flow into WaitingOnFeatures /
+// BlockedByFeatures / UnresolvedFeatureDeps, which are serialized to clients —
+// ranging over a map here made that output shuffle between identical requests.
 func collectFeatureDependencies(tasks []types.ResolvedTask) []string {
-	deps := make(map[string]bool)
+	seen := make(map[string]bool)
+	var result []string
 	for _, task := range tasks {
 		for _, dep := range task.FeatureDependsOn {
-			deps[dep] = true
+			if dep == "" || seen[dep] {
+				continue
+			}
+			seen[dep] = true
+			result = append(result, dep)
 		}
-	}
-	result := make([]string, 0, len(deps))
-	for dep := range deps {
-		result = append(result, dep)
 	}
 	return result
 }
@@ -182,7 +192,10 @@ func ComputeFeatures(tasks []types.ResolvedTask) []*ComputedFeature {
 			TaskStats:         taskStats,
 			BlockedByFeatures: []string{},
 			WaitingOnFeatures: []string{},
-			InCycle:           false,
+			// Filled by ResolveFeatureDependencies, which is the only
+			// layer that knows which deps name a real feature.
+			UnresolvedFeatureDeps: []string{},
+			InCycle:               false,
 		})
 	}
 
@@ -205,16 +218,27 @@ func buildFeatureLookupMaps(features []*ComputedFeature) *featureLookupMaps {
 	return m
 }
 
+// splitFeatureDeps partitions a feature's declared dependencies into those that
+// name a known feature and those that name nothing. Single source of truth for
+// "what does this dep list actually resolve to" — the adjacency list and the
+// classifier used to filter independently, so an unresolved dep could only ever
+// be dropped, never reported.
+func splitFeatureDeps(feature *ComputedFeature, maps *featureLookupMaps) (resolved, unresolved []string) {
+	for _, depID := range feature.DependsOnFeatures {
+		if _, ok := maps.byID[depID]; ok {
+			resolved = append(resolved, depID)
+		} else {
+			unresolved = append(unresolved, depID)
+		}
+	}
+	return resolved, unresolved
+}
+
 // buildFeatureAdjacencyList builds adjacency list from features.
 func buildFeatureAdjacencyList(features []*ComputedFeature, maps *featureLookupMaps) map[string][]string {
 	adj := make(map[string][]string, len(features))
 	for _, feature := range features {
-		var resolvedDeps []string
-		for _, depID := range feature.DependsOnFeatures {
-			if _, ok := maps.byID[depID]; ok {
-				resolvedDeps = append(resolvedDeps, depID)
-			}
-		}
+		resolvedDeps, _ := splitFeatureDeps(feature, maps)
 		adj[feature.ID] = resolvedDeps
 	}
 	return adj
@@ -296,12 +320,7 @@ func ResolveFeatureDependencies(features []*ComputedFeature) []*ComputedFeature 
 	result := make([]*ComputedFeature, len(features))
 	for i, feature := range features {
 		// Get resolved dependencies (only those that exist)
-		var resolvedDeps []string
-		for _, depID := range feature.DependsOnFeatures {
-			if _, ok := maps.byID[depID]; ok {
-				resolvedDeps = append(resolvedDeps, depID)
-			}
-		}
+		resolvedDeps, unresolvedDeps := splitFeatureDeps(feature, maps)
 
 		classification, blockedBy, waitingOn := classifyFeature(feature, resolvedDeps, effectiveStatus, inCycle)
 
@@ -317,6 +336,11 @@ func ResolveFeatureDependencies(features []*ComputedFeature) []*ComputedFeature 
 			f.WaitingOnFeatures = waitingOn
 		} else {
 			f.WaitingOnFeatures = []string{}
+		}
+		if unresolvedDeps != nil {
+			f.UnresolvedFeatureDeps = unresolvedDeps
+		} else {
+			f.UnresolvedFeatureDeps = []string{}
 		}
 		f.InCycle = inCycle[feature.ID]
 

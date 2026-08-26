@@ -106,6 +106,8 @@ func (tr *TaskRunner) resumeTask(ctx context.Context, task *types.ResolvedTask, 
 		CompleteOnIdle: resolveCompleteOnIdle(task.CompleteOnIdle, task.DirectPrompt),
 		RunID:          latestInProgressRunID(task.Runs),
 		FeatureID:      task.FeatureID,
+		AttemptCount:   task.AttemptCount,
+		MaxAttempts:    resolveMaxAttempts(task, tr.config),
 	}
 
 	// Track in process manager

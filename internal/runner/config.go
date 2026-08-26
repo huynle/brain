@@ -174,6 +174,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		IdleDetectionThreshold:    getEnvIntOrDefault("RUNNER_IDLE_THRESHOLD", firstNonZero(fileCfg.IdleDetectionThreshold, 60000)),
 		MaxTotalProcesses:         getEnvIntOrDefault("RUNNER_MAX_TOTAL_PROCESSES", firstNonZero(fileCfg.MaxTotalProcesses, 10)),
 		MemoryThresholdPercent:    getEnvIntOrDefault("RUNNER_MEMORY_THRESHOLD", firstNonZero(fileCfg.MemoryThresholdPercent, 10)),
+		MaxTaskAttempts:           getEnvIntOrDefault("RUNNER_MAX_TASK_ATTEMPTS", firstNonZero(fileCfg.MaxTaskAttempts, DefaultMaxTaskAttempts)),
 		Opencode: OpencodeConfig{
 			Bin:   getEnvOrDefault("OPENCODE_BIN", firstNonEmpty(fileCfg.Opencode.Bin, "opencode")),
 			Agent: getEnvOrDefault("OPENCODE_AGENT", fileCfg.Opencode.Agent),

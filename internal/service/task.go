@@ -2042,6 +2042,14 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	if v, ok := metaString(meta, "resume_requested_at"); ok {
 		entry.ResumeRequestedAt = v
 	}
+
+	// Failure retry accounting, written by the runner on each failed run.
+	if v, ok := metaInt(meta, "attempt_count"); ok {
+		entry.AttemptCount = v
+	}
+	if v, ok := metaString(meta, "last_failed_at"); ok {
+		entry.LastFailedAt = v
+	}
 	if v, ok := metaString(meta, "executor"); ok {
 		entry.Executor = v
 	}
@@ -2319,10 +2327,11 @@ func computedFeatureToFeature(f *ComputedFeature) types.Feature {
 	}
 
 	return types.Feature{
-		FeatureID: f.ID,
-		Tasks:     f.Tasks,
-		Ready:     f.Classification == "ready",
-		Stats:     stats,
+		FeatureID:             f.ID,
+		Tasks:                 f.Tasks,
+		Ready:                 f.Classification == "ready",
+		Stats:                 stats,
+		UnresolvedFeatureDeps: f.UnresolvedFeatureDeps,
 	}
 }
 

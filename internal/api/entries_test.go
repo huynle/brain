@@ -3409,6 +3409,14 @@ func TestAllowedMetadataUpdateFields_CoversKnownRuntimeAndDurableFields(t *testi
 		"sessions", "next_run", "schedule", "schedule_enabled",
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"last_reconcile", "exit_code", "script_output",
+		"resume_requested", "resume_requested_at",
+		"abandoned_at", "abandoned_reason",
+		// Bounded-retry accounting written by the runner's completion path
+		// (runner.recordTaskFailure / clearTaskFailures). Omitting these made
+		// every counter write 400, so a failing task's attempt count stayed
+		// at 0 and the retry cap never fired — the crash-loop it was written
+		// to stop kept running, silently, behind a warn-level log line.
+		"attempt_count", "last_failed_at",
 	}
 	for _, f := range append(durable, runtime...) {
 		if !AllowedMetadataUpdateFields[f] {

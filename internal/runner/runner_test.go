@@ -71,6 +71,9 @@ type mockClient struct {
 	appendErr   error
 	appendCalls []appendCall
 
+	metadataErr   error
+	metadataCalls []metadataCall
+
 	getEntryResult map[string]*types.BrainEntry
 	getEntryErr    error
 
@@ -109,6 +112,11 @@ type mockClient struct {
 	// inside poll() so tests can prove that other goroutines (dispatch
 	// command consumer, heartbeat, claim renewal) keep making progress.
 	healthBlockCh chan struct{}
+}
+
+type metadataCall struct {
+	Path   string
+	Fields map[string]interface{}
 }
 
 type nextTaskCall struct {
@@ -327,7 +335,20 @@ func (m *mockClient) GetTasksByFeature(ctx context.Context, projectID, featureID
 }
 
 func (m *mockClient) UpdateMetadata(ctx context.Context, entryPath string, fields map[string]interface{}) error {
-	return nil
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	copied := make(map[string]interface{}, len(fields))
+	for k, v := range fields {
+		copied[k] = v
+	}
+	m.metadataCalls = append(m.metadataCalls, metadataCall{entryPath, copied})
+	return m.metadataErr
+}
+
+func (m *mockClient) metadataWrites() []metadataCall {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]metadataCall(nil), m.metadataCalls...)
 }
 
 func (m *mockClient) GetEntry(ctx context.Context, entryPath string) (*types.BrainEntry, error) {

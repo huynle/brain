@@ -373,6 +373,14 @@ type BrainEntry struct {
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
 
+	// Failure retry accounting. Runtime-only (not frontmatter): written by
+	// the runner each time a task ends in failure/crash/timeout, reset to
+	// zero on success. A crashed task is reset to "pending" for retry, so
+	// without a counter a task that fails on a guard re-dispatched forever,
+	// every poll interval, holding a runner slot each time.
+	AttemptCount int    `json:"attempt_count,omitempty"`
+	LastFailedAt string `json:"last_failed_at,omitempty"`
+
 	// Backlinks (populated on GET)
 	Backlinks []BacklinkEntry `json:"backlinks,omitempty"`
 }
@@ -1143,6 +1151,21 @@ type ResolvedTask struct {
 	InCycle         bool     `json:"in_cycle"`
 	ResolvedWorkdir string   `json:"resolved_workdir"`
 
+	// Feature-level dependency gating (feature_depends_on). Populated by
+	// ResolveDependencies for tasks that carry a feature_id: the owning
+	// feature's dependency state is folded into this task's Classification
+	// so every dispatch path that reads Classification inherits the gate.
+	//
+	// BlockedByFeatures / WaitingOnFeatures name the dependency features
+	// responsible; UnresolvedFeatureDeps names feature_depends_on entries
+	// that match no known feature (typo, or a feature not created yet).
+	// Unresolved feature deps do NOT gate — same convention as
+	// UnresolvedDeps at the task level — they are reported so a silently
+	// ungating typo is visible instead of invisible.
+	BlockedByFeatures     []string `json:"blocked_by_features,omitempty"`
+	WaitingOnFeatures     []string `json:"waiting_on_features,omitempty"`
+	UnresolvedFeatureDeps []string `json:"unresolved_feature_deps,omitempty"`
+
 	// Dispatch diagnostics expose scheduler push state and placement decisions.
 	DispatchLease       *DispatchLease    `json:"dispatch_lease,omitempty"`
 	PlacementReasons    []PlacementReason `json:"placement_reasons,omitempty"`
@@ -1162,6 +1185,13 @@ type ResolvedTask struct {
 	// resume the same task forever.
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
+
+	// AttemptCount is how many times this task has ended in failure. The
+	// runner increments it on each failure and clears it on success; when it
+	// reaches the effective cap the task is parked in "blocked" instead of
+	// being reset to "pending" for another immediate retry.
+	AttemptCount int    `json:"attempt_count,omitempty"`
+	LastFailedAt string `json:"last_failed_at,omitempty"`
 }
 
 // TaskStats holds aggregate task statistics.
@@ -1382,6 +1412,11 @@ type Feature struct {
 	Tasks     []ResolvedTask `json:"tasks"`
 	Ready     bool           `json:"ready"`
 	Stats     *TaskStats     `json:"stats,omitempty"`
+
+	// UnresolvedFeatureDeps lists feature_depends_on entries on this
+	// feature's tasks that name no known feature. They gate nothing, so
+	// this is the only way a misspelled dependency becomes visible.
+	UnresolvedFeatureDeps []string `json:"unresolved_feature_deps,omitempty"`
 }
 
 // FeatureListResponse is the response for GET /tasks/:projectId/features.

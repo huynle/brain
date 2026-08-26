@@ -16,6 +16,19 @@ import (
 // dispatched it. These tests pin the gate to ResolveDependencies, which is
 // what every dispatch path reads.
 
+// makeTaskWithFeature builds a task entry with feature grouping fields set.
+//
+// Restored here during the #34 + #36 merge: it lived in taskdeps_test.go and
+// was removed with the GetNextTask tests that were its only other callers.
+// These tests are now its sole consumer.
+func makeTaskWithFeature(id, title, status, priority, featureID, featurePriority string, featureDeps []string, dependsOn []string) types.BrainEntry {
+	e := makeTask(id, title, status, priority, dependsOn)
+	e.FeatureID = featureID
+	e.FeaturePriority = featurePriority
+	e.FeatureDependsOn = featureDeps
+	return e
+}
+
 // classificationOf finds a task in a resolved response by ID.
 func classificationOf(t *testing.T, result *types.TaskListResponse, id string) types.ResolvedTask {
 	t.Helper()

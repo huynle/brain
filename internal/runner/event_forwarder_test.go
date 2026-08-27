@@ -210,20 +210,19 @@ func TestEventForwarder_RetriesOnFailure(t *testing.T) {
 
 func TestEventForwarder_DropsOldestWhenQueueFull(t *testing.T) {
 	poster := newMockEventPoster()
-	// Make all posts fail so events queue up
-	poster.setFailures(1000, &APIError{StatusCode: 500, Body: "offline"})
 	cfg := testForwarderConfig()
 	cfg.MaxQueueSize = 5
-	cfg.BatchSize = 100 // don't auto-batch
-	cfg.FlushInterval = 10 * time.Millisecond
 
 	fwd := NewEventForwarder(poster, cfg)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	fwd.Start(ctx)
 
-	// Enqueue more events than the max queue size
-	for i := 0; i < 10; i++ {
+	// Deliberately do NOT call Start(). Handle() enqueues straight onto the
+	// queue channel, so overflow is what we are testing; the run loop started
+	// by Start() drains that channel into an in-memory batch, which means the
+	// queue only fills if the producer happens to outrun the consumer. That
+	// race is what made this test flaky — it passed only when the scheduler
+	// cooperated.
+	const enqueued = 10
+	for i := 0; i < enqueued; i++ {
 		fwd.Handle(RunnerEvent{
 			Type:     EventTaskStarted,
 			RunnerID: "r1",
@@ -231,14 +230,15 @@ func TestEventForwarder_DropsOldestWhenQueueFull(t *testing.T) {
 		})
 	}
 
-	// Give time for queue to be exercised
-	time.Sleep(100 * time.Millisecond)
-	fwd.Stop()
-
-	// The queue should not exceed max size. Verify via stats.
+	// With nothing draining, exactly MaxQueueSize events fit and the rest
+	// are dropped.
 	stats := fwd.Stats()
-	if stats.Dropped == 0 {
-		t.Error("expected some events to be dropped when queue is full")
+	wantDropped := int64(enqueued - cfg.MaxQueueSize)
+	if stats.Dropped != wantDropped {
+		t.Errorf("expected %d dropped events, got %d", wantDropped, stats.Dropped)
+	}
+	if stats.Queued != int64(enqueued) {
+		t.Errorf("expected %d queued events, got %d", enqueued, stats.Queued)
 	}
 }
 

@@ -23,20 +23,6 @@ func makeTask(id, title, status, priority string, dependsOn []string) types.Brai
 	}
 }
 
-func makeTaskWithCreated(id, title, status, priority, created string, dependsOn []string) types.BrainEntry {
-	e := makeTask(id, title, status, priority, dependsOn)
-	e.Created = created
-	return e
-}
-
-func makeTaskWithFeature(id, title, status, priority, featureID, featurePriority string, featureDeps []string, dependsOn []string) types.BrainEntry {
-	e := makeTask(id, title, status, priority, dependsOn)
-	e.FeatureID = featureID
-	e.FeaturePriority = featurePriority
-	e.FeatureDependsOn = featureDeps
-	return e
-}
-
 // ---------------------------------------------------------------------------
 // BuildLookupMaps
 // ---------------------------------------------------------------------------
@@ -620,84 +606,6 @@ func TestGetBlockedTasks(t *testing.T) {
 	blocked := GetBlockedTasks(result)
 	if len(blocked) != 1 || blocked[0].ID != "b" {
 		t.Errorf("blocked = %v, want [b]", blocked)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// GetNextTask (feature-aware)
-// ---------------------------------------------------------------------------
-
-func TestGetNextTask_NoTasks(t *testing.T) {
-	result := &types.TaskListResponse{Tasks: nil}
-	next := GetNextTask(result)
-	if next != nil {
-		t.Errorf("expected nil, got %v", next)
-	}
-}
-
-func TestGetNextTask_NoFeatures(t *testing.T) {
-	result := &types.TaskListResponse{
-		Tasks: []types.ResolvedTask{
-			{ID: "a", Classification: "ready", Priority: "low", Created: "2025-01-02T00:00:00Z"},
-			{ID: "b", Classification: "ready", Priority: "high", Created: "2025-01-01T00:00:00Z"},
-		},
-	}
-
-	next := GetNextTask(result)
-	if next == nil {
-		t.Fatal("expected non-nil task")
-	}
-	if next.ID != "b" {
-		t.Errorf("next.ID = %q, want 'b' (highest priority)", next.ID)
-	}
-}
-
-func TestGetNextTask_WithFeatures(t *testing.T) {
-	tasks := []types.BrainEntry{
-		makeTaskWithFeature("t1", "Task 1", "pending", "low", "feat-a", "high", nil, nil),
-		makeTaskWithFeature("t2", "Task 2", "pending", "high", "feat-b", "low", nil, nil),
-	}
-	result := ResolveDependencies(tasks)
-
-	next := GetNextTask(result)
-	if next == nil {
-		t.Fatal("expected non-nil task")
-	}
-	if next.ID != "t1" {
-		t.Errorf("next.ID = %q, want 't1' (from higher priority feature)", next.ID)
-	}
-}
-
-func TestGetNextTask_FallbackToUngrouped(t *testing.T) {
-	tasks := []types.BrainEntry{
-		makeTaskWithFeature("t1", "Task 1", "pending", "high", "feat-a", "high", nil, []string{"t2"}),
-		makeTask("t2", "Task 2", "pending", "medium", nil),
-	}
-	result := ResolveDependencies(tasks)
-
-	next := GetNextTask(result)
-	if next == nil {
-		t.Fatal("expected non-nil task")
-	}
-	if next.ID != "t2" {
-		t.Errorf("next.ID = %q, want 't2' (ungrouped fallback)", next.ID)
-	}
-}
-
-func TestGetNextTask_FeatureDepsBlocked(t *testing.T) {
-	tasks := []types.BrainEntry{
-		makeTaskWithFeature("t1", "Task 1", "pending", "high", "feat-a", "high", nil, nil),
-		makeTaskWithFeature("t2", "Task 2", "pending", "high", "feat-b", "high", []string{"feat-a"}, nil),
-		makeTask("t3", "Ungrouped", "pending", "low", nil),
-	}
-	result := ResolveDependencies(tasks)
-
-	next := GetNextTask(result)
-	if next == nil {
-		t.Fatal("expected non-nil task")
-	}
-	if next.ID != "t1" {
-		t.Errorf("next.ID = %q, want 't1' (from ready feature feat-a)", next.ID)
 	}
 }
 

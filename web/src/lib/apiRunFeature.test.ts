@@ -171,3 +171,135 @@ test("a genuinely empty response keeps the old generic copy", () => {
   assert.equal(message, "Not triggered: nothing to dispatch");
   assert.equal(kind, "info");
 });
+
+/**
+ * The lie this file now guards against: a dispatch lease stuck in "pushed"
+ * — pushed to a runner that never acknowledged it — used to be summarized as
+ * "every ready task is already in flight". Nothing was running. The user was
+ * told to go find a process that did not exist, with no hint that the hold
+ * clears itself.
+ */
+test("an unacknowledged dispatch is not reported as in flight", () => {
+  const { message } = summarizeRunFeatureResult(
+    mk({
+      skippedCount: 1,
+      queued: ["8f5qhpj5"],
+      reason: "feature_dispatch_pending",
+      results: [
+        {
+          dispatched: false,
+          taskId: "8f5qhpj5",
+          projectId: "sandbox-demo",
+          runnerId: "runner-a",
+          leaseState: "pushed",
+          reason: "already_leased",
+        },
+      ],
+    }),
+  );
+  assert.ok(
+    !message.includes("in flight"),
+    `must not claim work is in flight: ${message}`,
+  );
+  assert.ok(
+    message.includes("nothing is running"),
+    `must say nothing is running: ${message}`,
+  );
+});
+
+test("a pending dispatch says when the hold clears", () => {
+  const expiresAt = new Date(Date.now() + 90_000).toISOString();
+  const { message } = summarizeRunFeatureResult(
+    mk({
+      skippedCount: 1,
+      reason: "feature_dispatch_pending",
+      results: [
+        {
+          dispatched: false,
+          taskId: "8f5qhpj5",
+          projectId: "sandbox-demo",
+          runnerId: "runner-a",
+          leaseState: "pushed",
+          expiresAt,
+          reason: "already_leased",
+        },
+      ],
+    }),
+  );
+  assert.ok(
+    /clears in \d+[smhd]/.test(message),
+    `want a relative clear time: ${message}`,
+  );
+});
+
+test("an acked lease keeps the in-flight wording", () => {
+  const { message } = summarizeRunFeatureResult(
+    mk({ skippedCount: 1, reason: "feature_in_progress" }),
+  );
+  assert.equal(message, "Not triggered: every ready task is already in flight");
+});
+
+test("an undelivered dispatch names the delivery failure", () => {
+  const { message } = summarizeRunFeatureResult(
+    mk({
+      skippedCount: 1,
+      reason: "runner_unreachable",
+      detail:
+        "runner-a is registered but its command stream is not connected; the dispatch was not delivered",
+    }),
+  );
+  assert.ok(
+    message.includes("not delivered"),
+    `want the delivery failure named: ${message}`,
+  );
+  assert.ok(message.includes("runner-a"), `want the runner named: ${message}`);
+});
+
+test("no ready tasks names the feature being waited on", () => {
+  const { message } = summarizeRunFeatureResult(
+    mk({ reason: "no_ready_tasks", waitingOnFeatures: ["data-pipeline"] }),
+  );
+  assert.equal(message, "Not triggered: no ready tasks — waiting on data-pipeline");
+});
+
+test("no ready tasks distinguishes blocked from waiting", () => {
+  const { message } = summarizeRunFeatureResult(
+    mk({ reason: "no_ready_tasks", blockedByFeatures: ["data-pipeline"] }),
+  );
+  assert.equal(message, "Not triggered: no ready tasks — blocked by data-pipeline");
+});
+
+test("no ready tasks without a feature hold keeps the generic copy", () => {
+  const { message } = summarizeRunFeatureResult(mk({ reason: "no_ready_tasks" }));
+  assert.equal(
+    message,
+    "Not triggered: no ready tasks in this feature (check dependencies)",
+  );
+});
+
+test("a per-task pushed lease reads as not-running in the legacy path", () => {
+  // Older server: no top-level reason, so the PWA reads `results`.
+  const { message } = summarizeRunFeatureResult(
+    mk({
+      skippedCount: 1,
+      results: [
+        {
+          dispatched: false,
+          taskId: "8f5qhpj5",
+          projectId: "sandbox-demo",
+          runnerId: "runner-a",
+          leaseState: "pushed",
+          reason: "already_leased",
+        },
+      ],
+    }),
+  );
+  assert.ok(
+    message.includes("not acknowledged yet"),
+    `want the unacked state surfaced: ${message}`,
+  );
+  assert.ok(
+    message.includes("nothing running"),
+    `want the absence of a process stated: ${message}`,
+  );
+});

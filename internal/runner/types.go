@@ -45,6 +45,12 @@ type RunnerConfig struct {
 	IncludeProjects           []string           `yaml:"include_projects" json:"include_projects"`
 	AutoMonitors              bool               `yaml:"auto_monitors" json:"auto_monitors"`
 
+	// MaxTaskAttempts caps how many times a task may run before a failure
+	// parks it in "blocked" instead of resetting it to "pending". A per-task
+	// retry.max_attempts overrides this. 0 uses DefaultMaxTaskAttempts; a
+	// negative value restores the old unbounded-retry behaviour.
+	MaxTaskAttempts int `yaml:"max_task_attempts" json:"max_task_attempts"`
+
 	// EnvPassthrough is a list of environment variable names to forward
 	// from the runner process to spawned OpenCode agents.
 	// Defaults: ["BRAIN_API_URL", "BRAIN_API_TOKEN"]
@@ -299,6 +305,14 @@ type RunningTask struct {
 	// (injected) turn finishing its work on the serve process. Completion
 	// is held until the session idles or the hold window lapses.
 	BusyHoldSince time.Time `json:"busyHoldSince,omitempty"`
+
+	// AttemptCount is how many times this task had already failed when this
+	// run started; MaxAttempts is the cap resolved for it at dispatch. Both
+	// ride on the running record so the completion path can choose between
+	// "reset to pending for another try" and "park in blocked" without a
+	// round-trip back to the API.
+	AttemptCount int `json:"attemptCount,omitempty"`
+	MaxAttempts  int `json:"maxAttempts,omitempty"`
 }
 
 // TaskResultStatus enumerates possible outcomes of a task execution.
@@ -375,8 +389,6 @@ const (
 	EventProjectResumed    RunnerEventType = "project_resumed"
 	EventAllPaused         RunnerEventType = "all_paused"
 	EventAllResumed        RunnerEventType = "all_resumed"
-	EventFeatureEnabled    RunnerEventType = "feature_enabled"
-	EventFeatureDisabled   RunnerEventType = "feature_disabled"
 	EventSessionDiscovered RunnerEventType = "session_discovered"
 	EventTaskClaimed       RunnerEventType = "task_claimed"
 	EventTaskClaimRejected RunnerEventType = "task_claim_rejected"
@@ -421,7 +433,7 @@ type RunnerEvent struct {
 	// Populated for project_paused/resumed events.
 	ProjectID string `json:"projectId,omitempty"`
 
-	// Populated for feature_enabled/disabled events.
+	// Populated for task and feature lifecycle events.
 	FeatureID string `json:"featureId,omitempty"`
 
 	// Populated for session_discovered events.
@@ -495,9 +507,6 @@ const (
 
 	// CommandShutdown signals the runner to initiate graceful shutdown.
 	CommandShutdown RunnerCommandType = "shutdown"
-
-	// CommandFeatureToggle signals the runner to enable/disable a feature.
-	CommandFeatureToggle RunnerCommandType = "feature_toggle"
 )
 
 // Pause command scopes carried on CommandPause/CommandResume payloads.
@@ -568,10 +577,6 @@ type RunnerCommand struct {
 
 	// Populated for shutdown commands.
 	Reason string `json:"reason,omitempty"`
-
-	// Populated for feature_toggle commands.
-	ToggleFeatureID string `json:"featureId,omitempty"`
-	Enabled         *bool  `json:"enabled,omitempty"`
 }
 
 // UnmarshalJSON preserves compatibility with scheduler dispatch payloads that

@@ -373,6 +373,14 @@ type BrainEntry struct {
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
 
+	// Failure retry accounting. Runtime-only (not frontmatter): written by
+	// the runner each time a task ends in failure/crash/timeout, reset to
+	// zero on success. A crashed task is reset to "pending" for retry, so
+	// without a counter a task that fails on a guard re-dispatched forever,
+	// every poll interval, holding a runner slot each time.
+	AttemptCount int    `json:"attempt_count,omitempty"`
+	LastFailedAt string `json:"last_failed_at,omitempty"`
+
 	// Backlinks (populated on GET)
 	Backlinks []BacklinkEntry `json:"backlinks,omitempty"`
 }
@@ -1143,6 +1151,21 @@ type ResolvedTask struct {
 	InCycle         bool     `json:"in_cycle"`
 	ResolvedWorkdir string   `json:"resolved_workdir"`
 
+	// Feature-level dependency gating (feature_depends_on). Populated by
+	// ResolveDependencies for tasks that carry a feature_id: the owning
+	// feature's dependency state is folded into this task's Classification
+	// so every dispatch path that reads Classification inherits the gate.
+	//
+	// BlockedByFeatures / WaitingOnFeatures name the dependency features
+	// responsible; UnresolvedFeatureDeps names feature_depends_on entries
+	// that match no known feature (typo, or a feature not created yet).
+	// Unresolved feature deps do NOT gate — same convention as
+	// UnresolvedDeps at the task level — they are reported so a silently
+	// ungating typo is visible instead of invisible.
+	BlockedByFeatures     []string `json:"blocked_by_features,omitempty"`
+	WaitingOnFeatures     []string `json:"waiting_on_features,omitempty"`
+	UnresolvedFeatureDeps []string `json:"unresolved_feature_deps,omitempty"`
+
 	// Dispatch diagnostics expose scheduler push state and placement decisions.
 	DispatchLease       *DispatchLease    `json:"dispatch_lease,omitempty"`
 	PlacementReasons    []PlacementReason `json:"placement_reasons,omitempty"`
@@ -1162,6 +1185,13 @@ type ResolvedTask struct {
 	// resume the same task forever.
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
+
+	// AttemptCount is how many times this task has ended in failure. The
+	// runner increments it on each failure and clears it on success; when it
+	// reaches the effective cap the task is parked in "blocked" instead of
+	// being reset to "pending" for another immediate retry.
+	AttemptCount int    `json:"attempt_count,omitempty"`
+	LastFailedAt string `json:"last_failed_at,omitempty"`
 }
 
 // TaskStats holds aggregate task statistics.
@@ -1287,6 +1317,16 @@ type RunTaskResponse struct {
 // project is paused. Pause is unconditionally bypassed (mirrors RunTaskRequest).
 type RunFeatureRequest struct {
 	Force bool `json:"force,omitempty"`
+	// IncludeDependents turns a one-shot run into a standing request: run
+	// this feature, and keep running whatever transitively depends on it as
+	// each gate opens.
+	//
+	// Worth knowing before enabling: on an UNPAUSED project the normal
+	// scheduler already dispatches a dependent the moment its gate opens, so
+	// this option earns its keep specifically while a project is paused —
+	// it is "a queued plan that survives pause", not "make dependents run
+	// at all".
+	IncludeDependents bool `json:"includeDependents,omitempty"`
 }
 
 // RunFeatureResponse is the response for POST /tasks/:projectId/features/:featureId/run.
@@ -1311,6 +1351,71 @@ type RunFeatureResponse struct {
 	Reason          string            `json:"reason,omitempty"`
 	Detail          string            `json:"detail,omitempty"`
 	CascadeActive   bool              `json:"cascadeActive,omitempty"`
+	// Outstanding counts this feature's tasks still capable of producing
+	// work — status pending or in_progress — at the moment of the call.
+	//
+	// It exists because Reason cannot answer "is this feature finished?".
+	// "no_ready_tasks" means only that nothing was READY right now, which
+	// is equally true of a drained feature and of one whose remaining
+	// tasks are waiting on a sibling that is still running. The cascade
+	// used the reason as a drain signal and dropped features mid-flight
+	// (see FeatureCascadeService.handleEvent). Outstanding is the
+	// unambiguous signal: 0 means nothing more can come from this feature
+	// without a human.
+	//
+	// A POINTER on purpose. nil means "could not measure", and it must be
+	// the zero value: an int whose zero value read as "drained" is the
+	// same shape of trap as the reason token it replaces — any fake or
+	// future implementation that forgot to set it would silently tell the
+	// cascade to drop the feature.
+	Outstanding *int `json:"outstanding,omitempty"`
+
+	// WaitingOnFeatures / BlockedByFeatures name the features this one is
+	// gated behind, folded from its tasks' feature-level dependency state.
+	// They exist so "no_ready_tasks" stops being a dead end: a feature held
+	// behind another feature can now say which one instead of telling the
+	// caller to go check. Waiting means the dependency is simply not
+	// finished; blocked means it cannot finish (failed dependency or a
+	// dependency cycle). Empty when the hold is not feature-level.
+	WaitingOnFeatures []string `json:"waitingOnFeatures,omitempty"`
+	BlockedByFeatures []string `json:"blockedByFeatures,omitempty"`
+
+	// Dependents is present only when the request asked for them.
+	Dependents *DependentQueue `json:"dependents,omitempty"`
+}
+
+// DependentChain is a standing run-with-dependents request as reported by the
+// API. Queued and the rest are DERIVED at read time from the current graph,
+// never read back from storage — only the root is persisted.
+type DependentChain struct {
+	ProjectID       string            `json:"projectId"`
+	RootFeatureID   string            `json:"rootFeatureId"`
+	RequestedAt     int64             `json:"requestedAt"`
+	PausedAtRequest bool              `json:"pausedAtRequest"`
+	Queued          []string          `json:"queued"`
+	Skipped         map[string]string `json:"skipped,omitempty"`
+	WaitsOnExternal []string          `json:"waitsOnExternal,omitempty"`
+	Truncated       bool              `json:"truncated,omitempty"`
+}
+
+// DependentQueue describes the chain enrolled by a run-with-dependents
+// request, derived fresh from feature_depends_on at the time of the call.
+type DependentQueue struct {
+	// Queued are the transitive dependents now under this request, in
+	// breadth-first order.
+	Queued []string `json:"queued"`
+	// Skipped maps a reachable feature to why it was NOT enrolled
+	// ("in_cycle", "already_settled"). Reported rather than dropped: a
+	// feature the user expected to run and which silently will not is the
+	// failure this whole surface exists to prevent.
+	Skipped map[string]string `json:"skipped,omitempty"`
+	// WaitsOnExternal names features OUTSIDE this chain that a queued member
+	// still waits on. Under a paused project those never run, so the chain
+	// stalls — this is the difference between "waiting its turn" and "never
+	// going to run", and only the graph can tell them apart.
+	WaitsOnExternal []string `json:"waitsOnExternal,omitempty"`
+	// Truncated is set when the chain hit the server's closure cap.
+	Truncated bool `json:"truncated,omitempty"`
 }
 
 // RunProjectRequest is the body for POST /tasks/:projectId/run.
@@ -1382,6 +1487,11 @@ type Feature struct {
 	Tasks     []ResolvedTask `json:"tasks"`
 	Ready     bool           `json:"ready"`
 	Stats     *TaskStats     `json:"stats,omitempty"`
+
+	// UnresolvedFeatureDeps lists feature_depends_on entries on this
+	// feature's tasks that name no known feature. They gate nothing, so
+	// this is the only way a misspelled dependency becomes visible.
+	UnresolvedFeatureDeps []string `json:"unresolved_feature_deps,omitempty"`
 }
 
 // FeatureListResponse is the response for GET /tasks/:projectId/features.
@@ -1675,6 +1785,14 @@ type SchedulerResult struct {
 	// SkippedAlreadyLeased counts tasks a previous pass already dispatched.
 	// This one is benign: the work is in flight, not stuck.
 	SkippedAlreadyLeased int `json:"skipped_already_leased,omitempty"`
+
+	// SkippedRunnerUnreachable counts tasks whose placement succeeded and
+	// whose lease was written, but whose dispatch command reached no live
+	// runner command stream — so the lease was undone again. A non-zero
+	// value means a runner is registered and looks online (its heartbeat is
+	// current) while its SSE stream is down: the tick did everything right
+	// and the work still went nowhere.
+	SkippedRunnerUnreachable int `json:"skipped_runner_unreachable,omitempty"`
 }
 
 // SchedulerStatus is lightweight scheduler loop state suitable for API exposure.

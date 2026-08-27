@@ -21,6 +21,8 @@ import { useWorkspace } from "../../store/workspace";
 import { useRunners } from "../../hooks/useRunners";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
+import type { DependentChain } from "../../lib/api";
+import { useDependentChains } from "../../hooks/useDependentChains";
 import { DepGuide } from "../common/DepGuide";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
@@ -36,6 +38,33 @@ const LIFECYCLE_TONE = {
   "mr-open": { tone: "mr", label: "MR open" },
   merged: { tone: "merged", label: "merged" },
 } as const;
+
+/** Tooltip for a chain root: what it queued, and anything that will stall it.
+ *  An external wait is the difference between "waiting its turn" and "never
+ *  going to run", so it must not be left to inference. */
+function chainRootTitle(c: DependentChain | undefined): string {
+  if (!c) return "Running with dependents";
+  // Defensive ?? []: the server omits an empty `queued`, and an older build
+  // could send null. Reading .length on that crashes the whole row rather
+  // than degrading to "nothing queued".
+  const queued = c.queued ?? [];
+  const parts = [
+    queued.length > 0
+      ? `Running with ${queued.length} queued dependent ${
+          queued.length === 1 ? "feature" : "features"
+        }: ${queued.join(", ")}`
+      : "Running with dependents; nothing queued behind it",
+  ];
+  if (c.waitsOnExternal?.length) {
+    parts.push(
+      `Stalls on ${c.waitsOnExternal.join(", ")} — not part of this run.`,
+    );
+  }
+  if (!c.pausedAtRequest) {
+    parts.push("Pausing the project will hold this chain.");
+  }
+  return parts.join("\n");
+}
 
 function featStateClass(f: DerivedFeature): string {
   if (f.lifecycle === "blocked") return "block";
@@ -61,6 +90,16 @@ export function CardFeatures({
   const { runners } = useRunners();
 
   const featureCtx = useFeatureActionContext(projectId);
+  // A chain is a queue the server advances on its own. Without showing it,
+  // the feature would be invisible after the click — the toast says "queued
+  // 2 features" and then nothing on screen ever mentions them again.
+  //
+  // The POLL lives in ProjectCard, not here: this component only mounts on
+  // the Features tab, while the verbs that need chain state (notably "Cancel
+  // queued dependents") are built on the default Tasks tab and the overview
+  // too. Polling only here meant the cancel verb silently vanished on every
+  // surface except this one.
+  const chains = useDependentChains(projectId);
   const { rowProps, overlays } = useRowActions();
 
   // Subscribed so checkboxes react to toggles from any surface.
@@ -153,7 +192,9 @@ export function CardFeatures({
             ? () => toggleFeatureSel(projectId, f.id)
             : () => openFeatureDrawer(projectId, f.id),
           {
-            selectionActions: marked ? selectionActions ?? undefined : undefined,
+            selectionActions: marked
+              ? (selectionActions ?? undefined)
+              : undefined,
             // Long-press = the touch shift-click.
             onRangeSelect: () =>
               rangeFeatureSel(projectId, orderedFeatureIds, f.id),
@@ -272,6 +313,22 @@ export function CardFeatures({
                 {f.name}
               </span>
               <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+              {chains.byRoot.has(f.id) && (
+                <span
+                  className="chain-chip root"
+                  title={chainRootTitle(chains.byRoot.get(f.id))}
+                >
+                  ⛓ chain
+                </span>
+              )}
+              {chains.queuedMembers.has(f.id) && (
+                <span
+                  className="chain-chip queued"
+                  title="Queued by a run-with-dependents chain. It dispatches on its own once its dependencies finish — no second click needed."
+                >
+                  ⛓ queued
+                </span>
+              )}
               {runner ? (
                 <span
                   className={`assign-chip ${runner.status !== "online" ? "warn" : ""}`}

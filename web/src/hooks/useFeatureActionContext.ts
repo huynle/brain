@@ -16,6 +16,7 @@
  * keeps type-to-confirm on that second pass too.
  */
 import { useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { useModal } from "../store/modal";
 import { useSelection } from "../store/selection";
@@ -25,8 +26,10 @@ import {
   bulkUpdate,
   clearFeatureAssignment,
   deleteFeatureTasks,
+  cancelDependentChain as apiCancelDependentChain,
   resumeFeature as apiResumeFeature,
   runFeature,
+  summarizeDependentQueue,
   setFeatureStatus,
   summarizeRunFeatureResult,
 } from "../lib/api";
@@ -44,7 +47,11 @@ import {
 } from "../lib/actions/bulkBaton";
 import { withForceRetry } from "../lib/actions/forceRetry";
 import { forceConfirmFor } from "../lib/actions/forceConfirm";
+import { forceDispatchNote, withForceNote } from "../lib/pause";
+import { usePauseState } from "./usePauseState";
 import type { DerivedFeature } from "../lib/features";
+import type { DependentChain } from "../lib/api";
+import { dependentChainsKey } from "./useDependentChains";
 import { ALL_STATUSES, type TaskStatus } from "../lib/types";
 
 /**
@@ -61,9 +68,27 @@ export function useFeatureActionContextFactory(): (
   const assignFeatureLocal = useWorkspace((s) => s.assignFeature);
   const unassignFeatureLocal = useWorkspace((s) => s.unassignFeature);
   const toast = useUI((s) => s.toast);
+  // Pause dials — "Run feature now" bypasses the project ones by design,
+  // and cannot bypass runner pause at all. Both are worth saying out loud.
+  const { pause } = usePauseState();
+  const queryClient = useQueryClient();
 
   return useMemo(
     () => (projectId: string) => {
+      // Sync cache reads rather than a hook: this factory is called per
+      // project inside a loop (the command palette), where hooks cannot go.
+      // Mirrors how assignedRunner reads useWorkspace.getState().
+      const activeChainRoots = (): Set<string> => {
+        const data = queryClient.getQueryData<{ chains: DependentChain[] }>(
+          dependentChainsKey(projectId),
+        );
+        return new Set((data?.chains ?? []).map((c) => c.rootFeatureId));
+      };
+      const refreshChains = () =>
+        queryClient.invalidateQueries({
+          queryKey: dependentChainsKey(projectId),
+        });
+
       /** Throttled progress toast for multi-page batons. */
       const progressToast = (verb: string, matched: number) => {
         return (p: { processed: number; iteration: number }) => {
@@ -89,6 +114,67 @@ export function useFeatureActionContextFactory(): (
           return s.projectId === projectId && s.featureIds.has(feature.id);
         },
 
+        hasActiveChain: (feature: DerivedFeature) =>
+          activeChainRoots().has(feature.id),
+
+        runFeatureWithDependents: async (feature: DerivedFeature) => {
+          const r = await runFeature(projectId, feature.id, false, true);
+          const { message, kind } = summarizeRunFeatureResult(r);
+          // Three things the user needs from one line: what dispatched,
+          // what got queued behind it, and that the pause was crossed on
+          // purpose. Dropping the middle one is how a chain becomes
+          // invisible the moment the toast fades.
+          const chain = summarizeDependentQueue(r.dependents);
+          const note = forceDispatchNote(pause, { projectId });
+          toast(
+            withForceNote(chain ? `${message} · ${chain}` : message, note),
+            kind,
+          );
+          // Seed the cache, do not merely invalidate.
+          //
+          // invalidateQueries does not create a query that has no observer,
+          // so on a surface that has not polled chains the entry stays
+          // undefined and hasActiveChain reads "no chain" — leaving the user
+          // who just started one with no way to cancel it. Writing the row we
+          // just learned about makes the cancel verb available immediately,
+          // everywhere, and the next poll reconciles it.
+          if (r.dependents) {
+            queryClient.setQueryData<{ chains: DependentChain[] }>(
+              dependentChainsKey(projectId),
+              (prev) => {
+                const others = (prev?.chains ?? []).filter(
+                  (c) => c.rootFeatureId !== feature.id,
+                );
+                return {
+                  chains: [
+                    ...others,
+                    {
+                      projectId,
+                      rootFeatureId: feature.id,
+                      requestedAt: Date.now(),
+                      pausedAtRequest: false,
+                      queued: r.dependents!.queued ?? [],
+                      skipped: r.dependents!.skipped,
+                      waitsOnExternal: r.dependents!.waitsOnExternal,
+                      truncated: r.dependents!.truncated,
+                    },
+                  ],
+                };
+              },
+            );
+          }
+          void refreshChains();
+        },
+
+        cancelDependentChain: async (feature: DerivedFeature) => {
+          const r = await apiCancelDependentChain(projectId, feature.id);
+          // The server distinguishes "stopped a chain" from "there was
+          // nothing to stop"; reporting both as success is how a user
+          // concludes cancel is broken.
+          toast(r.detail, r.cancelled ? "success" : "info");
+          void refreshChains();
+        },
+
         runFeature: async (feature: DerivedFeature) => {
           const r = await withForceRetry(
             (force) => runFeature(projectId, feature.id, force),
@@ -100,7 +186,8 @@ export function useFeatureActionContextFactory(): (
             }),
           );
           const { message, kind } = summarizeRunFeatureResult(r);
-          toast(message, kind);
+          const note = forceDispatchNote(pause, { projectId });
+          toast(withForceNote(message, note), kind);
         },
 
         resumeFeature: async (feature: DerivedFeature) => {
@@ -146,9 +233,14 @@ export function useFeatureActionContextFactory(): (
           feature: DerivedFeature,
           status: TaskStatus,
         ) => {
-          const preview = await setFeatureStatus(projectId, feature.id, status, {
-            dryRun: true,
-          });
+          const preview = await setFeatureStatus(
+            projectId,
+            feature.id,
+            status,
+            {
+              dryRun: true,
+            },
+          );
           if (preview.total === 0) {
             toast("No tasks matched — nothing changed", "warning");
             return;
@@ -334,7 +426,10 @@ export function useFeatureActionContextFactory(): (
         openAssignRunner: (feature: DerivedFeature) =>
           openModal("feature-assign", { projectId, featureId: feature.id }),
         openGoalCreate: (feature: DerivedFeature) =>
-          openModal("goal-create", { project: projectId, featureId: feature.id }),
+          openModal("goal-create", {
+            project: projectId,
+            featureId: feature.id,
+          }),
         openStatusPicker: (feature: DerivedFeature) =>
           openModal("feature-status", { projectId, featureId: feature.id }),
         openMetadata: (feature: DerivedFeature) =>
@@ -361,6 +456,7 @@ export function useFeatureActionContextFactory(): (
       assignFeatureLocal,
       unassignFeatureLocal,
       toast,
+      pause,
     ],
   );
 }

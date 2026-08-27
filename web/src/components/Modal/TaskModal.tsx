@@ -7,9 +7,11 @@ import { ActionBar } from "../common/ActionBar";
 import { useModal } from "../../store/modal";
 import { useLive } from "../../lib/sse";
 import { useActionRunner } from "../../hooks/useActionRunner";
+import { usePauseState } from "../../hooks/usePauseState";
 import { useTaskActionContext } from "../../hooks/useTaskActionContext";
 import { buildTaskActions } from "../../lib/actions/taskActions";
 import { historySessionRefs } from "../../lib/sessionRef";
+import { taskHoldReason } from "../../lib/pause";
 import { TaskKvGrid } from "./TaskKvGrid";
 import { useUI } from "../../store/ui";
 import type { Task } from "../../lib/types";
@@ -34,6 +36,10 @@ export function TaskModal(): JSX.Element {
 
   const taskCtx = useTaskActionContext(projectId);
   const runner = useActionRunner();
+  const { pause } = usePauseState();
+  // Hooks must run before the not-found early return below, so this is
+  // computed against a possibly-undefined task.
+  const hold = task ? taskHoldReason(task, { pause, projectId }) : null;
   // Built unconditionally so the hook order is stable across the
   // not-found early return below.
   const actions = useMemo(
@@ -78,6 +84,15 @@ export function TaskModal(): JSX.Element {
               resume pending
             </span>
           )}
+          {hold && (
+            <span
+              className={`life-badge held ${hold.code}`}
+              style={{ marginLeft: 8 }}
+              title={hold.detail}
+            >
+              {hold.glyph} {hold.short}
+            </span>
+          )}
         </>
       }
       onClose={close}
@@ -103,6 +118,18 @@ export function TaskModal(): JSX.Element {
         </>
       }
     >
+      {/* A task at `ready` with nothing running is the case with no visible
+          explanation anywhere else. The badge above flags it; this says
+          which switch is holding it and what releases it. */}
+      {hold && (
+        <div className={`hold-banner ${hold.code}`}>
+          <b>
+            {hold.glyph} Held — not dispatching.
+          </b>{" "}
+          {hold.detail}
+        </div>
+      )}
+
       <TaskKvGrid task={task} projectId={projectId} />
 
       <SessionsSection task={task} projectId={projectId} />

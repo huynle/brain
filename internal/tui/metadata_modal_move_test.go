@@ -453,11 +453,8 @@ func TestMetadataModal_GetFieldDisplayValue_MoveToProject(t *testing.T) {
 	if value == "" {
 		t.Error("getFieldDisplayValue for MoveToProject should not be empty")
 	}
-	// Should contain "brain-api" (the current project)
-	// Note: the value may contain ANSI styling, so we check the raw value
-	if modal.values[FieldMoveToProject] != "" {
-		// If a value was set, it should show that
-	}
+	// Not asserted beyond non-emptiness: the value may carry ANSI styling, and
+	// modal.values[FieldMoveToProject] is legitimately empty until edited.
 }
 
 func TestMetadataModal_RenderFilterDropdown(t *testing.T) {

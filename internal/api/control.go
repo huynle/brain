@@ -122,9 +122,13 @@ func (h *Handler) controlProxy(w http.ResponseWriter, r *http.Request, method, p
 	}
 	w.WriteHeader(status)
 	if len(respBody) > 0 {
-		w.Write(respBody)
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write(respBody)
 	} else {
-		w.Write([]byte("{}"))
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write([]byte("{}"))
 	}
 }
 
@@ -197,9 +201,13 @@ func (h *Handler) HandleControlSessionHistory(w http.ResponseWriter, r *http.Req
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	if len(body) > 0 {
-		w.Write(body)
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write(body)
 	} else {
-		w.Write([]byte("[]"))
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write([]byte("[]"))
 	}
 }
 

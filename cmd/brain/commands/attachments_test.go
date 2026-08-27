@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -378,23 +377,6 @@ func TestAttachmentCommandDownloadRejectsSHA256Mismatch(t *testing.T) {
 func shaHex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
-}
-
-func multipartBodyForTest(t *testing.T, field, filename string, data []byte) (*bytes.Buffer, string) {
-	t.Helper()
-	body := &bytes.Buffer{}
-	writer := multipart.NewWriter(body)
-	part, err := writer.CreateFormFile(field, filename)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := part.Write(data); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return body, writer.FormDataContentType()
 }
 
 func setAttachmentFlagForTest(t *testing.T, flags *AttachmentFlags, name string, value any) {

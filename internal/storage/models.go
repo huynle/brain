@@ -45,12 +45,21 @@ type TagRow struct {
 	Tag    string
 }
 
+// Link types stored in links.type. These mirror the classifications produced
+// by markdown.ExtractLinks.
+const (
+	LinkTypeMarkdown   = "markdown"
+	LinkTypeWiki       = "wikilink"
+	LinkTypeURL        = "url"
+	LinkTypeAttachment = "attachment"
+)
+
 // LinkInput is the input for SetLinks — one link to insert.
 type LinkInput struct {
 	TargetPath string
 	Title      string
 	Href       string
-	Type       string // defaults to "markdown" if empty
+	Type       string // defaults to LinkTypeMarkdown if empty
 	Snippet    string
 }
 

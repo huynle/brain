@@ -96,14 +96,14 @@ func brainMergeRequestGeneratedKey(project, featureID, sourceBranch, targetBranc
 func buildBrainMergeRequestContent(cfg BrainMergeRequestConfig, sourceBranch, targetBranch, mergePolicy, mergeStrategy, remoteBranchPolicy string) string {
 	var b strings.Builder
 	b.WriteString("## Brain Merge Request\n\n")
-	b.WriteString(fmt.Sprintf("- feature_id: %s\n", cfg.FeatureID))
-	b.WriteString(fmt.Sprintf("- source_branch: %s\n", sourceBranch))
-	b.WriteString(fmt.Sprintf("- target_branch: %s\n", targetBranch))
-	b.WriteString(fmt.Sprintf("- merge_policy: %s\n", mergePolicy))
-	b.WriteString(fmt.Sprintf("- merge_strategy: %s\n", mergeStrategy))
-	b.WriteString(fmt.Sprintf("- remote_branch_policy: %s\n", remoteBranchPolicy))
+	fmt.Fprintf(&b, "- feature_id: %s\n", cfg.FeatureID)
+	fmt.Fprintf(&b, "- source_branch: %s\n", sourceBranch)
+	fmt.Fprintf(&b, "- target_branch: %s\n", targetBranch)
+	fmt.Fprintf(&b, "- merge_policy: %s\n", mergePolicy)
+	fmt.Fprintf(&b, "- merge_strategy: %s\n", mergeStrategy)
+	fmt.Fprintf(&b, "- remote_branch_policy: %s\n", remoteBranchPolicy)
 	if cfg.TargetWorkdir != "" {
-		b.WriteString(fmt.Sprintf("- target_workdir: %s\n", cfg.TargetWorkdir))
+		fmt.Fprintf(&b, "- target_workdir: %s\n", cfg.TargetWorkdir)
 	}
 	if strings.TrimSpace(cfg.CoverageReport) != "" {
 		b.WriteString("\n## Checkout Coverage\n\n")

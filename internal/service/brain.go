@@ -105,6 +105,39 @@ func (s *BrainServiceImpl) checkFeatureCompletion(ctx context.Context, featureID
 // =============================================================================
 
 // Save creates a new brain entry on disk and indexes it.
+// renderRelatedEntries turns the request's relatedEntries into a trailing
+// "## Related" section of wiki-links, or "" when there is nothing to render.
+//
+// The field was declared, advertised by the MCP save tool and documented in
+// SKILL.md, but never read by Save — three linking mechanisms were offered and
+// this one silently did nothing. Writing the links into the body (rather than
+// inserting link rows directly) is what makes them durable: SetLinks rebuilds a
+// note's links from its file on every reindex, so any row not backed by the
+// file would be erased on the next pass.
+//
+// Wiki-link syntax carries all three accepted shapes without the caller having
+// to say which one it used: SetLinks resolves a target by path, then short ID,
+// then title.
+func renderRelatedEntries(entries []string) string {
+	seen := make(map[string]bool, len(entries))
+	var lines []string
+	for _, e := range entries {
+		// Collapse whitespace and drop the characters that would break out of
+		// the [[...]] wrapper.
+		clean := strings.TrimSpace(strings.Join(strings.Fields(e), " "))
+		clean = strings.NewReplacer("[", "", "]", "", "|", "").Replace(clean)
+		if clean == "" || seen[clean] {
+			continue
+		}
+		seen[clean] = true
+		lines = append(lines, "- [["+clean+"]]")
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n## Related\n\n" + strings.Join(lines, "\n") + "\n"
+}
+
 func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
 	// Validate required fields
 	if req.Type == "" {
@@ -232,6 +265,9 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		content.WriteString("\n")
 		content.WriteString(req.Content)
 		content.WriteString("\n")
+	}
+	if related := renderRelatedEntries(req.RelatedEntries); related != "" {
+		content.WriteString(related)
 	}
 
 	// Write file to disk
@@ -1001,6 +1037,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		"starts_at", "expires_at", "run_once_at", "timezone",
 		"resume_requested", "resume_requested_at",
 		"abandoned_at", "abandoned_reason",
+		"attempt_count", "last_failed_at",
 	}
 	userTouched := updateRequestTouchedFields(req)
 	var preservedFields map[string]interface{}
@@ -1857,6 +1894,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 		"starts_at", "expires_at", "run_once_at", "timezone",
 		"resume_requested", "resume_requested_at",
 		"abandoned_at", "abandoned_reason",
+		"attempt_count", "last_failed_at",
 	}
 	var preservedFields map[string]interface{}
 	if row.Metadata != "" && row.Metadata != "{}" {
@@ -2640,8 +2678,8 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 				content = truncateAtBoundary(content, perEntry)
 				truncated = true
 				contextBuilder.WriteString(content)
-				contextBuilder.WriteString(fmt.Sprintf(
-					"\n\n_[truncated — recall %q for the full entry]_\n", entry.Path))
+				fmt.Fprintf(&contextBuilder,
+					"\n\n_[truncated — recall %q for the full entry]_\n", entry.Path)
 			} else {
 				contextBuilder.WriteString(content)
 				contextBuilder.WriteString("\n")
@@ -3287,26 +3325,6 @@ func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
 		return nil
 	}
 	return &frontmatter.TriggerConfig{
-		Type:                   t.Type,
-		Event:                  t.Event,
-		Events:                 t.Events,
-		Schedule:               t.Schedule,
-		Timezone:               t.Timezone,
-		Filter:                 t.Filter,
-		OncePer:                t.OncePer,
-		Webhook:                t.Webhook,
-		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
-		Cooldown:               t.Cooldown,
-		MaxConcurrent:          t.MaxConcurrent,
-	}
-}
-
-// typesTriggerFromFM converts a frontmatter.TriggerConfig to a types.TriggerConfig.
-func typesTriggerFromFM(t *frontmatter.TriggerConfig) *types.TriggerConfig {
-	if t == nil {
-		return nil
-	}
-	return &types.TriggerConfig{
 		Type:                   t.Type,
 		Event:                  t.Event,
 		Events:                 t.Events,

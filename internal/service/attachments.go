@@ -24,8 +24,6 @@ import (
 // Compile-time check that AttachmentServiceImpl implements api.AttachmentService.
 var _ api.AttachmentService = (*AttachmentServiceImpl)(nil)
 
-var errAttachmentServiceNotImplemented = errors.New("attachment service behavior not implemented")
-
 const defaultAttachmentMaxSizeBytes int64 = 25 << 20 // 25 MiB
 
 // AttachmentServiceImpl orchestrates attachment blob storage, metadata storage,

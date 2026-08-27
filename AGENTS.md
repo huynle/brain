@@ -83,6 +83,41 @@ When a runner dies mid-task, or when a task's claim lease expires without renewa
 - Idempotent: a resume on a task already `pending+resume_requested=true` returns `Resumed=false` with an explanatory `Reason` and skips cleanup work.
 - The orphan reaper (`tryReapOrphan`) skips tasks with `resume_requested=true` and re-reads the task immediately before its status flip, so a Resume that races with a reaper doesn't get silently reverted.
 
+### Index freshness (who writes to the brain dir)
+
+SQLite is a derived view of the markdown files. Everything the API serves —
+search, the link graph, orphan detection — reads the index, not the disk, so a
+file that lands without an `IndexFile` call is invisible until something
+re-indexes it.
+
+- **Every writer indexes.** `BrainServiceImpl.Save`/`Update`/`Move` and
+  `TaskServiceImpl.CheckoutFeature` all call `indexer.IndexFile` immediately
+  after the write. `NewTaskService` takes the indexer as a required argument
+  for exactly this reason — CheckoutFeature is the one task-service path that
+  writes a file, and it silently skipped indexing until 2026-08-26.
+- **Boot indexes once.** `internal/apiserver/server.go` runs `IndexChanged` in
+  a background goroutine at startup, then never scans again.
+- **Out-of-band writes need the watcher.** A git pull into the brain dir, a
+  manual edit, or another process bypasses both of the above. `indexer.FileWatcher`
+  covers that gap, enabled with `server.index_watch.enabled` in config.yaml or
+  `BRAIN_INDEX_WATCH=true`. **It is off by default**: the watcher registers one
+  fsnotify watch per directory, and a large brain dir can exhaust the
+  platform's watch limit (inotify `max_user_watches`). With it off, out-of-band
+  writes appear only after a server restart.
+- The watcher starts after the boot scan finishes so the two never race on the
+  same path, and is stopped before the store closes so no debounced flush hits
+  a closed database.
+- fsnotify is not recursive. A directory created after startup arrives as a
+  single Create event naming only that directory, while the OS has usually
+  already built the rest of the chain and dropped files into it — so
+  `addDirRecursive` walks each new directory, watches every level, and queues
+  the markdown already inside. Without that walk a pulled
+  `projects/foo/note/` subtree is never watched at all.
+- `RebuildAll` exists but has no caller outside tests — there is no CLI or API
+  route to force a full reindex. Content already on disk with a matching
+  checksum is skipped by `IndexChanged`, so extraction fixes reach it only via
+  a migration that nulls the affected checksums.
+
 ### Storage Layer (`internal/storage/`)
 - `entries.go` - Entry storage operations
 - `search.go` - Full-text search indexing

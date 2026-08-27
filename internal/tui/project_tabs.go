@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
@@ -166,18 +165,6 @@ func (p ProjectTabs) TabIndexAt(x, width int) int {
 		pos += tabWidth + 2 // strings.Join separator
 	}
 	return -1
-}
-
-func (p ProjectTabs) render(width int, styled bool) string {
-	tabs := p.tabLabels(styled)
-	tabLine := strings.Join(tabs, "  ")
-
-	// Truncate if too wide
-	if lipgloss.Width(tabLine) > width {
-		tabLine = tabLine[:width-3] + "..."
-	}
-
-	return tabLine
 }
 
 func (p ProjectTabs) tabLabels(styled bool) []string {

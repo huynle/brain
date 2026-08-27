@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 23
+const CurrentSchemaVersion = 26
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -257,6 +257,15 @@ CREATE TABLE IF NOT EXISTS runner_pause_state (
   runner_id TEXT PRIMARY KEY,
   paused INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
+);`
+
+const createFeatureCascadeRootsTable = `
+CREATE TABLE IF NOT EXISTS feature_cascade_roots (
+  project_id        TEXT NOT NULL,
+  root_feature_id   TEXT NOT NULL,
+  requested_at      INTEGER NOT NULL,
+  paused_at_request INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (project_id, root_feature_id)
 );`
 
 const createProjectPlacementTable = `
@@ -913,6 +922,103 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 24 {
+		// v24: persist the ROOT of a manual "run feature + dependents"
+		// request.
+		//
+		// Only the root is stored, never the member list. The closure is
+		// derived from feature_depends_on, so a stored member set would go
+		// stale the moment someone edits the graph — and the server would
+		// then be dispatching a chain that no longer matches what is
+		// declared. Re-deriving from the root on every sweep also means a
+		// feature whose tasks are generated mid-run (feature-checkout
+		// follow-ups, goal-generated work) joins the chain instead of being
+		// invisible because it had no tasks at click time.
+		//
+		// paused_at_request captures whether the project's task dial was
+		// already off when the user asked. Propagation force-dispatches
+		// past a pause that was already on — that is the isolate workflow —
+		// but a pause applied AFTER the click stops the chain spreading
+		// into features that have not started.
+		if _, err := db.Exec(createFeatureCascadeRootsTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v24 (feature_cascade_roots table): %w", err)
+			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_feature_cascade_roots_project ON feature_cascade_roots(project_id)"); err != nil {
+			return fmt.Errorf("migrate v24 (feature_cascade_roots index): %w", err)
+		}
+	}
+
+	if ver < 25 {
+		// v25: force a re-extraction of links for the notes whose link rows
+		// this build changes.
+		//
+		// Two fixes landed together: [[wiki-links]] are now parsed at all, and
+		// link syntax inside code fences and inline code is no longer treated
+		// as a link. Neither reaches content already on disk, because the boot
+		// indexer (IndexChanged) skips any file whose checksum still matches
+		// the row — so a brain full of wiki-links would stay unlinked until
+		// each file happened to be edited.
+		//
+		// Nulling the checksum marks a note as "changed" for exactly one pass;
+		// the next IndexChanged re-parses it from disk and rewrites its links
+		// through the normal path. Scoped to the notes that can actually
+		// differ — those containing "[[" and those that already produced link
+		// rows — because the alternative, clearing every checksum, would
+		// re-index the whole brain behind a single SQLite connection and
+		// stall every read for the duration.
+		//
+		// SQLite LIKE has no character-class metacharacters, so '%[[%' is a
+		// literal match for a doubled bracket.
+		notesExist, err := tableExists(db, "notes")
+		if err != nil {
+			return fmt.Errorf("migrate v25 (inspect notes): %w", err)
+		}
+		linksExist, err := tableExists(db, "links")
+		if err != nil {
+			return fmt.Errorf("migrate v25 (inspect links): %w", err)
+		}
+		if notesExist && linksExist {
+			if _, err := db.Exec(`UPDATE notes SET checksum = NULL
+				WHERE body LIKE '%[[%'
+				   OR id IN (SELECT DISTINCT source_id FROM links)`); err != nil {
+				return fmt.Errorf("migrate v25 (invalidate checksums for link re-extraction): %w", err)
+			}
+		}
+	}
+
+	if ver < 26 {
+		// v26: same idea as v25, for HTML comments.
+		//
+		// v25 assumed the placeholder link targets in the graph ("pattern-id",
+		// "entry-id", "report-id") came from fenced code examples. They did
+		// not: the plan-template entries keep their example links inside HTML
+		// comments — "<!-- Link to patterns: [Pattern Name](pattern-id) -->" —
+		// which v25's fence masking never touched, so those rows survived the
+		// v25 backfill unchanged. ExtractLinks now masks comments too, and
+		// these notes need one more re-extraction pass to drop the rows.
+		//
+		// Scoped the same way and to a similar size (443 notes in production
+		// against 72,869), so it stays a short pass rather than a full
+		// re-index behind SQLite's single connection.
+		notesExist, err := tableExists(db, "notes")
+		if err != nil {
+			return fmt.Errorf("migrate v26 (inspect notes): %w", err)
+		}
+		linksExist, err := tableExists(db, "links")
+		if err != nil {
+			return fmt.Errorf("migrate v26 (inspect links): %w", err)
+		}
+		if notesExist && linksExist {
+			if _, err := db.Exec(`UPDATE notes SET checksum = NULL
+				WHERE body LIKE '%<!--%'
+				   OR id IN (SELECT DISTINCT source_id FROM links)`); err != nil {
+				return fmt.Errorf("migrate v26 (invalidate checksums for comment re-extraction): %w", err)
+			}
+		}
+	}
+
 	if ver < 21 {
 		// v21: add stable lease IDs to dispatch leases for ack/reject validation.
 		if exists, err := tableExists(db, "task_dispatch_leases"); err != nil {
@@ -1103,6 +1209,7 @@ func InitSchema(db *sql.DB) error {
 		createAttachmentsTable,
 		createEntryAttachmentsTable,
 		createAttachmentDerivedTable,
+		createFeatureCascadeRootsTable,
 	}
 	for _, ddl := range tables {
 		if _, err := db.Exec(ddl); err != nil {

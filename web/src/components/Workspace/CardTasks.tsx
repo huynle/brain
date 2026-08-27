@@ -4,7 +4,7 @@
  * Groups tasks by feature. Each feature shows:
  *   .feat[state]
  *     .feat-head (caret · name · life-badge · age · assign-chip · progress bar · % text)
- *     .trow × N (glyph · name · status · id)
+ *     .trow × N (glyph · name · status [+ .hold-chip] · id)
  *
  * Within a feature the rows form a dependency tree rather than a flat
  * list: a task that depends on another renders indented beneath it, so
@@ -21,6 +21,7 @@ import { useMemo } from "react";
 import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useRunners } from "../../hooks/useRunners";
+import { usePauseState } from "../../hooks/usePauseState";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useTaskActionContext } from "../../hooks/useTaskActionContext";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
@@ -30,6 +31,7 @@ import { buildTaskActions } from "../../lib/actions/taskActions";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
 import { buildSelectionActions } from "../../lib/actions/selectionActions";
 import { isRangeKey } from "../../lib/selection";
+import { featureDepWarning, taskHoldReason } from "../../lib/pause";
 import { buildTaskForest } from "../../lib/taskTree";
 import { flattenDepForest, type DepRow } from "../../lib/depTree";
 import type { Task } from "../../lib/types";
@@ -43,7 +45,10 @@ const LIFECYCLE_TONE = {
   merged: { tone: "merged", label: "merged" },
 } as const;
 
-function taskGlyph(status: Task["status"], isAbandoned = false): {
+function taskGlyph(
+  status: Task["status"],
+  isAbandoned = false,
+): {
   glyph: string;
   cls: string;
 } {
@@ -98,6 +103,7 @@ export function CardTasks({
   const toggleArchivedExpanded = useWorkspace((s) => s.toggleArchivedExpanded);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const { runners } = useRunners();
+  const { pause } = usePauseState();
 
   const taskCtx = useTaskActionContext(projectId);
   const featureCtx = useFeatureActionContext(projectId);
@@ -214,6 +220,16 @@ export function CardTasks({
     const t = row.node.item;
     const { glyph, cls } = taskGlyph(t.status, !!t.is_abandoned);
     const label = t.title || t.id;
+    // Why a task is not running. Null for every task that is running or
+    // simply not held — the chip only appears when there is a real answer.
+    // Also covers feature_depends_on gating, whose blocking party is a
+    // FEATURE and so has no row in this tree to point at.
+    const hold = taskHoldReason(t, { pause, projectId });
+    // Orthogonal to `hold`: an unresolved feature dep gates nothing, so it
+    // can sit on a task that is running perfectly well. Shown alongside
+    // rather than instead, because "running" and "ordered by a typo that
+    // does nothing" are both true at once.
+    const depWarn = featureDepWarning(t);
     const actions = buildTaskActions(t, taskCtx);
     const marked = selScoped && selTaskIds.has(t.id);
     // Single-click select-only highlight — one active row at a time,
@@ -232,7 +248,7 @@ export function CardTasks({
         ? () => toggleTaskSel(projectId, t.id)
         : () => openTaskDrawer(projectId, t.id),
       {
-        selectionActions: marked ? selectionActions ?? undefined : undefined,
+        selectionActions: marked ? (selectionActions ?? undefined) : undefined,
         // Long-press = the touch shift-click.
         onRangeSelect: () => rangeTaskSel(projectId, orderedTaskIds, t.id),
       },
@@ -325,7 +341,22 @@ export function CardTasks({
           />
           {label}
         </span>
-        <span className="status">{t.status}</span>
+        <span className="status">
+          {t.status}
+          {hold && (
+            <span className={`hold-chip ${hold.code}`} title={hold.detail}>
+              {hold.glyph} {hold.short}
+            </span>
+          )}
+          {depWarn && (
+            <span
+              className={`hold-chip ${depWarn.code}`}
+              title={depWarn.detail}
+            >
+              {depWarn.glyph} {depWarn.short}
+            </span>
+          )}
+        </span>
         <span className="id">{t.id.slice(0, 6)}</span>
       </div>
     );
@@ -355,7 +386,7 @@ export function CardTasks({
             : () => openFeatureDrawer(projectId, f.id),
           {
             selectionActions: featMarked
-              ? selectionActions ?? undefined
+              ? (selectionActions ?? undefined)
               : undefined,
             // Long-press = the touch shift-click.
             onRangeSelect: () =>

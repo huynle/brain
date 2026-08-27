@@ -394,3 +394,117 @@ func TestMCPRouteCORSAllowsSessionHeader(t *testing.T) {
 		t.Fatalf("Access-Control-Expose-Headers = %q, want Mcp-Session-Id", got)
 	}
 }
+
+// TestBuildHTTPHandler_IndexWatch covers the file watcher that keeps SQLite in
+// sync with writes that never went through the API.
+//
+// The server indexes BrainDir once at boot, so before this was wired up a git
+// pull into the brain dir (or a manual edit, or another process) stayed
+// invisible to search, the link graph, and orphan detection until a restart.
+// The watcher is opt-in, so both states are asserted here.
+//
+// Both subtests hinge on a seed file. IndexChanged globs the disk once up
+// front and only then starts writing rows, so a seed entry resolving proves
+// the glob has already happened — which means anything written afterwards
+// cannot be picked up by the boot index, only by the watcher. Without that
+// ordering both assertions would be racing the startup goroutine.
+func TestBuildHTTPHandler_IndexWatch(t *testing.T) {
+	const (
+		noteRel  = "projects/watchtest/note"
+		seedPath = noteRel + "/seed.md"
+		pullPath = noteRel + "/pulled.md"
+	)
+
+	newWatchTestServer := func(t *testing.T, enabled bool) (http.Handler, string) {
+		t.Helper()
+		brainDir := filepath.Join(t.TempDir(), "brain")
+		noteDir := filepath.Join(brainDir, filepath.FromSlash(noteRel))
+		if err := os.MkdirAll(noteDir, 0o755); err != nil {
+			t.Fatalf("failed to create note dir: %v", err)
+		}
+		// Present before startup, so the boot index picks it up.
+		writeOutOfBandNote(t, noteDir, "seed.md", "Seed")
+
+		ctx, cancel := context.WithCancel(context.Background())
+		handler, _, cleanup, err := buildHTTPHandler(ctx, ServerOptions{
+			Host:     "127.0.0.1",
+			Port:     0,
+			BrainDir: brainDir,
+			LogLevel: "error",
+			IndexWatch: config.IndexWatchConfig{
+				Enabled:    enabled,
+				DebounceMs: 10,
+			},
+		})
+		if err != nil {
+			cancel()
+			t.Fatalf("buildHTTPHandler failed: %v", err)
+		}
+		t.Cleanup(func() {
+			cancel()
+			cleanup()
+		})
+
+		// Wait out the boot index.
+		deadline := time.Now().Add(20 * time.Second)
+		for entryStatusCode(handler, seedPath) != http.StatusOK {
+			if time.Now().After(deadline) {
+				t.Fatal("boot index never picked up the seed entry")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return handler, noteDir
+	}
+
+	t.Run("enabled indexes out-of-band writes", func(t *testing.T) {
+		handler, noteDir := newWatchTestServer(t, true)
+
+		// The watcher's Start() trails the boot index by a hair, so rewrite
+		// on every attempt: a create event missed during that window is
+		// replaced by a write event once the watcher is live.
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			writeOutOfBandNote(t, noteDir, "pulled.md", "Pulled In")
+			if entryStatusCode(handler, pullPath) == http.StatusOK {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("file watcher never picked up %q", pullPath)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+
+	t.Run("disabled leaves them for the next restart", func(t *testing.T) {
+		handler, noteDir := newWatchTestServer(t, false)
+
+		writeOutOfBandNote(t, noteDir, "pulled.md", "Pulled In")
+
+		// 1s is ~100x the debounce the enabled case runs with; nothing is
+		// going to index this later.
+		deadline := time.Now().Add(time.Second)
+		for time.Now().Before(deadline) {
+			if entryStatusCode(handler, pullPath) == http.StatusOK {
+				t.Fatalf("entry %q was indexed with the watcher disabled", pullPath)
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+	})
+}
+
+// writeOutOfBandNote writes a markdown file straight to disk, the way a git
+// pull or a manual edit would — no API call, no explicit IndexFile.
+func writeOutOfBandNote(t *testing.T, dir, filename, title string) {
+	t.Helper()
+	body := fmt.Sprintf("---\ntype: note\ntitle: %s\n---\n\nWritten outside the API.\n", title)
+	if err := os.WriteFile(filepath.Join(dir, filename), []byte(body), 0o644); err != nil {
+		t.Fatalf("failed to write %s: %v", filename, err)
+	}
+}
+
+func entryStatusCode(handler http.Handler, relPath string) int {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/entries/"+relPath, nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec.Code
+}

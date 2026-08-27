@@ -21,7 +21,9 @@ type instanceReporterClient interface {
 // generateInstanceID returns a new opaque instance identifier ("inst_" + hex8).
 func generateInstanceID() string {
 	b := make([]byte, 4)
-	rand.Read(b)
+	// crypto/rand.Read never returns an error as of Go 1.24 — it
+	// panics if the system entropy source fails.
+	_, _ = rand.Read(b)
 	return "inst_" + hex.EncodeToString(b)
 }
 

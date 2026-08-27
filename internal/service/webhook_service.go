@@ -334,17 +334,32 @@ func (s *WebhookServiceImpl) deliverToWebhook(ctx context.Context, wh *storage.W
 	}
 
 	var lastErr error
+	attempts := 0
+retry:
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
 			delay := retryDelays[attempt-1]
 			select {
 			case <-ctx.Done():
+				// Labeled: a bare `break` leaves only the select, so a
+				// cancelled context fell through into the next delivery
+				// attempt instead of ending the loop.
+				//
+				// No test covers this, deliberately: the only caller of
+				// deliverToWebhook detaches into context.Background() on
+				// purpose (so an HTTP handler returning cannot kill an
+				// in-flight delivery), which leaves this path dormant, and
+				// the fall-through attempts were unobservable anyway — they
+				// die inside the HTTP client without reaching the endpoint,
+				// and logDelivery's write uses the same dead context so
+				// nothing reaches the delivery log either.
 				lastErr = ctx.Err()
-				break
+				break retry
 			case <-time.After(delay):
 			}
 		}
 
+		attempts++
 		start := time.Now()
 		statusCode, deliveryErr := s.doHTTPDelivery(ctx, wh, payload)
 		latencyMs := int(time.Since(start).Milliseconds())
@@ -375,7 +390,7 @@ func (s *WebhookServiceImpl) deliverToWebhook(ctx context.Context, wh *storage.W
 	}
 
 	if lastErr != nil {
-		log.Printf("[webhook] delivery to %s failed after %d attempts: %v", wh.URL, maxRetries, lastErr)
+		log.Printf("[webhook] delivery to %s failed after %d attempts: %v", wh.URL, attempts, lastErr)
 	}
 }
 

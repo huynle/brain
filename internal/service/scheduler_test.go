@@ -61,6 +61,135 @@ func TestSchedulerChoosesPreferredMachineBeforeLeastBusyRunner(t *testing.T) {
 	}
 }
 
+// TestSchedulerDoesNotDispatchFeatureGatedTask is the push-path regression for
+// feature_depends_on. Live, a task in a feature whose dependency feature had
+// not finished was dispatched on every 5s scheduler tick — the gate existed
+// only in the report-only pipeline behind GET /features, so /features said
+// ready:false while the scheduler pushed the task anyway.
+//
+// This drives the store from raw BrainEntries so GetReady runs the real
+// readiness pipeline. Asserting against hand-built ResolvedTask literals with
+// Classification:"ready" would pass with the gate removed again.
+func TestSchedulerDoesNotDispatchFeatureGatedTask(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.entries = []types.BrainEntry{
+		{
+			ID: "pipeline-1", Path: "projects/proj/task/pipeline-1.md",
+			Title: "Fetch raw records", Type: "task", Status: "pending",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "data-pipeline", FeaturePriority: "high",
+		},
+		{
+			ID: "report-1", Path: "projects/proj/task/report-1.md",
+			Title: "Build summary report", Type: "task", Status: "pending",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "reporting", FeaturePriority: "high",
+			// No task-level depends_on: feature gating is the only thing
+			// that can hold this back.
+			FeatureDependsOn: []string{"data-pipeline"},
+		},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 4},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Considered != 1 {
+		t.Errorf("Considered = %d, want 1 (the gated task must not even reach the scheduler)", result.Considered)
+	}
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1", result.Dispatched)
+	}
+	for _, lease := range store.leases {
+		if lease.TaskID == "report-1" {
+			t.Fatal("scheduler leased report-1: a feature-gated task was dispatched")
+		}
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "pipeline-1" {
+		t.Fatalf("leases = %#v, want only pipeline-1", store.leases)
+	}
+}
+
+// TestSchedulerDispatchesAfterFeatureDependencyCompletes is the other half:
+// the gate must open, not just close. Same fixture with data-pipeline done.
+func TestSchedulerDispatchesAfterFeatureDependencyCompletes(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.entries = []types.BrainEntry{
+		{
+			ID: "pipeline-1", Path: "projects/proj/task/pipeline-1.md",
+			Title: "Fetch raw records", Type: "task", Status: "completed",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "data-pipeline", FeaturePriority: "high",
+		},
+		{
+			ID: "report-1", Path: "projects/proj/task/report-1.md",
+			Title: "Build summary report", Type: "task", Status: "pending",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "reporting", FeaturePriority: "high",
+			FeatureDependsOn: []string{"data-pipeline"},
+		},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 4},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1", result.Dispatched)
+	}
+	if len(store.leases) != 1 || store.leases[0].TaskID != "report-1" {
+		t.Fatalf("leases = %#v, want report-1 dispatched once data-pipeline completed", store.leases)
+	}
+}
+
+// TestSchedulerDispatchesTaskWithUnresolvedFeatureDep pins the deliberate
+// non-enforcement of a dep that names no known feature. It cannot gate —
+// there is nothing to wait for, and a feature whose tasks were deleted or not
+// yet created would deadlock its dependents forever — so it is reported
+// instead. See UnresolvedFeatureDeps.
+func TestSchedulerDispatchesTaskWithUnresolvedFeatureDep(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.entries = []types.BrainEntry{
+		{
+			ID: "report-1", Path: "projects/proj/task/report-1.md",
+			Title: "Build summary report", Type: "task", Status: "pending",
+			Priority: "high", Executor: "opencode",
+			FeatureID: "reporting", FeaturePriority: "high",
+			FeatureDependsOn: []string{"data-pipelien"}, // typo, matches nothing
+		},
+	}
+	store.runners = []types.RunnerInfo{
+		{RunnerID: "runner-a", MachineID: "machine-a", Status: types.RunnerStatusOnline, DispatchPush: true, Executors: []string{"opencode"}, MaxParallel: 4},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+	if result.Dispatched != 1 {
+		t.Fatalf("Dispatched = %d, want 1", result.Dispatched)
+	}
+
+	ready := GetReadyTasks(ResolveDependencies(store.entries))
+	if len(ready) != 1 {
+		t.Fatalf("ready = %d tasks, want 1", len(ready))
+	}
+	if got := ready[0].UnresolvedFeatureDeps; len(got) != 1 || got[0] != "data-pipelien" {
+		t.Errorf("UnresolvedFeatureDeps = %v, want [data-pipelien] so the typo is visible", got)
+	}
+}
+
 func TestSchedulerRecordsNoCandidateForStrictAffinityWithoutChangingTaskStatus(t *testing.T) {
 	store := newFakeSchedulerStore()
 	store.tasks = []types.ResolvedTask{{ID: "task-1", ProjectID: "proj", Status: "pending", Classification: "ready", Executor: "opencode"}}
@@ -504,8 +633,15 @@ func waitForCondition(timeout time.Duration, fn func() bool) error {
 }
 
 type fakeSchedulerStore struct {
-	tasks                    []types.ResolvedTask
-	tasksByProject           map[string][]types.ResolvedTask
+	tasks          []types.ResolvedTask
+	tasksByProject map[string][]types.ResolvedTask
+	// entries feeds GetReady through the REAL readiness pipeline
+	// (ResolveDependencies + GetReadyTasks) instead of returning
+	// hand-classified literals. Set this whenever the thing under test is
+	// what the scheduler is allowed to see: a literal with
+	// Classification:"ready" asserts nothing about classification, which is
+	// how feature_depends_on went unenforced with the scheduler suite green.
+	entries                  []types.BrainEntry
 	projects                 []string
 	scheduledProjects        []string
 	expireCalls              int
@@ -523,6 +659,16 @@ type fakeSchedulerStore struct {
 	activeLeases map[string]*storage.DispatchLeaseRow
 	releasedKeys []string
 	clearedKeys  []string
+	// tasksByFeature backs GetTasksByFeature, keyed by "projectID/featureID".
+	// Nil leaves the feature-task lister answering with nothing, which is
+	// how most tests want it: RunFeatureNow then reports Outstanding as
+	// measured-zero rather than asserting anything about the wider feature.
+	tasksByFeature map[string][]types.ResolvedTask
+	// unreachableRunners names runners that are registered and look online
+	// but whose command stream has no live subscriber — the state a runner
+	// is in while the API restarts under it, or while its SSE connection
+	// is reconnecting. A dispatch published to one of these is lost.
+	unreachableRunners map[string]bool
 }
 
 type fakeRunnerCommand struct {
@@ -537,10 +683,17 @@ func newFakeSchedulerStore() *fakeSchedulerStore {
 
 func (f *fakeSchedulerStore) GetReady(ctx context.Context, projectID string, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error) {
 	f.scheduledProjects = append(f.scheduledProjects, projectID)
+	if f.entries != nil {
+		return GetReadyTasks(ResolveDependencies(append([]types.BrainEntry(nil), f.entries...))), nil
+	}
 	if f.tasksByProject != nil {
 		return append([]types.ResolvedTask(nil), f.tasksByProject[projectID]...), nil
 	}
 	return append([]types.ResolvedTask(nil), f.tasks...), nil
+}
+
+func (f *fakeSchedulerStore) GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error) {
+	return append([]types.ResolvedTask(nil), f.tasksByFeature[projectID+"/"+featureID]...), nil
 }
 
 func (f *fakeSchedulerStore) ListProjects(ctx context.Context) ([]string, error) {
@@ -623,6 +776,18 @@ func (f *fakeSchedulerStore) RecordPlacementReason(ctx context.Context, row *sto
 
 func (f *fakeSchedulerStore) PublishRunnerCommand(runnerID string, command string, payload interface{}) {
 	f.commands = append(f.commands, fakeRunnerCommand{runnerID: runnerID, command: command, payload: payload})
+}
+
+// PublishRunnerCommandTracked mirrors *realtime.Hub: the publish is attempted
+// either way, and the return says whether any live command stream took it.
+// Runners are reachable unless a test says otherwise, so every pre-existing
+// test keeps exercising the delivered path.
+func (f *fakeSchedulerStore) PublishRunnerCommandTracked(runnerID string, command string, payload interface{}) (int, int) {
+	f.PublishRunnerCommand(runnerID, command, payload)
+	if f.unreachableRunners[runnerID] {
+		return 0, 0
+	}
+	return 1, 0
 }
 
 func (f *fakeSchedulerStore) IsPaused(projectID string) bool { return f.paused }
@@ -1191,10 +1356,10 @@ func TestRunFeatureNow_NoRunnersOnlineSurfacesReason(t *testing.T) {
 	}
 }
 
-// TestRunFeatureNow_AlreadyLeasedStaysFeatureInProgress pins the reason that
-// existed before promotion: tasks held by a live lease really are in flight,
-// and both the cascade and the PWA already speak feature_in_progress.
-func TestRunFeatureNow_AlreadyLeasedStaysFeatureInProgress(t *testing.T) {
+// leasedFeatureStore builds the one-ready-task/one-eligible-runner fixture
+// used by the already_leased reason tests, with the blocking lease in the
+// given state.
+func leasedFeatureStore(leaseState string) *fakeSchedulerStore {
 	store := newFakeSchedulerStore()
 	store.tasks = []types.ResolvedTask{
 		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
@@ -1209,8 +1374,71 @@ func TestRunFeatureNow_AlreadyLeasedStaysFeatureInProgress(t *testing.T) {
 	store.activeLeases = map[string]*storage.DispatchLeaseRow{
 		"proj/task-1": {
 			ProjectID: "proj", TaskID: "task-1", LeaseID: "lease-1",
-			AssignedRunnerID: "runner-b", State: storage.DispatchLeaseStatePushed,
+			AssignedRunnerID: "runner-b", State: leaseState,
+			ExpiresAt: 1756000000000,
 		},
+	}
+	return store
+}
+
+// TestRunFeatureNow_AckedLeaseIsFeatureInProgress pins the reason for the
+// case the name has always described: a runner acknowledged the dispatch, so
+// it really is running the task.
+func TestRunFeatureNow_AckedLeaseIsFeatureInProgress(t *testing.T) {
+	store := leasedFeatureStore(storage.DispatchLeaseStateAcked)
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Reason != "feature_in_progress" {
+		t.Fatalf("Reason = %q, want feature_in_progress", resp.Reason)
+	}
+}
+
+// TestRunFeatureNow_UnackedLeaseIsDispatchPending covers the case this test
+// used to assert the opposite of. A lease stuck in "pushed" is not in
+// flight — the dispatch went out and nothing came back — and calling it
+// feature_in_progress sent users looking for a process that did not exist.
+// The reason and the detail both have to say "nothing is running".
+func TestRunFeatureNow_UnackedLeaseIsDispatchPending(t *testing.T) {
+	store := leasedFeatureStore(storage.DispatchLeaseStatePushed)
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Reason != "feature_dispatch_pending" {
+		t.Fatalf("Reason = %q, want feature_dispatch_pending", resp.Reason)
+	}
+	if strings.Contains(resp.Detail, "in flight") {
+		t.Fatalf("Detail = %q, must not claim the work is in flight", resp.Detail)
+	}
+	if !strings.Contains(resp.Detail, "no task is running") {
+		t.Fatalf("Detail = %q, want it to say nothing is running", resp.Detail)
+	}
+	// The per-task result has to carry the state that drove the decision,
+	// so a caller reading results (PWA task row) reaches the same answer.
+	if len(resp.Results) != 1 || resp.Results[0].LeaseState != storage.DispatchLeaseStatePushed {
+		t.Fatalf("Results = %+v, want one entry with leaseState=pushed", resp.Results)
+	}
+}
+
+// TestRunFeatureNow_MixedLeaseStatesStayInProgress guards the "every" in
+// allLeasesAwaitingAck: one acknowledged lease means a runner really is
+// working inside this feature, and in-progress is then the honest summary
+// even though a sibling is stuck in limbo.
+func TestRunFeatureNow_MixedLeaseStatesStayInProgress(t *testing.T) {
+	store := leasedFeatureStore(storage.DispatchLeaseStatePushed)
+	store.tasks = append(store.tasks, types.ResolvedTask{
+		ID: "task-2", ProjectID: "proj", FeatureID: "feat", Status: "pending",
+		Classification: "ready", Executor: "opencode",
+	})
+	store.activeLeases["proj/task-2"] = &storage.DispatchLeaseRow{
+		ProjectID: "proj", TaskID: "task-2", LeaseID: "lease-2",
+		AssignedRunnerID: "runner-b", State: storage.DispatchLeaseStateAcked,
 	}
 
 	svc := NewSchedulerService(store, nil, store)
@@ -1441,5 +1669,302 @@ func TestSchedulerService_SkipBreakdownSumsToTotal(t *testing.T) {
 		result.SkippedNoCandidate + result.SkippedAlreadyLeased
 	if accounted != result.Skipped {
 		t.Fatalf("skip causes account for %d of %d skips; result=%#v", accounted, result.Skipped, result)
+	}
+}
+
+// =============================================================================
+// Undelivered dispatch — the lease must not outlive the command
+// =============================================================================
+//
+// A dispatch is an SSE publish to a topic nobody is required to be listening
+// on, but the lease that authorizes it is a durable row. When a runner's
+// command stream is down — it restarted, the API restarted under it, the
+// network blipped — the command evaporates and the lease sits in "pushed"
+// until its TTL runs out. For that whole window the task reads as dispatched:
+// the PWA rendered it as "already in flight", and every further attempt to
+// run it was refused as already_leased, over a command no runner ever saw.
+// These tests pin the undo.
+
+// unreachableFeatureStore is the fixture for the reproduced production case:
+// one ready task, one runner that placement is happy with, and that runner's
+// command stream not connected.
+func unreachableFeatureStore() *fakeSchedulerStore {
+	store := newFakeSchedulerStore()
+	store.tasks = []types.ResolvedTask{
+		{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending", Classification: "ready", Executor: "opencode"},
+	}
+	store.runners = []types.RunnerInfo{{
+		RunnerID: "runner-a", MachineID: "machine-a",
+		Status: types.RunnerStatusOnline, DispatchPush: true,
+		Executors: []string{"opencode"}, MaxParallel: 2,
+	}}
+	store.unreachableRunners = map[string]bool{"runner-a": true}
+	return store
+}
+
+func TestRunFeatureNow_UndeliveredDispatchClearsLease(t *testing.T) {
+	store := unreachableFeatureStore()
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+
+	if resp.Dispatched || resp.DispatchedCount != 0 {
+		t.Fatalf("dispatched=%v count=%d; a command no runner received is not a dispatch",
+			resp.Dispatched, resp.DispatchedCount)
+	}
+	if resp.Reason != "runner_unreachable" {
+		t.Fatalf("Reason = %q, want runner_unreachable", resp.Reason)
+	}
+	if !strings.Contains(resp.Detail, "runner-a") {
+		t.Errorf("Detail = %q, want it to name the runner that went quiet", resp.Detail)
+	}
+	// The lease is the part that used to linger and lie.
+	if len(store.clearedKeys) != 1 || store.clearedKeys[0] != "proj/task-1" {
+		t.Fatalf("clearedKeys = %v, want the undelivered task's lease cleared", store.clearedKeys)
+	}
+	if store.activeLeases["proj/task-1"] != nil {
+		t.Fatalf("lease survived an undelivered dispatch: %+v", store.activeLeases["proj/task-1"])
+	}
+}
+
+// TestRunFeatureNow_UndeliveredThenRetryIsNotRefused is the user-visible
+// consequence: with the lease undone, the very next attempt is free to
+// dispatch instead of being told the feature is already in flight for a
+// minute. It is the difference between a dead menu item and a retry.
+func TestRunFeatureNow_UndeliveredThenRetryIsNotRefused(t *testing.T) {
+	store := unreachableFeatureStore()
+	svc := NewSchedulerService(store, nil, store)
+
+	if _, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false); err != nil {
+		t.Fatalf("first RunFeatureNow failed: %v", err)
+	}
+
+	// The runner's stream comes back (it finished reconnecting).
+	store.unreachableRunners = nil
+
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("second RunFeatureNow failed: %v", err)
+	}
+	if !resp.Dispatched || resp.DispatchedCount != 1 {
+		t.Fatalf("dispatched=%v count=%d reason=%q; want the retry to go through",
+			resp.Dispatched, resp.DispatchedCount, resp.Reason)
+	}
+}
+
+func TestRunTaskNow_UndeliveredDispatchClearsLease(t *testing.T) {
+	store := unreachableFeatureStore()
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "task-1", false)
+	if err != nil {
+		t.Fatalf("RunTaskNow failed: %v", err)
+	}
+
+	if resp.Dispatched {
+		t.Fatalf("Dispatched = true for a command that reached no runner: %+v", resp)
+	}
+	if resp.Reason != "runner_unreachable" {
+		t.Fatalf("Reason = %q, want runner_unreachable", resp.Reason)
+	}
+	if store.activeLeases["proj/task-1"] != nil {
+		t.Fatalf("lease survived an undelivered dispatch: %+v", store.activeLeases["proj/task-1"])
+	}
+}
+
+func TestScheduleProject_UndeliveredDispatchClearsLease(t *testing.T) {
+	store := unreachableFeatureStore()
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+
+	if result.Dispatched != 0 {
+		t.Fatalf("Dispatched = %d, want 0; result=%#v", result.Dispatched, result)
+	}
+	if result.SkippedRunnerUnreachable != 1 || result.Skipped != 1 {
+		t.Fatalf("SkippedRunnerUnreachable = %d, Skipped = %d, want 1 and 1; result=%#v",
+			result.SkippedRunnerUnreachable, result.Skipped, result)
+	}
+	// This tick is where the phantom lease was born: the scheduler pushes to
+	// a runner that just lost its stream, and the user meets the wreckage on
+	// their next explicit run.
+	if store.activeLeases["proj/task-1"] != nil {
+		t.Fatalf("scheduler left a lease for an undelivered dispatch: %+v", store.activeLeases["proj/task-1"])
+	}
+}
+
+// legacyPublisher is a publisher with no delivery accounting — the shape a
+// caller that predates PublishRunnerCommandTracked has.
+type legacyPublisher struct{ calls int }
+
+func (p *legacyPublisher) PublishRunnerCommand(runnerID string, command string, payload interface{}) {
+	p.calls++
+}
+
+// TestRunFeatureNow_UnmeasurableDeliveryCountsAsDelivered pins the fallback:
+// a publisher that cannot report delivery must not have its dispatches
+// treated as lost. "Cannot measure" is not "did not arrive" — reading it
+// that way would undo every lease on such a deployment.
+func TestRunFeatureNow_UnmeasurableDeliveryCountsAsDelivered(t *testing.T) {
+	store := unreachableFeatureStore()
+	pub := &legacyPublisher{}
+
+	// Passed last, so it takes over the publisher slot — and, because
+	// publisher and deliverer are wired from the same object, clears
+	// delivery reporting with it.
+	svc := NewSchedulerService(store, nil, store, pub)
+	if svc.deliverer != nil {
+		t.Fatalf("deliverer = %T, want nil: a publisher without tracking must not borrow another object's", svc.deliverer)
+	}
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if pub.calls != 1 {
+		t.Fatalf("legacy publisher calls = %d, want 1", pub.calls)
+	}
+	if !resp.Dispatched || resp.DispatchedCount != 1 {
+		t.Fatalf("dispatched=%v count=%d reason=%q; unmeasured delivery must stay a dispatch",
+			resp.Dispatched, resp.DispatchedCount, resp.Reason)
+	}
+	if len(store.clearedKeys) != 0 {
+		t.Fatalf("clearedKeys = %v, want none — nothing proved this dispatch was lost", store.clearedKeys)
+	}
+}
+
+// =============================================================================
+// force — reclaiming an unacknowledged lease
+// =============================================================================
+
+// TestRunFeatureNow_ForceReclaimsUnackedLease covers the escape hatch for a
+// lease that is stuck in "pushed": force releases it and re-dispatches.
+// Without this, RunFeatureNow accepted a force flag and silently ignored it.
+func TestRunFeatureNow_ForceReclaimsUnackedLease(t *testing.T) {
+	store := leasedFeatureStore(storage.DispatchLeaseStatePushed)
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", true)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if !resp.Dispatched || resp.DispatchedCount != 1 {
+		t.Fatalf("dispatched=%v count=%d reason=%q; force must reclaim an unacked lease",
+			resp.Dispatched, resp.DispatchedCount, resp.Reason)
+	}
+	if len(store.releasedKeys) != 1 || store.releasedKeys[0] != "proj/task-1" {
+		t.Fatalf("releasedKeys = %v, want the stale lease released", store.releasedKeys)
+	}
+	if got := store.activeLeases["proj/task-1"]; got == nil || got.AssignedRunnerID != "runner-a" {
+		t.Fatalf("lease after reclaim = %+v, want one held by runner-a", got)
+	}
+}
+
+// TestRunFeatureNow_ForceDoesNotReclaimAckedLease is the deliberate limit on
+// the escape hatch. An acked lease means a runner said it took the work and
+// is spawning it; displacing that races a live process. The resume path
+// already refuses to release a claim held by an online runner even under
+// force, and a feature-wide batch is the last place to be less careful.
+func TestRunFeatureNow_ForceDoesNotReclaimAckedLease(t *testing.T) {
+	store := leasedFeatureStore(storage.DispatchLeaseStateAcked)
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", true)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatalf("force displaced an acknowledged lease: %+v", resp)
+	}
+	if len(store.releasedKeys) != 0 {
+		t.Fatalf("releasedKeys = %v, want none — the runner is working this task", store.releasedKeys)
+	}
+	if got := store.activeLeases["proj/task-1"]; got == nil || got.AssignedRunnerID != "runner-b" {
+		t.Fatalf("lease after refused force = %+v, want runner-b to still hold it", got)
+	}
+	if len(resp.Results) != 1 || !strings.Contains(resp.Results[0].Detail, "force does not reclaim") {
+		t.Fatalf("Results = %+v, want the refusal explained in the per-task detail", resp.Results)
+	}
+}
+
+// TestRunFeatureNow_UnforcedRunLeavesUnackedLeaseAlone pins the other half of
+// the policy: reclaiming is opt-in. A pushed lease is NOT proof the runner
+// never got the dispatch — the ack lands after workdir resolution, which can
+// clone a repo — so an automatic reclaim would sometimes double-dispatch a
+// task whose runner was merely slow to prepare.
+func TestRunFeatureNow_UnforcedRunLeavesUnackedLeaseAlone(t *testing.T) {
+	store := leasedFeatureStore(storage.DispatchLeaseStatePushed)
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Dispatched {
+		t.Fatalf("an unforced run reclaimed a lease: %+v", resp)
+	}
+	if len(store.releasedKeys) != 0 {
+		t.Fatalf("releasedKeys = %v, want none without force", store.releasedKeys)
+	}
+}
+
+// =============================================================================
+// no_ready_tasks — naming the feature that is holding this one
+// =============================================================================
+
+// TestRunFeatureNow_NoReadyTasksNamesBlockingFeature stops the reason from
+// being a dead end. The tasks already carry the blocking feature IDs, so
+// telling the user to "check dependencies" sent them to look up something the
+// server had in hand.
+func TestRunFeatureNow_NoReadyTasksNamesBlockingFeature(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = nil // nothing ready: the whole feature is gated
+	store.tasksByFeature = map[string][]types.ResolvedTask{
+		"proj/feat": {{
+			ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "pending",
+			Classification: "waiting", WaitingOnFeatures: []string{"data-pipeline"},
+		}},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if resp.Reason != "no_ready_tasks" {
+		t.Fatalf("Reason = %q, want no_ready_tasks", resp.Reason)
+	}
+	if !strings.Contains(resp.Detail, "data-pipeline") {
+		t.Fatalf("Detail = %q, want it to name the feature being waited on", resp.Detail)
+	}
+	if len(resp.WaitingOnFeatures) != 1 || resp.WaitingOnFeatures[0] != "data-pipeline" {
+		t.Fatalf("WaitingOnFeatures = %v, want [data-pipeline]", resp.WaitingOnFeatures)
+	}
+}
+
+// TestRunFeatureNow_NoReadyTasksWithoutFeatureHoldKeepsGenericDetail: when
+// nothing feature-level is holding the work, the message must not invent one.
+func TestRunFeatureNow_NoReadyTasksWithoutFeatureHoldKeepsGenericDetail(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.tasks = nil
+	store.tasksByFeature = map[string][]types.ResolvedTask{
+		"proj/feat": {{ID: "task-1", ProjectID: "proj", FeatureID: "feat", Status: "in_progress"}},
+	}
+
+	svc := NewSchedulerService(store, nil, store)
+	resp, err := svc.RunFeatureNow(context.Background(), "proj", "feat", false)
+	if err != nil {
+		t.Fatalf("RunFeatureNow failed: %v", err)
+	}
+	if !strings.Contains(resp.Detail, "check dependencies") {
+		t.Fatalf("Detail = %q, want the generic wording", resp.Detail)
+	}
+	if len(resp.WaitingOnFeatures) != 0 || len(resp.BlockedByFeatures) != 0 {
+		t.Fatalf("holds = %v / %v, want both empty", resp.WaitingOnFeatures, resp.BlockedByFeatures)
 	}
 }

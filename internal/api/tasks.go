@@ -232,6 +232,10 @@ type TaskMetadataResponse struct {
 	DispatchLease       *types.DispatchLease         `json:"dispatch_lease,omitempty"`
 	PlacementReasons    []types.PlacementReason      `json:"placement_reasons,omitempty"`
 	LastPlacementReason *types.PlacementReason       `json:"last_placement_reason,omitempty"`
+	// Feature-level gating (feature_depends_on), mirroring ResolvedTask.
+	BlockedByFeatures     []string `json:"blocked_by_features,omitempty"`
+	WaitingOnFeatures     []string `json:"waiting_on_features,omitempty"`
+	UnresolvedFeatureDeps []string `json:"unresolved_feature_deps,omitempty"`
 }
 
 // HandleGetTaskMetadata handles GET /tasks/{projectId}/{taskId}/metadata.
@@ -288,6 +292,10 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 		DispatchLease:       task.DispatchLease,
 		PlacementReasons:    task.PlacementReasons,
 		LastPlacementReason: task.LastPlacementReason,
+
+		BlockedByFeatures:     task.BlockedByFeatures,
+		WaitingOnFeatures:     task.WaitingOnFeatures,
+		UnresolvedFeatureDeps: task.UnresolvedFeatureDeps,
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
@@ -1097,13 +1105,90 @@ func (h *Handler) HandleRunFeature(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp, err := h.runFeature.RunFeatureNow(r.Context(), projectId, featureId, req.Force)
+	// includeDependents needs the chain service. Without it the root still
+	// runs — degrading to today's behaviour beats refusing the whole call —
+	// but say so in the response rather than silently dropping the option.
+	var (
+		resp *types.RunFeatureResponse
+		err  error
+	)
+	if req.IncludeDependents && h.depChains != nil {
+		resp, err = h.depChains.RunFeatureWithDependents(r.Context(), projectId, featureId, req.Force, true)
+	} else {
+		resp, err = h.runFeature.RunFeatureNow(r.Context(), projectId, featureId, req.Force)
+		if req.IncludeDependents && resp != nil {
+			resp.Dependents = &types.DependentQueue{}
+		}
+	}
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return
 	}
 
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleCancelDependentChain handles DELETE
+// /tasks/{projectId}/features/{featureId}/run — cancels a standing
+// run-with-dependents request rooted at this feature.
+//
+// Cancelling stops NEW features joining the chain. Tasks already dispatched
+// run to completion, the same way a pause dial works; there is no way to
+// un-dispatch, and pretending otherwise would be a lie in the response.
+func (h *Handler) HandleCancelDependentChain(w http.ResponseWriter, r *http.Request) {
+	if h.depChains == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "dependent-chain service is not configured")
+		return
+	}
+	projectId := chi.URLParam(r, "projectId")
+	featureId := chi.URLParam(r, "featureId")
+
+	cancelled, err := h.depChains.CancelDependentChain(r.Context(), projectId, featureId)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"success":       true,
+		"cancelled":     cancelled,
+		"projectId":     projectId,
+		"rootFeatureId": featureId,
+		// Distinguishes "stopped a running chain" from "nothing was
+		// queued"; reporting both as success is how a user concludes
+		// cancel is broken.
+		"detail": cancelDetail(cancelled),
+	})
+}
+
+func cancelDetail(cancelled bool) string {
+	if cancelled {
+		return "chain cancelled; already-dispatched tasks run to completion"
+	}
+	return "no dependent chain was queued for this feature"
+}
+
+// HandleListDependentChains handles GET /tasks/{projectId}/chains — the
+// standing run-with-dependents requests for a project.
+//
+// The membership reported here is DERIVED from the current graph on every
+// read, never replayed from storage, so it reflects edits to
+// feature_depends_on and features whose tasks appeared after the request.
+func (h *Handler) HandleListDependentChains(w http.ResponseWriter, r *http.Request) {
+	if h.depChains == nil {
+		WriteError(w, http.StatusNotImplemented, "Not Implemented", "dependent-chain service is not configured")
+		return
+	}
+	projectId := chi.URLParam(r, "projectId")
+
+	chains, err := h.depChains.ListDependentChains(r.Context(), projectId)
+	if err != nil {
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+	if chains == nil {
+		chains = []types.DependentChain{}
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"chains": chains})
 }
 
 // HandleRunProject handles POST /tasks/{projectId}/run — fans out

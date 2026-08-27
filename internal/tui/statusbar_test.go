@@ -121,29 +121,11 @@ func TestStatusBarActiveFeatureOverridesPause(t *testing.T) {
 	}
 }
 
-func TestStatusBarPauseWithEnabledFeatures(t *testing.T) {
-	sb := NewStatusBar("test-project")
-	sb.Connected = true
-	sb.IsPaused = true
-	sb.EnabledFeatureCount = 3
-	sb.Stats = TaskStats{Ready: 5, Waiting: 2, InProgress: 1, Completed: 10}
-
-	rendered := sb.View(120)
-
-	if !strings.Contains(rendered, "⏸") {
-		t.Error("Status bar should show pause indicator when paused with no active features")
-	}
-	if !strings.Contains(rendered, "3 features enabled") {
-		t.Error("Status bar should show enabled features count when paused")
-	}
-}
-
 func TestStatusBarNoIndicatorsWhenNotPaused(t *testing.T) {
 	sb := NewStatusBar("test-project")
 	sb.Connected = true
 	sb.IsPaused = false
 	sb.ActiveFeatureCount = 0
-	sb.EnabledFeatureCount = 5
 	sb.Stats = TaskStats{Ready: 5, Waiting: 2, InProgress: 1, Completed: 10}
 
 	rendered := sb.View(120)

@@ -159,7 +159,7 @@ func TestUpdateMetadata_PreservesRuntimeFieldsAfterFileWrite(t *testing.T) {
 	}
 
 	// The sessions should still be present (preserved across re-index)
-	if recalled.Sessions == nil || len(recalled.Sessions) == 0 {
+	if len(recalled.Sessions) == 0 {
 		t.Error("expected sessions to be preserved after file write + re-index")
 	}
 }
@@ -506,7 +506,7 @@ func TestUpdate_PreservesUntouchedRuntimeFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recall failed: %v", err)
 	}
-	if recalled.Sessions == nil || len(recalled.Sessions) == 0 {
+	if len(recalled.Sessions) == 0 {
 		t.Error("expected sessions to survive Update() of an unrelated field")
 	}
 }

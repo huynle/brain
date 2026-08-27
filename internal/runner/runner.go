@@ -250,7 +250,6 @@ type TaskRunner struct {
 	serverTasksPaused        map[string]bool
 	serverAutosPaused        map[string]bool
 	runnerPaused             bool
-	enabledFeatures          map[string]bool // features toggled on via TUI "x" key
 
 	// Event handlers (protected by eventMu)
 	eventMu  sync.RWMutex
@@ -361,7 +360,6 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		automationPausedProjects: make(map[string]bool),
 		serverTasksPaused:        make(map[string]bool),
 		serverAutosPaused:        make(map[string]bool),
-		enabledFeatures:          make(map[string]bool),
 		logStreamers:             make(map[string]*LogStreamer),
 		wakeCh:                   make(chan struct{}, 1),
 		commandCh:                make(chan RunnerCommand, commandChannelCapacity(opts.Config.MaxParallel)),
@@ -1196,20 +1194,6 @@ func (tr *TaskRunner) handleCommand(ctx context.Context, cmd RunnerCommand) {
 		}
 		tr.handleDispatchCommand(ctx, cmd)
 
-	case CommandFeatureToggle:
-		if cmd.ToggleFeatureID == "" {
-			slog.Warn("feature_toggle command missing featureId")
-			break
-		}
-		enabled := cmd.Enabled == nil || *cmd.Enabled
-		if enabled {
-			tr.EnableFeature(cmd.ToggleFeatureID)
-		} else {
-			tr.DisableFeature(cmd.ToggleFeatureID)
-		}
-		slog.Info("feature toggled via SSE command",
-			"feature_id", cmd.ToggleFeatureID, "enabled", enabled)
-
 	case CommandShutdown:
 		slog.Info("shutdown command received", "reason", cmd.Reason)
 		tr.emitEvent(RunnerEvent{
@@ -1369,10 +1353,9 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 			break
 		}
 
-		// Skip paused projects (unless features are enabled)
+		// Skip paused projects. Automation tasks are the one carve-out.
 		tr.pauseMu.RLock()
 		paused := tr.pauseCache[projectID]
-		projEnabledIDs := tr.getEnabledFeatureIDsLocked()
 		tr.pauseMu.RUnlock()
 
 		automationsPausedForProject := automationsPaused || automationPausedProjects[projectID] || serverPausedFor(serverAutomationPaused, projectID)
@@ -1415,37 +1398,7 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 				}
 			}
 
-			if len(projEnabledIDs) == 0 {
-				continue // fully paused, no enabled features
-			}
-			// Paused but features enabled: poll only enabled features
-			task, err := tr.client.GetNextTask(ctx, projectID, &TaskFetchOptions{
-				FeatureIDs: projEnabledIDs,
-				Executors:  tr.executorNames(),
-				RunnerID:   tr.runnerID,
-			})
-			if err != nil || task == nil {
-				continue
-			}
-			// Filter by capability match before claiming
-			if !tr.matchesCapabilities(task) {
-				slog.Debug("skipping task (paused/enabled): runner lacks required capabilities",
-					"task_id", task.ID,
-					"project", projectID,
-					"requires", task.RequiresCapability,
-					"runner_capabilities", tr.config.Capabilities,
-				)
-				continue
-			}
-			if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
-				if errors.Is(err, ErrTaskClaimConflict) {
-					continue
-				}
-				tr.logger.Printf("claim and spawn (enabled feature) failed for %s/%s: %v", projectID, task.ID, err)
-				continue
-			}
-			filled++
-			continue
+			continue // paused: nothing but automations may run
 		}
 
 		// Get next task for this project (filtered by feature IDs and executors)
@@ -1520,19 +1473,6 @@ func (tr *TaskRunner) buildFetchOptions() *TaskFetchOptions {
 
 // DefaultExecutorName is the executor name used when task.Executor is empty.
 const DefaultExecutorName = "opencode"
-
-// getExecutor returns the executor for the given name, defaulting to "opencode"
-// for empty names. Returns nil if no matching executor is registered.
-func (tr *TaskRunner) getExecutor(name string) TaskExecutor {
-	if tr.executorRegistry != nil {
-		if name == "" {
-			name = DefaultExecutorName
-		}
-		exec, _ := tr.executorRegistry.Get(name)
-		return exec
-	}
-	return tr.executor
-}
 
 // executorNames returns a sorted list of registered executor names.
 func (tr *TaskRunner) executorNames() []string {
@@ -1659,7 +1599,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 	// Update task status to in_progress
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "in_progress"); err != nil {
 		// Release the claim on failure
-		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Rollback of a claim we already hold. If the release also fails the
+		// lease simply expires on its own, and the caller's error below is
+		// the one that matters.
+		_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		return fmt.Errorf("update task status: %w", err)
 	}
 
@@ -1685,7 +1628,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		if err := tr.hookDispatcher.DispatchPre(evt); err != nil {
 			tr.logger.Printf("pre-task-start hook failed for %s/%s: %v", projectID, task.ID, err)
 			// Release claim and reset status
-			tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+			// Rollback of a claim we already hold. If the release also fails the
+			// lease simply expires on its own, and the caller's error below is
+			// the one that matters.
+			_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 			_ = tr.client.UpdateTaskStatus(ctx, task.Path, "pending")
 			tr.emitEvent(RunnerEvent{
 				Type:       EventTaskStatusChanged,
@@ -1710,7 +1656,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 	// Resolve executor for this task
 	taskExecutor, executorType, err := tr.resolveExecutor(task)
 	if err != nil {
-		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Rollback of a claim we already hold. If the release also fails the
+		// lease simply expires on its own, and the caller's error below is
+		// the one that matters.
+		_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		return fmt.Errorf("resolve executor: %w", err)
 	}
 
@@ -1737,7 +1686,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 			FeatureID: task.FeatureID,
 			Reason:    "workdir resolution failed",
 		})
-		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Rollback of a claim we already hold. If the release also fails the
+		// lease simply expires on its own, and the caller's error below is
+		// the one that matters.
+		_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "blocked")
 		return fmt.Errorf("resolve workdir: %w", err)
 	}
@@ -1787,7 +1739,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 			FeatureID: task.FeatureID,
 			Reason:    fmt.Sprintf("spawn failed: %v", err),
 		})
-		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Rollback of a claim we already hold. If the release also fails the
+		// lease simply expires on its own, and the caller's error below is
+		// the one that matters.
+		_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		// Roll the task's status back from "in_progress" (set optimistically
 		// at claim time) to "blocked" so it doesn't sit forever waiting on
 		// the orphan reaper. Symmetric with the workdir-failure branch
@@ -1846,6 +1801,8 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		RunID:          latestInProgressRunID(task.Runs),
 		FeatureID:      task.FeatureID,
 		GeneratedBy:    task.GeneratedBy,
+		AttemptCount:   task.AttemptCount,
+		MaxAttempts:    resolveMaxAttempts(task, tr.config),
 	}
 	// Every executor gets an InstanceID so the Runners tab can surface a
 	// "currently running" row for it (issue: script/pi tasks were invisible
@@ -2510,6 +2467,9 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	case CompletionCompleted:
 		apiStatus = "completed"
 		eventType = EventTaskCompleted
+		// Clear any attempt counter left by earlier failed runs so a future
+		// failure starts from zero.
+		tr.clearTaskFailures(ctx, task)
 	case CompletionBlocked:
 		apiStatus = "blocked"
 		eventType = EventTaskFailed
@@ -2517,7 +2477,10 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 		apiStatus = "completed" // cancelled tasks are considered done
 		eventType = EventTaskCancelled
 	default:
-		apiStatus = "pending" // failed/crashed/timeout → back to pending for retry
+		// failed/crashed/timeout → retry, but a bounded number of times. This
+		// used to reset to "pending" unconditionally, so a task that failed
+		// deterministically re-dispatched every poll interval forever.
+		apiStatus, _ = tr.recordTaskFailure(ctx, task)
 		eventType = EventTaskFailed
 	}
 
@@ -2810,17 +2773,19 @@ func (tr *TaskRunner) cleanupTaskTmux(task RunningTask) {
 // state.
 //
 // ProjectID:
-//   ""     → global (all projects)
-//   "foo"  → project foo only
+//
+//	""     → global (all projects)
+//	"foo"  → project foo only
 //
 // Scope:
-//   "" or "all"     → both tasks and automations
-//   "tasks"         → task-pause gate only (dispatch gate)
-//   "automations"   → automation-pause gate only (carve-out)
-//   "runner"        → this runner as a whole; ProjectID is ignored and the
-//                     dial is kept out of the project maps entirely, since
-//                     those are reconciled from GetRunnerStatus (project
-//                     state) and would wipe it on the next poll tick
+//
+//	"" or "all"     → both tasks and automations
+//	"tasks"         → task-pause gate only (dispatch gate)
+//	"automations"   → automation-pause gate only (carve-out)
+//	"runner"        → this runner as a whole; ProjectID is ignored and the
+//	                  dial is kept out of the project maps entirely, since
+//	                  those are reconciled from GetRunnerStatus (project
+//	                  state) and would wipe it on the next poll tick
 //
 // pause=true applies the pause; pause=false applies the resume.
 func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
@@ -3035,75 +3000,6 @@ func (tr *TaskRunner) IsRunnerPaused() bool {
 	tr.pauseMu.RLock()
 	defer tr.pauseMu.RUnlock()
 	return tr.runnerPaused
-}
-
-// =============================================================================
-// Feature Toggle
-// =============================================================================
-
-// EnableFeature adds a feature to the enabled whitelist.
-// When a project is paused, the poll loop will still pick up tasks
-// from enabled features.
-func (tr *TaskRunner) EnableFeature(featureID string) {
-	tr.pauseMu.Lock()
-	tr.enabledFeatures[featureID] = true
-	tr.pauseMu.Unlock()
-
-	tr.emitEvent(RunnerEvent{
-		Type:      EventFeatureEnabled,
-		FeatureID: featureID,
-	})
-}
-
-// DisableFeature removes a feature from the enabled whitelist.
-// Running tasks continue, but no new tasks from this feature
-// will be auto-picked when the project is paused.
-func (tr *TaskRunner) DisableFeature(featureID string) {
-	tr.pauseMu.Lock()
-	delete(tr.enabledFeatures, featureID)
-	tr.pauseMu.Unlock()
-
-	tr.emitEvent(RunnerEvent{
-		Type:      EventFeatureDisabled,
-		FeatureID: featureID,
-	})
-}
-
-// GetEnabledFeatures returns a copy of the enabled features map.
-func (tr *TaskRunner) GetEnabledFeatures() map[string]bool {
-	tr.pauseMu.RLock()
-	defer tr.pauseMu.RUnlock()
-
-	if len(tr.enabledFeatures) == 0 {
-		return nil
-	}
-
-	cp := make(map[string]bool, len(tr.enabledFeatures))
-	for k, v := range tr.enabledFeatures {
-		cp[k] = v
-	}
-	return cp
-}
-
-// getEnabledFeatureIDs returns enabled feature IDs as a slice.
-// Thread-safe — acquires pauseMu internally.
-func (tr *TaskRunner) getEnabledFeatureIDs() []string {
-	tr.pauseMu.RLock()
-	defer tr.pauseMu.RUnlock()
-	return tr.getEnabledFeatureIDsLocked()
-}
-
-// getEnabledFeatureIDsLocked returns enabled feature IDs as a slice.
-// Caller MUST hold pauseMu (at least RLock).
-func (tr *TaskRunner) getEnabledFeatureIDsLocked() []string {
-	if len(tr.enabledFeatures) == 0 {
-		return nil
-	}
-	ids := make([]string, 0, len(tr.enabledFeatures))
-	for id := range tr.enabledFeatures {
-		ids = append(ids, id)
-	}
-	return ids
 }
 
 // =============================================================================

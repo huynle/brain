@@ -34,6 +34,12 @@ type ComputedFeature struct {
 	BlockedByFeatures []string             `json:"blocked_by_features"`
 	WaitingOnFeatures []string             `json:"waiting_on_features"`
 	InCycle           bool                 `json:"in_cycle"`
+
+	// UnresolvedFeatureDeps lists depends_on_features entries that match no
+	// known feature. Such a dep gates nothing — dropping it silently is how
+	// a misspelled feature_depends_on became a no-op that also reported
+	// nothing — so it is surfaced here instead.
+	UnresolvedFeatureDeps []string `json:"unresolved_feature_deps"`
 }
 
 // FeatureDependencyResult holds the result of feature dependency resolution.
@@ -120,17 +126,21 @@ func computeHighestPriority(tasks []types.ResolvedTask) string {
 	return highest
 }
 
-// collectFeatureDependencies collects all unique feature dependencies from tasks.
+// collectFeatureDependencies collects all unique feature dependencies from tasks,
+// in first-seen order. Order matters: these IDs flow into WaitingOnFeatures /
+// BlockedByFeatures / UnresolvedFeatureDeps, which are serialized to clients —
+// ranging over a map here made that output shuffle between identical requests.
 func collectFeatureDependencies(tasks []types.ResolvedTask) []string {
-	deps := make(map[string]bool)
+	seen := make(map[string]bool)
+	var result []string
 	for _, task := range tasks {
 		for _, dep := range task.FeatureDependsOn {
-			deps[dep] = true
+			if dep == "" || seen[dep] {
+				continue
+			}
+			seen[dep] = true
+			result = append(result, dep)
 		}
-	}
-	result := make([]string, 0, len(deps))
-	for dep := range deps {
-		result = append(result, dep)
 	}
 	return result
 }
@@ -182,7 +192,10 @@ func ComputeFeatures(tasks []types.ResolvedTask) []*ComputedFeature {
 			TaskStats:         taskStats,
 			BlockedByFeatures: []string{},
 			WaitingOnFeatures: []string{},
-			InCycle:           false,
+			// Filled by ResolveFeatureDependencies, which is the only
+			// layer that knows which deps name a real feature.
+			UnresolvedFeatureDeps: []string{},
+			InCycle:               false,
 		})
 	}
 
@@ -205,16 +218,27 @@ func buildFeatureLookupMaps(features []*ComputedFeature) *featureLookupMaps {
 	return m
 }
 
+// splitFeatureDeps partitions a feature's declared dependencies into those that
+// name a known feature and those that name nothing. Single source of truth for
+// "what does this dep list actually resolve to" — the adjacency list and the
+// classifier used to filter independently, so an unresolved dep could only ever
+// be dropped, never reported.
+func splitFeatureDeps(feature *ComputedFeature, maps *featureLookupMaps) (resolved, unresolved []string) {
+	for _, depID := range feature.DependsOnFeatures {
+		if _, ok := maps.byID[depID]; ok {
+			resolved = append(resolved, depID)
+		} else {
+			unresolved = append(unresolved, depID)
+		}
+	}
+	return resolved, unresolved
+}
+
 // buildFeatureAdjacencyList builds adjacency list from features.
 func buildFeatureAdjacencyList(features []*ComputedFeature, maps *featureLookupMaps) map[string][]string {
 	adj := make(map[string][]string, len(features))
 	for _, feature := range features {
-		var resolvedDeps []string
-		for _, depID := range feature.DependsOnFeatures {
-			if _, ok := maps.byID[depID]; ok {
-				resolvedDeps = append(resolvedDeps, depID)
-			}
-		}
+		resolvedDeps, _ := splitFeatureDeps(feature, maps)
 		adj[feature.ID] = resolvedDeps
 	}
 	return adj
@@ -296,12 +320,7 @@ func ResolveFeatureDependencies(features []*ComputedFeature) []*ComputedFeature 
 	result := make([]*ComputedFeature, len(features))
 	for i, feature := range features {
 		// Get resolved dependencies (only those that exist)
-		var resolvedDeps []string
-		for _, depID := range feature.DependsOnFeatures {
-			if _, ok := maps.byID[depID]; ok {
-				resolvedDeps = append(resolvedDeps, depID)
-			}
-		}
+		resolvedDeps, unresolvedDeps := splitFeatureDeps(feature, maps)
 
 		classification, blockedBy, waitingOn := classifyFeature(feature, resolvedDeps, effectiveStatus, inCycle)
 
@@ -317,6 +336,11 @@ func ResolveFeatureDependencies(features []*ComputedFeature) []*ComputedFeature 
 			f.WaitingOnFeatures = waitingOn
 		} else {
 			f.WaitingOnFeatures = []string{}
+		}
+		if unresolvedDeps != nil {
+			f.UnresolvedFeatureDeps = unresolvedDeps
+		} else {
+			f.UnresolvedFeatureDeps = []string{}
 		}
 		f.InCycle = inCycle[feature.ID]
 
@@ -493,4 +517,146 @@ func featureAssignmentRowToResponse(assignment *storage.FeatureAssignmentRow, pr
 		AssignedAt:     time.UnixMilli(assignment.AssignedAt).UTC().Format(time.RFC3339),
 		UpdatedAt:      time.UnixMilli(assignment.UpdatedAt).UTC().Format(time.RFC3339),
 	}
+}
+
+// =============================================================================
+// Dependent closure (manual "run feature + dependents")
+// =============================================================================
+
+// maxCascadeClosure bounds how many features one manual request may enrol.
+//
+// A chain force-dispatches past a project pause that was already on, so an
+// unbounded closure on a foundational feature could run most of a project from
+// one click. Truncation is reported rather than silent — see
+// DependentClosure.Truncated.
+const maxCascadeClosure = 32
+
+// DependentClosure is the set of features a manual "run + dependents" request
+// covers, derived fresh from the current graph.
+type DependentClosure struct {
+	// Members are the transitive dependents of the root, in breadth-first
+	// order, so a caller dispatching in order never asks a feature to run
+	// before something it depends on inside the closure.
+	Members []string
+	// Skipped names features that were reachable but deliberately not
+	// enrolled, mapped to why. A member that can never run is worth saying
+	// out loud: a chain that silently stalls is worse than one that refuses.
+	Skipped map[string]string
+	// External lists features OUTSIDE the closure that a member still waits
+	// on. These are why an otherwise-correct chain stalls — the member's gate
+	// cannot open until work nobody queued has run.
+	External []string
+	// Truncated is set when the closure hit maxCascadeClosure.
+	Truncated bool
+}
+
+// TransitiveDependents walks the REVERSE dependency edges from root: every
+// feature that declares root in feature_depends_on, then everything that
+// depends on those, and so on.
+//
+// The root itself is never a member — it is dispatched directly by the caller.
+//
+// Features already settled (completed/archived) are skipped: re-enrolling them
+// would keep a chain alive forever on work that is finished. Cycle members are
+// skipped because applyFeatureGating blocks their tasks unconditionally, so
+// enrolling one guarantees a permanent stall.
+func TransitiveDependents(features []*ComputedFeature, root string) DependentClosure {
+	// Members must never be nil: it serializes as `queued` and the PWA reads
+	// .length on it, where a null is a crash rather than an empty chain.
+	out := DependentClosure{Members: []string{}, Skipped: map[string]string{}}
+	if root == "" || len(features) == 0 {
+		return out
+	}
+
+	byID := make(map[string]*ComputedFeature, len(features))
+	// dependents[X] = features that declare X in their feature_depends_on.
+	dependents := make(map[string][]string, len(features))
+	for _, f := range features {
+		byID[f.ID] = f
+		for _, dep := range f.DependsOnFeatures {
+			dependents[dep] = append(dependents[dep], f.ID)
+		}
+	}
+
+	inClosure := map[string]bool{root: true}
+	seen := map[string]bool{root: true}
+	queue := []string{root}
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+
+		next := append([]string(nil), dependents[cur]...)
+		sort.Strings(next) // deterministic order for equal-depth siblings
+
+		for _, id := range next {
+			if seen[id] {
+				continue
+			}
+			seen[id] = true
+
+			f, ok := byID[id]
+			if !ok {
+				continue
+			}
+
+			// A settled feature is SKIPPED but still TRAVERSED.
+			//
+			// It needs no dispatch, but its gate is open, so everything
+			// behind it is exactly the runnable work the request asked
+			// for. Stopping here instead would be fatal rather than
+			// cosmetic: only the root is persisted, so the closure is
+			// recomputed every sweep and a truncated closure IS the
+			// chain. In A <- B <- C the chain would collapse to empty the
+			// moment B completed — and chainSettled, seeing only the root,
+			// would retire it at the exact instant C became dispatchable.
+			if f.Status == "completed" || f.Status == "archived" {
+				out.Skipped[id] = "already_settled"
+				queue = append(queue, id)
+				continue
+			}
+
+			// A cycle member is skipped AND not traversed, which is a
+			// different judgement: applyFeatureGating blocks its tasks
+			// unconditionally, so it can never complete and nothing behind
+			// it can ever become runnable through it.
+			if f.InCycle {
+				out.Skipped[id] = "in_cycle"
+				continue
+			}
+
+			if len(out.Members) >= maxCascadeClosure {
+				out.Truncated = true
+				continue
+			}
+			out.Members = append(out.Members, id)
+			inClosure[id] = true
+			queue = append(queue, id)
+		}
+	}
+
+	// Second pass: a member may also wait on something nobody enrolled. That
+	// is the difference between "queued and waiting its turn" and "queued and
+	// never going to run", and only the graph can tell them apart.
+	extSeen := map[string]bool{}
+	for _, id := range out.Members {
+		f := byID[id]
+		if f == nil {
+			continue
+		}
+		for _, dep := range append(append([]string(nil), f.WaitingOnFeatures...), f.BlockedByFeatures...) {
+			if inClosure[dep] || extSeen[dep] {
+				continue
+			}
+			// A settled dependency is not an obstacle.
+			if d, ok := byID[dep]; ok && (d.Status == "completed" || d.Status == "archived") {
+				continue
+			}
+			extSeen[dep] = true
+			out.External = append(out.External, dep)
+		}
+	}
+	sort.Strings(out.External)
+
+	return out
 }

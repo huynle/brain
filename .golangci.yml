@@ -1,0 +1,105 @@
+# golangci-lint configuration.
+#
+# Version 2 schema — CI pins golangci-lint v2.12.2 (.github/workflows/go.yml)
+# and the justfile installs the same version. v2 rejects a v1-format config
+# outright, so the two must not drift.
+#
+# Before this file existed the run used built-in defaults, including
+# max-issues-per-linter: 50 and max-same-issues: 3. That silently truncated
+# the report to 144 findings when the real total was 764, so the output could
+# not be used to tell whether a change made things better or worse. Both caps
+# are lifted below.
+
+version: "2"
+
+linters:
+  # Pinned rather than inherited so the set is visible in review. These are
+  # v1's defaults carried forward; gosimple is absent because v2 folded its
+  # S1xxx checks into staticcheck.
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+
+  settings:
+    staticcheck:
+      # QF* are staticcheck's "quickfix" category: editor refactoring
+      # suggestions, not correctness or style rules. v1's staticcheck did not
+      # run them, so they were never part of this repo's bar. QF1012 was
+      # adopted (all 66 sites now use fmt.Fprintf); the three below are
+      # declined per-check rather than left as standing noise.
+      #
+      # The first six entries are golangci-lint's own defaults for staticcheck
+      # (see createConfig in pkg/golinters/staticcheck). Naming this list at
+      # all replaces those defaults wholesale, so they are restated here —
+      # dropping them would switch on ST1003 and turn the repo-wide
+      # projectId/taskId convention into 162 findings.
+      checks:
+        - all
+        - "-ST1000" # default off: package comment
+        - "-ST1003" # default off: Id vs ID naming, used repo-wide
+        - "-ST1016" # default off: consistent receiver names
+        - "-ST1020" # default off: comment on exported function
+        - "-ST1021" # default off: comment on exported type
+        - "-ST1022" # default off: comment on exported var
+        # De Morgan's law. Every site here reads better as written:
+        # `for !(gotControl && gotFull)` says "until both are true", and
+        # `!(a && b)` guards carry comments explaining the positive case.
+        - "-QF1001"
+        # Tagged switch. Converting these if/else-if chains is a refactor of
+        # live TUI key handling and rendering, not a lint fix, and it is not
+        # worth the risk in code whose behaviour is awkward to verify.
+        - "-QF1003"
+        # Embedded-field selector. `d.Duration.String()` is deliberate: the
+        # implicit `d.String()` would silently start recursing the day
+        # Duration grows its own String method.
+        - "-QF1008"
+        # Inferred type on the left-hand side — the same complaint under two
+        # check codes. The one site is TestModeEditFilterDropdown_Constant,
+        # where the explicit MetadataInteractionMode annotation *is* the
+        # assertion the test exists to make.
+        - "-QF1011"
+        - "-ST1023"
+
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      # errcheck is off in tests, on everywhere else.
+      #
+      # A test that ignores an error still fails: the assertion that follows
+      # sees the missing file, the empty response, the unwritten row. The 572
+      # findings this suppresses were overwhelmingly json.Encoder.Encode
+      # inside httptest handlers writing canned responses, plus
+      # os.WriteFile/MkdirAll building fixtures — call sites where `_ =` adds
+      # noise and no safety.
+      #
+      # Production code gets no such exemption; every unchecked error there is
+      # either handled or explicitly ignored with a comment saying why.
+      - linters:
+          - errcheck
+        path: _test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+
+issues:
+  # Report everything. See the note at the top.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

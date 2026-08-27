@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -46,8 +47,12 @@ type ServerOptions struct {
 	JWTSecret       string
 	TaskDefaults    config.TaskDefaultsConfig
 	FeatureCheckout config.FeatureCheckoutConfig
-	Embedding       config.EmbeddingConfig
-	Attachments     config.AttachmentConfig
+	// IndexWatch, when enabled, runs a filesystem watcher that re-indexes
+	// out-of-band writes to BrainDir. Off by default; see
+	// config.IndexWatchConfig for why.
+	IndexWatch  config.IndexWatchConfig
+	Embedding   config.EmbeddingConfig
+	Attachments config.AttachmentConfig
 
 	AttachmentExtraction config.AttachmentExtractionConfig
 	Assistant            config.AssistantConfig
@@ -240,6 +245,41 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// ─── Indexer ────────────────────────────────────────────────────
 	idx := indexer.NewIndexer(opts.BrainDir, store)
 
+	// The boot index is a one-shot pass. Writes that reach BrainDir without
+	// going through the API — a git pull into the brain dir, a manual edit,
+	// another process — are invisible to search, the link graph, and orphan
+	// detection until the next restart, unless the optional watcher below is
+	// enabled to re-index them as they land.
+	var fileWatcher *indexer.FileWatcher
+	// watchMu serializes the deferred Start() below against cleanup's Stop().
+	// Without it a shutdown landing between the two would leave a watcher
+	// running against a closed store. Holding it across Start() means
+	// shutdown waits for the watcher's initial directory walk, which is a
+	// fraction of the boot index and bounded.
+	var watchMu sync.Mutex
+	watchStopped := false
+	if opts.IndexWatch.Enabled {
+		fw, err := indexer.NewFileWatcher(opts.BrainDir, idx, &indexer.FileWatcherOptions{
+			DebounceMs:     opts.IndexWatch.DebounceMs,
+			IgnorePatterns: opts.IndexWatch.IgnorePatterns,
+		})
+		if err != nil {
+			cleanup()
+			return nil, "", nil, fmt.Errorf("failed to create index file watcher: %w", err)
+		}
+		fileWatcher = fw
+		// Stop the watcher before the store closes, so no debounced flush
+		// can fire an IndexFile against a closed database.
+		storeCleanup := cleanup
+		cleanup = func() {
+			watchMu.Lock()
+			watchStopped = true
+			fileWatcher.Stop()
+			watchMu.Unlock()
+			storeCleanup()
+		}
+	}
+
 	// Run incremental index in the background so it does NOT block HTTP
 	// server startup. On large .brain directories (60k+ files) a full scan
 	// takes 15+ seconds, and callers like the embedded runner wait on
@@ -251,16 +291,35 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		result, err := idx.IndexChanged()
 		if err != nil {
 			slog.Warn("indexing failed, continuing with stale index", "error", err)
+		} else {
+			slog.Info("indexing complete",
+				"added", result.Added,
+				"updated", result.Updated,
+				"deleted", result.Deleted,
+				"skipped", result.Skipped,
+				"errors", len(result.Errors),
+				"duration", result.Duration,
+			)
+		}
+
+		// Start watching only after the boot scan finishes, so the two
+		// aren't racing to index the same paths. Started even when the scan
+		// failed — a stale index is exactly the case that benefits most from
+		// incremental updates.
+		if fileWatcher == nil {
 			return
 		}
-		slog.Info("indexing complete",
-			"added", result.Added,
-			"updated", result.Updated,
-			"deleted", result.Deleted,
-			"skipped", result.Skipped,
-			"errors", len(result.Errors),
-			"duration", result.Duration,
-		)
+		watchMu.Lock()
+		defer watchMu.Unlock()
+		if watchStopped {
+			return // shut down while the boot index was running
+		}
+		if err := fileWatcher.Start(); err != nil {
+			slog.Warn("index file watcher failed to start, out-of-band writes need a restart to appear",
+				"dir", opts.BrainDir, "error", err)
+			return
+		}
+		slog.Info("watching brain directory for out-of-band writes", "dir", opts.BrainDir)
 	}()
 
 	// ─── Build Config ───────────────────────────────────────────────
@@ -344,7 +403,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		service.WithAttachmentExtractor(attachmentExtractor),
 		service.WithAttachmentDerivedChangeHook(brainSvc),
 	)
-	taskSvc := service.NewTaskService(&cfg, store)
+	taskSvc := service.NewTaskService(&cfg, store, idx)
 	runnerSvc := service.NewRunnerServiceWithStorage(store)
 	runnerRegistrySvc := service.NewRunnerRegistryService(store)
 	clientContextSvc := service.NewClientContextService(store)
@@ -448,6 +507,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithSchedulerVisibilityService(store),
 		api.WithRunTaskService(schedulerSvc),
 		api.WithRunFeatureService(schedulerSvc),
+		api.WithDependentChainService(schedulerSvc),
 		api.WithRunProjectService(schedulerSvc),
 		api.WithMonitorService(monitorSvc),
 		api.WithTokenService(store),

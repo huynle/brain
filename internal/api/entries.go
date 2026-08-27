@@ -88,6 +88,12 @@ var AllowedMetadataUpdateFields = map[string]bool{
 	"resume_requested_at": true, // RFC3339 timestamp for audit
 	"abandoned_at":        true, // RFC3339 timestamp set by reaper / reconciler
 	"abandoned_reason":    true, // enum: runner_orphan | runner_offline | claim_expired | no_claim
+
+	// (5) Bounded-retry accounting, written by the runner on each terminal
+	// run. Runtime-only: a counter in frontmatter would churn the file on
+	// every failure. Preserved across re-index by service.runtimeKeys.
+	"attempt_count":  true, // failures so far; reset to 0 on success
+	"last_failed_at": true, // RFC3339 timestamp of the most recent failure
 }
 
 // HandleCreateEntry handles POST /entries.
@@ -243,7 +249,9 @@ func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Brain-Entry-Tags", strings.Join(entry.Tags, ","))
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(entry.Content))
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write([]byte(entry.Content))
 		return
 	} else if strings.Contains(accept, "text/x-brain-full") {
 		// Return full file content (frontmatter + body)
@@ -256,7 +264,9 @@ func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Brain-Entry-Id", entry.ID)
 		w.Header().Set("X-Brain-Entry-Path", entry.Path)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fullContent))
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write([]byte(fullContent))
 		return
 	}
 

@@ -1740,12 +1740,10 @@ func TestEnsureWorktree_FeatureID_SameWorktreeForSameFeature(t *testing.T) {
 	_, err1 := e.ensureWorktree(task1)
 	_, err2 := e.ensureWorktree(task2)
 
-	// Both should produce the same error (same worktree path attempted)
-	// Since CommandFactory returns "false", both will fail identically
-	if err1 == nil || err2 == nil {
-		// If one succeeds (e.g., directory exists), that's fine too
-		// The key test is the path would be the same
-	}
+	// Neither outcome is asserted: CommandFactory returns "false" so both
+	// normally fail identically, but either succeeding (e.g. the directory
+	// already exists) is fine too. The point of the test is the shared path.
+	_, _ = err1, err2
 
 	// Verify by computing expected path manually
 	expectedPath := filepath.Join(mainRepo, ".worktrees", sanitizeBranchName("shared-feature"))

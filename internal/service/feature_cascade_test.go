@@ -237,3 +237,101 @@ func TestFeatureCascade_IgnoresEventsWithoutFeatureID(t *testing.T) {
 		t.Fatalf("cascade fired %d times for event without FeatureID; want 0", runner.callCount())
 	}
 }
+
+// ─── drain detection ─────────────────────────────────────────────
+
+func intp(n int) *int { return &n }
+
+// TestFeatureCascade_KeepsFeatureAliveMidFlight pins the fan-in bug.
+//
+// A feature with two tasks running and a third waiting on both reports
+// reason "no_ready_tasks" the moment the FIRST of the two completes — it is
+// still mid-flight, but nothing is READY at that instant. The cascade used
+// to key drain detection on that token, unregistered here, and the second
+// completion then found no cascade: the third task was never dispatched. On
+// a paused project nothing else picks it up, so the tail of the feature was
+// silently dropped.
+//
+// Reproduced live before the fix: the fan-in task sat at classification
+// "ready" indefinitely under pause, then dispatched within a second of
+// resuming the project — proving the task was fine and the cascade had
+// dropped it.
+func TestFeatureCascade_KeepsFeatureAliveMidFlight(t *testing.T) {
+	runner := &fakeFeatureRunner{
+		nextResponse: &types.RunFeatureResponse{
+			Reason: "no_ready_tasks",
+			// Two tasks still in flight: NOT drained, whatever the reason says.
+			Outstanding: intp(2),
+		},
+	}
+	svc := NewFeatureCascadeService(nil, runner)
+	svc.Register("proj", "fanin")
+
+	svc.handleEvent(context.Background(), types.Event{
+		ProjectID: "proj", FeatureID: "fanin", Type: types.EventTaskCompleted,
+	})
+
+	if !svc.IsActive("proj", "fanin") {
+		t.Fatal("cascade unregistered while the feature still had outstanding work; " +
+			"the remaining task will never dispatch under a paused project")
+	}
+}
+
+func TestFeatureCascade_UnregistersOnRealDrain(t *testing.T) {
+	runner := &fakeFeatureRunner{
+		nextResponse: &types.RunFeatureResponse{
+			Reason:      "no_ready_tasks",
+			Outstanding: intp(0),
+		},
+	}
+	svc := NewFeatureCascadeService(nil, runner)
+	svc.Register("proj", "done")
+
+	svc.handleEvent(context.Background(), types.Event{
+		ProjectID: "proj", FeatureID: "done", Type: types.EventTaskCompleted,
+	})
+
+	if svc.IsActive("proj", "done") {
+		t.Fatal("cascade stayed registered after the feature genuinely drained")
+	}
+}
+
+// A nil Outstanding means the server could not measure. It must never be
+// confused with zero — that is the whole reason the field is a pointer.
+func TestFeatureCascade_UnknownOutstandingFallsBackToReason(t *testing.T) {
+	runner := &fakeFeatureRunner{
+		nextResponse: &types.RunFeatureResponse{Reason: "no_ready_tasks"},
+	}
+	svc := NewFeatureCascadeService(nil, runner)
+	svc.Register("proj", "legacy")
+
+	svc.handleEvent(context.Background(), types.Event{
+		ProjectID: "proj", FeatureID: "legacy", Type: types.EventTaskCompleted,
+	})
+
+	if svc.IsActive("proj", "legacy") {
+		t.Fatal("with Outstanding unmeasurable, the legacy reason-based drain should still apply")
+	}
+}
+
+// Outstanding > 0 with an in-flight reason must also keep the cascade — this
+// is the pre-existing "feature_in_progress" path, now measured rather than
+// inferred from a token.
+func TestFeatureCascade_KeepsAliveWhileInProgress(t *testing.T) {
+	runner := &fakeFeatureRunner{
+		nextResponse: &types.RunFeatureResponse{
+			Reason:      "feature_in_progress",
+			Outstanding: intp(1),
+		},
+	}
+	svc := NewFeatureCascadeService(nil, runner)
+	svc.Register("proj", "busy")
+
+	svc.handleEvent(context.Background(), types.Event{
+		ProjectID: "proj", FeatureID: "busy", Type: types.EventTaskCompleted,
+	})
+
+	if !svc.IsActive("proj", "busy") {
+		t.Fatal("cascade dropped a feature with work still in flight")
+	}
+}

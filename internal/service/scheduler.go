@@ -30,6 +30,37 @@ type schedulerProjectLister interface {
 	ListProjects(ctx context.Context) ([]string, error)
 }
 
+// schedulerFeatureTaskLister exposes every task in a feature, not just the
+// ready ones. RunFeatureNow needs it to answer "is this feature finished?",
+// which GetReady structurally cannot: it filters to Classification=="ready",
+// so a feature whose remaining tasks are waiting on an in-flight sibling and
+// a feature that has genuinely drained both come back empty.
+//
+// Optional, asserted from the task service the same way schedulerProjectLister
+// is. *TaskServiceImpl satisfies it; fakes that do not simply leave
+// Outstanding unknown (-1) and the cascade falls back to its old behaviour.
+// schedulerProjectTaskLister exposes every task in a project, which is what
+// the feature graph is derived from. GetReady cannot serve here: it filters to
+// Classification=="ready", and a dependent chain is made almost entirely of
+// features that are NOT ready yet.
+type schedulerProjectTaskLister interface {
+	GetTasks(ctx context.Context, projectID string) (*types.TaskListResponse, error)
+}
+
+// schedulerCascadeRootStore persists standing run-with-dependents requests.
+// Optional: without it the option still dispatches the root and whatever is
+// already ready, but nothing survives a restart and there is no chain to
+// cancel.
+type schedulerCascadeRootStore interface {
+	UpsertFeatureCascadeRoot(ctx context.Context, projectID, rootFeatureID string, pausedAtRequest bool) error
+	DeleteFeatureCascadeRoot(ctx context.Context, projectID, rootFeatureID string) (bool, error)
+	ListFeatureCascadeRoots(ctx context.Context, projectID string) ([]storage.FeatureCascadeRootRow, error)
+}
+
+type schedulerFeatureTaskLister interface {
+	GetTasksByFeature(ctx context.Context, projectID, featureID string) ([]types.ResolvedTask, error)
+}
+
 type schedulerRunnerRegistry interface {
 	ListRunners(ctx context.Context) ([]types.RunnerInfo, error)
 }
@@ -54,6 +85,14 @@ type schedulerCommandPublisher interface {
 	PublishRunnerCommand(runnerID string, command string, payload interface{})
 }
 
+// schedulerCommandDeliverer is the optional delivery-reporting half of the
+// publisher. *realtime.Hub satisfies it; a publisher that does not is used
+// exactly as before and every dispatch counts as delivered, because "cannot
+// measure" must never be read as "did not arrive".
+type schedulerCommandDeliverer interface {
+	PublishRunnerCommandTracked(runnerID string, command string, payload interface{}) (delivered, dropped int)
+}
+
 type schedulerPauseChecker interface {
 	IsPaused(projectID string) bool
 	IsAutomationsPaused() bool
@@ -67,11 +106,15 @@ type schedulerProjectAutomationPauseChecker interface {
 type SchedulerService struct {
 	tasks     schedulerTaskService
 	projects  schedulerProjectLister
+	featTasks schedulerFeatureTaskLister
+	projTasks schedulerProjectTaskLister
+	roots     schedulerCascadeRootStore
 	runners   schedulerRunnerRegistry
 	placement schedulerPlacementService
 	leases    schedulerLeaseStore
 	expirer   schedulerLeaseExpirer
 	publisher schedulerCommandPublisher
+	deliverer schedulerCommandDeliverer
 	pauses    schedulerPauseChecker
 	leaseTTL  time.Duration
 	nowUnixMS func() int64
@@ -126,7 +169,16 @@ func NewSchedulerService(tasks schedulerTaskService, pauses schedulerPauseChecke
 	if v, ok := tasks.(schedulerProjectLister); ok {
 		svc.projects = v
 	}
+	if v, ok := tasks.(schedulerFeatureTaskLister); ok {
+		svc.featTasks = v
+	}
+	if v, ok := tasks.(schedulerProjectTaskLister); ok {
+		svc.projTasks = v
+	}
 	for _, dep := range deps {
+		if v, ok := dep.(schedulerCascadeRootStore); ok {
+			svc.roots = v
+		}
 		if v, ok := dep.(schedulerRunnerRegistry); ok {
 			svc.runners = v
 		} else if v, ok := dep.(interface {
@@ -144,7 +196,13 @@ func NewSchedulerService(tasks schedulerTaskService, pauses schedulerPauseChecke
 			svc.expirer = v
 		}
 		if v, ok := dep.(schedulerCommandPublisher); ok {
+			// Publisher and deliverer are two faces of one object, so they
+			// are assigned together: a later dep that takes over publishing
+			// must also take over (or clear) delivery reporting, otherwise
+			// dispatches would be published through one object and judged
+			// delivered through another.
 			svc.publisher = v
+			svc.deliverer, _ = dep.(schedulerCommandDeliverer)
 		}
 	}
 	return svc
@@ -337,18 +395,26 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 			result.SkippedAlreadyLeased++
 			continue
 		}
-		if s.publisher != nil {
-			s.publisher.PublishRunnerCommand(candidate.RunnerID, "dispatch", map[string]any{
-				"taskId":    task.ID,
-				"projectId": projectID,
-				"lease":     lease,
-				"expiresAt": lease.ExpiresAt,
-				// Inline the resolved task so the runner can process
-				// this dispatch without an HTTP round-trip back to
-				// GetReadyTasks. Legacy runners that don't understand
-				// "task" simply ignore the extra field.
-				"task": task,
-			})
+		if !s.publishDispatch(candidate.RunnerID, map[string]any{
+			"taskId":    task.ID,
+			"projectId": projectID,
+			"lease":     lease,
+			"expiresAt": lease.ExpiresAt,
+			// Inline the resolved task so the runner can process
+			// this dispatch without an HTTP round-trip back to
+			// GetReadyTasks. Legacy runners that don't understand
+			// "task" simply ignore the extra field.
+			"task": task,
+		}) {
+			// The command never reached the runner, so the lease we
+			// just wrote describes work nobody has. Undo it now rather
+			// than let it read as in-flight for its whole TTL — this is
+			// the tick that births the phantom leases a user then runs
+			// into as "already_leased" on an explicit run.
+			s.undoUndeliveredLease(ctx, projectID, task.ID)
+			result.Skipped++
+			result.SkippedRunnerUnreachable++
+			continue
 		}
 		reservedSlots[candidate.RunnerID]++
 		result.Dispatched++
@@ -481,7 +547,7 @@ func (s *SchedulerService) RunTaskNow(ctx context.Context, projectID, taskID str
 		}
 		if !force {
 			resp.Reason = "already_leased"
-			resp.Detail = "task already has an active dispatch lease"
+			resp.Detail = describeActiveLease(existing)
 			if existing != nil {
 				resp.RunnerID = existing.AssignedRunnerID
 				resp.LeaseID = existing.LeaseID
@@ -520,7 +586,7 @@ func (s *SchedulerService) RunTaskNow(ctx context.Context, projectID, taskID str
 		}
 	}
 
-	if s.publisher != nil {
+	{
 		payload := map[string]any{
 			"taskId":    task.ID,
 			"projectId": projectID,
@@ -542,7 +608,17 @@ func (s *SchedulerService) RunTaskNow(ctx context.Context, projectID, taskID str
 			// "Triggered" toast while nothing actually runs.
 			"force": true,
 		}
-		s.publisher.PublishRunnerCommand(candidate.RunnerID, "dispatch", payload)
+		if !s.publishDispatch(candidate.RunnerID, payload) {
+			// Lease written, command lost: report the truth instead of a
+			// "Triggered" that never happened, and drop the lease so the
+			// next attempt (scheduler tick or another click) isn't refused
+			// as already_leased for the rest of the TTL.
+			s.undoUndeliveredLease(ctx, projectID, task.ID)
+			resp.Reason = reasonRunnerUnreachable
+			resp.Detail = unreachableDetail(candidate.RunnerID)
+			resp.RunnerID = candidate.RunnerID
+			return resp, nil
+		}
 	}
 
 	resp.Dispatched = true
@@ -787,6 +863,104 @@ func stringSliceContains(values []string, target string) bool {
 		}
 	}
 	return false
+}
+
+// reasonRunnerUnreachable is the skip token for a dispatch whose lease was
+// created but whose command never reached the runner: its command stream was
+// not connected at publish time. Distinct from no_eligible_runner (placement
+// refused the task) and from already_leased (someone else holds the lease) —
+// here placement succeeded and the lease was ours; only the delivery failed.
+const reasonRunnerUnreachable = "runner_unreachable"
+
+// publishDispatch publishes a dispatch command and reports whether it
+// actually reached the runner's live command stream.
+//
+// Dispatch is an SSE publish to a topic nobody is required to be listening
+// on. When the runner's stream is down — it restarted, the API restarted
+// under it, the network blipped — the command evaporates, but the lease row
+// the caller just wrote stays "pushed" for its full TTL. Everything
+// downstream then reads that task as dispatched: the PWA rendered it as
+// "already in flight", and every later dispatch attempt was refused as
+// already_leased, for a minute, over a command no runner ever saw.
+//
+// Returning false lets the caller undo the lease at the moment the loss
+// happens, which is the only moment the server can still tell. False means
+// measured-and-lost; a publisher that cannot measure delivery returns true,
+// preserving the old fire-and-forget behaviour.
+func (s *SchedulerService) publishDispatch(runnerID string, payload map[string]any) bool {
+	if s.publisher == nil {
+		// Nothing is wired to deliver commands (headless tests): there is
+		// no delivery to have failed, so leave the lease alone.
+		return true
+	}
+	if s.deliverer == nil {
+		s.publisher.PublishRunnerCommand(runnerID, "dispatch", payload)
+		return true
+	}
+	delivered, dropped := s.deliverer.PublishRunnerCommandTracked(runnerID, "dispatch", payload)
+	if delivered > 0 {
+		return true
+	}
+	slog.Warn("dispatch command not delivered; runner command stream is not connected",
+		"runner_id", runnerID,
+		"task_id", payload["taskId"],
+		"project_id", payload["projectId"],
+		"dropped", dropped,
+	)
+	return false
+}
+
+// undoUndeliveredLease wipes the lease written for a dispatch that never
+// reached its runner. Failure to clear is logged, not returned: the caller is
+// already reporting a skip, and a lingering lease self-heals at TTL — the old
+// behaviour — whereas failing the whole request would turn a degraded
+// dispatch into an error.
+func (s *SchedulerService) undoUndeliveredLease(ctx context.Context, projectID, taskID string) {
+	if s.leases == nil {
+		return
+	}
+	if _, err := s.leases.ClearDispatchLease(ctx, projectID, taskID); err != nil {
+		slog.Warn("failed to clear lease for undelivered dispatch",
+			"project_id", projectID, "task_id", taskID, "error", err)
+	}
+}
+
+// unreachableDetail is the human-facing half of reasonRunnerUnreachable.
+func unreachableDetail(runnerID string) string {
+	return fmt.Sprintf("%s is registered but its command stream is not connected; the dispatch was not delivered", runnerID)
+}
+
+// describeActiveLease explains an already_leased skip in terms of what the
+// lease's state actually means for the caller.
+//
+// The two states are not the same situation and used to share one sentence.
+// An acked lease means a runner took the work and is running it — wait for
+// it. A pushed lease means a dispatch went out and nothing came back: the
+// runner may be starting it (the ack lands after workdir resolution, which
+// can clone a repo) or may never have seen it. Telling a user the task is
+// "already in flight" when the truth is "we are waiting to hear back" sends
+// them hunting for a process that may not exist.
+func describeActiveLease(row *storage.DispatchLeaseRow) string {
+	if row == nil {
+		return "task already has an active dispatch lease"
+	}
+	runner := row.AssignedRunnerID
+	if runner == "" {
+		runner = "a runner"
+	}
+	switch row.State {
+	case storage.DispatchLeaseStateAcked:
+		return fmt.Sprintf("%s acknowledged this dispatch and is running the task", runner)
+	case storage.DispatchLeaseStatePushed:
+		detail := fmt.Sprintf("dispatch was pushed to %s and has not been acknowledged yet", runner)
+		if row.ExpiresAt > 0 {
+			detail += fmt.Sprintf("; the lease expires at %s and the task becomes dispatchable again then",
+				time.UnixMilli(row.ExpiresAt).UTC().Format(time.RFC3339))
+		}
+		return detail
+	default:
+		return "task already has an active dispatch lease"
+	}
 }
 
 func (s *SchedulerService) recordNoCandidate(ctx context.Context, projectID, taskID string, reasons []string) error {

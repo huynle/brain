@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/huynle/brain-api/internal/types"
 	_ "github.com/glebarez/go-sqlite"
+	"github.com/huynle/brain-api/internal/types"
 )
 
 func TestLookupOpenCodeSessionIDForTaskMatchesPromptNearTaskTime(t *testing.T) {

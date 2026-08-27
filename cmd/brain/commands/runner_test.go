@@ -166,22 +166,6 @@ func TestResolveProjectList_APIError(t *testing.T) {
 // Helper to build a RunCommand with a mock server
 // =============================================================================
 
-func newTestRunCommand(subcommand, project string, handler http.Handler) *RunCommand {
-	srv := httptest.NewServer(handler)
-	// Note: caller should defer srv.Close() if needed, but for tests the
-	// server lives until test ends via t.Cleanup or the handler itself.
-	return &RunCommand{
-		Subcommand: subcommand,
-		Project:    project,
-		Config: &UnifiedConfig{
-			Runner: runner.RunnerConfig{
-				BrainAPIURL: srv.URL,
-			},
-		},
-		Flags: &RunnerFlags{},
-	}
-}
-
 // =============================================================================
 // makeAPIClient tests
 // =============================================================================

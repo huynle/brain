@@ -80,8 +80,7 @@ func (c *PluginCommand) status() error {
 
 	targets := plugins.GetAvailableTargets()
 	for _, target := range targets {
-		status := "not installed"
-		icon := "⏭"
+		var status, icon string
 
 		if target.Exists() {
 			if err := target.Validate(); err == nil {

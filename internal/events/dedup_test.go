@@ -101,12 +101,6 @@ func (m *mockEventStore) getEvents() []storedEvent {
 	return result
 }
 
-func (m *mockEventStore) isProcessed(id int64) bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.processed[id]
-}
-
 // =============================================================================
 // Tests: Event Persistence
 // =============================================================================

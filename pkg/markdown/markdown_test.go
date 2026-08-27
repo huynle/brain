@@ -163,6 +163,273 @@ func TestExtractLinks_ImageAtStartThenLink(t *testing.T) {
 	}
 }
 
+// ---------------------------------------------------------------------------
+// Wiki-links
+//
+// [[title]] was documented in SKILL.md from the start and never implemented:
+// the only link regex required a literal "](", which [[title]] does not
+// contain, so every wiki-link in the brain was silently dropped.
+// ---------------------------------------------------------------------------
+
+func TestExtractLinks_WikiLink(t *testing.T) {
+	md := `See [[My Target Note]] for details.`
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(links))
+	}
+	if links[0].Href != "My Target Note" {
+		t.Errorf("href = %q, want %q", links[0].Href, "My Target Note")
+	}
+	if links[0].Title != "My Target Note" {
+		t.Errorf("title = %q, want %q", links[0].Title, "My Target Note")
+	}
+	if links[0].Type != "wikilink" {
+		t.Errorf("type = %q, want %q", links[0].Type, "wikilink")
+	}
+}
+
+func TestExtractLinks_WikiLinkAtStartOfInput(t *testing.T) {
+	md := "[[Leading Target]] then text."
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(links))
+	}
+	if links[0].Href != "Leading Target" {
+		t.Errorf("href = %q, want %q", links[0].Href, "Leading Target")
+	}
+}
+
+func TestExtractLinks_WikiLinkWithAlias(t *testing.T) {
+	md := `See [[abc12def|the design doc]] for details.`
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(links))
+	}
+	if links[0].Href != "abc12def" {
+		t.Errorf("href = %q, want %q", links[0].Href, "abc12def")
+	}
+	if links[0].Title != "the design doc" {
+		t.Errorf("title = %q, want %q", links[0].Title, "the design doc")
+	}
+}
+
+func TestExtractLinks_WikiLinkTrimsWhitespace(t *testing.T) {
+	md := `See [[  Padded Title  ]] here.`
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(links))
+	}
+	if links[0].Href != "Padded Title" {
+		t.Errorf("href = %q, want %q", links[0].Href, "Padded Title")
+	}
+}
+
+func TestExtractLinks_SkipsWikiEmbeds(t *testing.T) {
+	md := `An embed ![[some-image.png]] is not a link.`
+	links := ExtractLinks(md)
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links for an embed, got %d: %+v", len(links), links)
+	}
+}
+
+func TestExtractLinks_EmptyWikiLinkIgnored(t *testing.T) {
+	md := "Nothing here: [[]] or [[   ]]."
+	links := ExtractLinks(md)
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links, got %d: %+v", len(links), links)
+	}
+}
+
+// TestExtractLinks_MixedFormsInDocumentOrder is the case named in the bug
+// report: markdown and wiki forms interleaved, with the wiki one dropped.
+func TestExtractLinks_MixedFormsInDocumentOrder(t *testing.T) {
+	md := `[a](b) and [[c]] and [d](e)`
+	links := ExtractLinks(md)
+	if len(links) != 3 {
+		t.Fatalf("expected 3 links, got %d: %+v", len(links), links)
+	}
+	wantHrefs := []string{"b", "c", "e"}
+	for i, want := range wantHrefs {
+		if links[i].Href != want {
+			t.Errorf("links[%d].Href = %q, want %q", i, links[i].Href, want)
+		}
+	}
+	if links[1].Type != "wikilink" {
+		t.Errorf("links[1].Type = %q, want %q", links[1].Type, "wikilink")
+	}
+}
+
+func TestExtractLinks_WikiLinkSnippet(t *testing.T) {
+	md := strings.Repeat("x", 100) + " [[Target]] " + strings.Repeat("y", 100)
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d", len(links))
+	}
+	if !strings.Contains(links[0].Snippet, "[[Target]]") {
+		t.Errorf("snippet should contain the link itself, got %q", links[0].Snippet)
+	}
+	if len(links[0].Snippet) >= len(md) {
+		t.Errorf("snippet should be trimmed to ±50 chars, got %d bytes", len(links[0].Snippet))
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Code regions
+//
+// Brain entries document the link syntax itself, so extracting from code
+// examples filled the live graph with placeholder targets ("pattern-id",
+// "entry-id", "report-id" — 85 rows between them).
+// ---------------------------------------------------------------------------
+
+func TestExtractLinks_IgnoresFencedCodeBlock(t *testing.T) {
+	md := "Prose.\n\n```\nSee [example](pattern-id) and [[Example Title]]\n```\n\nMore prose."
+	links := ExtractLinks(md)
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links inside a fence, got %d: %+v", len(links), links)
+	}
+}
+
+func TestExtractLinks_IgnoresLanguageTaggedFence(t *testing.T) {
+	md := "```markdown\n[Title](entry-id)\n```"
+	links := ExtractLinks(md)
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links, got %d: %+v", len(links), links)
+	}
+}
+
+func TestExtractLinks_IgnoresTildeFence(t *testing.T) {
+	md := "~~~\n[Title](report-id)\n~~~"
+	links := ExtractLinks(md)
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links, got %d: %+v", len(links), links)
+	}
+}
+
+func TestExtractLinks_FindsLinksAroundFence(t *testing.T) {
+	md := "[before](aaa11111)\n\n```\n[inside](bbb22222)\n```\n\n[after](ccc33333)"
+	links := ExtractLinks(md)
+	if len(links) != 2 {
+		t.Fatalf("expected 2 links around the fence, got %d: %+v", len(links), links)
+	}
+	if links[0].Href != "aaa11111" {
+		t.Errorf("links[0].Href = %q, want %q", links[0].Href, "aaa11111")
+	}
+	if links[1].Href != "ccc33333" {
+		t.Errorf("links[1].Href = %q, want %q", links[1].Href, "ccc33333")
+	}
+}
+
+func TestExtractLinks_IgnoresInlineCode(t *testing.T) {
+	md := "Write it as `[Title](plan-id)` in your entry."
+	links := ExtractLinks(md)
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links inside inline code, got %d: %+v", len(links), links)
+	}
+}
+
+func TestExtractLinks_InlineCodeDoesNotHideNeighbours(t *testing.T) {
+	md := "Use `[Title](plan-id)` to reach [the plan](real1234)."
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d: %+v", len(links), links)
+	}
+	if links[0].Href != "real1234" {
+		t.Errorf("href = %q, want %q", links[0].Href, "real1234")
+	}
+}
+
+// A lone backtick must not mask the rest of the line: an unclosed run has no
+// closing run of equal length, so nothing is treated as code.
+func TestExtractLinks_UnclosedBacktickMasksNothing(t *testing.T) {
+	md := "A stray ` tick before [the note](abcd1234)."
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d: %+v", len(links), links)
+	}
+	if links[0].Href != "abcd1234" {
+		t.Errorf("href = %q, want %q", links[0].Href, "abcd1234")
+	}
+}
+
+// Adjacent links used to lose every one after the first: the "(^|[^!])" prefix
+// group consumed the separating character, and FindAll does not overlap.
+// The plan-template entries in the live brain keep their example links inside
+// HTML comments, which is where the bulk of the placeholder targets came from
+// — not code fences, as first assumed.
+func TestExtractLinks_IgnoresHTMLComments(t *testing.T) {
+	md := "## Patterns to Apply\n\n<!-- Link to patterns: [Pattern Name](pattern-id) -->\n\n## Based On"
+	links := ExtractLinks(md)
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links inside an HTML comment, got %d: %+v", len(links), links)
+	}
+}
+
+func TestExtractLinks_IgnoresMultiLineHTMLComment(t *testing.T) {
+	md := "<!--\n[Pattern Name](pattern-id)\nSee [[Some Title]]\n-->\n[real](abcd1234)"
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d: %+v", len(links), links)
+	}
+	if links[0].Href != "abcd1234" {
+		t.Errorf("href = %q, want %q", links[0].Href, "abcd1234")
+	}
+}
+
+func TestExtractLinks_FindsLinksAroundHTMLComment(t *testing.T) {
+	md := "[before](aaa11111) <!-- [hidden](bbb22222) --> [after](ccc33333)"
+	links := ExtractLinks(md)
+	if len(links) != 2 {
+		t.Fatalf("expected 2 links, got %d: %+v", len(links), links)
+	}
+	if links[0].Href != "aaa11111" || links[1].Href != "ccc33333" {
+		t.Errorf("hrefs = %q/%q, want aaa11111/ccc33333", links[0].Href, links[1].Href)
+	}
+}
+
+// An unterminated "<!--" masks nothing, matching the unclosed-backtick choice.
+func TestExtractLinks_UnterminatedHTMLCommentMasksNothing(t *testing.T) {
+	md := "<!-- oops [the note](abcd1234)"
+	links := ExtractLinks(md)
+	if len(links) != 1 {
+		t.Fatalf("expected 1 link, got %d: %+v", len(links), links)
+	}
+}
+
+func TestExtractLinks_AdjacentLinks(t *testing.T) {
+	tests := []struct {
+		name  string
+		md    string
+		hrefs []string
+	}{
+		{"markdown", "[x](aaa11111)[y](bbb22222)", []string{"aaa11111", "bbb22222"}},
+		{"wiki", "[[Alpha]][[Beta]]", []string{"Alpha", "Beta"}},
+		{"mixed", "[[Alpha]][y](bbb22222)", []string{"Alpha", "bbb22222"}},
+		{"image_then_link", "![img](pic.png)[y](bbb22222)", []string{"bbb22222"}},
+		{"embed_then_wiki", "![[pic.png]][[Beta]]", []string{"Beta"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			links := ExtractLinks(tt.md)
+			if len(links) != len(tt.hrefs) {
+				t.Fatalf("got %d links, want %d: %+v", len(links), len(tt.hrefs), links)
+			}
+			for i, want := range tt.hrefs {
+				if links[i].Href != want {
+					t.Errorf("links[%d].Href = %q, want %q", i, links[i].Href, want)
+				}
+			}
+		})
+	}
+}
+
+func TestExtractLinks_UnclosedFenceMasksToEnd(t *testing.T) {
+	md := "```\n[inside](aaa11111)\nstill inside [also](bbb22222)"
+	links := ExtractLinks(md)
+	if len(links) != 0 {
+		t.Fatalf("expected 0 links, got %d: %+v", len(links), links)
+	}
+}
+
 // ===========================================================================
 // ComputeChecksum
 // ===========================================================================

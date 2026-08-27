@@ -100,13 +100,6 @@ type RunnerController interface {
 	// An empty string clears the override.
 	SetDefaultModel(model string)
 
-	// EnableFeature adds a feature to the enabled whitelist.
-	// When a project is paused, only enabled features are polled for new tasks.
-	EnableFeature(featureID string)
-	// DisableFeature removes a feature from the enabled whitelist.
-	DisableFeature(featureID string)
-	// GetEnabledFeatures returns a copy of the enabled features map.
-	GetEnabledFeatures() map[string]bool
 	// ExecuteFeature batch-executes all ready tasks in a feature (up to capacity).
 	// Returns the number of tasks successfully started.
 	ExecuteFeature(ctx context.Context, tasks []types.ResolvedTask, projectID string) (int, error)

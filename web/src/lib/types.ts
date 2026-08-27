@@ -160,6 +160,18 @@ export interface Task {
   blocked_by?: string[];
   blocked_by_reason?: string;
   waiting_on?: string[];
+  // Feature-level gating, emitted by applyFeatureGating (service/taskdeps.go).
+  // Distinct from the task-level lists above: these name FEATURES, not tasks,
+  // and the task tree has no row for a feature — so unless they are rendered
+  // the task just sits at "waiting" with nothing explaining why.
+  /** Features that must finish before this task's feature may start. */
+  waiting_on_features?: string[];
+  /** Features that are themselves blocked, blocking this one in turn. */
+  blocked_by_features?: string[];
+  /** feature_depends_on entries that match no known feature. These gate
+   *  NOTHING — a typo silently orders nothing — so they are reported on every
+   *  task in the feature regardless of classification. */
+  unresolved_feature_deps?: string[];
   in_cycle?: boolean;
   resolved_workdir?: string;
 
@@ -318,6 +330,19 @@ export interface FeatureAssignment {
   project_id?: string;
   executor?: string;
   [k: string]: unknown;
+}
+
+/**
+ * Response from PUT /runners/{runnerId}/pause | /resume.
+ *
+ * `paused` echoes the dial's new value, so a caller never has to infer it
+ * from which endpoint it hit.
+ */
+export interface RunnerPauseResponse {
+  runnerId: string;
+  action: "pause" | "resume";
+  paused: boolean;
+  success: boolean;
 }
 
 export interface RunnerListResponse {
@@ -482,12 +507,57 @@ export interface OcProvider {
 
 export interface RunnerStatusResponse {
   running: boolean;
+  // FOOTGUN: despite living under /tasks/runner/status, `paused` is
+  // PROJECT scope, not runner scope. The server computes it as
+  // `len(pausedProjects) > 0` (service.RunnerServiceImpl.GetStatus), so it
+  // answers "is any project's task dial off?" and says nothing whatsoever
+  // about whether a *runner* is paused. Runner-scoped pause is the
+  // `paused` field on each RunnerInfo from GET /runners. Reading this one
+  // as "the runner is paused" is how a paused runner stays invisible.
   paused: boolean;
   // Go's encoding/json emits nil slices as JSON `null`, not `[]`. Reflect
   // that in the type so callers must defend against null.
   pausedProjects: string[] | null;
+  // Likewise project scope: true when ANY project has automations paused.
   automationsPaused: boolean;
   automationPausedProjects: string[] | null;
+}
+
+// ─── Scheduler status ────────────────────────────────────────────
+
+// One scheduler pass over one project. `skipped` is the total; the four
+// skipped_* counters break it down by cause and sum to it. The breakdown is
+// the whole point — "held by a dial someone flipped" and "no runner will
+// ever take this" are the two things an operator needs to tell apart, and a
+// bare total conflates them. Mirrors types.SchedulerResult in Go.
+export interface SchedulerResult {
+  project_id: string;
+  considered: number;
+  dispatched: number;
+  skipped: number;
+  // Held by the project task dial (non-automation tasks only).
+  skipped_tasks_paused?: number;
+  // Held by the project automations dial (automation tasks only).
+  skipped_automations_paused?: number;
+  // No online runner would accept the task. Per-task detail lands in
+  // placement_reasons on the task itself.
+  skipped_no_candidate?: number;
+  // Benign: a previous pass already dispatched it and the lease is live.
+  skipped_already_leased?: number;
+}
+
+// Scheduler loop state from GET /scheduler/status. Mirrors
+// types.SchedulerStatus in Go.
+export interface SchedulerStatus {
+  started: boolean;
+  running: boolean;
+  interval: string;
+  last_tick_at?: string;
+  last_success_at?: string;
+  last_error?: string;
+  total_ticks: number;
+  last_project_results?: Record<string, SchedulerResult>;
+  last_expired_leases: number;
 }
 
 // ─── Brain entries ───────────────────────────────────────────────

@@ -155,7 +155,9 @@ func (bc *BridgeClient) runConnection(ctx context.Context) error {
 	slog.Info("bridge client: connected", "runner_id", bc.runner.runnerID)
 
 	// Hello with current instance snapshot so the server reconciles.
-	bc.sendFrame(bridge.Frame{
+	// A send failure surfaces as the bridge connection dropping, which the
+	// read loop already handles; there is no recovery at this call site.
+	_ = bc.sendFrame(bridge.Frame{
 		Type:      bridge.FrameHello,
 		RunnerID:  bc.runner.runnerID,
 		Proto:     bridge.ProtoVersion,
@@ -386,7 +388,9 @@ func (bc *BridgeClient) runPump(ctx context.Context, instanceID string) {
 		}
 		// Instance gone? Stop. Otherwise reconnect after a short pause.
 		if _, err := bc.resolveInstancePort(instanceID); err != nil {
-			bc.sendFrame(bridge.Frame{
+			// A send failure surfaces as the bridge connection dropping, which the
+			// read loop already handles; there is no recovery at this call site.
+			_ = bc.sendFrame(bridge.Frame{
 				Type:       bridge.FrameStreamClosed,
 				ID:         "s:" + instanceID,
 				InstanceID: instanceID,
@@ -458,7 +462,9 @@ func (bc *BridgeClient) forwardEvent(instanceID string, raw json.RawMessage) {
 	_ = json.Unmarshal(raw, &head)
 
 	if isControlEvent(head.Type) {
-		bc.sendFrame(bridge.Frame{
+		// A send failure surfaces as the bridge connection dropping, which the
+		// read loop already handles; there is no recovery at this call site.
+		_ = bc.sendFrame(bridge.Frame{
 			Type:       bridge.FrameInstanceEvent,
 			InstanceID: instanceID,
 			Event:      raw,
@@ -470,7 +476,9 @@ func (bc *BridgeClient) forwardEvent(instanceID string, raw json.RawMessage) {
 	active := bc.streams[instanceID]
 	bc.mu.Unlock()
 	if active {
-		bc.sendFrame(bridge.Frame{
+		// A send failure surfaces as the bridge connection dropping, which the
+		// read loop already handles; there is no recovery at this call site.
+		_ = bc.sendFrame(bridge.Frame{
 			Type:       bridge.FrameStreamEvent,
 			ID:         "s:" + instanceID,
 			InstanceID: instanceID,
@@ -546,7 +554,9 @@ func (bc *BridgeClient) handleSpawn(f bridge.Frame) {
 			res.Body = body
 		}
 	}
-	bc.sendFrame(res)
+	// A send failure surfaces as the bridge connection dropping, which the
+	// read loop already handles; there is no recovery at this call site.
+	_ = bc.sendFrame(res)
 }
 
 func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.OpencodeInstance, error) {
@@ -594,7 +604,8 @@ func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.Openco
 		time.Sleep(2 * time.Second)
 	}
 	if port == 0 {
-		proc.Kill(syscall.SIGTERM)
+		// Best-effort teardown — the process is being abandoned either way.
+		_ = proc.Kill(syscall.SIGTERM)
 		return nil, errors.New("failed to discover port for ad-hoc instance")
 	}
 
@@ -637,7 +648,9 @@ func (bc *BridgeClient) handleKill(f bridge.Frame) {
 		res.Error = err.Error()
 		res.Status = 0
 	}
-	bc.sendFrame(res)
+	// A send failure surfaces as the bridge connection dropping, which the
+	// read loop already handles; there is no recovery at this call site.
+	_ = bc.sendFrame(res)
 }
 
 func (bc *BridgeClient) killAdhoc(instanceID string) error {
@@ -652,12 +665,12 @@ func (bc *BridgeClient) killAdhoc(instanceID string) error {
 
 	bc.StopPump(instanceID)
 	if !ad.proc.Exited() {
-		ad.proc.Kill(syscall.SIGTERM)
+		_ = ad.proc.Kill(syscall.SIGTERM)
 		// Give it a moment, then force.
 		go func(p Process) {
 			time.Sleep(5 * time.Second)
 			if !p.Exited() {
-				p.Kill(syscall.SIGKILL)
+				_ = p.Kill(syscall.SIGKILL)
 			}
 		}(ad.proc)
 	}
@@ -678,7 +691,9 @@ func (bc *BridgeClient) handleAbortTask(f bridge.Frame) {
 		res.Error = err.Error()
 		res.Status = 0
 	}
-	bc.sendFrame(res)
+	// A send failure surfaces as the bridge connection dropping, which the
+	// read loop already handles; there is no recovery at this call site.
+	_ = bc.sendFrame(res)
 }
 
 func (bc *BridgeClient) abortTask(taskID string) error {
@@ -718,7 +733,9 @@ func (bc *BridgeClient) handleHistory(f bridge.Frame) {
 		res.Status = http.StatusOK
 		res.Body = body
 	}
-	bc.sendFrame(res)
+	// A send failure surfaces as the bridge connection dropping, which the
+	// read loop already handles; there is no recovery at this call site.
+	_ = bc.sendFrame(res)
 }
 
 // fetchSessionHistory returns the transcript for a session as the same JSON

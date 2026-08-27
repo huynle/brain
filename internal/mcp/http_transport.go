@@ -24,7 +24,6 @@ import (
 // HTTPHandler serves the MCP Streamable HTTP transport.
 // It wraps an MCP Server and exposes it over HTTP at a single endpoint.
 type HTTPHandler struct {
-	server    *Server
 	apiClient *APIClient // base API client (unauthenticated)
 
 	// serverFactory creates a fresh MCP server with tools registered using
@@ -177,7 +176,8 @@ func writeJSONRPCError(w http.ResponseWriter, id json.RawMessage, code int, mess
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	// Status is already written; a failure here means the client hung up.
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 // extractBearer extracts the token from a "Bearer <token>" Authorization header.
@@ -196,6 +196,8 @@ func extractBearer(header string) string {
 // generateSessionID creates a cryptographically random session ID.
 func generateSessionID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	// crypto/rand.Read never returns an error as of Go 1.24 — it
+	// panics if the system entropy source fails.
+	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
 }

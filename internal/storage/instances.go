@@ -158,7 +158,9 @@ func (s *StorageLayer) ReplaceInstancesForRunner(ctx context.Context, runnerID s
 	if err != nil {
 		return fmt.Errorf("begin replace instances: %w", err)
 	}
-	defer tx.Rollback()
+	// Rolling back an already-committed tx returns sql.ErrTxDone; the
+	// commit result above is what callers act on.
+	defer func() { _ = tx.Rollback() }()
 
 	if _, err := tx.ExecContext(ctx,
 		"DELETE FROM opencode_instances WHERE runner_id = ?", runnerID); err != nil {

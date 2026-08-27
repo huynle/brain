@@ -91,8 +91,10 @@ func ParseGlobalFlags(args []string) (*GlobalFlags, []string) {
 	fs.BoolVar(&flags.Help, "h", false, "Show help (short)")
 	fs.BoolVar(&flags.Version, "version", false, "Show version")
 
-	// Parse and return remaining args
-	fs.Parse(args)
+	// Parse and return remaining args. ContinueOnError already reports a bad
+	// flag to the flag set's output, and fs.Args() stays usable after one, so
+	// there is nothing further to do with the error here.
+	_ = fs.Parse(args)
 	return flags, fs.Args()
 }
 
@@ -274,6 +276,7 @@ type UnifiedConfig struct {
 		LogMaxBackups   int
 		TaskDefaults    uconfig.TaskDefaultsConfig
 		FeatureCheckout uconfig.FeatureCheckoutConfig
+		IndexWatch      uconfig.IndexWatchConfig
 		Embedding       uconfig.EmbeddingConfig
 		Attachments     uconfig.AttachmentConfig
 
@@ -984,7 +987,8 @@ func ParseEntrySearchFlags(args []string) (*EntrySearchFlags, error) {
 		case "--limit":
 			if i+1 < len(args) {
 				limit := 20
-				fmt.Sscanf(args[i+1], "%d", &limit)
+				// A malformed value deliberately leaves the default above in place.
+				_, _ = fmt.Sscanf(args[i+1], "%d", &limit)
 				flags.Limit = limit
 				i++
 			}
@@ -1087,7 +1091,8 @@ func ParseEntryListFlags(args []string) (*EntryListFlags, error) {
 		case "--limit":
 			if i+1 < len(args) {
 				limit := 20
-				fmt.Sscanf(args[i+1], "%d", &limit)
+				// A malformed value deliberately leaves the default above in place.
+				_, _ = fmt.Sscanf(args[i+1], "%d", &limit)
 				flags.Limit = limit
 				i++
 			}
@@ -1172,7 +1177,8 @@ func ParseEntryEditFlags(args []string) (*EntryEditFlags, string, error) {
 		case "--limit":
 			if i+1 < len(args) {
 				limit := 20
-				fmt.Sscanf(args[i+1], "%d", &limit)
+				// A malformed value deliberately leaves the default above in place.
+				_, _ = fmt.Sscanf(args[i+1], "%d", &limit)
 				flags.Limit = limit
 				i++
 			}
@@ -1246,7 +1252,8 @@ func ParseAutomationFlags(args []string) (*AutomationFlags, error) {
 		case "--limit":
 			if i+1 < len(args) {
 				limit := 20
-				fmt.Sscanf(args[i+1], "%d", &limit)
+				// A malformed value deliberately leaves the default above in place.
+				_, _ = fmt.Sscanf(args[i+1], "%d", &limit)
 				flags.Limit = limit
 				i++
 			}
@@ -1368,7 +1375,8 @@ func ParseAutomationGoalFlags(args []string) (*GoalFlags, error) {
 		case "--limit":
 			if i+1 < len(args) {
 				limit := 20
-				fmt.Sscanf(args[i+1], "%d", &limit)
+				// A malformed value deliberately leaves the default above in place.
+				_, _ = fmt.Sscanf(args[i+1], "%d", &limit)
 				flags.Limit = limit
 				i++
 			}

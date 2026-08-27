@@ -340,7 +340,7 @@ func BenchmarkSortByPriority_500(b *testing.B) {
 }
 
 // ---------------------------------------------------------------------------
-// GetReadyTasks / GetNextTask Benchmarks
+// GetReadyTasks Benchmarks
 // ---------------------------------------------------------------------------
 
 func BenchmarkGetReadyTasks_100(b *testing.B) {
@@ -364,30 +364,6 @@ func BenchmarkGetReadyTasks_500(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ready := GetReadyTasks(result)
 		_ = ready
-	}
-}
-
-func BenchmarkGetNextTask_100(b *testing.B) {
-	tasks := generateTasks(100)
-	result := ResolveDependencies(tasks)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		next := GetNextTask(result)
-		_ = next
-	}
-}
-
-func BenchmarkGetNextTask_500(b *testing.B) {
-	tasks := generateTasks(500)
-	result := ResolveDependencies(tasks)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		next := GetNextTask(result)
-		_ = next
 	}
 }
 

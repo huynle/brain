@@ -695,9 +695,63 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 	}
 }
 
-func TestSchemaVersion_IncludesRunnerPauseDial(t *testing.T) {
-	if CurrentSchemaVersion != 23 {
-		t.Errorf("CurrentSchemaVersion = %d, want 23", CurrentSchemaVersion)
+func TestSchemaVersion_IncludesFeatureCascadeRoots(t *testing.T) {
+	// Bumped with each migration. v23 added runner_pause_state, v24 added
+	// feature_cascade_roots, v25 invalidated checksums for link re-extraction,
+	// v26 did the same for HTML comments.
+	if CurrentSchemaVersion != 26 {
+		t.Errorf("CurrentSchemaVersion = %d, want 26", CurrentSchemaVersion)
+	}
+}
+
+// The version constant alone proves nothing about the table actually
+// existing, which is what callers depend on.
+func TestFeatureCascadeRootsTable_FreshDB(t *testing.T) {
+	s := newTestStorage(t)
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+		"feature_cascade_roots",
+	).Scan(&name)
+	if err != nil {
+		t.Fatalf("feature_cascade_roots table not found on a fresh DB: %v", err)
+	}
+}
+
+func TestFeatureCascadeRoots_RoundTrip(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	if err := s.UpsertFeatureCascadeRoot(ctx, "proj", "root-a", true); err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+	rows, err := s.ListFeatureCascadeRoots(ctx, "proj")
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(rows) != 1 || rows[0].RootFeatureID != "root-a" || !rows[0].PausedAtRequest {
+		t.Fatalf("rows = %+v, want one root-a with PausedAtRequest true", rows)
+	}
+
+	// Re-clicking must refresh, not duplicate: two chains for one root would
+	// double-dispatch every member.
+	if err := s.UpsertFeatureCascadeRoot(ctx, "proj", "root-a", false); err != nil {
+		t.Fatalf("re-upsert: %v", err)
+	}
+	rows, _ = s.ListFeatureCascadeRoots(ctx, "proj")
+	if len(rows) != 1 || rows[0].PausedAtRequest {
+		t.Fatalf("rows = %+v, want a single refreshed row with PausedAtRequest false", rows)
+	}
+
+	deleted, err := s.DeleteFeatureCascadeRoot(ctx, "proj", "root-a")
+	if err != nil || !deleted {
+		t.Fatalf("delete = %v, %v; want true, nil", deleted, err)
+	}
+	// Cancelling something that is not queued must report false rather than
+	// pretending it cancelled a chain.
+	deleted, err = s.DeleteFeatureCascadeRoot(ctx, "proj", "root-a")
+	if err != nil || deleted {
+		t.Fatalf("second delete = %v, %v; want false, nil", deleted, err)
 	}
 }
 

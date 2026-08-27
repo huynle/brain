@@ -6,11 +6,13 @@
  * at all — the exact drift lib/actions exists to prevent. The verbs
  * live here once; both surfaces render the same list.
  *
- * Runners are not mutated through CRUD like entries: the two mutating
- * verbs are "clear feature assignments" (bulk unpin, reversible by
- * dragging features back) and "shutdown" (a graceful-stop command
- * delivered over the runner's SSE stream — the process can be
- * restarted from its host, so the confirm is plain, no type-to-confirm).
+ * Runners are not mutated through CRUD like entries. The mutating verbs
+ * are "pause/resume" (the runner-scoped dispatch dial, persisted server
+ * side so it survives a reconnect), "clear feature assignments" (bulk
+ * unpin, reversible by dragging features back) and "shutdown" (a
+ * graceful-stop command delivered over the runner's SSE stream — the
+ * process can be restarted from its host, so the confirm is plain, no
+ * type-to-confirm).
  *
  * Pure: takes a RunnerInfo plus effect callbacks, returns descriptors.
  */
@@ -30,6 +32,10 @@ export interface RunnerActionContext {
   openProcesses: (r: RunnerInfo) => void;
   /** Clears every feature→runner assignment pinned to this runner. */
   clearAssignments: (r: RunnerInfo) => Promise<void>;
+  /** PUT /runners/{id}/pause — stop placing new dispatch on this runner. */
+  pauseRunner: (r: RunnerInfo) => Promise<void>;
+  /** PUT /runners/{id}/resume. */
+  resumeRunner: (r: RunnerInfo) => Promise<void>;
   /** PUT /runners/{id}/shutdown — graceful stop via SSE command. */
   shutdownRunner: (r: RunnerInfo) => Promise<void>;
 }
@@ -70,6 +76,23 @@ export function combineRunnerAssignments(
 /** Why assignments cannot be cleared right now, or "" when they can. */
 export function clearAssignmentsBlockedReason(count: number): string {
   if (count === 0) return "No features are assigned to this runner";
+  return "";
+}
+
+/** True when the runner's own pause dial is set. Omitted ⇒ false. */
+export function isRunnerPaused(r: RunnerInfo): boolean {
+  return r.paused === true;
+}
+
+/** Why the runner cannot be paused right now, or "" when it can. */
+export function pauseRunnerBlockedReason(r: RunnerInfo): string {
+  if (isRunnerPaused(r)) return "Runner is already paused";
+  return "";
+}
+
+/** Why the runner cannot be resumed right now, or "" when it can. */
+export function resumeRunnerBlockedReason(r: RunnerInfo): string {
+  if (!isRunnerPaused(r)) return "Runner is not paused";
   return "";
 }
 
@@ -122,6 +145,33 @@ export function buildRunnerActions(
     label: "View processes",
     group: "navigate",
     run: async () => ctx.openProcesses(runner),
+  });
+
+  // ─── state ──────────────────────────────────────────────────────
+  // The runner's own pause dial. Unlike shutdown below, the process
+  // keeps running, stays registered and keeps heartbeating — the
+  // scheduler simply places no new dispatch on it. That makes this the
+  // reversible half of the pair: pause to drain, shutdown to stop.
+  //
+  // Distinct from the project dials too: pausing a runner stops work
+  // for every project it serves, and pausing a project stops work on
+  // every runner. Neither status endpoint reports the other's dial.
+  actions.push({
+    id: "pause",
+    label: "Pause runner (stop new dispatch)",
+    group: "state",
+    key: "p",
+    disabledReason: pauseRunnerBlockedReason(runner),
+    run: () => ctx.pauseRunner(runner),
+  });
+
+  actions.push({
+    id: "resume",
+    label: "Resume runner",
+    group: "state",
+    key: "r",
+    disabledReason: resumeRunnerBlockedReason(runner),
+    run: () => ctx.resumeRunner(runner),
   });
 
   // ─── danger ─────────────────────────────────────────────────────

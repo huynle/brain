@@ -1516,7 +1516,7 @@ func TestMetadataModal_HandleMouse_TabClick(t *testing.T) {
 	}
 
 	// Click on " Execution " (x=10, y=0)
-	handled, _ := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 10, 0)
+	handled, _ := modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 10, 0)
 	if !handled {
 		t.Error("expected tab click to be handled")
 	}
@@ -1525,7 +1525,7 @@ func TestMetadataModal_HandleMouse_TabClick(t *testing.T) {
 	}
 
 	// Click on " Task " (x=3, y=0)
-	handled, _ = modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 3, 0)
+	handled, _ = modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 3, 0)
 	if !handled {
 		t.Error("expected tab click to be handled")
 	}
@@ -1544,7 +1544,7 @@ func TestMetadataModal_HandleMouse_FieldClick(t *testing.T) {
 	// Field rows start at y=2 (tab header line 0, blank line 1)
 
 	// Click on field row 1 (Priority, y=3)
-	handled, _ := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 5, 3)
+	handled, _ := modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 5, 3)
 	if !handled {
 		t.Error("expected field click to be handled")
 	}
@@ -1556,7 +1556,7 @@ func TestMetadataModal_HandleMouse_FieldClick(t *testing.T) {
 	}
 
 	// Click on field row 2 (Feature ID, y=4)
-	handled, _ = modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 5, 4)
+	handled, _ = modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 5, 4)
 	if !handled {
 		t.Error("expected field click to be handled")
 	}
@@ -1572,7 +1572,7 @@ func TestMetadataModal_HandleMouse_FocusedFieldClickEntersEditMode(t *testing.T)
 	modal.loading = false
 
 	// Click the already-focused Status field row.
-	handled, cmd := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 5, 2)
+	handled, cmd := modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 5, 2)
 	if !handled {
 		t.Fatal("expected focused field click to be handled")
 	}
@@ -1594,7 +1594,7 @@ func TestMetadataModal_HandleMouse_DropdownOptionClickSelectsOption(t *testing.T
 	modal.enterEditMode()
 
 	// Dropdown rows start after the focused field line and blank separator.
-	handled, _ := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 5, 5)
+	handled, _ := modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 5, 5)
 	if !handled {
 		t.Fatal("expected dropdown option click to be handled")
 	}
@@ -1611,7 +1611,7 @@ func TestMetadataModal_HandleMouse_NotInEditMode(t *testing.T) {
 	modal.interactionMode = ModeEditText
 
 	// Mouse clicks should not be handled during edit mode
-	handled, _ := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 3, 0)
+	handled, _ := modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 3, 0)
 	if handled {
 		t.Error("mouse clicks should not be handled during edit mode")
 	}
@@ -1624,7 +1624,7 @@ func TestMetadataModal_HandleMouse_OutOfBounds(t *testing.T) {
 	modal.loading = false
 
 	// Click way below all fields (y=100)
-	handled, _ := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 5, 100)
+	handled, _ := modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 5, 100)
 	if handled {
 		t.Error("out-of-bounds click should not be handled")
 	}
@@ -1643,7 +1643,7 @@ func TestMetadataModalFeature_HandleMouse_TabClick(t *testing.T) {
 	}
 
 	// Click on " Task " area (x=14, y=0)
-	handled, _ := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 14, 0)
+	handled, _ := modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 14, 0)
 	if !handled {
 		t.Error("expected tab click to be handled")
 	}

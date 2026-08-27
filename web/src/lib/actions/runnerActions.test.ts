@@ -15,6 +15,9 @@ import {
   buildRunnerActions,
   clearAssignmentsBlockedReason,
   combineRunnerAssignments,
+  isRunnerPaused,
+  pauseRunnerBlockedReason,
+  resumeRunnerBlockedReason,
   shutdownRunnerBlockedReason,
   type RunnerActionContext,
 } from "./runnerActions";
@@ -40,6 +43,8 @@ function recorder() {
     openDetails: (r) => void calls.push(`details:${r.runner_id}`),
     openProcesses: (r) => void calls.push(`processes:${r.runner_id}`),
     clearAssignments: async (r) => void calls.push(`clear:${r.runner_id}`),
+    pauseRunner: async (r) => void calls.push(`pause:${r.runner_id}`),
+    resumeRunner: async (r) => void calls.push(`resume:${r.runner_id}`),
     shutdownRunner: async (r) => void calls.push(`shutdown:${r.runner_id}`),
   };
   return { calls, ctx };
@@ -67,6 +72,8 @@ test("every runner verb is present regardless of status", () => {
       "shell",
       "details",
       "processes",
+      "pause",
+      "resume",
       "clear-assignments",
       "shutdown",
     ]) {
@@ -211,4 +218,78 @@ test("no optimistic state falls through to the server list", () => {
   assert.deepEqual(combineRunnerAssignments(runner, {}), [
     { featureId: "auth", projectId: "brain-api" },
   ]);
+});
+
+// ─── the runner-scoped pause dial ──────────────────────────────────
+// A third dial, independent of the two project dials. Its state lives
+// on the runner row (`paused` on GET /runners), NOT in
+// /tasks/runner/status — reading the latter for runner state is the
+// footgun this pins.
+
+test("pause dial defaults to off when the API omits the field", () => {
+  // The server omits `paused` when false (omitempty), so absence must
+  // read as running, not as unknown.
+  assert.equal(isRunnerPaused(mkRunner()), false);
+  assert.equal(isRunnerPaused(mkRunner({ paused: true })), true);
+});
+
+test("exactly one of pause/resume is enabled", () => {
+  const { ctx } = recorder();
+
+  const running = byId(mkRunner({ paused: false }), ctx);
+  assert.equal(isEnabled(running.get("pause")!), true);
+  assert.equal(isEnabled(running.get("resume")!), false);
+  assert.match(running.get("resume")!.disabledReason ?? "", /not paused/i);
+
+  const paused = byId(mkRunner({ paused: true }), ctx);
+  assert.equal(isEnabled(paused.get("pause")!), false);
+  assert.equal(isEnabled(paused.get("resume")!), true);
+  assert.match(paused.get("pause")!.disabledReason ?? "", /already paused/i);
+});
+
+test("pause and resume route to their effects", async () => {
+  const { calls, ctx } = recorder();
+  await byId(mkRunner(), ctx).get("pause")!.run();
+  await byId(mkRunner({ paused: true }), ctx).get("resume")!.run();
+  assert.deepEqual(calls, ["pause:runner-1", "resume:runner-1"]);
+});
+
+test("pause is a state verb, distinct from the shutdown danger verb", () => {
+  // Pause leaves the process running and registered; shutdown stops it.
+  // Grouping pause under danger — or letting it inherit shutdown's
+  // confirm — would blur two very different consequences.
+  const { ctx } = recorder();
+  const m = byId(mkRunner(), ctx);
+  assert.equal(m.get("pause")!.group, "state");
+  assert.equal(m.get("resume")!.group, "state");
+  assert.equal(m.get("pause")!.danger, undefined);
+  assert.equal(m.get("pause")!.confirm, undefined);
+  assert.equal(m.get("shutdown")!.group, "danger");
+  assert.equal(m.get("shutdown")!.danger, true);
+  assert.ok(m.get("shutdown")!.confirm);
+});
+
+test("pause stays available on a runner that cannot be shut down", () => {
+  // Shutdown needs a live SSE stream; the pause dial is persisted
+  // server-side, so it applies to an offline runner too and will be
+  // honoured when it reconnects.
+  const { ctx } = recorder();
+  const m = byId(mkRunner({ status: "offline" }), ctx);
+  assert.equal(isEnabled(m.get("shutdown")!), false);
+  assert.equal(isEnabled(m.get("pause")!), true);
+});
+
+test("pause label promises only that NEW dispatch stops", () => {
+  const { ctx } = recorder();
+  assert.match(byId(mkRunner(), ctx).get("pause")!.label, /new dispatch/i);
+});
+
+test("blocked-reason helpers are exact", () => {
+  assert.equal(pauseRunnerBlockedReason(mkRunner()), "");
+  assert.match(
+    pauseRunnerBlockedReason(mkRunner({ paused: true })),
+    /already paused/i,
+  );
+  assert.equal(resumeRunnerBlockedReason(mkRunner({ paused: true })), "");
+  assert.match(resumeRunnerBlockedReason(mkRunner()), /not paused/i);
 });

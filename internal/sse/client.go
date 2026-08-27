@@ -18,9 +18,19 @@ type Client struct {
 
 	mu        sync.Mutex
 	cancel    context.CancelFunc
-	eventCh   chan Event
-	closed    bool // tracks whether eventCh has been closed
 	connected bool
+
+	// sendMu serializes sends on eventCh against the close of eventCh.
+	// A sender holds it for the whole duration of the send, so anything
+	// that closes the channel must cancel the context first — that is what
+	// unblocks an in-flight send and lets it release the lock. Guarding the
+	// closed flag with the same lock that covers the send is what makes the
+	// check-then-send safe; checking under a lock that is dropped before the
+	// send leaves a window where Close() can close the channel underneath a
+	// sender, which is a "send on closed channel" panic.
+	sendMu  sync.Mutex
+	eventCh chan Event
+	closed  bool // tracks whether eventCh has been closed
 }
 
 // NewClient creates a new SSE client for the given API URL, token, and project.
@@ -70,13 +80,20 @@ func (c *Client) Connect(ctx context.Context) <-chan Event {
 
 // Close stops the SSE connection.
 func (c *Client) Close() {
+	// Cancel before taking sendMu. An in-flight sendEvent holds sendMu until
+	// its send completes or its context is done, so on a full channel with no
+	// reader, cancelling is the only thing that releases the lock.
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.cancel != nil {
-		c.cancel()
-		c.cancel = nil
-	}
+	cancel := c.cancel
+	c.cancel = nil
 	c.connected = false
+	c.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 	if !c.closed {
 		c.closed = true
 		close(c.eventCh)
@@ -96,11 +113,14 @@ func (c *Client) listen(ctx context.Context) {
 	defer func() {
 		c.mu.Lock()
 		c.connected = false
+		c.mu.Unlock()
+
+		c.sendMu.Lock()
 		if !c.closed {
 			c.closed = true
 			close(c.eventCh)
 		}
-		c.mu.Unlock()
+		c.sendMu.Unlock()
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.streamURL(), nil)
@@ -169,12 +189,12 @@ func (c *Client) listen(ctx context.Context) {
 
 // sendEvent sends an event to the channel, respecting context cancellation.
 func (c *Client) sendEvent(ctx context.Context, event Event) {
-	c.mu.Lock()
+	// Held across the send, not just the closed check — see sendMu.
+	c.sendMu.Lock()
+	defer c.sendMu.Unlock()
 	if c.closed {
-		c.mu.Unlock()
 		return
 	}
-	c.mu.Unlock()
 
 	select {
 	case c.eventCh <- event:

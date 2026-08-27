@@ -32,12 +32,6 @@ func makeTask(id, title, classification, priority string, dependsOn []string) ty
 	}
 }
 
-func makeTaskWithStatus(id, title, classification, priority, status string, dependsOn []string) types.ResolvedTask {
-	t := makeTask(id, title, classification, priority, dependsOn)
-	t.Status = status
-	return t
-}
-
 func makeTaskWithFeature(id, title, classification, priority, featureID string, dependsOn []string) types.ResolvedTask {
 	t := makeTask(id, title, classification, priority, dependsOn)
 	t.FeatureID = featureID

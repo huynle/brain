@@ -11,16 +11,6 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// namedFormats lists the built-in format names.
-var namedFormats = map[string]bool{
-	"path":  true,
-	"id":    true,
-	"short": true,
-	"full":  true,
-	"json":  true,
-	"jsonl": true,
-}
-
 // OutputConfig controls how brain entries are rendered to stdout.
 type OutputConfig struct {
 	Format    string // Named format or Go template string
@@ -140,19 +130,19 @@ func formatShort(entry types.BrainEntry) string {
 func formatFull(entry types.BrainEntry) string {
 	var buf strings.Builder
 	buf.WriteString("---\n")
-	buf.WriteString(fmt.Sprintf("title: %s\n", entry.Title))
-	buf.WriteString(fmt.Sprintf("type: %s\n", entry.Type))
+	fmt.Fprintf(&buf, "title: %s\n", entry.Title)
+	fmt.Fprintf(&buf, "type: %s\n", entry.Type)
 	if entry.Status != "" {
-		buf.WriteString(fmt.Sprintf("status: %s\n", entry.Status))
+		fmt.Fprintf(&buf, "status: %s\n", entry.Status)
 	}
 	if entry.Priority != "" {
-		buf.WriteString(fmt.Sprintf("priority: %s\n", entry.Priority))
+		fmt.Fprintf(&buf, "priority: %s\n", entry.Priority)
 	}
 	if len(entry.Tags) > 0 {
-		buf.WriteString(fmt.Sprintf("tags: [%s]\n", strings.Join(entry.Tags, ", ")))
+		fmt.Fprintf(&buf, "tags: [%s]\n", strings.Join(entry.Tags, ", "))
 	}
-	buf.WriteString(fmt.Sprintf("path: %s\n", entry.Path))
-	buf.WriteString(fmt.Sprintf("id: %s\n", entry.ID))
+	fmt.Fprintf(&buf, "path: %s\n", entry.Path)
+	fmt.Fprintf(&buf, "id: %s\n", entry.ID)
 	buf.WriteString("---\n")
 	if entry.Content != "" {
 		buf.WriteString(entry.Content)

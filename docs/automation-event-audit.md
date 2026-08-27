@@ -230,8 +230,8 @@ Rows marked ✅ were empirically probed.
 | `feature.progress` | API `event_service.go:311`; runner `feature_tracker.go:216` | yes | Y | `project_id`, `feature_id`, `task_id`, `source`, `type`; metadata varies by emitter | Runner metadata is misleading: `running_count` actually carries the completed count. No `ToStatus`, so `to_status` filters never match. |
 | `feature.started` | Runner `feature_tracker.go:157` | yes | Y | `project_id`, `feature_id`, `source`, `runner_id`, `type`; metadata `ready_count` | No `task_id`. Runner-only, so a pure-API workflow never sees it. |
 | `feature.blocked` | Runner `feature_tracker.go:238` | yes | Y | `project_id`, `feature_id`, `source`, `runner_id`, `type` | Runner-derived only; no API equivalent; no metadata. |
-| ✅ `feature.enabled` | Runner `runner.go:2932` | yes | **C** | `feature_id`, `source`, `runner_id`, `type` | **`ProjectID` is EMPTY**, so a project-scoped automation can never match under any filter. Global-with-no-project-filter only. |
-| ✅ `feature.disabled` | Runner `runner.go:2946` | yes | **C** | same as above | Same limitation. |
+| ~~`feature.enabled`~~ | **REMOVED** | — | — | — | Removed 2026-08-26 along with the inert per-runner feature-toggle surface (`POST /runners/{id}/features/{fid}/toggle`). No emitter remains and the type is no longer in `AllEventTypes`. Use `POST /tasks/{project}/features/{fid}/run` to run one feature while a project is paused. |
+| ~~`feature.disabled`~~ | **REMOVED** | — | — | — | Same removal. |
 | `task.claimed` | API `tasks.go:335`; runner `runner.go:1539` | yes | Y | API: `project_id`, `task_id`, `source`, `type` + metadata `runner_id`. Runner: adds `feature_id`, `runner_id`, drops metadata | Fires TWICE per claim with different sources and different field sets. Hub dedupes by ID only. |
 | ✅ `task.released` | API `tasks.go:395`; runner `runner.go:1612/1646/1696/2545`, `bridge_client.go:687` | yes | Y | `project_id`, `task_id`, `source`, `type`; `feature_id` on runner sites; `reason` **only via the Metadata fallback** | The top-level `evt.Reason` field has no `getEventField` case. `reason` works only because both emitters mirror it into `Metadata` — a convention, not enforced. API path sets no `feature_id`. |
 | `task.claim_rejected` | Runner `runner.go:1523` | yes | Y | `project_id`, `task_id`, `feature_id`, `source`, `runner_id`, `type`; metadata `claimed_by` | Runner-only origin. |
@@ -1062,10 +1062,11 @@ automations keyed specifically on `task.completed` / `task.failed` break.
 `pi` and `script` executors are immune (`checkIdleStatus` routes them to
 no-ops).
 
-The same class affects `feature.enabled`/`feature.disabled`
-(`runner.go:2931/2945` — no `ProjectID`), `runner.session_discovered`
-(`:1920`), `runner.poll_complete` (`:3099`), and all four `control.*` events
-(`internal/api/control.go:84-90`).
+The same class affects `runner.session_discovered` (`:1920`),
+`runner.poll_complete` (`:3099`), and all four `control.*` events
+(`internal/api/control.go:84-90`). It also affected
+`feature.enabled`/`feature.disabled`, which have since been removed outright
+(see the table above).
 
 *Fix:* add `ProjectID: task.ProjectID, TaskPath: task.Path, FeatureID:
 task.FeatureID` to the three `idle_detection.go` emissions. Add a regression

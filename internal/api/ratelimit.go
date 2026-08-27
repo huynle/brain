@@ -47,12 +47,11 @@ func (b *tokenBucket) allow(now time.Time) (bool, int, int) {
 	}
 	b.lastTime = now
 
-	remaining := int(b.tokens)
 	resetSec := 1 // minimum 1 second
 
 	if b.tokens >= 1 {
 		b.tokens--
-		remaining = int(b.tokens)
+		remaining := int(b.tokens)
 		if remaining <= 0 {
 			resetSec = int(math.Ceil(1.0 / b.rate))
 		}

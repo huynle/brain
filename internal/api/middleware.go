@@ -557,9 +557,5 @@ func scopeList(scopes []string) string {
 	if len(scopes) == 0 {
 		return "(none)"
 	}
-	parts := make([]string, len(scopes))
-	for i, s := range scopes {
-		parts[i] = s
-	}
-	return strings.Join(parts, ", ")
+	return strings.Join(scopes, ", ")
 }

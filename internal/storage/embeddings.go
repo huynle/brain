@@ -50,7 +50,9 @@ func (s *StorageLayer) UpsertNoteEmbeddings(ctx context.Context, records []Embed
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback() // No-op if committed
+	// Rolling back an already-committed tx returns sql.ErrTxDone; the
+	// commit result above is what callers act on.
+	defer func() { _ = tx.Rollback() }()
 
 	// Prepare statements for efficiency
 	embeddingStmt, err := tx.PrepareContext(ctx, `
@@ -212,7 +214,9 @@ func (s *StorageLayer) DeleteNoteEmbeddings(ctx context.Context, noteID int64) e
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback()
+	// Rolling back an already-committed tx returns sql.ErrTxDone; the
+	// commit result above is what callers act on.
+	defer func() { _ = tx.Rollback() }()
 
 	// Delete embeddings
 	_, err = tx.ExecContext(ctx, "DELETE FROM note_embeddings WHERE note_id = ?", noteID)

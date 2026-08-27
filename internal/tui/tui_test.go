@@ -11,7 +11,6 @@ import (
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/huynle/brain-api/internal/runner"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -120,7 +119,7 @@ func TestMouseClickContentTabSwitchesToAutomation(t *testing.T) {
 		t.Fatal("expected Automation tab to have a click target")
 	}
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
-	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY - 1})
+	updated, cmd := m.handleMouseClick(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: mainContentStartY - 1})
 	model := updated.(Model)
 
 	if model.activeContentTab != ContentTabAutomation {
@@ -237,7 +236,7 @@ func TestMouseClickEveryRenderedContentTabSwitchesTab(t *testing.T) {
 				t.Fatalf("expected rendered tab %s to have a click target", tab)
 			}
 			mainContentStartY, _, _ := m.computeTaskPanelMetrics()
-			updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY - 1})
+			updated, _ := m.handleMouseClick(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: mainContentStartY - 1})
 			model := updated.(Model)
 
 			if model.activeContentTab != tab {
@@ -261,7 +260,7 @@ func TestMouseClickContentTabAcceptsAdjacentReportedRow(t *testing.T) {
 		t.Fatal("expected Automation tab to have a click target")
 	}
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
-	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: x, Y: mainContentStartY})
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: x, Y: mainContentStartY})
 	model := updated.(Model)
 
 	if model.activeContentTab != ContentTabAutomation {
@@ -283,7 +282,7 @@ func TestMouseClickBrainTabSelectsClickedEntryRow(t *testing.T) {
 
 	// Panel border is at mainContentStartY, title is the next row, then the
 	// directory header, then the first entry row.
-	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 4})
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 5, Y: mainContentStartY + 4})
 	model := updated.(Model)
 
 	selected := model.entryTree.SelectedEntry()
@@ -302,7 +301,7 @@ func TestMouseClickBrainGroupHeaderTogglesCollapse(t *testing.T) {
 	})
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
 
-	updated, _ := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: mainContentStartY + 3})
+	updated, _ := m.handleMouseClick(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 5, Y: mainContentStartY + 3})
 	model := updated.(Model)
 	view := model.entryTree.View(100, 10)
 	if strings.Contains(view, "A [decision]") {
@@ -323,7 +322,7 @@ func TestMouseHoverBrainTabDoesNotChangeSelection(t *testing.T) {
 	})
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
 
-	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, X: 5, Y: mainContentStartY + 3})
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonNone, X: 5, Y: mainContentStartY + 3})
 	model := updated.(Model)
 	if model.entryTree.IsOnGroupHeader() {
 		t.Fatal("expected hover over Brain tab to leave selection unchanged")
@@ -559,7 +558,7 @@ func TestBrainDetailAttachmentKeyOpensModalWithActions(t *testing.T) {
 		}
 	}
 
-	updated, cmd = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
+	updated, _ = model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'j'}})
 	model = updated.(Model)
 	modal = model.modalManager.activeModal.(*AttachmentModal)
 	if got := modal.SelectedAttachment().ID; got != "att_2" {
@@ -1518,7 +1517,7 @@ func TestBrainSearchResultsUseSearchTitleAndResultCount(t *testing.T) {
 func TestProjectPickerModal_MouseSelectsProject(t *testing.T) {
 	modal := NewProjectPickerModal([]string{"alpha", "beta", "gamma"}, "alpha")
 
-	handled, cmd := modal.HandleMouse(tea.MouseMsg{Type: tea.MouseLeft}, 3, 4)
+	handled, cmd := modal.HandleMouse(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft}, 3, 4)
 	if !handled {
 		t.Fatal("expected project row click to be handled")
 	}
@@ -1564,22 +1563,6 @@ func TestUpdate_ProjectSelectedMsgSwitchesProjectAndClosesModal(t *testing.T) {
 	}
 }
 
-func projectTabCenterXForTest(tabs ProjectTabs, tabIndex, width int) int {
-	labels := tabs.tabLabels(false)
-	pos := 0
-	for i, label := range labels {
-		labelWidth := lipgloss.Width(label)
-		if pos+labelWidth > width {
-			break
-		}
-		if i == tabIndex {
-			return pos + labelWidth/2
-		}
-		pos += labelWidth + 2
-	}
-	return 0
-}
-
 func TestMouseClickRunnerRowSelectsRunner(t *testing.T) {
 	m := NewModel(Config{APIURL: "http://localhost:3333", Project: "brain-api"})
 	m.width = 100
@@ -1595,7 +1578,7 @@ func TestMouseClickRunnerRowSelectsRunner(t *testing.T) {
 	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
 	// Runner rows are inside the bottom panel after: top border, title, column header.
 	runnerRowY := mainContentStartY + taskPanelOuterHeight + 3
-	updated, cmd := m.handleMouseClick(tea.MouseMsg{Type: tea.MouseLeft, X: 5, Y: runnerRowY})
+	updated, cmd := m.handleMouseClick(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 5, Y: runnerRowY})
 	model := updated.(Model)
 
 	if cmd != nil {
@@ -1633,7 +1616,7 @@ func TestMouseWheelDownOverTaskPaneMovesTaskSelectionWithoutClickFocus(t *testin
 	m.helpBar.ActivePanel = PanelDetails
 
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
-	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelDown, X: 5, Y: mainContentStartY + 2})
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 5, Y: mainContentStartY + 2})
 	model := updated.(Model)
 
 	if cmd != nil {
@@ -1660,7 +1643,7 @@ func TestMouseWheelDownOverRunnerPaneSelectsNextRunnerWithoutClickFocus(t *testi
 	})
 
 	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
-	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelDown, X: 5, Y: mainContentStartY + taskPanelOuterHeight + 3})
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 5, Y: mainContentStartY + taskPanelOuterHeight + 3})
 	model := updated.(Model)
 
 	if cmd != nil {
@@ -1693,7 +1676,7 @@ func TestMouseWheelDownOverDetailPaneScrollsDetailWithoutClickFocus(t *testing.T
 	m.taskDetail.SetSize(80, 4)
 
 	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
-	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelDown, X: 5, Y: mainContentStartY + taskPanelOuterHeight + 2})
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 5, Y: mainContentStartY + taskPanelOuterHeight + 2})
 	model := updated.(Model)
 
 	if cmd != nil {
@@ -1720,7 +1703,7 @@ func TestMouseWheelUpOverLogsPaneScrollsLogsWithoutClickFocus(t *testing.T) {
 	}
 
 	mainContentStartY, taskPanelOuterHeight, _ := m.computeTaskPanelMetrics()
-	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelUp, X: 5, Y: mainContentStartY + taskPanelOuterHeight + 2})
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp, X: 5, Y: mainContentStartY + taskPanelOuterHeight + 2})
 	model := updated.(Model)
 
 	if cmd != nil {
@@ -1750,7 +1733,7 @@ func TestMouseWheelOverGlobalLogsTabScrollsLogs(t *testing.T) {
 	}
 
 	mainStart := m.computeMainContentStartY()
-	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelUp, X: 10, Y: mainStart + 3})
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelUp, X: 10, Y: mainStart + 3})
 	m = updated.(Model)
 
 	if cmd != nil {
@@ -1777,7 +1760,7 @@ func TestMouseWheelOverDreamTabScrollsLikeJK(t *testing.T) {
 	m.dreamViewer.SetContent(strings.Repeat("line\n", 30))
 
 	mainContentStartY, _, _ := m.computeTaskPanelMetrics()
-	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseWheelDown, X: 5, Y: mainContentStartY + 2})
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonWheelDown, X: 5, Y: mainContentStartY + 2})
 	model := updated.(Model)
 
 	if cmd != nil {
@@ -1801,7 +1784,7 @@ func TestMouseDragMainSplitterResizesTaskAndBottomPanels(t *testing.T) {
 
 	mainContentStartY, initialTaskHeight, _ := m.computeTaskPanelMetrics()
 	pressY := mainContentStartY + initialTaskHeight - 1
-	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
 	m = updated.(Model)
 	if cmd != nil {
 		t.Fatalf("expected splitter press to be local-only, got command")
@@ -1810,7 +1793,7 @@ func TestMouseDragMainSplitterResizesTaskAndBottomPanels(t *testing.T) {
 		t.Fatal("expected splitter drag to start")
 	}
 
-	updated, cmd = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	updated, cmd = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
 	m = updated.(Model)
 	if cmd != nil {
 		t.Fatalf("expected splitter drag to be local-only, got command")
@@ -1819,7 +1802,7 @@ func TestMouseDragMainSplitterResizesTaskAndBottomPanels(t *testing.T) {
 		t.Fatalf("expected task panel height %d, got %d", initialTaskHeight+5, m.taskPanelHeight)
 	}
 
-	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: pressY + 5})
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: pressY + 5})
 	m = updated.(Model)
 	if m.splitDragActive {
 		t.Fatal("expected splitter drag to stop after release")
@@ -1838,7 +1821,7 @@ func TestMouseDragMainSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
 	mainContentStartY, initialTaskHeight, _ := m.computeTaskPanelMetrics()
 	splitterY := mainContentStartY + initialTaskHeight - 1
 	pressY := splitterY - 1
-	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
 	m = updated.(Model)
 
 	if !m.splitDragActive {
@@ -1848,7 +1831,7 @@ func TestMouseDragMainSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
 		t.Fatalf("expected press to leave task panel height unchanged, got %d", m.taskPanelHeight)
 	}
 
-	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
 	m = updated.(Model)
 	want := initialTaskHeight + 5
 	if m.taskPanelHeight != want {
@@ -1883,7 +1866,7 @@ func TestMouseDragBottomSplitterResizesDetailAndLogPanels(t *testing.T) {
 	bottomStart, bottomHeight := m.bottomPanelBounds()
 	initialDetailHeight := m.computeBottomTopPanelHeight(bottomHeight)
 	pressY := bottomStart + initialDetailHeight - 1
-	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	updated, cmd := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
 	m = updated.(Model)
 	if cmd != nil {
 		t.Fatalf("expected bottom splitter press to be local-only, got command")
@@ -1892,7 +1875,7 @@ func TestMouseDragBottomSplitterResizesDetailAndLogPanels(t *testing.T) {
 		t.Fatal("expected bottom splitter drag to start")
 	}
 
-	updated, cmd = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 3})
+	updated, cmd = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 3})
 	m = updated.(Model)
 	if cmd != nil {
 		t.Fatalf("expected bottom splitter drag to be local-only, got command")
@@ -1916,7 +1899,7 @@ func TestMouseDragBottomSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
 	initialDetailHeight := m.computeBottomTopPanelHeight(bottomHeight)
 	splitterY := bottomStart + initialDetailHeight - 1
 	pressY := splitterY - 1
-	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseLeft, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionPress, Button: tea.MouseButtonLeft, X: 20, Y: pressY})
 	m = updated.(Model)
 
 	if !m.bottomSplitDragActive {
@@ -1926,7 +1909,7 @@ func TestMouseDragBottomSplitterDoesNotJumpOnPressNearSplitter(t *testing.T) {
 		t.Fatalf("expected press to leave bottom split height unchanged, got %d", m.bottomTopPanelHeight)
 	}
 
-	updated, _ = m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseMotion, Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
+	updated, _ = m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionMotion, Button: tea.MouseButtonLeft, X: 20, Y: pressY + 5})
 	m = updated.(Model)
 	want := initialDetailHeight + 5
 	if m.bottomTopPanelHeight != want {
@@ -1967,7 +1950,7 @@ func TestMouseDragMainSplitterReleasePersistsPanelHeight(t *testing.T) {
 	m.taskPanelHeight = 23
 	m.splitDragActive = true
 
-	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: 25})
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: 25})
 	model := updated.(Model)
 	if model.splitDragActive {
 		t.Fatal("expected split drag to stop on release")
@@ -1992,7 +1975,7 @@ func TestMouseDragBottomSplitterReleasePersistsPanelHeight(t *testing.T) {
 	m.bottomTopPanelHeight = 14
 	m.bottomSplitDragActive = true
 
-	updated, _ := m.handleMouseMsg(tea.MouseMsg{Type: tea.MouseRelease, Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: 25})
+	updated, _ := m.handleMouseMsg(tea.MouseMsg{Action: tea.MouseActionRelease, Button: tea.MouseButtonNone, X: 20, Y: 25})
 	model := updated.(Model)
 	if model.bottomSplitDragActive {
 		t.Fatal("expected bottom split drag to stop on release")

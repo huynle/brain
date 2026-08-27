@@ -205,7 +205,6 @@ func NewAssistantService(opts AssistantServiceOptions) *AssistantService {
 }
 
 const assistantModeAgentic = "agentic"
-const assistantModeDirectLLM = "direct_llm" // retained for legacy planner status
 
 func (s *AssistantService) Status() AssistantStatusResponse {
 	toolNames := []string{}

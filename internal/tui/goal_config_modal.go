@@ -47,15 +47,6 @@ type goalAuditLoadedMsg struct {
 	err    error
 }
 
-// goalStatusFieldKind distinguishes the two multi-select status fields.
-type goalStatusFieldKind int
-
-const (
-	goalStatusKindNone goalStatusFieldKind = iota
-	goalStatusKindComplete
-	goalStatusKindBlocked
-)
-
 // GoalConfigModal implements Modal for editing goal automation config.
 type GoalConfigModal struct {
 	goalID    string
@@ -285,7 +276,7 @@ func (m *GoalConfigModal) View() string {
 			valRendered = valueStyle.Render(m.editBuf + "▏")
 		}
 
-		b.WriteString(fmt.Sprintf("%s%s: %s", marker, labelRendered, valRendered))
+		fmt.Fprintf(&b, "%s%s: %s", marker, labelRendered, valRendered)
 		b.WriteString("\n")
 
 		// Render sub-cursor row for focused multi-select fields.

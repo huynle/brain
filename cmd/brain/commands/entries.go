@@ -312,20 +312,20 @@ func (c *SaveCommand) buildEditorTemplate() string {
 	var buf bytes.Buffer
 
 	buf.WriteString("---\n")
-	buf.WriteString(fmt.Sprintf("title: %s\n", c.Flags.Title))
-	buf.WriteString(fmt.Sprintf("type: %s\n", c.Flags.Type))
+	fmt.Fprintf(&buf, "title: %s\n", c.Flags.Title)
+	fmt.Fprintf(&buf, "type: %s\n", c.Flags.Type)
 
 	if c.Flags.Tags != "" {
 		buf.WriteString("tags:\n")
 		for _, tag := range strings.Split(c.Flags.Tags, ",") {
 			tag = strings.TrimSpace(tag)
 			if tag != "" {
-				buf.WriteString(fmt.Sprintf("  - %s\n", tag))
+				fmt.Fprintf(&buf, "  - %s\n", tag)
 			}
 		}
 	} else {
 		buf.WriteString("tags:\n")
-		buf.WriteString(fmt.Sprintf("  - %s\n", c.Flags.Type))
+		fmt.Fprintf(&buf, "  - %s\n", c.Flags.Type)
 	}
 
 	status := c.Flags.Status
@@ -336,13 +336,13 @@ func (c *SaveCommand) buildEditorTemplate() string {
 			status = "active"
 		}
 	}
-	buf.WriteString(fmt.Sprintf("status: %s\n", status))
+	fmt.Fprintf(&buf, "status: %s\n", status)
 
 	priority := c.Flags.Priority
 	if priority == "" {
 		priority = "medium"
 	}
-	buf.WriteString(fmt.Sprintf("priority: %s\n", priority))
+	fmt.Fprintf(&buf, "priority: %s\n", priority)
 
 	buf.WriteString("---\n\n")
 	buf.WriteString("<!-- Enter your content below. Save and quit to create the entry. -->\n")
@@ -971,7 +971,9 @@ func (c *EditCommand) Execute() error {
 			fmt.Fprint(out, "Continue? [y/N] ")
 
 			var answer string
-			fmt.Fscan(os.Stdin, &answer)
+			// A read failure leaves answer empty, which is not "y" — the
+			// prompt then cancels, which is the safe default.
+			_, _ = fmt.Fscan(os.Stdin, &answer)
 			answer = strings.TrimSpace(strings.ToLower(answer))
 			if answer != "y" && answer != "yes" {
 				fmt.Fprintln(out, "Cancelled")
@@ -1032,7 +1034,9 @@ func (c *EditCommand) resolveTarget(ctx context.Context, client *runner.APIClien
 			fmt.Fprintf(out, "Are you sure you want to open %d entries? [y/N] ", len(resp.Entries))
 
 			var answer string
-			fmt.Fscan(os.Stdin, &answer)
+			// A read failure leaves answer empty, which is not "y" — the
+			// prompt then cancels, which is the safe default.
+			_, _ = fmt.Fscan(os.Stdin, &answer)
 			answer = strings.TrimSpace(strings.ToLower(answer))
 			if answer != "y" && answer != "yes" {
 				fmt.Fprintln(out, "Cancelled (use --force to skip confirmation)")
@@ -1183,10 +1187,7 @@ func extractBody(content string) string {
 		return content
 	}
 	// Skip past "---\n"
-	body := rest[idx+4:]
-	if strings.HasPrefix(body, "\n") {
-		body = body[1:]
-	}
+	body := strings.TrimPrefix(rest[idx+4:], "\n")
 	return body
 }
 

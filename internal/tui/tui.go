@@ -275,26 +275,6 @@ func (m Model) contentTabAtX(x int) (ContentTab, bool) {
 	return m.activeContentTab, false
 }
 
-func (m Model) automationSubTabAtX(x int) (AutomationSubTab, bool) {
-	plain := " "
-	for _, zone := range []struct {
-		tab   AutomationSubTab
-		label string
-	}{
-		{AutomationSubTabAutomations, "Automations"},
-		{AutomationSubTabDream, "Dream"},
-	} {
-		start := len(plain)
-		plain += " " + zone.label + " "
-		end := len(plain)
-		if x >= start && x < end {
-			return zone.tab, true
-		}
-		plain += " "
-	}
-	return m.activeAutomationSubTab, false
-}
-
 func contentTabCenterX(tab ContentTab) (int, bool) {
 	m := Model{}
 	for x := 0; x < 80; x++ {
@@ -2409,32 +2389,32 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if m.splitDragActive {
-		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+		if msg.Action == tea.MouseActionRelease {
 			m.splitDragActive = false
 			m.splitDragOffsetY = 0
 			m.persistPanelHeights()
 			return m, nil
 		}
-		if msg.Action == tea.MouseActionMotion || msg.Type == tea.MouseMotion || msg.Type == tea.MouseLeft {
+		if msg.Action == tea.MouseActionMotion || classifyMouse(msg) == mouseLeft {
 			m.resizeMainSplitToY(msg.Y - m.splitDragOffsetY)
 			return m, nil
 		}
 	}
 	if m.bottomSplitDragActive {
-		if msg.Action == tea.MouseActionRelease || msg.Type == tea.MouseRelease {
+		if msg.Action == tea.MouseActionRelease {
 			m.bottomSplitDragActive = false
 			m.bottomSplitDragOffsetY = 0
 			m.persistPanelHeights()
 			return m, nil
 		}
-		if msg.Action == tea.MouseActionMotion || msg.Type == tea.MouseMotion || msg.Type == tea.MouseLeft {
+		if msg.Action == tea.MouseActionMotion || classifyMouse(msg) == mouseLeft {
 			m.resizeBottomSplitToY(msg.Y - m.bottomSplitDragOffsetY)
 			return m, nil
 		}
 	}
 
-	switch msg.Type {
-	case tea.MouseLeft:
+	switch classifyMouse(msg) {
+	case mouseLeft:
 		if m.isBottomSplitterY(msg.Y) {
 			bottomStart, bottomHeight := m.bottomPanelBounds()
 			detailHeight := m.computeBottomTopPanelHeight(bottomHeight)
@@ -2449,7 +2429,7 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.handleMouseClick(msg)
-	case tea.MouseRelease:
+	case mouseRelease:
 		wasDragging := m.splitDragActive || m.bottomSplitDragActive
 		m.splitDragActive = false
 		m.bottomSplitDragActive = false
@@ -2459,13 +2439,13 @@ func (m Model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.persistPanelHeights()
 		}
 		return m, nil
-	case tea.MouseWheelUp:
+	case mouseWheelUp:
 		return m.handleMouseWheelUp(msg)
-	case tea.MouseWheelDown:
+	case mouseWheelDown:
 		return m.handleMouseWheelDown(msg)
-	case tea.MouseRight:
+	case mouseRight:
 		return m.handleRightClick(msg)
-	case tea.MouseMotion:
+	case mouseMotion:
 		return m.handleMouseHover(msg)
 	}
 
@@ -3728,7 +3708,7 @@ func (m *Model) automationDetailContent(path, content string) string {
 			if status == "" {
 				status = "unknown"
 			}
-			b.WriteString(fmt.Sprintf("- %s [%s] %s", run.ID, status, run.Title))
+			fmt.Fprintf(&b, "- %s [%s] %s", run.ID, status, run.Title)
 			if run.Modified != "" {
 				b.WriteString(" modified=" + run.Modified)
 			}
@@ -3919,14 +3899,14 @@ func (m *Model) goalReconcileDetailSection(entryID string) string {
 	last := audit[0]
 	var b strings.Builder
 	b.WriteString("\n\n## Last Reconcile\n")
-	b.WriteString(fmt.Sprintf("%s — %s", string(last.Decision), last.Reason))
+	fmt.Fprintf(&b, "%s — %s", string(last.Decision), last.Reason)
 	if last.Timestamp != "" {
 		b.WriteString("\n" + last.Timestamp)
 	}
 
 	b.WriteString("\n\n## Audit\n")
 	for _, a := range audit {
-		b.WriteString(fmt.Sprintf("- %s [%s] %s", a.Timestamp, string(a.Decision), a.Reason))
+		fmt.Fprintf(&b, "- %s [%s] %s", a.Timestamp, string(a.Decision), a.Reason)
 		if a.GeneratedTaskID != "" {
 			b.WriteString(" task=" + a.GeneratedTaskID)
 		}
@@ -4848,7 +4828,7 @@ func renderTaskLogLines(lines []types.LogLine, width, height int) string {
 		if len(level) > 5 {
 			level = level[:5]
 		}
-		b.WriteString(fmt.Sprintf("%s %-5s %s", DimStyle.Render(ts), level, truncateMsg(l.Content, contentWidth)))
+		fmt.Fprintf(&b, "%s %-5s %s", DimStyle.Render(ts), level, truncateMsg(l.Content, contentWidth))
 		if i < len(lines)-1 {
 			b.WriteString("\n")
 		}
@@ -5221,19 +5201,6 @@ func (m *Model) activeAutomationProject() string {
 
 func (m Model) isAutomationDreamActive() bool {
 	return m.activeContentTab == ContentTabAutomation && m.activeAutomationSubTab == AutomationSubTabDream
-}
-
-func (m *Model) cycleAutomationSubTab() tea.Cmd {
-	if m.activeAutomationSubTab == AutomationSubTabAutomations {
-		return m.setAutomationSubTab(AutomationSubTabDream)
-	}
-	return m.setAutomationSubTab(AutomationSubTabAutomations)
-}
-
-func (m *Model) setAutomationSubTab(tab AutomationSubTab) tea.Cmd {
-	m.activeAutomationSubTab = tab
-	m.helpBar.ActiveAutomationSubTab = tab
-	return m.prepareActiveAutomationFetch()
 }
 
 func (m *Model) prepareActiveAutomationFetch() tea.Cmd {
@@ -6258,50 +6225,6 @@ func batchCompleteTasksCmd(cfg runner.RunnerConfig, taskPaths, taskIDs []string)
 		}
 
 		return batchTasksCompletedMsg{
-			successCount: successCount,
-			failedCount:  failedCount,
-			errors:       errors,
-		}
-	}
-}
-
-// batchCancelTasksCmd cancels multiple tasks in parallel.
-func batchCancelTasksCmd(cfg runner.RunnerConfig, taskPaths, taskIDs []string) tea.Cmd {
-	return func() tea.Msg {
-		apiClient := runner.NewAPIClient(cfg)
-
-		type result struct {
-			taskID string
-			err    error
-		}
-
-		results := make(chan result, len(taskPaths))
-		ctx := context.Background()
-
-		// Execute all cancellations in parallel
-		for i, taskPath := range taskPaths {
-			go func(path, id string) {
-				err := apiClient.UpdateTaskStatus(ctx, path, "cancelled")
-				results <- result{taskID: id, err: err}
-			}(taskPath, taskIDs[i])
-		}
-
-		// Collect results
-		var errors []error
-		successCount := 0
-		failedCount := 0
-
-		for range taskPaths {
-			res := <-results
-			if res.err != nil {
-				errors = append(errors, fmt.Errorf("%s: %w", res.taskID, res.err))
-				failedCount++
-			} else {
-				successCount++
-			}
-		}
-
-		return batchTasksCancelledMsg{
 			successCount: successCount,
 			failedCount:  failedCount,
 			errors:       errors,

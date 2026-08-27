@@ -2218,6 +2218,38 @@ func TestLoadFeatureCheckoutEnvOverride(t *testing.T) {
 	}
 }
 
+func TestIndexWatchConfigYAMLParsing(t *testing.T) {
+	var cfg UnifiedConfig
+	if err := yaml.Unmarshal([]byte(`server:
+  index_watch:
+    enabled: true
+    debounce_ms: 250
+    ignore_patterns:
+      - archive/
+`), &cfg); err != nil {
+		t.Fatalf("yaml.Unmarshal() error = %v", err)
+	}
+	if !cfg.Server.IndexWatch.Enabled {
+		t.Error("IndexWatch.Enabled = false, want true")
+	}
+	if cfg.Server.IndexWatch.DebounceMs != 250 {
+		t.Errorf("IndexWatch.DebounceMs = %d, want 250", cfg.Server.IndexWatch.DebounceMs)
+	}
+	if len(cfg.Server.IndexWatch.IgnorePatterns) != 1 || cfg.Server.IndexWatch.IgnorePatterns[0] != "archive/" {
+		t.Errorf("IndexWatch.IgnorePatterns = %v, want [archive/]", cfg.Server.IndexWatch.IgnorePatterns)
+	}
+}
+
+// TestDefaultConfigDisablesIndexWatch pins the opt-in default: the watcher
+// registers one fsnotify watch per directory, and a large brain dir can
+// exhaust the platform's watch limit.
+func TestDefaultConfigDisablesIndexWatch(t *testing.T) {
+	cfg := defaultConfig()
+	if cfg.Server.IndexWatch.Enabled {
+		t.Fatal("default index watch enabled = true, want false")
+	}
+}
+
 // boolPtr is a helper to create *bool values for test expectations.
 func boolPtr(b bool) *bool {
 	return &b

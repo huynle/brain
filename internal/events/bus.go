@@ -32,7 +32,6 @@ type exactSub struct {
 // patternSub holds a handler subscribed via a wildcard pattern.
 type patternSub struct {
 	pattern string
-	prefix  string // precomputed prefix before "*"
 	matchFn func(EventType) bool
 	handler Handler
 }

@@ -1474,19 +1474,6 @@ func (tr *TaskRunner) buildFetchOptions() *TaskFetchOptions {
 // DefaultExecutorName is the executor name used when task.Executor is empty.
 const DefaultExecutorName = "opencode"
 
-// getExecutor returns the executor for the given name, defaulting to "opencode"
-// for empty names. Returns nil if no matching executor is registered.
-func (tr *TaskRunner) getExecutor(name string) TaskExecutor {
-	if tr.executorRegistry != nil {
-		if name == "" {
-			name = DefaultExecutorName
-		}
-		exec, _ := tr.executorRegistry.Get(name)
-		return exec
-	}
-	return tr.executor
-}
-
 // executorNames returns a sorted list of registered executor names.
 func (tr *TaskRunner) executorNames() []string {
 	if tr.executorRegistry != nil {
@@ -1612,7 +1599,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 	// Update task status to in_progress
 	if err := tr.client.UpdateTaskStatus(ctx, task.Path, "in_progress"); err != nil {
 		// Release the claim on failure
-		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Rollback of a claim we already hold. If the release also fails the
+		// lease simply expires on its own, and the caller's error below is
+		// the one that matters.
+		_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		return fmt.Errorf("update task status: %w", err)
 	}
 
@@ -1638,7 +1628,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		if err := tr.hookDispatcher.DispatchPre(evt); err != nil {
 			tr.logger.Printf("pre-task-start hook failed for %s/%s: %v", projectID, task.ID, err)
 			// Release claim and reset status
-			tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+			// Rollback of a claim we already hold. If the release also fails the
+			// lease simply expires on its own, and the caller's error below is
+			// the one that matters.
+			_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 			_ = tr.client.UpdateTaskStatus(ctx, task.Path, "pending")
 			tr.emitEvent(RunnerEvent{
 				Type:       EventTaskStatusChanged,
@@ -1663,7 +1656,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 	// Resolve executor for this task
 	taskExecutor, executorType, err := tr.resolveExecutor(task)
 	if err != nil {
-		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Rollback of a claim we already hold. If the release also fails the
+		// lease simply expires on its own, and the caller's error below is
+		// the one that matters.
+		_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		return fmt.Errorf("resolve executor: %w", err)
 	}
 
@@ -1690,7 +1686,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 			FeatureID: task.FeatureID,
 			Reason:    "workdir resolution failed",
 		})
-		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Rollback of a claim we already hold. If the release also fails the
+		// lease simply expires on its own, and the caller's error below is
+		// the one that matters.
+		_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		_ = tr.client.UpdateTaskStatus(ctx, task.Path, "blocked")
 		return fmt.Errorf("resolve workdir: %w", err)
 	}
@@ -1740,7 +1739,10 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 			FeatureID: task.FeatureID,
 			Reason:    fmt.Sprintf("spawn failed: %v", err),
 		})
-		tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
+		// Rollback of a claim we already hold. If the release also fails the
+		// lease simply expires on its own, and the caller's error below is
+		// the one that matters.
+		_ = tr.client.ReleaseTask(ctx, projectID, task.ID, tr.runnerID)
 		// Roll the task's status back from "in_progress" (set optimistically
 		// at claim time) to "blocked" so it doesn't sit forever waiting on
 		// the orphan reaper. Symmetric with the workdir-failure branch
@@ -2771,17 +2773,19 @@ func (tr *TaskRunner) cleanupTaskTmux(task RunningTask) {
 // state.
 //
 // ProjectID:
-//   ""     → global (all projects)
-//   "foo"  → project foo only
+//
+//	""     → global (all projects)
+//	"foo"  → project foo only
 //
 // Scope:
-//   "" or "all"     → both tasks and automations
-//   "tasks"         → task-pause gate only (dispatch gate)
-//   "automations"   → automation-pause gate only (carve-out)
-//   "runner"        → this runner as a whole; ProjectID is ignored and the
-//                     dial is kept out of the project maps entirely, since
-//                     those are reconciled from GetRunnerStatus (project
-//                     state) and would wipe it on the next poll tick
+//
+//	"" or "all"     → both tasks and automations
+//	"tasks"         → task-pause gate only (dispatch gate)
+//	"automations"   → automation-pause gate only (carve-out)
+//	"runner"        → this runner as a whole; ProjectID is ignored and the
+//	                  dial is kept out of the project maps entirely, since
+//	                  those are reconciled from GetRunnerStatus (project
+//	                  state) and would wipe it on the next poll tick
 //
 // pause=true applies the pause; pause=false applies the resume.
 func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {

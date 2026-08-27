@@ -68,8 +68,9 @@ func (s *StorageLayer) ValidateToken(ctx context.Context, tokenValue string) (*T
 		return nil, fmt.Errorf("validate token: %w", err)
 	}
 
-	// Update last_used asynchronously
-	go s.UpdateTokenLastUsed(context.Background(), t.Name)
+	// Update last_used asynchronously. Telemetry only — a failure must not
+	// affect the validation result the caller already has.
+	go func() { _ = s.UpdateTokenLastUsed(context.Background(), t.Name) }()
 
 	return &t, nil
 }

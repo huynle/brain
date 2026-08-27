@@ -1333,14 +1333,10 @@ func (m *MetadataModal) HandleMouse(msg tea.MouseMsg, x, y int) (bool, tea.Cmd) 
 
 	// Click on a monitor row (Monitors tab)
 	if m.currentTab == MetaTabMonitors && m.hasMonitorRows() {
-		// Monitor rows start after fields + blank line + separator line
-		monitorStartY := fieldStartY + len(m.fieldList)
-		if len(m.fieldList) == 0 {
-			// Monitors tab has no fields, rows start after: blank + separator
-			monitorStartY = fieldStartY + 2 // blank line + separator "── Automated Tasks ──"
-		} else {
-			monitorStartY = fieldStartY + len(m.fieldList) + 2 // fields + blank + separator
-		}
+		// Monitor rows start after fields + blank line + separator
+		// "── Automated Tasks ──". A Monitors tab with no fields lands on the
+		// same offset, so there is no empty-field special case.
+		monitorStartY := fieldStartY + len(m.fieldList) + 2
 
 		monitorRow := y - monitorStartY
 		if monitorRow >= 0 && monitorRow < len(m.monitorTemplates) {

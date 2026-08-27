@@ -2678,8 +2678,8 @@ func (s *BrainServiceImpl) Inject(ctx context.Context, req types.InjectRequest) 
 				content = truncateAtBoundary(content, perEntry)
 				truncated = true
 				contextBuilder.WriteString(content)
-				contextBuilder.WriteString(fmt.Sprintf(
-					"\n\n_[truncated — recall %q for the full entry]_\n", entry.Path))
+				fmt.Fprintf(&contextBuilder,
+					"\n\n_[truncated — recall %q for the full entry]_\n", entry.Path)
 			} else {
 				contextBuilder.WriteString(content)
 				contextBuilder.WriteString("\n")
@@ -3325,26 +3325,6 @@ func fmTriggerFromTypes(t *types.TriggerConfig) *frontmatter.TriggerConfig {
 		return nil
 	}
 	return &frontmatter.TriggerConfig{
-		Type:                   t.Type,
-		Event:                  t.Event,
-		Events:                 t.Events,
-		Schedule:               t.Schedule,
-		Timezone:               t.Timezone,
-		Filter:                 t.Filter,
-		OncePer:                t.OncePer,
-		Webhook:                t.Webhook,
-		IgnoreAutomationEvents: t.IgnoreAutomationEvents,
-		Cooldown:               t.Cooldown,
-		MaxConcurrent:          t.MaxConcurrent,
-	}
-}
-
-// typesTriggerFromFM converts a frontmatter.TriggerConfig to a types.TriggerConfig.
-func typesTriggerFromFM(t *frontmatter.TriggerConfig) *types.TriggerConfig {
-	if t == nil {
-		return nil
-	}
-	return &types.TriggerConfig{
 		Type:                   t.Type,
 		Event:                  t.Event,
 		Events:                 t.Events,

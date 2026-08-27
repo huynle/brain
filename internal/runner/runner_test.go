@@ -820,12 +820,6 @@ func (m *mockStateMgr) LoadRunningTasks() []RunningTask {
 	return nil
 }
 
-func (m *mockStateMgr) getSaveCalls() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.saveCalls
-}
-
 func (m *mockStateMgr) isPidCleared() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -5091,12 +5085,10 @@ func TestTaskRunner_RefreshProjects_ConcurrentReads(t *testing.T) {
 // TestTaskRunner_RefreshProjectsInterval_Config verifies the config field is
 // wired up with the documented default and env-var override behaviour.
 func TestTaskRunner_RefreshProjectsInterval_Config(t *testing.T) {
+	// testRunnerConfig() intentionally leaves ProjectRefreshInterval at 0 (no
+	// zero-value override); the LoadConfig default of 60 is tested separately
+	// in config_test.go.
 	cfg := testRunnerConfig()
-	if cfg.ProjectRefreshInterval != 0 {
-		// testRunnerConfig() intentionally leaves it 0 (no zero-value
-		// override); the LoadConfig default is 60. Tested separately
-		// in config_test.go.
-	}
 
 	// A NewTaskRunner must accept and store the value.
 	cfg.ProjectRefreshInterval = 5

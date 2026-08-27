@@ -318,7 +318,9 @@ func (e *PiExecutor) spawnHeadless(
 	// Send prompt via stdin and close
 	go func() {
 		defer stdin.Close()
-		stdin.Write(promptContent)
+		// A short write means the child died before reading its prompt; that
+		// surfaces as the process exiting, which CheckCompletion handles.
+		_, _ = stdin.Write(promptContent)
 	}()
 
 	// Create process wrapper

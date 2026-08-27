@@ -253,7 +253,7 @@ func (h HelpBar) View(width int, isMultiProject bool, projectName string) string
 	// Focus indicator on the right
 	focusLabel := ""
 	if h.ActivePanel.String() != "unknown" {
-		focusLabel = dim(fmt.Sprintf("Focus: ")) +
+		focusLabel = dim("Focus: ") +
 			lipgloss.NewStyle().Foreground(ColorCyan).Render(h.ActivePanel.String())
 	}
 

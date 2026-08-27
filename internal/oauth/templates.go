@@ -8,14 +8,8 @@ import (
 //go:embed templates/consent.html
 var consentHTML string
 
-//go:embed templates/success.html
-var successHTML string
-
 // consentTmpl is the parsed consent page template.
 var consentTmpl = template.Must(template.New("consent").Parse(consentHTML))
-
-// successTmpl is the parsed success page template.
-var successTmpl = template.Must(template.New("success").Parse(successHTML))
 
 // ScopeInfo describes a scope for display on the consent page.
 type ScopeInfo struct {

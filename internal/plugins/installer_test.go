@@ -3,6 +3,7 @@ package plugins
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -47,8 +48,8 @@ func TestExpandPath(t *testing.T) {
 				if got == tt.path || !filepath.IsAbs(got) {
 					t.Errorf("expandPath(%q) = %q, want absolute path with home directory", tt.path, got)
 				}
-				if got != home && !filepath.HasPrefix(got, home) {
-					t.Errorf("expandPath(%q) = %q, want path starting with %q", tt.path, got, home)
+				if rel, err := filepath.Rel(home, got); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+					t.Errorf("expandPath(%q) = %q, want a path under %q", tt.path, got, home)
 				}
 			} else {
 				if got != tt.path {

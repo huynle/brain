@@ -449,7 +449,9 @@ func (h *Hub) AcquireStream(runnerID, instanceID string) (func(), error) {
 	conn.mu.Unlock()
 
 	if first {
-		conn.send(Frame{Type: FrameStreamOpen, ID: "s:" + instanceID, InstanceID: instanceID})
+		// A send failure surfaces as the bridge connection dropping, which the
+		// read loop already handles; there is no recovery at this call site.
+		_ = conn.send(Frame{Type: FrameStreamOpen, ID: "s:" + instanceID, InstanceID: instanceID})
 	}
 
 	var once sync.Once
@@ -464,7 +466,9 @@ func (h *Hub) AcquireStream(runnerID, instanceID string) (func(), error) {
 			closed := conn.closed
 			conn.mu.Unlock()
 			if last && !closed {
-				conn.send(Frame{Type: FrameStreamClose, ID: "s:" + instanceID, InstanceID: instanceID})
+				// A send failure surfaces as the bridge connection dropping, which the
+				// read loop already handles; there is no recovery at this call site.
+				_ = conn.send(Frame{Type: FrameStreamClose, ID: "s:" + instanceID, InstanceID: instanceID})
 			}
 		})
 	}
@@ -651,7 +655,9 @@ func (c *runnerConn) handleFrame(f Frame) {
 		}
 		c.mu.Unlock()
 		for _, instanceID := range open {
-			c.send(Frame{Type: FrameStreamOpen, ID: "s:" + instanceID, InstanceID: instanceID})
+			// A send failure surfaces as the bridge connection dropping, which the
+			// read loop already handles; there is no recovery at this call site.
+			_ = c.send(Frame{Type: FrameStreamOpen, ID: "s:" + instanceID, InstanceID: instanceID})
 		}
 
 	case FrameRes:

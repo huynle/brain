@@ -382,6 +382,7 @@ func (c *StartCommand) startForeground(pidFile, logFile string) error {
 		JWTSecret:       c.Config.Server.JWTSecret,
 		TaskDefaults:    c.Config.Server.TaskDefaults,
 		FeatureCheckout: c.Config.Server.FeatureCheckout,
+		IndexWatch:      c.Config.Server.IndexWatch,
 		Embedding:       c.Config.Server.Embedding,
 		Attachments:     c.Config.Server.Attachments,
 
@@ -410,7 +411,8 @@ func (c *StartCommand) startForeground(pidFile, logFile string) error {
 	if err := lifecycle.WritePID(pidFile, os.Getpid()); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to write PID file: %v\n", err)
 	} else {
-		defer lifecycle.ClearPID(pidFile)
+		// Best-effort PID-file cleanup on a shutdown path.
+		defer func() { _ = lifecycle.ClearPID(pidFile) }()
 	}
 
 	fmt.Printf("Starting Brain API server on %s:%d\n", opts.Host, opts.Port)
@@ -461,7 +463,8 @@ func (c *StopCommand) Execute() error {
 	// Check if process is running
 	if !lifecycle.IsProcessRunning(pid) {
 		// Clean up stale PID file
-		lifecycle.ClearPID(pidFile)
+		// Best-effort PID-file cleanup on a shutdown path.
+		_ = lifecycle.ClearPID(pidFile)
 		return fmt.Errorf("server not running (stale PID %d)", pid)
 	}
 
@@ -491,7 +494,8 @@ func (c *StopCommand) Execute() error {
 	for time.Now().Before(deadline) {
 		if !lifecycle.IsProcessRunning(pid) {
 			// Process stopped - clean up PID file
-			lifecycle.ClearPID(pidFile)
+			// Best-effort PID-file cleanup on a shutdown path.
+			_ = lifecycle.ClearPID(pidFile)
 			fmt.Println("Server stopped")
 			return nil
 		}
@@ -505,7 +509,8 @@ func (c *StopCommand) Execute() error {
 			return fmt.Errorf("failed to send SIGKILL: %w", err)
 		}
 		time.Sleep(500 * time.Millisecond)
-		lifecycle.ClearPID(pidFile)
+		// Best-effort PID-file cleanup on a shutdown path.
+		_ = lifecycle.ClearPID(pidFile)
 		fmt.Println("Server killed")
 		return nil
 	}

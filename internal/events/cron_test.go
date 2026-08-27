@@ -30,12 +30,6 @@ func (m *mockScheduleSource) ListScheduledEntries(ctx context.Context) ([]Schedu
 	return result, nil
 }
 
-func (m *mockScheduleSource) setEntries(entries []ScheduleEntry) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.entries = entries
-}
-
 func TestCronEmitter_PublishesScheduleFired(t *testing.T) {
 	bus := NewMemoryBus()
 	defer bus.Close()

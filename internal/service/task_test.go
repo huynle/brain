@@ -12,6 +12,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/config"
+	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/internal/types"
 
@@ -40,7 +41,7 @@ func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.StorageLayer, 
 	brainDir := t.TempDir()
 	cfg := &config.Config{BrainDir: brainDir}
 
-	svc := NewTaskService(cfg, store)
+	svc := NewTaskService(cfg, store, indexer.NewIndexer(brainDir, store))
 	return svc, store, brainDir
 }
 
@@ -1864,7 +1865,7 @@ func TestClaimTask_PersistsSurvivesRestart(t *testing.T) {
 
 	// Create a NEW service instance (simulating restart) with same storage
 	cfg := &config.Config{BrainDir: brainDir}
-	svc2 := NewTaskService(cfg, store)
+	svc2 := NewTaskService(cfg, store, indexer.NewIndexer(brainDir, store))
 
 	// Verify the claim persists in the new instance
 	status, err := svc2.GetClaimStatus(ctx, "proj", "task1")
@@ -2112,6 +2113,55 @@ Task content`
 	}
 }
 
+// TestCheckoutFeature_IndexesCheckoutTask is the regression test for a
+// checkout task that existed on disk but not in SQLite.
+//
+// CheckoutFeature writes the file with os.WriteFile and used to stop there, so
+// the new task was absent from search, the link graph, and orphan detection
+// until the next server restart ran the boot indexer. Asserting on the file
+// alone (as the tests above do) cannot see that gap — this one reads the
+// index.
+func TestCheckoutFeature_IndexesCheckoutTask(t *testing.T) {
+	svc, store, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+	projectID := "test-project"
+	featureID := "feature-123"
+
+	taskDir := filepath.Join(brainDir, "projects", projectID, "task")
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		t.Fatalf("failed to create task dir: %v", err)
+	}
+
+	result, err := svc.CheckoutFeature(ctx, projectID, featureID, nil)
+	if err != nil {
+		t.Fatalf("CheckoutFeature failed: %v", err)
+	}
+	if !result.Created || result.Task == nil {
+		t.Fatalf("expected a created checkout task, got %+v", result)
+	}
+
+	row, err := store.GetNoteByPath(ctx, result.Task.Path)
+	if err != nil {
+		t.Fatalf("GetNoteByPath(%q) failed: %v", result.Task.Path, err)
+	}
+	if row == nil {
+		t.Fatalf("checkout task %q is on disk but missing from the index", result.Task.Path)
+	}
+	if row.Title != "Feature checkout: "+featureID {
+		t.Errorf("indexed title = %q, want %q", row.Title, "Feature checkout: "+featureID)
+	}
+
+	// The short ID is what every graph/search lookup resolves against, so it
+	// has to round-trip too.
+	byID, err := store.GetNoteByShortID(ctx, result.Task.ID)
+	if err != nil {
+		t.Fatalf("GetNoteByShortID(%q) failed: %v", result.Task.ID, err)
+	}
+	if byID == nil {
+		t.Errorf("checkout task short ID %q does not resolve in the index", result.Task.ID)
+	}
+}
+
 // TestCheckoutFeature_Idempotency tests that calling CheckoutFeature twice
 // returns the existing task.
 func TestCheckoutFeature_Idempotency(t *testing.T) {
@@ -2282,7 +2332,7 @@ func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsCo
 		TaskDefaults: defaults,
 	}
 
-	svc := NewTaskService(cfg, store)
+	svc := NewTaskService(cfg, store, indexer.NewIndexer(brainDir, store))
 	return svc, store, brainDir
 }
 

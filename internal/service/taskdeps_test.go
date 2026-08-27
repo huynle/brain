@@ -23,12 +23,6 @@ func makeTask(id, title, status, priority string, dependsOn []string) types.Brai
 	}
 }
 
-func makeTaskWithCreated(id, title, status, priority, created string, dependsOn []string) types.BrainEntry {
-	e := makeTask(id, title, status, priority, dependsOn)
-	e.Created = created
-	return e
-}
-
 // ---------------------------------------------------------------------------
 // BuildLookupMaps
 // ---------------------------------------------------------------------------

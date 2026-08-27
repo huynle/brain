@@ -249,7 +249,9 @@ func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("X-Brain-Entry-Tags", strings.Join(entry.Tags, ","))
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(entry.Content))
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write([]byte(entry.Content))
 		return
 	} else if strings.Contains(accept, "text/x-brain-full") {
 		// Return full file content (frontmatter + body)
@@ -262,7 +264,9 @@ func (h *Handler) HandleGetEntry(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Brain-Entry-Id", entry.ID)
 		w.Header().Set("X-Brain-Entry-Path", entry.Path)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(fullContent))
+		// The response is already committed; a write failure here means the
+		// client hung up, and there is no status code left to change.
+		_, _ = w.Write([]byte(fullContent))
 		return
 	}
 

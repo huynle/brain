@@ -107,9 +107,10 @@ func SpawnDetached(cmd *exec.Cmd, stdoutLog, stderrLog string) (int, error) {
 	// Get the PID
 	pid := cmd.Process.Pid
 
-	// Release the process (don't wait for it)
+	// Reap the child so it cannot zombie. The caller detached from it
+	// deliberately, so its exit status is not ours to report.
 	go func() {
-		cmd.Wait()
+		_ = cmd.Wait()
 	}()
 
 	return pid, nil

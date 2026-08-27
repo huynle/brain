@@ -254,8 +254,9 @@ func findBestSplitPoint(text string, start, target int, codeBlocks []codeBlockRa
 			
 			ch := searchText[i]
 			if (ch == ' ' || ch == '\n' || ch == '\t') && !isInsideCodeBlock(absPos, codeBlocks) {
+				// Lowest tier — nothing reads bestPriority past this point,
+				// so it is not updated.
 				bestPos = i + 1
-				bestPriority = 4
 				break
 			}
 		}

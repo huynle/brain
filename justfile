@@ -88,13 +88,21 @@ test-short:
     go test ./... -v -short -count=1
 
 # Run golangci-lint
+#
+# Version must match .github/workflows/go.yml — .golangci.yml uses the v2
+# schema, which v1 cannot read (and vice versa), so a local v1 binary fails
+# with "unsupported version of the configuration" rather than linting.
 lint:
-    @if command -v golangci-lint >/dev/null 2>&1; then \
-        golangci-lint run ./...; \
-    else \
-        echo "golangci-lint not found. Install: go install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.62.2"; \
+    @if ! command -v golangci-lint >/dev/null 2>&1; then \
+        echo "golangci-lint not found. Install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2"; \
         exit 1; \
     fi
+    @if ! golangci-lint version 2>&1 | grep -q 'version v\?2\.'; then \
+        echo "golangci-lint v2 required (CI pins v2.12.2), found: $(golangci-lint version 2>&1 | head -1)"; \
+        echo "Install: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2"; \
+        exit 1; \
+    fi
+    golangci-lint run ./...
 
 # Run go vet (static analysis)
 vet:

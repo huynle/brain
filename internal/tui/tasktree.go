@@ -748,31 +748,6 @@ func (tt *TaskTree) SetTasks(tasks []types.ResolvedTask) {
 	}
 }
 
-// selectFirstTask selects the first task in the grouped view.
-func (tt *TaskTree) selectFirstTask() {
-	if len(tt.groups) == 0 {
-		tt.SelectedID = ""
-		tt.selectedGroupIdx = 0
-		tt.selectedTaskIdx = -1
-		return
-	}
-
-	// Find first non-empty group and auto-select first task
-	for i, group := range tt.groups {
-		if len(group.Tasks) > 0 {
-			tt.selectedGroupIdx = i
-			tt.selectedTaskIdx = 0 // Auto-select first task
-			tt.SelectedID = group.Tasks[0].ID
-			return
-		}
-	}
-
-	// No tasks available
-	tt.SelectedID = ""
-	tt.selectedGroupIdx = 0
-	tt.selectedTaskIdx = -1
-}
-
 // selectFirstFeatureTask selects the first task in feature view mode.
 // restoreFeatureSelection searches the new featureGroups for the previously selected task ID.
 // If found, it restores selectedFeatureIdx, selectedFeatureTaskIdx, and isOnUngrouped.
@@ -2168,58 +2143,6 @@ func (tt *TaskTree) viewGrouped(width, height int, activeProjectID string) strin
 	}
 
 	return strings.Join(lines, "\n")
-}
-
-// renderGroupedTaskLine renders a single task line in grouped view.
-func (tt *TaskTree) renderGroupedTaskLine(task types.ResolvedTask, isSelected bool, selectedTasks map[string]bool, showCheckboxes bool) string {
-	// Selection marker (always 2 spaces for alignment)
-	selMarker := "  "
-
-	// Checkbox indicator (ONLY when multi-select active)
-	checkboxPart := ""
-	if showCheckboxes {
-		checkbox := "[ ]"
-		if selectedTasks[task.ID] {
-			checkbox = "[x]"
-		}
-		checkboxPart = checkbox + " "
-	}
-
-	// Status indicator with color
-	indicator := statusIndicator(task.Status, task.Classification)
-
-	// Title
-	title := task.Title
-
-	// Priority suffix
-	prioritySuffix := ""
-	if task.Priority == "high" {
-		prioritySuffix = "!"
-	}
-
-	// Apply blue background to ALL parts if selected
-	if isSelected {
-		selMarker = SelectedRowStyle.Render(selMarker)
-		checkboxPart = SelectedRowStyle.Render(checkboxPart)
-		indicatorStyled := SelectedRowStyle.Render(indicator)
-		title = SelectedRowStyle.Render(title)
-		prioritySuffix = SelectedRowStyle.Render(prioritySuffix)
-		return fmt.Sprintf("%s%s%s %s%s", selMarker, checkboxPart, indicatorStyled, title, prioritySuffix)
-	}
-
-	// Not selected - apply default styling
-	indicatorStyled := StatusStyleWithState(task.Status, task.Classification).Render(indicator)
-
-	if selectedTasks[task.ID] {
-		// Apply selection style to selected tasks even when not focused
-		title = SelectedTaskStyle.Render(title)
-	}
-
-	if task.Priority == "high" {
-		prioritySuffix = lipgloss.NewStyle().Foreground(ColorPriorityHigh).Bold(true).Render(prioritySuffix)
-	}
-
-	return fmt.Sprintf("%s%s%s %s%s", selMarker, checkboxPart, indicatorStyled, title, prioritySuffix)
 }
 
 // buildFeatureDepAnnotation builds the dependency annotation string for a feature header.
@@ -4130,11 +4053,6 @@ func (tt *TaskTree) clearTerminalSectionNav() {
 	tt.completedTaskIdx = -1
 }
 
-// clearDraftCompletedNav is kept as an alias for backward compatibility.
-func (tt *TaskTree) clearDraftCompletedNav() {
-	tt.clearTerminalSectionNav()
-}
-
 // moveToDraftSection moves cursor to draft section header.
 func (tt *TaskTree) moveToDraftSection() {
 	tt.isOnUngrouped = false
@@ -5211,7 +5129,6 @@ func computeViewportStart(view string, currentStart, selectedLineIdx, totalLines
 		return 0
 	}
 
-	const viewportPadding = 2
 	maxStart := totalLines - height
 	if maxStart < 0 {
 		maxStart = 0

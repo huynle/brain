@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/huynle/brain-api/internal/storage"
 )
 
 // ---------------------------------------------------------------------------
@@ -422,4 +424,69 @@ func TestFileWatcher_DebouncesRapidChanges(t *testing.T) {
 	if countNotes(t, store) != 1 {
 		t.Errorf("DB note count = %d, want 1", countNotes(t, store))
 	}
+}
+
+// TestFileWatcher_DetectsNestedNewDirectory is the regression test for a
+// pulled subtree going unwatched.
+//
+// fsnotify is not recursive: a Create event names one directory, and by the
+// time it is handled the OS has usually already created the rest of the chain
+// and dropped files into it. Adding only the named directory left everything
+// below it invisible — which is the git-pull case this watcher exists for.
+func TestFileWatcher_DetectsNestedNewDirectory(t *testing.T) {
+	store := newTestStorage(t)
+	brainDir := createBrainDir(t, map[string]string{
+		"note1.md": noteContent("Note One"),
+	})
+	idx := NewIndexer(brainDir, store)
+
+	if _, err := idx.RebuildAll(); err != nil {
+		t.Fatalf("RebuildAll failed: %v", err)
+	}
+
+	fw, err := NewFileWatcher(brainDir, idx, &FileWatcherOptions{DebounceMs: 50})
+	if err != nil {
+		t.Fatalf("NewFileWatcher failed: %v", err)
+	}
+	if err := fw.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer fw.Stop()
+
+	// Create the whole chain at once and populate it, the way a git pull
+	// does — none of these directories existed when Start() walked the tree.
+	nested := filepath.Join(brainDir, "projects", "pulled", "note")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "pulled1.md"), []byte(noteContent("Pulled One")), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	waitForNoteCount(t, store, 2)
+
+	// A later write into that same new directory must be picked up too —
+	// proving the directory itself is now watched, not just swept once.
+	if err := os.WriteFile(filepath.Join(nested, "pulled2.md"), []byte(noteContent("Pulled Two")), 0o644); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+
+	waitForNoteCount(t, store, 3)
+}
+
+// waitForNoteCount polls until the DB holds want notes, failing if it never
+// gets there. Directory-create events race with the writes that follow them,
+// so a fixed sleep is either flaky or needlessly slow.
+func waitForNoteCount(t *testing.T, store *storage.StorageLayer, want int) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	var got int
+	for time.Now().Before(deadline) {
+		got = countNotes(t, store)
+		if got == want {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("DB note count = %d, want %d", got, want)
 }

@@ -18,6 +18,7 @@ import { SessionsSection } from "./SessionsSection";
 import { RunnersSection } from "./RunnersSection";
 import { useLive } from "../../lib/sse";
 import { useProjects } from "../../hooks/useProjects";
+import { useEdgeResize } from "../../hooks/useEdgeResize";
 import type { StatusFilter } from "../../store/workspace";
 
 export function Sidebar(): JSX.Element {
@@ -26,6 +27,18 @@ export function Sidebar(): JSX.Element {
   const openModal = useModal((s) => s.open);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const setStatusFilter = useWorkspace((s) => s.setStatusFilter);
+  const setSidebarWidth = useWorkspace((s) => s.setSidebarWidth);
+
+  // ─── right-edge drag-resize ─────────────────────────────────────
+  // The sidebar is anchored to the viewport's LEFT edge, so its width
+  // is simply the pointer's distance from that edge (unlike the
+  // drawer, which is anchored right and has to subtract from
+  // innerWidth).
+  const startResize = useEdgeResize({
+    computeWidth: (clientX) => clientX,
+    onResize: setSidebarWidth,
+    bodyClass: "sidebar-resizing",
+  });
 
   // Subscribe to the live projects map (stable object reference between
   // updates), then derive totals in useMemo so we don't return a fresh
@@ -128,6 +141,8 @@ export function Sidebar(): JSX.Element {
           ⚙
         </button>
       </div>
+
+      <div className="sidebar-resizer" onPointerDown={startResize} />
     </div>
   );
 }

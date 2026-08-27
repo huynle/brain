@@ -38,6 +38,9 @@ export function Dashboard(): JSX.Element {
   const sidebarCollapsed = useWorkspace((s) => s.sidebarCollapsed);
   const setStreaming = useWorkspace((s) => s.setStreaming);
   const theme = useWorkspace((s) => s.theme);
+  const drawer = useWorkspace((s) => s.drawer);
+  const drawerWidth = useWorkspace((s) => s.drawerWidth);
+  const sidebarWidth = useWorkspace((s) => s.sidebarWidth);
   const isMobile = useIsMobile();
 
   const { data: projects, isLoading, error, refetch } = useProjects();
@@ -82,6 +85,16 @@ export function Dashboard(): JSX.Element {
     };
   }, [sidebarCollapsed]);
 
+  // Drives the desktop drawer-as-grid-column layout (see `body.drawer-open
+  // #app` in global.css). Scoped to desktop by CSS (`:not(.mobile)`) —
+  // mobile keeps its fixed-overlay portal regardless of this class.
+  useEffect(() => {
+    document.body.classList.toggle("drawer-open", !!drawer);
+    return () => {
+      document.body.classList.remove("drawer-open");
+    };
+  }, [drawer]);
+
   // Global keyboard shortcuts (⌘K palette, ⌘/ help, etc.)
   useGlobalKeyboard();
 
@@ -109,18 +122,34 @@ export function Dashboard(): JSX.Element {
     return <ErrorState error={error} onRetry={() => void refetch()} />;
   }
 
+  // `--sidebar-w` / `--drawer-w` drive #app's grid-template-columns
+  // (see global.css). Set here, on #app itself, so both the grid
+  // columns AND the drawer's own width (inherited by the <aside> that
+  // Dashboard mounts as a grid child below) read the same values. On
+  // mobile the drawer instead portals to document.body and carries its
+  // own copy of `--drawer-w` inline (see FeatureDrawer.tsx) — these
+  // vars are harmless there since #app's mobile grid never references
+  // them.
+  const appStyle = {
+    ["--sidebar-w" as never]: `${sidebarWidth}px`,
+    ["--drawer-w" as never]: `${drawerWidth}px`,
+  } as React.CSSProperties;
+
   return (
     <>
-      <div id="app">
+      <div id="app" style={appStyle}>
         <Topbar />
         <Sidebar />
         {isMobile && <MobileNav />}
         <Workspace />
         <Statusbar />
+        {/* Direct child of #app so `grid-area: drawer` applies on
+         * desktop. On mobile FeatureDrawer portals itself to
+         * document.body instead — see FeatureDrawer.tsx. */}
+        <FeatureDrawer />
       </div>
       <ModalHost />
       <CommandPalette />
-      <FeatureDrawer />
       <AssistantPanel />
     </>
   );

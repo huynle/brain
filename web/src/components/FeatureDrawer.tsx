@@ -1,23 +1,44 @@
 /**
- * FeatureDrawer — right-side slide-in that hosts EITHER a feature or a
- * task, driven by the `drawer` discriminated union in the workspace
- * store.
+ * FeatureDrawer — right-side panel that hosts a feature, a task, an
+ * entry, or a session, driven by the `drawer` discriminated union in
+ * the workspace store. The drawer IS full detail — there is no more
+ * "Full detail" → Modal hop for feature/task mode; TaskModal/
+ * FeatureModal remain reachable from their other callers (command
+ * palette, context-menu "Open"), but the drawer no longer routes to
+ * them.
  *
- * - Feature mode (double-click a feature) is the original wireframe
- *   port: feature detail, assign, and the member task list.
- * - Task mode (double-click / Enter a task row) shows the same KV
- *   metadata grid + Content body the Task modal renders, with a
- *   "Full detail" button that opens the full Task modal — so the modal
- *   stays reachable while the drawer is the default detail surface.
+ * - Feature mode (double-click a feature): status, assign-to-runner,
+ *   member tasks, and a Goals section (parity with FeatureModal).
+ * - Task mode (double-click / Enter a task row): the same KV metadata
+ *   grid + Sessions list + Content body TaskModal renders. Sessions
+ *   rows "View" INLINE in this drawer (`openSessionInDrawer`), not the
+ *   full-page session view.
+ * - Entry / session mode: dropped in (see below) or, for session,
+ *   opened via the task action context's "Open session in sidebar"
+ *   verb. These render the SAME `EntryLeaf`/`SessionLeaf` components
+ *   the Focus workspace docks — no duplicated rendering logic.
+ *
+ * Drop target: the open drawer accepts a drag of a task / entry /
+ * session (same `readDragPayload`/`endDrag` pattern as FocusPanes.tsx)
+ * and REPLACES its content. When the drawer is closed, a slim overlay
+ * rail on the right edge appears only while a drag is in flight (see
+ * the `!drawer` branch) so the first drop has somewhere to land.
  *
  * The aside is drag-resizable from its LEFT edge; the chosen width is
  * persisted (`drawerWidth` in the store) and applied via a CSS var.
+ *
+ * Mount strategy: on mobile the drawer stays a fixed-position overlay
+ * portaled to `document.body` (unchanged, `.feature-drawer` position:
+ * fixed override under `body.mobile`). On desktop it is NOT portaled —
+ * Dashboard.tsx mounts `<FeatureDrawer/>` as a direct child of `#app`,
+ * and `grid-area: drawer` slots it in as a real, third grid column
+ * that pushes the workspace column aside instead of overlaying it.
  *
  * Hook discipline: EVERY hook runs unconditionally at the top (guarding
  * on `drawer` being null), and only the RENDERED JSX branches on
  * `drawer.kind`. No conditional hook calls.
  */
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { useWorkspace } from "../store/workspace";
 import { useModal } from "../store/modal";
@@ -25,9 +46,19 @@ import { useSelection } from "../store/selection";
 import { useUI } from "../store/ui";
 import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
-import { useRowActions } from "../hooks/useRowActions";
+import { useIsMobile } from "../hooks/useIsMobile";
+import { useEdgeResize } from "../hooks/useEdgeResize";
+import { useRowActions, type RowActionProps } from "../hooks/useRowActions";
 import { useFeatureActionContext } from "../hooks/useFeatureActionContext";
 import { useTaskActionContext } from "../hooks/useTaskActionContext";
+import { useGoals, useGoalProgress } from "../hooks/useGoals";
+import { useGoalActionContext } from "../hooks/useGoalActionContext";
+import {
+  readDragPayload,
+  endDrag,
+  useDragDrop,
+  type DragPayload,
+} from "../hooks/useDragDrop";
 import {
   ApiError,
   assignFeatureToRunner,
@@ -36,12 +67,17 @@ import {
 import { buildFeatureActions } from "../lib/actions/featureActions";
 import { buildSelectionActions } from "../lib/actions/selectionActions";
 import { buildTaskActions } from "../lib/actions/taskActions";
+import { buildGoalActions, goalStatusLabel } from "../lib/actions/goalActions";
 import { taskHoldReason } from "../lib/pause";
 import { usePauseState } from "../hooks/usePauseState";
 import { isRangeKey } from "../lib/selection";
 import { deriveFeatures } from "../lib/features";
+import { historySessionRefs } from "../lib/sessionRef";
 import { TaskKvGrid } from "./Modal/TaskKvGrid";
-import type { Task } from "../lib/types";
+import { SessionsSection } from "./Modal/SessionsSection";
+import { EntryLeaf } from "./Workspace/leaves/EntryLeaf";
+import { SessionLeaf } from "./Workspace/leaves/SessionLeaf";
+import type { GoalSummary, Task } from "../lib/types";
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
 
@@ -53,6 +89,80 @@ const LIFECYCLE_TONE = {
   merged: { tone: "merged", label: "merged" },
 } as const;
 
+/** life-badge tone for a goal status (same classes CardGoals/FeatureModal use). */
+function goalTone(status: string): string {
+  switch (status) {
+    case "active":
+      return "active";
+    case "blocked":
+      return "blocked";
+    case "completed":
+      return "finished";
+    default:
+      return "";
+  }
+}
+
+/**
+ * One goal row with its tiny progress readout — ported from
+ * FeatureModal's GoalRow so the drawer's feature view has parity. A
+ * child component so the per-goal progress query is a hook call per
+ * row, not a hook in a loop.
+ */
+function DrawerGoalRow({
+  goal,
+  onOpen,
+  actionProps,
+}: {
+  goal: GoalSummary;
+  onOpen: () => void;
+  /** Built by the parent's useRowActions so the goal verbs ride the
+   *  drawer's shared overlays — right-click, long-press and keyboard,
+   *  same registry as FeatureModal/CardGoals rows. */
+  actionProps: RowActionProps;
+}): JSX.Element {
+  const { progress } = useGoalProgress(goal.goal_id);
+  const pct =
+    progress && progress.total > 0
+      ? Math.round((progress.completed / progress.total) * 100)
+      : 0;
+  return (
+    <div className="trow" {...actionProps} onClick={onOpen} title={goal.title}>
+      <span className="glyph">◎</span>
+      <span className="name">{goal.title || goal.goal_id}</span>
+      <span
+        className={`life-badge ${goalTone(goal.status)}`}
+        style={{ marginRight: 6 }}
+      >
+        {goalStatusLabel(goal.status)}
+      </span>
+      <span
+        className="bar"
+        style={{
+          width: 60,
+          height: 4,
+          background: "#22272c",
+          borderRadius: 2,
+          overflow: "hidden",
+          flex: "0 0 auto",
+        }}
+        title={
+          progress ? `${progress.completed}/${progress.total} tasks` : undefined
+        }
+      >
+        <i
+          style={{
+            display: "block",
+            height: "100%",
+            width: `${pct}%`,
+            background: "#6fca7d",
+          }}
+        />
+      </span>
+    </div>
+  );
+}
+
 export function FeatureDrawer(): JSX.Element | null {
   const drawer = useWorkspace((s) => s.drawer);
   const close = useWorkspace((s) => s.closeFeatureDrawer);
@@ -61,20 +171,40 @@ export function FeatureDrawer(): JSX.Element | null {
   const assignFeature = useWorkspace((s) => s.assignFeature);
   const unassignFeature = useWorkspace((s) => s.unassignFeature);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
+  const openDrawerFromDrag = useWorkspace((s) => s.openDrawerFromDrag);
   const openModal = useModal((s) => s.open);
   const toast = useUI((s) => s.toast);
   const { runners } = useRunners();
   const { pause } = usePauseState();
+  // Mobile keeps the original fixed-overlay portal; desktop becomes a
+  // real grid column inside #app (see Dashboard.tsx + .feature-drawer
+  // CSS). Both paths share this same component — only the mount
+  // strategy differs.
+  const isMobile = useIsMobile();
   const [assignBusy, setAssignBusy] = useState(false);
   // Archived-tasks fold. Local (not the persisted per-project toggle):
   // the drawer is transient and scoped to one feature, so a sticky
   // cross-feature expansion would surprise more than it helps.
   const [archivedOpen, setArchivedOpen] = useState(false);
+  // Visual feedback for the closed-drawer drop rail (see the `!drawer`
+  // branch below) — mirrors FocusPanes' `dragover` state.
+  const [railHover, setRailHover] = useState(false);
+  // Whether ANY drag is currently in flight, anywhere in the app — the
+  // drop rail only renders while this is true, so it never occupies
+  // permanent screen space.
+  const dragActive = useDragDrop((s) => s.payload !== null);
 
-  const projectId = drawer?.projectId ?? "";
+  // `entry`/`session` drawer kinds carry no projectId (an entry/session
+  // isn't necessarily scoped to a project the way a task/feature is).
+  const projectId =
+    drawer?.kind === "feature" || drawer?.kind === "task"
+      ? drawer.projectId
+      : "";
   const featureCtx = useFeatureActionContext(projectId);
   const taskCtx = useTaskActionContext(projectId);
   const { rowProps, overlays } = useRowActions();
+  const goalCtx = useGoalActionContext();
+  const { forFeature } = useGoals();
 
   // Same selection model as CardTasks: drawer rows carry the Select
   // verb, so they participate in selection mode and shift-click
@@ -90,9 +220,7 @@ export function FeatureDrawer(): JSX.Element | null {
   // Guard against returning a fresh [] on every render when no drawer
   // is open — that triggers zustand "getSnapshot should be cached"
   // and Maximum update depth exceeded.
-  const projectTasks = useLive((s) =>
-    drawer ? s.projects[drawer.projectId]?.tasks : undefined,
-  );
+  const projectTasks = useLive((s) => s.projects[projectId]?.tasks);
   const tasks = projectTasks ?? EMPTY_TASKS;
 
   useEffect(() => {
@@ -105,90 +233,111 @@ export function FeatureDrawer(): JSX.Element | null {
   }, [drawer, close]);
 
   // ─── left-edge drag-resize ────────────────────────────────────────
-  const resizerRef = useRef<HTMLDivElement | null>(null);
-  const startResize = useCallback(
-    (e: React.PointerEvent<HTMLDivElement>) => {
-      e.preventDefault();
-      const handle = e.currentTarget;
-      try {
-        handle.setPointerCapture(e.pointerId);
-      } catch {
-        /* jsdom / non-capturing envs — safe to ignore */
-      }
-      document.body.classList.add("drawer-resizing");
-      handle.classList.add("dragging");
+  // The drawer is anchored to the right edge (fixed on mobile, the
+  // rightmost grid column on desktop), so its width is the distance
+  // from the pointer to the viewport's right edge.
+  const startResize = useEdgeResize({
+    computeWidth: (clientX) => window.innerWidth - clientX,
+    onResize: setDrawerWidth,
+    bodyClass: "drawer-resizing",
+  });
 
-      const onMove = (ev: PointerEvent) => {
-        // The drawer is anchored to the right edge, so its width is the
-        // distance from the pointer to the viewport's right edge.
-        setDrawerWidth(window.innerWidth - ev.clientX);
-      };
-      const onUp = (ev: PointerEvent) => {
-        try {
-          handle.releasePointerCapture(ev.pointerId);
-        } catch {
-          /* ignore */
-        }
-        document.body.classList.remove("drawer-resizing");
-        handle.classList.remove("dragging");
-        window.removeEventListener("pointermove", onMove);
-        window.removeEventListener("pointerup", onUp);
-      };
-      window.addEventListener("pointermove", onMove);
-      window.addEventListener("pointerup", onUp);
-    },
-    [setDrawerWidth],
-  );
-
-  // Belt-and-braces cleanup: if the drawer unmounts mid-drag, drop the
-  // body class so the page doesn't get stuck with col-resize / no-select.
-  useEffect(() => {
-    return () => {
-      if (typeof document !== "undefined") {
-        document.body.classList.remove("drawer-resizing");
-      }
-    };
+  // ─── drop target: the drawer accepts a task / entry / session drag ──
+  // Same readDragPayload/endDrag pattern FocusPanes.tsx uses for its
+  // empty-state drop zone. Dropping on an ALREADY-OPEN drawer replaces
+  // its content; dropping on the closed-drawer rail (rendered in the
+  // `!drawer` branch below) opens it for the first time.
+  const handleDrawerDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
   }, []);
 
-  if (!drawer) return null;
+  const handleDrawerDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      const payload = readDragPayload(e);
+      endDrag();
+      if (!payload) return;
+      if (!isDrawerAcceptedKind(payload.kind)) return;
+      openDrawerFromDrag(payload.kind, payload.target, payload.title);
+    },
+    [openDrawerFromDrag],
+  );
+
+  if (!drawer) {
+    // Nothing to show, and no eligible drag in flight — render nothing
+    // rather than reserve a permanent sliver of screen space.
+    if (isMobile || !dragActive) return null;
+    // A drag IS in flight but the drawer is closed: there's currently
+    // no grid column to drop onto (the CSS only reserves one when
+    // `body.drawer-open`), so this is a fixed-position overlay rail on
+    // the right edge — the "open the first item" drop target.
+    return (
+      <div
+        className={"drawer-drop-rail" + (railHover ? " dragover" : "")}
+        onDragOver={(e) => {
+          handleDrawerDragOver(e);
+          setRailHover(true);
+        }}
+        onDragLeave={() => setRailHover(false)}
+        onDrop={(e) => {
+          setRailHover(false);
+          handleDrawerDrop(e);
+        }}
+        aria-label="Drop here to open in the side panel"
+        title="Drop a task, entry, or session here"
+      />
+    );
+  }
   if (typeof document === "undefined") return null;
 
   const asideStyle = { ["--drawer-w" as never]: `${drawerWidth}px` } as React.CSSProperties;
   const Resizer = (
-    <div
-      ref={resizerRef}
-      className="drawer-resizer"
-      onPointerDown={startResize}
-    />
+    <div className="drawer-resizer" onPointerDown={startResize} />
   );
+  // Mobile: portal to document.body (fixed overlay, unchanged from
+  // before). Desktop: render in place — Dashboard mounts <FeatureDrawer/>
+  // as a direct child of #app so `grid-area: drawer` applies.
+  const wrap = (node: JSX.Element) =>
+    isMobile ? createPortal(node, document.body) : node;
 
   // ─── task mode ────────────────────────────────────────────────────
   if (drawer.kind === "task") {
     const task = tasks.find((t) => t.id === drawer.taskId);
 
     if (!task) {
-      return createPortal(
-        <aside className="feature-drawer" style={asideStyle}>
+      return wrap(
+        <aside
+          className="feature-drawer"
+          style={asideStyle}
+          onDragOver={handleDrawerDragOver}
+          onDrop={handleDrawerDrop}
+        >
           {Resizer}
           <button className="drawer-close" onClick={close}>
             ×
           </button>
           <div style={{ padding: 20 }}>Task not found.</div>
         </aside>,
-        document.body,
       );
     }
 
     const taskActions = buildTaskActions(task, taskCtx);
-    // The drawer is the row's primary click target, so the "why is nothing
-    // happening" answer has to live here too — not only behind Full detail.
+    // The drawer IS full detail now (no more "Full detail" → Modal hop —
+    // see the KV grid, Sessions and Content below), so the "why is
+    // nothing happening" answer has to live here too.
     const hold = taskHoldReason(task, {
       pause,
       projectId: drawer.projectId,
     });
 
-    return createPortal(
-      <aside className="feature-drawer" style={asideStyle}>
+    return wrap(
+      <aside
+        className="feature-drawer"
+        style={asideStyle}
+        onDragOver={handleDrawerDragOver}
+        onDrop={handleDrawerDrop}
+      >
         {Resizer}
         <div className="drawer-head" {...rowProps(taskActions, task.title || task.id)}>
           <div>
@@ -199,20 +348,6 @@ export function FeatureDrawer(): JSX.Element | null {
           </div>
           <button className="drawer-close" onClick={close}>
             ×
-          </button>
-        </div>
-
-        <div className="drawer-actions">
-          <button
-            className="primary"
-            onClick={() =>
-              openModal("task", {
-                projectId: drawer.projectId,
-                taskId: task.id,
-              })
-            }
-          >
-            Full detail
           </button>
         </div>
 
@@ -232,6 +367,20 @@ export function FeatureDrawer(): JSX.Element | null {
           <TaskKvGrid task={task} projectId={drawer.projectId} />
         </div>
 
+        {historySessionRefs(task).length > 0 && (
+          <div className="drawer-section">
+            {/* "View" opens the session INLINE in this same drawer (not
+                the full-page session view) — consistent with the
+                "open-session-sidebar" verb below and with the drawer
+                being full detail now. */}
+            <SessionsSection
+              task={task}
+              projectId={drawer.projectId}
+              onView={(t, ref) => taskCtx.openSessionInDrawer(t, ref)}
+            />
+          </div>
+        )}
+
         {task.content && (
           <div className="drawer-section">
             <h4 className="modal-content-heading">Content</h4>
@@ -241,7 +390,75 @@ export function FeatureDrawer(): JSX.Element | null {
 
         {overlays}
       </aside>,
-      document.body,
+    );
+  }
+
+  // ─── entry mode (dropped from the sidebar / a Focus pane) ──────────
+  // Renders the SAME leaf component the Focus workspace docks — no
+  // duplicated entry-reading logic. `EntryLeaf`'s own "open a link"
+  // handler pushes into Focus (it doesn't know about the drawer), which
+  // is an acceptable seam: navigating an entry-to-entry link is a
+  // heavier action than viewing one, and Focus is where that belongs.
+  if (drawer.kind === "entry") {
+    return wrap(
+      <aside
+        className="feature-drawer"
+        style={asideStyle}
+        onDragOver={handleDrawerDragOver}
+        onDrop={handleDrawerDrop}
+      >
+        {Resizer}
+        <div className="drawer-head">
+          <div>
+            <div className="drawer-kicker">Entry</div>
+          </div>
+          <button className="drawer-close" onClick={close}>
+            ×
+          </button>
+        </div>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <EntryLeaf target={drawer.target} />
+        </div>
+      </aside>,
+    );
+  }
+
+  // ─── session mode (dropped, or opened via "Open session in sidebar") ─
+  if (drawer.kind === "session") {
+    return wrap(
+      <aside
+        className="feature-drawer"
+        style={asideStyle}
+        onDragOver={handleDrawerDragOver}
+        onDrop={handleDrawerDrop}
+      >
+        {Resizer}
+        <div className="drawer-head">
+          <div>
+            <div className="drawer-kicker">Session</div>
+          </div>
+          <button className="drawer-close" onClick={close}>
+            ×
+          </button>
+        </div>
+        <div
+          style={{
+            flex: 1,
+            minHeight: 0,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <SessionLeaf target={drawer.target} />
+        </div>
+      </aside>,
     );
   }
 
@@ -250,19 +467,24 @@ export function FeatureDrawer(): JSX.Element | null {
   const feature = derived.find((f) => f.id === drawer.featureId);
 
   if (!feature) {
-    return createPortal(
-      <aside className="feature-drawer" style={asideStyle}>
+    return wrap(
+      <aside
+        className="feature-drawer"
+        style={asideStyle}
+        onDragOver={handleDrawerDragOver}
+        onDrop={handleDrawerDrop}
+      >
         {Resizer}
         <button className="drawer-close" onClick={close}>
           ×
         </button>
         <div style={{ padding: 20 }}>Feature not found.</div>
       </aside>,
-      document.body,
     );
   }
 
   const tone = LIFECYCLE_TONE[feature.lifecycle];
+  const pct = Math.round(feature.progress * 100);
   const runnerId = featureAssignments[feature.id];
   const runner = runners.find((r) => r.runner_id === runnerId);
   // Archived members fold away, matching the derived feature (which no
@@ -270,7 +492,9 @@ export function FeatureDrawer(): JSX.Element | null {
   const memberTasks = tasks.filter((t) => t.feature_id === feature.id);
   const featureTasks = memberTasks.filter((t) => t.status !== "archived");
   const archivedTasks = memberTasks.filter((t) => t.status === "archived");
+  const abandonedCount = memberTasks.filter((t) => t.is_abandoned).length;
   const actions = buildFeatureActions(feature, featureCtx);
+  const featureGoals = forFeature(drawer.projectId, feature.id);
 
   const selScoped = selProjectId === drawer.projectId;
   const selActive =
@@ -420,8 +644,13 @@ export function FeatureDrawer(): JSX.Element | null {
     }
   };
 
-  return createPortal(
-    <aside className="feature-drawer" style={asideStyle}>
+  return wrap(
+    <aside
+      className="feature-drawer"
+      style={asideStyle}
+      onDragOver={handleDrawerDragOver}
+      onDrop={handleDrawerDrop}
+    >
       {Resizer}
       <div className="drawer-head" {...rowProps(actions, feature.name)}>
         <div>
@@ -435,19 +664,8 @@ export function FeatureDrawer(): JSX.Element | null {
         </button>
       </div>
 
-      <div className="drawer-actions">
-        <button
-          className="primary"
-          onClick={() =>
-            openModal("feature", {
-              projectId: drawer.projectId,
-              featureId: feature.id,
-            })
-          }
-        >
-          Full detail
-        </button>
-        {feature.prUrl && (
+      {feature.prUrl && (
+        <div className="drawer-actions">
           <a
             href={feature.prUrl}
             target="_blank"
@@ -463,8 +681,26 @@ export function FeatureDrawer(): JSX.Element | null {
           >
             Open MR
           </a>
-        )}
-      </div>
+        </div>
+      )}
+
+      {abandonedCount > 0 && (
+        <div
+          role="status"
+          className="life-badge abandoned"
+          style={{
+            display: "block",
+            padding: "6px 10px",
+            fontSize: 12,
+            lineHeight: 1.4,
+          }}
+        >
+          {abandonedCount === 1
+            ? "1 task in this feature looks abandoned"
+            : `${abandonedCount} tasks in this feature look abandoned`}
+          {" — use Resume on the task to recover it."}
+        </div>
+      )}
 
       <div className="drawer-section">
         <h4>Status</h4>
@@ -475,13 +711,42 @@ export function FeatureDrawer(): JSX.Element | null {
           </div>
           <div className="k">Progress</div>
           <div className="v">
-            {feature.taskCount.completed}/{feature.taskCount.total} (
-            {Math.round(feature.progress * 100)}%)
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div
+                className="bar"
+                style={{
+                  width: 80,
+                  height: 6,
+                  background: "#22272c",
+                  borderRadius: 3,
+                  overflow: "hidden",
+                }}
+              >
+                <i
+                  style={{
+                    display: "block",
+                    height: "100%",
+                    width: `${pct}%`,
+                    background: "#6fca7d",
+                  }}
+                />
+              </div>
+              <span>
+                {feature.taskCount.completed}/{feature.taskCount.total} (
+                {pct}%)
+              </span>
+            </div>
           </div>
           <div className="k">Runner</div>
           <div className="v">
             {runner ? runner.runner_id : "unassigned"}
           </div>
+          {feature.mergePolicy && (
+            <>
+              <div className="k">Merge policy</div>
+              <div className="v">{feature.mergePolicy}</div>
+            </>
+          )}
           {feature.finishedAt && (
             <>
               <div className="k">Finished</div>
@@ -554,8 +819,56 @@ export function FeatureDrawer(): JSX.Element | null {
         {archivedOpen && archivedTasks.map(renderTaskRow)}
       </div>
 
+      <div className="drawer-section">
+        <h4>Goals ({featureGoals.length})</h4>
+        {featureGoals.length === 0 && (
+          <div style={{ color: "#6b757e", fontSize: 11 }}>
+            No goals watching this feature.
+          </div>
+        )}
+        {featureGoals.map((g) => (
+          <DrawerGoalRow
+            key={g.goal_id}
+            goal={g}
+            onOpen={() => openModal("goal", { goalId: g.goal_id, projectId: drawer.projectId })}
+            actionProps={rowProps(
+              buildGoalActions(g, goalCtx),
+              g.title || g.goal_id,
+              () =>
+                openModal("goal", {
+                  goalId: g.goal_id,
+                  projectId: drawer.projectId,
+                }),
+            )}
+          />
+        ))}
+        <button
+          className="id"
+          style={{ marginTop: 4, padding: "1px 6px", fontSize: 10 }}
+          onClick={() =>
+            openModal("goal-create", {
+              project: drawer.projectId,
+              featureId: feature.id,
+            })
+          }
+        >
+          Add goal
+        </button>
+      </div>
+
       {overlays}
     </aside>,
-    document.body,
   );
+}
+
+/**
+ * The drawer only understands three drag kinds — everything else
+ * (`logs` / `runners` / `browser` from a Focus-pane drag, or `assign`
+ * from a feature-header→runner drag) stays Focus/runner-only for now.
+ * Mirrors `isLeafKind` in FocusPanes.tsx/PaneLeaf.tsx, narrowed further.
+ */
+function isDrawerAcceptedKind(
+  kind: DragPayload["kind"],
+): kind is "task-detail" | "entry" | "session" {
+  return kind === "task-detail" || kind === "entry" || kind === "session";
 }

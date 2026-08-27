@@ -22,6 +22,7 @@ import {
   useWorkspace,
   WORKSPACE_STORAGE_KEY,
   clampDrawerWidth,
+  clampSidebarWidth,
 } from "./workspace";
 
 // ─── setup ────────────────────────────────────────────────────────────
@@ -52,6 +53,7 @@ function resetStore() {
     statusFilter: "all",
     drawer: null,
     drawerWidth: 430,
+    sidebarWidth: 250,
   });
 }
 
@@ -393,6 +395,89 @@ test("workspace: closeFeatureDrawer clears the drawer regardless of kind", () =>
   assert.equal(useWorkspace.getState().drawer, null);
 });
 
+// ─── drawer: openSessionDrawer / openDrawerFromDrag (drag-drop) ────────
+
+test("workspace: openSessionDrawer opens a session-kind drawer wrapping the ref", () => {
+  resetStore();
+  const ref = {
+    mode: "live" as const,
+    runner_id: "r1",
+    instance_id: "i1",
+    session_id: "s1",
+  };
+  useWorkspace.getState().openSessionDrawer(ref);
+  assert.deepEqual(useWorkspace.getState().drawer, {
+    kind: "session",
+    target: { ref },
+  });
+});
+
+test("workspace: openDrawerFromDrag(task-detail) opens a task-kind drawer", () => {
+  resetStore();
+  useWorkspace.getState().openDrawerFromDrag("task-detail", {
+    projectId: "proj-a",
+    taskId: "task-9",
+  });
+  assert.deepEqual(useWorkspace.getState().drawer, {
+    kind: "task",
+    projectId: "proj-a",
+    taskId: "task-9",
+  });
+});
+
+test("workspace: openDrawerFromDrag(task-detail) is a no-op without projectId/taskId", () => {
+  resetStore();
+  useWorkspace.getState().openDrawerFromDrag("task-detail", {});
+  assert.equal(useWorkspace.getState().drawer, null);
+});
+
+test("workspace: openDrawerFromDrag(entry) opens an entry-kind drawer with the raw target", () => {
+  resetStore();
+  useWorkspace.getState().openDrawerFromDrag("entry", { path: "notes/x.md" });
+  assert.deepEqual(useWorkspace.getState().drawer, {
+    kind: "entry",
+    target: { path: "notes/x.md" },
+  });
+});
+
+test("workspace: openDrawerFromDrag(session) opens a session-kind drawer with the raw target", () => {
+  resetStore();
+  useWorkspace.getState().openDrawerFromDrag("session", {
+    instance_id: "i1",
+    runner_id: "r1",
+  });
+  assert.deepEqual(useWorkspace.getState().drawer, {
+    kind: "session",
+    target: { instance_id: "i1", runner_id: "r1" },
+  });
+});
+
+test("workspace: openDrawerFromDrag ignores Focus-only / assign kinds", () => {
+  for (const kind of ["logs", "runners", "browser", "assign"] as const) {
+    resetStore();
+    useWorkspace.getState().openDrawerFromDrag(kind, { projectId: "proj-a" });
+    assert.equal(
+      useWorkspace.getState().drawer,
+      null,
+      `kind "${kind}" should not open the drawer`,
+    );
+  }
+});
+
+test("workspace: openDrawerFromDrag replaces an already-open drawer", () => {
+  resetStore();
+  useWorkspace.getState().openFeatureDrawer("proj-a", "feat-1");
+  useWorkspace.getState().openDrawerFromDrag("task-detail", {
+    projectId: "proj-a",
+    taskId: "task-2",
+  });
+  assert.deepEqual(useWorkspace.getState().drawer, {
+    kind: "task",
+    projectId: "proj-a",
+    taskId: "task-2",
+  });
+});
+
 // ─── drawer: width state + setter clamp ────────────────────────────────
 
 test("workspace: drawerWidth defaults to 430", () => {
@@ -412,4 +497,46 @@ test("workspace: setDrawerWidth clamps to the [300, 900] range", () => {
   assert.equal(useWorkspace.getState().drawerWidth, 300);
   useWorkspace.getState().setDrawerWidth(5000);
   assert.equal(useWorkspace.getState().drawerWidth, 900);
+});
+
+// ─── sidebar: clampSidebarWidth (pure helper) ──────────────────────────
+
+test("workspace: clampSidebarWidth passes through an in-range value", () => {
+  assert.equal(clampSidebarWidth(300), 300);
+});
+
+test("workspace: clampSidebarWidth floors below the minimum (180)", () => {
+  assert.equal(clampSidebarWidth(50), 180);
+  assert.equal(clampSidebarWidth(-40), 180);
+});
+
+test("workspace: clampSidebarWidth caps above the maximum (480)", () => {
+  assert.equal(clampSidebarWidth(900), 480);
+});
+
+test("workspace: clampSidebarWidth honors explicit bounds", () => {
+  assert.equal(clampSidebarWidth(50, 100, 200), 100);
+  assert.equal(clampSidebarWidth(999, 100, 200), 200);
+  assert.equal(clampSidebarWidth(150, 100, 200), 150);
+});
+
+// ─── sidebar: width state + setter clamp ───────────────────────────────
+
+test("workspace: sidebarWidth defaults to 250", () => {
+  resetStore();
+  assert.equal(useWorkspace.getState().sidebarWidth, 250);
+});
+
+test("workspace: setSidebarWidth stores an in-range width", () => {
+  resetStore();
+  useWorkspace.getState().setSidebarWidth(320);
+  assert.equal(useWorkspace.getState().sidebarWidth, 320);
+});
+
+test("workspace: setSidebarWidth clamps to the [180, 480] range", () => {
+  resetStore();
+  useWorkspace.getState().setSidebarWidth(50);
+  assert.equal(useWorkspace.getState().sidebarWidth, 180);
+  useWorkspace.getState().setSidebarWidth(5000);
+  assert.equal(useWorkspace.getState().sidebarWidth, 480);
 });

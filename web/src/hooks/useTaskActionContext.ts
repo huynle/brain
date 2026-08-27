@@ -56,6 +56,7 @@ export function useTaskActionContextFactory(): (
   const closeModal = useModal((s) => s.close);
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const openSessionRef = useWorkspace((s) => s.openSessionRef);
+  const openSessionDrawer = useWorkspace((s) => s.openSessionDrawer);
   const setSteerIntent = useWorkspace((s) => s.setSteerIntent);
   const toast = useUI((s) => s.toast);
   // Instance registry for the live-session query. Poll-backed (8s); the
@@ -211,6 +212,15 @@ export function useTaskActionContextFactory(): (
         openSessionRef(ref);
       },
 
+      // "Open in sidebar" — inline in the drawer, not a full-page nav.
+      // Closing the modal mirrors the other session verbs above: if this
+      // was invoked from an open modal, the drawer should replace it
+      // rather than stack behind it.
+      openSessionInDrawer: (_task: Task, ref: SessionRef) => {
+        closeModal();
+        openSessionDrawer(ref);
+      },
+
       continueSession: async (task: Task, ref: SessionRef) => {
         if (ref.mode !== "history") return;
         const title = `continue: ${task.title || task.id}`;
@@ -254,6 +264,7 @@ export function useTaskActionContextFactory(): (
       closeModal,
       openInFocus,
       openSessionRef,
+      openSessionDrawer,
       setSteerIntent,
       toast,
       allInstances,

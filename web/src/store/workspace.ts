@@ -68,12 +68,18 @@ export type StatusFilter =
  * Discriminated union describing what the right-side drawer is showing.
  * A `feature` drawer renders feature detail + its task list; a `task`
  * drawer renders the same KV metadata + Content body the Task modal
- * shows. `null` = closed. Kept transient (not persisted), matching the
- * prior `featureDrawer` behavior.
+ * shows. `entry` and `session` drop-target modes render the SAME leaf
+ * components the Focus workspace docks (`EntryLeaf` / `SessionLeaf`) —
+ * `target` is deliberately typed identically to `DockLeaf["target"]` so
+ * those components can be reused verbatim instead of duplicating their
+ * rendering logic. `null` = closed. Kept transient (not persisted),
+ * matching the prior `featureDrawer` behavior.
  */
 export type DrawerState =
   | { kind: "feature"; projectId: string; featureId: string }
-  | { kind: "task"; projectId: string; taskId: string };
+  | { kind: "task"; projectId: string; taskId: string }
+  | { kind: "entry"; target: Record<string, unknown> }
+  | { kind: "session"; target: Record<string, unknown> };
 
 /**
  * Clamp a requested drawer width (px) into a usable range. Pure so the
@@ -84,6 +90,20 @@ export function clampDrawerWidth(
   px: number,
   min = 300,
   max = 900,
+): number {
+  if (!Number.isFinite(px)) return min;
+  return Math.min(max, Math.max(min, px));
+}
+
+/**
+ * Clamp a requested sidebar width (px) into a usable range. Mirrors
+ * `clampDrawerWidth` — same shape, same reasoning. Defaults to
+ * [180, 480], centered on the historical fixed 250px sidebar.
+ */
+export function clampSidebarWidth(
+  px: number,
+  min = 180,
+  max = 480,
 ): number {
   if (!Number.isFinite(px)) return min;
   return Math.min(max, Math.max(min, px));
@@ -114,6 +134,8 @@ export interface WorkspaceState {
   drawer: DrawerState | null;
   /** Persisted drawer width in px, clamped via `clampDrawerWidth`. */
   drawerWidth: number;
+  /** Persisted sidebar width in px, clamped via `clampSidebarWidth`. */
+  sidebarWidth: number;
   /** User theme preference. `system` follows `prefers-color-scheme`. */
   theme: "dark" | "light" | "system";
   mobile: boolean;
@@ -151,8 +173,28 @@ export interface WorkspaceState {
   toggleCommand(): void;
   openFeatureDrawer(projectId: string, featureId: string): void;
   openTaskDrawer(projectId: string, taskId: string): void;
+  /** Open a session (live or recorded) inline in the drawer. The one
+   *  place a `{kind:"session",...}` DrawerState is constructed from a
+   *  SessionRef directly — used by the task action context's "open in
+   *  sidebar" verb and the drawer's own Sessions list. */
+  openSessionDrawer(ref: SessionRef): void;
+  /**
+   * Map a drag payload (from `hooks/useDragDrop`) onto the drawer.
+   * Accepts a Focus-leaf kind (`DockLeaf["kind"]`) or the feature-header
+   * "assign" kind, but only `task-detail` / `entry` / `session` actually
+   * open the drawer — `logs` / `runners` / `browser` / `assign` are
+   * ignored (Focus-only for now). This is the drop handler both the
+   * drawer's own drop-to-replace surface and the closed-drawer drop
+   * rail call.
+   */
+  openDrawerFromDrag(
+    kind: DockLeaf["kind"] | "assign",
+    target: Record<string, unknown>,
+    title?: string,
+  ): void;
   closeFeatureDrawer(): void;
   setDrawerWidth(px: number): void;
+  setSidebarWidth(px: number): void;
   setTheme(t: "dark" | "light" | "system"): void;
   cycleTheme(): void;
   setMobile(m: boolean): void;
@@ -247,6 +289,7 @@ export const useWorkspace = create<WorkspaceState>()(
       commandOpen: false,
       drawer: null,
       drawerWidth: 430,
+      sidebarWidth: 250,
       theme: "dark",
       mobile: false,
       streaming: false,
@@ -293,8 +336,33 @@ export const useWorkspace = create<WorkspaceState>()(
         set({ drawer: { kind: "feature", projectId, featureId } }),
       openTaskDrawer: (projectId, taskId) =>
         set({ drawer: { kind: "task", projectId, taskId } }),
+      openSessionDrawer: (ref) =>
+        set({ drawer: { kind: "session", target: { ref } } }),
+      openDrawerFromDrag: (kind, target) => {
+        if (kind === "task-detail") {
+          const projectId = (target.projectId as string | undefined) ?? "";
+          const taskId =
+            (target.taskId as string | undefined) ??
+            (target.id as string | undefined) ??
+            "";
+          if (!projectId || !taskId) return;
+          set({ drawer: { kind: "task", projectId, taskId } });
+          return;
+        }
+        if (kind === "entry") {
+          set({ drawer: { kind: "entry", target } });
+          return;
+        }
+        if (kind === "session") {
+          set({ drawer: { kind: "session", target } });
+          return;
+        }
+        // "logs" | "runners" | "browser" | "assign" — Focus-only for
+        // now; the drawer silently ignores drops it can't render.
+      },
       closeFeatureDrawer: () => set({ drawer: null }),
       setDrawerWidth: (px) => set({ drawerWidth: clampDrawerWidth(px) }),
+      setSidebarWidth: (px) => set({ sidebarWidth: clampSidebarWidth(px) }),
 
       setTheme: (theme) => set({ theme }),
       cycleTheme: () =>
@@ -472,6 +540,7 @@ export const useWorkspace = create<WorkspaceState>()(
         dockTree: s.dockTree,
         lastFocusLeafId: s.lastFocusLeafId,
         drawerWidth: s.drawerWidth,
+        sidebarWidth: s.sidebarWidth,
       }),
       storage: createJSONStorage(() => safeStorage() ?? noopStorage),
       version: 1,

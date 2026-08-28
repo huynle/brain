@@ -63,6 +63,10 @@ function recorder(over: Partial<TaskActionContext> = {}) {
       void calls.push(
         `continue:${t.id}:${ref.mode === "history" ? ref.session_id : "?"}`,
       ),
+    openSessionInDrawer: (t, ref) =>
+      void calls.push(
+        `open-session-sidebar:${t.id}:${ref.mode === "history" ? ref.session_id : "live"}`,
+      ),
     ...over,
   };
   return { calls, ctx };
@@ -629,6 +633,40 @@ test("transcript: recorded sessions win even on a pi-labeled task", () => {
     ctx,
   ).get("transcript")!;
   assert.equal(isEnabled(a), true);
+});
+
+// ─── open-session-sidebar (drawer verb — "either works") ────────────
+
+test("open-session-sidebar: prefers the live ref when the task is running", async () => {
+  const { calls, ctx } = recorder({
+    liveSessionRef: () => LIVE_REF,
+  });
+  const a = byId(
+    mkTask({ status: "in_progress", ...RECORDED }),
+    ctx,
+  ).get("open-session-sidebar")!;
+  assert.equal(isEnabled(a), true);
+  await a.run();
+  assert.deepEqual(calls, ["open-session-sidebar:t1:live"]);
+});
+
+test("open-session-sidebar: falls back to the newest recorded session", async () => {
+  const { calls, ctx } = recorder();
+  const a = byId(
+    mkTask({ status: "completed", ...RECORDED }),
+    ctx,
+  ).get("open-session-sidebar")!;
+  assert.equal(isEnabled(a), true);
+  await a.run();
+  assert.deepEqual(calls, ["open-session-sidebar:t1:ses_new"]);
+});
+
+test("open-session-sidebar: disabled only when neither a live nor a recorded session exists", () => {
+  const { ctx } = recorder();
+  const a = byId(mkTask({ status: "pending" }), ctx).get(
+    "open-session-sidebar",
+  )!;
+  assert.match(a.disabledReason ?? "", /No session/);
 });
 
 // ─── steer / continue (session verbs) ───────────────────────────────

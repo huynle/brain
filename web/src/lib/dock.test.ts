@@ -12,8 +12,10 @@ import { test } from "node:test";
 
 import {
   addLeafAtEdge,
+  addNodeAtEdge,
   findNodeInfo,
   firstLeaf,
+  isDockLeafKind,
   moveLeaf,
   newLeafNode,
   removeNode,
@@ -37,6 +39,42 @@ function assertLeaf(node: DockNode | undefined, title: string): void {
   if (node!.type === "leaf") {
     assert.equal(node.leaf.title, title);
   }
+}
+
+function titles(tree: DockNode): string[] {
+  const out: string[] = [];
+  walkLeaves(tree, (l) => out.push(l.title));
+  return out;
+}
+
+/**
+ * Build `split(row)[ tabs[A, B], D ]` — the shape a dock reaches as
+ * soon as it holds three things, and the one every drop used to be
+ * silently discarded by (see the tabs-strip tests below). Returns the
+ * tree plus the ids a drop target would actually carry: `PaneTabs`
+ * renders `<PaneLeaf id={activeTab.id}/>`, so drop zones are stamped
+ * with a LEAF id inside the strip, never the strip's own id.
+ */
+function tabsInSplit(): {
+  tree: DockNode;
+  tabsId: string;
+  aId: string;
+  bId: string;
+  dId: string;
+} {
+  const a = newLeafNode(mkLeaf("A"));
+  const tabs = addLeafAtEdge(a, a.id, "center", mkLeaf("B")); // tabs [A, B]
+  const tree = addLeafAtEdge(tabs, tabs.id, "right", mkLeaf("D"));
+  if (tree.type !== "split") throw new Error("expected split");
+  const tabsNode = tree.children[0];
+  if (tabsNode.type !== "tabs") throw new Error("expected tabs");
+  return {
+    tree,
+    tabsId: tabsNode.id,
+    aId: tabsNode.children[0].id,
+    bId: tabsNode.children[1].id,
+    dId: tree.children[1].id,
+  };
 }
 
 // ─── 1. newLeafNode ───────────────────────────────────────────────────
@@ -312,6 +350,150 @@ test("dock: replaceNode swaps subtree in place", () => {
 });
 
 // ─── extra: nested add/remove smoke ──────────────────────────────────
+
+// ─── regression: inserting AT a leaf that lives inside a tabs strip ───
+// `replaceNode` can only substitute a tab child with another LEAF, but
+// every shape `addNodeAtEdge` builds is a container. It used to hand
+// one over anyway and the insertion was silently dropped — so once a
+// dock held two items (i.e. was a tab strip) EVERY drop zone on it, and
+// every "open in sidebar", stopped doing anything at all.
+
+test("dock: addLeafAtEdge — center on a leaf inside tabs appends to that strip", () => {
+  const { tree, aId, dId } = tabsInSplit();
+  const next = addLeafAtEdge(tree, aId, "center", mkLeaf("NEW"));
+
+  assert.deepEqual(titles(next), ["A", "B", "NEW", "D"]);
+  if (next.type !== "split") return assert.fail("expected split root");
+  const strip = next.children[0];
+  assert.equal(strip.type, "tabs");
+  if (strip.type === "tabs") {
+    assert.equal(strip.children.length, 3);
+    assert.equal(strip.children[2].leaf.title, "NEW");
+    // The freshly added tab is the one you see.
+    assert.equal(strip.activeIdx, 2);
+  }
+  // The sibling pane is untouched, id and all.
+  assert.equal(next.children[1].id, dId);
+});
+
+test("dock: addLeafAtEdge — an edge on a leaf inside tabs splits the whole strip", () => {
+  for (const edge of ["left", "right", "top", "bottom"] as const) {
+    const { tree, aId, tabsId } = tabsInSplit();
+    const next = addLeafAtEdge(tree, aId, edge, mkLeaf("NEW"));
+
+    assert.equal(titles(next).length, 4, `${edge}: NEW must be present`);
+    assert.ok(titles(next).includes("NEW"), `${edge}: NEW must be present`);
+    if (next.type !== "split") return assert.fail("expected split root");
+    const wrapper = next.children[0];
+    assert.equal(wrapper.type, "split", `${edge}: strip should be wrapped`);
+    if (wrapper.type !== "split") return;
+    assert.equal(wrapper.dir, edge === "left" || edge === "right" ? "row" : "col");
+    // The strip itself survives intact as one side of the new split —
+    // "beside the tab I'm looking at" means beside its whole group.
+    const newFirst = edge === "left" || edge === "top";
+    const stripSide = wrapper.children[newFirst ? 1 : 0];
+    const newSide = wrapper.children[newFirst ? 0 : 1];
+    assert.equal(stripSide.id, tabsId, `${edge}: strip kept its identity`);
+    assertLeaf(newSide, "NEW");
+  }
+});
+
+// ─── addNodeAtEdge: the caller keeps the new node's id ───────────────
+
+test("dock: addNodeAtEdge places the caller's own node, id intact", () => {
+  const { tree, dId } = tabsInSplit();
+  const node = newLeafNode(mkLeaf("NEW"));
+
+  const next = addNodeAtEdge(tree, dId, "bottom", node);
+  const found = findNodeInfo(next, node.id);
+  assert.ok(found, "the caller's id must address the placed node");
+  assert.equal(found!.node.type, "leaf");
+  if (found!.node.type === "leaf") {
+    assert.equal(found!.node.leaf.title, "NEW");
+  }
+});
+
+test("dock: addNodeAtEdge on a missing target returns the identical tree", () => {
+  const { tree } = tabsInSplit();
+  const next = addNodeAtEdge(tree, "leaf_gone", "left", newLeafNode(mkLeaf("N")));
+  assert.equal(next, tree, "no-op must be reference-equal so stores can detect it");
+});
+
+// ─── regression: moveLeaf must never lose the pane it is moving ───────
+// moveLeaf is remove-then-add. Before the tabs fix its add step no-opped
+// against any tabbed target, so the already-removed pane vanished for
+// good — silent, unrecoverable data loss on a routine drag.
+
+test("dock: moveLeaf onto a leaf inside tabs preserves the moved pane, every edge", () => {
+  for (const edge of ["center", "left", "right", "top", "bottom"] as const) {
+    const { tree, aId, dId } = tabsInSplit();
+    const moved = moveLeaf(tree, dId, aId, edge);
+    assert.deepEqual(
+      titles(moved).sort(),
+      ["A", "B", "D"],
+      `${edge}: no pane may be created or destroyed`,
+    );
+    assert.ok(findNodeInfo(moved, dId), `${edge}: the moved pane keeps its id`);
+  }
+});
+
+test("dock: moveLeaf preserves the leaf count across every edge and target", () => {
+  const { tree, tabsId, aId, bId, dId } = tabsInSplit();
+  for (const targetId of [tabsId, aId, bId, dId, tree.id]) {
+    for (const source of [aId, bId, dId]) {
+      for (const edge of ["center", "left", "right", "top", "bottom"] as const) {
+        const moved = moveLeaf(tree, source, targetId, edge);
+        assert.equal(
+          titles(moved).length,
+          3,
+          `source=${source} target=${targetId} edge=${edge} changed the leaf count`,
+        );
+      }
+    }
+  }
+});
+
+test("dock: moveLeaf retargets to the survivor when the target collapses", () => {
+  // PaneTabs' "Split right" verb: move a tab out of its own 2-tab strip,
+  // targeting the STRIP. Removing the source collapses the strip into
+  // its sibling, so the target id no longer exists. Falling back to the
+  // root (the old behaviour) flung the pane to the far edge of the whole
+  // dock and reparented everything else; it must land beside its former
+  // tab-mate instead.
+  const { tree, tabsId, aId, dId } = tabsInSplit();
+  const moved = moveLeaf(tree, aId, tabsId, "right");
+
+  assert.equal(moved.type, "split");
+  if (moved.type !== "split") return;
+  // D keeps its slot in the outer split — it was never involved.
+  assert.equal(moved.children[1].id, dId);
+  const inner = moved.children[0];
+  assert.equal(inner.type, "split", "A should sit beside B, not beside the root");
+  if (inner.type !== "split") return;
+  assert.equal(inner.dir, "row");
+  assertLeaf(inner.children[0], "B");
+  assertLeaf(inner.children[1], "A");
+});
+
+// ─── isDockLeafKind ──────────────────────────────────────────────────
+
+test("dock: isDockLeafKind accepts every leaf kind and rejects assign", () => {
+  for (const kind of [
+    "task-detail",
+    "feature-detail",
+    "logs",
+    "session",
+    "runners",
+    "browser",
+    "entry",
+  ]) {
+    assert.equal(isDockLeafKind(kind), true, `${kind} should be a leaf kind`);
+  }
+  // The feature→runner drag payload. Drop targets gate their zones on
+  // this, so a mistake here means panes advertise a drop they refuse.
+  assert.equal(isDockLeafKind("assign"), false);
+  assert.equal(isDockLeafKind(""), false);
+});
 
 test("dock: moving one of three siblings between panes keeps other two intact", () => {
   const a = newLeafNode(mkLeaf("A"));

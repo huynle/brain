@@ -2,13 +2,17 @@
  * panes-v2 TaskDetailLeaf.
  *
  * Renders the same information as `TaskModal` (read-only KV grid),
- * but embedded inside a focus pane instead of a modal shell.
+ * plus recorded Sessions and the Content body — the same three pieces
+ * the old single-item `FeatureDrawer` (now `SidebarDock.tsx`) showed
+ * for its task view — embedded inside a pane instead of a modal shell.
  *
  * NOTE: We currently duplicate the KV-pair builder from
  * `Modal/TaskModal.tsx` rather than extracting a shared
  * `TaskDetailView` component. Phase 7 focuses on the docking
  * infrastructure — the shared-view refactor is a low-risk follow-up
- * and is tracked in `docs/panes-v2-followups.md`.
+ * and is tracked in `docs/panes-v2-followups.md`. `SessionsSection` and
+ * the Content `<pre>` ARE already shared pieces (with TaskModal), so
+ * those are reused verbatim rather than re-duplicated here.
  */
 import React, { useMemo } from "react";
 
@@ -16,9 +20,13 @@ import { KV } from "../../common/KV";
 import { Chip } from "../../common/Chip";
 import { Dot, type DotVariant } from "../../common/Dot";
 import { ErrorState } from "../../common/ErrorState";
+import { SessionsSection } from "../../Modal/SessionsSection";
 
 import { useModal } from "../../../store/modal";
 import { useLive } from "../../../lib/sse";
+import { useTaskActionContext } from "../../../hooks/useTaskActionContext";
+import { usePauseState } from "../../../hooks/usePauseState";
+import { taskHoldReason } from "../../../lib/pause";
 import type { Task, TaskStatus } from "../../../lib/types";
 
 function taskDotVariant(status: TaskStatus): DotVariant {
@@ -51,6 +59,8 @@ export function TaskDetailLeaf({
   const task = useLive((s) =>
     s.projects[projectId]?.tasks.find((t) => t.id === taskId),
   );
+  const taskCtx = useTaskActionContext(projectId);
+  const { pause } = usePauseState();
 
   const pairs = useMemo(
     () => (task ? buildKvPairs(task, projectId, openModal) : []),
@@ -65,6 +75,8 @@ export function TaskDetailLeaf({
       />
     );
   }
+
+  const hold = taskHoldReason(task, { pause, projectId });
 
   return (
     <div>
@@ -81,7 +93,32 @@ export function TaskDetailLeaf({
         <Dot variant={taskDotVariant(task.status)} title={task.status} />
         <strong>{task.title || `Task: ${task.id}`}</strong>
       </div>
+
+      {hold && (
+        <div className={`hold-banner ${hold.code}`} style={{ marginBottom: 10 }}>
+          <b>{hold.glyph} Held — not dispatching.</b> {hold.detail}
+        </div>
+      )}
+
       <KV pairs={pairs} />
+
+      {/* "View" opens the session INLINE in the sidebar dock (not the
+          full-page session view) — same verb the task's context menu
+          offers as "Open session in sidebar". */}
+      <div style={{ marginTop: "var(--p2-space-3)" }}>
+        <SessionsSection
+          task={task}
+          projectId={projectId}
+          onView={(t, ref) => taskCtx.openSessionInDrawer(t, ref)}
+        />
+      </div>
+
+      {task.content && (
+        <div style={{ marginTop: "var(--p2-space-3)" }}>
+          <h4 className="modal-content-heading">Content</h4>
+          <pre className="modal-content-pre">{task.content}</pre>
+        </div>
+      )}
     </div>
   );
 }

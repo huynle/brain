@@ -24,7 +24,14 @@
 // ─── types ────────────────────────────────────────────────────────────
 
 export interface DockLeaf {
-  kind: "task-detail" | "logs" | "session" | "runners" | "browser" | "entry";
+  kind:
+    | "task-detail"
+    | "feature-detail"
+    | "logs"
+    | "session"
+    | "runners"
+    | "browser"
+    | "entry";
   target: Record<string, unknown>;
   title: string;
 }
@@ -47,6 +54,32 @@ export type DockNode =
 
 export type Edge = "left" | "right" | "top" | "bottom" | "center";
 
+/** A `DockNode` narrowed to the leaf arm. Callers that mint their own
+ *  node (so they can keep its id) hand one of these to `addNodeAtEdge`. */
+export type DockLeafNode = Extract<DockNode, { type: "leaf" }>;
+
+/**
+ * Runtime predicate for `DockLeaf["kind"]`.
+ *
+ * Drop targets use it to decide whether a drag payload can become a
+ * pane at all — the feature→runner "assign" payload cannot. Exported so
+ * `PaneLeaf`, `PaneTabs`, `FocusPanes` and `SidebarDock` share ONE list
+ * instead of hand-maintained copies, which had already drifted:
+ * FocusPanes' copy was missing "feature-detail" and "entry", so those
+ * panes could be dropped onto a populated Focus tab but not an empty one.
+ */
+export function isDockLeafKind(kind: string): kind is DockLeaf["kind"] {
+  return (
+    kind === "task-detail" ||
+    kind === "feature-detail" ||
+    kind === "logs" ||
+    kind === "session" ||
+    kind === "runners" ||
+    kind === "browser" ||
+    kind === "entry"
+  );
+}
+
 // ─── ids ──────────────────────────────────────────────────────────────
 
 /**
@@ -66,7 +99,7 @@ function nextId(prefix: string): string {
 
 // ─── constructors ─────────────────────────────────────────────────────
 
-export function newLeafNode(leaf: DockLeaf): DockNode {
+export function newLeafNode(leaf: DockLeaf): DockLeafNode {
   return { type: "leaf", id: nextId("leaf"), leaf };
 }
 
@@ -176,10 +209,13 @@ export function replaceNode(
       children: tree.children.map((c) => replaceNode(c, oldNodeId, newNode)),
     };
   }
-  // tabs: children are strictly leaves. If the replacement is not a
-  // leaf, we can't slot it into the tabs list — bail with the
-  // original tree. (Callers shouldn't hit this branch; they use
-  // moveLeaf which decomposes moves into remove+add.)
+  // tabs: children are strictly leaves, so a non-leaf replacement has
+  // nowhere to go and is dropped. That silent discard used to be a
+  // data-loss path: `addLeafAtEdge` always builds a container (tabs or
+  // split) and handed it straight here whenever its target was a leaf
+  // inside a strip, so every insertion into a tabbed pane vanished.
+  // `addNodeAtEdge` now retargets to the strip itself and never asks
+  // for the impossible; this branch is a type-level backstop only.
   const replaced = tree.children.map((c) => {
     if (c.id === oldNodeId && newNode.type === "leaf") return newNode;
     return c;
@@ -188,25 +224,42 @@ export function replaceNode(
 }
 
 /**
- * Insert `newLeaf` at the requested edge of the node with id
- * `targetId`. All edges wrap the target into a split except `center`,
- * which merges into (or creates) a tabs stack.
+ * Insert an already-minted `leafNode` at the requested edge of the node
+ * with id `targetId`. All edges wrap the target into a split except
+ * `center`, which merges into (or creates) a tabs stack.
+ *
+ * The caller owns the node, and therefore knows its id. That matters
+ * for the store: `openInFocusAt`/`openInSidebarAt` have to record the
+ * new leaf in `lastFocusLeafId`/`lastSidebarLeafId`, and the only other
+ * way to learn an id minted inside this module would be to diff the
+ * before/after trees. `addLeafAtEdge` is the id-blind wrapper over this.
  */
-export function addLeafAtEdge(
+export function addNodeAtEdge(
   tree: DockNode,
   targetId: string,
   edge: Edge,
-  newLeaf: DockLeaf,
+  leafNode: DockLeafNode,
 ): DockNode {
   const info = findNodeInfo(tree, targetId);
   if (!info) return tree; // target vanished — no-op
 
-  const target = info.node;
-  const leafNode = newLeafNode(newLeaf) as {
-    type: "leaf";
-    id: string;
-    leaf: DockLeaf;
-  };
+  // A leaf that lives inside a tabs strip cannot be substituted in
+  // place: `replaceNode`'s tabs branch only accepts another LEAF, and
+  // every shape built below is a container. Handing one over anyway
+  // rebuilt the tree with the insertion silently dropped — which is
+  // what made EVERY drop zone stop working once a dock held two items
+  // (two items is a tab strip, and `PaneTabs` renders the drop zones
+  // against the active tab's LEAF id, never the strip's).
+  //
+  // Retarget to the strip. That is also the semantically right answer:
+  // a strip holds leaves, so "put this beside the tab I'm looking at"
+  // means splitting the whole strip, and "put this in the middle of it"
+  // means appending a tab.
+  const target =
+    info.parent !== null && info.parent.type === "tabs"
+      ? info.parent
+      : info.node;
+  const anchorId = target.id;
 
   if (edge === "center") {
     // Merge into (or create) tabs.
@@ -217,14 +270,15 @@ export function addLeafAtEdge(
         children: nextChildren,
         activeIdx: nextChildren.length - 1,
       };
-      return replaceNode(tree, targetId, nextTabs);
+      return replaceNode(tree, anchorId, nextTabs);
     }
     if (target.type === "leaf") {
       const tabsNode = newTabs([target, leafNode], 1);
-      return replaceNode(tree, targetId, tabsNode);
+      return replaceNode(tree, anchorId, tabsNode);
     }
     // Split: fall through — dropping "center" on a split isn't
-    // meaningful in the current UI. Do nothing.
+    // meaningful in the current UI. Do nothing. `moveLeaf` guards
+    // against this no-op eating the pane it already removed.
     return tree;
   }
 
@@ -234,7 +288,21 @@ export function addLeafAtEdge(
   const newFirst = edge === "left" || edge === "top";
   const children = newFirst ? [leafNode, target] : [target, leafNode];
   const split = newSplit(dir, children, 0.5);
-  return replaceNode(tree, targetId, split);
+  return replaceNode(tree, anchorId, split);
+}
+
+/**
+ * Insert `newLeaf` at the requested edge of the node with id
+ * `targetId`, minting the node internally. Convenience wrapper over
+ * `addNodeAtEdge` for callers that don't need the new leaf's id.
+ */
+export function addLeafAtEdge(
+  tree: DockNode,
+  targetId: string,
+  edge: Edge,
+  newLeaf: DockLeaf,
+): DockNode {
+  return addNodeAtEdge(tree, targetId, edge, newLeafNode(newLeaf));
 }
 
 /**
@@ -298,14 +366,46 @@ function collapseContainer(node: DockNode): DockNode | null {
 }
 
 /**
+ * The container `targetId` named is gone from `next` because removing
+ * the source collapsed it (`collapseContainer` folds a 1-child split or
+ * tabs into that child, and the child keeps its own id, not the
+ * container's). Return the id of whatever took its place: the first
+ * descendant of the ORIGINAL target that survived the removal.
+ *
+ * Returns null when the target's whole subtree went with the source, in
+ * which case the caller has nothing better than the root.
+ */
+function resolveCollapsedTarget(
+  original: DockNode,
+  targetId: string,
+  next: DockNode,
+): string | null {
+  const before = findNodeInfo(original, targetId);
+  if (!before) return null;
+  let survivor: string | null = null;
+  walkLeaves(before.node, (_leaf, id) => {
+    if (survivor === null && findNodeInfo(next, id) !== null) survivor = id;
+  });
+  return survivor;
+}
+
+function countLeaves(tree: DockNode): number {
+  let n = 0;
+  walkLeaves(tree, () => {
+    n += 1;
+  });
+  return n;
+}
+
+/**
  * Move a leaf from its current location to a new one. This is
- * remove-then-add; it never creates duplicate nodes.
+ * remove-then-add; it never creates duplicate nodes, and — see the
+ * leaf-count guard below — it never loses one either.
  *
  * No-ops (returns the tree unchanged):
- *   • source == target
- *   • center-drop on self (leaf into itself)
+ *   • source == target (any edge, center included)
  *   • source not found
- *   • target not found after removal
+ *   • the add step couldn't place the leaf anywhere
  */
 export function moveLeaf(
   tree: DockNode,
@@ -314,7 +414,6 @@ export function moveLeaf(
   edge: Edge,
 ): DockNode {
   if (sourceLeafId === targetId) return tree;
-  if (edge === "center" && sourceLeafId === targetId) return tree;
 
   const src = findNodeInfo(tree, sourceLeafId);
   if (!src || src.node.type !== "leaf") return tree;
@@ -326,20 +425,38 @@ export function moveLeaf(
     return tree;
   }
 
-  const leafPayload = src.node.leaf;
+  const leafNode = src.node;
   const withoutSource = removeNode(tree, sourceLeafId);
   if (withoutSource === null) {
     // We just removed the last node; nothing to attach to.
     return tree;
   }
 
-  // The target may have collapsed as a side-effect of removal
-  // (e.g. its sibling was removed and the parent split folded up).
-  // If it's still findable, use it; otherwise fall back to the root.
-  const targetInfo = findNodeInfo(withoutSource, targetId);
-  const finalTargetId = targetInfo ? targetId : withoutSource.id;
+  // The target may have collapsed as a side-effect of removal (its only
+  // other child was the source, so the container folded into it). Chase
+  // the collapse to the surviving node rather than falling back to the
+  // root: the root fallback is what made PaneTabs' "Split right" on a
+  // two-tab group fling the pane to the far edge of the entire dock and
+  // reparent everything else, instead of landing it beside its former
+  // tab-mate.
+  const finalTargetId =
+    findNodeInfo(withoutSource, targetId) !== null
+      ? targetId
+      : (resolveCollapsedTarget(tree, targetId, withoutSource) ??
+        withoutSource.id);
 
-  return addLeafAtEdge(withoutSource, finalTargetId, edge, leafPayload);
+  // Reuse the source node so the moved pane keeps its identity — its id
+  // stays valid in `lastFocusLeafId`/`lastSidebarLeafId` and React keeps
+  // the same component instance (and its scroll position) across the move.
+  const moved = addNodeAtEdge(withoutSource, finalTargetId, edge, leafNode);
+
+  // A move must never lose its payload. `addNodeAtEdge` no-ops for a
+  // few shapes (a target that vanished entirely, "center" on a split);
+  // because the source is already removed by this point, a no-op add
+  // would DELETE the dragged pane with no error and no undo. Returning
+  // the original tree makes the worst case "the drag didn't take".
+  if (countLeaves(moved) !== countLeaves(tree)) return tree;
+  return moved;
 }
 
 /**

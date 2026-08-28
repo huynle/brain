@@ -14,13 +14,19 @@ import { PaneLeaf } from "./PaneLeaf";
 import { PaneTabs } from "./PaneTabs";
 import { Splitter } from "./Splitter";
 
-export function PaneNode({ node }: { node: DockNode }): JSX.Element {
+export function PaneNode({
+  dockId,
+  node,
+}: {
+  dockId: "focus" | "sidebar";
+  node: DockNode;
+}): JSX.Element {
   if (node.type === "leaf") {
-    return <PaneLeaf id={node.id} leaf={node.leaf} />;
+    return <PaneLeaf dockId={dockId} id={node.id} leaf={node.leaf} />;
   }
 
   if (node.type === "tabs") {
-    return <PaneTabs node={node} />;
+    return <PaneTabs dockId={dockId} node={node} />;
   }
 
   // split
@@ -36,7 +42,7 @@ export function PaneNode({ node }: { node: DockNode }): JSX.Element {
       <div className={`p2-dock-split ${dirClass}`}>
         {node.children.map((c) => (
           <div className="p2-dock-child" key={c.id} style={{ flex: 1 }}>
-            <PaneNode node={c} />
+            <PaneNode dockId={dockId} node={c} />
           </div>
         ))}
       </div>
@@ -50,11 +56,11 @@ export function PaneNode({ node }: { node: DockNode }): JSX.Element {
   return (
     <div className={`p2-dock-split ${dirClass}`}>
       <div className="p2-dock-child" style={{ flexBasis: firstBasis }}>
-        <PaneNode node={first} />
+        <PaneNode dockId={dockId} node={first} />
       </div>
-      <Splitter dir={node.dir} splitId={node.id} />
+      <Splitter dockId={dockId} dir={node.dir} splitId={node.id} />
       <div className="p2-dock-child" style={{ flexBasis: secondBasis }}>
-        <PaneNode node={second} />
+        <PaneNode dockId={dockId} node={second} />
       </div>
     </div>
   );

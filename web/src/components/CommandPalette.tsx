@@ -66,7 +66,7 @@ export function CommandPalette(): JSX.Element | null {
   const cycleTheme = useWorkspace((s) => s.cycleTheme);
   const openModal = useModal((s) => s.open);
   const openInFocus = useWorkspace((s) => s.openInFocus);
-  const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
+  const openInSidebar = useWorkspace((s) => s.openInSidebar);
   const taskCtxFor = useTaskActionContextFactory();
   const featureCtxFor = useFeatureActionContextFactory();
   const { byProject: goalsByProject } = useGoals();
@@ -149,7 +149,8 @@ export function CommandPalette(): JSX.Element | null {
         cmds.push({
           id: `feat:${pid}:${f.id}`,
           label: `Feature: ${f.name} (${pid})`,
-          action: () => openFeatureDrawer(pid, f.id),
+          action: () =>
+            openInSidebar("feature-detail", { projectId: pid, featureId: f.id }, f.name),
         });
         // Verbs, not just navigation. Previously the palette could only
         // take you somewhere — for a keyboard-first user this is the
@@ -232,7 +233,7 @@ export function CommandPalette(): JSX.Element | null {
     toggleAssistant,
     cycleTheme,
     openModal,
-    openFeatureDrawer,
+    openInSidebar,
     openInFocus,
     taskCtxFor,
     featureCtxFor,

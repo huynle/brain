@@ -22,7 +22,15 @@ import {
   useWorkspace,
   WORKSPACE_STORAGE_KEY,
   clampDrawerWidth,
+  clampSidebarWidth,
 } from "./workspace";
+import { walkLeaves, type DockNode } from "../lib/dock";
+
+/** Assert a node is a leaf carrying `title`. */
+function assertLeafTitle(node: DockNode, title: string): void {
+  assert.equal(node.type, "leaf");
+  if (node.type === "leaf") assert.equal(node.leaf.title, title);
+}
 
 // ─── setup ────────────────────────────────────────────────────────────
 
@@ -41,8 +49,9 @@ function resetStore() {
   useWorkspace.setState({
     view: INITIAL.view,
     focusSessionId: INITIAL.focusSessionId,
-    dockTree: INITIAL.dockTree,
+    docks: { focus: null, sidebar: null },
     lastFocusLeafId: null,
+    lastSidebarLeafId: null,
     sidebarSection: { ...INITIAL.sidebarSection },
     mobile: INITIAL.mobile,
     streaming: INITIAL.streaming,
@@ -50,8 +59,9 @@ function resetStore() {
     mergedExpanded: {},
     archivedExpanded: {},
     statusFilter: "all",
-    drawer: null,
+    sidebarDockOpen: false,
     drawerWidth: 430,
+    sidebarWidth: 250,
   });
 }
 
@@ -239,21 +249,21 @@ test("workspace: openInFocus on empty tree seeds the root leaf and switches view
 
   const s = useWorkspace.getState();
   assert.equal(s.view, "focus");
-  assert.ok(s.dockTree);
-  if (s.dockTree && s.dockTree.type === "leaf") {
-    assert.equal(s.dockTree.leaf.title, "Ex");
-    assert.equal(s.dockTree.leaf.kind, "browser");
+  assert.ok(s.docks.focus);
+  if (s.docks.focus && s.docks.focus.type === "leaf") {
+    assert.equal(s.docks.focus.leaf.title, "Ex");
+    assert.equal(s.docks.focus.leaf.kind, "browser");
   } else {
     assert.fail("expected a leaf root");
   }
-  assert.equal(s.lastFocusLeafId, s.dockTree?.id ?? null);
+  assert.equal(s.lastFocusLeafId, s.docks.focus?.id ?? null);
 });
 
 test("workspace: openInFocus on non-empty tree merges into tabs at the last-focus leaf", () => {
   resetStore();
   useWorkspace.getState().openInFocus("browser", { url: "https://a" }, "A");
   useWorkspace.getState().openInFocus("browser", { url: "https://b" }, "B");
-  const tree = useWorkspace.getState().dockTree;
+  const tree = useWorkspace.getState().docks.focus;
   assert.ok(tree);
   assert.equal(tree!.type, "tabs");
   if (tree!.type === "tabs") {
@@ -267,12 +277,12 @@ test("workspace: openInFocus on non-empty tree merges into tabs at the last-focu
 test("workspace: closeLeaf removes a leaf and clears lastFocus when it matches", () => {
   resetStore();
   useWorkspace.getState().openInFocus("browser", { url: "https://a" }, "A");
-  const tree = useWorkspace.getState().dockTree;
+  const tree = useWorkspace.getState().docks.focus;
   assert.ok(tree);
   const leafId = tree!.id;
 
   useWorkspace.getState().closeLeaf(leafId);
-  assert.equal(useWorkspace.getState().dockTree, null);
+  assert.equal(useWorkspace.getState().docks.focus, null);
   assert.equal(useWorkspace.getState().lastFocusLeafId, null);
 });
 
@@ -280,33 +290,36 @@ test("workspace: setSplitRatio and setActiveTab flow through dock helpers", () =
   resetStore();
   // Build: leaf A, then add B at right → row-split [A, B] ratio 0.5.
   useWorkspace.getState().openInFocus("browser", { url: "https://a" }, "A");
-  const rootLeaf = useWorkspace.getState().dockTree;
+  const rootLeaf = useWorkspace.getState().docks.focus;
   assert.ok(rootLeaf);
   // Force a right-edge split via moveLeaf-like effect: use dock helper
   // via the store's own move; simplest is a fresh direct set for test.
   useWorkspace.setState({
-    dockTree: {
-      type: "split",
-      id: "sp1",
-      dir: "row",
-      ratio: 0.5,
-      children: [
-        rootLeaf!,
-        {
-          type: "leaf",
-          id: "l-b",
-          leaf: {
-            kind: "browser",
-            target: { url: "https://b" },
-            title: "B",
+    docks: {
+      focus: {
+        type: "split",
+        id: "sp1",
+        dir: "row",
+        ratio: 0.5,
+        children: [
+          rootLeaf!,
+          {
+            type: "leaf",
+            id: "l-b",
+            leaf: {
+              kind: "browser",
+              target: { url: "https://b" },
+              title: "B",
+            },
           },
-        },
-      ],
+        ],
+      },
+      sidebar: null,
     },
   });
 
   useWorkspace.getState().setSplitRatio("sp1", 0.3);
-  const tree = useWorkspace.getState().dockTree;
+  const tree = useWorkspace.getState().docks.focus;
   if (tree && tree.type === "split") {
     assert.equal(tree.ratio, 0.3);
   } else {
@@ -315,7 +328,7 @@ test("workspace: setSplitRatio and setActiveTab flow through dock helpers", () =
 
   // Clamp path.
   useWorkspace.getState().setSplitRatio("sp1", 0.99);
-  const clamped = useWorkspace.getState().dockTree;
+  const clamped = useWorkspace.getState().docks.focus;
   if (clamped && clamped.type === "split") {
     assert.equal(clamped.ratio, 0.9);
   }
@@ -324,7 +337,381 @@ test("workspace: setSplitRatio and setActiveTab flow through dock helpers", () =
 test("workspace: moveLeaf on empty tree is a no-op", () => {
   resetStore();
   useWorkspace.getState().moveLeaf("nope", "also-nope", "center");
-  assert.equal(useWorkspace.getState().dockTree, null);
+  assert.equal(useWorkspace.getState().docks.focus, null);
+});
+
+// ─── target-aware insertion (the drop path) ───────────────────────────
+//
+// `openIn*` merges into the LAST-TOUCHED pane, which is right for menus
+// and the command palette and wrong for a drop, where the user picked
+// the pane and the edge by hand. `openIn*At` is the drop path: one tree
+// write at an explicit target. It replaced a broken round-trip in
+// PaneLeaf (openIn*, then moveLeaf using `lastXLeafId` as the new leaf's
+// id — an id openIn* never set, so it dragged a pre-existing pane to the
+// chosen edge or no-opped entirely).
+
+/** Titles of every leaf in a dock, in DFS order. */
+function focusTitles(): string[] {
+  const tree = useWorkspace.getState().docks.focus;
+  if (!tree) return [];
+  const out: string[] = [];
+  walkLeaves(tree, (l) => out.push(l.title));
+  return out;
+}
+
+/** Seed the Focus dock with `split(row)[A, B]` and return both leaf ids. */
+function seedFocusSplit(): { aId: string; bId: string } {
+  useWorkspace.getState().openInFocus("browser", { url: "https://a" }, "A");
+  const aId = useWorkspace.getState().docks.focus!.id;
+  useWorkspace
+    .getState()
+    .openInFocusAt("browser", { url: "https://b" }, "B", aId, "right");
+  const tree = useWorkspace.getState().docks.focus;
+  if (!tree || tree.type !== "split") throw new Error("expected a split root");
+  return { aId, bId: tree.children[1].id };
+}
+
+test("workspace: openInFocusAt seeds the root leaf on an empty dock", () => {
+  resetStore();
+  useWorkspace
+    .getState()
+    .openInFocusAt("browser", { url: "https://a" }, "A", "no-such-leaf", "left");
+  const s = useWorkspace.getState();
+  assert.equal(s.view, "focus");
+  assert.ok(s.docks.focus && s.docks.focus.type === "leaf");
+  assert.equal(s.lastFocusLeafId, s.docks.focus!.id);
+});
+
+test("workspace: openInFocusAt places the NEW leaf at the requested edge of the requested pane", () => {
+  // Drop on B's LEFT: the new pane must land between A and B, and A
+  // must not move. The old round-trip moved A here instead.
+  resetStore();
+  const { aId, bId } = seedFocusSplit();
+  useWorkspace
+    .getState()
+    .openInFocusAt("browser", { url: "https://n" }, "NEW", bId, "left");
+
+  assert.deepEqual(focusTitles(), ["A", "NEW", "B"]);
+  const tree = useWorkspace.getState().docks.focus!;
+  if (tree.type !== "split") return assert.fail("expected split root");
+  // A keeps its identity and its slot; only B's slot was subdivided.
+  assert.equal(tree.children[0].id, aId);
+  const inner = tree.children[1];
+  assert.equal(inner.type, "split");
+  if (inner.type !== "split") return;
+  assert.equal(inner.dir, "row");
+  assert.equal(inner.children[1].id, bId);
+});
+
+test("workspace: openInFocusAt honours each of the four split edges", () => {
+  const cases = [
+    { edge: "left" as const, dir: "row", order: ["A", "NEW", "B"] },
+    { edge: "right" as const, dir: "row", order: ["A", "B", "NEW"] },
+    { edge: "top" as const, dir: "col", order: ["A", "NEW", "B"] },
+    { edge: "bottom" as const, dir: "col", order: ["A", "B", "NEW"] },
+  ];
+  for (const c of cases) {
+    resetStore();
+    const { bId } = seedFocusSplit();
+    useWorkspace
+      .getState()
+      .openInFocusAt("browser", { url: "https://n" }, "NEW", bId, c.edge);
+
+    assert.deepEqual(focusTitles(), c.order, `edge ${c.edge}`);
+    const tree = useWorkspace.getState().docks.focus!;
+    if (tree.type !== "split") return assert.fail("expected split root");
+    const inner = tree.children[1];
+    assert.equal(inner.type, "split", `edge ${c.edge}: B's slot should split`);
+    if (inner.type === "split") assert.equal(inner.dir, c.dir, `edge ${c.edge}`);
+  }
+});
+
+test("workspace: openInFocusAt center merges into the pane that was dropped on, not the last-touched one", () => {
+  // The whole point of the target-aware action: `lastFocusLeafId` here
+  // is A (it opened last), but the drop was on B.
+  resetStore();
+  const { aId, bId } = seedFocusSplit();
+  useWorkspace.getState().setLastFocusLeaf(aId);
+  useWorkspace
+    .getState()
+    .openInFocusAt("browser", { url: "https://n" }, "NEW", bId, "center");
+
+  const tree = useWorkspace.getState().docks.focus!;
+  if (tree.type !== "split") return assert.fail("expected split root");
+  assert.equal(tree.children[0].id, aId, "A must stay a plain leaf");
+  assert.equal(tree.children[0].type, "leaf");
+  const tabs = tree.children[1];
+  assert.equal(tabs.type, "tabs", "B is the pane that gained a tab");
+  if (tabs.type === "tabs") {
+    assert.equal(tabs.children[0].id, bId);
+    assert.equal(tabs.children[1].leaf.title, "NEW");
+    assert.equal(tabs.activeIdx, 1);
+  }
+});
+
+test("workspace: openInFocusAt records the new leaf id as the drop-target hint", () => {
+  resetStore();
+  const { bId } = seedFocusSplit();
+  useWorkspace
+    .getState()
+    .openInFocusAt("browser", { url: "https://n" }, "NEW", bId, "right");
+
+  const s = useWorkspace.getState();
+  const tree = s.docks.focus!;
+  if (tree.type !== "split") return assert.fail("expected split root");
+  const inner = tree.children[1];
+  if (inner.type !== "split") return assert.fail("expected inner split");
+  assert.equal(s.lastFocusLeafId, inner.children[1].id);
+});
+
+test("workspace: openInFocusAt falls back to the last-touched rule when the target is gone", () => {
+  // A close can race a drop. The item must still land somewhere, and
+  // the existing tree must survive intact.
+  resetStore();
+  const { aId } = seedFocusSplit();
+  useWorkspace.getState().setLastFocusLeaf(aId);
+  useWorkspace
+    .getState()
+    .openInFocusAt("browser", { url: "https://n" }, "NEW", "leaf_closed", "left");
+
+  assert.deepEqual(focusTitles().sort(), ["A", "B", "NEW"]);
+  const tree = useWorkspace.getState().docks.focus!;
+  if (tree.type !== "split") return assert.fail("expected split root");
+  // Fell back to "merge as a tab at the last-touched pane" (A), and did
+  // NOT replace the whole tree with a bare root leaf.
+  assert.equal(tree.children[0].type, "tabs");
+});
+
+test("workspace: openInSidebarAt targets the sidebar dock and opens the panel", () => {
+  resetStore();
+  useWorkspace
+    .getState()
+    .openInSidebar("task-detail", { projectId: "p1", taskId: "t1" }, "T1");
+  const t1 = useWorkspace.getState().docks.sidebar!.id;
+  useWorkspace
+    .getState()
+    .openInSidebarAt(
+      "feature-detail",
+      { projectId: "p1", featureId: "f1" },
+      "F1",
+      t1,
+      "bottom",
+    );
+
+  const s = useWorkspace.getState();
+  assert.equal(s.sidebarDockOpen, true);
+  const tree = s.docks.sidebar!;
+  assert.equal(tree.type, "split");
+  if (tree.type === "split") {
+    assert.equal(tree.dir, "col");
+    assert.equal(tree.children[0].id, t1);
+    assert.equal(tree.children[1].type, "leaf");
+  }
+  // The Focus dock is a separate tree.
+  assert.equal(s.docks.focus, null);
+});
+
+test("workspace: openInSidebarAt lands on a pane that lives inside a tab group", () => {
+  // The side panel's normal state after item two is a tab strip, and
+  // drop zones there carry the ACTIVE TAB's leaf id. Every drop was
+  // silently discarded before the dock-layer fix.
+  resetStore();
+  const open = useWorkspace.getState().openInSidebar;
+  open("task-detail", { projectId: "p", taskId: "t1" }, "T1");
+  open("task-detail", { projectId: "p", taskId: "t2" }, "T2");
+  const strip = useWorkspace.getState().docks.sidebar!;
+  assert.equal(strip.type, "tabs");
+  if (strip.type !== "tabs") return;
+  const activeTabId = strip.children[strip.activeIdx].id;
+
+  useWorkspace
+    .getState()
+    .openInSidebarAt("logs", { taskId: "t3" }, "L3", activeTabId, "bottom");
+
+  const tree = useWorkspace.getState().docks.sidebar!;
+  const out: string[] = [];
+  walkLeaves(tree, (l) => out.push(l.title));
+  assert.deepEqual(out, ["T1", "T2", "L3"]);
+  assert.equal(tree.type, "split");
+  if (tree.type === "split") {
+    assert.equal(tree.dir, "col");
+    // The whole strip is one side of the split; the tabs survive.
+    assert.equal(tree.children[0].id, strip.id);
+    assertLeafTitle(tree.children[1], "L3");
+  }
+});
+
+// ─── regression: openIn* must record the leaf it just created ─────────
+
+test("workspace: openInFocus records the newly-created leaf as the drop-target hint", () => {
+  // Only the empty-tree branches used to set this. On a populated dock
+  // the hint stayed pinned to whatever pane was last moused down, which
+  // is what made PaneLeaf's open-then-move round-trip grab the wrong id.
+  resetStore();
+  useWorkspace.getState().openInFocus("browser", { url: "https://a" }, "A");
+  useWorkspace.getState().openInFocus("browser", { url: "https://b" }, "B");
+
+  const s = useWorkspace.getState();
+  const tree = s.docks.focus!;
+  assert.equal(tree.type, "tabs");
+  if (tree.type !== "tabs") return;
+  assert.equal(
+    s.lastFocusLeafId,
+    tree.children[1].id,
+    "the hint should name B, the leaf just opened",
+  );
+});
+
+test("workspace: a third and fourth openInSidebar still land once the dock is a tab strip", () => {
+  // Regression: `pickDropTarget` returned a leaf INSIDE the strip and
+  // the dock layer discarded the insertion, so opening anything into a
+  // populated side panel silently did nothing from the third item on.
+  resetStore();
+  const open = useWorkspace.getState().openInSidebar;
+  open("task-detail", { projectId: "p", taskId: "t1" }, "T1");
+  open("task-detail", { projectId: "p", taskId: "t2" }, "T2");
+  open("task-detail", { projectId: "p", taskId: "t3" }, "T3");
+  open("task-detail", { projectId: "p", taskId: "t4" }, "T4");
+
+  const tree = useWorkspace.getState().docks.sidebar!;
+  const out: string[] = [];
+  walkLeaves(tree, (l) => out.push(l.title));
+  assert.deepEqual(out, ["T1", "T2", "T3", "T4"]);
+});
+
+// ─── sidebar dock tree actions (mirror the Focus pair) ─────────────────
+
+test("workspace: openInSidebar on empty tree seeds the root leaf and opens the panel", () => {
+  resetStore();
+  useWorkspace
+    .getState()
+    .openInSidebar("task-detail", { projectId: "p1", taskId: "t1" }, "T1");
+
+  const s = useWorkspace.getState();
+  assert.equal(s.sidebarDockOpen, true);
+  assert.ok(s.docks.sidebar);
+  if (s.docks.sidebar && s.docks.sidebar.type === "leaf") {
+    assert.equal(s.docks.sidebar.leaf.title, "T1");
+    assert.equal(s.docks.sidebar.leaf.kind, "task-detail");
+  } else {
+    assert.fail("expected a leaf root");
+  }
+  assert.equal(s.lastSidebarLeafId, s.docks.sidebar?.id ?? null);
+  // The Focus dock is untouched.
+  assert.equal(s.docks.focus, null);
+});
+
+test("workspace: openInSidebar on non-empty tree merges into tabs", () => {
+  resetStore();
+  useWorkspace
+    .getState()
+    .openInSidebar("task-detail", { projectId: "p1", taskId: "t1" }, "T1");
+  useWorkspace
+    .getState()
+    .openInSidebar("feature-detail", { projectId: "p1", featureId: "f1" }, "F1");
+  const tree = useWorkspace.getState().docks.sidebar;
+  assert.ok(tree);
+  assert.equal(tree!.type, "tabs");
+  if (tree!.type === "tabs") {
+    assert.equal(tree.children.length, 2);
+    assert.equal(tree.children[0].leaf.title, "T1");
+    assert.equal(tree.children[1].leaf.title, "F1");
+  }
+});
+
+test("workspace: closeSidebarLeaf removes a leaf, clears lastSidebarLeaf, does not touch Focus", () => {
+  resetStore();
+  useWorkspace.getState().openInFocus("browser", { url: "https://a" }, "A");
+  useWorkspace
+    .getState()
+    .openInSidebar("task-detail", { projectId: "p1", taskId: "t1" }, "T1");
+  const sidebarLeafId = useWorkspace.getState().docks.sidebar!.id;
+
+  useWorkspace.getState().closeSidebarLeaf(sidebarLeafId);
+  const s = useWorkspace.getState();
+  assert.equal(s.docks.sidebar, null);
+  assert.equal(s.lastSidebarLeafId, null);
+  // Focus dock survives untouched.
+  assert.ok(s.docks.focus);
+});
+
+test("workspace: moveSidebarLeaf on empty tree is a no-op", () => {
+  resetStore();
+  useWorkspace.getState().moveSidebarLeaf("nope", "also-nope", "center");
+  assert.equal(useWorkspace.getState().docks.sidebar, null);
+});
+
+test("workspace: setSidebarSplitRatio flows through the dock helper and does not touch Focus", () => {
+  resetStore();
+  useWorkspace.getState().openInFocus("browser", { url: "https://a" }, "A");
+  const focusBefore = useWorkspace.getState().docks.focus;
+  useWorkspace
+    .getState()
+    .openInSidebar("task-detail", { projectId: "p1", taskId: "t1" }, "T1");
+  const rootLeaf = useWorkspace.getState().docks.sidebar;
+  assert.ok(rootLeaf);
+  useWorkspace.setState((s) => ({
+    docks: {
+      ...s.docks,
+      sidebar: {
+        type: "split",
+        id: "sp-sidebar",
+        dir: "row",
+        ratio: 0.5,
+        children: [
+          rootLeaf!,
+          {
+            type: "leaf",
+            id: "l-sidebar-b",
+            leaf: { kind: "task-detail", target: {}, title: "B" },
+          },
+        ],
+      },
+    },
+  }));
+
+  useWorkspace.getState().setSidebarSplitRatio("sp-sidebar", 0.3);
+  const tree = useWorkspace.getState().docks.sidebar;
+  if (tree && tree.type === "split") {
+    assert.equal(tree.ratio, 0.3);
+  } else {
+    assert.fail("expected split root");
+  }
+  // Focus dock is a completely separate tree.
+  assert.equal(useWorkspace.getState().docks.focus, focusBefore);
+});
+
+// ─── sidebarDockOpen: manual pin/collapse ──────────────────────────────
+
+test("workspace: sidebarDockOpen defaults to false", () => {
+  resetStore();
+  assert.equal(useWorkspace.getState().sidebarDockOpen, false);
+});
+
+test("workspace: toggleSidebarDockOpen flips the flag", () => {
+  resetStore();
+  useWorkspace.getState().toggleSidebarDockOpen();
+  assert.equal(useWorkspace.getState().sidebarDockOpen, true);
+  useWorkspace.getState().toggleSidebarDockOpen();
+  assert.equal(useWorkspace.getState().sidebarDockOpen, false);
+});
+
+test("workspace: closing the sidebar dock manually preserves docks.sidebar", () => {
+  resetStore();
+  useWorkspace
+    .getState()
+    .openInSidebar("task-detail", { projectId: "p1", taskId: "t1" }, "T1");
+  assert.equal(useWorkspace.getState().sidebarDockOpen, true);
+  const treeBefore = useWorkspace.getState().docks.sidebar;
+
+  useWorkspace.getState().setSidebarDockOpen(false);
+  const s = useWorkspace.getState();
+  assert.equal(s.sidebarDockOpen, false);
+  // The layout survives the close — reopening shows the same tree.
+  assert.equal(s.docks.sidebar, treeBefore);
+
+  useWorkspace.getState().setSidebarDockOpen(true);
+  assert.equal(useWorkspace.getState().docks.sidebar, treeBefore);
 });
 
 // ─── drawer: clampDrawerWidth (pure helper) ────────────────────────────
@@ -348,49 +735,86 @@ test("workspace: clampDrawerWidth honors explicit bounds", () => {
   assert.equal(clampDrawerWidth(150, 100, 200), 150);
 });
 
-// ─── drawer: open/close union state ────────────────────────────────────
+// ─── sidebar dock: openInSidebar covers every leaf kind ────────────────
+// The old single-item `DrawerState` union (`openFeatureDrawer` /
+// `openTaskDrawer` / `openSessionDrawer` / `openDrawerFromDrag`) is
+// retired — every one of its call sites now opens a leaf into
+// `docks.sidebar` via `openInSidebar`, exercised generically above and
+// per-kind below.
 
-test("workspace: drawer is null initially", () => {
+test("workspace: openInSidebar(task-detail) opens a task-detail leaf", () => {
   resetStore();
-  assert.equal(useWorkspace.getState().drawer, null);
+  useWorkspace
+    .getState()
+    .openInSidebar("task-detail", { projectId: "proj-a", taskId: "task-9" }, "Task 9");
+  const tree = useWorkspace.getState().docks.sidebar;
+  assert.ok(tree && tree.type === "leaf");
+  if (tree && tree.type === "leaf") {
+    assert.equal(tree.leaf.kind, "task-detail");
+    assert.deepEqual(tree.leaf.target, { projectId: "proj-a", taskId: "task-9" });
+  }
 });
 
-test("workspace: openFeatureDrawer sets a feature-kind drawer", () => {
+test("workspace: openInSidebar(feature-detail) opens a feature-detail leaf", () => {
   resetStore();
-  useWorkspace.getState().openFeatureDrawer("proj-a", "feat-1");
-  assert.deepEqual(useWorkspace.getState().drawer, {
-    kind: "feature",
-    projectId: "proj-a",
-    featureId: "feat-1",
-  });
+  useWorkspace
+    .getState()
+    .openInSidebar("feature-detail", { projectId: "proj-a", featureId: "feat-1" }, "Feat 1");
+  const tree = useWorkspace.getState().docks.sidebar;
+  assert.ok(tree && tree.type === "leaf");
+  if (tree && tree.type === "leaf") {
+    assert.equal(tree.leaf.kind, "feature-detail");
+    assert.deepEqual(tree.leaf.target, { projectId: "proj-a", featureId: "feat-1" });
+  }
 });
 
-test("workspace: openTaskDrawer sets a task-kind drawer", () => {
+test("workspace: openInSidebar(entry) opens an entry leaf with the raw target", () => {
   resetStore();
-  useWorkspace.getState().openTaskDrawer("proj-a", "task-9");
-  assert.deepEqual(useWorkspace.getState().drawer, {
-    kind: "task",
-    projectId: "proj-a",
-    taskId: "task-9",
-  });
+  useWorkspace.getState().openInSidebar("entry", { path: "notes/x.md" });
+  const tree = useWorkspace.getState().docks.sidebar;
+  assert.ok(tree && tree.type === "leaf");
+  if (tree && tree.type === "leaf") {
+    assert.equal(tree.leaf.kind, "entry");
+    assert.deepEqual(tree.leaf.target, { path: "notes/x.md" });
+  }
 });
 
-test("workspace: openTaskDrawer replaces an open feature drawer", () => {
+test("workspace: openInSidebar(session) opens a session leaf wrapping the ref", () => {
   resetStore();
-  useWorkspace.getState().openFeatureDrawer("proj-a", "feat-1");
-  useWorkspace.getState().openTaskDrawer("proj-b", "task-2");
-  assert.deepEqual(useWorkspace.getState().drawer, {
-    kind: "task",
-    projectId: "proj-b",
-    taskId: "task-2",
-  });
+  const ref = {
+    mode: "live" as const,
+    runner_id: "r1",
+    instance_id: "i1",
+    session_id: "s1",
+  };
+  useWorkspace.getState().openInSidebar("session", { ref });
+  const tree = useWorkspace.getState().docks.sidebar;
+  assert.ok(tree && tree.type === "leaf");
+  if (tree && tree.type === "leaf") {
+    assert.equal(tree.leaf.kind, "session");
+    assert.deepEqual(tree.leaf.target, { ref });
+  }
 });
 
-test("workspace: closeFeatureDrawer clears the drawer regardless of kind", () => {
+test("workspace: opening a second item into the sidebar adds it alongside the first, not replacing it", () => {
+  // The whole point of the generalization: two dropped/opened items
+  // coexist (as tabs, here) instead of one clobbering the other like
+  // the old single-item drawer did.
   resetStore();
-  useWorkspace.getState().openTaskDrawer("proj-a", "task-9");
-  useWorkspace.getState().closeFeatureDrawer();
-  assert.equal(useWorkspace.getState().drawer, null);
+  useWorkspace
+    .getState()
+    .openInSidebar("feature-detail", { projectId: "proj-a", featureId: "feat-1" }, "Feat 1");
+  useWorkspace
+    .getState()
+    .openInSidebar("task-detail", { projectId: "proj-b", taskId: "task-2" }, "Task 2");
+  const tree = useWorkspace.getState().docks.sidebar;
+  assert.ok(tree);
+  assert.equal(tree!.type, "tabs");
+  if (tree!.type === "tabs") {
+    assert.equal(tree.children.length, 2);
+    assert.equal(tree.children[0].leaf.kind, "feature-detail");
+    assert.equal(tree.children[1].leaf.kind, "task-detail");
+  }
 });
 
 // ─── drawer: width state + setter clamp ────────────────────────────────
@@ -412,4 +836,46 @@ test("workspace: setDrawerWidth clamps to the [300, 900] range", () => {
   assert.equal(useWorkspace.getState().drawerWidth, 300);
   useWorkspace.getState().setDrawerWidth(5000);
   assert.equal(useWorkspace.getState().drawerWidth, 900);
+});
+
+// ─── sidebar: clampSidebarWidth (pure helper) ──────────────────────────
+
+test("workspace: clampSidebarWidth passes through an in-range value", () => {
+  assert.equal(clampSidebarWidth(300), 300);
+});
+
+test("workspace: clampSidebarWidth floors below the minimum (180)", () => {
+  assert.equal(clampSidebarWidth(50), 180);
+  assert.equal(clampSidebarWidth(-40), 180);
+});
+
+test("workspace: clampSidebarWidth caps above the maximum (480)", () => {
+  assert.equal(clampSidebarWidth(900), 480);
+});
+
+test("workspace: clampSidebarWidth honors explicit bounds", () => {
+  assert.equal(clampSidebarWidth(50, 100, 200), 100);
+  assert.equal(clampSidebarWidth(999, 100, 200), 200);
+  assert.equal(clampSidebarWidth(150, 100, 200), 150);
+});
+
+// ─── sidebar: width state + setter clamp ───────────────────────────────
+
+test("workspace: sidebarWidth defaults to 250", () => {
+  resetStore();
+  assert.equal(useWorkspace.getState().sidebarWidth, 250);
+});
+
+test("workspace: setSidebarWidth stores an in-range width", () => {
+  resetStore();
+  useWorkspace.getState().setSidebarWidth(320);
+  assert.equal(useWorkspace.getState().sidebarWidth, 320);
+});
+
+test("workspace: setSidebarWidth clamps to the [180, 480] range", () => {
+  resetStore();
+  useWorkspace.getState().setSidebarWidth(50);
+  assert.equal(useWorkspace.getState().sidebarWidth, 180);
+  useWorkspace.getState().setSidebarWidth(5000);
+  assert.equal(useWorkspace.getState().sidebarWidth, 480);
 });

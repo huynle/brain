@@ -37,6 +37,7 @@ import { useRowActions } from "../../hooks/useRowActions";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import {
+  endDrag,
   readDragPayload,
   type DragPayload,
 } from "../../hooks/useDragDrop";
@@ -161,6 +162,14 @@ export function RunnersSection(): JSX.Element {
             if (payload?.source !== "feature-header") return;
             e.preventDefault();
             e.stopPropagation();
+            // Clear the shadow payload here like every other drop
+            // target does. Relying on the source row's `onDragEnd` is a
+            // coincidence: React delegates listeners to the root, so if
+            // the feature row unmounts during the drop (an SSE re-sort,
+            // a re-bucketing assignment) its `dragend` never lands and
+            // the payload sticks — leaving an armed, invisible
+            // `pointer-events: auto` overlay on every pane in both docks.
+            endDrag();
             setDropTarget(null);
             void doAssign(payload, r.runner_id);
           }}

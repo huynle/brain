@@ -234,7 +234,7 @@ body[data-theme="light"] .session-view .composer input {
 /* ---------- app grid ---------- */
 #app {
   display: grid;
-  grid-template-columns: 250px 1fr;
+  grid-template-columns: var(--sidebar-w, 250px) 1fr;
   grid-template-rows: 36px 1fr 24px;
   grid-template-areas:
     "topbar   topbar"
@@ -248,6 +248,26 @@ body.sidebar-collapsed #app {
     "topbar"
     "workspace"
     "statusbar";
+}
+/* Drawer open (desktop only — mobile keeps its fixed-overlay portal,
+ * see `body.mobile .feature-drawer` below) turns the drawer into a
+ * real third grid column instead of an overlay. Two variants: with
+ * the sidebar present, and with it collapsed to a rail. The combined
+ * selector below has to out-specificity the plain `.sidebar-collapsed`
+ * rule above when both are true. */
+body.drawer-open:not(.mobile) #app {
+  grid-template-columns: var(--sidebar-w, 250px) 1fr var(--drawer-w, 430px);
+  grid-template-areas:
+    "topbar   topbar     topbar"
+    "sidebar  workspace  drawer"
+    "sidebar  statusbar  drawer";
+}
+body.drawer-open.sidebar-collapsed:not(.mobile) #app {
+  grid-template-columns: 1fr var(--drawer-w, 430px);
+  grid-template-areas:
+    "topbar     topbar"
+    "workspace  drawer"
+    "statusbar  drawer";
 }
 
 /* ---------- top bar ---------- */
@@ -279,10 +299,12 @@ body.sidebar-collapsed #app {
 .topbar .viewmode button + button { border-left: 1px solid #2a2f35; }
 .topbar .icon-btn { border: 0; padding: 4px 6px; color: #9098a1; line-height: 1.25; white-space: nowrap; }
 .topbar .icon-btn:hover { color: #eaedef; }
+.topbar .icon-btn.active { color: #f4b23a; }
 
 /* ---------- sidebar ---------- */
 .sidebar {
   grid-area: sidebar;
+  position: relative;
   background: #0e1114; border-right: 1px solid #22272c;
   display: flex; flex-direction: column;
   overflow: hidden;
@@ -1046,6 +1068,27 @@ body[data-theme="light"] {
   background: #101317;
   overflow: hidden;
   position: relative;
+  /* Scope the drop overlay's z-index to this pane. Without a stacking
+   * context its `z-index: 10` competes with every other pane's, and any
+   * leaf content that ever used `z-index: 11+` (a sticky table header,
+   * a popover) would paint over the drop zones and quietly make the
+   * pane undroppable. Costs nothing; today's layering is unchanged. */
+  isolation: isolate;
+  /* Drop-zone sizing, read by `.p2-pane-dropzone.*` below. Kept on the
+   * pane so a future per-pane override has somewhere to live.
+   *
+   * Read outward: the 25% ideal is floored to a comfortable hit target
+   * (44/30px) and capped so a huge pane doesn't get an absurd gutter —
+   * but the OUTER `min(…, 33%)` is the load-bearing term. A bare
+   * `clamp()` floor is unconditional, so on a pane narrower than twice
+   * the floor the left and right zones overlap, `.right` wins the
+   * cascade across the overlap, and the center "add as tab" zone
+   * becomes unreachable at any point in the pane — the exact
+   * can't-hit-the-middle-rectangle failure this sizing exists to fix.
+   * Holding each edge to a third guarantees the two edges never claim
+   * more than 2/3 and center always survives, at every pane size. */
+  --p2-dz-v: min(max(30px, 25%), 33%, 96px);
+  --p2-dz-h: min(max(44px, 25%), 33%, 140px);
 }
 .p2-pane-leaf.dragover-center { border-color: #f4b23a; box-shadow: 0 0 0 1px #f4b23a55; }
 
@@ -1083,14 +1126,31 @@ body[data-theme="light"] {
   position: relative;
 }
 
-/* Drop-zone overlay (rendered inside .p2-pane-body during a drag). */
+/* Drop-zone overlay.
+ *
+ * Rendered as a direct child of `.p2-pane-leaf`, NOT of `.p2-pane-body`.
+ * The body is `overflow: auto`, and an absolutely-positioned child of a
+ * scroll container is laid out against the SCROLLED padding box — so
+ * from inside the body the overlay slid up by exactly `scrollTop`
+ * (entirely off-screen once scrollTop >= clientHeight) and the bottom
+ * `scrollTop` pixels of the visible pane had no target at all. Every
+ * leaf kind that scrolls — task detail, logs, transcripts, entries —
+ * hit that, which is most of them most of the time. On the leaf the
+ * overlay is scroll-stable, covers the title bar, and spans the
+ * scrollbar gutter that used to eat the right edge. */
 .p2-pane-dropzones {
   position: absolute; inset: 0; z-index: 10;
   pointer-events: none;
 }
-.p2-pane-dropzones.active { pointer-events: auto; }
+/* Dim the pane while dropping so five faint rectangles read as targets
+ * instead of as dashes scribbled over live body text. */
+.p2-pane-dropzones.active {
+  pointer-events: auto;
+  background: rgba(16, 19, 23, 0.55);
+}
 .p2-pane-dropzone {
   position: absolute;
+  display: flex; align-items: center; justify-content: center;
   border: 2px dashed transparent;
   transition: background 60ms, border-color 60ms;
 }
@@ -1098,12 +1158,50 @@ body[data-theme="light"] {
   background: rgba(244, 178, 58, 0.06);
   border-color: rgba(244, 178, 58, 0.35);
 }
-.p2-pane-dropzone.over { background: rgba(244, 178, 58, 0.35); border-color: #f4b23a; }
-.p2-pane-dropzone.center { inset: 25%; }
-.p2-pane-dropzone.top    { left: 0; right: 0; top: 0; height: 25%; }
-.p2-pane-dropzone.bottom { left: 0; right: 0; bottom: 0; height: 25%; }
-.p2-pane-dropzone.left   { top: 25%; bottom: 25%; left: 0; width: 25%; }
-.p2-pane-dropzone.right  { top: 25%; bottom: 25%; right: 0; width: 25%; }
+/* MUST be scoped under `.p2-pane-dropzones.active` to outrank the rule
+ * above. As a bare `.p2-pane-dropzone.over` (0,2,0 vs. that rule's
+ * 0,3,0) it lost the cascade and hovering an edge produced no visible
+ * change at all — leaving `.p2-pane-leaf.dragover-center` as the only
+ * surviving hover feedback in the system, which is why the pane border
+ * lit up but the rectangle under the cursor never did. The wireframe
+ * rule this was ported from (`.dz.hot`) carried `!important` for
+ * exactly this reason; the port dropped it. */
+.p2-pane-dropzones.active .p2-pane-dropzone.over {
+  background: rgba(244, 178, 58, 0.32);
+  border-color: #f4b23a;
+  border-style: solid;
+}
+
+/* Zone geometry. Pure percentages collapsed the edge targets to ~25px
+ * of usable width in a 300px side panel split in two, well under any
+ * sane minimum target size. Each axis gets a px floor and ceiling.
+ * The vertical and horizontal vars must stay separate: a percentage in
+ * `top`/`height` resolves against the pane's height, one in
+ * `left`/`width` against its width. */
+.p2-pane-dropzone.center { inset: var(--p2-dz-v) var(--p2-dz-h); }
+.p2-pane-dropzone.top    { left: 0; right: 0; top: 0; height: var(--p2-dz-v); }
+.p2-pane-dropzone.bottom { left: 0; right: 0; bottom: 0; height: var(--p2-dz-v); }
+.p2-pane-dropzone.left   { top: var(--p2-dz-v); bottom: var(--p2-dz-v); left: 0; width: var(--p2-dz-h); }
+.p2-pane-dropzone.right  { top: var(--p2-dz-v); bottom: var(--p2-dz-v); right: 0; width: var(--p2-dz-h); }
+
+/* Caption naming the outcome. Split and merge-as-tab are otherwise
+ * encoded only by position, and they are categorically different
+ * operations. Only the hovered zone reveals its caption, so exactly one
+ * is on screen. `pointer-events: none` keeps the span from becoming a
+ * `dragleave` target inside its own zone. */
+.p2-pane-dropzone__hint {
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 60ms;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #f4b23a;
+  color: #101317;
+  font-size: 10.5px; font-weight: 600;
+  white-space: nowrap;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.p2-pane-dropzone.over .p2-pane-dropzone__hint { opacity: 1; }
 
 /* Tabs node: strip on top, active leaf fills the rest. */
 .p2-pane-tabs {
@@ -1121,6 +1219,12 @@ body[data-theme="light"] {
   border: 1px solid #22272c;
   border-radius: 5px 5px 0 0;
   overflow-x: auto;
+}
+/* The strip is a drop target equivalent to the active leaf's `center`
+ * zone — "add this to my group". See the PaneTabs docstring. */
+.p2-pane-tabs__strip.dragover {
+  border-color: #f4b23a;
+  background: rgba(244, 178, 58, 0.16);
 }
 .p2-pane-tab {
   display: flex; align-items: center; gap: 6px;
@@ -1190,6 +1294,24 @@ body[data-theme="light"] .p2-pane-tab.active {
 body[data-theme="light"] .p2-pane-header__close:hover,
 body[data-theme="light"] .p2-pane-tab__close:hover { background: #e1e7ed; }
 body[data-theme="light"] .p2-pane-leaf.dragover-center { border-color: #d9991f; box-shadow: 0 0 0 1px #d9991f55; }
+body[data-theme="light"] .p2-pane-tabs__strip.dragover {
+  border-color: #d9991f; background: #fff7e8;
+}
+/* Light-theme drop overlay. The scrim lightens instead of darkening;
+ * the `.over` rule keeps the same `.active`-scoped specificity as its
+ * dark counterpart so it doesn't reintroduce the cascade bug. */
+body[data-theme="light"] .p2-pane-dropzones.active {
+  background: rgba(255, 255, 255, 0.62);
+}
+body[data-theme="light"] .p2-pane-dropzones.active .p2-pane-dropzone {
+  background: rgba(217, 153, 31, 0.10);
+  border-color: rgba(217, 153, 31, 0.45);
+}
+body[data-theme="light"] .p2-pane-dropzones.active .p2-pane-dropzone.over {
+  background: rgba(217, 153, 31, 0.34);
+  border-color: #d9991f;
+}
+body[data-theme="light"] .p2-pane-dropzone__hint { background: #a26500; color: #fff; }
 body[data-theme="light"] .p2-dock-splitter:hover,
 body[data-theme="light"] .p2-dock-splitter.active { background: #d9991f55; }
 body[data-theme="light"] .p2-dock-empty { border-color: #c8d0d8; color: #64717e; }
@@ -2221,23 +2343,34 @@ body[data-theme="light"] .modal {
 }
 .entry-cue { color: #6a8bff; }
 .entry-cue.stale { color: #d96060; }
+/* Desktop default: a real grid column (see `body.drawer-open #app`
+ * above), not an overlay. `body.mobile .feature-drawer` below restores
+ * the original fixed-position overlay for narrow viewports. */
 .feature-drawer {
-  position: fixed;
-  top: 40px;
-  right: 0;
-  bottom: 24px;
+  grid-area: drawer;
+  position: relative;
   width: var(--drawer-w, 430px);
   max-width: 92vw;
   min-width: 300px;
-  z-index: 70;
   background: #12161a;
   border-left: 1px solid #2a2f35;
-  box-shadow: -18px 0 48px #0008;
   display: flex;
   flex-direction: column;
   overflow: auto;
   padding: 12px;
   gap: 10px;
+}
+/* The whole panel is a catch-all drop target (SidebarDock mounts the
+ * handlers on the aside in both branches), so it needs to say so when a
+ * drag is over its chrome or gutters rather than over a pane's zones. */
+.feature-drawer.dragover { border-left-color: #f4b23a; }
+body.mobile .feature-drawer {
+  position: fixed;
+  top: 40px;
+  right: 0;
+  bottom: 24px;
+  z-index: 70;
+  box-shadow: -18px 0 48px #0008;
 }
 .drawer-resizer {
   position: absolute;
@@ -2250,6 +2383,21 @@ body[data-theme="light"] .modal {
 }
 .drawer-resizer:hover, .drawer-resizer.dragging { background: #f4b23a55; }
 body.drawer-resizing { user-select: none; cursor: col-resize; }
+.sidebar-resizer {
+  position: absolute;
+  right: -3px;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 1;
+}
+.sidebar-resizer:hover, .sidebar-resizer.dragging { background: #f4b23a55; }
+body.sidebar-resizing { user-select: none; cursor: col-resize; }
+/* The closed-panel drop rail (rendered only mid-drag on a closed
+ * drawer) from the single-item drawer era is superseded by
+ * SidebarDock.tsx's persistent empty state (`.p2-dock-empty`, reused
+ * from FocusPanes.tsx) — there is no more "conjured mid-drag" overlay. */
 .drawer-head { display: flex; gap: 8px; align-items: flex-start; }
 .drawer-kicker { color: #6b757e; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
 .drawer-head h3 { margin: 2px 0 0; font-size: 15px; color: #eaedef; }

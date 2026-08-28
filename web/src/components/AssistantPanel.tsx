@@ -50,7 +50,7 @@ export function AssistantPanel(): JSX.Element | null {
   const open = useWorkspace((s) => s.assistantOpen);
   const close = () => useWorkspace.getState().setAssistantOpen(false);
   const setCommandOpen = useWorkspace((s) => s.setCommandOpen);
-  const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
+  const openInSidebar = useWorkspace((s) => s.openInSidebar);
   const { data: projects } = useProjects();
   const liveProjects = useLive((s) => s.projects);
   const { runners } = useRunners();
@@ -219,7 +219,14 @@ export function AssistantPanel(): JSX.Element | null {
             <div className="assistant-actions">
               <button
                 onClick={() =>
-                  openFeatureDrawer(attention[0].projectId, attention[0].featureId)
+                  openInSidebar(
+                    "feature-detail",
+                    {
+                      projectId: attention[0].projectId,
+                      featureId: attention[0].featureId,
+                    },
+                    attention[0].name,
+                  )
                 }
               >
                 Open suggestion

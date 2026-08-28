@@ -52,7 +52,7 @@ export function OverviewGrid(): JSX.Element {
   const hideAllEmpty = useWorkspace((s) => s.hideAllEmpty);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const openModal = useModal((s) => s.open);
-  const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
+  const openInSidebar = useWorkspace((s) => s.openInSidebar);
   const setView = useWorkspace((s) => s.setView);
   const toast = useUI((s) => s.toast);
 
@@ -254,7 +254,11 @@ export function OverviewGrid(): JSX.Element {
                 </span>
                 <button
                   onClick={() =>
-                    openFeatureDrawer(f.projectId, f.id)
+                    openInSidebar(
+                      "feature-detail",
+                      { projectId: f.projectId, featureId: f.id },
+                      f.name,
+                    )
                   }
                 >
                   Plan

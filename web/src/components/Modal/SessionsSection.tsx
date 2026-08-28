@@ -1,20 +1,20 @@
 /**
  * SessionsSection — recorded sessions for a task, newest first.
  *
- * Shared between TaskModal and FeatureDrawer's task view so the two
- * "full detail" surfaces can't drift. Every recorded entry is listed,
- * not just the newest: after an abandonment + resume the
- * pre-abandonment transcript is exactly the one worth inspecting. Each
- * row gates on its OWN recorded runner (sessions can span runners
- * across retries).
+ * Shared between TaskModal and TaskDetailLeaf (the panes-v2 task pane,
+ * docked in either the Focus tab or the sidebar dock) so the two "full
+ * detail" surfaces can't drift. Every recorded entry is listed, not
+ * just the newest: after an abandonment + resume the pre-abandonment
+ * transcript is exactly the one worth inspecting. Each row gates on its
+ * OWN recorded runner (sessions can span runners across retries).
  *
  * `onView` is the caller's choice of what "View" does — TaskModal routes
- * it to the full-page session view (`openTranscript`); FeatureDrawer
- * routes it to `openSessionInDrawer` so the row stays inline in the
- * drawer instead of navigating away. "Continue" always reopens the
- * session live via `continueSession` — spawning a fresh instance is a
- * big enough action that it earns the full-page view regardless of
- * where the click came from.
+ * it to the full-page session view (`openTranscript`); TaskDetailLeaf
+ * routes it to `openSessionInDrawer` so the row opens as a sibling pane
+ * in the sidebar dock instead of navigating away. "Continue" always
+ * reopens the session live via `continueSession` — spawning a fresh
+ * instance is a big enough action that it earns the full-page view
+ * regardless of where the click came from.
  */
 import { useTaskActionContext } from "../../hooks/useTaskActionContext";
 import { historySessionRefs } from "../../lib/sessionRef";

@@ -7,24 +7,29 @@
  *   • Body — the leaf's rendered content, delegated by `kind` to a
  *     concrete leaf component under `./leaves/`.
  *   • 5 drop zones (top/bottom/left/right/center) overlaid on the
- *     body, active only while a drag is in progress. Dropping on
- *     an edge splits; dropping in the center merges into tabs.
+ *     WHOLE PANE, active only while a drag this dock accepts is in
+ *     progress. Dropping on an edge splits; the center merges into tabs.
+ *
+ * The overlay is a sibling of the body, not a child of it. `.p2-pane-
+ * body` is `overflow: auto`, and an absolutely-positioned child of a
+ * scroll container is laid out against the scrolled padding box — so
+ * inside the body the overlay slid up by `scrollTop`, off the top of
+ * the pane entirely once the content was scrolled by more than one
+ * pane-height, leaving the bottom of the visible pane with no drop
+ * target at all. Anchored to the leaf it stays put, spans the scrollbar
+ * gutter, and makes the title bar droppable too.
  *
  * The leaf never mutates the tree directly — it delegates every
  * operation to the workspace store, which owns the tree.
  */
-import React, { useCallback, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
 import type { DockLeaf, Edge } from "../../lib/dock";
 import { useWorkspace } from "../../store/workspace";
-import {
-  beginDrag,
-  endDrag,
-  readDragPayload,
-  useDragDrop,
-  type DragPayload,
-} from "../../hooks/useDragDrop";
+import { beginDrag, endDrag, type DragPayload } from "../../hooks/useDragDrop";
+import { useDockDrop } from "./useDockDrop";
 
 import { TaskDetailLeaf } from "./leaves/TaskDetailLeaf";
+import { FeatureDetailLeaf } from "./leaves/FeatureDetailLeaf";
 import { LogsLeaf } from "./leaves/LogsLeaf";
 import { SessionLeaf } from "./leaves/SessionLeaf";
 import { RunnersLeaf } from "./leaves/RunnersLeaf";
@@ -32,19 +37,48 @@ import { BrowserLeaf } from "./leaves/BrowserLeaf";
 import { EntryLeaf } from "./leaves/EntryLeaf";
 
 export function PaneLeaf({
+  dockId,
   id,
   leaf,
+  inTabGroup = false,
 }: {
+  dockId: "focus" | "sidebar";
   id: string;
   leaf: DockLeaf;
+  /**
+   * True when this pane is the active tab of a strip. An edge drop on a
+   * tab retargets to the whole strip (see `addNodeAtEdge`), so the
+   * affordance has to say "this tab group", not the tab's own title —
+   * otherwise the label promises an operation the dock will not perform.
+   */
+  inTabGroup?: boolean;
 }): JSX.Element {
-  const closeLeaf = useWorkspace((s) => s.closeLeaf);
-  const openInFocus = useWorkspace((s) => s.openInFocus);
-  const moveLeaf = useWorkspace((s) => s.moveLeaf);
+  const closeFocusLeaf = useWorkspace((s) => s.closeLeaf);
+  const closeSidebarLeaf = useWorkspace((s) => s.closeSidebarLeaf);
   const setLastFocusLeaf = useWorkspace((s) => s.setLastFocusLeaf);
-  const dragActive = useDragDrop((s) => s.payload !== null);
+  const setLastSidebarLeaf = useWorkspace((s) => s.setLastSidebarLeaf);
+  const { dragActive, dragSourceLeafId, drop } = useDockDrop(dockId);
+
+  const closeLeaf = dockId === "focus" ? closeFocusLeaf : closeSidebarLeaf;
+  const setLastLeaf = dockId === "focus" ? setLastFocusLeaf : setLastSidebarLeaf;
+
+  // A pane is not a drop target for itself: `moveLeaf` self-guards, so
+  // arming these zones would offer full acceptance feedback for a move
+  // that is a guaranteed no-op.
+  const armed = dragActive && dragSourceLeafId !== id;
 
   const [hoverEdge, setHoverEdge] = useState<Edge | null>(null);
+
+  // Clear the hover highlight on the falling edge of the drag rather
+  // than from the source's `onDragEnd`. `dragend` fires only on the
+  // element the drag STARTED from, and unmounting the zones doesn't
+  // fire `dragleave` — so a drag ended by Escape, or dropped on another
+  // pane, used to leave this pane's `hoverEdge` pinned forever: a
+  // permanent orange border, and a zone pre-lit as "selected" on the
+  // next drag that the pointer had never entered.
+  useEffect(() => {
+    if (!armed) setHoverEdge(null);
+  }, [armed]);
 
   const handleDragStart = useCallback(
     (e: React.DragEvent) => {
@@ -54,10 +88,11 @@ export function PaneLeaf({
         target: leaf.target,
         title: leaf.title,
         sourceLeafId: id,
+        sourceDockId: dockId,
       };
       beginDrag(e, payload);
     },
-    [id, leaf],
+    [id, leaf, dockId],
   );
 
   const handleDragEnd = useCallback(() => {
@@ -67,43 +102,10 @@ export function PaneLeaf({
 
   const dropAtEdge = useCallback(
     (edge: Edge, e: React.DragEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const payload = readDragPayload(e);
-      endDrag();
       setHoverEdge(null);
-      if (!payload) return;
-      if (!isLeafKind(payload.kind)) return;
-
-      // Pane-leaf source → move within tree.
-      if (payload.source === "pane-leaf" && payload.sourceLeafId) {
-        if (payload.sourceLeafId === id && edge === "center") return;
-        moveLeaf(payload.sourceLeafId, id, edge);
-      } else {
-        // Sidebar row → open + immediately move to the correct edge.
-        // Cleanest way: openInFocus (adds at last-focus center), then
-        // if the requested edge isn't center, move it to the right
-        // spot. To avoid the round-trip we could reach into dock ops
-        // directly, but that risks state divergence. This call site
-        // is rare (drag from sidebar → edge of a leaf).
-        openInFocus(payload.kind, payload.target, payload.title);
-        // Moving the just-opened leaf is tricky because we don't have
-        // its id here. Accept the fallback: it lands next to the last-
-        // focus leaf (which may be this one). The user can drag it
-        // to the exact edge from the pane title. This is documented
-        // in the phase notes.
-        if (edge !== "center") {
-          // Try to find the freshly-added leaf and move it.
-          // We know it's the "last touched" leaf after openInFocus.
-          const nextTree = useWorkspace.getState().dockTree;
-          const lastId = useWorkspace.getState().lastFocusLeafId;
-          if (nextTree && lastId && lastId !== id) {
-            moveLeaf(lastId, id, edge);
-          }
-        }
-      }
+      drop(id, edge, e);
     },
-    [id, moveLeaf, openInFocus],
+    [drop, id],
   );
 
   const handleClose = useCallback(() => {
@@ -111,8 +113,8 @@ export function PaneLeaf({
   }, [closeLeaf, id]);
 
   const handleFocus = useCallback(() => {
-    setLastFocusLeaf(id);
-  }, [id, setLastFocusLeaf]);
+    setLastLeaf(id);
+  }, [id, setLastLeaf]);
 
   return (
     <div
@@ -143,37 +145,77 @@ export function PaneLeaf({
       </div>
       <div className="p2-pane-body">
         <LeafContent leaf={leaf} />
-
-        {dragActive && (
-          <div className="p2-pane-dropzones active">
-            {(["top", "bottom", "left", "right", "center"] as const).map(
-              (edge) => (
-                <div
-                  key={edge}
-                  className={
-                    "p2-pane-dropzone " +
-                    edge +
-                    (hoverEdge === edge ? " over" : "")
-                  }
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    e.dataTransfer.dropEffect = "move";
-                    setHoverEdge(edge);
-                  }}
-                  onDragLeave={() => {
-                    // Debounce: only clear if we're still on this edge.
-                    setHoverEdge((cur) => (cur === edge ? null : cur));
-                  }}
-                  onDrop={(e) => dropAtEdge(edge, e)}
-                />
-              ),
-            )}
-          </div>
-        )}
       </div>
+
+      {armed && (
+        <div className="p2-pane-dropzones active">
+          {(["top", "bottom", "left", "right", "center"] as const).map(
+            (edge) => (
+              <div
+                key={edge}
+                className={
+                  "p2-pane-dropzone " +
+                  edge +
+                  (hoverEdge === edge ? " over" : "")
+                }
+                aria-label={dropZoneLabel(edge, leaf.title, inTabGroup)}
+                // Set the highlight from `dragenter`, which fires on the
+                // new target BEFORE `dragleave` on the old one. Doing it
+                // from `dragover` alone made the state go old → null →
+                // new across two events, and Chrome throttles `dragover`
+                // to ~3Hz when the pointer is still, so the highlight
+                // visibly blinked off when crossing a zone boundary.
+                onDragEnter={() => setHoverEdge(edge)}
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  e.dataTransfer.dropEffect = "move";
+                  // Only write when it actually changed: `dragover`
+                  // repeats continuously, and each call schedules a
+                  // render of this leaf's whole subtree.
+                  setHoverEdge((cur) => (cur === edge ? cur : edge));
+                }}
+                onDragLeave={() => {
+                  // Debounce: only clear if we're still on this edge.
+                  setHoverEdge((cur) => (cur === edge ? null : cur));
+                }}
+                onDrop={(e) => dropAtEdge(edge, e)}
+              >
+                {/* Position is otherwise the only thing distinguishing
+                    "split" from "merge as a tab". Only the hovered zone
+                    reveals its caption, so exactly one is on screen. */}
+                <span className="p2-pane-dropzone__hint">
+                  {edge === "center"
+                    ? "Add as tab"
+                    : inTabGroup
+                      ? `Split group ${edge}`
+                      : `Split ${edge}`}
+                </span>
+              </div>
+            ),
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+/**
+ * Accessible name for a drop zone — the zones were unlabelled.
+ *
+ * Center always merges into the pane dropped on. The four edges split
+ * the pane — except when it is a tab, where `addNodeAtEdge` retargets to
+ * the strip and the split wraps every tab in it, so the name says so.
+ */
+function dropZoneLabel(
+  edge: Edge,
+  paneTitle: string,
+  inTabGroup: boolean,
+): string {
+  if (edge === "center") return `Add as a tab in ${paneTitle}`;
+  return inTabGroup
+    ? `Split this tab group ${edge}`
+    : `Split ${paneTitle} ${edge}`;
 }
 
 /** Delegate content rendering by kind. */
@@ -181,6 +223,8 @@ function LeafContent({ leaf }: { leaf: DockLeaf }): JSX.Element {
   switch (leaf.kind) {
     case "task-detail":
       return <TaskDetailLeaf target={leaf.target} />;
+    case "feature-detail":
+      return <FeatureDetailLeaf target={leaf.target} />;
     case "logs":
       return <LogsLeaf target={leaf.target} />;
     case "session":
@@ -198,15 +242,4 @@ function LeafContent({ leaf }: { leaf: DockLeaf }): JSX.Element {
         </div>
       );
   }
-}
-
-function isLeafKind(kind: DragPayload["kind"]): kind is DockLeaf["kind"] {
-  return (
-    kind === "task-detail" ||
-    kind === "logs" ||
-    kind === "session" ||
-    kind === "runners" ||
-    kind === "browser" ||
-    kind === "entry"
-  );
 }

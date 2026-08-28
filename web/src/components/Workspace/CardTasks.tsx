@@ -94,8 +94,7 @@ export function CardTasks({
   tasks,
   features,
 }: CardTasksProps): JSX.Element {
-  const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
-  const openTaskDrawer = useWorkspace((s) => s.openTaskDrawer);
+  const openInSidebar = useWorkspace((s) => s.openInSidebar);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
   const archivedExpanded = useWorkspace(
     (s) => s.archivedExpanded[projectId] ?? false,
@@ -246,7 +245,7 @@ export function CardTasks({
       // not open detail.
       selActive
         ? () => toggleTaskSel(projectId, t.id)
-        : () => openTaskDrawer(projectId, t.id),
+        : () => openInSidebar("task-detail", { projectId, taskId: t.id }, label),
       {
         selectionActions: marked ? (selectionActions ?? undefined) : undefined,
         // Long-press = the touch shift-click.
@@ -291,7 +290,7 @@ export function CardTasks({
           // A double-click in multi-select mode must not open — mirror
           // the click guards.
           if (selActive) return;
-          openTaskDrawer(projectId, t.id);
+          openInSidebar("task-detail", { projectId, taskId: t.id }, label);
         }}
         // Shift-click would otherwise extend the browser's text
         // selection across the rows before our click handler runs. The
@@ -383,7 +382,7 @@ export function CardTasks({
           f.name,
           selActive
             ? () => toggleFeatureSel(projectId, f.id)
-            : () => openFeatureDrawer(projectId, f.id),
+            : () => openInSidebar("feature-detail", { projectId, featureId: f.id }, f.name),
           {
             selectionActions: featMarked
               ? (selectionActions ?? undefined)
@@ -448,7 +447,7 @@ export function CardTasks({
                 )
                   return;
                 if (selActive) return;
-                openFeatureDrawer(projectId, f.id);
+                openInSidebar("feature-detail", { projectId, featureId: f.id }, f.name);
               }}
               onMouseDown={(e) => {
                 if (e.shiftKey) {

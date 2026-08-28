@@ -81,7 +81,7 @@ export function CardFeatures({
   projectId,
   features,
 }: CardFeaturesProps): JSX.Element {
-  const openFeatureDrawer = useWorkspace((s) => s.openFeatureDrawer);
+  const openInSidebar = useWorkspace((s) => s.openInSidebar);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
   const mergedExpanded = useWorkspace(
     (s) => s.mergedExpanded[projectId] ?? false,
@@ -190,7 +190,7 @@ export function CardFeatures({
           // does not open the drawer.
           selActive
             ? () => toggleFeatureSel(projectId, f.id)
-            : () => openFeatureDrawer(projectId, f.id),
+            : () => openInSidebar("feature-detail", { projectId, featureId: f.id }, f.name),
           {
             selectionActions: marked
               ? (selectionActions ?? undefined)
@@ -272,7 +272,7 @@ export function CardFeatures({
                 )
                   return;
                 if (selActive) return;
-                openFeatureDrawer(projectId, f.id);
+                openInSidebar("feature-detail", { projectId, featureId: f.id }, f.name);
               }}
               // Shift-click would otherwise extend the browser's text
               // selection across the rows before our click handler

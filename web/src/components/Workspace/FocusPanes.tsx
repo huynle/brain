@@ -5,28 +5,37 @@
  * When the tree is null, shows a friendly empty state with a drop
  * zone so users can drag their first pane in from the sidebar.
  *
- * The workspace-level drop handling here is the single place a "drop
- * on empty" turns into `openInFocus`. Nested drops on existing leaves
- * are handled inside each `<PaneLeaf/>`.
+ * Both branches are drop targets. The empty state is the only place a
+ * first pane can land; the populated branch carries a catch-all on the
+ * `.p2-dock` wrapper so a drop that misses a pane's zones — the splitter
+ * between panes, the 3px gutters, the padding around the dock — still
+ * goes somewhere instead of evaporating. Pane zones `stopPropagation`,
+ * so the catch-all only ever sees genuine misses. All of it routes
+ * through `useDockDrop`, the one reducer every dock surface shares.
  */
 import React, { useCallback } from "react";
 import { useWorkspace } from "../../store/workspace";
 import { PaneNode } from "./PaneNode";
-import { readDragPayload, endDrag, type DragPayload } from "../../hooks/useDragDrop";
-import type { DockLeaf } from "../../lib/dock";
+import { useDockDrop } from "./useDockDrop";
 
 export function FocusPanes(): JSX.Element {
-  const dockTree = useWorkspace((s) => s.dockTree);
-  const openInFocus = useWorkspace((s) => s.openInFocus);
+  const dockTree = useWorkspace((s) => s.docks.focus);
+  const { dragActive, drop } = useDockDrop("focus");
 
   const [dragover, setDragover] = React.useState(false);
 
-  const handleDragOver = useCallback((e: React.DragEvent) => {
-    // Preventing default is REQUIRED to enable drop targets.
-    e.preventDefault();
-    e.dataTransfer.dropEffect = "move";
-    setDragover(true);
-  }, []);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent) => {
+      // Preventing default is REQUIRED to enable drop targets — but
+      // only for a payload we'll actually take, so an "assign" drag
+      // doesn't get a drop cursor it can't cash in.
+      if (!dragActive) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setDragover(true);
+    },
+    [dragActive],
+  );
 
   const handleDragLeave = useCallback((e: React.DragEvent) => {
     // Only clear when leaving the element itself, not a bubbling child.
@@ -35,23 +44,21 @@ export function FocusPanes(): JSX.Element {
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
-      e.preventDefault();
       setDragover(false);
-      const payload = readDragPayload(e);
-      endDrag();
-      if (!payload) return;
-      if (!isLeafKind(payload.kind)) return;
-      // Skip if the drag came from an existing leaf — moving into an
-      // empty state doesn't make sense (there's no "other" leaf to
-      // move relative to). We just re-open it.
-      openInFocus(
-        payload.kind,
-        payload.target,
-        payload.title,
-      );
+      // `null` target: no pane was aimed at, so the store's last-touched
+      // rule places it. A "pane-leaf" payload from the sidebar dock is
+      // moved here rather than duplicated — see useDockDrop.
+      drop(null, "center", e);
     },
-    [openInFocus],
+    [drop],
   );
+
+  // A drag abandoned over the dock (Escape, or a drop on a pane zone,
+  // which stops propagation before `dragleave` reaches this wrapper)
+  // never sends the falling-edge event that would clear this.
+  React.useEffect(() => {
+    if (!dragActive) setDragover(false);
+  }, [dragActive]);
 
   if (dockTree === null) {
     return (
@@ -76,18 +83,13 @@ export function FocusPanes(): JSX.Element {
   }
 
   return (
-    <div className="p2-dock">
-      <PaneNode node={dockTree} />
+    <div
+      className="p2-dock"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      <PaneNode dockId="focus" node={dockTree} />
     </div>
-  );
-}
-
-function isLeafKind(kind: DragPayload["kind"]): kind is DockLeaf["kind"] {
-  return (
-    kind === "task-detail" ||
-    kind === "logs" ||
-    kind === "session" ||
-    kind === "runners" ||
-    kind === "browser"
   );
 }

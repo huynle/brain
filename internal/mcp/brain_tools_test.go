@@ -1,9 +1,12 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1059,7 +1062,7 @@ func TestAttachmentToolSchemas(t *testing.T) {
 		tool     string
 		required []string
 	}{
-		{"attachment_upload", []string{"file_path"}},
+		{"attachment_upload", []string{}},
 		{"attachment_attach", []string{"entry_id", "attachment_id"}},
 		{"attachment_detach", []string{"entry_id", "attachment_id"}},
 		{"attachment_list", []string{}},
@@ -1068,7 +1071,7 @@ func TestAttachmentToolSchemas(t *testing.T) {
 		{"attachment_backfill", []string{}},
 		{"attachment_extract", []string{"attachment_id"}},
 		{"attachment_text", []string{"attachment_id"}},
-		{"attachment_download", []string{"attachment_id", "output_path"}},
+		{"attachment_download", []string{"attachment_id"}},
 	}
 
 	listTool := s.tools["attachment_list"].tool
@@ -1144,7 +1147,7 @@ func TestBrainAttachmentUpload_HandlerUsesMultipartHelper(t *testing.T) {
 	}))
 	defer server.Close()
 
-	s := NewServer()
+	s := NewServer(WithLocalFilesystem())
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
@@ -1251,7 +1254,7 @@ func TestBrainAttachmentAttachDetachListGetExtractTextDownload_RequestShapes(t *
 	}))
 	defer server.Close()
 
-	s := NewServer()
+	s := NewServer(WithLocalFilesystem())
 	client := NewAPIClient(server.URL)
 	RegisterBrainTools(s, client)
 
@@ -1349,14 +1352,14 @@ func TestBrainAttachmentTools_ValidateRequiredIDsBeforeRequest(t *testing.T) {
 		args map[string]any
 		want string
 	}{
-		{"attachment_upload", map[string]any{"project": "test-project"}, "provide 'file_path' (and 'project' if no ambient project is available)"},
+		{"attachment_upload", map[string]any{"project": "test-project"}, "provide 'content' (base64) with 'filename', or 'file_path' for a server-local file (and 'project' if no ambient project is available)"},
 		{"attachment_attach", map[string]any{"project": "test-project", "entry_id": "entry-123"}, "provide 'entry_id' and 'attachment_id' (and 'project' if no ambient project is available)"},
 		{"attachment_detach", map[string]any{"project": "test-project", "attachment_id": "att_123"}, "provide 'entry_id' and 'attachment_id' (and 'project' if no ambient project is available)"},
 		{"attachment_get", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
 		{"attachment_delete", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
 		{"attachment_extract", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
 		{"attachment_text", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
-		{"attachment_download", map[string]any{"project": "test-project", "attachment_id": "att_123"}, "provide 'attachment_id' and 'output_path' (and 'project' if no ambient project is available)"},
+		{"attachment_download", map[string]any{"project": "test-project"}, "provide 'attachment_id' (and 'project' if no ambient project is available)"},
 	}
 	for _, tt := range validationTests {
 		t.Run(tt.tool, func(t *testing.T) {
@@ -3295,5 +3298,176 @@ func TestFormatOptionalDefaults_IsDeterministic(t *testing.T) {
 		if got := formatOptionalDefaults(); got != first {
 			t.Fatalf("formatOptionalDefaults changed between calls (iteration %d):\n%s\nvs\n%s", i, first, got)
 		}
+	}
+}
+
+// A hosted MCP server (the Brain API serves one in-process) shares no
+// filesystem with its client, so path arguments must be refused rather than
+// resolved against the API host's disk.
+func TestAttachmentTools_RejectLocalPathsOnHostedServer(t *testing.T) {
+	var requests []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests = append(requests, r.Method+" "+r.URL.RequestURI())
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{})
+	}))
+	defer server.Close()
+
+	s := NewServer() // no WithLocalFilesystem: this is the hosted default
+	RegisterBrainTools(s, NewAPIClient(server.URL))
+
+	tests := []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{"attachment_upload", map[string]any{"project": "test-project", "file_path": "/etc/passwd"}, "\"file_path\" is unavailable"},
+		{"attachment_download", map[string]any{"project": "test-project", "attachment_id": "att_123", "output_path": "/tmp/out.bin"}, "\"output_path\" is unavailable"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			_, err := s.tools[tt.tool].handler(context.Background(), tt.args)
+			if err == nil {
+				t.Fatal("expected a rejection, got none")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
+			}
+			if !strings.Contains(err.Error(), "base64") {
+				t.Errorf("error should point at the base64 alternative, got: %s", err.Error())
+			}
+		})
+	}
+	if len(requests) != 0 {
+		t.Fatalf("rejected calls must not reach the API, got requests: %v", requests)
+	}
+}
+
+// Uploading by base64 content is the transport-independent path: it must send
+// the decoded bytes and the caller-supplied filename.
+func TestBrainAttachmentUpload_Base64Content(t *testing.T) {
+	var gotName, gotBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := r.ParseMultipartForm(1 << 20); err != nil {
+			t.Fatalf("parse multipart: %v", err)
+		}
+		f, header, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("missing file part: %v", err)
+		}
+		defer f.Close()
+		gotName = header.Filename
+		body, err := io.ReadAll(f)
+		if err != nil {
+			t.Fatalf("read file part: %v", err)
+		}
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"attachment": map[string]any{"id": "att_b64", "filename": header.Filename, "content_type": "text/plain", "size": len(body)}})
+	}))
+	defer server.Close()
+
+	s := NewServer() // hosted server: base64 must work without a local filesystem
+	RegisterBrainTools(s, NewAPIClient(server.URL))
+
+	result, err := s.tools["attachment_upload"].handler(context.Background(), map[string]any{
+		"project":  "test-project",
+		"filename": "pasted.png",
+		// Line-wrapped, as clients commonly emit it.
+		"content": base64.StdEncoding.EncodeToString([]byte("hello attachment")) + "\n",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if gotName != "pasted.png" {
+		t.Errorf("uploaded filename = %q, want pasted.png", gotName)
+	}
+	if gotBody != "hello attachment" {
+		t.Errorf("uploaded body = %q, want decoded bytes", gotBody)
+	}
+	if !strings.Contains(result, "att_b64") {
+		t.Errorf("result should contain the attachment ID, got: %s", result)
+	}
+}
+
+func TestBrainAttachmentUpload_ContentArgumentValidation(t *testing.T) {
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient("http://127.0.0.1:0"))
+
+	tests := []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"both sources", map[string]any{"project": "p", "content": "aGk=", "file_path": "/tmp/x"}, "not both"},
+		{"missing filename", map[string]any{"project": "p", "content": "aGk="}, "'filename' is required"},
+		{"bad base64", map[string]any{"project": "p", "filename": "x.bin", "content": "not base64!!"}, "not valid base64"},
+		{"empty content", map[string]any{"project": "p", "filename": "x.bin", "content": "   "}, "provide 'content'"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := s.tools["attachment_upload"].handler(context.Background(), tt.args)
+			if err == nil {
+				t.Fatal("expected validation error")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error = %q, want substring %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
+// Without output_path the tool returns the bytes inline, which is the only way
+// a remote client can get an attachment's content back.
+func TestBrainAttachmentDownload_InlineBase64(t *testing.T) {
+	payload := []byte("\x89PNG\r\n\x1a\nbinary-ish bytes")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v1/attachments/att_123/content" {
+			t.Errorf("unexpected path: %s", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "image/png")
+		w.Write(payload)
+	}))
+	defer server.Close()
+
+	s := NewServer()
+	RegisterBrainTools(s, NewAPIClient(server.URL))
+
+	result, err := s.tools["attachment_download"].handler(context.Background(), map[string]any{
+		"project":       "test-project",
+		"attachment_id": "att_123",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !strings.Contains(result, "image/png") {
+		t.Errorf("result should report the content type, got: %s", result)
+	}
+	if !strings.Contains(result, base64.StdEncoding.EncodeToString(payload)) {
+		t.Errorf("result should contain base64 payload, got: %s", result)
+	}
+}
+
+// Oversized attachments are an error, not a truncated payload: a half-written
+// image that decodes to garbage is worse than a pointer to the REST endpoint.
+func TestAPIClient_DownloadAttachmentBytesRejectsOversized(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(bytes.Repeat([]byte("x"), 128))
+	}))
+	defer server.Close()
+
+	client := NewAPIClient(server.URL)
+	if _, _, err := client.DownloadAttachmentBytes(context.Background(), "p", "att_123", 64); err == nil {
+		t.Fatal("expected an oversized error")
+	} else if !strings.Contains(err.Error(), "/api/v1/attachments/att_123/content") {
+		t.Fatalf("error should name the REST fallback, got: %v", err)
+	}
+
+	data, _, err := client.DownloadAttachmentBytes(context.Background(), "p", "att_123", 128)
+	if err != nil {
+		t.Fatalf("exactly-at-limit download failed: %v", err)
+	}
+	if len(data) != 128 {
+		t.Fatalf("len(data) = %d, want 128", len(data))
 	}
 }

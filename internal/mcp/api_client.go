@@ -120,7 +120,12 @@ func (c *APIClient) Request(ctx context.Context, method, path string, body any, 
 	return nil
 }
 
-// UploadAttachment uploads a local file as multipart/form-data to the Brain API.
+// UploadAttachment uploads a file from the filesystem of the process running
+// this client as multipart/form-data to the Brain API.
+//
+// The path is opened locally, so this is only meaningful when the client shares
+// a filesystem with whoever supplied the path. Remote callers must use
+// UploadAttachmentContent.
 func (c *APIClient) UploadAttachment(ctx context.Context, projectID, filePath string, metadata map[string]string) (*types.CreateAttachmentResponse, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -128,6 +133,12 @@ func (c *APIClient) UploadAttachment(ctx context.Context, projectID, filePath st
 	}
 	defer file.Close()
 
+	return c.UploadAttachmentContent(ctx, projectID, filepath.Base(filePath), file, metadata)
+}
+
+// UploadAttachmentContent uploads raw bytes as multipart/form-data under the
+// given filename. It touches no filesystem, so it works over any transport.
+func (c *APIClient) UploadAttachmentContent(ctx context.Context, projectID, filename string, content io.Reader, metadata map[string]string) (*types.CreateAttachmentResponse, error) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 
@@ -144,11 +155,11 @@ func (c *APIClient) UploadAttachment(ctx context.Context, projectID, filePath st
 		}
 	}
 
-	part, err := writer.CreateFormFile("file", filepath.Base(filePath))
+	part, err := writer.CreateFormFile("file", filepath.Base(filename))
 	if err != nil {
 		return nil, fmt.Errorf("create file part: %w", err)
 	}
-	if _, err := io.Copy(part, file); err != nil {
+	if _, err := io.Copy(part, content); err != nil {
 		return nil, fmt.Errorf("copy file part: %w", err)
 	}
 	if err := writer.Close(); err != nil {
@@ -234,8 +245,9 @@ func (c *APIClient) ExtractAttachmentText(ctx context.Context, projectID, attach
 	return &result, nil
 }
 
-// DownloadAttachmentToFile streams raw attachment bytes to outputPath.
-func (c *APIClient) DownloadAttachmentToFile(ctx context.Context, projectID, attachmentID, outputPath string) error {
+// attachmentContent issues the raw-content request for an attachment and
+// returns the live response. The caller owns the body and must close it.
+func (c *APIClient) attachmentContent(ctx context.Context, projectID, attachmentID string) (*http.Response, error) {
 	params := url.Values{}
 	if projectID != "" {
 		params.Set("project_id", projectID)
@@ -247,7 +259,7 @@ func (c *APIClient) DownloadAttachmentToFile(ctx context.Context, projectID, att
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return fmt.Errorf("create request: %w", err)
+		return nil, fmt.Errorf("create request: %w", err)
 	}
 	if c.authToken != "" {
 		req.Header.Set("Authorization", "Bearer "+c.authToken)
@@ -255,17 +267,51 @@ func (c *APIClient) DownloadAttachmentToFile(ctx context.Context, projectID, att
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("request failed: %w", err)
+	}
+
+	if resp.StatusCode >= 400 {
+		defer resp.Body.Close()
+		respBody, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read response: %w", err)
+		}
+		return nil, checkAPIError(resp, respBody)
+	}
+	return resp, nil
+}
+
+// DownloadAttachmentBytes returns an attachment's raw bytes and content type,
+// reading at most limit bytes. Anything larger is an error rather than a silent
+// truncation, so the caller can fall back to the REST content endpoint.
+func (c *APIClient) DownloadAttachmentBytes(ctx context.Context, projectID, attachmentID string, limit int64) ([]byte, string, error) {
+	resp, err := c.attachmentContent(ctx, projectID, attachmentID)
+	if err != nil {
+		return nil, "", err
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		respBody, err := io.ReadAll(resp.Body)
-		if err != nil {
-			return fmt.Errorf("read response: %w", err)
-		}
-		return checkAPIError(resp, respBody)
+	// Read one byte past the limit: if it arrives, the attachment is too big.
+	data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	if err != nil {
+		return nil, "", fmt.Errorf("read attachment content: %w", err)
 	}
+	if int64(len(data)) > limit {
+		return nil, "", fmt.Errorf("attachment %s is larger than the %d byte inline limit: fetch it from GET /api/v1/attachments/%s/content instead",
+			attachmentID, limit, attachmentID)
+	}
+	return data, resp.Header.Get("Content-Type"), nil
+}
+
+// DownloadAttachmentToFile streams raw attachment bytes to outputPath on the
+// filesystem of the process running this client. Remote callers must use
+// DownloadAttachmentBytes.
+func (c *APIClient) DownloadAttachmentToFile(ctx context.Context, projectID, attachmentID, outputPath string) error {
+	resp, err := c.attachmentContent(ctx, projectID, attachmentID)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
 
 	if dir := filepath.Dir(outputPath); dir != "." && dir != "" {
 		if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -35,6 +35,14 @@ export interface EntriesState {
   strategy: SearchStrategy;
   /** Entry open in the reader pane (path). */
   selectedPath: string | null;
+  /**
+   * Counts user navigations to an entry — bumped by `selectEntry` and by
+   * nothing else. `canonicalizeRef` deliberately leaves it alone: it
+   * rewrites the entry you are already on, so the URL sync replaces the
+   * current browser history entry instead of pushing a new one. See
+   * `hooks/useEntryNavHistory`. Ephemeral; never persisted.
+   */
+  navSeq: number;
   /** Up to two entry paths pinned for compare. */
   comparePins: string[];
   /** Compare surface open (needs two pins). */
@@ -49,6 +57,13 @@ export interface EntriesState {
   setQuery(q: string): void;
   setStrategy(s: SearchStrategy): void;
   selectEntry(path: string | null): void;
+  /**
+   * Select the entry a browser Back/Forward landed on. Same effect as
+   * `selectEntry` minus the navigation bookkeeping — the history entry
+   * already exists, so `navSeq` stays put and the URL sync does not push
+   * over it. Compare is closed because the popped state names one entry.
+   */
+  applyHistoryEntry(path: string | null): void;
   /**
    * Toggle a compare pin. Unpins if already pinned; fills a free slot if
    * one exists; otherwise replaces the second pin (the first pin is the
@@ -95,6 +110,7 @@ export const useEntriesStore = create<EntriesState>()(
       query: "",
       strategy: "fts",
       selectedPath: null,
+      navSeq: 0,
       comparePins: [],
       compareOpen: false,
       diffMode: false,
@@ -105,7 +121,14 @@ export const useEntriesStore = create<EntriesState>()(
       setSort: (sortBy, sortOrder) => set({ sortBy, sortOrder }),
       setQuery: (query) => set({ query }),
       setStrategy: (strategy) => set({ strategy }),
-      selectEntry: (selectedPath) => set({ selectedPath }),
+      selectEntry: (selectedPath) =>
+        set((s) => ({ selectedPath, navSeq: s.navSeq + 1 })),
+
+      applyHistoryEntry: (selectedPath) =>
+        set((s) => ({
+          selectedPath,
+          compareOpen: selectedPath ? false : s.compareOpen,
+        })),
 
       togglePin: (path) =>
         set((s) => {
@@ -170,6 +193,7 @@ export const useEntriesStore = create<EntriesState>()(
           comparePins: pins.slice(0, 2),
           // Ephemeral fields never come from the cache.
           query: "",
+          navSeq: 0,
           compareOpen: false,
           diffMode: false,
         };

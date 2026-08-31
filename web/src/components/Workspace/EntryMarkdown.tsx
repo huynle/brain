@@ -33,6 +33,7 @@ import {
   slugifyHeading,
   type MarkdownNode,
 } from "../../lib/entries";
+import { entryHref } from "../../lib/entryNav";
 import { resolveAttachmentSrc } from "../../lib/attachments";
 import type { AttachmentReference } from "../../lib/types";
 
@@ -105,7 +106,7 @@ export function EntryMarkdown({
         if (target.kind === "entry" && onOpenEntry) {
           return (
             <a
-              href={`/${target.ref}`}
+              href={entryHref(target.ref)}
               className="entry-link"
               title={target.ref}
               onClick={(e) => {

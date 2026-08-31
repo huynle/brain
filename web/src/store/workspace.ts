@@ -114,6 +114,15 @@ export function clampSidebarWidth(
   return Math.min(max, Math.max(min, px));
 }
 
+/** A copy of `map` without `key`. Returns `map` untouched when absent, so a
+ *  no-op never invalidates a zustand selector. */
+function omitKey<T>(map: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in map)) return map;
+  const next = { ...map };
+  delete next[key];
+  return next;
+}
+
 export interface WorkspaceState {
   view: WorkspaceView;
   focusSessionId?: string;
@@ -205,6 +214,7 @@ export interface WorkspaceState {
   toggleArchivedExpanded(projectId: string): void;
   hideProject(projectId: string): void;
   showProject(projectId: string): void;
+  forgetProject(projectId: string): void;
   toggleProjectVisibility(projectId: string): void;
   hideAllEmpty(projectIds: string[], nonEmpty: string[]): void;
   setStatusFilter(f: StatusFilter): void;
@@ -629,6 +639,47 @@ export const useWorkspace = create<WorkspaceState>()(
           set((s) => ({
             hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId),
           })),
+
+        // forgetProject drops every trace of a project from the persisted
+        // shell state. Called after the project is DELETED, not hidden —
+        // hide is a view preference about something that still exists.
+        //
+        // Panes have to close, not merely go stale: a task-detail leaf
+        // pointed at a deleted project renders an error state forever, and
+        // it survives a reload because the dock tree is persisted. Both
+        // docks are swept because a leaf can be dragged between them.
+        //
+        // The hiddenProjects entry goes too — otherwise a project recreated
+        // under the same name comes back invisible, which reads as the
+        // delete having half-failed.
+        forgetProject: (projectId) =>
+          set((s) => {
+            const sweep = (tree: DockNode | null): DockNode | null => {
+              if (!tree) return null;
+              const doomed: string[] = [];
+              walkLeaves(tree, (leaf, id) => {
+                if (leaf.target?.projectId === projectId) doomed.push(id);
+              });
+              let next: DockNode | null = tree;
+              for (const id of doomed) {
+                if (!next) break;
+                next = removeDockNode(next, id);
+              }
+              return next;
+            };
+            const focus = sweep(s.docks.focus);
+            const sidebar = sweep(s.docks.sidebar);
+            return {
+              hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId),
+              mergedExpanded: omitKey(s.mergedExpanded, projectId),
+              archivedExpanded: omitKey(s.archivedExpanded, projectId),
+              docks: { focus, sidebar },
+              // A leaf id recorded as "last focused" may have just been
+              // removed; the dock no longer contains it either way.
+              lastFocusLeafId: focus ? s.lastFocusLeafId : null,
+              lastSidebarLeafId: sidebar ? s.lastSidebarLeafId : null,
+            };
+          }),
 
         toggleProjectVisibility: (projectId) =>
           set((s) =>

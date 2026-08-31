@@ -41,6 +41,12 @@ const (
 	ProjectDirty  EventType = "project.dirty"
 	ProjectError  EventType = "project.error"
 	TasksSnapshot EventType = "tasks.snapshot"
+
+	// ProjectDeleted fires once when a whole project is erased. It is the
+	// summary signal for a wipe that also emits one entry.deleted per
+	// entry — subscribers that care about "this project is gone" watch
+	// this rather than trying to infer it from hundreds of entry events.
+	ProjectDeleted EventType = "project.deleted"
 )
 
 // Event represents a typed domain event flowing through the bus.

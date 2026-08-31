@@ -58,6 +58,7 @@ function resetStore() {
     featureAssignments: { ...INITIAL.featureAssignments },
     mergedExpanded: {},
     archivedExpanded: {},
+    hiddenProjects: [],
     statusFilter: "all",
     sidebarDockOpen: false,
     drawerWidth: 430,
@@ -878,4 +879,87 @@ test("workspace: setSidebarWidth clamps to the [180, 480] range", () => {
   assert.equal(useWorkspace.getState().sidebarWidth, 180);
   useWorkspace.getState().setSidebarWidth(5000);
   assert.equal(useWorkspace.getState().sidebarWidth, 480);
+});
+
+// ─── forgetProject: what a DELETED project leaves behind ──────────────
+//
+// hideProject is a view preference about something that still exists;
+// forgetProject runs after the project is gone from the server. The
+// difference that matters is the dock: a leaf pointed at a deleted project
+// renders an error state forever, and the dock tree is persisted, so it
+// survives a reload.
+
+test("workspace: forgetProject closes focus panes targeting the project", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+  w().openInFocus("task-detail", { projectId: "shop" }, "shop");
+  w().openInFocus("task-detail", { projectId: "warehouse" }, "warehouse");
+
+  w().forgetProject("shop");
+
+  const titles: string[] = [];
+  const tree = w().docks.focus;
+  if (tree) walkLeaves(tree, (leaf) => void titles.push(leaf.title));
+  assert.deepEqual(titles, ["warehouse"]);
+});
+
+test("workspace: forgetProject sweeps the sidebar dock too", () => {
+  // A leaf can be dragged between docks, so sweeping only `focus` would
+  // leave the dead pane alive in the other column.
+  resetStore();
+  const w = () => useWorkspace.getState();
+  w().openInSidebar("task-detail", { projectId: "shop" }, "shop");
+
+  w().forgetProject("shop");
+
+  assert.equal(w().docks.sidebar, null);
+});
+
+test("workspace: forgetProject leaves unrelated panes untouched", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+  w().openInFocus("runners", {}, "Runners");
+
+  w().forgetProject("shop");
+
+  const tree = w().docks.focus;
+  assert.ok(tree);
+  assertLeafTitle(tree, "Runners");
+});
+
+test("workspace: forgetProject drops the project from hiddenProjects", () => {
+  // Otherwise a project recreated under the same name comes back
+  // invisible, which reads as the delete having half-failed.
+  resetStore();
+  const w = () => useWorkspace.getState();
+  w().hideProject("shop");
+  w().hideProject("warehouse");
+
+  w().forgetProject("shop");
+
+  assert.deepEqual(w().hiddenProjects, ["warehouse"]);
+});
+
+test("workspace: forgetProject drops the project's expansion state", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+  w().toggleMergedExpanded("shop");
+  w().toggleArchivedExpanded("shop");
+  w().toggleMergedExpanded("warehouse");
+
+  w().forgetProject("shop");
+
+  assert.deepEqual(Object.keys(w().mergedExpanded), ["warehouse"]);
+  assert.deepEqual(Object.keys(w().archivedExpanded), []);
+});
+
+test("workspace: forgetProject on an unknown project is a no-op", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+  w().openInFocus("task-detail", { projectId: "shop" }, "shop");
+  const before = w().docks.focus;
+
+  w().forgetProject("nonexistent");
+
+  assert.equal(w().docks.focus, before);
 });

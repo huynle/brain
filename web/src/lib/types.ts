@@ -277,6 +277,24 @@ export interface ProjectListResponse {
   projects: string[];
 }
 
+/**
+ * Response from DELETE /tasks/{project} — erasing a whole project.
+ *
+ * No per-entry results list: a wipe routinely spans hundreds of entries and a
+ * caller who asked to remove all of them has no use for a row per success.
+ * Failures ARE enumerated (capped server-side) — those are the only entries
+ * the user still has to deal with.
+ */
+export interface DeleteProjectResponse {
+  project: string;
+  deleted: number;
+  failed: number;
+  errors?: string[];
+  index_rows_removed?: number;
+  state_rows_removed?: Record<string, number>;
+  directory_removed: boolean;
+}
+
 export interface LogLine {
   timestamp: string;
   level: string;

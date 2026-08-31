@@ -18,6 +18,7 @@
  * pause — is not a project verb at all and lives in ./runnerActions.
  */
 import type { ActionDescriptor } from "./types";
+import type { DeleteProjectResponse } from "../types";
 
 export interface ProjectActionContext {
   /** Dispatch every ready feature in the project (POST /tasks/{p}/run). */
@@ -34,6 +35,8 @@ export interface ProjectActionContext {
   pauseAutomations: (projectId: string) => Promise<void>;
   /** POST /tasks/runner/automations/resume/{projectId}. */
   resumeAutomations: (projectId: string) => Promise<void>;
+  /** DELETE /tasks/{projectId} — erase every entry in the project. */
+  deleteProject: (projectId: string) => Promise<void>;
 }
 
 /**
@@ -152,5 +155,62 @@ export function buildProjectActions(
       group: "navigate",
       run: async () => ctx.hideProject(projectId),
     },
+
+    // ─── danger ─────────────────────────────────────────────────────
+    // The only verb here that destroys anything. Hide (above) is its
+    // reversible neighbour and the reason the label spells out
+    // "permanently": the two are one right-click apart, and a user who
+    // wanted the × has to be stopped from landing here by accident.
+    //
+    // Never disabled on an empty project. An empty-looking project still
+    // has a directory, pause dials and possibly non-task entries the
+    // sidebar's task counts never showed — "nothing to delete" would be a
+    // lie, and the verb is how you get rid of the leftover name.
+    {
+      id: "delete",
+      label: "Delete project…",
+      group: "danger",
+      danger: true,
+      // No accelerator, deliberately. Every other single-key verb here is
+      // recoverable; a bare "d" that starts erasing a project is not the
+      // kind of thing to have under a finger resting on a row.
+      confirm: {
+        title: `Delete project ${projectId}?`,
+        body:
+          `This permanently removes every brain entry in ${projectId} — tasks, notes, ` +
+          `automations and goals alike — along with its history and its runner state. ` +
+          `It cannot be undone. To take the project off your board without destroying it, ` +
+          `hide it instead.`,
+        // Type-to-confirm, as on feature deletion: irreversible, and the
+        // blast radius is the whole project rather than one entry.
+        typeToConfirm: projectId,
+        confirmLabel: "Delete permanently",
+      },
+      run: () => ctx.deleteProject(projectId),
+    },
   ];
+}
+
+/**
+ * One-line toast summary of a project wipe.
+ *
+ * Lives here rather than beside the fetch wrapper for the same reason the
+ * builders do: it is pure data → string, and `node --test` can reach it
+ * without dragging in auth and the browser globals api.ts needs.
+ *
+ * A partial wipe leads with the failure. "Deleted 40 entries" is true and
+ * useless when 3 are still there — the leftovers are the only part the user
+ * has to act on, so they go first, with the server's own first reason
+ * attached rather than a generic "some failed".
+ */
+export function summarizeDeleteProjectResult(r: DeleteProjectResponse): string {
+  const entries = `${r.deleted} ${r.deleted === 1 ? "entry" : "entries"}`;
+  if (r.failed > 0) {
+    const first = r.errors?.[0] ? ` (${r.errors[0]})` : "";
+    return `${r.project}: ${r.failed} failed, ${entries} deleted${first}`;
+  }
+  // An empty project is a real case, not an error: the sidebar counts only
+  // tasks, so "0 entries" here means the name was all that was left.
+  if (r.deleted === 0) return `${r.project} deleted — it had no entries`;
+  return `${r.project} deleted — ${entries} removed`;
 }

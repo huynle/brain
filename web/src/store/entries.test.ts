@@ -18,6 +18,7 @@ function resetStore() {
     query: "",
     strategy: INITIAL.strategy,
     selectedPath: null,
+    navSeq: 0,
     comparePins: [],
     compareOpen: false,
     diffMode: false,
@@ -109,4 +110,42 @@ test("entries: canonicalizeRef is a no-op for unrelated refs", () => {
   st().canonicalizeRef("zzzzzzzz", "p/c.md");
   assert.equal(st().selectedPath, "p/a.md");
   assert.deepEqual(st().comparePins, ["p/b.md"]);
+});
+
+test("entries: selectEntry counts navigations, canonicalizeRef does not", () => {
+  resetStore();
+  const s = () => useEntriesStore.getState();
+  s().selectEntry("ab12cd34");
+  assert.equal(s().navSeq, 1);
+  // A short id resolving to its full path is the same navigation — the
+  // URL sync leans on this to replace rather than push (see
+  // hooks/useEntryNavHistory).
+  s().canonicalizeRef("ab12cd34", "projects/x/plan/ab12cd34.md");
+  assert.equal(s().selectedPath, "projects/x/plan/ab12cd34.md");
+  assert.equal(s().navSeq, 1);
+  s().selectEntry("projects/x/note/ef56ab78.md");
+  assert.equal(s().navSeq, 2);
+});
+
+test("entries: applyHistoryEntry selects without counting a navigation", () => {
+  resetStore();
+  const s = () => useEntriesStore.getState();
+  s().selectEntry("a.md");
+  const seq = s().navSeq;
+  s().applyHistoryEntry("b.md");
+  assert.equal(s().selectedPath, "b.md");
+  assert.equal(s().navSeq, seq, "a popped history entry is not a new navigation");
+  s().applyHistoryEntry(null);
+  assert.equal(s().selectedPath, null);
+});
+
+test("entries: popping to an entry closes compare", () => {
+  resetStore();
+  const s = () => useEntriesStore.getState();
+  s().togglePin("a.md");
+  s().togglePin("b.md");
+  s().setCompareOpen(true);
+  s().applyHistoryEntry("c.md");
+  assert.equal(s().compareOpen, false);
+  assert.deepEqual(s().comparePins, ["a.md", "b.md"], "pins survive the pop");
 });

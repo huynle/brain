@@ -20,10 +20,11 @@
  *                        runners only accept feature-header drops.
  *   - "pane-leaf" — dragging an existing focus pane title
  *
- * Payload targets:
- *   - The Focus workspace empty state  → openInFocus(kind, target)
- *   - A leaf's edge drop-zone           → openInFocus + edge split /
- *                                        moveLeaf(sourceLeafId, ...)
+ * Payload targets — every dock surface routes through one reducer,
+ * `Workspace/useDockDrop.ts`; only the runner row is separate:
+ *   - A leaf's edge drop-zone, a tabs strip, the dock gutter, or the
+ *     empty state → openIn*At(kind, target, title, targetNodeId, edge)
+ *     for an external payload, moveLeaf for a "pane-leaf" one
  *   - A sidebar runner row (Phase 8)   → assignFeatureToRunner
  *
  * The store is intentionally NOT persisted; drags are ephemeral.
@@ -60,6 +61,13 @@ export interface DragPayload {
   /** When source === "pane-leaf", this is the leaf's id in the dock tree.
    *  Consumers use this to distinguish a move from an open. */
   sourceLeafId?: string;
+  /** When source === "pane-leaf", which dock the leaf currently lives
+   *  in. There are two independent trees (`docks.focus` and
+   *  `docks.sidebar`) and every tree op is bound to one of them, so a
+   *  drop target has no other way to tell a rearrange-in-place from a
+   *  move across docks — it would just call `moveLeaf` with an id the
+   *  destination tree has never heard of and silently no-op. */
+  sourceDockId?: "focus" | "sidebar";
 }
 
 /** The MIME type we register so cross-frame drags work. */
@@ -76,6 +84,29 @@ export const useDragDrop = create<DragState>((set) => ({
   start: (p) => set({ payload: p }),
   end: () => set({ payload: null }),
 }));
+
+/**
+ * Backstop: clear the payload when the pointer's drag ends, whatever it
+ * ended on. Every drop target calls `endDrag()` itself, but a drag can
+ * also end by Escape or by releasing over something that isn't a target
+ * at all, and then only the SOURCE element's `onDragEnd` runs — so a
+ * source that unmounted mid-drag (an SSE-driven list re-sort, say)
+ * leaves the payload set forever. A stuck payload keeps `.p2-pane-
+ * dropzones.active` armed with `pointer-events: auto` on every pane in
+ * both docks, which swallows clicks until the next complete drag.
+ *
+ * `dragend` is capture-phase (it carries nothing anyone reads).
+ * `drop` is bubble-phase deliberately: `readDragPayload` falls back to
+ * this store when the browser didn't preserve our custom MIME type, so
+ * clearing before a target's own handler ran would break that fallback.
+ * Targets that call `stopPropagation()` never reach this listener —
+ * they clear the payload themselves.
+ */
+if (typeof window !== "undefined") {
+  const clear = () => useDragDrop.getState().end();
+  window.addEventListener("dragend", clear, true);
+  window.addEventListener("drop", clear, false);
+}
 
 /**
  * Helper: attach payload to a native drag event AND publish to the store.

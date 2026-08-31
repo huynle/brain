@@ -137,6 +137,13 @@ type SearchOptions struct {
 	FeatureID  string
 	Tags       []string
 	Priority   string
+
+	// ProjectIDs scopes to any of several projects (ProjectID is exactly
+	// one). IncludeGlobalPath widens that scope to global/ entries, which
+	// carry no project_id and so can never match a project_id filter.
+	// Both are ignored when ProjectID is set.
+	ProjectIDs        []string
+	IncludeGlobalPath bool
 }
 
 // ListOptions configures list/filter behavior.
@@ -153,6 +160,13 @@ type ListOptions struct {
 	SortOrder  string // "asc", "desc"
 	Limit      int
 	Offset     int
+
+	// ProjectIDs scopes to any of several projects (ProjectID is exactly
+	// one). IncludeGlobalPath widens that scope to global/ entries, which
+	// carry no project_id and so can never match a project_id filter.
+	// Both are ignored when ProjectID is set.
+	ProjectIDs        []string
+	IncludeGlobalPath bool
 }
 
 // EmbeddingSearchOptions configures embedding-based semantic search.
@@ -164,6 +178,10 @@ type EmbeddingSearchOptions struct {
 	FeatureID string
 	Priority  string
 	Tags      []string
+
+	// Multi-project scope; see the identical fields on SearchOptions.
+	ProjectIDs        []string
+	IncludeGlobalPath bool
 }
 
 // OrphanOptions configures the GetOrphans query.
@@ -183,6 +201,11 @@ type StaleOptions struct {
 // StatsOptions configures the GetStats query.
 type StatsOptions struct {
 	Path string // optional path prefix filter
+
+	// Paths is a multi-prefix filter: a row matches if it is under ANY of
+	// them. Used for the Entries browser's sidebar scope, whose chip counts
+	// span several projects. Ignored when Path is set.
+	Paths []string
 }
 
 // Stats holds aggregate storage statistics.

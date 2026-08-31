@@ -16,8 +16,11 @@ import (
 func (h *Handler) HandleGetStats(w http.ResponseWriter, r *http.Request) {
 	global := r.URL.Query().Get("global") == "true"
 	project := r.URL.Query().Get("project")
+	// ?projects=a,b,global scopes the counts to a set of projects; it
+	// supersedes ?project / ?global (see BrainService.GetStats).
+	projects := types.SplitCommaScope(r.URL.Query().Get("projects"))
 
-	resp, err := h.brain.GetStats(r.Context(), global, project)
+	resp, err := h.brain.GetStats(r.Context(), global, project, projects)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
 		return

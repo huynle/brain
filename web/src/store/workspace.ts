@@ -7,28 +7,44 @@
  * feature→runner assignment map (a client-side optimistic mirror of
  * the assignment API landed in Phase 6).
  *
- * The `dockTree` field is the Focus workspace's docking tree. It is
- * a `DockNode | null` (see `lib/dock.ts`). Phase 7 introduces real
- * mutations — `openInFocus`, `closeLeaf`, `moveLeaf`, etc. — and
- * persists the tree to localStorage.
+ * ─── two docks, one engine ─────────────────────────────────────────
+ * `docks.focus` and `docks.sidebar` are independent `DockNode | null`
+ * trees (see `lib/dock.ts`) driving the Focus tab and the right-side
+ * sidebar panel respectively. Both are rendered by the exact same
+ * `PaneNode`/`PaneTabs`/`PaneLeaf`/`Splitter` chain — split/tabs/
+ * drag-to-rearrange come for free instead of being reimplemented per
+ * dock. Every mutating action exists in a Focus/sidebar pair
+ * (`openInFocus`/`openInSidebar`, `closeLeaf`/`closeSidebarLeaf`,
+ * `moveLeaf`/`moveSidebarLeaf`, `setSplitRatio`/`setSidebarSplitRatio`,
+ * `setActiveTab`/`setSidebarActiveTab`) sharing one dockId-generic
+ * implementation defined below — see the `make*` factories.
+ *
+ * The right-side panel replaced an earlier single-item `DrawerState`
+ * (a `{kind, ...}` union rendered by `FeatureDrawer.tsx`) that could
+ * only show one feature/task/entry/session at a time. That machinery
+ * is gone; `FeatureDrawer.tsx` was renamed `SidebarDock.tsx` and now
+ * renders `docks.sidebar` the same way `FocusPanes.tsx` renders
+ * `docks.focus`. `sidebarDockOpen` is the panel's own visibility gate
+ * (mirrors the left `Sidebar`'s `sidebarCollapsed`): opening a leaf
+ * into the sidebar flips it true automatically, and the user can also
+ * pin it open (while empty) or close it (while populated) manually —
+ * closing never discards `docks.sidebar`, it just hides the column.
  *
  * ─── persistence ─────────────────────────────────────────────────
  * Persisted key: `panes-v2:workspace:v1` (unchanged from Phase 3).
- * The persisted shape now includes `dockTree`; if a browser loads a
- * cache that predates Phase 7, `dockTree` is simply absent, defaults
- * back to `null`, and the user's Focus layout starts empty. That's
- * an acceptable one-time loss, not a corruption.
- *
- * If the persisted `dockTree` shape can't be parsed as a valid
- * DockNode, `merge` defensively coerces it to `null` and logs a
- * warning. We do NOT bump the storage key — that would strand
- * pre-Phase-7 view/section/assignment state that is fine.
+ * The persisted shape includes `docks`; a browser loading a cache from
+ * before the two-dock generalization has a bare `dockTree` instead —
+ * `merge` migrates that into `{ focus: dockTree, sidebar: null }` so a
+ * user's saved Focus layout survives the upgrade. If a persisted dock
+ * tree can't be parsed as a valid DockNode, `merge` defensively coerces
+ * it to `null` and logs a warning rather than crashing the shell.
  */
 import { create } from "zustand";
 import { persist, createJSONStorage } from "zustand/middleware";
 import type { SessionRef } from "../lib/types";
 import {
-  addLeafAtEdge,
+  addNodeAtEdge,
+  findNodeInfo,
   newLeafNode,
   removeNode as removeDockNode,
   moveLeaf as moveDockLeaf,
@@ -50,6 +66,12 @@ export type WorkspaceView = "overview" | "focus" | "session" | "entries";
 
 export type SidebarSectionKey = "projects" | "sessions" | "runners";
 
+/** Which dock a tree-mutating action targets. Not part of the public
+ *  store surface — every action is exposed as a Focus/sidebar pair
+ *  instead of taking this as a parameter, so existing call sites never
+ *  have to pass it. */
+type DockId = "focus" | "sidebar";
+
 /**
  * Task-status filter driven by the sidebar chips (All / Active / Ready /
  * Blocked / Done / Archived). Applied to both the sidebar Projects list AND
@@ -65,17 +87,6 @@ export type StatusFilter =
   | "archived";
 
 /**
- * Discriminated union describing what the right-side drawer is showing.
- * A `feature` drawer renders feature detail + its task list; a `task`
- * drawer renders the same KV metadata + Content body the Task modal
- * shows. `null` = closed. Kept transient (not persisted), matching the
- * prior `featureDrawer` behavior.
- */
-export type DrawerState =
-  | { kind: "feature"; projectId: string; featureId: string }
-  | { kind: "task"; projectId: string; taskId: string };
-
-/**
  * Clamp a requested drawer width (px) into a usable range. Pure so the
  * store's `setDrawerWidth` and the resize handler both funnel through
  * one testable rule. Defaults to [300, 900].
@@ -89,6 +100,20 @@ export function clampDrawerWidth(
   return Math.min(max, Math.max(min, px));
 }
 
+/**
+ * Clamp a requested sidebar width (px) into a usable range. Mirrors
+ * `clampDrawerWidth` — same shape, same reasoning. Defaults to
+ * [180, 480], centered on the historical fixed 250px sidebar.
+ */
+export function clampSidebarWidth(
+  px: number,
+  min = 180,
+  max = 480,
+): number {
+  if (!Number.isFinite(px)) return min;
+  return Math.min(max, Math.max(min, px));
+}
+
 export interface WorkspaceState {
   view: WorkspaceView;
   focusSessionId?: string;
@@ -97,11 +122,19 @@ export interface WorkspaceState {
    *  `focusSessionId`, which remains the instance-id fast path used by
    *  the sidebar/MobileNav live rows. */
   focusSessionRef?: SessionRef | null;
-  dockTree: DockNode | null;
-  /** Last leaf a user interacted with — used as the default drop
-   *  target when they invoke `openInFocus` from a non-drag path
-   *  (e.g. TaskModal → "Open logs in focus pane"). */
+  /** The two independent dock trees. `focus` backs the Focus tab;
+   *  `sidebar` backs the right-side panel (see module docstring). */
+  docks: { focus: DockNode | null; sidebar: DockNode | null };
+  /** Last leaf a user interacted with in the Focus dock — used as the
+   *  default drop target when they invoke `openInFocus` from a non-drag
+   *  path (e.g. TaskModal → "Open logs in focus pane"). Written by
+   *  mousing down on a pane AND by `openInFocus`/`openInFocusAt`, which
+   *  point it at the leaf they just created so consecutive opens chain
+   *  onto the newest pane. It is only ever a hint: nothing outside this
+   *  store may treat it as "the id of the leaf that was just opened". */
   lastFocusLeafId: string | null;
+  /** Same idea as `lastFocusLeafId`, scoped to the sidebar dock. */
+  lastSidebarLeafId: string | null;
   sidebarSection: Record<SidebarSectionKey, boolean>;
   /** Whole sidebar collapsed to a slim rail. Independent of the
    *  per-section collapse map. Driven by user toggle in the topbar. */
@@ -110,10 +143,19 @@ export interface WorkspaceState {
   assistantOpen: boolean;
   /** Command palette open (⌘K). */
   commandOpen: boolean;
-  /** Right-side drawer: open + what it's showing (feature OR task). */
-  drawer: DrawerState | null;
+  /** Right-side sidebar-dock panel open/closed. This is the panel's own
+   *  visibility gate — independent of whether `docks.sidebar` has any
+   *  content. Opening a leaf into the sidebar (`openInSidebar`, or a
+   *  drop) flips this true automatically; the user can also pin it open
+   *  manually (e.g. to see the empty state before dragging something
+   *  in) or close it manually. Closing never clears `docks.sidebar` —
+   *  the layout is preserved and reappears on reopen, same as the left
+   *  `Sidebar`'s `sidebarCollapsed`. */
+  sidebarDockOpen: boolean;
   /** Persisted drawer width in px, clamped via `clampDrawerWidth`. */
   drawerWidth: number;
+  /** Persisted sidebar width in px, clamped via `clampSidebarWidth`. */
+  sidebarWidth: number;
   /** User theme preference. `system` follows `prefers-color-scheme`. */
   theme: "dark" | "light" | "system";
   mobile: boolean;
@@ -149,10 +191,10 @@ export interface WorkspaceState {
   toggleAssistant(): void;
   setCommandOpen(open: boolean): void;
   toggleCommand(): void;
-  openFeatureDrawer(projectId: string, featureId: string): void;
-  openTaskDrawer(projectId: string, taskId: string): void;
-  closeFeatureDrawer(): void;
+  setSidebarDockOpen(open: boolean): void;
+  toggleSidebarDockOpen(): void;
   setDrawerWidth(px: number): void;
+  setSidebarWidth(px: number): void;
   setTheme(t: "dark" | "light" | "system"): void;
   cycleTheme(): void;
   setMobile(m: boolean): void;
@@ -167,17 +209,49 @@ export interface WorkspaceState {
   hideAllEmpty(projectIds: string[], nonEmpty: string[]): void;
   setStatusFilter(f: StatusFilter): void;
 
-  // ─── actions: dock tree ───────────────────────────────────────
+  // ─── actions: focus dock tree ───────────────────────────────────
   openInFocus(
     kind: DockLeaf["kind"],
     target: Record<string, unknown>,
     title?: string,
+  ): void;
+  /** Target-aware `openInFocus`: place the new leaf at an explicit
+   *  node + edge instead of merging into the last-touched pane. This is
+   *  the drop path — see `makeOpenInAt` for why it's a second action
+   *  rather than optional parameters on `openInFocus`. */
+  openInFocusAt(
+    kind: DockLeaf["kind"],
+    target: Record<string, unknown>,
+    title: string | undefined,
+    targetNodeId: string,
+    edge: Edge,
   ): void;
   closeLeaf(leafId: string): void;
   moveLeaf(sourceLeafId: string, targetId: string, edge: Edge): void;
   setSplitRatio(splitId: string, ratio: number): void;
   setActiveTab(tabsId: string, idx: number): void;
   setLastFocusLeaf(leafId: string | null): void;
+
+  // ─── actions: sidebar dock tree ─────────────────────────────────
+  /** Same shape as `openInFocus`; also flips `sidebarDockOpen` true. */
+  openInSidebar(
+    kind: DockLeaf["kind"],
+    target: Record<string, unknown>,
+    title?: string,
+  ): void;
+  /** Sidebar twin of `openInFocusAt`. */
+  openInSidebarAt(
+    kind: DockLeaf["kind"],
+    target: Record<string, unknown>,
+    title: string | undefined,
+    targetNodeId: string,
+    edge: Edge,
+  ): void;
+  closeSidebarLeaf(leafId: string): void;
+  moveSidebarLeaf(sourceLeafId: string, targetId: string, edge: Edge): void;
+  setSidebarSplitRatio(splitId: string, ratio: number): void;
+  setSidebarActiveTab(tabsId: string, idx: number): void;
+  setLastSidebarLeaf(leafId: string | null): void;
 }
 
 /**
@@ -212,6 +286,7 @@ function coerceDockTree(raw: unknown): DockNode | null {
     const l = leaf as Partial<DockLeaf>;
     if (
       l.kind !== "task-detail" &&
+      l.kind !== "feature-detail" &&
       l.kind !== "logs" &&
       l.kind !== "session" &&
       l.kind !== "runners" &&
@@ -235,226 +310,362 @@ function coerceDockTree(raw: unknown): DockNode | null {
 
 export const useWorkspace = create<WorkspaceState>()(
   persist(
-    (set, get) => ({
-      view: "overview",
-      focusSessionId: undefined,
-      focusSessionRef: null,
-      dockTree: null,
-      lastFocusLeafId: null,
-      sidebarSection: { projects: true, sessions: true, runners: true },
-      sidebarCollapsed: false,
-      assistantOpen: false,
-      commandOpen: false,
-      drawer: null,
-      drawerWidth: 430,
-      theme: "dark",
-      mobile: false,
-      streaming: false,
-      featureAssignments: {},
-      mergedExpanded: {},
-      archivedExpanded: {},
-      hiddenProjects: [],
-      statusFilter: "all" as StatusFilter,
+    (set, get) => {
+      // ─── dockId-generic tree-mutation factories ──────────────────
+      // Each pair of public actions (openInFocus/openInSidebar, etc.)
+      // shares one of these implementations so the Focus and sidebar
+      // reducers cannot drift apart. `dockId` picks which tree in
+      // `docks` to read/write and which `lastXLeafId` field tracks the
+      // "last touched" drop-target hint.
 
-      setView: (v) => set({ view: v }),
+      const lastLeafField = (dockId: DockId): "lastFocusLeafId" | "lastSidebarLeafId" =>
+        dockId === "focus" ? "lastFocusLeafId" : "lastSidebarLeafId";
 
-      setFocusSession: (id) =>
-        set((s) => ({
-          focusSessionId: id,
-          focusSessionRef: null,
-          view: id ? "session" : s.view,
-        })),
-
-      openSessionRef: (ref) =>
-        set({
-          focusSessionRef: ref,
-          focusSessionId: undefined,
-          view: "session",
-        }),
-
-      steerIntent: false,
-      setSteerIntent: (v) => set({ steerIntent: v }),
-
-      toggleSidebarSection: (k) =>
-        set((s) => ({
-          sidebarSection: { ...s.sidebarSection, [k]: !s.sidebarSection[k] },
-        })),
-
-      toggleSidebarCollapsed: () =>
-        set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
-
-      setAssistantOpen: (open) => set({ assistantOpen: open }),
-      toggleAssistant: () => set((s) => ({ assistantOpen: !s.assistantOpen })),
-
-      setCommandOpen: (open) => set({ commandOpen: open }),
-      toggleCommand: () => set((s) => ({ commandOpen: !s.commandOpen })),
-
-      openFeatureDrawer: (projectId, featureId) =>
-        set({ drawer: { kind: "feature", projectId, featureId } }),
-      openTaskDrawer: (projectId, taskId) =>
-        set({ drawer: { kind: "task", projectId, taskId } }),
-      closeFeatureDrawer: () => set({ drawer: null }),
-      setDrawerWidth: (px) => set({ drawerWidth: clampDrawerWidth(px) }),
-
-      setTheme: (theme) => set({ theme }),
-      cycleTheme: () =>
-        set((s) => ({
-          theme:
-            s.theme === "dark"
-              ? "light"
-              : s.theme === "light"
-                ? "system"
-                : "dark",
-        })),
-
-      setMobile: (m) => set({ mobile: m }),
-      setStreaming: (streaming) => set({ streaming }),
-
-      assignFeature: (featureId, runnerId) =>
-        set((s) => ({
-          featureAssignments: {
-            ...s.featureAssignments,
-            [featureId]: runnerId,
-          },
-        })),
-
-      unassignFeature: (featureId) =>
-        set((s) => {
-          if (!(featureId in s.featureAssignments)) return s;
-          const next = { ...s.featureAssignments };
-          delete next[featureId];
-          return { featureAssignments: next };
-        }),
-
-      toggleMergedExpanded: (projectId) =>
-        set((s) => ({
-          mergedExpanded: {
-            ...s.mergedExpanded,
-            [projectId]: !s.mergedExpanded[projectId],
-          },
-        })),
-
-      toggleArchivedExpanded: (projectId) =>
-        set((s) => ({
-          archivedExpanded: {
-            ...s.archivedExpanded,
-            [projectId]: !s.archivedExpanded[projectId],
-          },
-        })),
-
-      hideProject: (projectId) =>
-        set((s) =>
-          s.hiddenProjects.includes(projectId)
-            ? s
-            : { hiddenProjects: [...s.hiddenProjects, projectId] },
-        ),
-
-      showProject: (projectId) =>
-        set((s) => ({
-          hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId),
-        })),
-
-      toggleProjectVisibility: (projectId) =>
-        set((s) =>
-          s.hiddenProjects.includes(projectId)
-            ? { hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId) }
-            : { hiddenProjects: [...s.hiddenProjects, projectId] },
-        ),
-
-      hideAllEmpty: (allProjectIds, nonEmpty) =>
-        set(() => {
-          const nonEmptySet = new Set(nonEmpty);
-          return {
-            hiddenProjects: allProjectIds.filter((p) => !nonEmptySet.has(p)),
+      const makeOpenIn =
+        (dockId: DockId) =>
+        (
+          kind: DockLeaf["kind"],
+          target: Record<string, unknown>,
+          title?: string,
+        ) => {
+          const state = get();
+          const leaf: DockLeaf = {
+            kind,
+            target,
+            title: title ?? defaultLeafTitle(kind, target),
           };
-        }),
+          const tree = state.docks[dockId];
+          const lastField = lastLeafField(dockId);
+          const gateOpen: Partial<WorkspaceState> =
+            dockId === "focus" ? { view: "focus" } : { sidebarDockOpen: true };
 
-      setStatusFilter: (f) => set({ statusFilter: f }),
+          const node = newLeafNode(leaf);
 
-      // ─── dock tree actions ──────────────────────────────────
+          if (tree === null) {
+            set({
+              docks: { ...state.docks, [dockId]: node },
+              [lastField]: node.id,
+              ...gateOpen,
+            } as Partial<WorkspaceState>);
+            return;
+          }
 
-      openInFocus: (kind, target, title) => {
-        const state = get();
-        const leaf: DockLeaf = {
-          kind,
-          target,
-          title: title ?? defaultLeafTitle(kind, target),
+          const dropTargetId = pickDropTarget(tree, state[lastField]);
+          if (!dropTargetId) {
+            set({
+              docks: { ...state.docks, [dockId]: node },
+              [lastField]: node.id,
+              ...gateOpen,
+            } as Partial<WorkspaceState>);
+            return;
+          }
+
+          // "center" means merge into tabs; matches user expectation
+          // for e.g. TaskModal → "Open logs in focus".
+          const nextTree = addNodeAtEdge(tree, dropTargetId, "center", node);
+          set({
+            docks: { ...state.docks, [dockId]: nextTree },
+            // Record the leaf we just created as the drop-target hint.
+            // Only the two degenerate branches above used to do this,
+            // so on a populated dock the hint stayed pinned to whatever
+            // pane was last moused down: consecutive opens didn't chain
+            // onto the pane just opened, and PaneLeaf read the hint as
+            // "the id of the leaf openIn* created" and moved the wrong
+            // pane. If the insert somehow no-opped, keep the old hint
+            // rather than pointing it at a leaf that isn't in the tree.
+            [lastField]: nextTree === tree ? state[lastField] : node.id,
+            ...gateOpen,
+          } as Partial<WorkspaceState>);
         };
 
-        if (state.dockTree === null) {
-          const root = newLeafNode(leaf);
+      /**
+       * Target-aware sibling of `makeOpenIn`: place a NEW leaf at an
+       * explicit node + edge in ONE tree write.
+       *
+       * `openIn*`'s "merge as a tab into the last-touched pane" rule is
+       * right for the ~16 menu / command-palette / double-click call
+       * sites that have no particular pane in mind, and wrong for a
+       * drop, where the user picked both the pane and the edge by hand.
+       * Two rules, so two actions — rather than threading a nullable
+       * target through every existing caller.
+       *
+       * This replaces the round-trip `PaneLeaf` used to do (openIn*,
+       * then `moveLeaf(lastXLeafId, ...)` to drag the result to the
+       * chosen edge). That never worked: `lastXLeafId` was not the new
+       * leaf's id, so it shuffled a pre-existing pane instead — and
+       * because `moveLeaf` is remove-then-add, a no-op in its add step
+       * destroyed a pane outright. A single `addNodeAtEdge` cannot
+       * misplace or lose anything: worst case the tree comes back
+       * unchanged and the drag simply didn't take.
+       *
+       * `targetNodeId` is any node id, not only a leaf's — the tab
+       * strip drops onto its own tabs container.
+       */
+      const makeOpenInAt =
+        (dockId: DockId) =>
+        (
+          kind: DockLeaf["kind"],
+          target: Record<string, unknown>,
+          title: string | undefined,
+          targetNodeId: string,
+          edge: Edge,
+        ) => {
+          const state = get();
+          const leaf: DockLeaf = {
+            kind,
+            target,
+            title: title ?? defaultLeafTitle(kind, target),
+          };
+          const tree = state.docks[dockId];
+          const lastField = lastLeafField(dockId);
+          const gateOpen: Partial<WorkspaceState> =
+            dockId === "focus" ? { view: "focus" } : { sidebarDockOpen: true };
+          const node = newLeafNode(leaf);
+
+          if (tree === null) {
+            set({
+              docks: { ...state.docks, [dockId]: node },
+              [lastField]: node.id,
+              ...gateOpen,
+            } as Partial<WorkspaceState>);
+            return;
+          }
+
+          // The pane the user aimed at should still be there, but a
+          // close can race a drop. Fall back to the target-less rule
+          // (merge as a tab at the last-touched pane) rather than
+          // dropping the item on the floor or clobbering the tree.
+          const hit = findNodeInfo(tree, targetNodeId) !== null;
+          const anchorId = hit
+            ? targetNodeId
+            : pickDropTarget(tree, state[lastField]);
+          if (!anchorId) {
+            set({
+              docks: { ...state.docks, [dockId]: node },
+              [lastField]: node.id,
+              ...gateOpen,
+            } as Partial<WorkspaceState>);
+            return;
+          }
+
+          const nextTree = addNodeAtEdge(
+            tree,
+            anchorId,
+            hit ? edge : "center",
+            node,
+          );
           set({
-            dockTree: root,
-            view: "focus",
-            lastFocusLeafId: root.type === "leaf" ? root.id : null,
-          });
-          return;
-        }
+            docks: { ...state.docks, [dockId]: nextTree },
+            [lastField]: nextTree === tree ? state[lastField] : node.id,
+            ...gateOpen,
+          } as Partial<WorkspaceState>);
+        };
 
-        const dropTargetId = pickDropTarget(
-          state.dockTree,
-          state.lastFocusLeafId,
-        );
-        if (!dropTargetId) {
-          const root = newLeafNode(leaf);
+      const makeCloseLeaf = (dockId: DockId) => (leafId: string) => {
+        const state = get();
+        const tree = state.docks[dockId];
+        if (!tree) return;
+        const next = removeDockNode(tree, leafId);
+        const lastField = lastLeafField(dockId);
+        set({
+          docks: { ...state.docks, [dockId]: next },
+          [lastField]: state[lastField] === leafId ? null : state[lastField],
+        } as Partial<WorkspaceState>);
+      };
+
+      const makeMoveLeaf =
+        (dockId: DockId) =>
+        (sourceLeafId: string, targetId: string, edge: Edge) => {
+          const state = get();
+          const tree = state.docks[dockId];
+          if (!tree) return;
+          const next = moveDockLeaf(tree, sourceLeafId, targetId, edge);
+          set({ docks: { ...state.docks, [dockId]: next } });
+        };
+
+      const makeSetSplitRatio =
+        (dockId: DockId) => (splitId: string, ratio: number) => {
+          const state = get();
+          const tree = state.docks[dockId];
+          if (!tree) return;
           set({
-            dockTree: root,
-            view: "focus",
-            lastFocusLeafId: root.type === "leaf" ? root.id : null,
+            docks: {
+              ...state.docks,
+              [dockId]: updateDockSplitRatio(tree, splitId, ratio),
+            },
           });
-          return;
-        }
+        };
 
-        // "center" means merge into tabs; matches user expectation
-        // for e.g. TaskModal → "Open logs in focus".
-        const nextTree = addLeafAtEdge(
-          state.dockTree,
-          dropTargetId,
-          "center",
-          leaf,
-        );
-        set({ dockTree: nextTree, view: "focus" });
-      },
+      const makeSetActiveTab =
+        (dockId: DockId) => (tabsId: string, idx: number) => {
+          const state = get();
+          const tree = state.docks[dockId];
+          if (!tree) return;
+          set({
+            docks: { ...state.docks, [dockId]: setDockActiveTab(tree, tabsId, idx) },
+          });
+        };
 
-      closeLeaf: (leafId) => {
-        const state = get();
-        if (!state.dockTree) return;
-        const next = removeDockNode(state.dockTree, leafId);
-        set({
-          dockTree: next,
-          lastFocusLeafId:
-            state.lastFocusLeafId === leafId ? null : state.lastFocusLeafId,
-        });
-      },
+      const makeSetLastLeaf = (dockId: DockId) => (leafId: string | null) =>
+        set({ [lastLeafField(dockId)]: leafId } as Partial<WorkspaceState>);
 
-      moveLeaf: (sourceLeafId, targetId, edge) => {
-        const state = get();
-        if (!state.dockTree) return;
-        const next = moveDockLeaf(
-          state.dockTree,
-          sourceLeafId,
-          targetId,
-          edge,
-        );
-        set({ dockTree: next });
-      },
+      return {
+        view: "overview",
+        focusSessionId: undefined,
+        focusSessionRef: null,
+        docks: { focus: null, sidebar: null },
+        lastFocusLeafId: null,
+        lastSidebarLeafId: null,
+        sidebarSection: { projects: true, sessions: true, runners: true },
+        sidebarCollapsed: false,
+        assistantOpen: false,
+        commandOpen: false,
+        sidebarDockOpen: false,
+        drawerWidth: 430,
+        sidebarWidth: 250,
+        theme: "dark",
+        mobile: false,
+        streaming: false,
+        featureAssignments: {},
+        mergedExpanded: {},
+        archivedExpanded: {},
+        hiddenProjects: [],
+        statusFilter: "all" as StatusFilter,
 
-      setSplitRatio: (splitId, ratio) => {
-        const state = get();
-        if (!state.dockTree) return;
-        set({
-          dockTree: updateDockSplitRatio(state.dockTree, splitId, ratio),
-        });
-      },
+        setView: (v) => set({ view: v }),
 
-      setActiveTab: (tabsId, idx) => {
-        const state = get();
-        if (!state.dockTree) return;
-        set({ dockTree: setDockActiveTab(state.dockTree, tabsId, idx) });
-      },
+        setFocusSession: (id) =>
+          set((s) => ({
+            focusSessionId: id,
+            focusSessionRef: null,
+            view: id ? "session" : s.view,
+          })),
 
-      setLastFocusLeaf: (leafId) => set({ lastFocusLeafId: leafId }),
-    }),
+        openSessionRef: (ref) =>
+          set({
+            focusSessionRef: ref,
+            focusSessionId: undefined,
+            view: "session",
+          }),
+
+        steerIntent: false,
+        setSteerIntent: (v) => set({ steerIntent: v }),
+
+        toggleSidebarSection: (k) =>
+          set((s) => ({
+            sidebarSection: { ...s.sidebarSection, [k]: !s.sidebarSection[k] },
+          })),
+
+        toggleSidebarCollapsed: () =>
+          set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
+
+        setAssistantOpen: (open) => set({ assistantOpen: open }),
+        toggleAssistant: () => set((s) => ({ assistantOpen: !s.assistantOpen })),
+
+        setCommandOpen: (open) => set({ commandOpen: open }),
+        toggleCommand: () => set((s) => ({ commandOpen: !s.commandOpen })),
+
+        setSidebarDockOpen: (open) => set({ sidebarDockOpen: open }),
+        toggleSidebarDockOpen: () =>
+          set((s) => ({ sidebarDockOpen: !s.sidebarDockOpen })),
+
+        setDrawerWidth: (px) => set({ drawerWidth: clampDrawerWidth(px) }),
+        setSidebarWidth: (px) => set({ sidebarWidth: clampSidebarWidth(px) }),
+
+        setTheme: (theme) => set({ theme }),
+        cycleTheme: () =>
+          set((s) => ({
+            theme:
+              s.theme === "dark"
+                ? "light"
+                : s.theme === "light"
+                  ? "system"
+                  : "dark",
+          })),
+
+        setMobile: (m) => set({ mobile: m }),
+        setStreaming: (streaming) => set({ streaming }),
+
+        assignFeature: (featureId, runnerId) =>
+          set((s) => ({
+            featureAssignments: {
+              ...s.featureAssignments,
+              [featureId]: runnerId,
+            },
+          })),
+
+        unassignFeature: (featureId) =>
+          set((s) => {
+            if (!(featureId in s.featureAssignments)) return s;
+            const next = { ...s.featureAssignments };
+            delete next[featureId];
+            return { featureAssignments: next };
+          }),
+
+        toggleMergedExpanded: (projectId) =>
+          set((s) => ({
+            mergedExpanded: {
+              ...s.mergedExpanded,
+              [projectId]: !s.mergedExpanded[projectId],
+            },
+          })),
+
+        toggleArchivedExpanded: (projectId) =>
+          set((s) => ({
+            archivedExpanded: {
+              ...s.archivedExpanded,
+              [projectId]: !s.archivedExpanded[projectId],
+            },
+          })),
+
+        hideProject: (projectId) =>
+          set((s) =>
+            s.hiddenProjects.includes(projectId)
+              ? s
+              : { hiddenProjects: [...s.hiddenProjects, projectId] },
+          ),
+
+        showProject: (projectId) =>
+          set((s) => ({
+            hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId),
+          })),
+
+        toggleProjectVisibility: (projectId) =>
+          set((s) =>
+            s.hiddenProjects.includes(projectId)
+              ? { hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId) }
+              : { hiddenProjects: [...s.hiddenProjects, projectId] },
+          ),
+
+        hideAllEmpty: (allProjectIds, nonEmpty) =>
+          set(() => {
+            const nonEmptySet = new Set(nonEmpty);
+            return {
+              hiddenProjects: allProjectIds.filter((p) => !nonEmptySet.has(p)),
+            };
+          }),
+
+        setStatusFilter: (f) => set({ statusFilter: f }),
+
+        // ─── focus dock tree actions ────────────────────────────
+        openInFocus: makeOpenIn("focus"),
+        openInFocusAt: makeOpenInAt("focus"),
+        closeLeaf: makeCloseLeaf("focus"),
+        moveLeaf: makeMoveLeaf("focus"),
+        setSplitRatio: makeSetSplitRatio("focus"),
+        setActiveTab: makeSetActiveTab("focus"),
+        setLastFocusLeaf: makeSetLastLeaf("focus"),
+
+        // ─── sidebar dock tree actions ──────────────────────────
+        openInSidebar: makeOpenIn("sidebar"),
+        openInSidebarAt: makeOpenInAt("sidebar"),
+        closeSidebarLeaf: makeCloseLeaf("sidebar"),
+        moveSidebarLeaf: makeMoveLeaf("sidebar"),
+        setSidebarSplitRatio: makeSetSplitRatio("sidebar"),
+        setSidebarActiveTab: makeSetActiveTab("sidebar"),
+        setLastSidebarLeaf: makeSetLastLeaf("sidebar"),
+      };
+    },
     {
       name: WORKSPACE_STORAGE_KEY,
       partialize: (s) => ({
@@ -469,30 +680,63 @@ export const useWorkspace = create<WorkspaceState>()(
         archivedExpanded: s.archivedExpanded,
         hiddenProjects: s.hiddenProjects,
         statusFilter: s.statusFilter,
-        dockTree: s.dockTree,
+        docks: s.docks,
         lastFocusLeafId: s.lastFocusLeafId,
+        lastSidebarLeafId: s.lastSidebarLeafId,
+        sidebarDockOpen: s.sidebarDockOpen,
         drawerWidth: s.drawerWidth,
+        sidebarWidth: s.sidebarWidth,
       }),
       storage: createJSONStorage(() => safeStorage() ?? noopStorage),
       version: 1,
       merge: (persistedState, currentState) => {
-        // Defensive merge: keep known fields, coerce the docktree so
+        // Defensive merge: keep known fields, coerce the dock trees so
         // a bad cache doesn't crash the shell.
-        const p = (persistedState ?? {}) as Partial<WorkspaceState>;
-        const tree = coerceDockTree(p.dockTree ?? null);
-        if (tree === null && p.dockTree != null) {
+        const p = (persistedState ?? {}) as Partial<WorkspaceState> & {
+          dockTree?: unknown;
+        };
+
+        let rawFocus: unknown = null;
+        let rawSidebar: unknown = null;
+        if (p.docks && typeof p.docks === "object") {
+          const d = p.docks as { focus?: unknown; sidebar?: unknown };
+          rawFocus = d.focus ?? null;
+          rawSidebar = d.sidebar ?? null;
+        } else if (Object.prototype.hasOwnProperty.call(p, "dockTree")) {
+          // Pre-generalization persisted shape: the one tree there was
+          // is the Focus tab's. Migrate it in place; the sidebar starts
+          // empty (it didn't exist yet).
+          rawFocus = p.dockTree ?? null;
+        }
+
+        const focusTree = coerceDockTree(rawFocus);
+        if (focusTree === null && rawFocus != null) {
           // eslint-disable-next-line no-console
           console.warn(
-            "[panes-v2] discarded incompatible persisted dockTree; starting fresh.",
+            "[panes-v2] discarded incompatible persisted Focus dock tree; starting fresh.",
           );
         }
+        const sidebarTree = coerceDockTree(rawSidebar);
+        if (sidebarTree === null && rawSidebar != null) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            "[panes-v2] discarded incompatible persisted sidebar dock tree; starting fresh.",
+          );
+        }
+
         return {
           ...currentState,
           ...p,
-          dockTree: tree,
+          docks: { focus: focusTree, sidebar: sidebarTree },
           lastFocusLeafId:
-            tree && p.lastFocusLeafId && leafIdExists(tree, p.lastFocusLeafId)
+            focusTree && p.lastFocusLeafId && leafIdExists(focusTree, p.lastFocusLeafId)
               ? p.lastFocusLeafId
+              : null,
+          lastSidebarLeafId:
+            sidebarTree &&
+            p.lastSidebarLeafId &&
+            leafIdExists(sidebarTree, p.lastSidebarLeafId)
+              ? p.lastSidebarLeafId
               : null,
         };
       },
@@ -530,6 +774,10 @@ function defaultLeafTitle(
     case "task-detail": {
       const id = (target.taskId ?? target.id) as string | undefined;
       return id ? `Task ${id.slice(0, 8)}` : "Task";
+    }
+    case "feature-detail": {
+      const id = (target.featureId ?? target.id) as string | undefined;
+      return id ? `Feature ${id}` : "Feature";
     }
     case "logs": {
       const id = target.taskId as string | undefined;

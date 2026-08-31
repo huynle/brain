@@ -1,7 +1,9 @@
 package mcp
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/url"
 	"sort"
@@ -355,22 +357,51 @@ func registerBrainRecall(s *Server, client *APIClient) {
 func registerBrainAttachmentUpload(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name: "attachment_upload",
-		Description: `Upload a local file as a first-class Brain attachment.
+		Description: `Upload a file as a first-class Brain attachment.
 
-Use this for pasted-image or local-PDF workflows: save the file locally, upload it with this tool, then attach the returned attachment_id to an entry with attachment_attach.`,
+Supply the bytes one of two ways: 'content' (base64) plus 'filename', which works from anywhere, or 'file_path', which only works when this MCP server runs on your own machine. A hosted server resolves 'file_path' on the API host and will reject it.
+
+Use this for pasted-image or local-PDF workflows: upload the file with this tool, then attach the returned attachment_id to an entry with attachment_attach.`,
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project":   {Type: "string", Description: "Project ID that owns the uploaded attachment. Defaults to the project detected from the MCP server's launch directory."},
-			"file_path": {Type: "string", Description: "Absolute or relative path to the local file to upload"},
+			"content":   {Type: "string", Description: "Base64-encoded file bytes. Requires 'filename'. Use this whenever the MCP server is not running on your own machine."},
+			"filename":  {Type: "string", Description: "Filename to store the bytes under. Required with 'content'; otherwise taken from 'file_path'."},
+			"file_path": {Type: "string", Description: "Path to the file to upload, resolved on the machine running the MCP server. Rejected by a hosted server — use 'content' there."},
 			"metadata":  {Type: "object", Description: "Optional string key/value metadata stored with the attachment"},
-		}, Required: []string{"file_path"}},
+		}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		projectID := ResolveProjectArg(args)
 		filePath := StringArg(args, "file_path", "")
-		if projectID == "" || filePath == "" {
-			return "", fmt.Errorf("provide 'file_path' (and 'project' if no ambient project is available)")
+		// Trim first so a whitespace-only 'content' reads as absent rather than
+		// as a payload that decodes to nothing.
+		encoded := strings.TrimSpace(StringArg(args, "content", ""))
+		filename := StringArg(args, "filename", "")
+		if projectID == "" || (filePath == "" && encoded == "") {
+			return "", fmt.Errorf("provide 'content' (base64) with 'filename', or 'file_path' for a server-local file (and 'project' if no ambient project is available)")
+		}
+		if filePath != "" && encoded != "" {
+			return "", fmt.Errorf("provide either 'content' or 'file_path', not both")
 		}
 
-		resp, err := client.UploadAttachment(ctx, projectID, filePath, stringMapArg(args, "metadata"))
+		var (
+			resp *types.CreateAttachmentResponse
+			err  error
+		)
+		if encoded != "" {
+			if filename == "" {
+				return "", fmt.Errorf("'filename' is required when uploading with 'content'")
+			}
+			data, decodeErr := decodeBase64Content(encoded)
+			if decodeErr != nil {
+				return "", fmt.Errorf("decode 'content': %w", decodeErr)
+			}
+			resp, err = client.UploadAttachmentContent(ctx, projectID, filename, bytes.NewReader(data), stringMapArg(args, "metadata"))
+		} else {
+			if fsErr := s.requireLocalFilesystem("file_path", "read the file yourself and pass its bytes as base64 'content' with 'filename'"); fsErr != nil {
+				return "", fsErr
+			}
+			resp, err = client.UploadAttachment(ctx, projectID, filePath, stringMapArg(args, "metadata"))
+		}
 		if err != nil {
 			return "", err
 		}
@@ -378,6 +409,31 @@ Use this for pasted-image or local-PDF workflows: save the file locally, upload 
 		return fmt.Sprintf("Uploaded attachment\n\n%s\n\nNext: attach it to an entry with `attachment_attach` using attachment_id `%s`.",
 			formatAttachment(resp.Attachment), resp.Attachment.ID), nil
 	})
+}
+
+// decodeBase64Content decodes a base64 tool argument, tolerating the shapes
+// clients actually send: data URLs, line-wrapped payloads, and unpadded base64.
+func decodeBase64Content(encoded string) ([]byte, error) {
+	payload := strings.TrimSpace(encoded)
+	if strings.HasPrefix(payload, "data:") {
+		if idx := strings.Index(payload, ","); idx >= 0 {
+			payload = payload[idx+1:]
+		}
+	}
+	// Wrapped base64 carries newlines that are not part of the payload.
+	payload = strings.Join(strings.Fields(payload), "")
+
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		data, err = base64.RawStdEncoding.DecodeString(payload)
+		if err != nil {
+			return nil, fmt.Errorf("not valid base64: %w", err)
+		}
+	}
+	if len(data) == 0 {
+		return nil, fmt.Errorf("decoded to zero bytes")
+	}
+	return data, nil
 }
 
 func registerBrainAttachmentAttach(s *Server, client *APIClient) {
@@ -617,26 +673,49 @@ func registerBrainAttachmentText(s *Server, client *APIClient) {
 	})
 }
 
+// maxInlineAttachmentBytes caps the raw bytes returned inline by
+// attachment_download. Base64 inflates by 4/3, so this stays clear of the
+// 10 MiB per-message ceiling both transports enforce.
+const maxInlineAttachmentBytes = 5 * 1024 * 1024
+
 func registerBrainAttachmentDownload(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
-		Name:        "attachment_download",
-		Description: "Download raw attachment bytes to a local output path. Use this when an agent needs the exact original image, PDF, or media file for later processing.",
+		Name: "attachment_download",
+		Description: `Fetch raw attachment bytes. Use this when an agent needs the exact original image, PDF, or media file for later processing.
+
+Returns the bytes inline as base64 by default. 'output_path' writes them to a file instead, and only works when this MCP server runs on your own machine — a hosted server would write the file onto the API host.`,
 		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
 			"project":       {Type: "string", Description: "Project ID containing the attachment. Defaults to the project detected from the MCP server's launch directory."},
 			"attachment_id": {Type: "string", Description: "Attachment ID whose raw content should be downloaded"},
-			"output_path":   {Type: "string", Description: "Local path where the downloaded bytes should be written"},
-		}, Required: []string{"attachment_id", "output_path"}},
+			"output_path":   {Type: "string", Description: "Optional path to write the bytes to, resolved on the machine running the MCP server. Rejected by a hosted server; omit it to get base64 content inline."},
+		}, Required: []string{"attachment_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		projectID := ResolveProjectArg(args)
 		attachmentID := StringArg(args, "attachment_id", "")
 		outputPath := StringArg(args, "output_path", "")
-		if projectID == "" || attachmentID == "" || outputPath == "" {
-			return "", fmt.Errorf("provide 'attachment_id' and 'output_path' (and 'project' if no ambient project is available)")
+		if projectID == "" || attachmentID == "" {
+			return "", fmt.Errorf("provide 'attachment_id' (and 'project' if no ambient project is available)")
 		}
-		if err := client.DownloadAttachmentToFile(ctx, projectID, attachmentID, outputPath); err != nil {
+
+		if outputPath != "" {
+			if err := s.requireLocalFilesystem("output_path", "omit it to receive the bytes inline as base64"); err != nil {
+				return "", err
+			}
+			if err := client.DownloadAttachmentToFile(ctx, projectID, attachmentID, outputPath); err != nil {
+				return "", err
+			}
+			return fmt.Sprintf("Downloaded attachment %s to %s", attachmentID, outputPath), nil
+		}
+
+		data, contentType, err := client.DownloadAttachmentBytes(ctx, projectID, attachmentID, maxInlineAttachmentBytes)
+		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Downloaded attachment %s to %s", attachmentID, outputPath), nil
+		if contentType == "" {
+			contentType = "application/octet-stream"
+		}
+		return fmt.Sprintf("## Attachment Content: %s\n\nContent-Type: %s\nSize: %d bytes\nEncoding: base64\n\n%s",
+			attachmentID, contentType, len(data), base64.StdEncoding.EncodeToString(data)), nil
 	})
 }
 

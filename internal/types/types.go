@@ -907,6 +907,13 @@ type ListEntriesRequest struct {
 	Project   string   `json:"project,omitempty"`
 	SortOrder string   `json:"sortOrder,omitempty"`
 	Priority  string   `json:"priority,omitempty"`
+
+	// Projects scopes the listing to a SET of projects — what the Entries
+	// browser needs when it follows the sidebar's visible-project set, and
+	// what Project (exactly one) cannot express. The literal token "global"
+	// additionally admits global/ entries, which have no project at all.
+	// When non-empty it supersedes both Project and Global.
+	Projects []string `json:"projects,omitempty"`
 }
 
 // ListEntriesResponse is the response for GET /entries.
@@ -952,6 +959,9 @@ type SearchRequest struct {
 	Project   string   `json:"project,omitempty"`
 	Strategy  string   `json:"strategy,omitempty"`
 	Priority  string   `json:"priority,omitempty"`
+
+	// Projects is the multi-project scope; see ListEntriesRequest.Projects.
+	Projects []string `json:"projects,omitempty"`
 }
 
 // SearchResult is a single search result.

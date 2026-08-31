@@ -115,6 +115,30 @@ When a runner dies mid-task, or when a task's claim lease expires without renewa
 - Idempotent: a resume on a task already `pending+resume_requested=true` returns `Resumed=false` with an explanatory `Reason` and skips cleanup work.
 - The orphan reaper (`tryReapOrphan`) skips tasks with `resume_requested=true` and re-reads the task immediately before its status flip, so a Resume that races with a reaper doesn't get silently reverted.
 
+### MCP transports + local paths
+
+The MCP server ships in two transports, and only one of them shares a
+filesystem with its client:
+
+- **stdio** (`brain mcp`, `internal/mcpserver`) is a child process of the
+  client, so a path the client names is a path this process can open.
+- **HTTP** (`internal/mcp/http_transport.go`, mounted in-process by
+  `apiserver/server.go` at `/mcp` and `/`) runs inside brain-api. A path from
+  the client resolves on the API *host* — which fails outright, or silently
+  reads/writes a different file that happens to exist there. It is also a
+  remote file-read/write primitive for anyone who can reach the endpoint.
+
+`NewServer()` therefore defaults to **no local filesystem**; only the stdio
+path passes `WithLocalFilesystem()`. Any tool argument naming a caller-side
+path must be gated on `Server.requireLocalFilesystem`, as `attachment_upload`
+(`file_path`) and `attachment_download` (`output_path`) are. Both tools have a
+transport-independent form that carries bytes over the wire instead —
+`content`/`filename` base64 in, base64 out (capped at
+`maxInlineAttachmentBytes`, 5 MiB, with the REST content endpoint as the
+fallback for anything larger). Note this does *not* apply to arguments that
+intentionally name paths on the server/runner host, such as the control tools'
+`workdir`.
+
 ### Index freshness (who writes to the brain dir)
 
 SQLite is a derived view of the markdown files. Everything the API serves —

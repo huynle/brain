@@ -9,10 +9,17 @@ import {
   KNOWLEDGE_TYPES,
   buildListPlan,
   classifyEntryHref,
+  resolveProjectScope,
+  scopeKey,
+  scopeProjectsParam,
+  PROJECT_FILTER_ALL,
+  PROJECT_FILTER_GLOBAL,
+  PROJECT_FILTER_SIDEBAR,
   entryBasename,
   entryProject,
   excerptOf,
   extractHeadings,
+  isLoneImageParagraph,
   mergeEntryLists,
   slugifyHeading,
   FANOUT_LIMIT_PER_TYPE,
@@ -37,7 +44,7 @@ function entry(over: Partial<BrainEntry>): BrainEntry {
 test("plan: knowledge filter fans out per knowledge type", () => {
   const plan = buildListPlan({
     typeFilter: "knowledge",
-    projectFilter: "",
+    scope: { kind: "all" },
     statusFilter: "",
     sortBy: "modified",
     sortOrder: "desc",
@@ -54,7 +61,7 @@ test("plan: knowledge filter fans out per knowledge type", () => {
 test("plan: all filter fans out across every type", () => {
   const plan = buildListPlan({
     typeFilter: "all",
-    projectFilter: "",
+    scope: { kind: "all" },
     statusFilter: "",
     sortBy: "modified",
     sortOrder: "desc",
@@ -65,7 +72,7 @@ test("plan: all filter fans out across every type", () => {
 test("plan: single type is one bigger call with filters applied", () => {
   const plan = buildListPlan({
     typeFilter: "walkthrough",
-    projectFilter: "hindsight",
+    scope: { kind: "project", project: "hindsight" },
     statusFilter: "active",
     sortBy: "created",
     sortOrder: "asc",
@@ -81,10 +88,28 @@ test("plan: single type is one bigger call with filters applied", () => {
   });
 });
 
+test("plan: a project set becomes one projects= call per type", () => {
+  const plan = buildListPlan({
+    typeFilter: "knowledge",
+    scope: { kind: "set", projects: ["hindsight", "pwa", "global"] },
+    statusFilter: "",
+    sortBy: "modified",
+    sortOrder: "desc",
+  });
+  // Still one call per type — NOT one per (type × project), which is what
+  // makes following a six-project sidebar affordable.
+  assert.equal(plan.length, KNOWLEDGE_TYPES.length);
+  assert.ok(
+    plan.every((c) => c.projects === "hindsight,pwa,global"),
+    "every call carries the whole scope",
+  );
+  assert.ok(plan.every((c) => c.project === undefined && c.global === undefined));
+});
+
 test("plan: global project filter maps to global=true", () => {
   const plan = buildListPlan({
     typeFilter: "summary",
-    projectFilter: "global",
+    scope: { kind: "global" },
     statusFilter: "",
     sortBy: "modified",
     sortOrder: "desc",
@@ -243,4 +268,111 @@ test("classifyEntryHref: relative entry links resolve via basename short id", ()
     ref: "xy12zw34",
   });
   assert.deepEqual(classifyEntryHref("docs/readme.md"), { kind: "external" });
+});
+
+// ─── resolveProjectScope ──────────────────────────────────────────────
+
+test("scope: the sidebar sentinel follows the visible projects, plus global", () => {
+  const scope = resolveProjectScope(PROJECT_FILTER_SIDEBAR, {
+    projects: ["hindsight", "pwa"],
+    unfiltered: false,
+  });
+  // Global entries belong to no project, so the sidebar can neither show
+  // nor hide them — they ride along rather than vanishing.
+  assert.deepEqual(scope, {
+    kind: "set",
+    projects: ["hindsight", "pwa", "global"],
+  });
+  assert.equal(scopeProjectsParam(scope), "hindsight,pwa,global");
+});
+
+test("scope: an unfiltered sidebar asks for everything, not a 44-item list", () => {
+  const scope = resolveProjectScope(PROJECT_FILTER_SIDEBAR, {
+    projects: ["a", "b", "c"],
+    unfiltered: true,
+  });
+  assert.deepEqual(scope, { kind: "all" });
+  assert.equal(scopeProjectsParam(scope), undefined);
+});
+
+test("scope: explicit picker values override the sidebar", () => {
+  const sidebar = { projects: ["hindsight"], unfiltered: false };
+  assert.deepEqual(resolveProjectScope(PROJECT_FILTER_ALL, sidebar), {
+    kind: "all",
+  });
+  assert.deepEqual(resolveProjectScope(PROJECT_FILTER_GLOBAL, sidebar), {
+    kind: "global",
+  });
+  assert.deepEqual(resolveProjectScope("supernote", sidebar), {
+    kind: "project",
+    project: "supernote",
+  });
+});
+
+test("scope: keys distinguish every scope, and track set membership", () => {
+  const keys = [
+    scopeKey({ kind: "all" }),
+    scopeKey({ kind: "global" }),
+    scopeKey({ kind: "project", project: "a" }),
+    scopeKey({ kind: "set", projects: ["a"] }),
+    scopeKey({ kind: "set", projects: ["a", "b"] }),
+  ];
+  assert.equal(new Set(keys).size, keys.length);
+});
+
+// ─── isLoneImageParagraph ─────────────────────────────────────────────
+
+const text = (value: string) => ({ type: "text", value });
+const el = (tagName: string, children: unknown[] = []) => ({
+  type: "element",
+  tagName,
+  children: children as never[],
+});
+
+test("figure: a paragraph holding only an image is a figure", () => {
+  assert.equal(isLoneImageParagraph(el("p", [el("img")])), true);
+});
+
+test("figure: surrounding whitespace doesn't disqualify a figure", () => {
+  // remark leaves newline text nodes around a lone image.
+  assert.equal(
+    isLoneImageParagraph(el("p", [text("\n"), el("img"), text("\n")])),
+    true,
+  );
+});
+
+test("figure: a linked lone image is still a figure", () => {
+  assert.equal(
+    isLoneImageParagraph(el("p", [el("a", [el("img")])])),
+    true,
+  );
+});
+
+test("figure: an image among words is NOT a figure", () => {
+  // The case a CSS :only-child rule got wrong: :only-child counts element
+  // children, so it matched this and broke the sentence onto three lines.
+  assert.equal(
+    isLoneImageParagraph(
+      el("p", [text("a sentence with an "), el("img"), text(" in it")]),
+    ),
+    false,
+  );
+});
+
+test("figure: two adjacent images are not a figure — they flow inline", () => {
+  assert.equal(
+    isLoneImageParagraph(el("p", [el("img"), text("\n"), el("img")])),
+    false,
+  );
+});
+
+test("figure: a text-only paragraph and an empty/absent node are not figures", () => {
+  assert.equal(isLoneImageParagraph(el("p", [text("just words")])), false);
+  assert.equal(isLoneImageParagraph(el("p", [])), false);
+  assert.equal(isLoneImageParagraph(undefined), false);
+  // A link that wraps more than the image keeps its inline flow.
+  assert.equal(
+    isLoneImageParagraph(el("p", [el("a", [el("img"), text(" caption")])])),
+    false,
+  );
 });

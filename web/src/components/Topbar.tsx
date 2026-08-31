@@ -21,6 +21,8 @@ export function Topbar(): JSX.Element {
   const theme = useWorkspace((s) => s.theme);
   const cycleTheme = useWorkspace((s) => s.cycleTheme);
   const toggleSidebarCollapsed = useWorkspace((s) => s.toggleSidebarCollapsed);
+  const sidebarDockOpen = useWorkspace((s) => s.sidebarDockOpen);
+  const toggleSidebarDockOpen = useWorkspace((s) => s.toggleSidebarDockOpen);
 
   return (
     <div className="topbar">
@@ -85,6 +87,13 @@ export function Topbar(): JSX.Element {
         onClick={cycleTheme}
       >
         {theme === "dark" ? "🌙" : theme === "light" ? "☀" : "◐"}
+      </button>
+      <button
+        className={"icon-btn" + (sidebarDockOpen ? " active" : "")}
+        title={sidebarDockOpen ? "Close side panel" : "Open side panel"}
+        onClick={toggleSidebarDockOpen}
+      >
+        Panel {sidebarDockOpen ? "▸" : "◂"}
       </button>
       <button
         className="icon-btn"

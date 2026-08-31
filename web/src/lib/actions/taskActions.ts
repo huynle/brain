@@ -78,6 +78,10 @@ export interface TaskActionContext {
   openSteer: (task: Task, ref: SessionRef) => void;
   /** Reopen a recorded session on its runner (spawn + address it live). */
   continueSession: (task: Task, ref: SessionRef) => Promise<void>;
+  /** Open a session (live or recorded) inline in the right-side drawer —
+   *  the "open in sidebar" verb. Distinct from openSession/openTranscript,
+   *  which navigate to the full-page session view. */
+  openSessionInDrawer: (task: Task, ref: SessionRef) => void;
 }
 
 /**
@@ -449,6 +453,21 @@ export function buildTaskActions(
     // Newest recorded session is the default; the task modal's Sessions
     // section lists every recorded session for the multi-session case.
     run: async () => ctx.openTranscript(task, recorded[0]),
+  });
+
+  // "Either works" verb: prefer the live session (task actively running),
+  // else fall back to the newest recorded one. Deliberately more
+  // permissive than watch/transcript individually — only disabled when
+  // NEITHER a live nor a recorded session exists at all.
+  const drawerRef = live ?? recorded[0];
+  actions.push({
+    id: "open-session-sidebar",
+    label: "Open session in sidebar",
+    group: "navigate",
+    disabledReason: drawerRef
+      ? ""
+      : "No session — live or recorded — is available for this task",
+    run: async () => ctx.openSessionInDrawer(task, drawerRef!),
   });
 
   // ─── danger ─────────────────────────────────────────────────────

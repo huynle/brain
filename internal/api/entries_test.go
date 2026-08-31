@@ -177,7 +177,7 @@ func (m *mockBrainService) GetSection(ctx context.Context, path string, title st
 	return nil, fmt.Errorf("getSectionFunc not set")
 }
 
-func (m *mockBrainService) GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
+func (m *mockBrainService) GetStats(ctx context.Context, global bool, project string, projects []string) (*types.StatsResponse, error) {
 	if m.getStatsFunc != nil {
 		return m.getStatsFunc(ctx, global, project)
 	}

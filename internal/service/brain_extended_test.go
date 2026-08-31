@@ -450,7 +450,7 @@ func TestGetStats_ReturnsStats(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "task", Title: "Task 1"})
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Plan 2"})
 
-	resp, err := svc.GetStats(ctx, false, "")
+	resp, err := svc.GetStats(ctx, false, "", nil)
 	if err != nil {
 		t.Fatalf("GetStats failed: %v", err)
 	}
@@ -479,7 +479,7 @@ func TestGetStats_GlobalFilter(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "pattern", Title: "Global", Global: boolPtr(true)})
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Project"})
 
-	resp, err := svc.GetStats(ctx, true, "")
+	resp, err := svc.GetStats(ctx, true, "", nil)
 	if err != nil {
 		t.Fatalf("GetStats failed: %v", err)
 	}
@@ -505,7 +505,7 @@ func TestGetStats_ProjectFilter(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "Beta 1", Project: "beta"})
 
 	// Baseline: unscoped call sees all 4 entries.
-	all, err := svc.GetStats(ctx, false, "")
+	all, err := svc.GetStats(ctx, false, "", nil)
 	if err != nil {
 		t.Fatalf("GetStats(all) failed: %v", err)
 	}
@@ -514,7 +514,7 @@ func TestGetStats_ProjectFilter(t *testing.T) {
 	}
 
 	// Scoped to alpha: only the 3 alpha entries count in the primary total.
-	alpha, err := svc.GetStats(ctx, false, "alpha")
+	alpha, err := svc.GetStats(ctx, false, "alpha", nil)
 	if err != nil {
 		t.Fatalf("GetStats(alpha) failed: %v", err)
 	}
@@ -523,7 +523,7 @@ func TestGetStats_ProjectFilter(t *testing.T) {
 	}
 
 	// Scoped to beta: only the 1 beta entry counts.
-	beta, err := svc.GetStats(ctx, false, "beta")
+	beta, err := svc.GetStats(ctx, false, "beta", nil)
 	if err != nil {
 		t.Fatalf("GetStats(beta) failed: %v", err)
 	}
@@ -548,7 +548,7 @@ func TestGetStats_ProjectWinsOverGlobal(t *testing.T) {
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "pattern", Title: "Global Two", Global: boolPtr(true)})
 	_, _ = svc.Save(ctx, types.CreateEntryRequest{Type: "plan", Title: "P One", Project: "alpha"})
 
-	resp, err := svc.GetStats(ctx, true, "alpha")
+	resp, err := svc.GetStats(ctx, true, "alpha", nil)
 	if err != nil {
 		t.Fatalf("GetStats failed: %v", err)
 	}

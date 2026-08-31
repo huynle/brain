@@ -13,13 +13,18 @@ import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useWorkspace } from "../../store/workspace";
 
 export function Splitter({
+  dockId,
   dir,
   splitId,
 }: {
+  dockId: "focus" | "sidebar";
   dir: "row" | "col";
   splitId: string;
 }): JSX.Element {
-  const setSplitRatio = useWorkspace((s) => s.setSplitRatio);
+  const setFocusSplitRatio = useWorkspace((s) => s.setSplitRatio);
+  const setSidebarSplitRatio = useWorkspace((s) => s.setSidebarSplitRatio);
+  const setSplitRatio =
+    dockId === "focus" ? setFocusSplitRatio : setSidebarSplitRatio;
   const ref = useRef<HTMLDivElement | null>(null);
   const [active, setActive] = useState(false);
   const draggingRef = useRef(false);

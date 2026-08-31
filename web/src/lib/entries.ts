@@ -42,13 +42,86 @@ export const ALL_ENTRY_TYPES = [...KNOWLEDGE_TYPES, ...SYSTEM_TYPES];
 /** "knowledge" (default fan-out), "all", or one concrete entry type. */
 export type EntryTypeFilter = "knowledge" | "all" | string;
 
+// ─── project scope ────────────────────────────────────────────────────
+//
+// The Entries browser's project picker holds one of four things, and the
+// sentinel values are what make "follow the sidebar" the DEFAULT rather
+// than an extra mode nobody finds:
+//
+//   ""       follow the sidebar's visible-project set (default)
+//   "*"      every project, explicitly — the escape hatch from the sidebar
+//   "global" project-less global/ entries only
+//   <id>     exactly one project
+//
+// "" is also what every already-persisted store holds, so upgrading users
+// land on the sidebar-scoped view without a migration.
+
+/** Picker value meaning "whatever the sidebar is currently showing". */
+export const PROJECT_FILTER_SIDEBAR = "";
+/** Picker value meaning "every project, ignore the sidebar". */
+export const PROJECT_FILTER_ALL = "*";
+/** Picker value meaning "global entries only". */
+export const PROJECT_FILTER_GLOBAL = "global";
+
+/** Resolved scope: what the API should actually be asked for. */
+export type ProjectScope =
+  | { kind: "all" }
+  | { kind: "global" }
+  | { kind: "project"; project: string }
+  | { kind: "set"; projects: string[] };
+
+/**
+ * Resolve a picker value against the sidebar's visible-project set.
+ *
+ * The sidebar case widens to `all` when nothing is hidden or filtered:
+ * naming all 44 projects and naming none of them mean the same thing to
+ * the server, and the shorter request is the one that keeps working when a
+ * project appears between the projects fetch and the entries fetch.
+ *
+ * Global entries ride along with a sidebar scope. They belong to no
+ * project, so the sidebar can neither show nor hide them — dropping them
+ * would silently hide the built-in automations and global knowledge with
+ * no control anywhere in the UI to bring them back.
+ */
+export function resolveProjectScope(
+  projectFilter: string,
+  sidebar: { projects: string[]; unfiltered: boolean },
+): ProjectScope {
+  if (projectFilter === PROJECT_FILTER_ALL) return { kind: "all" };
+  if (projectFilter === PROJECT_FILTER_GLOBAL) return { kind: "global" };
+  if (projectFilter !== PROJECT_FILTER_SIDEBAR) {
+    return { kind: "project", project: projectFilter };
+  }
+  if (sidebar.unfiltered) return { kind: "all" };
+  return { kind: "set", projects: [...sidebar.projects, "global"] };
+}
+
+/** The `projects=` query value for a scope, or undefined if it needs none. */
+export function scopeProjectsParam(scope: ProjectScope): string | undefined {
+  return scope.kind === "set" ? scope.projects.join(",") : undefined;
+}
+
+/** Stable cache-key fragment for a scope (react-query key member). */
+export function scopeKey(scope: ProjectScope): string {
+  switch (scope.kind) {
+    case "all":
+      return "all";
+    case "global":
+      return "global";
+    case "project":
+      return `project:${scope.project}`;
+    case "set":
+      return `set:${scope.projects.join(",")}`;
+  }
+}
+
 export type EntrySortBy = "modified" | "created" | "title";
 export type EntrySortOrder = "asc" | "desc";
 
 export interface EntryListFilters {
   typeFilter: EntryTypeFilter;
-  /** "" = all projects, "global" = only global/ entries, else a project id. */
-  projectFilter: string;
+  /** Already resolved against the sidebar — see resolveProjectScope. */
+  scope: ProjectScope;
   /** "" = any status. */
   statusFilter: string;
   sortBy: EntrySortBy;
@@ -58,6 +131,7 @@ export interface EntryListFilters {
 export interface EntryListCall {
   type?: string;
   project?: string;
+  projects?: string;
   global?: string;
   status?: string;
   sortBy: EntrySortBy;
@@ -79,16 +153,23 @@ export const MERGED_LIST_CAP = 400;
  * dominated by automation_run records.
  */
 export function buildListPlan(filters: EntryListFilters): EntryListCall[] {
+  const scope = filters.scope;
   const base: Omit<EntryListCall, "type"> = {
     sortBy: filters.sortBy,
     sortOrder: filters.sortOrder,
     limit: FANOUT_LIMIT_PER_TYPE,
     ...(filters.statusFilter ? { status: filters.statusFilter } : {}),
-    ...(filters.projectFilter === "global"
+    ...(scope.kind === "global"
       ? { global: "true" }
-      : filters.projectFilter
-        ? { project: filters.projectFilter }
-        : {}),
+      : scope.kind === "project"
+        ? { project: scope.project }
+        : scope.kind === "set"
+          ? // One request per type still, scoped to the whole set — the
+            // alternative (fetch everything, filter in the browser) loses
+            // entries whenever the per-type page fills up with projects
+            // the sidebar is hiding.
+            { projects: scope.projects.join(",") }
+          : {}),
   };
   if (filters.typeFilter === "knowledge") {
     return KNOWLEDGE_TYPES.map((type) => ({ ...base, type }));
@@ -296,6 +377,43 @@ export function excerptOf(content: string, maxLen = 160): string {
     return `${cut.slice(0, Math.max(cut.lastIndexOf(" "), maxLen - 20))}…`;
   }
   return "";
+}
+
+/** The subset of a hast node the markdown components need to inspect. */
+export interface MarkdownNode {
+  type?: string;
+  tagName?: string;
+  value?: string;
+  children?: MarkdownNode[];
+}
+
+/**
+ * Is this paragraph nothing but one image (optionally wrapped in a link)?
+ *
+ * Such a paragraph is a *figure* and gets its own block; an image sitting
+ * in the middle of a sentence must stay inline or it breaks the sentence
+ * across three lines.
+ *
+ * CSS cannot answer this. `p > img:only-child` matches
+ * `<p>text <img> text</p>` too, because :only-child counts *element*
+ * children and ignores the text around them — which is exactly the case
+ * that has to render inline. The markdown AST still has the text nodes,
+ * so the decision is made here instead.
+ */
+export function isLoneImageParagraph(node: MarkdownNode | undefined): boolean {
+  const meaningful = (n: MarkdownNode | undefined): MarkdownNode[] =>
+    (n?.children ?? []).filter(
+      (c) => !(c.type === "text" && (c.value ?? "").trim() === ""),
+    );
+  const kids = meaningful(node);
+  if (kids.length !== 1) return false;
+  const only = kids[0];
+  if (only.tagName === "img") return true;
+  if (only.tagName === "a") {
+    const inner = meaningful(only);
+    return inner.length === 1 && inner[0].tagName === "img";
+  }
+  return false;
 }
 
 /** Short display name for an entry path: "projects/foo/plan/abc.md" → "abc". */

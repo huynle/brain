@@ -63,13 +63,48 @@ type registeredTool struct {
 type Server struct {
 	mu    sync.RWMutex
 	tools map[string]registeredTool
+
+	// localFilesystem reports whether this server runs on the same machine as
+	// the MCP client, i.e. whether a path the client names is a path this
+	// process can open. Set at construction; never mutated afterwards.
+	localFilesystem bool
+}
+
+// ServerOption configures optional Server behavior.
+type ServerOption func(*Server)
+
+// WithLocalFilesystem marks the server as sharing a filesystem with its client,
+// which enables tool arguments that name local paths.
+//
+// It is off by default because the Brain API serves MCP in-process over HTTP:
+// for those sessions the tool handler runs on the API host, so a path from the
+// client resolves against the API host's filesystem. That fails outright, or —
+// worse — silently reads or writes a different file that happens to exist at
+// the same path there. Only the stdio transport, where the server is a child
+// process of the client, gets this option.
+func WithLocalFilesystem() ServerOption {
+	return func(s *Server) { s.localFilesystem = true }
 }
 
 // NewServer creates a new MCP server.
-func NewServer() *Server {
-	return &Server{
+func NewServer(opts ...ServerOption) *Server {
+	s := &Server{
 		tools: make(map[string]registeredTool),
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
+}
+
+// requireLocalFilesystem rejects a tool argument naming a path on the caller's
+// machine when this server has no access to that machine. alternative names the
+// argument the caller should reach for instead.
+func (s *Server) requireLocalFilesystem(arg, alternative string) error {
+	if s.localFilesystem {
+		return nil
+	}
+	return fmt.Errorf("%q is unavailable on this MCP server: it runs inside the Brain API, so the path would resolve on the API host's filesystem instead of yours — %s", arg, alternative)
 }
 
 // RegisterTool registers a tool with its handler.

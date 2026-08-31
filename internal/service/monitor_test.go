@@ -286,7 +286,7 @@ func (m *mockBrainForMonitor) GetSections(context.Context, string) (*types.Secti
 func (m *mockBrainForMonitor) GetSection(context.Context, string, string, bool) (*types.SectionContentResponse, error) {
 	return nil, nil
 }
-func (m *mockBrainForMonitor) GetStats(context.Context, bool, string) (*types.StatsResponse, error) {
+func (m *mockBrainForMonitor) GetStats(context.Context, bool, string, []string) (*types.StatsResponse, error) {
 	return nil, nil
 }
 func (m *mockBrainForMonitor) GetOrphans(context.Context, string, int, string) ([]types.BrainEntry, error) {

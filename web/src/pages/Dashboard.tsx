@@ -30,6 +30,7 @@ import { streams, useLive } from "../lib/sse";
 import { useAuth } from "../lib/auth";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useGlobalKeyboard } from "../hooks/useGlobalKeyboard";
+import { useEntryNavHistory } from "../hooks/useEntryNavHistory";
 import { usePauseSync } from "../hooks/usePauseSync";
 import { Loading } from "../components/common/Loading";
 import { ErrorState } from "../components/common/ErrorState";
@@ -101,6 +102,11 @@ export function Dashboard(): JSX.Element {
 
   // Global keyboard shortcuts (⌘K palette, ⌘/ help, etc.)
   useGlobalKeyboard();
+
+  // Entry reader selection ↔ browser history, so entry links can be
+  // walked with Back/Forward. Mounted here, not in EntriesBrowser: the
+  // back stack has to survive leaving the Entries view.
+  useEntryNavHistory();
 
   // Single owner of the pause / scheduler polling. Every pause indicator in
   // the tree reads the same cache entries without adding a timer — see the

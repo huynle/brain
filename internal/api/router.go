@@ -544,6 +544,10 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/{taskId}/dispatch", o.handler.HandleDispatchTask)
 							r.Post("/{taskId}/run", o.handler.HandleRunTask)
 							r.Post("/{taskId}/resume", o.handler.HandleResumeTask)
+							// Project wipe. Lives on the tasks tree because
+							// that is where a project is addressed by name,
+							// but it erases every entry type, not just tasks.
+							r.Delete("/", o.handler.HandleDeleteProject)
 						} else {
 							r.Post("/features/{featureId}/checkout", notImplemented)
 							r.Put("/features/{featureId}/assignment", notImplemented)
@@ -556,6 +560,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/{taskId}/dispatch", notImplemented)
 							r.Post("/{taskId}/run", notImplemented)
 							r.Post("/{taskId}/resume", notImplemented)
+							r.Delete("/", notImplemented)
 						}
 					})
 				})

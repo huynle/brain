@@ -43,6 +43,7 @@ type mockBrainService struct {
 	generateLinkFunc   func(ctx context.Context, req types.LinkRequest) (*types.LinkResponse, error)
 	bulkUpdateFunc     func(ctx context.Context, req types.BulkUpdateRequest) (*types.BulkUpdateResponse, error)
 	bulkDeleteFunc     func(ctx context.Context, req types.BulkDeleteRequest) (*types.BulkDeleteResponse, error)
+	deleteProjectFunc  func(ctx context.Context, projectID string) (*types.DeleteProjectResponse, error)
 	updateMetadataFunc func(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error)
 }
 
@@ -224,6 +225,13 @@ func (m *mockBrainService) BulkDelete(ctx context.Context, req types.BulkDeleteR
 		return m.bulkDeleteFunc(ctx, req)
 	}
 	return nil, fmt.Errorf("bulkDeleteFunc not set")
+}
+
+func (m *mockBrainService) DeleteProject(ctx context.Context, projectID string) (*types.DeleteProjectResponse, error) {
+	if m.deleteProjectFunc != nil {
+		return m.deleteProjectFunc(ctx, projectID)
+	}
+	return nil, fmt.Errorf("deleteProjectFunc not set")
 }
 
 func (m *mockBrainService) UpdateMetadata(ctx context.Context, pathOrID string, fields map[string]interface{}) (*types.BrainEntry, error) {

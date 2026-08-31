@@ -247,6 +247,10 @@ func (m *mockBrainForMonitor) Update(_ context.Context, pathOrID string, req typ
 	return entry, nil
 }
 
+func (m *mockBrainForMonitor) DeleteProject(_ context.Context, projectID string) (*types.DeleteProjectResponse, error) {
+	return nil, fmt.Errorf("DeleteProject not implemented in mock")
+}
+
 func (m *mockBrainForMonitor) Delete(_ context.Context, pathOrID string) error {
 	if _, ok := m.entries[pathOrID]; ok {
 		delete(m.entries, pathOrID)

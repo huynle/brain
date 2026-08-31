@@ -47,6 +47,13 @@ type BrainService interface {
 	// Delete removes a brain entry by path or ID.
 	Delete(ctx context.Context, pathOrID string) error
 
+	// DeleteProject erases an entire project — every entry under it, its
+	// index rows, its project-scoped runtime state and its directory.
+	// Returns ErrNotFound when neither the directory nor any indexed entry
+	// exists. Like BulkDelete it is not transactional; the response's
+	// Deleted/Failed counts are the contract for a partial wipe.
+	DeleteProject(ctx context.Context, projectID string) (*types.DeleteProjectResponse, error)
+
 	// List returns entries matching the given filters.
 	List(ctx context.Context, req types.ListEntriesRequest) (*types.ListEntriesResponse, error)
 

@@ -879,6 +879,33 @@ type BulkDeleteResponse struct {
 	MatchedTotal int  `json:"matched_total,omitempty"`
 }
 
+// DeleteProjectResponse reports the outcome of erasing a whole project.
+//
+// Unlike BulkDeleteResponse it carries no per-entry Results list: a project
+// wipe routinely spans hundreds of entries, and a caller who asked to remove
+// all of them has no use for a row per success. Failures ARE enumerated —
+// those are the only entries the user still has to deal with.
+type DeleteProjectResponse struct {
+	Project string `json:"project"`
+	// Deleted counts entries whose file and index row are both gone.
+	Deleted int `json:"deleted"`
+	// Failed counts entries that could not be removed. Their paths are in
+	// Errors.
+	Failed int `json:"failed"`
+	// Errors names each failure as "<path>: <reason>", capped so a
+	// systematically failing wipe cannot return a megabyte of text.
+	Errors []string `json:"errors,omitempty"`
+	// IndexRowsRemoved counts index rows swept afterwards — entries whose
+	// file was already missing from disk.
+	IndexRowsRemoved int64 `json:"index_rows_removed,omitempty"`
+	// StateRowsRemoved counts purged runtime rows per table (claims,
+	// dispatch leases, pause state, …).
+	StateRowsRemoved map[string]int64 `json:"state_rows_removed,omitempty"`
+	// DirectoryRemoved reports whether projects/<id>/ itself is gone. While
+	// it exists the project keeps showing up in the project list.
+	DirectoryRemoved bool `json:"directory_removed"`
+}
+
 // LiveClaim describes an active runner claim on a task. Returned by
 // TaskLivenessService so callers can refuse destructive operations on work
 // that is genuinely in flight.

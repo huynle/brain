@@ -27,6 +27,7 @@ import type {
   OcSession,
   OpencodeInstance,
   SpawnInstanceSpec,
+  DeleteProjectResponse,
   ProjectListResponse,
   ResumeFeatureResult,
   ResumeTaskOptions,
@@ -812,6 +813,28 @@ export const runProject = (projectId: string, force = false) =>
       body: { force },
     },
   );
+
+/**
+ * Erase a project: every brain entry under it, its index rows, its
+ * project-scoped runtime state (claims, dispatch leases, pause dials) and the
+ * projects/<id>/ directory itself.
+ *
+ * `confirm` is the project's own name, not `true`. Every other delete on this
+ * API takes confirm=true — a formality a client sets once and forgets. This
+ * one cannot be satisfied without naming the exact thing being destroyed, so
+ * a request built with the wrong id fails instead of wiping that project.
+ *
+ * `force` bypasses the live-claim guard, which otherwise rejects the whole
+ * request (409) while any task is being executed by an online runner.
+ */
+export const deleteProject = (projectId: string, opts: { force?: boolean } = {}) =>
+  api<DeleteProjectResponse>(`/api/v1/tasks/${encodeURIComponent(projectId)}`, {
+    method: "DELETE",
+    query: {
+      confirm: projectId,
+      ...(opts.force ? { force: "true" } : {}),
+    },
+  });
 
 // One-line toast summary of a project-scoped run. Mirrors
 // summarizeRunFeatureResult style so calling code can reuse the pattern.

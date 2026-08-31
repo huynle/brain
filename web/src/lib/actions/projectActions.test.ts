@@ -16,10 +16,11 @@ import {
   isProjectAutomationsPaused,
   isProjectTasksPaused,
   pauseDialBlockedReason,
+  summarizeDeleteProjectResult,
   type ProjectActionContext,
 } from "./projectActions";
 import { isEnabled } from "./types";
-import type { RunnerStatusResponse } from "../types";
+import type { DeleteProjectResponse, RunnerStatusResponse } from "../types";
 import { buildPauseState, EMPTY_PAUSE_STATE } from "../pause";
 
 /** Adapt a raw status response into the PauseState the predicates now take.
@@ -40,6 +41,7 @@ function recorder() {
     resumeProject: async (pid) => void calls.push(`resume:${pid}`),
     pauseAutomations: async (pid) => void calls.push(`pause-auto:${pid}`),
     resumeAutomations: async (pid) => void calls.push(`resume-auto:${pid}`),
+    deleteProject: async (pid) => void calls.push(`delete:${pid}`),
   };
   return { calls, ctx };
 }
@@ -77,6 +79,7 @@ test("every project verb is present", () => {
     "resume-automations",
     "focus-tasks",
     "hide",
+    "delete",
   ]);
 });
 
@@ -91,6 +94,7 @@ test("verbs route to their effects with the project id", async () => {
     "resume-auto:shop",
     "focus:shop",
     "hide:shop",
+    "delete:shop",
   ]);
 });
 
@@ -238,4 +242,107 @@ test("pause labels promise only that NEW dispatch stops", () => {
   const { ctx } = recorder();
   const m = byId(ctx, {});
   assert.match(m.get("pause")!.label, /new dispatch/i);
+});
+
+// ─── delete ────────────────────────────────────────────────────────
+//
+// The verb sits one right-click away from Hide, its reversible neighbour,
+// so the guards around it are the point of these cases.
+
+test("delete requires typing the project name", () => {
+  const { ctx } = recorder();
+  const del = byId(ctx).get("delete");
+  assert.ok(del);
+  assert.equal(del.confirm?.typeToConfirm, "shop");
+  assert.equal(del.danger, true);
+  assert.equal(del.group, "danger");
+});
+
+test("delete's type-to-confirm tracks the project it was built for", () => {
+  // A dialog that accepts the wrong name is a dialog that deletes the
+  // wrong project — pin that the string is per-project, not a constant.
+  const { ctx } = recorder();
+  const other = buildProjectActions("warehouse", ctx).find(
+    (a) => a.id === "delete",
+  );
+  assert.equal(other?.confirm?.typeToConfirm, "warehouse");
+});
+
+test("delete carries no keyboard accelerator", () => {
+  // Every other single-key verb on a row is recoverable. A bare letter
+  // that starts erasing a project is not something to leave under a
+  // finger resting on the list.
+  const { ctx } = recorder();
+  assert.equal(byId(ctx).get("delete")?.key, undefined);
+});
+
+test("delete stays enabled for an empty project", () => {
+  // "Empty" here means no TASKS. The project still has a directory, pause
+  // dials and possibly notes the sidebar count never showed — and deleting
+  // the leftover name is exactly what the verb is for.
+  const { ctx } = recorder();
+  const del = byId(ctx, { taskCount: 0 }).get("delete");
+  assert.ok(del);
+  assert.equal(isEnabled(del), true);
+});
+
+test("delete's confirm body names hide as the reversible alternative", () => {
+  const { ctx } = recorder();
+  const body = byId(ctx).get("delete")?.confirm?.body ?? "";
+  assert.match(body, /cannot be undone/i);
+  assert.match(body, /hide it instead/i);
+});
+
+// ─── delete summaries ──────────────────────────────────────────────
+
+function mkDeleteResult(
+  over: Partial<DeleteProjectResponse> = {},
+): DeleteProjectResponse {
+  return {
+    project: "shop",
+    deleted: 12,
+    failed: 0,
+    directory_removed: true,
+    ...over,
+  };
+}
+
+test("summarizeDeleteProjectResult: clean wipe reports the count", () => {
+  const msg = summarizeDeleteProjectResult(mkDeleteResult());
+  assert.match(msg, /shop deleted/);
+  assert.match(msg, /12 entries/);
+});
+
+test("summarizeDeleteProjectResult: a single entry is not pluralised", () => {
+  const msg = summarizeDeleteProjectResult(mkDeleteResult({ deleted: 1 }));
+  assert.match(msg, /1 entry/);
+  assert.doesNotMatch(msg, /1 entries/);
+});
+
+test("summarizeDeleteProjectResult: an empty project is not an error", () => {
+  // The sidebar counts only tasks, so a project can look empty and still
+  // exist. Deleting the leftover name has to read as success.
+  const msg = summarizeDeleteProjectResult(mkDeleteResult({ deleted: 0 }));
+  assert.match(msg, /no entries/);
+});
+
+test("summarizeDeleteProjectResult: a partial wipe leads with the failure", () => {
+  // "deleted 40 entries" is true and useless when 3 are still there — the
+  // leftovers are the only part the user has to act on.
+  const msg = summarizeDeleteProjectResult(
+    mkDeleteResult({ deleted: 40, failed: 3 }),
+  );
+  assert.match(msg, /^shop: 3 failed/);
+  assert.match(msg, /40 entries deleted/);
+});
+
+test("summarizeDeleteProjectResult: a partial wipe quotes the server's reason", () => {
+  const msg = summarizeDeleteProjectResult(
+    mkDeleteResult({
+      deleted: 2,
+      failed: 1,
+      errors: ["projects/shop/task/x.md: permission denied"],
+    }),
+  );
+  assert.match(msg, /permission denied/);
 });

@@ -12,6 +12,7 @@
 import { useState } from "react";
 import { useWorkspace } from "../../store/workspace";
 import { useProjects } from "../../hooks/useProjects";
+import { useVisibleProjects } from "../../hooks/useVisibleProjects";
 import { usePauseState } from "../../hooks/usePauseState";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useLive } from "../../lib/sse";
@@ -23,7 +24,6 @@ import {
 import { useProjectActionContext } from "../../hooks/useProjectActionContext";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
-import { projectMatchesStatusFilter } from "../../lib/statusFilter";
 import { projectPauseBadges } from "../../lib/pause";
 import type { Task } from "../../lib/types";
 
@@ -63,27 +63,20 @@ export function ProjectsSection(): JSX.Element {
   const expanded = useWorkspace((s) => s.sidebarSection.projects);
   const toggle = useWorkspace((s) => s.toggleSidebarSection);
   const setView = useWorkspace((s) => s.setView);
-  const hiddenProjects = useWorkspace((s) => s.hiddenProjects);
   const showProject = useWorkspace((s) => s.showProject);
   const hideProject = useWorkspace((s) => s.hideProject);
   const { data: projects, isLoading, error, refetch } = useProjects();
   const projectCtx = useProjectActionContext();
   const { pause, isLoading: pauseLoading } = usePauseState();
   const liveProjects = useLive((s) => s.projects);
-  const statusFilter = useWorkspace((s) => s.statusFilter);
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   const { rowProps, overlays } = useRowActions();
 
-  const hiddenSet = new Set(hiddenProjects);
-  // "Visible" means (a) not user-hidden AND (b) matches the current
-  // status-chip filter. When statusFilter === "all", filterMatches every
-  // project so this reduces to the pre-filter behavior.
-  const filterMatch = (pid: string) =>
-    projectMatchesStatusFilter(liveProjects[pid]?.tasks ?? [], statusFilter);
-  const visibleProjectIds = (projects ?? []).filter(
-    (p) => !hiddenSet.has(p) && filterMatch(p),
-  );
-  const hiddenProjectIds = (projects ?? []).filter((p) => hiddenSet.has(p));
+  // "Visible" means (a) not user-hidden AND (b) matching the current
+  // status chip. Shared with the Entries browser via useVisibleProjects,
+  // so "the projects in my sidebar" means one thing across the app.
+  const { visible: visibleProjectIds, hidden: hiddenProjectIds } =
+    useVisibleProjects();
 
   const rows = (() => {
     if (isLoading) return <Loading size="sm" label="Loading…" />;

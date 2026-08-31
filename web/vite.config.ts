@@ -29,6 +29,14 @@ const proxy = Object.fromEntries(
   ]),
 );
 
+// Packages that exist in this bundle only to draw mermaid diagrams. Used to
+// keep their chunks out of the PWA precache — see build.rollupOptions below.
+// Set DIAG_DEBUG=1 on a build to have chunkFileNames report which module
+// ids a mermaid chunk contains that this list does not cover — that is how
+// the list is re-derived when mermaid changes its dependencies.
+const DIAGRAM_DEPS =
+  /node_modules\/(?:\.pnpm\/)?(?:@mermaid-js|mermaid|@upsetjs|@iconify|cytoscape(?:-[a-z-]+)?|cose-base|layout-base|katex|dagre-d3-es|d3|d3-[a-z-]+|delaunator|robust-predicates|internmap|khroma|langium|chevrotain|@braintree|dompurify|marked|roughjs|points-on-curve|points-on-path|path-data-parser|ts-dedent|uuid|dayjs|lodash-es|es-toolkit|fastdom|stylis)[/@]/;
+
 export default defineConfig({
   // Built assets are embedded into the Go binary at internal/webui/dist and
   // served from the site root.
@@ -68,11 +76,33 @@ export default defineConfig({
         clientsClaim: true,
         // Don't precache source maps; cache the app shell + assets.
         globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+        // …but not the diagram engine. mermaid and its dependencies are
+        // ~3MB across per-diagram-type chunks, dynamically imported only
+        // when an entry actually contains a ```mermaid fence. Precaching
+        // them would triple the install payload of a mobile PWA for a
+        // feature most sessions never touch.
+        //
+        // They are matched by DIRECTORY, not by filename: the build below
+        // routes pure-diagram chunks to assets/diagram/. Matching on names
+        // like "**/chunk-*" once excluded the app's own entry bundle and
+        // silently broke offline start-up.
+        globIgnores: ["**/assets/diagram/**"],
         // API responses are real-time; never serve them from the SW cache.
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.startsWith("/api"),
             handler: "NetworkOnly",
+          },
+          {
+            // The diagram chunks excluded from precache above. Their
+            // filenames are content-hashed, so they are safe to keep
+            // forever once a user opens their first diagram.
+            urlPattern: ({ url }) => url.pathname.startsWith("/assets/diagram/"),
+            handler: "CacheFirst",
+            options: {
+              cacheName: "diagram-chunks",
+              expiration: { maxEntries: 120, maxAgeSeconds: 30 * 24 * 3600 },
+            },
           },
         ],
         cleanupOutdatedCaches: true,
@@ -126,5 +156,29 @@ export default defineConfig({
     emptyOutDir: false,
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
+    rollupOptions: {
+      output: {
+        // Route chunks that are ENTIRELY diagram-engine code into their own
+        // directory so the service worker can skip precaching them (see
+        // globIgnores above). `every` is the safe direction: a chunk that
+        // mixes app code with mermaid stays in assets/ and stays precached,
+        // so this can shrink the install payload but never break offline.
+        chunkFileNames(chunk) {
+          const ids = chunk.moduleIds ?? [];
+          if (process.env.DIAG_DEBUG) {
+            const miss = ids.filter((id) => !DIAGRAM_DEPS.test(id));
+            if (miss.length && ids.length > 1) {
+              console.log("CHUNK", chunk.name, "misses:", miss.slice(0, 6));
+            }
+          }
+          const diagramOnly =
+            ids.length > 0 &&
+            ids.every((id) => DIAGRAM_DEPS.test(id));
+          return diagramOnly
+            ? "assets/diagram/[name]-[hash].js"
+            : "assets/[name]-[hash].js";
+        },
+      },
+    },
   },
 });

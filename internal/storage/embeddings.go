@@ -302,6 +302,15 @@ func (s *StorageLayer) SearchByEmbedding(ctx context.Context, queryVec []float32
 		if opts.ProjectID != "" {
 			whereClauses = append(whereClauses, "m.project_id = ?")
 			params = append(params, opts.ProjectID)
+		} else if clause, scopeParams := projectScopeClause(
+			"m.project_id",
+			// note_embeddings_meta has no path column, and global entries
+			// carry no project_id — reach their path through notes.
+			"(SELECT n.path FROM notes n WHERE n.id = m.note_id)",
+			opts.ProjectIDs, opts.IncludeGlobalPath,
+		); clause != "" {
+			whereClauses = append(whereClauses, clause)
+			params = append(params, scopeParams...)
 		}
 		if opts.Type != "" {
 			whereClauses = append(whereClauses, "m.type = ?")

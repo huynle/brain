@@ -14,6 +14,7 @@ import { Dot, type DotVariant } from "../common/Dot";
 import { ErrorState } from "../common/ErrorState";
 import { Loading } from "../common/Loading";
 import { EntryMarkdown } from "./EntryMarkdown";
+import { EntryAttachments } from "./EntryAttachments";
 import { useEntry, useEntryGraph } from "../../hooks/useEntries";
 import { useEntryActionContext } from "../../hooks/useEntryActionContext";
 import { useRowActions } from "../../hooks/useRowActions";
@@ -26,6 +27,7 @@ import { useWorkspace } from "../../store/workspace";
 import { useUI } from "../../store/ui";
 import { relativeTime, statusLabel } from "../../lib/format";
 import { entryProject, extractHeadings } from "../../lib/entries";
+import { collectInlinedAttachmentIds } from "../../lib/attachments";
 import type { BrainEntry } from "../../lib/types";
 
 function entryDotVariant(status: string): DotVariant {
@@ -103,6 +105,12 @@ function LoadedReader({
   const headings = useMemo(
     () => extractHeadings(entry.content || ""),
     [entry.content],
+  );
+  const attachments = entry.attachments ?? [];
+  // Anything the body already shows inline is not repeated in the strip.
+  const inlinedIds = useMemo(
+    () => collectInlinedAttachmentIds(entry.content || "", attachments),
+    [entry.content, attachments],
   );
   const pinned = comparePins.includes(entry.path);
   const project = entryProject(entry);
@@ -220,9 +228,20 @@ function LoadedReader({
         {rawMode ? (
           <pre className="entry-raw">{entry.content || "(empty entry)"}</pre>
         ) : entry.content ? (
-          <EntryMarkdown content={entry.content} onOpenEntry={onOpenEntry} />
+          <EntryMarkdown
+            content={entry.content}
+            onOpenEntry={onOpenEntry}
+            attachments={attachments}
+          />
         ) : (
           <div className="entry-empty-body">(empty entry)</div>
+        )}
+
+        {!rawMode && attachments.length > 0 && (
+          <EntryAttachments
+            attachments={attachments}
+            inlinedIds={inlinedIds}
+          />
         )}
 
         {!compact && <GraphFooter entry={entry} onOpenEntry={onOpenEntry} />}

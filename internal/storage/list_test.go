@@ -786,3 +786,121 @@ func TestListNotes_FilterByPriority(t *testing.T) {
 		})
 	}
 }
+
+// ---------------------------------------------------------------------------
+// ListNotes: multi-project scope (ProjectIDs / IncludeGlobalPath)
+// ---------------------------------------------------------------------------
+
+// seedGlobalNote adds one project-less global entry to the seedListNotes set,
+// so the global half of a scope has something to find. Global entries carry
+// no project_id at all — that is exactly why the scope needs a path arm.
+func seedGlobalNote(t *testing.T, s *StorageLayer) {
+	t.Helper()
+	strPtr := func(s string) *string { return &s }
+	_, err := s.InsertNote(context.Background(), &NoteRow{
+		Path: "global/pattern/retry.md", ShortID: "glob0001",
+		Title: "Retry Pattern", Metadata: "{}",
+		Type: strPtr("pattern"), Status: strPtr("active"),
+		Created: strPtr("2025-01-06T00:00:00Z"), Modified: strPtr("2025-01-11T00:00:00Z"),
+	})
+	if err != nil {
+		t.Fatalf("seed global note: %v", err)
+	}
+}
+
+func TestListNotes_FilterByProjectIDs(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	seedListNotes(t, s)
+	seedGlobalNote(t, s)
+
+	tests := []struct {
+		name          string
+		opts          *ListOptions
+		wantPathsHave []string
+		wantCount     int
+	}{
+		{
+			name:      "single id matches that project only",
+			opts:      &ListOptions{ProjectIDs: []string{"beta"}},
+			wantCount: 2,
+		},
+		{
+			name:      "several ids union their projects",
+			opts:      &ListOptions{ProjectIDs: []string{"alpha", "beta"}},
+			wantCount: 5,
+		},
+		{
+			name:      "unknown id contributes nothing",
+			opts:      &ListOptions{ProjectIDs: []string{"beta", "gamma"}},
+			wantCount: 2,
+		},
+		{
+			// The whole point of IncludeGlobalPath: global entries have no
+			// project_id, so a project_id IN (…) filter can never reach them.
+			name:          "global is excluded unless asked for",
+			opts:          &ListOptions{ProjectIDs: []string{"alpha", "beta"}},
+			wantCount:     5,
+			wantPathsHave: nil,
+		},
+		{
+			name: "global rides along with the named projects",
+			opts: &ListOptions{
+				ProjectIDs: []string{"beta"}, IncludeGlobalPath: true,
+			},
+			wantCount:     3,
+			wantPathsHave: []string{"global/pattern/retry.md"},
+		},
+		{
+			name:          "global alone",
+			opts:          &ListOptions{IncludeGlobalPath: true},
+			wantCount:     1,
+			wantPathsHave: []string{"global/pattern/retry.md"},
+		},
+		{
+			// An empty scope restricts nothing, so callers can pass it
+			// unconditionally.
+			name:      "empty scope is no filter",
+			opts:      &ListOptions{},
+			wantCount: 6,
+		},
+		{
+			// ProjectID (exactly one) is the older, narrower field and wins,
+			// so no existing caller changes behavior by setting both.
+			name: "single ProjectID wins over the multi scope",
+			opts: &ListOptions{
+				ProjectID:  "alpha",
+				ProjectIDs: []string{"beta"}, IncludeGlobalPath: true,
+			},
+			wantCount: 3,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			notes, err := s.ListNotes(ctx, tt.opts)
+			if err != nil {
+				t.Fatalf("ListNotes error: %v", err)
+			}
+			if len(notes) != tt.wantCount {
+				paths := make([]string, len(notes))
+				for i, n := range notes {
+					paths[i] = n.Path
+				}
+				t.Fatalf("got %d notes %v, want %d", len(notes), paths, tt.wantCount)
+			}
+			for _, want := range tt.wantPathsHave {
+				found := false
+				for _, n := range notes {
+					if n.Path == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("missing expected path %q", want)
+				}
+			}
+		})
+	}
+}

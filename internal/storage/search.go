@@ -377,6 +377,11 @@ func appendFilters(sql string, params []interface{}, tableAlias string, opts *Se
 	if opts.ProjectID != "" {
 		sql += " AND " + col("project_id") + " = ?"
 		params = append(params, opts.ProjectID)
+	} else if clause, scopeParams := projectScopeClause(
+		col("project_id"), col("path"), opts.ProjectIDs, opts.IncludeGlobalPath,
+	); clause != "" {
+		sql += " AND " + clause
+		params = append(params, scopeParams...)
 	}
 	if opts.FeatureID != "" {
 		sql += " AND " + col("feature_id") + " = ?"

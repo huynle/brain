@@ -619,6 +619,9 @@ export interface SearchRequest {
   limit?: number;
   global?: boolean;
   project?: string;
+  /** Multi-project scope; the reserved member "global" admits
+   *  project-less entries. Supersedes `project` / `global`. */
+  projects?: string[];
   strategy?: SearchStrategy;
 }
 

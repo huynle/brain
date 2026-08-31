@@ -327,6 +327,9 @@ func (h *Handler) HandleListEntries(w http.ResponseWriter, r *http.Request) {
 		Project:   q.Get("project"),
 		SortOrder: q.Get("sortOrder"),
 		Priority:  q.Get("priority"),
+		// ?projects=a,b,global — a multi-project scope. See
+		// types.ListEntriesRequest.Projects; supersedes project/global.
+		Projects: types.SplitCommaScope(q.Get("projects")),
 	}
 
 	if v := q.Get("limit"); v != "" {

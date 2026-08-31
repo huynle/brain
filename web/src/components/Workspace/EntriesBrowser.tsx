@@ -28,6 +28,7 @@ import { Loading } from "../common/Loading";
 import { EntryReader } from "./EntryReader";
 import { EntryCompare } from "./EntryCompare";
 import { useProjects } from "../../hooks/useProjects";
+import { useVisibleProjects } from "../../hooks/useVisibleProjects";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import {
   useBrainStats,
@@ -45,9 +46,13 @@ import { relativeTime } from "../../lib/format";
 import {
   ALL_ENTRY_TYPES,
   KNOWLEDGE_TYPES,
+  PROJECT_FILTER_ALL,
+  PROJECT_FILTER_GLOBAL,
+  PROJECT_FILTER_SIDEBAR,
   entryBasename,
   entryProject,
   excerptOf,
+  resolveProjectScope,
 } from "../../lib/entries";
 import type { SearchStrategy } from "../../lib/types";
 
@@ -111,9 +116,24 @@ export function EntriesBrowser(): JSX.Element {
   const setCompareOpen = useEntriesStore((s) => s.setCompareOpen);
 
   const { data: projects } = useProjects();
-  const { stats } = useBrainStats(projectFilter);
+  // The Entries view is a workspace view, so the sidebar's project
+  // selection scopes it the way it scopes the overview grid — that is the
+  // default, with "all projects" left in the picker as the escape hatch.
+  const sidebar = useVisibleProjects();
+  const scope = useMemo(
+    () =>
+      resolveProjectScope(projectFilter, {
+        projects: sidebar.visible,
+        // While projects are still loading, `visible` is empty and would
+        // resolve to a scope of nothing but global. Treat that moment as
+        // unfiltered so the first paint isn't an empty list.
+        unfiltered: sidebar.unfiltered || sidebar.loading,
+      }),
+    [projectFilter, sidebar.visible, sidebar.unfiltered, sidebar.loading],
+  );
+  const { stats } = useBrainStats(scope);
 
-  const filters = { typeFilter, projectFilter, statusFilter, sortBy, sortOrder };
+  const filters = { typeFilter, scope, statusFilter, sortBy, sortOrder };
   const list = useEntryList(filters);
   const searchRes = useEntrySearch(query, strategy, filters);
   const searching = searchRes.enabled;
@@ -338,11 +358,20 @@ export function EntriesBrowser(): JSX.Element {
             )}
             <select
               value={projectFilter}
-              title="Project"
+              title={
+                projectFilter === PROJECT_FILTER_SIDEBAR
+                  ? `Following the sidebar: ${sidebar.visible.length} of ${sidebar.all.length} projects, plus global entries`
+                  : "Project"
+              }
               onChange={(e) => setProjectFilter(e.target.value)}
             >
-              <option value="">all projects</option>
-              <option value="global">global</option>
+              <option value={PROJECT_FILTER_SIDEBAR}>
+                {sidebar.unfiltered
+                  ? "sidebar projects"
+                  : `sidebar projects (${sidebar.visible.length})`}
+              </option>
+              <option value={PROJECT_FILTER_ALL}>all projects</option>
+              <option value={PROJECT_FILTER_GLOBAL}>global</option>
               {(projects ?? []).map((p) => (
                 <option key={p} value={p}>
                   {p}

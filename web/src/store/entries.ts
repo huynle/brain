@@ -21,7 +21,10 @@ export const ENTRIES_STORAGE_KEY = "panes-v2:entries:v1";
 export interface EntriesState {
   /** "knowledge" (default), "all", or one concrete entry type. */
   typeFilter: EntryTypeFilter;
-  /** "" = all projects, "global" = only global entries, else project id. */
+  /** Project picker value. "" (the default) follows the sidebar's visible
+   *  projects, "*" is every project explicitly, "global" is global entries
+   *  only, anything else is one project id. See lib/entries
+   *  `resolveProjectScope`, which turns this into the actual API scope. */
   projectFilter: string;
   /** "" = any status. */
   statusFilter: string;

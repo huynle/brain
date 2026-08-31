@@ -79,7 +79,7 @@ type BrainService interface {
 	// projects/<project>/); the `global` flag is ignored in that case.
 	// When project is empty and global=true, stats cover global entries only.
 	// When both are empty/false, stats span all entries.
-	GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error)
+	GetStats(ctx context.Context, global bool, project string, projects []string) (*types.StatsResponse, error)
 
 	// GetOrphans returns entries with no incoming links.
 	// When project is set, results are scoped to entries under projects/<project>/.

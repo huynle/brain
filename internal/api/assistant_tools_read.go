@@ -724,7 +724,7 @@ func handleGetStats(ctx context.Context, s *AssistantService, defaultProject str
 		// global overrides project scoping
 		project = ""
 	}
-	return s.brain.GetStats(ctx, globalFlag, project)
+	return s.brain.GetStats(ctx, globalFlag, project, nil)
 }
 
 // ─── get_backlinks ────────────────────────────────────────────────────

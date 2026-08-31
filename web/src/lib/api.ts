@@ -1277,6 +1277,24 @@ export const assistantGoalDraft = (body: {
     },
   );
 
+/**
+ * Fetch attachment bytes as an object URL.
+ *
+ * `download_url` cannot be handed straight to <img src>: the API takes a
+ * Bearer token in a header, which the browser will not attach to an image
+ * request, so an auth-enabled server answers 401 and the picture silently
+ * breaks. Fetching through `api()` and wrapping the blob keeps one auth
+ * path for everything.
+ *
+ * The caller owns the returned URL and must revokeObjectURL it.
+ */
+export async function fetchAttachmentObjectURL(
+  downloadUrl: string,
+): Promise<string> {
+  const res = await api<Response>(downloadUrl, { raw: true });
+  return URL.createObjectURL(await res.blob());
+}
+
 export async function uploadAttachment(
   projectId: string,
   file: Blob,
@@ -1729,6 +1747,10 @@ export const listEntries = (query?: {
   status?: string;
   limit?: number;
   global?: string;
+  /** Comma-separated multi-project scope, e.g. "hindsight,pwa,global".
+   *  The reserved member "global" admits project-less entries. Supersedes
+   *  `project` / `global` server-side. */
+  projects?: string;
   sortBy?: "created" | "modified" | "priority" | "completed" | "title";
   sortOrder?: "asc" | "desc";
 }) => api<ListEntriesResponse>("/api/v1/entries", { query });
@@ -1823,9 +1845,21 @@ export interface BrainStats {
   staleCount?: number;
 }
 
-export const getBrainStats = (project?: string, global?: boolean) =>
+/** Entry counts. `projects` is the comma-separated multi-project scope
+ *  (see listEntries) and supersedes the single-project / global forms. */
+export const getBrainStats = (
+  project?: string,
+  global?: boolean,
+  projects?: string,
+) =>
   api<BrainStats>("/api/v1/stats", {
-    query: global ? { global: "true" } : project ? { project } : undefined,
+    query: projects
+      ? { projects }
+      : global
+        ? { global: "true" }
+        : project
+          ? { project }
+          : undefined,
   });
 
 export const embedBackfill = (body: {

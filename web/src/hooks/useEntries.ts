@@ -20,8 +20,11 @@ import type { BrainEntry, SearchStrategy } from "../lib/types";
 import {
   buildListPlan,
   mergeEntryLists,
+  scopeKey,
+  scopeProjectsParam,
   KNOWLEDGE_TYPES,
   type EntryListFilters,
+  type ProjectScope,
 } from "../lib/entries";
 
 const EMPTY_ENTRIES: BrainEntry[] = [];
@@ -32,7 +35,7 @@ export function useEntryList(filters: EntryListFilters) {
       "entries",
       "list",
       filters.typeFilter,
-      filters.projectFilter,
+      scopeKey(filters.scope),
       filters.statusFilter,
       filters.sortBy,
       filters.sortOrder,
@@ -94,7 +97,8 @@ export interface EntrySearchFilters {
   /** "knowledge" filters results client-side; a concrete type is passed
    *  to the API; "all" searches everything. */
   typeFilter: string;
-  projectFilter: string;
+  /** Already resolved against the sidebar — see resolveProjectScope. */
+  scope: ProjectScope;
   statusFilter: string;
 }
 
@@ -112,7 +116,7 @@ export function useEntrySearch(
       trimmed,
       strategy,
       filters.typeFilter,
-      filters.projectFilter,
+      scopeKey(filters.scope),
       filters.statusFilter,
     ],
     queryFn: async () => {
@@ -126,11 +130,13 @@ export function useEntrySearch(
         limit: 50,
         ...(concreteType ? { type: concreteType } : {}),
         ...(filters.statusFilter ? { status: filters.statusFilter } : {}),
-        ...(filters.projectFilter === "global"
+        ...(filters.scope.kind === "global"
           ? { global: true }
-          : filters.projectFilter
-            ? { project: filters.projectFilter }
-            : {}),
+          : filters.scope.kind === "project"
+            ? { project: filters.scope.project }
+            : filters.scope.kind === "set"
+              ? { projects: filters.scope.projects }
+              : {}),
       });
       let results = res.results || [];
       if (filters.typeFilter === "knowledge") {
@@ -171,14 +177,17 @@ export function useEntryGraph(id: string | undefined) {
   };
 }
 
-/** Entry counts by type, for the type-filter chips. */
-export function useBrainStats(project?: string) {
+/** Entry counts by type, for the type-filter chips. Scoped exactly like
+ *  the list below them — chip counts that span projects the list can't
+ *  show would send the user hunting for entries that never appear. */
+export function useBrainStats(scope: ProjectScope) {
   const q = useQuery({
-    queryKey: ["entries", "stats", project || ""],
+    queryKey: ["entries", "stats", scopeKey(scope)],
     queryFn: () =>
       getBrainStats(
-        project && project !== "global" ? project : undefined,
-        project === "global",
+        scope.kind === "project" ? scope.project : undefined,
+        scope.kind === "global",
+        scopeProjectsParam(scope),
       ),
     staleTime: 60_000,
     refetchOnWindowFocus: true,

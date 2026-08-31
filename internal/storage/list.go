@@ -46,6 +46,11 @@ func (s *StorageLayer) ListNotes(ctx context.Context, opts *ListOptions) ([]*Not
 		if opts.ProjectID != "" {
 			where = append(where, "project_id = ?")
 			params = append(params, opts.ProjectID)
+		} else if clause, scopeParams := projectScopeClause(
+			"project_id", "path", opts.ProjectIDs, opts.IncludeGlobalPath,
+		); clause != "" {
+			where = append(where, clause)
+			params = append(params, scopeParams...)
 		}
 		if opts.FeatureID != "" {
 			where = append(where, "feature_id = ?")

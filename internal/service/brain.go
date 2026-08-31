@@ -2183,8 +2183,13 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 		Priority:  req.Priority,
 	}
 
-	// Handle global vs project filtering
-	if req.Global != nil && *req.Global {
+	// Handle global vs project filtering. A multi-project scope supersedes
+	// both: "these six projects plus global" cannot be said with the
+	// single-project field and the global flag, which are mutually exclusive.
+	if len(req.Projects) > 0 {
+		opts.ProjectID = ""
+		opts.ProjectIDs, opts.IncludeGlobalPath = types.ParseProjectScope(req.Projects)
+	} else if req.Global != nil && *req.Global {
 		opts.PathPrefix = "global/"
 	}
 
@@ -2316,7 +2321,11 @@ func (s *BrainServiceImpl) Search(ctx context.Context, req types.SearchRequest) 
 	if req.Limit != nil {
 		opts.Limit = *req.Limit
 	}
-	if req.Global != nil && *req.Global {
+	// See List: a multi-project scope supersedes project + global.
+	if len(req.Projects) > 0 {
+		opts.ProjectID = ""
+		opts.ProjectIDs, opts.IncludeGlobalPath = types.ParseProjectScope(req.Projects)
+	} else if req.Global != nil && *req.Global {
 		opts.PathPrefix = "global/"
 	}
 
@@ -2365,13 +2374,15 @@ func (s *BrainServiceImpl) searchSemantic(ctx context.Context, req types.SearchR
 
 	// Build embedding search options from filter options
 	embOpts := &storage.EmbeddingSearchOptions{
-		Limit:     opts.Limit,
-		ProjectID: opts.ProjectID,
-		Type:      opts.Type,
-		Status:    opts.Status,
-		FeatureID: opts.FeatureID,
-		Priority:  opts.Priority,
-		Tags:      opts.Tags,
+		Limit:             opts.Limit,
+		ProjectID:         opts.ProjectID,
+		ProjectIDs:        opts.ProjectIDs,
+		IncludeGlobalPath: opts.IncludeGlobalPath,
+		Type:              opts.Type,
+		Status:            opts.Status,
+		FeatureID:         opts.FeatureID,
+		Priority:          opts.Priority,
+		Tags:              opts.Tags,
 	}
 
 	// Perform embedding-based search
@@ -2414,13 +2425,15 @@ func (s *BrainServiceImpl) searchHybrid(ctx context.Context, req types.SearchReq
 
 	// Build embedding search options
 	embOpts := &storage.EmbeddingSearchOptions{
-		Limit:     opts.Limit,
-		ProjectID: opts.ProjectID,
-		Type:      opts.Type,
-		Status:    opts.Status,
-		FeatureID: opts.FeatureID,
-		Priority:  opts.Priority,
-		Tags:      opts.Tags,
+		Limit:             opts.Limit,
+		ProjectID:         opts.ProjectID,
+		ProjectIDs:        opts.ProjectIDs,
+		IncludeGlobalPath: opts.IncludeGlobalPath,
+		Type:              opts.Type,
+		Status:            opts.Status,
+		FeatureID:         opts.FeatureID,
+		Priority:          opts.Priority,
+		Tags:              opts.Tags,
 	}
 
 	// Perform embedding-based search
@@ -3019,10 +3032,18 @@ func (s *BrainServiceImpl) GetSection(ctx context.Context, path string, title st
 //
 // The response always includes overall GlobalEntries and ProjectEntries
 // counts so callers can compare a scoped result against the totals.
-func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool, project string) (*types.StatsResponse, error) {
+// projects, when non-empty, is a multi-project scope (see
+// ListEntriesRequest.Projects) and supersedes both project and global — the
+// Entries browser's type-chip counts have to span the whole sidebar scope,
+// not one project of it.
+func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool, project string, projects []string) (*types.StatsResponse, error) {
 	// Primary stats based on the filter precedence above.
 	var primaryOpts *storage.StatsOptions
 	switch {
+	case len(projects) > 0:
+		if paths := ProjectScopePaths(projects); len(paths) > 0 {
+			primaryOpts = &storage.StatsOptions{Paths: paths}
+		}
 	case project != "":
 		primaryOpts = &storage.StatsOptions{Path: "projects/" + project + "/"}
 	case global:

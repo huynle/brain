@@ -11,18 +11,30 @@
  *   • entry-link interception — `[Title](projects/x/plan/ab12cd34.md)`
  *     or `[Title](ab12cd34)` opens in the reader instead of navigating
  *     the SPA away;
- *   • external links forced to a new tab.
+ *   • external links forced to a new tab;
+ *   • images resolved against the entry's attachments — `![x](gradient.png)`,
+ *     `![x](attachment:12)` and `![x](./figures/gradient.png)` all reach the
+ *     attachment's authed bytes, which a bare <img src> could not (see
+ *     `fetchAttachmentObjectURL`);
+ *   • ```mermaid fences rendered as diagrams, with mermaid loaded on
+ *     demand so entries without one never pay for it.
  *
  * Styling lives under `.entry-md` in `styles/global.css`.
  */
 import React, { useId, useMemo } from "react";
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { AttachmentImage } from "./AttachmentImage";
+import { MermaidDiagram } from "./MermaidDiagram";
 import {
   classifyEntryHref,
   extractHeadings,
+  isLoneImageParagraph,
   slugifyHeading,
+  type MarkdownNode,
 } from "../../lib/entries";
+import { resolveAttachmentSrc } from "../../lib/attachments";
+import type { AttachmentReference } from "../../lib/types";
 
 function textOf(node: React.ReactNode): string {
   if (node == null || typeof node === "boolean") return "";
@@ -34,18 +46,33 @@ function textOf(node: React.ReactNode): string {
   return "";
 }
 
-/** The subset of remark's node position react-markdown hands components. */
+/** The subset of the hast node react-markdown hands components. */
 interface MdNodeProps {
-  node?: { position?: { start?: { line?: number } } };
+  node?: MarkdownNode & { position?: { start?: { line?: number } } };
   children?: React.ReactNode;
+}
+
+/**
+ * react-markdown drops URLs whose scheme isn't in its allowlist, so
+ * `![x](attachment:12)` reached the img component as an empty string and
+ * rendered as a missing image. `attachment:` refs are resolved against the
+ * entry's own attachment list and never emitted as an href, so letting
+ * them through costs nothing; everything else keeps the default sanitizer.
+ */
+function entryUrlTransform(url: string): string {
+  if (/^attachment:/i.test(url)) return url;
+  return defaultUrlTransform(url);
 }
 
 export function EntryMarkdown({
   content,
   onOpenEntry,
+  attachments,
 }: {
   content: string;
   onOpenEntry?: (ref: string) => void;
+  /** The entry's attachments, so `![x](file.png)` can find its bytes. */
+  attachments?: readonly AttachmentReference[];
 }): JSX.Element {
   const instanceId = useId();
 
@@ -112,12 +139,74 @@ export function EntryMarkdown({
           </a>
         );
       },
+      img: ({ src, alt, title }: {
+        src?: string;
+        alt?: string;
+        title?: string;
+      }) => {
+        const resolved = resolveAttachmentSrc(src, attachments);
+        if (resolved && "attachment" in resolved) {
+          return (
+            <AttachmentImage
+              attachment={{
+                ...resolved.attachment,
+                caption: alt || resolved.attachment.caption,
+              }}
+              className="entry-md-img"
+            />
+          );
+        }
+        if (resolved) {
+          return (
+            <img
+              className="entry-md-img"
+              src={resolved.url}
+              alt={alt || ""}
+              title={title}
+              loading="lazy"
+            />
+          );
+        }
+        // A relative src with no matching attachment would resolve against
+        // the SPA origin and render a broken-image icon. Say what is wrong
+        // instead.
+        return (
+          <span className="entry-md-img-missing" title={src}>
+            🖼 missing image: {alt || src}
+          </span>
+        );
+      },
+      // A paragraph holding nothing but an image is a figure and gets its
+      // own block; an image among words stays inline. See
+      // `isLoneImageParagraph` for why CSS can't make this call.
+      p: ({ node, children }: MdNodeProps) => (
+        <p className={isLoneImageParagraph(node) ? "entry-md-figure" : undefined}>
+          {children}
+        </p>
+      ),
+      code: ({
+        className,
+        children,
+      }: {
+        className?: string;
+        children?: React.ReactNode;
+      }) => {
+        const lang = /language-(\w+)/.exec(className || "")?.[1];
+        if (lang === "mermaid") {
+          return <MermaidDiagram source={textOf(children).trim()} />;
+        }
+        return <code className={className}>{children}</code>;
+      },
     };
-  }, [content, instanceId, onOpenEntry]);
+  }, [content, instanceId, onOpenEntry, attachments]);
 
   return (
     <div className="entry-md" data-md-instance={instanceId}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={components}
+        urlTransform={entryUrlTransform}
+      >
         {content}
       </ReactMarkdown>
     </div>

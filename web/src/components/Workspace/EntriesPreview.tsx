@@ -12,6 +12,7 @@
  */
 import { useCallback, useMemo } from "react";
 import { useEntryList } from "../../hooks/useEntries";
+import { useVisibleProjects } from "../../hooks/useVisibleProjects";
 import { useEntryActionContext } from "../../hooks/useEntryActionContext";
 import { useRowActions } from "../../hooks/useRowActions";
 import {
@@ -21,7 +22,12 @@ import {
 import { useEntriesStore } from "../../store/entries";
 import { useWorkspace } from "../../store/workspace";
 import { relativeTime } from "../../lib/format";
-import { entryProject, excerptOf } from "../../lib/entries";
+import {
+  PROJECT_FILTER_SIDEBAR,
+  entryProject,
+  excerptOf,
+  resolveProjectScope,
+} from "../../lib/entries";
 
 const PREVIEW_COUNT = 8;
 
@@ -30,9 +36,22 @@ export function EntriesPreview(): JSX.Element | null {
   const selectEntry = useEntriesStore((s) => s.selectEntry);
   const comparePins = useEntriesStore((s) => s.comparePins);
 
+  // This carousel sits inside the Overview grid, which already shows only
+  // the sidebar's visible projects — so it follows the same scope rather
+  // than surfacing "recent" entries from projects the grid above it hides.
+  const sidebar = useVisibleProjects();
+  const scope = useMemo(
+    () =>
+      resolveProjectScope(PROJECT_FILTER_SIDEBAR, {
+        projects: sidebar.visible,
+        unfiltered: sidebar.unfiltered || sidebar.loading,
+      }),
+    [sidebar.visible, sidebar.unfiltered, sidebar.loading],
+  );
+
   const { entries } = useEntryList({
     typeFilter: "knowledge",
-    projectFilter: "",
+    scope,
     statusFilter: "",
     sortBy: "modified",
     sortOrder: "desc",

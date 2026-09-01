@@ -64,6 +64,25 @@ Tools that take an optional 'project' parameter fall back to the project shown h
 			fmt.Sprintf("- Hostname: %s", execCtx.Hostname),
 			fmt.Sprintf("- OS/Arch: %s/%s", execCtx.OS, execCtx.Arch),
 		)
+		// Say plainly whether stamping is actually happening. The identity
+		// above is this process's, and over the HTTP transport this process
+		// is the Brain API — not the caller — so nothing is stamped.
+		if s.ambientContextDescribesCaller() {
+			if execCtx.AbsPath != "" {
+				lines = append(lines, fmt.Sprintf("- Origin path: %s", execCtx.AbsPath))
+			}
+			lines = append(lines,
+				"- Tasks created here are stamped origin_machine_id/origin_client_id/origin_path,",
+				"  and default to machine_affinity=preferred (a runner on this machine wins,",
+				"  but the task still runs elsewhere if none is available). Pass",
+				"  machine_affinity='local' to require this machine.")
+		} else {
+			lines = append(lines,
+				"- ⚠ Origin stamping is DISABLED for this session: this MCP server runs inside",
+				"  the Brain API, so the identity above describes the API host rather than you.",
+				"  Tasks created here carry no origin, and machine_affinity has nothing to",
+				"  resolve against. Use the stdio MCP server for machine-affine tasks.")
+		}
 		if execCtx.Username != "" {
 			lines = append(lines, fmt.Sprintf("- Username: %s", execCtx.Username))
 		}

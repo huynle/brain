@@ -458,10 +458,31 @@ func (s *TaskServiceImpl) applyTaskFilterOptions(ctx context.Context, projectID 
 		return nil, fmt.Errorf("get runner %q: %w", opts.RunnerID, err)
 	}
 	if runner == nil {
-		return tasks, nil
+		// Unknown runner: we cannot check executors, capabilities or labels,
+		// and historically that meant no filtering at all. Machine affinity
+		// cannot inherit that default. An unregistered runner has no machine
+		// id to compare, so serving it a machine_affinity=local task would
+		// hand pinned work to the one caller we know least about — the
+		// bypass is trivial and silent. Withhold only those tasks; every
+		// other filter keeps its existing fail-open behavior.
+		return filterOutMachinePinnedTasks(tasks), nil
 	}
 
 	return s.filterByRunnerEligibility(ctx, projectID, tasks, runner)
+}
+
+// filterOutMachinePinnedTasks drops every task whose resolved affinity is
+// "local". Used when the requesting runner's machine cannot be established at
+// all, where the honest answer is "this task is not for you".
+func filterOutMachinePinnedTasks(tasks []types.ResolvedTask) []types.ResolvedTask {
+	filtered := make([]types.ResolvedTask, 0, len(tasks))
+	for _, task := range tasks {
+		if types.ResolveMachineAffinity(task.MachineAffinity, task.OriginMachineID) == types.MachineAffinityLocal {
+			continue
+		}
+		filtered = append(filtered, task)
+	}
+	return filtered
 }
 
 func (s *TaskServiceImpl) filterByRunnerEligibility(ctx context.Context, projectID string, tasks []types.ResolvedTask, runner *storage.RunnerRow) ([]types.ResolvedTask, error) {
@@ -477,6 +498,12 @@ func (s *TaskServiceImpl) filterByRunnerEligibility(ctx context.Context, project
 	filtered := make([]types.ResolvedTask, 0, len(tasks))
 	for _, task := range tasks {
 		if !runnerHasRequiredCapabilities(task, capabilities) {
+			continue
+		}
+		// Mirror of the push path's check in runnerEligibleForTask. A
+		// machine_affinity=local task must be invisible to a polling runner
+		// on another machine, or the pull path quietly undoes the pin.
+		if _, ok := machineAffinitySatisfied(task, runnerMachineID(runner)); !ok {
 			continue
 		}
 		if task.FeatureID != "" {
@@ -2046,6 +2073,22 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	}
 	if v, ok := metaString(meta, "target_workdir"); ok {
 		entry.TargetWorkdir = v
+	}
+
+	// Origin provenance. Frontmatter-persisted, so this runs on every
+	// re-index; without it the fields survive on disk but vanish from the
+	// API response, and the scheduler/runner never see them.
+	if v, ok := metaString(meta, "origin_machine_id"); ok {
+		entry.OriginMachineID = v
+	}
+	if v, ok := metaString(meta, "origin_client_id"); ok {
+		entry.OriginClientID = v
+	}
+	if v, ok := metaString(meta, "origin_path"); ok {
+		entry.OriginPath = v
+	}
+	if v, ok := metaString(meta, "machine_affinity"); ok {
+		entry.MachineAffinity = v
 	}
 
 	// Resume-abandoned-tasks flow. Both are runtime-only (not in frontmatter).

@@ -38,6 +38,13 @@ type ExecutorRegistry struct {
 
 // NewExecutorRegistry creates a registry pre-populated with OpenCode and Pi executors.
 func NewExecutorRegistry(cfg RunnerConfig) *ExecutorRegistry {
+	// Resolve the host's machine id once, here, because this is the single
+	// chokepoint every executor is constructed through — both runnercli
+	// entry points build their config independently, so filling it in the
+	// config loader alone would miss one of them.
+	if cfg.MachineID == "" {
+		cfg.MachineID = ResolveMachineID()
+	}
 	reg := &ExecutorRegistry{
 		executors: make(map[string]TaskExecutor),
 		config:    cfg,

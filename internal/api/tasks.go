@@ -208,6 +208,10 @@ type TaskMetadataResponse struct {
 	OpenPRBeforeMerge   *bool                        `json:"open_pr_before_merge"`
 	TargetWorkdir       string                       `json:"target_workdir"`
 	ResolvedWorkdir     string                       `json:"resolved_workdir"`
+	OriginMachineID     string                       `json:"origin_machine_id,omitempty"`
+	OriginClientID      string                       `json:"origin_client_id,omitempty"`
+	OriginPath          string                       `json:"origin_path,omitempty"`
+	MachineAffinity     string                       `json:"machine_affinity,omitempty"`
 	DirectPrompt        string                       `json:"direct_prompt"`
 	Executor            string                       `json:"executor"`
 	CheckoutMode        string                       `json:"checkout_mode,omitempty"`
@@ -254,6 +258,10 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Resolved, not raw: a blank field means "preferred" when an origin
+	// machine is known, and callers should not have to re-derive that.
+	machineAffinity := types.ResolveMachineAffinity(task.MachineAffinity, task.OriginMachineID)
+
 	resp := TaskMetadataResponse{
 		Path:                task.Path,
 		Agent:               task.Agent,
@@ -269,6 +277,10 @@ func (h *Handler) HandleGetTaskMetadata(w http.ResponseWriter, r *http.Request) 
 		OpenPRBeforeMerge:   task.OpenPRBeforeMerge,
 		TargetWorkdir:       task.TargetWorkdir,
 		ResolvedWorkdir:     task.ResolvedWorkdir,
+		OriginMachineID:     task.OriginMachineID,
+		OriginClientID:      task.OriginClientID,
+		OriginPath:          task.OriginPath,
+		MachineAffinity:     machineAffinity,
 		DirectPrompt:        task.DirectPrompt,
 		Executor:            task.Executor,
 		CheckoutMode:        task.CheckoutMode,

@@ -105,6 +105,18 @@ type RunnerConfig struct {
 	// RUNNER_DISPATCH_PUSH env var.
 	DispatchPush bool `yaml:"dispatch_push" json:"dispatch_push"`
 
+	// MachineID is this host's stable machine id. It is DERIVED, never
+	// user-configured (hence yaml/json "-"): NewExecutorRegistry fills it
+	// from ResolveMachineID so workdir resolution can tell "this task was
+	// created here" from "this task was created somewhere else".
+	//
+	// An empty value means "unknown machine", and workdir resolution treats
+	// that as not-a-match. Failing closed matters: a task's origin_path is
+	// an absolute path chosen by whoever created the task, and honoring it
+	// on the wrong host would open a directory that has nothing to do with
+	// the work.
+	MachineID string `yaml:"-" json:"-"`
+
 	// Labels and resource metadata are advertised to the scheduler during
 	// registration and heartbeat so placement can target suitable runners.
 	Labels         map[string]string      `yaml:"labels" json:"labels"`

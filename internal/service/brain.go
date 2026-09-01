@@ -224,6 +224,10 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		CompleteOnIdle:      req.CompleteOnIdle,
 		CheckoutMode:        req.CheckoutMode,
 		TargetWorkdir:       frontmatter.SanitizeSimpleValue(req.TargetWorkdir),
+		OriginMachineID:     frontmatter.SanitizeSimpleValue(req.OriginMachineID),
+		OriginClientID:      frontmatter.SanitizeSimpleValue(req.OriginClientID),
+		OriginPath:          frontmatter.SanitizeSimpleValue(req.OriginPath),
+		MachineAffinity:     normalizeMachineAffinity(req.MachineAffinity),
 		UserOriginalRequest: req.UserOriginalRequest,
 		DirectPrompt:        req.DirectPrompt,
 		Agent:               req.Agent,
@@ -534,6 +538,18 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["target_workdir"].(string); ok {
 			fm.TargetWorkdir = v
 		}
+		if v, ok := meta["origin_machine_id"].(string); ok {
+			fm.OriginMachineID = v
+		}
+		if v, ok := meta["origin_client_id"].(string); ok {
+			fm.OriginClientID = v
+		}
+		if v, ok := meta["origin_path"].(string); ok {
+			fm.OriginPath = v
+		}
+		if v, ok := meta["machine_affinity"].(string); ok {
+			fm.MachineAffinity = normalizeMachineAffinity(v)
+		}
 		if v, ok := meta["merge_target_branch"].(string); ok {
 			fm.MergeTargetBranch = v
 		}
@@ -594,6 +610,19 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 	}
 
 	return fm
+}
+
+// normalizeMachineAffinity trims and validates a machine_affinity value on the
+// way to disk. An unrecognized value is dropped rather than persisted, so a
+// typo can never be interpreted later as a stricter policy than the author
+// intended — the field is left empty and ResolveMachineAffinity supplies the
+// default.
+func normalizeMachineAffinity(v string) string {
+	v = strings.TrimSpace(v)
+	if !types.IsValidMachineAffinity(v) {
+		return ""
+	}
+	return v
 }
 
 // metaToStringSlice converts a JSON value ([]interface{} or []string) to []string.
@@ -813,6 +842,18 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	// Git/execution fields
 	if req.TargetWorkdir != nil {
 		fm.TargetWorkdir = frontmatter.SanitizeSimpleValue(*req.TargetWorkdir)
+	}
+	if req.OriginMachineID != nil {
+		fm.OriginMachineID = frontmatter.SanitizeSimpleValue(*req.OriginMachineID)
+	}
+	if req.OriginClientID != nil {
+		fm.OriginClientID = frontmatter.SanitizeSimpleValue(*req.OriginClientID)
+	}
+	if req.OriginPath != nil {
+		fm.OriginPath = frontmatter.SanitizeSimpleValue(*req.OriginPath)
+	}
+	if req.MachineAffinity != nil {
+		fm.MachineAffinity = normalizeMachineAffinity(*req.MachineAffinity)
 	}
 	if req.Workdir != nil {
 		fm.Workdir = frontmatter.SanitizeSimpleValue(*req.Workdir)

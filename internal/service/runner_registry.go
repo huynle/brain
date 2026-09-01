@@ -535,14 +535,29 @@ func computeRunnerStatus(lastHeartbeatMs int64) types.RunnerStatus {
 // before runners had a first-class machine_id column.
 const machineIDLabel = "_machine_id"
 
+// runnerMachineID returns a runner row's machine id, falling back to the
+// legacy label for rows written before the first-class column existed.
+// Callers that compare a machine id against a task's origin MUST go through
+// this rather than reading row.MachineID directly, or an older runner reads
+// as "no machine" and never matches its own tasks.
+func runnerMachineID(row *storage.RunnerRow) string {
+	if row == nil {
+		return ""
+	}
+	if row.MachineID != "" {
+		return row.MachineID
+	}
+	if row.Labels != nil {
+		return row.Labels[machineIDLabel]
+	}
+	return ""
+}
+
 // rowToRunnerInfo converts a storage RunnerRow to an API RunnerInfo.
 func rowToRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
-	machineID := row.MachineID
+	machineID := runnerMachineID(row)
 	activeTasks := 0
 	if row.Labels != nil {
-		if machineID == "" {
-			machineID = row.Labels[machineIDLabel]
-		}
 		if runningTasks := row.Labels["_running_tasks"]; runningTasks != "" {
 			if parsed, err := strconv.Atoi(runningTasks); err == nil && parsed >= 0 {
 				activeTasks = parsed

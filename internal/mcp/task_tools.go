@@ -817,6 +817,16 @@ or to inspect its dependency graph details. Complements task_get which returns c
 				"complete_on_idle": task.CompleteOnIdle,
 			},
 
+			// Where this task came from, and where it is allowed to run.
+			// machine_affinity is the RESOLVED value, not the raw field, so
+			// the default is visible rather than inferred from a blank.
+			"origin": map[string]any{
+				"origin_machine_id": nilIfEmpty(task.OriginMachineID),
+				"origin_client_id":  nilIfEmpty(task.OriginClientID),
+				"origin_path":       nilIfEmpty(task.OriginPath),
+				"machine_affinity":  types.ResolveMachineAffinity(task.MachineAffinity, task.OriginMachineID),
+			},
+
 			// Merge intent
 			"merge": map[string]any{
 				"merge_target_branch":  nilIfEmpty(task.MergeTargetBranch),
@@ -1678,6 +1688,10 @@ type fullTask struct {
 	ExecutionMode      string   `json:"execution_mode"`
 	CompleteOnIdle     *bool    `json:"complete_on_idle"`
 	CheckoutMode       string   `json:"checkout_mode,omitempty"`
+	OriginMachineID    string   `json:"origin_machine_id,omitempty"`
+	OriginClientID     string   `json:"origin_client_id,omitempty"`
+	OriginPath         string   `json:"origin_path,omitempty"`
+	MachineAffinity    string   `json:"machine_affinity,omitempty"`
 	FeatureID          string   `json:"feature_id"`
 	FeaturePriority    string   `json:"feature_priority"`
 	FeatureDependsOn   []string `json:"feature_depends_on"`

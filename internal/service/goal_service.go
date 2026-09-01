@@ -477,6 +477,13 @@ func (s *GoalService) generateGoalTask(ctx context.Context, goal types.BrainEntr
 		CompleteOnIdle: goal.Action.CompleteOnIdle,
 		TargetWorkdir:  firstNonEmpty(goal.Goal.Workdir, goal.Action.TargetWorkdir),
 
+		// Origin provenance is deliberately NOT set. A generated task has no
+		// human caller and no origin machine — stamping this process's
+		// identity would be stamping the API host, pinning server-generated
+		// work to the API box. Left empty, machine_affinity resolves to
+		// "none" and placement behaves exactly as it did before origin
+		// tracking existed.
+
 		// Git / merge settings flow from the goal entry onto the generated
 		// task, exactly as AutomationService.createTask does — without this
 		// the structured fields the executor reads when merging were empty.

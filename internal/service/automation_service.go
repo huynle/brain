@@ -459,6 +459,13 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		CompleteOnIdle: automationCompleteOnIdle(automation.Action.CompleteOnIdle),
 		TargetWorkdir:  targetWorkdir,
 
+		// Origin provenance is deliberately NOT set. A generated task has no
+		// human caller and no origin machine — stamping this process's
+		// identity would be stamping the API host, pinning server-generated
+		// work to the API box. Left empty, machine_affinity resolves to
+		// "none" and placement behaves exactly as it did before origin
+		// tracking existed.
+
 		// Git / merge settings flow from the automation entry onto the task
 		// it generates. Without this the built-in feature-checkout task knew
 		// its merge target only as prose inside the prompt — the structured

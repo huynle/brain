@@ -2264,3 +2264,100 @@ func TestGenerate_WithGoal(t *testing.T) {
 func boolPtr(b bool) *bool {
 	return &b
 }
+
+// TestOriginFields_RoundTrip guards the four-point registration a new
+// frontmatter field needs: the Frontmatter struct, rawFrontmatter, knownFields
+// and the serializer. Miss any one and the value parses cleanly, writes
+// cleanly, and silently disappears — unknown keys land in Frontmatter.Extra,
+// which nothing reads.
+func TestOriginFields_RoundTrip(t *testing.T) {
+	opts := &GenerateOptions{
+		Title:           "Ship the thing",
+		Type:            "task",
+		Status:          "pending",
+		OriginMachineID: "machine_a1b2c3d4",
+		OriginClientID:  "mcp-9f8e7d6c",
+		OriginPath:      "/Users/huy/projects/brain api/worktree",
+		MachineAffinity: "local",
+	}
+
+	generated := Generate(opts)
+
+	// Generate emits the YAML body only; Parse expects the delimited document.
+	doc, err := Parse("---\n" + generated + "---\n")
+	if err != nil {
+		t.Fatalf("parse generated frontmatter: %v", err)
+	}
+
+	if got := doc.Frontmatter.OriginMachineID; got != opts.OriginMachineID {
+		t.Errorf("origin_machine_id = %q, want %q\n--- generated ---\n%s", got, opts.OriginMachineID, generated)
+	}
+	if got := doc.Frontmatter.OriginClientID; got != opts.OriginClientID {
+		t.Errorf("origin_client_id = %q, want %q", got, opts.OriginClientID)
+	}
+	// A path containing a space is the case that distinguishes emit (escaped)
+	// from emitPlain (raw): unescaped it still parses, but as a different
+	// value or not at all.
+	if got := doc.Frontmatter.OriginPath; got != opts.OriginPath {
+		t.Errorf("origin_path = %q, want %q\n--- generated ---\n%s", got, opts.OriginPath, generated)
+	}
+	if got := doc.Frontmatter.MachineAffinity; got != opts.MachineAffinity {
+		t.Errorf("machine_affinity = %q, want %q", got, opts.MachineAffinity)
+	}
+
+	// Not in Extra: presence there means the key was never registered in
+	// knownFields, so the indexer would drop it on the way to SQLite.
+	for _, key := range []string{"origin_machine_id", "origin_client_id", "origin_path", "machine_affinity"} {
+		if _, leaked := doc.Frontmatter.Extra[key]; leaked {
+			t.Errorf("%s leaked into Frontmatter.Extra — missing from knownFields", key)
+		}
+	}
+}
+
+// TestOriginFields_OmittedWhenEmpty keeps the fields out of the frontmatter of
+// every non-task entry, rather than churning files with four blank keys.
+func TestOriginFields_OmittedWhenEmpty(t *testing.T) {
+	generated := Generate(&GenerateOptions{Title: "A note", Type: "note"})
+	for _, key := range []string{"origin_machine_id", "origin_client_id", "origin_path", "machine_affinity"} {
+		if strings.Contains(generated, key+":") {
+			t.Errorf("empty %s was emitted:\n%s", key, generated)
+		}
+	}
+}
+
+// TestOriginFields_YamlMetacharactersAreEscaped guards the serializer choice.
+// origin_machine_id and origin_client_id are normally machine-generated, but
+// they are caller-settable (PATCH /entries, the MCP update tool) so a task can
+// be re-homed. SanitizeSimpleValue strips NULs and newlines but NOT YAML
+// metacharacters, so emitting them unquoted lets a value containing ": "
+// corrupt the entire document — not just its own field.
+func TestOriginFields_YamlMetacharactersAreEscaped(t *testing.T) {
+	opts := &GenerateOptions{
+		Title:           "Re-homed",
+		Type:            "task",
+		OriginMachineID: "host: prod",
+		OriginClientID:  "client #2",
+		OriginPath:      "/tmp/a: b/repo",
+	}
+
+	generated := Generate(opts)
+	doc, err := Parse("---\n" + generated + "---\n")
+	if err != nil {
+		t.Fatalf("generated frontmatter does not parse: %v\n%s", err, generated)
+	}
+
+	if doc.Frontmatter.OriginMachineID != opts.OriginMachineID {
+		t.Errorf("origin_machine_id = %q, want %q\n%s", doc.Frontmatter.OriginMachineID, opts.OriginMachineID, generated)
+	}
+	if doc.Frontmatter.OriginClientID != opts.OriginClientID {
+		t.Errorf("origin_client_id = %q, want %q\n%s", doc.Frontmatter.OriginClientID, opts.OriginClientID, generated)
+	}
+	if doc.Frontmatter.OriginPath != opts.OriginPath {
+		t.Errorf("origin_path = %q, want %q\n%s", doc.Frontmatter.OriginPath, opts.OriginPath, generated)
+	}
+	// The rest of the document must survive too — that is what makes an
+	// unquoted colon a corruption bug rather than a single bad field.
+	if doc.Frontmatter.Title != "Re-homed" {
+		t.Errorf("title = %q, want Re-homed — the document was corrupted\n%s", doc.Frontmatter.Title, generated)
+	}
+}

@@ -213,6 +213,16 @@ type Frontmatter struct {
 	Extensions         []string `yaml:"extensions,omitempty" json:"extensions,omitempty"`
 	CheckoutMode       string   `yaml:"checkout_mode,omitempty" json:"checkout_mode,omitempty"`
 
+	// Origin provenance: which machine, which client install, and which
+	// absolute directory the task was created from. Stamped by the MCP stdio
+	// server from its ExecutionContext. OriginPath is the caller's own cwd,
+	// unlike Workdir which is home-relative and re-resolved against whatever
+	// host ends up running the task.
+	OriginMachineID string `yaml:"origin_machine_id,omitempty" json:"origin_machine_id,omitempty"`
+	OriginClientID  string `yaml:"origin_client_id,omitempty" json:"origin_client_id,omitempty"`
+	OriginPath      string `yaml:"origin_path,omitempty" json:"origin_path,omitempty"`
+	MachineAffinity string `yaml:"machine_affinity,omitempty" json:"machine_affinity,omitempty"`
+
 	// User intent / prompts
 	UserOriginalRequest string `yaml:"user_original_request,omitempty" json:"user_original_request,omitempty"`
 	DirectPrompt        string `yaml:"direct_prompt,omitempty" json:"direct_prompt,omitempty"`
@@ -293,6 +303,11 @@ type GenerateOptions struct {
 	Executor           string
 	Extensions         []string
 	CheckoutMode       string
+
+	OriginMachineID string
+	OriginClientID  string
+	OriginPath      string
+	MachineAffinity string
 
 	UserOriginalRequest string
 	DirectPrompt        string
@@ -380,6 +395,10 @@ type rawFrontmatter struct {
 	Executor            string                     `yaml:"executor"`
 	Extensions          []string                   `yaml:"extensions"`
 	CheckoutMode        string                     `yaml:"checkout_mode"`
+	OriginMachineID     string                     `yaml:"origin_machine_id"`
+	OriginClientID      string                     `yaml:"origin_client_id"`
+	OriginPath          string                     `yaml:"origin_path"`
+	MachineAffinity     string                     `yaml:"machine_affinity"`
 	UserOriginalRequest string                     `yaml:"user_original_request"`
 	DirectPrompt        string                     `yaml:"direct_prompt"`
 	Agent               string                     `yaml:"agent"`
@@ -420,7 +439,9 @@ var knownFields = map[string]bool{
 	"remote_branch_policy": true, "open_pr_before_merge": true,
 	"execution_mode": true, "complete_on_idle": true, "target_workdir": true,
 	"executor": true, "extensions": true,
-	"checkout_mode":         true,
+	"checkout_mode":     true,
+	"origin_machine_id": true, "origin_client_id": true, "origin_path": true,
+	"machine_affinity":      true,
 	"user_original_request": true, "direct_prompt": true,
 	"agent": true, "model": true,
 	"generated": true, "generated_kind": true, "generated_key": true,
@@ -560,6 +581,10 @@ func Parse(content string) (*Document, error) {
 		Executor:            raw.Executor,
 		Extensions:          raw.Extensions,
 		CheckoutMode:        raw.CheckoutMode,
+		OriginMachineID:     raw.OriginMachineID,
+		OriginClientID:      raw.OriginClientID,
+		OriginPath:          raw.OriginPath,
+		MachineAffinity:     raw.MachineAffinity,
 		UserOriginalRequest: raw.UserOriginalRequest,
 		DirectPrompt:        raw.DirectPrompt,
 		Agent:               raw.Agent,
@@ -815,6 +840,19 @@ func Serialize(fm *Frontmatter) string {
 	emit("target_workdir", fm.TargetWorkdir)
 	emitPlain("executor", fm.Executor)
 
+	// Origin provenance. All three ids/paths go through emit (escaped): they
+	// are normally machine-generated ("machine_<hex>", "mcp-<hex>", an
+	// absolute path), but they are caller-settable via PATCH and the MCP
+	// update tool for re-homing a task, and SanitizeSimpleValue strips only
+	// NULs and newlines — not YAML metacharacters. Emitted raw, a value
+	// containing ": " would produce a malformed document and corrupt the
+	// whole frontmatter, not just this field. Only machine_affinity is a
+	// closed enum and safe unquoted.
+	emit("origin_machine_id", fm.OriginMachineID)
+	emit("origin_client_id", fm.OriginClientID)
+	emit("origin_path", fm.OriginPath)
+	emitPlain("machine_affinity", fm.MachineAffinity)
+
 	// Extensions
 	if len(fm.Extensions) > 0 {
 		lines = append(lines, "extensions:")
@@ -981,6 +1019,10 @@ func Generate(opts *GenerateOptions) string {
 		Executor:            opts.Executor,
 		Extensions:          opts.Extensions,
 		CheckoutMode:        opts.CheckoutMode,
+		OriginMachineID:     opts.OriginMachineID,
+		OriginClientID:      opts.OriginClientID,
+		OriginPath:          opts.OriginPath,
+		MachineAffinity:     opts.MachineAffinity,
 		UserOriginalRequest: opts.UserOriginalRequest,
 		DirectPrompt:        opts.DirectPrompt,
 		Agent:               opts.Agent,

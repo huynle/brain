@@ -123,3 +123,51 @@ export function resolveSessionRef(
 ): SessionRef | undefined {
   return liveSessionRef(task, instances) ?? historySessionRefs(task)[0];
 }
+
+/**
+ * Whether a session can be steered right now, and what to say when it
+ * cannot.
+ *
+ * This is the rule the whole UI turns on — "can the user type into this
+ * transcript" — so it lives here as a pure function rather than inside
+ * the pane, next to the ref construction it reads. Three inputs, in the
+ * order they disqualify:
+ *
+ *   • a HISTORY ref is a recording; its process is gone by definition.
+ *   • a LIVE ref without a session id has nothing to address yet — the
+ *     runner is still discovering it (the "starting" window).
+ *   • delivery "ended" is the server telling us the instance exited
+ *     while we were watching. The ref still says live; it isn't. Without
+ *     this check the composer stays enabled over a dead process and
+ *     every send fails.
+ *
+ * `hostNote` lets a caller that knows more (a registry row that already
+ * reads "exited") explain it better than this function can.
+ */
+export function sessionSteerState(
+  sref: SessionRef | undefined,
+  delivery: "streaming" | "polling" | "ended" | "none",
+  hostNote?: string,
+): { canSteer: boolean; note: string } {
+  const note = (fallback: string) => hostNote || fallback;
+  if (!sref) return { canSteer: false, note: note("No session to show.") };
+  if (sref.mode !== "live") {
+    return {
+      canSteer: false,
+      note: note("This is a recorded transcript — the process is gone."),
+    };
+  }
+  if (delivery === "ended") {
+    return {
+      canSteer: false,
+      note: note("The session stream ended — the transcript is read-only."),
+    };
+  }
+  if (!sref.session_id) {
+    return {
+      canSteer: false,
+      note: note("Waiting for the session id before prompts can be delivered."),
+    };
+  }
+  return { canSteer: true, note: "" };
+}

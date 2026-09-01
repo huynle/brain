@@ -70,17 +70,15 @@ export interface TaskActionContext {
   /** Live session ref for the task's running instance, if one is up.
    *  A query, not an effect — instance state lives outside Task. */
   liveSessionRef: (task: Task) => SessionRef | undefined;
-  /** Open the session view on a live session. */
+  /** Open the session view on a ref — live or recorded. One effect for
+   *  both: every session surface now streams and steers, so "watch",
+   *  "read the transcript" and "steer" are the same navigation. */
   openSession: (task: Task, ref: SessionRef) => void;
-  /** Open the session view on a recorded (history) session. */
-  openTranscript: (task: Task, ref: SessionRef) => void;
-  /** Open the session view on a live session with the composer focused. */
-  openSteer: (task: Task, ref: SessionRef) => void;
   /** Reopen a recorded session on its runner (spawn + address it live). */
   continueSession: (task: Task, ref: SessionRef) => Promise<void>;
   /** Open a session (live or recorded) inline in the right-side drawer —
-   *  the "open in sidebar" verb. Distinct from openSession/openTranscript,
-   *  which navigate to the full-page session view. */
+   *  the "open in sidebar" verb. Distinct from openSession, which
+   *  navigates to the full-page session view; same ref either way. */
   openSessionInDrawer: (task: Task, ref: SessionRef) => void;
 }
 
@@ -161,6 +159,28 @@ export function transcriptBlockedReason(task: Task): string {
     return `Executor is ${task.executor} — sessions are recorded for OpenCode tasks only`;
   }
   return "No session recorded — discovery may have failed; check runner logs";
+}
+
+/**
+ * Why a task's session cannot be opened at all, or "" when it can.
+ *
+ * The menu offers ONE session verb, so this gate is the union of the
+ * two it replaced: a live session opens, a recorded one opens, and only
+ * a task with neither is blocked. The reason it reports is the one the
+ * user can act on — a running task that has no live instance is a
+ * runner problem, anything else is a "nothing was ever recorded"
+ * problem.
+ */
+export function sessionBlockedReason(
+  task: Task,
+  live: SessionRef | undefined,
+): string {
+  if (live) return "";
+  if (historySessionRefs(task).length > 0) return "";
+  if (task.status === "in_progress" && (!task.executor || task.executor === "opencode")) {
+    return watchBlockedReason(task, live);
+  }
+  return transcriptBlockedReason(task);
 }
 
 /**
@@ -283,15 +303,6 @@ export function buildTaskActions(
       run: async () => ctx.openResume(task),
     });
   }
-
-  const liveForSteer = ctx.liveSessionRef(task);
-  actions.push({
-    id: "steer",
-    label: "Steer session…",
-    group: "run",
-    disabledReason: watchBlockedReason(task, liveForSteer),
-    run: async () => ctx.openSteer(task, liveForSteer!),
-  });
 
   const continueRefs = historySessionRefs(task);
   actions.push({
@@ -433,41 +444,43 @@ export function buildTaskActions(
     run: async () => ctx.openLogs(task),
   });
 
+  /*
+   * ONE session verb, two placements.
+   *
+   * "Watch session", "View transcript" and "Steer session…" used to be
+   * three entries that differed only in which ref they resolved and
+   * whether they focused the composer. Every session surface now streams
+   * live and carries a composer, so those distinctions no longer describe
+   * anything the user would see — they only made the caller guess which
+   * entry was the enabled one. The verb resolves the ref instead: the
+   * live session while the task is running, the newest recording once it
+   * has settled.
+   *
+   * The task modal's Sessions section still lists every recorded session
+   * individually, which is where the multi-session (post-resume) case is
+   * chosen explicitly.
+   */
   const live = ctx.liveSessionRef(task);
+  const recorded = historySessionRefs(task);
+  const sessionRef = live ?? recorded[0];
+  const sessionReason = sessionBlockedReason(task, live);
+
   actions.push({
-    id: "watch",
-    label: "Watch session",
+    id: "session",
+    label: live ? "Open live session" : "Open session transcript",
     group: "navigate",
     key: "w",
-    disabledReason: watchBlockedReason(task, live),
-    run: async () => ctx.openSession(task, live!),
+    disabledReason: sessionReason,
+    run: async () => ctx.openSession(task, sessionRef!),
   });
 
-  const recorded = historySessionRefs(task);
-  actions.push({
-    id: "transcript",
-    label: "View transcript",
-    group: "navigate",
-    key: "t",
-    disabledReason: transcriptBlockedReason(task),
-    // Newest recorded session is the default; the task modal's Sessions
-    // section lists every recorded session for the multi-session case.
-    run: async () => ctx.openTranscript(task, recorded[0]),
-  });
-
-  // "Either works" verb: prefer the live session (task actively running),
-  // else fall back to the newest recorded one. Deliberately more
-  // permissive than watch/transcript individually — only disabled when
-  // NEITHER a live nor a recorded session exists at all.
-  const drawerRef = live ?? recorded[0];
   actions.push({
     id: "open-session-sidebar",
     label: "Open session in sidebar",
     group: "navigate",
-    disabledReason: drawerRef
-      ? ""
-      : "No session — live or recorded — is available for this task",
-    run: async () => ctx.openSessionInDrawer(task, drawerRef!),
+    key: "t",
+    disabledReason: sessionReason,
+    run: async () => ctx.openSessionInDrawer(task, sessionRef!),
   });
 
   // ─── danger ─────────────────────────────────────────────────────

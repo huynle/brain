@@ -7,10 +7,9 @@
  *
  * Bottom half: a two-mode detail pane for the selected process.
  *
- *   CHAT — the real session transcript, composed out of the pieces the
- *          Session views already use: liveSessionRef → useSessionTranscript
- *          → PermissionBanner + Transcript + Composer. The composer's
- *          prompt is delivered to the RUNNING agent (prompt_async), so a
+ *   CHAT — Session/SessionPane, the one session body every surface
+ *          renders (docked leaves and the full-page view included). Its
+ *          composer delivers to the RUNNING agent (prompt_async), so a
  *          user can steer a process mid-flight and watch it react. This
  *          is the default wherever a session is addressable.
  *   RAW LOG — the historical task-log REST buffer merged with the live
@@ -40,10 +39,7 @@ import { useModal } from "../store/modal";
 import { useRowActions } from "../hooks/useRowActions";
 import { useSessionActionContext } from "../hooks/useSessionActionContext";
 import { buildSessionActions } from "../lib/actions/sessionActions";
-import { useSessionTranscript } from "../hooks/useSessionTranscript";
-import { Transcript } from "./Session/Transcript";
-import { Composer } from "./Session/Composer";
-import { PermissionBanner } from "./Session/PermissionBanner";
+import { SessionPane } from "./Session/SessionPane";
 import { Loading } from "./common/Loading";
 import { ErrorState } from "./common/ErrorState";
 import { TerminalText } from "./common/TerminalText";
@@ -133,30 +129,13 @@ export function ViewToggle({
   );
 }
 
-/** Small live/polling/ended indicator, mirroring SessionFull's header. */
-function DeliveryPill({
-  delivery,
-}: {
-  delivery: "streaming" | "polling" | "ended" | "none";
-}): JSX.Element | null {
-  if (delivery === "none") return null;
-  if (delivery === "streaming") {
-    return (
-      <span className="proc-chat-delivery live">
-        <span className="live-dot" /> streaming
-      </span>
-    );
-  }
-  return (
-    <span className="proc-chat-delivery">
-      {delivery === "polling" ? "updating · 10s" : "session ended"}
-    </span>
-  );
-}
-
 /**
  * Chat pane — the session transcript for the selected process, plus a
  * composer that injects a prompt into the agent while it runs.
+ *
+ * The body is SessionPane, the same component the docked leaves and the
+ * full-page view render; this wrapper only resolves the process row into
+ * a SessionRef and seeds the check-in preset from the linked task.
  */
 export function ProcessChat({
   inst,
@@ -182,8 +161,6 @@ export function ProcessChat({
     ],
   );
 
-  const transcript = useSessionTranscript(sref);
-
   // The linked task, for the composer's check-in preset seed — same
   // source SessionFull uses.
   const projectTasks =
@@ -195,82 +172,25 @@ export function ProcessChat({
     [projectTasks, inst.task_id],
   );
 
-  const live = sref?.mode === "live";
-  const sessionId = sref?.session_id;
-  const canSteer = live && !!sessionId && inst.status !== "exited";
-
   return (
-    <div className="session-view proc-chat" style={{ gridTemplateColumns: "1fr" }}>
-      <div className="hdr">
-        <span className="proc-chat-mode">
-          {live ? (inst.status === "busy" ? "working" : "live") : "transcript"}
-        </span>
-        {live && transcript.starting ? (
-          <span className="proc-chat-delivery">session starting…</span>
-        ) : (
-          <DeliveryPill delivery={transcript.delivery} />
-        )}
-        <code className="proc-chat-sid" title={sessionId ?? undefined}>
-          {sessionId ?? "discovering…"}
-        </code>
-        <span className="spacer" style={{ flex: 1 }} />
-        {toggle}
-      </div>
-
-      <div className="stream proc-chat-stream">
-        {live && sref && (
-          <PermissionBanner
-            runnerId={sref.runner_id}
-            instanceId={sref.instance_id}
-            sessionId={sessionId}
-          />
-        )}
-        {transcript.error ? (
-          <div className="proc-log-empty">
-            Transcript unavailable — the runner hosting this session may be
-            offline.
-            <div style={{ marginTop: 4 }}>
-              {String((transcript.error as Error)?.message ?? transcript.error)}
-            </div>
-          </div>
-        ) : (
-          <Transcript
-            style={{ flex: 1, overflowY: "auto", padding: "8px 10px" }}
-            messages={transcript.messages}
-            emptyText={
-              transcript.starting
-                ? "Session starting — the runner is still discovering it."
-                : transcript.isLoading
-                  ? "Loading transcript…"
-                  : "No messages yet."
-            }
-          />
-        )}
-      </div>
-
-      {canSteer && sref ? (
-        <Composer
-          target={{
-            runner_id: sref.runner_id,
-            instance_id: sref.mode === "live" ? sref.instance_id : "",
-            session_id: sessionId as string,
-          }}
-          checkinSeed={
-            linkedTask
-              ? { title: linkedTask.title || linkedTask.id, request: linkedTask.content }
-              : inst.title
-                ? { title: inst.title }
-                : undefined
-          }
-        />
-      ) : (
-        <div className="composer proc-chat-note">
-          {inst.status === "exited"
-            ? "This process has exited — the transcript is read-only."
-            : "Waiting for the session id before prompts can be delivered."}
-        </div>
-      )}
-    </div>
+    <SessionPane
+      className="proc-chat"
+      sref={sref}
+      headerExtra={toggle}
+      liveLabel={inst.status === "busy" ? "working" : "live"}
+      readOnlyNote={
+        inst.status === "exited"
+          ? "This process has exited — the transcript is read-only."
+          : undefined
+      }
+      checkinSeed={
+        linkedTask
+          ? { title: linkedTask.title || linkedTask.id, request: linkedTask.content }
+          : inst.title
+            ? { title: inst.title }
+            : undefined
+      }
+    />
   );
 }
 

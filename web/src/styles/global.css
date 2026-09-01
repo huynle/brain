@@ -1414,7 +1414,7 @@ body[data-theme="light"] .p2-browser-iframe { border-color: #d5dde5; }
 /* The nested proc-chat/proc-log already lives inside SessionFull's framed
  * main cell, so strip its standalone border/radius to avoid a double frame
  * and let it fill the cell. */
-.session-full .session-full-main .proc-chat {
+.session-full .session-full-main .session-pane {
   border: none;
   border-radius: 0;
   background: transparent;
@@ -1644,11 +1644,11 @@ body.mobile .proc-detail { min-height: 200px; }
 /* 52px is exactly the 8 monospace characters of HH:MM:SS at 10.5px —
    any narrower and the clipped column eats the seconds. */
 body.mobile .log-mini .body .l { grid-template-columns: 52px 34px minmax(0, 1fr); gap: 3px; }
-body.mobile .proc-chat .hdr { flex-wrap: wrap; row-gap: 4px; }
+body.mobile .session-pane .hdr { flex-wrap: wrap; row-gap: 4px; }
 body.mobile .proc-chat-sid { max-width: 14ch; }
-body.mobile .proc-chat .composer { flex-wrap: wrap; }
-body.mobile .proc-chat .composer > div:first-child { flex-wrap: wrap; }
-body.mobile .proc-chat .composer input { flex: 1 1 100%; }
+body.mobile .session-pane .composer { flex-wrap: wrap; }
+body.mobile .session-pane .composer > div:first-child { flex-wrap: wrap; }
+body.mobile .session-pane .composer input { flex: 1 1 100%; }
 
 /* ---------- Runner row (sidebar) ---------- */
 .runner-row {
@@ -1762,27 +1762,55 @@ body.mobile .proc-chat .composer input { flex: 1 1 100%; }
 .proc-log { flex: 1 1 auto; height: auto; min-height: 0; }
 .proc-log-empty { color: #6b757e; font-size: 11px; padding: 6px 2px; line-height: 1.5; }
 
-/* ---------- Processes tab: chat pane + mode toggle ---------- */
+/* ---------- SessionPane: the shared session body ---------- */
 /*
- * The chat pane is the session-view grid collapsed to a single column:
+ * The pane is the session-view grid collapsed to a single column:
  * header row, transcript row, composer row. It reuses every
  * `.session-view` rule (message bubbles, roles, composer input) so the
- * Processes tab and the full Session view stay one visual language.
+ * Processes tab, the docked leaves and the full Session view stay one
+ * visual language — they are literally the same component.
+ *
+ * `.proc-chat` and `.session-leaf` are host modifiers on it, not
+ * separate layouts.
  */
-.proc-chat {
+.session-pane {
   flex: 1 1 auto; min-height: 0;
   background: #0e1114;
   border: 1px solid #22272c; border-radius: 5px;
   overflow: hidden;
 }
-.proc-chat .hdr { padding: 5px 8px; font-size: 11px; gap: 8px; }
-.proc-chat .stream {
+.session-pane .hdr { padding: 5px 8px; font-size: 11px; gap: 8px; }
+.session-pane .stream {
   border-right: none;
   padding: 0;
   display: flex; flex-direction: column;
   overflow: hidden; min-height: 0;
 }
-.proc-chat .composer { padding: 6px 8px; }
+.session-pane .composer { padding: 6px 8px; }
+/*
+ * A pane docked in a narrow Focus/sidebar leaf gets the same wrapping
+ * the mobile breakpoint gives the modal: the composer's button row must
+ * never push the input off the edge, because the input IS the feature.
+ */
+.session-leaf { border: none; border-radius: 0; }
+.session-leaf .hdr { flex-wrap: wrap; row-gap: 4px; }
+.session-leaf .composer > div:first-child { flex-wrap: wrap; }
+.session-leaf .composer input { flex: 1 1 100%; }
+
+/* Detached-from-tail affordance, sticky over the bottom of the stream. */
+.transcript-jump-wrap {
+  position: sticky; bottom: 6px;
+  display: flex; justify-content: center;
+  pointer-events: none;
+}
+.transcript-jump {
+  pointer-events: auto;
+  font-size: 10.5px; padding: 3px 10px; border-radius: 999px;
+  background: #1a1f25; color: #d7dde3;
+  border: 1px solid #333a42; cursor: pointer;
+  box-shadow: 0 2px 8px #0008;
+}
+.transcript-jump:hover { border-color: #f4b23a; color: #f4b23a; }
 .proc-chat-mode { color: #f4b23a; text-transform: uppercase; font-size: 10px; letter-spacing: 0.05em; }
 .proc-chat-delivery {
   display: inline-flex; align-items: center; gap: 4px;
@@ -1816,10 +1844,15 @@ body[data-theme="light"] .proc-row {
 }
 body[data-theme="light"] .proc-row.sel { border-color: #b7791f; background: #b7791f0d; }
 body[data-theme="light"] .proc-title { color: #1b232b; }
-body[data-theme="light"] .proc-chat {
+body[data-theme="light"] .session-pane {
   background: #ffffff; border-color: #d5dde5;
 }
 body[data-theme="light"] .proc-chat-mode { color: #b7791f; }
+body[data-theme="light"] .transcript-jump {
+  background: #ffffff; color: #33404c; border-color: #c8d0d8;
+  box-shadow: 0 2px 8px #1b232b1f;
+}
+body[data-theme="light"] .transcript-jump:hover { border-color: #b7791f; color: #b7791f; }
 body[data-theme="light"] .proc-view-toggle button {
   background: #f3f6f9; border-color: #d5dde5; color: #4b5866;
 }

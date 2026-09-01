@@ -53,6 +53,7 @@ export function PaneLeaf({
    */
   inTabGroup?: boolean;
 }): JSX.Element {
+  const sendToOtherDock = useWorkspace((s) => s.sendLeafToOtherDock);
   const closeFocusLeaf = useWorkspace((s) => s.closeLeaf);
   const closeSidebarLeaf = useWorkspace((s) => s.closeSidebarLeaf);
   const setLastFocusLeaf = useWorkspace((s) => s.setLastFocusLeaf);
@@ -112,6 +113,10 @@ export function PaneLeaf({
     closeLeaf(id);
   }, [closeLeaf, id]);
 
+  const handleSend = useCallback(() => {
+    sendToOtherDock(id, dockId);
+  }, [sendToOtherDock, id, dockId]);
+
   const handleFocus = useCallback(() => {
     setLastLeaf(id);
   }, [id, setLastLeaf]);
@@ -133,6 +138,29 @@ export function PaneLeaf({
         <span className="p2-pane-header__title" title={leaf.title}>
           {leaf.title}
         </span>
+        {/*
+          Dragging a pane header from one dock to the other already
+          moved it. That is undiscoverable, and impossible on a touch
+          screen — so the same operation gets a button. Focus panes send
+          to the narrow side panel; side-panel panes get promoted to
+          Focus, which is the move you want the moment a transcript
+          stops fitting in 430px.
+        */}
+        <button
+          type="button"
+          className="p2-pane-header__send"
+          onClick={handleSend}
+          aria-label={
+            dockId === "focus"
+              ? `Send ${leaf.title} to the side panel`
+              : `Send ${leaf.title} to Focus`
+          }
+          title={
+            dockId === "focus" ? "Send to side panel" : "Send to Focus"
+          }
+        >
+          {dockId === "focus" ? "⇥" : "⤢"}
+        </button>
         <button
           type="button"
           className="p2-pane-header__close"

@@ -59,6 +59,10 @@ function recorder(over: Partial<FeatureActionContext> = {}) {
     openResume: (f) => void calls.push(`resume:${f.id}`),
     openPlan: (f) => void calls.push(`plan:${f.id}`),
     openDetails: (f) => void calls.push(`details:${f.id}`),
+    watchInFocus: (f) => {
+      calls.push(`watch-focus:${f.id}`);
+      return 1;
+    },
     openMetadata: (f) => void calls.push(`metadata:${f.id}`),
     openAssignRunner: (f) => void calls.push(`assign:${f.id}`),
     clearRunnerAssignment: async (f) => void calls.push(`unassign:${f.id}`),
@@ -601,4 +605,24 @@ test("cancel routes to its own effect", async () => {
   )!;
   await a.run();
   assert.deepEqual(calls, ["cancel-chain:checkout-flow"]);
+});
+
+
+// ─── watch-focus (fan out running tasks into Focus panes) ──────────
+
+test("watch-focus: enabled while the feature has active tasks", async () => {
+  const { calls, ctx } = recorder();
+  const a = byId(mkFeature(), ctx).get("watch-focus")!;
+  assert.equal(isEnabled(a), true);
+  await a.run();
+  assert.deepEqual(calls, [`watch-focus:${mkFeature().id}`]);
+});
+
+test("watch-focus: disabled when nothing in the feature is active", () => {
+  const { ctx } = recorder();
+  const a = byId(
+    mkFeature({ taskCount: { total: 3, completed: 3, blocked: 0, active: 0 } }),
+    ctx,
+  ).get("watch-focus")!;
+  assert.match(a.disabledReason ?? "", /nothing is running/i);
 });

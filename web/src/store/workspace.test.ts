@@ -24,7 +24,7 @@ import {
   clampDrawerWidth,
   clampSidebarWidth,
 } from "./workspace";
-import { walkLeaves, type DockNode } from "../lib/dock";
+import { countLeaves, walkLeaves, type DockNode } from "../lib/dock";
 
 /** Assert a node is a leaf carrying `title`. */
 function assertLeafTitle(node: DockNode, title: string): void {
@@ -962,4 +962,141 @@ test("workspace: forgetProject on an unknown project is a no-op", () => {
   w().forgetProject("nonexistent");
 
   assert.equal(w().docks.focus, before);
+});
+
+
+// ─── openInFocusGroup ─────────────────────────────────────────────────
+
+/** Titles of every leaf in a dock, in tree order. */
+function dockTitles(tree: DockNode | null): string[] {
+  if (!tree) return [];
+  const out: string[] = [];
+  walkLeaves(tree, (l) => out.push(l.title));
+  return out;
+}
+
+test("openInFocusGroup: an empty dock becomes exactly the group", () => {
+  resetStore();
+  useWorkspace.getState().openInFocusGroup([
+    { kind: "session", target: { ref: { mode: "live" } }, title: "Session" },
+    { kind: "logs", target: { projectId: "p", taskId: "t1" }, title: "Logs" },
+  ]);
+  const s = useWorkspace.getState();
+  assert.deepEqual(dockTitles(s.docks.focus), ["Session", "Logs"]);
+  assert.equal(s.view, "focus");
+});
+
+test("openInFocusGroup: panes land SIDE BY SIDE, not stacked as tabs", () => {
+  // This is the whole reason the action exists — two openInFocus calls
+  // merge into one pane as tabs, which is the opposite of a watch
+  // layout.
+  resetStore();
+  useWorkspace.getState().openInFocusGroup([
+    { kind: "session", target: {}, title: "Session" },
+    { kind: "logs", target: {}, title: "Logs" },
+  ]);
+  const tree = useWorkspace.getState().docks.focus!;
+  assert.equal(tree.type, "split");
+});
+
+test("openInFocusGroup: adds beside an existing layout instead of replacing it", () => {
+  resetStore();
+  useWorkspace.getState().openInFocus("runners", {}, "Runners");
+  useWorkspace.getState().openInFocusGroup([
+    { kind: "session", target: {}, title: "Session" },
+    { kind: "logs", target: {}, title: "Logs" },
+  ]);
+  const titles = dockTitles(useWorkspace.getState().docks.focus);
+  // The pane the user already had is still there.
+  assert.ok(titles.includes("Runners"), titles.join(","));
+  assert.equal(titles.length, 3);
+});
+
+test("openInFocusGroup: a single item still works, and an empty list is a no-op", () => {
+  resetStore();
+  useWorkspace.getState().openInFocusGroup([
+    { kind: "logs", target: {}, title: "Logs" },
+  ]);
+  assert.equal(countLeaves(useWorkspace.getState().docks.focus), 1);
+
+  const before = useWorkspace.getState().docks.focus;
+  useWorkspace.getState().openInFocusGroup([]);
+  assert.equal(useWorkspace.getState().docks.focus, before);
+});
+
+test("openInFocusGroup: points the drop hint at the group it just made", () => {
+  resetStore();
+  useWorkspace.getState().openInFocusGroup([
+    { kind: "session", target: {}, title: "Session" },
+    { kind: "logs", target: {}, title: "Logs" },
+  ]);
+  const { docks, lastFocusLeafId } = useWorkspace.getState();
+  const ids: string[] = [];
+  walkLeaves(docks.focus!, (_l, id) => ids.push(id));
+  assert.ok(lastFocusLeafId && ids.includes(lastFocusLeafId));
+});
+
+// ─── sendLeafToOtherDock ──────────────────────────────────────────────
+
+/** The id of the first leaf in a dock. */
+function firstLeafId(tree: DockNode | null): string {
+  let id = "";
+  if (tree) walkLeaves(tree, (_l, leafId) => {
+    if (!id) id = leafId;
+  });
+  return id;
+}
+
+test("sendLeafToOtherDock: focus → sidebar moves the pane, keeping its content", () => {
+  resetStore();
+  useWorkspace.getState().openInFocus("logs", { taskId: "t1" }, "Logs t1");
+  const id = firstLeafId(useWorkspace.getState().docks.focus);
+
+  useWorkspace.getState().sendLeafToOtherDock(id, "focus");
+
+  const s = useWorkspace.getState();
+  assert.equal(s.docks.focus, null, "left the source dock");
+  assert.deepEqual(dockTitles(s.docks.sidebar), ["Logs t1"]);
+  // The destination column is opened, or the move would be invisible.
+  assert.equal(s.sidebarDockOpen, true);
+});
+
+test("sendLeafToOtherDock: sidebar → focus takes the user to Focus", () => {
+  resetStore();
+  useWorkspace.getState().openInSidebar("session", {}, "Session");
+  const id = firstLeafId(useWorkspace.getState().docks.sidebar);
+
+  useWorkspace.getState().sendLeafToOtherDock(id, "sidebar");
+
+  const s = useWorkspace.getState();
+  assert.equal(s.docks.sidebar, null);
+  assert.deepEqual(dockTitles(s.docks.focus), ["Session"]);
+  assert.equal(s.view, "focus");
+});
+
+test("sendLeafToOtherDock: never duplicates or loses a pane", () => {
+  resetStore();
+  const ws = useWorkspace.getState();
+  ws.openInFocus("logs", {}, "A");
+  ws.openInFocus("logs", {}, "B");
+  assert.equal(countLeaves(useWorkspace.getState().docks.focus), 2);
+
+  const id = firstLeafId(useWorkspace.getState().docks.focus);
+  useWorkspace.getState().sendLeafToOtherDock(id, "focus");
+
+  const s = useWorkspace.getState();
+  assert.equal(
+    countLeaves(s.docks.focus) + countLeaves(s.docks.sidebar),
+    2,
+    "total pane count is conserved",
+  );
+  assert.equal(countLeaves(s.docks.sidebar), 1);
+});
+
+test("sendLeafToOtherDock: an unknown leaf id changes nothing", () => {
+  resetStore();
+  useWorkspace.getState().openInFocus("logs", {}, "A");
+  const before = useWorkspace.getState().docks;
+  useWorkspace.getState().sendLeafToOtherDock("leaf_nope", "focus");
+  assert.equal(useWorkspace.getState().docks, before);
 });

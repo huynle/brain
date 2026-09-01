@@ -73,10 +73,23 @@ export function FocusPanes(): JSX.Element {
           ⌗
         </div>
         <div>Focus workspace is empty.</div>
-        <div style={{ fontSize: 11, maxWidth: 340 }}>
-          Drag a task, session, or runner from the sidebar to open it
-          here, or click a task/feature/runner to open its detail in a
-          pane.
+        {/*
+          The old copy advertised only the drag, which is the one route
+          nobody finds and the one that does not exist on a touch
+          screen. Lead with the verb that builds a layout for you —
+          Focus is for watching several things at once, and saying so is
+          most of what it needed.
+        */}
+        <div style={{ fontSize: 11, maxWidth: 380, lineHeight: 1.6 }}>
+          This is where you watch work run — several panes side by side,
+          at a width where each is actually readable.
+          <br />
+          <b>Watch in Focus</b> on a task opens its transcript beside its
+          raw log. <b>Watch tasks in Focus</b> on a feature opens one
+          live session per running task.
+          <br />
+          You can also drag any pane or sidebar row in here, or send one
+          over from the side panel with its <b>⤢</b> button.
         </div>
       </div>
     );

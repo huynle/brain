@@ -209,7 +209,7 @@ func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, 
 
 // spawnOpencode dispatches to mode-specific OpenCode spawners.
 func (e *OpenCodeExecutor) spawnOpencode(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string, opts SpawnOptions) (*SpawnResult, error) {
-	switch opts.Mode {
+	switch opts.Mode.SpawnMode() {
 	case ExecutionModeHeadless:
 		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts)
 	case ExecutionModeTUI:
@@ -217,7 +217,7 @@ func (e *OpenCodeExecutor) spawnOpencode(ctx context.Context, task *types.Resolv
 	case ExecutionModeDashboard:
 		return e.spawnDashboard(ctx, task, projectID, workdir, promptFile, opts)
 	default:
-		return nil, fmt.Errorf("unknown execution mode: %s", opts.Mode)
+		return nil, fmt.Errorf("unknown execution mode: %q (valid modes: headless, foreground, tui, dashboard)", opts.Mode)
 	}
 }
 

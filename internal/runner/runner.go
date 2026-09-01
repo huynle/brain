@@ -283,7 +283,15 @@ type TaskRunner struct {
 	dispatchPoolMu sync.RWMutex
 	dispatchPool   *dispatchPool
 
-	// Remote-control bridge (outbound WS tunnel to the Brain API)
+	// Remote-control bridge (outbound WS tunnel to the Brain API).
+	//
+	// Assigned in Start, but read from the instance reporter, the
+	// heartbeat and the bridge's own goroutines — all of which may
+	// already be running by then. Guarded by bridgeMu; go through
+	// getBridgeClient/setBridgeClient, never the field directly.
+	//
+	// nil when control is disabled or no API URL is configured.
+	bridgeMu     sync.RWMutex
 	bridgeClient *BridgeClient
 
 	// Lifecycle
@@ -512,8 +520,9 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 
 	// Start the remote-control bridge (outbound WS; reconnects internally)
 	if tr.config.BrainAPIURL != "" && !tr.config.Control.Disabled {
-		tr.bridgeClient = NewBridgeClient(tr)
-		go tr.bridgeClient.Start(ctx)
+		bridge := NewBridgeClient(tr)
+		tr.setBridgeClient(bridge)
+		go bridge.Start(ctx)
 		slog.Info("bridge client started", "runner_id", tr.runnerID)
 	}
 
@@ -3019,6 +3028,24 @@ func (tr *TaskRunner) SetMaxParallel(n int) {
 
 // getMaxParallel returns the current effective max parallel limit.
 // Uses the runtime-adjusted value if set, otherwise falls back to config.
+// setBridgeClient installs the remote-control bridge. Called once from
+// Start, on the main goroutine, after the poll loop and instance reporter
+// are already live.
+func (tr *TaskRunner) setBridgeClient(bc *BridgeClient) {
+	tr.bridgeMu.Lock()
+	tr.bridgeClient = bc
+	tr.bridgeMu.Unlock()
+}
+
+// getBridgeClient returns the remote-control bridge, or nil if control is
+// disabled or Start has not installed it yet. Every reader outside Start
+// must use this — the background goroutines race the assignment otherwise.
+func (tr *TaskRunner) getBridgeClient() *BridgeClient {
+	tr.bridgeMu.RLock()
+	defer tr.bridgeMu.RUnlock()
+	return tr.bridgeClient
+}
+
 func (tr *TaskRunner) getMaxParallel() int {
 	tr.mu.RLock()
 	n := tr.maxParallel

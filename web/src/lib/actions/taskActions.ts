@@ -61,7 +61,13 @@ export interface TaskActionContext {
   abortTask: (task: Task) => Promise<void>;
   openResume: (task: Task) => void;
   openDetails: (task: Task) => void;
-  openLogs: (task: Task) => void;
+  /**
+   * Build the watch layout in Focus: the session transcript beside the
+   * raw task log. `ref` is the session to show, or undefined when the
+   * task has none (a pi/script task) — the effect then opens the log
+   * alone rather than refusing.
+   */
+  watchInFocus: (task: Task, ref: SessionRef | undefined) => void;
   openMetadata: (task: Task) => void;
   /** Open the status picker; separate from applying a status. */
   openStatusPicker: (task: Task) => void;
@@ -430,20 +436,6 @@ export function buildTaskActions(
   });
 
   // ─── navigate ───────────────────────────────────────────────────
-  actions.push({
-    id: "details",
-    label: "Open in focus pane",
-    group: "navigate",
-    run: async () => ctx.openDetails(task),
-  });
-  actions.push({
-    id: "logs",
-    label: "Open logs in focus pane",
-    group: "navigate",
-    key: "l",
-    run: async () => ctx.openLogs(task),
-  });
-
   /*
    * ONE session verb, two placements.
    *
@@ -472,6 +464,34 @@ export function buildTaskActions(
     key: "w",
     disabledReason: sessionReason,
     run: async () => ctx.openSession(task, sessionRef!),
+  });
+
+  /*
+   * The Focus workspace's reason to exist: the transcript and the raw
+   * stdout side by side, at a width where both are readable, while the
+   * agent is still working. Nothing else in the UI can show you those
+   * two at once — the session pane's own Chat/Raw-log toggle only
+   * exists inside the runner Processes tab, and it is a toggle, not a
+   * split.
+   *
+   * This REPLACES "Open logs in focus pane", which opened one of the
+   * two panes and left you to arrange the other by hand. Never
+   * disabled: a task always has a log stream even when it has no
+   * session, and the effect opens whichever halves exist.
+   */
+  actions.push({
+    id: "watch-focus",
+    label: live ? "Watch in Focus" : "Review in Focus",
+    group: "navigate",
+    key: "l",
+    run: async () => ctx.watchInFocus(task, sessionRef),
+  });
+
+  actions.push({
+    id: "details",
+    label: "Open details in Focus",
+    group: "navigate",
+    run: async () => ctx.openDetails(task),
   });
 
   actions.push({

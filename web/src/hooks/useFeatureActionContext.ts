@@ -53,6 +53,18 @@ import type { DerivedFeature } from "../lib/features";
 import type { DependentChain } from "../lib/api";
 import { dependentChainsKey } from "./useDependentChains";
 import { ALL_STATUSES, type TaskStatus } from "../lib/types";
+import type { OpencodeInstance, SessionRef, Task } from "../lib/types";
+import { useLive } from "../lib/sse";
+import { liveSessionRef } from "../lib/sessionRef";
+
+/** Stable empty list, so a project with no live tasks never churns. */
+const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
+
+/**
+ * How many session panes "Watch tasks in Focus" will open at once.
+ * Past four, each transcript is narrower than the code it is printing.
+ */
+const MAX_WATCH_PANES = 4;
 
 /**
  * Factory form, for callers that span several projects at once (the
@@ -65,6 +77,7 @@ export function useFeatureActionContextFactory(): (
   const openModal = useModal((s) => s.open);
   const closeModal = useModal((s) => s.close);
   const openInSidebar = useWorkspace((s) => s.openInSidebar);
+  const openInFocusGroup = useWorkspace((s) => s.openInFocusGroup);
   const assignFeatureLocal = useWorkspace((s) => s.assignFeature);
   const unassignFeatureLocal = useWorkspace((s) => s.unassignFeature);
   const toast = useUI((s) => s.toast);
@@ -440,6 +453,70 @@ export function useFeatureActionContextFactory(): (
           openModal("feature-actions", { projectId, featureId: feature.id }),
         openDetails: (feature: DerivedFeature) =>
           openModal("feature", { projectId, featureId: feature.id }),
+
+        /*
+         * One session pane per running task, side by side.
+         *
+         * Reads both caches synchronously rather than through hooks —
+         * this factory is called per project inside a loop (the command
+         * palette), where hooks cannot go. Same pattern as
+         * activeChainRoots above.
+         *
+         * "Active" on the feature is a task-status rollup; being
+         * addressable is a stronger condition (the runner must have
+         * discovered an instance). So the count returned is what was
+         * actually opened, and the toast reports the gap instead of
+         * quietly showing fewer panes than there are running tasks.
+         */
+        watchInFocus: (feature: DerivedFeature): number => {
+          const instances =
+            queryClient.getQueryData<OpencodeInstance[]>(["v2", "sessions"]) ??
+            [];
+          const tasks =
+            useLive.getState().projects[projectId]?.tasks ?? EMPTY_TASKS;
+
+          const running = tasks.filter(
+            (t) =>
+              t.feature_id === feature.id && t.status === "in_progress",
+          );
+          const addressable = running
+            .map((t) => ({
+              task: t,
+              ref: liveSessionRef({ id: t.id, projectId }, instances),
+            }))
+            .filter((x): x is { task: Task; ref: SessionRef } => !!x.ref);
+
+          if (addressable.length === 0) {
+            toast(
+              running.length === 0
+                ? "No tasks are running in this feature right now"
+                : `${running.length} task${running.length === 1 ? " is" : "s are"} in progress but no session is addressable yet — the runner may still be starting them`,
+              "warning",
+            );
+            return 0;
+          }
+
+          // Past four panes each transcript is too narrow to read, which
+          // defeats the point of watching them. Cap, and say so — a
+          // silent truncation would read as "this is all that's
+          // running".
+          const shown = addressable.slice(0, MAX_WATCH_PANES);
+          closeModal();
+          openInFocusGroup(
+            shown.map(({ task, ref }) => ({
+              kind: "session" as const,
+              target: { ref },
+              title: task.title || task.id,
+            })),
+          );
+          if (addressable.length > shown.length) {
+            toast(
+              `Watching ${shown.length} of ${addressable.length} running tasks — open the rest from the sidebar`,
+              "info",
+            );
+          }
+          return shown.length;
+        },
         openPlan: (feature: DerivedFeature) =>
           openInSidebar(
             "feature-detail",
@@ -461,6 +538,7 @@ export function useFeatureActionContextFactory(): (
       openModal,
       closeModal,
       openInSidebar,
+      openInFocusGroup,
       assignFeatureLocal,
       unassignFeatureLocal,
       toast,

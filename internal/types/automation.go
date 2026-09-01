@@ -244,10 +244,19 @@ type CreateGoalRequest struct {
 
 // UpdateGoalRequest is the input for updating an existing goal automation.
 // Provided fields are merged onto the existing goal; nil fields are unchanged.
+//
+// Every field is a pointer so "not supplied" (nil) stays distinguishable from
+// "set to empty" (pointer to ""). A pointer to the empty string CLEARS the
+// field — that is how a mis-scoped goal is widened from one feature back to
+// its whole project without deleting and recreating it (which would destroy
+// the goal id, entry, and audit history).
 type UpdateGoalRequest struct {
-	Title            *string           `json:"title,omitempty"`
-	Content          *string           `json:"content,omitempty"`
-	Status           *string           `json:"status,omitempty"`
+	Title   *string `json:"title,omitempty"`
+	Content *string `json:"content,omitempty"`
+	Status  *string `json:"status,omitempty"`
+	// FeatureID re-scopes the goal. Pointer to "" clears the feature scope,
+	// widening the goal to its whole project.
+	FeatureID        *string           `json:"feature_id,omitempty"`
 	Criteria         *string           `json:"criteria,omitempty"`
 	Validation       *string           `json:"validation,omitempty"`
 	Workdir          *string           `json:"workdir,omitempty"`
@@ -273,13 +282,27 @@ type GoalSummary struct {
 }
 
 // GoalProgressResponse reports goal-scoped linked-task progress.
+//
+// The counts are bucketed by the goal's OWN CompleteStatuses/BlockedStatuses
+// (with the reconciler's defaults when unset), so this view and the reconcile
+// decision classify a task identically. They used to disagree: the counts came
+// from the feature-level helper, whose buckets are hardcoded and call
+// "cancelled" blocked, which the reconciler never does.
 type GoalProgressResponse struct {
-	GoalID        string               `json:"goal_id"`
-	EntryID       string               `json:"entry_id"`
-	Project       string               `json:"project,omitempty"`
-	FeatureID     string               `json:"feature_id,omitempty"`
-	TaskID        string               `json:"task_id,omitempty"`
-	FeatureStatus string               `json:"feature_status"`
+	GoalID    string `json:"goal_id"`
+	EntryID   string `json:"entry_id"`
+	Project   string `json:"project,omitempty"`
+	FeatureID string `json:"feature_id,omitempty"`
+	TaskID    string `json:"task_id,omitempty"`
+	// GoalStatus aggregates the linked tasks under goal semantics
+	// (completed | in_progress | blocked | pending). It is meaningful for
+	// every scope — task, feature, or whole project.
+	GoalStatus string `json:"goal_status"`
+	// FeatureStatus is the owning feature's status under FEATURE semantics,
+	// and is set only for a feature-scoped goal. A project-scoped goal spans
+	// many features, so reporting one aggregate status for them was how a
+	// healthy goal came to display "Feature: blocked".
+	FeatureStatus string               `json:"feature_status,omitempty"`
 	Total         int                  `json:"total"`
 	Pending       int                  `json:"pending"`
 	InProgress    int                  `json:"in_progress"`

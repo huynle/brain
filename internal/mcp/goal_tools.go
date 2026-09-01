@@ -58,6 +58,16 @@ func goalCommonProperties(includeCreateOnly bool) map[string]Property {
 		props["config"] = Property{Type: "object", Description: "Nested GoalConfig object; flat config fields are merged over it"}
 	} else {
 		props["status"] = Property{Type: "string", Description: "Goal status"}
+		// On update these fields are presence-based: passing "" clears them.
+		// Say so, because an advertised field whose empty value silently did
+		// nothing is exactly the trap this schema used to set.
+		props["feature_id"] = Property{Type: "string", Description: "Feature ID to scope the goal. Pass \"\" to clear the feature scope and widen the goal to the whole project."}
+		props["task_id"] = Property{Type: "string", Description: "Task ID to scope the goal to a single task (takes precedence over feature_id). Pass \"\" to clear."}
+		props["criteria"] = Property{Type: "string", Description: "Success criteria for the goal. Pass \"\" to clear."}
+		props["validation"] = Property{Type: "string", Description: "How goal completion is validated. Pass \"\" to clear."}
+		props["workdir"] = Property{Type: "string", Description: "Working directory for generated work. Pass \"\" to clear."}
+		props["complete_statuses"] = Property{Type: "array", Items: &Property{Type: "string"}, Description: "Task statuses that count as complete. Pass [] to reset to defaults (completed, validated, archived)."}
+		props["blocked_statuses"] = Property{Type: "array", Items: &Property{Type: "string"}, Description: "Task statuses that count as blocked. Pass [] to reset to the default (blocked)."}
 	}
 	return props
 }
@@ -123,7 +133,7 @@ func registerBrainGoalList(s *Server, client *APIClient) {
 func registerBrainGoalUpdate(s *Server, client *APIClient) {
 	s.RegisterTool(Tool{
 		Name:        "goal_update",
-		Description: "Update a goal automation's title/content/status/config/action fields.",
+		Description: "Update a goal automation's title/content/status/scope/config/action fields. Omitted fields are left alone; an explicit empty value clears the field (feature_id: \"\" re-scopes the goal to its whole project).",
 		InputSchema: InputSchema{Type: "object", Properties: goalCommonProperties(false), Required: []string{"goal_id"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		goalID := StringArg(args, "goal_id", "")
@@ -376,38 +386,64 @@ func buildGoalAction(args map[string]any) types.AutomationAction {
 	return action
 }
 
+// clearableStringArg returns a pointer to the string at key when the caller
+// supplied one, and nil when the key is absent or holds a non-string (JSON
+// null included, which reads as "not supplied" rather than "clear this").
+//
+// Presence is the test, not emptiness. Every string arm below was once guarded
+// `if v := StringArg(...); v != ""`, which makes an explicit "" indistinguishable
+// from an omitted field — so no string field on a goal could be cleared, only
+// overwritten with something else. MCP args arrive as map[string]any, where the
+// two ARE distinguishable; it just takes checking the key instead of the value.
+func clearableStringArg(args map[string]any, key string) *string {
+	v, ok := args[key].(string)
+	if !ok {
+		return nil
+	}
+	return &v
+}
+
+// clearableStringSliceArg is clearableStringArg for array fields: an explicit
+// [] resets the field (the goal status sets then fall back to the reconciler's
+// defaults), which the old `len(v) > 0` guard could not express.
+func clearableStringSliceArg(args map[string]any, key string) *[]string {
+	if _, ok := args[key]; !ok {
+		return nil
+	}
+	v := StringSliceArg(args, key)
+	if v == nil {
+		return nil
+	}
+	return &v
+}
+
 func buildUpdateGoalRequest(args map[string]any) types.UpdateGoalRequest {
 	req := types.UpdateGoalRequest{}
+
+	// Title and status stay value-based: a goal has no valid empty title (the
+	// rebuild rejects one) and no valid empty status, so a blank there is an
+	// autofilled field, never an instruction to clear.
 	if v := StringArg(args, "title", ""); v != "" {
 		req.Title = &v
-	}
-	if v := StringArg(args, "content", ""); v != "" {
-		req.Content = &v
 	}
 	if v := StringArg(args, "status", ""); v != "" {
 		req.Status = &v
 	}
-	if v := StringArg(args, "criteria", ""); v != "" {
-		req.Criteria = &v
-	}
-	if v := StringArg(args, "validation", ""); v != "" {
-		req.Validation = &v
-	}
-	if v := StringArg(args, "workdir", ""); v != "" {
-		req.Workdir = &v
-	}
-	if v := StringArg(args, "trigger_source", ""); v != "" {
-		req.TriggerSource = &v
-	}
-	if v := StringArg(args, "task_id", ""); v != "" {
-		req.TaskID = &v
-	}
-	if v := StringSliceArg(args, "complete_statuses"); len(v) > 0 {
-		req.CompleteStatuses = &v
-	}
-	if v := StringSliceArg(args, "blocked_statuses"); len(v) > 0 {
-		req.BlockedStatuses = &v
-	}
+
+	// Everything else is presence-based, so "" clears the field. feature_id
+	// is the one that was missing outright — advertised by the input schema,
+	// handled on create, and silently dropped here, which left re-scoping a
+	// goal to delete-and-recreate.
+	req.FeatureID = clearableStringArg(args, "feature_id")
+	req.Content = clearableStringArg(args, "content")
+	req.Criteria = clearableStringArg(args, "criteria")
+	req.Validation = clearableStringArg(args, "validation")
+	req.Workdir = clearableStringArg(args, "workdir")
+	req.TriggerSource = clearableStringArg(args, "trigger_source")
+	req.TaskID = clearableStringArg(args, "task_id")
+	req.CompleteStatuses = clearableStringSliceArg(args, "complete_statuses")
+	req.BlockedStatuses = clearableStringSliceArg(args, "blocked_statuses")
+
 	if steering := buildGoalSteering(args); steering != nil {
 		req.Steering = steering
 	}
@@ -529,6 +565,10 @@ func formatGoalProgress(p *types.GoalProgressResponse) string {
 	if p.FeatureID != "" {
 		lines = append(lines, fmt.Sprintf("- Feature ID: %s", p.FeatureID))
 	}
+	if p.GoalStatus != "" {
+		lines = append(lines, fmt.Sprintf("- Goal: %s", p.GoalStatus))
+	}
+	// Only set for a feature-scoped goal; see GoalProgressResponse.
 	if p.FeatureStatus != "" {
 		lines = append(lines, fmt.Sprintf("- Feature: %s", p.FeatureStatus))
 	}

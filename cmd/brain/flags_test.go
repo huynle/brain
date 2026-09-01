@@ -463,6 +463,7 @@ func TestParseAutomationGoalFlags(t *testing.T) {
 
 		assert.Equal(t, "brain-api", flags.Project)
 		assert.Equal(t, "ga-cli", flags.Feature)
+		assert.True(t, flags.FeatureSet, "--feature must record that it was passed")
 		assert.Equal(t, "My Goal", flags.Title)
 		assert.Equal(t, "Some content", flags.Content)
 		assert.Equal(t, "both", flags.TriggerSource)
@@ -588,4 +589,17 @@ func TestParseAPIFlagsWithEmbeddedRunner(t *testing.T) {
 	assert.Equal(t, []string{"prod-*"}, flags.Include)
 	assert.Equal(t, []string{"sandbox-*"}, flags.Exclude)
 	assert.Equal(t, "opencode", flags.Executor)
+}
+
+func TestParseAutomationGoalFlags_FeaturePresence(t *testing.T) {
+	// An omitted --feature and `--feature ""` produce the same Feature value;
+	// only FeatureSet separates "leave the scope alone" from "clear it".
+	omitted, err := ParseAutomationGoalFlags([]string{"--title", "T"})
+	require.NoError(t, err)
+	assert.False(t, omitted.FeatureSet)
+
+	cleared, err := ParseAutomationGoalFlags([]string{"--feature", ""})
+	require.NoError(t, err)
+	assert.True(t, cleared.FeatureSet)
+	assert.Equal(t, "", cleared.Feature)
 }

@@ -20,8 +20,11 @@ import (
 
 // GoalFlags holds flags for the `brain automation goal` subcommands.
 type GoalFlags struct {
-	Project       string   // --project
-	Feature       string   // --feature
+	Project string // --project
+	Feature string // --feature
+	// FeatureSet records that --feature was passed at all, so `edit` can tell
+	// "leave the scope alone" from "--feature \"\"", which clears it.
+	FeatureSet    bool
 	Title         string   // --title
 	Content       string   // --content
 	TriggerSource string   // --trigger-source (task|feature|both)
@@ -326,6 +329,9 @@ func (c *AutomationGoalCommand) executeEdit(out io.Writer) error {
 	if c.Flags.Status != "" {
 		req.Status = strPtr(c.Flags.Status)
 	}
+	if c.Flags.FeatureSet {
+		req.FeatureID = strPtr(strings.TrimSpace(c.Flags.Feature))
+	}
 	if len(c.Flags.Criteria) > 0 {
 		req.Criteria = strPtr(strings.Join(c.Flags.Criteria, "\n"))
 	}
@@ -502,6 +508,10 @@ func writeProgress(out io.Writer, p *types.GoalProgressResponse) {
 	fmt.Fprintf(out, "  In Progress: %d\n", p.InProgress)
 	fmt.Fprintf(out, "  Completed:   %d\n", p.Completed)
 	fmt.Fprintf(out, "  Blocked:     %d\n", p.Blocked)
+	if p.GoalStatus != "" {
+		fmt.Fprintf(out, "  Goal:        %s\n", p.GoalStatus)
+	}
+	// Only set for a feature-scoped goal; see types.GoalProgressResponse.
 	if p.FeatureStatus != "" {
 		fmt.Fprintf(out, "  Feature:     %s\n", p.FeatureStatus)
 	}

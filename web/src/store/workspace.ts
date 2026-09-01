@@ -44,6 +44,8 @@ import { persist, createJSONStorage } from "zustand/middleware";
 import type { SessionRef } from "../lib/types";
 import {
   addNodeAtEdge,
+  addSubtreeAtEdge,
+  evenSplitTree,
   findNodeInfo,
   newLeafNode,
   removeNode as removeDockNode,
@@ -236,6 +238,25 @@ export interface WorkspaceState {
     targetNodeId: string,
     edge: Edge,
   ): void;
+  /**
+   * Open several leaves at once as ONE evenly-split layout, and switch
+   * to Focus.
+   *
+   * This is the action behind the "Watch in Focus" verbs. Chaining
+   * `openInFocus` would not do: each call merges into the last-touched
+   * pane as a TAB, so a session and its log would stack on top of each
+   * other — the opposite of the point. The group is built as a balanced
+   * split and docked beside whatever the user already had, so an
+   * existing layout is never replaced.
+   */
+  openInFocusGroup(
+    items: Array<{
+      kind: DockLeaf["kind"];
+      target: Record<string, unknown>;
+      title?: string;
+    }>,
+    dir?: "row" | "col",
+  ): void;
   closeLeaf(leafId: string): void;
   moveLeaf(sourceLeafId: string, targetId: string, edge: Edge): void;
   setSplitRatio(splitId: string, ratio: number): void;
@@ -262,6 +283,17 @@ export interface WorkspaceState {
   setSidebarSplitRatio(splitId: string, ratio: number): void;
   setSidebarActiveTab(tabsId: string, idx: number): void;
   setLastSidebarLeaf(leafId: string | null): void;
+
+  // ─── actions: across the two docks ──────────────────────────────
+  /**
+   * Move one pane to the other dock, keeping its content and title.
+   *
+   * Dragging a pane header between the docks already did this; this is
+   * the same operation as a click, because the drag is undiscoverable
+   * and impossible on a touch screen. `fromDockId` says where the pane
+   * lives now — the destination is the other one.
+   */
+  sendLeafToOtherDock(leafId: string, fromDockId: "focus" | "sidebar"): void;
 }
 
 /**
@@ -701,6 +733,51 @@ export const useWorkspace = create<WorkspaceState>()(
         // ─── focus dock tree actions ────────────────────────────
         openInFocus: makeOpenIn("focus"),
         openInFocusAt: makeOpenInAt("focus"),
+
+        openInFocusGroup: (items, dir = "row") => {
+          if (items.length === 0) return;
+          const state = get();
+          const nodes = items.map((it) =>
+            newLeafNode({
+              kind: it.kind,
+              target: it.target,
+              title: it.title ?? defaultLeafTitle(it.kind, it.target),
+            }),
+          );
+          // evenSplitTree returns null only for an empty list, which the
+          // guard above already excluded.
+          const group = evenSplitTree(nodes, dir) as DockNode;
+          const tree = state.docks.focus;
+
+          // Nothing docked yet: the group IS the layout.
+          if (tree === null) {
+            set({
+              docks: { ...state.docks, focus: group },
+              lastFocusLeafId: nodes[0].id,
+              view: "focus",
+            });
+            return;
+          }
+
+          // Otherwise dock it BESIDE the existing layout. Replacing what
+          // the user had arranged would be the more obvious
+          // implementation and the wrong one — a watch layout is
+          // something you add, not a mode you enter.
+          const anchor = pickDropTarget(tree, state.lastFocusLeafId);
+          const nextTree = anchor
+            ? addSubtreeAtEdge(tree, anchor, dir === "row" ? "right" : "bottom", group)
+            : group;
+          set({
+            docks: { ...state.docks, focus: nextTree },
+            // Point the hint at the first pane of the group when the
+            // insert took, so a follow-up open chains onto what was
+            // just created rather than the pane it displaced.
+            lastFocusLeafId:
+              nextTree === tree ? state.lastFocusLeafId : nodes[0].id,
+            view: "focus",
+          });
+        },
+
         closeLeaf: makeCloseLeaf("focus"),
         moveLeaf: makeMoveLeaf("focus"),
         setSplitRatio: makeSetSplitRatio("focus"),
@@ -715,6 +792,51 @@ export const useWorkspace = create<WorkspaceState>()(
         setSidebarSplitRatio: makeSetSplitRatio("sidebar"),
         setSidebarActiveTab: makeSetActiveTab("sidebar"),
         setLastSidebarLeaf: makeSetLastLeaf("sidebar"),
+
+        // ─── across the two docks ───────────────────────────────
+        sendLeafToOtherDock: (leafId, fromDockId) => {
+          const state = get();
+          const fromTree = state.docks[fromDockId];
+          if (!fromTree) return;
+          const info = findNodeInfo(fromTree, leafId);
+          if (!info || info.node.type !== "leaf") return;
+          const leaf = info.node.leaf;
+          const toDockId: DockId =
+            fromDockId === "focus" ? "sidebar" : "focus";
+
+          // Remove first, then place — the two trees are independent, so
+          // there is no ordering hazard, and doing both in ONE set keeps
+          // a pane from flickering out of existence between renders.
+          const prunedFrom = removeDockNode(fromTree, leafId);
+          const toTree = state.docks[toDockId];
+          const node = newLeafNode(leaf);
+          const anchor = toTree
+            ? pickDropTarget(toTree, state[lastLeafField(toDockId)])
+            : null;
+          // "center" — arriving as a tab in the destination's current
+          // pane, the same rule openIn* uses for a menu-driven open.
+          const nextTo =
+            toTree && anchor
+              ? addNodeAtEdge(toTree, anchor, "center", node)
+              : node;
+
+          set({
+            docks: {
+              ...state.docks,
+              [fromDockId]: prunedFrom,
+              [toDockId]: nextTo,
+            },
+            [lastLeafField(fromDockId)]:
+              prunedFrom === null ? null : state[lastLeafField(fromDockId)],
+            [lastLeafField(toDockId)]: node.id,
+            // Take the user where the pane went, so the move is never
+            // silent: to Focus by switching view, to the sidebar by
+            // making sure the column is open.
+            ...(toDockId === "focus"
+              ? { view: "focus" }
+              : { sidebarDockOpen: true }),
+          } as Partial<WorkspaceState>);
+        },
       };
     },
     {

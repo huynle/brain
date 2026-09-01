@@ -60,6 +60,13 @@ export interface FeatureActionContext {
   openResume: (feature: DerivedFeature) => void;
   openPlan: (feature: DerivedFeature) => void;
   openDetails: (feature: DerivedFeature) => void;
+  /**
+   * Open one session pane per running task in this feature, side by
+   * side in Focus. Returns how many it could actually address, so the
+   * verb can say when it found nothing rather than switching the user
+   * to an unchanged workspace.
+   */
+  watchInFocus: (feature: DerivedFeature) => number;
   openMetadata: (feature: DerivedFeature) => void;
   /** Opens the runner-assignment modal (ModalKind "feature-assign"). */
   openAssignRunner: (feature: DerivedFeature) => void;
@@ -310,6 +317,30 @@ export function buildFeatureActions(
   });
 
   // ─── navigate ───────────────────────────────────────────────────
+  /*
+   * The one thing no other surface can do: several agents on screen at
+   * once. A feature is usually two or three tasks running in parallel,
+   * and until now watching them meant clicking between sessions and
+   * losing the thread of each.
+   *
+   * Gated on the feature having active tasks rather than on live
+   * instances: `taskCount.active` is already on DerivedFeature, and the
+   * builder stays pure. The effect reports what it actually found — a
+   * task can be "active" with no addressable session (dispatch pending,
+   * a pi executor) — so a run that opens nothing says so instead of
+   * switching the user to an unchanged Focus tab.
+   */
+  actions.push({
+    id: "watch-focus",
+    label: "Watch tasks in Focus",
+    group: "navigate",
+    key: "w",
+    disabledReason:
+      feature.taskCount.active > 0
+        ? ""
+        : "No active tasks — nothing is running to watch",
+    run: async () => void ctx.watchInFocus(feature),
+  });
   actions.push({
     id: "plan",
     label: "Open plan drawer",

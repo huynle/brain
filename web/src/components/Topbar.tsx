@@ -11,6 +11,7 @@
  *     icon buttons (command palette, new session, notifs, theme, assistant)
  */
 import { useWorkspace } from "../store/workspace";
+import { countLeaves } from "../lib/dock";
 
 export function Topbar(): JSX.Element {
   const view = useWorkspace((s) => s.view);
@@ -23,6 +24,17 @@ export function Topbar(): JSX.Element {
   const toggleSidebarCollapsed = useWorkspace((s) => s.toggleSidebarCollapsed);
   const sidebarDockOpen = useWorkspace((s) => s.sidebarDockOpen);
   const toggleSidebarDockOpen = useWorkspace((s) => s.toggleSidebarDockOpen);
+
+  /*
+   * Both dock trees persist across reloads, so panes parked in them
+   * outlive the session that opened them. Without a count here the
+   * Focus tab looks identical whether it holds nothing or holds the
+   * three-pane layout you set up yesterday — which is most of why the
+   * workspace reads as an empty room. Zero renders no badge; a badge
+   * that always says "0" is just noise.
+   */
+  const focusPanes = useWorkspace((s) => countLeaves(s.docks.focus));
+  const sidebarPanes = useWorkspace((s) => countLeaves(s.docks.sidebar));
 
   return (
     <div className="topbar">
@@ -47,8 +59,14 @@ export function Topbar(): JSX.Element {
         <button
           className={view === "focus" ? "active" : ""}
           onClick={() => setView("focus")}
+          title={
+            focusPanes === 0
+              ? "Focus workspace — split panes for watching work run"
+              : `Focus workspace — ${focusPanes} pane${focusPanes === 1 ? "" : "s"} open`
+          }
         >
           Focus
+          {focusPanes > 0 && <span className="dock-count">{focusPanes}</span>}
         </button>
         <button
           className={view === "entries" ? "active" : ""}
@@ -93,7 +111,9 @@ export function Topbar(): JSX.Element {
         title={sidebarDockOpen ? "Close side panel" : "Open side panel"}
         onClick={toggleSidebarDockOpen}
       >
-        Panel {sidebarDockOpen ? "▸" : "◂"}
+        Panel
+        {sidebarPanes > 0 && <span className="dock-count">{sidebarPanes}</span>}{" "}
+        {sidebarDockOpen ? "▸" : "◂"}
       </button>
       <button
         className="icon-btn"

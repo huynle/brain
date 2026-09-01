@@ -48,7 +48,10 @@ function recorder(over: Partial<TaskActionContext> = {}) {
     abortTask: async (t) => void calls.push(`abort:${t.id}`),
     openResume: (t) => void calls.push(`resume:${t.id}`),
     openDetails: (t) => void calls.push(`details:${t.id}`),
-    openLogs: (t) => void calls.push(`logs:${t.id}`),
+    watchInFocus: (t, ref) =>
+      void calls.push(
+        `watch-focus:${t.id}:${ref ? (ref.mode === "history" ? ref.session_id : "live") : "none"}`,
+      ),
     openMetadata: (t) => void calls.push(`metadata:${t.id}`),
     openStatusPicker: (t) => void calls.push(`picker:${t.id}`),
     openGoalCreate: (t) => void calls.push(`goal-create:${t.id}`),
@@ -88,7 +91,7 @@ test("every core verb is present for an ordinary pending task", () => {
     "metadata",
     "set-goal",
     "details",
-    "logs",
+    "watch-focus",
     "delete",
   ]) {
     assert.ok(ids.includes(expected), `missing action: ${expected}`);
@@ -476,12 +479,12 @@ test("navigation and edit actions route to their openers", async () => {
   const { calls, ctx } = recorder();
   const actions = byId(mkTask(), ctx);
   await actions.get("details")!.run();
-  await actions.get("logs")!.run();
+  await actions.get("watch-focus")!.run();
   await actions.get("metadata")!.run();
   await actions.get("status")!.run();
   assert.deepEqual(calls, [
     "details:t1",
-    "logs:t1",
+    "watch-focus:t1:none",
     "metadata:t1",
     "picker:t1",
   ]);
@@ -634,6 +637,43 @@ test("session: the separate watch / transcript / steer verbs are gone", () => {
   for (const id of ["watch", "transcript", "steer"]) {
     assert.equal(menu.get(id), undefined, id);
   }
+});
+
+// ─── watch-focus (the Focus watch layout) ───────────────────────────
+
+test("watch-focus: passes the live ref while the task is running", async () => {
+  const { calls, ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+  const a = byId(mkTask({ status: "in_progress" }), ctx).get("watch-focus")!;
+  assert.equal(a.label, "Watch in Focus");
+  await a.run();
+  assert.deepEqual(calls, ["watch-focus:t1:live"]);
+});
+
+test("watch-focus: reads Review once the task has settled", async () => {
+  const { calls, ctx } = recorder();
+  const a = byId(mkTask({ status: "completed", ...RECORDED }), ctx).get(
+    "watch-focus",
+  )!;
+  assert.equal(a.label, "Review in Focus");
+  await a.run();
+  assert.deepEqual(calls, ["watch-focus:t1:ses_new"]);
+});
+
+test("watch-focus: stays enabled with no session at all — the log is still there", async () => {
+  // A pi/script task has no transcript but always has stdout, so the
+  // verb opens the half that exists rather than refusing.
+  const { calls, ctx } = recorder();
+  const a = byId(mkTask({ status: "completed", executor: "pi" }), ctx).get(
+    "watch-focus",
+  )!;
+  assert.equal(isEnabled(a), true);
+  await a.run();
+  assert.deepEqual(calls, ["watch-focus:t1:none"]);
+});
+
+test("watch-focus: replaces the old single-pane logs verb", () => {
+  const { ctx } = recorder();
+  assert.equal(byId(mkTask({}), ctx).get("logs"), undefined);
 });
 
 // ─── open-session-sidebar (same ref, docked instead of navigated) ───

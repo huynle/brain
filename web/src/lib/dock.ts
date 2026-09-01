@@ -283,12 +283,64 @@ export function addNodeAtEdge(
   }
 
   // Edge = left | right | top | bottom → wrap target in a new split.
+  return addSubtreeAtEdge(tree, anchorId, edge, leafNode);
+}
+
+/**
+ * Dock an arbitrary SUBTREE (not just a leaf) at one edge of a node.
+ *
+ * `addNodeAtEdge` delegates its edge branch here, so the two cannot
+ * drift. The extra generality exists for layouts opened as a group — a
+ * "watch this run" pane set arrives as a pre-built split, and must land
+ * beside whatever the user already had rather than replacing it.
+ *
+ * "center" is deliberately not accepted: merging into a tab strip needs
+ * a leaf, and a subtree is not one.
+ */
+export function addSubtreeAtEdge(
+  tree: DockNode,
+  targetId: string,
+  edge: Exclude<Edge, "center">,
+  subtree: DockNode,
+): DockNode {
+  const info = findNodeInfo(tree, targetId);
+  if (!info) return tree; // target vanished — no-op
+  // Same tab-strip retarget as addNodeAtEdge: "beside the tab I am
+  // looking at" means beside the whole strip.
+  const target =
+    info.parent !== null && info.parent.type === "tabs"
+      ? info.parent
+      : info.node;
   const dir: "row" | "col" =
     edge === "left" || edge === "right" ? "row" : "col";
   const newFirst = edge === "left" || edge === "top";
-  const children = newFirst ? [leafNode, target] : [target, leafNode];
-  const split = newSplit(dir, children, 0.5);
-  return replaceNode(tree, anchorId, split);
+  const children = newFirst ? [subtree, target] : [target, subtree];
+  return replaceNode(tree, target.id, newSplit(dir, children, 0.5));
+}
+
+/**
+ * Build a BALANCED binary split over `nodes`, weighted so every pane
+ * ends up the same size.
+ *
+ * Splits are strictly binary here — `PaneNode` renders exactly two
+ * children plus a splitter — so an N-pane row has to be nested. Nesting
+ * naively off the last pane (a | (b | (c | d))) at the default 0.5
+ * leaves the first pane with half the dock and the last with an eighth.
+ * Halving the LIST instead, and setting each split's ratio to the share
+ * of leaves on its left, gives an even row at any N.
+ *
+ * Returns null for an empty list, the node itself for one.
+ */
+export function evenSplitTree(
+  nodes: DockNode[],
+  dir: "row" | "col",
+): DockNode | null {
+  if (nodes.length === 0) return null;
+  if (nodes.length === 1) return nodes[0];
+  const half = Math.ceil(nodes.length / 2);
+  const left = evenSplitTree(nodes.slice(0, half), dir) as DockNode;
+  const right = evenSplitTree(nodes.slice(half), dir) as DockNode;
+  return newSplit(dir, [left, right], half / nodes.length);
 }
 
 /**
@@ -389,7 +441,18 @@ function resolveCollapsedTarget(
   return survivor;
 }
 
-function countLeaves(tree: DockNode): number {
+/**
+ * How many panes a tree holds.
+ *
+ * Was private, for `moveLeaf`'s "lost a pane" invariant. Now also the
+ * dock badges: a dock's tree persists across reloads, so without a
+ * count on the Focus tab there is no signal that anything is parked in
+ * there — which is most of why the Focus workspace reads as empty and
+ * pointless even when it is not. Accepts null so callers can pass a
+ * dock tree straight from the store.
+ */
+export function countLeaves(tree: DockNode | null | undefined): number {
+  if (!tree) return 0;
   let n = 0;
   walkLeaves(tree, () => {
     n += 1;

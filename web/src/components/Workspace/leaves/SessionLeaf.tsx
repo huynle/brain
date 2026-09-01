@@ -1,5 +1,6 @@
 /**
- * panes-v2 SessionLeaf — a session transcript docked in a Focus pane.
+ * panes-v2 SessionLeaf — a session docked in a Focus pane or the
+ * sidebar dock.
  *
  * Target shapes (leaf targets are persisted, so both remain readable):
  *   • legacy live rows: { instance_id, runner_id, project_id, session_id? }
@@ -8,11 +9,16 @@
  * A rehydrated live leaf whose instance has exited falls back to
  * history mode when it knows its session id, instead of rotting into
  * "not found".
+ *
+ * The body is SessionPane — the same component the runner Processes tab
+ * and the full-page view render — so a docked live session streams and
+ * can be steered exactly like the one in the modal. This leaf used to
+ * render a bare Transcript, which is why a session read from the dock
+ * looked frozen and had nowhere to type.
  */
 import { useMemo } from "react";
 import { useSessions } from "../../../hooks/useSessions";
-import { useSessionTranscript } from "../../../hooks/useSessionTranscript";
-import { Transcript } from "../../Session/Transcript";
+import { SessionPane } from "../../Session/SessionPane";
 import { instanceSessionRef } from "../../../lib/sessionRef";
 import type { SessionRef } from "../../../lib/types";
 
@@ -40,9 +46,16 @@ export function SessionLeaf({
   const base = targetRef(target);
   const { sessions } = useSessions();
 
+  const inst = useMemo(
+    () =>
+      base?.mode === "live"
+        ? sessions.find((s) => s.instance_id === base.instance_id)
+        : undefined,
+    [base, sessions],
+  );
+
   const effective: SessionRef | undefined = useMemo(() => {
     if (!base || base.mode === "history") return base;
-    const inst = sessions.find((s) => s.instance_id === base.instance_id);
     if (inst) {
       // A persisted leaf target names the session the user docked; it
       // stays pinned, and only a target without one follows the
@@ -53,9 +66,7 @@ export function SessionLeaf({
       return { mode: "history", runner_id: base.runner_id, session_id: base.session_id };
     }
     return undefined;
-  }, [base, sessions]);
-
-  const transcript = useSessionTranscript(effective);
+  }, [base, inst]);
 
   if (!base) {
     return (
@@ -74,40 +85,23 @@ export function SessionLeaf({
     );
   }
 
-  const sessionId = effective.session_id;
-
   return (
-    <div
-      className="session-view"
-      style={{ gridTemplateColumns: "1fr", height: "100%" }}
-    >
-      <div className="hdr" style={{ fontSize: 11 }}>
-        <span>{effective.mode === "live" ? "live" : "transcript"}</span>
-        <code style={{ fontSize: 10, color: "var(--p2-fg-faint)" }}>
-          {sessionId ?? "discovering…"}
-        </code>
-        <span className="spacer" style={{ flex: 1 }} />
-        <span style={{ color: "var(--p2-fg-faint)" }}>{effective.runner_id}</span>
-      </div>
-      {transcript.error ? (
-        <div className="stream" style={{ borderRight: "none" }}>
-          <div style={{ color: "#e06c5f", padding: 8, fontSize: 11 }}>
-            Transcript unavailable — the recorded runner may be offline.
-          </div>
-        </div>
-      ) : (
-        <Transcript
-          className="stream"
-          messages={transcript.messages}
-          emptyText={
-            transcript.starting
-              ? "Session starting — the runner is still discovering it."
-              : transcript.isLoading
-                ? "Loading transcript…"
-                : "No messages yet."
-          }
-        />
-      )}
-    </div>
+    <SessionPane
+      className="session-leaf"
+      sref={effective}
+      liveLabel={inst?.status === "busy" ? "working" : "live"}
+      checkinSeed={
+        inst?.title
+          ? { title: inst.title }
+          : inst?.task_id
+            ? { title: inst.task_id }
+            : undefined
+      }
+      headerExtra={
+        <span style={{ color: "var(--p2-fg-faint)", fontSize: 10 }}>
+          {effective.runner_id}
+        </span>
+      }
+    />
   );
 }

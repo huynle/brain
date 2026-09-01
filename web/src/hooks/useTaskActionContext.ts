@@ -198,17 +198,15 @@ export function useTaskActionContextFactory(): (
 
       liveSessionRef: (task: Task) =>
         liveSessionRef({ id: task.id, projectId }, allInstances),
+      /*
+       * One effect for the one session verb. A live ref also arms the
+       * steer intent, so the composer is focused on arrival — the whole
+       * of what the separate "Steer session…" entry used to add, now
+       * that every session surface has a composer to focus.
+       */
       openSession: (_task: Task, ref: SessionRef) => {
         closeModal();
-        openSessionRef(ref);
-      },
-      openTranscript: (_task: Task, ref: SessionRef) => {
-        closeModal();
-        openSessionRef(ref);
-      },
-      openSteer: (_task: Task, ref: SessionRef) => {
-        closeModal();
-        setSteerIntent(true);
+        if (ref.mode === "live") setSteerIntent(true);
         openSessionRef(ref);
       },
 

@@ -7,6 +7,7 @@ import {
   instanceTranscriptRef,
   liveSessionRef,
   resolveSessionRef,
+  sessionSteerState,
 } from "./sessionRef";
 import type { OpencodeInstance } from "./types";
 
@@ -168,4 +169,63 @@ test("instanceTranscriptRef: exited with no session is unaddressable", () => {
     instanceTranscriptRef(inst({ status: "exited", session_ids: [] })),
     undefined,
   );
+});
+
+
+// ─── sessionSteerState (can the user type into this transcript?) ────
+
+const LIVE = {
+  mode: "live" as const,
+  runner_id: "r1",
+  instance_id: "i1",
+  session_id: "ses_1",
+};
+
+test("sessionSteerState: a live, addressable, streaming session steers", () => {
+  assert.deepEqual(sessionSteerState(LIVE, "streaming"), {
+    canSteer: true,
+    note: "",
+  });
+  // Falling back to the 10s poll is a delivery downgrade, not a dead
+  // session — prompts still reach the runner.
+  assert.equal(sessionSteerState(LIVE, "polling").canSteer, true);
+});
+
+test("sessionSteerState: a history ref is a recording", () => {
+  const r = sessionSteerState(
+    { mode: "history", runner_id: "r1", session_id: "ses_1" },
+    "none",
+  );
+  assert.equal(r.canSteer, false);
+  assert.match(r.note, /recorded transcript/);
+});
+
+test("sessionSteerState: an ended stream closes the composer", () => {
+  // The ref still claims live — the instance exited while we watched.
+  // Without this the composer stays enabled over a dead process.
+  const r = sessionSteerState(LIVE, "ended");
+  assert.equal(r.canSteer, false);
+  assert.match(r.note, /stream ended/);
+});
+
+test("sessionSteerState: no session id yet is the starting window", () => {
+  const r = sessionSteerState({ ...LIVE, session_id: undefined }, "streaming");
+  assert.equal(r.canSteer, false);
+  assert.match(r.note, /Waiting for the session id/);
+});
+
+test("sessionSteerState: no ref at all", () => {
+  const r = sessionSteerState(undefined, "none");
+  assert.equal(r.canSteer, false);
+  assert.match(r.note, /No session/);
+});
+
+test("sessionSteerState: a host note wins over the generic wording", () => {
+  const note = "This process has exited — the transcript is read-only.";
+  assert.equal(sessionSteerState(LIVE, "ended", note).note, note);
+  // But it never turns a steerable session read-only.
+  assert.deepEqual(sessionSteerState(LIVE, "streaming", note), {
+    canSteer: true,
+    note: "",
+  });
 });

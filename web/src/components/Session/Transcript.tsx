@@ -14,9 +14,14 @@
  * lines survive exactly as before.
  *
  * Autoscroll: pinned-to-bottom while the user is at (or near) the
- * bottom; scrolling away detaches, scrolling back re-pins.
+ * bottom; scrolling away detaches, scrolling back re-pins. A live
+ * transcript grows in two ways React's message-array identity does not
+ * capture on its own — a streaming text part reflows to a taller box,
+ * a <details> block opens — so a ResizeObserver on the content re-pins
+ * on every height change too. While detached, a "Jump to latest" button
+ * says so out loud and offers the way back.
  */
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { OcMessage, OcPart } from "../../lib/types";
 import { isInjectedCheckin } from "../../lib/transcript";
 import { TerminalText } from "../common/TerminalText";
@@ -131,18 +136,35 @@ function MessageView({ message }: { message: OcMessage }): JSX.Element {
           </span>
         )}
       </div>
-      {message.parts.map((p) => (
-        <PartView key={p.id} part={p} />
+      {/*
+        Part ids are absent on some payloads (and on the stub a part
+        arriving before its message creates). React then warns and, worse,
+        remounts the <pre> on every delta — the exact nodes a streaming
+        turn is rewriting. Index is a safe fallback: parts are
+        append-only within a message and never reordered.
+      */}
+      {message.parts.map((p, i) => (
+        <PartView key={p.id || `${message.info.id}-part-${i}`} part={p} />
       ))}
     </div>
   );
 }
+
+/** How close to the bottom still counts as "following the tail" (px). */
+const PIN_THRESHOLD = 48;
 
 export interface TranscriptProps {
   messages: OcMessage[];
   className?: string;
   style?: React.CSSProperties;
   emptyText?: string;
+  /** Changing this re-pins to the bottom — pass the session id so
+   *  switching sessions starts at the newest message, not at whatever
+   *  scroll offset the previous one was left at. */
+  resetKey?: string;
+  /** Show the "Jump to latest" affordance while detached. Off for
+   *  read-only history, where nothing new is arriving below. */
+  follow?: boolean;
 }
 
 export function Transcript({
@@ -150,31 +172,91 @@ export function Transcript({
   className,
   style,
   emptyText = "No messages yet.",
+  resetKey,
+  follow = false,
 }: TranscriptProps): JSX.Element {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const pinnedRef = useRef(true);
+  // Mirrored into state only so the jump button can render; the ref is
+  // what the scroll effects read, so they never see a stale value.
+  const [pinned, setPinned] = useState(true);
+
+  const setPin = useCallback((next: boolean) => {
+    pinnedRef.current = next;
+    setPinned((prev) => (prev === next ? prev : next));
+  }, []);
+
+  const stickToBottom = useCallback(() => {
+    const el = containerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, []);
 
   const onScroll = () => {
     const el = containerRef.current;
     if (!el) return;
-    pinnedRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+    setPin(el.scrollHeight - el.scrollTop - el.clientHeight < PIN_THRESHOLD);
   };
 
+  // A different session starts pinned again.
   useEffect(() => {
-    const el = containerRef.current;
-    if (el && pinnedRef.current) {
-      el.scrollTop = el.scrollHeight;
-    }
-  }, [messages]);
+    setPin(true);
+    stickToBottom();
+  }, [resetKey, setPin, stickToBottom]);
 
+  useEffect(() => {
+    if (pinnedRef.current) stickToBottom();
+  }, [messages, stickToBottom]);
+
+  /*
+   * Message-array identity is not the only thing that moves the tail.
+   * A streaming text part rewrites one existing node — its box grows
+   * without the list changing length — and TerminalText, images and
+   * <details> all settle their height after the commit that added them.
+   * Observing the content box catches every one of those.
+   */
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (pinnedRef.current) stickToBottom();
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, [stickToBottom]);
+
+  const jump = () => {
+    setPin(true);
+    stickToBottom();
+  };
+
+  /*
+   * The scroll container keeps taking the caller's className and style
+   * verbatim — every surface sizes this element itself. The jump button
+   * rides along as a sticky child rather than an absolutely-positioned
+   * sibling, so no wrapper element gets between the caller's layout and
+   * the scroller.
+   */
   return (
     <div ref={containerRef} className={className} style={style} onScroll={onScroll}>
-      {messages.length === 0 && (
-        <div style={{ color: "var(--p2-fg-faint, #6b757e)", padding: 12 }}>{emptyText}</div>
+      <div ref={contentRef}>
+        {messages.length === 0 && (
+          <div style={{ color: "var(--p2-fg-faint, #6b757e)", padding: 12 }}>
+            {emptyText}
+          </div>
+        )}
+        {/* Same reason as the parts above: messages are append-only. */}
+        {messages.map((m, i) => (
+          <MessageView key={m.info.id || `msg-${i}`} message={m} />
+        ))}
+      </div>
+      {follow && !pinned && messages.length > 0 && (
+        <div className="transcript-jump-wrap">
+          <button type="button" className="transcript-jump" onClick={jump}>
+            ↓ Jump to latest
+          </button>
+        </div>
       )}
-      {messages.map((m) => (
-        <MessageView key={m.info.id} message={m} />
-      ))}
     </div>
   );
 }

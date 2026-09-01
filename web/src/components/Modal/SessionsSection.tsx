@@ -9,7 +9,7 @@
  * OWN recorded runner (sessions can span runners across retries).
  *
  * `onView` is the caller's choice of what "View" does — TaskModal routes
- * it to the full-page session view (`openTranscript`); TaskDetailLeaf
+ * it to the full-page session view (`openSession`); TaskDetailLeaf
  * routes it to `openSessionInDrawer` so the row opens as a sibling pane
  * in the sidebar dock instead of navigating away. "Continue" always
  * reopens the session live via `continueSession` — spawning a fresh

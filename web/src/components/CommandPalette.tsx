@@ -4,6 +4,12 @@
  * ⌘K / Ctrl+K opens; Esc closes. Renders a scrim + centered search
  * input + command list. Commands map to workspace/modal store
  * actions. Type-filter narrows the list.
+ *
+ * Two sources feed the list. Local commands are built synchronously
+ * from stores already in memory and filtered by label substring. Brain
+ * entries can't work that way — there are thousands and none are
+ * loaded — so they come from a debounced server search and are
+ * appended below, unfiltered (see `filtered`).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -14,6 +20,8 @@ import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
 import { useActionRunner } from "../hooks/useActionRunner";
 import { useGoals } from "../hooks/useGoals";
+import { usePaletteEntrySearch } from "../hooks/useEntries";
+import { entryHitLabel, entryHitTitle } from "../lib/paletteEntries";
 import { useGoalActionContext } from "../hooks/useGoalActionContext";
 import { useTaskActionContextFactory } from "../hooks/useTaskActionContext";
 import { useFeatureActionContextFactory } from "../hooks/useFeatureActionContext";
@@ -73,6 +81,7 @@ export function CommandPalette(): JSX.Element | null {
   const goalCtx = useGoalActionContext();
   const runner = useActionRunner();
   const runAction = runner.run;
+  const entryHits = usePaletteEntrySearch(query, open);
 
   useEffect(() => {
     if (open) {
@@ -242,13 +251,39 @@ export function CommandPalette(): JSX.Element | null {
     runAction,
   ]);
 
+  /**
+   * Brain entries, straight from the server search.
+   *
+   * The short id goes in `hint` rather than the label: the palette
+   * renders it as a right-aligned <kbd>, so an id lookup shows you the
+   * id it matched.
+   */
+  const entryCommands: Command[] = useMemo(
+    () =>
+      entryHits.results.map((r) => ({
+        id: `entry:${r.path}`,
+        label: entryHitLabel(r),
+        hint: r.id,
+        action: () =>
+          openInSidebar("entry", { path: r.path }, entryHitTitle(r)),
+      })),
+    [entryHits.results, openInSidebar],
+  );
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return commands.slice(0, 50);
-    return commands
-      .filter((c) => c.label.toLowerCase().includes(q))
-      .slice(0, 50);
-  }, [commands, query]);
+    const local = q
+      ? commands.filter((c) => c.label.toLowerCase().includes(q))
+      : commands;
+    // Entry hits are appended, never run through the substring filter:
+    // they were matched server-side by id, path, or body text, none of
+    // which appear in the label, so filtering would drop every one.
+    return [...local.slice(0, 50), ...entryCommands];
+  }, [commands, entryCommands, query]);
+
+  // Entry hits land after the query settles, so the list can shrink
+  // without the query changing — clamp rather than trusting `selected`.
+  const sel = Math.min(selected, filtered.length - 1);
 
   useEffect(() => {
     setSelected(0);
@@ -276,7 +311,7 @@ export function CommandPalette(): JSX.Element | null {
         <input
           ref={inputRef}
           type="search"
-          placeholder="Type a command, project, feature, task, or runner…"
+          placeholder="Command, project, feature, task, runner, or entry id…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           onKeyDown={(e) => {
@@ -287,17 +322,17 @@ export function CommandPalette(): JSX.Element | null {
             }
             if (e.key === "ArrowDown") {
               e.preventDefault();
-              setSelected((s) => Math.min(s + 1, filtered.length - 1));
+              setSelected(Math.min(sel + 1, filtered.length - 1));
               return;
             }
             if (e.key === "ArrowUp") {
               e.preventDefault();
-              setSelected((s) => Math.max(s - 1, 0));
+              setSelected(Math.max(sel - 1, 0));
               return;
             }
             if (e.key === "Enter") {
               e.preventDefault();
-              const cmd = filtered[selected];
+              const cmd = filtered[sel];
               if (cmd) run(cmd);
               return;
             }
@@ -306,7 +341,9 @@ export function CommandPalette(): JSX.Element | null {
         <div className="palette-list">
           {filtered.length === 0 && (
             <div style={{ padding: 12, color: "#6b757e", fontSize: 11 }}>
-              No commands match.
+              {entryHits.searching
+                ? "Searching entries…"
+                : "No commands match."}
             </div>
           )}
           {filtered.map((c, i) => (
@@ -315,7 +352,7 @@ export function CommandPalette(): JSX.Element | null {
               onClick={() => run(c)}
               onMouseEnter={() => setSelected(i)}
               style={
-                i === selected
+                i === sel
                   ? { background: "#1e2833", color: "#f4b23a" }
                   : undefined
               }

@@ -15,8 +15,8 @@
  *     sidebar-opened view cannot drift from the Processes tab.
  *   • When there is no live instance but a history ref exists (a
  *     completed-task transcript opened via a task verb), the middle
- *     column renders the read-only transcript. No composer — the
- *     process is gone.
+ *     column renders the same SessionPane, which resolves itself to
+ *     read-only because the ref is a recording — the process is gone.
  *
  * SessionFull keeps its own outer chrome: the breadcrumb header
  * (project label, title, Overview / Focus split / Close for adhoc) and
@@ -25,10 +25,9 @@
 import { useMemo, useState } from "react";
 import { useWorkspace } from "../../store/workspace";
 import { useSessions } from "../../hooks/useSessions";
-import { useSessionTranscript } from "../../hooks/useSessionTranscript";
 import { useUI } from "../../store/ui";
 import { controlKillInstance } from "../../lib/api";
-import { Transcript } from "../Session/Transcript";
+import { SessionPane } from "../Session/SessionPane";
 import { ProcessChat, ProcessRawLog, ViewToggle } from "../RunnerProcesses";
 import { instanceSessionRef } from "../../lib/sessionRef";
 import {
@@ -121,11 +120,6 @@ export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element
     return undefined;
   }, [sref, inst]);
 
-  // Read-only transcript for the history-only branch (no live instance).
-  // ProcessChat resolves its own transcript in the instance branch, so
-  // this is only consumed when `mode === "history"`.
-  const historyTranscript = useSessionTranscript(inst ? undefined : effective);
-
   const back = () => {
     setFocusSession(undefined);
     setView("overview");
@@ -213,39 +207,9 @@ export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element
             <ProcessRawLog inst={inst} toggle={toggle} />
           )
         ) : (
-          // History-only: read-only transcript, no composer.
-          <div
-            className="stream"
-            style={{
-              padding: 0,
-              display: "flex",
-              flexDirection: "column",
-              overflow: "hidden",
-              borderRight: "none",
-            }}
-          >
-            {historyTranscript.error ? (
-              <div style={{ color: "#e06c5f", padding: 12 }}>
-                Transcript unavailable — the recorded runner may be offline.
-                <div style={{ color: "#6b757e", marginTop: 6, fontSize: 11 }}>
-                  {String(
-                    (historyTranscript.error as Error)?.message ??
-                      historyTranscript.error,
-                  )}
-                </div>
-              </div>
-            ) : (
-              <Transcript
-                style={{ flex: 1, overflowY: "auto", padding: "8px 12px" }}
-                messages={historyTranscript.messages}
-                emptyText={
-                  historyTranscript.isLoading
-                    ? "Loading transcript…"
-                    : "No messages yet."
-                }
-              />
-            )}
-          </div>
+          // History-only: the same pane, which resolves itself to
+          // read-only because the ref is a recording.
+          <SessionPane sref={effective} />
         )}
       </div>
 

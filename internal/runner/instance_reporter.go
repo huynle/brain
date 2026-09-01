@@ -111,8 +111,8 @@ func (tr *TaskRunner) instanceSnapshot() []types.OpencodeInstance {
 		inst := tr.taskInstance(&info, hostname)
 		out = append(out, inst)
 	}
-	if tr.bridgeClient != nil {
-		out = append(out, tr.bridgeClient.AdhocInstances(hostname)...)
+	if bridge := tr.getBridgeClient(); bridge != nil {
+		out = append(out, bridge.AdhocInstances(hostname)...)
 	}
 	return out
 }
@@ -131,8 +131,8 @@ func (tr *TaskRunner) reportInstance(inst types.OpencodeInstance) {
 	}
 	// Keep the bridge event pump running for every known instance so
 	// control events (permissions, idle) flow even without a browser attached.
-	if tr.bridgeClient != nil && inst.Port > 0 {
-		tr.bridgeClient.EnsurePump(inst.InstanceID)
+	if bridge := tr.getBridgeClient(); bridge != nil && inst.Port > 0 {
+		bridge.EnsurePump(inst.InstanceID)
 	}
 }
 
@@ -142,8 +142,8 @@ func (tr *TaskRunner) removeInstance(instanceID string) {
 	if instanceID == "" {
 		return
 	}
-	if tr.bridgeClient != nil {
-		tr.bridgeClient.StopPump(instanceID)
+	if bridge := tr.getBridgeClient(); bridge != nil {
+		bridge.StopPump(instanceID)
 	}
 	reporter, ok := tr.client.(instanceReporterClient)
 	if !ok {

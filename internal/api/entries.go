@@ -170,6 +170,12 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 			Message: fmt.Sprintf("invalid executor %q; valid values: opencode, pi", req.Executor),
 		})
 	}
+	if req.MachineAffinity != "" && !types.IsValidMachineAffinity(req.MachineAffinity) {
+		details = append(details, types.ValidationDetail{
+			Field:   "machine_affinity",
+			Message: fmt.Sprintf("invalid machine_affinity %q; valid values: local, preferred, none", req.MachineAffinity),
+		})
+	}
 	if req.FeaturePriority != "" && !types.IsValidPriority(req.FeaturePriority) {
 		details = append(details, types.ValidationDetail{
 			Field:   "feature_priority",
@@ -446,6 +452,12 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		details = append(details, types.ValidationDetail{
 			Field:   "executor",
 			Message: fmt.Sprintf("invalid executor %q; valid values: opencode, pi", *req.Executor),
+		})
+	}
+	if req.MachineAffinity != nil && !types.IsValidMachineAffinity(*req.MachineAffinity) {
+		details = append(details, types.ValidationDetail{
+			Field:   "machine_affinity",
+			Message: fmt.Sprintf("invalid machine_affinity %q; valid values: local, preferred, none", *req.MachineAffinity),
 		})
 	}
 	if req.FeaturePriority != nil && !types.IsValidPriority(*req.FeaturePriority) {
@@ -1347,6 +1359,12 @@ func validateUpdateEnums(prefix string, req *types.UpdateEntryRequest) []types.V
 			Message: fmt.Sprintf("invalid execution_mode %q", *req.ExecutionMode),
 		})
 	}
+	if req.MachineAffinity != nil && !types.IsValidMachineAffinity(*req.MachineAffinity) {
+		details = append(details, types.ValidationDetail{
+			Field:   prefix + ".machine_affinity",
+			Message: fmt.Sprintf("invalid machine_affinity %q", *req.MachineAffinity),
+		})
+	}
 	if req.FeaturePriority != nil && !types.IsValidPriority(*req.FeaturePriority) {
 		details = append(details, types.ValidationDetail{
 			Field:   prefix + ".feature_priority",
@@ -1740,6 +1758,10 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		RemoteBranchPolicy:  strPtr(fm.RemoteBranchPolicy),
 		ExecutionMode:       strPtr(fm.ExecutionMode),
 		CheckoutMode:        strPtr(fm.CheckoutMode),
+		OriginMachineID:     strPtr(fm.OriginMachineID),
+		OriginClientID:      strPtr(fm.OriginClientID),
+		OriginPath:          strPtr(fm.OriginPath),
+		MachineAffinity:     strPtr(fm.MachineAffinity),
 		DirectPrompt:        strPtr(fm.DirectPrompt),
 		UserOriginalRequest: strPtr(fm.UserOriginalRequest),
 		Agent:               strPtr(fm.Agent),

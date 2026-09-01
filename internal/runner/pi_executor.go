@@ -254,7 +254,7 @@ func (e *PiExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, projec
 		}
 	}
 
-	switch opts.Mode {
+	switch opts.Mode.SpawnMode() {
 	case ExecutionModeHeadless:
 		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts.RuntimeDefaultModel)
 	case ExecutionModeTUI:
@@ -262,7 +262,7 @@ func (e *PiExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, projec
 	case ExecutionModeDashboard:
 		return e.spawnDashboard(ctx, task, projectID, workdir, promptFile, opts)
 	default:
-		return nil, fmt.Errorf("unknown execution mode: %s", opts.Mode)
+		return nil, fmt.Errorf("unknown execution mode: %q (valid modes: headless, foreground, tui, dashboard)", opts.Mode)
 	}
 }
 

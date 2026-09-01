@@ -122,6 +122,7 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 				"remote_branch_policy":  {Type: "string", Enum: types.RemoteBranchPolicies, Description: "Remote branch cleanup after merge"},
 				"open_pr_before_merge":  {Type: "boolean", Description: "Require PR before merge"},
 				"execution_mode":        {Type: "string", Enum: types.ExecutionModes, Description: "Task execution mode (default: worktree)"},
+				"machine_affinity":      {Type: "string", Enum: types.MachineAffinities, Description: "Where this task may run, relative to the machine it was created on. 'preferred' (the default when the machine is known) favors a runner on this machine but allows any other. 'local' restricts it to this machine only — the task waits rather than running elsewhere. 'none' ignores the origin machine. The origin machine/client/path are stamped automatically; this only chooses the policy."},
 				"complete_on_idle":      {Type: "boolean", Description: "Mark task as completed when agent becomes idle (default: false). Useful for fire-and-forget tasks."},
 				"checkout_mode":         {Type: "string", Enum: types.CheckoutModes, Description: "Feature checkout automation mode: 'ai' (default) runs the feature-checkout skill; 'simple' triggers a deterministic squash-merge automation. Only meaningful on task entries whose feature completion triggers a checkout automation."},
 				"related_entries":       {Type: "array", Items: &Property{Type: "string"}, Description: "Related brain entries to link, each named by title, path, or 8-char ID. Appended to the entry as a \"## Related\" section of wiki-links."},
@@ -163,6 +164,45 @@ If project is omitted, the entry is saved to the project detected from the MCP s
 				body["git_branch"] = StringArg(args, "git_branch", execCtx.GitBranch)
 			}
 			body["target_workdir"] = args["target_workdir"]
+
+			// Origin provenance: which machine, which client install, and
+			// which absolute directory this task was authored in. Stamped
+			// from the ambient context rather than taken from args, because
+			// it describes the caller, not the caller's intent — an agent
+			// cannot know these and should not be able to spoof them.
+			//
+			// Gated on the ambient context actually describing the caller.
+			// Over the in-process HTTP transport it describes the Brain API
+			// host instead, and stamping that would pin every task created
+			// through it to the API server.
+			if s.ambientContextDescribesCaller() {
+				if execCtx.HostID != "" {
+					body["origin_machine_id"] = execCtx.HostID
+				}
+				if execCtx.ClientID != "" {
+					body["origin_client_id"] = execCtx.ClientID
+				}
+				if execCtx.AbsPath != "" {
+					body["origin_path"] = execCtx.AbsPath
+				}
+			}
+			// machine_affinity IS caller intent, so it comes from args
+			// regardless of transport; left unset it resolves to "preferred"
+			// whenever an origin machine is known, and to "none" otherwise
+			// (see types.ResolveMachineAffinity).
+			if v, ok := args["machine_affinity"].(string); ok && v != "" {
+				// "local" needs an origin machine to be local TO. Over the
+				// HTTP transport none is stamped, so the task would be
+				// refused by every runner forever with
+				// machine_affinity_unresolved. Fail here, where the caller
+				// can still see why, instead of stranding it in the queue.
+				if v == types.MachineAffinityLocal && !s.ambientContextDescribesCaller() {
+					return "", fmt.Errorf("machine_affinity=%q is unavailable on this MCP server: it runs inside the Brain API and cannot identify your machine, so the task would never become runnable — use the stdio MCP server, or pass %q/%q",
+						types.MachineAffinityLocal, types.MachineAffinityPreferred, types.MachineAffinityNone)
+				}
+				body["machine_affinity"] = v
+			}
+
 			body["user_original_request"] = args["user_original_request"]
 			body["feature_id"] = args["feature_id"]
 			body["feature_priority"] = args["feature_priority"]
@@ -1233,6 +1273,9 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 				"model":                 {Type: "string", Description: "Override model (format: 'provider/model-id')"},
 				"executor":              {Type: "string", Enum: []string{"", "opencode", "pi", "script"}, Description: "Executor backend for this task: 'opencode', 'pi', or 'script'. Empty = use runner default."},
 				"extensions":            {Type: "array", Items: &Property{Type: "string"}, Description: "Additional extensions to load for this task (e.g., ['code-review', 'auto-commit'])"},
+				"machine_affinity":      {Type: "string", Enum: types.MachineAffinities, Description: "Where this task may run relative to its origin machine: 'local' (origin machine only), 'preferred' (favor it, allow others), 'none' (ignore it)."},
+				"origin_machine_id":     {Type: "string", Description: "Re-home this task to a different machine. Normally stamped automatically at creation — set it only to move a task whose origin machine is gone or wrong."},
+				"origin_path":           {Type: "string", Description: "Absolute directory on the origin machine that this task should run in. Normally stamped automatically at creation."},
 			},
 			Required: []string{"path"},
 		},
@@ -1247,6 +1290,7 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 			"schedule", "run_once_at", "timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
 			"feature_schedule", "feature_starts_at", "feature_expires_at", "feature_run_once_at", "feature_timezone",
 			"direct_prompt", "user_original_request", "agent", "model", "executor", "checkout_mode",
+			"machine_affinity", "origin_machine_id", "origin_path",
 		)
 		addPresentUpdateFields(body, cleanArgs,
 			"depends_on", "tags", "open_pr_before_merge", "complete_on_idle", "schedule_enabled", "max_runs",

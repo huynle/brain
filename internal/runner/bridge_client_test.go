@@ -119,7 +119,7 @@ func TestBridge_EndToEnd(t *testing.T) {
 	defer cancel()
 
 	bc := NewBridgeClient(tr)
-	tr.bridgeClient = bc
+	tr.setBridgeClient(bc)
 	go bc.Start(ctx)
 
 	waitFor(t, 5*time.Second, func() bool { return hub.Connected(runnerID) }, "bridge connection")
@@ -313,7 +313,7 @@ func TestBridgeExec_EndToEnd(t *testing.T) {
 	}
 
 	bc := NewBridgeClient(tr)
-	tr.bridgeClient = bc
+	tr.setBridgeClient(bc)
 	go bc.Start(ctx)
 	waitFor(t, 5*time.Second, func() bool { return hub.Connected(runnerID) }, "bridge connection")
 

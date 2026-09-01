@@ -134,7 +134,7 @@ export function TaskModal(): JSX.Element {
       <SessionsSection
         task={task}
         projectId={projectId}
-        onView={(t, ref) => taskCtx.openTranscript(t, ref)}
+        onView={(t, ref) => taskCtx.openSession(t, ref)}
       />
 
       {task.content && (

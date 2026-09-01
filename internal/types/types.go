@@ -160,6 +160,65 @@ const (
 	WorkspacePolicyCurrentBranch = "current_branch"
 )
 
+// Task-level machine affinity. Unlike ProjectPlacement's Affinity — which is
+// project-wide and names machines explicitly — this is per-task and resolves
+// against the task's own OriginMachineID, so "run this where I made it" needs
+// no configuration at all.
+const (
+	// MachineAffinityLocal hard-filters placement to the origin machine. A
+	// task with no origin machine can never satisfy this, so it stays
+	// unplaced rather than silently running somewhere else.
+	MachineAffinityLocal = "local"
+	// MachineAffinityPreferred scores the origin machine ahead of others but
+	// still allows placement elsewhere. This is the default when an origin
+	// machine is known: a local runner wins when one is available, and the
+	// task does not starve when none is.
+	MachineAffinityPreferred = "preferred"
+	// MachineAffinityNone ignores the origin machine entirely.
+	MachineAffinityNone = "none"
+)
+
+// MachineAffinities lists the valid values, for schema enums and validation.
+var MachineAffinities = []string{
+	MachineAffinityLocal,
+	MachineAffinityPreferred,
+	MachineAffinityNone,
+}
+
+// IsValidMachineAffinity reports whether s is a recognized affinity value.
+// The empty string is valid and means "unset" — see ResolveMachineAffinity.
+func IsValidMachineAffinity(s string) bool {
+	if s == "" {
+		return true
+	}
+	for _, v := range MachineAffinities {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// ResolveMachineAffinity returns the effective affinity for a task, applying
+// the default: "preferred" when an origin machine is known, "none" otherwise.
+//
+// Defaulting to preferred rather than local is deliberate. A strict default
+// turns "the origin machine's runner is offline" into a task that never runs
+// and reports no reason anyone would think to look for; preferred degrades to
+// today's behavior instead. Opting into local is an explicit choice.
+func ResolveMachineAffinity(affinity, originMachineID string) string {
+	if affinity == "" {
+		if originMachineID == "" {
+			return MachineAffinityNone
+		}
+		return MachineAffinityPreferred
+	}
+	if !IsValidMachineAffinity(affinity) {
+		return MachineAffinityNone
+	}
+	return affinity
+}
+
 // ProjectPlacement stores Brain-owned scheduling placement policy for a project.
 type ProjectPlacement struct {
 	ProjectID            string            `json:"project_id"`
@@ -334,6 +393,18 @@ type BrainEntry struct {
 	RequiresCapability  []string `json:"requires_capability,omitempty"`
 	CompleteOnIdle      *bool    `json:"complete_on_idle,omitempty"`
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
+
+	// Origin provenance — where this task was created from. Stamped by the
+	// MCP stdio server from its ExecutionContext at create time. Persisted
+	// in frontmatter (not runtime-only) because it is authored intent, not
+	// scheduler bookkeeping: it must survive a re-index.
+	//
+	// OriginPath is the caller's ABSOLUTE cwd, and is only meaningful on the
+	// machine named by OriginMachineID — see MachineAffinity.
+	OriginMachineID string `json:"origin_machine_id,omitempty"`
+	OriginClientID  string `json:"origin_client_id,omitempty"`
+	OriginPath      string `json:"origin_path,omitempty"`
+	MachineAffinity string `json:"machine_affinity,omitempty"`
 
 	// Feature grouping
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
@@ -662,14 +733,21 @@ type CreateEntryRequest struct {
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
 	Executor            string   `json:"executor,omitempty"`
 	Extensions          []string `json:"extensions,omitempty"`
-	FeatureID           string   `json:"feature_id,omitempty"`
-	FeaturePriority     string   `json:"feature_priority,omitempty"`
-	FeatureDependsOn    []string `json:"feature_depends_on,omitempty"`
-	FeatureSchedule     string   `json:"feature_schedule,omitempty"`
-	FeatureStartsAt     string   `json:"feature_starts_at,omitempty"`
-	FeatureExpiresAt    string   `json:"feature_expires_at,omitempty"`
-	FeatureRunOnceAt    string   `json:"feature_run_once_at,omitempty"`
-	FeatureTimezone     string   `json:"feature_timezone,omitempty"`
+
+	// Origin provenance stamped by the creating client (see BrainEntry).
+	OriginMachineID string `json:"origin_machine_id,omitempty"`
+	OriginClientID  string `json:"origin_client_id,omitempty"`
+	OriginPath      string `json:"origin_path,omitempty"`
+	MachineAffinity string `json:"machine_affinity,omitempty"`
+
+	FeatureID        string   `json:"feature_id,omitempty"`
+	FeaturePriority  string   `json:"feature_priority,omitempty"`
+	FeatureDependsOn []string `json:"feature_depends_on,omitempty"`
+	FeatureSchedule  string   `json:"feature_schedule,omitempty"`
+	FeatureStartsAt  string   `json:"feature_starts_at,omitempty"`
+	FeatureExpiresAt string   `json:"feature_expires_at,omitempty"`
+	FeatureRunOnceAt string   `json:"feature_run_once_at,omitempty"`
+	FeatureTimezone  string   `json:"feature_timezone,omitempty"`
 
 	DirectPrompt string `json:"direct_prompt,omitempty"`
 	Agent        string `json:"agent,omitempty"`
@@ -737,6 +815,14 @@ type UpdateEntryRequest struct {
 	Executor           *string   `json:"executor,omitempty"`
 	Extensions         *[]string `json:"extensions,omitempty"`
 	CheckoutMode       *string   `json:"checkout_mode,omitempty"`
+
+	// Origin provenance (see BrainEntry). Updatable so a task can be
+	// re-homed to a different machine, or its affinity relaxed, without
+	// recreating it.
+	OriginMachineID *string `json:"origin_machine_id,omitempty"`
+	OriginClientID  *string `json:"origin_client_id,omitempty"`
+	OriginPath      *string `json:"origin_path,omitempty"`
+	MachineAffinity *string `json:"machine_affinity,omitempty"`
 
 	FeatureID        *string   `json:"feature_id,omitempty"`
 	FeaturePriority  *string   `json:"feature_priority,omitempty"`
@@ -1157,6 +1243,14 @@ type ResolvedTask struct {
 	CompleteOnIdle      *bool             `json:"complete_on_idle,omitempty"`
 	TargetWorkdir       string            `json:"target_workdir,omitempty"`
 	Env                 map[string]string `json:"env,omitempty"`
+
+	// Origin provenance (see BrainEntry). Carried to the runner so it can
+	// prefer OriginPath when it is itself OriginMachineID, and to the
+	// scheduler so it can honor MachineAffinity.
+	OriginMachineID string `json:"origin_machine_id,omitempty"`
+	OriginClientID  string `json:"origin_client_id,omitempty"`
+	OriginPath      string `json:"origin_path,omitempty"`
+	MachineAffinity string `json:"machine_affinity,omitempty"`
 
 	// Session tracking
 	Sessions map[string]SessionInfo `json:"sessions,omitempty"`

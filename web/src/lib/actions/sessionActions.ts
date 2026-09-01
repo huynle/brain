@@ -200,9 +200,11 @@ export function buildSessionActions(
   // ─── navigate ───────────────────────────────────────────────────
   actions.push({
     id: "watch",
-    // Honest about process state, like instanceTranscriptRef: an
-    // exited process's session is a recording, not something to watch.
-    label: inst.status === "exited" ? "View transcript" : "Watch session",
+    // Same two labels the task menu's session verb uses, chosen the same
+    // way: live sessions stream and steer, exited ones are recordings.
+    // Honest about process state, like instanceTranscriptRef.
+    label:
+      inst.status === "exited" ? "Open session transcript" : "Open live session",
     group: "navigate",
     key: "w",
     disabledReason: watchSessionBlockedReason(inst),

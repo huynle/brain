@@ -107,6 +107,23 @@ func (s *Server) requireLocalFilesystem(arg, alternative string) error {
 	return fmt.Errorf("%q is unavailable on this MCP server: it runs inside the Brain API, so the path would resolve on the API host's filesystem instead of yours — %s", arg, alternative)
 }
 
+// ambientContextDescribesCaller reports whether GetCachedContext() describes
+// the client that made this call, rather than the process serving it.
+//
+// GetCachedContext is a process-global computed once from os.Getwd(). Under
+// stdio that is right: the server is a child of the client and inherits its
+// working directory. Under the in-process HTTP transport it is the Brain API
+// server's own directory and identity, shared by every client on it — so
+// stamping origin provenance from it would brand every task with the API
+// host's machine id and pin them all there.
+//
+// It shares the localFilesystem flag with requireLocalFilesystem because it
+// is the same underlying fact: only the stdio transport is co-located with
+// its caller.
+func (s *Server) ambientContextDescribesCaller() bool {
+	return s != nil && s.localFilesystem
+}
+
 // RegisterTool registers a tool with its handler.
 func (s *Server) RegisterTool(tool Tool, handler ToolHandler) {
 	s.mu.Lock()

@@ -115,6 +115,96 @@ When a runner dies mid-task, or when a task's claim lease expires without renewa
 - Idempotent: a resume on a task already `pending+resume_requested=true` returns `Resumed=false` with an explanatory `Reason` and skips cleanup work.
 - The orphan reaper (`tryReapOrphan`) skips tasks with `resume_requested=true` and re-reads the task immediately before its status flip, so a Resume that races with a reaper doesn't get silently reverted.
 
+### OpenCode session identity (who owns which session)
+
+The PWA addresses a transcript by `(instance_id, session_id)`, so a task that
+records the wrong session ID silently streams a *different* task's
+conversation — no error, anywhere.
+
+- **The session is pinned, not discovered.** `spawnHeadless` calls
+  `createOpencodeSession` (`POST /session`) on the serve process it just
+  started and hands the ID to `opencode run --attach --session <id>`. The ID
+  is then known exactly and `discoverAndSaveSession` records it as-is.
+- **Discovery cannot be made reliable on its own**, which is why pinning
+  exists. `GET /session` is a **store-wide** listing, not a per-server one:
+  every `opencode serve` against the same workdir lists the same sessions
+  (observed listings reach past that workdir too). The per-spawn
+  `ExistingSessionIDs` baseline is a snapshot taken *before* any sibling's
+  session existed, so it can never exclude a session another concurrent spawn
+  is about to claim. With `execution_mode: current_branch` (shared workdir)
+  and `--max-parallel > 1`, every task landed on one session ID. Production
+  mostly escaped this because `worktree` mode gives each task its own
+  directory.
+- **The fallback path is still hardened**, for when `POST /session` fails or
+  the bridge is disabled: `claimDiscoveredSession` holds `sessionClaimMu`
+  across pick-and-record and folds this runner's already-claimed session IDs
+  (tracked tasks + bridge ad-hoc instances) into the exclude set, so two
+  in-flight discoveries cannot converge. It ranks candidates by
+  `time.created` **ascending** — `time.updated` moves whenever the agent
+  writes, so recency says nothing about ownership.
+- A task re-discovering may always re-claim its own session
+  (`claimedSessionIDs` skips the calling task's path); the claim must not
+  starve an idempotent retry.
+
+### Task origin + machine affinity
+
+A task records where it was created, so it can be run back there. Three
+provenance fields (`origin_machine_id`, `origin_client_id`, `origin_path`) are
+stamped by the **stdio** MCP server from its `ExecutionContext`, plus a
+caller-chosen `machine_affinity` (`local` | `preferred` | `none`).
+
+- **`origin_path` is the caller's ACTUAL cwd** — the linked worktree, absolute.
+  That is what distinguishes it from `workdir`, which is home-relative and gets
+  re-resolved against whichever host runs the task; on a machine with a
+  different layout that guess silently lands on another checkout, or falls
+  through to `ensureCachedRemoteRepo` and clones a fresh copy.
+- **The default is `preferred`, not `local`**, whenever an origin machine is
+  known (`types.ResolveMachineAffinity`). Preferred is a +75 score in
+  `scoreMachine` — outranking the project-level preferred-machine bonus, since
+  it is the only signal distinguishing two tasks in the same project created on
+  different machines. Only `local` is a hard filter. A strict default would
+  turn "the origin machine's runner is offline" into a task that never runs and
+  names no reason.
+- **Enforced on BOTH dispatch paths** via `machineAffinitySatisfied`: push in
+  `runnerEligibleForTask`, pull in `filterByRunnerEligibility`. Enforcing one
+  only would let a polling runner elsewhere quietly undo the pin. Rejections
+  surface as `machine_affinity_mismatch` / `machine_affinity_unresolved` in the
+  same reasons slice as every other check.
+- **Everything fails closed.** `local` with no origin is refused rather than
+  widened to "anywhere". An unregistered runner (no row, so every other filter
+  is skipped) is served no pinned tasks. The runner honors `origin_path` only
+  when `RunnerConfig.MachineID` equals the task's origin — an absolute path
+  from another host would otherwise open an unrelated directory. `MachineID` is
+  derived in `NewExecutorRegistry`, the one chokepoint both runnercli entry
+  points share; empty means "unknown machine", which never matches.
+- **Stamping is gated on the transport** (`Server.ambientContextDescribesCaller`,
+  sharing the `WithLocalFilesystem` flag). `GetCachedContext` is a
+  process-global from `os.Getwd()`; under the in-process HTTP transport that is
+  the API host, shared by every client, so stamping it would brand every task
+  with the API host's machine id and — at `local` — pin them all there. Over HTTP,
+  `machine_affinity=local` is refused at creation rather than queued unrunnable.
+  Note the pre-existing `workdir`/`git_remote`/`git_branch` stamping at the same
+  call site is NOT gated this way.
+- **Generated tasks carry no origin** by design — automation and goal
+  `createTask` deliberately omit it, since server-generated work has no human
+  caller and stamping would pin it to the API box.
+- **Known limitation**: `ClaimTask` does not validate affinity, so a runner that
+  claims a task directly by id bypasses the pin. Both discovery paths (push
+  dispatch and `/next`) are filtered, so this is not reachable by accident;
+  `requires_capability` has the identical gap.
+
+Adding another frontmatter task field means SEVEN registration points, and
+missing any one is silent — unknown YAML keys land in `Frontmatter.Extra`,
+which nothing reads: the `Frontmatter` struct (both `yaml` AND `json` tags —
+the indexer marshals the struct into `notes.metadata`), `rawFrontmatter`,
+`knownFields`, the raw→Frontmatter copy in `Parse`, the `Generate` serializer,
+`GenerateOptions` + its literal, then `parseMetadataIntoEntry`
+(`internal/service/task.go`) and `brainEntryToResolvedTask`
+(`internal/service/taskdeps.go`). The last two are the hops that left
+`checkout_mode` write-only. Use `emit` (escaped) for anything caller-settable;
+`emitPlain` is only safe for closed enums, since `SanitizeSimpleValue` strips
+NULs and newlines but not YAML metacharacters.
+
 ### MCP transports + local paths
 
 The MCP server ships in two transports, and only one of them shares a

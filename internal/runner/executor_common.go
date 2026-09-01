@@ -25,7 +25,8 @@ import (
 
 // CommonResolveWorkdir resolves the working directory for a task.
 // For worktree execution mode, it ensures a git worktree exists and returns its path.
-// Fallback chain: worktree > target_workdir > resolved_workdir > config default.
+// Fallback chain: worktree > target_workdir > origin_path (same machine only)
+// > workdir > resolved_workdir > config default.
 //
 // This is executor-agnostic and can be used by any executor implementation.
 func CommonResolveWorkdir(task *types.ResolvedTask, config RunnerConfig, cmdFactory CommandFactory) (string, error) {
@@ -54,6 +55,13 @@ func CommonResolveWorkdir(task *types.ResolvedTask, config RunnerConfig, cmdFact
 	if task.TargetWorkdir != "" {
 		if _, err := os.Stat(task.TargetWorkdir); err == nil {
 			return task.TargetWorkdir, nil
+		}
+	}
+	// Same origin-before-workdir ordering as resolveRepoContext, so
+	// current_branch mode lands in the caller's own directory too.
+	if p := taskOriginWorkdir(task, config); p != "" {
+		if _, err := os.Stat(p); err == nil {
+			return p, nil
 		}
 	}
 	if task.Workdir != "" {
@@ -121,6 +129,18 @@ func ensureWorktreeForTaskWithConfig(task *types.ResolvedTask, config RunnerConf
 		}
 	}
 
+	// From here on we are going to CREATE a worktree, so anchor on the
+	// repository's main worktree. mainRepoPath may itself be a linked
+	// worktree — the task's origin_path points at wherever its author was
+	// sitting — and hanging {path}/.worktrees off a linked worktree nests
+	// them one level deeper on every hop. Every check above this point
+	// (current branch, existing worktree) works correctly from any worktree,
+	// which is why the normalization belongs here and not in
+	// resolveRepoContext.
+	if main := mainWorktreeRoot(mainRepoPath, cmdFactory); main != "" {
+		mainRepoPath = main
+	}
+
 	// Compute worktree path: {mainRepo}/.worktrees/{sanitized-branch}
 	sanitizedBranch := sanitizeBranchName(branch)
 	worktreePath := filepath.Join(mainRepoPath, ".worktrees", sanitizedBranch)
@@ -170,6 +190,25 @@ func resolveRepoContext(task *types.ResolvedTask, config RunnerConfig, cmdFactor
 		}
 	}
 
+	// Origin path, but only on the machine the task was created on. This
+	// comes BEFORE task.Workdir because task.Workdir is home-relative and
+	// re-resolved against whatever host runs the task: on the origin machine
+	// origin_path is the directory the author was actually sitting in, while
+	// the home-relative guess can land on a different checkout of the same
+	// repo — or, if the name collides, a different repo entirely.
+	//
+	// The path is returned as-is, NOT normalized to the main worktree. When
+	// the author was inside a linked worktree and no new worktree is being
+	// created, that linked worktree is exactly where the work belongs.
+	// Normalization happens only at the point a worktree is actually created
+	// (see ensureWorktreeForTaskWithConfig), which is the only place the
+	// {repo}/.worktrees layout invariant is at stake.
+	if p := taskOriginWorkdir(task, config); p != "" {
+		if isGitRepo(p, cmdFactory) {
+			return p, nil
+		}
+	}
+
 	if task.Workdir != "" {
 		p := resolveTaskWorkdirPath(task.Workdir)
 		if isGitRepo(p, cmdFactory) {
@@ -182,6 +221,57 @@ func resolveRepoContext(task *types.ResolvedTask, config RunnerConfig, cmdFactor
 	}
 
 	return "", nil
+}
+
+// taskOriginWorkdir returns the task's origin_path when this runner is on the
+// machine that created the task, and "" otherwise.
+//
+// Every condition here fails closed, because origin_path is an absolute path
+// supplied by whoever created the task and is only meaningful on one host:
+//
+//   - no origin machine on the task, or no machine id on this runner, means
+//     we cannot establish that this is the same host — so we do not use it;
+//   - a relative origin_path is rejected outright rather than joined to
+//     something, since there is no directory it could sensibly be relative to
+//     on the runner side.
+//
+// Callers still validate the path before using it, so one that no longer
+// exists (the worktree was removed after the task was queued) falls through
+// to the rest of the chain. Note the two callers validate differently:
+// resolveRepoContext requires a git repo, while CommonResolveWorkdir's plain
+// fallback only requires the directory to exist — matching how it treats
+// target_workdir and workdir on that same path.
+func taskOriginWorkdir(task *types.ResolvedTask, config RunnerConfig) string {
+	originPath := strings.TrimSpace(task.OriginPath)
+	originMachine := strings.TrimSpace(task.OriginMachineID)
+	if originPath == "" || originMachine == "" {
+		return ""
+	}
+	if strings.TrimSpace(config.MachineID) != originMachine {
+		return ""
+	}
+	if !filepath.IsAbs(originPath) {
+		return ""
+	}
+	return originPath
+}
+
+// mainWorktreeRoot returns the path of the repository's main worktree, given
+// any path inside it. `git worktree list --porcelain` always lists the main
+// worktree first. Returns "" when the path is not in a repo or git is
+// unavailable, so callers can fall back to the path they already have.
+func mainWorktreeRoot(path string, cmdFactory CommandFactory) string {
+	cmd := cmdFactory("git", "-C", path, "worktree", "list", "--porcelain")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(line, "worktree ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "worktree "))
+		}
+	}
+	return ""
 }
 
 func resolveTaskWorkdirPath(workdir string) string {

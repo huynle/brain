@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -25,6 +26,14 @@ type ExecutionContext struct {
 	Workdir   string // Home-relative path to main repo
 	GitRemote string // Git remote URL (origin)
 	GitBranch string // Current git branch
+
+	// AbsPath is the caller's ACTUAL working directory, absolute and
+	// un-normalized — the linked worktree, not the main repo. Workdir is
+	// home-relative and gets re-resolved against whatever host runs the
+	// task; AbsPath is only meaningful together with HostID, and is stamped
+	// on tasks as origin_path so a runner on the same machine can use the
+	// directory the author was really in.
+	AbsPath string
 
 	// Identity context (who/where is calling). Populated once per process.
 	ClientID string // MCP per-install client id (e.g. mcp-<uuid>)
@@ -87,9 +96,19 @@ func GetExecutionContext(directory string) ExecutionContext {
 		}
 	}
 
+	// Only claim an absolute origin path when git vouched for the directory
+	// being a repository. Outside a repo there is nothing for a runner to do
+	// with the path, and stamping one would invite it to open an unrelated
+	// directory that happens to exist at the same location.
+	absPath := ""
+	if insideRepo && filepath.IsAbs(directory) {
+		absPath = directory
+	}
+
 	return ExecutionContext{
 		ProjectID: resolveProjectName(workdir, insideRepo),
 		Workdir:   workdir,
+		AbsPath:   absPath,
 		GitRemote: gitRemote,
 		GitBranch: gitBranch,
 

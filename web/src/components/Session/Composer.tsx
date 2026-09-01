@@ -96,7 +96,13 @@ export function Composer({
               void send();
             }
           }}
-          style={{ flex: 1 }}
+          /*
+           * No inline `flex: 1` here. `.session-view .composer input`
+           * already sets it, and an inline style outranks the narrow-pane
+           * and mobile rules that give the input a row of its own
+           * (`flex: 1 1 100%`) — which is why those overrides had never
+           * actually taken effect. Width belongs to the stylesheet.
+           */
         />
         <button onClick={() => void send()} disabled={sending || !text.trim()}>
           {sending ? "Sending…" : "Send"}

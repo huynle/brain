@@ -105,6 +105,18 @@ type RunnerConfig struct {
 	// RUNNER_DISPATCH_PUSH env var.
 	DispatchPush bool `yaml:"dispatch_push" json:"dispatch_push"`
 
+	// MachineID is this host's stable machine id. It is DERIVED, never
+	// user-configured (hence yaml/json "-"): NewExecutorRegistry fills it
+	// from ResolveMachineID so workdir resolution can tell "this task was
+	// created here" from "this task was created somewhere else".
+	//
+	// An empty value means "unknown machine", and workdir resolution treats
+	// that as not-a-match. Failing closed matters: a task's origin_path is
+	// an absolute path chosen by whoever created the task, and honoring it
+	// on the wrong host would open a directory that has nothing to do with
+	// the work.
+	MachineID string `yaml:"-" json:"-"`
+
 	// Labels and resource metadata are advertised to the scheduler during
 	// registration and heartbeat so placement can target suitable runners.
 	Labels         map[string]string      `yaml:"labels" json:"labels"`
@@ -272,7 +284,30 @@ const (
 	ExecutionModeTUI       ExecutionMode = "tui"
 	ExecutionModeDashboard ExecutionMode = "dashboard"
 	ExecutionModeHeadless  ExecutionMode = "headless"
+
+	// ExecutionModeForeground is what `brain run start --foreground` sets. It
+	// describes how the RUNNER presents itself — no TUI, attached to the
+	// invoking shell — and says nothing about how tasks are spawned. Executors
+	// must not switch on it directly; SpawnMode folds it to the spawn strategy
+	// it implies.
+	ExecutionModeForeground ExecutionMode = "foreground"
 )
+
+// SpawnMode returns the mode an executor should switch on.
+//
+// Modes that only describe the runner's own presentation fold to the spawn
+// strategy they imply, so adding one cannot silently turn every task into
+// "unknown execution mode" at spawn time — which is exactly what --foreground
+// did: the script executor ignores the mode and kept working, while every
+// OpenCode and Pi task failed to spawn.
+func (m ExecutionMode) SpawnMode() ExecutionMode {
+	switch m {
+	case ExecutionModeForeground, "":
+		return ExecutionModeHeadless
+	default:
+		return m
+	}
+}
 
 // RunningTask represents a task currently being executed by the runner.
 type RunningTask struct {

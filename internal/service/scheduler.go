@@ -658,7 +658,10 @@ func (s *SchedulerService) selectCandidate(task types.ResolvedTask, projectID st
 		}
 		candidate := machines[machineID]
 		if candidate == nil {
-			candidate = &schedulerMachineCandidate{machineID: machineID, score: scoreMachine(machineID, placement)}
+			candidate = &schedulerMachineCandidate{
+				machineID: machineID,
+				score:     scoreMachine(machineID, placement, task),
+			}
 			machines[machineID] = candidate
 		}
 		candidate.runners = append(candidate.runners, schedulerCandidate{runner: runner})
@@ -744,10 +747,40 @@ func runnerEligibleForTask(task types.ResolvedTask, projectID string, runner typ
 	if placement.Affinity == types.PlacementAffinityStrict && !machineAllowedByStrictAffinity(runner.MachineID, placement) {
 		return "strict affinity mismatch", false
 	}
+	if reason, ok := machineAffinitySatisfied(task, runner.MachineID); !ok {
+		return reason, false
+	}
 	return "eligible", true
 }
 
-func scoreMachine(machineID string, placement *types.ProjectPlacement) int {
+// machineAffinitySatisfied enforces a task's own machine_affinity against a
+// candidate runner's machine. Only "local" is a hard filter; "preferred" is
+// expressed as a score in scoreMachine, and "none" is unconstrained.
+//
+// This is called from both dispatch paths — here for push, and from
+// TaskServiceImpl.filterByRunnerEligibility for pull. Enforcing it in only
+// one place would mean a "local" task still gets picked up by a polling
+// runner on another machine, which is the exact failure the field exists to
+// prevent.
+func machineAffinitySatisfied(task types.ResolvedTask, runnerMachineID string) (string, bool) {
+	if types.ResolveMachineAffinity(task.MachineAffinity, task.OriginMachineID) != types.MachineAffinityLocal {
+		return "eligible", true
+	}
+	origin := strings.TrimSpace(task.OriginMachineID)
+	if origin == "" {
+		// machine_affinity=local with nothing to be local to. Refuse rather
+		// than fall back to "anywhere": the author asked for a constraint,
+		// and silently ignoring it is worse than an unplaced task with a
+		// reason attached.
+		return reasonMachineAffinityUnresolved, false
+	}
+	if strings.TrimSpace(runnerMachineID) != origin {
+		return reasonMachineAffinityMismatch, false
+	}
+	return "eligible", true
+}
+
+func scoreMachine(machineID string, placement *types.ProjectPlacement, task types.ResolvedTask) int {
 	score := 100
 	if stringSliceContains(placement.PreferredMachines, machineID) {
 		score += 50
@@ -755,7 +788,26 @@ func scoreMachine(machineID string, placement *types.ProjectPlacement) int {
 	if len(placement.AllowedMachines) > 0 && stringSliceContains(placement.AllowedMachines, machineID) {
 		score += 25
 	}
+	// Task-level origin affinity outranks the project-level preference: the
+	// machine the task was authored on is a stronger signal than a blanket
+	// project policy, and it is the only signal that distinguishes two tasks
+	// in the same project created from different machines.
+	if machineIsTaskOrigin(machineID, task) {
+		switch types.ResolveMachineAffinity(task.MachineAffinity, task.OriginMachineID) {
+		case types.MachineAffinityLocal, types.MachineAffinityPreferred:
+			score += 75
+		}
+	}
 	return score
+}
+
+// machineIsTaskOrigin reports whether machineID is the machine the task was
+// created on. An empty origin never matches — including against the synthetic
+// "runner:<id>" id selectCandidate substitutes for a runner that reports no
+// machine id, which must not be mistaken for a match.
+func machineIsTaskOrigin(machineID string, task types.ResolvedTask) bool {
+	origin := strings.TrimSpace(task.OriginMachineID)
+	return origin != "" && machineID == origin
 }
 
 func remainingCapacity(runner types.RunnerInfo) int {
@@ -871,6 +923,21 @@ func stringSliceContains(values []string, target string) bool {
 // refused the task) and from already_leased (someone else holds the lease) —
 // here placement succeeded and the lease was ours; only the delivery failed.
 const reasonRunnerUnreachable = "runner_unreachable"
+
+// Machine-affinity ineligibility tokens. These flow out through the same
+// per-runner `reasons` slice as every other eligibility check, so they land
+// in placement reasons and are visible via task_placement_reasons rather
+// than presenting as an unexplained stuck task.
+const (
+	// reasonMachineAffinityMismatch: the task asked to run on its origin
+	// machine and this runner is on a different one.
+	reasonMachineAffinityMismatch = "machine_affinity_mismatch"
+	// reasonMachineAffinityUnresolved: the task asked to run on its origin
+	// machine but carries no origin machine id — usually a task created
+	// before origin stamping, or by a client that could not resolve its own
+	// machine id. Relax machine_affinity or set origin_machine_id.
+	reasonMachineAffinityUnresolved = "machine_affinity_unresolved"
+)
 
 // publishDispatch publishes a dispatch command and reports whether it
 // actually reached the runner's live command stream.

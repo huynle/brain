@@ -6,7 +6,7 @@
  * destructive verbs all confirm but none demand type-to-confirm (kill
  * is not a data delete — the transcript survives), pi/script rows get
  * honest executor reasons instead of a dead chat verb, and the watch
- * label flips to "View transcript" once the process has exited.
+ * label flips to "Open session transcript" once the process has exited.
  */
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
@@ -93,14 +93,14 @@ test("every session verb is present regardless of status and kind", () => {
 
 // ─── watch ─────────────────────────────────────────────────────────
 
-test("watch is enabled live, reads View transcript once exited", () => {
+test("watch is enabled live, reads Open session transcript once exited", () => {
   const { ctx } = recorder();
   const live = byId(mkInst({ status: "busy" }), ctx).get("watch")!;
-  assert.equal(live.label, "Watch session");
+  assert.equal(live.label, "Open live session");
   assert.ok(isEnabled(live));
 
   const exited = byId(mkInst({ status: "exited" }), ctx).get("watch")!;
-  assert.equal(exited.label, "View transcript");
+  assert.equal(exited.label, "Open session transcript");
   assert.ok(isEnabled(exited));
 });
 

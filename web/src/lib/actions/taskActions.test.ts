@@ -48,17 +48,18 @@ function recorder(over: Partial<TaskActionContext> = {}) {
     abortTask: async (t) => void calls.push(`abort:${t.id}`),
     openResume: (t) => void calls.push(`resume:${t.id}`),
     openDetails: (t) => void calls.push(`details:${t.id}`),
-    openLogs: (t) => void calls.push(`logs:${t.id}`),
+    watchInFocus: (t, ref) =>
+      void calls.push(
+        `watch-focus:${t.id}:${ref ? (ref.mode === "history" ? ref.session_id : "live") : "none"}`,
+      ),
     openMetadata: (t) => void calls.push(`metadata:${t.id}`),
     openStatusPicker: (t) => void calls.push(`picker:${t.id}`),
     openGoalCreate: (t) => void calls.push(`goal-create:${t.id}`),
     liveSessionRef: () => undefined,
-    openSession: (t) => void calls.push(`watch:${t.id}`),
-    openTranscript: (t, ref) =>
+    openSession: (t, ref) =>
       void calls.push(
-        `transcript:${t.id}:${ref.mode === "history" ? ref.session_id : "?"}`,
+        `session:${t.id}:${ref.mode === "history" ? ref.session_id : "live"}`,
       ),
-    openSteer: (t) => void calls.push(`steer:${t.id}`),
     continueSession: async (t, ref) =>
       void calls.push(
         `continue:${t.id}:${ref.mode === "history" ? ref.session_id : "?"}`,
@@ -90,7 +91,7 @@ test("every core verb is present for an ordinary pending task", () => {
     "metadata",
     "set-goal",
     "details",
-    "logs",
+    "watch-focus",
     "delete",
   ]) {
     assert.ok(ids.includes(expected), `missing action: ${expected}`);
@@ -478,12 +479,12 @@ test("navigation and edit actions route to their openers", async () => {
   const { calls, ctx } = recorder();
   const actions = byId(mkTask(), ctx);
   await actions.get("details")!.run();
-  await actions.get("logs")!.run();
+  await actions.get("watch-focus")!.run();
   await actions.get("metadata")!.run();
   await actions.get("status")!.run();
   assert.deepEqual(calls, [
     "details:t1",
-    "logs:t1",
+    "watch-focus:t1:none",
     "metadata:t1",
     "picker:t1",
   ]);
@@ -550,7 +551,7 @@ test("picking a status routes to setStatus with that status", async () => {
   assert.deepEqual(calls, ["status:t1:completed"]);
 });
 
-// ─── watch / transcript (session verbs) ─────────────────────────────
+// ─── session (the one consolidated session verb) ────────────────────
 
 const LIVE_REF = {
   mode: "live" as const,
@@ -566,76 +567,116 @@ const RECORDED = {
   },
 };
 
-test("watch: enabled for a running opencode task with a live session", () => {
-  const { ctx } = recorder({ liveSessionRef: () => LIVE_REF });
-  const a = byId(mkTask({ status: "in_progress" }), ctx).get("watch")!;
-  assert.equal(isEnabled(a), true);
-});
-
-test("watch: disabled with reason for pi executor", () => {
-  const { ctx } = recorder({ liveSessionRef: () => LIVE_REF });
-  const a = byId(mkTask({ status: "in_progress", executor: "pi" }), ctx).get(
-    "watch",
+test("session: prefers the live ref and says so in the label", async () => {
+  const { calls, ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+  const a = byId(mkTask({ status: "in_progress", ...RECORDED }), ctx).get(
+    "session",
   )!;
-  assert.match(a.disabledReason ?? "", /Executor is pi/);
+  assert.equal(a.label, "Open live session");
+  assert.equal(isEnabled(a), true);
+  await a.run();
+  assert.deepEqual(calls, ["session:t1:live"]);
 });
 
-test("watch: disabled for non-running statuses", () => {
-  const { ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+test("session: falls back to the newest recorded session once settled", async () => {
+  const { calls, ctx } = recorder();
+  const a = byId(mkTask({ status: "completed", ...RECORDED }), ctx).get(
+    "session",
+  )!;
+  assert.equal(a.label, "Open session transcript");
+  assert.equal(isEnabled(a), true);
+  await a.run();
+  assert.deepEqual(calls, ["session:t1:ses_new"]);
+});
+
+test("session: a recorded transcript survives the task no longer running", () => {
+  // The old "Watch session" verb was disabled for every non-running
+  // status, which meant a completed task's menu offered a disabled entry
+  // next to an enabled one. There is one entry now, and it is enabled.
+  const { ctx } = recorder({ liveSessionRef: () => undefined });
   for (const status of ["pending", "completed", "blocked"] as const) {
-    const a = byId(mkTask({ status }), ctx).get("watch")!;
-    assert.match(a.disabledReason ?? "", /only a running task/);
+    const a = byId(mkTask({ status, ...RECORDED }), ctx).get("session")!;
+    assert.equal(isEnabled(a), true, status);
   }
 });
 
-test("watch: disabled when no live instance is found", () => {
-  const { ctx } = recorder({ liveSessionRef: () => undefined });
-  const a = byId(mkTask({ status: "in_progress" }), ctx).get("watch")!;
-  assert.match(a.disabledReason ?? "", /Runner is offline/);
-});
-
-test("watch: routes to openSession", async () => {
-  const { calls, ctx } = recorder({ liveSessionRef: () => LIVE_REF });
-  await byId(mkTask({ status: "in_progress" }), ctx).get("watch")!.run();
-  assert.deepEqual(calls, ["watch:t1"]);
-});
-
-test("transcript: enabled when sessions are recorded; newest is default", async () => {
-  const { calls, ctx } = recorder();
-  const a = byId(mkTask({ status: "completed", ...RECORDED }), ctx).get(
-    "transcript",
-  )!;
-  assert.equal(isEnabled(a), true);
-  await a.run();
-  assert.deepEqual(calls, ["transcript:t1:ses_new"]);
-});
-
-test("transcript: disabled with pi-specific reason when pi and nothing recorded", () => {
-  const { ctx } = recorder();
-  const a = byId(mkTask({ status: "completed", executor: "pi" }), ctx).get(
-    "transcript",
-  )!;
-  assert.match(a.disabledReason ?? "", /recorded for OpenCode tasks only/);
-});
-
-test("transcript: disabled with discovery hint when nothing recorded", () => {
-  const { ctx } = recorder();
-  const a = byId(mkTask({ status: "completed" }), ctx).get("transcript")!;
-  assert.match(a.disabledReason ?? "", /discovery may have failed/);
-});
-
-test("transcript: recorded sessions win even on a pi-labeled task", () => {
-  // A task that ran on opencode then was retried on pi keeps its recorded
-  // sessions readable.
+test("session: recorded sessions win even on a pi-labeled task", () => {
+  // A task that ran on opencode then was retried on pi keeps its
+  // recorded sessions readable.
   const { ctx } = recorder();
   const a = byId(
     mkTask({ status: "completed", executor: "pi", ...RECORDED }),
     ctx,
-  ).get("transcript")!;
+  ).get("session")!;
   assert.equal(isEnabled(a), true);
 });
 
-// ─── open-session-sidebar (drawer verb — "either works") ────────────
+test("session: a running task with no live instance blames the runner", () => {
+  const { ctx } = recorder({ liveSessionRef: () => undefined });
+  const a = byId(mkTask({ status: "in_progress" }), ctx).get("session")!;
+  assert.match(a.disabledReason ?? "", /Runner is offline/);
+});
+
+test("session: pi with nothing recorded reports the executor reason", () => {
+  const { ctx } = recorder();
+  const a = byId(mkTask({ status: "completed", executor: "pi" }), ctx).get(
+    "session",
+  )!;
+  assert.match(a.disabledReason ?? "", /recorded for OpenCode tasks only/);
+});
+
+test("session: nothing recorded at all gives the discovery hint", () => {
+  const { ctx } = recorder();
+  const a = byId(mkTask({ status: "completed" }), ctx).get("session")!;
+  assert.match(a.disabledReason ?? "", /discovery may have failed/);
+});
+
+test("session: the separate watch / transcript / steer verbs are gone", () => {
+  const { ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+  const menu = byId(mkTask({ status: "in_progress", ...RECORDED }), ctx);
+  for (const id of ["watch", "transcript", "steer"]) {
+    assert.equal(menu.get(id), undefined, id);
+  }
+});
+
+// ─── watch-focus (the Focus watch layout) ───────────────────────────
+
+test("watch-focus: passes the live ref while the task is running", async () => {
+  const { calls, ctx } = recorder({ liveSessionRef: () => LIVE_REF });
+  const a = byId(mkTask({ status: "in_progress" }), ctx).get("watch-focus")!;
+  assert.equal(a.label, "Watch in Focus");
+  await a.run();
+  assert.deepEqual(calls, ["watch-focus:t1:live"]);
+});
+
+test("watch-focus: reads Review once the task has settled", async () => {
+  const { calls, ctx } = recorder();
+  const a = byId(mkTask({ status: "completed", ...RECORDED }), ctx).get(
+    "watch-focus",
+  )!;
+  assert.equal(a.label, "Review in Focus");
+  await a.run();
+  assert.deepEqual(calls, ["watch-focus:t1:ses_new"]);
+});
+
+test("watch-focus: stays enabled with no session at all — the log is still there", async () => {
+  // A pi/script task has no transcript but always has stdout, so the
+  // verb opens the half that exists rather than refusing.
+  const { calls, ctx } = recorder();
+  const a = byId(mkTask({ status: "completed", executor: "pi" }), ctx).get(
+    "watch-focus",
+  )!;
+  assert.equal(isEnabled(a), true);
+  await a.run();
+  assert.deepEqual(calls, ["watch-focus:t1:none"]);
+});
+
+test("watch-focus: replaces the old single-pane logs verb", () => {
+  const { ctx } = recorder();
+  assert.equal(byId(mkTask({}), ctx).get("logs"), undefined);
+});
+
+// ─── open-session-sidebar (same ref, docked instead of navigated) ───
 
 test("open-session-sidebar: prefers the live ref when the task is running", async () => {
   const { calls, ctx } = recorder({
@@ -661,34 +702,19 @@ test("open-session-sidebar: falls back to the newest recorded session", async ()
   assert.deepEqual(calls, ["open-session-sidebar:t1:ses_new"]);
 });
 
-test("open-session-sidebar: disabled only when neither a live nor a recorded session exists", () => {
+test("open-session-sidebar: shares the one session gate", () => {
   const { ctx } = recorder();
   const a = byId(mkTask({ status: "pending" }), ctx).get(
     "open-session-sidebar",
   )!;
-  assert.match(a.disabledReason ?? "", /No session/);
+  assert.equal(
+    a.disabledReason,
+    byId(mkTask({ status: "pending" }), ctx).get("session")!.disabledReason,
+  );
+  assert.match(a.disabledReason ?? "", /discovery may have failed/);
 });
 
-// ─── steer / continue (session verbs) ───────────────────────────────
-
-test("steer: enabled for a running opencode task and routes to openSteer", async () => {
-  const { calls, ctx } = recorder({ liveSessionRef: () => LIVE_REF });
-  const a = byId(mkTask({ status: "in_progress" }), ctx).get("steer")!;
-  assert.equal(isEnabled(a), true);
-  await a.run();
-  assert.deepEqual(calls, ["steer:t1"]);
-});
-
-test("steer: shares the watch gate (pi / not running / no instance)", () => {
-  const { ctx } = recorder({ liveSessionRef: () => undefined });
-  const a = byId(mkTask({ status: "in_progress" }), ctx).get("steer")!;
-  assert.match(a.disabledReason ?? "", /Runner is offline/);
-  const pi = byId(
-    mkTask({ status: "in_progress", executor: "pi" }),
-    recorder({ liveSessionRef: () => LIVE_REF }).ctx,
-  ).get("steer")!;
-  assert.match(pi.disabledReason ?? "", /Executor is pi/);
-});
+// ─── continue (spawns a fresh instance — still its own verb) ────────
 
 test("continue: enabled for a settled task with a recorded workdir", async () => {
   const { calls, ctx } = recorder();

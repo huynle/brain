@@ -13,6 +13,9 @@ import { test } from "node:test";
 import {
   addLeafAtEdge,
   addNodeAtEdge,
+  addSubtreeAtEdge,
+  countLeaves,
+  evenSplitTree,
   findNodeInfo,
   firstLeaf,
   isDockLeafKind,
@@ -514,4 +517,117 @@ test("dock: moving one of three siblings between panes keeps other two intact", 
   walkLeaves(moved, (l) => titles.push(l.title));
   // A is now merged with C into tabs; B still there.
   assert.deepEqual(titles.sort(), ["A", "B", "C"]);
+});
+
+
+// ─── countLeaves ──────────────────────────────────────────────────────
+
+test("countLeaves: null and single-leaf trees", () => {
+  assert.equal(countLeaves(null), 0);
+  assert.equal(countLeaves(undefined), 0);
+  assert.equal(countLeaves(newLeafNode(mkLeaf("A"))), 1);
+});
+
+test("countLeaves: counts through splits and tab strips", () => {
+  const { tree } = tabsInSplit(); // tabs[A, B] beside D
+  assert.equal(countLeaves(tree), 3);
+});
+
+// ─── evenSplitTree ────────────────────────────────────────────────────
+
+/** Fraction of the dock each leaf gets, walking the ratio down. */
+function shares(tree: DockNode, acc = 1): Record<string, number> {
+  if (tree.type === "leaf") return { [tree.leaf.title]: acc };
+  if (tree.type === "tabs") return {};
+  const [a, b] = tree.children;
+  return {
+    ...shares(a, acc * tree.ratio),
+    ...shares(b, acc * (1 - tree.ratio)),
+  };
+}
+
+test("evenSplitTree: empty is null, one node is itself", () => {
+  assert.equal(evenSplitTree([], "row"), null);
+  const only = newLeafNode(mkLeaf("A"));
+  assert.equal(evenSplitTree([only], "row"), only);
+});
+
+test("evenSplitTree: two panes split down the middle", () => {
+  const tree = evenSplitTree(
+    [newLeafNode(mkLeaf("A")), newLeafNode(mkLeaf("B"))],
+    "row",
+  )!;
+  assert.equal(tree.type, "split");
+  assert.deepEqual(shares(tree), { A: 0.5, B: 0.5 });
+});
+
+test("evenSplitTree: every pane gets an equal share at any N", () => {
+  // The whole point. Chaining splits off the last pane instead would
+  // give the first half the dock and the last an eighth.
+  for (const n of [3, 4, 5, 6]) {
+    const nodes = Array.from({ length: n }, (_, i) =>
+      newLeafNode(mkLeaf(`L${i}`)),
+    );
+    const got = shares(evenSplitTree(nodes, "row")!);
+    assert.equal(Object.keys(got).length, n, `n=${n}`);
+    for (const [title, share] of Object.entries(got)) {
+      assert.ok(
+        Math.abs(share - 1 / n) < 1e-9,
+        `n=${n} ${title} got ${share}, expected ${1 / n}`,
+      );
+    }
+  }
+});
+
+test("evenSplitTree: builds binary splits only — PaneNode renders two children", () => {
+  const nodes = Array.from({ length: 5 }, (_, i) =>
+    newLeafNode(mkLeaf(`L${i}`)),
+  );
+  const seen: number[] = [];
+  const walk = (n: DockNode): void => {
+    if (n.type === "split") {
+      seen.push(n.children.length);
+      n.children.forEach(walk);
+    }
+  };
+  walk(evenSplitTree(nodes, "row")!);
+  assert.ok(seen.length > 0);
+  assert.deepEqual([...new Set(seen)], [2]);
+});
+
+// ─── addSubtreeAtEdge ─────────────────────────────────────────────────
+
+test("addSubtreeAtEdge: docks a whole group beside an existing pane", () => {
+  const existing = newLeafNode(mkLeaf("existing"));
+  const group = evenSplitTree(
+    [newLeafNode(mkLeaf("G1")), newLeafNode(mkLeaf("G2"))],
+    "row",
+  )!;
+  const next = addSubtreeAtEdge(existing, existing.id, "right", group);
+  // Nothing displaced: the existing pane survives alongside the group.
+  assert.deepEqual(titles(next).sort(), ["G1", "G2", "existing"]);
+  assert.equal(countLeaves(next), 3);
+});
+
+test("addSubtreeAtEdge: an unknown target is a no-op, never a wipe", () => {
+  const tree = newLeafNode(mkLeaf("A"));
+  const group = newLeafNode(mkLeaf("B"));
+  assert.equal(addSubtreeAtEdge(tree, "nope", "right", group), tree);
+});
+
+test("addSubtreeAtEdge: retargets to the strip when the anchor is a tab", () => {
+  // Same rule addNodeAtEdge follows: "beside this tab" means beside the
+  // whole strip, because a strip holds leaves, not containers.
+  const { tree, aId } = tabsInSplit();
+  const group = newLeafNode(mkLeaf("G"));
+  const next = addSubtreeAtEdge(tree, aId, "right", group);
+  assert.equal(countLeaves(next), 4);
+  // A and B stayed together in their strip rather than being torn apart.
+  let strip: DockNode | null = null;
+  const walk = (n: DockNode): void => {
+    if (n.type === "tabs") strip = n;
+    else if (n.type === "split") n.children.forEach(walk);
+  };
+  walk(next);
+  assert.ok(strip, "the tab strip survived");
 });

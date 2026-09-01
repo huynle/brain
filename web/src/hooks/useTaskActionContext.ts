@@ -55,6 +55,7 @@ export function useTaskActionContextFactory(): (
   const openModal = useModal((s) => s.open);
   const closeModal = useModal((s) => s.close);
   const openInFocus = useWorkspace((s) => s.openInFocus);
+  const openInFocusGroup = useWorkspace((s) => s.openInFocusGroup);
   const openSessionRef = useWorkspace((s) => s.openSessionRef);
   const openInSidebar = useWorkspace((s) => s.openInSidebar);
   const setSteerIntent = useWorkspace((s) => s.setSteerIntent);
@@ -187,28 +188,46 @@ export function useTaskActionContextFactory(): (
           task.title || task.id,
         );
       },
-      openLogs: (task: Task) => {
+      /*
+       * One layout, opened as a group: transcript beside stdout. Two
+       * `openInFocus` calls would not produce this — each merges into
+       * the last-touched pane as a TAB, so the log would land on top of
+       * the session instead of next to it.
+       *
+       * A task with no session (pi/script) still has a log, so the
+       * group degrades to the single pane rather than the verb
+       * refusing.
+       */
+      watchInFocus: (task: Task, ref: SessionRef | undefined) => {
         closeModal();
-        openInFocus(
-          "logs",
-          { projectId, taskId: task.id },
-          `Logs ${task.id.slice(0, 8)}`,
-        );
+        const label = task.title || task.id;
+        const items: Array<{
+          kind: "session" | "logs";
+          target: Record<string, unknown>;
+          title: string;
+        }> = [];
+        if (ref) {
+          items.push({ kind: "session", target: { ref }, title: label });
+        }
+        items.push({
+          kind: "logs",
+          target: { projectId, taskId: task.id },
+          title: `Logs ${task.id.slice(0, 8)}`,
+        });
+        openInFocusGroup(items);
       },
 
       liveSessionRef: (task: Task) =>
         liveSessionRef({ id: task.id, projectId }, allInstances),
+      /*
+       * One effect for the one session verb. A live ref also arms the
+       * steer intent, so the composer is focused on arrival — the whole
+       * of what the separate "Steer session…" entry used to add, now
+       * that every session surface has a composer to focus.
+       */
       openSession: (_task: Task, ref: SessionRef) => {
         closeModal();
-        openSessionRef(ref);
-      },
-      openTranscript: (_task: Task, ref: SessionRef) => {
-        closeModal();
-        openSessionRef(ref);
-      },
-      openSteer: (_task: Task, ref: SessionRef) => {
-        closeModal();
-        setSteerIntent(true);
+        if (ref.mode === "live") setSteerIntent(true);
         openSessionRef(ref);
       },
 
@@ -263,6 +282,7 @@ export function useTaskActionContextFactory(): (
       openModal,
       closeModal,
       openInFocus,
+      openInFocusGroup,
       openSessionRef,
       openInSidebar,
       setSteerIntent,

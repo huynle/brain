@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -283,7 +284,20 @@ type TaskRunner struct {
 	dispatchPoolMu sync.RWMutex
 	dispatchPool   *dispatchPool
 
-	// Remote-control bridge (outbound WS tunnel to the Brain API)
+	// sessionClaimMu serializes session discovery across this runner's tasks
+	// so two concurrent discoveries cannot claim the same OpenCode session
+	// (see claimDiscoveredSession).
+	sessionClaimMu sync.Mutex
+
+	// Remote-control bridge (outbound WS tunnel to the Brain API).
+	//
+	// Assigned in Start, but read from the instance reporter, the
+	// heartbeat and the bridge's own goroutines — all of which may
+	// already be running by then. Guarded by bridgeMu; go through
+	// getBridgeClient/setBridgeClient, never the field directly.
+	//
+	// nil when control is disabled or no API URL is configured.
+	bridgeMu     sync.RWMutex
 	bridgeClient *BridgeClient
 
 	// Lifecycle
@@ -512,8 +526,9 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 
 	// Start the remote-control bridge (outbound WS; reconnects internally)
 	if tr.config.BrainAPIURL != "" && !tr.config.Control.Disabled {
-		tr.bridgeClient = NewBridgeClient(tr)
-		go tr.bridgeClient.Start(ctx)
+		bridge := NewBridgeClient(tr)
+		tr.setBridgeClient(bridge)
+		go bridge.Start(ctx)
 		slog.Info("bridge client started", "runner_id", tr.runnerID)
 	}
 
@@ -1853,7 +1868,7 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 			Task: runningTask,
 			Proc: NewPidProcess(runningTask.PID),
 		}, runnerHostname()))
-		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort, spawnResult.ExistingSessionIDs)
+		go tr.discoverAndSaveSession(task.Path, spawnResult.PID, spawnResult.OpencodePort, spawnResult.ExistingSessionIDs, spawnResult.SessionID)
 	}
 
 	return nil
@@ -1866,7 +1881,11 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 // knownPort, when > 0, is the already-resolved server port (headless
 // serve+attach reports it at spawn time, and the run --attach process binds
 // no port of its own); discovery via the PID is skipped in that case.
-func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort int, excludeSessionIDs map[string]struct{}) {
+//
+// pinnedSessionID, when non-empty, is a session this runner created itself and
+// handed to `opencode run --session`. There is then nothing to discover: the
+// heuristic below is skipped entirely and the known ID is recorded as-is.
+func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort int, excludeSessionIDs map[string]struct{}, pinnedSessionID string) {
 	port := knownPort
 	if port <= 0 {
 		if pid <= 0 {
@@ -1903,22 +1922,28 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 	// Query opencode's session endpoint. With serve+attach the session is
 	// created by the run process a beat after the server is up, so retry
 	// briefly until one appears.
-	var sessionID string
-	var err error
-	for attempt := 0; attempt < 5; attempt++ {
-		sessionID, err = discoverSessionID(port, excludeSessionIDs)
-		if err == nil && sessionID != "" {
-			break
+	//
+	// Skipped when the session was pinned at spawn: the ID is already known
+	// and exact, so there is nothing to guess.
+	sessionID := pinnedSessionID
+	if sessionID == "" {
+		var err error
+		for attempt := 0; attempt < 5; attempt++ {
+			sessionID, err = tr.claimDiscoveredSession(taskPath, port, excludeSessionIDs)
+			if err == nil && sessionID != "" {
+				break
+			}
+			time.Sleep(2 * time.Second)
 		}
-		time.Sleep(2 * time.Second)
-	}
-	if err != nil {
-		tr.logger.Printf("session discovery: failed to get session from port %d: %v", port, err)
-		return
+		if err != nil {
+			tr.logger.Printf("session discovery: failed to get session from port %d: %v", port, err)
+			return
+		}
 	}
 	if sessionID == "" {
 		return
 	}
+	tr.recordSessionID(taskPath, sessionID)
 
 	// Capture the workdir so the session can be re-served/resumed later from
 	// the machine that ran it.
@@ -1937,7 +1962,7 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	err = tr.client.UpdateMetadata(ctx, taskPath, map[string]interface{}{
+	err := tr.client.UpdateMetadata(ctx, taskPath, map[string]interface{}{
 		"sessions": map[string]interface{}{
 			sessionID: map[string]interface{}{
 				"timestamp":  time.Now().UTC().Format(time.RFC3339),
@@ -1952,7 +1977,85 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 		tr.logger.Printf("session discovery: failed to persist session %s for %s: %v", sessionID, taskPath, err)
 	}
 
-	// Update the tracked task and instance registry with the session ID
+	// Also emit event so the TUI updates in-memory immediately
+	tr.emitEvent(RunnerEvent{
+		Type:      EventSessionDiscovered,
+		TaskPath:  taskPath,
+		SessionID: sessionID,
+	})
+	origin := "discovered"
+	if pinnedSessionID != "" {
+		origin = "pinned at spawn"
+	}
+	tr.logger.Printf("session discovery: saved session %s for %s (port %d, %s)", sessionID, taskPath, port, origin)
+}
+
+// claimDiscoveredSession picks a session for taskPath and claims it in one
+// atomic step, so two tasks discovering at the same moment cannot converge on
+// the same ID.
+//
+// The per-spawn exclude set is a snapshot taken before this task's server
+// started; it cannot possibly contain a session another concurrently-spawned
+// task is about to claim. Two tasks sharing a workdir therefore both see both
+// new sessions, both apply "newest wins", and both record the same ID — after
+// which the PWA streams one task's transcript into the other task's pane, with
+// no error anywhere. Folding in the sessions already claimed by this runner's
+// live instances closes that gap, and holding the lock across the pick and the
+// record keeps it closed against the two discovery goroutines racing.
+//
+// This is only the fallback path: when the session was pinned at spawn (the
+// normal attach case) discovery never runs at all.
+func (tr *TaskRunner) claimDiscoveredSession(taskPath string, port int, exclude map[string]struct{}) (string, error) {
+	tr.sessionClaimMu.Lock()
+	defer tr.sessionClaimMu.Unlock()
+
+	skip := make(map[string]struct{}, len(exclude))
+	for id := range exclude {
+		skip[id] = struct{}{}
+	}
+	for id := range tr.claimedSessionIDs(taskPath) {
+		skip[id] = struct{}{}
+	}
+
+	sessionID, err := discoverSessionID(port, skip)
+	if err != nil || sessionID == "" {
+		return "", err
+	}
+	// Record the claim before releasing the lock, so a concurrent discovery
+	// sees it in claimedSessionIDs and picks a different session.
+	tr.recordSessionID(taskPath, sessionID)
+	return sessionID, nil
+}
+
+// claimedSessionIDs returns the session IDs already spoken for by this
+// runner's live instances — tracked tasks plus ad-hoc bridge instances —
+// excluding the task at exceptPath (a re-discovery must be able to re-claim
+// its own session).
+func (tr *TaskRunner) claimedSessionIDs(exceptPath string) map[string]struct{} {
+	claimed := make(map[string]struct{})
+	for _, info := range tr.processMgr.GetAll() {
+		if info.Task.Path == exceptPath {
+			continue
+		}
+		if info.Task.SessionID != "" {
+			claimed[info.Task.SessionID] = struct{}{}
+		}
+	}
+	if bc := tr.getBridgeClient(); bc != nil {
+		for _, inst := range bc.AdhocInstances(runnerHostname()) {
+			for _, id := range inst.SessionIDs {
+				if id != "" {
+					claimed[id] = struct{}{}
+				}
+			}
+		}
+	}
+	return claimed
+}
+
+// recordSessionID stores the session on the tracked task and re-reports the
+// instance so the registry reflects it.
+func (tr *TaskRunner) recordSessionID(taskPath, sessionID string) {
 	for _, info := range tr.processMgr.GetAll() {
 		if info.Task.Path == taskPath {
 			tr.processMgr.UpdateSessionID(info.Task.ID, sessionID)
@@ -1960,14 +2063,6 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 		}
 	}
 	tr.reportTaskInstanceByPath(taskPath)
-
-	// Also emit event so the TUI updates in-memory immediately
-	tr.emitEvent(RunnerEvent{
-		Type:      EventSessionDiscovered,
-		TaskPath:  taskPath,
-		SessionID: sessionID,
-	})
-	tr.logger.Printf("session discovery: saved session %s for %s (port %d)", sessionID, taskPath, port)
 }
 
 // reportTaskInstanceByPath re-reports the instance record for the tracked
@@ -2023,8 +2118,20 @@ func discoverChildPort(parentPID int) (int, error) {
 type opencodeSession struct {
 	ID   string `json:"id"`
 	Time struct {
+		Created int64 `json:"created"`
 		Updated int64 `json:"updated"`
 	} `json:"time"`
+}
+
+// order returns the value sessions are ranked by when picking one for a task.
+// Creation time is the right key: `updated` moves every time the agent writes
+// a message, so it says nothing about which session belongs to whom. Older
+// OpenCode builds that omit `created` fall back to `updated`.
+func (s opencodeSession) order() int64 {
+	if s.Time.Created > 0 {
+		return s.Time.Created
+	}
+	return s.Time.Updated
 }
 
 func fetchSessions(port int) ([]opencodeSession, error) {
@@ -2055,8 +2162,8 @@ func fetchSessions(port int) ([]opencodeSession, error) {
 	return []opencodeSession{single}, nil
 }
 
-// discoverSessionID queries an opencode HTTP server for the task session ID.
-// When exclude is set, pre-existing sessions from before task spawn are ignored.
+// listSessionIDs snapshots the session IDs an opencode server can currently
+// see, for use as a pre-spawn baseline.
 func listSessionIDs(port int) (map[string]struct{}, error) {
 	sessions, err := fetchSessions(port)
 	if err != nil {
@@ -2071,12 +2178,72 @@ func listSessionIDs(port int) (map[string]struct{}, error) {
 	return ids, nil
 }
 
+// createOpencodeSession creates a session on an OpenCode server and returns
+// its ID, so the caller can pin the task's run to a session it already knows.
+//
+// This exists because session discovery cannot be made reliable by itself:
+// `GET /session` is a store-wide listing, not a per-server one. Every
+// `opencode serve` started against the same workdir lists the same sessions
+// (observed listings reach beyond that workdir too), so "the newest session
+// that was not there when I started" cannot tell two concurrently-spawned
+// tasks apart — each one's baseline was taken before the other's session
+// existed, and both land on whichever session was touched last.
+func createOpencodeSession(port int, title string) (string, error) {
+	body := map[string]string{}
+	if title != "" {
+		body["title"] = title
+	}
+	payload, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("encode session request: %w", err)
+	}
+
+	url := fmt.Sprintf("http://localhost:%d/session", port)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(payload))
+	if err != nil {
+		return "", fmt.Errorf("build session request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("POST %s: %w", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		return "", fmt.Errorf("POST %s: status %d", url, resp.StatusCode)
+	}
+
+	var created opencodeSession
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return "", fmt.Errorf("decode session response: %w", err)
+	}
+	if created.ID == "" {
+		return "", fmt.Errorf("POST %s: response had no session id", url)
+	}
+	return created.ID, nil
+}
+
+// discoverSessionID queries an opencode HTTP server for the task session ID.
+// When exclude is set, pre-existing sessions from before task spawn are ignored.
+//
+// Among what remains it takes the OLDEST session, not the newest. Sessions are
+// created in spawn order, so when several are in flight the one belonging to
+// the task discovering now is the earliest-created that nobody has claimed;
+// ranking by recency instead handed every concurrent discovery whichever
+// session had been written to last — which is how tasks sharing a workdir all
+// ended up on one session ID.
+//
+// This remains a heuristic. Prefer pinning the session at spawn
+// (createOpencodeSession); this is the fallback for when that is unavailable.
 func discoverSessionID(port int, exclude map[string]struct{}) (string, error) {
 	sessions, err := fetchSessions(port)
 	if err != nil {
 		return "", err
 	}
-	var latest *opencodeSession
+	var oldest *opencodeSession
 	for i := range sessions {
 		if sessions[i].ID == "" {
 			continue
@@ -2084,14 +2251,14 @@ func discoverSessionID(port int, exclude map[string]struct{}) (string, error) {
 		if _, ok := exclude[sessions[i].ID]; ok {
 			continue
 		}
-		if latest == nil || sessions[i].Time.Updated > latest.Time.Updated {
-			latest = &sessions[i]
+		if oldest == nil || sessions[i].order() < oldest.order() {
+			oldest = &sessions[i]
 		}
 	}
-	if latest == nil {
+	if oldest == nil {
 		return "", nil
 	}
-	return latest.ID, nil
+	return oldest.ID, nil
 }
 
 // =============================================================================
@@ -3019,6 +3186,24 @@ func (tr *TaskRunner) SetMaxParallel(n int) {
 
 // getMaxParallel returns the current effective max parallel limit.
 // Uses the runtime-adjusted value if set, otherwise falls back to config.
+// setBridgeClient installs the remote-control bridge. Called once from
+// Start, on the main goroutine, after the poll loop and instance reporter
+// are already live.
+func (tr *TaskRunner) setBridgeClient(bc *BridgeClient) {
+	tr.bridgeMu.Lock()
+	tr.bridgeClient = bc
+	tr.bridgeMu.Unlock()
+}
+
+// getBridgeClient returns the remote-control bridge, or nil if control is
+// disabled or Start has not installed it yet. Every reader outside Start
+// must use this — the background goroutines race the assignment otherwise.
+func (tr *TaskRunner) getBridgeClient() *BridgeClient {
+	tr.bridgeMu.RLock()
+	defer tr.bridgeMu.RUnlock()
+	return tr.bridgeClient
+}
+
 func (tr *TaskRunner) getMaxParallel() int {
 	tr.mu.RLock()
 	n := tr.maxParallel

@@ -209,7 +209,7 @@ func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, 
 
 // spawnOpencode dispatches to mode-specific OpenCode spawners.
 func (e *OpenCodeExecutor) spawnOpencode(ctx context.Context, task *types.ResolvedTask, projectID, workdir, promptFile string, opts SpawnOptions) (*SpawnResult, error) {
-	switch opts.Mode {
+	switch opts.Mode.SpawnMode() {
 	case ExecutionModeHeadless:
 		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts)
 	case ExecutionModeTUI:
@@ -217,7 +217,7 @@ func (e *OpenCodeExecutor) spawnOpencode(ctx context.Context, task *types.Resolv
 	case ExecutionModeDashboard:
 		return e.spawnDashboard(ctx, task, projectID, workdir, promptFile, opts)
 	default:
-		return nil, fmt.Errorf("unknown execution mode: %s", opts.Mode)
+		return nil, fmt.Errorf("unknown execution mode: %q (valid modes: headless, foreground, tui, dashboard)", opts.Mode)
 	}
 }
 
@@ -460,23 +460,39 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	opts SpawnOptions,
 ) (*SpawnResult, error) {
 	if e.config.Control.Disabled {
-		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0)
+		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0, "")
 	}
 
 	port, existingSessionIDs, serveProc, err := e.startHeadlessServer(workdir, projectID, task.ID)
 	if err != nil {
 		slog.Warn("headless server unavailable, running task non-attachable",
 			"task_id", task.ID, "error", err)
-		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0)
+		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0, "")
 	}
 
-	res, err := e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, port)
+	// Pin the session up front rather than guessing it afterwards. Creating
+	// it here and passing it to `run --session` is the only way to know which
+	// session is this task's: `GET /session` lists the whole store, so two
+	// tasks sharing a workdir see each other's sessions and post-hoc
+	// discovery cannot tell them apart (see createOpencodeSession).
+	//
+	// A failure here is not fatal — the task still runs, and the legacy
+	// discovery path picks up whatever session `run` creates for itself.
+	sessionID, err := createOpencodeSession(port, task.Title)
+	if err != nil {
+		slog.Warn("could not pre-create opencode session; falling back to session discovery",
+			"task_id", task.ID, "port", port, "error", err)
+		sessionID = ""
+	}
+
+	res, err := e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, port, sessionID)
 	if err != nil {
 		// Driver failed to start — don't leak the server we started.
 		_ = serveProc.Kill(syscall.SIGTERM)
 		return nil, err
 	}
 	res.ExistingSessionIDs = existingSessionIDs
+	res.SessionID = sessionID
 	e.trackServeProc(task.ID, serveProc)
 
 	// Tie the server's lifetime to the driver process: when the run process
@@ -516,6 +532,7 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 	promptFile string,
 	opts SpawnOptions,
 	attachPort int,
+	attachSession string,
 ) (*SpawnResult, error) {
 	outputFile := filepath.Join(e.config.StateDir, fmt.Sprintf("output_%s_%s.log", projectID, task.ID))
 	logFile, err := os.Create(outputFile)
@@ -535,6 +552,9 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 	args := []string{"run"}
 	if attachPort > 0 {
 		args = append(args, "--attach", fmt.Sprintf("http://127.0.0.1:%d", attachPort))
+		if attachSession != "" {
+			args = append(args, "--session", attachSession)
+		}
 	}
 	if agent != "" {
 		args = append(args, "--agent", agent)
@@ -571,6 +591,7 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 		PromptFile:   promptFile,
 		Workdir:      workdir,
 		OpencodePort: attachPort,
+		SessionID:    attachSession,
 	}, nil
 }
 

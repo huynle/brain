@@ -1279,6 +1279,7 @@ func convertToCommandsAutomationFlags(flags *AutomationFlags) *commands.Automati
 type GoalFlags struct {
 	Project       string   // --project
 	Feature       string   // --feature
+	FeatureSet    bool     // --feature was passed (distinguishes "" from omitted)
 	Title         string   // --title
 	Content       string   // --content
 	TriggerSource string   // --trigger-source (task|feature|both)
@@ -1310,6 +1311,10 @@ func ParseAutomationGoalFlags(args []string) (*GoalFlags, error) {
 		case "--feature":
 			if i+1 < len(args) {
 				flags.Feature = args[i+1]
+				// Record the flag itself, not just its value: `edit` needs to
+				// tell an omitted --feature from `--feature ""`, which clears
+				// the goal's feature scope.
+				flags.FeatureSet = true
 				i++
 			}
 		case "--title":
@@ -1393,6 +1398,7 @@ func convertToCommandsGoalFlags(flags *GoalFlags) *commands.GoalFlags {
 	return &commands.GoalFlags{
 		Project:       flags.Project,
 		Feature:       flags.Feature,
+		FeatureSet:    flags.FeatureSet,
 		Title:         flags.Title,
 		Content:       flags.Content,
 		TriggerSource: flags.TriggerSource,

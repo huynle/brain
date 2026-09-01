@@ -191,10 +191,23 @@ func (s *GoalService) UpdateGoal(ctx context.Context, goalID string, req UpdateG
 		content = *req.Content
 	}
 
+	// Feature scope is re-settable AND clearable: an explicit "" widens a
+	// mis-scoped goal back to its whole project. Before this, feature_id was
+	// advertised by the update tool and silently dropped, so the only way to
+	// re-scope a goal was to delete and recreate it — losing its id, entry,
+	// and audit history.
+	featureID := existing.FeatureID
+	if req.FeatureID != nil {
+		featureID = strings.TrimSpace(*req.FeatureID)
+	}
+
 	// Rebuild the goal automation so the trigger reflects merged config.
+	// Passing featureID here is what re-points the trigger's feature_id
+	// filter; leaving the entry field alone would keep the goal listening on
+	// the old feature.
 	rebuilt, err := BuildGoalAutomation(GoalInput{
 		Project:   existing.ProjectID,
-		FeatureID: existing.FeatureID,
+		FeatureID: featureID,
 		Title:     title,
 		Content:   content,
 		Config:    cfg,
@@ -214,6 +227,9 @@ func (s *GoalService) UpdateGoal(ctx context.Context, goalID string, req UpdateG
 	if req.Status != nil {
 		update.Status = req.Status
 	}
+	if req.FeatureID != nil {
+		update.FeatureID = &featureID
+	}
 
 	updated, err := s.brain.Update(ctx, existing.ID, update)
 	if err != nil {
@@ -232,7 +248,7 @@ func (s *GoalService) UpdateGoal(ctx context.Context, goalID string, req UpdateG
 		GoalID:    rebuilt.Goal.ID,
 		Title:     rebuilt.Title,
 		Project:   existing.ProjectID,
-		FeatureID: existing.FeatureID,
+		FeatureID: featureID,
 		Status:    status,
 		Config:    rebuilt.Goal,
 		Action:    rebuilt.Action,
@@ -352,14 +368,26 @@ func (s *GoalService) GoalProgress(ctx context.Context, goalID string) (*GoalPro
 		return nil, fmt.Errorf("goal progress: list tasks: %w", err)
 	}
 
-	stats := computeTaskStats(tasks)
+	// Bucket under the goal's own status config, not the feature helper's
+	// hardcoded one, so this view and decideReconcile agree on every task.
+	stats := goalTaskStats(goal.Goal, tasks)
+
+	// The feature aggregate is reported only when the goal is actually scoped
+	// to a feature. A project-scoped goal spans many features; one feature
+	// status for all of them describes an aggregate that does not exist.
+	featureStatus := ""
+	if goal.FeatureID != "" && goalTaskScope(goal.Goal) == "" {
+		featureStatus = ComputeFeatureStatus(tasks)
+	}
+
 	return &GoalProgressResponse{
 		GoalID:        goal.Goal.ID,
 		EntryID:       goal.ID,
 		Project:       goal.ProjectID,
 		FeatureID:     goal.FeatureID,
 		TaskID:        goalTaskScope(goal.Goal),
-		FeatureStatus: ComputeFeatureStatus(tasks),
+		GoalStatus:    computeGoalStatus(goal.Goal, tasks),
+		FeatureStatus: featureStatus,
 		Total:         stats.Total,
 		Pending:       stats.Pending,
 		InProgress:    stats.InProgress,

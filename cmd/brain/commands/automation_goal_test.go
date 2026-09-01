@@ -397,6 +397,11 @@ func TestAutomationGoalCommand_Edit(t *testing.T) {
 	if receivedReq.Status != nil {
 		t.Errorf("expected nil status, got %v", *receivedReq.Status)
 	}
+	// --feature not passed → the goal's scope must be left alone, not
+	// silently widened to the whole project.
+	if receivedReq.FeatureID != nil {
+		t.Errorf("expected nil feature_id when --feature is absent, got %q", *receivedReq.FeatureID)
+	}
 
 	if !strings.Contains(out.String(), "goal-edit") {
 		t.Errorf("output should contain goal ID: %q", out.String())
@@ -665,5 +670,43 @@ func newTestGoalCommand(apiURL, subcommand, project, goalID string, flags *GoalF
 		Flags:      flags,
 		Out:        out,
 		apiClient:  runner.NewAPIClient(cfg.Runner),
+	}
+}
+
+// TestAutomationGoalCommand_EditFeatureScope covers re-scoping and clearing a
+// goal's feature from the CLI. `--feature ""` clears the scope, which is why
+// the flag tracks presence rather than just its value.
+func TestAutomationGoalCommand_EditFeatureScope(t *testing.T) {
+	tests := []struct {
+		name    string
+		feature string
+	}{
+		{"re-scope to another feature", "other-feature"},
+		{"clear the feature scope", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var receivedReq types.UpdateGoalRequest
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				json.NewDecoder(r.Body).Decode(&receivedReq)
+				json.NewEncoder(w).Encode(types.GoalSummary{EntryID: "e1", GoalID: "goal-edit", Status: "active", FeatureID: tt.feature})
+			}))
+			defer server.Close()
+
+			var out bytes.Buffer
+			flags := &GoalFlags{Feature: tt.feature, FeatureSet: true}
+			cmd := newTestGoalCommand(server.URL, "edit", "my-project", "goal-edit", flags, &out)
+			if err := cmd.Execute(); err != nil {
+				t.Fatalf("Execute() error: %v", err)
+			}
+
+			if receivedReq.FeatureID == nil {
+				t.Fatalf("expected feature_id to be sent when --feature is passed")
+			}
+			if *receivedReq.FeatureID != tt.feature {
+				t.Errorf("feature_id = %q, want %q", *receivedReq.FeatureID, tt.feature)
+			}
+		})
 	}
 }

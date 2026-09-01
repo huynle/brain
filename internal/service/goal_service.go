@@ -80,6 +80,68 @@ func statusSet(statuses, fallback []string) map[string]bool {
 	return set
 }
 
+// goalTaskStats buckets a goal's linked tasks using the goal's OWN status
+// configuration — the same statusSet + defaults decideReconcile uses.
+//
+// It exists because the feature-level computeTaskStats cannot do this job: it
+// takes only []ResolvedTask, so there is no parameter through which a goal's
+// config could reach it, and its hardcoded buckets disagree with the
+// reconciler even at defaults (it calls "cancelled" blocked; the reconciler
+// ignores it, and counts "archived" as complete where computeTaskStats drops
+// archived tasks from the totals entirely). Two classification rules for one
+// question is the bug; this is the goal-side implementation, and it must stay
+// in step with decideReconcile above.
+//
+// Total counts every linked task, archived included, because the reconciler
+// does — "all linked tasks complete" is measured against the same total.
+func goalTaskStats(cfg *types.GoalConfig, tasks []types.ResolvedTask) FeatureTaskStats {
+	var goal types.GoalConfig
+	if cfg != nil {
+		goal = *cfg
+	}
+	completeSet := statusSet(goal.CompleteStatuses, defaultCompleteStatuses)
+	blockedSet := statusSet(goal.BlockedStatuses, defaultBlockedStatuses)
+
+	stats := FeatureTaskStats{Total: len(tasks)}
+	for _, t := range tasks {
+		// A status listed in both sets counts in both, exactly as
+		// decideReconcile tallies it.
+		if completeSet[t.Status] {
+			stats.Completed++
+		}
+		if blockedSet[t.Status] {
+			stats.Blocked++
+		}
+		switch t.Status {
+		case "in_progress":
+			stats.InProgress++
+		case "pending":
+			stats.Pending++
+		}
+	}
+	return stats
+}
+
+// computeGoalStatus aggregates a goal's linked tasks into a single status
+// under goal semantics. It mirrors decideReconcile's precedence
+// (complete > in progress > blocked > otherwise) so the reported status never
+// contradicts the decision the reconciler would reach on the same tasks.
+func computeGoalStatus(cfg *types.GoalConfig, tasks []types.ResolvedTask) string {
+	stats := goalTaskStats(cfg, tasks)
+	switch {
+	case stats.Total == 0:
+		return "pending"
+	case stats.Completed == stats.Total:
+		return "completed"
+	case stats.InProgress > 0:
+		return "in_progress"
+	case stats.Blocked > 0:
+		return "blocked"
+	default:
+		return "pending"
+	}
+}
+
 // decideReconcile computes the reconcile decision from goal config + linked
 // task states. It is deterministic, with no I/O and no LLM. It honors
 // cfg.CompleteStatuses and cfg.BlockedStatuses, falling back to
@@ -92,37 +154,19 @@ func statusSet(statuses, fallback []string) map[string]bool {
 //  4. block      — blocked > 0 (blocked work, none in progress)
 //  5. need_work  — otherwise (pending work remains with no active task)
 func decideReconcile(cfg types.GoalConfig, tasks []types.ResolvedTask) (ReconcileDecision, string) {
-	completeSet := statusSet(cfg.CompleteStatuses, defaultCompleteStatuses)
-	blockedSet := statusSet(cfg.BlockedStatuses, defaultBlockedStatuses)
-
-	total := len(tasks)
-	var completed, blocked, inProgress, pending int
-	for _, t := range tasks {
-		if completeSet[t.Status] {
-			completed++
-		}
-		if blockedSet[t.Status] {
-			blocked++
-		}
-		switch t.Status {
-		case "in_progress":
-			inProgress++
-		case "pending":
-			pending++
-		}
-	}
+	stats := goalTaskStats(&cfg, tasks)
 
 	switch {
-	case total == 0:
+	case stats.Total == 0:
 		return ReconcileNeedWork, "no linked tasks; work must be generated"
-	case completed == total:
-		return ReconcileComplete, fmt.Sprintf("all %d linked task(s) complete", total)
-	case inProgress > 0:
-		return ReconcileNoop, fmt.Sprintf("%d task(s) in progress; nothing to do", inProgress)
-	case blocked > 0:
-		return ReconcileBlock, fmt.Sprintf("%d task(s) blocked, none in progress", blocked)
+	case stats.Completed == stats.Total:
+		return ReconcileComplete, fmt.Sprintf("all %d linked task(s) complete", stats.Total)
+	case stats.InProgress > 0:
+		return ReconcileNoop, fmt.Sprintf("%d task(s) in progress; nothing to do", stats.InProgress)
+	case stats.Blocked > 0:
+		return ReconcileBlock, fmt.Sprintf("%d task(s) blocked, none in progress", stats.Blocked)
 	default:
-		return ReconcileNeedWork, fmt.Sprintf("pending work remains with no active task (%d pending of %d)", pending, total)
+		return ReconcileNeedWork, fmt.Sprintf("pending work remains with no active task (%d pending of %d)", stats.Pending, stats.Total)
 	}
 }
 

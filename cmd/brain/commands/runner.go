@@ -91,13 +91,13 @@ func (c *RunnerTUICommand) Type() string {
 // Execute starts the runner, dispatching to TUI, headless, or other modes based on flags.
 func (c *RunnerTUICommand) Execute() error {
 	// Determine mode from flags (same pattern as RunCommand.runStart)
-	mode := "tui"
+	mode := string(runner.ExecutionModeTUI)
 	if c.Flags.Foreground {
-		mode = "foreground"
+		mode = string(runner.ExecutionModeForeground)
 	} else if c.Flags.Headless {
-		mode = "headless"
+		mode = string(runner.ExecutionModeHeadless)
 	} else if c.Flags.Dashboard {
-		mode = "dashboard"
+		mode = string(runner.ExecutionModeDashboard)
 	}
 
 	// Start with the full runner config (all fields preserved)
@@ -211,13 +211,13 @@ func (c *RunCommand) Execute() error {
 
 func (c *RunCommand) runStart() error {
 	// Determine mode from flags
-	mode := "tui"
+	mode := string(runner.ExecutionModeTUI)
 	if c.Flags.Foreground {
-		mode = "foreground"
+		mode = string(runner.ExecutionModeForeground)
 	} else if c.Flags.Headless {
-		mode = "headless"
+		mode = string(runner.ExecutionModeHeadless)
 	} else if c.Flags.Dashboard {
-		mode = "dashboard"
+		mode = string(runner.ExecutionModeDashboard)
 	}
 
 	// Start with the full runner config (all fields preserved)

@@ -115,6 +115,37 @@ When a runner dies mid-task, or when a task's claim lease expires without renewa
 - Idempotent: a resume on a task already `pending+resume_requested=true` returns `Resumed=false` with an explanatory `Reason` and skips cleanup work.
 - The orphan reaper (`tryReapOrphan`) skips tasks with `resume_requested=true` and re-reads the task immediately before its status flip, so a Resume that races with a reaper doesn't get silently reverted.
 
+### OpenCode session identity (who owns which session)
+
+The PWA addresses a transcript by `(instance_id, session_id)`, so a task that
+records the wrong session ID silently streams a *different* task's
+conversation — no error, anywhere.
+
+- **The session is pinned, not discovered.** `spawnHeadless` calls
+  `createOpencodeSession` (`POST /session`) on the serve process it just
+  started and hands the ID to `opencode run --attach --session <id>`. The ID
+  is then known exactly and `discoverAndSaveSession` records it as-is.
+- **Discovery cannot be made reliable on its own**, which is why pinning
+  exists. `GET /session` is a **store-wide** listing, not a per-server one:
+  every `opencode serve` against the same workdir lists the same sessions
+  (observed listings reach past that workdir too). The per-spawn
+  `ExistingSessionIDs` baseline is a snapshot taken *before* any sibling's
+  session existed, so it can never exclude a session another concurrent spawn
+  is about to claim. With `execution_mode: current_branch` (shared workdir)
+  and `--max-parallel > 1`, every task landed on one session ID. Production
+  mostly escaped this because `worktree` mode gives each task its own
+  directory.
+- **The fallback path is still hardened**, for when `POST /session` fails or
+  the bridge is disabled: `claimDiscoveredSession` holds `sessionClaimMu`
+  across pick-and-record and folds this runner's already-claimed session IDs
+  (tracked tasks + bridge ad-hoc instances) into the exclude set, so two
+  in-flight discoveries cannot converge. It ranks candidates by
+  `time.created` **ascending** — `time.updated` moves whenever the agent
+  writes, so recency says nothing about ownership.
+- A task re-discovering may always re-claim its own session
+  (`claimedSessionIDs` skips the calling task's path); the claim must not
+  starve an idempotent retry.
+
 ### Task origin + machine affinity
 
 A task records where it was created, so it can be run back there. Three
@@ -150,7 +181,7 @@ caller-chosen `machine_affinity` (`local` | `preferred` | `none`).
   sharing the `WithLocalFilesystem` flag). `GetCachedContext` is a
   process-global from `os.Getwd()`; under the in-process HTTP transport that is
   the API host, shared by every client, so stamping it would brand every task
-  with amos's machine id and — at `local` — pin them all there. Over HTTP,
+  with the API host's machine id and — at `local` — pin them all there. Over HTTP,
   `machine_affinity=local` is refused at creation rather than queued unrunnable.
   Note the pre-existing `workdir`/`git_remote`/`git_branch` stamping at the same
   call site is NOT gated this way.

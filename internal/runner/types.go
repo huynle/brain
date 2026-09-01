@@ -284,7 +284,30 @@ const (
 	ExecutionModeTUI       ExecutionMode = "tui"
 	ExecutionModeDashboard ExecutionMode = "dashboard"
 	ExecutionModeHeadless  ExecutionMode = "headless"
+
+	// ExecutionModeForeground is what `brain run start --foreground` sets. It
+	// describes how the RUNNER presents itself — no TUI, attached to the
+	// invoking shell — and says nothing about how tasks are spawned. Executors
+	// must not switch on it directly; SpawnMode folds it to the spawn strategy
+	// it implies.
+	ExecutionModeForeground ExecutionMode = "foreground"
 )
+
+// SpawnMode returns the mode an executor should switch on.
+//
+// Modes that only describe the runner's own presentation fold to the spawn
+// strategy they imply, so adding one cannot silently turn every task into
+// "unknown execution mode" at spawn time — which is exactly what --foreground
+// did: the script executor ignores the mode and kept working, while every
+// OpenCode and Pi task failed to spawn.
+func (m ExecutionMode) SpawnMode() ExecutionMode {
+	switch m {
+	case ExecutionModeForeground, "":
+		return ExecutionModeHeadless
+	default:
+		return m
+	}
+}
 
 // RunningTask represents a task currently being executed by the runner.
 type RunningTask struct {

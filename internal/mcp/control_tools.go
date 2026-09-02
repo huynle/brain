@@ -15,6 +15,8 @@ import (
 func RegisterControlTools(s *Server, client *APIClient) {
 	registerBrainRunnerPauseProject(s, client)
 	registerBrainRunnerResumeProject(s, client)
+	registerBrainRunnerPauseFeature(s, client)
+	registerBrainRunnerResumeFeature(s, client)
 	registerBrainRunnerPauseProjectAutomations(s, client)
 	registerBrainRunnerResumeProjectAutomations(s, client)
 	registerBrainRunnerPauseAll(s, client)
@@ -46,6 +48,67 @@ func automationsStillRunNote(projectID string) string {
 	return "Automation-generated tasks are NOT paused by this call - they follow a separate dial. " +
 		"To stop those too: runner_pause_project_automations(project: \"" + projectID + "\"). " +
 		"Check the resulting state with runner_status(project: \"" + projectID + "\")."
+}
+
+// The FEATURE dial. The one the other three cannot express: hold a single
+// feature while the rest of the project keeps running.
+//
+// It is the answer for a MANUALLY STARTED feature specifically, because
+// "run feature now" force-dispatches past the project dial by design — so
+// pausing the project was never a way to stop work someone had already
+// kicked off by hand.
+func registerBrainRunnerPauseFeature(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name: "runner_pause_feature",
+		Description: controlDescription("Pause task dispatch for ONE feature, leaving the rest of the project running. " +
+			"Holds NEW dispatch only: a task a runner is already executing runs to completion, and an explicit run_task/run_feature still overrides. " +
+			"Unlike the two project dials, this applies to automation-generated tasks in the feature as well - it is scoped to the WORK, not to who authored it."),
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project":    {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"feature_id": {Type: "string", Description: "Feature to hold."},
+		}, Required: []string{"feature_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := ResolveProjectArg(args)
+		if projectID == "" {
+			return "", fmt.Errorf("project is required")
+		}
+		featureID := StringArg(args, "feature_id", "")
+		if featureID == "" {
+			return "", fmt.Errorf("feature_id is required")
+		}
+		var resp controlSuccessResponse
+		path := "/tasks/runner/features/pause/" + url.PathEscape(projectID) + "/" + url.PathEscape(featureID)
+		if err := client.Request(ctx, http.MethodPost, path, map[string]any{}, nil, &resp); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Paused dispatch for feature %s in project %s. Success: %t\n\nWork already running finishes; nothing new starts. The rest of %s is unaffected. Resume with runner_resume_feature.", featureID, projectID, resp.Success, projectID), nil
+	})
+}
+
+func registerBrainRunnerResumeFeature(s *Server, client *APIClient) {
+	s.RegisterTool(Tool{
+		Name:        "runner_resume_feature",
+		Description: controlDescription("Resume task dispatch for ONE feature held by runner_pause_feature."),
+		InputSchema: InputSchema{Type: "object", Properties: map[string]Property{
+			"project":    {Type: "string", Description: "Project ID. Defaults to the project detected from the MCP server's launch directory."},
+			"feature_id": {Type: "string", Description: "Feature to release."},
+		}, Required: []string{"feature_id"}},
+	}, func(ctx context.Context, args map[string]any) (string, error) {
+		projectID := ResolveProjectArg(args)
+		if projectID == "" {
+			return "", fmt.Errorf("project is required")
+		}
+		featureID := StringArg(args, "feature_id", "")
+		if featureID == "" {
+			return "", fmt.Errorf("feature_id is required")
+		}
+		var resp controlSuccessResponse
+		path := "/tasks/runner/features/resume/" + url.PathEscape(projectID) + "/" + url.PathEscape(featureID)
+		if err := client.Request(ctx, http.MethodPost, path, map[string]any{}, nil, &resp); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Resumed dispatch for feature %s in project %s. Success: %t", featureID, projectID, resp.Success), nil
+	})
 }
 
 func registerBrainRunnerPauseProjectAutomations(s *Server, client *APIClient) {

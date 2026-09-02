@@ -291,6 +291,14 @@ func (m *mockRunnerService) ResumeAutomations(ctx context.Context) error {
 	return fmt.Errorf("resumeAutomationsFunc not set")
 }
 
+func (m *mockRunnerService) PauseFeature(ctx context.Context, projectId, featureId string) error {
+	return nil
+}
+
+func (m *mockRunnerService) ResumeFeature(ctx context.Context, projectId, featureId string) error {
+	return nil
+}
+
 func (m *mockRunnerService) PauseProjectAutomations(ctx context.Context, projectId string) error {
 	if m.pauseProjectAutomationsFunc != nil {
 		return m.pauseProjectAutomationsFunc(ctx, projectId)

@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 26
+const CurrentSchemaVersion = 27
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -250,6 +250,15 @@ CREATE TABLE IF NOT EXISTS project_pause_state (
   tasks_paused INTEGER NOT NULL DEFAULT 0,
   automations_paused INTEGER NOT NULL DEFAULT 0,
   updated_at INTEGER NOT NULL
+);`
+
+const createFeaturePauseStateTable = `
+CREATE TABLE IF NOT EXISTS feature_pause_state (
+  project_id TEXT NOT NULL,
+  feature_id TEXT NOT NULL,
+  paused INTEGER NOT NULL DEFAULT 0,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (project_id, feature_id)
 );`
 
 const createRunnerPauseStateTable = `
@@ -1019,6 +1028,28 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 27 {
+		// v27: persist the FEATURE-scoped pause dial.
+		//
+		// Its own table rather than a column on anything, for the same
+		// reason as the runner dial: a feature is not a stored entity. It
+		// is a computed grouping of tasks sharing a feature_id, so there
+		// is no row to hang the flag on, and the flag has to outlive the
+		// tasks that happen to carry the id today — a feature whose work
+		// is all archived and then re-created must stay held.
+		//
+		// Keyed (project_id, feature_id) because feature ids are only
+		// unique within a project.
+		if _, err := db.Exec(createFeaturePauseStateTable); err != nil {
+			if !isTableExistsError(err) {
+				return fmt.Errorf("migrate v27 (feature_pause_state table): %w", err)
+			}
+		}
+		if _, err := db.Exec("CREATE INDEX IF NOT EXISTS idx_feature_pause_state_paused ON feature_pause_state(project_id, paused)"); err != nil {
+			return fmt.Errorf("migrate v27 (feature_pause_state index): %w", err)
+		}
+	}
+
 	if ver < 21 {
 		// v21: add stable lease IDs to dispatch leases for ack/reject validation.
 		if exists, err := tableExists(db, "task_dispatch_leases"); err != nil {
@@ -1202,6 +1233,7 @@ func InitSchema(db *sql.DB) error {
 		createOpencodeInstancesTable,
 		createProjectPlacementTable,
 		createProjectPauseStateTable,
+		createFeaturePauseStateTable,
 		createRunnerPauseStateTable,
 		createWebhooksTable,
 		createWebhookDeliveriesTable,

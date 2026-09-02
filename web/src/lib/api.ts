@@ -1466,6 +1466,23 @@ export const resumeProject = (projectId: string) =>
   api(`/api/v1/tasks/runner/resume/${encodeURIComponent(projectId)}`, {
     method: "POST",
   });
+/** The FEATURE dial: hold ONE feature while the rest of its project keeps
+ *  running. The only dial that can stop a feature someone started by hand,
+ *  because "run feature now" force-dispatches past the project one.
+ *
+ *  `Dispatch` in the name is not decoration: `resumeFeature` above is the
+ *  unrelated ABANDONMENT resume, which rewrites stuck tasks' status. */
+export const pauseFeatureDispatch = (projectId: string, featureId: string) =>
+  api(
+    `/api/v1/tasks/runner/features/pause/${encodeURIComponent(projectId)}/${encodeURIComponent(featureId)}`,
+    { method: "POST" },
+  );
+export const resumeFeatureDispatch = (projectId: string, featureId: string) =>
+  api(
+    `/api/v1/tasks/runner/features/resume/${encodeURIComponent(projectId)}/${encodeURIComponent(featureId)}`,
+    { method: "POST" },
+  );
+
 export const pauseAll = () =>
   api("/api/v1/tasks/runner/pause", { method: "POST" });
 export const resumeAll = () =>

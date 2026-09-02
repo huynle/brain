@@ -19,6 +19,8 @@ import { useUI } from "../../../store/ui";
 import { useRunners } from "../../../hooks/useRunners";
 import { useRowActions, type RowActionProps } from "../../../hooks/useRowActions";
 import { useFeatureActionContext } from "../../../hooks/useFeatureActionContext";
+import { usePauseState } from "../../../hooks/usePauseState";
+import { isFeaturePaused } from "../../../lib/pause";
 import { useTaskActionContext } from "../../../hooks/useTaskActionContext";
 import { useGoals, useGoalProgress } from "../../../hooks/useGoals";
 import { useGoalActionContext } from "../../../hooks/useGoalActionContext";
@@ -143,6 +145,7 @@ export function FeatureDetailLeaf({
   const [archivedOpen, setArchivedOpen] = useState(false);
 
   const featureCtx = useFeatureActionContext(projectId);
+  const { pause, isLoading: pauseLoading } = usePauseState();
   const taskCtx = useTaskActionContext(projectId);
   const { rowProps, overlays } = useRowActions();
   const goalCtx = useGoalActionContext();
@@ -190,7 +193,9 @@ export function FeatureDetailLeaf({
   const featureTasks = memberTasks.filter((t) => t.status !== "archived");
   const archivedTasks = memberTasks.filter((t) => t.status === "archived");
   const abandonedCount = memberTasks.filter((t) => t.is_abandoned).length;
-  const actions = buildFeatureActions(feature, featureCtx);
+  const actions = buildFeatureActions(feature, featureCtx, {
+    paused: pauseLoading ? undefined : isFeaturePaused(pause, projectId, feature.id),
+  });
   const featureGoals = forFeature(projectId, feature.id);
 
   const selScoped = selProjectId === projectId;

@@ -539,6 +539,9 @@ export interface RunnerStatusResponse {
   // Likewise project scope: true when ANY project has automations paused.
   automationsPaused: boolean;
   automationPausedProjects: string[] | null;
+  /** FEATURE-scoped holds, as "<project>/<feature>". Omitted entirely by a
+   *  server that predates the dial, hence the optional. */
+  pausedFeatures?: string[] | null;
 }
 
 // ─── Scheduler status ────────────────────────────────────────────

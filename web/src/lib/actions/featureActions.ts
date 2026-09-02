@@ -38,6 +38,15 @@ export interface FeatureActionContext {
   /** Whether the feature is currently in the multi-select scope. */
   isSelected: (feature: DerivedFeature) => boolean;
   runFeature: (feature: DerivedFeature) => Promise<void>;
+  /** The FEATURE pause dial — holds this feature's tasks out of automatic
+   *  dispatch while the rest of the project keeps running.
+   *
+   *  The `Dispatch` suffix is load-bearing: `resumeFeature` below is an
+   *  UNRELATED operation that batch-resumes the feature's ABANDONED tasks
+   *  by rewriting their status. One turns a dial, the other edits tasks —
+   *  a bad pair to confuse. */
+  pauseFeatureDispatch: (feature: DerivedFeature) => Promise<void>;
+  resumeFeatureDispatch: (feature: DerivedFeature) => Promise<void>;
   /** Runs the feature AND enrols everything that transitively depends on it,
    *  so each runs as its gate opens. */
   runFeatureWithDependents: (feature: DerivedFeature) => Promise<void>;
@@ -139,9 +148,27 @@ export function affectedTaskCount(feature: DerivedFeature): number {
   return feature.taskCount.total;
 }
 
+/** Why the feature dial cannot be moved to `want`, or "" when it can.
+ *  Mirrors `pauseDialBlockedReason` for the project dials: an unknown state
+ *  (still loading) must not disable an idempotent verb. */
+export function featurePauseBlockedReason(
+  paused: boolean | undefined,
+  want: boolean,
+): string {
+  if (paused === undefined) return "";
+  if (paused === want) {
+    return want ? "Feature is already paused" : "Feature is not paused";
+  }
+  return "";
+}
+
 export function buildFeatureActions(
   feature: DerivedFeature,
   ctx: FeatureActionContext,
+  opts: {
+    /** From `isFeaturePaused`; undefined while pause state is loading. */
+    paused?: boolean;
+  } = {},
 ): ActionDescriptor[] {
   const actions: ActionDescriptor[] = [];
   const n = affectedTaskCount(feature);
@@ -242,6 +269,31 @@ export function buildFeatureActions(
     key: "s",
     disabledReason: n === 0 ? "Feature has no tasks" : "",
     run: async () => ctx.openStatusPicker(feature),
+  });
+
+  // ─── the feature dial ───────────────────────────────────────────
+  // Placed beside cancel because that is the pair a user chooses
+  // between, and the difference matters: pause is reversible and
+  // touches no task, cancel rewrites every task's status and — since
+  // a cancelled task counts as blocked — permanently hard-blocks every
+  // feature that depends on this one.
+  //
+  // "Stop new dispatch" is spelled out for the same reason as the
+  // project verb: pause does not interrupt a task a runner is already
+  // executing, and a bare "Pause feature" would promise that it does.
+  actions.push({
+    id: "pause-dispatch",
+    label: "Pause feature (stop new dispatch)",
+    group: "state",
+    disabledReason: featurePauseBlockedReason(opts.paused, true),
+    run: () => ctx.pauseFeatureDispatch(feature),
+  });
+  actions.push({
+    id: "resume-dispatch",
+    label: "Resume feature",
+    group: "state",
+    disabledReason: featurePauseBlockedReason(opts.paused, false),
+    run: () => ctx.resumeFeatureDispatch(feature),
   });
 
   actions.push({

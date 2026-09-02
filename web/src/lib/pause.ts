@@ -45,6 +45,12 @@ export interface PauseState {
   projectTasks: ReadonlySet<string>;
   /** Projects whose automations dial is off (holds automation tasks). */
   projectAutomations: ReadonlySet<string>;
+  /** Features whose dial is off, keyed `${projectId}/${featureId}`. The
+   *  fourth dial: it holds ONE feature while the rest of its project keeps
+   *  running, which is the only shape that can stop a feature someone
+   *  started by hand — "Run feature now" force-dispatches past the project
+   *  dial on purpose. */
+  features: ReadonlySet<string>;
   /** Runner ids whose runner-scoped dial is off. */
   runners: ReadonlySet<string>;
   /** Total runners known, so "2 paused" can be read against a denominator. */
@@ -59,6 +65,7 @@ const EMPTY_SET: ReadonlySet<string> = new Set();
 export const EMPTY_PAUSE_STATE: PauseState = {
   projectTasks: EMPTY_SET,
   projectAutomations: EMPTY_SET,
+  features: EMPTY_SET,
   runners: EMPTY_SET,
   runnerCount: 0,
   availableRunnerCount: 0,
@@ -78,6 +85,7 @@ export function buildPauseState(
   // Go marshals nil slices as JSON null, not [] — hence the ?? [].
   const projectTasks = new Set(status?.pausedProjects ?? []);
   const projectAutomations = new Set(status?.automationPausedProjects ?? []);
+  const features = new Set(status?.pausedFeatures ?? []);
   const pausedRunners = new Set(
     runners.filter((r) => r.paused).map((r) => r.runner_id),
   );
@@ -87,6 +95,7 @@ export function buildPauseState(
   return {
     projectTasks,
     projectAutomations,
+    features,
     runners: pausedRunners,
     runnerCount: runners.length,
     availableRunnerCount: available,
@@ -99,6 +108,17 @@ export const isProjectTasksPaused = (s: PauseState, projectId: string) =>
 export const isProjectAutomationsPaused = (s: PauseState, projectId: string) =>
   s.projectAutomations.has(projectId);
 
+/** Key for the feature dial. Project-qualified because feature ids are only
+ *  unique within a project. */
+export const featurePauseKey = (projectId: string, featureId: string) =>
+  `${projectId}/${featureId}`;
+
+export const isFeaturePaused = (
+  s: PauseState,
+  projectId: string,
+  featureId: string,
+) => s.features.has(featurePauseKey(projectId, featureId));
+
 export const isRunnerPaused = (s: PauseState, runnerId: string) =>
   s.runners.has(runnerId);
 
@@ -110,6 +130,7 @@ export const allRunnersPaused = (s: PauseState) =>
 export const anyPaused = (s: PauseState) =>
   s.projectTasks.size > 0 ||
   s.projectAutomations.size > 0 ||
+  s.features.size > 0 ||
   s.runners.size > 0;
 
 // ─── Runner row ──────────────────────────────────────────────────

@@ -11,6 +11,8 @@ import { useModal } from "../../store/modal";
 import { useLive } from "../../lib/sse";
 import { useActionRunner } from "../../hooks/useActionRunner";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
+import { usePauseState } from "../../hooks/usePauseState";
+import { isFeaturePaused } from "../../lib/pause";
 import { useGoals, useGoalProgress } from "../../hooks/useGoals";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
 import { useRowActions, type RowActionProps } from "../../hooks/useRowActions";
@@ -131,6 +133,7 @@ export function FeatureModal(): JSX.Element {
   );
 
   const featureCtx = useFeatureActionContext(projectId);
+  const { pause } = usePauseState();
   const taskCtx = useTaskActionContext(projectId);
   const goalCtx = useGoalActionContext();
   // Right-click / long-press / keyboard verbs on the modal's task rows —
@@ -142,7 +145,12 @@ export function FeatureModal(): JSX.Element {
   // Built unconditionally so hook order stays stable across the
   // not-found early return.
   const actions = useMemo(
-    () => (feature ? buildFeatureActions(feature, featureCtx) : []),
+    () =>
+      feature
+        ? buildFeatureActions(feature, featureCtx, {
+            paused: isFeaturePaused(pause, projectId, feature.id),
+          })
+        : [],
     [feature, featureCtx],
   );
 

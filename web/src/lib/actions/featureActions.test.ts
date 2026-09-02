@@ -52,6 +52,8 @@ function recorder(over: Partial<FeatureActionContext> = {}) {
     cancelDependentChain: async (f) => void calls.push(`cancel-chain:${f.id}`),
     hasActiveChain: () => false,
     resumeFeature: async (f) => void calls.push(`resume-direct:${f.id}`),
+    pauseFeatureDispatch: async (f) => void calls.push(`pause-dial:${f.id}`),
+    resumeFeatureDispatch: async (f) => void calls.push(`resume-dial:${f.id}`),
     openStatusPicker: (f) => void calls.push(`picker:${f.id}`),
     setStatusForAll: async (f, s) => void calls.push(`status:${f.id}:${s}`),
     deleteFeature: async (f) => void calls.push(`delete:${f.id}`),
@@ -625,4 +627,56 @@ test("watch-focus: disabled when nothing in the feature is active", () => {
     ctx,
   ).get("watch-focus")!;
   assert.match(a.disabledReason ?? "", /nothing is running/i);
+});
+
+// ─── the feature pause dial ─────────────────────────────────────────
+// The gap it fills: a manually started feature could not be stopped
+// without pausing the whole project, and "Run feature now" force-
+// dispatches past the project dial by design.
+
+test("the dial's two verbs are always present and gate on each other", () => {
+  const { ctx } = recorder();
+  const byId = (paused: boolean | undefined) =>
+    new Map(buildFeatureActions(mkFeature(), ctx, { paused }).map((a) => [a.id, a]));
+
+  const running = byId(false);
+  assert.equal(running.get("pause-dispatch")!.disabledReason, "");
+  assert.match(running.get("resume-dispatch")!.disabledReason!, /not paused/);
+
+  const held = byId(true);
+  assert.match(held.get("pause-dispatch")!.disabledReason!, /already paused/);
+  assert.equal(held.get("resume-dispatch")!.disabledReason, "");
+});
+
+// Unknown state must not disable an idempotent verb — same rule the
+// project dials follow while runner-status is still loading.
+test("an unknown dial state disables neither verb", () => {
+  const { ctx } = recorder();
+  const all = new Map(
+    buildFeatureActions(mkFeature(), ctx, {}).map((a) => [a.id, a]),
+  );
+  assert.equal(all.get("pause-dispatch")!.disabledReason, "");
+  assert.equal(all.get("resume-dispatch")!.disabledReason, "");
+});
+
+// The dial verbs must not be confused with the ABANDONMENT resume, which
+// rewrites task status rather than turning a switch.
+test("the dial is distinct from the abandonment resume", async () => {
+  const { calls, ctx } = recorder();
+  const all = new Map(
+    buildFeatureActions(mkFeature({ resumableCount: 2 }), ctx, { paused: true }).map(
+      (a) => [a.id, a],
+    ),
+  );
+  await all.get("resume-dispatch")!.run();
+  await all.get("resume")!.run();
+  assert.deepEqual(calls, ["resume-dial:checkout-flow", "resume-direct:checkout-flow"]);
+});
+
+test("the pause verb says it does not interrupt running work", () => {
+  const { ctx } = recorder();
+  const pause = buildFeatureActions(mkFeature(), ctx, { paused: false }).find(
+    (a) => a.id === "pause-dispatch",
+  )!;
+  assert.match(pause.label, /stop new dispatch/i);
 });

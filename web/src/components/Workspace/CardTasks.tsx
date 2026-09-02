@@ -38,6 +38,8 @@ import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useRunners } from "../../hooks/useRunners";
 import { useDependentChains } from "../../hooks/useDependentChains";
+import { usePauseState } from "../../hooks/usePauseState";
+import { isFeaturePaused } from "../../lib/pause";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useTaskRowRenderer } from "./TaskRow";
 import { DepGuide } from "../common/DepGuide";
@@ -120,6 +122,8 @@ export function CardTasks({
   // it enrolled, so the chips below are the only place they exist.
   // The POLL lives in ProjectCard; this is a cache reader.
   const chains = useDependentChains(projectId);
+  // The FEATURE dial, for the head's badge and its two verbs.
+  const { pause, isLoading: pauseLoading } = usePauseState();
 
   const featureCtx = useFeatureActionContext(projectId);
   // The groups that answer to no feature_id — the ungrouped bucket and
@@ -307,7 +311,12 @@ export function CardTasks({
         const runnerId = featureAssignments[f.id];
         const runner = runners.find((r) => r.runner_id === runnerId);
         const pct = Math.round(f.progress * 100);
-        const featureActions = buildFeatureActions(f, featureCtx);
+        const featurePaused = isFeaturePaused(pause, projectId, f.id);
+        const featureActions = buildFeatureActions(f, featureCtx, {
+          // undefined while the dials are loading: unknown must not
+          // disable an idempotent verb.
+          paused: pauseLoading ? undefined : featurePaused,
+        });
         const featMarked = selScoped && selFeatureIds.has(f.id);
         // Single-click select-only highlight for the feature head.
         const featIsActive =
@@ -492,6 +501,22 @@ export function CardTasks({
                 {f.name}
               </span>
               <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+              {/* The dial is a DIFFERENT fact from the lifecycle — a
+                  paused feature is still "active" work, just held — so it
+                  gets its own chip rather than overwriting the badge. */}
+              {featurePaused && (
+                <span
+                  className="pause-tag"
+                  title={
+                    `Dispatch PAUSED for this feature. Its ready tasks will not ` +
+                    `be picked up; the rest of ${projectId} is unaffected. Work ` +
+                    `already running finishes, and "Run feature now" still ` +
+                    `overrides.`
+                  }
+                >
+                  paused
+                </span>
+              )}
               {/* Collapsed features hide their rows, so the count has to
                   come back to the header or the fold loses the one number
                   it was hiding. */}

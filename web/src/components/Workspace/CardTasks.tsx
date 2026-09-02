@@ -40,6 +40,7 @@ import { useRunners } from "../../hooks/useRunners";
 import { useDependentChains } from "../../hooks/useDependentChains";
 import { usePauseState } from "../../hooks/usePauseState";
 import { isFeaturePaused } from "../../lib/pause";
+import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useTaskRowRenderer } from "./TaskRow";
 import { DepGuide } from "../common/DepGuide";
@@ -108,6 +109,9 @@ export function CardTasks({
   // Focus. See TaskRow for why reuse rather than a new tab.
   const previewInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
   const openInFocus = useWorkspace((s) => s.openInFocus);
+  // Same click contract as a task row: the preview waits out the
+  // double-click window so pinning to Focus does not flash the panel.
+  const preview = useDeferredPreview();
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
   // Whole map for this project, not a per-feature selector: the feature
   // list is built inside a render, so there is no stable place to call one
@@ -414,11 +418,15 @@ export function CardTasks({
                 }
                 // Plain single-click: highlight AND preview in the side
                 // panel. Double-click pins it into Focus.
+                // Highlight now, preview after the double-click window —
+                // otherwise the panel flashes open on the way to Focus.
                 setActive(projectId, "feature", f.id);
-                previewInSidebar(
-                  "feature-detail",
-                  { projectId, featureId: f.id },
-                  f.name,
+                preview.schedule(() =>
+                  previewInSidebar(
+                    "feature-detail",
+                    { projectId, featureId: f.id },
+                    f.name,
+                  ),
                 );
               }}
               onDoubleClick={(e) => {
@@ -429,6 +437,7 @@ export function CardTasks({
                 )
                   return;
                 if (selActive) return;
+                preview.cancel();
                 openInFocus(
                   "feature-detail",
                   { projectId, featureId: f.id },

@@ -3624,6 +3624,31 @@ body[data-theme="light"] .dial.paused { color: var(--pause); }
    a fold nobody could operate. It is now the control, and needs a tap
    target to match: same trick as `.dial`, sized to stay within the head's
    6px gap so it cannot swallow a click meant for the feature name. */
+/* Some carets are <span role="button"> (a feature head, which is itself
+   role="button" and must not nest one) and some are real <button>s (the
+   group heads, which are not). That difference is an accessibility
+   detail; it must not be VISIBLE. Without these resets the real buttons
+   pick up the global `button` chrome — a 1px border, 3px 8px padding, a
+   4px radius — and the same fold control renders boxed in one place and
+   bare in another. Everything the generic rule sets is answered here,
+   including the light theme's solid-white fill. */
+.feat-head button.caret,
+body[data-theme="light"] .feat-head button.caret {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  border-radius: 0;
+  font: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  color: #6b757e;
+  width: 10px;
+  text-align: center;
+}
+.feat-head button.caret:hover,
+body[data-theme="light"] .feat-head button.caret:hover {
+  background: transparent;
+}
 .feat-head .caret:hover { color: #eaedef; }
 /* Selection mode boxes the shared slot and hides what was in it — fine
    while the caret was decorative, a dead end now that it folds the
@@ -3834,3 +3859,44 @@ body[data-theme="light"] .adetail-actions button.primary { color: #fff; }
   text-align: left; cursor: pointer;
 }
 .adetail-fold:hover { color: var(--p2-fg); }
+
+/* ---------- Project tiles (overview) ---------- */
+/* Masonry, not a grid of equal-height rows. `.overview` sizes every card
+   in a row to the tallest one, so a two-task project beside a
+   four-hundred-task one left a column of dead space — and folding a
+   feature made it grow. See components/Workspace/ProjectTiles for the
+   measuring half; this is the lattice it writes spans against.
+
+   `grid-auto-rows` is deliberately tiny and the ROW gap is zero: the gap
+   between cards is folded into each card's span, because a row-gap here
+   would apply between every one of the dozens of lattice rows a card
+   covers. Columns keep a real gap. */
+.project-tiles {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  grid-auto-rows: 4px;
+  column-gap: 12px;
+  row-gap: 0;
+  align-items: start;
+}
+/* Until a span is written the card occupies one 4px row, which would
+   stack every card on top of the next for one frame. `span 1` is
+   overridden by the observer's first measurement; the fallback for a
+   browser with no ResizeObserver is the auto-placement below. */
+.project-tiles > .pcard { grid-row-end: span 100; }
+@supports not (contain: layout) {
+  .project-tiles { grid-auto-rows: max-content; row-gap: 12px; }
+  .project-tiles > .pcard { grid-row-end: auto; }
+}
+/* A docked project card fills its pane instead of the overview's 460px
+   cap — the pane is the thing with a height there. */
+.pcard.fill {
+  height: 100%;
+  border: 0;
+  border-radius: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.pcard.fill .pcard-body { flex: 1 1 auto; min-height: 0; }

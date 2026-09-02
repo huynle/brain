@@ -57,7 +57,6 @@ function resetStore() {
     streaming: INITIAL.streaming,
     featureAssignments: { ...INITIAL.featureAssignments },
     featureCollapsed: {},
-    archivedExpanded: {},
     hiddenProjects: [],
     statusFilter: "all",
     sidebarDockOpen: false,
@@ -200,38 +199,39 @@ test("workspace: unassignFeature on a missing key is a no-op", () => {
   assert.deepEqual(useWorkspace.getState().featureAssignments, {});
 });
 
-// ─── archived fold + filter ──────────────────────────────────────────
+// ─── group folds ─────────────────────────────────────────────────────
+// The archive fold used to be its own `archivedExpanded` map. It now
+// shares `featureCollapsed` under sentinel keys, so there is ONE fold
+// mechanism on the card: the archive section, each archived bucket, the
+// ungrouped bucket and every feature all read and write the same map.
 
-test("workspace: archivedExpanded starts empty (collapsed by default)", () => {
+test("workspace: the archive fold shares the feature fold map", () => {
   resetStore();
-  assert.deepEqual(useWorkspace.getState().archivedExpanded, {});
+  const w = () => useWorkspace.getState();
+
+  // The sidebar's Archived chip supplies the DEFAULT (open), and the
+  // click still wins — the old implementation removed the toggle from
+  // the DOM in that mode instead, leaving no way to fold at all.
+  w().toggleFeatureCollapsed("p1", "__archived__", false);
+  assert.equal(w().featureCollapsed["p1"]["__archived__"], true);
+  w().toggleFeatureCollapsed("p1", "__archived__", false);
+  assert.equal(w().featureCollapsed["p1"]["__archived__"], false);
 });
 
-test("workspace: toggleArchivedExpanded flips one project's fold", () => {
+// An archived bucket and its live sibling are the SAME feature id on two
+// sides of the fold; the archived side is prefixed so folding one cannot
+// fold the other.
+test("workspace: an archived bucket folds independently of its live feature", () => {
   resetStore();
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  assert.equal(useWorkspace.getState().archivedExpanded["p1"], true);
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  assert.equal(useWorkspace.getState().archivedExpanded["p1"], false);
-});
+  const w = () => useWorkspace.getState();
 
-test("workspace: toggleArchivedExpanded leaves other projects untouched", () => {
-  resetStore();
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  useWorkspace.getState().toggleArchivedExpanded("p2");
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  const m = useWorkspace.getState().archivedExpanded;
-  assert.equal(m["p1"], false);
-  assert.equal(m["p2"], true);
-});
+  w().toggleFeatureCollapsed("p1", "auth", false);
+  assert.equal(w().featureCollapsed["p1"]["auth"], true);
+  assert.equal(w().featureCollapsed["p1"]["__archived__:auth"], undefined);
 
-test("workspace: archived and feature folds are independent maps", () => {
-  resetStore();
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  assert.deepEqual(useWorkspace.getState().featureCollapsed, {});
-  useWorkspace.getState().toggleFeatureCollapsed("p1", "feat-a", false);
-  assert.equal(useWorkspace.getState().archivedExpanded["p1"], true);
-  assert.equal(useWorkspace.getState().featureCollapsed["p1"]["feat-a"], true);
+  w().toggleFeatureCollapsed("p1", "__archived__:auth", false);
+  assert.equal(w().featureCollapsed["p1"]["auth"], true);
+  assert.equal(w().featureCollapsed["p1"]["__archived__:auth"], true);
 });
 
 // ─── per-feature fold ────────────────────────────────────────────────
@@ -1006,13 +1006,12 @@ test("workspace: forgetProject drops the project's expansion state", () => {
   const w = () => useWorkspace.getState();
   w().toggleFeatureCollapsed("shop", "feat-a", false);
   w().toggleFeatureCollapsed("shop", "feat-b", false);
-  w().toggleArchivedExpanded("shop");
+  w().toggleFeatureCollapsed("shop", "__archived__", false);
   w().toggleFeatureCollapsed("warehouse", "feat-a", false);
 
   w().forgetProject("shop");
 
   assert.deepEqual(Object.keys(w().featureCollapsed), ["warehouse"]);
-  assert.deepEqual(Object.keys(w().archivedExpanded), []);
 });
 
 test("workspace: forgetProject on an unknown project is a no-op", () => {

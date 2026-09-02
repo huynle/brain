@@ -14,8 +14,13 @@
  * each mean, and `projectRunIndicator` for how the state is derived. The
  * old "paused" text tag is gone with it — the ⏸ glyph says the same thing
  * one column to the left. The `autos` tag stays: that is the OTHER dial.
+ *
+ * Click reveals, double-click docks: a single click takes you to the
+ * project's card in the overview, a double-click opens the project as a
+ * pane in Focus — the same click/double-click split the task and feature
+ * rows already use.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useWorkspace } from "../../store/workspace";
 import { useProjects } from "../../hooks/useProjects";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
@@ -56,6 +61,29 @@ export function ProjectsSection(): JSX.Element {
   const liveProjects = useLive((s) => s.projects);
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   const { rowProps, overlays } = useRowActions();
+
+  // The single click's scroll is DEFERRED (see focusProjectCard), which is
+  // what makes a double-click on this row workable: the browser fires
+  // click → click → dblclick, so the double-click gets to cancel a
+  // pending scroll into a view it is about to leave. Without it, a
+  // double-click from Focus flashes through the overview first.
+  const revealTimer = useRef<number | null>(null);
+  const cancelReveal = () => {
+    if (revealTimer.current !== null) {
+      window.clearTimeout(revealTimer.current);
+      revealTimer.current = null;
+    }
+  };
+  useEffect(() => cancelReveal, []);
+
+  const revealInOverview = (pid: string) => {
+    cancelReveal();
+    setView("overview");
+    revealTimer.current = window.setTimeout(() => {
+      revealTimer.current = null;
+      focusProjectCard(pid);
+    }, 30);
+  };
 
   // "Visible" means (a) not user-hidden AND (b) matching the current
   // status chip. Shared with the Entries browser via useVisibleProjects,
@@ -109,13 +137,25 @@ export function ProjectsSection(): JSX.Element {
             <div
               key={pid}
               className="proj-row"
-              {...rowProps(actions, pid, () => {
-                setView("overview");
-                setTimeout(() => focusProjectCard(pid), 30);
-              })}
-              onClick={() => {
-                setView("overview");
-                setTimeout(() => focusProjectCard(pid), 30);
+              // Enter keeps matching a single click, as it does on the
+              // task and feature rows; opening in Focus is on the
+              // keyboard through the row's own verb list.
+              {...rowProps(actions, pid, () => revealInOverview(pid))}
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest("button")) return;
+                revealInOverview(pid);
+              }}
+              onDoubleClick={(e) => {
+                if ((e.target as HTMLElement).closest("button")) return;
+                // Cancel the reveal the two preceding clicks queued —
+                // `openProject` switches the view to Focus, and scrolling
+                // an overview nobody is looking at is the flash this
+                // removes.
+                cancelReveal();
+                // The registry's effect, not a second inline openInFocus:
+                // "open this project" has to mean one thing whether it
+                // arrives by double-click, right-click or keyboard.
+                projectCtx.openProject(pid);
               }}
               title={
                 badges.automations ? `${pid} — automations paused` : pid

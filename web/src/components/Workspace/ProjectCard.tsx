@@ -97,9 +97,17 @@ function healthFor(
 
 export interface ProjectCardProps {
   projectId: string;
+  /** Drop the overview grid's height cap and grow to the container.
+   *  Set by `ProjectLeaf`: in a dock pane the PANE decides the height,
+   *  and a 460px cap would leave dead space below a tall pane and a
+   *  double scrollbar inside a short one. */
+  fill?: boolean;
 }
 
-export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
+export function ProjectCard({
+  projectId,
+  fill = false,
+}: ProjectCardProps): JSX.Element {
   const [tab, setTab] = useState<TabKey>("tasks");
   // Poll chain state for the whole card, not only for the tab that draws
   // the chips.
@@ -168,7 +176,9 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
     // a blank iframe with no url, from before a runs surface existed.)
     if (tab === "automations")
       openInFocus("automation-runs", { projectId }, `${projectId} runs`);
-    else openInFocus("task-detail", { projectId }, projectId);
+    // Everything else expands to the project itself. This used to open a
+    // `task-detail` leaf with no taskId, i.e. a "Task not found" error.
+    else openInFocus("project", { projectId }, projectId);
   };
 
   const projectCtx = useProjectActionContext();
@@ -192,7 +202,11 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   );
 
   return (
-    <div className="pcard" data-project={projectId} style={{ maxHeight: 460 }}>
+    <div
+      className={`pcard${fill ? " fill" : ""}`}
+      data-project={projectId}
+      style={fill ? undefined : { maxHeight: 460 }}
+    >
       <div className="pcard-head" {...rowProps(projectActions, projectId)}>
         {/* The dial replaces a dot that only ever reported SSE liveness
             — it never showed pause, so `.pcard-head .dot.paused` sat in

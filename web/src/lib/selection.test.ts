@@ -13,6 +13,7 @@ import { test } from "node:test";
 import {
   buildDeletePlan,
   chunkPaths,
+  selectTasks,
   describeSelection,
   EMPTY_SELECTION,
   isEmptySelection,
@@ -208,4 +209,28 @@ test("describeSelection grammar", () => {
   assert.equal(describeSelection(2, 1), "2 tasks and 1 feature");
   assert.equal(describeSelection(0, 3), "3 features");
   assert.equal(describeSelection(0, 0), "nothing");
+});
+
+// ─── selectTasks (additive) ──────────────────────────────────────
+// The "Select all in this group" primitive. It must NOT be a loop over
+// toggleTask: that would deselect every row of the group the user had
+// already marked, i.e. do the opposite of what the verb says.
+
+test("selectTasks adds without unmarking what is already selected", () => {
+  const s = toggleTask(EMPTY_SELECTION, "p", "a");
+  const out = selectTasks(s, "p", ["a", "b", "c"]);
+  assert.deepEqual([...out.taskIds].sort(), ["a", "b", "c"]);
+});
+
+test("selectTasks in another project restarts the scope", () => {
+  const s = toggleTask(EMPTY_SELECTION, "p1", "a");
+  const out = selectTasks(s, "p2", ["x", "y"]);
+  assert.equal(out.projectId, "p2");
+  assert.deepEqual([...out.taskIds].sort(), ["x", "y"]);
+});
+
+test("selectTasks with no ids is a no-op that keeps identity", () => {
+  const s = toggleTask(EMPTY_SELECTION, "p", "a");
+  // Same reference: a no-op must not invalidate a zustand selector.
+  assert.equal(selectTasks(s, "p", []), s);
 });

@@ -23,8 +23,8 @@ import type { DeleteProjectResponse } from "../types";
 export interface ProjectActionContext {
   /** Dispatch every ready feature in the project (POST /tasks/{p}/run). */
   runProject: (projectId: string) => Promise<void>;
-  /** Open the project's task list in the focus workspace. */
-  openTaskList: (projectId: string) => void;
+  /** Dock the whole project card in the focus workspace. */
+  openProject: (projectId: string) => void;
   /** Hide the card from the overview grid. */
   hideProject: (projectId: string) => void;
   /** POST /tasks/runner/pause/{projectId} — stop new task dispatch. */
@@ -144,10 +144,10 @@ export function buildProjectActions(
     },
 
     {
-      id: "focus-tasks",
-      label: "Open task list in focus",
+      id: "focus-project",
+      label: "Open project in focus",
       group: "navigate",
-      run: async () => ctx.openTaskList(projectId),
+      run: async () => ctx.openProject(projectId),
     },
     {
       id: "hide",

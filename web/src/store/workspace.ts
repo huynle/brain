@@ -57,6 +57,7 @@ import {
   updateSplitRatio as updateDockSplitRatio,
   walkLeaves,
   firstLeaf,
+  isDockLeafKind,
   type DockLeaf,
   type DockNode,
   type Edge,
@@ -175,9 +176,6 @@ export interface WorkspaceState {
    *  `forgetProject` can drop a whole project with the same `omitKey`
    *  the other per-project maps use — a composite key would survive it. */
   featureCollapsed: Record<string, Record<string, boolean>>;
-  /** Per-project expansion state for the "N archived tasks" fold
-   *  in CardTasks. Missing key = collapsed (default). */
-  archivedExpanded: Record<string, boolean>;
   /** Explicitly-hidden project ids. Anything NOT in this set is
    *  visible in the overview grid + sidebar Projects section. */
   hiddenProjects: string[];
@@ -220,7 +218,6 @@ export interface WorkspaceState {
     featureId: string,
     defaultCollapsed: boolean,
   ): void;
-  toggleArchivedExpanded(projectId: string): void;
   hideProject(projectId: string): void;
   showProject(projectId: string): void;
   forgetProject(projectId: string): void;
@@ -348,16 +345,14 @@ function coerceDockTree(raw: unknown): DockNode | null {
     const leaf = (node as { leaf?: unknown }).leaf;
     if (!leaf || typeof leaf !== "object") return null;
     const l = leaf as Partial<DockLeaf>;
-    if (
-      l.kind !== "task-detail" &&
-      l.kind !== "feature-detail" &&
-      l.kind !== "logs" &&
-      l.kind !== "session" &&
-      l.kind !== "runners" &&
-      l.kind !== "browser" &&
-      l.kind !== "entry"
-    )
-      return null;
+    // Delegate to `isDockLeafKind` rather than repeating the union here.
+    // The literal chain this replaces had already drifted: it never
+    // learned "automation-runs" or "automation-detail", and an unknown
+    // kind returns null, which the split/tabs branch below propagates all
+    // the way up — so `merge` threw away the user's ENTIRE persisted dock
+    // layout on the next reload, silently, for anyone who left an
+    // automation pane docked. One list, one source of truth.
+    if (typeof l.kind !== "string" || !isDockLeafKind(l.kind)) return null;
     if (typeof l.title !== "string") return null;
     return raw as DockNode;
   }
@@ -597,7 +592,6 @@ export const useWorkspace = create<WorkspaceState>()(
         streaming: false,
         featureAssignments: {},
         featureCollapsed: {},
-        archivedExpanded: {},
         hiddenProjects: [],
         statusFilter: "all" as StatusFilter,
 
@@ -688,13 +682,6 @@ export const useWorkspace = create<WorkspaceState>()(
             };
           }),
 
-        toggleArchivedExpanded: (projectId) =>
-          set((s) => ({
-            archivedExpanded: {
-              ...s.archivedExpanded,
-              [projectId]: !s.archivedExpanded[projectId],
-            },
-          })),
 
         hideProject: (projectId) =>
           set((s) =>
@@ -740,7 +727,6 @@ export const useWorkspace = create<WorkspaceState>()(
             return {
               hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId),
               featureCollapsed: omitKey(s.featureCollapsed, projectId),
-              archivedExpanded: omitKey(s.archivedExpanded, projectId),
               docks: { focus, sidebar },
               // A leaf id recorded as "last focused" may have just been
               // removed; the dock no longer contains it either way.
@@ -926,7 +912,6 @@ export const useWorkspace = create<WorkspaceState>()(
         theme: s.theme,
         featureAssignments: s.featureAssignments,
         featureCollapsed: s.featureCollapsed,
-        archivedExpanded: s.archivedExpanded,
         hiddenProjects: s.hiddenProjects,
         statusFilter: s.statusFilter,
         docks: s.docks,
@@ -1052,6 +1037,10 @@ function defaultLeafTitle(
       if (!path) return "Entry";
       const base = path.split("/").pop() || path;
       return base.replace(/\.md$/, "");
+    }
+    case "project": {
+      const project = target.projectId as string | undefined;
+      return project ?? "Project";
     }
     case "automation-runs": {
       const project = target.projectId as string | undefined;

@@ -35,7 +35,7 @@ function recorder() {
   const calls: string[] = [];
   const ctx: ProjectActionContext = {
     runProject: async (pid) => void calls.push(`run:${pid}`),
-    openTaskList: (pid) => void calls.push(`focus:${pid}`),
+    openProject: (pid) => void calls.push(`focus:${pid}`),
     hideProject: (pid) => void calls.push(`hide:${pid}`),
     pauseProject: async (pid) => void calls.push(`pause:${pid}`),
     resumeProject: async (pid) => void calls.push(`resume:${pid}`),
@@ -77,7 +77,7 @@ test("every project verb is present", () => {
     "resume",
     "pause-automations",
     "resume-automations",
-    "focus-tasks",
+    "focus-project",
     "hide",
     "delete",
   ]);

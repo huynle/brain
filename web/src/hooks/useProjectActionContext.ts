@@ -55,8 +55,12 @@ export function useProjectActionContext(): ProjectActionContext {
         );
       },
 
-      openTaskList: (pid: string) =>
-        openInFocus("task-detail", { projectId: pid }, pid),
+      // A "project" leaf, not a task-detail one. This verb opened
+      // `task-detail` with a projectId and NO taskId for as long as it
+      // existed, which resolves no task and renders `Task "" not found in
+      // project "<pid>"` — a shipped, reachable dead end behind a menu
+      // item that promised a project.
+      openProject: (pid: string) => openInFocus("project", { projectId: pid }, pid),
 
       hideProject: (pid: string) => hideProject(pid),
 

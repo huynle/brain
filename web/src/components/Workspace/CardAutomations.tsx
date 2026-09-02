@@ -2,7 +2,13 @@
  * CardAutomations — wireframe-parity port.
  *
  * Lists automations for a project. Each row:
- *   [status-toggle glyph] name · trigger · Run
+ *   [status-toggle glyph] name · last run · trigger · Run
+ *
+ * The "last run" cell is the answer to the question the card is usually
+ * open for — "is this thing still working?" — without a click: the
+ * newest audit's outcome glyph and age, or "never run" when an enabled
+ * automation has no audit at all, which is itself the finding. Clicking
+ * it opens the automation on its Runs tab.
  * The leading glyph doubles as the enable/pause toggle -- clicking it
  * flips `status` between "active" and "archived" without needing a
  * separate button. Body click still opens the automation modal.
@@ -14,16 +20,27 @@
  * same context effects.
  */
 import { useAutomations } from "../../hooks/useAutomations";
+import { useAutomationRuns } from "../../hooks/useAutomationRuns";
+import { useMemo } from "react";
 import { useAutomationActionContext } from "../../hooks/useAutomationActionContext";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useActionRunner } from "../../hooks/useActionRunner";
-import { useModal } from "../../store/modal";
+import { useWorkspace } from "../../store/workspace";
 import {
   buildAutomationActions,
   isEnabledAutomation,
 } from "../../lib/actions/automationActions";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
+import { relativeTime } from "../../lib/format";
+import {
+  latestRunByAutomation,
+  outcomeGlyph,
+  outcomeLabel,
+  outcomeTone,
+  runOutcome,
+  runTime,
+} from "../../lib/automationRuns";
 
 export interface CardAutomationsProps {
   projectId: string;
@@ -32,9 +49,28 @@ export interface CardAutomationsProps {
 export function CardAutomations({
   projectId,
 }: CardAutomationsProps): JSX.Element {
-  const { automations, isLoading, error, refetch } =
-    useAutomations(projectId);
-  const openModal = useModal((s) => s.open);
+  const { automations, isLoading, error, refetch } = useAutomations(projectId);
+  // One project-wide run query for the whole card, folded to the newest
+  // run per automation. Deliberately NOT one query per row: a project
+  // with a dozen automations would otherwise issue a dozen over-fetch
+  // scans of the largest table in the store on every poll.
+  const { runs, windowFull, limit: runWindow } = useAutomationRuns(projectId);
+  const lastRuns = useMemo(() => latestRunByAutomation(runs), [runs]);
+
+  // Activation docks the automation in the side panel instead of opening
+  // a modal: acting on an automation is a loop (run → read the run →
+  // open its session → run again), and a modal blocks the workspace
+  // behind it and closes the moment you open anything from it.
+  // Reuse, don't stack: the detail pane is a viewer onto whichever row
+  // you activated, so clicking through six automations moves one pane
+  // six times instead of leaving six tabs behind.
+  const openDetail = (automationId: string, name: string) =>
+    openOrReuseInSidebar(
+      "automation-detail",
+      { projectId, automationId },
+      name,
+    );
+  const openOrReuseInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
   const ctx = useAutomationActionContext(projectId);
   const { rowProps, overlays } = useRowActions();
   const runner = useActionRunner();
@@ -61,7 +97,8 @@ export function CardAutomations({
         // when enabled (or errored — stops the retry loop), enable
         // when paused. Routing through the runner keeps toasts and
         // error handling identical to the menu's.
-        const toggleAction = enabled || errored ? byId.get("pause") : byId.get("enable");
+        const toggleAction =
+          enabled || errored ? byId.get("pause") : byId.get("enable");
         const runAction = byId.get("run");
 
         // Glyph legend:
@@ -81,13 +118,11 @@ export function CardAutomations({
         return (
           <div
             key={a.id}
-            className="trow"
-            {...rowProps(actions, name, () =>
-              openModal("automation", { projectId, automationId: a.id }),
-            )}
+            className="trow auto-row"
+            {...rowProps(actions, name, () => openDetail(a.id, name))}
             onClick={(e) => {
               if ((e.target as HTMLElement).closest("button")) return;
-              openModal("automation", { projectId, automationId: a.id });
+              openDetail(a.id, name);
             }}
             title={a.title}
             style={enabled ? undefined : { opacity: 0.55 }}
@@ -101,9 +136,7 @@ export function CardAutomations({
               }}
               title={glyphTitle}
               aria-pressed={enabled}
-              aria-label={
-                enabled ? "Pause automation" : "Enable automation"
-              }
+              aria-label={enabled ? "Pause automation" : "Enable automation"}
               style={{
                 background: "transparent",
                 border: 0,
@@ -116,6 +149,19 @@ export function CardAutomations({
               {glyph}
             </button>
             <span className="name">{name}</span>
+            <LastRun
+              run={lastRuns.get(a.id)}
+              enabled={enabled}
+              inconclusive={windowFull}
+              window={runWindow}
+              onOpen={(e) => {
+                e.stopPropagation();
+                // Same destination as the row: the docked view leads with
+                // the run history, so there is no second surface to route
+                // to and no tab to preselect.
+                openDetail(a.id, name);
+              }}
+            />
             <span className="status">{a.trigger?.type || "manual"}</span>
             <button
               className="id"
@@ -134,5 +180,72 @@ export function CardAutomations({
       {overlays}
       {runner.dialog}
     </div>
+  );
+}
+
+/**
+ * The row's last-run cell.
+ *
+ * The card reads ONE project-wide window of runs, so "no run here" has
+ * two meanings and they must not be conflated: on a project with a
+ * minutely cron, that window is entirely that cron, and every other
+ * automation would read "never run" while firing nightly. Absence is
+ * only conclusive when the window came back short — i.e. we have seen
+ * every run the project has.
+ *
+ * "Never run" is also only worth flagging for an ENABLED automation: a
+ * paused one records no runs by definition.
+ */
+function LastRun({
+  run,
+  enabled,
+  inconclusive,
+  window: runWindow,
+  onOpen,
+}: {
+  run?: ReturnType<typeof latestRunByAutomation> extends Map<string, infer R>
+    ? R
+    : never;
+  enabled: boolean;
+  inconclusive: boolean;
+  window: number;
+  onOpen: (e: React.MouseEvent) => void;
+}): JSX.Element {
+  if (!run) {
+    return (
+      <span
+        className="auto-lastrun never"
+        title={
+          inconclusive
+            ? `Nothing from this automation is in the project's newest ${runWindow} runs — open the runs pane to search its own history.`
+            : enabled
+              ? "No run has ever been recorded for this automation."
+              : "Paused automations do not fire, so they record no runs."
+        }
+      >
+        {inconclusive ? "no recent run" : "never run"}
+      </span>
+    );
+  }
+  const outcome = runOutcome(run);
+  return (
+    <button
+      type="button"
+      className="auto-lastrun"
+      onClick={onOpen}
+      title={`Last run ${runTime(run)} — ${outcomeLabel(run)}. Click for this automation's run history.`}
+      style={{
+        background: "transparent",
+        border: 0,
+        padding: 0,
+        cursor: "pointer",
+        font: "inherit",
+      }}
+    >
+      <span className={`glyph ${outcomeTone(outcome)}`}>
+        {outcomeGlyph(outcome)}
+      </span>
+      {relativeTime(runTime(run))}
+    </button>
   );
 }

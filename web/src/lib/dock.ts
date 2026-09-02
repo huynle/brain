@@ -31,7 +31,9 @@ export interface DockLeaf {
     | "session"
     | "runners"
     | "browser"
-    | "entry";
+    | "entry"
+    | "automation-runs"
+    | "automation-detail";
   target: Record<string, unknown>;
   title: string;
 }
@@ -76,7 +78,9 @@ export function isDockLeafKind(kind: string): kind is DockLeaf["kind"] {
     kind === "session" ||
     kind === "runners" ||
     kind === "browser" ||
-    kind === "entry"
+    kind === "entry" ||
+    kind === "automation-runs" ||
+    kind === "automation-detail"
   );
 }
 
@@ -157,6 +161,48 @@ export function firstLeaf(tree: DockNode): DockLeaf | null {
   return found;
 }
 
+/**
+ * The first leaf of a given kind, with its id — for surfaces that are
+ * VIEWERS rather than collections.
+ *
+ * A detail pane (one automation, say) is a single window onto whichever
+ * row you activated: opening five automations should move one pane five
+ * times, not leave five tabs to close. Callers pair this with
+ * `retargetLeaf` and `enclosingTabsId` to reuse the pane they already
+ * have. Panes the user may legitimately want several of at once —
+ * sessions, logs — deliberately do NOT use it.
+ */
+export function findLeafOfKind(
+  tree: DockNode,
+  kind: DockLeaf["kind"],
+): { id: string; leaf: DockLeaf } | null {
+  let found: { id: string; leaf: DockLeaf } | null = null;
+  walkLeaves(tree, (leaf, id) => {
+    if (found === null && leaf.kind === kind) found = { id, leaf };
+  });
+  return found;
+}
+
+/** Point an existing leaf at new content, keeping its id and position. */
+export function retargetLeaf(
+  tree: DockNode,
+  leafId: string,
+  leaf: DockLeaf,
+): DockNode {
+  const info = findNodeInfo(tree, leafId);
+  if (!info || info.node.type !== "leaf") return tree;
+  return replaceNode(tree, leafId, { ...info.node, leaf });
+}
+
+/** The id of the tabs strip holding `leafId`, when it is in one — the
+ *  reused pane has to be brought to the front of its strip, or it is
+ *  updated invisibly behind whatever tab is showing. */
+export function enclosingTabsId(tree: DockNode, leafId: string): string | null {
+  const info = findNodeInfo(tree, leafId);
+  if (!info || !info.parent || info.parent.type !== "tabs") return null;
+  return info.parent.id;
+}
+
 export function findNodeInfo(
   tree: DockNode,
   nodeId: string,
@@ -179,7 +225,11 @@ export function findNodeInfo(
 
 /** Returns true if `ancestorId` contains a node with id `descendantId`
  *  anywhere in its subtree (including itself). */
-function isAncestor(tree: DockNode, ancestorId: string, descendantId: string): boolean {
+function isAncestor(
+  tree: DockNode,
+  ancestorId: string,
+  descendantId: string,
+): boolean {
   const anc = findNodeInfo(tree, ancestorId);
   if (!anc) return false;
   if (ancestorId === descendantId) return true;

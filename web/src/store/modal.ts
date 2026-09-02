@@ -27,7 +27,6 @@ export type ModalKind =
   | "feature-status"
   | "feature-metadata"
   | "feature-assign"
-  | "automation"
   | "goal"
   | "goal-create"
   | "settings"

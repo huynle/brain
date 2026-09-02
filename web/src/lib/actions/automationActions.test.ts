@@ -41,6 +41,8 @@ function recorder() {
     pauseAutomation: async (a) => void calls.push(`pause:${a.id}`),
     deleteAutomation: async (a) => void calls.push(`delete:${a.id}`),
     openDetails: (a) => void calls.push(`details:${a.id}`),
+    openHistory: (a) => void calls.push(`history:${a.id}`),
+    openRunsPane: (a) => void calls.push(`runs-pane:${a.id}`),
   };
   return { calls, ctx };
 }
@@ -59,8 +61,10 @@ test("every automation verb is present regardless of status", () => {
       "delete",
       "details",
       "enable",
+      "history",
       "pause",
       "run",
+      "runs-pane",
     ]);
   }
 });
@@ -126,5 +130,25 @@ test("verbs call their context effects with the entry", async () => {
     "pause:nightly-cleanup",
     "details:nightly-cleanup",
     "delete:nightly-cleanup",
+  ]);
+});
+
+// ─── history navigation ────────────────────────────────────────────
+
+test("history verbs are always enabled and route to their own surfaces", async () => {
+  const { calls, ctx } = recorder();
+  const a = mkAutomation({ status: "archived" });
+  const acts = byId(a, ctx);
+
+  // A paused automation still has a past worth reading — that is often
+  // exactly why it was paused.
+  assert.equal(isEnabled(acts.get("history")!), true);
+  assert.equal(isEnabled(acts.get("runs-pane")!), true);
+
+  await acts.get("history")!.run();
+  await acts.get("runs-pane")!.run();
+  assert.deepEqual(calls, [
+    `history:${a.id}`,
+    `runs-pane:${a.id}`,
   ]);
 });

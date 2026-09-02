@@ -45,8 +45,11 @@ import type { SessionRef } from "../lib/types";
 import {
   addNodeAtEdge,
   addSubtreeAtEdge,
+  enclosingTabsId,
   evenSplitTree,
+  findLeafOfKind,
   findNodeInfo,
+  retargetLeaf,
   newLeafNode,
   removeNode as removeDockNode,
   moveLeaf as moveDockLeaf,
@@ -81,23 +84,14 @@ type DockId = "focus" | "sidebar";
  * one task with a matching status. `all` disables the filter entirely.
  */
 export type StatusFilter =
-  | "all"
-  | "active"
-  | "ready"
-  | "blocked"
-  | "done"
-  | "archived";
+  "all" | "active" | "ready" | "blocked" | "done" | "archived";
 
 /**
  * Clamp a requested drawer width (px) into a usable range. Pure so the
  * store's `setDrawerWidth` and the resize handler both funnel through
  * one testable rule. Defaults to [300, 900].
  */
-export function clampDrawerWidth(
-  px: number,
-  min = 300,
-  max = 900,
-): number {
+export function clampDrawerWidth(px: number, min = 300, max = 900): number {
   if (!Number.isFinite(px)) return min;
   return Math.min(max, Math.max(min, px));
 }
@@ -107,11 +101,7 @@ export function clampDrawerWidth(
  * `clampDrawerWidth` — same shape, same reasoning. Defaults to
  * [180, 480], centered on the historical fixed 250px sidebar.
  */
-export function clampSidebarWidth(
-  px: number,
-  min = 180,
-  max = 480,
-): number {
+export function clampSidebarWidth(px: number, min = 180, max = 480): number {
   if (!Number.isFinite(px)) return min;
   return Math.min(max, Math.max(min, px));
 }
@@ -278,6 +268,21 @@ export interface WorkspaceState {
     targetNodeId: string,
     edge: Edge,
   ): void;
+  /**
+   * Open a leaf in the sidebar, REUSING the pane of the same kind if one
+   * is already docked there.
+   *
+   * For a viewer pane — one automation at a time — stacking is wrong:
+   * clicking through a project's automations would leave a tab per row
+   * for the user to clean up, and every one of them a stale snapshot of
+   * a row they have moved on from. Panes there is a real reason to have
+   * several of (sessions, logs) keep using `openInSidebar`.
+   */
+  openOrReuseInSidebar(
+    kind: DockLeaf["kind"],
+    target: Record<string, unknown>,
+    title?: string,
+  ): void;
   closeSidebarLeaf(leafId: string): void;
   moveSidebarLeaf(sourceLeafId: string, targetId: string, edge: Edge): void;
   setSidebarSplitRatio(splitId: string, ratio: number): void;
@@ -360,7 +365,9 @@ export const useWorkspace = create<WorkspaceState>()(
       // `docks` to read/write and which `lastXLeafId` field tracks the
       // "last touched" drop-target hint.
 
-      const lastLeafField = (dockId: DockId): "lastFocusLeafId" | "lastSidebarLeafId" =>
+      const lastLeafField = (
+        dockId: DockId,
+      ): "lastFocusLeafId" | "lastSidebarLeafId" =>
         dockId === "focus" ? "lastFocusLeafId" : "lastSidebarLeafId";
 
       const makeOpenIn =
@@ -544,7 +551,10 @@ export const useWorkspace = create<WorkspaceState>()(
           const tree = state.docks[dockId];
           if (!tree) return;
           set({
-            docks: { ...state.docks, [dockId]: setDockActiveTab(tree, tabsId, idx) },
+            docks: {
+              ...state.docks,
+              [dockId]: setDockActiveTab(tree, tabsId, idx),
+            },
           });
         };
 
@@ -602,7 +612,8 @@ export const useWorkspace = create<WorkspaceState>()(
           set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
 
         setAssistantOpen: (open) => set({ assistantOpen: open }),
-        toggleAssistant: () => set((s) => ({ assistantOpen: !s.assistantOpen })),
+        toggleAssistant: () =>
+          set((s) => ({ assistantOpen: !s.assistantOpen })),
 
         setCommandOpen: (open) => set({ commandOpen: open }),
         toggleCommand: () => set((s) => ({ commandOpen: !s.commandOpen })),
@@ -716,7 +727,11 @@ export const useWorkspace = create<WorkspaceState>()(
         toggleProjectVisibility: (projectId) =>
           set((s) =>
             s.hiddenProjects.includes(projectId)
-              ? { hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId) }
+              ? {
+                  hiddenProjects: s.hiddenProjects.filter(
+                    (p) => p !== projectId,
+                  ),
+                }
               : { hiddenProjects: [...s.hiddenProjects, projectId] },
           ),
 
@@ -765,7 +780,12 @@ export const useWorkspace = create<WorkspaceState>()(
           // something you add, not a mode you enter.
           const anchor = pickDropTarget(tree, state.lastFocusLeafId);
           const nextTree = anchor
-            ? addSubtreeAtEdge(tree, anchor, dir === "row" ? "right" : "bottom", group)
+            ? addSubtreeAtEdge(
+                tree,
+                anchor,
+                dir === "row" ? "right" : "bottom",
+                group,
+              )
             : group;
           set({
             docks: { ...state.docks, focus: nextTree },
@@ -787,6 +807,38 @@ export const useWorkspace = create<WorkspaceState>()(
         // ─── sidebar dock tree actions ──────────────────────────
         openInSidebar: makeOpenIn("sidebar"),
         openInSidebarAt: makeOpenInAt("sidebar"),
+        openOrReuseInSidebar: (kind, target, title) => {
+          const state = get();
+          const tree = state.docks.sidebar;
+          const existing = tree ? findLeafOfKind(tree, kind) : null;
+          if (!tree || !existing) {
+            makeOpenIn("sidebar")(kind, target, title);
+            return;
+          }
+          const leaf: DockLeaf = {
+            kind,
+            target,
+            title: title ?? defaultLeafTitle(kind, target),
+          };
+          let next = retargetLeaf(tree, existing.id, leaf);
+          // Bring it to the front of its strip: a pane updated behind
+          // another tab looks like the click did nothing.
+          const tabsId = enclosingTabsId(next, existing.id);
+          if (tabsId) {
+            const info = findNodeInfo(next, tabsId);
+            if (info && info.node.type === "tabs") {
+              const idx = info.node.children.findIndex(
+                (c) => c.id === existing.id,
+              );
+              if (idx >= 0) next = setDockActiveTab(next, tabsId, idx);
+            }
+          }
+          set({
+            docks: { ...state.docks, sidebar: next },
+            lastSidebarLeafId: existing.id,
+            sidebarDockOpen: true,
+          });
+        },
         closeSidebarLeaf: makeCloseLeaf("sidebar"),
         moveSidebarLeaf: makeMoveLeaf("sidebar"),
         setSidebarSplitRatio: makeSetSplitRatio("sidebar"),
@@ -801,8 +853,7 @@ export const useWorkspace = create<WorkspaceState>()(
           const info = findNodeInfo(fromTree, leafId);
           if (!info || info.node.type !== "leaf") return;
           const leaf = info.node.leaf;
-          const toDockId: DockId =
-            fromDockId === "focus" ? "sidebar" : "focus";
+          const toDockId: DockId = fromDockId === "focus" ? "sidebar" : "focus";
 
           // Remove first, then place — the two trees are independent, so
           // there is no ordering hazard, and doing both in ONE set keeps
@@ -902,7 +953,9 @@ export const useWorkspace = create<WorkspaceState>()(
           ...p,
           docks: { focus: focusTree, sidebar: sidebarTree },
           lastFocusLeafId:
-            focusTree && p.lastFocusLeafId && leafIdExists(focusTree, p.lastFocusLeafId)
+            focusTree &&
+            p.lastFocusLeafId &&
+            leafIdExists(focusTree, p.lastFocusLeafId)
               ? p.lastFocusLeafId
               : null,
           lastSidebarLeafId:
@@ -974,6 +1027,14 @@ function defaultLeafTitle(
       if (!path) return "Entry";
       const base = path.split("/").pop() || path;
       return base.replace(/\.md$/, "");
+    }
+    case "automation-runs": {
+      const project = target.projectId as string | undefined;
+      return project ? `${project} runs` : "Automation runs";
+    }
+    case "automation-detail": {
+      const id = target.automationId as string | undefined;
+      return id ? `Automation ${id}` : "Automation";
     }
     default:
       return "Pane";

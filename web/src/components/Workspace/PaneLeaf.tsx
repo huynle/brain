@@ -35,6 +35,8 @@ import { SessionLeaf } from "./leaves/SessionLeaf";
 import { RunnersLeaf } from "./leaves/RunnersLeaf";
 import { BrowserLeaf } from "./leaves/BrowserLeaf";
 import { EntryLeaf } from "./leaves/EntryLeaf";
+import { AutomationRunsLeaf } from "./leaves/AutomationRunsLeaf";
+import { AutomationDetailLeaf } from "./leaves/AutomationDetailLeaf";
 
 export function PaneLeaf({
   dockId,
@@ -263,6 +265,10 @@ function LeafContent({ leaf }: { leaf: DockLeaf }): JSX.Element {
       return <BrowserLeaf target={leaf.target} />;
     case "entry":
       return <EntryLeaf target={leaf.target} />;
+    case "automation-runs":
+      return <AutomationRunsLeaf target={leaf.target} />;
+    case "automation-detail":
+      return <AutomationDetailLeaf target={leaf.target} />;
     default:
       return (
         <div style={{ color: "var(--p2-fg-faint)" }}>

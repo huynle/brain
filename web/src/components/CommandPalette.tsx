@@ -137,6 +137,13 @@ export function CommandPalette(): JSX.Element | null {
     // Add project / task / feature / runner commands from live data.
     for (const pid of projects ?? []) {
       cmds.push({
+        id: `proj-runs:${pid}`,
+        label: `Automation runs: ${pid}`,
+        hint: "run history + sessions",
+        action: () =>
+          openInFocus("automation-runs", { projectId: pid }, `${pid} runs`),
+      });
+      cmds.push({
         id: `proj:${pid}`,
         label: `Go to project: ${pid}`,
         action: () => {

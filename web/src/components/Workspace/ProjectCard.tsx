@@ -136,8 +136,11 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   const openInFocusForTab = () => {
     if (tab === "features")
       openModal("feature", { projectId, featureId: features[0]?.id });
+    // Automations expand to their RUN HISTORY, not to the catalog the
+    // card already shows. (This used to open an empty browser pane —
+    // a blank iframe with no url, from before a runs surface existed.)
     else if (tab === "automations")
-      openInFocus("browser", { url: "" }, `${projectId} automations`);
+      openInFocus("automation-runs", { projectId }, `${projectId} runs`);
     else openInFocus("task-detail", { projectId }, projectId);
   };
 

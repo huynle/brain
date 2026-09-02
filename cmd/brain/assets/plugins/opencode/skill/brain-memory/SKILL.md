@@ -31,14 +31,15 @@ Remember what will matter later, not everything that was said. A good memory is 
 
 At the start of project work or when prior context may matter:
 
-1. Call `project_context` to load the current project and latest `dream` memory.
+1. Call `context_get` to resolve the current project, then `search` for that project's latest `dream` entry.
+   `context_get` reports the project, workdir and git context this MCP server resolved at startup — it does NOT return the dream, so load that yourself.
 2. Search for relevant memories using `search` or `inject` when the user asks about preferences, history, prior decisions, or project context.
 3. Use recalled memory quietly as context. Mention it only when it materially affects your answer or there is uncertainty.
 
 Good recall prompts:
 
 ```text
-project_context()
+context_get()
 inject(query: "user preferences coding style project constraints", maxEntries: 5)
 search(query: "deployment decision migration rollback", type: "decision", limit: 5)
 search(query: "memory preference <topic>", tags: ["memory"], limit: 5)

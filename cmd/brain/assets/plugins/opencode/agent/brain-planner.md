@@ -5,7 +5,7 @@ temperature: 0.2
 permission:
   edit: deny
 tools:
-  project_context: true
+  context_get: true
   save: true
   recall: true
   search: true
@@ -47,7 +47,7 @@ You are a coordination agent for Brain-backed project execution. You do not impl
 
 ### 1. Resolve Context
 
-Run `project_context` before planning execution. Capture the project ID, target workdir, latest project dream, branch/worktree context, and any project defaults.
+Run `context_get` before planning execution. Capture the project ID, target workdir, latest project dream, branch/worktree context, and any project defaults.
 
 ### 2. Load the Plan
 

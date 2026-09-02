@@ -19,7 +19,7 @@ The Brain is a persistent knowledge store and task/automation system that surviv
 - [ ] Step 7: Consider linking to suggested related entries
 
 ### When Recalling
-- [ ] Step 1: Use `project_context` to load project dream context at session start
+- [ ] Step 1: Use `context_get` to resolve the project, then `search` for its latest `dream` entry
 - [ ] Step 2: Search before creating to avoid duplicates
 - [ ] Step 3: Use `backlinks`, `outlinks`, and `related` to explore the knowledge graph
 
@@ -33,7 +33,7 @@ The Brain is a persistent knowledge store and task/automation system that surviv
 - [ ] Step 1: Use the `brain-automation` skill for event-triggered or scheduled work
 - [ ] Step 2: Prefer scheduled tasks for simple recurring work
 - [ ] Step 3: Prefer automation entries for event/webhook/session-triggered generated work
-- [ ] Step 4: Add safeguards such as `once_per`, `cooldown`, `max_concurrent`, `max_runs`, or `expires_at`
+- [ ] Step 4: Add safeguards such as `cooldown`, `max_concurrent`, `max_runs`, `expires_at`, or `once_per` (an EVENT FIELD NAME like `feature_id` — never a duration; see the brain-automation skill)
 
 ### Maintenance
 - [ ] Step 1: Check `orphans` periodically for unconnected notes
@@ -72,7 +72,9 @@ The Brain is a persistent knowledge store and task/automation system that surviv
 - Searching conceptually when exact keywords may differ
 - Reviewing an entry that has attachments or extracted media text
 
-Start with `project_context` when working inside a project checkout. It automatically registers the current Brain client/workspace, resolves the Brain project across hosts and git worktrees, and returns the latest `dream` entry as consolidated context.
+Start with `context_get` when working inside a project checkout. It takes no arguments and reports the ambient execution context this MCP server resolved at startup: the project that every tool call defaults to when `project` is omitted, the workdir, and the git remote/branch.
+
+It does NOT return the project dream — load that separately with `search(query: "dream", project: "<project>", type: "dream")` and `recall` the newest hit. If `context_get` reports the project as ⚠ COULD NOT DETERMINE, the process is not inside a recognised repository: pass `project` explicitly on every call rather than letting it guess.
 
 Use the `brain-project-context` skill when you need to refresh consolidated project context mid-task because context feels thin or assumptions are starting to pile up.
 
@@ -274,13 +276,11 @@ save(
   trigger: {
     type: "cron",
     schedule: "0 2 * * *",
-    once_per: "day",
     cooldown: "20h",
     max_concurrent: 1
   },
   action: {
-    type: "create_task",
-    title_template: "Nightly test audit {{date}}",
+    type: "prompt",
     direct_prompt: "Run the nightly test audit and save findings to Brain.",
     complete_on_idle: true
   }
@@ -306,9 +306,8 @@ save(
     max_concurrent: 1
   },
   action: {
-    type: "create_task",
-    title_template: "Checkout {{feature_id}}",
-    direct_prompt: "Use feature-checkout to audit {{feature_id}} against original requests.",
+    type: "prompt",
+    direct_prompt: "Use feature-checkout to audit {{.FeatureID}} against original requests.",
     complete_on_idle: true
   }
 )

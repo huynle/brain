@@ -28,7 +28,7 @@ Brain supports two timed-work shapes, but user-facing project automations should
 
 ## Workflow
 1. Identify whether this is a user-facing automation or an explicit scheduled task. Default to `type: "automation"` for project-level automations.
-2. Resolve the destination Brain project before saving. Use `project_context` when working from a checkout, but do not assume the current checkout is the right project for personal, cross-project, office, or external-system automations.
+2. Resolve the destination Brain project before saving. Use `context_get` when working from a checkout, but do not assume the current checkout is the right project for personal, cross-project, office, or external-system automations.
 3. Ask one clarifying question if the destination project is not obvious from the user's words or workspace. Example: "Which Brain project should own this automation?"
 4. Ask one clarifying question only if the trigger time/event or action is ambiguous.
 5. Save the durable Brain entry with the minimum fields needed, including explicit `project: "<project>"`.
@@ -38,7 +38,7 @@ Brain supports two timed-work shapes, but user-facing project automations should
 
 ## Project Selection Rules
 - If the user names a project, use that project.
-- If the automation is clearly tied to the current repository, use the project returned by `project_context`.
+- If the automation is clearly tied to the current repository, use the project reported by `context_get`.
 - If the automation is personal productivity, office activity, cross-project summarization, or not tied to the current repository, ask which Brain project should own it.
 - If the user names an output path like `/tmp`, do not infer the Brain project from the path. The output path and the owning Brain project are separate decisions.
 - Always set `project` explicitly in `save`; do not rely on the plugin's default project when creating automations.
@@ -57,13 +57,11 @@ save(
   trigger: {
     type: "cron",
     schedule: "*/5 * * * *",
-    once_per: "5m",
     cooldown: "4m",
     max_concurrent: 1
   },
   action: {
-    type: "create_task",
-    title_template: "Teams activity work-log check {{time}}",
+    type: "prompt",
     direct_prompt: "Use the daily-office-chromeuse skill. Read recent Microsoft Teams activity only. Extract concise, timestamped project/work evidence and save new findings to Brain. Do not send messages or modify external systems.",
     agent: "assistant",
     executor: "opencode",
@@ -156,9 +154,8 @@ save(
     ignore_automation_events: true
   },
   action: {
-    type: "create_task",
-    title_template: "Checkout {{feature_id}}",
-    direct_prompt: "Use the feature-checkout skill to audit completed tasks for {{feature_id}}.",
+    type: "prompt",
+    direct_prompt: "Use the feature-checkout skill to audit completed tasks for {{.FeatureID}} in project {{.ProjectID}}.",
     agent: "tdd-dev",
     executor: "opencode",
     target_workdir: "<absolute-workdir>",
@@ -186,9 +183,8 @@ save(
     max_concurrent: 1
   },
   action: {
-    type: "create_task",
-    title_template: "Summarize completed task {{task_id}}",
-    direct_prompt: "Summarize task {{task_id}}, include commit/results, and save a Brain report.",
+    type: "prompt",
+    direct_prompt: "Summarize task {{.TaskID}} ({{.TaskTitle}}), include commit/results, and save a Brain report.",
     complete_on_idle: true
   }
 )
@@ -207,33 +203,89 @@ save(
   trigger: {
     type: "cron",
     schedule: "0 8 * * MON-FRI",
-    once_per: "day",
     cooldown: "20h",
     max_concurrent: 1
   },
   action: {
-    type: "create_task",
-    title_template: "Daily stale task review {{date}}",
+    type: "prompt",
     direct_prompt: "Review stale pending or blocked tasks and save recommendations.",
     complete_on_idle: true
   }
 )
 ```
 
+## Action Types
+
+Four names exist. Only two of them do what their name suggests, so check
+this list before writing an action:
+
+| `action.type` | What actually happens |
+|---|---|
+| `prompt` (default) | Creates a task carrying `direct_prompt`, for an agent to run. This is the workhorse. |
+| `script` | Creates a task with `executor: "script"` that runs `command`. Needs a runner with the script executor enabled. |
+| `update` | Applied IN the API process — no task, no runner. Sets `set_status` on the tasks of the feature the triggering event names. Only rewrites tasks already in a terminal state (`completed`/`validated`/`cancelled`), and refuses to run if the event carries no feature. |
+| `http` | Declared but NOT dispatched. Falls through to the prompt path. Do not use. |
+
+Anything that is not `script` or `update` takes the prompt path,
+**including a typo** — an unrecognised action type does not error, it
+silently creates an LLM task.
+
+There is no `create_task` action type and no `title_template` field.
+Generated task titles are always `Automation: <automation-id>`; put the
+descriptive text in `direct_prompt` and in the automation's own `title`.
+
+## Prompt Templating
+
+`direct_prompt` and `command` are rendered with Go `text/template`, so
+placeholders are dotted field names, not snake_case:
+
+```text
+{{.Project}}  {{.ProjectID}}  {{.EventProjectID}}
+{{.FeatureID}}  {{.TaskID}}  {{.TaskPath}}  {{.TaskTitle}}
+{{.FromStatus}}  {{.ToStatus}}
+```
+
+`{{feature_id}}` is **not** a template action: it fails to parse, and the
+renderer returns the input unchanged, so the literal text `{{feature_id}}`
+is written into the generated prompt. There are no date or time
+placeholders — `{{date}}` and `{{time}}` do not exist.
+
+## `once_per` Is an Event Field Name
+
+`once_per` names a field ON THE TRIGGERING EVENT whose value becomes part
+of the dedup key (`automation:<id>:<value>`). It is not a duration and not
+a schedule.
+
+Valid values: `project_id`, `feature_id`, `task_id`, `source`, `runner_id`,
+`session`, `from_status`, `to_status`, `type` — anything else is looked up
+in the event's metadata.
+
+So `once_per: "feature_id"` means "once per feature", which is right for a
+`feature.completed` automation. But `once_per: "5m"` or `once_per: "day"`
+resolves to an empty value, giving one constant key for every firing — the
+automation runs **once, ever**, and is skipped forever after. Use
+`cooldown` for time-based spacing, and leave `once_per` unset on cron
+triggers, where it is ignored anyway.
+
+Dedup is also **permanent**: the generated task is what proves the key was
+used, and it is never deleted. A feature that is reopened and re-completed
+will not fire a second time.
+
 ## Field Guide
 
 | Need | Field |
 |------|-------|
-| User asks for an automation on cron | `type: "automation"` + `trigger.type: "cron"` + `action.type: "create_task"` |
+| User asks for an automation on cron | `type: "automation"` + `trigger.type: "cron"` + `action.type: "prompt"` |
 | User asks to monitor/review/summarize periodically | `type: "automation"` + cron trigger |
 | User explicitly asks for a scheduled task | `schedule` on `type: "task"` |
 | User explicitly asks for one scheduled task in the future | `run_once_at` on `type: "task"` |
 | Schedule an entire feature | `feature_schedule` or `feature_run_once_at` |
 | React to event | `type: "automation"` + `trigger.type: "event"` |
 | React to webhook | `type: "automation"` + `trigger.type: "webhook"` + `webhook` |
-| Create generated task | `action.type: "create_task"` |
-| Run script | `action.type: "script"` + `command` |
-| Prevent duplicates | `once_per` |
+| Run an agent prompt | `action.type: "prompt"` + `direct_prompt` |
+| Run a shell command | `action.type: "script"` + `command` |
+| Set a status when the trigger fires | `action.type: "update"` + `set_status` |
+| Prevent duplicates per event subject | `once_per` (an EVENT FIELD NAME — see below) |
 | Avoid rapid repeats | `cooldown` |
 | Bound concurrency | `max_concurrent` |
 | Limit retry loops | `retry.max_attempts` |

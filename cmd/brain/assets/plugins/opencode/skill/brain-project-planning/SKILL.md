@@ -29,7 +29,7 @@ Do not copy plan bullets into tasks. First convert the plan into a production im
 
 ## Required Tools
 
-- `project_context` to resolve project and workspace context.
+- `context_get` to resolve the ambient project and workspace context (no arguments; reports the project, workdir, git remote and branch this server resolved at startup).
 - `recall`, `search`, or `section` to load the plan and related context.
 - `Task` with `subagent_type: "explore"` for codebase feasibility and conflict analysis.
 - `save` to create draft tasks with dependencies and execution metadata.
@@ -43,7 +43,7 @@ Do not copy plan bullets into tasks. First convert the plan into a production im
 Start by resolving the current workspace:
 
 ```text
-project_context()
+context_get()
 ```
 
 Capture:
@@ -187,7 +187,104 @@ tags: ["plan-to-tasks", "<feature_id>"]
 
 **Note on squash merges:** Any task/prompt that instructs a downstream executor to run a squash merge MUST use `git -c merge.ff=true merge --squash <source_branch>` (not `git merge --squash <source_branch>`). The `-c merge.ff=true` override is required to avoid collision with users who have `merge.ff = no` in their global gitconfig — otherwise Git treats the global value as an implicit `--no-ff` flag and rejects the squash with `fatal: options '--squash' and '--no-ff.' cannot be used together`. See `feature-checkout` SKILL.md ("Git Command Invariants") for the full contract across all merge strategies.
 
-### 7. Present the Graph Before Queueing
+### 7. Order Across Features with `feature_depends_on`
+
+`depends_on` orders tasks **inside** one feature. `feature_depends_on`
+orders **whole features against each other**, and the scheduler enforces
+it: no task of a dependent feature is dispatched until every dependency
+feature is satisfied.
+
+Use it when a plan has phases that must land in order but are too big for
+one feature — a schema/migration feature before the service feature that
+reads the new shape, a shared-library feature before its consumers, a
+preflight feature before the main build.
+
+```text
+save(
+  type: "task",
+  title: "Read invoices through the new schema",
+  project: "<project>",
+  feature_id: "billing-service",
+  feature_depends_on: ["billing-schema"],
+  ...
+)
+```
+
+Settable on `save`, `update` and `bulk_update`. Clear it with
+`update(path: "...", feature_depends_on: [])` — an empty array clears,
+omitting the key leaves it alone.
+
+**What "satisfied" means.** A dependency is satisfied only when its
+feature computes to status `completed` or `archived`. `completed` means
+every non-archived task in it is `completed` or `validated`. Archived
+tasks are skipped entirely when computing this, so archiving the last
+stragglers of a blocking feature is a real (if blunt) way to open the
+gate. Nothing else satisfies it — there is no "good enough" and no
+criteria check.
+
+**What the gate does to a task.** Only a task that is otherwise `ready`
+is downgraded, so task-level dependencies keep their own more specific
+reason:
+
+| Dependency feature is | Dependent tasks become | Fields to read |
+|---|---|---|
+| `pending` or `in_progress` | `waiting` | `waiting_on_features` |
+| `blocked`, or in a cycle | `blocked` | `blocked_by_features`, `blocked_by_reason` |
+| `completed` or `archived` | unchanged (`ready`) | — |
+
+There is one enforcement point (`applyFeatureGating`), and every dispatch
+path reads the classification it produces — the scheduler's push loop,
+`/next`, run-task-now and run-feature-now all inherit the gate.
+
+#### Four traps, all silent
+
+**1. It is per-task but acts per-feature.** The server takes the UNION of
+`feature_depends_on` across every task in a feature. Setting it on one
+task gates *every* task in that feature, and removing it from one task
+does not lift the gate while a sibling still carries it.
+
+> Set the identical list on every task of the feature. The server unions,
+> but the PWA and TUI display the *first* non-empty list they find — so a
+> feature whose tasks disagree renders one dependency while the scheduler
+> holds it on another. Keeping the lists identical makes that divergence
+> unreachable.
+
+**2. A misspelled feature id gates nothing.** An entry naming a feature
+that does not exist is dropped, not blocked on — the task stays `ready`
+and dispatches immediately. This is deliberate (an unresolved dependency
+must not wedge the queue), and it is why a typo looks exactly like
+correct ordering until the work runs out of order. It surfaces as
+`unresolved_feature_deps`; check it, do not assume.
+
+**3. One `cancelled` task hard-blocks everything downstream, forever.**
+Cancelled counts as blocked when a feature's status is computed, so a
+feature with one cancelled task computes to `blocked` and puts every
+dependent at `blocked` / `feature_dependency_blocked` — permanently,
+because nothing will move it. To drop work from scope without wedging the
+graph, **archive** the task instead of cancelling it.
+
+**4. Cycles block every feature in the cycle.** Two features that depend
+on each other are both `blocked` with reason `feature_circular_dependency`.
+The graph must be acyclic at the feature level as well as the task level.
+
+#### Rules
+
+- Order **within** a feature with `depends_on`; order **between** features
+  with `feature_depends_on`. Do not use one for the other's job.
+- Prefer one feature per plan. Reach for a second feature (and a
+  dependency) only when the phases need separate branches, separate merge
+  timing, or separate review.
+- Create the dependency feature's tasks **before** the dependent's, so the
+  name resolves the moment it is written and trap 2 cannot bite.
+- Never point `feature_depends_on` at the feature's own id.
+- Say in the plan summary which feature is the gate and what will be
+  waiting on it.
+
+There is no MCP tool for run-with-dependents; that is a PWA/REST
+affordance. From a skill, the durable way to express "run these in order"
+is the dependency itself.
+
+### 8. Present the Graph Before Queueing
 
 Show the user the graph unless they explicitly asked for fully autonomous task creation.
 
@@ -205,7 +302,7 @@ Include:
 
 Do not queue tasks while unresolved blockers remain.
 
-### 8. Queue Atomically
+### 9. Queue Atomically
 
 Use draft-then-promote to avoid brain-runner starting before the graph is complete.
 
@@ -254,7 +351,7 @@ Task content template:
 
 Do not include a dependency section in task content unless it explains why; dependencies belong in `depends_on`.
 
-### 9. Verify Queue State
+### 10. Verify Queue State
 
 After promotion, verify with Brain:
 
@@ -267,7 +364,12 @@ Confirm:
 - All expected tasks exist.
 - Tasks are `pending` unless intentionally blocked/draft.
 - Dependency classification matches the graph.
-- No cycles are present.
+- No cycles are present, at the task level AND the feature level.
+- For a multi-feature plan, `waiting_on_features` / `blocked_by_features`
+  name the features you intended, and `unresolved_feature_deps` is empty.
+- Nothing is held for a reason outside the graph: `runner_status` shows
+  the project's dials are on, and `task_placement_reasons` /
+  `scheduler_status` explain any ready task that is not moving.
 - Ready tasks are the intended starting points.
 
 Final response should include the feature ID, task count, ready starting tasks, and any residual risks.
@@ -317,7 +419,12 @@ save(
 - [ ] Codebase validation completed with an explore agent.
 - [ ] Dependency graph is acyclic and conflict-aware.
 - [ ] Shared `feature_id` assigned to all tasks.
+- [ ] Cross-feature ordering expressed with `feature_depends_on`, set
+      identically on every task of the dependent feature, naming features
+      that already exist.
 - [ ] Worktree execution metadata set where appropriate.
 - [ ] Tasks created as drafts first.
 - [ ] Drafts promoted only after the full graph exists.
 - [ ] Queue verified with `tasks`.
+- [ ] `unresolved_feature_deps` empty — a misspelled feature dependency
+      gates nothing and looks exactly like correct ordering.

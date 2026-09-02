@@ -123,6 +123,11 @@ type AutomationAction struct {
 	CompleteOnIdle     *bool  `yaml:"complete_on_idle,omitempty" json:"complete_on_idle,omitempty"`
 	Timeout            string `yaml:"timeout,omitempty" json:"timeout,omitempty"`
 	RequiresCapability string `yaml:"requires_capability,omitempty" json:"requires_capability,omitempty"`
+	// SetStatus is the payload for type=update. Mirrors
+	// types.AutomationAction.SetStatus — this struct is the ON-DISK shape,
+	// and a field missing here is written nowhere and read back as empty
+	// no matter how correct the domain struct is.
+	SetStatus string `yaml:"set_status,omitempty" json:"set_status,omitempty"`
 }
 
 // AutomationRetry defines retry behavior for failed automation actions (frontmatter representation).

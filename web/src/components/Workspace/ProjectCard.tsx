@@ -7,8 +7,8 @@
  *                  · stats] · close)
  *     .hold-strip (why the last scheduler pass dispatched nothing)
  *     .flow-strip (lifecycle pills)
- *     .pcard-tabs (Tasks | Goals | Automations | Focus icon)
- *     .pcard-body → CardTasks | CardGoals | CardAutomations
+ *     .pcard-tabs (Tasks | Archived | Goals | Automations | Focus icon)
+ *     .pcard-body → CardTasks | CardArchived | CardGoals | CardAutomations
  *
  * There is no Features tab. Features are not a separate list — every one
  * of them is a group header in the Tasks tab, nested by
@@ -17,7 +17,7 @@
  * three unique affordances (the dependency forest, the chain chips, and
  * the merged fold) moved into `CardTasks`.
  */
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useLive } from "../../lib/sse";
 import { useWorkspace } from "../../store/workspace";
 import {
@@ -42,12 +42,13 @@ import {
 } from "../../lib/pause";
 import { ProjectPauseButton } from "../common/ProjectPauseButton";
 import { CardTasks } from "./CardTasks";
+import { CardArchived } from "./CardArchived";
 import { useDependentChainsSync } from "../../hooks/useDependentChains";
 import { CardAutomations } from "./CardAutomations";
 import { CardGoals } from "./CardGoals";
 import type { Task } from "../../lib/types";
 
-type TabKey = "tasks" | "goals" | "automations";
+type TabKey = "tasks" | "archived" | "goals" | "automations";
 
 interface ProjectStats {
   active: number;
@@ -130,6 +131,21 @@ export function ProjectCard({
   const hideProject = useWorkspace((s) => s.hideProject);
 
   const stats = useMemo(() => statsFor(tasks), [tasks]);
+  const archivedCount = useMemo(
+    () => tasks.filter((t) => t.status === "archived").length,
+    [tasks],
+  );
+
+  // The sidebar's Archived chip narrows the grid to projects that HAVE
+  // archived work; landing them on the Tasks tab would make the chip a
+  // filter with nothing to show. It selects the tab, it does not pin it —
+  // clicking another tab still wins, and leaving the chip restores the
+  // default.
+  const statusFilter = useWorkspace((s) => s.statusFilter);
+  useEffect(() => {
+    if (statusFilter === "archived") setTab("archived");
+    else setTab((t) => (t === "archived" ? "tasks" : t));
+  }, [statusFilter]);
   // Brain-native MRs fold into lifecycle (see lib/mergeRequests).
   const { openByProject } = useMergeRequests();
   // Sorted into the canonical blocked → in-progress → mr-open → finished
@@ -345,6 +361,15 @@ export function ProjectCard({
           Tasks
         </button>
         <button
+          className={tab === "archived" ? "active" : ""}
+          onClick={() => setTab("archived")}
+        >
+          Archived
+          {archivedCount > 0 && (
+            <span className="tab-count">{archivedCount}</span>
+          )}
+        </button>
+        <button
           className={tab === "goals" ? "active" : ""}
           onClick={() => setTab("goals")}
         >
@@ -369,6 +394,9 @@ export function ProjectCard({
       <div className="pcard-body">
         {tab === "tasks" && (
           <CardTasks projectId={projectId} tasks={tasks} features={features} />
+        )}
+        {tab === "archived" && (
+          <CardArchived projectId={projectId} tasks={tasks} />
         )}
         {tab === "goals" && <CardGoals projectId={projectId} />}
         {tab === "automations" && <CardAutomations projectId={projectId} />}

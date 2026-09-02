@@ -3900,3 +3900,48 @@ body[data-theme="light"] .adetail-actions button.primary { color: #fff; }
   min-height: 0;
 }
 .pcard.fill .pcard-body { flex: 1 1 auto; min-height: 0; }
+/* A count beside a tab name — the Archived tab's, so the size of the pile
+   is visible without opening it. Muted: it is a fact about the tab, not a
+   call to action like the amber active count in the header. */
+.pcard-tabs .tab-count {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 6px;
+  background: #22272c;
+  color: #9098a1;
+  font-size: 9px;
+  line-height: 1.5;
+}
+body[data-theme="light"] .pcard-tabs .tab-count {
+  background: #dfe6ed;
+  color: #48525c;
+}
+
+/* ---------- Auto-archive toggle (Tasks tab) ---------- */
+/* A settings control living above a list of work, so it is deliberately
+   quieter than everything below it: no border, no chip, muted until
+   hovered. It must be findable, not prominent — it is ticked once and
+   then forgotten. */
+.auto-archive {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0 6px;
+  color: #6b757e;
+  font-size: 10.5px;
+  cursor: pointer;
+  user-select: none;
+}
+.auto-archive:hover { color: #9098a1; }
+.auto-archive input {
+  width: 11px;
+  height: 11px;
+  margin: 0;
+  padding: 0;
+  accent-color: #f4b23a;
+  cursor: pointer;
+}
+.auto-archive input:disabled { cursor: default; opacity: 0.5; }
+body[data-theme="light"] .auto-archive { color: #6b757e; }
+body[data-theme="light"] .auto-archive:hover { color: #17202a; }
+body[data-theme="light"] .auto-archive input { background: transparent; border: 0; }

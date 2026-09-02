@@ -29,6 +29,7 @@ func automationActionToFM(a *types.AutomationAction) *frontmatter.AutomationActi
 		CompleteOnIdle:     a.CompleteOnIdle,
 		Timeout:            a.Timeout,
 		RequiresCapability: a.RequiresCapability,
+		SetStatus:          a.SetStatus,
 	}
 }
 

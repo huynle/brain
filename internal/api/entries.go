@@ -1883,6 +1883,7 @@ func fmAutomationActionToType(a *frontmatter.AutomationAction) *types.Automation
 		CompleteOnIdle:     a.CompleteOnIdle,
 		Timeout:            a.Timeout,
 		RequiresCapability: a.RequiresCapability,
+		SetStatus:          a.SetStatus,
 	}
 }
 

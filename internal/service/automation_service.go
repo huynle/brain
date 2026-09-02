@@ -59,6 +59,17 @@ func (s *AutomationService) RunAutomationNow(ctx context.Context, pathOrID strin
 		Timestamp: time.Now().UTC(),
 		ProjectID: entry.ProjectID,
 	}
+	if types.NormalizeAutomationActionType(entry.Action.Type) ==
+		types.AutomationActionUpdate {
+		// A manual run of an update automation has no event to scope it,
+		// and an unscoped bulk write is the one thing this action must
+		// never do. Refuse rather than guess a target.
+		return "", fmt.Errorf(
+			"automation %s has an update action: it applies to the feature its "+
+				"trigger names, so there is nothing for a manual run to act on",
+			entry.ID,
+		)
+	}
 	key := fmt.Sprintf("automation:manual:%s:%d", entry.ID, time.Now().UTC().UnixNano())
 	return s.createTask(ctx, *entry, evt, key)
 }
@@ -209,6 +220,20 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 				skipReason: "paused",
 			})
 			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		// An `update` action is applied HERE, in process. Every other
+		// action type ends in "queue a task for a runner to pick up",
+		// which is right for work that needs a shell or a model — and
+		// wrong for a bookkeeping write, which would then need a runner
+		// online, an executor enabled, and a round trip through the
+		// queue to set a status the API could set itself.
+		if types.NormalizeAutomationActionType(automation.Action.Type) ==
+			types.AutomationActionUpdate {
+			if err := s.applyUpdateAction(ctx, automation, evt); err != nil {
 				return err
 			}
 			continue
@@ -833,4 +858,144 @@ func automationGeneratedKey(automation types.BrainEntry, evt types.Event) string
 		return ""
 	}
 	return fmt.Sprintf("automation:%s:%s", automation.ID, getEventField(evt, automation.Trigger.OncePer))
+}
+
+// bulkUpdateActionLimit mirrors the server-side bulk cap. Explicit-mode
+// bulk updates are truncated at 100 without reporting it, so an update
+// action asks for no more than it can be sure was applied.
+const bulkUpdateActionLimit = 100
+
+// applyUpdateAction runs an `update` automation in process.
+//
+// The only action type that does not end in a queued task. It exists for
+// bookkeeping writes — archiving a feature the moment its work is done —
+// where routing through the task queue would mean the change needs an
+// online runner, an enabled executor and a round trip, to set a status the
+// API server is already holding the transaction for.
+//
+// ─── Scope is taken from the EVENT, never from the automation ────
+//
+// The target is always {project, feature_id, type: task}, with both ids
+// read off the triggering event. An automation cannot widen that, because
+// nothing in it is consulted: there is no filter field to get wrong.
+//
+// Both ids must be non-empty and the write is refused otherwise. That is
+// not defensive noise — `storage.ListOptions` appends its WHERE clause
+// only for a non-empty value, so an empty feature id is not "no matching
+// tasks", it is NO CONSTRAINT: the bulk update would rewrite the first 100
+// tasks of the project, or of the brain. Every gate upstream would report
+// the filter as constrained while it matched everything.
+//
+// A skip is audited like any other, so an automation that never fires has
+// a reason on the record rather than a silence.
+func (s *AutomationService) applyUpdateAction(
+	ctx context.Context,
+	automation types.BrainEntry,
+	evt types.Event,
+) error {
+	project := automation.ProjectID
+	if project == "" {
+		project = evt.ProjectID
+	}
+
+	skip := func(reason string) error {
+		_, err := s.createRunAudit(ctx, automationRunAudit{
+			automation: automation,
+			evt:        evt,
+			project:    project,
+			status:     "skipped",
+			skipReason: reason,
+		})
+		return err
+	}
+
+	status := strings.TrimSpace(automation.Action.SetStatus)
+	if status == "" {
+		return skip("update action has no set_status")
+	}
+	if !types.IsValidEntryStatus(status) {
+		return skip(fmt.Sprintf("update action has an unknown status %q", status))
+	}
+	if project == "" {
+		return skip("update action has no project to scope to")
+	}
+	if evt.FeatureID == "" {
+		return skip("update action fired on an event with no feature")
+	}
+
+	// ─── Why this lists first instead of writing a filter ────────
+	//
+	// The dedup that protects every other action type lives in
+	// `createTask` (once_per → generated_key → generatedTaskExists), and
+	// this path deliberately does not go through it. Without a stand-in,
+	// a filter-mode write would be a LOOP: it sets every task in the
+	// feature to `archived`, each write emits task.status_changed,
+	// CheckFeatureCompletion counts archived as done and re-emits
+	// feature.completed, and this automation fires again — forever,
+	// because re-archiving an archived task is still a write.
+	//
+	// Listing first and writing only the tasks that are NOT already at the
+	// target status breaks it at the source rather than papering over it
+	// with a dedup key: the second pass finds nothing to change, writes
+	// nothing, and therefore emits nothing. It also keeps the audit honest
+	// — "3 updated" means three tasks moved.
+	taskType := "task"
+	listed, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Project:   project,
+		Type:      taskType,
+		FeatureID: evt.FeatureID,
+		Limit:     bulkUpdateActionLimit,
+	})
+	if err != nil {
+		return err
+	}
+	entries := make([]types.BulkUpdateEntry, 0, len(listed.Entries))
+	for _, e := range listed.Entries {
+		if e.Status == status {
+			continue
+		}
+		entries = append(entries, types.BulkUpdateEntry{
+			Path:    e.Path,
+			Updates: types.UpdateEntryRequest{Status: &status},
+		})
+	}
+	if len(entries) == 0 {
+		return skip(fmt.Sprintf("every task is already %s", status))
+	}
+
+	resp, err := s.brain.BulkUpdate(ctx, types.BulkUpdateRequest{
+		Entries: entries,
+	})
+	if err != nil {
+		_, auditErr := s.createRunAudit(ctx, automationRunAudit{
+			automation: automation,
+			evt:        evt,
+			project:    project,
+			status:     "failed",
+			skipReason: err.Error(),
+		})
+		if auditErr != nil {
+			return auditErr
+		}
+		return err
+	}
+
+	// The bulk endpoint caps at 100 per call, and in explicit mode it does
+	// so SILENTLY — no `truncated` flag. A feature with more tasks than
+	// that is drained by the next firing, which is exactly why the loop
+	// guard above is "skip when nothing needs changing" rather than a
+	// fire-once key: a fire-once key would strand the remainder forever.
+	note := fmt.Sprintf("updated %d/%d to %s", resp.Updated, resp.Total, status)
+	if len(entries) == bulkUpdateActionLimit {
+		note += fmt.Sprintf(" (capped at %d — the next firing takes the rest)",
+			bulkUpdateActionLimit)
+	}
+	_, err = s.createRunAudit(ctx, automationRunAudit{
+		automation: automation,
+		evt:        evt,
+		project:    project,
+		status:     "success",
+		skipReason: note,
+	})
+	return err
 }

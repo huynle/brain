@@ -411,6 +411,28 @@ export const setFeatureStatus = (
   );
 };
 
+/**
+ * Delete every ARCHIVED task in a project.
+ *
+ * Scoped by filter rather than by an explicit path list on purpose: the
+ * caller wants "all archived in this project", not "all archived in the
+ * snapshot the browser happens to hold".
+ *
+ * The status guard is the same trap as `featureFilterGuard` and needs its
+ * own check: `storage/list.go` appends `status = ?` only for a non-empty
+ * value, so a blank status would delete the first 100 entries of the
+ * project instead of nothing. The literal here cannot be blank, but the
+ * assertion documents why it must never become a parameter.
+ */
+export const deleteArchivedTasks = (
+  projectId: string,
+  opts: { dryRun?: boolean; force?: boolean } = {},
+) =>
+  bulkDelete(
+    { project: projectId, status: "archived", type: "task" },
+    opts,
+  );
+
 /** Delete every task in a feature. */
 export const deleteFeatureTasks = (
   projectId: string,

@@ -633,7 +633,14 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard.dragging { opacity: 0.6; }
 .pcard-head {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px;
+  /* On a narrow card the badges + counts (.pcard-meta) wrap to a second row
+     rather than squeezing the project name down to "p…" — the name is what
+     the card is FOR, so it keeps the first row. The × is taken out of flow
+     (below) so wrapping never drags it off the top-right corner. */
+  position: relative;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  padding: 8px 28px 8px 10px;
   background: #12161a; border-bottom: 1px solid #22272c;
   cursor: grab; user-select: none;
   touch-action: none;
@@ -645,13 +652,16 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard-head .dot.busy { background: #f4b23a; animation: pulse 1.4s ease-in-out infinite; }
 .pcard-head .name {
   font-weight: 600; color: #eaedef;
-  /* Truncate very long project ids with ellipsis so stats + close
-     stay visible on the right. */
-  min-width: 0;
+  font-size: 13px; letter-spacing: 0.01em;
+  /* Long project ids still ellipsize, but only after a readable floor:
+     the name stops shrinking at ~14 characters, so .pcard-meta gives way
+     first (wrapping to its own row). `title` on the span carries the full
+     id for the truncated tail. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 0 1 auto;
+  min-width: 14ch;
 }
 .pcard-head .env {
   padding: 1px 6px; border-radius: 3px; background: #2a2f35; color: #9098a1;
@@ -667,10 +677,22 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard-head .health.blocked { color: #d96060; border-color: #d9606055; background: #d9606011; }
 .pcard-head .health.mr { color: #6a8bff; border-color: #6a8bff55; background: #6a8bff11; }
 .pcard-head .health.merged { color: #b98cff; border-color: #b98cff55; background: #b98cff11; }
-.pcard-head .spacer { flex: 1 0 8px; min-width: 8px; }
+/* Badges + counts travel together: this group either sits beside the name
+   or wraps below it whole, so "paused" is never stranded on the name's line
+   while the counts it qualifies sit on the next one. */
+.pcard-meta {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  min-width: 0;
+}
 .pcard-head .stats {
   display: flex; gap: 8px; font-size: 10px; color: #9098a1;
   flex: 0 1 auto;
+  /* Right-aligned within the group, so the counts hold the row's right
+     edge whether the group shares the name's line or wraps below it. */
+  margin-left: auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -682,7 +704,9 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard-head .stats .blocked b { color: #d96060; }
 .pcard-head .close {
   color: #6b757e; padding: 2px 5px; border-radius: 3px;
-  /* Never let the × get pushed off the right edge by a long name. */
+  /* Out of flow: a long name or a wrapped stats row must never move the ×
+     off the top-right corner. The head reserves room for it in padding. */
+  position: absolute; top: 5px; right: 4px;
   flex: 0 0 auto;
   background: transparent; border: 0;
   cursor: pointer;

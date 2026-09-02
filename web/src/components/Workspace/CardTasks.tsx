@@ -101,7 +101,11 @@ export function CardTasks({
   tasks,
   features,
 }: CardTasksProps): JSX.Element {
-  const openInSidebar = useWorkspace((s) => s.openInSidebar);
+  // Same click contract as a task row: single click previews the feature
+  // in the side panel (reusing one pane), double click pins it into
+  // Focus. See TaskRow for why reuse rather than a new tab.
+  const previewInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
+  const openInFocus = useWorkspace((s) => s.openInFocus);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
   // Whole map for this project, not a per-feature selector: the feature
   // list is built inside a render, so there is no stable place to call one
@@ -315,7 +319,12 @@ export function CardTasks({
           f.name,
           selActive
             ? () => toggleFeatureSel(projectId, f.id)
-            : () => openInSidebar("feature-detail", { projectId, featureId: f.id }, f.name),
+            : () =>
+                previewInSidebar(
+                  "feature-detail",
+                  { projectId, featureId: f.id },
+                  f.name,
+                ),
           {
             selectionActions: featMarked
               ? (selectionActions ?? undefined)
@@ -397,9 +406,14 @@ export function CardTasks({
                   toggleFeatureSel(projectId, f.id);
                   return;
                 }
-                // Plain single-click: select-only highlight. Double-click
-                // / Enter open the drawer.
+                // Plain single-click: highlight AND preview in the side
+                // panel. Double-click pins it into Focus.
                 setActive(projectId, "feature", f.id);
+                previewInSidebar(
+                  "feature-detail",
+                  { projectId, featureId: f.id },
+                  f.name,
+                );
               }}
               onDoubleClick={(e) => {
                 if (
@@ -409,7 +423,11 @@ export function CardTasks({
                 )
                   return;
                 if (selActive) return;
-                openInSidebar("feature-detail", { projectId, featureId: f.id }, f.name);
+                openInFocus(
+                  "feature-detail",
+                  { projectId, featureId: f.id },
+                  f.name,
+                );
               }}
               onMouseDown={(e) => {
                 if (e.shiftKey) {

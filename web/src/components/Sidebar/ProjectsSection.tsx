@@ -37,6 +37,7 @@ import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { ProjectPauseButton } from "../common/ProjectPauseButton";
 import { projectPauseBadges, projectRunIndicator } from "../../lib/pause";
+import type { Task } from "../../lib/types";
 
 function focusProjectCard(projectId: string) {
   if (typeof document === "undefined") return;
@@ -246,22 +247,54 @@ export function ProjectsSection(): JSX.Element {
                 {hiddenProjectIds.length}
               </span>
             </div>
+            {/* A hidden project is hidden from the BOARD, not switched
+                off — its runner keeps dispatching. So the dial belongs
+                here too: pausing a project you are not watching is
+                exactly when you want it one click away, and the old
+                inert dot meant the only route was unhiding it first,
+                pausing, and hiding it again.
+
+                The dial reads live task state like any other row, so a
+                hidden project that is running still shows amber. */}
             {hiddenExpanded &&
-              hiddenProjectIds.map((pid) => (
-                <div
-                  key={pid}
-                  className="proj-row"
-                  style={{ opacity: 0.55 }}
-                  onClick={() => showProject(pid)}
-                  title={`Show ${pid}`}
-                >
-                  <span className="dot" />
-                  <span className="name">{pid}</span>
-                  <span className="stats" style={{ color: "#6b757e" }}>
-                    +
-                  </span>
-                </div>
-              ))}
+              hiddenProjectIds.map((pid) => {
+                const tasks = liveProjects[pid]?.tasks ?? EMPTY_TASKS;
+                const badges = projectPauseBadges(pause, pid);
+                const indicator = projectRunIndicator(tasks, {
+                  paused: badges.tasks,
+                  projectId: pid,
+                });
+                return (
+                  <div
+                    key={pid}
+                    className="proj-row"
+                    style={{ opacity: 0.55 }}
+                    // The dial stops its own click, so this still means
+                    // "restore" everywhere except on the glyph itself.
+                    onClick={() => showProject(pid)}
+                    title={`Show ${pid}`}
+                  >
+                    <ProjectPauseButton
+                      projectId={pid}
+                      indicator={indicator}
+                      taskCount={tasks.length}
+                      pauseLoading={pauseLoading}
+                    />
+                    <span className="name">{pid}</span>
+                    {badges.automations && (
+                      <span
+                        className="pause-tag autos"
+                        title={badges.automationsTitle}
+                      >
+                        autos
+                      </span>
+                    )}
+                    <span className="stats" style={{ color: "#6b757e" }}>
+                      +
+                    </span>
+                  </div>
+                );
+              })}
           </>
         )}
       </>
@@ -288,3 +321,7 @@ export function ProjectsSection(): JSX.Element {
     </div>
   );
 }
+
+/** Stable empty list so a project with no live snapshot does not hand
+ *  the indicator a fresh array on every render. */
+const EMPTY_TASKS: Task[] = [];

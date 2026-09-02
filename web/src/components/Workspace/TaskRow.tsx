@@ -78,7 +78,13 @@ export function useTaskRowRenderer({
   rowProps,
   selectionActions,
 }: TaskRowRendererOptions): (row: DepRow<Task>) => JSX.Element {
-  const openInSidebar = useWorkspace((s) => s.openInSidebar);
+  // Preview on single click, pin on double. `openOrReuseInSidebar`
+  // retargets the existing task-detail pane in place instead of adding a
+  // tab, which is what makes single-click viable at all: `openInSidebar`
+  // opens a NEW tab every time, so clicking down a list of twenty tasks
+  // would leave twenty panes.
+  const previewInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
+  const openInFocus = useWorkspace((s) => s.openInFocus);
   const { pause } = usePauseState();
   const taskCtx = useTaskActionContext(projectId);
 
@@ -123,7 +129,8 @@ export function useTaskRowRenderer({
     // not open detail.
     selActive
       ? () => toggleTaskSel(projectId, t.id)
-      : () => openInSidebar("task-detail", { projectId, taskId: t.id }, label),
+      : () =>
+          previewInSidebar("task-detail", { projectId, taskId: t.id }, label),
     {
       selectionActions: marked ? (selectionActions ?? undefined) : undefined,
       // Long-press = the touch shift-click.
@@ -159,16 +166,19 @@ export function useTaskRowRenderer({
           toggleTaskSel(projectId, t.id);
           return;
         }
-        // Plain single-click: select-only highlight. Does NOT open the
-        // modal — double-click / Enter do that.
+        // Plain single-click: highlight AND preview in the side panel.
+        // The panel is the temporary viewing spot — one pane, reused —
+        // so a click is cheap and reversible. Double-click pins the task
+        // into Focus, which is the workspace you keep things in.
         setActive(projectId, "task", t.id);
+        previewInSidebar("task-detail", { projectId, taskId: t.id }, label);
       }}
       onDoubleClick={(e) => {
         if ((e.target as HTMLElement).closest(".selbox")) return;
         // A double-click in multi-select mode must not open — mirror
         // the click guards.
         if (selActive) return;
-        openInSidebar("task-detail", { projectId, taskId: t.id }, label);
+        openInFocus("task-detail", { projectId, taskId: t.id }, label);
       }}
       // Shift-click would otherwise extend the browser's text
       // selection across the rows before our click handler runs. The

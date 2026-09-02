@@ -117,6 +117,16 @@ type RunnerConfig struct {
 	// the work.
 	MachineID string `yaml:"-" json:"-"`
 
+	// Name distinguishes several runners on ONE machine. It is the operator's
+	// handle for a runner: it selects the per-runner state dir (hence the
+	// persisted runner id), the daemon's pid/log files, and the "name" label
+	// shown in `brain run status` and the web UI. Empty means DefaultRunnerName,
+	// which keeps the historical single-runner paths untouched.
+	//
+	// Set via config file `name:`, RUNNER_NAME, or --name. Never derive anything
+	// from it directly — go through ResolveRunnerIdentity, which validates it.
+	Name string `yaml:"name" json:"name"`
+
 	// Labels and resource metadata are advertised to the scheduler during
 	// registration and heartbeat so placement can target suitable runners.
 	Labels         map[string]string      `yaml:"labels" json:"labels"`

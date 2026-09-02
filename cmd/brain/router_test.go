@@ -796,3 +796,88 @@ func TestDefaultConfig_IndexWatchEnvOverride(t *testing.T) {
 		t.Fatal("BRAIN_INDEX_WATCH=true did not enable the index watcher")
 	}
 }
+
+func TestSplitRunnerProjectArg(t *testing.T) {
+	tests := []struct {
+		name         string
+		args         []string
+		wantProject  string
+		wantFlagArgs []string
+	}{
+		{
+			name:        "no args defaults to all",
+			args:        nil,
+			wantProject: "all",
+		},
+		{
+			name:         "project then flags",
+			args:         []string{"my-project", "--headless"},
+			wantProject:  "my-project",
+			wantFlagArgs: []string{"--headless"},
+		},
+		{
+			// The daemon re-execs exactly this shape. Reading "worker-a" as a
+			// second positional would leave --name without a value and the
+			// runner would fail to start at all.
+			name:         "value after a flag is not the project",
+			args:         []string{"all", "--headless", "--name", "worker-a"},
+			wantProject:  "all",
+			wantFlagArgs: []string{"--headless", "--name", "worker-a"},
+		},
+		{
+			name:         "value flags with an explicit project",
+			args:         []string{"my-project", "--model", "sonnet", "--max-parallel", "2"},
+			wantProject:  "my-project",
+			wantFlagArgs: []string{"--model", "sonnet", "--max-parallel", "2"},
+		},
+		{
+			name:         "flag=value form needs no lookahead",
+			args:         []string{"--name=worker-a", "my-project"},
+			wantProject:  "my-project",
+			wantFlagArgs: []string{"--name=worker-a"},
+		},
+		{
+			name:         "bool flag does not swallow the project",
+			args:         []string{"--headless", "my-project"},
+			wantProject:  "my-project",
+			wantFlagArgs: []string{"--headless"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			project, flagArgs := splitRunnerProjectArg(tt.args)
+			if project != tt.wantProject {
+				t.Errorf("project = %q, want %q", project, tt.wantProject)
+			}
+			if len(flagArgs) != len(tt.wantFlagArgs) {
+				t.Fatalf("flagArgs = %v, want %v", flagArgs, tt.wantFlagArgs)
+			}
+			for i := range flagArgs {
+				if flagArgs[i] != tt.wantFlagArgs[i] {
+					t.Fatalf("flagArgs = %v, want %v", flagArgs, tt.wantFlagArgs)
+				}
+			}
+		})
+	}
+}
+
+func TestParseRunCommand_NamedRunner(t *testing.T) {
+	cmd, err := parseRunCommand([]string{"start", "all", "--headless", "--name", "worker-a"})
+	if err != nil {
+		t.Fatalf("parseRunCommand: %v", err)
+	}
+	rc, ok := cmd.(*commands.RunCommand)
+	if !ok {
+		t.Fatalf("got %T, want *commands.RunCommand", cmd)
+	}
+	if rc.Project != "all" {
+		t.Errorf("Project = %q, want all", rc.Project)
+	}
+	if rc.Flags.Name != "worker-a" {
+		t.Errorf("Flags.Name = %q, want worker-a", rc.Flags.Name)
+	}
+	if !rc.Flags.Headless {
+		t.Error("Flags.Headless = false, want true")
+	}
+}

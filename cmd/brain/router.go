@@ -420,6 +420,48 @@ func parseAuthCommand(args []string) (Command, error) {
 	}, nil
 }
 
+// runnerValueFlags are the runner flags that consume the token after them. The
+// project pre-scan has to know them: without that, `brain run start all --name
+// worker-a` reads "worker-a" as a second positional and eats the flag's value —
+// which is how a daemonized `--name` runner silently came up unnamed.
+var runnerValueFlags = map[string]bool{
+	"--name": true, "--max-parallel": true, "-p": true, "--poll-interval": true,
+	"--workdir": true, "-w": true, "--agent": true, "--model": true, "-m": true,
+	"--executor": true, "--pi-bin": true, "--pi-model": true, "--pi-thinking": true,
+	"--include": true, "-i": true, "--exclude": true, "-e": true,
+	"--feature-id": true, "-F": true,
+}
+
+// splitRunnerProjectArg pulls the positional project out of a runner arg list,
+// returning it plus the remaining args for ParseRunnerFlags. Only the FIRST
+// positional is the project ("all" when there is none); everything else stays a
+// flag argument, including a value that follows a flag.
+func splitRunnerProjectArg(args []string) (string, []string) {
+	project := "all"
+	var flagArgs []string
+	found := false
+	skipNext := false
+	for _, a := range args {
+		switch {
+		case skipNext:
+			skipNext = false
+			flagArgs = append(flagArgs, a)
+		case isFlag(a):
+			// "--flag=value" carries its own value; "--flag value" does not.
+			if runnerValueFlags[a] {
+				skipNext = true
+			}
+			flagArgs = append(flagArgs, a)
+		case !found:
+			project = a
+			found = true
+		default:
+			flagArgs = append(flagArgs, a)
+		}
+	}
+	return project, flagArgs
+}
+
 // parseRunCommand creates a RunCommand from args.
 func parseRunCommand(args []string) (Command, error) {
 	if len(args) == 0 {
@@ -437,19 +479,10 @@ func parseRunCommand(args []string) (Command, error) {
 
 	cfg := defaultConfig()
 
-	// Pre-scan args to find positional project arg regardless of flag order.
-	// This mirrors parseDreamCommand: find first non-flag arg before calling
-	// ParseRunnerFlags so that "brain run start <project> --headless" works
-	// the same as "brain run start --headless <project>".
-	project := "all"
-	var flagArgs []string
-	for _, a := range subArgs {
-		if !isFlag(a) && project == "all" {
-			project = a
-		} else {
-			flagArgs = append(flagArgs, a)
-		}
-	}
+	// Pre-scan args to find the positional project arg regardless of flag order,
+	// so "brain run start <project> --headless" works the same as
+	// "brain run start --headless <project>".
+	project, flagArgs := splitRunnerProjectArg(subArgs)
 
 	flags, err := ParseRunnerFlags(flagArgs)
 	if err != nil {
@@ -477,17 +510,7 @@ func parseRunnerCommand(args []string) (Command, error) {
 	}
 
 	// Find the first positional (project) regardless of flag order; default "all".
-	project := "all"
-	var flagArgs []string
-	found := false
-	for _, a := range subArgs {
-		if !isFlag(a) && !found {
-			project = a
-			found = true
-		} else {
-			flagArgs = append(flagArgs, a)
-		}
-	}
+	project, flagArgs := splitRunnerProjectArg(subArgs)
 
 	flags, err := ParseRunnerFlags(flagArgs)
 	if err != nil {
@@ -742,6 +765,7 @@ func convertToCommandsAPIFlags(flags *APIFlags) *commands.APIFlags {
 		TLSKey:        flags.TLSKey,
 		Runner:        flags.Runner,
 		RunnerProject: flags.RunnerProject,
+		RunnerName:    flags.RunnerName,
 		MaxParallel:   flags.MaxParallel,
 		Include:       flags.Include,
 		Exclude:       flags.Exclude,
@@ -752,6 +776,8 @@ func convertToCommandsAPIFlags(flags *APIFlags) *commands.APIFlags {
 // convertToCommandsRunnerFlags converts main.RunnerFlags to commands.RunnerFlags.
 func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 	return &commands.RunnerFlags{
+		Name:         flags.Name,
+		All:          flags.All,
 		TUI:          flags.TUI,
 		Foreground:   flags.Foreground,
 		Headless:     flags.Headless,
@@ -763,6 +789,10 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Workdir:      flags.Workdir,
 		Agent:        flags.Agent,
 		Model:        flags.Model,
+		Executor:     flags.Executor,
+		PiBin:        flags.PiBin,
+		PiModel:      flags.PiModel,
+		PiThinking:   flags.PiThinking,
 		Include:      flags.Include,
 		Exclude:      flags.Exclude,
 		FeatureIDs:   flags.FeatureIDs,

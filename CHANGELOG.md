@@ -6,6 +6,41 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ## Unreleased
 
+### Added
+
+- **Multiple runners on one machine.** `brain runner start --name <name>` starts
+  an additional, independently-registered runner on a host that already has one.
+  The name selects the runner's state dir (and therefore its persisted runner
+  id), its daemon pid/log files, and a `name` label shown in `brain run status`
+  and the web UI's runner list. `brain runner status` now lists every runner on
+  the machine; `brain runner stop --name <name>` stops one and
+  `brain runner stop --all` stops them all. `--name` also works on
+  `brain run start` and `brain start --runner`, and can be set with `RUNNER_NAME`
+  or `runner.name` in config.yaml.
+
+  An unnamed runner keeps the exact paths it had before — same state dir, same
+  `brain-runner.pid` — so an existing deployment keeps its runner id and its
+  `brain runner stop` still works. Sharing one state dir between two runners is
+  what was never supported: `ResolveRunnerID` persists the id in that directory,
+  so both processes would register as the same runner and then race for every
+  dispatch sent to it.
+
+  `brain api start --runner --runner-name <name>` does the same for the API
+  server's embedded runner, which otherwise shares the default state dir (and
+  therefore the runner id) with a standalone runner on the same host.
+
+### Fixed
+
+- **`--executor`, `--pi-bin`, `--pi-model` and `--pi-thinking` reach the runner
+  again.** `convertToCommandsRunnerFlags` dropped all four, so
+  `brain runner start --executor pi` (and the same flags on `brain start`)
+  silently fell back to the configured default executor.
+- **A flag value after the project no longer becomes the project.** The
+  positional pre-scan in `brain run <sub>` used `project == "all"` as its
+  "not found yet" sentinel, so `brain run start all --model sonnet` parsed
+  "sonnet" as the project and left `--model` empty. The scan now stops at the
+  first positional and skips the value of every value-taking runner flag.
+
 ### Removed
 
 - **`brain.ts` OpenCode plugin.** The TypeScript API-client plugin previously

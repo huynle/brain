@@ -15,6 +15,9 @@ import (
 // applyRunnerFlagOverrides applies CLI flag values on top of the runner config.
 // Only non-zero/non-empty flag values override the config file values.
 func applyRunnerFlagOverrides(cfg *runner.RunnerConfig, flags *RunnerFlags) {
+	if flags.Name != "" {
+		cfg.Name = flags.Name
+	}
 	if flags.MaxParallel != 0 {
 		cfg.MaxParallel = flags.MaxParallel
 	}
@@ -55,6 +58,8 @@ func applyRunnerFlagOverrides(cfg *runner.RunnerConfig, flags *RunnerFlags) {
 
 // RunnerFlags holds runner command flags.
 type RunnerFlags struct {
+	Name         string
+	All          bool
 	TUI          bool
 	Foreground   bool
 	Headless     bool
@@ -385,8 +390,14 @@ func (c *RunCommand) runStatus() error {
 	fmt.Printf("\nRegistered runners: %d\n", runners.Total)
 	if runners.Total > 0 {
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "RUNNER_ID\tHOSTNAME\tSTATUS\tMAX_PARALLEL\tLAST_HEARTBEAT")
+		fmt.Fprintln(w, "RUNNER_ID\tNAME\tHOSTNAME\tSTATUS\tMAX_PARALLEL\tLAST_HEARTBEAT")
 		for _, r := range runners.Runners {
+			// Several runners can share a hostname, so the name label is what
+			// tells them apart; older runners don't advertise one.
+			name := "-"
+			if v := strings.TrimSpace(r.Labels[runner.RunnerNameLabel]); v != "" {
+				name = v
+			}
 			age := "-"
 			if r.LastHeartbeat != "" {
 				if t, err := time.Parse(time.RFC3339, r.LastHeartbeat); err == nil {
@@ -395,7 +406,7 @@ func (c *RunCommand) runStatus() error {
 					age = r.LastHeartbeat
 				}
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", r.RunnerID, r.Hostname, r.Status, r.MaxParallel, age)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n", r.RunnerID, name, r.Hostname, r.Status, r.MaxParallel, age)
 		}
 		w.Flush()
 	}

@@ -20,13 +20,16 @@ import { KV } from "../../common/KV";
 import { Chip } from "../../common/Chip";
 import { Dot, type DotVariant } from "../../common/Dot";
 import { ErrorState } from "../../common/ErrorState";
+import { ActionBar } from "../../common/ActionBar";
 import { SessionsSection } from "../../Modal/SessionsSection";
 import { DispatchAttemptsSection } from "../../Modal/DispatchAttemptsSection";
 
 import { useModal } from "../../../store/modal";
 import { useLive } from "../../../lib/sse";
+import { useActionRunner } from "../../../hooks/useActionRunner";
 import { useTaskActionContext } from "../../../hooks/useTaskActionContext";
 import { usePauseState } from "../../../hooks/usePauseState";
+import { buildTaskActions } from "../../../lib/actions/taskActions";
 import { taskHoldReason } from "../../../lib/pause";
 import type { Task, TaskStatus } from "../../../lib/types";
 
@@ -61,11 +64,22 @@ export function TaskDetailLeaf({
     s.projects[projectId]?.tasks.find((t) => t.id === taskId),
   );
   const taskCtx = useTaskActionContext(projectId);
+  const runner = useActionRunner();
   const { pause } = usePauseState();
 
   const pairs = useMemo(
     () => (task ? buildKvPairs(task, projectId, openModal) : []),
     [task, projectId, openModal],
+  );
+
+  // Built unconditionally (before the not-found early return) so hook
+  // order stays stable. buildTaskActions surfaces the shared "Resume
+  // task" verb whenever the task is resumable (is_abandoned, stuck
+  // pending, etc.) — the same registry the row context menu and TaskModal
+  // footer use, so this docked pane can't drift from them.
+  const actions = useMemo(
+    () => (task ? buildTaskActions(task, taskCtx) : []),
+    [task, taskCtx],
   );
 
   if (!task) {
@@ -93,6 +107,19 @@ export function TaskDetailLeaf({
       >
         <Dot variant={taskDotVariant(task.status)} title={task.status} />
         <strong>{task.title || `Task: ${task.id}`}</strong>
+        {task.is_abandoned && (
+          <span
+            className="life-badge abandoned"
+            style={{ marginLeft: 4 }}
+            title={
+              task.abandon_reason
+                ? `Abandoned (${task.abandon_reason})`
+                : "Abandoned"
+            }
+          >
+            abandoned
+          </span>
+        )}
       </div>
 
       {hold && (
@@ -100,6 +127,22 @@ export function TaskDetailLeaf({
           <b>{hold.glyph} Held — not dispatching.</b> {hold.detail}
         </div>
       )}
+
+      {/* Action row — the same shared registry the row context menu and
+          TaskModal footer use. Without this the docked task pane had no
+          Resume affordance at all: an abandoned task (e.g. after the runner
+          was rebuilt/restarted mid-run) could only be recovered from the
+          row menu or the feature-level batch resume, never from the pane
+          the user was already looking at. Resume is promoted beside Run
+          whenever it applies. */}
+      <div style={{ marginBottom: "var(--p2-space-3)" }}>
+        <ActionBar
+          actions={actions}
+          onRun={runner.run}
+          primary={["run", "resume"]}
+        />
+        {runner.dialog}
+      </div>
 
       <KV pairs={pairs} />
 

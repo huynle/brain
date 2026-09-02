@@ -9,15 +9,19 @@
  *
  * Verbs come from `lib/actions/sessionActions` via `useRowActions`, so
  * right-click, long-press and keyboard offer the identical set as the
- * session card and the runner Processes rows. Plain click opens the
- * session view.
+ * session card and the runner Processes rows.
  *
- * The click builds a live SessionRef from the instance row we already
- * hold (openSessionRef(instanceSessionRef(s))) instead of only handing
- * SessionFull an instance-id string. That makes SessionFull's live flag
- * and header correct immediately — without waiting for the global
- * instances poll to re-resolve the row — so the "· transcript" false
- * state and the missing steer box are gone.
+ * Click previews in the side panel, double click pins into Focus — the
+ * same contract as a task or feature row. Both dock a `session` leaf,
+ * whose body is `SessionPane`: the same component the full-page view
+ * renders, so a docked live session streams and can be steered rather
+ * than being a read-only transcript.
+ *
+ * Either way the target is a live SessionRef built from the instance row
+ * already in hand (`instanceSessionRef(s)`), not a bare instance-id
+ * string — that is what makes the pane's live flag and header correct
+ * immediately instead of waiting for the global instances poll to
+ * re-resolve the row.
  */
 import { useWorkspace } from "../../store/workspace";
 import { useSessions } from "../../hooks/useSessions";
@@ -27,7 +31,8 @@ import { buildSessionActions } from "../../lib/actions/sessionActions";
 import { instanceSessionRef } from "../../lib/sessionRef";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
-import type { OpencodeInstance } from "../../lib/types";
+import { walkLeaves } from "../../lib/dock";
+import type { OpencodeInstance, SessionRef } from "../../lib/types";
 
 function sessionLabel(inst: OpencodeInstance): string {
   if (inst.title && inst.title.trim()) return inst.title;
@@ -40,14 +45,42 @@ function sessionLabel(inst: OpencodeInstance): string {
 export function SessionsSection(): JSX.Element {
   const expanded = useWorkspace((s) => s.sidebarSection.sessions);
   const toggle = useWorkspace((s) => s.toggleSidebarSection);
-  const openSessionRef = useWorkspace((s) => s.openSessionRef);
-  const focusSessionId = useWorkspace((s) => s.focusSessionId);
-  const focusSessionRef = useWorkspace((s) => s.focusSessionRef);
+  // Same click contract as a task or feature row: single click previews
+  // in the side panel, double click pins it into Focus.
+  // `openOrReuseInSidebar` retargets the one session pane rather than
+  // adding a tab, so clicking down a list of live sessions to see what
+  // each is doing costs one pane, not one per session.
+  const previewInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
+  const openInFocus = useWorkspace((s) => s.openInFocus);
+  const docks = useWorkspace((s) => s.docks);
   const { sessions, isLoading, error, refetch } = useSessions();
   const actionCtx = useSessionActionContext();
   const { rowProps, overlays } = useRowActions();
 
-  const open = (s: OpencodeInstance) => openSessionRef(instanceSessionRef(s));
+  const preview = (s: OpencodeInstance) =>
+    previewInSidebar("session", { ref: instanceSessionRef(s) }, sessionLabel(s));
+  const pin = (s: OpencodeInstance) =>
+    openInFocus("session", { ref: instanceSessionRef(s) }, sessionLabel(s));
+
+  // Which instances are on screen right now, in either dock. This used to
+  // be read off `focusSessionId`/`focusSessionRef`, which only the
+  // full-screen session view sets — with the row opening a docked pane
+  // instead, that marker would never move and every row would read
+  // inactive. Asking the docks is also simply the truer question: the
+  // highlight means "this is the one you are looking at".
+  const openInstanceIds = new Set<string>();
+  for (const tree of [docks.sidebar, docks.focus]) {
+    if (!tree) continue;
+    walkLeaves(tree, (leaf) => {
+      if (leaf.kind !== "session") return;
+      const ref = (leaf.target as { ref?: SessionRef }).ref;
+      if (ref?.mode === "live" && ref.instance_id) {
+        openInstanceIds.add(ref.instance_id);
+      }
+      const legacy = (leaf.target as { instance_id?: string }).instance_id;
+      if (legacy) openInstanceIds.add(legacy);
+    });
+  }
 
   const rows = (() => {
     if (isLoading) return <Loading size="sm" label="Loading…" />;
@@ -60,21 +93,19 @@ export function SessionsSection(): JSX.Element {
       );
     }
     return sessions.map((s) => {
-      // A row is active whether it was opened by the legacy instance-id
-      // fast path or by the new live-ref path (openSessionRef sets
-      // focusSessionRef and clears focusSessionId).
-      const active =
-        focusSessionId === s.instance_id ||
-        (focusSessionRef?.mode === "live" &&
-          focusSessionRef.instance_id === s.instance_id);
+      const active = openInstanceIds.has(s.instance_id);
       const label = sessionLabel(s);
       const isLive = s.status === "busy" || s.status === "starting";
       return (
         <div
           key={s.instance_id}
           className={`sess-row ${active ? "active" : ""}`}
-          {...rowProps(buildSessionActions(s, actionCtx), label, () => open(s))}
-          onClick={() => open(s)}
+          // Enter matches a single click, as on every other row.
+          {...rowProps(buildSessionActions(s, actionCtx), label, () =>
+            preview(s),
+          )}
+          onClick={() => preview(s)}
+          onDoubleClick={() => pin(s)}
           title={label}
         >
           <span className="glyph">{isLive ? "▸" : "○"}</span>

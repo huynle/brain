@@ -698,9 +698,9 @@ func TestTaskClaimsTable_MigrationFromV4(t *testing.T) {
 func TestSchemaVersion_IncludesFeatureCascadeRoots(t *testing.T) {
 	// Bumped with each migration. v23 added runner_pause_state, v24 added
 	// feature_cascade_roots, v25 invalidated checksums for link re-extraction,
-	// v26 did the same for HTML comments.
-	if CurrentSchemaVersion != 26 {
-		t.Errorf("CurrentSchemaVersion = %d, want 26", CurrentSchemaVersion)
+	// v26 did the same for HTML comments, v27 added feature_pause_state.
+	if CurrentSchemaVersion != 27 {
+		t.Errorf("CurrentSchemaVersion = %d, want 27", CurrentSchemaVersion)
 	}
 }
 
@@ -1319,5 +1319,65 @@ func TestNewWithDB_KeepsForeignKeysUnderTheConnectionCap(t *testing.T) {
 	}
 	if foreignKeys != 1 {
 		t.Errorf("foreign_keys=%d, want 1", foreignKeys)
+	}
+}
+
+// The version constant alone proves nothing about the table existing.
+func TestFeaturePauseStateTable_FreshDB(t *testing.T) {
+	s := newTestStorage(t)
+	var name string
+	err := s.DB().QueryRow(
+		"SELECT name FROM sqlite_master WHERE type='table' AND name='feature_pause_state'").Scan(&name)
+	if err != nil {
+		t.Fatalf("feature_pause_state table missing on a fresh DB: %v", err)
+	}
+}
+
+func TestFeaturePauseState_RoundTrip(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+
+	if paused, err := s.IsFeaturePaused(ctx, "proj", "feat"); err != nil || paused {
+		t.Fatalf("a feature with no row must read as running: %v %v", paused, err)
+	}
+	if err := s.SetFeaturePaused(ctx, "proj", "feat", true); err != nil {
+		t.Fatalf("pause: %v", err)
+	}
+	if paused, err := s.IsFeaturePaused(ctx, "proj", "feat"); err != nil || !paused {
+		t.Fatalf("pause did not stick: %v %v", paused, err)
+	}
+	// Same feature id in a DIFFERENT project must be untouched — ids are
+	// only unique within a project, which is why the key is the pair.
+	if paused, err := s.IsFeaturePaused(ctx, "other", "feat"); err != nil || paused {
+		t.Fatalf("the hold leaked across projects: %v %v", paused, err)
+	}
+
+	list, err := s.ListPausedFeatures(ctx)
+	if err != nil || len(list) != 1 || list[0].ProjectID != "proj" || list[0].FeatureID != "feat" {
+		t.Fatalf("ListPausedFeatures = %#v, %v", list, err)
+	}
+
+	if err := s.SetFeaturePaused(ctx, "proj", "feat", false); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if paused, _ := s.IsFeaturePaused(ctx, "proj", "feat"); paused {
+		t.Fatal("resume did not stick")
+	}
+	if list, _ := s.ListPausedFeatures(ctx); len(list) != 0 {
+		t.Fatalf("a resumed feature is still listed as paused: %#v", list)
+	}
+}
+
+// An empty id must be refused rather than written: a row keyed on "" would
+// either match nothing or, read loosely, be taken for "every task with no
+// feature".
+func TestFeaturePauseState_RefusesEmptyIDs(t *testing.T) {
+	s := newTestStorage(t)
+	ctx := context.Background()
+	if err := s.SetFeaturePaused(ctx, "", "feat", true); err == nil {
+		t.Error("empty project id was accepted")
+	}
+	if err := s.SetFeaturePaused(ctx, "proj", "", true); err == nil {
+		t.Error("empty feature id was accepted")
 	}
 }

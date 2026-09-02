@@ -651,6 +651,8 @@ type fakeSchedulerStore struct {
 	paused                   bool
 	automationPaused         bool
 	automationPausedProjects map[string]bool
+	// pausedFeatures keys "<project>\x00<feature>", matching the service.
+	pausedFeatures map[string]bool
 	leases                   []storage.DispatchLeaseCreate
 	reasons                  []storage.PlacementReasonRow
 	commands                 []fakeRunnerCommand
@@ -791,6 +793,13 @@ func (f *fakeSchedulerStore) PublishRunnerCommandTracked(runnerID string, comman
 }
 
 func (f *fakeSchedulerStore) IsPaused(projectID string) bool { return f.paused }
+
+func (f *fakeSchedulerStore) IsFeaturePaused(projectID, featureID string) bool {
+	if f.pausedFeatures == nil {
+		return false
+	}
+	return f.pausedFeatures[projectID+"\x00"+featureID]
+}
 
 func (f *fakeSchedulerStore) IsAutomationsPaused() bool { return f.automationPaused }
 
@@ -1966,5 +1975,105 @@ func TestRunFeatureNow_NoReadyTasksWithoutFeatureHoldKeepsGenericDetail(t *testi
 	}
 	if len(resp.WaitingOnFeatures) != 0 || len(resp.BlockedByFeatures) != 0 {
 		t.Fatalf("holds = %v / %v, want both empty", resp.WaitingOnFeatures, resp.BlockedByFeatures)
+	}
+}
+
+// ─── feature-scoped pause dial ──────────────────────────────────────
+
+// The gap this dial fills: a manually started feature could not be stopped
+// without pausing the WHOLE project. Holding one feature must leave the
+// rest of the project dispatching normally.
+func TestSchedulerService_FeaturePause_HoldsOnlyThatFeature(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.pausedFeatures = map[string]bool{"proj\x00held": true}
+	store.tasks = []types.ResolvedTask{
+		{ID: "in-held", ProjectID: "proj", FeatureID: "held", Status: "pending", Classification: "ready"},
+		{ID: "in-other", ProjectID: "proj", FeatureID: "other", Status: "pending", Classification: "ready"},
+		{ID: "no-feature", ProjectID: "proj", Status: "pending", Classification: "ready"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 5}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+	if result.Dispatched != 2 {
+		t.Fatalf("Dispatched = %d, want 2 (other feature + ungrouped); result=%#v", result.Dispatched, result)
+	}
+	if result.SkippedFeaturePaused != 1 {
+		t.Fatalf("SkippedFeaturePaused = %d, want 1; result=%#v", result.SkippedFeaturePaused, result)
+	}
+	for _, l := range store.leases {
+		if l.TaskID == "in-held" {
+			t.Fatal("dispatched a task from the held feature")
+		}
+	}
+}
+
+// A task with no feature_id must never be caught by a feature dial — an
+// empty id is not a wildcard.
+func TestSchedulerService_FeaturePause_IgnoresUngroupedTasks(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.pausedFeatures = map[string]bool{"proj\x00": true} // the degenerate row
+	store.tasks = []types.ResolvedTask{
+		{ID: "no-feature", ProjectID: "proj", Status: "pending", Classification: "ready"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+	if result.Dispatched != 1 {
+		t.Fatalf("an ungrouped task was held by a feature dial; result=%#v", result)
+	}
+}
+
+// Unlike the two PROJECT dials, which are a carve-out of each other by who
+// authored the task, a feature hold is about the WORK. A feature whose
+// automation-generated follow-ups kept dispatching would not be held at all.
+func TestSchedulerService_FeaturePause_AlsoHoldsAutomationTasks(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.pausedFeatures = map[string]bool{"proj\x00held": true}
+	store.automationPaused = false // autos ON — only the feature dial applies
+	store.tasks = []types.ResolvedTask{
+		{ID: "auto-in-held", ProjectID: "proj", FeatureID: "held", Status: "pending", Classification: "ready", GeneratedBy: "automation:a1"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	result, err := svc.ScheduleProject(context.Background(), "proj")
+	if err != nil {
+		t.Fatalf("ScheduleProject failed: %v", err)
+	}
+	if result.Dispatched != 0 || result.SkippedFeaturePaused != 1 {
+		t.Fatalf("an automation task escaped the feature hold; result=%#v", result)
+	}
+}
+
+// The dial holds AUTOMATIC scheduling. An explicit "Run now" is a manual
+// override and bypasses it, exactly as it bypasses the project dial —
+// RunTaskNow does not consult shouldSkipTask at all.
+func TestSchedulerService_FeaturePause_RunNowStillOverrides(t *testing.T) {
+	store := newFakeSchedulerStore()
+	store.pausedFeatures = map[string]bool{"proj\x00held": true}
+	store.tasks = []types.ResolvedTask{
+		{ID: "in-held", ProjectID: "proj", FeatureID: "held", Status: "pending", Classification: "ready"},
+	}
+	store.runners = []types.RunnerInfo{{RunnerID: "runner", MachineID: "machine", Status: types.RunnerStatusOnline, DispatchPush: true, MaxParallel: 2}}
+	store.placement = types.ProjectPlacement{ProjectID: "proj", Affinity: types.PlacementAffinityNone}
+
+	svc := NewSchedulerService(store, store, store)
+	resp, err := svc.RunTaskNow(context.Background(), "proj", "in-held", false)
+	if err != nil {
+		t.Fatalf("RunTaskNow failed: %v", err)
+	}
+	if !resp.Dispatched {
+		t.Fatalf("Run now did not override the feature hold: %#v", resp)
 	}
 }

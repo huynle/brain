@@ -336,6 +336,14 @@ type RunnerService interface {
 	// ResumeAutomations resumes automation-generated task execution.
 	ResumeAutomations(ctx context.Context) error
 
+	// PauseFeature holds ONE feature's tasks out of automatic dispatch,
+	// leaving the rest of the project running. Bypassed by an explicit
+	// "Run now", like the project dial.
+	PauseFeature(ctx context.Context, projectId, featureId string) error
+
+	// ResumeFeature turns one feature's dial back on.
+	ResumeFeature(ctx context.Context, projectId, featureId string) error
+
 	// PauseProjectAutomations pauses automation-generated task execution for a specific project.
 	PauseProjectAutomations(ctx context.Context, projectId string) error
 

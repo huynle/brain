@@ -102,6 +102,13 @@ type schedulerProjectAutomationPauseChecker interface {
 	IsAutomationsPausedForProject(projectID string) bool
 }
 
+// schedulerFeaturePauseChecker is the FEATURE-scoped dial. Optional, like
+// the per-project automations one: a pause implementation that predates it
+// simply never holds a feature.
+type schedulerFeaturePauseChecker interface {
+	IsFeaturePaused(projectID, featureID string) bool
+}
+
 // SchedulerService owns Brain push dispatch placement decisions.
 type SchedulerService struct {
 	tasks     schedulerTaskService
@@ -365,6 +372,8 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 				result.SkippedTasksPaused++
 			case skipReasonAutomationsPaused:
 				result.SkippedAutomationsPaused++
+			case skipReasonFeaturePaused:
+				result.SkippedFeaturePaused++
 			}
 			continue
 		}
@@ -427,6 +436,7 @@ func (s *SchedulerService) ScheduleProject(ctx context.Context, projectID string
 const (
 	skipReasonTasksPaused       = "tasks_paused"
 	skipReasonAutomationsPaused = "automations_paused"
+	skipReasonFeaturePaused     = "feature_paused"
 )
 
 // shouldSkipTask decides whether a task should be skipped by the scheduler
@@ -446,6 +456,18 @@ func (s *SchedulerService) shouldSkipTask(projectID string, task types.ResolvedT
 	if s.pauses == nil {
 		return false, ""
 	}
+	// The feature dial is checked FIRST and applies to automation-generated
+	// tasks as well. The two project dials are a carve-out of each other by
+	// origin — who authored the task — but a feature hold is about the WORK:
+	// "stop this feature", not "stop this kind of task". A feature whose
+	// automation-generated follow-ups kept dispatching would not be held at
+	// all, which is the one thing the switch promises.
+	if feat, ok := s.pauses.(schedulerFeaturePauseChecker); ok {
+		if task.FeatureID != "" && feat.IsFeaturePaused(projectID, task.FeatureID) {
+			return true, skipReasonFeaturePaused
+		}
+	}
+
 	isAutomation := strings.HasPrefix(task.GeneratedBy, "automation:")
 	if isAutomation {
 		// Automation tasks respect ONLY the autos-paused switch.

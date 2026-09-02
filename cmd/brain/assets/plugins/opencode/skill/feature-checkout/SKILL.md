@@ -79,12 +79,27 @@ Extract and save — these fields will be copied to any gap tasks:
 - `execution.agent` → the `agent` (will be null for checkout tasks; gap tasks may override)
 - `execution.target_workdir` → the `target_workdir`
 - `execution.git_branch` → the `git_branch`
-- `execution.merge_target_branch` → merge destination branch (default `main` if unset)
-- `execution.merge_policy` → one of `prompt_only`, `auto_pr`, `auto_merge` (default `auto_merge`)
-- `execution.merge_strategy` → one of `squash`, `merge`, `rebase` (default `squash`)
-- `execution.remote_branch_policy` → one of `delete`, `keep` (default `delete`)
-- `execution.open_pr_before_merge` → whether PR flow is required before merging
-- `execution.execution_mode` and `execution.checkout_enabled` → execution constraints for follow-up tasks
+- `execution.execution_mode` → execution constraint to propagate to follow-up tasks
+
+`task_metadata` returns **grouped** objects. The merge fields are under
+`merge`, NOT under `execution` — reading them off `execution` yields
+`undefined` and silently substitutes the defaults below for the feature's
+actual policy:
+
+- `merge.merge_target_branch` → merge destination branch (default `main` if unset)
+- `merge.merge_policy` → one of `prompt_only`, `auto_pr`, `auto_merge` (default `auto_merge`)
+- `merge.merge_strategy` → one of `squash`, `merge`, `rebase` (default `squash`)
+- `merge.remote_branch_policy` → one of `delete`, `keep` (default `delete`)
+- `merge.open_pr_before_merge` → whether PR flow is required before merging
+- `merge.checkout_mode` → `"ai"` (this skill) or `"simple"` (the deterministic script)
+
+There is no `checkout_enabled` field anywhere in Brain. Do not read it and
+do not set it on generated tasks.
+
+The third group is `origin` (`origin_machine_id`, `origin_client_id`,
+`origin_path`, `machine_affinity`) — the machine a task was created on.
+Generated tasks deliberately carry no origin, so a gap task will not pin
+itself back to the machine the feature was built on.
 - `tags` → base tags to propagate
 - `dependencies.depends_on` → raw dependency IDs (the tasks to audit)
 
@@ -368,10 +383,6 @@ save(
   merge_strategy: "<merge_strategy>",
   remote_branch_policy: "<remote_branch_policy>",
   target_workdir: "<target_workdir>",
-  generated: true,
-  generated_kind: "other",
-  generated_key: "merge-request:<project>:<feature_id>:<source_branch>:<merge_target_branch>",
-  generated_by: "brain:merge-request",
   tags: ["merge-request", "<feature_id>"]
 )
 ```
@@ -432,20 +443,46 @@ save(
   merge_strategy: "<same merge_strategy>",
   open_pr_before_merge: <same open_pr_before_merge>,
   execution_mode: "<same execution_mode>",
-  checkout_enabled: <same checkout_enabled>,
-  generated: true,
-  generated_kind: "gap_task",
-  generated_key: "feature-checkout:gap:<feature_id>:criterion-<N>",
-  generated_by: "feature-checkout",
   tags: ["gap", "follow-up", "<feature_id>"]
 )
 ```
+
+> **`save` cannot mark an entry as generated.** `generated`,
+> `generated_kind`, `generated_key` and `generated_by` are not in the
+> `save` or `update` schema — passing them is silently ignored, so a task
+> created here is indistinguishable from a hand-written one and carries no
+> dedup key. They exist only as `bulk_update` *filter* fields. Use the
+> `tags` above as the marker instead, and rely on the checkout task's own
+> `depends_on` chain for ordering rather than on a dedup key.
 
 **Save each returned task ID.** You will need them for the next checkout task.
 
 ### Create Next Checkout Task
 
-After creating all gap tasks, create a new checkout task that depends on the gap tasks:
+After creating all gap tasks, create the next checkout task with the
+dedicated tool rather than by hand:
+
+```text
+feature_checkout(
+  project: "<project>",
+  feature_id: "<feature_id>",
+  merge_target_branch: "<same merge_target_branch>",
+  merge_policy: "<same merge_policy>",
+  merge_strategy: "<same merge_strategy>",
+  remote_branch_policy: "<same remote_branch_policy>",
+  open_pr_before_merge: <same open_pr_before_merge>,
+  execution_mode: "<same execution_mode>",
+  checkout_mode: "<same checkout_mode>"
+)
+```
+
+It creates-or-reuses the checkout task server-side, honours the feature's
+own execution and merge settings, and — unlike `save` — stamps a real
+`generated_key`, so a re-run of the same round cannot duplicate it. It
+reports the key back; note it in your summary.
+
+Fall back to `save` only if `feature_checkout` is unavailable, accepting
+that the resulting task carries no dedup key:
 
 ```
 save(
@@ -467,11 +504,6 @@ save(
   merge_strategy: "<same merge_strategy>",
   open_pr_before_merge: <same open_pr_before_merge>,
   execution_mode: "<same execution_mode>",
-  checkout_enabled: <same checkout_enabled>,
-  generated: true,
-  generated_kind: "feature_checkout",
-  generated_key: "feature-checkout:<feature_id>:round-<N+1>",
-  generated_by: "feature-checkout",
   tags: ["checkout", "<feature_id>"]
 )
 ```
@@ -553,11 +585,6 @@ save(
   merge_strategy: "squash",
   open_pr_before_merge: false,
   execution_mode: "worktree",
-  checkout_enabled: true,
-  generated: true,
-  generated_kind: "feature_checkout",
-  generated_key: "feature-checkout:<feature_id>:round-1",
-  generated_by: "feature-checkout",
   tags: ["checkout", "<feature_id>"]
 )
 ```

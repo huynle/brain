@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"sort"
+	"strings"
 	"sync"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -22,6 +24,9 @@ type RunnerServiceImpl struct {
 	automationsPaused        bool
 	automationPausedProjects map[string]bool
 	pausedProjects           map[string]bool
+	// Keyed "<project>\x00<feature>". Only the fallback when there is no
+	// store; the durable path is the feature_pause_state table.
+	pausedFeatures map[string]bool
 }
 
 // NewRunnerService creates a new RunnerServiceImpl.
@@ -35,6 +40,7 @@ func NewRunnerServiceWithStorage(store *storage.StorageLayer) *RunnerServiceImpl
 		store:                    store,
 		pausedProjects:           make(map[string]bool),
 		automationPausedProjects: make(map[string]bool),
+		pausedFeatures:           make(map[string]bool),
 	}
 }
 
@@ -123,12 +129,24 @@ func (s *RunnerServiceImpl) GetStatus(ctx context.Context) (*types.RunnerStatusR
 				automationPausedProjects = append(automationPausedProjects, row.ProjectID)
 			}
 		}
+		// A failure to read the feature dials must not blank the project
+		// ones — a status call that returns "nothing is paused" because a
+		// secondary query failed is the exact false-reassurance this whole
+		// surface exists to remove. Report what we have.
+		var pausedFeatures []string
+		if feats, ferr := s.store.ListPausedFeatures(ctx); ferr == nil {
+			for _, f := range feats {
+				pausedFeatures = append(pausedFeatures, f.ProjectID+"/"+f.FeatureID)
+			}
+			sort.Strings(pausedFeatures)
+		}
 		return &types.RunnerStatusResponse{
 			Running:                  true,
 			Paused:                   len(pausedProjects) > 0,
 			PausedProjects:           pausedProjects,
 			AutomationsPaused:        len(automationPausedProjects) > 0,
 			AutomationPausedProjects: automationPausedProjects,
+			PausedFeatures:           pausedFeatures,
 		}, nil
 	}
 	s.mu.RLock()
@@ -144,6 +162,11 @@ func (s *RunnerServiceImpl) GetStatus(ctx context.Context) (*types.RunnerStatusR
 	for p := range s.automationPausedProjects {
 		automationPausedProjects = append(automationPausedProjects, p)
 	}
+	var pausedFeatures []string
+	for k := range s.pausedFeatures {
+		pausedFeatures = append(pausedFeatures, strings.Replace(k, "\x00", "/", 1))
+	}
+	sort.Strings(pausedFeatures)
 
 	return &types.RunnerStatusResponse{
 		Running:                  true, // API server is always "running"
@@ -151,6 +174,7 @@ func (s *RunnerServiceImpl) GetStatus(ctx context.Context) (*types.RunnerStatusR
 		PausedProjects:           pausedProjects,
 		AutomationsPaused:        s.automationsPaused,
 		AutomationPausedProjects: automationPausedProjects,
+		PausedFeatures:           pausedFeatures,
 	}, nil
 }
 
@@ -205,6 +229,63 @@ func (s *RunnerServiceImpl) IsAutomationsPausedForProject(projectID string) bool
 
 // IsPaused returns true if the given project is paused (either globally or
 // per-project). Consults durable storage when available.
+// featurePauseKey joins the two ids for the in-memory fallback map. A NUL
+// separator cannot appear in either id, so "a\x00b" can only ever mean one
+// (project, feature) pair — a "-" or ":" join could be produced by two
+// different pairs.
+func featurePauseKey(projectID, featureID string) string {
+	return projectID + "\x00" + featureID
+}
+
+// PauseFeature holds ONE feature's tasks out of automatic dispatch.
+//
+// The dial the project one is too coarse for: a manually started feature
+// you want to stop without freezing everything else in the project. Like
+// the project dial it holds NEW dispatch only — work already handed to a
+// runner runs to completion — and like the project dial it is bypassed by
+// an explicit "Run now", because a manual override is the point of a
+// manual override.
+func (s *RunnerServiceImpl) PauseFeature(ctx context.Context, projectID, featureID string) error {
+	if s.store != nil {
+		return s.store.SetFeaturePaused(ctx, projectID, featureID, true)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pausedFeatures[featurePauseKey(projectID, featureID)] = true
+	return nil
+}
+
+// ResumeFeature turns one feature's dial back on.
+func (s *RunnerServiceImpl) ResumeFeature(ctx context.Context, projectID, featureID string) error {
+	if s.store != nil {
+		return s.store.SetFeaturePaused(ctx, projectID, featureID, false)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.pausedFeatures, featurePauseKey(projectID, featureID))
+	return nil
+}
+
+// IsFeaturePaused reports whether one feature is held.
+//
+// Returns false for an empty feature id rather than treating it as a
+// wildcard: tasks with no feature must never be caught by a feature dial.
+func (s *RunnerServiceImpl) IsFeaturePaused(projectID, featureID string) bool {
+	if projectID == "" || featureID == "" {
+		return false
+	}
+	if s.store != nil {
+		paused, err := s.store.IsFeaturePaused(context.Background(), projectID, featureID)
+		if err == nil {
+			return paused
+		}
+		// fall through to in-memory on error
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.pausedFeatures[featurePauseKey(projectID, featureID)]
+}
+
 func (s *RunnerServiceImpl) IsPaused(projectId string) bool {
 	if projectId == "" {
 		return false

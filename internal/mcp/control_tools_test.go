@@ -19,6 +19,8 @@ func TestRegisterControlTools_CountNamesHandlersDescriptions(t *testing.T) {
 		"runner_pause_project",
 		"runner_resume_project",
 		"runner_pause_project_automations",
+		"runner_pause_feature",
+		"runner_resume_feature",
 		"runner_resume_project_automations",
 		"runner_pause_all",
 		"runner_resume_all",
@@ -65,6 +67,8 @@ func TestControlToolSchemas(t *testing.T) {
 		props    []string
 	}{
 		{"runner_pause_project", nil, []string{"project"}},
+		{"runner_pause_feature", nil, []string{"project", "feature_id"}},
+		{"runner_resume_feature", nil, []string{"project", "feature_id"}},
 		{"runner_resume_project", nil, []string{"project"}},
 		{"runner_pause_all", []string{"confirm"}, []string{"confirm"}},
 		{"runner_resume_all", []string{"confirm"}, []string{"confirm"}},

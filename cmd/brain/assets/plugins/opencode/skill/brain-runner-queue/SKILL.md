@@ -96,6 +96,21 @@ Read task → Names files + clear changes? → Yes → Route A
 
 ---
 
+## Mid-Task Injections
+
+A message can arrive mid-task that is not from the user and not a tool
+result: if a **goal** is scoped to this task or its feature, the goal
+reconcile loop injects a `## Goal check-in` prompt into the live session —
+the goal's title, criteria, validation, and an instruction to self-assess.
+
+Treat it as a real instruction, and act on it **in the same turn it
+arrives**. The session process exits when its current turn ends, so a
+check-in deferred to "after this step" is a check-in that never happens.
+Answer it honestly against the stated criteria — if the work does not meet
+them, say so rather than reporting progress.
+
+Only OpenCode sessions receive these; Pi sessions are skipped.
+
 ## Part 2: Task Workflow
 
 ### Step 1: Read Task
@@ -104,11 +119,53 @@ Read task → Names files + clear changes? → Yes → Route A
 recall(path: "<task-path-from-prompt>")
 ```
 
+### Step 1b: Is this a RESUME?
+
+The runner tells you. When a task was interrupted mid-flight, the prompt
+says so explicitly — "RESUME the interrupted task", and the header carries
+`- Resume: true`. Do not skip to triage on a resume; the work may already
+be half done, and re-implementing it from scratch is how a resumed task
+ends up duplicating or conflicting with its own committed partial work.
+
+On a resume, before anything else:
+
+1. Read the task body for sections a previous run left behind — `## Triage`,
+   `## Phase N Implementation`, progress notes. That is the record of what
+   route was chosen and how far it got.
+2. Check `task_logs(task_id: "<id>")` for the previous run's output.
+3. Inspect the working tree and recent commits for partial work. A commit
+   already on the branch is done; do not redo it.
+4. Continue from there. Restart from the beginning only if you cannot
+   establish what was done.
+5. Say in the completion summary that this was a resumed task and what you
+   found already finished.
+
+**Why a task gets resumed.** The runner claims work with a renewable lease
+in `task_claims`; the entry's `in_progress` status is a consequence of
+that claim, not the claim itself. When the lease expires or its runner
+dies, the task is left `in_progress` with nothing running it and is
+flagged `is_abandoned` with an `abandon_reason` — `no_claim`,
+`claim_expired`, `runner_offline` or `orphan_reaped`. A human or the
+resume endpoint then re-queues it, which is how you got here.
+
 ### Step 2: Claim Task
 
 ```
 update(path: "<task-path>", status: "in_progress")
 ```
+
+The runner has already claimed the task and set this status before you
+were spawned, so on the normal path this is a confirmation, not the claim.
+The real claim is the lease described above. Setting it is still correct —
+it is idempotent — but do not treat the status flip as what makes the task
+yours.
+
+> **Use the repository's own commands.** The examples below write
+> `<project test command>` deliberately: check the repo for a `justfile`,
+> `Makefile`, `package.json` scripts or `CONTRIBUTING`/`CLAUDE.md` and use
+> what is there. In this repository that is `just test`, `just vet` and
+> `just check`. A hardcoded command from another stack silently verifies
+> nothing.
 
 ### Step 3: Triage
 
@@ -252,8 +309,8 @@ update(
 **3. Run tests** to confirm the phase didn't break anything:
 
 ```bash
-bun test        # or relevant test command
-bun run typecheck
+<project test command>        # or relevant test command
+<project typecheck command>
 ```
 
 If tests fail, either:

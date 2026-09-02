@@ -1715,6 +1715,11 @@ type RunnerStatusResponse struct {
 	PausedProjects           []string `json:"pausedProjects"`
 	AutomationsPaused        bool     `json:"automationsPaused"`
 	AutomationPausedProjects []string `json:"automationPausedProjects"`
+	// PausedFeatures lists the FEATURE-scoped holds as "<project>/<feature>".
+	// One flat list rather than a map so the JSON shape matches the two
+	// project lists beside it; a client that predates the dial simply
+	// ignores the field.
+	PausedFeatures []string `json:"pausedFeatures,omitempty"`
 }
 
 // =============================================================================
@@ -1907,6 +1912,10 @@ type SchedulerResult struct {
 	// tells the operator which switch to flip.
 	SkippedTasksPaused       int `json:"skipped_tasks_paused,omitempty"`
 	SkippedAutomationsPaused int `json:"skipped_automations_paused,omitempty"`
+	// SkippedFeaturePaused counts tasks held by the FEATURE dial. Counted
+	// separately because the remedy is different: resuming the project does
+	// nothing for these.
+	SkippedFeaturePaused int `json:"skipped_feature_paused,omitempty"`
 
 	// SkippedNoCandidate counts tasks that no online runner would accept.
 	// The per-task detail is recorded separately as a placement reason and

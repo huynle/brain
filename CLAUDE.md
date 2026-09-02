@@ -105,6 +105,48 @@ A goal is an `automation` BrainEntry with `Goal *GoalConfig` (`generated_by: bra
 - **Lookups are status-agnostic** (`findGoalByID` searches all statuses) so pause (`blocked`) → resume (`active`) round-trips; only event dispatch and the ticker filter to `active`.
 - **Known limitation**: `complete` is status-based, not criteria-verified — a task that completes without actually meeting the goal criteria still completes the goal. A criteria-validation task on the complete path is the designed next step. Also `opencode run` exits when its current turn ends, so a steered agent must act on the injection within that turn.
 
+### Pause dials: there are FOUR
+
+The three documented in `web/src/lib/pause.ts` plus a feature-scoped one:
+
+  1. project-tasks  POST /tasks/runner/pause/{project}
+  2. project-autos  POST /tasks/runner/automations/pause/{project}
+  3. runner         PUT  /runners/{runnerId}/pause
+  4. feature        POST /tasks/runner/features/pause/{project}/{feature}
+
+The feature dial exists because none of the others can stop a MANUALLY
+STARTED feature. "Run feature now" force-dispatches past the project dials
+by design, so pausing the project was never an answer for work already
+kicked off by hand, and the alternative — cancelling — is destructive AND
+permanently hard-blocks every dependent feature (a cancelled task counts as
+blocked in `ComputeFeatureStatus`).
+
+- **It gates in `shouldSkipTask`**, beside the project dials, not in
+  classification. So it holds automatic scheduling and an explicit
+  `RunTaskNow`/`RunFeatureNow` still overrides — identical to the project
+  dial, and the reason the two read the same way to a user.
+- **It applies to automation-generated tasks too.** The two project dials
+  are a carve-out of each other by ORIGIN (who authored the task); a
+  feature hold is about the WORK. A feature whose automation follow-ups
+  kept dispatching would not be held at all.
+- **An empty feature id is never a wildcard.** `IsFeaturePaused` returns
+  false for one, and the storage setter refuses to write one, so a
+  degenerate row can never catch the tasks that have no feature.
+- Persisted in `feature_pause_state` (schema v27), keyed
+  (project_id, feature_id) because feature ids are unique only within a
+  project. Its own table because a feature is a computed grouping with no
+  row to hang a flag on — and so a hold outlives the tasks that carry the
+  id today.
+- Reported on the status response as `pausedFeatures: ["<project>/<feature>"]`,
+  and counted separately in `SchedulerResult.SkippedFeaturePaused` — the
+  remedy differs, since resuming the project does nothing for these.
+- **Two name traps**, both real collisions already in the tree: the API
+  handler is `HandlePauseFeatureDispatch`/`HandleResumeFeatureDispatch`
+  because `HandleResumeFeature` is the unrelated ABANDONMENT resume, and
+  the PWA context method is `resumeFeatureDispatch` because `resumeFeature`
+  is likewise the abandonment one. One turns a dial; the other rewrites
+  task status.
+
 ### Dispatch delivery + lease states
 
 A dispatch is a durable lease row (`task_dispatch_leases`) plus an SSE publish

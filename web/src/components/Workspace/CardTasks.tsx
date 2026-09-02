@@ -38,6 +38,8 @@ import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useRunners } from "../../hooks/useRunners";
 import { useDependentChains } from "../../hooks/useDependentChains";
+import { usePauseState } from "../../hooks/usePauseState";
+import { isFeaturePaused } from "../../lib/pause";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useTaskRowRenderer } from "./TaskRow";
 import { DepGuide } from "../common/DepGuide";
@@ -101,7 +103,11 @@ export function CardTasks({
   tasks,
   features,
 }: CardTasksProps): JSX.Element {
-  const openInSidebar = useWorkspace((s) => s.openInSidebar);
+  // Same click contract as a task row: single click previews the feature
+  // in the side panel (reusing one pane), double click pins it into
+  // Focus. See TaskRow for why reuse rather than a new tab.
+  const previewInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
+  const openInFocus = useWorkspace((s) => s.openInFocus);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
   // Whole map for this project, not a per-feature selector: the feature
   // list is built inside a render, so there is no stable place to call one
@@ -116,6 +122,8 @@ export function CardTasks({
   // it enrolled, so the chips below are the only place they exist.
   // The POLL lives in ProjectCard; this is a cache reader.
   const chains = useDependentChains(projectId);
+  // The FEATURE dial, for the head's badge and its two verbs.
+  const { pause, isLoading: pauseLoading } = usePauseState();
 
   const featureCtx = useFeatureActionContext(projectId);
   // The groups that answer to no feature_id — the ungrouped bucket and
@@ -258,7 +266,6 @@ export function CardTasks({
     selectionActions,
   });
 
-
   return (
     <div>
       {/* Auto-archive is a property of the PROJECT, but it belongs on this
@@ -303,7 +310,12 @@ export function CardTasks({
         const runnerId = featureAssignments[f.id];
         const runner = runners.find((r) => r.runner_id === runnerId);
         const pct = Math.round(f.progress * 100);
-        const featureActions = buildFeatureActions(f, featureCtx);
+        const featurePaused = isFeaturePaused(pause, projectId, f.id);
+        const featureActions = buildFeatureActions(f, featureCtx, {
+          // undefined while the dials are loading: unknown must not
+          // disable an idempotent verb.
+          paused: pauseLoading ? undefined : featurePaused,
+        });
         const featMarked = selScoped && selFeatureIds.has(f.id);
         // Single-click select-only highlight for the feature head.
         const featIsActive =
@@ -315,7 +327,12 @@ export function CardTasks({
           f.name,
           selActive
             ? () => toggleFeatureSel(projectId, f.id)
-            : () => openInSidebar("feature-detail", { projectId, featureId: f.id }, f.name),
+            : () =>
+                previewInSidebar(
+                  "feature-detail",
+                  { projectId, featureId: f.id },
+                  f.name,
+                ),
           {
             selectionActions: featMarked
               ? (selectionActions ?? undefined)
@@ -333,9 +350,7 @@ export function CardTasks({
             // Indent nested features so the tree reads at a glance. The
             // guide glyphs carry the exact structure; this gives each
             // level a visible step.
-            style={
-              frow.depth > 0 ? { marginLeft: frow.depth * 12 } : undefined
-            }
+            style={frow.depth > 0 ? { marginLeft: frow.depth * 12 } : undefined}
           >
             <div
               className={`feat-head${featMarked ? " marked" : ""}${featIsActive ? " active" : ""}`}
@@ -397,9 +412,14 @@ export function CardTasks({
                   toggleFeatureSel(projectId, f.id);
                   return;
                 }
-                // Plain single-click: select-only highlight. Double-click
-                // / Enter open the drawer.
+                // Plain single-click: highlight AND preview in the side
+                // panel. Double-click pins it into Focus.
                 setActive(projectId, "feature", f.id);
+                previewInSidebar(
+                  "feature-detail",
+                  { projectId, featureId: f.id },
+                  f.name,
+                );
               }}
               onDoubleClick={(e) => {
                 if (
@@ -409,7 +429,11 @@ export function CardTasks({
                 )
                   return;
                 if (selActive) return;
-                openInSidebar("feature-detail", { projectId, featureId: f.id }, f.name);
+                openInFocus(
+                  "feature-detail",
+                  { projectId, featureId: f.id },
+                  f.name,
+                );
               }}
               onMouseDown={(e) => {
                 if (e.shiftKey) {
@@ -474,6 +498,22 @@ export function CardTasks({
                 {f.name}
               </span>
               <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+              {/* The dial is a DIFFERENT fact from the lifecycle — a
+                  paused feature is still "active" work, just held — so it
+                  gets its own chip rather than overwriting the badge. */}
+              {featurePaused && (
+                <span
+                  className="pause-tag"
+                  title={
+                    `Dispatch PAUSED for this feature. Its ready tasks will not ` +
+                    `be picked up; the rest of ${projectId} is unaffected. Work ` +
+                    `already running finishes, and "Run feature now" still ` +
+                    `overrides.`
+                  }
+                >
+                  paused
+                </span>
+              )}
               {/* Collapsed features hide their rows, so the count has to
                   come back to the header or the fold loses the one number
                   it was hiding. */}
@@ -543,10 +583,10 @@ export function CardTasks({
       )}
 
       {features.length === 0 && orphanRows.length === 0 && (
-          <div style={{ color: "#6b757e", fontSize: 11, padding: "6px 0" }}>
-            No tasks yet.
-          </div>
-        )}
+        <div style={{ color: "#6b757e", fontSize: 11, padding: "6px 0" }}>
+          No tasks yet.
+        </div>
+      )}
 
       {overlays}
     </div>

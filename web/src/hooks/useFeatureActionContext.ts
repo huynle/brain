@@ -47,6 +47,11 @@ import {
 } from "../lib/actions/bulkBaton";
 import { withForceRetry } from "../lib/actions/forceRetry";
 import { forceConfirmFor } from "../lib/actions/forceConfirm";
+import {
+  pauseFeatureDispatch as apiPauseFeatureDispatch,
+  resumeFeatureDispatch as apiResumeFeatureDispatch,
+} from "../lib/api";
+import { useInvalidateRunnerStatus } from "./useRunnerStatus";
 import { forceDispatchNote, withForceNote } from "../lib/pause";
 import { usePauseState } from "./usePauseState";
 import type { DerivedFeature } from "../lib/features";
@@ -81,6 +86,7 @@ export function useFeatureActionContextFactory(): (
   const assignFeatureLocal = useWorkspace((s) => s.assignFeature);
   const unassignFeatureLocal = useWorkspace((s) => s.unassignFeature);
   const toast = useUI((s) => s.toast);
+  const invalidateStatus = useInvalidateRunnerStatus();
   // Pause dials — "Run feature now" bypasses the project ones by design,
   // and cannot bypass runner pause at all. Both are worth saying out loud.
   const { pause } = usePauseState();
@@ -186,6 +192,31 @@ export function useFeatureActionContextFactory(): (
           // concludes cancel is broken.
           toast(r.detail, r.cancelled ? "success" : "info");
           void refreshChains();
+        },
+
+        // The FEATURE dial. Reversible and status-free, unlike cancel: it
+
+        // holds this feature's tasks out of automatic dispatch and leaves
+
+        // the rest of the project running. The dials do not ride SSE, so
+
+        // both effects invalidate runner-status after writing.
+
+        pauseFeatureDispatch: async (feature: DerivedFeature) => {
+          await apiPauseFeatureDispatch(projectId, feature.id);
+
+          invalidateStatus();
+          toast(
+            `${feature.name} paused — no new dispatch for this feature. ` +
+              `Work already running finishes.`,
+            "success",
+          );
+        },
+
+        resumeFeatureDispatch: async (feature: DerivedFeature) => {
+          await apiResumeFeatureDispatch(projectId, feature.id);
+          invalidateStatus();
+          toast(`${feature.name} resumed`, "success");
         },
 
         runFeature: async (feature: DerivedFeature) => {
@@ -476,8 +507,7 @@ export function useFeatureActionContextFactory(): (
             useLive.getState().projects[projectId]?.tasks ?? EMPTY_TASKS;
 
           const running = tasks.filter(
-            (t) =>
-              t.feature_id === feature.id && t.status === "in_progress",
+            (t) => t.feature_id === feature.id && t.status === "in_progress",
           );
           const addressable = running
             .map((t) => ({

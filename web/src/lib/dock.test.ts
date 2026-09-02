@@ -505,6 +505,11 @@ test("dock: moveLeaf retargets to the survivor when the target collapses", () =>
 
 // ─── isDockLeafKind ──────────────────────────────────────────────────
 
+// The list below is not decoration: `coerceDockTree` gates every PERSISTED
+// leaf on this predicate, and an unrecognised kind discards the user's
+// whole saved dock layout. It fell behind the union once already —
+// "automation-runs" and "automation-detail" shipped without reaching
+// either — so every kind in DockLeaf["kind"] must appear here.
 test("dock: isDockLeafKind accepts every leaf kind and rejects assign", () => {
   for (const kind of [
     "task-detail",
@@ -514,7 +519,10 @@ test("dock: isDockLeafKind accepts every leaf kind and rejects assign", () => {
     "runners",
     "browser",
     "entry",
-  ]) {
+    "project",
+    "automation-runs",
+    "automation-detail",
+  ] satisfies DockLeaf["kind"][]) {
     assert.equal(isDockLeafKind(kind), true, `${kind} should be a leaf kind`);
   }
   // The feature→runner drag payload. Drop targets gate their zones on
@@ -710,4 +718,18 @@ test("enclosingTabsId: names the strip only when the leaf is tabbed", () => {
 
   const solo = newLeafNode(mkLeaf("Solo"));
   assert.equal(enclosingTabsId(solo, solo.id), null);
+});
+
+// The regression this pairs with: `coerceDockTree` (store/workspace.ts)
+// used to repeat the kind list by hand, and a leaf kind it had never heard
+// of made it return null — which the split/tabs branch propagates up, so
+// `merge` threw away the ENTIRE persisted dock tree. It now delegates
+// here, which is only safe while this predicate really does accept the
+// whole union.
+test("dock: a kind missing from isDockLeafKind would discard a saved layout", () => {
+  // Stand-in for the class of bug: anything the predicate rejects is a
+  // leaf a persisted tree cannot carry.
+  assert.equal(isDockLeafKind("automation-runs"), true);
+  assert.equal(isDockLeafKind("project"), true);
+  assert.equal(isDockLeafKind("task-detai"), false);
 });

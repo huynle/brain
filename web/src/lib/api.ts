@@ -340,16 +340,96 @@ export const bulkDeletePaths = (
     },
   });
 
+/**
+ * Apply the SAME updates to an explicit list of entries — the bulk-update
+ * mirror of {@link bulkDeletePaths}.
+ *
+ * The server's explicit mode is `entries: [{path, updates}]`, not `paths`
+ * (which it rejects outright as an unknown field), so the shared update
+ * object is repeated per path here rather than sent once.
+ *
+ * Use this, never a filter, for a set of entries that no filter can name —
+ * above all the tasks with NO feature_id. See {@link featureFilterGuard}
+ * for what happens if you try.
+ *
+ * Explicit mode is capped at 100 like the filter mode, but it does NOT
+ * report `truncated` — it is cut silently — so callers must chunk with
+ * `chunkPaths` exactly as the delete path does.
+ */
+export const bulkUpdateEntries = (
+  paths: readonly string[],
+  updates: Record<string, unknown>,
+  opts: { dryRun?: boolean; force?: boolean } = {},
+) =>
+  api<BulkUpdateResponse>("/api/v1/entries/bulk-update", {
+    method: "POST",
+    body: {
+      entries: paths.map((path) => ({ path, updates })),
+      ...(opts.dryRun ? { dry_run: true } : {}),
+      ...(opts.force ? { force: true } : {}),
+    },
+  });
+
+/**
+ * Refuse a feature-scoped bulk filter with an empty feature id.
+ *
+ * `feature_id: ""` is NOT "the tasks with no feature" and it is NOT a
+ * rejected request. The storage layer appends its WHERE clause only when
+ * the value is non-empty (`storage/list.go`), so an empty string reaches
+ * the database as NO CONSTRAINT AT ALL — and the pointer is non-nil, so
+ * every validation gate upstream reports the filter as "constrained".
+ * `setFeatureStatus(pid, "", "cancelled")` would therefore cancel the
+ * first 100 tasks of the whole project, and a bare `{feature_id: ""}`
+ * delete filter passes `bulkDeleteFilterIsEmpty` and reaches the first 100
+ * entries in the brain.
+ *
+ * Throwing here is the cheap half of the fix; the server-side guard is the
+ * other half.
+ */
+function featureFilterGuard(featureId: string): void {
+  if (featureId === "") {
+    throw new Error(
+      "refusing a feature-scoped bulk operation with an empty feature id — " +
+        "an empty filter value matches EVERY task in the project. Use " +
+        "bulkUpdateEntries/bulkDeletePaths with an explicit path list.",
+    );
+  }
+}
+
 /** Set one status across every task in a feature. */
 export const setFeatureStatus = (
   projectId: string,
   featureId: string,
   status: string,
   opts: { dryRun?: boolean; force?: boolean } = {},
-) =>
-  bulkUpdate(
+) => {
+  featureFilterGuard(featureId);
+  return bulkUpdate(
     { project: projectId, feature_id: featureId, type: "task" },
     { status },
+    opts,
+  );
+};
+
+/**
+ * Delete every ARCHIVED task in a project.
+ *
+ * Scoped by filter rather than by an explicit path list on purpose: the
+ * caller wants "all archived in this project", not "all archived in the
+ * snapshot the browser happens to hold".
+ *
+ * The status guard is the same trap as `featureFilterGuard` and needs its
+ * own check: `storage/list.go` appends `status = ?` only for a non-empty
+ * value, so a blank status would delete the first 100 entries of the
+ * project instead of nothing. The literal here cannot be blank, but the
+ * assertion documents why it must never become a parameter.
+ */
+export const deleteArchivedTasks = (
+  projectId: string,
+  opts: { dryRun?: boolean; force?: boolean } = {},
+) =>
+  bulkDelete(
+    { project: projectId, status: "archived", type: "task" },
     opts,
   );
 
@@ -358,8 +438,13 @@ export const deleteFeatureTasks = (
   projectId: string,
   featureId: string,
   opts: { dryRun?: boolean; force?: boolean } = {},
-) =>
-  bulkDelete({ project: projectId, feature_id: featureId, type: "task" }, opts);
+) => {
+  featureFilterGuard(featureId);
+  return bulkDelete(
+    { project: projectId, feature_id: featureId, type: "task" },
+    opts,
+  );
+};
 
 export interface TriggerResponse {
   success: boolean;

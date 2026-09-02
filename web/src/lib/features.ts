@@ -3,10 +3,9 @@
  *
  * A "feature" is an emergent grouping of tasks that share the same
  * `feature_id`. The Brain API does not have a first-class features
- * endpoint (see CardFeatures for the original prose): everything is
- * derived from the task list. Phase 5 formalizes the rollup so the
- * UI can render lifecycle chips, sort features consistently, and
- * link to open MRs.
+ * endpoint — everything is derived from the task list. Phase 5
+ * formalizes the rollup so the UI can render lifecycle chips, sort
+ * features consistently, and link to open MRs.
  *
  * This module is intentionally pure: no react, no hooks, no fetch.
  * Trivially unit-tested from `features.test.ts`.
@@ -84,8 +83,8 @@ export interface DerivedFeature {
   ownerTaskIds: string[];
   /** Number of tasks in this feature currently flagged is_abandoned
    *  by the server (offline-runner claim, expired lease, orphan
-   *  reaped). Used by CardFeatures + FeatureModal to surface the
-   *  Resume affordance. Zero when nothing is resumable. */
+   *  reaped). Read by lib/actions/featureActions + FeatureActionsModal
+   *  to surface the Resume affordance. Zero when nothing is resumable. */
   resumableCount: number;
   /** Feature ids this feature depends on, from the first task in the
    *  group carrying a non-empty `feature_depends_on`.
@@ -232,6 +231,17 @@ function deriveOne(
     dependsOn: dependsOn ?? [],
   };
 }
+
+/**
+ * A feature whose work is over — there is nothing left in it to act on.
+ *
+ * Drives the default collapse state of a feature's task list: a finished
+ * or merged feature is history, so its rows start folded and the feature
+ * reads as one line. `mr-open` is deliberately NOT done — an open MR is
+ * the one lifecycle that is waiting on a human.
+ */
+export const isFeatureDone = (f: DerivedFeature): boolean =>
+  f.lifecycle === "finished" || f.lifecycle === "merged";
 
 /**
  * Sort features into the canonical panes-v2 display order:

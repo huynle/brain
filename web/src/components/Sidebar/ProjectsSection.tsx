@@ -5,11 +5,22 @@
  *   .sb-section
  *     .sb-head (▾ Projects · N/M · ＋)
  *     .sb-list
- *       .proj-row × N (dot + name + pause tags + stats + × close)
+ *       .proj-row × N (dial button + name + autos tag + stats + × close)
  *       ▸ Hidden (N)   (collapsed by default)
  *         .proj-row × N hidden — click to restore
+ *
+ * The leading glyph is a BUTTON, not a dot: one click flips the project's
+ * task dial. See `ProjectPauseButton` for what the glyph and the colour
+ * each mean, and `projectRunIndicator` for how the state is derived. The
+ * old "paused" text tag is gone with it — the ⏸ glyph says the same thing
+ * one column to the left. The `autos` tag stays: that is the OTHER dial.
+ *
+ * Click reveals, double-click docks: a single click takes you to the
+ * project's card in the overview, a double-click opens the project as a
+ * pane in Focus — the same click/double-click split the task and feature
+ * rows already use.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useWorkspace } from "../../store/workspace";
 import { useProjects } from "../../hooks/useProjects";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
@@ -24,29 +35,8 @@ import {
 import { useProjectActionContext } from "../../hooks/useProjectActionContext";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
-import { projectPauseBadges } from "../../lib/pause";
-import type { Task } from "../../lib/types";
-
-type Dot = "on" | "busy" | "paused" | "err" | "";
-
-// A paused project outranks its task mix: with the task dial off, "some
-// tasks are pending" and "some tasks are blocked" both reduce to "nothing
-// is going to happen here", and a green dot said the opposite. Tasks still
-// in flight keep the busy dot — pause stops new dispatches, it does not
-// stop a process that is already running.
-function projectDot(tasks: readonly Task[], paused: boolean): Dot {
-  let hasBusy = false;
-  let hasBlocked = false;
-  for (const t of tasks) {
-    if (t.status === "in_progress") hasBusy = true;
-    else if (t.status === "blocked") hasBlocked = true;
-  }
-  if (hasBusy) return "busy";
-  if (paused) return "paused";
-  if (tasks.length === 0) return "";
-  if (hasBlocked) return "err";
-  return "on";
-}
+import { ProjectPauseButton } from "../common/ProjectPauseButton";
+import { projectPauseBadges, projectRunIndicator } from "../../lib/pause";
 
 function focusProjectCard(projectId: string) {
   if (typeof document === "undefined") return;
@@ -72,6 +62,29 @@ export function ProjectsSection(): JSX.Element {
   const [hiddenExpanded, setHiddenExpanded] = useState(false);
   const { rowProps, overlays } = useRowActions();
 
+  // The single click's scroll is DEFERRED (see focusProjectCard), which is
+  // what makes a double-click on this row workable: the browser fires
+  // click → click → dblclick, so the double-click gets to cancel a
+  // pending scroll into a view it is about to leave. Without it, a
+  // double-click from Focus flashes through the overview first.
+  const revealTimer = useRef<number | null>(null);
+  const cancelReveal = () => {
+    if (revealTimer.current !== null) {
+      window.clearTimeout(revealTimer.current);
+      revealTimer.current = null;
+    }
+  };
+  useEffect(() => cancelReveal, []);
+
+  const revealInOverview = (pid: string) => {
+    cancelReveal();
+    setView("overview");
+    revealTimer.current = window.setTimeout(() => {
+      revealTimer.current = null;
+      focusProjectCard(pid);
+    }, 30);
+  };
+
   // "Visible" means (a) not user-hidden AND (b) matching the current
   // status chip. Shared with the Entries browser via useVisibleProjects,
   // so "the projects in my sidebar" means one thing across the app.
@@ -95,7 +108,10 @@ export function ProjectsSection(): JSX.Element {
           const live = liveProjects[pid];
           const tasks = live?.tasks ?? [];
           const badges = projectPauseBadges(pause, pid);
-          const dot = projectDot(tasks, badges.tasks);
+          const indicator = projectRunIndicator(tasks, {
+            paused: badges.tasks,
+            projectId: pid,
+          });
           const active = tasks.filter((t) => t.status === "in_progress").length;
           const ready = tasks.filter((t) => t.status === "pending").length;
           const blocked = tasks.filter((t) => t.status === "blocked").length;
@@ -121,32 +137,37 @@ export function ProjectsSection(): JSX.Element {
             <div
               key={pid}
               className="proj-row"
-              {...rowProps(actions, pid, () => {
-                setView("overview");
-                setTimeout(() => focusProjectCard(pid), 30);
-              })}
-              onClick={() => {
-                setView("overview");
-                setTimeout(() => focusProjectCard(pid), 30);
+              // Enter keeps matching a single click, as it does on the
+              // task and feature rows; opening in Focus is on the
+              // keyboard through the row's own verb list.
+              {...rowProps(actions, pid, () => revealInOverview(pid))}
+              onClick={(e) => {
+                if ((e.target as HTMLElement).closest("button")) return;
+                revealInOverview(pid);
+              }}
+              onDoubleClick={(e) => {
+                if ((e.target as HTMLElement).closest("button")) return;
+                // Cancel the reveal the two preceding clicks queued —
+                // `openProject` switches the view to Focus, and scrolling
+                // an overview nobody is looking at is the flash this
+                // removes.
+                cancelReveal();
+                // The registry's effect, not a second inline openInFocus:
+                // "open this project" has to mean one thing whether it
+                // arrives by double-click, right-click or keyboard.
+                projectCtx.openProject(pid);
               }}
               title={
-                badges.tasks
-                  ? `${pid} — PAUSED`
-                  : badges.automations
-                    ? `${pid} — automations paused`
-                    : pid
+                badges.automations ? `${pid} — automations paused` : pid
               }
             >
-              <span
-                className={`dot ${dot}`}
-                title={badges.tasks ? badges.tasksTitle : undefined}
+              <ProjectPauseButton
+                projectId={pid}
+                indicator={indicator}
+                taskCount={tasks.length}
+                pauseLoading={pauseLoading}
               />
               <span className="name">{pid}</span>
-              {badges.tasks && (
-                <span className="pause-tag" title={badges.tasksTitle}>
-                  paused
-                </span>
-              )}
               {badges.automations && (
                 <span
                   className="pause-tag autos"

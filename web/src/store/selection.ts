@@ -16,6 +16,7 @@ import {
   EMPTY_SELECTION,
   selectFeatureRange,
   selectTaskRange,
+  selectTasks,
   toggleFeature,
   toggleTask,
   type SelectionAnchor,
@@ -68,6 +69,8 @@ interface SelectionStore extends SelectionSnapshot {
   requestVerb: (verb: SelectionVerb) => void;
   consumeVerbRequest: () => void;
   toggleTask: (projectId: string, taskId: string) => void;
+  /** Add every listed task to the scope without unmarking anything. */
+  selectTasks: (projectId: string, taskIds: readonly string[]) => void;
   toggleFeature: (projectId: string, featureId: string) => void;
   /** Shift-click: mark every row between the anchor and `taskId`, in
    *  `orderedIds` (the card's visual order). Falls back to a plain
@@ -102,6 +105,16 @@ export const useSelection = create<SelectionStore>((set) => ({
       ...toggleTask(s, projectId, taskId),
       anchor: { kind: "task", id: taskId },
     })),
+  // Anchors on the LAST id so a following shift-click ranges from the end
+  // of what was just added, the same rule single marks follow.
+  selectTasks: (projectId, taskIds) =>
+    set((s) => {
+      if (taskIds.length === 0) return s;
+      return {
+        ...selectTasks(s, projectId, taskIds),
+        anchor: { kind: "task", id: taskIds[taskIds.length - 1]! },
+      };
+    }),
   toggleFeature: (projectId, featureId) =>
     set((s) => ({
       ...toggleFeature(s, projectId, featureId),

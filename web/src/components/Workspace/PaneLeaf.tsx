@@ -35,6 +35,7 @@ import { SessionLeaf } from "./leaves/SessionLeaf";
 import { RunnersLeaf } from "./leaves/RunnersLeaf";
 import { BrowserLeaf } from "./leaves/BrowserLeaf";
 import { EntryLeaf } from "./leaves/EntryLeaf";
+import { ProjectLeaf } from "./leaves/ProjectLeaf";
 import { AutomationRunsLeaf } from "./leaves/AutomationRunsLeaf";
 import { AutomationDetailLeaf } from "./leaves/AutomationDetailLeaf";
 
@@ -265,6 +266,8 @@ function LeafContent({ leaf }: { leaf: DockLeaf }): JSX.Element {
       return <BrowserLeaf target={leaf.target} />;
     case "entry":
       return <EntryLeaf target={leaf.target} />;
+    case "project":
+      return <ProjectLeaf target={leaf.target} />;
     case "automation-runs":
       return <AutomationRunsLeaf target={leaf.target} />;
     case "automation-detail":

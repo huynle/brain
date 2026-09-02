@@ -2361,3 +2361,32 @@ func TestOriginFields_YamlMetacharactersAreEscaped(t *testing.T) {
 		t.Errorf("title = %q, want Re-homed — the document was corrupted\n%s", doc.Frontmatter.Title, generated)
 	}
 }
+
+// An automation action field that exists in internal/types but not in this
+// struct is written nowhere and read back empty, however correct the domain
+// code is — the failure is silent at every layer. `set_status` (the payload
+// of an `update` action) shipped that way once; this pins the round trip.
+func TestAutomationActionSetStatusRoundTrips(t *testing.T) {
+	fm := &Frontmatter{
+		Title:  "Auto-archive completed features",
+		Type:   "automation",
+		Status: "active",
+		Action: &AutomationAction{Type: "update", SetStatus: "archived"},
+	}
+
+	out := Serialize(fm)
+	if !strings.Contains(out, "set_status: archived") {
+		t.Fatalf("set_status was not serialized:\n%s", out)
+	}
+
+	doc, err := Parse("---\n" + out + "\n---\n\nBody")
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if doc.Frontmatter.Action == nil {
+		t.Fatal("action lost on the way back")
+	}
+	if got := doc.Frontmatter.Action.SetStatus; got != "archived" {
+		t.Fatalf("set_status = %q, want %q", got, "archived")
+	}
+}

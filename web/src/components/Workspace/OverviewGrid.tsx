@@ -26,7 +26,7 @@ import {
   type FeatureLifecycle,
 } from "../../lib/features";
 import { laneVisible } from "../../lib/lane";
-import { ProjectCard } from "./ProjectCard";
+import { ProjectTiles } from "./ProjectTiles";
 import { EntriesPreview } from "./EntriesPreview";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
 import type { Task } from "../../lib/types";
@@ -394,10 +394,9 @@ export function OverviewGrid(): JSX.Element {
       {/* Brain memory carousel */}
       <EntriesPreview />
 
-      {/* Project cards (visible only) */}
-      {visibleProjectIds.map((pid) => (
-        <ProjectCard key={pid} projectId={pid} />
-      ))}
+      {/* Project cards (visible only), tiled — see ProjectTiles for why
+          they are not just more children of this grid. */}
+      <ProjectTiles projectIds={visibleProjectIds} />
 
       {projectIds.length === 0 && (
         <div className="empty-state">

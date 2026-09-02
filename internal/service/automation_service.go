@@ -59,6 +59,17 @@ func (s *AutomationService) RunAutomationNow(ctx context.Context, pathOrID strin
 		Timestamp: time.Now().UTC(),
 		ProjectID: entry.ProjectID,
 	}
+	if types.NormalizeAutomationActionType(entry.Action.Type) ==
+		types.AutomationActionUpdate {
+		// A manual run of an update automation has no event to scope it,
+		// and an unscoped bulk write is the one thing this action must
+		// never do. Refuse rather than guess a target.
+		return "", fmt.Errorf(
+			"automation %s has an update action: it applies to the feature its "+
+				"trigger names, so there is nothing for a manual run to act on",
+			entry.ID,
+		)
+	}
 	key := fmt.Sprintf("automation:manual:%s:%d", entry.ID, time.Now().UTC().UnixNano())
 	return s.createTask(ctx, *entry, evt, key)
 }
@@ -209,6 +220,20 @@ func (s *AutomationService) HandleEvent(ctx context.Context, evt types.Event) er
 				skipReason: "paused",
 			})
 			if err != nil {
+				return err
+			}
+			continue
+		}
+
+		// An `update` action is applied HERE, in process. Every other
+		// action type ends in "queue a task for a runner to pick up",
+		// which is right for work that needs a shell or a model — and
+		// wrong for a bookkeeping write, which would then need a runner
+		// online, an executor enabled, and a round trip through the
+		// queue to set a status the API could set itself.
+		if types.NormalizeAutomationActionType(automation.Action.Type) ==
+			types.AutomationActionUpdate {
+			if err := s.applyUpdateAction(ctx, automation, evt); err != nil {
 				return err
 			}
 			continue
@@ -619,6 +644,11 @@ type automationRunAudit struct {
 	taskIDs      []string
 	errorText    string
 	skipReason   string
+	// summary describes what a SUCCESSFUL run did. Distinct from
+	// skipReason because readers treat a non-empty skip reason as proof
+	// the run did nothing (see runOutcome in the PWA) — a success note
+	// there would misreport real work as a skip.
+	summary string
 }
 
 func (s *AutomationService) createRunAudit(ctx context.Context, audit automationRunAudit) (string, error) {
@@ -665,6 +695,9 @@ func (s *AutomationService) createRunAudit(ctx context.Context, audit automation
 	fmt.Fprintf(&content, "started_at: %s\n", started.Format(time.RFC3339))
 	fmt.Fprintf(&content, "completed_at: %s\n", started.Format(time.RFC3339))
 	content.WriteString("duration_ms: 0\n")
+	if audit.summary != "" {
+		fmt.Fprintf(&content, "summary: %s\n", audit.summary)
+	}
 	if audit.skipReason != "" {
 		fmt.Fprintf(&content, "skip_reason: %s\n", audit.skipReason)
 	}
@@ -833,4 +866,183 @@ func automationGeneratedKey(automation types.BrainEntry, evt types.Event) string
 		return ""
 	}
 	return fmt.Sprintf("automation:%s:%s", automation.ID, getEventField(evt, automation.Trigger.OncePer))
+}
+
+// bulkUpdateActionLimit mirrors the server-side bulk cap. Explicit-mode
+// bulk updates are truncated at 100 without reporting it, so an update
+// action asks for no more than it can be sure was applied.
+const bulkUpdateActionLimit = 100
+
+// bulkUpdateActionMaxPasses bounds the drain loop below. A feature with
+// more tasks than one page holds needs several passes; a bug that stopped
+// them making progress must not spin forever.
+const bulkUpdateActionMaxPasses = 20
+
+// updateActionSourceStatuses are the ONLY statuses an update action will
+// rewrite.
+//
+// Terminal ones, exclusively. "Archive a finished feature" must never mean
+// "archive work that has not run yet", and the way it would is not
+// hypothetical: `feature.completed` fires ONE pass over the automation
+// list, and the built-in feature-checkout automation handles that same
+// event by creating a `pending` checkout task stamped with the same
+// feature id. Whichever of the two automations the list happens to yield
+// first — decided by `modified DESC`, i.e. by which entry was written
+// last — decides whether this action then archives the checkout task that
+// was created microseconds earlier. An archived task never dispatches, so
+// the merge it existed to perform silently never happens, and the
+// built-in's `once_per: feature_id` dedup means it never gets a second
+// task either.
+//
+// Restricting the source set removes the race outright rather than
+// ordering around it: nothing that has yet to run is eligible.
+var updateActionSourceStatuses = []string{"completed", "validated", "cancelled"}
+
+// applyUpdateAction runs an `update` automation in process.
+//
+// The only action type that does not end in a queued task. It exists for
+// bookkeeping writes — archiving a feature the moment its work is done —
+// where routing through the task queue would mean the change needs an
+// online runner, an enabled executor and a round trip, to set a status the
+// API server is already holding the transaction for.
+//
+// ─── Scope is taken from the EVENT, never from the automation ────
+//
+// The target is always {project, feature_id, type: task}, with both ids
+// read off the triggering event. An automation cannot widen that, because
+// nothing in it is consulted: there is no filter field to get wrong.
+//
+// Both ids must be non-empty and the write is refused otherwise. That is
+// not defensive noise — `storage.ListOptions` appends its WHERE clause
+// only for a non-empty value, so an empty feature id is not "no matching
+// tasks", it is NO CONSTRAINT: the bulk update would rewrite the first 100
+// tasks of the project, or of the brain. Every gate upstream would report
+// the filter as constrained while it matched everything.
+//
+// A skip is audited like any other, so an automation that never fires has
+// a reason on the record rather than a silence.
+func (s *AutomationService) applyUpdateAction(
+	ctx context.Context,
+	automation types.BrainEntry,
+	evt types.Event,
+) error {
+	project := automation.ProjectID
+	if project == "" {
+		project = evt.ProjectID
+	}
+
+	// `skip_reason` is what readers key off to render a run as SKIPPED —
+	// the PWA's runOutcome checks `error` first, then `skip_reason`, and
+	// never looks at the entry status. So a note only belongs there when
+	// the run really was a skip: putting a success summary in it made an
+	// archive that moved three tasks render as "skipped: updated 3/3",
+	// and putting a failure there hid the failure behind the same glyph.
+	skip := func(reason string) error {
+		_, err := s.createRunAudit(ctx, automationRunAudit{
+			automation: automation,
+			evt:        evt,
+			project:    project,
+			status:     "skipped",
+			skipReason: reason,
+		})
+		return err
+	}
+	fail := func(err error) error {
+		_, auditErr := s.createRunAudit(ctx, automationRunAudit{
+			automation: automation,
+			evt:        evt,
+			project:    project,
+			status:     "failed",
+			errorText:  err.Error(),
+		})
+		if auditErr != nil {
+			return auditErr
+		}
+		return err
+	}
+
+	status := strings.TrimSpace(automation.Action.SetStatus)
+	if status == "" {
+		return skip("update action has no set_status")
+	}
+	if !types.IsValidEntryStatus(status) {
+		return skip(fmt.Sprintf("update action has an unknown status %q", status))
+	}
+	if project == "" {
+		return skip("update action has no project to scope to")
+	}
+	if evt.FeatureID == "" {
+		return skip("update action fired on an event with no feature")
+	}
+
+	// ─── Why this pages per SOURCE STATUS ────────────────────────
+	//
+	// A bare {project, feature, type} list is capped at 100 and ordered
+	// `modified DESC` — and writing a task rewrites its file, so the rows
+	// this pass just changed sort to the FRONT of the next one. A feature
+	// with more tasks than one page would serve the same first hundred
+	// forever and never reach the tail.
+	//
+	// Pinning each pass to a source status makes every write leave that
+	// pass's match set, which is the same reasoning the feature-level
+	// bulk verbs use. It also gives the loop its own termination: a pass
+	// that returns nothing is done.
+	taskType := "task"
+	var updated, total int
+	for _, source := range updateActionSourceStatuses {
+		if source == status {
+			continue // already there; nothing to move
+		}
+		for pass := 0; pass < bulkUpdateActionMaxPasses; pass++ {
+			listed, err := s.brain.List(ctx, types.ListEntriesRequest{
+				Project:   project,
+				Type:      taskType,
+				FeatureID: evt.FeatureID,
+				Status:    source,
+				Limit:     bulkUpdateActionLimit,
+			})
+			if err != nil {
+				return fail(err)
+			}
+			if len(listed.Entries) == 0 {
+				break
+			}
+			entries := make([]types.BulkUpdateEntry, 0, len(listed.Entries))
+			for _, e := range listed.Entries {
+				entries = append(entries, types.BulkUpdateEntry{
+					Path:    e.Path,
+					Updates: types.UpdateEntryRequest{Status: &status},
+				})
+			}
+			resp, err := s.brain.BulkUpdate(ctx, types.BulkUpdateRequest{
+				Entries: entries,
+			})
+			if err != nil {
+				return fail(err)
+			}
+			updated += resp.Updated
+			total += resp.Total
+			// A pass that changed nothing cannot make progress on the
+			// next one either — bail rather than spin to the cap.
+			if resp.Updated == 0 {
+				break
+			}
+		}
+	}
+
+	if total == 0 {
+		return skip(fmt.Sprintf("no finished task to move to %s", status))
+	}
+	// A success carries its summary in the audit BODY (taskIDs are for
+	// generated tasks, which this action never makes), leaving both
+	// `skip_reason` and `error` empty so every reader classifies it as a
+	// real run rather than a skip.
+	_, err := s.createRunAudit(ctx, automationRunAudit{
+		automation: automation,
+		evt:        evt,
+		project:    project,
+		status:     "success",
+		summary:    fmt.Sprintf("updated %d/%d to %s", updated, total, status),
+	})
+	return err
 }

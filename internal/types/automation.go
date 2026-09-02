@@ -63,6 +63,15 @@ type AutomationAction struct {
 	CompleteOnIdle     *bool  `json:"complete_on_idle,omitempty" yaml:"complete_on_idle,omitempty"`       // auto-complete on idle
 	Timeout            string `json:"timeout,omitempty" yaml:"timeout,omitempty"`                         // execution timeout (e.g. "5m", "1h")
 	RequiresCapability string `json:"requires_capability,omitempty" yaml:"requires_capability,omitempty"` // required runner capability
+
+	// SetStatus is the payload for type=update: the status to apply to the
+	// tasks the triggering event names. Deliberately a single named field
+	// rather than a free-form updates map — an update action runs IN the API
+	// process with no runner, no prompt and no review, so the set of things
+	// it can change is kept to the one that has a use case (archiving a
+	// finished feature) instead of being a general write primitive reachable
+	// by anyone who can author an automation entry.
+	SetStatus string `json:"set_status,omitempty" yaml:"set_status,omitempty"`
 }
 
 // AutomationRetry defines retry behavior for failed automation actions.

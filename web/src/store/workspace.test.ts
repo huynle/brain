@@ -56,8 +56,7 @@ function resetStore() {
     mobile: INITIAL.mobile,
     streaming: INITIAL.streaming,
     featureAssignments: { ...INITIAL.featureAssignments },
-    mergedExpanded: {},
-    archivedExpanded: {},
+    featureCollapsed: {},
     hiddenProjects: [],
     statusFilter: "all",
     sidebarDockOpen: false,
@@ -200,38 +199,96 @@ test("workspace: unassignFeature on a missing key is a no-op", () => {
   assert.deepEqual(useWorkspace.getState().featureAssignments, {});
 });
 
-// ─── archived fold + filter ──────────────────────────────────────────
+// ─── group folds ─────────────────────────────────────────────────────
+// The archive fold used to be its own `archivedExpanded` map. It now
+// shares `featureCollapsed` under sentinel keys, so there is ONE fold
+// mechanism on the card: the archive section, each archived bucket, the
+// ungrouped bucket and every feature all read and write the same map.
 
-test("workspace: archivedExpanded starts empty (collapsed by default)", () => {
+test("workspace: the archive fold shares the feature fold map", () => {
   resetStore();
-  assert.deepEqual(useWorkspace.getState().archivedExpanded, {});
+  const w = () => useWorkspace.getState();
+
+  // The sidebar's Archived chip supplies the DEFAULT (open), and the
+  // click still wins — the old implementation removed the toggle from
+  // the DOM in that mode instead, leaving no way to fold at all.
+  w().toggleFeatureCollapsed("p1", "__archived__", false);
+  assert.equal(w().featureCollapsed["p1"]["__archived__"], true);
+  w().toggleFeatureCollapsed("p1", "__archived__", false);
+  assert.equal(w().featureCollapsed["p1"]["__archived__"], false);
 });
 
-test("workspace: toggleArchivedExpanded flips one project's fold", () => {
+// An archived bucket and its live sibling are the SAME feature id on two
+// sides of the fold; the archived side is prefixed so folding one cannot
+// fold the other.
+test("workspace: an archived bucket folds independently of its live feature", () => {
   resetStore();
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  assert.equal(useWorkspace.getState().archivedExpanded["p1"], true);
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  assert.equal(useWorkspace.getState().archivedExpanded["p1"], false);
+  const w = () => useWorkspace.getState();
+
+  w().toggleFeatureCollapsed("p1", "auth", false);
+  assert.equal(w().featureCollapsed["p1"]["auth"], true);
+  assert.equal(w().featureCollapsed["p1"]["__archived__:auth"], undefined);
+
+  w().toggleFeatureCollapsed("p1", "__archived__:auth", false);
+  assert.equal(w().featureCollapsed["p1"]["auth"], true);
+  assert.equal(w().featureCollapsed["p1"]["__archived__:auth"], true);
 });
 
-test("workspace: toggleArchivedExpanded leaves other projects untouched", () => {
+// ─── per-feature fold ────────────────────────────────────────────────
+
+test("workspace: featureCollapsed starts empty (no stored opinions)", () => {
   resetStore();
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  useWorkspace.getState().toggleArchivedExpanded("p2");
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  const m = useWorkspace.getState().archivedExpanded;
-  assert.equal(m["p1"], false);
-  assert.equal(m["p2"], true);
+  assert.deepEqual(useWorkspace.getState().featureCollapsed, {});
 });
 
-test("workspace: archived and merged folds are independent maps", () => {
+// The default is passed IN because the view derives it from the feature's
+// lifecycle. A toggle that flipped `!undefined` instead would make the
+// first click on an already-folded finished feature a no-op on screen.
+test("workspace: the first toggle inverts the DERIVED default, not undefined", () => {
   resetStore();
-  useWorkspace.getState().toggleArchivedExpanded("p1");
-  assert.deepEqual(useWorkspace.getState().mergedExpanded, {});
-  useWorkspace.getState().toggleMergedExpanded("p1");
-  assert.equal(useWorkspace.getState().archivedExpanded["p1"], true);
-  assert.equal(useWorkspace.getState().mergedExpanded["p1"], true);
+  const w = () => useWorkspace.getState();
+
+  w().toggleFeatureCollapsed("p1", "open-feat", false);
+  assert.equal(w().featureCollapsed["p1"]["open-feat"], true);
+
+  w().toggleFeatureCollapsed("p1", "done-feat", true);
+  assert.equal(w().featureCollapsed["p1"]["done-feat"], false);
+});
+
+// Once stored, the user's choice outranks the default in both directions —
+// a feature they expanded must not silently re-fold when it merges.
+test("workspace: a stored fold outranks the default on later toggles", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+
+  w().toggleFeatureCollapsed("p1", "f", true); // stored false
+  w().toggleFeatureCollapsed("p1", "f", true); // ignores the default
+  assert.equal(w().featureCollapsed["p1"]["f"], true);
+});
+
+test("workspace: featureCollapsed keys are scoped per project", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+
+  w().toggleFeatureCollapsed("p1", "shared-id", false);
+  assert.equal(w().featureCollapsed["p1"]["shared-id"], true);
+  assert.equal(w().featureCollapsed["p2"], undefined);
+
+  w().toggleFeatureCollapsed("p2", "shared-id", false);
+  assert.equal(w().featureCollapsed["p1"]["shared-id"], true);
+  assert.equal(w().featureCollapsed["p2"]["shared-id"], true);
+});
+
+test("workspace: toggling one feature leaves its siblings untouched", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+
+  w().toggleFeatureCollapsed("p1", "a", false);
+  w().toggleFeatureCollapsed("p1", "b", false);
+  w().toggleFeatureCollapsed("p1", "a", false);
+
+  assert.equal(w().featureCollapsed["p1"]["a"], false);
+  assert.equal(w().featureCollapsed["p1"]["b"], true);
 });
 
 test("workspace: setStatusFilter accepts archived", () => {
@@ -940,17 +997,21 @@ test("workspace: forgetProject drops the project from hiddenProjects", () => {
   assert.deepEqual(w().hiddenProjects, ["warehouse"]);
 });
 
+// The nesting is what makes this a one-liner in forgetProject: a
+// `${projectId}:${featureId}` composite key would survive `omitKey` and
+// leak every fold of a deleted project into a project recreated under the
+// same name.
 test("workspace: forgetProject drops the project's expansion state", () => {
   resetStore();
   const w = () => useWorkspace.getState();
-  w().toggleMergedExpanded("shop");
-  w().toggleArchivedExpanded("shop");
-  w().toggleMergedExpanded("warehouse");
+  w().toggleFeatureCollapsed("shop", "feat-a", false);
+  w().toggleFeatureCollapsed("shop", "feat-b", false);
+  w().toggleFeatureCollapsed("shop", "__archived__", false);
+  w().toggleFeatureCollapsed("warehouse", "feat-a", false);
 
   w().forgetProject("shop");
 
-  assert.deepEqual(Object.keys(w().mergedExpanded), ["warehouse"]);
-  assert.deepEqual(Object.keys(w().archivedExpanded), []);
+  assert.deepEqual(Object.keys(w().featureCollapsed), ["warehouse"]);
 });
 
 test("workspace: forgetProject on an unknown project is a no-op", () => {

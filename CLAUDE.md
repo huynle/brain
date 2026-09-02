@@ -56,6 +56,45 @@ Fold rule across a feature's tasks: any `checkout_mode:"simple"` → simple path
 
 The simple script honors the `git -c merge.ff=true` invariant (see `feature-checkout/SKILL.md`) so it works regardless of user `merge.ff` gitconfig. It uses `feature_id` as the source branch name and cannot recover from merge conflicts — use AI mode for anything non-trivial.
 
+### Automation actions: `update` is the one that does not queue a task
+
+Every other action type ends in "create a task for a runner to pick up".
+`update` is applied IN the API process by
+`AutomationService.applyUpdateAction`, because a status write routed
+through the queue would need an online runner and an enabled executor to
+set a status the API server is already holding the transaction for.
+
+- **Scope comes from the EVENT, never from the automation.** The target is
+  always `{project, feature_id, type: task}` with both ids read off the
+  triggering event, and the write is REFUSED when either is empty. That is
+  not defensive noise: `storage/list.go` appends its WHERE clause only for
+  a non-empty value, so an empty id is not "match nothing" but "no
+  constraint", and every gate upstream still reports the filter as
+  constrained. A blank feature id would rewrite the first 100 tasks of the
+  project. (The same trap sits behind `bulkDeleteFilterIsEmpty`, which is
+  a nil-check: `{"feature_id": ""}` alone passes it.)
+- **The loop guard is "write only what is not already there".** Archiving
+  emits `task.status_changed`, `CheckFeatureCompletion` counts archived as
+  done and re-emits `feature.completed`, and the automation fires again —
+  and re-archiving an archived task is still a write. `applyUpdateAction`
+  lists first and updates only the tasks not already at the target status,
+  so the second pass writes nothing and therefore emits nothing. It does
+  NOT use `once_per`, deliberately: a fire-once key would strand any task
+  added after the first pass, and would strand the remainder of a feature
+  larger than the 100-entry bulk cap.
+- **A manual run is refused.** There is no event to scope it to, and an
+  unscoped bulk write is the one thing this action must never do.
+- **`SetStatus` has THREE registration points**, and missing any one is
+  silent: `types.AutomationAction`, the on-disk mirror
+  `frontmatter.AutomationAction`, and BOTH conversion functions
+  (`automationActionToFM` in service, `fmAutomationActionToType` in api).
+  It shipped once with only the first, which wrote the field nowhere and
+  read it back empty while every layer looked correct.
+- The PWA's per-project "Auto-archive completed features" checkbox
+  (`lib/autoArchive.ts` + `useAutoArchive`) is just an entry with this
+  action; it is visible and editable in the Automations tab like any
+  other.
+
 ### Goal subsystem (check + steer loop)
 
 A goal is an `automation` BrainEntry with `Goal *GoalConfig` (`generated_by: brain-goal`, tags `[goal, goal:<id>]`). Scope resolution: `task_id` → that one task; else `feature_id` → the feature's tasks; else the whole project. Core: `internal/service/goal_service.go` (+ `goal_api.go`, `goal_automation.go`, `goal_steering.go`), HTTP in `internal/api/goals.go` (CRUD incl. `DELETE /goals/{id}`, `?status=` listing), steerer wiring in `internal/apiserver/goal_steerer.go`.

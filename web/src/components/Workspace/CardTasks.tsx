@@ -1,16 +1,32 @@
 /**
- * CardTasks — wireframe-parity port.
+ * CardTasks — the project card's one list of work.
  *
  * Groups tasks by feature. Each feature shows:
  *   .feat[state]
- *     .feat-head (caret · name · life-badge · age · assign-chip · progress bar · % text)
+ *     .feat-head (caret · name · life-badge · chain-chip · assign-chip ·
+ *                 progress bar · % text)
  *     .trow × N (glyph · name · status [+ .hold-chip] · id)
  *
- * Within a feature the rows form a dependency tree rather than a flat
- * list: a task that depends on another renders indented beneath it, so
- * a plan reads top-down in execution order. Features whose tasks have
- * no dependencies look exactly as they did before — the forest is then
- * all roots. See `lib/taskTree` for the edge rules.
+ * ─── Two dependency trees, one view ──────────────────────────────
+ *
+ * WITHIN a feature the task rows form a dependency tree: a task that
+ * depends on another renders indented beneath it, so a plan reads
+ * top-down in execution order (`lib/taskTree`).
+ *
+ * ACROSS features the feature headers do the same, nested by
+ * `feature_depends_on` (`buildFeatureForest`). That used to live on a
+ * separate Features tab, which meant the two halves of one dependency
+ * graph were never on screen together — and it was the justification
+ * for dropping cross-feature task edges here. Both trees now render in
+ * one list, so a task gated by another feature sits visibly beneath the
+ * feature it waits on.
+ *
+ * ─── Folding ─────────────────────────────────────────────────────
+ *
+ * A feature's rows collapse to just the header. Finished and merged
+ * features start folded (`isFeatureDone`), because a completed feature
+ * is a one-line fact, not a list to scroll past — the store only records
+ * the folds a user explicitly clicked (`featureCollapsed`).
  *
  * Every row's verbs come from `lib/actions` via `useRowActions`, so
  * right-click, long-press and keyboard all offer the identical set —
@@ -21,21 +37,29 @@ import { useMemo } from "react";
 import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useRunners } from "../../hooks/useRunners";
-import { usePauseState } from "../../hooks/usePauseState";
+import { useDependentChains } from "../../hooks/useDependentChains";
 import { useRowActions } from "../../hooks/useRowActions";
-import { useTaskActionContext } from "../../hooks/useTaskActionContext";
-import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
+import { useTaskRowRenderer } from "./TaskRow";
 import { DepGuide } from "../common/DepGuide";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
-import { buildTaskActions } from "../../lib/actions/taskActions";
+import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
+import { useTaskGroupActionContext } from "../../hooks/useTaskGroupActionContext";
+import { useAutoArchive } from "../../hooks/useAutoArchive";
+import { useActionRunner } from "../../hooks/useActionRunner";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
 import { buildSelectionActions } from "../../lib/actions/selectionActions";
 import { isRangeKey } from "../../lib/selection";
-import { featureDepWarning, taskHoldReason } from "../../lib/pause";
+import { CHAIN_QUEUED_TITLE, chainRootTitle } from "../../lib/chains";
 import { buildTaskForest } from "../../lib/taskTree";
 import { flattenDepForest, type DepRow } from "../../lib/depTree";
+import { NO_FEATURE } from "../../lib/taskGroups";
+import { TaskGroupBlock } from "./TaskGroupBlock";
 import type { Task } from "../../lib/types";
-import type { DerivedFeature } from "../../lib/features";
+import {
+  buildFeatureForest,
+  isFeatureDone,
+  type DerivedFeature,
+} from "../../lib/features";
 
 const LIFECYCLE_TONE = {
   "in-progress": { tone: "active", label: "active" },
@@ -45,43 +69,26 @@ const LIFECYCLE_TONE = {
   merged: { tone: "merged", label: "merged" },
 } as const;
 
-function taskGlyph(
-  status: Task["status"],
-  isAbandoned = false,
-): {
-  glyph: string;
-  cls: string;
-} {
-  // Abandoned tasks override the status glyph with a "⟳" (recovery) marker
-  // in amber. Distinct from ✕ (blocked) and ▸ (in-progress) so a user
-  // scanning the row can spot resumable work without opening the modal.
-  if (isAbandoned) {
-    return { glyph: "⟳", cls: "abandoned" };
-  }
-  switch (status) {
-    case "in_progress":
-      return { glyph: "▸", cls: "busy" };
-    case "blocked":
-      return { glyph: "✕", cls: "blk" };
-    case "completed":
-    case "validated":
-      return { glyph: "✓", cls: "ok" };
-    case "pending":
-      return { glyph: "▪", cls: "" };
-    default:
-      return { glyph: "○", cls: "" };
-  }
-}
-
 function featStateClass(f: DerivedFeature): string {
   if (f.lifecycle === "blocked") return "block";
   if (f.lifecycle === "merged" || f.lifecycle === "finished") return "done";
   return "busy";
 }
 
-/** Bucket key for tasks with no feature_id. Not a legal feature id, so
- *  it cannot collide with a real one. */
-const NO_FEATURE = "__nofeat__";
+/** Fold/verb keys for the groups that are NOT features. None is a legal
+ *  feature id, so none can collide with a real one in the per-project
+ *  `featureCollapsed` map. Archived buckets are prefixed because the SAME
+ *  feature can hold both live and archived tasks, and folding one must not
+ *  fold the other. */
+
+/** The tri-state fold: an explicit click outranks the lifecycle default.
+ *  Module-level and pure so the render and the shift-click ordering read
+ *  it through the SAME expression — they must agree exactly, or a range
+ *  selection reaches rows nobody can see. */
+const isCollapsed = (
+  map: Record<string, boolean>,
+  f: DerivedFeature,
+): boolean => map[f.id] ?? isFeatureDone(f);
 
 export interface CardTasksProps {
   projectId: string;
@@ -96,26 +103,43 @@ export function CardTasks({
 }: CardTasksProps): JSX.Element {
   const openInSidebar = useWorkspace((s) => s.openInSidebar);
   const featureAssignments = useWorkspace((s) => s.featureAssignments);
-  const archivedExpanded = useWorkspace(
-    (s) => s.archivedExpanded[projectId] ?? false,
+  // Whole map for this project, not a per-feature selector: the feature
+  // list is built inside a render, so there is no stable place to call one
+  // hook per feature. It changes only when a fold is clicked.
+  const featureCollapsed = useWorkspace(
+    (s) => s.featureCollapsed[projectId] ?? EMPTY_COLLAPSE,
   );
-  const toggleArchivedExpanded = useWorkspace((s) => s.toggleArchivedExpanded);
-  const statusFilter = useWorkspace((s) => s.statusFilter);
+  const toggleFeatureCollapsed = useWorkspace((s) => s.toggleFeatureCollapsed);
   const { runners } = useRunners();
-  const { pause } = usePauseState();
+  // A standing "run feature + dependents" request is a queue the server
+  // drains on its own. Nothing else on screen would mention the features
+  // it enrolled, so the chips below are the only place they exist.
+  // The POLL lives in ProjectCard; this is a cache reader.
+  const chains = useDependentChains(projectId);
 
-  const taskCtx = useTaskActionContext(projectId);
   const featureCtx = useFeatureActionContext(projectId);
+  // The groups that answer to no feature_id — the ungrouped bucket and
+  // every bucket inside the archive — get their own verb matrix. It is
+  // deliberately NOT buildFeatureActions on a synthetic feature: half
+  // those verbs put a feature id in a URL or re-derive it in a modal, and
+  // would dead-end on an id `deriveFeatures` can never produce.
+  const groupCtx = useTaskGroupActionContext(projectId, {
+    toggleCollapsed: (g) => toggleFeatureCollapsed(projectId, g.key, false),
+  });
   const { rowProps, overlays } = useRowActions();
+  const autoArchive = useAutoArchive(projectId);
+  // The toggle writes to the server (it creates or deletes an
+  // automation), so it runs through the action runner like every other
+  // mutating verb — a failure becomes a toast rather than an unhandled
+  // rejection and a checkbox that silently springs back.
+  const autoArchiveRunner = useActionRunner();
 
   // Subscribed (not getState) so checkboxes and the "marked" tint react
   // to every toggle, from any surface — checkbox, `v` key, or menu.
   const selProjectId = useSelection((s) => s.projectId);
   const selTaskIds = useSelection((s) => s.taskIds);
   const selFeatureIds = useSelection((s) => s.featureIds);
-  const toggleTaskSel = useSelection((s) => s.toggleTask);
   const toggleFeatureSel = useSelection((s) => s.toggleFeature);
-  const rangeTaskSel = useSelection((s) => s.rangeTask);
   const rangeFeatureSel = useSelection((s) => s.rangeFeature);
   const requestVerb = useSelection((s) => s.requestVerb);
   const clearSel = useSelection((s) => s.clear);
@@ -148,24 +172,15 @@ export function CardTasks({
     [selCount, requestVerb, clearSel],
   );
 
-  // Archived tasks leave the default rows entirely (mirroring the server
-  // rule that they count toward nothing) and collect in a fold at the
-  // bottom, modeled on the merged-features fold in CardFeatures. The
-  // sidebar "Archived" filter forces the fold open — the user asked to
-  // see exactly these rows.
-  const archivedTasks = useMemo(
-    () => tasks.filter((t) => t.status === "archived"),
-    [tasks],
-  );
-  const archivedForced = statusFilter === "archived";
-  const showArchived =
-    archivedTasks.length > 0 && (archivedExpanded || archivedForced);
-
-  // Group tasks by feature_id (using DerivedFeature order), then turn
-  // each bucket into dependency-ordered rows. Dependency edges are
-  // resolved per bucket, so a cross-feature dep does not drag a task
-  // out of its own feature — it simply stays a root here and shows up
-  // in the feature-level tree on the Features tab instead.
+  // Archived tasks are NOT here. They have their own tab now: a fold at
+  // the bottom of this list meant the rows you were done with shared a
+  // scroll region with the rows you are not, which is the opposite of
+  // what a fold is for on a project with hundreds of them.
+  // Group tasks by feature_id, then turn each bucket into
+  // dependency-ordered rows. Dependency edges are resolved per bucket, so
+  // a cross-feature dep does not drag a task out of its own feature — it
+  // stays a root here, and the relationship is carried by the feature
+  // forest below, which now nests in this same list.
   const rowsByFeat = useMemo(() => {
     const buckets = new Map<string, Task[]>();
     for (const t of tasks) {
@@ -183,188 +198,106 @@ export function CardTasks({
   }, [tasks]);
 
   const orphanRows = rowsByFeat.get(NO_FEATURE) ?? [];
-
-  // Archived rows keep their dependency ordering but render in one flat
-  // group: an all-archived feature derives no DerivedFeature (it left the
-  // lanes), so there is no per-feature header to hang them under.
-  const archivedRows = useMemo(
-    () => flattenDepForest(buildTaskForest(archivedTasks)),
-    [archivedTasks],
+  const orphanCollapsed = featureCollapsed[NO_FEATURE] ?? false;
+  // The bucket's raw tasks, in render order — what its verbs operate on.
+  const orphanTasks = useMemo(
+    () => orphanRows.map((r) => r.node.item),
+    [orphanRows],
   );
 
+  // Feature headers nested by `feature_depends_on`. Roots keep the caller's
+  // order (ProjectCard sorts them blocked → … → merged), so the canonical
+  // sequence holds at every level of the tree.
+  //
+  // DONE features form a SECOND forest rather than joining the first. A
+  // finished dependency is still a legal placement parent, and letting it
+  // act as one drags its live dependents down the list underneath it —
+  // an in-progress feature rendering below a folded merged one, which
+  // undoes both the sort and the point of folding finished work away.
+  // Excluding them promotes those dependents back to roots, exactly as
+  // filtering a hidden parent out of the tree used to.
+  const featureRows = useMemo(() => {
+    const active: DerivedFeature[] = [];
+    const done: DerivedFeature[] = [];
+    for (const f of features) (isFeatureDone(f) ? done : active).push(f);
+    return [
+      ...flattenDepForest(buildFeatureForest(active)),
+      ...flattenDepForest(buildFeatureForest(done)),
+    ];
+  }, [features]);
+
   // Visual order of every task row on screen, for shift-click ranges.
-  // Must mirror the render exactly: features in list order, then the
-  // "No feature" bucket, then the archived fold only while it is open —
-  // a range never reaches into rows the user cannot see.
+  // Must mirror the render exactly: features in tree order and only while
+  // expanded, then the "No feature" bucket, then the archived fold only
+  // while it is open — a range never reaches rows the user cannot see.
   const orderedTaskIds = useMemo(() => {
     const ids: string[] = [];
-    for (const f of features) {
-      for (const row of rowsByFeat.get(f.id) ?? []) ids.push(row.node.item.id);
+    for (const row of featureRows) {
+      const f = row.node.item;
+      if (isCollapsed(featureCollapsed, f)) continue;
+      for (const r of rowsByFeat.get(f.id) ?? []) ids.push(r.node.item.id);
     }
-    for (const row of rowsByFeat.get(NO_FEATURE) ?? [])
-      ids.push(row.node.item.id);
-    if (showArchived)
-      for (const row of archivedRows) ids.push(row.node.item.id);
+    if (!(featureCollapsed[NO_FEATURE] ?? false))
+      for (const row of rowsByFeat.get(NO_FEATURE) ?? [])
+        ids.push(row.node.item.id);
     return ids;
-  }, [features, rowsByFeat, showArchived, archivedRows]);
+  }, [featureRows, featureCollapsed, rowsByFeat]);
 
   // Feature headers range over the headers only, in their render order.
   const orderedFeatureIds = useMemo(
-    () => features.map((f) => f.id),
-    [features],
+    () => featureRows.map((row) => row.node.item.id),
+    [featureRows],
   );
 
-  /** One task row, identical whether it sits under a feature or not. */
-  const renderTaskRow = (row: DepRow<Task>) => {
-    const t = row.node.item;
-    const { glyph, cls } = taskGlyph(t.status, !!t.is_abandoned);
-    const label = t.title || t.id;
-    // Why a task is not running. Null for every task that is running or
-    // simply not held — the chip only appears when there is a real answer.
-    // Also covers feature_depends_on gating, whose blocking party is a
-    // FEATURE and so has no row in this tree to point at.
-    const hold = taskHoldReason(t, { pause, projectId });
-    // Orthogonal to `hold`: an unresolved feature dep gates nothing, so it
-    // can sit on a task that is running perfectly well. Shown alongside
-    // rather than instead, because "running" and "ordered by a typo that
-    // does nothing" are both true at once.
-    const depWarn = featureDepWarning(t);
-    const actions = buildTaskActions(t, taskCtx);
-    const marked = selScoped && selTaskIds.has(t.id);
-    // Single-click select-only highlight — one active row at a time,
-    // independent of the checkbox multi-select. Never toggles on
-    // selActive: the active state is set directly by a plain click.
-    const isActive =
-      selActiveRow?.projectId === projectId &&
-      selActiveRow.kind === "task" &&
-      selActiveRow.id === t.id;
-    const rp = rowProps(
-      actions,
-      label,
-      // Selection mode is modal: Enter toggles like a click, it does
-      // not open detail.
-      selActive
-        ? () => toggleTaskSel(projectId, t.id)
-        : () => openInSidebar("task-detail", { projectId, taskId: t.id }, label),
-      {
-        selectionActions: marked ? (selectionActions ?? undefined) : undefined,
-        // Long-press = the touch shift-click.
-        onRangeSelect: () => rangeTaskSel(projectId, orderedTaskIds, t.id),
-      },
-    );
+  // One row renderer, shared with the Archived tab. `orderedTaskIds` is
+  // this surface's own visible order — see the hook's docstring.
+  const renderTaskRow = useTaskRowRenderer({
+    projectId,
+    orderedTaskIds,
+    rowProps,
+    selectionActions,
+  });
 
-    return (
-      <div
-        key={t.id}
-        className={`trow${marked ? " marked" : ""}${isActive ? " active" : ""}`}
-        {...rp}
-        onKeyDown={(e) => {
-          // Shift+V ranges from the anchor — keyboard parity with
-          // shift-click for rows focused via Tab.
-          if (isRangeKey(e)) {
-            e.preventDefault();
-            rangeTaskSel(projectId, orderedTaskIds, t.id);
-            return;
-          }
-          rp.onKeyDown(e);
-        }}
-        onClick={(e) => {
-          if ((e.target as HTMLElement).closest(".selbox")) return;
-          // Shift-click anywhere on the row is a selection gesture, not
-          // an open: range from the anchor, or start a selection here.
-          if (e.shiftKey) {
-            rangeTaskSel(projectId, orderedTaskIds, t.id);
-            return;
-          }
-          // Selection mode is modal: clicks toggle, they never open.
-          if (selActive) {
-            toggleTaskSel(projectId, t.id);
-            return;
-          }
-          // Plain single-click: select-only highlight. Does NOT open the
-          // modal — double-click / Enter do that.
-          setActive(projectId, "task", t.id);
-        }}
-        onDoubleClick={(e) => {
-          if ((e.target as HTMLElement).closest(".selbox")) return;
-          // A double-click in multi-select mode must not open — mirror
-          // the click guards.
-          if (selActive) return;
-          openInSidebar("task-detail", { projectId, taskId: t.id }, label);
-        }}
-        // Shift-click would otherwise extend the browser's text
-        // selection across the rows before our click handler runs. The
-        // explicit focus() keeps what preventDefault suppresses: row
-        // accelerators must target the row that was last clicked.
-        onMouseDown={(e) => {
-          if (e.shiftKey) {
-            e.preventDefault();
-            e.currentTarget.focus();
-          }
-        }}
-        draggable
-        onDragStart={(e) =>
-          beginDrag(e, {
-            source: "task-row",
-            kind: "task-detail",
-            target: { projectId, taskId: t.id },
-            title: label,
-          })
-        }
-        onDragEnd={endDrag}
-      >
-        {/* Checkbox and status glyph share one grid cell. The glyph holds
-            it unless `boxed` (marked, or selection mode is on) swaps the
-            checkbox in. A plain click reads as colour only — `.active`.
-            Keeps the 4-column row layout intact. */}
-        <span className={`glyph-slot${marked || selActive ? " boxed" : ""}`}>
-          <span
-            className={`selbox${marked ? " on" : ""}`}
-            role="checkbox"
-            aria-checked={marked}
-            aria-label={`Select ${label}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              if (e.shiftKey) rangeTaskSel(projectId, orderedTaskIds, t.id);
-              else toggleTaskSel(projectId, t.id);
-            }}
-          />
-          <span className={`glyph ${cls}`}>{glyph}</span>
-        </span>
-        <span className="name">
-          <DepGuide
-            prefix={row.prefix}
-            inCycle={row.node.inCycle}
-            extraDeps={row.node.extraDeps}
-            extraLabel="tasks"
-          />
-          {label}
-        </span>
-        <span className="status">
-          {t.status}
-          {hold && (
-            <span className={`hold-chip ${hold.code}`} title={hold.detail}>
-              {hold.glyph} {hold.short}
-            </span>
-          )}
-          {depWarn && (
-            <span
-              className={`hold-chip ${depWarn.code}`}
-              title={depWarn.detail}
-            >
-              {depWarn.glyph} {depWarn.short}
-            </span>
-          )}
-        </span>
-        <span className="id">{t.id.slice(0, 6)}</span>
-      </div>
-    );
-  };
 
   return (
     <div>
-      {features.map((f) => {
-        const rows = rowsByFeat.get(f.id) ?? [];
+      {/* Auto-archive is a property of the PROJECT, but it belongs on this
+          tab because this is the list it keeps short — the checkbox and
+          its effect are one glance apart. It creates a real automation on
+          the server (visible in the Automations tab), so it keeps working
+          with every browser closed. */}
+      <label
+        className="auto-archive"
+        title={
+          autoArchive.enabled
+            ? "On — a feature's tasks move to Archived as soon as it " +
+              "completes. Untick to remove the automation."
+            : "Off — completed features stay in this list. Tick to archive " +
+              "them automatically as they finish."
+        }
+      >
+        <input
+          type="checkbox"
+          checked={autoArchive.enabled}
+          disabled={autoArchive.isLoading || autoArchiveRunner.busy}
+          onChange={() =>
+            autoArchiveRunner.run({
+              id: "toggle-auto-archive",
+              label: "Auto-archive",
+              group: "state",
+              run: autoArchive.toggle,
+            })
+          }
+        />
+        Auto-archive completed features
+      </label>
+      {autoArchiveRunner.dialog}
+
+      {featureRows.map((frow) => {
+        const f = frow.node.item;
+        const collapsed = isCollapsed(featureCollapsed, f);
+        const rows = collapsed ? EMPTY_ROWS : (rowsByFeat.get(f.id) ?? []);
+        const taskTotal = f.taskCount.total;
         const stateClass = featStateClass(f);
         const tone = LIFECYCLE_TONE[f.lifecycle];
         const runnerId = featureAssignments[f.id];
@@ -394,7 +327,16 @@ export function CardTasks({
         );
 
         return (
-          <div key={f.id} className={`feat ${stateClass}`}>
+          <div
+            key={f.id}
+            className={`feat ${stateClass}${collapsed ? " collapsed" : ""}`}
+            // Indent nested features so the tree reads at a glance. The
+            // guide glyphs carry the exact structure; this gives each
+            // level a visible step.
+            style={
+              frow.depth > 0 ? { marginLeft: frow.depth * 12 } : undefined
+            }
+          >
             <div
               className={`feat-head${featMarked ? " marked" : ""}${featIsActive ? " active" : ""}`}
               {...rpHead}
@@ -402,6 +344,26 @@ export function CardTasks({
                 if (isRangeKey(e)) {
                   e.preventDefault();
                   rangeFeatureSel(projectId, orderedFeatureIds, f.id);
+                  return;
+                }
+                // Tree convention, and deliberately NOT a letter: every
+                // single-key accelerator on this row belongs to the
+                // feature verb registry, and arrows collide with nothing.
+                //
+                // The modifier guard is the row handler's own rule ("never
+                // fight browser/OS chords") applied one level earlier —
+                // this branch returns before delegating, so without it
+                // ⌘←/Alt+← would fold a feature instead of going back.
+                if (
+                  !e.metaKey &&
+                  !e.ctrlKey &&
+                  !e.altKey &&
+                  (e.key === "ArrowLeft" || e.key === "ArrowRight")
+                ) {
+                  e.preventDefault();
+                  if (collapsed !== (e.key === "ArrowLeft")) {
+                    toggleFeatureCollapsed(projectId, f.id, isFeatureDone(f));
+                  }
                   return;
                 }
                 rpHead.onKeyDown(e);
@@ -457,7 +419,13 @@ export function CardTasks({
               }}
             >
               {/* The caret's slot doubles as the feature checkbox once
-                  selection mode is on — no extra column, no shift. */}
+                  selection mode is on — no extra column, no shift. The
+                  caret is a real control now: the head's own click
+                  handler already excluded `.caret`, so for the whole life
+                  of this component it was an arrow that pointed at a fold
+                  nobody could operate. Not a <button>: this row is itself
+                  role="button", and a nested one both breaks nesting
+                  rules and swallows the row's key accelerators. */}
               <span
                 className={`glyph-slot${featMarked || selActive ? " boxed" : ""}`}
               >
@@ -473,10 +441,60 @@ export function CardTasks({
                     else toggleFeatureSel(projectId, f.id);
                   }}
                 />
-                <span className="caret">▾</span>
+                <span
+                  className="caret"
+                  role="button"
+                  // Out of the tab order on purpose: the row is the
+                  // focusable unit, and ← / → fold it from there.
+                  tabIndex={-1}
+                  aria-expanded={!collapsed}
+                  aria-label={`${collapsed ? "Show" : "Hide"} ${taskTotal} task${
+                    taskTotal === 1 ? "" : "s"
+                  } in ${f.name}`}
+                  title={
+                    collapsed
+                      ? `Show ${taskTotal} task${taskTotal === 1 ? "" : "s"}`
+                      : `Hide ${taskTotal} task${taskTotal === 1 ? "" : "s"}`
+                  }
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    toggleFeatureCollapsed(projectId, f.id, isFeatureDone(f));
+                  }}
+                >
+                  {collapsed ? "▸" : "▾"}
+                </span>
               </span>
-              <span className="name">{f.name}</span>
+              <span className="name">
+                <DepGuide
+                  prefix={frow.prefix}
+                  inCycle={frow.node.inCycle}
+                  extraDeps={frow.node.extraDeps}
+                  extraLabel="features"
+                />
+                {f.name}
+              </span>
               <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+              {/* Collapsed features hide their rows, so the count has to
+                  come back to the header or the fold loses the one number
+                  it was hiding. */}
+              {collapsed && taskTotal > 0 && (
+                <span className="age">
+                  {taskTotal} task{taskTotal === 1 ? "" : "s"}
+                </span>
+              )}
+              {chains.byRoot.has(f.id) && (
+                <span
+                  className="chain-chip root"
+                  title={chainRootTitle(chains.byRoot.get(f.id))}
+                >
+                  ⛓ chain
+                </span>
+              )}
+              {chains.queuedMembers.has(f.id) && (
+                <span className="chain-chip queued" title={CHAIN_QUEUED_TITLE}>
+                  ⛓ queued
+                </span>
+              )}
               {runner ? (
                 <span
                   className={`assign-chip ${runner.status !== "online" ? "warn" : ""}`}
@@ -504,54 +522,27 @@ export function CardTasks({
         );
       })}
 
+      {/* Every group that is NOT a feature renders through one component:
+          the ungrouped bucket here, and each bucket inside the archive
+          fold below. They behave identically because they ARE the same
+          thing — a set of tasks with a header, a fold and a verb list. */}
       {orphanRows.length > 0 && (
-        <div className="feat">
-          <div className="feat-head">
-            <span className="name" style={{ color: "#6b757e" }}>
-              No feature
-            </span>
-            <span className="age">{orphanRows.length} tasks</span>
-          </div>
-          {orphanRows.map(renderTaskRow)}
-        </div>
-      )}
-
-      {showArchived && (
-        <div className="feat done">
-          <div className="feat-head">
-            <span className="name" style={{ color: "#6b757e" }}>
-              Archived
-            </span>
-            <span className="age">{archivedTasks.length} tasks</span>
-          </div>
-          {archivedRows.map(renderTaskRow)}
-        </div>
-      )}
-
-      {/* Same dashed expander as the merged-features fold. Hidden while
-          the sidebar filter forces the rows open — a toggle that cannot
-          take effect would just lie. */}
-      {archivedTasks.length > 0 && !archivedForced && (
-        <button
-          onClick={() => toggleArchivedExpanded(projectId)}
-          style={{
-            border: "1px dashed #22272c",
-            padding: "5px 8px",
-            width: "100%",
-            textAlign: "left",
-            color: "#6b757e",
-            fontSize: 11,
-            marginTop: 6,
+        <TaskGroupBlock
+          group={{
+            projectId,
+            key: NO_FEATURE,
+            label: "No feature",
+            tasks: orphanTasks,
           }}
-        >
-          {archivedExpanded ? "▾" : "▸"} {archivedTasks.length} archived task
-          {archivedTasks.length === 1 ? "" : "s"}
-        </button>
+          rows={orphanRows}
+          collapsed={orphanCollapsed}
+          renderRow={renderTaskRow}
+          rowProps={rowProps}
+          ctx={groupCtx}
+        />
       )}
 
-      {features.length === 0 &&
-        orphanRows.length === 0 &&
-        archivedTasks.length === 0 && (
+      {features.length === 0 && orphanRows.length === 0 && (
           <div style={{ color: "#6b757e", fontSize: 11, padding: "6px 0" }}>
             No tasks yet.
           </div>
@@ -561,3 +552,10 @@ export function CardTasks({
     </div>
   );
 }
+
+/** Stable empty map so the collapse selector never returns a fresh
+ *  object for a project nobody has folded anything in. */
+const EMPTY_COLLAPSE: Record<string, boolean> = {};
+
+/** Shared empty row list for a collapsed feature. */
+const EMPTY_ROWS: DepRow<Task>[] = [];

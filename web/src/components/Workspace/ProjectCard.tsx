@@ -3,17 +3,28 @@
  *
  * DOM:
  *   .pcard[data-project=pid]
- *     .pcard-head (dot · name · .pcard-meta[health · autos-paused · stats] · close)
+ *     .pcard-head (dial button · name · .pcard-meta[health · autos-paused
+ *                  · stats] · close)
  *     .hold-strip (why the last scheduler pass dispatched nothing)
  *     .flow-strip (lifecycle pills)
- *     .pcard-tabs (Tasks | Features | More▾ | Focus icon)
- *     .pcard-body → CardTasks | CardFeatures | CardAutomations | CardSession | CardLogs
+ *     .pcard-tabs (Tasks | Archived | Goals | Automations | Focus icon)
+ *     .pcard-body → CardTasks | CardArchived | CardGoals | CardAutomations
+ *
+ * There is no Features tab. Features are not a separate list — every one
+ * of them is a group header in the Tasks tab, nested by
+ * `feature_depends_on` and foldable, so the old tab was the same features
+ * shown twice with the tasks removed. `CardFeatures` was deleted when its
+ * three unique affordances (the dependency forest, the chain chips, and
+ * the merged fold) moved into `CardTasks`.
  */
-import { useState, useMemo } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useLive } from "../../lib/sse";
 import { useWorkspace } from "../../store/workspace";
-import { useModal } from "../../store/modal";
-import { deriveFeatures, type DerivedFeature } from "../../lib/features";
+import {
+  deriveFeatures,
+  sortFeatures,
+  type DerivedFeature,
+} from "../../lib/features";
 import { useMergeRequests } from "../../hooks/useMergeRequests";
 import { usePauseState } from "../../hooks/usePauseState";
 import { useSchedulerStatus } from "../../hooks/useSchedulerStatus";
@@ -24,15 +35,20 @@ import {
   isProjectTasksPaused,
 } from "../../lib/actions/projectActions";
 import { useProjectActionContext } from "../../hooks/useProjectActionContext";
-import { projectPauseBadges, schedulerHoldNote } from "../../lib/pause";
+import {
+  projectPauseBadges,
+  projectRunIndicator,
+  schedulerHoldNote,
+} from "../../lib/pause";
+import { ProjectPauseButton } from "../common/ProjectPauseButton";
 import { CardTasks } from "./CardTasks";
-import { CardFeatures } from "./CardFeatures";
+import { CardArchived } from "./CardArchived";
 import { useDependentChainsSync } from "../../hooks/useDependentChains";
 import { CardAutomations } from "./CardAutomations";
 import { CardGoals } from "./CardGoals";
 import type { Task } from "../../lib/types";
 
-type TabKey = "tasks" | "features" | "goals" | "automations";
+type TabKey = "tasks" | "archived" | "goals" | "automations";
 
 interface ProjectStats {
   active: number;
@@ -82,16 +98,26 @@ function healthFor(
 
 export interface ProjectCardProps {
   projectId: string;
+  /** Drop the overview grid's height cap and grow to the container.
+   *  Set by `ProjectLeaf`: in a dock pane the PANE decides the height,
+   *  and a 460px cap would leave dead space below a tall pane and a
+   *  double scrollbar inside a short one. */
+  fill?: boolean;
 }
 
-export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
+export function ProjectCard({
+  projectId,
+  fill = false,
+}: ProjectCardProps): JSX.Element {
   const [tab, setTab] = useState<TabKey>("tasks");
-  // Poll chain state for the whole card, not just the Features tab.
+  // Poll chain state for the whole card, not only for the tab that draws
+  // the chips.
   //
-  // The verbs that read it — "Cancel queued dependents" above all — are built
-  // on the default Tasks tab as well. Polling inside CardFeatures meant the
-  // cancel verb was silently absent everywhere except the one tab that
-  // happened to observe the query, with no error and no disabled entry.
+  // The verbs that read it — "Cancel queued dependents" above all — are
+  // built on every surface, including the overview. Polling inside the tab
+  // body meant the cancel verb was silently absent everywhere except the
+  // one view that happened to observe the query, with no error and no
+  // disabled entry.
   useDependentChainsSync(projectId);
   const projectLive = useLive((s) => s.projects[projectId]);
   const tasks = projectLive?.tasks ?? EMPTY_TASKS;
@@ -102,17 +128,47 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   const { pause, isLoading: pauseLoading } = usePauseState();
   const { resultFor } = useSchedulerStatus();
   const openInFocus = useWorkspace((s) => s.openInFocus);
-  const openModal = useModal((s) => s.open);
   const hideProject = useWorkspace((s) => s.hideProject);
 
   const stats = useMemo(() => statsFor(tasks), [tasks]);
+  const archivedCount = useMemo(
+    () => tasks.filter((t) => t.status === "archived").length,
+    [tasks],
+  );
+
+  // The sidebar's Archived chip narrows the grid to projects that HAVE
+  // archived work; landing them on the Tasks tab would make the chip a
+  // filter with nothing to show. So selecting it selects the tab.
+  //
+  // It only ever does that ONE thing. An earlier version also sent the
+  // card back to Tasks whenever the filter was anything else, which fired
+  // on EVERY chip transition — all→blocked would yank a user off the
+  // Archived tab they had opened by hand, for a chip that changes nothing
+  // about what the card shows.
+  const statusFilter = useWorkspace((s) => s.statusFilter);
+  useEffect(() => {
+    if (statusFilter === "archived") setTab("archived");
+  }, [statusFilter]);
   // Brain-native MRs fold into lifecycle (see lib/mergeRequests).
   const { openByProject } = useMergeRequests();
+  // Sorted into the canonical blocked → in-progress → mr-open → finished
+  // → merged order. `sortFeatures` had no caller at all while a second,
+  // flat feature list existed alongside this one; now that the Tasks tab
+  // is the only feature list, the order it imposes IS the reading order —
+  // and it is the one that puts what needs attention at the top and the
+  // folded, finished work at the bottom.
   const features = useMemo(
-    () => deriveFeatures(tasks, projectId, openByProject.get(projectId)),
+    () =>
+      sortFeatures(
+        deriveFeatures(tasks, projectId, openByProject.get(projectId)),
+      ),
     [tasks, projectId, openByProject],
   );
   const badges = projectPauseBadges(pause, projectId);
+  const indicator = projectRunIndicator(tasks, {
+    paused: badges.tasks,
+    projectId,
+  });
   const health = useMemo(
     () => healthFor(stats, features, badges.tasks),
     [stats, features, badges.tasks],
@@ -134,14 +190,14 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   }, [features]);
 
   const openInFocusForTab = () => {
-    if (tab === "features")
-      openModal("feature", { projectId, featureId: features[0]?.id });
     // Automations expand to their RUN HISTORY, not to the catalog the
     // card already shows. (This used to open an empty browser pane —
     // a blank iframe with no url, from before a runs surface existed.)
-    else if (tab === "automations")
+    if (tab === "automations")
       openInFocus("automation-runs", { projectId }, `${projectId} runs`);
-    else openInFocus("task-detail", { projectId }, projectId);
+    // Everything else expands to the project itself. This used to open a
+    // `task-detail` leaf with no taskId, i.e. a "Task not found" error.
+    else openInFocus("project", { projectId }, projectId);
   };
 
   const projectCtx = useProjectActionContext();
@@ -165,15 +221,38 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   );
 
   return (
-    <div className="pcard" data-project={projectId} style={{ maxHeight: 460 }}>
+    <div
+      className={`pcard${fill ? " fill" : ""}`}
+      data-project={projectId}
+      style={fill ? undefined : { maxHeight: 460 }}
+    >
       <div className="pcard-head" {...rowProps(projectActions, projectId)}>
-        <span
-          className={`dot ${!hasSnapshot ? "" : stats.active ? "busy" : "on"}`}
-          title={
-            !hasSnapshot ? "connecting…" : connected ? "live" : "reconnecting"
-          }
+        {/* The dial replaces a dot that only ever reported SSE liveness
+            — it never showed pause, so `.pcard-head .dot.paused` sat in
+            the stylesheet unreachable. Connection state moves onto the
+            name's tooltip, which is where "connecting…" belongs: it is a
+            transient of the card, not a state of the project. */}
+        <ProjectPauseButton
+          projectId={projectId}
+          indicator={indicator}
+          taskCount={tasks.length}
+          pauseLoading={pauseLoading}
         />
-        <span className="name" title={projectId}>
+        {/* The name's tooltip carries BOTH jobs: the full id, because the
+            name truncates, and the stream state the dot's title used to
+            hold. `connecting…` is also visible in the stats below, but
+            `reconnecting` — a live snapshot with a dropped stream — has
+            no other surface at all. */}
+        <span
+          className="name"
+          title={
+            !hasSnapshot
+              ? `${projectId} — connecting…`
+              : connected
+                ? projectId
+                : `${projectId} — reconnecting`
+          }
+        >
           {projectId}
         </span>
         {/* State badges and counts are ONE wrapping unit: on a narrow card
@@ -285,10 +364,13 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
           Tasks
         </button>
         <button
-          className={tab === "features" ? "active" : ""}
-          onClick={() => setTab("features")}
+          className={tab === "archived" ? "active" : ""}
+          onClick={() => setTab("archived")}
         >
-          Features
+          Archived
+          {archivedCount > 0 && (
+            <span className="tab-count">{archivedCount}</span>
+          )}
         </button>
         <button
           className={tab === "goals" ? "active" : ""}
@@ -316,8 +398,8 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
         {tab === "tasks" && (
           <CardTasks projectId={projectId} tasks={tasks} features={features} />
         )}
-        {tab === "features" && (
-          <CardFeatures projectId={projectId} features={features} />
+        {tab === "archived" && (
+          <CardArchived projectId={projectId} tasks={tasks} />
         )}
         {tab === "goals" && <CardGoals projectId={projectId} />}
         {tab === "automations" && <CardAutomations projectId={projectId} />}

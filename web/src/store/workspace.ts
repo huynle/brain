@@ -57,6 +57,7 @@ import {
   updateSplitRatio as updateDockSplitRatio,
   walkLeaves,
   firstLeaf,
+  isDockLeafKind,
   type DockLeaf,
   type DockNode,
   type Edge,
@@ -162,12 +163,19 @@ export interface WorkspaceState {
   mobile: boolean;
   streaming: boolean;
   featureAssignments: Record<string, string>;
-  /** Per-project expansion state for the "N merged features" fold
-   *  in CardFeatures. Missing key = collapsed (default). */
-  mergedExpanded: Record<string, boolean>;
-  /** Per-project expansion state for the "N archived tasks" fold
-   *  in CardTasks. Missing key = collapsed (default). */
-  archivedExpanded: Record<string, boolean>;
+  /** Per-feature collapse state for a feature's task rows in CardTasks,
+   *  nested projectId → featureId → collapsed.
+   *
+   *  TRI-STATE on purpose: a missing key means "no opinion", and the
+   *  view falls back to `isFeatureDone(f)` so finished and merged
+   *  features start folded without anyone having to write an entry for
+   *  every feature in the project. Only an explicit click stores a
+   *  boolean, and it then outranks the default in both directions.
+   *
+   *  Nested rather than a `${projectId}:${featureId}` composite key so
+   *  `forgetProject` can drop a whole project with the same `omitKey`
+   *  the other per-project maps use — a composite key would survive it. */
+  featureCollapsed: Record<string, Record<string, boolean>>;
   /** Explicitly-hidden project ids. Anything NOT in this set is
    *  visible in the overview grid + sidebar Projects section. */
   hiddenProjects: string[];
@@ -202,8 +210,14 @@ export interface WorkspaceState {
   setStreaming(s: boolean): void;
   assignFeature(featureId: string, runnerId: string): void;
   unassignFeature(featureId: string): void;
-  toggleMergedExpanded(projectId: string): void;
-  toggleArchivedExpanded(projectId: string): void;
+  /** Flip one feature's task rows. `defaultCollapsed` is the view's
+   *  derived state, so the FIRST click always does the visible opposite
+   *  of what is on screen rather than of `!undefined`. */
+  toggleFeatureCollapsed(
+    projectId: string,
+    featureId: string,
+    defaultCollapsed: boolean,
+  ): void;
   hideProject(projectId: string): void;
   showProject(projectId: string): void;
   forgetProject(projectId: string): void;
@@ -331,16 +345,14 @@ function coerceDockTree(raw: unknown): DockNode | null {
     const leaf = (node as { leaf?: unknown }).leaf;
     if (!leaf || typeof leaf !== "object") return null;
     const l = leaf as Partial<DockLeaf>;
-    if (
-      l.kind !== "task-detail" &&
-      l.kind !== "feature-detail" &&
-      l.kind !== "logs" &&
-      l.kind !== "session" &&
-      l.kind !== "runners" &&
-      l.kind !== "browser" &&
-      l.kind !== "entry"
-    )
-      return null;
+    // Delegate to `isDockLeafKind` rather than repeating the union here.
+    // The literal chain this replaces had already drifted: it never
+    // learned "automation-runs" or "automation-detail", and an unknown
+    // kind returns null, which the split/tabs branch below propagates all
+    // the way up — so `merge` threw away the user's ENTIRE persisted dock
+    // layout on the next reload, silently, for anyone who left an
+    // automation pane docked. One list, one source of truth.
+    if (typeof l.kind !== "string" || !isDockLeafKind(l.kind)) return null;
     if (typeof l.title !== "string") return null;
     return raw as DockNode;
   }
@@ -579,8 +591,7 @@ export const useWorkspace = create<WorkspaceState>()(
         mobile: false,
         streaming: false,
         featureAssignments: {},
-        mergedExpanded: {},
-        archivedExpanded: {},
+        featureCollapsed: {},
         hiddenProjects: [],
         statusFilter: "all" as StatusFilter,
 
@@ -655,21 +666,22 @@ export const useWorkspace = create<WorkspaceState>()(
             return { featureAssignments: next };
           }),
 
-        toggleMergedExpanded: (projectId) =>
-          set((s) => ({
-            mergedExpanded: {
-              ...s.mergedExpanded,
-              [projectId]: !s.mergedExpanded[projectId],
-            },
-          })),
+        // Writes an explicit boolean even when it equals the default —
+        // "the user decided this" has to outlive the feature moving to
+        // another lifecycle, or reopening a finished feature's rows
+        // would silently re-fold them the moment it merged.
+        toggleFeatureCollapsed: (projectId, featureId, defaultCollapsed) =>
+          set((s) => {
+            const forProject = s.featureCollapsed[projectId] ?? {};
+            const current = forProject[featureId] ?? defaultCollapsed;
+            return {
+              featureCollapsed: {
+                ...s.featureCollapsed,
+                [projectId]: { ...forProject, [featureId]: !current },
+              },
+            };
+          }),
 
-        toggleArchivedExpanded: (projectId) =>
-          set((s) => ({
-            archivedExpanded: {
-              ...s.archivedExpanded,
-              [projectId]: !s.archivedExpanded[projectId],
-            },
-          })),
 
         hideProject: (projectId) =>
           set((s) =>
@@ -714,8 +726,7 @@ export const useWorkspace = create<WorkspaceState>()(
             const sidebar = sweep(s.docks.sidebar);
             return {
               hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId),
-              mergedExpanded: omitKey(s.mergedExpanded, projectId),
-              archivedExpanded: omitKey(s.archivedExpanded, projectId),
+              featureCollapsed: omitKey(s.featureCollapsed, projectId),
               docks: { focus, sidebar },
               // A leaf id recorded as "last focused" may have just been
               // removed; the dock no longer contains it either way.
@@ -900,8 +911,7 @@ export const useWorkspace = create<WorkspaceState>()(
         sidebarCollapsed: s.sidebarCollapsed,
         theme: s.theme,
         featureAssignments: s.featureAssignments,
-        mergedExpanded: s.mergedExpanded,
-        archivedExpanded: s.archivedExpanded,
+        featureCollapsed: s.featureCollapsed,
         hiddenProjects: s.hiddenProjects,
         statusFilter: s.statusFilter,
         docks: s.docks,
@@ -1027,6 +1037,10 @@ function defaultLeafTitle(
       if (!path) return "Entry";
       const base = path.split("/").pop() || path;
       return base.replace(/\.md$/, "");
+    }
+    case "project": {
+      const project = target.projectId as string | undefined;
+      return project ?? "Project";
     }
     case "automation-runs": {
       const project = target.projectId as string | undefined;

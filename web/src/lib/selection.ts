@@ -44,6 +44,31 @@ export function toggleTask(
   return { ...s, taskIds: toggled(s.taskIds, taskId) };
 }
 
+/**
+ * Add many tasks at once, without unmarking anything already in scope.
+ *
+ * NOT a loop over `toggleTask`: a "select all in this group" that toggled
+ * would DESELECT every row of the group the user had already marked, which
+ * is the opposite of what the verb says. Additive by definition — the way
+ * out is Clear selection.
+ *
+ * Marking in a different project restarts the scope, exactly as toggling
+ * one task does.
+ */
+export function selectTasks(
+  s: SelectionSnapshot,
+  projectId: string,
+  taskIds: readonly string[],
+): SelectionSnapshot {
+  if (taskIds.length === 0) return s;
+  if (s.projectId !== projectId) {
+    return { projectId, taskIds: new Set(taskIds), featureIds: new Set() };
+  }
+  const next = new Set(s.taskIds);
+  for (const id of taskIds) next.add(id);
+  return { ...s, taskIds: next };
+}
+
 /** Toggle one feature. Marking in a different project restarts the scope. */
 export function toggleFeature(
   s: SelectionSnapshot,

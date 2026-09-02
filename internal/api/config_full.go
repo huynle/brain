@@ -232,10 +232,73 @@ func loadFromDisk(path string) (*config.UnifiedConfig, error) {
 	return &cfg, nil
 }
 
+// marshalPreservingUnknownKeys renders cfg as YAML, but keeps any key already
+// on disk that UnifiedConfig does not model.
+//
+// This file is read by TWO different structs. config.UnifiedConfig is what the
+// API serves and writes; runner.RunnerConfig reads the SAME path and models
+// fields UnifiedConfig has never heard of — script, pi, executors,
+// default_executor, dispatch_push, labels, repo_cache_dir, max_task_attempts,
+// hooks, env_passthrough, feature_ids, task_defaults. A plain marshal of the
+// API's struct silently deleted every one of them on any successful save,
+// because the Settings modal PUTs the whole document back after an edit to a
+// single unrelated field.
+//
+// Deep-merging the rendered struct OVER the existing document keeps those keys
+// alive. It is safe against "the user cleared this field" because
+// UnifiedConfig sets omitempty on exactly one field: every other modeled key is
+// always present in the rendered map and therefore always overwrites.
+func marshalPreservingUnknownKeys(path string, cfg *config.UnifiedConfig) ([]byte, error) {
+	rendered, err := yaml.Marshal(cfg)
+	if err != nil {
+		return nil, err
+	}
+	existing, err := os.ReadFile(path)
+	if err != nil {
+		// No file yet (or unreadable): nothing to preserve.
+		return rendered, nil
+	}
+	var prev map[string]any
+	if err := yaml.Unmarshal(existing, &prev); err != nil || prev == nil {
+		// Unparseable YAML is not something to merge into; the backup
+		// writeToDisk already took is the recovery path.
+		return rendered, nil
+	}
+	var next map[string]any
+	if err := yaml.Unmarshal(rendered, &next); err != nil || next == nil {
+		return rendered, nil
+	}
+	return yaml.Marshal(mergePreservingUnknown(prev, next))
+}
+
+// mergePreservingUnknown returns next with any key present only in prev
+// carried over, recursing into nested maps.
+func mergePreservingUnknown(prev, next map[string]any) map[string]any {
+	out := make(map[string]any, len(next)+len(prev))
+	for k, v := range next {
+		out[k] = v
+	}
+	for k, pv := range prev {
+		nv, ok := out[k]
+		if !ok {
+			// A key the API's struct does not model at all — keep it.
+			out[k] = pv
+			continue
+		}
+		pm, pOK := pv.(map[string]any)
+		nm, nOK := nv.(map[string]any)
+		if pOK && nOK {
+			out[k] = mergePreservingUnknown(pm, nm)
+		}
+		// Otherwise the modeled value wins, which is the point of the save.
+	}
+	return out
+}
+
 // writeToDisk marshals cfg and atomically replaces the file, keeping
 // a timestamped backup.
 func writeToDisk(path string, cfg *config.UnifiedConfig) (string, error) {
-	data, err := yaml.Marshal(cfg)
+	data, err := marshalPreservingUnknownKeys(path, cfg)
 	if err != nil {
 		return "", err
 	}

@@ -105,20 +105,16 @@ export function FeatureActionsModal(): JSX.Element {
     }
   }
 
-  // The one decision point for "the user asked to create the checkout
-  // task", shared by the form's Enter key and the footer button so the
-  // force confirmation cannot be reached by only one of them.
-  function submitFromFooter() {
+  // The single decision point for "the user asked to create the checkout
+  // task" — reached by the footer's submit button and by Enter in a field,
+  // so the force confirmation cannot be bypassed by either route.
+  function onCheckoutSubmit(e: FormEvent) {
+    e.preventDefault();
     if (mode === "force") {
       setView("confirmForce");
       return;
     }
     void submitCheckout();
-  }
-
-  function onCheckoutSubmit(e: FormEvent) {
-    e.preventDefault();
-    submitFromFooter();
   }
 
   async function runInspector() {
@@ -201,21 +197,21 @@ export function FeatureActionsModal(): JSX.Element {
             <button
               className="primary"
               style={{ marginLeft: "auto" }}
-              // type="button" with an explicit handler, NOT a submit button
-              // associated to the form across the DOM.
+              // Submit button for the checkout form, associated across the
+              // DOM (the footer is a sibling of .modal-body, not a
+              // descendant). That association is what makes this the form's
+              // DEFAULT button, which is what makes Enter-in-a-field submit.
               //
-              // It used to be both at once — onClick AND form+type="submit"
-              // — so a single click ran the handler twice: once directly,
-              // then again through the form's onSubmit. In review mode that
-              // fired the POST twice. In force mode it was worse: onClick
-              // called submitCheckout immediately, so the request was
-              // already gone before setView("confirmForce") rendered the
-              // confirmation the user is supposed to approve.
-              //
-              // Routing through onCheckoutSubmit is what restores that
-              // gate; the form keeps its own onSubmit for Enter-in-field.
-              type="button"
-              onClick={() => submitFromFooter()}
+              // It used to ALSO carry onClick, so a single click ran the work
+              // twice — once directly, then again through the form's
+              // onSubmit. In force mode that was worse: the direct call sent
+              // the request before setView("confirmForce") could render the
+              // confirmation. Removing the handler and keeping the
+              // association fixes the double-fire without costing the
+              // keyboard path; everything now routes through onCheckoutSubmit,
+              // which owns the force branch.
+              form="feature-checkout-form"
+              type="submit"
               disabled={busy}
             >
               {busy

@@ -1424,6 +1424,9 @@ body[data-theme="light"] .p2-browser-iframe { border-color: #d5dde5; }
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
+  /* Shrinkable in the pane header for the same reason as .proc-chat-agent;
+     inside a transcript .role row it simply wraps instead. */
+  flex: 0 1 auto;
 }
 .session-view .stream pre {
   margin: 4px 0 0; background: #0a0c0e; border: 1px solid #1a1e22;
@@ -1895,6 +1898,14 @@ body.mobile .session-pane .composer input { flex: 1 1 100%; }
 .proc-chat-agent {
   font-size: 10px; color: #9098a1; text-transform: uppercase;
   letter-spacing: 0.05em; white-space: nowrap;
+  /* Must be able to shrink. The header is a flex row whose track is only
+     1fr wide, and adding two nowrap items to it pushed the row past its
+     container instead of squeezing — the agent name and model are the
+     LEAST important things there, so they give way before the session id
+     and the delivery pill do. */
+  min-width: 0; max-width: 18ch;
+  overflow: hidden; text-overflow: ellipsis;
+  flex: 0 1 auto;
 }
 body[data-theme="light"] .proc-chat-agent { color: #64717e; }
 

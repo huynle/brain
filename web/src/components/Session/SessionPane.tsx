@@ -91,9 +91,13 @@ export function SessionPane({
   // question — what the session is set to right now — which a turn cannot,
   // because the newest turn may be scrolled off, or the session may be idle
   // with no assistant turn yet at all.
+  // SessionRef is a discriminated union and `instance_id` lives only on the
+  // live arm, so it has to be narrowed before it is read — a history ref has
+  // no such property at all.
   const { allInstances } = useSessions();
-  const inst = sref?.instance_id
-    ? allInstances.find((i) => i.instance_id === sref.instance_id)
+  const instanceId = sref?.mode === "live" ? sref.instance_id : undefined;
+  const inst = instanceId
+    ? allInstances.find((i) => i.instance_id === instanceId)
     : undefined;
   const sessionModel = inst?.model
     ? (inst.model.split("/").pop() ?? inst.model)

@@ -228,3 +228,41 @@ func TestCheckoutFeature_ResolvesWorkdirFromFeatureTasks(t *testing.T) {
 		t.Errorf("checkout task must inherit the feature's repo, got:\n%s", raw)
 	}
 }
+
+// "" and "ai" are the same mode. The write side deliberately omits
+// checkout_mode rather than persisting "ai", and the two front doors disagree
+// by construction — the PWA always sends "ai", the MCP tool passes "" through
+// when the caller omits it. Comparing raw strings made an ordinary
+// agent-creates-then-human-confirms flow delete and recreate a byte-identical
+// task, losing its id and resetting its retry attempt_count, forever.
+func TestCheckoutFeature_EmptyAndAIAreTheSameMode(t *testing.T) {
+	svc, _, _ := newTestTaskService(t)
+	ctx := context.Background()
+
+	// The MCP shape: no checkout_mode at all.
+	first, err := svc.CheckoutFeature(ctx, "brain", "feat-fold", &types.FeatureCheckoutOptions{})
+	if err != nil {
+		t.Fatalf("first: %v", err)
+	}
+	// The PWA shape: explicit "ai".
+	second, err := svc.CheckoutFeature(ctx, "brain", "feat-fold",
+		&types.FeatureCheckoutOptions{CheckoutMode: "ai"})
+	if err != nil {
+		t.Fatalf("second: %v", err)
+	}
+	if second.Created || second.Superseded {
+		t.Errorf(`"" then "ai" must be idempotent, got created=%v superseded=%v`,
+			second.Created, second.Superseded)
+	}
+	if second.Task.ID != first.Task.ID {
+		t.Errorf("task id churned: %s -> %s", first.Task.ID, second.Task.ID)
+	}
+	// And back the other way — alternating front doors must still converge.
+	third, err := svc.CheckoutFeature(ctx, "brain", "feat-fold", &types.FeatureCheckoutOptions{})
+	if err != nil {
+		t.Fatalf("third: %v", err)
+	}
+	if third.Created || third.Task.ID != first.Task.ID {
+		t.Errorf("alternating front doors churn the task: %+v", third)
+	}
+}

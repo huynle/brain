@@ -149,9 +149,16 @@ type simpleCheckoutScriptParams struct {
 	FeatureExpr string
 	ProjectExpr string
 
-	// SourceBranch is a shell expression evaluated inside the script. It is
-	// "${FEATURE_ID}" unless a caller pinned an explicit execution branch.
-	SourceBranch string
+	// SourceBranchExpr is the COMPLETE right-hand side of the SOURCE_BRANCH
+	// assignment, quoting included, because the two callers need different
+	// quoting: the automation needs "${FEATURE_ID}" (double quotes, so the
+	// placeholder expands at dispatch), the manual path needs a single-quoted
+	// literal (so nothing expands at all).
+	//
+	// It is NOT a bare name that the template quotes, because that forced one
+	// quoting style on both and left the literal in a double-quoted context
+	// where $, backtick and backslash still expand.
+	SourceBranchExpr string
 
 	// TargetBranch is the branch the feature is squash-merged into.
 	TargetBranch string
@@ -171,11 +178,11 @@ type simpleCheckoutScriptParams struct {
 //	{{.EventProjectID}} — source-event project (differs for cross-project)
 func buildSimpleFeatureCheckoutScript(cfg BuiltInFeatureCheckoutSimpleConfig) string {
 	return renderSimpleFeatureCheckoutScript(simpleCheckoutScriptParams{
-		FeatureExpr:  "{{.FeatureID}}",
-		ProjectExpr:  "{{.ProjectID}}",
-		SourceBranch: "${FEATURE_ID}",
-		TargetBranch: cfg.MergeTargetBranch,
-		RemoteDelete: cfg.RemoteBranchPolicy == "delete",
+		FeatureExpr:      "{{.FeatureID}}",
+		ProjectExpr:      "{{.ProjectID}}",
+		SourceBranchExpr: `"${FEATURE_ID}"`,
+		TargetBranch:     cfg.MergeTargetBranch,
+		RemoteDelete:     cfg.RemoteBranchPolicy == "delete",
 	})
 }
 
@@ -193,13 +200,18 @@ func buildSimpleFeatureCheckoutScript(cfg BuiltInFeatureCheckoutSimpleConfig) st
 //     path's job).
 //   - Never deletes the merge target branch.
 func renderSimpleFeatureCheckoutScript(p simpleCheckoutScriptParams) string {
-	target := strings.TrimSpace(p.TargetBranch)
-	if target == "" {
+	// Escaped, not filtered. TARGET_BRANCH is caller-supplied on the manual
+	// path (a free-text field in the modal, a free-form MCP argument) and was
+	// the one embedded value going in raw while the other three were
+	// hardened — so a branch name containing a quote closed the literal and
+	// handed the remainder to bash on the runner host.
+	target := shellSingleQuoted(strings.TrimSpace(p.TargetBranch))
+	if strings.TrimSpace(p.TargetBranch) == "" {
 		target = "main"
 	}
-	source := strings.TrimSpace(p.SourceBranch)
+	source := strings.TrimSpace(p.SourceBranchExpr)
 	if source == "" {
-		source = "${FEATURE_ID}"
+		source = `"${FEATURE_ID}"`
 	}
 
 	remoteBlock := "# Remote branch deletion skipped (RemoteBranchPolicy != delete).\n"
@@ -240,7 +252,7 @@ set -euo pipefail
 FEATURE_ID='%s'
 PROJECT_ID='%s'
 TARGET_BRANCH='%s'
-SOURCE_BRANCH="%s"
+SOURCE_BRANCH=%s
 
 # The runner names worktree directories with a SANITIZED branch name
 # (runner.sanitizeBranchName: "/" becomes "-", everything outside
@@ -333,25 +345,4 @@ echo "[feature-checkout-simple] done"
 // literal and hand the rest of the value to bash as code, on a runner host.
 func shellSingleQuoted(s string) string {
 	return strings.ReplaceAll(s, "'", `'\''`)
-}
-
-// safeBranchLiteral reduces s to the characters git actually allows in a
-// branch name, so it can be embedded in the script's double-quoted
-// SOURCE_BRANCH assignment without carrying `$`, a backtick or a backslash
-// into a context bash would expand.
-//
-// This is a narrowing filter, not a validator: a name that loses characters
-// here would not have resolved as a branch anyway, and the script's own
-// "source branch no longer exists" guard reports that cleanly.
-func safeBranchLiteral(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '.' || r == '_' || r == '-' || r == '/':
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }

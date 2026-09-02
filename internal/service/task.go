@@ -1152,7 +1152,16 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 		// says.
 		stale := normalizedOpts.CheckoutMode == "simple" &&
 			existingTask.Executor != "script"
-		sameMode := existingTask.Mode == normalizedOpts.CheckoutMode
+		// Compare FOLDED modes. "" is a first-class stored value — the write
+		// side deliberately omits checkout_mode rather than persisting "ai"
+		// as a default, and every consumer treats empty as "ai". A raw string
+		// compare made the two front doors disagree by construction: the PWA
+		// always sends "ai", the MCP tool passes "" through when the caller
+		// omits it, so alternating between them deleted and recreated a
+		// byte-identical task forever, never converging — losing the task's
+		// id and resetting its retry attempt_count each time.
+		sameMode := foldCheckoutModeValue(existingTask.Mode) ==
+			foldCheckoutModeValue(normalizedOpts.CheckoutMode)
 		replaceable := existingTask.Resp.Status == "pending"
 		if (sameMode && !stale) || !replaceable {
 			return &types.CheckoutFeatureResult{
@@ -1205,16 +1214,23 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	content := buildFeatureCheckoutContent(sanitizedFeatureID, normalizedOpts)
 	var checkoutScript string
 	if normalizedOpts.CheckoutMode == "simple" {
-		sourceBranch := safeBranchLiteral(normalizedOpts.ExecutionBranch)
+		// The branch name is ESCAPED, never filtered. An earlier pass stripped
+		// it to [A-Za-z0-9._/-], which silently mangled names git accepts
+		// perfectly well (release/v1.0+rc1, fix/issue#42, feature/über-fix).
+		// The script's "source branch no longer exists" guard then reported
+		// that mangled name as already-merged and exited 0, so the task went
+		// GREEN having merged nothing — the worst possible failure for a
+		// merge tool.
+		sourceBranch := strings.TrimSpace(normalizedOpts.ExecutionBranch)
 		if sourceBranch == "" {
-			sourceBranch = safeBranchLiteral(sanitizedFeatureID)
+			sourceBranch = sanitizedFeatureID
 		}
 		checkoutScript = renderSimpleFeatureCheckoutScript(simpleCheckoutScriptParams{
-			FeatureExpr:  shellSingleQuoted(sanitizedFeatureID),
-			ProjectExpr:  shellSingleQuoted(sanitizedProjectID),
-			SourceBranch: sourceBranch,
-			TargetBranch: normalizedOpts.MergeTargetBranch,
-			RemoteDelete: normalizedOpts.RemoteBranchPolicy == "delete",
+			FeatureExpr:      shellSingleQuoted(sanitizedFeatureID),
+			ProjectExpr:      shellSingleQuoted(sanitizedProjectID),
+			SourceBranchExpr: "'" + shellSingleQuoted(sourceBranch) + "'",
+			TargetBranch:     normalizedOpts.MergeTargetBranch,
+			RemoteDelete:     normalizedOpts.RemoteBranchPolicy == "delete",
 		})
 		content = checkoutScript
 	}
@@ -1414,6 +1430,17 @@ type existingCheckoutTask struct {
 	Executor string
 	// FilePath is the absolute path on disk, for superseding.
 	FilePath string
+}
+
+// foldCheckoutModeValue resolves a stored or requested checkout mode to the
+// value the rest of the system acts on. Empty means "ai" everywhere else
+// (foldCheckoutMode in event_service.go, and the routing in CheckoutFeature),
+// so any comparison of two modes has to agree with that.
+func foldCheckoutModeValue(mode string) string {
+	if strings.TrimSpace(mode) == "" {
+		return "ai"
+	}
+	return mode
 }
 
 // findCheckoutTaskByKey searches for a checkout task with the given generated_key.

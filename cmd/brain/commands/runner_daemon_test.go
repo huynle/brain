@@ -111,3 +111,64 @@ func TestDiscoverLocalRunners(t *testing.T) {
 		t.Errorf("default runner id = %q, want empty (never started)", found[0].RunnerID)
 	}
 }
+
+func TestAllocateRunnerName(t *testing.T) {
+	stateDir := withStateHome(t)
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	base := t.TempDir()
+	cfg := &UnifiedConfig{}
+	cfg.Runner.StateDir = base
+
+	newCmd := func(flags *RunnerFlags) *RunnerDaemonCommand {
+		return &RunnerDaemonCommand{Subcommand: "start", Config: cfg, Flags: flags}
+	}
+
+	// No --new: the explicit name (or the default) comes straight through.
+	name, err := newCmd(&RunnerFlags{}).allocateRunnerName()
+	if err != nil || name != runner.DefaultRunnerName {
+		t.Fatalf("allocateRunnerName = %q, %v; want %q", name, err, runner.DefaultRunnerName)
+	}
+	name, err = newCmd(&RunnerFlags{Name: "worker-a"}).allocateRunnerName()
+	if err != nil || name != "worker-a" {
+		t.Fatalf("allocateRunnerName = %q, %v; want worker-a", name, err)
+	}
+
+	// --new allocates, and skips a slot whose daemon is alive.
+	name, err = newCmd(&RunnerFlags{New: true}).allocateRunnerName()
+	if err != nil || name != "runner-2" {
+		t.Fatalf("allocateRunnerName = %q, %v; want runner-2", name, err)
+	}
+	if err := os.WriteFile(runnerPIDFile("runner-2"), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name, err = newCmd(&RunnerFlags{New: true}).allocateRunnerName()
+	if err != nil || name != "runner-3" {
+		t.Fatalf("allocateRunnerName = %q, %v; want runner-3 (runner-2 daemon is alive)", name, err)
+	}
+
+	// A stale pid file frees the slot again — reusing it keeps that runner id.
+	if err := os.WriteFile(runnerPIDFile("runner-2"), []byte("999999"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	name, err = newCmd(&RunnerFlags{New: true}).allocateRunnerName()
+	if err != nil || name != "runner-2" {
+		t.Fatalf("allocateRunnerName = %q, %v; want runner-2 (stale pid)", name, err)
+	}
+
+	// --new plus an explicit name is a contradiction, not a silent preference.
+	if _, err = newCmd(&RunnerFlags{New: true, Name: "worker-a"}).allocateRunnerName(); err == nil {
+		t.Fatal("allocateRunnerName accepted --new together with --name")
+	}
+}
+
+func TestRejectNewFlagOnStopAndStatus(t *testing.T) {
+	withStateHome(t)
+	for _, sub := range []string{"stop", "status"} {
+		cmd := &RunnerDaemonCommand{Subcommand: sub, Config: &UnifiedConfig{}, Flags: &RunnerFlags{New: true}}
+		if err := cmd.Execute(); err == nil {
+			t.Errorf("brain runner %s --new was accepted; want an error", sub)
+		}
+	}
+}

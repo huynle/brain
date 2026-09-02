@@ -645,3 +645,25 @@ func TestConvertToCommandsRunnerFlags(t *testing.T) {
 	assert.Equal(t, "high", got.PiThinking)
 	assert.Equal(t, []string{"prod-*"}, got.Include)
 }
+
+func TestParseRunnerFlags_ShortNameAndNew(t *testing.T) {
+	flags, err := ParseRunnerFlags([]string{"-n", "worker-a"})
+	require.NoError(t, err)
+	assert.Equal(t, "worker-a", flags.Name)
+	assert.False(t, flags.New)
+
+	flags, err = ParseRunnerFlags([]string{"--new"})
+	require.NoError(t, err)
+	assert.True(t, flags.New)
+	assert.Empty(t, flags.Name)
+
+	// -n is a value flag, so the project pre-scan must not mistake its value
+	// for a positional.
+	project, flagArgs := splitRunnerProjectArg([]string{"-n", "worker-a"})
+	assert.Equal(t, "all", project)
+	assert.Equal(t, []string{"-n", "worker-a"}, flagArgs)
+
+	project, flagArgs = splitRunnerProjectArg([]string{"my-project", "-n", "worker-a"})
+	assert.Equal(t, "my-project", project)
+	assert.Equal(t, []string{"-n", "worker-a"}, flagArgs)
+}

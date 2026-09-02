@@ -197,3 +197,56 @@ func ResolveRunnerIdentity(cfg *RunnerConfig) error {
 	}
 	return nil
 }
+
+// =============================================================================
+// Auto-named runners (`--new`)
+// =============================================================================
+
+// autoRunnerNamePrefix is the stem of a name handed out by `--new`. The unnamed
+// default runner is slot 1, so allocation starts at 2 and the number reads as
+// "the Nth runner on this machine".
+const autoRunnerNamePrefix = "runner-"
+
+// maxAutoRunnerSlots bounds the search. Well past any plausible number of
+// runners on one host, and it keeps a bug from spinning forever.
+const maxAutoRunnerSlots = 64
+
+// RunnerNameLive reports whether a runner is currently running out of the named
+// runner's state dir, judged by the per-project pid files the runner writes
+// there itself. This is what covers foreground, TUI and embedded runners, which
+// write no daemon pid file — handing one of them a name already in use would
+// put two processes on one runner id.
+func RunnerNameLive(baseStateDir, name string) bool {
+	dir := RunnerStateDir(baseStateDir, name)
+	for _, st := range FindAllRunnerStates(dir) {
+		if NewStateManager(dir, st.ProjectID).IsPidRunning() {
+			return true
+		}
+	}
+	return false
+}
+
+// NextFreeRunnerName returns the lowest unused "runner-N" (N >= 2) under
+// baseStateDir. inUse, when non-nil, is consulted alongside the state-dir check
+// so a caller can add its own notion of "taken" (the daemon adds its pid files).
+//
+// A slot whose runner is dead is REUSED rather than skipped: its state dir still
+// holds that runner's id, so reusing it keeps the id stable across a crash
+// instead of leaking a fresh identity and an orphaned directory every restart.
+func NextFreeRunnerName(baseStateDir string, inUse func(name string) bool) (string, error) {
+	if strings.TrimSpace(baseStateDir) == "" {
+		baseStateDir = DefaultStateDir()
+	}
+	for n := 2; n <= maxAutoRunnerSlots; n++ {
+		name := fmt.Sprintf("%s%d", autoRunnerNamePrefix, n)
+		if RunnerNameLive(baseStateDir, name) {
+			continue
+		}
+		if inUse != nil && inUse(name) {
+			continue
+		}
+		return name, nil
+	}
+	return "", fmt.Errorf("no free runner name: %s2..%s%d are all in use; name this runner explicitly with --name",
+		autoRunnerNamePrefix, autoRunnerNamePrefix, maxAutoRunnerSlots)
+}

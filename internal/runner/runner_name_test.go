@@ -1,9 +1,11 @@
 package runner
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestNormalizeRunnerName(t *testing.T) {
@@ -140,5 +142,51 @@ func TestResolveRunnerID_DistinctPerNamedStateDir(t *testing.T) {
 	}
 	if peeked := PeekRunnerID(RunnerStateDir(base, "never-started")); peeked != "" {
 		t.Errorf("PeekRunnerID minted an id for an unstarted runner: %q", peeked)
+	}
+}
+
+func TestNextFreeRunnerName(t *testing.T) {
+	base := t.TempDir()
+
+	// Nothing running: the first auto name is runner-2, since the unnamed
+	// default runner is slot 1.
+	name, err := NextFreeRunnerName(base, nil)
+	if err != nil || name != "runner-2" {
+		t.Fatalf("NextFreeRunnerName = %q, %v; want runner-2, nil", name, err)
+	}
+
+	// Slots the caller reports as taken are skipped, in order.
+	taken := map[string]bool{"runner-2": true, "runner-3": true}
+	name, err = NextFreeRunnerName(base, func(n string) bool { return taken[n] })
+	if err != nil || name != "runner-4" {
+		t.Fatalf("NextFreeRunnerName = %q, %v; want runner-4, nil", name, err)
+	}
+
+	// A live runner in a name's state dir takes that name even with no daemon
+	// pid file — that is the foreground/TUI case.
+	live := RunnerStateDir(base, "runner-2")
+	sm := NewStateManager(live, "demo")
+	if err := os.MkdirAll(live, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sm.Save(RunnerStatusPolling, nil, RunnerStats{}, time.Now())
+	sm.SavePid(os.Getpid())
+	name, err = NextFreeRunnerName(base, nil)
+	if err != nil || name != "runner-3" {
+		t.Fatalf("NextFreeRunnerName = %q, %v; want runner-3 (runner-2 is live), nil", name, err)
+	}
+
+	// A dead runner's slot is reused, so its persisted runner id survives a
+	// crash instead of leaking a new identity per restart.
+	sm.SavePid(999999)
+	name, err = NextFreeRunnerName(base, nil)
+	if err != nil || name != "runner-2" {
+		t.Fatalf("NextFreeRunnerName = %q, %v; want runner-2 (stale slot reused), nil", name, err)
+	}
+
+	// Exhaustion is an error naming the fix, never a silent fallback to the
+	// default runner's state dir.
+	if _, err = NextFreeRunnerName(base, func(string) bool { return true }); err == nil {
+		t.Fatal("NextFreeRunnerName returned a name with every slot taken")
 	}
 }

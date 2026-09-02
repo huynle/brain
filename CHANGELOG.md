@@ -8,15 +8,22 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/en/
 
 ### Added
 
-- **Multiple runners on one machine.** `brain runner start --name <name>` starts
-  an additional, independently-registered runner on a host that already has one.
-  The name selects the runner's state dir (and therefore its persisted runner
-  id), its daemon pid/log files, and a `name` label shown in `brain run status`
-  and the web UI's runner list. `brain runner status` now lists every runner on
-  the machine; `brain runner stop --name <name>` stops one and
-  `brain runner stop --all` stops them all. `--name` also works on
-  `brain run start` and `brain start --runner`, and can be set with `RUNNER_NAME`
-  or `runner.name` in config.yaml.
+- **Multiple runners on one machine.** `brain runner start -n <name>` (or
+  `--new`, which assigns the next free `runner-N`) starts an additional,
+  independently-registered runner on a host that already has one. The name
+  selects the runner's state dir (and therefore its persisted runner id), its
+  daemon pid/log files, and a `name` label shown in `brain run status` and the
+  web UI's runner list. `brain runner status` now lists every runner on the
+  machine; `brain runner stop -n <name>` stops one and `brain runner stop --all`
+  stops them all. `-n` / `--name` / `--new` also work on `brain run start` and
+  `brain start --runner`, and the name can be set with `RUNNER_NAME` or
+  `runner.name` in config.yaml.
+
+  The positional project argument is unchanged and still optional — bare
+  `brain runner start` means all projects. A bare repeat is still refused rather
+  than silently doubling the fleet; the error names `--new`. `--new` reuses the
+  slot of a runner that died, so a crashed `runner-2` comes back with the runner
+  id it had instead of leaking a new identity and an orphaned state dir.
 
   An unnamed runner keeps the exact paths it had before — same state dir, same
   `brain-runner.pid` — so an existing deployment keeps its runner id and its

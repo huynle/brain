@@ -425,7 +425,7 @@ func parseAuthCommand(args []string) (Command, error) {
 // worker-a` reads "worker-a" as a second positional and eats the flag's value —
 // which is how a daemonized `--name` runner silently came up unnamed.
 var runnerValueFlags = map[string]bool{
-	"--name": true, "--max-parallel": true, "-p": true, "--poll-interval": true,
+	"--name": true, "-n": true, "--max-parallel": true, "-p": true, "--poll-interval": true,
 	"--workdir": true, "-w": true, "--agent": true, "--model": true, "-m": true,
 	"--executor": true, "--pi-bin": true, "--pi-model": true, "--pi-thinking": true,
 	"--include": true, "-i": true, "--exclude": true, "-e": true,
@@ -777,6 +777,7 @@ func convertToCommandsAPIFlags(flags *APIFlags) *commands.APIFlags {
 func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 	return &commands.RunnerFlags{
 		Name:         flags.Name,
+		New:          flags.New,
 		All:          flags.All,
 		TUI:          flags.TUI,
 		Foreground:   flags.Foreground,

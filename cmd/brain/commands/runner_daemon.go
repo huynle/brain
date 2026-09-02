@@ -98,16 +98,46 @@ func (c *RunnerDaemonCommand) runnerName() (string, error) {
 	return runner.NormalizeRunnerName(name)
 }
 
+// allocateRunnerName returns the name a `start` should use: the one given with
+// --name, or — with --new — the lowest free auto name.
+//
+// "Free" means no live daemon pid file AND no live runner in that state dir, so
+// --new can never hand out a name a foreground or TUI runner is already using.
+func (c *RunnerDaemonCommand) allocateRunnerName() (string, error) {
+	if c.Flags != nil && c.Flags.New {
+		if strings.TrimSpace(c.Flags.Name) != "" {
+			return "", fmt.Errorf("--new and --name are mutually exclusive: --new picks the name for you")
+		}
+		return runner.NextFreeRunnerName(c.baseStateDir(), func(name string) bool {
+			pid, err := lifecycle.ReadPID(runnerPIDFile(name))
+			return err == nil && lifecycle.IsProcessRunning(pid)
+		})
+	}
+	return c.runnerName()
+}
+
+// rejectNewFlag guards the subcommands --new says nothing about. Silently
+// ignoring a flag is how `--executor` went missing for a release.
+func (c *RunnerDaemonCommand) rejectNewFlag() error {
+	if c.Flags != nil && c.Flags.New {
+		return fmt.Errorf("--new applies to `brain runner start`, not `brain runner %s`", c.Subcommand)
+	}
+	return nil
+}
+
 // start launches the runner. By default it daemonizes (detaches into the
 // background); --foreground runs it headless in the current terminal.
 func (c *RunnerDaemonCommand) start() error {
-	name, err := c.runnerName()
+	name, err := c.allocateRunnerName()
 	if err != nil {
 		return err
 	}
 
 	// Foreground: run a headless runner in this process (delegates to `run start`).
+	// Hand it the already-allocated name so --new is resolved once, not twice.
 	if c.Flags.Foreground {
+		c.Flags.Name = name
+		c.Flags.New = false
 		rc := &RunCommand{
 			Subcommand: "start",
 			Project:    c.Project,
@@ -125,7 +155,7 @@ func (c *RunnerDaemonCommand) start() error {
 	// the same host is the point of the feature, not a collision.
 	if pid, err := lifecycle.ReadPID(pidFile); err == nil {
 		if lifecycle.IsProcessRunning(pid) {
-			return fmt.Errorf("runner %q already running (PID %d) — stop it with `brain runner stop%s`, or start another with `brain runner start --name <other>`",
+			return fmt.Errorf("runner %q already running (PID %d) — stop it with `brain runner stop%s`, or start another with `brain runner start --new` (auto-named) or `--name <other>`",
 				name, pid, stopFlagSuffix(name))
 		}
 		_ = lifecycle.ClearPID(pidFile) // stale
@@ -174,6 +204,9 @@ func stopFlagSuffix(name string) string {
 // stop sends SIGTERM to the background runner and waits for it to exit.
 // With --all it stops every runner started on this machine.
 func (c *RunnerDaemonCommand) stop() error {
+	if err := c.rejectNewFlag(); err != nil {
+		return err
+	}
 	if c.Flags != nil && c.Flags.All {
 		return c.stopAll()
 	}
@@ -301,6 +334,9 @@ func discoverLocalRunners(baseStateDir string) []localRunner {
 // status reports the background runners on this machine. With --name it reports
 // just that one; otherwise every runner this host has started.
 func (c *RunnerDaemonCommand) status() error {
+	if err := c.rejectNewFlag(); err != nil {
+		return err
+	}
 	if c.Flags != nil && c.Flags.Name != "" {
 		name, err := c.runnerName()
 		if err != nil {

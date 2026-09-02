@@ -364,7 +364,8 @@ USAGE:
 
 FLAGS:
   --runner                       Also run a local runner alongside the TUI
-  --name <name>                  Name the local runner (several per machine)
+  -n, --name <name>              Name the local runner (several per machine)
+  --new                          Name the local runner automatically
   --tui                          TUI mode (default behavior)
   --monitor                      Monitor-only TUI (no local runner; the default)
   -f, --foreground               Foreground mode without TUI
@@ -402,21 +403,26 @@ Run a runner on a machine that registers with the Brain API and claims/executes
 tasks. By default it daemonizes (detaches into the background); the runner then
 appears under the Control tab in the web UI for remote interaction.
 
-Several runners can share one machine. Give each one a --name: the name selects
-its own state dir (and therefore its own runner id), pid file and log file, so
-the runners register separately and each claims its own work. Without --name you
-get the single unnamed runner, exactly as before.
+The project argument is optional and defaults to all projects.
+
+Several runners can share one machine. Each additional one needs a name — with
+-n <name>, or --new to have one assigned. The name selects that runner's own
+state dir (and therefore its own runner id), pid file and log file, so the
+runners register separately and each claims its own work. With no name you get
+the single unnamed runner, exactly as before.
 
 USAGE:
   brain runner start [project|all]    Start a background runner (daemonized)
+  brain runner start --new            Start an additional, auto-named runner
+  brain runner start -n <name>        Start an additional, named runner
   brain runner start <p> --foreground Run a headless runner in this terminal
-  brain runner start <p> --name <n>   Start an additional, named runner
-  brain runner stop [--name <n>]      Stop a background runner
+  brain runner stop [-n <name>]       Stop a background runner
   brain runner stop --all             Stop every runner on this machine
   brain runner status                 List the runners on this machine
 
 FLAGS:
-  --name <name>                  Runner name (several runners per machine)
+  -n, --name <name>              Runner name (several runners per machine)
+  --new                          Start another runner under the next free name
   --all                          brain runner stop: stop every local runner
   --foreground                   Run headless in the foreground (don't detach)
   -p, --max-parallel <n>         Max parallel tasks
@@ -426,11 +432,12 @@ FLAGS:
   -h, --help                     Show this help
 
 EXAMPLES:
-  brain runner start all
-  brain runner start all --name worker-a --max-parallel 2
-  brain runner start all --name worker-b --executor pi
+  brain runner start                       # all projects, unnamed runner
+  brain runner start --new                 # another one, auto-named runner-2
+  brain runner start -n worker-a --max-parallel 2
+  brain runner start my-project -n worker-b --executor pi
   brain runner status
-  brain runner stop --name worker-b
+  brain runner stop -n worker-b
 
 See also: brain start --runner (TUI + a local runner), brain run (granular).
 `
@@ -461,7 +468,7 @@ EXAMPLES:
   brain run start
   brain run start my-project --foreground
   brain runner start all --max-parallel 4
-  brain runner start all --name worker-a
+  brain runner start --new
 `
 
 const runStartHelp = `brain run start - Start runner via run command

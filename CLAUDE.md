@@ -155,11 +155,21 @@ processes sharing a state dir register as the SAME runner, both subscribe to
 scheduler sends. `machine-id` is deliberately the opposite — one file per host,
 shared by all of them, because affinity asks "which box?", not "which runner?".
 
-- **`--name` is the operator handle.** It picks the state dir
+- **`-n` / `--name` is the operator handle.** It picks the state dir
   (`RunnerStateDir`: `<base>` for the default runner, `<base>/<name>` for any
   other), the daemon's `brain-runner-<name>.pid` / `.log`, the TUI's
   `runner-<name>.log`, and the `name` label advertised at registration. Also
-  settable as `RUNNER_NAME` or `runner.name` in config.yaml.
+  settable as `RUNNER_NAME` or `runner.name` in config.yaml. The positional
+  argument stays the PROJECT (optional, defaults to `all`) in both
+  `brain runner start` and `brain start` — naming is flag-only so neither
+  command's positional changes meaning.
+- **`--new` allocates a name** via `NextFreeRunnerName`: the lowest free
+  `runner-N` for N ≥ 2, counting the unnamed default runner as slot 1. "Free"
+  means no live daemon pid file AND no live pid in that name's state dir
+  (`RunnerNameLive`), so it can never hand out a name a foreground, TUI or
+  embedded runner already holds. A dead runner's slot is REUSED, not skipped —
+  the state dir still holds that runner's id, and skipping would leak a fresh
+  identity plus an orphaned directory on every crash.
 - **The unnamed runner keeps every historical path.** `DefaultRunnerName`
   ("default") maps back to the bare state dir and `brain-runner.pid`, so an
   upgrade neither strands a persisted runner id nor breaks `brain runner stop`.

@@ -38,6 +38,7 @@ type APIFlags struct {
 // RunnerFlags for runner commands
 type RunnerFlags struct {
 	Name         string
+	New          bool
 	All          bool
 	TUI          bool
 	Foreground   bool
@@ -150,6 +151,8 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 
 	fs.StringVar(&flags.Name, "name", "", "Runner name (lets several runners share one machine)")
+	fs.StringVar(&flags.Name, "n", "", "Runner name (short)")
+	fs.BoolVar(&flags.New, "new", false, "Start an additional runner under an auto-assigned name")
 	fs.BoolVar(&flags.All, "all", false, "Apply to every runner on this machine (brain runner stop)")
 	fs.BoolVar(&flags.TUI, "tui", false, "Interactive TUI")
 	fs.BoolVar(&flags.Foreground, "foreground", false, "Foreground without TUI")

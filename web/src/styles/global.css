@@ -339,24 +339,6 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
   color: #9098a1;
 }
 .collapse-btn:hover { color: #f4b23a; background: #1a1e22; }
-.sidebar-restore {
-  position: fixed;
-  left: 8px;
-  top: 48px;
-  z-index: 80;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 9px;
-  border-radius: 999px;
-  border-color: #f4b23a55;
-  background: #12161ae6;
-  color: #f4b23a;
-  box-shadow: 0 8px 24px #0008;
-  backdrop-filter: blur(6px);
-}
-.sidebar-restore span { color: #9098a1; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
-.sidebar-restore:hover { background: #1a1e22; border-color: #f4b23a; }
 .sb-section {
   border-bottom: 1px solid #1a1e22;
   display: flex; flex-direction: column;
@@ -2230,7 +2212,6 @@ body[data-theme="light"] .pcard-head .health {
   border-color: #c8d0d8;
 }
 body[data-theme="light"] .banner,
-body[data-theme="light"] .sidebar-restore,
 body[data-theme="light"] .empty-state {
   background: #f8fafce8;
   border-color: #d5dde5;

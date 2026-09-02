@@ -67,21 +67,12 @@ export function Sidebar(): JSX.Element {
     return { active, ready, blocked, completed, archived };
   }, [projects, liveProjects]);
 
-  if (collapsed) {
-    // Wireframe uses `body.sidebar-collapsed` + a floating restore
-    // pill that lives outside the sidebar. We render the restore
-    // pill here so it can share workspace state without extra portal
-    // plumbing.
-    return (
-      <button
-        className="sidebar-restore"
-        onClick={toggleCollapsed}
-        title="Show sidebar"
-      >
-        ☰ <span>sidebar</span>
-      </button>
-    );
-  }
+  // Collapsed renders NOTHING. The wireframe put a floating "☰ sidebar"
+  // restore pill here, but the topbar's ☰ — first control on the bar,
+  // beside the brand — already calls this same toggle. Two controls for
+  // one switch, one of them floating over the content, is a worse answer
+  // than the fixed one that is always in the same place.
+  if (collapsed) return <></>;
 
   return (
     <div className="sidebar">

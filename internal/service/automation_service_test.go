@@ -1972,7 +1972,18 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	}
 }
 
-func TestAutomationService_CheckScheduledCreatesScriptTaskWithDeterministicWorkdir(t *testing.T) {
+// A generated script task pins its executor and execution mode, and
+// deliberately pins NO workdir.
+//
+// This used to force target_workdir="/tmp", which reads as a safe default
+// and is not one: it OVERRIDES the runner's normal resolution chain (task
+// workdir → git remote clone → the runner's configured work dir) with a
+// directory that is guaranteed not to be a git repository. Every git-based
+// script died there on "not a git repository" — including the built-in
+// simple feature checkout, which is on by default. Leaving it empty gives a
+// script task the same workdir resolution every other task type already
+// gets.
+func TestAutomationService_CheckScheduledCreatesScriptTaskWithoutForcedWorkdir(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()
 	now := time.Date(2026, 4, 29, 13, 5, 0, 0, time.UTC)
@@ -2019,8 +2030,8 @@ func TestAutomationService_CheckScheduledCreatesScriptTaskWithDeterministicWorkd
 	if task.ExecutionMode != "current_branch" {
 		t.Fatalf("generated script task execution_mode = %q, want current_branch", task.ExecutionMode)
 	}
-	if task.TargetWorkdir != "/tmp" {
-		t.Fatalf("generated script task target_workdir = %q, want /tmp", task.TargetWorkdir)
+	if task.TargetWorkdir != "" {
+		t.Fatalf("generated script task target_workdir = %q, want empty so the runner resolves it", task.TargetWorkdir)
 	}
 }
 

@@ -214,7 +214,18 @@ func loadFromDisk(path string) (*config.UnifiedConfig, error) {
 	if err != nil {
 		return nil, err
 	}
-	var cfg config.UnifiedConfig
+	// Seed from defaults, exactly as config.LoadConfig does at startup, then
+	// let the file overlay it. Decoding into a ZERO struct reported whatever
+	// the Go zero value happened to be for every key the file omits — which
+	// is not what the running server is using.
+	//
+	// server.feature_checkout.enabled defaults to TRUE, so on any install
+	// whose config.yaml never mentioned it, the Settings toggle rendered OFF
+	// while the feature was ON. Worse, the field has no omitempty and
+	// HandlePut writes the whole struct back, so the first save of ANY
+	// unrelated field materialized `enabled: false` on disk and genuinely
+	// disabled feature checkout at the next restart.
+	cfg := config.DefaultConfig()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("yaml parse: %w", err)
 	}

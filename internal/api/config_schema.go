@@ -125,7 +125,7 @@ func ConfigSchema() []ConfigField {
 		{Path: "server.attachment_extraction.max_derived_text_chars", Kind: "int", Section: "attachment_extraction", Label: "Max derived text chars"},
 
 		// ─── feature_checkout ──────────────────────────────────
-		{Path: "server.feature_checkout.enabled", Kind: "bool", Section: "feature_checkout", Label: "Enable feature checkout automation", Help: "Automatically run the feature-checkout skill when all feature tasks complete."},
+		{Path: "server.feature_checkout.enabled", Kind: "bool", Section: "feature_checkout", Label: "Enable feature checkout automation", Help: "Registers the built-in feature-checkout automations at startup, so a completed feature is merged automatically. Takes effect when the API server restarts.", RequiresRestart: true},
 
 		// ─── runner ────────────────────────────────────────────
 		{Path: "runner.brain_api_url", Kind: "url", Section: "runner", Label: "Brain API URL", Help: "URL the runner uses to reach the API server.", RequiresRestart: true, Required: true},

@@ -133,33 +133,77 @@ func EnsureBuiltInFeatureCheckoutSimpleAutomation(ctx context.Context, brain *Br
 	return nil
 }
 
-// buildSimpleFeatureCheckoutScript returns a bash script that performs the
-// deterministic squash-merge sequence. The script uses Go template
-// placeholders that automation_service.renderAutomationTemplate expands at
-// task dispatch time. Available placeholders:
+// simpleCheckoutScriptParams are the values baked into one rendering of the
+// deterministic checkout script.
+//
+// Two callers render the same body from different sources, and they MUST NOT
+// drift: the built-in automation renders it once at ensure time with Brain
+// template placeholders that renderAutomationTemplate expands at dispatch,
+// while TaskServiceImpl.CheckoutFeature renders it with concrete ids because
+// the manual endpoint has no automation to expand anything. Sharing one
+// template is the only reason a fix to the merge sequence reaches both paths.
+type simpleCheckoutScriptParams struct {
+	// FeatureExpr and ProjectExpr are single-quoted shell literals as they
+	// appear in the script — either a Brain placeholder ({{.FeatureID}})
+	// for the automation, or a real id for the manual path.
+	FeatureExpr string
+	ProjectExpr string
+
+	// SourceBranch is a shell expression evaluated inside the script. It is
+	// "${FEATURE_ID}" unless a caller pinned an explicit execution branch.
+	SourceBranch string
+
+	// TargetBranch is the branch the feature is squash-merged into.
+	TargetBranch string
+
+	// RemoteDelete deletes the remote source branch after a pushed merge.
+	RemoteDelete bool
+}
+
+// buildSimpleFeatureCheckoutScript returns the automation's rendering: Brain
+// template placeholders that renderAutomationTemplate expands at task
+// dispatch time. Available placeholders:
 //
 //	{{.Project}}     — automation-owner project ID
 //	{{.ProjectID}}   — same as .Project
 //	{{.FeatureID}}   — the feature that completed
 //	{{.TaskID}}      — the task whose status change triggered completion
 //	{{.EventProjectID}} — source-event project (differs for cross-project)
+func buildSimpleFeatureCheckoutScript(cfg BuiltInFeatureCheckoutSimpleConfig) string {
+	return renderSimpleFeatureCheckoutScript(simpleCheckoutScriptParams{
+		FeatureExpr:  "{{.FeatureID}}",
+		ProjectExpr:  "{{.ProjectID}}",
+		SourceBranch: "${FEATURE_ID}",
+		TargetBranch: cfg.MergeTargetBranch,
+		RemoteDelete: cfg.RemoteBranchPolicy == "delete",
+	})
+}
+
+// renderSimpleFeatureCheckoutScript renders the deterministic squash-merge
+// sequence. It honors the following invariants:
 //
-// The script honors the following invariants:
 //   - Finding 7: `git -c merge.ff=true merge --squash` (never bare
 //     `git merge --squash`, which collides with global merge.ff=no).
-//   - Idempotency for retry: worktree/branch removal treats "not found"
-//     as success.
+//   - Re-runnable: a second run after a successful merge exits 0 rather
+//     than dying on "nothing to commit". This matters because the runner
+//     retries up to 3 times, and every failure AFTER the merge — a push
+//     hiccup, a branch still checked out in a worktree — would otherwise
+//     burn all three attempts on work that had already landed.
 //   - Fails loudly on merge conflicts (no auto-resolution — that's the AI
 //     path's job).
 //   - Never deletes the merge target branch.
-func buildSimpleFeatureCheckoutScript(cfg BuiltInFeatureCheckoutSimpleConfig) string {
-	target := strings.TrimSpace(cfg.MergeTargetBranch)
+func renderSimpleFeatureCheckoutScript(p simpleCheckoutScriptParams) string {
+	target := strings.TrimSpace(p.TargetBranch)
 	if target == "" {
 		target = "main"
 	}
+	source := strings.TrimSpace(p.SourceBranch)
+	if source == "" {
+		source = "${FEATURE_ID}"
+	}
 
 	remoteBlock := "# Remote branch deletion skipped (RemoteBranchPolicy != delete).\n"
-	if cfg.RemoteBranchPolicy == "delete" {
+	if p.RemoteDelete {
 		// PUSHED_TARGET gates this block. Deleting the remote source branch
 		// while the merge exists only locally destroys the only shared copy
 		// of the work: the remote loses the feature branch and never gains
@@ -176,27 +220,37 @@ fi
 `
 	}
 
-	return fmt.Sprintf(simpleFeatureCheckoutScriptTemplate, target, remoteBlock)
+	return fmt.Sprintf(
+		simpleFeatureCheckoutScriptTemplate,
+		p.FeatureExpr, p.ProjectExpr, target, source, remoteBlock,
+	)
 }
 
 // simpleFeatureCheckoutScriptTemplate is the deterministic squash-merge
-// script emitted by the simple built-in automation. It uses two fmt verbs:
-//  1. target branch (a literal, embedded at ensure time)
-//  2. remote deletion block (also a literal, embedded at ensure time)
-//
-// It also uses Go/Brain template placeholders like {{.FeatureID}} that
-// automation_service.renderAutomationTemplate expands at task dispatch time.
+// script body. It uses five fmt verbs, all embedded at render time:
+//  1. feature id expression   2. project id expression
+//  3. target branch           4. source branch expression
+//  5. remote deletion block
 const simpleFeatureCheckoutScriptTemplate = `#!/usr/bin/env bash
 set -euo pipefail
 
-# Built-in feature checkout (simple/script) — Phase 3.3.
-# Deterministic squash-merge for feature {{.FeatureID}} in project {{.ProjectID}}.
+# Built-in feature checkout (simple/script).
+# Deterministic squash-merge — no LLM.
 
-FEATURE_ID='{{.FeatureID}}'
-PROJECT_ID='{{.ProjectID}}'
+FEATURE_ID='%s'
+PROJECT_ID='%s'
 TARGET_BRANCH='%s'
-SOURCE_BRANCH="${FEATURE_ID}"  # runner convention: branch defaults to feature_id
-WORKTREE_PATH=".worktrees/${SOURCE_BRANCH}"
+SOURCE_BRANCH="%s"
+
+# The runner names worktree directories with a SANITIZED branch name
+# (runner.sanitizeBranchName: "/" becomes "-", everything outside
+# [A-Za-z0-9-_] is stripped), so a feature id like "feat/x" lives in
+# .worktrees/feat-x. Testing the raw name here missed the directory
+# entirely, skipped cleanup, and then died on ` + "`git branch -D`" + ` with
+# "cannot delete branch used by worktree" — AFTER the merge and push had
+# already landed.
+SAFE_BRANCH="$(printf '%%s' "${SOURCE_BRANCH}" | tr '/' '-' | tr -cd 'A-Za-z0-9-_')"
+WORKTREE_PATH=".worktrees/${SAFE_BRANCH}"
 
 echo "[feature-checkout-simple] project=${PROJECT_ID} feature=${FEATURE_ID}"
 echo "[feature-checkout-simple] source=${SOURCE_BRANCH} target=${TARGET_BRANCH}"
@@ -210,13 +264,30 @@ fi
 # Switch to the target branch. If unable, abort loudly.
 git checkout "${TARGET_BRANCH}"
 
+# Re-run guard. If the source branch is gone both locally and on the remote,
+# a previous run already merged it and cleaned up; finishing quietly beats
+# failing the task for work that is done.
+if ! git rev-parse --verify --quiet "${SOURCE_BRANCH}" >/dev/null 2>&1 &&
+   ! git rev-parse --verify --quiet "origin/${SOURCE_BRANCH}" >/dev/null 2>&1; then
+  echo "[feature-checkout-simple] source branch ${SOURCE_BRANCH} no longer exists; already checked out"
+  exit 0
+fi
+
 # Squash-merge with the Finding-7 invariant: ` + "`-c merge.ff=true`" + `
 # overrides any user gitconfig ` + "`merge.ff=no`" + `, which otherwise conflicts
 # with ` + "`--squash`" + `. This invariant is documented in the feature-checkout
 # skill markdown as well; both paths MUST agree.
 echo "[feature-checkout-simple] squash-merging ${SOURCE_BRANCH} into ${TARGET_BRANCH}"
 git -c merge.ff=true merge --squash "${SOURCE_BRANCH}"
-git commit -m "feat(${FEATURE_ID}): squash merge from ${SOURCE_BRANCH}"
+
+# Commit only if the squash actually staged something. A retry after a
+# successful merge stages nothing, and ` + "`git commit`" + ` would exit 1 under
+# ` + "`set -e`" + ` — failing a task whose merge had already landed.
+if git diff --cached --quiet; then
+  echo "[feature-checkout-simple] nothing staged; ${SOURCE_BRANCH} is already merged into ${TARGET_BRANCH}"
+else
+  git commit -m "feat(${FEATURE_ID}): squash merge from ${SOURCE_BRANCH}"
+fi
 
 # Publish the merge. Without this the feature only ever landed in one local
 # clone: another runner, another machine, or a fresh checkout would never see
@@ -240,10 +311,12 @@ else
   echo "[feature-checkout-simple] no worktree at ${WORKTREE_PATH}; skipping"
 fi
 
-# Local branch deletion (idempotent — ignore if already gone).
+# Local branch deletion (idempotent — ignore if already gone). Best-effort:
+# a branch still held by a worktree we could not remove must not fail a
+# checkout whose merge and push already succeeded.
 if git rev-parse --verify --quiet "${SOURCE_BRANCH}" >/dev/null; then
   echo "[feature-checkout-simple] deleting local branch ${SOURCE_BRANCH}"
-  git branch -D "${SOURCE_BRANCH}"
+  git branch -D "${SOURCE_BRANCH}" || echo "[feature-checkout-simple] could not delete ${SOURCE_BRANCH} (non-fatal)"
 else
   echo "[feature-checkout-simple] local branch ${SOURCE_BRANCH} already gone; skipping"
 fi
@@ -251,3 +324,34 @@ fi
 %s
 echo "[feature-checkout-simple] done"
 `
+
+// shellSingleQuoted escapes s for use inside a single-quoted shell literal.
+//
+// The manual checkout path bakes real project and feature ids into the
+// script, and neither is validated anywhere upstream — CheckoutFeature only
+// trims whitespace. An id containing an apostrophe would otherwise close the
+// literal and hand the rest of the value to bash as code, on a runner host.
+func shellSingleQuoted(s string) string {
+	return strings.ReplaceAll(s, "'", `'\''`)
+}
+
+// safeBranchLiteral reduces s to the characters git actually allows in a
+// branch name, so it can be embedded in the script's double-quoted
+// SOURCE_BRANCH assignment without carrying `$`, a backtick or a backslash
+// into a context bash would expand.
+//
+// This is a narrowing filter, not a validator: a name that loses characters
+// here would not have resolved as a branch anyway, and the script's own
+// "source branch no longer exists" guard reports that cleanly.
+func safeBranchLiteral(s string) string {
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		case r == '.' || r == '_' || r == '-' || r == '/':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}

@@ -516,9 +516,13 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		if req.ExecutionMode == "" {
 			req.ExecutionMode = "current_branch"
 		}
-		if req.TargetWorkdir == "" {
-			req.TargetWorkdir = "/tmp"
-		}
+		// No /tmp default. An empty TargetWorkdir lets the runner's normal
+		// chain resolve (task workdir → git remote clone → the runner's
+		// configured work dir); pinning /tmp OVERRIDES that chain with a
+		// directory that is guaranteed not to be a git repository, so every
+		// git-based script — the built-in simple feature checkout above all
+		// — died on "not a git repository" instead of running where the
+		// runner would otherwise have put it.
 	}
 
 	if evt.FeatureID != "" {
@@ -572,8 +576,16 @@ func (s *AutomationService) workdirFromFeatureTasks(ctx context.Context, project
 	if err != nil || resp == nil {
 		return ""
 	}
+	return workdirFromFeatureEntries(resp.Entries)
+}
+
+// workdirFromFeatureEntries is the pure half of workdirFromFeatureTasks, so
+// the manual checkout endpoint (which already has the feature's tasks in
+// hand, read straight off the filesystem) resolves a workdir by exactly the
+// same rule as the automation path.
+func workdirFromFeatureEntries(entries []types.BrainEntry) string {
 	var workdirFallback string
-	for _, t := range resp.Entries {
+	for _, t := range entries {
 		if t.Generated != nil && *t.Generated {
 			continue
 		}

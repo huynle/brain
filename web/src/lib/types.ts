@@ -191,6 +191,16 @@ export interface Task {
   is_abandoned?: boolean;
   abandon_reason?: AbandonReason;
 
+  // Why no runner can take this pending task, or absent when one could.
+  // Derived server-side by enrichUndispatchable from the executors the
+  // live fleet advertises. Shaped "no_runner_supports_executor:<name>".
+  //
+  // This is the one hold with no switch behind it: the task is filtered
+  // out of BOTH dispatch paths before any placement decision is recorded,
+  // so without this field it just sits at pending with nothing anywhere
+  // saying why.
+  undispatchable_reason?: string;
+
   // Runtime lifecycle flags for resume. resume_requested is set by
   // POST /resume and consumed by the runner at claim time.
   resume_requested?: boolean;

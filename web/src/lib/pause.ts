@@ -445,6 +445,7 @@ export function projectRunIndicator(
 // ─── Per-task hold reason ────────────────────────────────────────
 
 export type HoldCode =
+  | "no_executor"
   | "project_paused"
   | "automations_paused"
   | "runners_paused"
@@ -529,6 +530,36 @@ export function taskHoldReason(
 
   if (!isReadyUndispatched(task)) return null;
   const { pause, projectId } = ctx;
+
+  // Answered before every dial, because this is the one hold a dial cannot
+  // release. The task is filtered out server-side on both dispatch paths
+  // before any placement decision exists, so naming a pause here would send
+  // the user to flip a switch and watch nothing happen — while the real
+  // answer (no runner registers this executor) stayed invisible. That is
+  // exactly how the built-in simple feature checkout looked like it was
+  // doing nothing: it asks for the "script" executor, which runners register
+  // only when script.enabled is set, and that is off by default.
+  const undispatchable = task.undispatchable_reason ?? "";
+  if (undispatchable.startsWith("no_runner_supports_executor:")) {
+    const executor = undispatchable.slice(
+      "no_runner_supports_executor:".length,
+    );
+    return {
+      code: "no_executor",
+      glyph: "⚠",
+      short: `no ${executor} runner`,
+      detail:
+        `This task needs the "${executor}" executor and no running runner ` +
+        `advertises it, so it is filtered out before placement — pausing ` +
+        `and resuming will not release it, and Run now cannot either.` +
+        (executor === "script"
+          ? ` The script executor is off by default: set script.enabled ` +
+            `(or RUNNER_SCRIPT_ENABLED=true) in the RUNNER config and ` +
+            `restart the runner. Deterministic "simple" feature checkout ` +
+            `needs it.`
+          : ` Start a runner configured with that executor.`),
+    };
+  }
 
   // Dials compose. When a project dial AND the whole fleet are both off,
   // naming only one of them sends the user to flip a switch that will not

@@ -153,7 +153,77 @@ func (s *TaskServiceImpl) GetTasks(ctx context.Context, projectId string) (*type
 	if err := s.enrichAbandonmentState(ctx, projectId, result.Tasks); err != nil {
 		return nil, err
 	}
+	if err := s.enrichUndispatchable(ctx, result.Tasks); err != nil {
+		return nil, err
+	}
 	return result, nil
+}
+
+// enrichUndispatchable derives UndispatchableReason for pending tasks whose
+// executor no live runner advertises.
+//
+// Read-only and derived at response time, following enrichAbandonmentState:
+// no new sweeper, no stored state. One ListRunners call per response, not per
+// task.
+//
+// Deliberately narrow. It reports ONLY the executor mismatch, which is a
+// static property of the fleet's registrations — not capacity, capabilities,
+// pauses or affinity, which are per-decision and already surface through
+// placement reasons. A task is called undispatchable only when NO known
+// runner could ever take it as configured.
+func (s *TaskServiceImpl) enrichUndispatchable(ctx context.Context, tasks []types.ResolvedTask) error {
+	if len(tasks) == 0 || s.storage == nil {
+		return nil
+	}
+	var pending bool
+	for i := range tasks {
+		if tasks[i].Status == "pending" {
+			pending = true
+			break
+		}
+	}
+	if !pending {
+		return nil
+	}
+
+	runners, err := s.storage.ListRunners(ctx)
+	if err != nil {
+		// A diagnostic must never fail the listing it annotates.
+		return nil
+	}
+	// An empty fleet means "no runner has registered yet", which is a normal
+	// transient state at boot — not a mismatch to report against.
+	supported := make(map[string]bool)
+	var known int
+	for _, r := range runners {
+		if r.Status == "offline" {
+			continue
+		}
+		known++
+		for _, e := range r.Executors {
+			supported[e] = true
+		}
+	}
+	if known == 0 {
+		return nil
+	}
+
+	for i := range tasks {
+		t := &tasks[i]
+		if t.Status != "pending" {
+			continue
+		}
+		executor := t.Executor
+		if executor == "" {
+			// Matches filterByExecutors: an unset executor means opencode.
+			executor = "opencode"
+		}
+		if supported[executor] {
+			continue
+		}
+		t.UndispatchableReason = "no_runner_supports_executor:" + executor
+	}
+	return nil
 }
 
 func (s *TaskServiceImpl) enrichDispatchDiagnostics(ctx context.Context, projectID string, tasks []types.ResolvedTask) error {
@@ -1057,15 +1127,49 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 		return nil, fmt.Errorf("failed to create task directory: %w", err)
 	}
 
-	// Look for existing checkout task with this generated_key
+	// Look for an existing checkout task with this generated_key.
+	//
+	// The key carries no mode and no round counter, so a second "Review &
+	// merge…" on the same feature used to be a permanent no-op that threw
+	// away whatever the user had just chosen — including the checkout mode.
+	// A user whose first attempt produced an AI task could never get the
+	// simple path to take, and the modal reported it as reassurance rather
+	// than as a refusal.
+	//
+	// A still-pending task has not been claimed by anything, so replacing it
+	// with the mode actually requested loses no work. Anything past pending
+	// is left alone: it is running or has run, and quietly deleting it would
+	// discard real history.
 	existingTask, err := findCheckoutTaskByKey(taskDir, generatedKey)
+	var supersededID string
 	if err == nil && existingTask != nil {
-		// Task already exists
-		return &types.CheckoutFeatureResult{
-			Created:      false,
-			GeneratedKey: generatedKey,
-			Task:         existingTask,
-		}, nil
+		// A checkout task written before this build RECORDED checkout_mode
+		// without acting on it, so a stored "simple" task can carry no
+		// executor and no script — the exact shape that could never run. It
+		// matches on mode, so a mode comparison alone would hand that dead
+		// task back forever and the fix would never reach any feature that
+		// already had one. Compare what the task can DO, not just what it
+		// says.
+		stale := normalizedOpts.CheckoutMode == "simple" &&
+			existingTask.Executor != "script"
+		sameMode := existingTask.Mode == normalizedOpts.CheckoutMode
+		replaceable := existingTask.Resp.Status == "pending"
+		if (sameMode && !stale) || !replaceable {
+			return &types.CheckoutFeatureResult{
+				Created:      false,
+				GeneratedKey: generatedKey,
+				Task:         existingTask.Resp,
+			}, nil
+		}
+		if err := os.Remove(existingTask.FilePath); err != nil {
+			return nil, fmt.Errorf("supersede checkout task %s: %w", existingTask.Resp.ID, err)
+		}
+		if s.indexer != nil {
+			// Best-effort: the file is already gone, and a stale index row
+			// must not fail a checkout the user asked for.
+			_ = s.indexer.RemoveFile(existingTask.Resp.Path)
+		}
+		supersededID = existingTask.Resp.ID
 	}
 
 	// Get all feature tasks to build depends_on list
@@ -1082,8 +1186,38 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	filename := shortID + ".md"
 	taskPath := filepath.Join(taskDir, filename)
 
-	// Build checkout task content
+	// Resolve the repo the feature's work actually happened in. The manual
+	// endpoint inherits nothing from an automation entry, so without this the
+	// checkout task carries no workdir at all and the runner resolves it
+	// against whatever its own default happens to be — which for a git merge
+	// means merging some unrelated checkout, or none.
+	checkoutWorkdir := workdirFromFeatureEntries(featureTasks)
+
+	// Build checkout task content, routed by checkout_mode.
+	//
+	// This routing is the whole point of the mode and it did not exist:
+	// CheckoutFeature used to WRITE checkout_mode into frontmatter and never
+	// read it, so "Simple" produced the same LLM prose task as "AI" — no
+	// executor, no script, nothing deterministic. The squash-merge script
+	// lived only inside the built-in automation, reachable only from a
+	// feature.completed event, which this endpoint does not publish. Picking
+	// Simple in the modal therefore could not do what the modal said it did.
 	content := buildFeatureCheckoutContent(sanitizedFeatureID, normalizedOpts)
+	var checkoutScript string
+	if normalizedOpts.CheckoutMode == "simple" {
+		sourceBranch := safeBranchLiteral(normalizedOpts.ExecutionBranch)
+		if sourceBranch == "" {
+			sourceBranch = safeBranchLiteral(sanitizedFeatureID)
+		}
+		checkoutScript = renderSimpleFeatureCheckoutScript(simpleCheckoutScriptParams{
+			FeatureExpr:  shellSingleQuoted(sanitizedFeatureID),
+			ProjectExpr:  shellSingleQuoted(sanitizedProjectID),
+			SourceBranch: sourceBranch,
+			TargetBranch: normalizedOpts.MergeTargetBranch,
+			RemoteDelete: normalizedOpts.RemoteBranchPolicy == "delete",
+		})
+		content = checkoutScript
+	}
 
 	// Build frontmatter
 	trueVal := true
@@ -1126,6 +1260,20 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	if normalizedOpts.ExecutionMode != "" {
 		fm.ExecutionMode = normalizedOpts.ExecutionMode
 	}
+	if checkoutScript != "" {
+		// The script executor reads direct_prompt as the command to run, so
+		// the body alone is not enough — a task with script content but no
+		// executor resolves to opencode and hands an LLM a bash script as a
+		// prompt.
+		fm.Executor = "script"
+		fm.DirectPrompt = checkoutScript
+		// The script does its own `git checkout <target>`; a worktree would
+		// put it on a detached feature branch with nothing to merge into.
+		fm.ExecutionMode = "current_branch"
+		if checkoutWorkdir != "" {
+			fm.TargetWorkdir = checkoutWorkdir
+		}
+	}
 	if normalizedOpts.OpenPRBeforeMerge {
 		fm.OpenPRBeforeMerge = &normalizedOpts.OpenPRBeforeMerge
 	}
@@ -1159,8 +1307,10 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 
 	// Build response
 	result := &types.CheckoutFeatureResult{
-		Created:      true,
-		GeneratedKey: generatedKey,
+		Created:          true,
+		GeneratedKey:     generatedKey,
+		Superseded:       supersededID != "",
+		SupersededTaskID: supersededID,
 		Task: &types.CreateEntryResponse{
 			ID:     shortID,
 			Path:   relPath,
@@ -1251,8 +1401,23 @@ func buildFeatureCheckoutContent(featureID string, opts *types.FeatureCheckoutOp
 	return strings.Join(lines, "\n")
 }
 
+// existingCheckoutTask is what findCheckoutTaskByKey reports about a
+// checkout task already on disk: the response shape callers return, plus the
+// two fields CheckoutFeature needs to decide whether that task still answers
+// the request it just received.
+type existingCheckoutTask struct {
+	Resp *types.CreateEntryResponse
+	// Mode is the stored checkout_mode ("" for entries written before modes).
+	Mode string
+	// Executor is the stored executor, used to tell a task that merely
+	// RECORDS a mode from one that can actually carry it out.
+	Executor string
+	// FilePath is the absolute path on disk, for superseding.
+	FilePath string
+}
+
 // findCheckoutTaskByKey searches for a checkout task with the given generated_key.
-func findCheckoutTaskByKey(taskDir, generatedKey string) (*types.CreateEntryResponse, error) {
+func findCheckoutTaskByKey(taskDir, generatedKey string) (*existingCheckoutTask, error) {
 	entries, err := os.ReadDir(taskDir)
 	if err != nil {
 		return nil, err
@@ -1280,12 +1445,22 @@ func findCheckoutTaskByKey(taskDir, generatedKey string) (*types.CreateEntryResp
 			title := doc.Frontmatter.Title
 			status := doc.Frontmatter.Status
 
-			return &types.CreateEntryResponse{
-				ID:     shortID,
-				Path:   fmt.Sprintf("projects/%s/%s", filepath.Base(filepath.Dir(taskDir)), entry.Name()),
-				Title:  title,
-				Type:   "task",
-				Status: status,
+			return &existingCheckoutTask{
+				Resp: &types.CreateEntryResponse{
+					ID: shortID,
+					// The "/task/" segment was missing here while the
+					// creation path below emits it, so the already-exists
+					// branch handed back a path that resolves to nothing —
+					// a 404 for a task that exists.
+					Path: fmt.Sprintf("projects/%s/task/%s",
+						filepath.Base(filepath.Dir(taskDir)), entry.Name()),
+					Title:  title,
+					Type:   "task",
+					Status: status,
+				},
+				Mode:     doc.Frontmatter.CheckoutMode,
+				Executor: doc.Frontmatter.Executor,
+				FilePath: filePath,
 			}, nil
 		}
 	}
@@ -1335,6 +1510,13 @@ func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID str
 			Status:        doc.Frontmatter.Status,
 			Generated:     generated,
 			GeneratedKind: doc.Frontmatter.GeneratedKind,
+			// The repo the work happened in. Carried so CheckoutFeature can
+			// resolve a workdir for the checkout task it generates: the
+			// manual endpoint inherits none from an automation entry, and a
+			// git script with no workdir runs wherever the runner happens to
+			// be. Dropping these here silently produced exactly that.
+			TargetWorkdir: doc.Frontmatter.TargetWorkdir,
+			Workdir:       doc.Frontmatter.Workdir,
 		})
 	}
 

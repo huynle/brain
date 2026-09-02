@@ -48,15 +48,12 @@ import { useAutoArchive } from "../../hooks/useAutoArchive";
 import { useActionRunner } from "../../hooks/useActionRunner";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
 import { buildSelectionActions } from "../../lib/actions/selectionActions";
-import {
-  buildTaskGroupActions,
-  type TaskGroup,
-  type TaskGroupActionContext,
-} from "../../lib/actions/taskGroupActions";
 import { isRangeKey } from "../../lib/selection";
 import { CHAIN_QUEUED_TITLE, chainRootTitle } from "../../lib/chains";
 import { buildTaskForest } from "../../lib/taskTree";
 import { flattenDepForest, type DepRow } from "../../lib/depTree";
+import { NO_FEATURE } from "../../lib/taskGroups";
+import { TaskGroupBlock } from "./TaskGroupBlock";
 import type { Task } from "../../lib/types";
 import {
   buildFeatureForest,
@@ -83,40 +80,6 @@ function featStateClass(f: DerivedFeature): string {
  *  `featureCollapsed` map. Archived buckets are prefixed because the SAME
  *  feature can hold both live and archived tasks, and folding one must not
  *  fold the other. */
-export const NO_FEATURE = "__nofeat__";
-export const archivedKey = (featureId: string) => `__archived__:${featureId}`;
-
-/**
- * Bucket archived tasks by feature, preserving dependency order inside
- * each bucket.
- *
- * `deriveFeatures` skips archived tasks, so an all-archived feature has
- * no DerivedFeature to hang rows under — but the raw `feature_id`
- * survives archiving, and that is all a header needs. Real features
- * first in id order, the ungrouped bucket last, matching the live list.
- */
-export function bucketArchived(archivedTasks: readonly Task[]) {
-  const buckets = new Map<string, Task[]>();
-  for (const t of archivedTasks) {
-    const key = t.feature_id ?? NO_FEATURE;
-    const arr = buckets.get(key);
-    if (arr) arr.push(t);
-    else buckets.set(key, [t]);
-  }
-  const keys = [...buckets.keys()]
-    .filter((k) => k !== NO_FEATURE)
-    .sort((a, b) => a.localeCompare(b));
-  if (buckets.has(NO_FEATURE)) keys.push(NO_FEATURE);
-  return keys.map((key) => {
-    const bucket = buckets.get(key)!;
-    return {
-      key,
-      label: key === NO_FEATURE ? "No feature" : key,
-      tasks: bucket,
-      rows: flattenDepForest(buildTaskForest(bucket)),
-    };
-  });
-}
 
 /** The tri-state fold: an explicit click outranks the lifecycle default.
  *  Module-level and pure so the render and the shift-click ordering read
@@ -131,98 +94,6 @@ export interface CardTasksProps {
   projectId: string;
   tasks: readonly Task[];
   features: DerivedFeature[];
-}
-
-/**
- * A group of tasks that is NOT a feature: the ungrouped bucket, and each
- * bucket inside the archive fold.
- *
- * One component for both, because they are the same object — a header, a
- * fold, and a verb list over an explicit set of tasks. The header answers
- * right-click, long-press and the keyboard through `useRowActions` like
- * every other row on the card; it is NOT draggable and carries no
- * selection checkbox, because there is no feature entity behind it to
- * assign to a runner or to mark.
- */
-export function TaskGroupBlock({
-  group,
-  rows,
-  collapsed,
-  renderRow,
-  rowProps,
-  ctx,
-  nested = false,
-}: {
-  group: TaskGroup;
-  rows: DepRow<Task>[];
-  collapsed: boolean;
-  renderRow: (row: DepRow<Task>) => JSX.Element;
-  rowProps: ReturnType<typeof useRowActions>["rowProps"];
-  ctx: TaskGroupActionContext;
-  /** Rendered inside the archive fold — indent it under that header. */
-  nested?: boolean;
-}): JSX.Element {
-  const n = group.tasks.length;
-  const actions = buildTaskGroupActions(group, ctx, { collapsed });
-  const rp = rowProps(actions, group.label, () => ctx.toggleCollapsed(group));
-  const word = `task${n === 1 ? "" : "s"}`;
-
-  return (
-    <div
-      className={`feat${collapsed ? " collapsed" : ""}`}
-      style={nested ? { marginLeft: 12 } : undefined}
-    >
-      <div
-        className="feat-head"
-        {...rp}
-        onKeyDown={(e) => {
-          // Same tree convention as a feature head, same modifier guard:
-          // ⌘←/Alt+← belongs to the browser, not to a fold.
-          if (
-            !e.metaKey &&
-            !e.ctrlKey &&
-            !e.altKey &&
-            (e.key === "ArrowLeft" || e.key === "ArrowRight")
-          ) {
-            e.preventDefault();
-            if (collapsed !== (e.key === "ArrowLeft")) ctx.toggleCollapsed(group);
-            return;
-          }
-          rp.onKeyDown(e);
-        }}
-        onClick={(e) => {
-          if ((e.target as HTMLElement).closest("button, .caret")) return;
-          ctx.toggleCollapsed(group);
-        }}
-      >
-        <span className="glyph-slot">
-          {/* A real <button>, unlike a feature caret: this header has no
-              selection checkbox competing for the slot, so nothing hides
-              it, and `.feat-head` here is not itself role="button". */}
-          <button
-            type="button"
-            className="caret"
-            aria-expanded={!collapsed}
-            aria-label={`${collapsed ? "Show" : "Hide"} ${n} ${word} in ${group.label}`}
-            title={collapsed ? `Show ${n} ${word}` : `Hide ${n} ${word}`}
-            onClick={(e) => {
-              e.stopPropagation();
-              ctx.toggleCollapsed(group);
-            }}
-          >
-            {collapsed ? "▸" : "▾"}
-          </button>
-        </span>
-        <span className="name" style={{ color: "#6b757e" }}>
-          {group.label}
-        </span>
-        <span className="age">
-          {n} {word}
-        </span>
-      </div>
-      {!collapsed && rows.map(renderRow)}
-    </div>
-  );
 }
 
 export function CardTasks({

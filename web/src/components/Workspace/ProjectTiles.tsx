@@ -58,7 +58,14 @@ export function ProjectTiles({ projectIds }: ProjectTilesProps): JSX.Element {
 
     const measure = (card: Element) => {
       if (!(card instanceof HTMLElement)) return;
-      card.style.gridRowEnd = `span ${spanFor(card.getBoundingClientRect().height)}`;
+      const next = `span ${spanFor(card.getBoundingClientRect().height)}`;
+      // Only write when it CHANGES. This callback runs on a resize and
+      // sets a property that affects layout, which is the shape of a
+      // ResizeObserver feedback loop ("loop completed with undelivered
+      // notifications"). Writing an identical value does not dirty
+      // layout, so the guard is what makes the cycle terminate rather
+      // than merely usually terminating.
+      if (card.style.gridRowEnd !== next) card.style.gridRowEnd = next;
     };
 
     // A card resizes for reasons React never re-renders for — a feature

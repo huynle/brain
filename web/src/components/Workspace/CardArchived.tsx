@@ -41,7 +41,8 @@ import { withForceRetry } from "../../lib/actions/forceRetry";
 import { deleteArchivedTasks } from "../../lib/api";
 import type { ActionDescriptor } from "../../lib/actions/types";
 import type { Task } from "../../lib/types";
-import { TaskGroupBlock, archivedKey, bucketArchived } from "./CardTasks";
+import { archivedKey, bucketArchived } from "../../lib/taskGroups";
+import { TaskGroupBlock } from "./TaskGroupBlock";
 import { useTaskRowRenderer } from "./TaskRow";
 
 export interface CardArchivedProps {

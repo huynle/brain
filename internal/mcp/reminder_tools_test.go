@@ -56,11 +56,11 @@ func TestReminderToolSchemas(t *testing.T) {
 		props    []string
 	}{
 		{"reminder_create", []string{"title"},
-			[]string{"project", "global", "title", "content", "remind_at", "timezone", "action", "prompt", "agent", "model", "executor", "execution_mode", "target_workdir", "tags", "feature_id"}},
+			[]string{"project", "global", "title", "content", "remind_at", "timezone", "action", "prompt", "agent", "model", "executor", "execution_mode", "target_workdir", "tags", "feature_id", "repeat", "repeat_until"}},
 		{"reminder_list", nil, []string{"project", "state"}},
 		{"reminder_get", []string{"reminder_id"}, []string{"reminder_id"}},
 		{"reminder_update", []string{"reminder_id"},
-			[]string{"reminder_id", "title", "content", "status", "remind_at", "timezone", "action", "prompt"}},
+			[]string{"reminder_id", "title", "content", "status", "remind_at", "timezone", "action", "prompt", "repeat", "repeat_until"}},
 		{"reminder_ack", []string{"reminder_id"}, []string{"reminder_id"}},
 		{"reminder_snooze", []string{"reminder_id", "remind_at"}, []string{"reminder_id", "remind_at"}},
 		{"reminder_delete", []string{"reminder_id"}, []string{"reminder_id"}},

@@ -130,6 +130,9 @@ func (s *ReminderService) SweepDue(ctx context.Context, now time.Time) (int, err
 		if e.Reminder == nil || !e.Reminder.IsDated() {
 			continue
 		}
+		if !reminderIsArmed(e) {
+			continue
+		}
 		at, err := e.Reminder.RemindAtTime()
 		if err != nil {
 			// A reminder whose date does not parse can never fire. Say so
@@ -148,28 +151,58 @@ func (s *ReminderService) SweepDue(ctx context.Context, now time.Time) (int, err
 		if now.UTC().Before(at.UTC()) {
 			continue
 		}
-		if _, err := s.fireOne(ctx, e, at, now); err != nil {
+		payload, err := s.fireOne(ctx, e, at, now)
+		if err != nil {
 			slog.Warn("reminder failed to fire", "entry", e.ID, "error", err)
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		fired++
+		// A nil payload means nothing happened — suppressed by the pause dial,
+		// or already recorded. Counting those as fired made the sweep report
+		// work it verifiably did not do.
+		if payload != nil {
+			fired++
+		}
 	}
 	return fired, firstErr
 }
 
-// listArmed loads dated, active reminders. Undated ones are excluded by the
+// reminderIsArmed reports whether an entry is eligible to fire.
+//
+// `active` is the ordinary armed state. `pending` means "fired and not yet
+// acknowledged" — eligible ONLY when the reminder repeats, which is what lets
+// a daily reminder keep firing while yesterday's notification is still on
+// screen. Everything else (completed, blocked, cancelled, archived) is a
+// deliberate stop.
+func reminderIsArmed(e types.BrainEntry) bool {
+	switch e.Status {
+	case "active":
+		return true
+	case "pending":
+		return e.Reminder.Repeats()
+	default:
+		return false
+	}
+}
+
+// listArmed loads dated reminders. Undated ones are excluded by the
 // TAG filter rather than by a predicate, so they are never loaded at all.
 func (s *ReminderService) listArmed(ctx context.Context) ([]types.BrainEntry, error) {
+	// NOTE: no Status filter.
+	//
+	// A recurring reminder sits at `pending` between occurrences — that is how
+	// its unacknowledged notification stays visible — so filtering to `active`
+	// would fire it once and never again. Status is applied per entry below
+	// instead: `active` is armed, `pending` is armed only when it repeats, and
+	// completed/blocked/cancelled/archived are never due.
 	var out []types.BrainEntry
 	const page = 200
 	offset := 0
 	for {
 		resp, err := s.brain.List(ctx, types.ListEntriesRequest{
 			Type:   "reminder",
-			Status: "active",
 			Tags:   types.ReminderDatedTag,
 			Limit:  page,
 			Offset: offset,
@@ -196,6 +229,14 @@ func (s *ReminderService) listArmed(ctx context.Context) ([]types.BrainEntry, er
 
 // fireOne performs one reminder's firing: claim, act, record.
 func (s *ReminderService) fireOne(ctx context.Context, e types.BrainEntry, at, now time.Time) (*types.ReminderFiredPayload, error) {
+	return s.fire(ctx, e, at, now, "")
+}
+
+// fire performs one firing. keySuffix distinguishes firings that share a
+// remind_at: the scheduled one passes "", a manual "fire now" passes a unique
+// value, because otherwise every manual fire of the same reminder collides
+// with the scheduled firing's claim and does nothing.
+func (s *ReminderService) fire(ctx context.Context, e types.BrainEntry, at, now time.Time, keySuffix string) (*types.ReminderFiredPayload, error) {
 	cfg := e.Reminder
 	lock := s.lockReminder(cfg.ID)
 	lock.Lock()
@@ -220,6 +261,9 @@ func (s *ReminderService) fireOne(ctx context.Context, e types.BrainEntry, at, n
 	// The key includes remind_at so a snooze (which rewrites it) can fire
 	// again while a mere reactivation cannot.
 	dedupKey := fmt.Sprintf("reminder:%s:%s", cfg.ID, cfg.RemindAt)
+	if keySuffix != "" {
+		dedupKey += ":" + keySuffix
+	}
 
 	lateBy := int64(now.UTC().Sub(at.UTC()) / time.Second)
 	if lateBy < 0 {
@@ -244,15 +288,30 @@ func (s *ReminderService) fireOne(ctx context.Context, e types.BrainEntry, at, n
 			if !isDuplicateDedupKey(err) {
 				return nil, fmt.Errorf("claim reminder %s: %w", cfg.ID, err)
 			}
-			// Already claimed. The entry is still `active`, which means a
-			// previous attempt crashed between the claim and the status flip.
-			// HEAL: finish the bookkeeping, do NOT re-run the action — that
-			// would double-create a task or re-notify.
+			// Someone already claimed this (id, remind_at). What that means is
+			// NOT knowable from the status — "crashed mid-firing" and "was
+			// reactivated without moving the time" both leave it active — so
+			// decide from durable evidence on the entry itself.
 			claimed = false
 		}
 	}
 
-	if claimed && action == types.ReminderActionTask {
+	// The claim row is written BEFORE the action runs, so a crash between the
+	// two leaves a claim for an action that never happened. `fired_at` and
+	// `generated_task_id` are the durable record of what actually completed,
+	// and they are what the heal path reads.
+	alreadyRecorded := strings.TrimSpace(cfg.FiredAt) != ""
+	taskOutstanding := action == types.ReminderActionTask &&
+		strings.TrimSpace(cfg.GeneratedTaskID) == ""
+
+	if !claimed && alreadyRecorded && !taskOutstanding {
+		// This firing genuinely happened. Do nothing at all — in particular
+		// do NOT re-stamp fired_at and flip the status, which would fake a
+		// fresh notification for a reminder somebody merely reactivated.
+		return nil, nil
+	}
+
+	if action == types.ReminderActionTask && (claimed || taskOutstanding) {
 		taskID, err := s.actionTask(ctx, e)
 		if err != nil {
 			return nil, fmt.Errorf("reminder %s task action: %w", cfg.ID, err)
@@ -265,25 +324,68 @@ func (s *ReminderService) fireOne(ctx context.Context, e types.BrainEntry, at, n
 	// re-index. status=pending IS the unacknowledged notification.
 	next := *cfg
 	next.FiredAt = payload.FiredAt
+	next.FireCount = cfg.FireCount + 1
 	if payload.GeneratedTaskID != "" {
 		next.GeneratedTaskID = payload.GeneratedTaskID
 	}
+
+	// A recurring reminder advances to its next occurrence NOW, in the same
+	// write that records this firing. It stays at `pending` so the
+	// unacknowledged notification remains visible — acknowledging it is what
+	// returns it to `armed`.
+	//
+	// The next time is computed from the SCHEDULED time, not from `now`, so a
+	// 09:00 daily reminder stays at 09:00 instead of walking later every time
+	// the sweeper ticks a few seconds late. It is advanced until it is in the
+	// future, which is what makes an outage collapse into one catch-up firing
+	// rather than a burst of backdated ones.
+	if cfg.Repeats() {
+		at := at
+		for {
+			n, ok := cfg.NextOccurrence(at)
+			if !ok {
+				break
+			}
+			at = n
+			if at.After(now) {
+				break
+			}
+		}
+		if cfg.RepeatEnded(at) {
+			// The recurrence is over: leave the date where it was so the
+			// history reads truthfully, and drop the dated tag by clearing it.
+			next.RemindAt = ""
+		} else {
+			next.RemindAt = at.Format(time.RFC3339)
+			payload.NextRemindAt = next.RemindAt
+		}
+	}
+
 	firedStatus := "pending"
-	if _, err := s.brain.Update(ctx, e.Path, types.UpdateEntryRequest{
+	update := types.UpdateEntryRequest{
 		Status:   &firedStatus,
 		Reminder: &next,
-	}); err != nil {
+	}
+	// The dated tag decides whether the sweeper ever loads this entry again,
+	// so an ended recurrence has to drop it here too.
+	update.Tags = reminderTagsFor(e.Tags, next)
+	if _, err := s.brain.Update(ctx, e.Path, update); err != nil {
 		return nil, fmt.Errorf("record reminder %s as fired: %w", cfg.ID, err)
 	}
 
-	if claimed && s.events != nil {
+	if (claimed || taskOutstanding) && s.events != nil {
 		// Through the event service so automations and webhooks can trigger
 		// off reminder.fired with no new engine code. Metadata is what
 		// TriggerConfig.Filter matches on, so the discriminating fields go
 		// there rather than only into an opaque payload.
 		if err := s.events.Ingest(ctx, []types.Event{{
-			Type:      types.EventReminderFired,
-			Source:    "reminder",
+			Type: types.EventReminderFired,
+			// MUST be one of the two sources EventServiceImpl.Ingest accepts
+			// ("runner" or "api"); it rejects anything else BEFORE publishing.
+			// A bare "reminder" here made every single firing fail to reach
+			// the hub — no webhook, no event automation, no SSE — with only a
+			// WARN line, while the README advertised the opposite.
+			Source:    types.EventSourceAPI,
 			Timestamp: now.UTC(),
 			ProjectID: e.ProjectID,
 			TaskID:    payload.GeneratedTaskID,

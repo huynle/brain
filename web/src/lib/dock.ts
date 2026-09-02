@@ -34,7 +34,8 @@ export interface DockLeaf {
     | "entry"
     | "project"
     | "automation-runs"
-    | "automation-detail";
+    | "automation-detail"
+    | "reminders";
   target: Record<string, unknown>;
   title: string;
 }
@@ -82,7 +83,8 @@ export function isDockLeafKind(kind: string): kind is DockLeaf["kind"] {
     kind === "entry" ||
     kind === "project" ||
     kind === "automation-runs" ||
-    kind === "automation-detail"
+    kind === "automation-detail" ||
+    kind === "reminders"
   );
 }
 

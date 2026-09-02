@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { useReminders, snoozeUntil } from "../hooks/useReminders";
+import { useWorkspace } from "../store/workspace";
 import { useUI } from "../store/ui";
 
 /** How overdue, in words. Reminders are inherently about time. */
@@ -33,6 +34,7 @@ export function ReminderBell(): JSX.Element | null {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const toast = useUI((s) => s.toast);
+  const openInFocus = useWorkspace((s) => s.openInFocus);
 
   // Close on an outside click or Escape, like every other transient popover.
   useEffect(() => {
@@ -86,7 +88,21 @@ export function ReminderBell(): JSX.Element | null {
       {open && (
         <div className="reminder-panel" role="dialog" aria-label="Reminders">
           <div className="reminder-panel__head">
-            {fired.length} reminder{fired.length === 1 ? "" : "s"}
+            <span>
+              {fired.length} reminder{fired.length === 1 ? "" : "s"}
+            </span>
+            {/* The bell shows only what is unacknowledged. Everything else —
+                what is scheduled, what already fired, what agents were sent
+                to do — lives in the centre, and needs a door. */}
+            <button
+              className="reminder-panel__all"
+              onClick={() => {
+                setOpen(false);
+                openInFocus("reminders", {}, "Reminders");
+              }}
+            >
+              See all →
+            </button>
           </div>
           <div className="reminder-panel__list">
             {fired.map((r) => (

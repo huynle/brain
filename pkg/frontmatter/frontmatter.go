@@ -172,6 +172,9 @@ type ReminderConfig struct {
 	Executor        string `yaml:"executor,omitempty" json:"executor,omitempty"`
 	ExecutionMode   string `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
 	TargetWorkdir   string `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
+	Repeat          string `yaml:"repeat,omitempty" json:"repeat,omitempty"`
+	RepeatUntil     string `yaml:"repeat_until,omitempty" json:"repeat_until,omitempty"`
+	FireCount       int    `yaml:"fire_count,omitempty" json:"fire_count,omitempty"`
 	FiredAt         string `yaml:"fired_at,omitempty" json:"fired_at,omitempty"`
 	GeneratedTaskID string `yaml:"generated_task_id,omitempty" json:"generated_task_id,omitempty"`
 }

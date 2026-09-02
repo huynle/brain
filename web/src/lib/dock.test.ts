@@ -522,6 +522,7 @@ test("dock: isDockLeafKind accepts every leaf kind and rejects assign", () => {
     "project",
     "automation-runs",
     "automation-detail",
+    "reminders",
   ] satisfies DockLeaf["kind"][]) {
     assert.equal(isDockLeafKind(kind), true, `${kind} should be a leaf kind`);
   }

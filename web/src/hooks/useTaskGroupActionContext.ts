@@ -130,16 +130,27 @@ export function useTaskGroupActionContext(
           return;
         }
 
+        // The tally and the cursor live OUTSIDE the retry. `withForceRetry`
+        // discards the throwing attempt and calls this again from the top,
+        // so a run that committed two chunks and 409'd on the third would
+        // otherwise re-send the first two — double-counting the update and,
+        // on the delete path below, reporting a hundred "not found"
+        // failures for entries it had itself already removed. Resuming at
+        // the chunk that failed is the only reading of "retry with force"
+        // that describes what happened.
+        const agg: FanOut = { ok: 0, failed: 0, firstError: "" };
+        const chunks = chunkPaths(paths);
+        let next = 0;
         const commit = async (force: boolean): Promise<FanOut> => {
-          const agg: FanOut = { ok: 0, failed: 0, firstError: "" };
-          for (const chunk of chunkPaths(paths)) {
-            const r = await bulkUpdateEntries(chunk, { status }, { force });
+          while (next < chunks.length) {
+            const r = await bulkUpdateEntries(chunks[next]!, { status }, { force });
             agg.ok += r.updated;
             agg.failed += r.failed;
             if (!agg.firstError) {
               const bad = r.results?.find((row) => row.status !== "ok");
               if (bad) agg.firstError = bad.error ?? bad.title ?? bad.id;
             }
+            next++;
           }
           return agg;
         };
@@ -173,16 +184,24 @@ export function useTaskGroupActionContext(
           return;
         }
 
+        // Resumes at the failed chunk rather than restarting — see the
+        // status path above. Here the cost of restarting is worse than a
+        // double count: a re-sent chunk of already-deleted paths comes
+        // back `failed` with "not found", so a delete that removed every
+        // task would report "deleted 50, failed 200".
+        const agg: FanOut = { ok: 0, failed: 0, firstError: "" };
+        const chunks = chunkPaths(paths);
+        let next = 0;
         const commit = async (force: boolean): Promise<FanOut> => {
-          const agg: FanOut = { ok: 0, failed: 0, firstError: "" };
-          for (const chunk of chunkPaths(paths)) {
-            const r = await bulkDeletePaths(chunk, { force });
+          while (next < chunks.length) {
+            const r = await bulkDeletePaths(chunks[next]!, { force });
             agg.ok += r.deleted;
             agg.failed += r.failed;
             if (!agg.firstError) {
               const bad = r.results?.find((row) => row.status !== "ok");
               if (bad) agg.firstError = bad.error ?? bad.title ?? bad.id;
             }
+            next++;
           }
           return agg;
         };

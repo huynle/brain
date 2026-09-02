@@ -83,12 +83,15 @@ export function TaskGroupBlock({
         }}
       >
         <span className="glyph-slot">
-          {/* A real <button>, unlike a feature caret: this header has no
-              selection checkbox competing for the slot, so nothing hides
-              it, and `.feat-head` here is not itself role="button". */}
-          <button
-            type="button"
+          {/* NOT a <button>: `rowProps` puts role="button" and tabIndex=0
+              on the header above, and a focusable button inside a
+              role="button" is both a nesting violation and a focus stop
+              that swallows the row's own key handling. The header IS the
+              focusable unit; ← / → fold from there. */}
+          <span
             className="caret"
+            role="button"
+            tabIndex={-1}
             aria-expanded={!collapsed}
             aria-label={`${collapsed ? "Show" : "Hide"} ${n} ${word} in ${group.label}`}
             title={collapsed ? `Show ${n} ${word}` : `Hide ${n} ${word}`}
@@ -98,7 +101,7 @@ export function TaskGroupBlock({
             }}
           >
             {collapsed ? "▸" : "▾"}
-          </button>
+          </span>
         </span>
         <span className="name" style={{ color: "#6b757e" }}>
           {group.label}

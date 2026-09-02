@@ -83,16 +83,27 @@ test("archive is disabled once everything is already archived", () => {
   const { ctx } = recorder();
   const all = byId(group([task("a", "archived")]), ctx);
   assert.match(all.get("archive")!.disabledReason!, /already archived/);
-  // …and restore becomes the live verb in that state, so the archive is
+  // …and unarchive becomes the live verb in that state, so the archive is
   // not a one-way door.
-  assert.equal(all.get("restore")!.disabledReason, "");
+  assert.equal(all.get("unarchive")!.disabledReason, "");
 });
 
-test("restore is disabled when nothing here is archived", () => {
+test("unarchive is disabled when nothing here is archived", () => {
   const { ctx } = recorder();
   const all = byId(group([task("a", "pending")]), ctx);
-  assert.match(all.get("restore")!.disabledReason!, /Nothing here is archived/);
+  assert.match(all.get("unarchive")!.disabledReason!, /Nothing here is archived/);
   assert.equal(all.get("archive")!.disabledReason, "");
+});
+
+// Unarchive restores to `completed`, NOT `pending`, matching the
+// single-task verb. `pending` is RUNNABLE — the scheduler dispatches every
+// ready task on its next pass — so restoring to it would re-execute work
+// that had already finished.
+test("unarchive restores to a status that will not be re-run", () => {
+  const { calls, ctx } = recorder();
+  const all = byId(group([task("a", "archived")]), ctx);
+  void all.get("unarchive")!.run();
+  assert.deepEqual(calls, ["status:completed"]);
 });
 
 test("cancel is disabled when no task is still live", () => {
@@ -136,7 +147,7 @@ test("every verb reaches its context function", async () => {
     "run:__nofeat__",
     "status:archived",
     "status:cancelled",
-    "status:pending",
+    "status:completed",
     "delete:__nofeat__",
   ]);
 });
@@ -146,7 +157,7 @@ test("every verb reaches its context function", async () => {
 test("an empty group keeps its verbs, disabled with reasons", () => {
   const { ctx } = recorder();
   const all = byId(group([]), ctx);
-  for (const id of ["select-all", "run", "archive", "cancel", "restore", "delete"]) {
+  for (const id of ["select-all", "run", "archive", "cancel", "unarchive", "delete"]) {
     assert.match(all.get(id)!.disabledReason!, /no tasks/i, id);
   }
 });

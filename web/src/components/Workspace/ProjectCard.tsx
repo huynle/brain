@@ -138,13 +138,16 @@ export function ProjectCard({
 
   // The sidebar's Archived chip narrows the grid to projects that HAVE
   // archived work; landing them on the Tasks tab would make the chip a
-  // filter with nothing to show. It selects the tab, it does not pin it —
-  // clicking another tab still wins, and leaving the chip restores the
-  // default.
+  // filter with nothing to show. So selecting it selects the tab.
+  //
+  // It only ever does that ONE thing. An earlier version also sent the
+  // card back to Tasks whenever the filter was anything else, which fired
+  // on EVERY chip transition — all→blocked would yank a user off the
+  // Archived tab they had opened by hand, for a chip that changes nothing
+  // about what the card shows.
   const statusFilter = useWorkspace((s) => s.statusFilter);
   useEffect(() => {
     if (statusFilter === "archived") setTab("archived");
-    else setTab((t) => (t === "archived" ? "tasks" : t));
   }, [statusFilter]);
   // Brain-native MRs fold into lifecycle (see lib/mergeRequests).
   const { openByProject } = useMergeRequests();

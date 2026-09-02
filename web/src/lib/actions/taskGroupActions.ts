@@ -199,13 +199,19 @@ export function buildTaskGroupActions(
           ? "No task here is still live"
           : "",
     ),
-    // The way back out of the archive. Without it, archiving a group from
-    // this menu is a one-way door — the rows move into the fold and the
-    // only route back is opening each task.
+    // The way back out of the archive. Without it, archiving a group is a
+    // one-way door — the rows move into the fold and the only route back
+    // is opening each task.
+    //
+    // It restores to `completed`, NOT `pending`, matching the single-task
+    // Unarchive verb. Pending is a RUNNABLE status: the scheduler picks up
+    // every ready task on its next pass, so "restore" would re-execute
+    // work that had already finished — with no record anywhere of what
+    // each task's status was before it was archived to restore instead.
     statusVerb(
-      "restore",
-      "Restore to pending…",
-      "pending",
+      "unarchive",
+      "Unarchive all…",
+      "completed",
       c.total === 0
         ? "Group has no tasks"
         : c.archived === 0

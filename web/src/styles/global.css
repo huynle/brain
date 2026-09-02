@@ -3624,14 +3624,14 @@ body[data-theme="light"] .dial.paused { color: var(--pause); }
    a fold nobody could operate. It is now the control, and needs a tap
    target to match: same trick as `.dial`, sized to stay within the head's
    6px gap so it cannot swallow a click meant for the feature name. */
-/* Some carets are <span role="button"> (a feature head, which is itself
-   role="button" and must not nest one) and some are real <button>s (the
-   group heads, which are not). That difference is an accessibility
-   detail; it must not be VISIBLE. Without these resets the real buttons
-   pick up the global `button` chrome — a 1px border, 3px 8px padding, a
-   4px radius — and the same fold control renders boxed in one place and
-   bare in another. Everything the generic rule sets is answered here,
-   including the light theme's solid-white fill. */
+/* Every caret is a <span role="button" tabIndex={-1}> — a feature head and
+   a group head are both role="button" themselves, so neither may nest a
+   focusable control, and the header is the focusable unit either way.
+   These resets stay as a guard: a caret that becomes a real <button>
+   again would silently pick up the global button chrome (a 1px border,
+   3px 8px padding, a 4px radius, and a solid white fill in light theme)
+   and render boxed where its siblings render bare — which is exactly what
+   happened once. */
 .feat-head button.caret,
 body[data-theme="light"] .feat-head button.caret {
   background: transparent;
@@ -3885,6 +3885,13 @@ body[data-theme="light"] .adetail-actions button.primary { color: #fff; }
    overridden by the observer's first measurement; the fallback for a
    browser with no ResizeObserver is the auto-placement below. */
 .project-tiles > .pcard { grid-row-end: span 100; }
+/* `body.mobile .overview` forces one column and a tighter gap, and the
+   cards are no longer ITS children — so the override has to follow them
+   here or a phone gets a 420px minimum column it cannot fit. */
+body.mobile .project-tiles {
+  grid-template-columns: 1fr;
+  column-gap: 8px;
+}
 @supports not (contain: layout) {
   .project-tiles { grid-auto-rows: max-content; row-gap: 12px; }
   .project-tiles > .pcard { grid-row-end: auto; }

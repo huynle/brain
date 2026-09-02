@@ -13,7 +13,7 @@
 import { useCallback } from "react";
 
 import { useUI } from "../store/ui";
-import { createEntry, deleteEntry } from "../lib/api";
+import { createEntry, deleteEntry, updateEntry } from "../lib/api";
 import {
   AUTO_ARCHIVE_TITLE,
   autoArchiveEntry,
@@ -37,6 +37,18 @@ export function useAutoArchive(projectId: string): UseAutoArchiveResult {
 
   const toggle = useCallback(async () => {
     const existing = findAutoArchive(automations);
+    // A switch that EXISTS but is not active reads as OFF, so a click on
+    // it means "turn this on". Branching on existence alone would take
+    // the delete path and destroy the automation the user was trying to
+    // enable — the opposite of the requested action, unconfirmed, with
+    // the box left unticked either way. `enabled` is what the checkbox
+    // shows, so `enabled` is what the toggle has to invert.
+    if (existing && !enabled) {
+      await updateEntry(existing.path, { status: "active" });
+      refetch();
+      toast(`${projectId}: auto-archive on`, "success");
+      return;
+    }
     if (existing) {
       // Delete rather than pause: the checkbox is a two-state control and
       // leaving a paused husk behind would make the Automations tab show
@@ -53,7 +65,7 @@ export function useAutoArchive(projectId: string): UseAutoArchiveResult {
         `move to Archived as soon as it completes`,
       "success",
     );
-  }, [automations, projectId, refetch, toast]);
+  }, [automations, enabled, projectId, refetch, toast]);
 
   return { enabled, isLoading, toggle };
 }

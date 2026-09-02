@@ -87,3 +87,16 @@ test("autoArchiveEntry explains itself and how to turn it off", () => {
   assert.match(String(e.content), /untick/i);
   assert.match(String(e.content), /Archived tab/);
 });
+
+// The checkbox and the toggle must invert the SAME value. Matching on
+// existence alone meant a paused switch (which renders unticked) took the
+// delete branch: clicking a box that said "off" to turn it on destroyed
+// the automation instead, unconfirmed, leaving the box still unticked.
+test("a paused switch reads as off, so it is reactivated rather than deleted", () => {
+  const paused = entry({ status: "archived" });
+  // What the checkbox shows:
+  assert.equal(isAutoArchiveOn([paused]), false);
+  // What the toggle finds — deliberately status-agnostic, which is why
+  // the hook must branch on `enabled`, not on existence.
+  assert.equal(findAutoArchive([paused])?.id, "a1");
+});

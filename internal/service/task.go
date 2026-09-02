@@ -819,6 +819,54 @@ func (s *TaskServiceImpl) RejectDispatch(ctx context.Context, projectId, taskId,
 		resp.Error = "dispatch lease not found or not rejectable"
 		return resp, api.ErrNotFound
 	}
+
+	// Record the rejection into the append-only placement-reason history so
+	// the reason survives the next push overwriting the single-row dispatch
+	// lease. task_dispatch_leases is keyed by (project_id, task_id) and holds
+	// only the LATEST attempt, so a task rejected every 5s (e.g. an AI-mode
+	// checkout with no git context looping on "workdir_unavailable") shows a
+	// fresh lease each time and no trace of how many times it tried or why.
+	// task_placement_reasons is the history table already surfaced on
+	// ResolvedTask.PlacementReasons and in the PWA task panel; recording here
+	// gives the operator a visible "N attempts, reason: workdir_unavailable"
+	// list instead of a task that silently sits pending forever.
+	//
+	// Best-effort: the reject itself already succeeded, so a history write
+	// failure must not turn a successful rejection into an error.
+	humanReason := reason.Code
+	if reason.Message != "" {
+		if humanReason != "" {
+			humanReason += ": " + reason.Message
+		} else {
+			humanReason = reason.Message
+		}
+	}
+	if humanReason == "" {
+		humanReason = "dispatch rejected by runner"
+	}
+	var machineID string
+	if lease, lerr := s.storage.GetDispatchLeaseRow(ctx, projectId, taskId); lerr == nil && lease != nil {
+		machineID = lease.AssignedMachineID
+	}
+	prRow := &storage.PlacementReasonRow{
+		ProjectID: projectId,
+		TaskID:    taskId,
+		RunnerID:  runnerId,
+		MachineID: machineID,
+		Decision:  "dispatch_rejected",
+		Reason:    humanReason,
+		CreatedAt: now,
+	}
+	if len(reason.Details) > 0 {
+		if encoded, derr := json.Marshal(reason.Details); derr == nil {
+			prRow.MissingLabels = string(encoded)
+		}
+	}
+	if perr := s.storage.RecordPlacementReason(ctx, prRow); perr != nil {
+		slog.Warn("record dispatch rejection history failed",
+			"project", projectId, "task_id", taskId, "runner_id", runnerId, "error", perr)
+	}
+
 	return resp, nil
 }
 

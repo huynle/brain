@@ -72,6 +72,65 @@ func TestTaskServiceRejectDispatchLeaseRecordsStructuredReason(t *testing.T) {
 	}
 }
 
+// TestTaskServiceRejectDispatchRecordsPlacementHistory is the regression test
+// for dispatch rejections being invisible in the UI.
+//
+// task_dispatch_leases holds only the latest attempt (PK is project+task), so a
+// task rejected repeatedly (e.g. an AI-mode checkout with no git context
+// looping on "workdir_unavailable") left no history of how many times it tried
+// or why. RejectDispatch now also appends a "dispatch_rejected" row to the
+// task_placement_reasons history the PWA already renders, so the operator sees
+// the attempt count and reason instead of a task silently stuck pending.
+func TestTaskServiceRejectDispatchRecordsPlacementHistory(t *testing.T) {
+	ctx := context.Background()
+	svc, store, brainDir := newTestTaskService(t)
+	createProjectDir(t, brainDir, "brain-api")
+
+	reason := types.DispatchRejectReason{
+		Code:    "workdir_unavailable",
+		Message: "worktree mode requires a valid git repo context",
+		Details: map[string]string{"execution_mode": "worktree"},
+	}
+
+	// Two rejection rounds: create a fresh lease each time (the scheduler
+	// pushes a new lease per attempt), reject it, and expect one history row
+	// per round.
+	for round := 0; round < 2; round++ {
+		createdLease, ok, err := store.CreateDispatchLease(ctx, storage.DispatchLeaseCreate{
+			ProjectID:        "brain-api",
+			TaskID:           "task-hist",
+			AssignedRunnerID: "runner-123",
+			PushedAt:         time.Now().UnixMilli(),
+			ExpiresAt:        time.Now().Add(time.Minute).UnixMilli(),
+		})
+		if err != nil || !ok {
+			t.Fatalf("round %d CreateDispatchLease ok=%v err=%v", round, ok, err)
+		}
+		if _, err := svc.RejectDispatch(ctx, "brain-api", "task-hist", "runner-123", createdLease.LeaseID, reason); err != nil {
+			t.Fatalf("round %d RejectDispatch() error = %v", round, err)
+		}
+	}
+
+	reasons, err := store.ListPlacementReasons(ctx, "brain-api", "task-hist")
+	if err != nil {
+		t.Fatalf("ListPlacementReasons error = %v", err)
+	}
+	if len(reasons) != 2 {
+		t.Fatalf("expected 2 placement-reason history rows, got %d: %+v", len(reasons), reasons)
+	}
+	for i, r := range reasons {
+		if r.Decision != "dispatch_rejected" {
+			t.Errorf("row %d decision = %q, want dispatch_rejected", i, r.Decision)
+		}
+		if !strings.Contains(r.Reason, "workdir_unavailable") {
+			t.Errorf("row %d reason = %q, want it to contain the rejection code", i, r.Reason)
+		}
+		if r.RunnerID != "runner-123" {
+			t.Errorf("row %d runner_id = %q, want runner-123", i, r.RunnerID)
+		}
+	}
+}
+
 func TestTaskServiceAckRejectMissingOrMismatchedLease(t *testing.T) {
 	ctx := context.Background()
 	svc, store, _ := newTestTaskService(t)

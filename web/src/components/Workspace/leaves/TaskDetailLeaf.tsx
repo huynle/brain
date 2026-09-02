@@ -21,6 +21,7 @@ import { Chip } from "../../common/Chip";
 import { Dot, type DotVariant } from "../../common/Dot";
 import { ErrorState } from "../../common/ErrorState";
 import { SessionsSection } from "../../Modal/SessionsSection";
+import { DispatchAttemptsSection } from "../../Modal/DispatchAttemptsSection";
 
 import { useModal } from "../../../store/modal";
 import { useLive } from "../../../lib/sse";
@@ -111,6 +112,10 @@ export function TaskDetailLeaf({
           projectId={projectId}
           onView={(t, ref) => taskCtx.openSessionInDrawer(t, ref)}
         />
+      </div>
+
+      <div style={{ marginTop: "var(--p2-space-3)" }}>
+        <DispatchAttemptsSection task={task} />
       </div>
 
       {task.content && (

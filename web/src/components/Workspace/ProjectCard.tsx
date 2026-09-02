@@ -3,7 +3,7 @@
  *
  * DOM:
  *   .pcard[data-project=pid]
- *     .pcard-head (dot · name · env · health · autos-paused · stats · close)
+ *     .pcard-head (dot · name · .pcard-meta[health · autos-paused · stats] · close)
  *     .hold-strip (why the last scheduler pass dispatched nothing)
  *     .flow-strip (lifecycle pills)
  *     .pcard-tabs (Tasks | Features | More▾ | Focus icon)
@@ -136,8 +136,11 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
   const openInFocusForTab = () => {
     if (tab === "features")
       openModal("feature", { projectId, featureId: features[0]?.id });
+    // Automations expand to their RUN HISTORY, not to the catalog the
+    // card already shows. (This used to open an empty browser pane —
+    // a blank iframe with no url, from before a runs surface existed.)
     else if (tab === "automations")
-      openInFocus("browser", { url: "" }, `${projectId} automations`);
+      openInFocus("automation-runs", { projectId }, `${projectId} runs`);
     else openInFocus("task-detail", { projectId }, projectId);
   };
 
@@ -170,45 +173,55 @@ export function ProjectCard({ projectId }: ProjectCardProps): JSX.Element {
             !hasSnapshot ? "connecting…" : connected ? "live" : "reconnecting"
           }
         />
-        <span className="name">{projectId}</span>
-        <span
-          className={`health ${health.tone}`}
-          title={badges.tasks ? badges.tasksTitle : undefined}
-        >
-          {health.label}
+        <span className="name" title={projectId}>
+          {projectId}
         </span>
-        {/* The automations dial is a DIFFERENT switch with a different
-            meaning, so it gets its own indicator rather than folding into
-            the health label. Both can be on at once. */}
-        {badges.automations && (
-          <span className="health autos-paused" title={badges.automationsTitle}>
-            autos paused
-          </span>
-        )}
-        <span className="spacer" />
-        {!hasSnapshot ? (
+        {/* State badges and counts are ONE wrapping unit: on a narrow card
+            they drop to a second line together, so the name keeps the first
+            line and "paused" never reads as a lone orphan above the counts
+            it qualifies. */}
+        <span className="pcard-meta">
           <span
-            className="stats compact"
-            style={{ color: "#6b757e", fontStyle: "italic" }}
+            className={`health ${health.tone}`}
+            title={badges.tasks ? badges.tasksTitle : undefined}
           >
-            connecting…
+            {health.label}
           </span>
-        ) : (
-          <span className="stats compact">
-            <span className="active">
-              <b>{stats.active}</b> active
+          {/* The automations dial is a DIFFERENT switch with a different
+              meaning, so it gets its own indicator rather than folding into
+              the health label. Both can be on at once. */}
+          {badges.automations && (
+            <span
+              className="health autos-paused"
+              title={badges.automationsTitle}
+            >
+              autos paused
             </span>
-            <span className="ready">
-              <b>{stats.ready}</b> ready
+          )}
+          {!hasSnapshot ? (
+            <span
+              className="stats compact"
+              style={{ color: "#6b757e", fontStyle: "italic" }}
+            >
+              connecting…
             </span>
-            <span className="blocked">
-              <b>{stats.blocked}</b> blocked
+          ) : (
+            <span className="stats compact">
+              <span className="active">
+                <b>{stats.active}</b> active
+              </span>
+              <span className="ready">
+                <b>{stats.ready}</b> ready
+              </span>
+              <span className="blocked">
+                <b>{stats.blocked}</b> blocked
+              </span>
+              <span>
+                <b>{stats.completed}</b> done
+              </span>
             </span>
-            <span>
-              <b>{stats.completed}</b> done
-            </span>
-          </span>
-        )}
+          )}
+        </span>
         <button
           className="close"
           title="Hide card"

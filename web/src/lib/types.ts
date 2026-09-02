@@ -623,6 +623,11 @@ export interface ListEntriesResponse {
   total: number;
   limit: number;
   offset: number;
+  /** Set when the server exhausted a bounded scan window before filling
+   *  the page (the post-SQL filters: automation_id, filename). "Fewer
+   *  rows than asked for" then means "older than the window", not "no
+   *  more rows" — surfaces must be able to tell those apart. */
+  truncated?: boolean;
 }
 
 export type SearchStrategy = "semantic" | "fts" | "hybrid";
@@ -743,13 +748,20 @@ export interface LinkedTaskSnapshot {
   status: string;
 }
 
+/**
+ * Counts are bucketed by the goal's own complete/blocked status sets, so they
+ * match the reconciler's view. `goal_status` aggregates them under the same
+ * rules and is always present; `feature_status` is feature semantics and is
+ * only sent for a feature-scoped goal.
+ */
 export interface GoalProgressResponse {
   goal_id: string;
   entry_id: string;
   project?: string;
   feature_id?: string;
   task_id?: string;
-  feature_status: string;
+  goal_status: string;
+  feature_status?: string;
   total: number;
   pending: number;
   in_progress: number;

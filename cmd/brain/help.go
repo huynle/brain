@@ -225,6 +225,7 @@ FLAGS:
   --host <host>                  Server bind host override
   --runner                       Start an embedded headless task runner
   --runner-project <project|all> Embedded runner project (default: all)
+  --runner-name <name>           Embedded runner name (several per machine)
   --max-parallel <n>             Embedded runner max parallel tasks
   -i, --include <pattern>        Include project glob for --runner-project all
   -e, --exclude <pattern>        Exclude project glob for --runner-project all
@@ -363,6 +364,8 @@ USAGE:
 
 FLAGS:
   --runner                       Also run a local runner alongside the TUI
+  -n, --name <name>              Name the local runner (several per machine)
+  --new                          Name the local runner automatically
   --tui                          TUI mode (default behavior)
   --monitor                      Monitor-only TUI (no local runner; the default)
   -f, --foreground               Foreground mode without TUI
@@ -400,19 +403,41 @@ Run a runner on a machine that registers with the Brain API and claims/executes
 tasks. By default it daemonizes (detaches into the background); the runner then
 appears under the Control tab in the web UI for remote interaction.
 
+The project argument is optional and defaults to all projects.
+
+Several runners can share one machine. Each additional one needs a name — with
+-n <name>, or --new to have one assigned. The name selects that runner's own
+state dir (and therefore its own runner id), pid file and log file, so the
+runners register separately and each claims its own work. With no name you get
+the single unnamed runner, exactly as before.
+
 USAGE:
   brain runner start [project|all]    Start a background runner (daemonized)
+  brain runner start --new            Start an additional, auto-named runner
+  brain runner start -n <name>        Start an additional, named runner
   brain runner start <p> --foreground Run a headless runner in this terminal
-  brain runner stop                   Stop the background runner
-  brain runner status                 Show whether a runner is running
+  brain runner stop [-n <name>]       Stop a background runner
+  brain runner stop --all             Stop every runner on this machine
+  brain runner status                 List the runners on this machine
 
 FLAGS:
+  -n, --name <name>              Runner name (several runners per machine)
+  --new                          Start another runner under the next free name
+  --all                          brain runner stop: stop every local runner
   --foreground                   Run headless in the foreground (don't detach)
   -p, --max-parallel <n>         Max parallel tasks
   -i, --include <pattern>        Include projects (repeatable)
   -e, --exclude <pattern>        Exclude projects (repeatable)
   --executor <name>              Default executor (opencode or pi)
   -h, --help                     Show this help
+
+EXAMPLES:
+  brain runner start                       # all projects, unnamed runner
+  brain runner start --new                 # another one, auto-named runner-2
+  brain runner start -n worker-a --max-parallel 2
+  brain runner start my-project -n worker-b --executor pi
+  brain runner status
+  brain runner stop -n worker-b
 
 See also: brain start --runner (TUI + a local runner), brain run (granular).
 `
@@ -443,6 +468,7 @@ EXAMPLES:
   brain run start
   brain run start my-project --foreground
   brain runner start all --max-parallel 4
+  brain runner start --new
 `
 
 const runStartHelp = `brain run start - Start runner via run command
@@ -1211,7 +1237,7 @@ func ShowHelp(command string) {
 		fmt.Print(startHelp)
 	case "run":
 		fmt.Print(runHelp)
-	case "runner":
+	case "runner", "runner start", "runner stop", "runner status":
 		fmt.Print(runnerHelp)
 	case "run start":
 		fmt.Print(runStartHelp)

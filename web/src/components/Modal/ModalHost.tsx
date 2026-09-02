@@ -21,7 +21,6 @@ import { TaskActionsModal } from "./TaskActionsModal";
 import { FeatureModal } from "./FeatureModal";
 import { FeatureActionsModal } from "./FeatureActionsModal";
 import { FeatureAssignModal } from "./FeatureAssignModal";
-import { AutomationModal } from "./AutomationModal";
 import { GoalModal } from "./GoalModal";
 import { GoalCreateModal } from "./GoalCreateModal";
 import { SettingsModal } from "./SettingsModal";
@@ -65,8 +64,6 @@ function renderKind(kind: ModalKind): JSX.Element | null {
       return <StatusPickerModal mode="feature" />;
     case "feature-metadata":
       return <MetadataModal mode="feature" />;
-    case "automation":
-      return <AutomationModal />;
     case "goal":
       return <GoalModal />;
     case "goal-create":

@@ -20,6 +20,7 @@ type GlobalFlags struct {
 // APIFlags for api command
 type APIFlags struct {
 	Port          int
+	RunnerName    string
 	Host          string
 	Daemon        bool
 	LogFile       string
@@ -36,6 +37,9 @@ type APIFlags struct {
 
 // RunnerFlags for runner commands
 type RunnerFlags struct {
+	Name         string
+	New          bool
+	All          bool
 	TUI          bool
 	Foreground   bool
 	Headless     bool
@@ -114,6 +118,7 @@ func ParseAPIFlags(args []string) (*APIFlags, error) {
 	fs.StringVar(&flags.TLSKey, "tls-key", "", "TLS key path")
 	fs.BoolVar(&flags.Runner, "runner", false, "Run embedded task runner")
 	fs.StringVar(&flags.RunnerProject, "runner-project", "", "Embedded runner project")
+	fs.StringVar(&flags.RunnerName, "runner-name", "", "Embedded runner name (several runners per machine)")
 	fs.IntVar(&flags.MaxParallel, "max-parallel", 0, "Embedded runner max parallel tasks")
 	fs.StringVar(&flags.Executor, "executor", "", "Embedded runner executor")
 	fs.Func("include", "Embedded runner include project pattern", func(s string) error {
@@ -145,6 +150,10 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	flags := &RunnerFlags{}
 	fs := flag.NewFlagSet("runner", flag.ExitOnError)
 
+	fs.StringVar(&flags.Name, "name", "", "Runner name (lets several runners share one machine)")
+	fs.StringVar(&flags.Name, "n", "", "Runner name (short)")
+	fs.BoolVar(&flags.New, "new", false, "Start an additional runner under an auto-assigned name")
+	fs.BoolVar(&flags.All, "all", false, "Apply to every runner on this machine (brain runner stop)")
 	fs.BoolVar(&flags.TUI, "tui", false, "Interactive TUI")
 	fs.BoolVar(&flags.Foreground, "foreground", false, "Foreground without TUI")
 	fs.BoolVar(&flags.Foreground, "f", false, "Foreground (short)")
@@ -356,6 +365,7 @@ func ApplyFlagsToConfig(cfg *UnifiedConfig, globalFlags *GlobalFlags, cmdFlags i
 // LifecycleFlags holds flags for lifecycle commands (start, stop, restart).
 type LifecycleFlags struct {
 	PIDFile       string
+	RunnerName    string
 	LogFile       string
 	Timeout       int
 	Force         bool
@@ -424,6 +434,11 @@ func ParseLifecycleFlags(args []string) (*LifecycleFlags, error) {
 				flags.RunnerProject = args[i+1]
 				i++
 			}
+		case "--runner-name":
+			if i+1 < len(args) {
+				flags.RunnerName = args[i+1]
+				i++
+			}
 		case "--max-parallel":
 			if i+1 < len(args) {
 				maxParallel := 0
@@ -466,6 +481,7 @@ func convertToCommandsLifecycleFlags(flags *LifecycleFlags) *commands.LifecycleF
 		Host:          flags.Host,
 		Runner:        flags.Runner,
 		RunnerProject: flags.RunnerProject,
+		RunnerName:    flags.RunnerName,
 		MaxParallel:   flags.MaxParallel,
 		Include:       flags.Include,
 		Exclude:       flags.Exclude,
@@ -1279,6 +1295,7 @@ func convertToCommandsAutomationFlags(flags *AutomationFlags) *commands.Automati
 type GoalFlags struct {
 	Project       string   // --project
 	Feature       string   // --feature
+	FeatureSet    bool     // --feature was passed (distinguishes "" from omitted)
 	Title         string   // --title
 	Content       string   // --content
 	TriggerSource string   // --trigger-source (task|feature|both)
@@ -1310,6 +1327,10 @@ func ParseAutomationGoalFlags(args []string) (*GoalFlags, error) {
 		case "--feature":
 			if i+1 < len(args) {
 				flags.Feature = args[i+1]
+				// Record the flag itself, not just its value: `edit` needs to
+				// tell an omitted --feature from `--feature ""`, which clears
+				// the goal's feature scope.
+				flags.FeatureSet = true
 				i++
 			}
 		case "--title":
@@ -1393,6 +1414,7 @@ func convertToCommandsGoalFlags(flags *GoalFlags) *commands.GoalFlags {
 	return &commands.GoalFlags{
 		Project:       flags.Project,
 		Feature:       flags.Feature,
+		FeatureSet:    flags.FeatureSet,
 		Title:         flags.Title,
 		Content:       flags.Content,
 		TriggerSource: flags.TriggerSource,

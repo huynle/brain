@@ -633,7 +633,14 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard.dragging { opacity: 0.6; }
 .pcard-head {
   display: flex; align-items: center; gap: 8px;
-  padding: 8px 10px;
+  /* On a narrow card the badges + counts (.pcard-meta) wrap to a second row
+     rather than squeezing the project name down to "p…" — the name is what
+     the card is FOR, so it keeps the first row. The × is taken out of flow
+     (below) so wrapping never drags it off the top-right corner. */
+  position: relative;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  padding: 8px 28px 8px 10px;
   background: #12161a; border-bottom: 1px solid #22272c;
   cursor: grab; user-select: none;
   touch-action: none;
@@ -645,13 +652,16 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard-head .dot.busy { background: #f4b23a; animation: pulse 1.4s ease-in-out infinite; }
 .pcard-head .name {
   font-weight: 600; color: #eaedef;
-  /* Truncate very long project ids with ellipsis so stats + close
-     stay visible on the right. */
-  min-width: 0;
+  font-size: 13px; letter-spacing: 0.01em;
+  /* Long project ids still ellipsize, but only after a readable floor:
+     the name stops shrinking at ~14 characters, so .pcard-meta gives way
+     first (wrapping to its own row). `title` on the span carries the full
+     id for the truncated tail. */
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   flex: 0 1 auto;
+  min-width: 14ch;
 }
 .pcard-head .env {
   padding: 1px 6px; border-radius: 3px; background: #2a2f35; color: #9098a1;
@@ -667,10 +677,22 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard-head .health.blocked { color: #d96060; border-color: #d9606055; background: #d9606011; }
 .pcard-head .health.mr { color: #6a8bff; border-color: #6a8bff55; background: #6a8bff11; }
 .pcard-head .health.merged { color: #b98cff; border-color: #b98cff55; background: #b98cff11; }
-.pcard-head .spacer { flex: 1 0 8px; min-width: 8px; }
+/* Badges + counts travel together: this group either sits beside the name
+   or wraps below it whole, so "paused" is never stranded on the name's line
+   while the counts it qualifies sit on the next one. */
+.pcard-meta {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  row-gap: 4px;
+  min-width: 0;
+}
 .pcard-head .stats {
   display: flex; gap: 8px; font-size: 10px; color: #9098a1;
   flex: 0 1 auto;
+  /* Right-aligned within the group, so the counts hold the row's right
+     edge whether the group shares the name's line or wraps below it. */
+  margin-left: auto;
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -682,7 +704,9 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard-head .stats .blocked b { color: #d96060; }
 .pcard-head .close {
   color: #6b757e; padding: 2px 5px; border-radius: 3px;
-  /* Never let the × get pushed off the right edge by a long name. */
+  /* Out of flow: a long name or a wrapped stats row must never move the ×
+     off the top-right corner. The head reserves room for it in padding. */
+  position: absolute; top: 5px; right: 4px;
   flex: 0 0 auto;
   background: transparent; border: 0;
   cursor: pointer;
@@ -3504,3 +3528,202 @@ body[data-theme="light"] .hold-banner { color: #48525c; }
    legible number in the row. */
 body[data-theme="light"] .wc-metrics b { color: #17202a; }
 body[data-theme="light"] .wc-metrics b.wc-metric-warn { color: #a4610f; }
+
+/* ---------- Automation runs (modal Runs tab + docked Runs pane) ----------
+ * One row per firing of an automation. Built on the p2 tokens so the
+ * same markup is legible in both themes without a per-rule override.
+ *
+ * The row is a grid, not a flex line: the columns are scan targets — a
+ * user reading a night's worth of cron runs is looking DOWN the outcome
+ * glyph and the time, and ragged columns defeat that. It degrades to a
+ * two-line wrap on narrow panes rather than clipping the actions, which
+ * are the reason the list exists. */
+/* The list is its own query container so the row can respond to the
+   PANE it is docked in (430px side panel vs a full Focus column), which
+   a viewport media query cannot see. */
+.arun-scope { container-type: inline-size; }
+.arun-list { display: flex; flex-direction: column; }
+.arun-row {
+  display: grid;
+  /* glyph | when | trigger | duration | task | actions.
+     The count must match the cells the row actually renders: a template
+     one column short doesn't compress, it wraps the last cell onto its
+     own implicit row — which silently doubled every row's height. */
+  grid-template-columns:
+    14px minmax(58px, max-content) minmax(0, 1fr)
+    max-content minmax(0, max-content) max-content;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  cursor: default;
+}
+/* The project-wide pane names the automation, so its rows carry one
+   more cell than the modal's (which is already about one automation). */
+.arun-row.named {
+  grid-template-columns:
+    14px minmax(58px, max-content) minmax(0, 1.2fr) minmax(0, 1fr)
+    max-content minmax(0, max-content) max-content;
+}
+.arun-row:hover { background: #1a1e22; }
+.arun-row.sel { background: #1e2833; }
+body[data-theme="light"] .arun-row:hover { background: #e7edf3; }
+body[data-theme="light"] .arun-row.sel { background: #dce7f2; }
+.arun-when { color: var(--p2-fg-dim); white-space: nowrap; }
+.arun-name {
+  color: var(--p2-fg);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.arun-trigger {
+  color: var(--p2-fg-faint);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.arun-dur { color: var(--p2-fg-faint); text-align: right; white-space: nowrap; }
+.arun-task {
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; overflow: hidden; white-space: nowrap;
+}
+.arun-task code { color: var(--p2-fg-faint); font-size: 10px; }
+.arun-muted { color: var(--p2-fg-faint); }
+/* The generated task's CURRENT status — the honest answer to "did the
+   3am cleanup work?", which the run audit itself cannot know: the audit
+   is written when the task is queued, long before it succeeds or dies. */
+.arun-task-status {
+  padding: 0 5px; border-radius: 3px; border: 1px solid var(--p2-border);
+  color: var(--p2-fg-faint);
+  font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em;
+}
+.arun-task-status.completed,
+.arun-task-status.validated { color: var(--p2-ok); border-color: #6fca7d55; }
+.arun-task-status.in_progress,
+.arun-task-status.active { color: #f4b23a; border-color: #f4b23a55; }
+.arun-task-status.blocked { color: #d96060; border-color: #d9606055; }
+.arun-actions { display: flex; gap: 4px; }
+.arun-actions button {
+  border: 1px solid #333a42; background: transparent; color: inherit;
+  border-radius: 3px; padding: 0 6px; font: inherit; font-size: 10px;
+  cursor: pointer;
+}
+.arun-actions button:hover:not(:disabled) {
+  border-color: var(--p2-accent); color: var(--p2-accent);
+}
+/* Disabled means "there is nothing to open here", and the button's title
+   says which of the three reasons applies. Kept visible rather than
+   hidden so the row's shape doesn't change from line to line. */
+.arun-actions button:disabled { opacity: 0.35; cursor: not-allowed; }
+body[data-theme="light"] .arun-actions button { border-color: #c8d0d8; }
+.arun-detail { padding: 6px 2px; }
+.arun-error {
+  margin-top: 6px; padding: 6px;
+  border: 1px solid #d9606055; border-radius: 4px;
+  background: #d9606011; color: #d96060;
+  font-size: 11px; white-space: pre-wrap; word-break: break-word;
+}
+/* Narrow panes: actions keep their own line rather than squeezing the
+   trigger and task columns into ellipsis soup. */
+@container (max-width: 520px) {
+  .arun-row,
+  .arun-row.named {
+    grid-template-columns: 14px minmax(58px, max-content) minmax(0, 1fr);
+  }
+  /* Two lines, deliberately: identity on the first (when + what fired),
+     outcome and verbs on the second. Duration is the one column worth
+     nothing on a phone — a run's own audit duration is milliseconds of
+     bookkeeping, not the task's runtime. */
+  .arun-dur { display: none; }
+  .arun-row.named .arun-trigger { display: none; }
+  .arun-task { grid-column: 2 / 3; }
+  .arun-actions { grid-column: 3 / 4; justify-self: end; }
+}
+
+/* ---------- Automation list: last-run cell ---------- */
+/* The automation row carries one more column than a task row (its last
+   run), so it declares its own template rather than spilling into an
+   implicit fifth column the base .trow grid never sized. */
+.trow.auto-row {
+  grid-template-columns:
+    14px minmax(0, 1fr) max-content minmax(58px, max-content) 40px;
+}
+
+/* The automation row's answer to "is this thing working?" — the newest
+   run's outcome and age, on the row itself, so the common check needs no
+   click at all. */
+.auto-lastrun {
+  display: inline-flex; align-items: center; gap: 4px;
+  color: var(--p2-fg-faint); font-size: 10px; white-space: nowrap;
+}
+.auto-lastrun .glyph { font-size: 10px; }
+.auto-lastrun.never { font-style: italic; }
+.arun-toolbar {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  padding: 4px 0 6px;
+  font-size: 11px; color: var(--p2-fg-dim);
+}
+.arun-toolbar select {
+  background: transparent; color: inherit;
+  border: 1px solid var(--p2-border); border-radius: 3px;
+  padding: 1px 4px; font: inherit; font-size: 10.5px;
+}
+.arun-note { color: var(--p2-fg-faint); font-size: 10.5px; padding: 4px 2px; }
+
+/* ---------- Automation detail (docked side-panel pane) ----------
+ * Ordered by frequency of use, not by data model: identity, verbs, the
+ * last run's verdict, the run list, and config folded away at the
+ * bottom. In a ~430px panel everything below the fold costs a scroll,
+ * and the run list is what the pane is opened for. */
+.adetail { display: flex; flex-direction: column; gap: 6px; }
+.adetail:focus-visible { outline: 1px solid var(--p2-accent); outline-offset: 2px; }
+.adetail-head { display: flex; align-items: baseline; gap: 6px; }
+.adetail-head .dot { width: 8px; height: 8px; border-radius: 50%; background: #4b545c; flex: 0 0 auto; }
+.adetail-head .dot.on { background: #6fca7d; }
+.adetail-head .dot.err { background: #d96060; }
+.adetail-name {
+  font-size: 13px; font-weight: 600; color: var(--p2-fg);
+  /* Wraps rather than truncates: this is the pane's subject, and the
+     pane header above it already shows a shortened title. */
+  overflow-wrap: anywhere;
+}
+.adetail-badges { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.adetail-badges .health {
+  padding: 1px 6px; border-radius: 3px; border: 1px solid var(--p2-border);
+  color: var(--p2-fg-faint);
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em;
+}
+.adetail-badges .health.active { color: #6fca7d; border-color: #6fca7d55; background: #6fca7d11; }
+.adetail-badges .health.blocked { color: #d96060; border-color: #d9606055; background: #d9606011; }
+.adetail-trigger { color: var(--p2-fg-faint); font-size: 10.5px; overflow-wrap: anywhere; }
+.adetail-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.adetail-actions button {
+  border: 1px solid #333a42; background: transparent; color: inherit;
+  border-radius: 4px; padding: 3px 10px; font: inherit; font-size: 11px;
+  cursor: pointer;
+}
+.adetail-actions button:hover:not(:disabled) { border-color: var(--p2-accent); color: var(--p2-accent); }
+.adetail-actions button:disabled { opacity: 0.45; cursor: not-allowed; }
+.adetail-actions button.primary {
+  background: var(--p2-accent); border-color: var(--p2-accent); color: #14181c;
+  font-weight: 600;
+}
+.adetail-actions button.primary:hover:not(:disabled) { filter: brightness(1.1); color: #14181c; }
+body[data-theme="light"] .adetail-actions button { border-color: #c8d0d8; }
+body[data-theme="light"] .adetail-actions button.primary { color: #fff; }
+.adetail-last {
+  display: flex; align-items: center; gap: 5px;
+  color: var(--p2-fg-dim); font-size: 10.5px;
+  padding: 2px 0 4px;
+  border-bottom: 1px solid var(--p2-border);
+}
+.adetail-count {
+  margin-left: 6px; color: var(--p2-fg-faint); font-weight: 400;
+}
+.adetail .modal-content-heading { margin: 8px 0 2px; }
+/* The config fold: a heading that behaves like one, not a button that
+   looks like an action — the actions above it are the real verbs. */
+.adetail-fold {
+  margin-top: 8px; padding: 4px 0;
+  background: none; border: 0; border-top: 1px solid var(--p2-border);
+  color: var(--p2-fg-faint); font: inherit; font-size: 11px;
+  text-align: left; cursor: pointer;
+}
+.adetail-fold:hover { color: var(--p2-fg); }

@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/types"
 )
 
 func TestRegisterGoalTools_CountNamesHandlersDescriptions(t *testing.T) {
@@ -447,5 +449,162 @@ func TestBrainGoalDelete_Request(t *testing.T) {
 	}
 	if !strings.Contains(result, "Goal deleted") || !strings.Contains(result, "goal-123") {
 		t.Errorf("unexpected result: %s", result)
+	}
+}
+
+// =============================================================================
+// goal_update field coverage
+//
+// goal_update advertised feature_id in its input schema and never sent it, so
+// a mis-scoped goal could only be fixed by delete-and-recreate. The wider half
+// of the same defect: every string arm was guarded `if v != ""`, which makes an
+// explicit empty value indistinguishable from an omitted one, so no field could
+// be cleared at all.
+// =============================================================================
+
+func TestBuildUpdateGoalRequest_ClearableFields(t *testing.T) {
+	// Every field supplied as an explicit empty value must reach the API as a
+	// pointer to empty (clear), not as nil (leave alone).
+	req := buildUpdateGoalRequest(map[string]any{
+		"goal_id":           "goal-123",
+		"feature_id":        "",
+		"content":           "",
+		"criteria":          "",
+		"validation":        "",
+		"workdir":           "",
+		"trigger_source":    "",
+		"task_id":           "",
+		"complete_statuses": []any{},
+		"blocked_statuses":  []any{},
+	})
+
+	strFields := map[string]*string{
+		"feature_id":     req.FeatureID,
+		"content":        req.Content,
+		"criteria":       req.Criteria,
+		"validation":     req.Validation,
+		"workdir":        req.Workdir,
+		"trigger_source": req.TriggerSource,
+		"task_id":        req.TaskID,
+	}
+	for name, got := range strFields {
+		if got == nil {
+			t.Errorf("%s = nil for an explicit \"\", want a pointer to \"\" (the field must be clearable)", name)
+			continue
+		}
+		if *got != "" {
+			t.Errorf("%s = %q, want \"\"", name, *got)
+		}
+	}
+	if req.CompleteStatuses == nil || len(*req.CompleteStatuses) != 0 {
+		t.Errorf("complete_statuses = %v for an explicit [], want a pointer to an empty slice", req.CompleteStatuses)
+	}
+	if req.BlockedStatuses == nil || len(*req.BlockedStatuses) != 0 {
+		t.Errorf("blocked_statuses = %v for an explicit [], want a pointer to an empty slice", req.BlockedStatuses)
+	}
+}
+
+func TestBuildUpdateGoalRequest_OmittedFieldsStayNil(t *testing.T) {
+	// The flip side: nothing supplied means nothing sent. Presence-based
+	// detection must not turn an untouched field into a clear.
+	req := buildUpdateGoalRequest(map[string]any{"goal_id": "goal-123", "title": "Renamed"})
+
+	if req.Title == nil || *req.Title != "Renamed" {
+		t.Fatalf("title = %v, want Renamed", req.Title)
+	}
+	nils := map[string]any{
+		"feature_id":     req.FeatureID,
+		"content":        req.Content,
+		"status":         req.Status,
+		"criteria":       req.Criteria,
+		"validation":     req.Validation,
+		"workdir":        req.Workdir,
+		"trigger_source": req.TriggerSource,
+		"task_id":        req.TaskID,
+	}
+	for name, got := range nils {
+		switch v := got.(type) {
+		case *string:
+			if v != nil {
+				t.Errorf("%s = %q for an omitted field, want nil", name, *v)
+			}
+		}
+	}
+	if req.CompleteStatuses != nil || req.BlockedStatuses != nil {
+		t.Errorf("status sets sent for an omitted field: complete=%v blocked=%v", req.CompleteStatuses, req.BlockedStatuses)
+	}
+}
+
+func TestBuildUpdateGoalRequest_TitleAndStatusAreNotClearable(t *testing.T) {
+	// A goal has no valid empty title (the rebuild rejects one) and no valid
+	// empty status, so a blank there is an autofilled field, not an
+	// instruction — these two stay value-based on purpose.
+	req := buildUpdateGoalRequest(map[string]any{"goal_id": "goal-123", "title": "", "status": ""})
+	if req.Title != nil {
+		t.Errorf("title = %q for an empty value, want nil", *req.Title)
+	}
+	if req.Status != nil {
+		t.Errorf("status = %q for an empty value, want nil", *req.Status)
+	}
+}
+
+func TestBrainGoalUpdate_SendsFeatureID(t *testing.T) {
+	tests := []struct {
+		name      string
+		featureID string
+		want      any
+	}{
+		{"re-scope to another feature", "other-feature", "other-feature"},
+		{"clear the feature scope", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var capturedBody map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewDecoder(r.Body).Decode(&capturedBody); err != nil {
+					t.Fatalf("decode body: %v", err)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				json.NewEncoder(w).Encode(map[string]any{"entry_id": "entry-123", "goal_id": "goal-123", "title": "Scoped", "project": "brain", "feature_id": tt.featureID, "status": "active"})
+			}))
+			defer server.Close()
+
+			s := NewServer()
+			client := NewAPIClient(server.URL)
+			RegisterGoalTools(s, client)
+			if _, err := s.tools["goal_update"].handler(context.Background(), map[string]any{"goal_id": "goal-123", "feature_id": tt.featureID}); err != nil {
+				t.Fatalf("handler error: %v", err)
+			}
+
+			got, ok := capturedBody["feature_id"]
+			if !ok {
+				t.Fatalf("feature_id absent from PATCH body %#v: the tool advertises the field, so it must send it", capturedBody)
+			}
+			if got != tt.want {
+				t.Errorf("feature_id = %#v, want %#v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFormatGoalProgress_GoalStatusAndFeatureStatus(t *testing.T) {
+	// A project-scoped goal reports no feature status at all; printing one was
+	// how a healthy goal spanning 12 features displayed "Feature: blocked".
+	projectScoped := formatGoalProgress(&types.GoalProgressResponse{
+		GoalID: "goal-123", GoalStatus: "pending", Total: 4, Completed: 3,
+	})
+	if !strings.Contains(projectScoped, "- Goal: pending") {
+		t.Errorf("project-scoped progress missing goal status:\n%s", projectScoped)
+	}
+	if strings.Contains(projectScoped, "Feature:") {
+		t.Errorf("project-scoped progress reports a feature status:\n%s", projectScoped)
+	}
+
+	featureScoped := formatGoalProgress(&types.GoalProgressResponse{
+		GoalID: "goal-123", FeatureID: "feat-1", GoalStatus: "in_progress", FeatureStatus: "in_progress",
+	})
+	if !strings.Contains(featureScoped, "- Feature: in_progress") {
+		t.Errorf("feature-scoped progress missing feature status:\n%s", featureScoped)
 	}
 }

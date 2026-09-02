@@ -24,6 +24,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { OcMessage, OcPart } from "../../lib/types";
 import { isInjectedCheckin } from "../../lib/transcript";
+import { messageModel, modelLabel, modelTitle } from "../../lib/messageModel";
 import { TerminalText } from "../common/TerminalText";
 
 function toolTitle(part: OcPart): string {
@@ -55,7 +56,13 @@ function PartView({ part }: { part: OcPart }): JSX.Element | null {
     case "reasoning":
       return part.text ? (
         <details>
-          <summary style={{ cursor: "pointer", color: "var(--p2-fg-faint, #6b757e)", fontSize: 11 }}>
+          <summary
+            style={{
+              cursor: "pointer",
+              color: "var(--p2-fg-faint, #6b757e)",
+              fontSize: 11,
+            }}
+          >
             reasoning
           </summary>
           <pre style={{ opacity: 0.75 }}>
@@ -71,8 +78,12 @@ function PartView({ part }: { part: OcPart }): JSX.Element | null {
       return (
         <details>
           <summary style={{ cursor: "pointer", fontSize: 11 }}>
-            <span style={{ color: "var(--p2-fg-dim, #9098a1)" }}>{toolTitle(part)}</span>{" "}
-            <span style={{ color: toolStatusColor(status) }}>· {status || "pending"}</span>
+            <span style={{ color: "var(--p2-fg-dim, #9098a1)" }}>
+              {toolTitle(part)}
+            </span>{" "}
+            <span style={{ color: toolStatusColor(status) }}>
+              · {status || "pending"}
+            </span>
           </summary>
           {/*
             Tool payloads are captured terminal output — a bash/test tool
@@ -84,7 +95,11 @@ function PartView({ part }: { part: OcPart }): JSX.Element | null {
           {input !== undefined && (
             <pre style={{ opacity: 0.8 }}>
               <TerminalText
-                text={typeof input === "string" ? input : JSON.stringify(input, null, 2)}
+                text={
+                  typeof input === "string"
+                    ? input
+                    : JSON.stringify(input, null, 2)
+                }
               />
             </pre>
           )}
@@ -112,13 +127,26 @@ function PartView({ part }: { part: OcPart }): JSX.Element | null {
 function MessageView({ message }: { message: OcMessage }): JSX.Element {
   const role = message.info.role === "user" ? "user" : "assistant";
   const injected = isInjectedCheckin(message);
+  const model = messageModel(message.info);
   const hasTool = message.parts.some((p) => p.type === "tool");
   return (
     <div className={`msg ${hasTool && role === "assistant" ? "tool" : role}`}>
       <div className="role">
         <span>{message.info.role || "…"}</span>
         {message.info.agent && (
-          <span style={{ color: "var(--p2-fg-faint, #6b757e)" }}> · {message.info.agent}</span>
+          <span style={{ color: "var(--p2-fg-faint, #6b757e)" }}>
+            {" "}
+            · {message.info.agent}
+          </span>
+        )}
+        {/* The model beside the agent, so a session that switches models
+            mid-run says so on the turn it changed rather than only in the
+            instance header — which reports the CURRENT model and cannot
+            describe the turns already on screen. */}
+        {model && (
+          <span className="msg-model" title={modelTitle(model)}>
+            {modelLabel(model)}
+          </span>
         )}
         {injected && (
           <span
@@ -238,7 +266,12 @@ export function Transcript({
    * the scroller.
    */
   return (
-    <div ref={containerRef} className={className} style={style} onScroll={onScroll}>
+    <div
+      ref={containerRef}
+      className={className}
+      style={style}
+      onScroll={onScroll}
+    >
       <div ref={contentRef}>
         {messages.length === 0 && (
           <div style={{ color: "var(--p2-fg-faint, #6b757e)", padding: 12 }}>

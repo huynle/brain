@@ -210,10 +210,7 @@ export interface Task {
 /** Discriminant on the underlying signal that flagged the task as abandoned.
  *  Keep in sync with service.AbandonReason* constants in Go. */
 export type AbandonReason =
-  | "no_claim"
-  | "claim_expired"
-  | "runner_offline"
-  | "orphan_reaped";
+  "no_claim" | "claim_expired" | "runner_offline" | "orphan_reaped";
 
 /** Body for POST /tasks/{project}/{task}/resume and
  *  POST /tasks/{project}/features/{feature}/resume. */
@@ -450,6 +447,16 @@ export interface OcMessageInfo {
   agent?: string;
   time?: { created?: number; completed?: number };
   error?: unknown;
+
+  // The model that produced (or was requested for) this message. OpenCode
+  // writes it two different ways depending on the role, both observed in
+  // real stored messages: an ASSISTANT message carries flat modelID +
+  // providerID, a USER message carries a nested model object. Read it with
+  // messageModel() rather than either field directly.
+  modelID?: string;
+  providerID?: string;
+  model?: { providerID?: string; modelID?: string } | string;
+
   [k: string]: unknown;
 }
 
@@ -785,11 +792,7 @@ export interface GoalProgressResponse {
 
 /** Reconcile outcomes; "steer" means live sessions were nudged (noop+prompt). */
 export type GoalReconcileDecision =
-  | "complete"
-  | "block"
-  | "need_work"
-  | "noop"
-  | "steer";
+  "complete" | "block" | "need_work" | "noop" | "steer";
 
 export interface GoalReconcileAudit {
   timestamp: string;

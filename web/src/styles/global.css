@@ -211,6 +211,9 @@ body[data-theme="light"] .session-view .stream .role         { color: #64717e; }
 body[data-theme="light"] .session-view .stream .msg.assistant .role { color: #c78016; }
 body[data-theme="light"] .session-view .stream .msg.user      .role { color: #3b9d4a; }
 body[data-theme="light"] .session-view .stream .msg.tool      .role { color: #3d5fd9; }
+body[data-theme="light"] .session-view .msg-model {
+  border-color: #d7dbe0; color: #64717e; background: #f2f4f6;
+}
 body[data-theme="light"] .session-view .stream pre {
   background: #ffffff;
   border-color: #d5dde5;
@@ -1381,10 +1384,47 @@ body[data-theme="light"] .p2-browser-iframe { border-color: #d5dde5; }
 .session-view .stream .role {
   color: #9098a1; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em;
   margin-bottom: 2px; display: flex; gap: 6px; align-items: center;
+  /* Wraps only when it has to. A session pane docked in the sidebar is
+     narrow, and the row gained a third item (the model) that is nowrap by
+     necessity — without this it is clipped mid-identifier, which is worse
+     than useless for a value you are trying to read exactly. */
+  flex-wrap: wrap;
 }
 .session-view .stream .msg.assistant .role { color: #f4b23a; }
 .session-view .stream .msg.user      .role { color: #6fca7d; }
 .session-view .stream .msg.tool      .role { color: #6a8bff; }
+/* Model beside the agent name — used in two places, so it is NOT scoped to
+   the transcript row: the per-message header inside `.stream .role`, and the
+   session pane's own header, which reports what the session is set to now.
+
+   `text-transform: none` is load-bearing: .role uppercases its contents, and
+   a model id is a literal identifier — "CLAUDE-OPUS-4-5" is not the string
+   anyone will match against a config file or a billing line. Deliberately
+   quieter than the role it sits next to: it answers a question you only
+   sometimes ask, and must not compete with the turn structure when you are
+   reading the conversation itself. */
+.session-view .msg-model {
+  /* Sits immediately after the agent it describes. An earlier pass pushed
+     it right with `margin-left: auto`, which on a wide pane strands the
+     model an inch away from the name it belongs to — the two read as
+     unrelated facts instead of "this agent, on this model". */
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 999px;
+  border: 1px solid #262c33;
+  color: #7c858e;
+  background: #14181c;
+  /* nowrap so a model id never breaks across lines mid-token, with an
+     ellipsis as the last resort when even a wrapped line cannot hold it.
+     min-width:0 is what lets the ellipsis engage inside a flex row. */
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .session-view .stream pre {
   margin: 4px 0 0; background: #0a0c0e; border: 1px solid #1a1e22;
   padding: 4px 6px; border-radius: 3px; overflow-x: auto; font-size: 11px;
@@ -1849,6 +1889,15 @@ body.mobile .session-pane .composer input { flex: 1 1 100%; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 22ch; min-width: 0;
 }
+/* Agent name in the session pane header, beside the model. Same weight as
+   the session id it follows — these are all "what this session is", not
+   things to act on. */
+.proc-chat-agent {
+  font-size: 10px; color: #9098a1; text-transform: uppercase;
+  letter-spacing: 0.05em; white-space: nowrap;
+}
+body[data-theme="light"] .proc-chat-agent { color: #64717e; }
+
 /* Stand-in for the composer when nothing can be delivered. */
 .proc-chat-note { color: #6b757e; font-size: 10.5px; display: block; }
 

@@ -27,16 +27,15 @@ type RunnerOptions struct {
 	KeyBindings map[string]string // TUI keybinding overrides from config
 }
 
-// RunTaskRunner starts the task runner in daemon mode and blocks until context is cancelled.
-func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
-	if len(opts.Projects) == 0 {
-		return fmt.Errorf("no projects specified")
-	}
-
-	// Use the full config directly — no lossy field-by-field copying
-	cfg := opts.Config
-
-	// Apply defaults for required fields if not set
+// prepareRunnerConfig fills in the defaults a runner needs before it is built,
+// and is the ONE place runner identity is resolved — every path that starts a
+// local TaskRunner (`brain run start`, `brain runner start`, `brain start
+// --runner`, the API server's embedded runner) funnels through here.
+//
+// Identity has to land after CLI flags are merged (that is where --name arrives)
+// and exactly once (ResolveRunnerIdentity is not idempotent), which is why it
+// lives here rather than in LoadConfig.
+func prepareRunnerConfig(cfg *runner.RunnerConfig) error {
 	if cfg.MaxParallel == 0 {
 		cfg.MaxParallel = 3
 	}
@@ -51,9 +50,22 @@ func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
 	}
 	// StateDir feeds filepath.Join for state, prompt, output-log and runner-script
 	// paths. Leaving it empty makes every one of those relative to the process
-	// working directory, so resolve the default explicitly.
-	if cfg.StateDir == "" {
-		cfg.StateDir = runner.DefaultStateDir()
+	// working directory, so ResolveRunnerIdentity resolves the default explicitly
+	// before appending the runner name.
+	return runner.ResolveRunnerIdentity(cfg)
+}
+
+// RunTaskRunner starts the task runner in daemon mode and blocks until context is cancelled.
+func RunTaskRunner(ctx context.Context, opts RunnerOptions) error {
+	if len(opts.Projects) == 0 {
+		return fmt.Errorf("no projects specified")
+	}
+
+	// Use the full config directly — no lossy field-by-field copying
+	cfg := opts.Config
+
+	if err := prepareRunnerConfig(&cfg); err != nil {
+		return err
 	}
 	// Allow env var override for opencode binary
 	if bin := os.Getenv("OPENCODE_BIN"); bin != "" {
@@ -202,24 +214,8 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	// Use the full config directly — no lossy field-by-field copying
 	cfg := opts.Config
 
-	// Apply defaults for required fields if not set
-	if cfg.MaxParallel == 0 {
-		cfg.MaxParallel = 3
-	}
-	if cfg.PollInterval == 0 {
-		cfg.PollInterval = 10
-	}
-	if cfg.APITimeout == 0 {
-		cfg.APITimeout = 5000
-	}
-	if cfg.Opencode.Bin == "" {
-		cfg.Opencode.Bin = "opencode"
-	}
-	// StateDir feeds filepath.Join for state, prompt, output-log and runner-script
-	// paths. Leaving it empty makes every one of those relative to the process
-	// working directory, so resolve the default explicitly.
-	if cfg.StateDir == "" {
-		cfg.StateDir = runner.DefaultStateDir()
+	if err := prepareRunnerConfig(&cfg); err != nil {
+		return err
 	}
 	// Allow env var override for opencode binary
 	if bin := os.Getenv("OPENCODE_BIN"); bin != "" {
@@ -237,7 +233,7 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	var runnerLogger *log.Logger
 	if cfg.LogDir != "" {
 		if err := os.MkdirAll(cfg.LogDir, 0o755); err == nil {
-			logPath := filepath.Join(cfg.LogDir, "runner.log")
+			logPath := filepath.Join(cfg.LogDir, runnerLogName(cfg.Name))
 			logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
 			if err == nil {
 				defer func() { _ = logFile.Close() }()
@@ -472,4 +468,14 @@ func RunTUI(ctx context.Context, opts RunnerOptions) error {
 	}
 
 	return nil
+}
+
+// runnerLogName returns the TUI-mode log file name for a runner. The default
+// runner keeps "runner.log"; named runners get their own file so two runners on
+// one host don't interleave their logs into a single unreadable stream.
+func runnerLogName(name string) string {
+	if name == "" || name == runner.DefaultRunnerName {
+		return "runner.log"
+	}
+	return "runner-" + name + ".log"
 }

@@ -14,7 +14,24 @@ import (
 
 // applyRunnerFlagOverrides applies CLI flag values on top of the runner config.
 // Only non-zero/non-empty flag values override the config file values.
-func applyRunnerFlagOverrides(cfg *runner.RunnerConfig, flags *RunnerFlags) {
+//
+// It errors only on --new: allocating a name reads the state dir, and a caller
+// that cannot get a free one must not fall through to the default runner —
+// that is the state dir this machine's other runner is already using.
+func applyRunnerFlagOverrides(cfg *runner.RunnerConfig, flags *RunnerFlags) error {
+	if flags.New && flags.Name != "" {
+		return fmt.Errorf("--new and --name are mutually exclusive: --new picks the name for you")
+	}
+	if flags.Name != "" {
+		cfg.Name = flags.Name
+	}
+	if flags.New {
+		name, err := runner.NextFreeRunnerName(cfg.StateDir, nil)
+		if err != nil {
+			return err
+		}
+		cfg.Name = name
+	}
 	if flags.MaxParallel != 0 {
 		cfg.MaxParallel = flags.MaxParallel
 	}
@@ -51,10 +68,14 @@ func applyRunnerFlagOverrides(cfg *runner.RunnerConfig, flags *RunnerFlags) {
 	if len(flags.Exclude) > 0 {
 		cfg.ExcludeProjects = append(cfg.ExcludeProjects, flags.Exclude...)
 	}
+	return nil
 }
 
 // RunnerFlags holds runner command flags.
 type RunnerFlags struct {
+	Name         string
+	New          bool
+	All          bool
 	TUI          bool
 	Foreground   bool
 	Headless     bool
@@ -109,7 +130,9 @@ func (c *RunnerTUICommand) Execute() error {
 	}
 
 	// Apply CLI flag overrides
-	applyRunnerFlagOverrides(&cfg, c.Flags)
+	if err := applyRunnerFlagOverrides(&cfg, c.Flags); err != nil {
+		return err
+	}
 
 	// Resolve projects
 	projects, err := c.resolveProjects(cfg)
@@ -229,7 +252,9 @@ func (c *RunCommand) runStart() error {
 	}
 
 	// Apply CLI flag overrides
-	applyRunnerFlagOverrides(&cfg, c.Flags)
+	if err := applyRunnerFlagOverrides(&cfg, c.Flags); err != nil {
+		return err
+	}
 
 	// Resolve projects
 	projects, err := resolveProjectList(c.Project, cfg)
@@ -385,8 +410,14 @@ func (c *RunCommand) runStatus() error {
 	fmt.Printf("\nRegistered runners: %d\n", runners.Total)
 	if runners.Total > 0 {
 		w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(w, "RUNNER_ID\tHOSTNAME\tSTATUS\tMAX_PARALLEL\tLAST_HEARTBEAT")
+		fmt.Fprintln(w, "RUNNER_ID\tNAME\tHOSTNAME\tSTATUS\tMAX_PARALLEL\tLAST_HEARTBEAT")
 		for _, r := range runners.Runners {
+			// Several runners can share a hostname, so the name label is what
+			// tells them apart; older runners don't advertise one.
+			name := "-"
+			if v := strings.TrimSpace(r.Labels[runner.RunnerNameLabel]); v != "" {
+				name = v
+			}
 			age := "-"
 			if r.LastHeartbeat != "" {
 				if t, err := time.Parse(time.RFC3339, r.LastHeartbeat); err == nil {
@@ -395,7 +426,7 @@ func (c *RunCommand) runStatus() error {
 					age = r.LastHeartbeat
 				}
 			}
-			fmt.Fprintf(w, "%s\t%s\t%s\t%d\t%s\n", r.RunnerID, r.Hostname, r.Status, r.MaxParallel, age)
+			fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%d\t%s\n", r.RunnerID, name, r.Hostname, r.Status, r.MaxParallel, age)
 		}
 		w.Flush()
 	}

@@ -603,3 +603,67 @@ func TestParseAutomationGoalFlags_FeaturePresence(t *testing.T) {
 	assert.True(t, cleared.FeatureSet)
 	assert.Equal(t, "", cleared.Feature)
 }
+
+func TestParseRunnerFlags_NameAndAll(t *testing.T) {
+	flags, err := ParseRunnerFlags([]string{"--name", "worker-a", "--max-parallel", "2"})
+	require.NoError(t, err)
+	assert.Equal(t, "worker-a", flags.Name)
+	assert.False(t, flags.All)
+	assert.Equal(t, 2, flags.MaxParallel)
+
+	flags, err = ParseRunnerFlags([]string{"--all"})
+	require.NoError(t, err)
+	assert.True(t, flags.All)
+	assert.Empty(t, flags.Name)
+
+	flags, err = ParseRunnerFlags([]string{})
+	require.NoError(t, err)
+	assert.Empty(t, flags.Name, "an unnamed runner must stay unnamed so it keeps the default paths")
+}
+
+// The converter is the only bridge between the parsed flags and the command
+// structs; a field missing here is silently dropped at runtime.
+func TestConvertToCommandsRunnerFlags(t *testing.T) {
+	flags := &RunnerFlags{
+		Name:        "worker-a",
+		All:         true,
+		MaxParallel: 4,
+		Executor:    "pi",
+		PiBin:       "/usr/local/bin/pi",
+		PiModel:     "anthropic/claude-sonnet-4",
+		PiThinking:  "high",
+		Include:     []string{"prod-*"},
+	}
+	got := convertToCommandsRunnerFlags(flags)
+
+	assert.Equal(t, "worker-a", got.Name)
+	assert.True(t, got.All)
+	assert.Equal(t, 4, got.MaxParallel)
+	assert.Equal(t, "pi", got.Executor)
+	assert.Equal(t, "/usr/local/bin/pi", got.PiBin)
+	assert.Equal(t, "anthropic/claude-sonnet-4", got.PiModel)
+	assert.Equal(t, "high", got.PiThinking)
+	assert.Equal(t, []string{"prod-*"}, got.Include)
+}
+
+func TestParseRunnerFlags_ShortNameAndNew(t *testing.T) {
+	flags, err := ParseRunnerFlags([]string{"-n", "worker-a"})
+	require.NoError(t, err)
+	assert.Equal(t, "worker-a", flags.Name)
+	assert.False(t, flags.New)
+
+	flags, err = ParseRunnerFlags([]string{"--new"})
+	require.NoError(t, err)
+	assert.True(t, flags.New)
+	assert.Empty(t, flags.Name)
+
+	// -n is a value flag, so the project pre-scan must not mistake its value
+	// for a positional.
+	project, flagArgs := splitRunnerProjectArg([]string{"-n", "worker-a"})
+	assert.Equal(t, "all", project)
+	assert.Equal(t, []string{"-n", "worker-a"}, flagArgs)
+
+	project, flagArgs = splitRunnerProjectArg([]string{"my-project", "-n", "worker-a"})
+	assert.Equal(t, "my-project", project)
+	assert.Equal(t, []string{"-n", "worker-a"}, flagArgs)
+}

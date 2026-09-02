@@ -146,6 +146,49 @@ conversation — no error, anywhere.
   (`claimedSessionIDs` skips the calling task's path); the claim must not
   starve an idempotent retry.
 
+### Runner identity (several runners, one machine)
+
+A machine can host any number of runners. What separates them is the **state
+dir**, nothing else: `ResolveRunnerID` persists `runner-id` inside it, so two
+processes sharing a state dir register as the SAME runner, both subscribe to
+`realtime.RunnerTopic(runnerID)`, and race each other for every dispatch the
+scheduler sends. `machine-id` is deliberately the opposite — one file per host,
+shared by all of them, because affinity asks "which box?", not "which runner?".
+
+- **`-n` / `--name` is the operator handle.** It picks the state dir
+  (`RunnerStateDir`: `<base>` for the default runner, `<base>/<name>` for any
+  other), the daemon's `brain-runner-<name>.pid` / `.log`, the TUI's
+  `runner-<name>.log`, and the `name` label advertised at registration. Also
+  settable as `RUNNER_NAME` or `runner.name` in config.yaml. The positional
+  argument stays the PROJECT (optional, defaults to `all`) in both
+  `brain runner start` and `brain start` — naming is flag-only so neither
+  command's positional changes meaning.
+- **`--new` allocates a name** via `NextFreeRunnerName`: the lowest free
+  `runner-N` for N ≥ 2, counting the unnamed default runner as slot 1. "Free"
+  means no live daemon pid file AND no live pid in that name's state dir
+  (`RunnerNameLive`), so it can never hand out a name a foreground, TUI or
+  embedded runner already holds. A dead runner's slot is REUSED, not skipped —
+  the state dir still holds that runner's id, and skipping would leak a fresh
+  identity plus an orphaned directory on every crash.
+- **The unnamed runner keeps every historical path.** `DefaultRunnerName`
+  ("default") maps back to the bare state dir and `brain-runner.pid`, so an
+  upgrade neither strands a persisted runner id nor breaks `brain runner stop`.
+- **Names are validated, never sanitized** (`NormalizeRunnerName`). They become
+  path segments; silently rewriting one would resolve to a different runner id
+  than the operator typed, which surfaces much later as "my runner stopped
+  picking up work".
+- **`runnercli.prepareRunnerConfig` is the single call site** for
+  `ResolveRunnerIdentity`, the way `NewExecutorRegistry` is the single site that
+  derives `MachineID`. It has to run after CLI flags are merged (that is where
+  `--name` arrives) and exactly once — `ResolveRunnerIdentity` is not
+  idempotent, a second call nests another `<name>` segment.
+- **Runner ids are random hex**, so the `name` label is the only human-readable
+  discriminator once two runners share a hostname: `brain run status` and the
+  PWA sidebar both display it, falling back to the id for older runners.
+- **`brain runner status` reads pid files, not the API** — it lists what this
+  host started (including stale entries whose PID is dead), while
+  `brain run status` lists what the API has registered.
+
 ### Task origin + machine affinity
 
 A task records where it was created, so it can be run back there. Three

@@ -243,3 +243,55 @@ func dirEntries(t *testing.T, dir string) map[string]struct{} {
 	}
 	return names
 }
+
+// TestPrepareRunnerConfig covers the single chokepoint where a runner's name
+// becomes its state dir — the thing that lets several runners share a machine.
+func TestPrepareRunnerConfig(t *testing.T) {
+	base := t.TempDir()
+
+	t.Run("named runner is isolated", func(t *testing.T) {
+		cfg := runner.RunnerConfig{Name: "worker-a", StateDir: base}
+		if err := prepareRunnerConfig(&cfg); err != nil {
+			t.Fatalf("prepareRunnerConfig: %v", err)
+		}
+		if want := filepath.Join(base, "worker-a"); cfg.StateDir != want {
+			t.Errorf("StateDir = %q, want %q", cfg.StateDir, want)
+		}
+		if cfg.Labels[runner.RunnerNameLabel] != "worker-a" {
+			t.Errorf("name label = %q, want worker-a", cfg.Labels[runner.RunnerNameLabel])
+		}
+		// Defaults still applied.
+		if cfg.MaxParallel != 3 || cfg.PollInterval != 10 || cfg.APITimeout != 5000 || cfg.Opencode.Bin != "opencode" {
+			t.Errorf("defaults not applied: %+v", cfg)
+		}
+	})
+
+	t.Run("unnamed runner keeps its state dir", func(t *testing.T) {
+		cfg := runner.RunnerConfig{StateDir: base}
+		if err := prepareRunnerConfig(&cfg); err != nil {
+			t.Fatalf("prepareRunnerConfig: %v", err)
+		}
+		if cfg.StateDir != base {
+			t.Errorf("StateDir = %q, want %q", cfg.StateDir, base)
+		}
+	})
+
+	t.Run("invalid name fails before anything starts", func(t *testing.T) {
+		cfg := runner.RunnerConfig{Name: "bad name", StateDir: base}
+		if err := prepareRunnerConfig(&cfg); err == nil {
+			t.Fatal("prepareRunnerConfig accepted an invalid runner name")
+		}
+	})
+}
+
+func TestRunnerLogName(t *testing.T) {
+	if got := runnerLogName(""); got != "runner.log" {
+		t.Errorf("runnerLogName(\"\") = %q, want runner.log", got)
+	}
+	if got := runnerLogName(runner.DefaultRunnerName); got != "runner.log" {
+		t.Errorf("default runnerLogName = %q, want runner.log", got)
+	}
+	if got := runnerLogName("worker-a"); got != "runner-worker-a.log" {
+		t.Errorf("named runnerLogName = %q, want runner-worker-a.log", got)
+	}
+}

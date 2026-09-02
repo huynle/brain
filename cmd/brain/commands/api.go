@@ -66,6 +66,7 @@ type APIFlags struct {
 	TLSKey        string
 	Runner        bool
 	RunnerProject string
+	RunnerName    string
 	MaxParallel   int
 	Include       []string
 	Exclude       []string

@@ -42,6 +42,7 @@ func runServerWithOptionalRunner(ctx context.Context, cfg *UnifiedConfig, opts a
 
 	project, runnerCfg := embeddedRunnerConfig(cfg, opts, embeddedRunnerFlags{
 		RunnerProject: flags.RunnerProject,
+		RunnerName:    flags.RunnerName,
 		MaxParallel:   flags.MaxParallel,
 		Include:       flags.Include,
 		Exclude:       flags.Exclude,
@@ -145,6 +146,7 @@ func lifecycleFlagsFromAPIFlags(flags *APIFlags) LifecycleFlags {
 		Daemon:        flags.Daemon,
 		Runner:        flags.Runner,
 		RunnerProject: flags.RunnerProject,
+		RunnerName:    flags.RunnerName,
 		MaxParallel:   flags.MaxParallel,
 		Include:       flags.Include,
 		Exclude:       flags.Exclude,
@@ -154,6 +156,7 @@ func lifecycleFlagsFromAPIFlags(flags *APIFlags) LifecycleFlags {
 
 type embeddedRunnerFlags struct {
 	RunnerProject string
+	RunnerName    string
 	MaxParallel   int
 	Include       []string
 	Exclude       []string
@@ -167,6 +170,11 @@ func embeddedRunnerConfig(cfg *UnifiedConfig, opts apiserver.ServerOptions, flag
 	}
 	runnerCfg := cfg.Runner
 	runnerCfg.BrainAPIURL = embeddedRunnerAPIURL(cfg, opts)
+	// Without a name the embedded runner shares the default state dir — and so
+	// the runner id — with a standalone `brain runner start` on the same host.
+	if flags.RunnerName != "" {
+		runnerCfg.Name = flags.RunnerName
+	}
 	if flags.MaxParallel != 0 {
 		runnerCfg.MaxParallel = flags.MaxParallel
 	}
@@ -220,6 +228,7 @@ type LifecycleFlags struct {
 	Host          string   // Server host override
 	Runner        bool     // Run embedded task runner with API server
 	RunnerProject string   // Embedded runner project scope
+	RunnerName    string   // Embedded runner name (several runners per machine)
 	MaxParallel   int      // Embedded runner max parallel tasks
 	Include       []string // Embedded runner include project patterns
 	Exclude       []string // Embedded runner exclude project patterns
@@ -325,6 +334,9 @@ func (c *StartCommand) daemonArgs(logFile string) []string {
 		args = append(args, "--runner")
 		if c.Flags.RunnerProject != "" {
 			args = append(args, "--runner-project", c.Flags.RunnerProject)
+		}
+		if c.Flags.RunnerName != "" {
+			args = append(args, "--runner-name", c.Flags.RunnerName)
 		}
 		if c.Flags.MaxParallel != 0 {
 			args = append(args, "--max-parallel", fmt.Sprintf("%d", c.Flags.MaxParallel))

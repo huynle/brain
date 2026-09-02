@@ -558,3 +558,22 @@ func TestStatusCommand_Crashed(t *testing.T) {
 		t.Errorf("Expected output to contain 'crashed', got: %s", output)
 	}
 }
+
+func TestEmbeddedRunnerConfig_RunnerName(t *testing.T) {
+	cfg := &UnifiedConfig{}
+	opts := apiserver.ServerOptions{Port: 3333, Host: "localhost"}
+
+	// Unnamed: the embedded runner keeps whatever the config said (empty means
+	// the default runner).
+	_, runnerCfg := embeddedRunnerConfig(cfg, opts, embeddedRunnerFlags{})
+	if runnerCfg.Name != "" {
+		t.Errorf("Name = %q, want empty", runnerCfg.Name)
+	}
+
+	// Named: needed so an embedded runner and a standalone `brain runner start`
+	// on the same host don't share a state dir, and therefore a runner id.
+	_, runnerCfg = embeddedRunnerConfig(cfg, opts, embeddedRunnerFlags{RunnerName: "embedded"})
+	if runnerCfg.Name != "embedded" {
+		t.Errorf("Name = %q, want embedded", runnerCfg.Name)
+	}
+}

@@ -1536,6 +1536,20 @@ body[data-theme="light"] .p2-browser-iframe { border-color: #d5dde5; }
 .ctxmenu .sep { height: 1px; background: #2a2f35; margin: 4px 0; }
 .ctxmenu .lbl { padding: 4px 12px; font-size: 10px; text-transform: uppercase; color: #6b757e; }
 
+/* Light theme: the menu carried the dark palette's near-black surface and
+ * `#2a2f35` separators, so on a light page every `.sep` read as a heavy
+ * black rule. Re-skin the surface, border, text and separators to the same
+ * light tokens the rest of the app uses. */
+body[data-theme="light"] .ctxmenu {
+  background: #f8fafc;
+  border-color: #d5dde5;
+  box-shadow: 0 8px 24px #0003;
+}
+body[data-theme="light"] .ctxmenu button { color: #1b232b; }
+body[data-theme="light"] .ctxmenu button:hover { background: #e1e7ed; color: #17202a; }
+body[data-theme="light"] .ctxmenu .sep { background: #d5dde5; }
+body[data-theme="light"] .ctxmenu .lbl { color: #64717e; }
+
 .sheet-scrim {
   position: fixed; inset: 0; background: #000a; z-index: 900;
 }

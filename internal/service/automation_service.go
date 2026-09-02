@@ -453,6 +453,8 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	executor := firstNonEmpty(automation.Executor, automation.Action.Executor)
 	executionMode := firstNonEmpty(automation.ExecutionMode, automation.Action.ExecutionMode)
 	targetWorkdir := firstNonEmpty(automation.TargetWorkdir, automation.Action.TargetWorkdir)
+	workdir := automation.Workdir
+	gitRemote := automation.GitRemote
 
 	// A global automation has one workdir for every project it serves, which
 	// cannot be right for more than one of them. The built-in feature
@@ -462,9 +464,21 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 	//
 	// Without this the generated checkout task inherited nothing, defaulted
 	// to /tmp, and died on "not a git repository" — the feature was built
-	// but never merged.
-	if targetWorkdir == "" && evt.FeatureID != "" {
-		targetWorkdir = s.workdirFromFeatureTasks(ctx, project, evt.FeatureID)
+	// but never merged. An AI-mode checkout runs in worktree mode, which the
+	// runner rejects with "workdir_unavailable" unless it has a local repo
+	// path (target_workdir/workdir) or a git_remote to clone, so all three
+	// are inherited from the feature when the automation entry omits them.
+	if evt.FeatureID != "" && (targetWorkdir == "" || workdir == "" || gitRemote == "") {
+		featureGit := s.gitContextFromFeatureTasks(ctx, project, evt.FeatureID)
+		if targetWorkdir == "" {
+			targetWorkdir = featureGit.TargetWorkdir
+		}
+		if workdir == "" {
+			workdir = featureGit.Workdir
+		}
+		if gitRemote == "" {
+			gitRemote = featureGit.GitRemote
+		}
 	}
 	req := types.CreateEntryRequest{
 		Type:           "task",
@@ -498,8 +512,8 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		// automated checkout could not land the branch it was created to
 		// land. Anything left unset on the automation stays unset here and
 		// falls back to task_defaults downstream, as before.
-		Workdir:            automation.Workdir,
-		GitRemote:          automation.GitRemote,
+		Workdir:            workdir,
+		GitRemote:          gitRemote,
 		MergeTargetBranch:  automation.MergeTargetBranch,
 		MergePolicy:        automation.MergePolicy,
 		MergeStrategy:      automation.MergeStrategy,
@@ -579,6 +593,28 @@ func (s *AutomationService) workdirFromFeatureTasks(ctx context.Context, project
 	return workdirFromFeatureEntries(resp.Entries)
 }
 
+// gitContextFromFeatureTasks returns the full repo context a feature's work
+// happened in, by reading the tasks that make up the feature. It is the
+// context-loading wrapper around gitContextFromFeatureEntries, mirroring
+// workdirFromFeatureTasks, so the automation path inherits target_workdir,
+// workdir, and git_remote by exactly the same rule the manual checkout
+// endpoint uses.
+func (s *AutomationService) gitContextFromFeatureTasks(ctx context.Context, project, featureID string) featureGitContext {
+	if s == nil || s.brain == nil || project == "" || featureID == "" {
+		return featureGitContext{}
+	}
+	resp, err := s.brain.List(ctx, types.ListEntriesRequest{
+		Type:      "task",
+		Project:   project,
+		FeatureID: featureID,
+		Limit:     100,
+	})
+	if err != nil || resp == nil {
+		return featureGitContext{}
+	}
+	return gitContextFromFeatureEntries(resp.Entries)
+}
+
 // workdirFromFeatureEntries is the pure half of workdirFromFeatureTasks, so
 // the manual checkout endpoint (which already has the feature's tasks in
 // hand, read straight off the filesystem) resolves a workdir by exactly the
@@ -597,6 +633,49 @@ func workdirFromFeatureEntries(entries []types.BrainEntry) string {
 		}
 	}
 	return workdirFallback
+}
+
+// featureGitContext is the repo context a checkout task needs to resolve a
+// working directory. In worktree mode the executor requires at least one of
+// these to be non-empty; without them it rejects the dispatch with
+// "workdir_unavailable" and the checkout task loops as pending forever.
+type featureGitContext struct {
+	TargetWorkdir string
+	Workdir       string
+	GitRemote     string
+}
+
+// gitContextFromFeatureEntries resolves the repo context a feature's work
+// actually happened in, so a generated checkout task can be pointed at the
+// same git repo the feature was built in.
+//
+// TargetWorkdir/Workdir follow the same preference as workdirFromFeatureEntries
+// (target_workdir wins, workdir is the fallback). GitRemote is collected
+// independently: a worktree-mode checkout can resolve either from a local repo
+// path (target_workdir/workdir) OR from git_remote + repo_cache_dir, so
+// carrying the remote too lets the runner clone when no local path is valid on
+// the machine that ends up executing.
+//
+// Generated tasks are skipped for the same reason as workdirFromFeatureEntries:
+// a prior automation's task carries the fallback we are computing, so including
+// it would let a bad value propagate to every later checkout.
+func gitContextFromFeatureEntries(entries []types.BrainEntry) featureGitContext {
+	var ctx featureGitContext
+	for _, t := range entries {
+		if t.Generated != nil && *t.Generated {
+			continue
+		}
+		if ctx.TargetWorkdir == "" && t.TargetWorkdir != "" {
+			ctx.TargetWorkdir = t.TargetWorkdir
+		}
+		if ctx.Workdir == "" && t.Workdir != "" {
+			ctx.Workdir = t.Workdir
+		}
+		if ctx.GitRemote == "" && t.GitRemote != "" {
+			ctx.GitRemote = t.GitRemote
+		}
+	}
+	return ctx
 }
 
 func automationCompleteOnIdle(value *bool) *bool {

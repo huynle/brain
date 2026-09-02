@@ -2113,6 +2113,92 @@ Task content`
 	}
 }
 
+// TestCheckoutFeature_AIMode_InheritsGitContext is the regression test for
+// AI-mode (worktree) checkout tasks being created with no git repo context.
+//
+// The generator computed the feature's workdir but only applied it inside the
+// simple/script branch, so an AI-mode checkout carried an empty target_workdir
+// while running in worktree mode. The runner then rejected the dispatch with
+// "workdir_unavailable" and the checkout task looped as pending forever.
+//
+// This asserts the checkout task inherits target_workdir, workdir, and
+// git_remote from the feature's own tasks in the default (AI) mode.
+func TestCheckoutFeature_AIMode_InheritsGitContext(t *testing.T) {
+	svc, _, brainDir := newTestTaskService(t)
+	ctx := context.Background()
+	projectID := "test-project"
+	featureID := "feature-123"
+
+	taskDir := filepath.Join(brainDir, "projects", projectID, "task")
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		t.Fatalf("failed to create task dir: %v", err)
+	}
+
+	// A real feature task carrying the repo context the runner needs.
+	task1Path := filepath.Join(taskDir, "abc12def.md")
+	task1Content := `---
+type: task
+title: Implement auth
+status: completed
+priority: high
+feature_id: feature-123
+target_workdir: /Users/me/repo/.worktrees/dev
+workdir: orion/repo
+git_remote: git@example.com:org/repo.git
+execution_mode: worktree
+---
+Task content`
+	if err := os.WriteFile(task1Path, []byte(task1Content), 0644); err != nil {
+		t.Fatalf("failed to write task: %v", err)
+	}
+
+	// AI mode is the default: no CheckoutMode set, worktree execution.
+	opts := &types.FeatureCheckoutOptions{
+		MergeTargetBranch: "dev",
+		MergePolicy:       "auto_pr",
+		MergeStrategy:     "squash",
+		ExecutionMode:     "worktree",
+	}
+
+	result, err := svc.CheckoutFeature(ctx, projectID, featureID, opts)
+	if err != nil {
+		t.Fatalf("CheckoutFeature failed: %v", err)
+	}
+	if !result.Created {
+		t.Fatal("expected result.Created = true")
+	}
+
+	files, err := os.ReadDir(taskDir)
+	if err != nil {
+		t.Fatalf("failed to read task dir: %v", err)
+	}
+	var checkoutPath string
+	for _, f := range files {
+		if f.Name() != "abc12def.md" {
+			checkoutPath = filepath.Join(taskDir, f.Name())
+		}
+	}
+	if checkoutPath == "" {
+		t.Fatal("checkout task file not created")
+	}
+	content, err := os.ReadFile(checkoutPath)
+	if err != nil {
+		t.Fatalf("failed to read checkout task: %v", err)
+	}
+	contentStr := string(content)
+
+	for _, expected := range []string{
+		"target_workdir: /Users/me/repo/.worktrees/dev",
+		"workdir: orion/repo",
+		"git@example.com:org/repo.git", // git_remote value (serializer may quote it)
+		"execution_mode: worktree",
+	} {
+		if !contains(contentStr, expected) {
+			t.Errorf("AI-mode checkout task missing inherited git context: %q\nFull content:\n%s", expected, contentStr)
+		}
+	}
+}
+
 // TestCheckoutFeature_IndexesCheckoutTask is the regression test for a
 // checkout task that existed on disk but not in SQLite.
 //

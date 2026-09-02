@@ -1200,7 +1200,15 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	// checkout task carries no workdir at all and the runner resolves it
 	// against whatever its own default happens to be — which for a git merge
 	// means merging some unrelated checkout, or none.
-	checkoutWorkdir := workdirFromFeatureEntries(featureTasks)
+	//
+	// This context is applied to the checkout task in ALL modes below, not
+	// just the simple/script path. An AI-mode checkout runs in worktree mode,
+	// and worktree mode needs a valid git repo context (target_workdir/workdir
+	// or git_remote+repo_cache_dir); without it the runner rejects the
+	// dispatch with "workdir_unavailable" and the checkout task loops as
+	// pending forever.
+	checkoutGit := gitContextFromFeatureEntries(featureTasks)
+	checkoutWorkdir := checkoutGit.TargetWorkdir
 
 	// Build checkout task content, routed by checkout_mode.
 	//
@@ -1275,6 +1283,21 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	}
 	if normalizedOpts.ExecutionMode != "" {
 		fm.ExecutionMode = normalizedOpts.ExecutionMode
+	}
+	// Inherit the feature's git repo context in ALL modes. In worktree mode
+	// (the AI-checkout default) the runner needs a valid repo to resolve a
+	// workdir; leaving these empty is what caused AI checkouts to be rejected
+	// with "workdir_unavailable" and loop as pending. target_workdir/workdir
+	// let the runner find the local repo; git_remote lets it clone when no
+	// local path is valid on the executing machine.
+	if checkoutGit.TargetWorkdir != "" {
+		fm.TargetWorkdir = checkoutGit.TargetWorkdir
+	}
+	if checkoutGit.Workdir != "" {
+		fm.Workdir = checkoutGit.Workdir
+	}
+	if checkoutGit.GitRemote != "" {
+		fm.GitRemote = checkoutGit.GitRemote
 	}
 	if checkoutScript != "" {
 		// The script executor reads direct_prompt as the command to run, so
@@ -1544,6 +1567,7 @@ func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID str
 			// be. Dropping these here silently produced exactly that.
 			TargetWorkdir: doc.Frontmatter.TargetWorkdir,
 			Workdir:       doc.Frontmatter.Workdir,
+			GitRemote:     doc.Frontmatter.GitRemote,
 		})
 	}
 

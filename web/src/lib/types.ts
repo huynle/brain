@@ -440,6 +440,58 @@ export function sessionName(s: OcSession): string {
   return s.id;
 }
 
+/** Lifecycle state of a reminder, derived server-side from status + date. */
+export type ReminderState = "armed" | "undated" | "fired" | "done" | "paused";
+
+/** What happens when a dated reminder's time arrives. */
+export type ReminderAction = "notify" | "task";
+
+export interface ReminderSummary {
+  entry_id: string;
+  reminder_id: string;
+  title: string;
+  project?: string;
+  feature_id?: string;
+  path?: string;
+  content?: string;
+  status: string;
+  state: ReminderState;
+  /** RFC3339 with an offset. Absent means undated — it never fires. */
+  remind_at?: string;
+  timezone?: string;
+  action: ReminderAction;
+  prompt?: string;
+  fired_at?: string;
+  generated_task_id?: string;
+  /** How far past remind_at the firing actually happened. */
+  late_by_seconds?: number;
+}
+
+export interface ReminderListResponse {
+  reminders: ReminderSummary[];
+  count: number;
+}
+
+export interface CreateReminderRequest {
+  project?: string;
+  global?: boolean;
+  feature_id?: string;
+  title: string;
+  content?: string;
+  tags?: string[];
+  config?: {
+    remind_at?: string;
+    timezone?: string;
+    action?: ReminderAction;
+    prompt?: string;
+    agent?: string;
+    model?: string;
+    executor?: string;
+    execution_mode?: string;
+    target_workdir?: string;
+  };
+}
+
 export interface OcMessageInfo {
   id: string;
   sessionID?: string;

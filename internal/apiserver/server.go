@@ -475,6 +475,18 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	})
 	go goalSvc.Start(ctx, eventHub)
 
+	// ─── Reminders ─────────────────────────────────────────────────
+	// The sweeper runs HERE, in the API process, not in the runner. A
+	// notify-action reminder has nothing to do with runners and must not go
+	// undelivered because none happens to be polling; the runner's existing
+	// run_once_at path is additionally gated by the project and feature pause
+	// dials, which have no business suppressing a notification.
+	reminderSvc := service.NewReminderService(brainSvc, store,
+		service.WithReminderEventIngester(eventSvc),
+		service.WithReminderPauseChecker(runnerSvc),
+	)
+	go reminderSvc.Start(ctx)
+
 	// ─── Webhook Dispatcher ────────────────────────────────────────
 	// Subscribe to all EventHub events and deliver to matching webhooks.
 	webhookDispatcher := realtime.NewWebhookDispatcher(eventHub, webhookSvc)
@@ -515,6 +527,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithEventService(eventSvc),
 		api.WithWebhookService(webhookSvc),
 		api.WithGoalService(goalSvc),
+		api.WithReminderService(reminderSvc),
 		api.WithAutomationRunService(automationSvc),
 		api.WithAssistantService(assistantSvc),
 		api.WithBridgeService(bridgeHub),

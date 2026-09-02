@@ -243,6 +243,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		Action:              automationActionToFM(req.Action),
 		Retry:               automationRetryToFM(req.Retry),
 		Goal:                goalConfigToFM(req.Goal),
+		Reminder:            reminderConfigToFM(req.Reminder),
 		Schedule:            req.Schedule,
 		ScheduleEnabled:     req.ScheduleEnabled,
 		NextRun:             req.NextRun,
@@ -960,6 +961,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.Goal != nil {
 		fm.Goal = goalConfigToFM(req.Goal)
+	}
+	if req.Reminder != nil {
+		fm.Reminder = reminderConfigToFM(req.Reminder)
 	}
 	if req.Retry != nil {
 		fm.Retry = automationRetryToFM(req.Retry)

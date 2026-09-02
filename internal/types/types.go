@@ -30,6 +30,7 @@ var EntryTypes = []string{
 	"automation",
 	"automation_run",
 	"merge_request",
+	"reminder",
 }
 
 // entryTypeSet is a lookup set for O(1) validation.
@@ -432,6 +433,9 @@ type BrainEntry struct {
 	// Goal automation configuration (set when generated_by=brain-goal).
 	Goal *GoalConfig `json:"goal,omitempty"`
 
+	// Reminder configuration (set on type=reminder entries).
+	Reminder *ReminderConfig `json:"reminder,omitempty"`
+
 	// Session tracking
 	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
 	Runs             []CronRun                  `json:"runs,omitempty"`
@@ -759,10 +763,11 @@ type CreateEntryRequest struct {
 	GeneratedBy     string `json:"generated_by,omitempty"`
 	AutomationRunID string `json:"automation_run_id,omitempty"`
 
-	Trigger *TriggerConfig    `json:"trigger,omitempty"`
-	Action  *AutomationAction `json:"action,omitempty"`
-	Retry   *AutomationRetry  `json:"retry,omitempty"`
-	Goal    *GoalConfig       `json:"goal,omitempty"`
+	Trigger  *TriggerConfig    `json:"trigger,omitempty"`
+	Action   *AutomationAction `json:"action,omitempty"`
+	Retry    *AutomationRetry  `json:"retry,omitempty"`
+	Goal     *GoalConfig       `json:"goal,omitempty"`
+	Reminder *ReminderConfig   `json:"reminder,omitempty"`
 
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
@@ -850,10 +855,11 @@ type UpdateEntryRequest struct {
 	GeneratedBy     *string `json:"generated_by,omitempty"`
 	AutomationRunID *string `json:"automation_run_id,omitempty"`
 
-	Trigger *TriggerConfig    `json:"trigger,omitempty"`
-	Action  *AutomationAction `json:"action,omitempty"`
-	Retry   *AutomationRetry  `json:"retry,omitempty"`
-	Goal    *GoalConfig       `json:"goal,omitempty"`
+	Trigger  *TriggerConfig    `json:"trigger,omitempty"`
+	Action   *AutomationAction `json:"action,omitempty"`
+	Retry    *AutomationRetry  `json:"retry,omitempty"`
+	Goal     *GoalConfig       `json:"goal,omitempty"`
+	Reminder *ReminderConfig   `json:"reminder,omitempty"`
 }
 
 // =============================================================================

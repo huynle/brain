@@ -3993,3 +3993,59 @@ body[data-theme="light"] .pcard-tabs .tab-count {
 body[data-theme="light"] .auto-archive { color: #6b757e; }
 body[data-theme="light"] .auto-archive:hover { color: #17202a; }
 body[data-theme="light"] .auto-archive input { background: transparent; border: 0; }
+
+/* ─── Reminder bell ──────────────────────────────────────────────
+   The in-app notification surface. Anchored to its button so the panel
+   follows the bell rather than floating, and the whole thing is absent from
+   the DOM when nothing is waiting (see ReminderBell). */
+.reminder-bell { position: relative; display: inline-flex; }
+.reminder-panel {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
+  width: min(380px, calc(100vw - 24px));
+  background: #12161a; border: 1px solid #2a2f35; border-radius: 6px;
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+.reminder-panel__head {
+  padding: 7px 10px; font-size: 10px; letter-spacing: 0.05em;
+  text-transform: uppercase; color: #9098a1;
+  border-bottom: 1px solid #22272c; background: #0e1114;
+}
+/* Caps the panel rather than the page: twenty fired reminders must scroll
+   inside the popover, not push it off the bottom of the viewport. */
+.reminder-panel__list { max-height: min(60vh, 420px); overflow-y: auto; }
+.reminder-row {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 10px; border-bottom: 1px solid #1a1e22;
+}
+.reminder-row:last-child { border-bottom: 0; }
+.reminder-row__main { min-width: 0; flex: 1; }
+.reminder-row__title {
+  font-size: 12px; color: #d7dbe0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reminder-row__meta { font-size: 10px; color: #6b757e; margin-top: 2px; }
+.reminder-row__acts { display: flex; gap: 4px; flex: 0 0 auto; }
+.reminder-row__acts button {
+  background: #12161a; border: 1px solid #2a2f35; color: #9098a1;
+  font-size: 10px; padding: 2px 7px; border-radius: 3px; cursor: pointer;
+}
+.reminder-row__acts button:hover { background: #1a1f25; color: #d7dbe0; }
+.reminder-row__acts button.primary { border-color: #3d5a3f; color: #6fca7d; }
+
+body[data-theme="light"] .reminder-panel {
+  background: #ffffff; border-color: #d5dde5;
+  box-shadow: 0 8px 28px rgba(20, 30, 45, 0.14);
+}
+body[data-theme="light"] .reminder-panel__head {
+  background: #f1f4f7; border-bottom-color: #d5dde5; color: #64717e;
+}
+body[data-theme="light"] .reminder-row { border-bottom-color: #e6ebf0; }
+body[data-theme="light"] .reminder-row__title { color: #1b232b; }
+body[data-theme="light"] .reminder-row__acts button {
+  background: #f8fafc; border-color: #d5dde5; color: #64717e;
+}
+body[data-theme="light"] .reminder-row__acts button:hover { color: #1b232b; }
+body[data-theme="light"] .reminder-row__acts button.primary {
+  border-color: #9ac9a2; color: #2f7d3c;
+}

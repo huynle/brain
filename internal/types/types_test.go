@@ -119,8 +119,9 @@ func TestIsValidTaskClassification(t *testing.T) {
 
 func TestEntryTypeConstants(t *testing.T) {
 	// 14 base types (incl. quirk) + automation + automation_run + merge_request
-	if len(EntryTypes) != 17 {
-		t.Errorf("expected 17 entry types, got %d", len(EntryTypes))
+	// + reminder
+	if len(EntryTypes) != 18 {
+		t.Errorf("expected 18 entry types, got %d", len(EntryTypes))
 	}
 }
 

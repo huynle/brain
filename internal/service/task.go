@@ -2399,6 +2399,21 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 			}
 		}
 	}
+	// The reminder block, read back out of notes.metadata.
+	//
+	// This is the hop that made checkout_mode write-only. The sweeper reads
+	// entries through brain.List -> NoteRowToBrainEntry -> here, so without
+	// this arm every reminder looks UNDATED and nothing ever fires — while
+	// the markdown on disk is perfectly correct and every other layer agrees.
+	if v, ok := meta["reminder"]; ok {
+		data, err := json.Marshal(v)
+		if err == nil {
+			var rc types.ReminderConfig
+			if err := json.Unmarshal(data, &rc); err == nil {
+				entry.Reminder = &rc
+			}
+		}
+	}
 
 	// Sessions: map[string]SessionInfo from metadata JSON
 	if sessionsRaw, ok := meta["sessions"]; ok {

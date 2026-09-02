@@ -1837,6 +1837,9 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 	if fm.Goal != nil {
 		req.Goal = fmGoalConfigToType(fm.Goal)
 	}
+	if fm.Reminder != nil {
+		req.Reminder = fmReminderConfigToType(fm.Reminder)
+	}
 
 	return req
 }
@@ -1922,6 +1925,30 @@ func fmGoalConfigToType(g *frontmatter.GoalConfig) *types.GoalConfig {
 		}
 	}
 	return cfg
+}
+
+// fmReminderConfigToType converts the on-disk reminder mirror back to the
+// API-facing config. Used by the raw-file editor path, which reparses a file
+// the user edited by hand and rebuilds the update request from it — without
+// this the reminder block is silently dropped on every such save.
+func fmReminderConfigToType(r *frontmatter.ReminderConfig) *types.ReminderConfig {
+	if r == nil {
+		return nil
+	}
+	return &types.ReminderConfig{
+		ID:              r.ID,
+		RemindAt:        r.RemindAt,
+		Timezone:        r.Timezone,
+		Action:          r.Action,
+		Prompt:          r.Prompt,
+		Agent:           r.Agent,
+		Model:           r.Model,
+		Executor:        r.Executor,
+		ExecutionMode:   r.ExecutionMode,
+		TargetWorkdir:   r.TargetWorkdir,
+		FiredAt:         r.FiredAt,
+		GeneratedTaskID: r.GeneratedTaskID,
+	}
 }
 
 func attachmentRefsFromFM(refs []frontmatter.AttachmentReference) []types.AttachmentReference {

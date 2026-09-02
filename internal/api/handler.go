@@ -19,6 +19,7 @@ type Handler struct {
 	events         EventService
 	webhooks       WebhookService
 	goalService    GoalService
+	reminders      ReminderService
 	automationRun  AutomationRunService
 	assistant      *AssistantService
 	placement      ProjectPlacementService
@@ -123,6 +124,17 @@ func WithWebhookService(ws WebhookService) HandlerOption {
 func WithGoalService(gs GoalService) HandlerOption {
 	return func(h *Handler) {
 		h.goalService = gs
+	}
+}
+
+// WithReminderService sets the ReminderService on the Handler.
+//
+// The FIELD alone is not enough: without this option the field stays nil and
+// every /reminders route serves 501 forever, with fully wired-looking code
+// and green unit tests.
+func WithReminderService(rs ReminderService) HandlerOption {
+	return func(h *Handler) {
+		h.reminders = rs
 	}
 }
 

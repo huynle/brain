@@ -815,7 +815,7 @@ button.glyph:focus-visible {
 }
 .trow .id { color: #4b545c; font-size: 10px; text-align: right; }
 
-/* Dependency-tree guides (CardTasks + CardFeatures).
+/* Dependency-tree guides (task rows AND feature headers in CardTasks).
  *
  * The prefix is box-drawing text from `flattenDepForest`, so it must
  * render in a monospace face at a fixed advance width or the vertical
@@ -3301,12 +3301,16 @@ body[data-theme="light"] .p2-runner-shell__prompt {
 }
 
 /* ---------- Dots ---------- */
-/* A paused runner/project keeps reporting "online". Its dot must not be the
-   same green as one doing work — that equivalence is the whole bug. The
-   hollow ring reads as "present but not participating". */
-.proj-row .dot.paused,
-.runner-row .dot.paused,
-.pcard-head .dot.paused {
+/* A paused runner keeps reporting "online". Its dot must not be the same
+   green as one doing work — that equivalence is the whole bug. The hollow
+   ring reads as "present but not participating".
+   Runner-scoped only now: both PROJECT dots became the .dial button at the
+   end of this file, where the paused state is a ⏸ glyph rather than a
+   ring. The `.proj-row`/`.pcard-head` halves of this selector are gone
+   rather than left behind — the card-head one was already unreachable, and
+   a dead selector is how the next reader concludes the dot still shows
+   pause. */
+.runner-row .dot.paused {
   background: transparent;
   box-shadow: inset 0 0 0 2px var(--pause);
 }
@@ -3504,3 +3508,108 @@ body[data-theme="light"] .hold-banner { color: #48525c; }
    legible number in the row. */
 body[data-theme="light"] .wc-metrics b { color: #17202a; }
 body[data-theme="light"] .wc-metrics b.wc-metric-warn { color: #a4610f; }
+
+/* ---------- Project dial (the pause/play control) ---------- */
+/* Replaces the inert status dot at the head of a sidebar project row and a
+   project card header. Two channels, deliberately: the GLYPH is the task
+   dial (▶ dispatching / ⏸ held) and the COLOUR is the work (green ready,
+   amber running, red blocked, grey empty, steel-blue held). The dot it
+   replaced tried to carry both in one swatch and had to rank them, so a
+   paused project with a task still finishing looked exactly like one
+   running freely.
+
+   Every one of background / border / padding / border-radius is declared
+   because the generic `button` rules (and the light-theme block that
+   paints every button solid white) would otherwise reclaim whatever is
+   left unset. `.dial` plus its state class is a two-class selector, which
+   outranks `body[data-theme="light"] button` without !important. */
+.dial {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: #4b545c;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+/* Hover paints the plate, never the glyph. `.dial:hover:not(:disabled)`
+   is (0,3,0) and would outrank every state class below it at (0,2,0), so
+   setting a colour here erased the amber/steel-blue at the exact moment
+   the pointer was on the control — and in light theme it landed near-white
+   on a near-white plate. The state colour is the whole message; hover only
+   says "this is clickable".
+   NOTE: no enlarged ::after hit area. One was tried and it bled out of the
+   14px box in both surfaces — 6px into the sidebar row's 8px left gutter,
+   and far enough down to claim the top of the NEXT row's dial and the
+   first task row under a feature caret. The dial matches the density of
+   every other control here (`.selbox` is 11px, the close buttons smaller
+   still); stealing a neighbour's clicks is a worse bug than a small
+   target. */
+.dial:hover:not(:disabled) { background: #22272c; }
+.dial:disabled { cursor: default; opacity: 0.6; }
+.dial:focus-visible { outline: 1px solid #f4b23a; outline-offset: 1px; }
+
+.dial.on   { color: #6fca7d; }
+.dial.busy { color: #f4b23a; animation: pulse 1.4s ease-in-out infinite; }
+.dial.err  { color: #d96060; }
+.dial.paused { color: var(--pause); }
+/* Held, but hot: the dial is off and work is running anyway. "Run now"
+   force-dispatches past the dial by design, so this is a normal state and
+   not an error — amber says "moving", the ⏸ glyph says "not by the
+   scheduler". Anything less would repeat the old dot's lie in reverse. */
+.dial.override {
+  color: #f4b23a;
+  background: var(--pause-wash);
+  box-shadow: inset 0 0 0 1px var(--pause-dim);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+
+/* `body[data-theme="light"] button` is (0,1,2) and beats a bare `.dial`
+   at (0,1,0), so the "no tasks" state — which carries no state class at
+   all — inherited the light theme's near-black body text instead of the
+   grey it is meant to be. Every property that rule sets has to be answered
+   here, colour included. */
+body[data-theme="light"] .dial {
+  background: transparent;
+  border: 0;
+  /* Darker than a straight translation of the dark theme's #4b545c would
+     be: on the sidebar's #f8fafc that lands at ~2.6:1, under the 3:1 WCAG
+     1.4.11 asks of a graphical control. #78828c is ~3.4:1 and still reads
+     as the muted, nothing-to-report state. */
+  color: #78828c;
+}
+body[data-theme="light"] .dial:hover:not(:disabled) { background: #dfe6ed; }
+body[data-theme="light"] .dial.on   { color: #2f8f45; }
+body[data-theme="light"] .dial.busy { color: #a4610f; }
+body[data-theme="light"] .dial.err  { color: #b03b3b; }
+body[data-theme="light"] .dial.override { color: #a4610f; }
+/* Not redundant with `.dial.paused` above: the light base rule two blocks
+   up is (0,2,1) and outranks it, so every state class needs an answer here
+   — including the one that only wanted the variable it already had. */
+body[data-theme="light"] .dial.paused { color: var(--pause); }
+
+/* ---------- Feature fold ---------- */
+/* The caret was decorative for the whole life of this component — the
+   feature head's click handler already skipped `.caret`, so it pointed at
+   a fold nobody could operate. It is now the control, and needs a tap
+   target to match: same trick as `.dial`, sized to stay within the head's
+   6px gap so it cannot swallow a click meant for the feature name. */
+.feat-head .caret:hover { color: #eaedef; }
+/* Selection mode boxes the shared slot and hides what was in it — fine
+   while the caret was decorative, a dead end now that it folds the
+   feature. Keep both: the slot widens by the checkbox for as long as the
+   mode is on, which is a mode the SelectionBar is already announcing. */
+.feat-head .glyph-slot.boxed .caret { display: inline-block; }
+.feat-head .glyph-slot { gap: 4px; }
+.feat-head .caret:focus-visible { outline: 1px solid #f4b23a; }
+/* A folded feature is a single line, so the head loses the rule that
+   separated it from its rows and gains a little air instead. */
+.feat.collapsed .feat-head { margin-bottom: 2px; }
+body[data-theme="light"] .feat-head .caret:hover { color: #17202a; }

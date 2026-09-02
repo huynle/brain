@@ -172,9 +172,19 @@ export interface WorkspaceState {
   mobile: boolean;
   streaming: boolean;
   featureAssignments: Record<string, string>;
-  /** Per-project expansion state for the "N merged features" fold
-   *  in CardFeatures. Missing key = collapsed (default). */
-  mergedExpanded: Record<string, boolean>;
+  /** Per-feature collapse state for a feature's task rows in CardTasks,
+   *  nested projectId → featureId → collapsed.
+   *
+   *  TRI-STATE on purpose: a missing key means "no opinion", and the
+   *  view falls back to `isFeatureDone(f)` so finished and merged
+   *  features start folded without anyone having to write an entry for
+   *  every feature in the project. Only an explicit click stores a
+   *  boolean, and it then outranks the default in both directions.
+   *
+   *  Nested rather than a `${projectId}:${featureId}` composite key so
+   *  `forgetProject` can drop a whole project with the same `omitKey`
+   *  the other per-project maps use — a composite key would survive it. */
+  featureCollapsed: Record<string, Record<string, boolean>>;
   /** Per-project expansion state for the "N archived tasks" fold
    *  in CardTasks. Missing key = collapsed (default). */
   archivedExpanded: Record<string, boolean>;
@@ -212,7 +222,14 @@ export interface WorkspaceState {
   setStreaming(s: boolean): void;
   assignFeature(featureId: string, runnerId: string): void;
   unassignFeature(featureId: string): void;
-  toggleMergedExpanded(projectId: string): void;
+  /** Flip one feature's task rows. `defaultCollapsed` is the view's
+   *  derived state, so the FIRST click always does the visible opposite
+   *  of what is on screen rather than of `!undefined`. */
+  toggleFeatureCollapsed(
+    projectId: string,
+    featureId: string,
+    defaultCollapsed: boolean,
+  ): void;
   toggleArchivedExpanded(projectId: string): void;
   hideProject(projectId: string): void;
   showProject(projectId: string): void;
@@ -569,7 +586,7 @@ export const useWorkspace = create<WorkspaceState>()(
         mobile: false,
         streaming: false,
         featureAssignments: {},
-        mergedExpanded: {},
+        featureCollapsed: {},
         archivedExpanded: {},
         hiddenProjects: [],
         statusFilter: "all" as StatusFilter,
@@ -644,13 +661,21 @@ export const useWorkspace = create<WorkspaceState>()(
             return { featureAssignments: next };
           }),
 
-        toggleMergedExpanded: (projectId) =>
-          set((s) => ({
-            mergedExpanded: {
-              ...s.mergedExpanded,
-              [projectId]: !s.mergedExpanded[projectId],
-            },
-          })),
+        // Writes an explicit boolean even when it equals the default —
+        // "the user decided this" has to outlive the feature moving to
+        // another lifecycle, or reopening a finished feature's rows
+        // would silently re-fold them the moment it merged.
+        toggleFeatureCollapsed: (projectId, featureId, defaultCollapsed) =>
+          set((s) => {
+            const forProject = s.featureCollapsed[projectId] ?? {};
+            const current = forProject[featureId] ?? defaultCollapsed;
+            return {
+              featureCollapsed: {
+                ...s.featureCollapsed,
+                [projectId]: { ...forProject, [featureId]: !current },
+              },
+            };
+          }),
 
         toggleArchivedExpanded: (projectId) =>
           set((s) => ({
@@ -703,7 +728,7 @@ export const useWorkspace = create<WorkspaceState>()(
             const sidebar = sweep(s.docks.sidebar);
             return {
               hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId),
-              mergedExpanded: omitKey(s.mergedExpanded, projectId),
+              featureCollapsed: omitKey(s.featureCollapsed, projectId),
               archivedExpanded: omitKey(s.archivedExpanded, projectId),
               docks: { focus, sidebar },
               // A leaf id recorded as "last focused" may have just been
@@ -849,7 +874,7 @@ export const useWorkspace = create<WorkspaceState>()(
         sidebarCollapsed: s.sidebarCollapsed,
         theme: s.theme,
         featureAssignments: s.featureAssignments,
-        mergedExpanded: s.mergedExpanded,
+        featureCollapsed: s.featureCollapsed,
         archivedExpanded: s.archivedExpanded,
         hiddenProjects: s.hiddenProjects,
         statusFilter: s.statusFilter,

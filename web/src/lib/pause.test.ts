@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   EMPTY_PAUSE_STATE,
+  isTaskExecuting,
+  projectRunIndicator,
   allRunnersPaused,
   anyPaused,
   buildPauseState,
@@ -683,4 +685,130 @@ test("an unresolved feature dep warns even on a healthy task", () => {
 test("no unresolved deps means no warning", () => {
   assert.equal(featureDepWarning(task()), null);
   assert.equal(featureDepWarning(task({ unresolved_feature_deps: [] })), null);
+});
+
+// ─── projectRunIndicator (the pause/play control) ────────────────
+
+const RUNNING = { status: "in_progress" } as const;
+
+test("projectRunIndicator: an unpaused project shows the play glyph", () => {
+  const i = projectRunIndicator([task()], {
+    paused: false,
+    projectId: "shop",
+  });
+  assert.equal(i.paused, false);
+  assert.equal(i.state, "on");
+  assert.equal(i.actionLabel, "Pause shop");
+});
+
+test("projectRunIndicator: work in flight paints it busy", () => {
+  const i = projectRunIndicator([task(), task({ id: "t2", ...RUNNING })], {
+    paused: false,
+    projectId: "shop",
+  });
+  assert.equal(i.state, "busy");
+  assert.equal(i.liveCount, 1);
+});
+
+test("projectRunIndicator: blocked outranks ready, running outranks blocked", () => {
+  const blocked = task({ id: "b", status: "blocked" });
+  assert.equal(
+    projectRunIndicator([task(), blocked], { paused: false, projectId: "p" })
+      .state,
+    "err",
+  );
+  assert.equal(
+    projectRunIndicator([blocked, task({ id: "r", ...RUNNING })], {
+      paused: false,
+      projectId: "p",
+    }).state,
+    "busy",
+  );
+});
+
+test("projectRunIndicator: an empty project has no colour to report", () => {
+  const i = projectRunIndicator([], { paused: false, projectId: "p" });
+  assert.equal(i.state, "");
+  assert.equal(i.liveCount, 0);
+});
+
+test("projectRunIndicator: a quiet paused project reads as held", () => {
+  const i = projectRunIndicator([task(), task({ id: "b", status: "blocked" })], {
+    paused: true,
+    projectId: "shop",
+  });
+  assert.equal(i.state, "paused");
+  assert.equal(i.paused, true);
+  assert.equal(i.actionLabel, "Resume shop");
+  // The dial outranks the task mix here: with dispatch off, "some tasks
+  // are blocked" is not the headline — nothing is going to move at all.
+  assert.match(i.title, /PAUSED/);
+});
+
+// The whole point of the override state: "Run now" force-dispatches past
+// the dial on purpose, so paused + running is a deliberate workflow, not a
+// contradiction. The old dot ranked busy above paused and erased it.
+test("projectRunIndicator: paused WITH work running is its own state", () => {
+  const i = projectRunIndicator([task(), task({ id: "t2", ...RUNNING })], {
+    paused: true,
+    projectId: "shop",
+  });
+  assert.equal(i.state, "override");
+  assert.equal(i.paused, true);
+  assert.equal(i.liveCount, 1);
+  assert.match(i.title, /still running/);
+});
+
+// Automation tasks answer to the SEPARATE automations dial, so one running
+// under a paused task dial is ordinary scheduling. Counting it would flag
+// an override on every project with a cron.
+test("projectRunIndicator: an automation task is not an override", () => {
+  const i = projectRunIndicator(
+    [task({ id: "a", ...RUNNING, generated_by: "automation:nightly" })],
+    { paused: true, projectId: "shop" },
+  );
+  assert.equal(i.state, "paused");
+  assert.equal(i.liveCount, 0);
+});
+
+// `in_progress` sticks when a runner dies mid-task — that is exactly what
+// the server's is_abandoned enrichment exists to flag. Counting it would
+// paint a dead project amber forever and claim an override that is not
+// happening.
+test("projectRunIndicator: an abandoned task is not running", () => {
+  const i = projectRunIndicator(
+    [task({ id: "z", ...RUNNING, is_abandoned: true })],
+    { paused: true, projectId: "shop" },
+  );
+  assert.equal(i.state, "paused");
+  assert.equal(i.liveCount, 0);
+  assert.equal(isTaskExecuting(task({ ...RUNNING, is_abandoned: true })), false);
+  assert.equal(isTaskExecuting(task({ ...RUNNING })), true);
+});
+
+// The automation carve-out belongs to the OVERRIDE question only. Folding
+// it into the colour too made an unpaused project with a running cron
+// report "ready" in static green while the same card header said "1 active".
+test("projectRunIndicator: a running automation still paints an unpaused project busy", () => {
+  const i = projectRunIndicator(
+    [task({ id: "a", ...RUNNING, generated_by: "automation:nightly" })],
+    { paused: false, projectId: "shop" },
+  );
+  assert.equal(i.state, "busy");
+  assert.match(i.title, /1 task running/);
+  // …but it is not work THIS dial governs, so the override count stays 0.
+  assert.equal(i.liveCount, 0);
+});
+
+test("projectRunIndicator: the busy count includes automations, the override count does not", () => {
+  const i = projectRunIndicator(
+    [
+      task({ id: "a", ...RUNNING, generated_by: "automation:nightly" }),
+      task({ id: "m", ...RUNNING }),
+    ],
+    { paused: false, projectId: "shop" },
+  );
+  assert.equal(i.state, "busy");
+  assert.match(i.title, /2 tasks running/);
+  assert.equal(i.liveCount, 1);
 });

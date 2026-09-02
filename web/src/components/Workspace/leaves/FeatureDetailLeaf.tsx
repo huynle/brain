@@ -414,6 +414,18 @@ export function FeatureDetailLeaf({
           </div>
           <div className="k">Runner</div>
           <div className="v">{runner ? runner.runner_id : "unassigned"}</div>
+          {/* `feature_depends_on`, spelled out. The Tasks tab nests this
+              feature under what it waits on, which shows the SHAPE; the
+              ids only ever appeared on the deleted Features tab, so
+              without this row a dependency naming a feature that is not
+              in the project (a typo, or one that lives elsewhere) has
+              nowhere left to be read. */}
+          {feature.dependsOn.length > 0 && (
+            <>
+              <div className="k">Waits on</div>
+              <div className="v">{feature.dependsOn.join(", ")}</div>
+            </>
+          )}
           {feature.mergePolicy && (
             <>
               <div className="k">Merge policy</div>

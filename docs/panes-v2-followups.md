@@ -79,11 +79,14 @@ Deltas from the Phase 3 task text worth remembering:
   and briefly adds `.dragover` (which was defined for drag-drop in
   Phase 2). Same tokenized accent — no new CSS needed. Phase 4/5 can
   swap this for a dedicated `.pulse` class if the accent conflicts.
-- **`CardAutomations` scaffolded but unused in the default tab
-  strip.** The four card tabs are Tasks / Features / Session / Logs
-  per the plan. `CardAutomations.tsx` is committed so a Phase 4
-  toggle can promote Automations to a top-level tab without a churny
-  restructure.
+- **Card tab strip.** Resolved: the strip is Tasks / Goals /
+  Automations. `CardAutomations` was promoted out of scaffolding, and
+  Session / Logs never became card tabs — they are dock leaves. The
+  **Features** tab was removed once every feature became a foldable,
+  dependency-nested group header inside Tasks; `CardFeatures.tsx` is
+  deleted and its three unique affordances (the feature forest, the
+  ⛓ chain chips, and the merged fold, now a per-feature fold that
+  defaults closed for finished work) live in `CardTasks.tsx`.
 - **Runner-row context-menu "Clear assignment"** — wired in Phase 8.
   The Phase 6 stub is now a real call to
   `POST /api/v1/tasks/{projectId}/features/{featureId}/assignment/clear`

@@ -5,9 +5,15 @@
  *   .sb-section
  *     .sb-head (▾ Projects · N/M · ＋)
  *     .sb-list
- *       .proj-row × N (dot + name + pause tags + stats + × close)
+ *       .proj-row × N (dial button + name + autos tag + stats + × close)
  *       ▸ Hidden (N)   (collapsed by default)
  *         .proj-row × N hidden — click to restore
+ *
+ * The leading glyph is a BUTTON, not a dot: one click flips the project's
+ * task dial. See `ProjectPauseButton` for what the glyph and the colour
+ * each mean, and `projectRunIndicator` for how the state is derived. The
+ * old "paused" text tag is gone with it — the ⏸ glyph says the same thing
+ * one column to the left. The `autos` tag stays: that is the OTHER dial.
  */
 import { useState } from "react";
 import { useWorkspace } from "../../store/workspace";
@@ -24,29 +30,8 @@ import {
 import { useProjectActionContext } from "../../hooks/useProjectActionContext";
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
-import { projectPauseBadges } from "../../lib/pause";
-import type { Task } from "../../lib/types";
-
-type Dot = "on" | "busy" | "paused" | "err" | "";
-
-// A paused project outranks its task mix: with the task dial off, "some
-// tasks are pending" and "some tasks are blocked" both reduce to "nothing
-// is going to happen here", and a green dot said the opposite. Tasks still
-// in flight keep the busy dot — pause stops new dispatches, it does not
-// stop a process that is already running.
-function projectDot(tasks: readonly Task[], paused: boolean): Dot {
-  let hasBusy = false;
-  let hasBlocked = false;
-  for (const t of tasks) {
-    if (t.status === "in_progress") hasBusy = true;
-    else if (t.status === "blocked") hasBlocked = true;
-  }
-  if (hasBusy) return "busy";
-  if (paused) return "paused";
-  if (tasks.length === 0) return "";
-  if (hasBlocked) return "err";
-  return "on";
-}
+import { ProjectPauseButton } from "../common/ProjectPauseButton";
+import { projectPauseBadges, projectRunIndicator } from "../../lib/pause";
 
 function focusProjectCard(projectId: string) {
   if (typeof document === "undefined") return;
@@ -95,7 +80,10 @@ export function ProjectsSection(): JSX.Element {
           const live = liveProjects[pid];
           const tasks = live?.tasks ?? [];
           const badges = projectPauseBadges(pause, pid);
-          const dot = projectDot(tasks, badges.tasks);
+          const indicator = projectRunIndicator(tasks, {
+            paused: badges.tasks,
+            projectId: pid,
+          });
           const active = tasks.filter((t) => t.status === "in_progress").length;
           const ready = tasks.filter((t) => t.status === "pending").length;
           const blocked = tasks.filter((t) => t.status === "blocked").length;
@@ -130,23 +118,16 @@ export function ProjectsSection(): JSX.Element {
                 setTimeout(() => focusProjectCard(pid), 30);
               }}
               title={
-                badges.tasks
-                  ? `${pid} — PAUSED`
-                  : badges.automations
-                    ? `${pid} — automations paused`
-                    : pid
+                badges.automations ? `${pid} — automations paused` : pid
               }
             >
-              <span
-                className={`dot ${dot}`}
-                title={badges.tasks ? badges.tasksTitle : undefined}
+              <ProjectPauseButton
+                projectId={pid}
+                indicator={indicator}
+                taskCount={tasks.length}
+                pauseLoading={pauseLoading}
               />
               <span className="name">{pid}</span>
-              {badges.tasks && (
-                <span className="pause-tag" title={badges.tasksTitle}>
-                  paused
-                </span>
-              )}
               {badges.automations && (
                 <span
                   className="pause-tag autos"

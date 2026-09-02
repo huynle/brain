@@ -56,7 +56,7 @@ function resetStore() {
     mobile: INITIAL.mobile,
     streaming: INITIAL.streaming,
     featureAssignments: { ...INITIAL.featureAssignments },
-    mergedExpanded: {},
+    featureCollapsed: {},
     archivedExpanded: {},
     hiddenProjects: [],
     statusFilter: "all",
@@ -225,13 +225,70 @@ test("workspace: toggleArchivedExpanded leaves other projects untouched", () => 
   assert.equal(m["p2"], true);
 });
 
-test("workspace: archived and merged folds are independent maps", () => {
+test("workspace: archived and feature folds are independent maps", () => {
   resetStore();
   useWorkspace.getState().toggleArchivedExpanded("p1");
-  assert.deepEqual(useWorkspace.getState().mergedExpanded, {});
-  useWorkspace.getState().toggleMergedExpanded("p1");
+  assert.deepEqual(useWorkspace.getState().featureCollapsed, {});
+  useWorkspace.getState().toggleFeatureCollapsed("p1", "feat-a", false);
   assert.equal(useWorkspace.getState().archivedExpanded["p1"], true);
-  assert.equal(useWorkspace.getState().mergedExpanded["p1"], true);
+  assert.equal(useWorkspace.getState().featureCollapsed["p1"]["feat-a"], true);
+});
+
+// ─── per-feature fold ────────────────────────────────────────────────
+
+test("workspace: featureCollapsed starts empty (no stored opinions)", () => {
+  resetStore();
+  assert.deepEqual(useWorkspace.getState().featureCollapsed, {});
+});
+
+// The default is passed IN because the view derives it from the feature's
+// lifecycle. A toggle that flipped `!undefined` instead would make the
+// first click on an already-folded finished feature a no-op on screen.
+test("workspace: the first toggle inverts the DERIVED default, not undefined", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+
+  w().toggleFeatureCollapsed("p1", "open-feat", false);
+  assert.equal(w().featureCollapsed["p1"]["open-feat"], true);
+
+  w().toggleFeatureCollapsed("p1", "done-feat", true);
+  assert.equal(w().featureCollapsed["p1"]["done-feat"], false);
+});
+
+// Once stored, the user's choice outranks the default in both directions —
+// a feature they expanded must not silently re-fold when it merges.
+test("workspace: a stored fold outranks the default on later toggles", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+
+  w().toggleFeatureCollapsed("p1", "f", true); // stored false
+  w().toggleFeatureCollapsed("p1", "f", true); // ignores the default
+  assert.equal(w().featureCollapsed["p1"]["f"], true);
+});
+
+test("workspace: featureCollapsed keys are scoped per project", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+
+  w().toggleFeatureCollapsed("p1", "shared-id", false);
+  assert.equal(w().featureCollapsed["p1"]["shared-id"], true);
+  assert.equal(w().featureCollapsed["p2"], undefined);
+
+  w().toggleFeatureCollapsed("p2", "shared-id", false);
+  assert.equal(w().featureCollapsed["p1"]["shared-id"], true);
+  assert.equal(w().featureCollapsed["p2"]["shared-id"], true);
+});
+
+test("workspace: toggling one feature leaves its siblings untouched", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+
+  w().toggleFeatureCollapsed("p1", "a", false);
+  w().toggleFeatureCollapsed("p1", "b", false);
+  w().toggleFeatureCollapsed("p1", "a", false);
+
+  assert.equal(w().featureCollapsed["p1"]["a"], false);
+  assert.equal(w().featureCollapsed["p1"]["b"], true);
 });
 
 test("workspace: setStatusFilter accepts archived", () => {
@@ -940,16 +997,21 @@ test("workspace: forgetProject drops the project from hiddenProjects", () => {
   assert.deepEqual(w().hiddenProjects, ["warehouse"]);
 });
 
+// The nesting is what makes this a one-liner in forgetProject: a
+// `${projectId}:${featureId}` composite key would survive `omitKey` and
+// leak every fold of a deleted project into a project recreated under the
+// same name.
 test("workspace: forgetProject drops the project's expansion state", () => {
   resetStore();
   const w = () => useWorkspace.getState();
-  w().toggleMergedExpanded("shop");
+  w().toggleFeatureCollapsed("shop", "feat-a", false);
+  w().toggleFeatureCollapsed("shop", "feat-b", false);
   w().toggleArchivedExpanded("shop");
-  w().toggleMergedExpanded("warehouse");
+  w().toggleFeatureCollapsed("warehouse", "feat-a", false);
 
   w().forgetProject("shop");
 
-  assert.deepEqual(Object.keys(w().mergedExpanded), ["warehouse"]);
+  assert.deepEqual(Object.keys(w().featureCollapsed), ["warehouse"]);
   assert.deepEqual(Object.keys(w().archivedExpanded), []);
 });
 

@@ -19,6 +19,7 @@ import { test } from "node:test";
 
 import {
   deriveFeatures,
+  isFeatureDone,
   sortFeatures,
   extractPrUrl,
   buildFeatureForest,
@@ -357,8 +358,9 @@ test("buildFeatureForest: two features sharing a dependency both nest", () => {
 });
 
 test("buildFeatureForest: a filtered-out dependency leaves the dependent a root", () => {
-  // CardFeatures hides merged features by default; a feature that
-  // depends on a hidden one must still render, not disappear.
+  // A dependency the caller filtered out (a merged feature, or one in
+  // another project) must not take its dependent down with it — the
+  // dependent stays a root rather than disappearing.
   const roots = buildFeatureForest([mkFeat("api", "in-progress", ["merged-schema"])]);
   assert.deepEqual(
     roots.map((r) => r.id),
@@ -540,4 +542,29 @@ test("deriveFeatures: an archived task's PR URL does not surface", () => {
   );
   assert.equal(out[0]!.prUrl, undefined);
   assert.equal(out[0]!.lifecycle, "in-progress");
+});
+
+// ─── isFeatureDone ───────────────────────────────────────────────
+// Drives the default fold of a feature's task rows in CardTasks.
+
+test("isFeatureDone: finished and merged are done, nothing else is", () => {
+  const of = (lifecycle: DerivedFeature["lifecycle"]): DerivedFeature => ({
+    id: "f",
+    projectId: "p",
+    name: "f",
+    progress: 1,
+    lifecycle,
+    taskCount: { total: 1, completed: 1, blocked: 0, active: 0 },
+    ownerTaskIds: ["t1"],
+    resumableCount: 0,
+    dependsOn: [],
+  });
+
+  assert.equal(isFeatureDone(of("finished")), true);
+  assert.equal(isFeatureDone(of("merged")), true);
+  assert.equal(isFeatureDone(of("in-progress")), false);
+  assert.equal(isFeatureDone(of("blocked")), false);
+  // An open MR is the one lifecycle that is 100% coded and still waiting
+  // on a human — folding it away would hide the thing that needs doing.
+  assert.equal(isFeatureDone(of("mr-open")), false);
 });

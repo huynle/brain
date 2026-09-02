@@ -265,6 +265,156 @@ export function projectPauseBadges(
   };
 }
 
+// ─── Project run indicator (the pause/play control) ──────────────
+
+/**
+ * State of the one control that both shows whether a project's task dial
+ * is on and flips it.
+ *
+ * It replaces a plain status dot, so it has to keep saying everything the
+ * dot said — busy / blocked / idle / empty — while adding the dial. The
+ * two are carried on different channels: the GLYPH is the dial (⏸ vs ▶),
+ * the COLOUR is the work. That is why `paused` is its own field rather
+ * than just another `state` value.
+ */
+export type ProjectRunState =
+  // Reuses the existing dot palette so the CSS keeps working.
+  | "on" // tasks present, none blocked, nothing executing
+  | "busy" // a runner is executing something
+  | "err" // blocked tasks and nothing executing
+  | "" // no tasks at all
+  | "paused" // dial off, nothing executing
+  | "override"; // dial off, yet work is executing anyway
+
+export interface ProjectRunIndicator {
+  state: ProjectRunState;
+  /** The task dial is off. Drives the glyph, not the colour. */
+  paused: boolean;
+  /** Tasks a runner is executing right now (see {@link isTaskExecuting}),
+   *  EXCLUDING automations — the count the override state is about. Use
+   *  it for "running despite the dial", not for "is anything running":
+   *  {@link ProjectRunIndicator.state} `busy` answers that one. */
+  liveCount: number;
+  /** Describes the CURRENT state — what the old dot's tooltip said, plus
+   *  the dial and the override case. */
+  title: string;
+  /** What a click does. Used as the aria-label so a screen reader is told
+   *  the action, while `title` carries the state. */
+  actionLabel: string;
+}
+
+/**
+ * Is a runner actually executing this task right now?
+ *
+ * `status === "in_progress"` alone over-reports: the status stays stuck
+ * there when a runner dies mid-task, which is exactly what the server's
+ * `is_abandoned` enrichment exists to flag (see the Abandonment + Resume
+ * model in CLAUDE.md). An abandoned task is not work in flight — counting
+ * it would paint a dead project amber forever.
+ */
+export const isTaskExecuting = (task: Task): boolean =>
+  task.status === "in_progress" && !task.is_abandoned;
+
+/**
+ * Fold a project's tasks and its task dial into one indicator.
+ *
+ * ─── Why `override` exists ───────────────────────────────────────
+ *
+ * The task dial is DELIBERATELY bypassed by "Run now" / "Run feature now"
+ * (SchedulerService.RunTaskNow skips shouldSkipTask outright), so "paused"
+ * and "something is running" are not contradictory — pausing the project
+ * and then hand-running one feature is a normal, deliberate workflow. The
+ * old dot collapsed that: `busy` outranked `paused`, so a project the user
+ * had deliberately isolated looked identical to one running freely.
+ *
+ * AUTOMATION tasks are excluded from the live count on purpose. They answer
+ * to the SEPARATE automations dial (`shouldSkipTask` routes a task to
+ * exactly one of the two on the `automation:` prefix), so an automation
+ * running while the task dial is off is ordinary scheduling, not an
+ * override, and flagging it would cry wolf on every project with a cron.
+ *
+ * The title stops short of claiming the run was manual. A task dispatched
+ * just before the dial was flipped, and a server-side dependent-chain
+ * drain, both land here too — what is certain is that the dial is off and
+ * work is moving anyway, so that is what it says.
+ */
+export function projectRunIndicator(
+  tasks: readonly Task[],
+  opts: { paused: boolean; projectId: string },
+): ProjectRunIndicator {
+  const { paused, projectId } = opts;
+
+  // TWO counters, because the automation carve-out applies to exactly one
+  // of the two questions this function answers.
+  //
+  //   executing  is anything running at all → the COLOUR
+  //   liveCount  is anything running that THIS dial governs → the override
+  //
+  // Folding them into one counter made an unpaused project with a running
+  // cron report "ready" in static green while the very same card header
+  // said "1 active" and healthFor said "active".
+  let executing = 0;
+  let liveCount = 0;
+  let hasBlocked = false;
+  for (const t of tasks) {
+    if (isTaskExecuting(t)) {
+      executing++;
+      if (!isAutomationTask(t)) liveCount++;
+    } else if (t.status === "blocked") {
+      hasBlocked = true;
+    }
+  }
+
+  const actionLabel = paused ? `Resume ${projectId}` : `Pause ${projectId}`;
+
+  if (paused) {
+    if (liveCount > 0) {
+      return {
+        state: "override",
+        paused: true,
+        liveCount,
+        title:
+          `${projectId} — PAUSED, but ${liveCount} task` +
+          `${liveCount === 1 ? " is" : "s are"} still running. Pause holds ` +
+          `NEW dispatch only; "Run now" / "Run feature now" force past the ` +
+          `dial on purpose, and work already in flight runs to completion. ` +
+          `Click to resume normal dispatch.`,
+        actionLabel,
+      };
+    }
+    return {
+      state: "paused",
+      paused: true,
+      liveCount: 0,
+      title:
+        `${projectId} — PAUSED. Ready tasks will not be picked up. ` +
+        `Automation-generated tasks answer to the separate automations ` +
+        `dial and are NOT held by this one. Click to resume.`,
+      actionLabel,
+    };
+  }
+
+  const state: ProjectRunState =
+    executing > 0 ? "busy" : tasks.length === 0 ? "" : hasBlocked ? "err" : "on";
+
+  const what =
+    executing > 0
+      ? `${executing} task${executing === 1 ? "" : "s"} running`
+      : tasks.length === 0
+        ? "no tasks"
+        : hasBlocked
+          ? "blocked tasks, nothing running"
+          : "ready";
+
+  return {
+    state,
+    paused: false,
+    liveCount,
+    title: `${projectId} — ${what}. Click to pause new task dispatch.`,
+    actionLabel,
+  };
+}
+
 // ─── Per-task hold reason ────────────────────────────────────────
 
 export type HoldCode =

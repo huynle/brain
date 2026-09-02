@@ -11,6 +11,7 @@
  *     icon buttons (command palette, new session, notifs, theme, assistant)
  */
 import { useWorkspace } from "../store/workspace";
+import { ReminderBell } from "./ReminderBell";
 import { countLeaves } from "../lib/dock";
 
 export function Topbar(): JSX.Element {
@@ -106,20 +107,20 @@ export function Topbar(): JSX.Element {
       >
         {theme === "dark" ? "🌙" : theme === "light" ? "☀" : "◐"}
       </button>
+      {/* Only renders when a reminder is actually waiting — see ReminderBell. */}
+      <ReminderBell />
       <button
         className={"icon-btn" + (sidebarDockOpen ? " active" : "")}
         title={sidebarDockOpen ? "Close side panel" : "Open side panel"}
         onClick={toggleSidebarDockOpen}
       >
         Panel
-        {sidebarPanes > 0 && <span className="dock-count">{sidebarPanes}</span>}{" "}
+        {sidebarPanes > 0 && (
+          <span className="dock-count">{sidebarPanes}</span>
+        )}{" "}
         {sidebarDockOpen ? "▸" : "◂"}
       </button>
-      <button
-        className="icon-btn"
-        title="Assistant"
-        onClick={toggleAssistant}
-      >
+      <button className="icon-btn" title="Assistant" onClick={toggleAssistant}>
         Assistant {assistantOpen ? "▾" : "▸"}
       </button>
     </div>

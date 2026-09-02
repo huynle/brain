@@ -30,6 +30,7 @@ var EntryTypes = []string{
 	"automation",
 	"automation_run",
 	"merge_request",
+	"reminder",
 }
 
 // entryTypeSet is a lookup set for O(1) validation.
@@ -432,6 +433,9 @@ type BrainEntry struct {
 	// Goal automation configuration (set when generated_by=brain-goal).
 	Goal *GoalConfig `json:"goal,omitempty"`
 
+	// Reminder configuration (set on type=reminder entries).
+	Reminder *ReminderConfig `json:"reminder,omitempty"`
+
 	// Session tracking
 	Sessions         map[string]SessionInfo     `json:"sessions,omitempty"`
 	Runs             []CronRun                  `json:"runs,omitempty"`
@@ -759,10 +763,11 @@ type CreateEntryRequest struct {
 	GeneratedBy     string `json:"generated_by,omitempty"`
 	AutomationRunID string `json:"automation_run_id,omitempty"`
 
-	Trigger *TriggerConfig    `json:"trigger,omitempty"`
-	Action  *AutomationAction `json:"action,omitempty"`
-	Retry   *AutomationRetry  `json:"retry,omitempty"`
-	Goal    *GoalConfig       `json:"goal,omitempty"`
+	Trigger  *TriggerConfig    `json:"trigger,omitempty"`
+	Action   *AutomationAction `json:"action,omitempty"`
+	Retry    *AutomationRetry  `json:"retry,omitempty"`
+	Goal     *GoalConfig       `json:"goal,omitempty"`
+	Reminder *ReminderConfig   `json:"reminder,omitempty"`
 
 	Runs             []CronRun                  `json:"runs,omitempty"`
 	RunFinalizations map[string]RunFinalization `json:"run_finalizations,omitempty"`
@@ -850,10 +855,11 @@ type UpdateEntryRequest struct {
 	GeneratedBy     *string `json:"generated_by,omitempty"`
 	AutomationRunID *string `json:"automation_run_id,omitempty"`
 
-	Trigger *TriggerConfig    `json:"trigger,omitempty"`
-	Action  *AutomationAction `json:"action,omitempty"`
-	Retry   *AutomationRetry  `json:"retry,omitempty"`
-	Goal    *GoalConfig       `json:"goal,omitempty"`
+	Trigger  *TriggerConfig    `json:"trigger,omitempty"`
+	Action   *AutomationAction `json:"action,omitempty"`
+	Retry    *AutomationRetry  `json:"retry,omitempty"`
+	Goal     *GoalConfig       `json:"goal,omitempty"`
+	Reminder *ReminderConfig   `json:"reminder,omitempty"`
 }
 
 // =============================================================================
@@ -1310,6 +1316,20 @@ type ResolvedTask struct {
 	IsAbandoned   bool   `json:"is_abandoned,omitempty"`
 	AbandonReason string `json:"abandon_reason,omitempty"`
 
+	// UndispatchableReason explains why a pending task cannot be picked up by
+	// any runner currently known to the server, or "" when nothing blocks it.
+	//
+	// This exists because the failure it names is otherwise completely
+	// silent. A task whose executor no online runner advertises is filtered
+	// out server-side on BOTH dispatch paths — push (scheduler
+	// "executor not supported") and pull (filterByExecutors) — so it simply
+	// sits at pending forever. The built-in simple feature checkout generates
+	// exactly such a task: it asks for the "script" executor, which runners
+	// register only when script.enabled is set, and that is off by default.
+	// The user's report was "I enabled feature checkout and nothing executes",
+	// with no error anywhere to explain it.
+	UndispatchableReason string `json:"undispatchable_reason,omitempty"`
+
 	// ResumeRequested is the durable flag written by POST /resume. The runner
 	// reads this at claim time and passes IsResume=true to the executor's
 	// prompt builder, then clears the flag via PATCH so re-polls don't loop-
@@ -1663,6 +1683,17 @@ type CheckoutFeatureResult struct {
 	Created      bool                 `json:"created"`
 	GeneratedKey string               `json:"generatedKey"`
 	Task         *CreateEntryResponse `json:"task,omitempty"`
+
+	// Superseded is true when an earlier, still-pending checkout task for
+	// this feature was replaced because the caller asked for a different
+	// checkout_mode. Without this the idempotency key silently discarded
+	// the mode the user had just chosen and handed back the old task,
+	// reported as reassurance ("already exists") rather than as a refusal.
+	Superseded bool `json:"superseded,omitempty"`
+
+	// SupersededTaskID names the task Superseded replaced, so the caller
+	// can say which one went away.
+	SupersededTaskID string `json:"supersededTaskId,omitempty"`
 }
 
 // ResumeTaskOptions is the request body for POST /tasks/{project}/{task}/resume.

@@ -23,6 +23,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useWorkspace } from "../../store/workspace";
 import { useProjects } from "../../hooks/useProjects";
+import { DOUBLE_CLICK_WINDOW_MS } from "../../hooks/useDeferredPreview";
 import { useVisibleProjects } from "../../hooks/useVisibleProjects";
 import { usePauseState } from "../../hooks/usePauseState";
 import { useRowActions } from "../../hooks/useRowActions";
@@ -79,11 +80,15 @@ export function ProjectsSection(): JSX.Element {
 
   const revealInOverview = (pid: string) => {
     cancelReveal();
+    // NOTE: the view switch is NOT deferred — it is this row's version of
+    // the instant highlight, so the click is acknowledged immediately. Only
+    // the scroll-to-card waits, because that is the part a double-click
+    // heading for Focus should never perform.
     setView("overview");
     revealTimer.current = window.setTimeout(() => {
       revealTimer.current = null;
       focusProjectCard(pid);
-    }, 30);
+    }, DOUBLE_CLICK_WINDOW_MS);
   };
 
   // "Visible" means (a) not user-hidden AND (b) matching the current
@@ -158,9 +163,7 @@ export function ProjectsSection(): JSX.Element {
                 // arrives by double-click, right-click or keyboard.
                 projectCtx.openProject(pid);
               }}
-              title={
-                badges.automations ? `${pid} — automations paused` : pid
-              }
+              title={badges.automations ? `${pid} — automations paused` : pid}
             >
               <ProjectPauseButton
                 projectId={pid}

@@ -393,6 +393,20 @@ type AutomationRunService interface {
 // progress, and fetch reconcile audit history. The concrete
 // service.GoalService satisfies this interface. Request/response types live in
 // the shared types package to avoid an api->service import cycle.
+// ReminderService is the reminder surface the API needs. Implemented by
+// service.ReminderService; declared here so internal/api does not import
+// internal/service.
+type ReminderService interface {
+	CreateReminder(ctx context.Context, req types.CreateReminderRequest) (*types.ReminderSummary, error)
+	ListReminders(ctx context.Context, project, state string) ([]types.ReminderSummary, error)
+	GetReminder(ctx context.Context, reminderID string) (*types.ReminderSummary, error)
+	UpdateReminder(ctx context.Context, reminderID string, req types.UpdateReminderRequest) (*types.ReminderSummary, error)
+	DeleteReminder(ctx context.Context, reminderID string) error
+	AckReminder(ctx context.Context, reminderID string) (*types.ReminderSummary, error)
+	SnoozeReminder(ctx context.Context, reminderID, until string) (*types.ReminderSummary, error)
+	FireReminderNow(ctx context.Context, reminderID string) (*types.ReminderSummary, error)
+}
+
 type GoalService interface {
 	// CreateGoal builds and persists a goal automation, returning its summary.
 	CreateGoal(ctx context.Context, req types.CreateGoalRequest) (*types.GoalSummary, error)

@@ -69,6 +69,29 @@ func goalConfigToFM(g *types.GoalConfig) *frontmatter.GoalConfig {
 	return out
 }
 
+// reminderConfigToFM converts the API-facing reminder config to its on-disk
+// mirror. Both structs exist for the frontmatter package boundary; keeping
+// them in step is the whole job of this function.
+func reminderConfigToFM(r *types.ReminderConfig) *frontmatter.ReminderConfig {
+	if r == nil {
+		return nil
+	}
+	return &frontmatter.ReminderConfig{
+		ID:              r.ID,
+		RemindAt:        r.RemindAt,
+		Timezone:        r.Timezone,
+		Action:          r.Action,
+		Prompt:          r.Prompt,
+		Agent:           r.Agent,
+		Model:           r.Model,
+		Executor:        r.Executor,
+		ExecutionMode:   r.ExecutionMode,
+		TargetWorkdir:   r.TargetWorkdir,
+		FiredAt:         r.FiredAt,
+		GeneratedTaskID: r.GeneratedTaskID,
+	}
+}
+
 // =============================================================================
 // Metadata JSON -> frontmatter/types conversion helpers
 // These convert untyped map[string]interface{} (from JSON metadata) back

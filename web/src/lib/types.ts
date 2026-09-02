@@ -191,6 +191,16 @@ export interface Task {
   is_abandoned?: boolean;
   abandon_reason?: AbandonReason;
 
+  // Why no runner can take this pending task, or absent when one could.
+  // Derived server-side by enrichUndispatchable from the executors the
+  // live fleet advertises. Shaped "no_runner_supports_executor:<name>".
+  //
+  // This is the one hold with no switch behind it: the task is filtered
+  // out of BOTH dispatch paths before any placement decision is recorded,
+  // so without this field it just sits at pending with nothing anywhere
+  // saying why.
+  undispatchable_reason?: string;
+
   // Runtime lifecycle flags for resume. resume_requested is set by
   // POST /resume and consumed by the runner at claim time.
   resume_requested?: boolean;
@@ -200,10 +210,7 @@ export interface Task {
 /** Discriminant on the underlying signal that flagged the task as abandoned.
  *  Keep in sync with service.AbandonReason* constants in Go. */
 export type AbandonReason =
-  | "no_claim"
-  | "claim_expired"
-  | "runner_offline"
-  | "orphan_reaped";
+  "no_claim" | "claim_expired" | "runner_offline" | "orphan_reaped";
 
 /** Body for POST /tasks/{project}/{task}/resume and
  *  POST /tasks/{project}/features/{feature}/resume. */
@@ -433,6 +440,58 @@ export function sessionName(s: OcSession): string {
   return s.id;
 }
 
+/** Lifecycle state of a reminder, derived server-side from status + date. */
+export type ReminderState = "armed" | "undated" | "fired" | "done" | "paused";
+
+/** What happens when a dated reminder's time arrives. */
+export type ReminderAction = "notify" | "task";
+
+export interface ReminderSummary {
+  entry_id: string;
+  reminder_id: string;
+  title: string;
+  project?: string;
+  feature_id?: string;
+  path?: string;
+  content?: string;
+  status: string;
+  state: ReminderState;
+  /** RFC3339 with an offset. Absent means undated — it never fires. */
+  remind_at?: string;
+  timezone?: string;
+  action: ReminderAction;
+  prompt?: string;
+  fired_at?: string;
+  generated_task_id?: string;
+  /** How far past remind_at the firing actually happened. */
+  late_by_seconds?: number;
+}
+
+export interface ReminderListResponse {
+  reminders: ReminderSummary[];
+  count: number;
+}
+
+export interface CreateReminderRequest {
+  project?: string;
+  global?: boolean;
+  feature_id?: string;
+  title: string;
+  content?: string;
+  tags?: string[];
+  config?: {
+    remind_at?: string;
+    timezone?: string;
+    action?: ReminderAction;
+    prompt?: string;
+    agent?: string;
+    model?: string;
+    executor?: string;
+    execution_mode?: string;
+    target_workdir?: string;
+  };
+}
+
 export interface OcMessageInfo {
   id: string;
   sessionID?: string;
@@ -440,6 +499,16 @@ export interface OcMessageInfo {
   agent?: string;
   time?: { created?: number; completed?: number };
   error?: unknown;
+
+  // The model that produced (or was requested for) this message. OpenCode
+  // writes it two different ways depending on the role, both observed in
+  // real stored messages: an ASSISTANT message carries flat modelID +
+  // providerID, a USER message carries a nested model object. Read it with
+  // messageModel() rather than either field directly.
+  modelID?: string;
+  providerID?: string;
+  model?: { providerID?: string; modelID?: string } | string;
+
   [k: string]: unknown;
 }
 
@@ -775,11 +844,7 @@ export interface GoalProgressResponse {
 
 /** Reconcile outcomes; "steer" means live sessions were nudged (noop+prompt). */
 export type GoalReconcileDecision =
-  | "complete"
-  | "block"
-  | "need_work"
-  | "noop"
-  | "steer";
+  "complete" | "block" | "need_work" | "noop" | "steer";
 
 export interface GoalReconcileAudit {
   timestamp: string;

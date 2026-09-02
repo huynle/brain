@@ -334,6 +334,42 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				})
 			})
 
+			r.Route("/reminders", func(r chi.Router) {
+				// Reads — read:* scope, matching goals.
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*", "runner:*", "read:*"))
+					if o.handler != nil && o.handler.reminders != nil {
+						r.Get("/", o.handler.HandleListReminders)
+						r.Get("/{reminderId}", o.handler.HandleGetReminder)
+					} else {
+						r.Get("/", notImplemented)
+						r.Get("/{reminderId}", notImplemented)
+					}
+				})
+
+				// Writes — admin:* only. The split is not cosmetic: a
+				// reminder with action=task schedules an agent, so creating
+				// one under read:* would be a privilege escalation.
+				r.Group(func(r chi.Router) {
+					r.Use(RequireScope("admin:*"))
+					if o.handler != nil && o.handler.reminders != nil {
+						r.Post("/", o.handler.HandleCreateReminder)
+						r.Patch("/{reminderId}", o.handler.HandleUpdateReminder)
+						r.Delete("/{reminderId}", o.handler.HandleDeleteReminder)
+						r.Post("/{reminderId}/ack", o.handler.HandleAckReminder)
+						r.Post("/{reminderId}/snooze", o.handler.HandleSnoozeReminder)
+						r.Post("/{reminderId}/fire", o.handler.HandleFireReminder)
+					} else {
+						r.Post("/", notImplemented)
+						r.Patch("/{reminderId}", notImplemented)
+						r.Delete("/{reminderId}", notImplemented)
+						r.Post("/{reminderId}/ack", notImplemented)
+						r.Post("/{reminderId}/snooze", notImplemented)
+						r.Post("/{reminderId}/fire", notImplemented)
+					}
+				})
+			})
+
 			// ─── Scheduler ────────────────────────────────────────
 			r.Route("/scheduler", func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))

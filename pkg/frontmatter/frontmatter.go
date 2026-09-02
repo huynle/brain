@@ -158,6 +158,24 @@ type GoalSteering struct {
 	CooldownMinutes int   `yaml:"cooldown_minutes,omitempty" json:"cooldown_minutes,omitempty"`
 }
 
+// ReminderConfig holds reminder-specific configuration (frontmatter
+// representation). Mirrors internal/types.ReminderConfig for the frontmatter
+// package boundary.
+type ReminderConfig struct {
+	ID              string `yaml:"id" json:"id"`
+	RemindAt        string `yaml:"remind_at,omitempty" json:"remind_at,omitempty"`
+	Timezone        string `yaml:"timezone,omitempty" json:"timezone,omitempty"`
+	Action          string `yaml:"action,omitempty" json:"action,omitempty"`
+	Prompt          string `yaml:"prompt,omitempty" json:"prompt,omitempty"`
+	Agent           string `yaml:"agent,omitempty" json:"agent,omitempty"`
+	Model           string `yaml:"model,omitempty" json:"model,omitempty"`
+	Executor        string `yaml:"executor,omitempty" json:"executor,omitempty"`
+	ExecutionMode   string `yaml:"execution_mode,omitempty" json:"execution_mode,omitempty"`
+	TargetWorkdir   string `yaml:"target_workdir,omitempty" json:"target_workdir,omitempty"`
+	FiredAt         string `yaml:"fired_at,omitempty" json:"fired_at,omitempty"`
+	GeneratedTaskID string `yaml:"generated_task_id,omitempty" json:"generated_task_id,omitempty"`
+}
+
 // Frontmatter holds all known brain entry frontmatter fields.
 // Boolean fields use *bool so nil (absent) is distinguishable from false.
 // Integer fields use *int for the same reason.
@@ -246,6 +264,10 @@ type Frontmatter struct {
 	Action  *AutomationAction `yaml:"action,omitempty" json:"action,omitempty"`
 	Retry   *AutomationRetry  `yaml:"retry,omitempty" json:"retry,omitempty"`
 	Goal    *GoalConfig       `yaml:"goal,omitempty" json:"goal,omitempty"`
+	// Reminder needs BOTH tags for the same reason Goal does: the indexer
+	// marshals this struct into notes.metadata, so a missing json tag makes
+	// every database read-back blind while the file on disk looks perfect.
+	Reminder *ReminderConfig `yaml:"reminder,omitempty" json:"reminder,omitempty"`
 
 	// Session traceability
 	Sessions         map[string]SessionInfo     `yaml:"sessions,omitempty" json:"sessions,omitempty"`
@@ -325,10 +347,11 @@ type GenerateOptions struct {
 	GeneratedBy     string
 	AutomationRunID string
 
-	Trigger *TriggerConfig
-	Action  *AutomationAction
-	Retry   *AutomationRetry
-	Goal    *GoalConfig
+	Trigger  *TriggerConfig
+	Action   *AutomationAction
+	Retry    *AutomationRetry
+	Goal     *GoalConfig
+	Reminder *ReminderConfig
 
 	Attachments []AttachmentReference
 
@@ -417,6 +440,7 @@ type rawFrontmatter struct {
 	Action              *AutomationAction          `yaml:"action"`
 	Retry               *AutomationRetry           `yaml:"retry"`
 	Goal                *GoalConfig                `yaml:"goal"`
+	Reminder            *ReminderConfig            `yaml:"reminder"`
 	Sessions            map[string]SessionInfo     `yaml:"sessions"`
 	RunFinalizations    map[string]RunFinalization `yaml:"run_finalizations"`
 
@@ -452,6 +476,7 @@ var knownFields = map[string]bool{
 	"generated": true, "generated_kind": true, "generated_key": true,
 	"generated_by": true, "automation_run_id": true,
 	"trigger": true, "action": true, "retry": true, "goal": true,
+	"reminder": true,
 	"sessions": true, "run_finalizations": true,
 	// Legacy fields (consumed during normalization, not emitted)
 	"session_ids": true, "session_timestamps": true,
@@ -603,6 +628,7 @@ func Parse(content string) (*Document, error) {
 		Action:              raw.Action,
 		Retry:               raw.Retry,
 		Goal:                raw.Goal,
+		Reminder:            raw.Reminder,
 		Sessions:            sessions,
 		RunFinalizations:    raw.RunFinalizations,
 	}
@@ -898,6 +924,9 @@ func Serialize(fm *Frontmatter) string {
 	if fm.Goal != nil {
 		lines = append(lines, serializeNestedStruct("goal", fm.Goal)...)
 	}
+	if fm.Reminder != nil {
+		lines = append(lines, serializeNestedStruct("reminder", fm.Reminder)...)
+	}
 
 	// Sessions map
 	if len(fm.Sessions) > 0 {
@@ -1041,6 +1070,7 @@ func Generate(opts *GenerateOptions) string {
 		Action:              opts.Action,
 		Retry:               opts.Retry,
 		Goal:                opts.Goal,
+		Reminder:            opts.Reminder,
 		Sessions:            opts.Sessions,
 		RunFinalizations:    opts.RunFinalizations,
 	}

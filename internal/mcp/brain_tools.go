@@ -65,6 +65,7 @@ Entry types:
 - idea, scratch: ideas for future exploration and temporary working notes
 - task: a work item for the task runner (see task options below)
 - automation: an event-driven behavior (see trigger, action, retry)
+- reminder: something to come back to. Create these with the dedicated reminder_create tool, NOT with save — save cannot carry a reminder's date, action or prompt and will drop them silently.
 - execution, dream, automation_run, merge_request: system-generated entries (rarely created by hand)
 
 Only type, title, and content are required. The remaining parameters apply conditionally:

@@ -28,6 +28,7 @@
  * went away underneath us.
  */
 import { useSessionTranscript } from "../../hooks/useSessionTranscript";
+import { useSessions } from "../../hooks/useSessions";
 import { Composer } from "./Composer";
 import { PermissionBanner } from "./PermissionBanner";
 import { Transcript } from "./Transcript";
@@ -82,6 +83,26 @@ export function SessionPane({
 }: SessionPaneProps): JSX.Element {
   const transcript = useSessionTranscript(sref);
 
+  // The agent and model this session is configured with. Read off the
+  // instance rather than the ref, which carries only routing.
+  //
+  // The transcript already stamps a model on each turn, and that is the
+  // better answer for "what produced THIS message". This answers the other
+  // question — what the session is set to right now — which a turn cannot,
+  // because the newest turn may be scrolled off, or the session may be idle
+  // with no assistant turn yet at all.
+  // SessionRef is a discriminated union and `instance_id` lives only on the
+  // live arm, so it has to be narrowed before it is read — a history ref has
+  // no such property at all.
+  const { allInstances } = useSessions();
+  const instanceId = sref?.mode === "live" ? sref.instance_id : undefined;
+  const inst = instanceId
+    ? allInstances.find((i) => i.instance_id === instanceId)
+    : undefined;
+  const sessionModel = inst?.model
+    ? (inst.model.split("/").pop() ?? inst.model)
+    : "";
+
   const live = sref?.mode === "live";
   const sessionId = sref?.session_id;
   // Live, addressable, and the stream has not been closed under us —
@@ -109,6 +130,12 @@ export function SessionPane({
         <code className="proc-chat-sid" title={sessionId ?? undefined}>
           {sessionId ?? "discovering…"}
         </code>
+        {inst?.agent && <span className="proc-chat-agent">{inst.agent}</span>}
+        {sessionModel && (
+          <span className="msg-model" title={inst?.model}>
+            {sessionModel}
+          </span>
+        )}
         <span className="spacer" style={{ flex: 1 }} />
         {headerExtra}
       </div>

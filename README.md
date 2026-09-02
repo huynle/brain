@@ -419,6 +419,23 @@ ENABLE_TLS=true TLS_KEY=./localhost-key.pem TLS_CERT=./localhost.pem ./bin/brain
 | `goal_resume` | Resume a paused goal automation |
 | `goal_archive` | Archive a goal automation |
 
+#### Reminder Tools
+| Tool | Description |
+|------|-------------|
+| `reminder_create` | Create a reminder, optionally dated. Undated ones are simply things to come back to |
+| `reminder_list` | List reminders; `state:"fired"` is what is waiting to be acknowledged |
+| `reminder_get` | Show one reminder |
+| `reminder_update` | Change a reminder; an empty `remind_at` clears the date |
+| `reminder_ack` | Acknowledge a fired reminder |
+| `reminder_snooze` | Re-arm a reminder for a new time |
+| `reminder_delete` | Delete a reminder |
+
+A dated reminder fires from the API server on a one-minute sweep. Its `action`
+decides what firing means: `notify` (default) surfaces it in the Brain app
+until someone acknowledges it, and `task` creates a pending task so an agent
+works it. Firing emits a `reminder.fired` event, so automations and webhooks
+can trigger off reminders like any other event.
+
 #### Context Tools
 | Tool | Description |
 |------|-------------|

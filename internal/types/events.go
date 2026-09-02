@@ -85,6 +85,12 @@ const (
 	// integration posts this event via POST /api/v1/events like any other.
 	EventWebhookReceived = "webhook.received"
 
+	// EventReminderFired is emitted when a dated reminder's time arrives and
+	// it fires. Declared here AND added to AllEventTypes below, so it can be
+	// matched by event automations and webhooks and accepted by POST /events
+	// — the exact thing webhook.received went years without (see above).
+	EventReminderFired = "reminder.fired"
+
 	// Remote-control audit events.
 	EventControlPromptSent          = "control.prompt_sent"
 	EventControlPermissionResponded = "control.permission_responded"
@@ -129,6 +135,7 @@ var AllEventTypes = []string{
 	EventControlPromptSent, EventControlPermissionResponded,
 	EventControlInstanceSpawned, EventControlInstanceKilled,
 	EventControlExecStarted,
+	EventReminderFired,
 }
 
 // eventTypeSet is a lookup set for O(1) event type validation.

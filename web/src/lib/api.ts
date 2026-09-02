@@ -14,6 +14,9 @@ import type {
   FeatureCheckoutOptions,
   GoalAuditResponse,
   GoalListResponse,
+  ReminderSummary,
+  ReminderListResponse,
+  CreateReminderRequest,
   GoalProgressResponse,
   GoalReconcileAudit,
   GoalSummary,
@@ -2009,6 +2012,56 @@ export const embedBackfill = (body: {
   force?: boolean;
   dry_run?: boolean;
 }) => api<unknown>("/api/v1/embeddings/backfill", { method: "POST", body });
+
+// ─── Reminders ───────────────────────────────────────────────────
+//
+// Shapes mirror internal/api/reminders.go. `state: "fired"` is the
+// notification list: a reminder that has fired and not been acknowledged IS
+// the notification, so there is no separate notification store to drift.
+
+export const listReminders = (params?: { project?: string; state?: string }) =>
+  api<ReminderListResponse>("/api/v1/reminders", { query: params }).then(
+    (r) => r.reminders || [],
+  );
+
+export const createReminder = (body: CreateReminderRequest) =>
+  api<ReminderSummary>("/api/v1/reminders", { method: "POST", body });
+
+export const getReminder = (id: string) =>
+  api<ReminderSummary>(`/api/v1/reminders/${encodeURIComponent(id)}`);
+
+export const updateReminder = (
+  id: string,
+  patch: Record<string, string | undefined>,
+) =>
+  api<ReminderSummary>(`/api/v1/reminders/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    body: patch,
+  });
+
+export const deleteReminder = (id: string) =>
+  api<{ deleted: boolean }>(`/api/v1/reminders/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+  });
+
+/** Acknowledge a fired reminder — clears it from the notification list. */
+export const ackReminder = (id: string) =>
+  api<ReminderSummary>(`/api/v1/reminders/${encodeURIComponent(id)}/ack`, {
+    method: "POST",
+  });
+
+/**
+ * Re-arm a reminder for a new time.
+ *
+ * Its own endpoint rather than a status patch because each firing is claimed
+ * once per remind_at: setting a fired reminder back to active without moving
+ * the time looks like it worked and then never fires.
+ */
+export const snoozeReminder = (id: string, remindAt: string) =>
+  api<ReminderSummary>(`/api/v1/reminders/${encodeURIComponent(id)}/snooze`, {
+    method: "POST",
+    body: { remind_at: remindAt },
+  });
 
 // ─── Goals ───────────────────────────────────────────────────────
 

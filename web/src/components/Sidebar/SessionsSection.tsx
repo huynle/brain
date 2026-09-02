@@ -26,6 +26,7 @@
 import { useWorkspace } from "../../store/workspace";
 import { useSessions } from "../../hooks/useSessions";
 import { useSessionActionContext } from "../../hooks/useSessionActionContext";
+import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useRowActions } from "../../hooks/useRowActions";
 import { buildSessionActions } from "../../lib/actions/sessionActions";
 import { instanceSessionRef } from "../../lib/sessionRef";
@@ -57,10 +58,23 @@ export function SessionsSection(): JSX.Element {
   const actionCtx = useSessionActionContext();
   const { rowProps, overlays } = useRowActions();
 
+  // The preview waits out the double-click window. A live session pane
+  // subscribes to a stream on mount, so opening one on the way to Focus is
+  // not just a visual flash — it connects and tears down a transcript
+  // nobody asked for.
+  const deferred = useDeferredPreview();
   const preview = (s: OpencodeInstance) =>
-    previewInSidebar("session", { ref: instanceSessionRef(s) }, sessionLabel(s));
-  const pin = (s: OpencodeInstance) =>
+    deferred.schedule(() =>
+      previewInSidebar(
+        "session",
+        { ref: instanceSessionRef(s) },
+        sessionLabel(s),
+      ),
+    );
+  const pin = (s: OpencodeInstance) => {
+    deferred.cancel();
     openInFocus("session", { ref: instanceSessionRef(s) }, sessionLabel(s));
+  };
 
   // Which instances are on screen right now, in either dock. This used to
   // be read off `focusSessionId`/`focusSessionRef`, which only the

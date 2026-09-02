@@ -12,17 +12,21 @@
  * Reads `featureId` + `projectId` from `useModal().target` (matching the
  * panes-v2 modal store contract). Tasks come from `useLive` — no props.
  */
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import { Modal } from "../common/Modal";
-import { checkoutFeature, resumeFeature, runFeature, runBlockedInspectorNow, summarizeResumeResults, summarizeRunFeatureResult } from "../../lib/api";
+import {
+  checkoutFeature,
+  resumeFeature,
+  runFeature,
+  runBlockedInspectorNow,
+  summarizeResumeResults,
+  summarizeRunFeatureResult,
+} from "../../lib/api";
 import { useLive } from "../../lib/sse";
 import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
 import type { FeatureCheckoutOptions, Task } from "../../lib/types";
-import {
-  computeFeatureState,
-  deriveCheckoutDefaults,
-} from "./featureActions";
+import { computeFeatureState, deriveCheckoutDefaults } from "./featureActions";
 
 type View = "menu" | "checkout" | "confirmForce";
 
@@ -69,7 +73,6 @@ export function FeatureActionsModal(): JSX.Element {
   const [opts, setOpts] = useState<FeatureCheckoutOptions>(() =>
     deriveCheckoutDefaults(tasks as Task[]),
   );
-  const submitRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   function openCheckout(next: "review" | "force") {
     setMode(next);
@@ -101,8 +104,10 @@ export function FeatureActionsModal(): JSX.Element {
       setBusy(false);
     }
   }
-  submitRef.current = submitCheckout;
 
+  // The single decision point for "the user asked to create the checkout
+  // task" — reached by the footer's submit button and by Enter in a field,
+  // so the force confirmation cannot be bypassed by either route.
   function onCheckoutSubmit(e: FormEvent) {
     e.preventDefault();
     if (mode === "force") {
@@ -131,7 +136,9 @@ export function FeatureActionsModal(): JSX.Element {
   async function resumeAbandoned() {
     setBusy(true);
     try {
-      const result = await resumeFeature(projectId, featureId, { force: false });
+      const result = await resumeFeature(projectId, featureId, {
+        force: false,
+      });
       const kind = result.total_resumed > 0 ? "success" : "info";
       toast(summarizeResumeResults(result), kind);
       close();
@@ -184,19 +191,28 @@ export function FeatureActionsModal(): JSX.Element {
         ) : view === "checkout" ? (
           <>
             <span className="faint">Esc leaves field · q closes</span>
-            <button
-              onClick={() => setView("menu")}
-              disabled={busy}
-            >
+            <button onClick={() => setView("menu")} disabled={busy}>
               Back
             </button>
             <button
               className="primary"
               style={{ marginLeft: "auto" }}
-              onClick={() => submitRef.current && void submitRef.current()}
-              disabled={busy}
+              // Submit button for the checkout form, associated across the
+              // DOM (the footer is a sibling of .modal-body, not a
+              // descendant). That association is what makes this the form's
+              // DEFAULT button, which is what makes Enter-in-a-field submit.
+              //
+              // It used to ALSO carry onClick, so a single click ran the work
+              // twice — once directly, then again through the form's
+              // onSubmit. In force mode that was worse: the direct call sent
+              // the request before setView("confirmForce") could render the
+              // confirmation. Removing the handler and keeping the
+              // association fixes the double-fire without costing the
+              // keyboard path; everything now routes through onCheckoutSubmit,
+              // which owns the force branch.
               form="feature-checkout-form"
               type="submit"
+              disabled={busy}
             >
               {busy
                 ? "Submitting..."
@@ -208,10 +224,7 @@ export function FeatureActionsModal(): JSX.Element {
         ) : (
           <>
             <span className="faint">Esc = No</span>
-            <button
-              onClick={() => setView("checkout")}
-              disabled={busy}
-            >
+            <button onClick={() => setView("checkout")} disabled={busy}>
               No
             </button>
             <button

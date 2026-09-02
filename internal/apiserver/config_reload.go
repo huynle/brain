@@ -110,6 +110,13 @@ func diffRestartFields(prev, next *config.UnifiedConfig) []string {
 		prev.Server.Embedding.Model != next.Server.Embedding.Model {
 		out = append(out, "server.embedding.*")
 	}
+	// The two EnsureBuiltInFeatureCheckout*Automation calls run once, inside
+	// apiserver.Start. Nothing re-runs them, so flipping this in Settings
+	// changed the file and nothing else — the user saw a green "Saved." with
+	// no restart badge while no automation existed to match feature.completed.
+	if prev.Server.FeatureCheckout.Enabled != next.Server.FeatureCheckout.Enabled {
+		out = append(out, "server.feature_checkout.enabled")
+	}
 	if prev.Runner.BrainAPIURL != next.Runner.BrainAPIURL {
 		out = append(out, "runner.brain_api_url")
 	}

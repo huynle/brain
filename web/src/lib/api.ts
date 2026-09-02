@@ -427,11 +427,7 @@ export const setFeatureStatus = (
 export const deleteArchivedTasks = (
   projectId: string,
   opts: { dryRun?: boolean; force?: boolean } = {},
-) =>
-  bulkDelete(
-    { project: projectId, status: "archived", type: "task" },
-    opts,
-  );
+) => bulkDelete({ project: projectId, status: "archived", type: "task" }, opts);
 
 /** Delete every task in a feature. */
 export const deleteFeatureTasks = (
@@ -912,7 +908,10 @@ export const runProject = (projectId: string, force = false) =>
  * `force` bypasses the live-claim guard, which otherwise rejects the whole
  * request (409) while any task is being executed by an online runner.
  */
-export const deleteProject = (projectId: string, opts: { force?: boolean } = {}) =>
+export const deleteProject = (
+  projectId: string,
+  opts: { force?: boolean } = {},
+) =>
   api<DeleteProjectResponse>(`/api/v1/tasks/${encodeURIComponent(projectId)}`, {
     method: "DELETE",
     query: {

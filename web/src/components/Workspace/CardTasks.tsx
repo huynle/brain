@@ -266,7 +266,6 @@ export function CardTasks({
     selectionActions,
   });
 
-
   return (
     <div>
       {/* Auto-archive is a property of the PROJECT, but it belongs on this
@@ -351,9 +350,7 @@ export function CardTasks({
             // Indent nested features so the tree reads at a glance. The
             // guide glyphs carry the exact structure; this gives each
             // level a visible step.
-            style={
-              frow.depth > 0 ? { marginLeft: frow.depth * 12 } : undefined
-            }
+            style={frow.depth > 0 ? { marginLeft: frow.depth * 12 } : undefined}
           >
             <div
               className={`feat-head${featMarked ? " marked" : ""}${featIsActive ? " active" : ""}`}
@@ -586,10 +583,10 @@ export function CardTasks({
       )}
 
       {features.length === 0 && orphanRows.length === 0 && (
-          <div style={{ color: "#6b757e", fontSize: 11, padding: "6px 0" }}>
-            No tasks yet.
-          </div>
-        )}
+        <div style={{ color: "#6b757e", fontSize: 11, padding: "6px 0" }}>
+          No tasks yet.
+        </div>
+      )}
 
       {overlays}
     </div>

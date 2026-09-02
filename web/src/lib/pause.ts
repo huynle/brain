@@ -416,7 +416,13 @@ export function projectRunIndicator(
   }
 
   const state: ProjectRunState =
-    executing > 0 ? "busy" : tasks.length === 0 ? "" : hasBlocked ? "err" : "on";
+    executing > 0
+      ? "busy"
+      : tasks.length === 0
+        ? ""
+        : hasBlocked
+          ? "err"
+          : "on";
 
   const what =
     executing > 0

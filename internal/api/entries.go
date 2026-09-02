@@ -1946,6 +1946,9 @@ func fmReminderConfigToType(r *frontmatter.ReminderConfig) *types.ReminderConfig
 		Executor:        r.Executor,
 		ExecutionMode:   r.ExecutionMode,
 		TargetWorkdir:   r.TargetWorkdir,
+		Repeat:          r.Repeat,
+		RepeatUntil:     r.RepeatUntil,
+		FireCount:       r.FireCount,
 		FiredAt:         r.FiredAt,
 		GeneratedTaskID: r.GeneratedTaskID,
 	}

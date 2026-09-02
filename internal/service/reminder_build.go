@@ -37,10 +37,13 @@ func BuildReminderEntry(in ReminderInput) (types.CreateEntryRequest, error) {
 	}
 
 	cfg := in.Config
-	cfg.ID = strings.TrimSpace(cfg.ID)
-	if cfg.ID == "" {
-		cfg.ID = markdown.GenerateShortID()
-	}
+	// The id is ALWAYS generated, never taken from the caller. It becomes a
+	// tag, a URL path segment on six routes, and half the exactly-once dedup
+	// key — and nothing checked it for uniqueness or for a safe character
+	// set. Honoring a supplied id meant two reminders could share one, which
+	// made findReminderByID ambiguous and let one reminder's claim suppress
+	// another's firing.
+	cfg.ID = markdown.GenerateShortID()
 	cfg.RemindAt = strings.TrimSpace(cfg.RemindAt)
 	cfg.Timezone = strings.TrimSpace(cfg.Timezone)
 
@@ -67,6 +70,29 @@ func BuildReminderEntry(in ReminderInput) (types.CreateEntryRequest, error) {
 		// Re-emit in a canonical form so the dedup key is stable regardless of
 		// how the caller spelled the same instant.
 		cfg.RemindAt = t.Format(time.RFC3339)
+	}
+
+	repeat := types.NormalizeReminderRepeat(cfg.Repeat)
+	if repeat == "!" {
+		return types.CreateEntryRequest{}, fmt.Errorf(
+			"unknown repeat %q (want one of: %s)",
+			in.Config.Repeat, strings.Join(types.ReminderRepeats, ", "))
+	}
+	cfg.Repeat = repeat
+	// A recurrence with no start has nothing to recur from — it would look
+	// scheduled and never fire.
+	if cfg.Repeat != "" && cfg.RemindAt == "" {
+		return types.CreateEntryRequest{}, fmt.Errorf(
+			"repeat %q requires a remind_at to recur from", cfg.Repeat)
+	}
+	cfg.RepeatUntil = strings.TrimSpace(cfg.RepeatUntil)
+	if cfg.RepeatUntil != "" {
+		t, err := time.Parse(time.RFC3339, cfg.RepeatUntil)
+		if err != nil {
+			return types.CreateEntryRequest{}, fmt.Errorf(
+				"repeat_until %q is not RFC3339 with an offset: %w", cfg.RepeatUntil, err)
+		}
+		cfg.RepeatUntil = t.Format(time.RFC3339)
 	}
 
 	// A task-action reminder with no prompt is not work, it is noise — and it
@@ -146,13 +172,15 @@ func ReminderSummaryFrom(e types.BrainEntry) types.ReminderSummary {
 		cfg = &types.ReminderConfig{}
 	}
 	return types.ReminderSummary{
+		Repeat:          cfg.Repeat,
+		RepeatUntil:     cfg.RepeatUntil,
+		FireCount:       cfg.FireCount,
 		EntryID:         e.ID,
 		ReminderID:      cfg.ID,
 		Title:           e.Title,
 		Project:         e.ProjectID,
 		FeatureID:       e.FeatureID,
 		Path:            e.Path,
-		Content:         e.Content,
 		Status:          e.Status,
 		State:           ReminderStateFor(e.Status, cfg),
 		RemindAt:        cfg.RemindAt,
@@ -161,5 +189,36 @@ func ReminderSummaryFrom(e types.BrainEntry) types.ReminderSummary {
 		Prompt:          cfg.Prompt,
 		FiredAt:         cfg.FiredAt,
 		GeneratedTaskID: cfg.GeneratedTaskID,
+		// How overdue the firing actually was. Computed at fire time but
+		// never surfaced before, so a reminder that drained hours after an
+		// outage looked identical to a punctual one.
+		LateBySeconds: reminderLateBySeconds(cfg),
 	}
+}
+
+// reminderLateBySeconds derives how far past its scheduled time a reminder
+// actually fired, from the two timestamps already on the entry.
+func reminderLateBySeconds(cfg *types.ReminderConfig) int64 {
+	if cfg == nil || cfg.FiredAt == "" || cfg.RemindAt == "" {
+		return 0
+	}
+	fired, err := time.Parse(time.RFC3339, cfg.FiredAt)
+	if err != nil {
+		return 0
+	}
+	// For a recurring reminder RemindAt has already advanced to the NEXT
+	// occurrence by the time anyone reads this, so the difference would be
+	// negative and meaningless. Only report it for a one-shot.
+	if cfg.Repeats() {
+		return 0
+	}
+	at, err := time.Parse(time.RFC3339, cfg.RemindAt)
+	if err != nil {
+		return 0
+	}
+	d := int64(fired.UTC().Sub(at.UTC()) / time.Second)
+	if d < 0 {
+		return 0
+	}
+	return d
 }

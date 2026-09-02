@@ -40,6 +40,9 @@ func reminderConfigProperties() map[string]Property {
 		"action": {Type: "string", Enum: types.ReminderActions, Description: "What happens when it fires. " +
 			"\"notify\" (default) surfaces it in the Brain app and does nothing else. " +
 			"\"task\" creates a pending task so an agent works the reminder — requires a prompt."},
+		"repeat": {Type: "string", Enum: types.ReminderRepeats, Description: "Make it recur: daily, weekly, monthly or yearly. " +
+			"Requires remind_at, which is the first occurrence. Omit for a one-shot reminder."},
+		"repeat_until":   {Type: "string", Description: "Stop recurring after this instant (RFC3339 with an offset). Omit to recur indefinitely."},
 		"prompt":         {Type: "string", Description: "Instruction for the generated task. Required when action is \"task\"."},
 		"agent":          {Type: "string", Description: "Agent override for the generated task"},
 		"model":          {Type: "string", Description: "Model override for the generated task"},
@@ -54,6 +57,8 @@ func reminderConfigFromArgs(args map[string]any) types.ReminderConfig {
 		RemindAt:      StringArg(args, "remind_at", ""),
 		Timezone:      StringArg(args, "timezone", ""),
 		Action:        StringArg(args, "action", ""),
+		Repeat:        StringArg(args, "repeat", ""),
+		RepeatUntil:   StringArg(args, "repeat_until", ""),
 		Prompt:        StringArg(args, "prompt", ""),
 		Agent:         StringArg(args, "agent", ""),
 		Model:         StringArg(args, "model", ""),
@@ -76,8 +81,9 @@ func registerBrainReminderCreate(s *Server, client *APIClient) {
 		Name: "reminder_create",
 		Description: "Create a reminder — something to come back to, optionally at a specific date and time.\n\n" +
 			"With remind_at it fires at that moment: either notifying in the Brain app (default) or " +
-			"creating a task for an agent to work. Without remind_at it is simply a durable note to " +
-			"revisit, which never fires on its own.",
+			"creating a task for an agent to work. Add repeat (daily/weekly/monthly/yearly) to make " +
+			"it recur. Without remind_at it is simply a durable note to revisit, which never fires " +
+			"on its own.",
 		InputSchema: InputSchema{Type: "object", Properties: props, Required: []string{"title"}},
 	}, func(ctx context.Context, args map[string]any) (string, error) {
 		title := strings.TrimSpace(StringArg(args, "title", ""))
@@ -150,6 +156,9 @@ func registerBrainReminderList(s *Server, client *APIClient) {
 			if r.RemindAt != "" {
 				fmt.Fprintf(&b, " · %s", r.RemindAt)
 			}
+			if r.Repeat != "" {
+				fmt.Fprintf(&b, " · repeats %s", r.Repeat)
+			}
 			if r.Action != "" && r.Action != types.ReminderActionNotify {
 				fmt.Fprintf(&b, " · action: %s", r.Action)
 			}
@@ -209,6 +218,8 @@ func registerBrainReminderUpdate(s *Server, client *APIClient) {
 			RemindAt:      clearableStringArg(args, "remind_at"),
 			Timezone:      clearableStringArg(args, "timezone"),
 			Action:        clearableStringArg(args, "action"),
+			Repeat:        clearableStringArg(args, "repeat"),
+			RepeatUntil:   clearableStringArg(args, "repeat_until"),
 			Prompt:        clearableStringArg(args, "prompt"),
 			Agent:         clearableStringArg(args, "agent"),
 			Model:         clearableStringArg(args, "model"),
@@ -305,6 +316,16 @@ func formatReminderSummary(heading string, r *types.ReminderSummary) string {
 		fmt.Fprintf(&b, "- timezone: %s\n", r.Timezone)
 	}
 	fmt.Fprintf(&b, "- action: %s\n", r.Action)
+	if r.Repeat != "" {
+		fmt.Fprintf(&b, "- repeats: %s", r.Repeat)
+		if r.RepeatUntil != "" {
+			fmt.Fprintf(&b, " until %s", r.RepeatUntil)
+		}
+		b.WriteString("\n")
+	}
+	if r.FireCount > 0 {
+		fmt.Fprintf(&b, "- fired %d time(s)\n", r.FireCount)
+	}
 	if r.Project != "" {
 		fmt.Fprintf(&b, "- project: %s\n", r.Project)
 	}

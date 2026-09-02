@@ -37,6 +37,7 @@ import { BrowserLeaf } from "./leaves/BrowserLeaf";
 import { EntryLeaf } from "./leaves/EntryLeaf";
 import { ProjectLeaf } from "./leaves/ProjectLeaf";
 import { AutomationRunsLeaf } from "./leaves/AutomationRunsLeaf";
+import { RemindersLeaf } from "./leaves/RemindersLeaf";
 import { AutomationDetailLeaf } from "./leaves/AutomationDetailLeaf";
 
 export function PaneLeaf({
@@ -272,6 +273,8 @@ function LeafContent({ leaf }: { leaf: DockLeaf }): JSX.Element {
       return <AutomationRunsLeaf target={leaf.target} />;
     case "automation-detail":
       return <AutomationDetailLeaf target={leaf.target} />;
+    case "reminders":
+      return <RemindersLeaf target={leaf.target} />;
     default:
       return (
         <div style={{ color: "var(--p2-fg-faint)" }}>

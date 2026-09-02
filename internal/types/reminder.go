@@ -20,6 +20,37 @@ const (
 // ReminderActions enumerates the valid trigger actions.
 var ReminderActions = []string{ReminderActionNotify, ReminderActionTask}
 
+// Reminder repeat intervals. Empty means one-shot.
+const (
+	ReminderRepeatDaily   = "daily"
+	ReminderRepeatWeekly  = "weekly"
+	ReminderRepeatMonthly = "monthly"
+	ReminderRepeatYearly  = "yearly"
+)
+
+// ReminderRepeats enumerates the valid recurrence values.
+var ReminderRepeats = []string{
+	ReminderRepeatDaily, ReminderRepeatWeekly,
+	ReminderRepeatMonthly, ReminderRepeatYearly,
+}
+
+// NormalizeReminderRepeat maps an input repeat to a stored one. Empty is
+// valid and means one-shot. An unrecognized value returns "!" so the caller
+// can reject it rather than silently making the reminder one-shot — a
+// reminder that was meant to recur and does not is a silent failure.
+func NormalizeReminderRepeat(s string) string {
+	v := strings.TrimSpace(strings.ToLower(s))
+	switch v {
+	case "":
+		return ""
+	case ReminderRepeatDaily, ReminderRepeatWeekly,
+		ReminderRepeatMonthly, ReminderRepeatYearly:
+		return v
+	default:
+		return "!"
+	}
+}
+
 // Reminder tags. ReminderDatedTag is load-bearing, not decorative: the sweeper
 // lists by tag, so an undated reminder is never even loaded rather than being
 // loaded and skipped.
@@ -68,6 +99,17 @@ type ReminderConfig struct {
 	Executor      string `json:"executor,omitempty" yaml:"executor,omitempty"`
 	ExecutionMode string `json:"execution_mode,omitempty" yaml:"execution_mode,omitempty"`
 	TargetWorkdir string `json:"target_workdir,omitempty" yaml:"target_workdir,omitempty"`
+
+	// Repeat makes the reminder recur: daily, weekly, monthly, yearly.
+	// Empty is one-shot.
+	Repeat string `json:"repeat,omitempty" yaml:"repeat,omitempty"`
+
+	// RepeatUntil stops a recurrence (RFC3339). Empty means forever.
+	RepeatUntil string `json:"repeat_until,omitempty" yaml:"repeat_until,omitempty"`
+
+	// FireCount counts how many times this reminder has fired. Useful for a
+	// recurring reminder, where FiredAt only records the most recent one.
+	FireCount int `json:"fire_count,omitempty" yaml:"fire_count,omitempty"`
 
 	// FiredAt records when this reminder fired, for display. It is NOT the
 	// exactly-once guard — that is the event log's unique dedup key, which is
@@ -123,6 +165,46 @@ func (r *ReminderConfig) NormalizedAction() string {
 	return ReminderActionNotify
 }
 
+// Repeats reports whether this reminder recurs.
+func (r *ReminderConfig) Repeats() bool {
+	return r != nil && strings.TrimSpace(r.Repeat) != ""
+}
+
+// NextOccurrence advances t by one repeat interval.
+//
+// Advancing from the SCHEDULED time rather than from "now" is what keeps a
+// daily 09:00 reminder at 09:00: computing from the firing instant would walk
+// it later every time the sweeper ticked a few seconds late.
+//
+// AddDate is used for month and year so "the 31st" clamps the way the
+// calendar does rather than drifting by a fixed number of days.
+func (r *ReminderConfig) NextOccurrence(t time.Time) (time.Time, bool) {
+	switch NormalizeReminderRepeat(r.Repeat) {
+	case ReminderRepeatDaily:
+		return t.AddDate(0, 0, 1), true
+	case ReminderRepeatWeekly:
+		return t.AddDate(0, 0, 7), true
+	case ReminderRepeatMonthly:
+		return t.AddDate(0, 1, 0), true
+	case ReminderRepeatYearly:
+		return t.AddDate(1, 0, 0), true
+	default:
+		return time.Time{}, false
+	}
+}
+
+// RepeatEnded reports whether the recurrence has passed its RepeatUntil.
+func (r *ReminderConfig) RepeatEnded(next time.Time) bool {
+	if r == nil || strings.TrimSpace(r.RepeatUntil) == "" {
+		return false
+	}
+	until, err := time.Parse(time.RFC3339, strings.TrimSpace(r.RepeatUntil))
+	if err != nil {
+		return false
+	}
+	return next.After(until)
+}
+
 // Reminder lifecycle states, derived from the entry's status plus whether it
 // carries a date. Reported by the API so callers never have to re-derive it.
 const (
@@ -156,6 +238,8 @@ type UpdateReminderRequest struct {
 
 	RemindAt      *string `json:"remind_at,omitempty"`
 	Timezone      *string `json:"timezone,omitempty"`
+	Repeat        *string `json:"repeat,omitempty"`
+	RepeatUntil   *string `json:"repeat_until,omitempty"`
 	Action        *string `json:"action,omitempty"`
 	Prompt        *string `json:"prompt,omitempty"`
 	Agent         *string `json:"agent,omitempty"`
@@ -173,15 +257,17 @@ type ReminderSummary struct {
 	Project    string `json:"project,omitempty"`
 	FeatureID  string `json:"feature_id,omitempty"`
 	Path       string `json:"path,omitempty"`
-	Content    string `json:"content,omitempty"`
 
 	Status string `json:"status"`
 	State  string `json:"state"`
 
-	RemindAt string `json:"remind_at,omitempty"`
-	Timezone string `json:"timezone,omitempty"`
-	Action   string `json:"action"`
-	Prompt   string `json:"prompt,omitempty"`
+	RemindAt    string `json:"remind_at,omitempty"`
+	Timezone    string `json:"timezone,omitempty"`
+	Action      string `json:"action"`
+	Prompt      string `json:"prompt,omitempty"`
+	Repeat      string `json:"repeat,omitempty"`
+	RepeatUntil string `json:"repeat_until,omitempty"`
+	FireCount   int    `json:"fire_count,omitempty"`
 
 	FiredAt         string `json:"fired_at,omitempty"`
 	GeneratedTaskID string `json:"generated_task_id,omitempty"`
@@ -209,4 +295,6 @@ type ReminderFiredPayload struct {
 	FiredAt         string `json:"fired_at"`
 	LateBySeconds   int64  `json:"late_by_seconds,omitempty"`
 	GeneratedTaskID string `json:"generated_task_id,omitempty"`
+	// NextRemindAt is set for a recurring reminder: when it will fire again.
+	NextRemindAt string `json:"next_remind_at,omitempty"`
 }

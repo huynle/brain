@@ -63,14 +63,16 @@ export function SessionsSection(): JSX.Element {
   // not just a visual flash — it connects and tears down a transcript
   // nobody asked for.
   const deferred = useDeferredPreview();
-  const preview = (s: OpencodeInstance) =>
-    deferred.schedule(() =>
-      previewInSidebar(
-        "session",
-        { ref: instanceSessionRef(s) },
-        sessionLabel(s),
-      ),
+  // The immediate form, for the keyboard. Enter has no double-click to wait
+  // for, so deferring it just made the row feel broken.
+  const previewNow = (s: OpencodeInstance) =>
+    previewInSidebar(
+      "session",
+      { ref: instanceSessionRef(s) },
+      sessionLabel(s),
     );
+  const preview = (s: OpencodeInstance) =>
+    deferred.schedule(() => previewNow(s));
   const pin = (s: OpencodeInstance) => {
     deferred.cancel();
     openInFocus("session", { ref: instanceSessionRef(s) }, sessionLabel(s));
@@ -116,7 +118,7 @@ export function SessionsSection(): JSX.Element {
           className={`sess-row ${active ? "active" : ""}`}
           // Enter matches a single click, as on every other row.
           {...rowProps(buildSessionActions(s, actionCtx), label, () =>
-            preview(s),
+            previewNow(s),
           )}
           onClick={() => preview(s)}
           onDoubleClick={() => pin(s)}

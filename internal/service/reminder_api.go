@@ -32,16 +32,22 @@ func (s *ReminderService) CreateReminder(ctx context.Context, req types.CreateRe
 
 // ListReminders returns reminders, optionally scoped by project and state.
 func (s *ReminderService) ListReminders(ctx context.Context, project, state string) ([]types.ReminderSummary, error) {
-	entries, err := s.listReminderEntries(ctx, "")
+	project = strings.TrimSpace(project)
+	// Pushed into SQL rather than filtered in Go: ListEntriesRequest.Project
+	// reaches a WHERE clause, so scoping here is the difference between
+	// reading one project's reminders and reading every project's.
+	entries, err := s.listReminderEntries(ctx, "", project)
 	if err != nil {
 		return nil, err
 	}
-	project = strings.TrimSpace(project)
 	state = strings.TrimSpace(strings.ToLower(state))
 
 	out := make([]types.ReminderSummary, 0, len(entries))
 	for _, e := range entries {
-		if project != "" && e.ProjectID != project {
+		// An entry typed `reminder` with no reminder block is not a reminder
+		// this service made — it would list with an empty id, which no verb
+		// can then address.
+		if e.Reminder == nil {
 			continue
 		}
 		sum := ReminderSummaryFrom(e)
@@ -87,6 +93,25 @@ func (s *ReminderService) UpdateReminder(ctx context.Context, reminderID string,
 	if req.Timezone != nil {
 		cfg.Timezone = strings.TrimSpace(*req.Timezone)
 	}
+	if req.Repeat != nil {
+		v := types.NormalizeReminderRepeat(*req.Repeat)
+		if v == "!" {
+			return nil, fmt.Errorf("unknown repeat %q (want one of: %s)",
+				*req.Repeat, strings.Join(types.ReminderRepeats, ", "))
+		}
+		cfg.Repeat = v
+	}
+	if req.RepeatUntil != nil {
+		v := strings.TrimSpace(*req.RepeatUntil)
+		if v != "" {
+			t, perr := time.Parse(time.RFC3339, v)
+			if perr != nil {
+				return nil, fmt.Errorf("repeat_until %q is not RFC3339 with an offset: %w", v, perr)
+			}
+			v = t.Format(time.RFC3339)
+		}
+		cfg.RepeatUntil = v
+	}
 	if req.Action != nil {
 		a := types.NormalizeReminderAction(*req.Action)
 		if a == "" {
@@ -118,6 +143,19 @@ func (s *ReminderService) UpdateReminder(ctx context.Context, reminderID string,
 		strings.TrimSpace(cfg.Prompt) == "" {
 		return nil, fmt.Errorf("action %q requires a prompt", types.ReminderActionTask)
 	}
+	if cfg.Repeats() && cfg.RemindAt == "" {
+		return nil, fmt.Errorf("repeat %q requires a remind_at to recur from", cfg.Repeat)
+	}
+
+	if req.Status != nil {
+		v := strings.TrimSpace(*req.Status)
+		// Free-form status was a way to strand a reminder: the sweeper only
+		// loads active/pending, so any other value silently removed it from
+		// the schedule while every endpoint still reported it happily.
+		if !types.IsValidEntryStatus(v) {
+			return nil, fmt.Errorf("unknown status %q", v)
+		}
+	}
 
 	update := types.UpdateEntryRequest{Reminder: &cfg}
 	if req.Title != nil {
@@ -139,10 +177,23 @@ func (s *ReminderService) UpdateReminder(ctx context.Context, reminderID string,
 	return s.GetReminder(ctx, reminderID)
 }
 
-// AckReminder marks a fired reminder as dealt with.
+// AckReminder dismisses a fired reminder.
+//
+// For a RECURRING reminder this means "dismiss this occurrence", not "stop
+// reminding me" — so it goes back to active, still armed for its next
+// occurrence, which the firing already scheduled. Marking it completed would
+// silently cancel the recurrence, and the user asked to be reminded again.
+// Stopping a recurrence is an explicit edit (clear repeat) or a delete.
 func (s *ReminderService) AckReminder(ctx context.Context, reminderID string) (*types.ReminderSummary, error) {
-	done := "completed"
-	return s.UpdateReminder(ctx, reminderID, types.UpdateReminderRequest{Status: &done})
+	e, err := s.findReminderByID(ctx, reminderID)
+	if err != nil {
+		return nil, err
+	}
+	next := "completed"
+	if e.Reminder.Repeats() && e.Reminder.IsDated() {
+		next = "active"
+	}
+	return s.UpdateReminder(ctx, reminderID, types.UpdateReminderRequest{Status: &next})
 }
 
 // SnoozeReminder re-arms a reminder for a new time.
@@ -186,7 +237,10 @@ func (s *ReminderService) FireReminderNow(ctx context.Context, reminderID string
 	if t, err := e.Reminder.RemindAtTime(); err == nil {
 		at = t
 	}
-	if _, err := s.fireOne(ctx, *e, at, now); err != nil {
+	// A unique suffix, so a manual fire is its own claim rather than
+	// colliding with the scheduled firing's and silently doing nothing.
+	suffix := fmt.Sprintf("manual:%d", now.UTC().UnixNano())
+	if _, err := s.fire(ctx, *e, at, now, suffix); err != nil {
 		return nil, err
 	}
 	return s.GetReminder(ctx, reminderID)
@@ -202,7 +256,7 @@ func (s *ReminderService) findReminderByID(ctx context.Context, reminderID strin
 	if reminderID == "" {
 		return nil, types.ErrReminderNotFound
 	}
-	entries, err := s.listReminderEntries(ctx, types.ReminderIDTag(reminderID))
+	entries, err := s.listReminderEntries(ctx, types.ReminderIDTag(reminderID), "")
 	if err != nil {
 		return nil, err
 	}
@@ -216,16 +270,17 @@ func (s *ReminderService) findReminderByID(ctx context.Context, reminderID strin
 
 // listReminderEntries lists reminder entries in every status, optionally
 // filtered to one tag.
-func (s *ReminderService) listReminderEntries(ctx context.Context, tag string) ([]types.BrainEntry, error) {
+func (s *ReminderService) listReminderEntries(ctx context.Context, tag, project string) ([]types.BrainEntry, error) {
 	var out []types.BrainEntry
 	const page = 200
 	offset := 0
 	for {
 		resp, err := s.brain.List(ctx, types.ListEntriesRequest{
-			Type:   "reminder",
-			Tags:   tag,
-			Limit:  page,
-			Offset: offset,
+			Type:    "reminder",
+			Tags:    tag,
+			Project: project,
+			Limit:   page,
+			Offset:  offset,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("list reminders: %w", err)

@@ -4000,8 +4000,16 @@ body[data-theme="light"] .auto-archive input { background: transparent; border: 
    the DOM when nothing is waiting (see ReminderBell). */
 .reminder-bell { position: relative; display: inline-flex; }
 .reminder-panel {
-  position: absolute; top: calc(100% + 6px); right: 0; z-index: 60;
-  width: min(380px, calc(100vw - 24px));
+  position: absolute; top: calc(100% + 6px); right: 0;
+  /* Above the feature drawer (70) and the assistant panel (75). At 60 the
+     panel opened UNDER both — visible in the DOM, unreachable on screen. */
+  z-index: 80;
+  /* NOT calc(100vw - 24px): the bell is not at the viewport's right edge
+     (the Panel and Assistant buttons sit to its right), so a viewport-width
+     panel anchored right:0 grew ~150px past x=0 and body{overflow:hidden}
+     clipped it with no way to scroll it back. Bounded by a fixed max and
+     repositioned outright on narrow screens below. */
+  width: 380px; max-width: 92vw;
   background: #12161a; border: 1px solid #2a2f35; border-radius: 6px;
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
   overflow: hidden;
@@ -4010,7 +4018,13 @@ body[data-theme="light"] .auto-archive input { background: transparent; border: 
   padding: 7px 10px; font-size: 10px; letter-spacing: 0.05em;
   text-transform: uppercase; color: #9098a1;
   border-bottom: 1px solid #22272c; background: #0e1114;
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
+.reminder-panel__all {
+  background: none; border: 0; padding: 0; cursor: pointer;
+  font-size: 10px; letter-spacing: 0.05em; color: #6a8bff;
+}
+.reminder-panel__all:hover { text-decoration: underline; }
 /* Caps the panel rather than the page: twenty fired reminders must scroll
    inside the popover, not push it off the bottom of the viewport. */
 .reminder-panel__list { max-height: min(60vh, 420px); overflow-y: auto; }
@@ -4048,4 +4062,85 @@ body[data-theme="light"] .reminder-row__acts button {
 body[data-theme="light"] .reminder-row__acts button:hover { color: #1b232b; }
 body[data-theme="light"] .reminder-row__acts button.primary {
   border-color: #9ac9a2; color: #2f7d3c;
+}
+
+/* ─── Reminder centre (RemindersLeaf) ────────────────────────────
+   The bell answers "what needs me now"; this answers what is scheduled,
+   what already happened, and what agents were sent to do. */
+.reminders-leaf { padding: 6px 8px; overflow-y: auto; height: 100%; }
+.reminders-leaf__empty {
+  padding: 14px 10px; font-size: 11px; color: #6b757e; line-height: 1.6;
+}
+.reminders-leaf__empty code {
+  background: #14181c; border: 1px solid #262c33; border-radius: 3px;
+  padding: 0 4px; font-size: 10.5px;
+}
+.reminders-group { margin-bottom: 8px; }
+.reminders-group__head {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: none; border: 0; cursor: pointer; padding: 4px 2px;
+  font-size: 10px; letter-spacing: 0.05em; text-transform: uppercase;
+  color: #9098a1;
+}
+.reminders-group__head:hover { color: #d7dbe0; }
+.reminders-group__count {
+  margin-left: auto; font-size: 10px; color: #6b757e;
+  background: #14181c; border: 1px solid #262c33;
+  border-radius: 999px; padding: 0 6px;
+}
+.reminder-item {
+  display: flex; align-items: flex-start; gap: 8px;
+  padding: 6px 6px; border-left: 2px solid #262c33; margin: 2px 0 2px 4px;
+}
+.reminder-item__main { min-width: 0; flex: 1; }
+.reminder-item__title {
+  font-size: 12px; color: #d7dbe0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reminder-item__meta { font-size: 10px; color: #6b757e; margin-top: 2px; }
+.reminder-item__task {
+  margin-top: 3px; background: none; border: 0; padding: 0; cursor: pointer;
+  font-size: 10px; color: #6a8bff;
+}
+.reminder-item__task:hover { text-decoration: underline; }
+.reminder-item__acts { display: flex; gap: 4px; flex: 0 0 auto; }
+.reminder-item__acts button {
+  background: #12161a; border: 1px solid #2a2f35; color: #9098a1;
+  font-size: 10px; padding: 2px 7px; border-radius: 3px; cursor: pointer;
+}
+.reminder-item__acts button:hover { background: #1a1f25; color: #d7dbe0; }
+.reminder-item__acts button.primary { border-color: #3d5a3f; color: #6fca7d; }
+
+body[data-theme="light"] .reminders-leaf__empty { color: #64717e; }
+body[data-theme="light"] .reminders-leaf__empty code {
+  background: #f2f4f6; border-color: #d7dbe0;
+}
+body[data-theme="light"] .reminders-group__head { color: #64717e; }
+body[data-theme="light"] .reminders-group__count {
+  background: #f2f4f6; border-color: #d7dbe0; color: #64717e;
+}
+body[data-theme="light"] .reminder-item { border-left-color: #e6ebf0; }
+body[data-theme="light"] .reminder-item__title { color: #1b232b; }
+body[data-theme="light"] .reminder-item__acts button {
+  background: #f8fafc; border-color: #d5dde5; color: #64717e;
+}
+body[data-theme="light"] .reminder-item__acts button.primary {
+  border-color: #9ac9a2; color: #2f7d3c;
+}
+
+/* On a narrow screen the bell has no room to anchor a 380px panel, so the
+   panel stops hanging off the button and spans the viewport instead. Fixed,
+   not absolute, so it is measured against the viewport rather than against a
+   button that is nowhere near its edge. */
+@media (max-width: 620px) {
+  .reminder-panel {
+    position: fixed;
+    top: 46px; left: 8px; right: 8px;
+    width: auto; max-width: none;
+  }
+}
+body.mobile .reminder-panel {
+  position: fixed;
+  top: 46px; left: 8px; right: 8px;
+  width: auto; max-width: none;
 }

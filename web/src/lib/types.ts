@@ -461,6 +461,11 @@ export interface ReminderSummary {
   timezone?: string;
   action: ReminderAction;
   prompt?: string;
+  /** daily | weekly | monthly | yearly. Absent means one-shot. */
+  repeat?: string;
+  repeat_until?: string;
+  /** How many times it has fired — only FiredAt records the most recent. */
+  fire_count?: number;
   fired_at?: string;
   generated_task_id?: string;
   /** How far past remind_at the firing actually happened. */
@@ -484,6 +489,8 @@ export interface CreateReminderRequest {
     timezone?: string;
     action?: ReminderAction;
     prompt?: string;
+    repeat?: string;
+    repeat_until?: string;
     agent?: string;
     model?: string;
     executor?: string;

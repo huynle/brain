@@ -15,6 +15,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { useModal } from "../store/modal";
 import { useUI } from "../store/ui";
+import { useWorkspace } from "../store/workspace";
 import { deleteEntry, executeAutomation, updateEntry } from "../lib/api";
 import {
   automationName,
@@ -25,8 +26,9 @@ import type { BrainEntry } from "../lib/types";
 export function useAutomationActionContext(
   projectId: string,
 ): AutomationActionContext {
-  const openModal = useModal((s) => s.open);
   const closeModal = useModal((s) => s.close);
+  const openInFocus = useWorkspace((s) => s.openInFocus);
+  const openOrReuseInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
   const toast = useUI((s) => s.toast);
   const queryClient = useQueryClient();
 
@@ -36,12 +38,21 @@ export function useAutomationActionContext(
         queryKey: ["v2", "automations", projectId],
       });
 
+    // A manual run writes a fresh audit immediately. Without this the
+    // run list the user is looking at keeps showing the pre-run history
+    // for up to 30s — which reads as "Run now did nothing".
+    const invalidateRuns = () =>
+      void queryClient.invalidateQueries({
+        queryKey: ["v2", "automation-runs", projectId],
+      });
+
     return {
       runAutomation: async (a: BrainEntry) => {
         // executeAutomation expects the entry path (e.g.
         // "projects/x/automation/y.md"), not the short id.
         await executeAutomation(a.path, projectId);
         invalidate();
+        invalidateRuns();
         toast(`Ran ${automationName(a)}`, "success");
       },
 
@@ -66,8 +77,38 @@ export function useAutomationActionContext(
         toast(`Deleted ${automationName(a)}`, "success");
       },
 
+      // Details and history are the SAME surface now: the docked view
+      // leads with the run list and folds the config away, so there is
+      // nothing left for a second destination to show.
       openDetails: (a: BrainEntry) =>
-        openModal("automation", { projectId, automationId: a.id }),
+        openOrReuseInSidebar(
+          "automation-detail",
+          { projectId, automationId: a.id },
+          automationName(a),
+        ),
+
+      openHistory: (a: BrainEntry) =>
+        openOrReuseInSidebar(
+          "automation-detail",
+          { projectId, automationId: a.id },
+          automationName(a),
+        ),
+
+      openRunsPane: (a: BrainEntry) => {
+        closeModal();
+        openInFocus(
+          "automation-runs",
+          { projectId, automationId: a.id },
+          `${automationName(a)} runs`,
+        );
+      },
     };
-  }, [projectId, openModal, closeModal, toast, queryClient]);
+  }, [
+    projectId,
+    closeModal,
+    openInFocus,
+    openOrReuseInSidebar,
+    toast,
+    queryClient,
+  ]);
 }

@@ -35,6 +35,10 @@ export interface AutomationActionContext {
   deleteAutomation: (a: BrainEntry) => Promise<void>;
   /** Opens the automation modal. */
   openDetails: (a: BrainEntry) => void;
+  /** Opens the automation modal on its Runs tab — the run history. */
+  openHistory: (a: BrainEntry) => void;
+  /** Opens the project's dockable runs pane, filtered to this one. */
+  openRunsPane: (a: BrainEntry) => void;
 }
 
 export function automationName(a: BrainEntry): string {
@@ -122,6 +126,25 @@ export function buildAutomationActions(
     label: "Automation details",
     group: "navigate",
     run: async () => ctx.openDetails(a),
+  });
+
+  // History is a verb, not just a click target on the row's last-run
+  // cell: the registry is what gives it right-click, long-press AND a
+  // keyboard accelerator at once, which is the only way to reach it on
+  // touch without hunting for a 10px cell.
+  actions.push({
+    id: "history",
+    label: "Run history",
+    group: "navigate",
+    key: "h",
+    run: async () => ctx.openHistory(a),
+  });
+
+  actions.push({
+    id: "runs-pane",
+    label: "Open runs pane",
+    group: "navigate",
+    run: async () => ctx.openRunsPane(a),
   });
 
   // ─── danger ─────────────────────────────────────────────────────

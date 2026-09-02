@@ -159,6 +159,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		PollInterval:              getEnvIntOrDefault("RUNNER_POLL_INTERVAL", firstNonZero(fileCfg.PollInterval, 30)),
 		TaskPollInterval:          getEnvIntOrDefault("RUNNER_TASK_POLL_INTERVAL", firstNonZero(fileCfg.TaskPollInterval, 5)),
 		MaxParallel:               getEnvIntOrDefault("RUNNER_MAX_PARALLEL", firstNonZero(fileCfg.MaxParallel, 2)),
+		Name:                      getEnvOrDefault("RUNNER_NAME", fileCfg.Name),
 		StateDir:                  getEnvOrDefault("RUNNER_STATE_DIR", firstNonEmpty(fileCfg.StateDir, DefaultStateDir())),
 		LogDir:                    getEnvOrDefault("RUNNER_LOG_DIR", firstNonEmpty(fileCfg.LogDir, filepath.Join(homeDir, ".local", "log"))),
 		WorkDir:                   getEnvOrDefault("RUNNER_WORK_DIR", firstNonEmpty(fileCfg.WorkDir, homeDir)),
@@ -246,6 +247,9 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 func ValidateConfig(cfg RunnerConfig) error {
 	var errs []string
 
+	if _, err := NormalizeRunnerName(cfg.Name); err != nil {
+		errs = append(errs, err.Error())
+	}
 	if cfg.MaxParallel < 1 || cfg.MaxParallel > 100 {
 		errs = append(errs, fmt.Sprintf("maxParallel must be between 1 and 100, got %d", cfg.MaxParallel))
 	}

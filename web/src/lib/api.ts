@@ -1816,6 +1816,24 @@ export async function listAutomationData(project?: string): Promise<{
   return { automations: [...byId.values()], tasks, runs };
 }
 
+// ─── Automation runs (audit history) ─────────────────────────────
+// GET /automation-runs is the dedicated history route, and the ONLY one
+// that can filter by automation_id: the id lives in the run's markdown
+// body, not a column, so the server over-fetches and trims (see
+// internal/api/automation_runs.go). Filtering a plain /entries page
+// client-side asks for the newest N runs across ALL automations and then
+// keeps the few that match — on a store where automation_run is most of
+// the table, that returns nothing for an automation with thousands of
+// runs. `truncated` says the server's scan window was exhausted before
+// the page filled, which is a different answer from "no more runs".
+export const listAutomationRuns = (query: {
+  project?: string;
+  /** Filter to one automation. Costs an over-fetch server-side. */
+  automation_id?: string;
+  status?: string;
+  limit?: number;
+}) => api<ListEntriesResponse>("/api/v1/automation-runs", { query });
+
 // executeAutomation triggers a manual run of an automation entry SERVER-side
 // (POST /automations/run), which reuses the exact task-generation code the
 // cron/event dispatchers run. The previous client-side reimplementation

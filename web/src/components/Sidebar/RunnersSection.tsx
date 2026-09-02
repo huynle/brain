@@ -179,8 +179,15 @@ export function RunnersSection(): JSX.Element {
             <div className="runner-name">
               {/* The id truncates; the pause tag never does. Without the
                   inner span the tag rode inside the ellipsised text and a
-                  long runner id would have hidden it entirely. */}
-              <span className="runner-name__id">{r.runner_id}</span>
+                  long runner id would have hidden it entirely.
+
+                  Several runners can share a machine, so a runner that
+                  advertises a name label is shown by it — the random hex id
+                  says nothing about which of them this row is. The id stays
+                  in the tooltip, since that is what every API call uses. */}
+              <span className="runner-name__id" title={r.runner_id}>
+                {r.labels?.name?.trim() || r.runner_id}
+              </span>
               {r.paused && (
                 <span className="pause-tag" title={runnerDotTitle(r)}>
                   paused

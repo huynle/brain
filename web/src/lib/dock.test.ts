@@ -15,8 +15,11 @@ import {
   addNodeAtEdge,
   addSubtreeAtEdge,
   countLeaves,
+  enclosingTabsId,
   evenSplitTree,
+  findLeafOfKind,
   findNodeInfo,
+  retargetLeaf,
   firstLeaf,
   isDockLeafKind,
   moveLeaf,
@@ -390,7 +393,10 @@ test("dock: addLeafAtEdge — an edge on a leaf inside tabs splits the whole str
     const wrapper = next.children[0];
     assert.equal(wrapper.type, "split", `${edge}: strip should be wrapped`);
     if (wrapper.type !== "split") return;
-    assert.equal(wrapper.dir, edge === "left" || edge === "right" ? "row" : "col");
+    assert.equal(
+      wrapper.dir,
+      edge === "left" || edge === "right" ? "row" : "col",
+    );
     // The strip itself survives intact as one side of the new split —
     // "beside the tab I'm looking at" means beside its whole group.
     const newFirst = edge === "left" || edge === "top";
@@ -418,8 +424,17 @@ test("dock: addNodeAtEdge places the caller's own node, id intact", () => {
 
 test("dock: addNodeAtEdge on a missing target returns the identical tree", () => {
   const { tree } = tabsInSplit();
-  const next = addNodeAtEdge(tree, "leaf_gone", "left", newLeafNode(mkLeaf("N")));
-  assert.equal(next, tree, "no-op must be reference-equal so stores can detect it");
+  const next = addNodeAtEdge(
+    tree,
+    "leaf_gone",
+    "left",
+    newLeafNode(mkLeaf("N")),
+  );
+  assert.equal(
+    next,
+    tree,
+    "no-op must be reference-equal so stores can detect it",
+  );
 });
 
 // ─── regression: moveLeaf must never lose the pane it is moving ───────
@@ -444,7 +459,13 @@ test("dock: moveLeaf preserves the leaf count across every edge and target", () 
   const { tree, tabsId, aId, bId, dId } = tabsInSplit();
   for (const targetId of [tabsId, aId, bId, dId, tree.id]) {
     for (const source of [aId, bId, dId]) {
-      for (const edge of ["center", "left", "right", "top", "bottom"] as const) {
+      for (const edge of [
+        "center",
+        "left",
+        "right",
+        "top",
+        "bottom",
+      ] as const) {
         const moved = moveLeaf(tree, source, targetId, edge);
         assert.equal(
           titles(moved).length,
@@ -471,7 +492,11 @@ test("dock: moveLeaf retargets to the survivor when the target collapses", () =>
   // D keeps its slot in the outer split — it was never involved.
   assert.equal(moved.children[1].id, dId);
   const inner = moved.children[0];
-  assert.equal(inner.type, "split", "A should sit beside B, not beside the root");
+  assert.equal(
+    inner.type,
+    "split",
+    "A should sit beside B, not beside the root",
+  );
   if (inner.type !== "split") return;
   assert.equal(inner.dir, "row");
   assertLeaf(inner.children[0], "B");
@@ -518,7 +543,6 @@ test("dock: moving one of three siblings between panes keeps other two intact", 
   // A is now merged with C into tabs; B still there.
   assert.deepEqual(titles.sort(), ["A", "B", "C"]);
 });
-
 
 // ─── countLeaves ──────────────────────────────────────────────────────
 
@@ -630,4 +654,60 @@ test("addSubtreeAtEdge: retargets to the strip when the anchor is a tab", () => 
   };
   walk(next);
   assert.ok(strip, "the tab strip survived");
+});
+
+// ─── viewer-pane reuse (findLeafOfKind / retargetLeaf / enclosingTabsId) ──
+
+/** A leaf of an arbitrary kind, for the reuse tests. */
+function mkKind(kind: DockLeaf["kind"], title: string): DockLeaf {
+  return { kind, target: { title }, title };
+}
+
+test("findLeafOfKind: finds the pane to reuse, or nothing", () => {
+  const a = newLeafNode(mkLeaf("A"));
+  const tree = addLeafAtEdge(
+    a,
+    a.id,
+    "right",
+    mkKind("automation-detail", "Nightly"),
+  );
+  const found = findLeafOfKind(tree, "automation-detail");
+  assert.equal(found?.leaf.title, "Nightly");
+  assert.equal(findLeafOfKind(tree, "runners"), null);
+});
+
+test("retargetLeaf: same pane, same id, new content", () => {
+  const a = newLeafNode(mkKind("automation-detail", "Nightly"));
+  const tree = addLeafAtEdge(a, a.id, "right", mkLeaf("Other"));
+  const next = retargetLeaf(
+    tree,
+    a.id,
+    mkKind("automation-detail", "Long Job"),
+  );
+  // Reuse means the pane keeps its identity and position — a new id
+  // would defeat the point (the dock would treat it as a new pane, and
+  // every id the store recorded would dangle).
+  const info = findNodeInfo(next, a.id);
+  assert.ok(info && info.node.type === "leaf");
+  if (info?.node.type === "leaf") {
+    assert.equal(info.node.leaf.title, "Long Job");
+  }
+  assert.equal(countLeaves(next), 2);
+});
+
+test("retargetLeaf: an unknown or non-leaf id is a no-op", () => {
+  const a = newLeafNode(mkLeaf("A"));
+  const tree = addLeafAtEdge(a, a.id, "right", mkLeaf("B"));
+  assert.equal(retargetLeaf(tree, "nope", mkLeaf("X")), tree);
+  // The split's own id addresses a container, not a leaf.
+  assert.equal(retargetLeaf(tree, tree.id, mkLeaf("X")), tree);
+});
+
+test("enclosingTabsId: names the strip only when the leaf is tabbed", () => {
+  const a = newLeafNode(mkLeaf("A"));
+  const tabs = addLeafAtEdge(a, a.id, "center", mkLeaf("B"));
+  assert.equal(enclosingTabsId(tabs, a.id), tabs.id);
+
+  const solo = newLeafNode(mkLeaf("Solo"));
+  assert.equal(enclosingTabsId(solo, solo.id), null);
 });

@@ -623,6 +623,11 @@ export interface ListEntriesResponse {
   total: number;
   limit: number;
   offset: number;
+  /** Set when the server exhausted a bounded scan window before filling
+   *  the page (the post-SQL filters: automation_id, filename). "Fewer
+   *  rows than asked for" then means "older than the window", not "no
+   *  more rows" — surfaces must be able to tell those apart. */
+  truncated?: boolean;
 }
 
 export type SearchStrategy = "semantic" | "fts" | "hybrid";

@@ -175,6 +175,9 @@ type IndexWatchConfig struct {
 
 // RunnerConfig holds task runner configuration.
 type RunnerConfig struct {
+	// Name distinguishes several runners on one machine; empty is the single
+	// default runner. See runner.ResolveRunnerIdentity.
+	Name                   string           `yaml:"name,omitempty"`
 	BrainAPIURL            string           `yaml:"brain_api_url"`
 	APIToken               string           `yaml:"api_token"`
 	APITokenEnv            string           `yaml:"api_token_env"`

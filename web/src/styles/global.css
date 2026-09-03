@@ -4129,6 +4129,19 @@ body[data-theme="light"] .pcard-tabs .tab-count {
    quieter than everything below it: no border, no chip, muted until
    hovered. It must be findable, not prominent — it is ticked once and
    then forgotten. */
+/* The Tasks tab's two per-project switches, side by side. They are
+   deliberately adjacent and deliberately worded to contrast: auto-archive
+   changes data on the server for everyone, hide-completed only changes what
+   this browser draws. Wrapping is allowed so a narrow card stacks them
+   rather than clipping the second one. */
+.card-toggles {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.card-toggles .auto-archive { padding: 2px 0 6px; }
+
 .auto-archive {
   display: flex;
   align-items: center;

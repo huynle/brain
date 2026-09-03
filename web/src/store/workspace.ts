@@ -185,6 +185,18 @@ export interface WorkspaceState {
    *  `forgetProject` can drop a whole project with the same `omitKey`
    *  the other per-project maps use — a composite key would survive it. */
   featureCollapsed: Record<string, Record<string, boolean>>;
+  /** Per-project "hide completed tasks" toggle for the Tasks tab.
+   *
+   *  A pure VIEW preference, unlike the auto-archive checkbox beside it:
+   *  that one creates a real automation on the server and moves rows into
+   *  Archived for everyone, permanently. This only stops drawing rows in
+   *  this browser, so it lives here rather than on the server — a project
+   *  with 1146 done tasks is unreadable, and hiding them must not be
+   *  confusable with archiving them.
+   *
+   *  Keyed by project for the same reason featureCollapsed is: one project
+   *  being noisy says nothing about another. */
+  hideCompleted: Record<string, boolean>;
   /** Explicitly-hidden project ids. Anything NOT in this set is
    *  visible in the overview grid + sidebar Projects section. */
   hiddenProjects: string[];
@@ -222,6 +234,7 @@ export interface WorkspaceState {
   /** Flip one feature's task rows. `defaultCollapsed` is the view's
    *  derived state, so the FIRST click always does the visible opposite
    *  of what is on screen rather than of `!undefined`. */
+  toggleHideCompleted(projectId: string): void;
   toggleFeatureCollapsed(
     projectId: string,
     featureId: string,
@@ -646,6 +659,7 @@ export const useWorkspace = create<WorkspaceState>()(
         streaming: false,
         featureAssignments: {},
         featureCollapsed: {},
+        hideCompleted: {},
         hiddenProjects: [],
         statusFilter: "all" as StatusFilter,
 
@@ -727,6 +741,14 @@ export const useWorkspace = create<WorkspaceState>()(
         // "the user decided this" has to outlive the feature moving to
         // another lifecycle, or reopening a finished feature's rows
         // would silently re-fold them the moment it merged.
+        toggleHideCompleted: (projectId) =>
+          set((s) => ({
+            hideCompleted: {
+              ...s.hideCompleted,
+              [projectId]: !(s.hideCompleted[projectId] ?? false),
+            },
+          })),
+
         toggleFeatureCollapsed: (projectId, featureId, defaultCollapsed) =>
           set((s) => {
             const forProject = s.featureCollapsed[projectId] ?? {};
@@ -783,6 +805,7 @@ export const useWorkspace = create<WorkspaceState>()(
             return {
               hiddenProjects: s.hiddenProjects.filter((p) => p !== projectId),
               featureCollapsed: omitKey(s.featureCollapsed, projectId),
+              hideCompleted: omitKey(s.hideCompleted, projectId),
               docks: { focus, sidebar },
               // A leaf id recorded as "last focused" may have just been
               // removed; the dock no longer contains it either way.
@@ -1015,6 +1038,7 @@ export const useWorkspace = create<WorkspaceState>()(
         theme: s.theme,
         featureAssignments: s.featureAssignments,
         featureCollapsed: s.featureCollapsed,
+        hideCompleted: s.hideCompleted,
         hiddenProjects: s.hiddenProjects,
         statusFilter: s.statusFilter,
         docks: s.docks,

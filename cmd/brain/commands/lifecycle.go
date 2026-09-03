@@ -67,7 +67,6 @@ func runServerWithOptionalRunner(ctx context.Context, cfg *UnifiedConfig, opts a
 			Config:      runnerCfg,
 			Mode:        "headless",
 			StartPaused: false,
-			KeyBindings: cfg.TUI.KeyBindings,
 		})
 	}()
 

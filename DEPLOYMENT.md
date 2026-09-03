@@ -345,7 +345,7 @@ Test with your AI editor (Claude Code, OpenCode, etc.):
 ### Step 7: Verify Task Runner (if used)
 
 ```bash
-# Start the Go task runner with TUI
+# Start the Go task runner
 ./bin/brain-runner my-project
 
 # Or start for all projects
@@ -493,7 +493,7 @@ make test                       # Run all tests
 go vet ./...                    # Static analysis
 
 # Task Runner
-./bin/brain-runner my-project   # TUI dashboard
+./bin/brain-runner my-project   # Run the task runner
 ./bin/brain-runner list all     # List all projects
 
 # MCP Server
@@ -507,7 +507,7 @@ go vet ./...                    # Static analysis
 
 ### Binaries (`cmd/`)
 - `brain-api` — HTTP REST server (port 3000 default)
-- `brain-runner` — Task queue processor with TUI
+- `brain-runner` — Task queue processor
 - `brain-mcp` — MCP server for AI editors
 - `brain` — CLI tool (stub)
 
@@ -520,7 +520,6 @@ go vet ./...                    # Static analysis
 - `runner/` — Task runner, executor, process manager
 - `service/` — Business logic (brain, task, runner, monitor)
 - `storage/` — SQLite storage layer
-- `tui/` — Bubble Tea TUI for task runner
 - `types/` — Shared type definitions
 
 ### Public Packages (`pkg/`)
@@ -596,9 +595,8 @@ git push origin ts-final
 
 ### Task Runner Differences
 
-| Feature | TypeScript (Bun + Ink) | Go (Bubble Tea) |
+| Feature | TypeScript (Bun + Ink) | Go |
 |---------|----------------------|-----------------|
-| TUI framework | Ink (React for CLI) | Bubble Tea |
 | Multi-project mode | ✓ | ✓ |
 | Background daemon | ✓ | ✓ |
 | Glob filters (`-i`/`-e`) | ✓ | ✓ |

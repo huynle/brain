@@ -31,7 +31,6 @@ func TestShowHelp_BasicTopics(t *testing.T) {
 	}{
 		{name: "main", topic: "", wants: []string{"brain - Unified Brain CLI", "CORE COMMANDS:", "RUNNER COMMANDS:"}},
 		{name: "api", topic: "api", wants: []string{"brain api", "SUBCOMMANDS:", "brain help api logs"}},
-		{name: "start", topic: "start", wants: []string{"brain start", "--max-parallel", "--feature-id"}},
 		{name: "run", topic: "run", wants: []string{"brain run", "SUBCOMMANDS:", "run start"}},
 		{name: "mcp", topic: "mcp", wants: []string{"brain mcp", "--api-url"}},
 		{name: "init", topic: "init", wants: []string{"brain init", "--dry-run"}},

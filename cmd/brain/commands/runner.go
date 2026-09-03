@@ -76,12 +76,9 @@ type RunnerFlags struct {
 	Name         string
 	New          bool
 	All          bool
-	TUI          bool
 	Foreground   bool
 	Headless     bool
 	Dashboard    bool
-	Monitor      bool
-	Runner       bool
 	MaxParallel  int
 	PollInterval int
 	Workdir      string
@@ -95,78 +92,6 @@ type RunnerFlags struct {
 	Exclude      []string
 	FeatureIDs   []string
 	Follow       bool
-}
-
-// RunnerTUICommand starts runner in TUI mode.
-type RunnerTUICommand struct {
-	Project string
-	Config  *UnifiedConfig
-	Flags   *RunnerFlags
-}
-
-// Type returns the command type identifier.
-func (c *RunnerTUICommand) Type() string {
-	return "runner_tui"
-}
-
-// Execute starts the runner, dispatching to TUI, headless, or other modes based on flags.
-func (c *RunnerTUICommand) Execute() error {
-	// Determine mode from flags (same pattern as RunCommand.runStart)
-	mode := string(runner.ExecutionModeTUI)
-	if c.Flags.Foreground {
-		mode = string(runner.ExecutionModeForeground)
-	} else if c.Flags.Headless {
-		mode = string(runner.ExecutionModeHeadless)
-	} else if c.Flags.Dashboard {
-		mode = string(runner.ExecutionModeDashboard)
-	}
-
-	// Start with the full runner config (all fields preserved)
-	cfg := c.Config.Runner
-
-	// Fallback: if BrainAPIURL not set, use MCP.APIURL
-	if cfg.BrainAPIURL == "" {
-		cfg.BrainAPIURL = c.Config.MCP.APIURL
-	}
-
-	// Apply CLI flag overrides
-	if err := applyRunnerFlagOverrides(&cfg, c.Flags); err != nil {
-		return err
-	}
-
-	// Resolve projects
-	projects, err := c.resolveProjects(cfg)
-	if err != nil {
-		return err
-	}
-
-	// Build runner options
-	opts := runnercli.RunnerOptions{
-		Projects:    projects,
-		Config:      cfg,
-		Mode:        mode,
-		StartPaused: true,
-		KeyBindings: c.Config.TUI.KeyBindings,
-	}
-
-	ctx := context.Background()
-
-	// Non-TUI modes (headless, foreground, dashboard) go through RunTaskRunner.
-	if mode != "tui" {
-		return runnercli.RunTaskRunner(ctx, opts)
-	}
-
-	// TUI modes. `brain start <project>` now opens a monitor-only TUI (no local
-	// runner) by default; pass --runner to also run a local runner that claims
-	// and executes tasks. --monitor remains an explicit alias for the default.
-	if c.Flags.Runner {
-		return runnercli.RunTUI(ctx, opts)
-	}
-	return runnercli.RunMonitorTUI(ctx, opts)
-}
-
-func (c *RunnerTUICommand) resolveProjects(cfg runner.RunnerConfig) ([]string, error) {
-	return resolveProjectList(c.Project, cfg)
 }
 
 // resolveProjectList fetches and filters the project list from the Brain API.
@@ -233,8 +158,15 @@ func (c *RunCommand) Execute() error {
 }
 
 func (c *RunCommand) runStart() error {
-	// Determine mode from flags
-	mode := string(runner.ExecutionModeTUI)
+	// Determine mode from flags.
+	//
+	// The default is empty rather than a named mode: NewTaskRunner folds ""
+	// to headless, and leaving it empty lets `runner.execution_mode` in
+	// config.yaml stay meaningful. Before the TUI dashboard was removed this
+	// defaulted to "tui", which ALSO selected the tmux window-per-task spawn
+	// strategy — those two meanings travelled together on one constant, and
+	// only the dashboard half is gone.
+	mode := ""
 	if c.Flags.Foreground {
 		mode = string(runner.ExecutionModeForeground)
 	} else if c.Flags.Headless {
@@ -268,19 +200,9 @@ func (c *RunCommand) runStart() error {
 		Config:      cfg,
 		Mode:        mode,
 		StartPaused: false,
-		KeyBindings: c.Config.TUI.KeyBindings,
 	}
 
-	ctx := context.Background()
-
-	// Run based on mode
-	if c.Flags.Monitor {
-		return runnercli.RunMonitorTUI(ctx, opts)
-	}
-	if mode == "tui" {
-		return runnercli.RunTUI(ctx, opts)
-	}
-	return runnercli.RunTaskRunner(ctx, opts)
+	return runnercli.RunTaskRunner(context.Background(), opts)
 }
 
 // makeAPIClient creates an APIClient from the command's config,

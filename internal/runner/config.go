@@ -228,8 +228,8 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 
 	// Push dispatch is the only fully-supported task delivery mode. The
 	// poll-only path (dispatch_push: false) is deprecated: the scheduler,
-	// the /run endpoint (PWA "x" shortcut), and the TUI's manual-execute
-	// path all require runners to advertise push capability. Reject the
+	// and the /run endpoint (PWA "x" shortcut) all require runners to
+	// advertise push capability. Reject the
 	// misconfig here with a pointer to the fix rather than failing later
 	// with confusing "no eligible runner" errors.
 	if !cfg.DispatchPush {

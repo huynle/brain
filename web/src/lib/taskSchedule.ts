@@ -9,8 +9,8 @@
  *
  * `disableSchedule` (internal/runner/schedule.go) fires when `expires_at`
  * passes or `max_runs` is reached. It sets `schedule_enabled: false`, appends
- * a "## Schedule Disabled" note to the markdown body, and emits an event the
- * TUI consumes. In the PWA the task simply stops recurring, keeping whatever
+ * a "## Schedule Disabled" note to the markdown body, and emits an event.
+ * In the PWA the task simply stops recurring, keeping whatever
  * status it last held — so a nightly job that quietly retired three weeks ago
  * is indistinguishable from one that is still running nightly. That is the
  * state this module exists to make visible, which is why every stopped

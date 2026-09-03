@@ -127,14 +127,6 @@ func TestAPIFlags(t *testing.T) {
 }
 
 func TestRunnerFlags(t *testing.T) {
-	t.Run("tui flag", func(t *testing.T) {
-		args := []string{"--tui"}
-		flags, err := ParseRunnerFlags(args)
-		require.NoError(t, err)
-
-		assert.True(t, flags.TUI)
-	})
-
 	t.Run("foreground flag", func(t *testing.T) {
 		args := []string{"--foreground"}
 		flags, err := ParseRunnerFlags(args)
@@ -221,14 +213,14 @@ func TestRunnerFlags(t *testing.T) {
 	})
 
 	t.Run("combined runner flags", func(t *testing.T) {
-		args := []string{"--max-parallel", "5", "-i", "prod-*", "-e", "test-*", "--tui", "--agent", "tdd-dev"}
+		args := []string{"--max-parallel", "5", "-i", "prod-*", "-e", "test-*", "--headless", "--agent", "tdd-dev"}
 		flags, err := ParseRunnerFlags(args)
 		require.NoError(t, err)
 
 		assert.Equal(t, 5, flags.MaxParallel)
 		assert.Contains(t, flags.Include, "prod-*")
 		assert.Contains(t, flags.Exclude, "test-*")
-		assert.True(t, flags.TUI)
+		assert.True(t, flags.Headless)
 		assert.Equal(t, "tdd-dev", flags.Agent)
 	})
 

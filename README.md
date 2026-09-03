@@ -4,7 +4,7 @@
 
 Brain is a REST API + MCP server that gives AI coding agents (Claude Code, OpenCode, etc.) long-term memory, structured knowledge management, and an autonomous task runner that can execute multi-step plans while you sleep. Think of it as a second brain for your AI workflow — it remembers decisions, tracks dependencies, schedules recurring work, and orchestrates parallel execution across projects.
 
-Built with Go and [Bubbletea](https://github.com/charmbracelet/bubbletea).
+Built with Go.
 
 ## Why Brain?
 
@@ -49,22 +49,13 @@ AI coding agents are powerful but stateless — they forget everything between s
 - **Manual triggers** — trigger a scheduled task on demand with `task_trigger`
 - **Automatic reset** — completed scheduled tasks reset for the next run
 
-### Interactive TUI Dashboard
-- **Real-time task tree** with dependency visualization and git-graph style lane rendering
-- **Feature grouping** with collapsible headers, status indicators, and bulk operations
-- **Multi-select** with Space key for batch status changes and deletions
-- **Metadata popup** for editing task properties (status, priority, feature, project, schedule)
-- **Settings popup** for per-project concurrency limits and runtime model overrides
-- **Mouse support** with click-to-select, hover preview, and collapsible sections
-- **External editor integration** — press `e` to edit a task in `$EDITOR`
-- **Clipboard support** — press `y` to yank task info to system clipboard
-- **Focus mode** — press `x` to execute a single feature to completion
-- **Pause/resume toggles** for the active project scope; the `All` project tab toggles global execution, while a single project tab toggles only that project
-- **Live resource metrics** (CPU, memory) in the status bar
-- **Real-time SSE streaming** with automatic polling fallback
-- **Keyboard-driven** with vim-style navigation (`j/k/g/G`), Tab panel cycling, and `?` help overlay
-- **Text wrap toggle** — press `w` to toggle truncation vs wrapping in the task tree
-- **Log panel** with togglable visibility and real-time streaming
+### Web Dashboard (PWA)
+- **Real-time task tree** with dependency visualization and feature grouping
+- **Multi-select** for batch status changes and deletions
+- **Metadata editing** for task properties (status, priority, feature, project, schedule)
+- **Per-project settings** for concurrency limits and runtime model overrides
+- **Automation and goal management** with run history drill-through
+- **Installable** on desktop and mobile; see [Progressive Web App](#progressive-web-app)
 
 ### MCP Server (93 tools)
 - **Embedded Streamable HTTP transport** — no separate process, served on the same port as the REST API
@@ -126,7 +117,7 @@ go install github.com/huynle/brain-api/cmd/brain-runner@latest
 This provides the following CLI commands:
 - `brain` - Server management and diagnostics
 - `brain-api` - API server (used internally)
-- `brain-runner` - Task runner with TUI
+- `brain-runner` - Task runner
 
 ### From Source
 
@@ -259,7 +250,7 @@ curl -N http://localhost:3333/api/v1/tasks/myproject/stream
 
 ## MCP Server
 
-Brain API includes an embedded [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server served over Streamable HTTP on the same port as the REST API. When `brain start` runs, the MCP endpoint is available at `POST /mcp` — no separate process needed.
+Brain API includes an embedded [MCP](https://modelcontextprotocol.io) (Model Context Protocol) server served over Streamable HTTP on the same port as the REST API. When the server runs, the MCP endpoint is available at `POST /mcp` — no separate process needed.
 
 ### Connecting Claude Code CLI
 
@@ -649,77 +640,9 @@ The built-in task runner (`brain-runner`) processes tasks with dependency tracki
 # Start the runner in foreground mode
 ./bin/brain-runner start my-project -f
 
-# Run with interactive TUI dashboard
-./bin/brain-runner start my-project --tui
-
 # List available commands
 ./bin/brain-runner --help
 ```
-
-### TUI Dashboard
-
-The `--tui` flag enables an interactive terminal dashboard built with [Bubbletea](https://github.com/charmbracelet/bubbletea):
-
-```
-┌─ my-project ──────────────────────────────────────────────────────────────┐
-│  ● 2 ready   ○ 3 waiting   ▶ 1 active   ✓ 5 done                          │
-├───────────────────────────────────────────────────────────────────────────┤
-│ Tasks                              │ Logs                                  │
-│ ────────────────────────────────── │ ───────────────────────────────────── │
-│ ● Setup base config                │ 17:30:45 INFO  Runner started         │
-│ └─○ Create utils module            │ 17:30:46 INFO  Task started...        │
-│   └─○ Create main entry            │ 17:30:47 DEBUG Polling...             │
-├───────────────────────────────────────────────────────────────────────────┤
-│ ↑↓/j/k Navigate  Tab: Switch  r: Refresh  ?: Help  q: Quit               │
-└───────────────────────────────────────────────────────────────────────────┘
-```
-
-#### TUI Highlights
-
-- **Real-time task tree** with git-graph style lane rendering and dependency path coloring
-- **Feature grouping** with collapsible headers, pause indicators, and checkout actions
-- **Status indicators**: `●` ready, `○` waiting, `▶` running, `✓` completed, `✗` blocked
-- **Priority markers**: `!` for high priority tasks
-- **Cycle detection**: `↺` marks circular dependencies
-- **Multi-select operations** for batch status changes and deletions
-- **Metadata popup** for editing all task properties inline
-- **Settings popup** with concurrency limits, model overrides, and group visibility
-- **Mouse support** with click navigation, hover preview, and header collapse
-- **Live resource metrics** (CPU/memory) and connection status in the status bar
-- **SSE streaming** with automatic polling fallback for reliability
-
-#### Keyboard Shortcuts
-
-| Key | Action |
-|-----|--------|
-| `j/k` | Navigate up/down |
-| `g/G` | Jump to first/last task |
-| `Tab` | Cycle focus (tasks → logs → details) |
-| `Enter` | Select task / toggle feature collapse |
-| `Space` | Toggle multi-select |
-| `s` | Status change (single or bulk) |
-| `e` | Edit task in `$EDITOR` |
-| `y` | Yank task info to clipboard |
-| `w` | Toggle text wrap/truncation |
-| `x` | Focus mode (run feature to completion) |
-| `p` | Pause/resume active scope; `All` toggles global execution, single-project tabs toggle only that project |
-| `o` | Open settings popup |
-| `O` | Open OpenCode session in tmux |
-| `s` | Shutdown selected runner (runners panel) |
-| `r` | Refresh task list |
-| `L` | Toggle logs panel visibility |
-| `Backspace` | Open metadata popup |
-| `d` | Delete selected tasks |
-| `?` | Toggle help overlay |
-| `q` | Quit |
-
-**Multi-project mode adds:**
-
-| Key | Action |
-|-----|--------|
-| `h/[` | Previous project tab |
-| `l/]` | Next project tab |
-| `1-9` | Jump to project tab |
 
 ## Brain CLI
 
@@ -729,10 +652,10 @@ The `brain` CLI manages the API server and diagnoses brain configuration issues.
 
 ```bash
 # Start the API server (background)
-brain start
+brain api start
 
 # Stop the server
-brain stop
+brain api stop
 
 # Restart the server
 brain restart
@@ -793,8 +716,8 @@ First-class attachments are split across SQLite metadata (`brain.db`) and blob f
 ### Runner Commands
 
 ```bash
-# Start runner (foreground or TUI)
-brain-runner start [project] [-f|--tui]
+# Start runner (foreground or headless)
+brain-runner start [project] [-f|-b]
 
 # Stop running daemon
 brain-runner stop [project]
@@ -821,7 +744,6 @@ brain-runner logs [-f]
 |--------|-------------|
 | `-f, --foreground` | Run in foreground (default) |
 | `-b, --background` | Run as daemon |
-| `--tui` | Interactive TUI dashboard |
 | `-p, --max-parallel N` | Max concurrent tasks across ALL projects |
 | `--poll-interval N` | Seconds between polls (default: 30) |
 | `-w, --workdir DIR` | Working directory |
@@ -832,7 +754,7 @@ brain-runner logs [-f]
 
 Automation entries are brain entries with `type: automation` and a `trigger` plus an `action` in frontmatter. Active automations are evaluated by the runner and create generated tasks when their trigger matches.
 
-Automation execution can be paused globally or by project. In the TUI and PWA,
+Automation execution can be paused globally or by project. In the PWA,
 pause/resume controls are toggles scoped to the active project tab: selecting
 `All` toggles global automation pause, while selecting a single project toggles
 only that project's automation pause. Project-scoped automation pauses are
@@ -848,7 +770,7 @@ Scoped automation control endpoints:
 | `POST /api/v1/tasks/runner/automations/pause/{projectId}` | Pause automations for one project |
 | `POST /api/v1/tasks/runner/automations/resume/{projectId}` | Resume automations for one project |
 
-Task execution pause/resume follows the same active-scope rule in the TUI and
+Task execution pause/resume follows the same active-scope rule in the
 PWA: `All` toggles global task execution and a single-project tab toggles only
 that project via the existing project pause/resume endpoints.
 
@@ -895,8 +817,8 @@ max_runs: 0
 
 ## Web UI (PWA)
 
-Brain ships an installable Progressive Web App that mirrors the TUI — tasks,
-real-time logs, automations/goals, the knowledge base, and runners — and is
+Brain ships an installable Progressive Web App — tasks, real-time logs,
+automations/goals, the knowledge base, and runners — and is
 **embedded directly in the `brain` binary**. When the server runs, the app is
 served at `/` from the same origin as the API, so visiting your Brain URL (e.g.
 `https://brain.example.com`) loads the full dashboard with no separate deploy
@@ -933,7 +855,7 @@ proxy (Traefik labels are stubbed in `docker-compose.yml`); the server honors
 
 ### Keyboard shortcuts (desktop)
 
-The PWA mirrors the TUI's keyboard model — press `?` for the full list. Highlights:
+The PWA is keyboard-first — press `?` for the full list. Highlights:
 
 - `j`/`k`, `g`/`G` — move the cursor; `Enter` opens.
 - `H`/`L` — switch tabs; `h`/`l`/`[`/`]`/`1–9` — switch projects.
@@ -960,10 +882,6 @@ just build-all    # web-build + build the Go binary with the UI embedded
 `just release` and `docker build` build the web UI automatically. A plain
 `just build` embeds whatever assets are already present (a placeholder page is
 served if the UI hasn't been built).
-
-> Two TUI features have no browser equivalent and are intentionally omitted:
-> spawning your local `$EDITOR` (replaced by an in-app editor) and tmux/full-screen
-> session reattach (logs are streamed instead).
 
 ## Environment Variables
 
@@ -1019,16 +937,6 @@ served if the UI hasn't been built).
 │         (spawns AI agents in git worktrees)                      │
 └──────────────────────────────────────────────────────────────────┘
 
-┌──────────────────────────────────────────────────────────────────┐
-│                    TUI Dashboard (Bubbletea)                      │
-├──────────────────────────────────────────────────────────────────┤
-│  StatusBar  │  TaskTree    │  LogViewer  │  TaskDetail           │
-│  (stats,    │  (lanes,     │  (real-time │  (properties,         │
-│   metrics)  │   features,  │   SSE logs) │   schedule info,      │
-│             │   mouse)     │             │   dependencies)       │
-├──────────────────────────────────────────────────────────────────┤
-│  MetadataPopup  │  SettingsPopup  │  PausePopup  │  HelpOverlay │
-└──────────────────────────────────────────────────────────────────┘
 ```
 
 ## License

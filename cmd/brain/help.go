@@ -23,8 +23,6 @@ CORE COMMANDS:
   api health                     Call /api/v1/health
 
 RUNNER COMMANDS:
-  start [project|all]            Open runner TUI (default project: all)
-  start [project|all] --monitor  Monitor-only TUI (no local runner)
   run <subcommand> [project]     Runner management subcommands
   runner <subcommand> [project]  Alias for run
 
@@ -88,9 +86,7 @@ GLOBAL HELP:
   -h, --help                     Show help for current command
 
 EXAMPLES:
-  brain start
-  brain start my-project --max-parallel 5
-  brain start all --monitor
+  brain run start my-project --max-parallel 5
   brain api --port 3000
   brain api start --dry-run
   brain api logs -f -n 200
@@ -349,54 +345,6 @@ EXAMPLES:
   brain api health --wait --timeout 60
 `
 
-const startHelp = `brain start - Open the dashboard TUI
-
-By default this opens a monitor-only TUI (no local runner) — it shows tasks,
-brain entries, automations, runners, and lets you drive runners remotely. Pass
---runner to also run a local runner in the same process that claims and executes
-tasks. To run a runner detached in the background instead, use ` + "`brain runner start`" + `.
-
-USAGE:
-  brain start                         Monitor-only TUI for all projects
-  brain start <project>               Monitor-only TUI for one project
-  brain start <project> --runner      TUI + a local runner
-  brain start all [filters]
-
-FLAGS:
-  --runner                       Also run a local runner alongside the TUI
-  -n, --name <name>              Name the local runner (several per machine)
-  --new                          Name the local runner automatically
-  --tui                          TUI mode (default behavior)
-  --monitor                      Monitor-only TUI (no local runner; the default)
-  -f, --foreground               Foreground mode without TUI
-  -b, --headless                 Headless mode (no TUI, no tmux)
-  --dashboard                    Dashboard mode
-  -p, --max-parallel <n>         Override max parallel tasks
-  --poll-interval <sec>          Override poll interval
-  -w, --workdir <dir>            Override execution workdir
-  --agent <name>                 Override OpenCode agent
-  -m, --model <name>             Override OpenCode model
-  -i, --include <pattern>        Include projects (repeatable)
-  -e, --exclude <pattern>        Exclude projects (repeatable)
-  -F, --feature-id <id>          Limit execution to feature IDs (repeatable)
-  --follow                       Follow logs mode
-  -h, --help                     Show this help
-
-MONITOR MODE:
-  The --monitor flag launches the TUI as a pure remote control panel.
-  No local task runner is started. The TUI connects to the Brain API
-  via SSE for real-time task updates and uses HTTP API for actions
-  like pause/resume and task execution (priority bump).
-
-EXAMPLES:
-  brain start
-  brain start my-project
-  brain start my-project --monitor
-  brain start all --monitor
-  brain start all -i 'prod-*' -e 'legacy-*'
-  brain start all --max-parallel 5 --poll-interval 3
-`
-
 const runnerHelp = `brain runner - Background task runner
 
 Run a runner on a machine that registers with the Brain API and claims/executes
@@ -439,7 +387,7 @@ EXAMPLES:
   brain runner status
   brain runner stop -n worker-b
 
-See also: brain start --runner (TUI + a local runner), brain run (granular).
+See also: brain run (granular runner management).
 `
 
 const runHelp = `brain run - Runner management commands
@@ -1233,8 +1181,6 @@ func ShowHelp(command string) {
 		fmt.Print(apiLogsHelp)
 	case "api health":
 		fmt.Print(apiHealthHelp)
-	case "start":
-		fmt.Print(startHelp)
 	case "run":
 		fmt.Print(runHelp)
 	case "runner", "runner start", "runner stop", "runner status":

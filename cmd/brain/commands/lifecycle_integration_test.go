@@ -17,7 +17,7 @@ func TestStartCommand_StalePID(t *testing.T) {
 	tmpDir := t.TempDir()
 	pidFile := filepath.Join(tmpDir, "test.pid")
 	logFile := filepath.Join(tmpDir, "test.log")
-	
+
 	// Write PID of non-existent process
 	stalePID := 99999
 	if err := lifecycle.WritePID(pidFile, stalePID); err != nil {
@@ -28,7 +28,7 @@ func TestStartCommand_StalePID(t *testing.T) {
 	cfg.Server.PIDFile = pidFile
 	cfg.Server.LogFile = logFile
 	cfg.Server.Port = 13333
-	
+
 	flags := &LifecycleFlags{
 		DryRun: true, // Don't actually start server
 	}

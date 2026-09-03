@@ -40,12 +40,9 @@ type RunnerFlags struct {
 	Name         string
 	New          bool
 	All          bool
-	TUI          bool
 	Foreground   bool
 	Headless     bool
 	Dashboard    bool
-	Monitor      bool
-	Runner       bool
 	MaxParallel  int
 	PollInterval int
 	Workdir      string
@@ -154,14 +151,11 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs.StringVar(&flags.Name, "n", "", "Runner name (short)")
 	fs.BoolVar(&flags.New, "new", false, "Start an additional runner under an auto-assigned name")
 	fs.BoolVar(&flags.All, "all", false, "Apply to every runner on this machine (brain runner stop)")
-	fs.BoolVar(&flags.TUI, "tui", false, "Interactive TUI")
-	fs.BoolVar(&flags.Foreground, "foreground", false, "Foreground without TUI")
+	fs.BoolVar(&flags.Foreground, "foreground", false, "Run attached to this shell")
 	fs.BoolVar(&flags.Foreground, "f", false, "Foreground (short)")
-	fs.BoolVar(&flags.Headless, "headless", false, "Headless mode (no TUI, no tmux)")
+	fs.BoolVar(&flags.Headless, "headless", false, "Headless mode (no tmux)")
 	fs.BoolVar(&flags.Headless, "b", false, "Headless (short)")
 	fs.BoolVar(&flags.Dashboard, "dashboard", false, "Tmux dashboard")
-	fs.BoolVar(&flags.Monitor, "monitor", false, "Monitor-only TUI (no local runner)")
-	fs.BoolVar(&flags.Runner, "runner", false, "Run a local runner alongside the TUI (brain start)")
 	fs.IntVar(&flags.MaxParallel, "max-parallel", 0, "Max parallel tasks")
 	fs.IntVar(&flags.MaxParallel, "p", 0, "Max parallel (short)")
 	fs.IntVar(&flags.PollInterval, "poll-interval", 0, "Poll interval seconds")
@@ -295,9 +289,6 @@ type UnifiedConfig struct {
 	Runner runner.RunnerConfig
 	MCP    struct {
 		APIURL string
-	}
-	TUI struct {
-		KeyBindings map[string]string
 	}
 }
 

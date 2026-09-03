@@ -228,7 +228,7 @@ type TaskRunner struct {
 	// Two origins are tracked separately:
 	//   - Local origin (pauseCache/allPaused/automationsPaused/
 	//     automationPausedProjects): set by direct calls to PauseProject/
-	//     PauseAll/etc. — the embedded TUI controller and StartPaused. The
+	//     PauseAll/etc. — the embedded controller and StartPaused. The
 	//     server does not know about these, so they are never overwritten
 	//     by reconciliation.
 	//   - Server origin (serverTasksPaused/serverAutosPaused): set by SSE
@@ -2084,7 +2084,7 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 		tr.logger.Printf("session discovery: failed to persist session %s for %s: %v", sessionID, taskPath, err)
 	}
 
-	// Also emit event so the TUI updates in-memory immediately
+	// Also emit event so in-memory consumers update immediately
 	tr.emitEvent(RunnerEvent{
 		Type:      EventSessionDiscovered,
 		TaskPath:  taskPath,
@@ -2421,7 +2421,7 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 // Without recovery these zombies live forever, and crucially they continue
 // counting toward `countRunnableGeneratedTasks` in automation_service.go,
 // silently consuming automation `max_concurrent` slots and (more often)
-// just cluttering the TUI with stale work.
+// just cluttering the dashboard with stale work.
 //
 // Safety model: ownership is gated through the existing claim system.
 // We attempt to claim each orphan; if the claim succeeds, no live runner
@@ -3100,7 +3100,7 @@ func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
 
 	// SSE pause/resume commands broadcast server-side state, so pauses land
 	// in the server-origin maps (key "" = global) where syncServerPauseState
-	// can reconcile them against GetRunnerStatus — TUI-local pauses are a
+	// can reconcile them against GetRunnerStatus — runner-local pauses are a
 	// separate concern and stay untouched. Resumes additionally clear the
 	// matching local state: an explicit user resume overrides a pause
 	// regardless of origin (a StartPaused runner is resumed from the PWA
@@ -3135,7 +3135,7 @@ func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
 	tr.wake()
 
 	// Emit the same lifecycle events the local pause methods produce so
-	// TUI and event-forwarding consumers observe SSE-driven pauses
+	// Event-forwarding consumers observe SSE-driven pauses
 	// identically to local ones.
 	if tasksScope {
 		switch {

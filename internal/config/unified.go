@@ -72,7 +72,6 @@ type UnifiedConfig struct {
 	Runner  RunnerConfig  `yaml:"runner"`
 	MCP     MCPConfig     `yaml:"mcp"`
 	Plugins PluginsConfig `yaml:"plugins"`
-	TUI     TUIConfig     `yaml:"tui"`
 }
 
 // ServerConfig holds API server configuration.
@@ -221,11 +220,6 @@ type TaskDefaultsConfig struct {
 	RemoteBranchPolicy string   `yaml:"remote_branch_policy"`
 	OpenPRBeforeMerge  *bool    `yaml:"open_pr_before_merge"`
 	TargetWorkdir      string   `yaml:"target_workdir"`
-}
-
-// TUIConfig holds TUI display and keybinding configuration.
-type TUIConfig struct {
-	KeyBindings map[string]string `yaml:"keybindings"`
 }
 
 // MCPConfig holds MCP integration configuration.

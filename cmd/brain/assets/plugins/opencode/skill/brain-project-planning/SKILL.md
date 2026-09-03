@@ -244,7 +244,7 @@ task gates *every* task in that feature, and removing it from one task
 does not lift the gate while a sibling still carries it.
 
 > Set the identical list on every task of the feature. The server unions,
-> but the PWA and TUI display the *first* non-empty list they find — so a
+> but the PWA displays the *first* non-empty list it finds — so a
 > feature whose tasks disagree renders one dependency while the scheduler
 > holds it on another. Keeping the lists identical makes that divergence
 > unreachable.

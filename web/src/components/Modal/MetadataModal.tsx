@@ -1,7 +1,7 @@
 /**
  * MetadataModal — field editor for a task or a whole feature.
  *
- * Mirrors the TUI's `s` (metadata) modal, including its tab split. See
+ * The `s` (metadata) modal, including its tab split. See
  * `lib/actions/metadataFields` for the schema and the diffing rules.
  *
  * Two behaviours worth knowing:

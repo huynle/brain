@@ -859,7 +859,7 @@ button.glyph:focus-visible {
   margin-right: 3px;
   user-select: none;
 }
-/* Cycle marker — magenta, matching the TUI's ColorMagenta "↺". A cycle
+/* Cycle marker — magenta "↺". A cycle
  * is a data problem the user has to break, not a status, so it does not
  * reuse any of the lifecycle tones. */
 .dep-cycle {

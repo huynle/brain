@@ -57,59 +57,6 @@ func TestRunTaskRunner_InvalidProject(t *testing.T) {
 	}
 }
 
-// TestRunTUI_BasicStartStop tests TUI mode lifecycle.
-func TestRunTUI_BasicStartStop(t *testing.T) {
-	// Bubbletea needs a real TTY; headless environments (CI) don't have one.
-	if tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0); err != nil {
-		t.Skipf("no TTY available: %v", err)
-	} else {
-		_ = tty.Close()
-	}
-
-	opts := RunnerOptions{
-		Projects:    []string{"test-project"},
-		Mode:        "tui",
-		StartPaused: true,
-		Config: runner.RunnerConfig{
-			BrainAPIURL: "http://localhost:3333",
-			MaxParallel: 1,
-			WorkDir:     t.TempDir(),
-			StateDir:    t.TempDir(),
-			LogDir:      t.TempDir(),
-		},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
-	defer cancel()
-
-	// TUI should respect context cancellation
-	err := RunTUI(ctx, opts)
-	if err != nil && err != context.DeadlineExceeded && err != context.Canceled {
-		t.Fatalf("unexpected error: %v", err)
-	}
-}
-
-// TestRunTUI_EmptyProjects tests TUI error handling.
-func TestRunTUI_EmptyProjects(t *testing.T) {
-	opts := RunnerOptions{
-		Projects: []string{},
-		Mode:     "tui",
-		Config: runner.RunnerConfig{
-			BrainAPIURL: "http://localhost:3333",
-		},
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-
-	err := RunTUI(ctx, opts)
-	if err == nil {
-		t.Fatal("expected error for empty projects, got nil")
-	}
-}
-
-// TestRunnerOptions_FullConfigPassthrough verifies that all runner.RunnerConfig fields
-// are accepted by RunnerOptions without any lossy conversion layer.
 func TestRunnerOptions_FullConfigPassthrough(t *testing.T) {
 	// Construct a RunnerConfig with ALL fields populated
 	cfg := runner.RunnerConfig{
@@ -282,16 +229,4 @@ func TestPrepareRunnerConfig(t *testing.T) {
 			t.Fatal("prepareRunnerConfig accepted an invalid runner name")
 		}
 	})
-}
-
-func TestRunnerLogName(t *testing.T) {
-	if got := runnerLogName(""); got != "runner.log" {
-		t.Errorf("runnerLogName(\"\") = %q, want runner.log", got)
-	}
-	if got := runnerLogName(runner.DefaultRunnerName); got != "runner.log" {
-		t.Errorf("default runnerLogName = %q, want runner.log", got)
-	}
-	if got := runnerLogName("worker-a"); got != "runner-worker-a.log" {
-		t.Errorf("named runnerLogName = %q, want runner-worker-a.log", got)
-	}
 }

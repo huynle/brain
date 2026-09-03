@@ -2,8 +2,8 @@
  * lib/taskTree — task dependency forests for the project cards.
  *
  * Thin domain layer over `lib/depTree`: it picks the right id/dep/parent
- * accessors for a `Task` and supplies the sibling ordering the TUI uses
- * (priority, then status). Everything structural lives in depTree.
+ * accessors for a `Task` and supplies the sibling ordering used across
+ * surfaces (priority, then status). Everything structural lives in depTree.
  *
  * Why `resolved_deps` and not `depends_on`: `depends_on` is authored by
  * humans and agents, so it holds a mix of task ids and free-text titles.
@@ -16,7 +16,7 @@
 import { buildDepForest, type DepNode } from "./depTree";
 import type { Task } from "./types";
 
-// Sibling ordering, mirroring internal/tui/tasktree.go.
+// Sibling ordering: priority first, then status.
 const PRIORITY_ORDER: Record<string, number> = {
   high: 0,
   medium: 1,

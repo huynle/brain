@@ -185,8 +185,6 @@ docker:
 #   just int-test-projects   # List projects (multi-project discovery)
 #   just int-test-all        # Run all API-level smoke tests
 #
-#   just int-tui-all         # Open multi-project TUI (--include prod-*)
-#   just int-tui PROJECT     # Open TUI for a specific project
 #   just int-run PROJECT     # Start headless runner for a project
 #
 # Environment:
@@ -239,16 +237,16 @@ int-seed: _int-bootstrap
       '{"type":"task","title":"Generate API docs (explicit agent=explore override)","status":"pending","priority":"medium","project":"task-defaults-test","feature_id":"docs","agent":"explore","model":"anthropic/claude-opus-4-5","execution_mode":"current_branch","content":"**Verify:** agent/model/execution_mode must NOT be overwritten by server defaults."}'
     echo "=== prod-payments ==="
     mk "Fix refund idempotency" \
-      '{"type":"task","title":"Fix refund idempotency bug","status":"pending","priority":"high","project":"prod-payments","feature_id":"refund-fix","content":"In prod-payments. Verify appears under prod-payments tab with: just int-tui-all"}'
+      '{"type":"task","title":"Fix refund idempotency bug","status":"pending","priority":"high","project":"prod-payments","feature_id":"refund-fix","content":"In prod-payments. Verify it is scoped to prod-payments in the PWA."}'
     echo "=== prod-api ==="
     mk "Add rate limiting" \
-      '{"type":"task","title":"Add per-endpoint rate limiting","status":"pending","priority":"high","project":"prod-api","feature_id":"security","content":"In prod-api. Should appear in its own TUI tab."}'
+      '{"type":"task","title":"Add per-endpoint rate limiting","status":"pending","priority":"high","project":"prod-api","feature_id":"security","content":"In prod-api. Should be scoped to its own project in the PWA."}'
     echo "=== prod-workers ==="
     mk "Queue backpressure" \
       '{"type":"task","title":"Implement queue backpressure","status":"pending","priority":"high","project":"prod-workers","feature_id":"reliability","content":"In prod-workers."}'
     echo "=== test-flaky (excluded by test-*) ==="
     mk "Fix timing test" \
-      '{"type":"task","title":"Fix timing-dependent test","status":"pending","priority":"low","project":"test-flaky","content":"Should NOT appear with: just int-tui-all (excluded by --exclude test-*)"}'
+      '{"type":"task","title":"Fix timing-dependent test","status":"pending","priority":"low","project":"test-flaky","content":"Should be excluded by runner filters such as --exclude test-*"}'
     echo "=== event-hooks-test ==="
     mk "Event ingestion + SSE" \
       '{"type":"task","title":"Verify POST /events ingestion and SSE broadcast","status":"pending","priority":"high","project":"event-hooks-test","feature_id":"event-stream","content":"Run: just int-test-events"}'
@@ -434,15 +432,7 @@ int-test-projects:
 int-test-all: int-test-defaults int-test-events int-test-webhooks int-test-runners int-test-claims int-test-projects
     @echo "" && echo "=== All smoke tests complete ==="
 
-# --- TUI / runner targets ---
-
-# Open multi-project TUI watching prod-* projects (excludes test-* and staging-*)
-int-tui-all: build
-    {{ int_env }} {{ int_bin }} start all --include 'prod-*' --exclude 'test-*' --exclude 'staging-*'
-
-# Open TUI for a specific project (e.g.: just int-tui event-hooks-test)
-int-tui project: build
-    {{ int_env }} {{ int_bin }} start {{ project }}
+# --- Runner targets ---
 
 # Start a headless runner for a project (e.g.: just int-run horizontal-scaling-test)
 int-run project: build

@@ -108,9 +108,9 @@ export interface DerivedFeature {
    *  `feature_depends_on` is a feature-level field replicated onto
    *  every task's frontmatter, so in a well-formed feature all tasks
    *  agree and "first non-empty" is exact. When they disagree (a task
-   *  edited in isolation) we take the first rather than unioning, so
-   *  the tree matches what the TUI draws — see
-   *  `internal/tui/featuregroup.go`, which reads `featureTasks[0]`.
+   *  edited in isolation) we take the first rather than unioning: the
+   *  server reads the feature's first task for this field, so unioning
+   *  would draw a tree the backend does not agree with.
    *  Empty when the feature has no declared dependencies. */
   dependsOn: string[];
 }

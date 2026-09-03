@@ -71,7 +71,6 @@ var builtinCommands = map[string]bool{
 	"mcp":           true,
 	"run":           true,
 	"runner":        true, // alias for "run" (backwards compat with old Node.js CLI)
-	"start":         true, // start runner TUI for a project
 	"stop":          true, // stop runner for a project
 	"dev":           true,
 	"init":          true,
@@ -106,10 +105,10 @@ var builtinCommands = map[string]bool{
 //
 // Routing priority:
 //  1. Zero args → help
-//  2. Built-in commands (api, start, mcp, etc.)
+//  2. Built-in commands (api, run, mcp, etc.)
 //  3. Unknown/invalid input → help
 //
-// Use "brain start <project>" or "brain start all" to launch the runner TUI.
+// Use "brain run start <project>" to launch a task runner.
 func route(args []string) (Command, error) {
 	// Zero args → help
 	if len(args) == 0 {
@@ -136,20 +135,6 @@ func route(args []string) (Command, error) {
 // Command Constructors
 // =============================================================================
 
-func newRunnerTUICommand(project string, args []string) (Command, error) {
-	cfg := defaultConfig()
-	flags, err := ParseRunnerFlags(args)
-	if err != nil {
-		return nil, err
-	}
-
-	return &commands.RunnerTUICommand{
-		Project: project,
-		Config:  convertToCommandsConfig(cfg),
-		Flags:   convertToCommandsRunnerFlags(flags),
-	}, nil
-}
-
 func newHelpCommand() Command {
 	return &HelpCommand{command: ""}
 }
@@ -175,17 +160,6 @@ func parseBuiltinCommand(args []string) (Command, error) {
 	switch cmdName {
 	case "api":
 		return parseAPICommand(cmdArgs)
-	case "start":
-		if wantsHelp(cmdArgs) {
-			return &HelpCommand{command: "start"}, nil
-		}
-		// "brain start <project>" → runner TUI for project
-		// "brain start all" → runner TUI for all projects
-		// "brain start" (no args) → runner TUI for all projects
-		if len(cmdArgs) == 0 {
-			return newRunnerTUICommand("all", []string{})
-		}
-		return newRunnerTUICommand(cmdArgs[0], cmdArgs[1:])
 	case "stop":
 		if wantsHelp(cmdArgs) {
 			return &HelpCommand{command: "stop"}, nil
@@ -640,10 +614,6 @@ func defaultConfig() *UnifiedConfig {
 			cfg.Server.TLS.Enabled = true
 		}
 
-		// TUI keybindings
-		if len(ucfg.TUI.KeyBindings) > 0 {
-			cfg.TUI.KeyBindings = ucfg.TUI.KeyBindings
-		}
 	}
 
 	// Layer 3: Environment variable overrides (highest priority, for Docker deployments)
@@ -747,9 +717,6 @@ func convertToCommandsConfig(cfg *UnifiedConfig) *commands.UnifiedConfig {
 	// MCP
 	cmdCfg.MCP.APIURL = cfg.MCP.APIURL
 
-	// TUI
-	cmdCfg.TUI.KeyBindings = cfg.TUI.KeyBindings
-
 	return cmdCfg
 }
 
@@ -779,12 +746,9 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Name:         flags.Name,
 		New:          flags.New,
 		All:          flags.All,
-		TUI:          flags.TUI,
 		Foreground:   flags.Foreground,
 		Headless:     flags.Headless,
 		Dashboard:    flags.Dashboard,
-		Monitor:      flags.Monitor,
-		Runner:       flags.Runner,
 		MaxParallel:  flags.MaxParallel,
 		PollInterval: flags.PollInterval,
 		Workdir:      flags.Workdir,

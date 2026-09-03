@@ -201,7 +201,7 @@ export const moveEntry = (path: string, project: string) =>
     body: { project },
   });
 
-// Full-file (frontmatter + body) get/update — mirrors the TUI's $EDITOR flow so
+// Full-file (frontmatter + body) get/update — an in-app $EDITOR equivalent so
 // the PWA can edit the entire entry, not just metadata or the body.
 export const getEntryRaw = (path: string) =>
   api<Response>(`/api/v1/entries/${encodeEntryPath(path)}`, {
@@ -476,7 +476,7 @@ export const triggerTask = (projectId: string, taskId: string) =>
 // /run is the user-explicit "execute this task now" endpoint. Unlike /trigger
 // (which only flips status to pending and waits for the runner to poll),
 // /run picks an eligible runner and pushes a dispatch command immediately.
-// This matches the TUI's "x" key behaviour from the runner-controller path.
+// This is the "x" shortcut, routed through the runner-controller path.
 export interface RunTaskResponse {
   dispatched: boolean;
   taskId: string;

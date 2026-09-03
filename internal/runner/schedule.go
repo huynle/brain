@@ -314,7 +314,7 @@ func (tr *TaskRunner) disableSchedule(ctx context.Context, task *types.ResolvedT
 		tr.logger.Printf("cron: failed to append disable note for %s: %v", task.ID, err)
 	}
 
-	// Emit event for TUI
+	// Emit event for event consumers
 	tr.emitEvent(RunnerEvent{
 		Type:   EventTaskCancelled,
 		TaskID: task.ID,
@@ -418,7 +418,7 @@ func (tr *TaskRunner) processFeatureScheduleGate(ctx context.Context, task *type
 	tr.logger.Printf("cron: feature gate completed %s run=%s (feature_id: %s)",
 		task.ID, runID, task.FeatureID)
 
-	// Emit completed event for TUI
+	// Emit completed event for event consumers
 	tr.emitEvent(RunnerEvent{
 		Type:   EventTaskCompleted,
 		TaskID: task.ID,

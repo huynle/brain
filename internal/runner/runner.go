@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -471,6 +472,12 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	// poll loop so orphans don't distort automation max_concurrent counting.
 	// Non-fatal on failure — logs and continues.
 	tr.reapOrphanedTasks(ctx)
+
+	// Kill `opencode serve` processes a crashed predecessor left behind. The
+	// task reaper above fixes task STATUS; this is the only thing that fixes
+	// the PROCESSES, which otherwise hold their heaps until someone notices
+	// the machine swapping.
+	tr.reapLeftoverServeProcs()
 
 	tr.emitEvent(RunnerEvent{
 		Type:     EventRunnerStarted,
@@ -1299,6 +1306,11 @@ func (tr *TaskRunner) Stop() error {
 		tr.processMgr.KillAll(ctx)
 	}
 
+	// KillAll covers the `run` drivers the ProcessManager tracks. Each
+	// attachable task also has an `opencode serve` the executor owns, and
+	// nothing above touches it — see serveProcsFileName in executor.go.
+	tr.killAllServeProcs()
+
 	// Clear PID
 	if tr.stateMgr != nil {
 		tr.stateMgr.ClearPid()
@@ -1565,6 +1577,52 @@ func (tr *TaskRunner) resolveExecutor(task *types.ResolvedTask) (TaskExecutor, s
 		name = DefaultExecutorName
 	}
 	return tr.executor, name, nil
+}
+
+// serveProcOwner is implemented by executors that keep a server process alive
+// beside each task's driver. Only OpenCodeExecutor does today; the interface
+// keeps TaskExecutor untouched for executors with nothing to reap.
+type serveProcOwner interface {
+	KillAllServeProcs()
+	ReapLeftoverServeProcs()
+}
+
+// forEachExecutor visits every distinct executor the runner can dispatch to:
+// the registry's entries plus the default, deduplicated so an executor
+// registered under two names is visited once.
+func (tr *TaskRunner) forEachExecutor(visit func(TaskExecutor)) {
+	seen := make(map[TaskExecutor]bool)
+	if tr.executorRegistry != nil {
+		for _, name := range tr.executorRegistry.Names() {
+			if exec, ok := tr.executorRegistry.Get(name); ok && exec != nil && !seen[exec] {
+				seen[exec] = true
+				visit(exec)
+			}
+		}
+	}
+	if tr.executor != nil && !seen[tr.executor] {
+		visit(tr.executor)
+	}
+}
+
+// killAllServeProcs tears down every executor-owned server process. Called
+// from Stop, after the drivers are killed.
+func (tr *TaskRunner) killAllServeProcs() {
+	tr.forEachExecutor(func(exec TaskExecutor) {
+		if owner, ok := exec.(serveProcOwner); ok {
+			owner.KillAllServeProcs()
+		}
+	})
+}
+
+// reapLeftoverServeProcs kills server processes recorded by a previous runner
+// that never got to Stop. Called once at startup.
+func (tr *TaskRunner) reapLeftoverServeProcs() {
+	tr.forEachExecutor(func(exec TaskExecutor) {
+		if owner, ok := exec.(serveProcOwner); ok {
+			owner.ReapLeftoverServeProcs()
+		}
+	})
 }
 
 func (tr *TaskRunner) cleanupTaskArtifacts(task RunningTask) {
@@ -1874,6 +1932,14 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 	// Track in process manager
 	if spawnResult.Proc != nil {
 		if err := tr.processMgr.Add(task.ID, runningTask, spawnResult.Proc); err != nil {
+			// Both the driver and its serve are already running. Untracked,
+			// neither would ever be killed — KillAll cannot see a process it
+			// was never handed. Tear them down before reporting the failure,
+			// with the same rollback discipline as the Spawn error above.
+			_ = spawnResult.Proc.Kill(syscall.SIGTERM)
+			if taskExecutor != nil {
+				_ = taskExecutor.Cleanup(task.ID, projectID)
+			}
 			return fmt.Errorf("track process: %w", err)
 		}
 	}
@@ -2798,6 +2864,11 @@ func (tr *TaskRunner) renewClaims(ctx context.Context) {
 
 			// Clean up tmux
 			tr.cleanupTaskTmux(task)
+
+			// And the executor's own artifacts — including the `opencode
+			// serve` beside the driver, which Kill above does not reach.
+			// handleTaskCompletion does this; this path forgot to.
+			tr.cleanupTaskArtifacts(task)
 
 			// Emit event
 			tr.emitEvent(RunnerEvent{

@@ -711,6 +711,9 @@ func (bc *BridgeClient) abortTask(taskID string) error {
 		return fmt.Errorf("reset task status: %w", err)
 	}
 	bc.runner.cleanupTaskTmux(info.Task)
+	// The executor's serve process is not in the ProcessManager, so Kill
+	// above left it running. Same omission handleTaskCompletion never had.
+	bc.runner.cleanupTaskArtifacts(info.Task)
 	bc.runner.releaseDispatchLease(bc.ctx, info.Task.ProjectID, taskID)
 	bc.runner.emitEvent(RunnerEvent{
 		Type:      EventTaskReleased,

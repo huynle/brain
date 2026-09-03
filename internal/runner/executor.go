@@ -2,6 +2,7 @@ package runner
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -62,8 +63,9 @@ type OpenCodeExecutor struct {
 	// attachable headless task, keyed by task ID. The task is driven by a
 	// separate `opencode run --attach` process (tracked for completion); the
 	// serve process is torn down in Cleanup.
-	serveMu    sync.Mutex
-	serveProcs map[string]Process
+	serveMu       sync.Mutex
+	serveProcs    map[string]Process
+	serveProjects map[string]string // task ID -> project ID, for the persisted record
 }
 
 // Compile-time interface check.
@@ -77,29 +79,245 @@ func NewExecutor(cfg RunnerConfig) *OpenCodeExecutor {
 		CommandFactory: func(name string, args ...string) *exec.Cmd {
 			return exec.Command(name, args...)
 		},
-		serveProcs: make(map[string]Process),
+		serveProcs:    make(map[string]Process),
+		serveProjects: make(map[string]string),
 	}
 }
 
-// trackServeProc records the persistent serve process backing a headless task.
-func (e *OpenCodeExecutor) trackServeProc(taskID string, proc Process) {
+// serveProcsFileName persists the PIDs of live `opencode serve` processes in
+// the state dir, so a runner that comes up after a crash can reap what its
+// predecessor left behind.
+//
+// The in-memory map alone was not enough. `serve` is a separate PID from the
+// `run` driver the ProcessManager tracks, and it was torn down only from
+// Cleanup on normal completion and from a goroutine tied to the driver's
+// exit. A runner shutdown kills the driver and returns before that goroutine
+// wakes, and a crash never runs it at all — so every restart with work in
+// flight orphaned one `serve` per task, each holding its full heap forever.
+// Five of them, up to 31 hours old, had a 36GB machine deep into swap on
+// 2026-09-03. Nothing on disk named them, so no later runner could find them.
+const serveProcsFileName = "serve-procs.json"
+
+// serveProcRecord is one persisted serve process.
+type serveProcRecord struct {
+	PID       int    `json:"pid"`
+	ProjectID string `json:"project_id"`
+	StartedAt string `json:"started_at"`
+}
+
+// serveProcsState is the on-disk form of serveProcs, keyed by task ID.
+type serveProcsState struct {
+	Procs map[string]serveProcRecord `json:"procs"`
+}
+
+func (e *OpenCodeExecutor) serveProcsPath() string {
+	return filepath.Join(e.config.StateDir, serveProcsFileName)
+}
+
+// trackServeProcFor records the persistent serve process backing a headless
+// task, and the project it belongs to for the persisted record.
+func (e *OpenCodeExecutor) trackServeProcFor(taskID, projectID string, proc Process) {
 	e.serveMu.Lock()
-	defer e.serveMu.Unlock()
 	if e.serveProcs == nil {
 		e.serveProcs = make(map[string]Process)
 	}
 	e.serveProcs[taskID] = proc
+	if e.serveProjects == nil {
+		e.serveProjects = make(map[string]string)
+	}
+	e.serveProjects[taskID] = projectID
+	e.serveMu.Unlock()
+	e.persistServeProcs()
+}
+
+// Serve teardown timings, mirroring ProcessManager.Kill: a polite SIGTERM,
+// a bounded wait, then SIGKILL for anything still standing.
+//
+// Package-level vars, not consts, so tests can shrink them.
+var (
+	serveTermGrace = 5 * time.Second
+	serveKillGrace = 2 * time.Second
+)
+
+// terminateServe escalates SIGTERM → SIGKILL on one serve process.
+//
+// A single SIGTERM was the old behaviour, and it is how a server mid-request
+// or slow to handle the signal survived teardown with brain having already
+// discarded its handle. Every sibling kill in the runner escalates; this one
+// did not.
+func terminateServe(taskID string, proc Process) {
+	if proc == nil || proc.Exited() {
+		return
+	}
+	_ = proc.Kill(syscall.SIGTERM)
+	if waitServeExit(proc, serveTermGrace) {
+		return
+	}
+	slog.Warn("opencode serve ignored SIGTERM; sending SIGKILL", "task_id", taskID, "pid", proc.Pid())
+	_ = proc.Kill(syscall.SIGKILL)
+	waitServeExit(proc, serveKillGrace)
+}
+
+// waitServeExit polls Exited until it is true or d elapses.
+func waitServeExit(proc Process, d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if proc.Exited() {
+			return true
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	return proc.Exited()
 }
 
 // killServeProc terminates and forgets the serve process for a task, if any.
+//
+// The record is dropped before the escalation finishes. That is deliberate:
+// the on-disk record is a crash net for a *successor* runner, which verifies
+// the command line before signalling, so a pid that dies a few seconds later
+// than the record says is harmless. Holding the entry open would instead let
+// a stuck server keep a completed task's slot in the map.
 func (e *OpenCodeExecutor) killServeProc(taskID string) {
 	e.serveMu.Lock()
 	proc := e.serveProcs[taskID]
 	delete(e.serveProcs, taskID)
+	delete(e.serveProjects, taskID)
 	e.serveMu.Unlock()
-	if proc != nil && !proc.Exited() {
-		_ = proc.Kill(syscall.SIGTERM)
+	e.persistServeProcs()
+	if proc == nil || proc.Exited() {
+		return
 	}
+	// Task completion must not wait out a stubborn server.
+	go terminateServe(taskID, proc)
+}
+
+// KillAllServeProcs terminates every serve process this executor started.
+//
+// Runner shutdown calls this and waits for it. It cannot rely on the
+// per-task goroutine that ties a server's lifetime to its driver: that
+// goroutine polls the driver once a second and may then hold for session
+// idle, and Stop() returns — and the process exits — long before it gets
+// there. Servers are torn down concurrently so the wait is bounded by one
+// escalation, not one per task.
+func (e *OpenCodeExecutor) KillAllServeProcs() {
+	e.serveMu.Lock()
+	procs := e.serveProcs
+	e.serveProcs = make(map[string]Process)
+	e.serveProjects = make(map[string]string)
+	e.serveMu.Unlock()
+	e.persistServeProcs()
+
+	var wg sync.WaitGroup
+	for taskID, proc := range procs {
+		if proc == nil || proc.Exited() {
+			continue
+		}
+		wg.Add(1)
+		go func(taskID string, proc Process) {
+			defer wg.Done()
+			terminateServe(taskID, proc)
+		}(taskID, proc)
+	}
+	wg.Wait()
+}
+
+// persistServeProcs writes the live serve PIDs to the state dir. Failure is
+// logged, not returned: the map is still authoritative for this process, and
+// the file only matters to a successor after a crash.
+func (e *OpenCodeExecutor) persistServeProcs() {
+	if e.config.StateDir == "" {
+		return
+	}
+	e.serveMu.Lock()
+	state := serveProcsState{Procs: make(map[string]serveProcRecord, len(e.serveProcs))}
+	for taskID, proc := range e.serveProcs {
+		if proc == nil {
+			continue
+		}
+		state.Procs[taskID] = serveProcRecord{
+			PID:       proc.Pid(),
+			ProjectID: e.serveProjects[taskID],
+			StartedAt: time.Now().UTC().Format(time.RFC3339),
+		}
+	}
+	e.serveMu.Unlock()
+
+	path := e.serveProcsPath()
+	if len(state.Procs) == 0 {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			slog.Warn("failed to clear serve process record", "path", path, "error", err)
+		}
+		return
+	}
+	b, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return
+	}
+	if err := os.WriteFile(path, b, 0o644); err != nil {
+		slog.Warn("failed to persist serve process record", "path", path, "error", err)
+	}
+}
+
+// ReapLeftoverServeProcs kills serve processes recorded by a previous runner
+// that are still alive, then discards the record.
+//
+// A PID is only signalled if it is alive AND its command line still looks
+// like `opencode serve` — PIDs are reused, and a stale record must never kill
+// whatever unrelated process inherited the number. Called once at startup.
+func (e *OpenCodeExecutor) ReapLeftoverServeProcs() {
+	path := e.serveProcsPath()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	// Whatever happens below, the record describes a runner that is gone.
+	defer func() { _ = os.Remove(path) }()
+
+	var state serveProcsState
+	if err := json.Unmarshal(b, &state); err != nil {
+		slog.Warn("serve process record is unreadable; not reaping", "path", path, "error", err)
+		return
+	}
+
+	reaped := 0
+	for taskID, rec := range state.Procs {
+		if rec.PID <= 0 || !IsPidAlive(rec.PID) {
+			continue
+		}
+		if !e.looksLikeOpencodeServe(rec.PID) {
+			slog.Info("skipping recorded serve pid: command line no longer matches (pid reused)",
+				"task_id", taskID, "pid", rec.PID)
+			continue
+		}
+		if err := NewPidProcess(rec.PID).Kill(syscall.SIGTERM); err != nil {
+			slog.Warn("failed to reap leftover opencode serve",
+				"task_id", taskID, "pid", rec.PID, "error", err)
+			continue
+		}
+		reaped++
+		slog.Info("reaped leftover opencode serve from a previous runner",
+			"task_id", taskID, "project_id", rec.ProjectID, "pid", rec.PID, "started_at", rec.StartedAt)
+	}
+	if reaped > 0 {
+		slog.Info("reaped leftover opencode serve processes", "count", reaped)
+	}
+}
+
+// looksLikeOpencodeServe reports whether pid's current command line is an
+// opencode serve invocation. Goes through CommandFactory so tests can answer
+// without a real process table.
+func (e *OpenCodeExecutor) looksLikeOpencodeServe(pid int) bool {
+	cmd := e.CommandFactory("ps", "-o", "command=", "-p", strconv.Itoa(pid))
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	line := strings.ToLower(strings.TrimSpace(string(out)))
+	bin := strings.ToLower(filepath.Base(e.config.Opencode.Bin))
+	if bin == "" || bin == "." {
+		bin = "opencode"
+	}
+	return strings.Contains(line, bin) && strings.Contains(line, "serve")
 }
 
 // =============================================================================
@@ -493,7 +711,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	}
 	res.ExistingSessionIDs = existingSessionIDs
 	res.SessionID = sessionID
-	e.trackServeProc(task.ID, serveProc)
+	e.trackServeProcFor(task.ID, projectID, serveProc)
 
 	// Tie the server's lifetime to the driver process: when the run process
 	// exits (completion, kill, crash, or runner shutdown), tear the server

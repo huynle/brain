@@ -137,6 +137,14 @@ export interface WorkspaceState {
   lastFocusLeafId: string | null;
   /** Same idea as `lastFocusLeafId`, scoped to the sidebar dock. */
   lastSidebarLeafId: string | null;
+  /** Which dock the user touched most recently.
+   *
+   *  Deliberately NOT persisted: it answers "what am I looking at right
+   *  now", and a value restored from a previous session would aim a close
+   *  shortcut at a pane the user has not looked at since. */
+  lastActiveDock: DockId | null;
+  /** Close the pane the user is currently working in. */
+  closeCurrentLeaf(): void;
   sidebarSection: Record<SidebarSectionKey, boolean>;
   /** Whole sidebar collapsed to a slim rail. Independent of the
    *  per-section collapse map. Driven by user toggle in the topbar. */
@@ -406,6 +414,7 @@ export const useWorkspace = create<WorkspaceState>()(
             set({
               docks: { ...state.docks, [dockId]: node },
               [lastField]: node.id,
+              lastActiveDock: dockId,
               ...gateOpen,
             } as Partial<WorkspaceState>);
             return;
@@ -416,6 +425,7 @@ export const useWorkspace = create<WorkspaceState>()(
             set({
               docks: { ...state.docks, [dockId]: node },
               [lastField]: node.id,
+              lastActiveDock: dockId,
               ...gateOpen,
             } as Partial<WorkspaceState>);
             return;
@@ -435,6 +445,7 @@ export const useWorkspace = create<WorkspaceState>()(
             // pane. If the insert somehow no-opped, keep the old hint
             // rather than pointing it at a leaf that isn't in the tree.
             [lastField]: nextTree === tree ? state[lastField] : node.id,
+            lastActiveDock: dockId,
             ...gateOpen,
           } as Partial<WorkspaceState>);
         };
@@ -487,6 +498,7 @@ export const useWorkspace = create<WorkspaceState>()(
             set({
               docks: { ...state.docks, [dockId]: node },
               [lastField]: node.id,
+              lastActiveDock: dockId,
               ...gateOpen,
             } as Partial<WorkspaceState>);
             return;
@@ -504,6 +516,7 @@ export const useWorkspace = create<WorkspaceState>()(
             set({
               docks: { ...state.docks, [dockId]: node },
               [lastField]: node.id,
+              lastActiveDock: dockId,
               ...gateOpen,
             } as Partial<WorkspaceState>);
             return;
@@ -518,6 +531,7 @@ export const useWorkspace = create<WorkspaceState>()(
           set({
             docks: { ...state.docks, [dockId]: nextTree },
             [lastField]: nextTree === tree ? state[lastField] : node.id,
+            lastActiveDock: dockId,
             ...gateOpen,
           } as Partial<WorkspaceState>);
         };
@@ -562,16 +576,31 @@ export const useWorkspace = create<WorkspaceState>()(
           const state = get();
           const tree = state.docks[dockId];
           if (!tree) return;
-          set({
-            docks: {
-              ...state.docks,
-              [dockId]: setDockActiveTab(tree, tabsId, idx),
-            },
-          });
+          const nextTree = setDockActiveTab(tree, tabsId, idx);
+          // Clicking a tab is the clearest possible statement of "this is
+          // the pane I am working in", and it updated NOTHING before: the
+          // tab strip is a sibling of the pane body, so PaneLeaf's
+          // onMouseDown never fires for it. The close shortcut would have
+          // closed the tab you just clicked away from — and the same gap
+          // was already misdirecting openInFocus's merge target.
+          const patch: Partial<WorkspaceState> = {
+            docks: { ...state.docks, [dockId]: nextTree },
+            lastActiveDock: dockId,
+          };
+          const found = findNodeInfo(nextTree, tabsId);
+          const tabs = found?.node;
+          if (tabs && tabs.type === "tabs" && tabs.children[idx]) {
+            (patch as Record<string, unknown>)[lastLeafField(dockId)] =
+              tabs.children[idx].id;
+          }
+          set(patch);
         };
 
       const makeSetLastLeaf = (dockId: DockId) => (leafId: string | null) =>
-        set({ [lastLeafField(dockId)]: leafId } as Partial<WorkspaceState>);
+        set({
+          [lastLeafField(dockId)]: leafId,
+          lastActiveDock: dockId,
+        } as Partial<WorkspaceState>);
 
       return {
         view: "overview",
@@ -580,6 +609,7 @@ export const useWorkspace = create<WorkspaceState>()(
         docks: { focus: null, sidebar: null },
         lastFocusLeafId: null,
         lastSidebarLeafId: null,
+        lastActiveDock: null,
         sidebarSection: { projects: true, sessions: true, runners: true },
         sidebarCollapsed: false,
         assistantOpen: false,
@@ -681,7 +711,6 @@ export const useWorkspace = create<WorkspaceState>()(
               },
             };
           }),
-
 
         hideProject: (projectId) =>
           set((s) =>
@@ -851,6 +880,50 @@ export const useWorkspace = create<WorkspaceState>()(
           });
         },
         closeSidebarLeaf: makeCloseLeaf("sidebar"),
+
+        // Close the pane the user is working in.
+        //
+        // The close primitive already existed; what was missing was the
+        // REFERENT. Three rules make that safe:
+        //
+        //  1. Only a dock that is actually ON SCREEN may be closed. The
+        //     Focus dock is invisible in Overview/Entries and the sidebar
+        //     is invisible when collapsed — and `docks` is persisted, so a
+        //     chord pressed in the wrong view would delete a pane the user
+        //     cannot see and it would still be gone after a reload.
+        //  2. The leaf hint is a HINT (the store's own docstring says so
+        //     and it is nullable), so it is resolved through the same
+        //     `pickDropTarget` rule the drop path uses: a stale id closes
+        //     the frontmost pane rather than silently nothing.
+        //  3. Emptying the sidebar also collapses the column, so it cannot
+        //     linger as an empty strip the shortcut can no longer clear.
+        //     Deliberately NOT folded into makeCloseLeaf: the pane × keeps
+        //     its documented layout-preserving behaviour.
+        closeCurrentLeaf: () => {
+          const state = get();
+          const onScreen = (dockId: DockId): boolean =>
+            dockId === "focus" ? state.view === "focus" : state.sidebarDockOpen;
+
+          const order: DockId[] =
+            state.lastActiveDock === "sidebar"
+              ? ["sidebar", "focus"]
+              : ["focus", "sidebar"];
+          const dockId = order.find(
+            (d) => onScreen(d) && state.docks[d] !== null,
+          );
+          if (!dockId) return;
+
+          const tree = state.docks[dockId];
+          if (!tree) return;
+          const leafId = pickDropTarget(tree, state[lastLeafField(dockId)]);
+          if (!leafId) return;
+
+          makeCloseLeaf(dockId)(leafId);
+
+          if (dockId === "sidebar" && get().docks.sidebar === null) {
+            set({ sidebarDockOpen: false });
+          }
+        },
         moveSidebarLeaf: makeMoveLeaf("sidebar"),
         setSidebarSplitRatio: makeSetSplitRatio("sidebar"),
         setSidebarActiveTab: makeSetActiveTab("sidebar"),
@@ -1050,6 +1123,8 @@ function defaultLeafTitle(
       const id = target.automationId as string | undefined;
       return id ? `Automation ${id}` : "Automation";
     }
+    case "reminders":
+      return "Reminders";
     default:
       return "Pane";
   }

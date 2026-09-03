@@ -407,6 +407,12 @@ func TestStoreDerivedTextReextractRefreshesLinkedEntryEmbeddingState(t *testing.
 	if _, err := attachments.Attach(ctx, "default", entry.ID, types.AttachEntryAttachmentRequest{Attachment: types.AttachmentReference{ID: created.Attachment.ID, Role: "source"}}); err != nil {
 		t.Fatalf("Attach failed: %v", err)
 	}
+	// Attach schedules a BACKGROUND embedding refresh. Without draining it,
+	// that goroutine races the two synchronous derived-text hooks below for
+	// `embeddedInputs`, and under load it lands after the `embeddedInputs = nil`
+	// reset — so the assertion sees an input the test never asked for.
+	// The seam already exists and six other tests in this package use it.
+	brain.WaitForPendingEmbeddings()
 
 	if _, err := attachments.StoreDerivedText(ctx, "default", created.Attachment.ID, types.AttachmentDerivedText{Kind: "text", Status: "ready", ContentType: "text/plain", Text: "first extraction old calibration text"}); err != nil {
 		t.Fatalf("StoreDerivedText first failed: %v", err)

@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -167,6 +168,28 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	// Start server in background
 	errCh := make(chan error, 1)
 	tlsEnabled := opts.TLSCert != "" && opts.TLSKey != ""
+
+	// BIND SYNCHRONOUSLY, before the goroutine exists.
+	//
+	// ListenAndServe binds inside the goroutine, so the bind result could
+	// only reach the caller through errCh — and the select below races that
+	// channel against ctx.Done(). Go chooses uniformly at random among ready
+	// select cases, so a port conflict that coincided with cancellation
+	// returned nil: brain-api logged "server stopped" and exited 0 having
+	// never bound the port. A test caught it as flakiness, but an operator
+	// would have seen a successful-looking start with nothing listening.
+	//
+	// net.Listen + Serve is exactly what ListenAndServe does internally, so
+	// behaviour is unchanged — but the bind becomes a return value that no
+	// context deadline can outrace.
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", addr, err)
+	}
+	// Shutdown closes the listener once Serve has registered it, but there is
+	// a window before that where returning via ctx.Done() would leak the fd.
+	// The stdlib's ListenAndServe does the same for the same reason.
+	defer func() { _ = ln.Close() }()
 	if tlsEnabled {
 		if err := trustSelfSignedCertForLoopback(opts.TLSCert, opts.Host); err != nil {
 			slog.Warn("failed to trust server cert for in-process clients; runner/MCP calls to loopback https may fail with x509 errors",
@@ -195,9 +218,9 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 			// negotiated through ALPN. Browsers only speak h2 over TLS, which
 			// is why plain HTTP hits the 6-conn-per-origin cap for our SSE
 			// streams. See docs/panes-v2-followups.md.
-			err = srv.ListenAndServeTLS(opts.TLSCert, opts.TLSKey)
+			err = srv.ServeTLS(ln, opts.TLSCert, opts.TLSKey)
 		} else {
-			err = srv.ListenAndServe()
+			err = srv.Serve(ln)
 		}
 		if err != nil && err != http.ErrServerClosed {
 			errCh <- err

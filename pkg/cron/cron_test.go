@@ -403,3 +403,104 @@ func TestParse_DayOfWeek_Sunday_Both0And7(t *testing.T) {
 		t.Error("day-of-week 7 should match Sunday")
 	}
 }
+
+// =============================================================================
+// DST Tests
+// =============================================================================
+
+// A schedule whose only matching hour falls inside a spring-forward gap used
+// to hang NextAfter: time.Date normalizes the missing 02:00 BACKWARD to
+// 01:00, advanceCandidate then selects hour 2 again and returns the same
+// instant, so the candidate never moved and the search burned all 527,040
+// iterations before returning the zero time.
+//
+// The zero time is not a harmless "don't know": runner.getNextRun returns it
+// with a nil error, so next_run is written as 0001-01-01T00:00:00Z and
+// shouldTrigger reads "now >= next_run" on every poll, re-firing the task
+// forever.
+func TestNextAfter_SpringForwardGap(t *testing.T) {
+	loc, err := time.LoadLocation("America/Denver")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	s, err := Parse("0 2 * * *")
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	// 2026-03-08 is the US spring-forward date: 02:00-02:59 never occurs.
+	from := time.Date(2026, 3, 7, 3, 0, 0, 0, loc)
+	got := s.NextAfter(from)
+
+	if got.IsZero() {
+		t.Fatal("NextAfter returned the zero time; a daily 02:00 schedule must still resolve across a DST gap")
+	}
+	// The 8th has no 02:00, so the next real run is on the 9th.
+	want := time.Date(2026, 3, 9, 2, 0, 0, 0, loc)
+	if !got.Equal(want) {
+		t.Errorf("NextAfter = %v, want %v (the 8th has no 02:00 in Denver)", got, want)
+	}
+}
+
+// The repeated hour is the opposite case: 01:00 happens twice on the
+// fall-back date. Either instant is defensible; what must not happen is a
+// hang or a zero time.
+func TestNextAfter_FallBackRepeatedHour(t *testing.T) {
+	loc, err := time.LoadLocation("America/Denver")
+	if err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+	s, err := Parse("30 1 * * *")
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	from := time.Date(2026, 11, 1, 0, 0, 0, 0, loc)
+	got := s.NextAfter(from)
+
+	if got.IsZero() {
+		t.Fatal("NextAfter returned the zero time for a repeated local hour")
+	}
+	if got.Hour() != 1 || got.Minute() != 30 {
+		t.Errorf("NextAfter = %v, want a 01:30 local time", got)
+	}
+	if !got.After(from) {
+		t.Errorf("NextAfter = %v, must be strictly after %v", got, from)
+	}
+}
+
+// Whatever the zone, NextAfter must always move forward. This is the
+// invariant whose absence caused the hang above.
+func TestNextAfter_AlwaysAdvances(t *testing.T) {
+	zones := []string{"UTC", "America/Denver", "Australia/Lord_Howe", "Pacific/Chatham"}
+	exprs := []string{"0 2 * * *", "30 2 * * *", "* * * * *", "0 0 * * *", "15 2 * * 0"}
+
+	for _, z := range zones {
+		loc, err := time.LoadLocation(z)
+		if err != nil {
+			t.Skipf("tzdata unavailable for %s: %v", z, err)
+		}
+		for _, expr := range exprs {
+			s, err := Parse(expr)
+			if err != nil {
+				t.Fatalf("Parse(%q) returned error: %v", expr, err)
+			}
+			// Walk a year of daily starts so every DST transition in the
+			// zone is crossed.
+			cur := time.Date(2026, 1, 1, 0, 0, 0, 0, loc)
+			for i := 0; i < 365; i++ {
+				next := s.NextAfter(cur)
+				if next.IsZero() {
+					t.Fatalf("%s/%s: NextAfter(%v) returned the zero time", z, expr, cur)
+				}
+				if !next.After(cur) {
+					t.Fatalf("%s/%s: NextAfter(%v) = %v, did not advance", z, expr, cur, next)
+				}
+				if !s.Matches(next) {
+					t.Fatalf("%s/%s: NextAfter(%v) = %v, which does not match the schedule", z, expr, cur, next)
+				}
+				cur = cur.AddDate(0, 0, 1)
+			}
+		}
+	}
+}

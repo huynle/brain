@@ -2103,3 +2103,116 @@ func TestCheckScheduledTasks_MaxRunsNotReached(t *testing.T) {
 		t.Error("should trigger when max_runs not yet reached")
 	}
 }
+
+// A DST spring-forward gap used to make cron.NextAfter exhaust its search
+// and hand back the zero time, which getNextRun then returned with a nil
+// error. processScheduledTask formatted it straight into next_run as
+// "0001-01-01T00:00:00Z" — a timestamp in the past — so shouldTrigger
+// answered "fire now" on every subsequent poll and the task re-ran forever.
+//
+// Each case fires ON the day BEFORE the transition, which is what makes the
+// NEXT occurrence land in the gap. Firing on the transition day instead
+// makes the test vacuous: by 09:00 UTC Denver is already 03:00 MDT, the
+// schedule does not match, and nothing is written at all.
+//
+// The guard is stated as an invariant over the write rather than as one
+// expected timestamp: whatever the schedule and zone, next_run must never be
+// written as a time in the past.
+func TestCheckScheduledTasks_NeverWritesZeroNextRun(t *testing.T) {
+	if _, err := time.LoadLocation("America/Denver"); err != nil {
+		t.Skipf("tzdata unavailable: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		schedule string
+		timezone string
+		// now must be an instant at which `schedule` matches, so the task
+		// actually triggers and next_run is recomputed.
+		now time.Time
+	}{
+		{
+			name:     "denver 2am, next occurrence falls in the gap",
+			schedule: "0 2 * * *",
+			timezone: "America/Denver",
+			// 02:00 MST on the 7th; the next 02:00 is the missing one.
+			now: time.Date(2026, 3, 7, 9, 0, 0, 0, time.UTC),
+		},
+		{
+			name:     "denver 2:30am, next occurrence falls in the gap",
+			schedule: "30 2 * * *",
+			timezone: "America/Denver",
+			now:      time.Date(2026, 3, 7, 9, 30, 0, 0, time.UTC),
+		},
+		{
+			name:     "utc control, no transition involved",
+			schedule: "0 9 * * *",
+			timezone: "UTC",
+			now:      time.Date(2026, 3, 7, 9, 0, 0, 0, time.UTC),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tr, client, _ := schedTestRunner()
+			client.allTasks["proj-a"] = []types.ResolvedTask{
+				{
+					ID:       "sched-dst",
+					Path:     "projects/proj-a/task/sched-dst.md",
+					Title:    "DST Scheduled Task",
+					Status:   "active",
+					Schedule: tc.schedule,
+					Timezone: tc.timezone,
+				},
+			}
+
+			tr.checkScheduledTasks(context.Background(), tc.now)
+
+			// The case is only meaningful if the task actually fired.
+			sawWrite := false
+			for _, c := range client.getUpdateMetadataCalls() {
+				if c.Path != "projects/proj-a/task/sched-dst.md" {
+					continue
+				}
+				raw, ok := c.Fields["next_run"]
+				if !ok {
+					continue
+				}
+				sawWrite = true
+				got, _ := raw.(string)
+				if got == "" {
+					// Explicitly cleared — sends shouldTrigger back to live
+					// cron matching, which is the safe fallback.
+					continue
+				}
+				parsed, err := time.Parse(time.RFC3339, got)
+				if err != nil {
+					t.Fatalf("next_run %q is not valid RFC3339: %v", got, err)
+				}
+				if !parsed.After(tc.now) {
+					t.Fatalf("next_run written as %q, which is not after now (%v) — "+
+						"shouldTrigger would re-fire this task on every poll",
+						got, tc.now.Format(time.RFC3339))
+				}
+			}
+			if !sawWrite {
+				t.Fatal("task did not trigger, so this case proves nothing; " +
+					"pick a `now` at which the schedule matches")
+			}
+		})
+	}
+}
+
+// getNextRun must report "no next occurrence" as an error rather than
+// returning the zero time, which formats as a real-looking past timestamp.
+func TestGetNextRun_ImpossibleScheduleErrors(t *testing.T) {
+	if _, err := getNextRun("0 0 30 2 *", time.Now().UTC(), "UTC"); err == nil {
+		t.Error("February 30th has no next occurrence; getNextRun must return an error, not the zero time")
+	}
+	// A schedule that does resolve must still succeed.
+	got, err := getNextRun("0 2 * * *", time.Date(2026, 3, 7, 10, 0, 0, 0, time.UTC), "America/Denver")
+	if err != nil {
+		t.Fatalf("getNextRun across a DST gap returned an error: %v", err)
+	}
+	if got.IsZero() {
+		t.Fatal("getNextRun returned the zero time with a nil error")
+	}
+}

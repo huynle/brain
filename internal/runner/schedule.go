@@ -129,6 +129,14 @@ func getNextRun(schedule string, after time.Time, timezone string) (time.Time, e
 	loc := loadTimezone(timezone)
 	// Convert after to the task's timezone, find next match, convert back to UTC
 	nextLocal := sched.NextAfter(after.In(loc))
+	if nextLocal.IsZero() {
+		// The zero time is "no answer", but it FORMATS as a real timestamp
+		// in the year 1 — and shouldTrigger reads a past next_run as "fire
+		// now", on every poll, forever. Returning it as a value is what
+		// turned a cron edge case into a runaway task, so it leaves here as
+		// an error and the callers below skip the write.
+		return time.Time{}, fmt.Errorf("schedule %q in %s has no next occurrence", schedule, loc)
+	}
 	return nextLocal.UTC(), nil
 }
 
@@ -339,7 +347,17 @@ func (tr *TaskRunner) processScheduledTask(ctx context.Context, task *types.Reso
 	// Update metadata: runs array + next_run
 	nextRun, err := getNextRun(task.Schedule, now, task.Timezone)
 	if err != nil {
+		// Record the run, but CLEAR next_run rather than leaving the stale
+		// one in place: a next_run in the past makes shouldTrigger fire on
+		// every poll. Empty sends it back to live cron matching, which is
+		// the correct behaviour when we cannot predict the next occurrence.
 		tr.logger.Printf("cron: failed to compute next_run for %s: %v", task.ID, err)
+		if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+			"runs":     runs,
+			"next_run": "",
+		}); err != nil {
+			tr.logger.Printf("cron: failed to clear next_run for %s: %v", task.ID, err)
+		}
 		return
 	}
 

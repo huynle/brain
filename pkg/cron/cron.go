@@ -176,9 +176,19 @@ func (s *Schedule) Matches(t time.Time) bool {
 }
 
 // NextAfter returns the next time after t that matches the schedule.
-// Searches up to 1 year ahead. Returns zero time if no match found.
 // The returned time preserves the location of the input time.
 // Seconds and nanoseconds are zeroed.
+//
+// Returns the zero time when the schedule can never match — "0 0 30 2 *"
+// (February 30th) being the canonical case. The budget below is a count of
+// ADVANCEMENT STEPS, not minutes: advanceCandidate skips whole months and
+// days, so the reachable horizon is far more than the year an earlier
+// comment here claimed. A leap-day schedule resolves four years out.
+//
+// Callers must test IsZero rather than formatting the result. The zero time
+// renders as 0001-01-01T00:00:00Z, which reads as a valid RFC3339 timestamp
+// in the past — and any scheduler comparing "now >= next_run" against it
+// fires forever.
 func (s *Schedule) NextAfter(t time.Time) time.Time {
 	loc := t.Location()
 
@@ -193,7 +203,26 @@ func (s *Schedule) NextAfter(t time.Time) time.Time {
 		}
 
 		// Smart advancement: skip ahead when possible
-		candidate = s.advanceCandidate(candidate, loc)
+		next := s.advanceCandidate(candidate, loc)
+
+		// Forward progress is what terminates this loop, and it is not
+		// something advanceCandidate can promise on its own: it builds
+		// candidates with time.Date, and a local time inside a DST
+		// spring-forward gap does not exist, so time.Date silently
+		// substitutes a different one. On US zones that substitute is an
+		// EARLIER instant (02:00 becomes 01:00 MST), which stalled the
+		// candidate and burned the whole budget here — NextAfter then
+		// returned the zero time for an ordinary "0 2 * * *".
+		//
+		// advanceCandidate now rejects nonexistent hours itself, so this is
+		// the backstop rather than the fix. It is kept because the cost is
+		// one comparison and the failure it prevents is silent: callers
+		// treat the zero time as a real timestamp (see
+		// runner.getNextRun) rather than as "no answer".
+		if !next.After(candidate) {
+			next = candidate.Add(time.Minute)
+		}
+		candidate = next
 	}
 
 	return time.Time{}
@@ -224,24 +253,61 @@ func (s *Schedule) advanceCandidate(t time.Time, loc *time.Location) time.Time {
 	weekday := int(t.Weekday())
 	if !s.fields[2].has(day) || !s.fields[4].has(weekday) {
 		// Skip to next day
-		next := t.AddDate(0, 0, 1)
-		return time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, loc)
+		return startOfNextDay(t, loc)
 	}
 
 	// Check hour
 	hour := t.Hour()
 	if !s.fields[1].has(hour) {
-		// Skip to next valid hour today
+		// Skip to next valid hour today, ignoring any that a DST
+		// spring-forward removes from this date. An hour that does not
+		// occur cannot host a run, so the schedule genuinely does not fire
+		// then and the search must continue past it.
 		for h := hour + 1; h <= 23; h++ {
-			if s.fields[1].has(h) {
-				return time.Date(t.Year(), t.Month(), t.Day(), h, 0, 0, 0, loc)
+			if !s.fields[1].has(h) {
+				continue
+			}
+			if c, ok := atLocalHour(t, h, loc); ok && c.After(t) {
+				return c
 			}
 		}
 		// Wrap to next day
-		next := t.AddDate(0, 0, 1)
-		return time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, loc)
+		return startOfNextDay(t, loc)
 	}
 
 	// Minute doesn't match — just advance by 1 minute
 	return t.Add(time.Minute)
+}
+
+// atLocalHour builds the top of local hour h on t's date, reporting whether
+// that local time actually exists.
+//
+// time.Date is documented to normalize a nonexistent local time rather than
+// fail, and the substitute it picks is not guaranteed — on US zones a
+// missing 02:00 comes back as 01:00, an hour EARLIER than asked for. A
+// caller that trusts the result walks backwards, which is how the search
+// loop above used to stall. The bool is the whole point: it distinguishes
+// "here is that hour" from "that hour does not happen today".
+func atLocalHour(t time.Time, h int, loc *time.Location) (time.Time, bool) {
+	c := time.Date(t.Year(), t.Month(), t.Day(), h, 0, 0, 0, loc)
+	return c, c.Hour() == h
+}
+
+// startOfNextDay returns the first instant of the day after t.
+//
+// Midnight is not universally available either — Asia/Beirut and
+// America/Santiago, among others, transition at 00:00, so their clocks jump
+// from 23:59 to 01:00 and "00:00" does not exist. time.Date substitutes the
+// hour after the gap, which is the correct place to resume; the guarantee
+// this function adds is only that the result is strictly after t, so the
+// caller cannot be walked backwards by the substitution.
+func startOfNextDay(t time.Time, loc *time.Location) time.Time {
+	next := t.AddDate(0, 0, 1)
+	c := time.Date(next.Year(), next.Month(), next.Day(), 0, 0, 0, 0, loc)
+	if !c.After(t) {
+		// Degenerate zone data: fall back to a plain forward step rather
+		// than handing back a candidate that cannot terminate the search.
+		return t.Add(time.Minute)
+	}
+	return c
 }

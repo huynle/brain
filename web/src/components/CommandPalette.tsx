@@ -118,6 +118,12 @@ export function CommandPalette(): JSX.Element | null {
         action: toggleSidebar,
       },
       {
+        id: "close-pane",
+        label: "Close current pane",
+        hint: "⌃W / ⇧⌘X",
+        action: () => useWorkspace.getState().closeCurrentLeaf(),
+      },
+      {
         id: "toggle-assistant",
         label: "Toggle Assistant panel",
         action: toggleAssistant,
@@ -166,7 +172,11 @@ export function CommandPalette(): JSX.Element | null {
           id: `feat:${pid}:${f.id}`,
           label: `Feature: ${f.name} (${pid})`,
           action: () =>
-            openInSidebar("feature-detail", { projectId: pid, featureId: f.id }, f.name),
+            openInSidebar(
+              "feature-detail",
+              { projectId: pid, featureId: f.id },
+              f.name,
+            ),
         });
         // Verbs, not just navigation. Previously the palette could only
         // take you somewhere — for a keyboard-first user this is the
@@ -192,9 +202,7 @@ export function CommandPalette(): JSX.Element | null {
           action: () =>
             openModal("goal", { goalId: g.goal_id, projectId: pid }),
         });
-        const runNow = buildGoalActions(g, goalCtx).find(
-          (a) => a.id === "run",
-        );
+        const runNow = buildGoalActions(g, goalCtx).find((a) => a.id === "run");
         if (runNow) {
           cmds.push({
             id: `goal-act:${pid}:${g.goal_id}:run`,

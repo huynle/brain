@@ -25,11 +25,7 @@ import React, { useCallback, useEffect, useState } from "react";
 import type { DockNode } from "../../lib/dock";
 import { useWorkspace } from "../../store/workspace";
 import { useContextMenu } from "../common/ContextMenu";
-import {
-  beginDrag,
-  endDrag,
-  type DragPayload,
-} from "../../hooks/useDragDrop";
+import { beginDrag, endDrag, type DragPayload } from "../../hooks/useDragDrop";
 import { PaneLeaf } from "./PaneLeaf";
 import { useDockDrop } from "./useDockDrop";
 
@@ -48,7 +44,8 @@ export function PaneTabs({
   const closeSidebarLeaf = useWorkspace((s) => s.closeSidebarLeaf);
   const moveFocusLeaf = useWorkspace((s) => s.moveLeaf);
   const moveSidebarLeaf = useWorkspace((s) => s.moveSidebarLeaf);
-  const setActiveTab = dockId === "focus" ? setFocusActiveTab : setSidebarActiveTab;
+  const setActiveTab =
+    dockId === "focus" ? setFocusActiveTab : setSidebarActiveTab;
   const closeLeaf = dockId === "focus" ? closeFocusLeaf : closeSidebarLeaf;
   const moveLeaf = dockId === "focus" ? moveFocusLeaf : moveSidebarLeaf;
   const ctx = useContextMenu();
@@ -70,6 +67,9 @@ export function PaneTabs({
       {
         id: "close",
         label: `Close ${title}`,
+        // Shown inline so the menu teaches the shortcut, the convention
+        // useRowActions already sets for its accelerators.
+        shortcut: "⌃W",
         onClick: () => closeLeaf(leafId),
       },
       {
@@ -107,8 +107,7 @@ export function PaneTabs({
     <div className="p2-pane-tabs">
       <div
         className={
-          "p2-pane-tabs__strip" +
-          (dragActive && stripOver ? " dragover" : "")
+          "p2-pane-tabs__strip" + (dragActive && stripOver ? " dragover" : "")
         }
         role="tablist"
         onDragEnter={() => setStripOver(true)}

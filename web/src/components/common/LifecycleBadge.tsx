@@ -103,6 +103,11 @@ export function LifecycleBadge({
         aria-label="Open the merge request in a new tab"
         title={`${title}\n${href}`}
         onClick={(e) => e.stopPropagation()}
+        // The Overview's attention rows pin a feature on double-click, and
+        // their guard only skips `closest("button")` — an anchor is neither.
+        // Stopping it here keeps that responsibility with the badge, where
+        // the click and keydown guards already live.
+        onDoubleClick={(e) => e.stopPropagation()}
         onKeyDown={(e) => {
           if (e.key !== "Enter" && e.key !== " ") return;
           // Enter: let the browser follow the link, just keep the row's

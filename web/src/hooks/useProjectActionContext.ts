@@ -41,6 +41,7 @@ export function useProjectActionContext(): ProjectActionContext {
   const toast = useUI((s) => s.toast);
   const openInFocus = useWorkspace((s) => s.openInFocus);
   const hideProject = useWorkspace((s) => s.hideProject);
+  const showProject = useWorkspace((s) => s.showProject);
   const forgetProject = useWorkspace((s) => s.forgetProject);
   const invalidateStatus = useInvalidateRunnerStatus();
   const queryClient = useQueryClient();
@@ -60,9 +61,11 @@ export function useProjectActionContext(): ProjectActionContext {
       // existed, which resolves no task and renders `Task "" not found in
       // project "<pid>"` — a shipped, reachable dead end behind a menu
       // item that promised a project.
-      openProject: (pid: string) => openInFocus("project", { projectId: pid }, pid),
+      openProject: (pid: string) =>
+        openInFocus("project", { projectId: pid }, pid),
 
       hideProject: (pid: string) => hideProject(pid),
+      showProject: (pid: string) => showProject(pid),
 
       // ─── the two project dials ──────────────────────────────────
       // Toasts describe the actual effect: pause holds back NEW
@@ -138,6 +141,14 @@ export function useProjectActionContext(): ProjectActionContext {
         );
       },
     }),
-    [toast, openInFocus, hideProject, invalidateStatus, forgetProject, queryClient],
+    [
+      toast,
+      openInFocus,
+      hideProject,
+      showProject,
+      invalidateStatus,
+      forgetProject,
+      queryClient,
+    ],
   );
 }

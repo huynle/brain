@@ -25,7 +25,33 @@ const (
 
 	// backoffMultiplier doubles the delay on each consecutive failure.
 	backoffMultiplier = 2
+
+	// reconnectWarnAfter is how many consecutive failed connects pass before
+	// a listener escalates from Debug to Warn.
+	//
+	// A stream that reconnects once is noise; a stream that never comes back
+	// means this runner is receiving no pushed work at all, and at Debug that
+	// is indistinguishable from an idle server. A runner sat deaf for 17
+	// hours on 2026-09-03 without emitting one line above Debug.
+	reconnectWarnAfter = 3
+
+	// reconnectWarnEvery re-warns on every Nth attempt past the threshold, so
+	// a long outage stays visible without flooding the log.
+	reconnectWarnEvery = 10
 )
+
+// warnStalledReconnect logs once at the threshold and periodically after it.
+// attempt is the count of consecutive failed connects.
+func warnStalledReconnect(stream string, attempt int, backoff time.Duration, attrs ...any) {
+	if attempt < reconnectWarnAfter {
+		return
+	}
+	if attempt > reconnectWarnAfter && (attempt-reconnectWarnAfter)%reconnectWarnEvery != 0 {
+		return
+	}
+	slog.Warn(stream+" SSE stream is not reconnecting; this runner is receiving no pushed work",
+		append([]any{"consecutive_failures", attempt, "backoff", backoff}, attrs...)...)
+}
 
 // =============================================================================
 // SSEListener
@@ -110,6 +136,7 @@ func (l *SSEListener) Start(ctx context.Context) {
 // listenProject listens to a single project's SSE stream and sends wake signals.
 func (l *SSEListener) listenProject(ctx context.Context, client *sse.Client, projectID string) {
 	backoff := initialBackoff
+	failures := 0
 
 	for {
 		select {
@@ -152,6 +179,10 @@ func (l *SSEListener) listenProject(ctx context.Context, client *sse.Client, pro
 		// Reset backoff if we had a successful connection
 		if connected {
 			backoff = initialBackoff
+			failures = 0
+		} else {
+			failures++
+			warnStalledReconnect("project", failures, backoff, "project", projectID)
 		}
 
 		// Reconnect with exponential backoff
@@ -174,6 +205,7 @@ func (l *SSEListener) listenProject(ctx context.Context, client *sse.Client, pro
 // GET /api/v1/runners/{runnerId}/stream and handles command events.
 func (l *SSEListener) listenRunner(ctx context.Context, runnerID string) {
 	backoff := initialBackoff
+	failures := 0
 
 	streamURL := fmt.Sprintf("%s/api/v1/runners/%s/stream",
 		strings.TrimRight(l.apiURL, "/"), runnerID)
@@ -231,6 +263,10 @@ func (l *SSEListener) listenRunner(ctx context.Context, runnerID string) {
 
 		if connected {
 			backoff = initialBackoff
+			failures = 0
+		} else {
+			failures++
+			warnStalledReconnect("runner", failures, backoff, "runner_id", runnerID)
 		}
 
 		slog.Debug("runner SSE reconnecting", "runner_id", runnerID, "backoff", backoff)

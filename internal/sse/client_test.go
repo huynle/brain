@@ -479,3 +479,113 @@ func writeSSEEvent(w http.ResponseWriter, eventType, data string) {
 
 // Suppress unused import warning
 var _ = json.Marshal
+
+// =============================================================================
+// Reconnect Tests
+//
+// A Client outlives its connections: the runner's SSE listeners construct one
+// client and call Connect in a loop forever. These pin that contract. The
+// client was single-use until 2026-09-03 — the event channel was allocated in
+// the constructor and closed on the first disconnect — so a runner that lost
+// its stream once went permanently deaf to dispatch commands while still
+// opening real sockets the server counted as delivered subscribers.
+// =============================================================================
+
+func TestClient_ReconnectDeliversEventsOnNewChannel(t *testing.T) {
+	var conns int32
+	var mu sync.Mutex
+	server := newSSETestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		conns++
+		n := conns
+		mu.Unlock()
+
+		writeSSEEvent(w, "connected", `{"type":"connected"}`)
+		if n == 1 {
+			// First connection drops, the way an API restart or a proxy
+			// blip drops it.
+			return
+		}
+		writeSSEEvent(w, "command", `{"command":"dispatch"}`)
+		<-r.Context().Done()
+	})
+	defer server.Close()
+
+	c := NewClient(server.URL, "", "test-project")
+	defer c.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	// Drain the first generation until the server hangs up and it closes.
+	for range c.Connect(ctx) {
+	}
+
+	// Reconnect. Before the fix this handed back the SAME already-closed
+	// channel, so the range below returned instantly and every event the
+	// client went on to read off the wire was discarded.
+	second := c.Connect(ctx)
+
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, ok := <-second:
+			if !ok {
+				t.Fatal("second Connect returned a closed channel: the client is single-use again")
+			}
+			if event.Type == "command" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for an event on the reconnected stream")
+		}
+	}
+}
+
+func TestClient_ReconnectRetiresPreviousConnection(t *testing.T) {
+	released := make(chan struct{}, 4)
+	server := newSSETestServer(t, func(w http.ResponseWriter, r *http.Request) {
+		writeSSEEvent(w, "connected", `{"type":"connected"}`)
+		<-r.Context().Done() // hold it open until the client lets go
+		released <- struct{}{}
+	})
+	defer server.Close()
+
+	c := NewClient(server.URL, "", "test-project")
+	defer c.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	awaitConnected(t, c.Connect(ctx))
+
+	// The second Connect must cancel the first connection. Without that its
+	// listen goroutine stays parked in scanner.Scan() holding the socket for
+	// the life of the process, and every reconnect leaks another one.
+	awaitConnected(t, c.Connect(ctx))
+
+	select {
+	case <-released:
+	case <-time.After(5 * time.Second):
+		t.Fatal("previous connection was not retired by the second Connect")
+	}
+}
+
+// awaitConnected reads until the stream reports "connected".
+func awaitConnected(t *testing.T, ch <-chan Event) {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case event, ok := <-ch:
+			if !ok {
+				t.Fatal("channel closed before a connected event arrived")
+			}
+			if event.Type == "connected" {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for the connected event")
+		}
+	}
+}

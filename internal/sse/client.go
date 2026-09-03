@@ -10,7 +10,70 @@ import (
 	"sync"
 )
 
+// eventBuffer is the depth of one connection's event channel.
+const eventBuffer = 32
+
+// stream is ONE connection's event channel plus the state needed to close it
+// exactly once.
+//
+// It is a separate type because a Client outlives its connections. Every
+// Connect gets a fresh stream, so a dropped connection closes only the
+// generation that owned it and the next Connect hands the caller a live
+// channel. Holding the channel on the Client instead — allocated once in the
+// constructor, closed on the first disconnect — made the client single-use:
+// reconnects kept opening real sockets while every event parsed off them was
+// dropped by the closed check, so a runner went permanently deaf to dispatch
+// commands while the server still counted them as delivered. That is
+// indistinguishable from an idle server, and it stayed that way for 17 hours
+// in production on 2026-09-03.
+type stream struct {
+	// mu serializes sends on ch against the close of ch. A sender holds it
+	// for the whole duration of the send, so anything that closes the channel
+	// must cancel the connection's context first — that is what unblocks an
+	// in-flight send and lets it release the lock. Guarding the closed flag
+	// with the same lock that covers the send is what makes the
+	// check-then-send safe; checking under a lock that is dropped before the
+	// send leaves a window where the close can land underneath a sender,
+	// which is a "send on closed channel" panic.
+	mu     sync.Mutex
+	ch     chan Event
+	closed bool
+}
+
+func newStream() *stream {
+	return &stream{ch: make(chan Event, eventBuffer)}
+}
+
+// send delivers an event unless this generation is already closed.
+func (s *stream) send(ctx context.Context, event Event) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+
+	select {
+	case s.ch <- event:
+	case <-ctx.Done():
+	}
+}
+
+// close closes the channel exactly once. Callers must cancel the owning
+// context first — see the note on stream.mu.
+func (s *stream) close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.closed {
+		s.closed = true
+		close(s.ch)
+	}
+}
+
 // Client connects to an SSE endpoint and emits events on a channel.
+//
+// A Client is reusable: call Connect again to reconnect after a drop. Each
+// Connect returns the channel for that connection, so a reconnect loop must
+// re-read it every iteration rather than caching the first one.
 type Client struct {
 	apiURL    string
 	apiToken  string
@@ -19,18 +82,7 @@ type Client struct {
 	mu        sync.Mutex
 	cancel    context.CancelFunc
 	connected bool
-
-	// sendMu serializes sends on eventCh against the close of eventCh.
-	// A sender holds it for the whole duration of the send, so anything
-	// that closes the channel must cancel the context first — that is what
-	// unblocks an in-flight send and lets it release the lock. Guarding the
-	// closed flag with the same lock that covers the send is what makes the
-	// check-then-send safe; checking under a lock that is dropped before the
-	// send leaves a window where Close() can close the channel underneath a
-	// sender, which is a "send on closed channel" panic.
-	sendMu  sync.Mutex
-	eventCh chan Event
-	closed  bool // tracks whether eventCh has been closed
+	cur       *stream // the generation the most recent Connect handed out
 }
 
 // NewClient creates a new SSE client for the given API URL, token, and project.
@@ -39,7 +91,6 @@ func NewClient(apiURL, apiToken, projectID string) *Client {
 		apiURL:    strings.TrimRight(apiURL, "/"),
 		apiToken:  apiToken,
 		projectID: projectID,
-		eventCh:   make(chan Event, 32),
 	}
 }
 
@@ -51,7 +102,6 @@ func NewClientWithURL(apiURL, apiToken, streamURL string) *Client {
 		apiURL:    streamURL, // store the full URL directly
 		apiToken:  apiToken,
 		projectID: "", // not used — streamURL overrides
-		eventCh:   make(chan Event, 32),
 	}
 }
 
@@ -64,39 +114,65 @@ func (c *Client) streamURL() string {
 	return fmt.Sprintf("%s/api/v1/tasks/%s/stream", c.apiURL, c.projectID)
 }
 
-// Connect starts the SSE connection. Returns a read-only event channel.
-// The channel receives parsed events. A "disconnected" event is sent when
-// the connection is lost. The channel is closed when the context is cancelled.
+// Connect starts an SSE connection and returns the read-only event channel for
+// THAT connection. The channel receives parsed events; a "disconnected" event
+// is sent when the connection is lost, after which the channel is closed.
+//
+// Calling Connect again reconnects. It returns a NEW channel and retires the
+// previous connection, so a reconnect loop must re-read the channel each time:
+//
+//	for {
+//	    ch := client.Connect(ctx)
+//	    for event := range ch { ... }
+//	    // ch is closed; loop to reconnect
+//	}
+//
+// Caching the channel from the first Connect reads a closed channel forever.
 func (c *Client) Connect(ctx context.Context) <-chan Event {
 	ctx, cancel := context.WithCancel(ctx)
+	s := newStream()
+
 	c.mu.Lock()
+	prevCancel := c.cancel
+	prev := c.cur
 	c.cancel = cancel
+	c.cur = s
 	c.connected = false
 	c.mu.Unlock()
 
-	go c.listen(ctx)
-	return c.eventCh
+	// Retire the previous generation before starting another one. Without
+	// this its listen goroutine stays parked in scanner.Scan() holding a
+	// socket open for the life of the process, and every reconnect leaks one
+	// more — a runner reconnecting on a 60s backoff accumulated dozens.
+	// Cancel before close, for the reason on stream.mu.
+	if prevCancel != nil {
+		prevCancel()
+	}
+	if prev != nil {
+		prev.close()
+	}
+
+	go c.listen(ctx, s)
+	return s.ch
 }
 
 // Close stops the SSE connection.
 func (c *Client) Close() {
-	// Cancel before taking sendMu. An in-flight sendEvent holds sendMu until
-	// its send completes or its context is done, so on a full channel with no
-	// reader, cancelling is the only thing that releases the lock.
+	// Cancel before closing the stream. An in-flight send holds stream.mu
+	// until its send completes or its context is done, so on a full channel
+	// with no reader, cancelling is the only thing that releases the lock.
 	c.mu.Lock()
 	cancel := c.cancel
 	c.cancel = nil
 	c.connected = false
+	s := c.cur
+	c.cur = nil
 	c.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
-	if !c.closed {
-		c.closed = true
-		close(c.eventCh)
+	if s != nil {
+		s.close()
 	}
 }
 
@@ -109,23 +185,23 @@ func (c *Client) Connected() bool {
 
 // listen connects to the SSE endpoint and sends parsed events to the channel.
 // Blocks until context is cancelled or the connection is lost.
-func (c *Client) listen(ctx context.Context) {
+func (c *Client) listen(ctx context.Context, s *stream) {
 	defer func() {
+		// Only clear connected if this generation is still the current one.
+		// A newer Connect may already have taken over, and a slow-exiting
+		// predecessor must not report its successor as disconnected.
 		c.mu.Lock()
-		c.connected = false
+		if c.cur == s {
+			c.connected = false
+		}
 		c.mu.Unlock()
 
-		c.sendMu.Lock()
-		if !c.closed {
-			c.closed = true
-			close(c.eventCh)
-		}
-		c.sendMu.Unlock()
+		s.close()
 	}()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.streamURL(), nil)
 	if err != nil {
-		c.sendEvent(ctx, Event{Type: "disconnected"})
+		s.send(ctx, Event{Type: "disconnected"})
 		return
 	}
 
@@ -137,7 +213,7 @@ func (c *Client) listen(ctx context.Context) {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		c.sendEvent(ctx, Event{Type: "disconnected"})
+		s.send(ctx, Event{Type: "disconnected"})
 		return
 	}
 	defer resp.Body.Close()
@@ -162,15 +238,18 @@ func (c *Client) listen(ctx context.Context) {
 				event, err := ParseEvent(lines)
 				if err != nil {
 					slog.Debug("SSE parse error", "error", err)
-					c.sendEvent(ctx, Event{Type: "error", Data: []byte(fmt.Sprintf(`{"message":%q}`, err.Error()))})
+					s.send(ctx, Event{Type: "error", Data: []byte(fmt.Sprintf(`{"message":%q}`, err.Error()))})
 				} else if event != nil {
-					// Track connected state
+					// Track connected state, but only while this generation
+					// is still current — same reason as the defer.
 					if event.Type == "connected" {
 						c.mu.Lock()
-						c.connected = true
+						if c.cur == s {
+							c.connected = true
+						}
 						c.mu.Unlock()
 					}
-					c.sendEvent(ctx, *event)
+					s.send(ctx, *event)
 				}
 				lines = nil
 			}
@@ -184,20 +263,5 @@ func (c *Client) listen(ctx context.Context) {
 		return
 	}
 
-	c.sendEvent(ctx, Event{Type: "disconnected"})
-}
-
-// sendEvent sends an event to the channel, respecting context cancellation.
-func (c *Client) sendEvent(ctx context.Context, event Event) {
-	// Held across the send, not just the closed check — see sendMu.
-	c.sendMu.Lock()
-	defer c.sendMu.Unlock()
-	if c.closed {
-		return
-	}
-
-	select {
-	case c.eventCh <- event:
-	case <-ctx.Done():
-	}
+	s.send(ctx, Event{Type: "disconnected"})
 }

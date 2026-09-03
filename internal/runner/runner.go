@@ -25,6 +25,10 @@ import (
 // renewed well before they expire.
 const DefaultRenewInterval = 5 * time.Minute
 
+// reregisterCooldown bounds how often a runner the API says it does not know
+// will try to register itself again. See reregisterIfUnknown.
+const reregisterCooldown = 30 * time.Second
+
 // ErrTaskClaimConflict indicates an expected runner race where another runner
 // claimed or was assigned the task before this runner could start it.
 var ErrTaskClaimConflict = errors.New("task claim conflict")
@@ -208,14 +212,15 @@ type TaskRunner struct {
 	stateMgr         TaskStateManager
 
 	// Mutable state (protected by mu)
-	mu              sync.RWMutex
-	status          RunnerStatus
-	stats           RunnerStats
-	startedAt       time.Time
-	lastCronCheckAt time.Time
-	maxParallel     int    // runtime-adjustable max parallel (0 = use config.MaxParallel)
-	defaultModel    string // runtime-adjustable default model (empty = no override)
-	lastClaimDate   string // YYYY-MM-DD of last claim, for first_task_today detection
+	mu               sync.RWMutex
+	status           RunnerStatus
+	stats            RunnerStats
+	startedAt        time.Time
+	lastCronCheckAt  time.Time
+	lastReregisterAt time.Time // rate-limits reregisterIfUnknown
+	maxParallel      int       // runtime-adjustable max parallel (0 = use config.MaxParallel)
+	defaultModel     string    // runtime-adjustable default model (empty = no override)
+	lastClaimDate    string    // YYYY-MM-DD of last claim, for first_task_today detection
 
 	// Pause state (protected by pauseMu).
 	//
@@ -867,12 +872,48 @@ func (tr *TaskRunner) fetchRunnerPauseState(ctx context.Context) (bool, bool) {
 	info, err := fetcher.GetRunner(ctx, tr.runnerID)
 	if err != nil {
 		tr.logger.Printf("get runner pause state failed: %v", err)
+		tr.reregisterIfUnknown(ctx, err)
 		return false, false
 	}
 	if info == nil {
 		return false, false
 	}
 	return info.Paused, true
+}
+
+// reregisterIfUnknown re-registers this runner when the API reports it has no
+// record of it.
+//
+// A 404 from GetRunner is not a transient error — it is the server stating the
+// registry row is gone. Two ways that happens in practice: the API's registry
+// was reset, or a predecessor sharing this state dir deregistered *after* this
+// process registered. `kill <pid> && brain runner start` races exactly that
+// way, because && fires when the signal is delivered, not when the old process
+// exits, and both processes resolve the same persisted runner id.
+//
+// Without this the runner spins forever in a state it can already diagnose:
+// heartbeats 500, pause reads 404, no dispatch can be routed to it, and it
+// shows up nowhere in the UI. Registration is idempotent, so recovery costs
+// one poll tick instead of an operator noticing an empty runner list.
+func (tr *TaskRunner) reregisterIfUnknown(ctx context.Context, err error) {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		return
+	}
+
+	// Cooldown so a registration endpoint that keeps failing is retried on a
+	// leash rather than on every tick.
+	tr.mu.Lock()
+	if !tr.lastReregisterAt.IsZero() && time.Since(tr.lastReregisterAt) < reregisterCooldown {
+		tr.mu.Unlock()
+		return
+	}
+	tr.lastReregisterAt = time.Now()
+	tr.mu.Unlock()
+
+	slog.Warn("API has no record of this runner; re-registering",
+		"runner_id", tr.runnerID)
+	tr.registerWithAPI(ctx)
 }
 
 // serverPausedFor returns true when the server has either paused all tasks

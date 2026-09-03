@@ -428,6 +428,28 @@ func TestMatchFilterValue(t *testing.T) {
 		{"in: empty members ignored", "completed", "in:completed,,", true},
 		{"in: empty actual no match", "", "in:completed,blocked", false},
 		{"in: empty actual matches empty member excluded", "", "in:,", false},
+
+		// has: set-membership over a comma-joined ACTUAL value.
+		{"has: hit first element", "supernote,page,draft", "has:supernote", true},
+		{"has: hit middle element", "supernote,page,draft", "has:page", true},
+		{"has: hit last element", "supernote,page,draft", "has:draft", true},
+		{"has: miss", "supernote,page,draft", "has:archived", false},
+		{"has: single element actual hit", "supernote", "has:supernote", true},
+		{"has: single element actual miss", "supernote", "has:page", false},
+		// Element-exact, NOT substring: this is the whole point of has: over
+		// a contains: form. "note" must not match inside "supernote".
+		{"has: substring near-miss is not a match", "supernote,page", "has:note", false},
+		{"has: reverse substring near-miss is not a match", "note,page", "has:supernote", false},
+		{"has: whitespace around elements trimmed", "supernote , page , draft", "has:page", true},
+		{"has: whitespace around operand trimmed", "supernote,page", "has: page ", true},
+		{"has: empty actual is false", "", "has:page", false},
+		// Fail CLOSED on an empty operand. The nearby normalizeWebhookPath
+		// bug fails OPEN on empty input and matches everything; do not
+		// repeat that shape.
+		{"has: empty operand fails closed", "supernote,page", "has:", false},
+		{"has: whitespace-only operand fails closed", "supernote,page", "has:   ", false},
+		{"has: empty operand with empty actual fails closed", "", "has:", false},
+		{"has: does not match an empty element in actual", "a,,b", "has:", false},
 	}
 
 	for _, tt := range tests {

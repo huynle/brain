@@ -9,6 +9,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -800,6 +801,202 @@ func TestListAttachmentMetadataMapsServiceErrors(t *testing.T) {
 func newAttachmentTestRouter(attachments *mockAttachmentService) http.Handler {
 	h := NewHandler(&mockBrainService{}, WithAttachmentService(attachments))
 	return NewRouter(config.Config{}, WithHandler(h))
+}
+
+// newAttachmentTestRouterWithEvents wires an event service alongside the
+// attachment service so attachment event emission can be observed.
+func newAttachmentTestRouterWithEvents(attachments *mockAttachmentService, es *mockEventService) http.Handler {
+	h := NewHandler(&mockBrainService{},
+		WithAttachmentService(attachments),
+		WithEventService(es),
+	)
+	return NewRouter(config.Config{}, WithHandler(h))
+}
+
+// TestAttachmentEventTypesAreRegistered guards the failure mode that made
+// webhook.received unreachable for years: an event type that exists as a
+// constant but is missing from AllEventTypes is rejected by
+// EventServiceImpl.Ingest and makes POST /api/v1/events return 400. The
+// mock event service does not validate, so without this the handler tests
+// below would pass against an unusable event type.
+func TestAttachmentEventTypesAreRegistered(t *testing.T) {
+	for _, eventType := range []string{types.EventAttachmentCreated, types.EventEntryAttachmentAdded} {
+		if !types.IsValidEventType(eventType) {
+			t.Errorf("IsValidEventType(%q) = false; add it to types.AllEventTypes or Ingest will reject it", eventType)
+		}
+	}
+}
+
+func TestCreateAttachmentEmitsAttachmentCreatedEvent(t *testing.T) {
+	attachments := &mockAttachmentService{}
+	es := &mockEventService{}
+	router := newAttachmentTestRouterWithEvents(attachments, es)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("project_id", "test-project"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "page.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// PNG magic bytes so DetectContentType reports image/png.
+	payload := []byte("\x89PNG\r\n\x1a\nfake-image-bytes")
+	if _, err := part.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventAttachmentCreated {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventAttachmentCreated)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "test-project" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "test-project")
+	}
+	if evt.Metadata["attachment_id"] != "att_created" {
+		t.Errorf("metadata[attachment_id] = %q, want %q", evt.Metadata["attachment_id"], "att_created")
+	}
+	if evt.Metadata["filename"] != "page.png" {
+		t.Errorf("metadata[filename] = %q, want %q", evt.Metadata["filename"], "page.png")
+	}
+	if evt.Metadata["media_type"] != "image/png" {
+		t.Errorf("metadata[media_type] = %q, want %q", evt.Metadata["media_type"], "image/png")
+	}
+	wantSize := strconv.Itoa(len(payload))
+	if evt.Metadata["size_bytes"] != wantSize {
+		t.Errorf("metadata[size_bytes] = %q, want %q", evt.Metadata["size_bytes"], wantSize)
+	}
+}
+
+// TestCreateAttachmentDoesNotEmitEventOnFailure keeps the emitter on the
+// success path only — a rejected upload must not look like a stored one.
+func TestCreateAttachmentDoesNotEmitEventOnFailure(t *testing.T) {
+	attachments := &mockAttachmentService{createErr: errors.New("boom")}
+	es := &mockEventService{}
+	router := newAttachmentTestRouterWithEvents(attachments, es)
+
+	body := &bytes.Buffer{}
+	writer := multipart.NewWriter(body)
+	if err := writer.WriteField("project_id", "test-project"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "page.png")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte("data")); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/attachments", body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	router.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusCreated {
+		t.Fatalf("expected failure status, got %d", rec.Code)
+	}
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 0 {
+		t.Fatalf("ingested events = %d, want 0 on failure", len(es.ingested))
+	}
+}
+
+func TestAttachEntryAttachmentEmitsEntryAttachmentAddedEvent(t *testing.T) {
+	attachments := &mockAttachmentService{}
+	es := &mockEventService{}
+	router := newAttachmentTestRouterWithEvents(attachments, es)
+
+	payload := `{"project_id":"test-project","attachment":{"id":"att_9","content_type":"image/png","role":"source"}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/entries/entry-123/attachments", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	evt := es.ingested[0]
+	if evt.Type != types.EventEntryAttachmentAdded {
+		t.Errorf("event type = %q, want %q", evt.Type, types.EventEntryAttachmentAdded)
+	}
+	if evt.Source != types.EventSourceAPI {
+		t.Errorf("event source = %q, want %q", evt.Source, types.EventSourceAPI)
+	}
+	if evt.ProjectID != "test-project" {
+		t.Errorf("project_id = %q, want %q", evt.ProjectID, "test-project")
+	}
+	// TaskID/TaskPath carry the ENTRY identity so once_per: task_id and
+	// {{.TaskPath}} work for attachment-driven automations too.
+	if evt.TaskID != "entry-123" {
+		t.Errorf("task_id = %q, want %q", evt.TaskID, "entry-123")
+	}
+	if evt.TaskPath != "projects/test-project/report/entry.md" {
+		t.Errorf("task_path = %q, want %q", evt.TaskPath, "projects/test-project/report/entry.md")
+	}
+	if evt.Metadata["attachment_id"] != "att_9" {
+		t.Errorf("metadata[attachment_id] = %q, want %q", evt.Metadata["attachment_id"], "att_9")
+	}
+	if evt.Metadata["media_type"] != "image/png" {
+		t.Errorf("metadata[media_type] = %q, want %q", evt.Metadata["media_type"], "image/png")
+	}
+	if evt.Metadata["role"] != "source" {
+		t.Errorf("metadata[role] = %q, want %q", evt.Metadata["role"], "source")
+	}
+}
+
+// TestAttachEntryAttachmentDoesNotEmitEventOnFailure keeps the emitter on the
+// success path only.
+func TestAttachEntryAttachmentDoesNotEmitEventOnFailure(t *testing.T) {
+	attachments := &mockAttachmentService{attachErr: errors.New("boom")}
+	es := &mockEventService{}
+	router := newAttachmentTestRouterWithEvents(attachments, es)
+
+	payload := `{"project_id":"test-project","attachment":{"id":"att_9"}}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/entries/entry-123/attachments", strings.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK {
+		t.Fatalf("expected failure status, got %d", rec.Code)
+	}
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 0 {
+		t.Fatalf("ingested events = %d, want 0 on failure", len(es.ingested))
+	}
 }
 
 func TestEntryAttachmentRoutesAreNotShadowedByEntryWildcardRoutes(t *testing.T) {

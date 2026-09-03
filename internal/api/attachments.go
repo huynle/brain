@@ -69,6 +69,20 @@ func (h *Handler) HandleCreateAttachment(w http.ResponseWriter, r *http.Request)
 		writeAttachmentServiceError(w, err)
 		return
 	}
+
+	// Emit attachment.created. Values come from the response, not the
+	// request: Create may reuse existing metadata for identical content, in
+	// which case the stored attachment's ID is the one consumers must see.
+	evt := types.NewEvent(types.EventAttachmentCreated, types.EventSourceAPI)
+	evt.ProjectID = projectID
+	evt.Metadata = map[string]string{
+		"attachment_id": resp.Attachment.ID,
+		"media_type":    resp.Attachment.ContentType,
+		"filename":      resp.Attachment.Filename,
+		"size_bytes":    strconv.FormatInt(resp.Attachment.Size, 10),
+	}
+	h.emitEvent(r.Context(), evt)
+
 	WriteJSON(w, http.StatusCreated, resp)
 }
 
@@ -314,7 +328,47 @@ func (h *Handler) HandleAttachEntryAttachment(w http.ResponseWriter, r *http.Req
 		writeAttachmentServiceError(w, err)
 		return
 	}
+
+	// Emit entry.attachment_added. TaskID/TaskPath carry the ENTRY identity
+	// so once_per: task_id dedups per entry and path templates resolve.
+	role := strings.TrimSpace(req.Attachment.Role)
+	stored := resolveAttachedReference(resp.Attachments, req.Attachment.ID, role)
+	evt := types.NewEvent(types.EventEntryAttachmentAdded, types.EventSourceAPI)
+	evt.ProjectID = projectID
+	evt.TaskID = resp.EntryID
+	evt.TaskPath = resp.Path
+	evt.Metadata = map[string]string{
+		"attachment_id": req.Attachment.ID,
+		"media_type":    stored.ContentType,
+		"role":          role,
+	}
+	h.emitEvent(r.Context(), evt)
+
 	WriteJSON(w, http.StatusOK, resp)
+}
+
+// resolveAttachedReference finds the stored reference for an attachment in an
+// attach response. The service resolves content type from the stored row, so
+// the request's copy is often empty — a caller may legitimately post only an
+// id. Preference is the ref matching both id and role, then id alone, then
+// the request's own values as a last resort.
+func resolveAttachedReference(refs []types.AttachmentReference, attachmentID, role string) types.AttachmentReference {
+	var byID *types.AttachmentReference
+	for i := range refs {
+		if refs[i].ID != attachmentID {
+			continue
+		}
+		if strings.TrimSpace(refs[i].Role) == role {
+			return refs[i]
+		}
+		if byID == nil {
+			byID = &refs[i]
+		}
+	}
+	if byID != nil {
+		return *byID
+	}
+	return types.AttachmentReference{ID: attachmentID, Role: role}
 }
 
 // HandleDetachEntryAttachment handles DELETE /entries/{id}/attachments/{attachmentID}.

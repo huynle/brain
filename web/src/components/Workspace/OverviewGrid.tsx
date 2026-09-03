@@ -26,22 +26,12 @@ import {
   type FeatureLifecycle,
 } from "../../lib/features";
 import { laneVisible } from "../../lib/lane";
+import { useDeferredPreview } from "../../hooks/useDeferredPreview";
+import { LIFECYCLE_TONE, LifecycleBadge } from "../common/LifecycleBadge";
 import { ProjectTiles } from "./ProjectTiles";
 import { EntriesPreview } from "./EntriesPreview";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
 import type { Task } from "../../lib/types";
-
-// Map internal lifecycle key → wireframe tone/label.
-const LIFECYCLE_TONE: Record<
-  FeatureLifecycle,
-  { tone: string; label: string }
-> = {
-  "in-progress": { tone: "active", label: "active" },
-  blocked: { tone: "blocked", label: "blocked" },
-  finished: { tone: "finished", label: "finished" },
-  "mr-open": { tone: "mr", label: "MR open" },
-  merged: { tone: "merged", label: "merged" },
-};
 
 export function OverviewGrid(): JSX.Element {
   const { data: projects } = useProjects();
@@ -52,7 +42,11 @@ export function OverviewGrid(): JSX.Element {
   const hideAllEmpty = useWorkspace((s) => s.hideAllEmpty);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const openModal = useModal((s) => s.open);
-  const openInSidebar = useWorkspace((s) => s.openInSidebar);
+  // openOrReuseInSidebar, not openInSidebar: the latter opens a NEW tab
+  // every time, so clicking down a lane of features would leave one pane
+  // per click. Reuse is what makes single-click preview viable at all.
+  const previewInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
+  const openInFocus = useWorkspace((s) => s.openInFocus);
   const setView = useWorkspace((s) => s.setView);
   const toast = useUI((s) => s.toast);
 
@@ -67,16 +61,34 @@ export function OverviewGrid(): JSX.Element {
   // whole grid — its overlays render once at the end.
   const featureCtxFor = useFeatureActionContextFactory();
   const { rowProps, overlays } = useRowActions();
+  // Every feature surface on this page follows the app-wide click
+  // contract: single click previews in the side panel, double click pins
+  // into Focus. These used to open a MODAL instead — the one place in the
+  // app where clicking a feature took over the screen.
+  const preview = useDeferredPreview();
+  const previewFeature = (f: DerivedFeature & { projectId: string }) =>
+    previewInSidebar(
+      "feature-detail",
+      { projectId: f.projectId, featureId: f.id },
+      f.name,
+    );
+  const pinFeature = (f: DerivedFeature & { projectId: string }) => {
+    preview.cancel();
+    openInFocus(
+      "feature-detail",
+      { projectId: f.projectId, featureId: f.id },
+      f.name,
+    );
+  };
+  // Enter previews immediately — the keyboard has no double-click to wait
+  // out.
   const featureRowProps = (f: DerivedFeature & { projectId: string }) =>
     rowProps(buildFeatureActions(f, featureCtxFor(f.projectId)), f.name, () =>
-      openModal("feature", { projectId: f.projectId, featureId: f.id }),
+      previewFeature(f),
     );
 
   const projectIds = projects ?? [];
-  const hiddenSet = useMemo(
-    () => new Set(hiddenProjects),
-    [hiddenProjects],
-  );
+  const hiddenSet = useMemo(() => new Set(hiddenProjects), [hiddenProjects]);
 
   // On first load — if user hasn't curated a hidden list yet, auto-hide
   // projects with zero tasks so the grid isn't overwhelmed. Runs once
@@ -146,14 +158,22 @@ export function OverviewGrid(): JSX.Element {
     blocked: [],
     finished: [],
     "mr-open": [],
+    "ready-to-merge": [],
     merged: [],
   };
   for (const f of allDerived) byLifecycle[f.lifecycle].push(f);
 
-  // "Needs attention" = blocked + mr-open + features whose runner is stale/offline
+  // "Needs attention" = blocked + either MR state + features whose runner
+  // is stale/offline. Both MR states qualify: one is waiting on a reviewer,
+  // the other on the merge executor, and in both the work itself has stopped.
   const attention = useMemo(() => {
     return allDerived.filter((f) => {
-      if (f.lifecycle === "blocked" || f.lifecycle === "mr-open") return true;
+      if (
+        f.lifecycle === "blocked" ||
+        f.lifecycle === "mr-open" ||
+        f.lifecycle === "ready-to-merge"
+      )
+        return true;
       const runnerId = featureAssignments[f.id];
       if (!runnerId) return false;
       const runner = runners.find((r) => r.runner_id === runnerId);
@@ -184,7 +204,9 @@ export function OverviewGrid(): JSX.Element {
       <div className="workflow-center">
         <div className="wc-head">
           <div>
-            <div className="wc-title">Workflow command center · all projects</div>
+            <div className="wc-title">
+              Workflow command center · all projects
+            </div>
             <div className="wc-sub">
               Execute features, track automation consequences, and update Brain
               memory from one control surface.
@@ -193,16 +215,13 @@ export function OverviewGrid(): JSX.Element {
           <button
             className="primary"
             onClick={() => {
-              if (executable[0])
-                toast(`Dispatch ${executable[0].id}`, "info");
+              if (executable[0]) toast(`Dispatch ${executable[0].id}`, "info");
               else toast("No executable features", "info");
             }}
           >
             Run next ready feature
           </button>
-          <button onClick={() => setView("entries")}>
-            Open Brain entries
-          </button>
+          <button onClick={() => setView("entries")}>Open Brain entries</button>
         </div>
         <div className="wc-metrics">
           <div>
@@ -232,6 +251,10 @@ export function OverviewGrid(): JSX.Element {
             <span> MRs open</span>
           </div>
           <div>
+            <b>{byLifecycle["ready-to-merge"].length}</b>
+            <span> ready to merge</span>
+          </div>
+          <div>
             <b>{byLifecycle.merged.length}</b>
             <span> merged</span>
           </div>
@@ -240,29 +263,18 @@ export function OverviewGrid(): JSX.Element {
           {executable.slice(0, 5).map((f) => {
             const runnerId = featureAssignments[f.id];
             const runner = runners.find((r) => r.runner_id === runnerId);
-            const tone = LIFECYCLE_TONE[f.lifecycle];
             return (
               <div
                 key={`${f.projectId}:${f.id}`}
                 className="wc-row"
                 {...featureRowProps(f)}
               >
-                <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+                <LifecycleBadge lifecycle={f.lifecycle} href={f.prUrl} />
                 <span className="wc-feature">{f.name}</span>
                 <span className="wc-meta">
                   {f.projectId} · {runner ? runner.runner_id : "unassigned"}
                 </span>
-                <button
-                  onClick={() =>
-                    openInSidebar(
-                      "feature-detail",
-                      { projectId: f.projectId, featureId: f.id },
-                      f.name,
-                    )
-                  }
-                >
-                  Plan
-                </button>
+                <button onClick={() => previewFeature(f)}>Plan</button>
                 <button
                   onClick={() =>
                     openModal("feature", {
@@ -298,7 +310,6 @@ export function OverviewGrid(): JSX.Element {
           </div>
           <div className="rq-list">
             {attention.map((f) => {
-              const tone = LIFECYCLE_TONE[f.lifecycle];
               const runnerId = featureAssignments[f.id];
               const runner = runners.find((r) => r.runner_id === runnerId);
               const runnerIssue =
@@ -310,19 +321,23 @@ export function OverviewGrid(): JSX.Element {
                   key={`${f.projectId}:${f.id}`}
                   className="rq-item"
                   {...featureRowProps(f)}
-                  onClick={() =>
-                    openModal("feature", {
-                      projectId: f.projectId,
-                      featureId: f.id,
-                    })
-                  }
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).closest("button")) return;
+                    preview.schedule(() => previewFeature(f));
+                  }}
+                  onDoubleClick={(e) => {
+                    if ((e.target as HTMLElement).closest("button")) return;
+                    pinFeature(f);
+                  }}
                 >
-                  <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+                  <LifecycleBadge lifecycle={f.lifecycle} href={f.prUrl} />
                   <span className="rq-name">{f.name}</span>
+                  {/* The badge itself now says which MR state this is, and
+                      links out when there is a real one — the old ` · MR
+                      open` suffix here said neither. */}
                   <span className="rq-meta">
                     {f.projectId}
                     {runnerIssue ? ` · ${runnerIssue}` : ""}
-                    {f.prUrl && !runnerIssue ? ` · MR open` : ""}
                   </span>
                 </div>
               );
@@ -339,6 +354,7 @@ export function OverviewGrid(): JSX.Element {
             ["blocked", "blocked"],
             ["finished", "finished"],
             ["mr-open", "mr"],
+            ["ready-to-merge", "ready"],
             ["merged", "merged"],
           ] as Array<[FeatureLifecycle, string]>
         ).map(([key, laneClass]) => {
@@ -358,12 +374,8 @@ export function OverviewGrid(): JSX.Element {
                     key={`${f.projectId}:${f.id}`}
                     className="lane-card"
                     {...featureRowProps(f)}
-                    onClick={() =>
-                      openModal("feature", {
-                        projectId: f.projectId,
-                        featureId: f.id,
-                      })
-                    }
+                    onClick={() => preview.schedule(() => previewFeature(f))}
+                    onDoubleClick={() => pinFeature(f)}
                   >
                     <span className="lane-name">{f.name}</span>
                     <span className="lane-meta">
@@ -407,8 +419,8 @@ export function OverviewGrid(): JSX.Element {
       {projectIds.length > 0 && visibleProjectIds.length === 0 && (
         <div className="empty-state">
           <div>
-            All projects are hidden. Click a project in the sidebar's
-            Hidden group to bring one back.
+            All projects are hidden. Click a project in the sidebar's Hidden
+            group to bring one back.
           </div>
         </div>
       )}

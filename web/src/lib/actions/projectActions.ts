@@ -27,6 +27,8 @@ export interface ProjectActionContext {
   openProject: (projectId: string) => void;
   /** Hide the card from the overview grid. */
   hideProject: (projectId: string) => void;
+  /** Put a hidden card back on the overview grid. */
+  showProject: (projectId: string) => void;
   /** POST /tasks/runner/pause/{projectId} — stop new task dispatch. */
   pauseProject: (projectId: string) => Promise<void>;
   /** POST /tasks/runner/resume/{projectId}. */
@@ -86,6 +88,8 @@ export function buildProjectActions(
     tasksPaused?: boolean;
     /** From `isProjectAutomationsPaused`. */
     automationsPaused?: boolean;
+    /** True when the project is currently hidden from the workspace. */
+    hidden?: boolean;
   } = {},
 ): ActionDescriptor[] {
   const { tasksPaused, automationsPaused } = opts;
@@ -149,12 +153,25 @@ export function buildProjectActions(
       group: "navigate",
       run: async () => ctx.openProject(projectId),
     },
-    {
-      id: "hide",
-      label: "Hide from workspace",
-      group: "navigate",
-      run: async () => ctx.hideProject(projectId),
-    },
+    // The single verb whose LABEL depends on where the row is. Every other
+    // verb here means the same thing hidden or not — a hidden project is
+    // hidden from the board, not switched off: its runner keeps dispatching,
+    // its dials still matter, and it can still be opened or deleted. Only
+    // "hide" would be a no-op on a row that is already hidden, so it becomes
+    // its inverse rather than sitting there disabled.
+    opts.hidden
+      ? {
+          id: "show",
+          label: "Show in workspace",
+          group: "navigate",
+          run: async () => ctx.showProject(projectId),
+        }
+      : {
+          id: "hide",
+          label: "Hide from workspace",
+          group: "navigate",
+          run: async () => ctx.hideProject(projectId),
+        },
 
     // ─── danger ─────────────────────────────────────────────────────
     // The only verb here that destroys anything. Hide (above) is its

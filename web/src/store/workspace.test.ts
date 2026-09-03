@@ -25,6 +25,12 @@ import {
   clampSidebarWidth,
 } from "./workspace";
 import { countLeaves, walkLeaves, type DockNode } from "../lib/dock";
+import {
+  installNavPush,
+  leafIdentity,
+  withoutNav,
+  type NavEntry,
+} from "../lib/navBridge";
 
 /** Assert a node is a leaf carrying `title`. */
 function assertLeafTitle(node: DockNode, title: string): void {
@@ -177,10 +183,7 @@ test("workspace: assignFeature overwrites existing mapping", () => {
   resetStore();
   useWorkspace.getState().assignFeature("panes-v2", "r-a");
   useWorkspace.getState().assignFeature("panes-v2", "r-b");
-  assert.equal(
-    useWorkspace.getState().featureAssignments["panes-v2"],
-    "r-b",
-  );
+  assert.equal(useWorkspace.getState().featureAssignments["panes-v2"], "r-b");
 });
 
 test("workspace: unassignFeature removes the mapping", () => {
@@ -433,7 +436,13 @@ test("workspace: openInFocusAt seeds the root leaf on an empty dock", () => {
   resetStore();
   useWorkspace
     .getState()
-    .openInFocusAt("browser", { url: "https://a" }, "A", "no-such-leaf", "left");
+    .openInFocusAt(
+      "browser",
+      { url: "https://a" },
+      "A",
+      "no-such-leaf",
+      "left",
+    );
   const s = useWorkspace.getState();
   assert.equal(s.view, "focus");
   assert.ok(s.docks.focus && s.docks.focus.type === "leaf");
@@ -480,7 +489,8 @@ test("workspace: openInFocusAt honours each of the four split edges", () => {
     if (tree.type !== "split") return assert.fail("expected split root");
     const inner = tree.children[1];
     assert.equal(inner.type, "split", `edge ${c.edge}: B's slot should split`);
-    if (inner.type === "split") assert.equal(inner.dir, c.dir, `edge ${c.edge}`);
+    if (inner.type === "split")
+      assert.equal(inner.dir, c.dir, `edge ${c.edge}`);
   }
 });
 
@@ -530,7 +540,13 @@ test("workspace: openInFocusAt falls back to the last-touched rule when the targ
   useWorkspace.getState().setLastFocusLeaf(aId);
   useWorkspace
     .getState()
-    .openInFocusAt("browser", { url: "https://n" }, "NEW", "leaf_closed", "left");
+    .openInFocusAt(
+      "browser",
+      { url: "https://n" },
+      "NEW",
+      "leaf_closed",
+      "left",
+    );
 
   assert.deepEqual(focusTitles().sort(), ["A", "B", "NEW"]);
   const tree = useWorkspace.getState().docks.focus!;
@@ -666,7 +682,11 @@ test("workspace: openInSidebar on non-empty tree merges into tabs", () => {
     .openInSidebar("task-detail", { projectId: "p1", taskId: "t1" }, "T1");
   useWorkspace
     .getState()
-    .openInSidebar("feature-detail", { projectId: "p1", featureId: "f1" }, "F1");
+    .openInSidebar(
+      "feature-detail",
+      { projectId: "p1", featureId: "f1" },
+      "F1",
+    );
   const tree = useWorkspace.getState().docks.sidebar;
   assert.ok(tree);
   assert.equal(tree!.type, "tabs");
@@ -804,12 +824,19 @@ test("workspace: openInSidebar(task-detail) opens a task-detail leaf", () => {
   resetStore();
   useWorkspace
     .getState()
-    .openInSidebar("task-detail", { projectId: "proj-a", taskId: "task-9" }, "Task 9");
+    .openInSidebar(
+      "task-detail",
+      { projectId: "proj-a", taskId: "task-9" },
+      "Task 9",
+    );
   const tree = useWorkspace.getState().docks.sidebar;
   assert.ok(tree && tree.type === "leaf");
   if (tree && tree.type === "leaf") {
     assert.equal(tree.leaf.kind, "task-detail");
-    assert.deepEqual(tree.leaf.target, { projectId: "proj-a", taskId: "task-9" });
+    assert.deepEqual(tree.leaf.target, {
+      projectId: "proj-a",
+      taskId: "task-9",
+    });
   }
 });
 
@@ -817,12 +844,19 @@ test("workspace: openInSidebar(feature-detail) opens a feature-detail leaf", () 
   resetStore();
   useWorkspace
     .getState()
-    .openInSidebar("feature-detail", { projectId: "proj-a", featureId: "feat-1" }, "Feat 1");
+    .openInSidebar(
+      "feature-detail",
+      { projectId: "proj-a", featureId: "feat-1" },
+      "Feat 1",
+    );
   const tree = useWorkspace.getState().docks.sidebar;
   assert.ok(tree && tree.type === "leaf");
   if (tree && tree.type === "leaf") {
     assert.equal(tree.leaf.kind, "feature-detail");
-    assert.deepEqual(tree.leaf.target, { projectId: "proj-a", featureId: "feat-1" });
+    assert.deepEqual(tree.leaf.target, {
+      projectId: "proj-a",
+      featureId: "feat-1",
+    });
   }
 });
 
@@ -861,10 +895,18 @@ test("workspace: opening a second item into the sidebar adds it alongside the fi
   resetStore();
   useWorkspace
     .getState()
-    .openInSidebar("feature-detail", { projectId: "proj-a", featureId: "feat-1" }, "Feat 1");
+    .openInSidebar(
+      "feature-detail",
+      { projectId: "proj-a", featureId: "feat-1" },
+      "Feat 1",
+    );
   useWorkspace
     .getState()
-    .openInSidebar("task-detail", { projectId: "proj-b", taskId: "task-2" }, "Task 2");
+    .openInSidebar(
+      "task-detail",
+      { projectId: "proj-b", taskId: "task-2" },
+      "Task 2",
+    );
   const tree = useWorkspace.getState().docks.sidebar;
   assert.ok(tree);
   assert.equal(tree!.type, "tabs");
@@ -1025,7 +1067,6 @@ test("workspace: forgetProject on an unknown project is a no-op", () => {
   assert.equal(w().docks.focus, before);
 });
 
-
 // ─── openInFocusGroup ─────────────────────────────────────────────────
 
 /** Titles of every leaf in a dock, in tree order. */
@@ -1075,9 +1116,9 @@ test("openInFocusGroup: adds beside an existing layout instead of replacing it",
 
 test("openInFocusGroup: a single item still works, and an empty list is a no-op", () => {
   resetStore();
-  useWorkspace.getState().openInFocusGroup([
-    { kind: "logs", target: {}, title: "Logs" },
-  ]);
+  useWorkspace
+    .getState()
+    .openInFocusGroup([{ kind: "logs", target: {}, title: "Logs" }]);
   assert.equal(countLeaves(useWorkspace.getState().docks.focus), 1);
 
   const before = useWorkspace.getState().docks.focus;
@@ -1102,9 +1143,10 @@ test("openInFocusGroup: points the drop hint at the group it just made", () => {
 /** The id of the first leaf in a dock. */
 function firstLeafId(tree: DockNode | null): string {
   let id = "";
-  if (tree) walkLeaves(tree, (_l, leafId) => {
-    if (!id) id = leafId;
-  });
+  if (tree)
+    walkLeaves(tree, (_l, leafId) => {
+      if (!id) id = leafId;
+    });
   return id;
 }
 
@@ -1160,4 +1202,271 @@ test("sendLeafToOtherDock: an unknown leaf id changes nothing", () => {
   const before = useWorkspace.getState().docks;
   useWorkspace.getState().sendLeafToOtherDock("leaf_nope", "focus");
   assert.equal(useWorkspace.getState().docks, before);
+});
+
+// ─── closeCurrentLeaf (the ⌃W / ⇧⌘X target) ──────────────────────────
+
+const w = () => useWorkspace.getState();
+
+test("workspace: closeCurrentLeaf closes the pane in the dock on screen", () => {
+  resetStore();
+  w().openInFocus("browser", { url: "https://a" }, "A");
+  w().setView("focus");
+  assert.ok(w().docks.focus);
+
+  w().closeCurrentLeaf();
+  assert.equal(w().docks.focus, null, "the focus pane should be gone");
+});
+
+// The gate that stops a chord from deleting something invisible. `docks`
+// is persisted, so an ungated shortcut pressed in Overview would remove a
+// Focus pane the user cannot see — and it would still be gone on reload.
+test("workspace: closeCurrentLeaf refuses a dock that is not on screen", () => {
+  resetStore();
+  w().openInFocus("browser", { url: "https://a" }, "A");
+  w().setView("overview"); // Focus dock is not visible here
+  const before = w().docks.focus;
+  assert.ok(before);
+
+  w().closeCurrentLeaf();
+  assert.equal(
+    w().docks.focus,
+    before,
+    "a pane the user cannot see must not be closable by a chord",
+  );
+});
+
+test("workspace: closeCurrentLeaf closes a sidebar pane when the sidebar is open", () => {
+  resetStore();
+  w().openInSidebar("browser", { url: "https://s" }, "S");
+  assert.ok(w().docks.sidebar);
+  assert.equal(w().sidebarDockOpen, true);
+
+  w().closeCurrentLeaf();
+  assert.equal(w().docks.sidebar, null);
+  // Emptying the sidebar collapses the column, so it cannot linger as an
+  // empty strip the shortcut can no longer clear.
+  assert.equal(w().sidebarDockOpen, false);
+});
+
+// Both docks populated: the one the user touched last wins.
+test("workspace: closeCurrentLeaf prefers the dock touched most recently", () => {
+  resetStore();
+  w().openInFocus("browser", { url: "https://f" }, "F");
+  w().setView("focus");
+  w().openInSidebar("browser", { url: "https://s" }, "S");
+  // openInSidebar was last, so lastActiveDock is the sidebar.
+  assert.equal(w().lastActiveDock, "sidebar");
+
+  w().closeCurrentLeaf();
+  assert.equal(w().docks.sidebar, null, "the sidebar pane should close");
+  assert.ok(w().docks.focus, "the focus pane must be untouched");
+});
+
+// A stale hint is reachable in normal use. It must close the frontmost
+// pane rather than silently doing nothing.
+test("workspace: closeCurrentLeaf falls back when the hint is stale", () => {
+  resetStore();
+  w().openInFocus("browser", { url: "https://a" }, "A");
+  w().setView("focus");
+  useWorkspace.setState({ lastFocusLeafId: "no-such-leaf" });
+
+  w().closeCurrentLeaf();
+  assert.equal(w().docks.focus, null, "a stale hint must not wedge the verb");
+});
+
+test("workspace: closeCurrentLeaf is a no-op with nothing open", () => {
+  resetStore();
+  w().setView("focus");
+  w().closeCurrentLeaf();
+  assert.equal(w().docks.focus, null);
+  assert.equal(w().docks.sidebar, null);
+});
+
+// Clicking a tab is the clearest statement of "this is the pane I am in",
+// and it updated nothing before — so the shortcut closed the tab the user
+// had just clicked AWAY from.
+test("workspace: clicking a tab makes it the close target", () => {
+  resetStore();
+  w().openInFocus("browser", { url: "https://a" }, "A");
+  w().setView("focus");
+  const first = w().docks.focus!.id;
+  // Stack a second pane as a tab in the same group.
+  w().openInFocusAt("browser", { url: "https://b" }, "B", first, "center");
+
+  const tree = w().docks.focus!;
+  assert.equal(tree.type, "tabs", "expected a tabs group");
+  if (tree.type !== "tabs") return;
+
+  // Select the FIRST tab explicitly.
+  w().setActiveTab(tree.id, 0);
+  assert.equal(
+    w().lastFocusLeafId,
+    tree.children[0].id,
+    "selecting a tab must become the close target",
+  );
+
+  w().closeCurrentLeaf();
+  const after = w().docks.focus;
+  assert.ok(after);
+  // The tab we selected is gone; the other one survives.
+  const ids: string[] = [];
+  walkLeaves(after!, (_l, id) => ids.push(id));
+  assert.ok(
+    !ids.includes(tree.children[0].id),
+    "the selected tab should have closed",
+  );
+  assert.ok(ids.includes(tree.children[1].id), "the other tab should remain");
+});
+
+// ─── navigation history pushes ───────────────────────────────────────
+
+// Opening a pane used to be invisible to the browser, so Back had nothing
+// to pop. The push happens at ONE chokepoint in the store rather than at
+// the 43 call sites that open panes.
+test("workspace: opening a pane records a navigation", () => {
+  resetStore();
+  const seen: NavEntry[] = [];
+  installNavPush((e) => seen.push(e));
+
+  w().openInFocus("task-detail", { projectId: "p", taskId: "t1" }, "T1");
+
+  assert.equal(seen.length, 1, "opening a pane should record one navigation");
+  assert.equal(seen[0].view, "focus");
+  assert.equal(seen[0].leaf?.dock, "focus");
+  assert.equal(seen[0].leaf?.kind, "task-detail");
+  assert.deepEqual(seen[0].leaf?.target, { projectId: "p", taskId: "t1" });
+  installNavPush(null);
+});
+
+// The single-click preview path retargets an existing pane instead of
+// minting one, so it never reaches the main chokepoint and needs its own.
+test("workspace: reusing the sidebar pane still records a navigation", () => {
+  resetStore();
+  w().openOrReuseInSidebar("task-detail", { projectId: "p", taskId: "a" }, "A");
+  const seen: NavEntry[] = [];
+  installNavPush((e) => seen.push(e));
+
+  w().openOrReuseInSidebar("task-detail", { projectId: "p", taskId: "b" }, "B");
+
+  assert.equal(seen.length, 1, "the reuse branch must record too");
+  assert.deepEqual(seen[0].leaf?.target, { projectId: "p", taskId: "b" });
+  installNavPush(null);
+});
+
+test("workspace: switching view records a navigation, staying put does not", () => {
+  resetStore();
+  const seen: NavEntry[] = [];
+  installNavPush((e) => seen.push(e));
+
+  w().setView("entries");
+  w().setView("entries"); // no change — must not push
+  w().setView("focus");
+
+  assert.deepEqual(
+    seen.map((e) => e.view),
+    ["entries", "focus"],
+    "only real view changes are navigations",
+  );
+  installNavPush(null);
+});
+
+// Applying a popped entry calls the same store actions that push. Without
+// the guard one Back would append an entry and Forward would be lost.
+test("workspace: withoutNav suppresses pushes while a pop is applied", () => {
+  resetStore();
+  const seen: NavEntry[] = [];
+  installNavPush((e) => seen.push(e));
+
+  withoutNav(() => {
+    w().setView("focus");
+    w().openInFocus("browser", { url: "https://x" }, "X");
+  });
+
+  assert.equal(seen.length, 0, "re-applying a popped entry must not push");
+  // And the mutations still happened.
+  assert.equal(w().view, "focus");
+  assert.ok(w().docks.focus);
+  installNavPush(null);
+});
+
+// The identity function is what lets a popped intent find its pane again.
+// It must be order-insensitive, since target objects are built ad hoc.
+test("workspace: leafIdentity is stable across key order and kinds", () => {
+  assert.equal(
+    leafIdentity("task-detail", { projectId: "p", taskId: "t" }),
+    leafIdentity("task-detail", { taskId: "t", projectId: "p" }),
+    "key order must not change identity",
+  );
+  assert.notEqual(
+    leafIdentity("task-detail", { projectId: "p", taskId: "t" }),
+    leafIdentity("feature-detail", { projectId: "p", taskId: "t" }),
+    "different kinds are different panes",
+  );
+  // Must never throw on the arbitrary JSON coerceDockTree lets through.
+  assert.ok(leafIdentity("browser", null));
+  assert.ok(leafIdentity("browser", undefined));
+});
+
+// ─── closing the last sidebar pane collapses the column ──────────────
+
+// Every close path shares this now — the pane ×, the tab menu's Close and
+// the keyboard shortcut all route through makeCloseLeaf — so they cannot
+// disagree about what closing the last pane means.
+test("workspace: closeSidebarLeaf collapses the column when it empties it", () => {
+  resetStore();
+  w().openInSidebar("browser", { url: "https://only" }, "Only");
+  const leafId = w().docks.sidebar!.id;
+  assert.equal(w().sidebarDockOpen, true);
+
+  w().closeSidebarLeaf(leafId);
+  assert.equal(w().docks.sidebar, null);
+  assert.equal(
+    w().sidebarDockOpen,
+    false,
+    "an empty panel is a blank strip, not a preserved layout",
+  );
+});
+
+// ...but only when it was the LAST one.
+test("workspace: closing one of two sidebar panes leaves the column open", () => {
+  resetStore();
+  w().openInSidebar("browser", { url: "https://a" }, "A");
+  const firstId = w().docks.sidebar!.id;
+  w().openInSidebarAt("browser", { url: "https://b" }, "B", firstId, "bottom");
+  assert.equal(countLeaves(w().docks.sidebar), 2);
+
+  w().closeSidebarLeaf(firstId);
+  assert.equal(countLeaves(w().docks.sidebar), 1);
+  assert.equal(
+    w().sidebarDockOpen,
+    true,
+    "the column must stay open while a pane remains",
+  );
+});
+
+// Emptying the FOCUS dock must not touch the sidebar's visibility gate.
+test("workspace: emptying the focus dock does not collapse the sidebar", () => {
+  resetStore();
+  w().openInSidebar("browser", { url: "https://s" }, "S");
+  w().openInFocus("browser", { url: "https://f" }, "F");
+  const focusLeaf = w().docks.focus!.id;
+
+  w().closeLeaf(focusLeaf);
+  assert.equal(w().docks.focus, null);
+  assert.equal(w().sidebarDockOpen, true, "the sidebar is unrelated");
+  assert.ok(w().docks.sidebar, "and still has its pane");
+});
+
+// Collapsing the column by hand still preserves the layout — that is the
+// other direction and must not have changed.
+test("workspace: manually collapsing the column keeps its panes", () => {
+  resetStore();
+  w().openInSidebar("browser", { url: "https://keep" }, "Keep");
+  w().setSidebarDockOpen(false);
+  assert.equal(w().sidebarDockOpen, false);
+  assert.ok(
+    w().docks.sidebar,
+    "a manual collapse preserves the layout for when it reopens",
+  );
 });

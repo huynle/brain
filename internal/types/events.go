@@ -70,6 +70,22 @@ const (
 	EventEntryUpdated = "entry.updated"
 	EventEntryDeleted = "entry.deleted"
 
+	// Attachment events.
+	//
+	// Before these existed, uploading a file and associating it with an
+	// entry was completely invisible to automations: the attachment
+	// handlers emitted nothing at all. An integration that delivers an
+	// image (handwriting capture, scan-to-brain) had no way to trigger
+	// downstream work on arrival.
+	//
+	// EventAttachmentCreated fires when blob content is stored and
+	// attachment metadata is created, before any entry references it.
+	EventAttachmentCreated = "attachment.created"
+	// EventEntryAttachmentAdded fires when an existing attachment is
+	// associated with an entry. It carries the ENTRY's id/path in
+	// TaskID/TaskPath so once_per: task_id and path-based templates work.
+	EventEntryAttachmentAdded = "entry.attachment_added"
+
 	// EventWebhookReceived is what a webhook-triggered automation matches on
 	// (see automationMatchesWebhook). It carries the inbound path in
 	// metadata["webhook_path"].
@@ -131,6 +147,7 @@ var AllEventTypes = []string{
 	EventTaskResumeRequested,
 	EventFeatureStarted, EventFeatureCompleted, EventFeatureBlocked, EventFeatureProgress,
 	EventEntryCreated, EventEntryUpdated, EventEntryDeleted,
+	EventAttachmentCreated, EventEntryAttachmentAdded,
 	EventWebhookReceived,
 	EventControlPromptSent, EventControlPermissionResponded,
 	EventControlInstanceSpawned, EventControlInstanceKilled,
@@ -245,10 +262,12 @@ type TriggerConfig struct {
 	Timezone string `json:"timezone,omitempty" yaml:"timezone,omitempty"`
 	// Filter is optional key-value filters applied to event fields.
 	//
-	// Filter values support two forms:
+	// Filter values support four forms:
 	//   - Exact match (default): "to_status": "completed" matches only "completed".
 	//   - OR-able set via "in:" prefix: "to_status": "in:completed,blocked"
 	//     matches if the event field is any of the comma-separated values.
+	//   - Set membership via "has:" prefix: "tags": "has:supernote" matches if
+	//     the comma-joined event value contains "supernote" as a whole element.
 	//   - Wildcard "*" matches any non-empty value.
 	Filter map[string]string `json:"filter,omitempty" yaml:"filter,omitempty"`
 	// OncePer is an automation dedup key (e.g. feature_id, session, day).
@@ -310,9 +329,16 @@ func (tc *TriggerConfig) MatchesEvent(eventType string) bool {
 //
 //   - "*"                  → matches any non-empty actual value.
 //   - "in:a,b,c"           → matches if actual is any of a, b, or c (OR-able set).
+//   - "has:x"              → matches if the comma-joined ACTUAL contains element x.
 //   - "<value>" (default)  → exact match against actual.
 //
 // Whitespace around "in:" members is trimmed and empty members are ignored.
+//
+// "in:" and "has:" are duals: "in:" ORs over the FILTER's values against a
+// single actual, while "has:" tests membership within a multi-valued ACTUAL
+// (e.g. metadata "tags": "supernote,page,draft"). Neither could express the
+// other, which left comma-joined metadata effectively unfilterable — an exact
+// match required listing every tag in the same order.
 func MatchFilterValue(actual, filterExpr string) bool {
 	if filterExpr == "*" {
 		return actual != ""
@@ -325,7 +351,39 @@ func MatchFilterValue(actual, filterExpr string) bool {
 		}
 		return false
 	}
+	if want, ok := parseHasFilter(filterExpr); ok {
+		return containsElement(actual, want)
+	}
 	return actual == filterExpr
+}
+
+// parseHasFilter parses a "has:x" filter expression into its operand.
+// The second return value is false if the expression is not a "has:" form.
+func parseHasFilter(filterExpr string) (string, bool) {
+	const prefix = "has:"
+	if !strings.HasPrefix(filterExpr, prefix) {
+		return "", false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(filterExpr, prefix)), true
+}
+
+// containsElement reports whether the comma-separated actual value contains
+// want as a whole element. Matching is element-exact, never substring: a
+// substring test would make "has:note" match "supernote", and tag namespaces
+// collide exactly that way.
+//
+// An empty want returns false — "has:" with no operand fails CLOSED, matching
+// nothing rather than everything.
+func containsElement(actual, want string) bool {
+	if want == "" || actual == "" {
+		return false
+	}
+	for _, part := range strings.Split(actual, ",") {
+		if strings.TrimSpace(part) == want {
+			return true
+		}
+	}
+	return false
 }
 
 // parseInFilter parses an "in:a,b,c" filter expression into its members.

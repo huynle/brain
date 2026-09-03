@@ -17,9 +17,13 @@
  * (mirrored after the left `Sidebar`'s `sidebarCollapsed`; see the
  * topbar toggle button). Opening a leaf into the sidebar
  * (`openInSidebar`, or a drop) flips `sidebarDockOpen` true
- * automatically. Closing it manually only hides the column — it does
+ * automatically. Collapsing it manually only hides the column — it does
  * NOT clear `docks.sidebar`, so reopening restores the exact same
  * layout, same as the left sidebar's collapse.
+ *
+ * Closing the last PANE is the other direction and does collapse the
+ * column: an empty panel is not a preserved layout, just a blank strip
+ * the user would have to dismiss by hand. See `makeCloseLeaf`.
  *
  * The aside is drag-resizable from its LEFT edge; the chosen width is
  * persisted (`drawerWidth` in the store, unchanged from the prior
@@ -108,7 +112,9 @@ export function SidebarDock(): JSX.Element | null {
   const asideStyle = {
     ["--drawer-w" as never]: `${drawerWidth}px`,
   } as React.CSSProperties;
-  const Resizer = <div className="drawer-resizer" onPointerDown={startResize} />;
+  const Resizer = (
+    <div className="drawer-resizer" onPointerDown={startResize} />
+  );
   // Mobile: portal to document.body (fixed overlay, unchanged from
   // before). Desktop: render in place — Dashboard mounts <SidebarDock/>
   // as a direct child of #app so `grid-area: drawer` applies.
@@ -152,8 +158,8 @@ export function SidebarDock(): JSX.Element | null {
           </div>
           <div>Side panel is empty.</div>
           <div style={{ fontSize: 11, maxWidth: 260 }}>
-            Double-click a task or feature, or drag a task here, to open
-            it. Multiple items can dock side by side.
+            Double-click a task or feature, or drag a task here, to open it.
+            Multiple items can dock side by side.
           </div>
         </div>
       </aside>,

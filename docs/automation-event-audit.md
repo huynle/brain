@@ -11,6 +11,35 @@ AutomationService.Start`), a coverage-matrix builder, 8 dimension auditors, and 
 
 ---
 
+## 0. Amendments since the audited commit
+
+This document is a point-in-time audit. The findings below were true at
+`7b9286b`. Several have since been fixed, so the affected claims are marked
+inline with **AMENDED** and the original wording is preserved next to the
+correction — a reader needs to know both what was broken and that it no longer
+is.
+
+| Finding at `7b9286b` | Status now | Where |
+|---|---|---|
+| `webhook.received` absent from `AllEventTypes`, so `trigger.type: webhook` is structurally unreachable | **Fixed** — registered. Still no *unauthenticated inbound receiver*: an integration POSTs the event to `/api/v1/events` like any other. | §1, §3, §5.4, M-1 |
+| `action.type: update` degrades to an empty prompt task | **Fixed** — implemented in process as `applyUpdateAction` (`automation_service.go:936`) | §1 |
+| `entry.created` never sets `TaskID`, so `once_per: task_id` collapses to one constant key | **Fixed** — `evt.TaskID = resp.ID` (`entries.go:213`) | §3 |
+| `MatchFilterValue` has exactly three forms, none able to test membership of a multi-valued actual | **Extended** — a fourth form, `has:`, added | §6.2 |
+| No attachment events exist | **Fixed** — `attachment.created` and `entry.attachment_added` added | §3 |
+
+Events added since the audit and absent from the §3 inventory:
+`attachment.created`, `entry.attachment_added`, `reminder.fired`,
+`control.exec_started`, plus `webhook.received` now being registered.
+
+**Not fixed, still true:** `action.type: http` has no dispatch branch; the
+`retry` block, `action.timeout` and `requires_capability` have no live readers;
+`ignore_automation_events` has no live reader in the production matcher;
+`feature.all_completed` does not exist on the live bus and the shipped
+`feature-review.md` asset that subscribes to it remains inert; events are not
+persisted; non-matches are logged nowhere.
+
+---
+
 ## 1. Verdict
 
 Event-driven automation **works**. The core dispatch path was verified end to
@@ -25,7 +54,16 @@ one (`session`) only fires under a single undocumented scope shape, and one
 `types.AllEventTypes`, so `Ingest` rejects it, and no inbound receiver route
 exists. Of four action types, two (`prompt`, `script`) work and two (`update`,
 `http`) are declared, accepted, persisted, displayed — and silently degrade to a
-prompt task with an empty prompt. The `retry` block, `action.timeout`, and
+prompt task with an empty prompt.
+
+> **AMENDED.** Two of those claims no longer hold. `webhook.received` is now in
+> `types.AllEventTypes`, so a webhook automation *can* fire — though still only
+> when something POSTs the event to `/api/v1/events`; there is still no
+> unauthenticated inbound receiver route. And `action.type: update` is now
+> implemented in process (`applyUpdateAction`), so only `http` still degrades to
+> an empty prompt task. See §0.
+
+The `retry` block, `action.timeout`, and
 `requires_capability` are round-tripped through every layer and read by nothing.
 `ignore_automation_events` is documented in the README as a default-on loop
 guard and has zero live readers, so a `task.status_changed` automation re-fires
@@ -81,10 +119,12 @@ is honest about what it does.
   POST /api/v1/events ───────────► api.HandleIngestEvents (router.go:246)
                                               │
    ┌── API-native emitters ───────────────────┤
-   │   entries.go:196/495/511/606/622/677/798 │
-   │   tasks.go:335/395/836/895/916/977/992   │
-   │   control.go:275/301/374/428             │
-   │   event_service.go:309/316 (direct pub)  │
+    │   entries.go:209/495/511/606/622/677/798 │
+    │   tasks.go:335/395/836/895/916/977/992   │
+    │   control.go:275/301/374/428/656         │
+    │   attachments.go (attachment.* — added   │
+    │     after this audit)                    │
+    │   event_service.go:309/316 (direct pub)  │
    └──────────────────────────────────────────┤
                                               ▼
                               EventServiceImpl.Ingest
@@ -252,14 +292,18 @@ Rows marked ✅ were empirically probed.
 | `runner.all_paused` | Runner `runner.go:2831`, `:2787` | yes | **C** | `source`, `runner_id`, `type` | Global only. |
 | `runner.all_resumed` | Runner `runner.go:2842`, `:2789` | yes | **C** | `source`, `runner_id`, `type` | Global only. |
 | ✅ `runner.session_discovered` | Runner `runner.go:1921` | yes | **C** | `source`, `runner_id`, `type`, `session` (→`metadata.session_id`), `session_id` | The **only** event a `trigger.type: session` automation can match. Probe truth table: global+no filter = MATCH; global+`project:"*"` = NO MATCH; project-scoped = NO MATCH under any filter. |
-| `entry.created` | API only `entries.go:196` | yes | Y | `project_id`, `source`, `type`; `feature_id` when set; metadata `entry_type`, `title` | `TaskID` is never set. Entries created through internal service paths — `AutomationService.createTask`, `GoalService.generateGoalTask`, the scheduler, monitors — emit **nothing**, so automation-generated entries are invisible to `entry.*` triggers. |
+| `entry.created` | API only `entries.go:209` *(was `:196`)* | yes | Y | `project_id`, `source`, `type`, **`task_id`**; `feature_id` when set; metadata `entry_type`, `title`, **`entry_id`**, **`tags`**, **`has_attachment`**, **`attachment_media_types`** | **AMENDED:** `TaskID` is now set to the created entry's id, so `once_per: task_id` produces distinct keys and `{{.TaskID}}` renders. *(Originally: "`TaskID` is never set" — while that held, every created entry produced the same dedup key and such an automation fired exactly once, ever.)* `tags` are the **persisted** tags — sanitized, deduplicated, entry type appended — read from `CreateEntryResponse.Tags`, not the request. Filter them with `has:` (§6.2); an exact match would require listing every tag in order. **Still true:** entries created through internal service paths — `AutomationService.createTask`, `GoalService.generateGoalTask`, the scheduler, monitors — emit **nothing**, so automation-generated entries remain invisible to `entry.*` triggers. |
+| `attachment.created` | API `attachments.go` `HandleCreateAttachment` | yes | Y | `project_id`, `source`, `type`; metadata `attachment_id`, `media_type`, `filename`, `size_bytes` | Added after the audit. Fires when blob content is stored, **before** any entry references it. Carries no entry id — pair it with `entry.attachment_added` if you need one. |
+| `entry.attachment_added` | API `attachments.go` `HandleAttachEntryAttachment` | yes | Y | `project_id`, `source`, `type`, `task_id` (the ENTRY id), `task_path`; metadata `attachment_id`, `media_type`, `role` | Added after the audit. This is the event an image-delivery integration should trigger on: unlike `entry.created`, the attachment is linked by the time it fires. No `entry.attachment_removed` counterpart — `Detach` returns 200 even when nothing was unlinked, so a naive emitter would fire spurious removals. |
+| `reminder.fired` | `internal/service/reminder_service.go` sweeper | yes | Y | per reminder | Added after the audit; in `AllEventTypes`. Not analysed by this audit. |
+| `control.exec_started` | API `control.go:656` | yes | **C** | `source`, `runner_id`, `type` | Added after the audit; in `AllEventTypes`. Same project-blindness as the other `control.*` events. |
 | `entry.updated` | API only, 4 sites: `entries.go:495`, `:606`, `:798`, `:986` | yes | Y | `project_id`, `source`, `type` always; `task_id`+`feature_id` on `:495`/`:606` only; metadata varies per site | Bulk and move paths set neither `task_id` nor `feature_id`. Same internal-path blind spot. |
 | `entry.deleted` | API only `entries.go:677` | yes | Y | `project_id`, `source`, `type`; `task_id`+`feature_id`+metadata only when the pre-delete Recall succeeded | — |
 | `control.prompt_sent` | API `control.go:275` via `emitControlAudit` | yes | **C** | `source`, `runner_id`, `type`; metadata `instance_id`, `actor`, `auth_type`, `session_id` | `ProjectID`/`TaskID`/`FeatureID` all EMPTY ⇒ unroutable by project-scoped automations. |
 | `control.permission_responded` | API `control.go:301` | yes | **C** | same + `permission_id` | Same. |
 | `control.instance_spawned` | API `control.go:374` | yes | **C** | same + `workdir` | Same. |
 | `control.instance_killed` | API `control.go:428` | yes | **C** | `source`, `runner_id`, `type`; metadata `instance_id`, `actor`, `auth_type` | Same. |
-| ✅ `webhook.received` | **NOWHERE.** Only consumer is `automation_service.go:276`; only definition is dead `internal/events/types.go:38` | **no** | **N** | n/a | **NOT in `AllEventTypes`.** Probe: `Ingest` returns `invalid event type "webhook.received" at index 0`. No inbound receiver route exists (`router.go:579-597` is outbound-only). Makes `trigger.type: webhook` structurally unreachable. |
+| ✅ `webhook.received` | No *producer* in this tree; an external integration POSTs it to `/api/v1/events` | **yes** *(was no)* | Y | `project_id`, `source`, `type`; metadata `webhook_path` | **AMENDED:** now declared in `internal/types/events.go` and present in `AllEventTypes`, so `Ingest` accepts it and `trigger.type: webhook` is reachable. *(Originally: "NOT in `AllEventTypes`… structurally unreachable" — `Ingest` returned `invalid event type "webhook.received" at index 0`.)* There is still **no unauthenticated inbound receiver route**; `router.go` webhook routes remain outbound-only. The `normalizeWebhookPath` fail-open below is therefore now live, not hypothetical. |
 | ✅ `goal.reconcile` | `goal_service.go:219` via `store.InsertEvent` | **no** | **N** | n/a | The **ONLY persisted event type** — SQLite `event_log`. Deliberately excluded from `AllEventTypes` so it cannot loop back. No retention/pruning. Read only by `GoalAuditHistory`, hard-capped at 1000 rows then filtered in memory. |
 | ✅ `manual` | Constructed as a literal in `automation_service.go:56-61` by `RunAutomationNow` | **no** | **C** | `project_id`, `source`, `type` | Pseudo-event. `POST /automations/run` works and creates a task, but it **bypasses `automationMatchesEvent` entirely** — the automation's own trigger is not consulted and the pause gate is deliberately skipped. `trigger: {event: manual}` on another automation can never match. |
 | `webhook.test` | `webhooks.go:191` | **no** | **N** | n/a | Pseudo-event for the outbound test endpoint; delivered directly, never published. |
@@ -360,25 +404,44 @@ filter**. The working filter key is `session` (→ `Metadata["session_id"]`);
 (`:536-539`) reports `Trigger.Event` as the `trigger_event`, so the audit trail
 claims a match rule the matcher never consulted.
 
-### `webhook` — broken / structurally unreachable ❌
+### `webhook` — ~~broken / structurally unreachable ❌~~ → reachable, with one live fail-open ⚠️ **AMENDED**
 
-`automationMatchesWebhook` (`automation_service.go:272-289`) requires `evt.Type
-== "webhook.received"`. **Verified:** `types.IsValidEventType("webhook.received")
-== false`, and `EventService.Ingest` returns ``invalid event type
-"webhook.received" at index 0``. There is no inbound webhook receiver route —
-`internal/api/router.go:579-597` registers only outbound webhook
-CRUD/test/deliveries. The only other definition of the string is the dead
-`internal/events/types.go:38`.
+> **Original finding, no longer true:** `types.IsValidEventType("webhook.received")`
+> returned `false` and `EventService.Ingest` rejected the event with ``invalid
+> event type "webhook.received" at index 0``, so **a webhook automation could
+> never fire under any input**. The only definition of the string was the dead
+> `internal/events/types.go:38`.
 
-**A webhook automation can never fire under any input**, yet it is offered as
-option 3 by the CLI wizard (`cmd/brain/commands/automation.go:121`), documented
-at `README.md:844`, listed in `cmd/brain/help.go`, taught in
-`brain-automation/SKILL.md:233`, and exposed in the MCP `save` trigger schema
-(`internal/mcp/brain_tools.go:96`, `:1101`).
+`webhook.received` is now declared in `internal/types/events.go` and listed in
+`AllEventTypes`, so `Ingest` accepts it. `automationMatchesWebhook` requires
+`evt.Type == "webhook.received"` and compares
+`normalizeWebhookPath(evt.Metadata["webhook_path"])` against
+`normalizeWebhookPath(trigger.webhook)`.
 
-Latent secondary bug: `normalizeWebhookPath` is `strings.Trim(path, "/")` only
-(`:291-293`), so an **empty** `Trigger.Webhook` would fail-open and match any
-`webhook.received` lacking `webhook_path` metadata — if the event ever existed.
+**What is still missing:** there is no inbound webhook receiver route. The
+`router.go` webhook routes remain outbound CRUD/test/deliveries only. A webhook
+automation fires only when something POSTs
+
+```json
+{"type":"webhook.received","source":"api","project_id":"…",
+ "metadata":{"webhook_path":"…"}}
+```
+
+to `/api/v1/events` **with a valid token**. Note that `/events` carries no
+`RequireScope`, so any authenticated token — including a read-only one — can
+inject this and drive task creation.
+
+The trigger type remains offered as option 3 by the CLI wizard
+(`cmd/brain/commands/automation.go:121`), documented at `README.md:844`, listed
+in `cmd/brain/help.go`, taught in `brain-automation/SKILL.md:233`, and exposed in
+the MCP `save` trigger schema (`internal/mcp/brain_tools.go:96`, `:1101`) — all
+of which are now accurate rather than advertising a dead feature.
+
+⚠️ **The fail-open is now live, not latent.** `normalizeWebhookPath` is
+`strings.Trim(path, "/")` only, so an **empty** `Trigger.Webhook` matches any
+`webhook.received` lacking `webhook_path` metadata. While the event type was
+unreachable this could not be reached; it can be now. *(Contrast the `has:`
+filter added in §6.2, which deliberately fails closed on an empty operand.)*
 
 ### Any other value (`""`, `"Event"`, `"EVENT"`, typos) — silently inert ❌
 
@@ -512,15 +575,23 @@ advertises.
 ### 6.2 Filter value expressions (`trigger.filter`)
 
 Every value in the `filter` map is evaluated by `types.MatchFilterValue`
-(`internal/types/events.go:274-287`). There are exactly **three** forms:
+(`internal/types/events.go`). There are **four** forms *(was three — `has:` was
+added after this audit)*:
 
 | Expression | Semantics | Gotcha |
 |---|---|---|
 | `"*"` | `actual != ""` — i.e. **"field is present"**, not "any value" | `MatchFilterValue("", "*")` is **false**. This is why a global automation with `project: "*"` stops matching project-less events. |
 | `"in:a,b,c"` | `actual` equals any member. Whitespace around members is trimmed; empty members ignored. | `"in:P,Q"` in a `project`/`project_id` filter does **not** satisfy the project scope guard, which tests literal equality to `"*"` before the filter loop runs. |
+| `"has:x"` **(new)** | Splits the **actual** on commas and matches if any element equals `x` exactly. | Element-exact, **never substring**: `has:note` does *not* match an actual containing `supernote`. An empty operand (`"has:"`) fails **closed** — deliberately unlike `normalizeWebhookPath` (§5.4). |
 | `"<value>"` | Exact string equality. | An unresolvable key yields `""`, and `"" == "<value>"` is false ⇒ the automation **silently never fires**. |
 
-There is **no** support for negation, prefix/suffix globs inside a value,
+`in:` and `has:` are duals and neither can express the other: `in:` ORs over the
+**filter's** values against a single actual, while `has:` tests membership within
+a multi-valued **actual**. Before `has:` existed, comma-joined metadata such as
+`entry.created`'s `tags` was effectively unfilterable — an exact match required
+listing every tag in the same order.
+
+There is still **no** support for negation, prefix/suffix globs inside a value,
 numeric comparison, regex, or boolean composition. Filters are ANDed: every key
 must match.
 
@@ -956,23 +1027,35 @@ if an installed asset's `trigger.event` is not in `types.AllEventTypes`.
 
 ---
 
-#### M-1 · MEDIUM · `trigger.type: webhook` is structurally unreachable
+#### M-1 · MEDIUM · `trigger.type: webhook` is structurally unreachable — ✅ **RESOLVED (partially)**
 
 **`internal/service/automation_service.go:276`**
 *(both verifiers rated this a missing-feature / doc mismatch rather than a
 runtime bug)*
 
-See §4. `webhook.received` is not a valid event type, has no producer, and there
-is no inbound receiver route — yet it is offered by the CLI wizard, the README,
-CLI help, `brain-automation/SKILL.md`, and the MCP schema. The automation saves,
-lists as active, and can never be triggered by any webhook. (`POST
-/api/v1/automations/run` still fires the action, since `RunAutomationNow` never
-inspects `Trigger.Type`.)
+> **Original finding:** `webhook.received` is not a valid event type, has no
+> producer, and there is no inbound receiver route — yet it is offered by the CLI
+> wizard, the README, CLI help, `brain-automation/SKILL.md`, and the MCP schema.
+> The automation saves, lists as active, and can never be triggered by any
+> webhook. (`POST /api/v1/automations/run` still fires the action, since
+> `RunAutomationNow` never inspects `Trigger.Type`.)
+>
+> *Proposed fix:* either implement it (add `"webhook.received"` to
+> `types.AllEventTypes` and register an inbound receiver route that `Ingest`s
+> it), or reject `trigger.type=="webhook"` at entry-create time and remove it
+> from all six advertising surfaces.
 
-*Fix:* either implement it (add `"webhook.received"` to `types.AllEventTypes`
-and register an inbound receiver route that `Ingest`s it), or reject
-`trigger.type=="webhook"` at entry-create time and remove it from all six
-advertising surfaces.
+**Resolution:** the first half of the proposed fix was taken.
+`"webhook.received"` is now declared and present in `types.AllEventTypes`, so
+`Ingest` accepts it and a webhook automation is reachable. The six advertising
+surfaces are therefore no longer lying.
+
+**Residual, still open:** no inbound receiver route was added, so the trigger is
+only usable by an integration that POSTs the event to `/api/v1/events` with a
+valid token — and that endpoint has no `RequireScope`, so a read-only token
+suffices to drive task creation. The `normalizeWebhookPath` fail-open described
+in §5.4 is now reachable as a result. Downgrade to LOW rather than closing
+outright.
 
 ---
 

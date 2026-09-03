@@ -31,6 +31,7 @@ import { useAuth } from "../lib/auth";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useGlobalKeyboard } from "../hooks/useGlobalKeyboard";
 import { useEntryNavHistory } from "../hooks/useEntryNavHistory";
+import { useDockNavHistory } from "../hooks/useDockNavHistory";
 import { usePauseSync } from "../hooks/usePauseSync";
 import { Loading } from "../components/common/Loading";
 import { ErrorState } from "../components/common/ErrorState";
@@ -107,6 +108,9 @@ export function Dashboard(): JSX.Element {
   // walked with Back/Forward. Mounted here, not in EntriesBrowser: the
   // back stack has to survive leaving the Entries view.
   useEntryNavHistory();
+  // Back/Forward for pane navigation. Mounted here for the same reason as
+  // the line above: the back stack outlives any one view.
+  useDockNavHistory();
 
   // Single owner of the pause / scheduler polling. Every pause indicator in
   // the tree reads the same cache entries without adding a timer — see the

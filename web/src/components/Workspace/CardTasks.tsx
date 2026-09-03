@@ -44,6 +44,7 @@ import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useTaskRowRenderer } from "./TaskRow";
 import { DepGuide } from "../common/DepGuide";
+import { LifecycleBadge } from "../common/LifecycleBadge";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
 import { useTaskGroupActionContext } from "../../hooks/useTaskGroupActionContext";
@@ -63,14 +64,6 @@ import {
   isFeatureDone,
   type DerivedFeature,
 } from "../../lib/features";
-
-const LIFECYCLE_TONE = {
-  "in-progress": { tone: "active", label: "active" },
-  blocked: { tone: "blocked", label: "blocked" },
-  finished: { tone: "finished", label: "finished" },
-  "mr-open": { tone: "mr", label: "MR open" },
-  merged: { tone: "merged", label: "merged" },
-} as const;
 
 function featStateClass(f: DerivedFeature): string {
   if (f.lifecycle === "blocked") return "block";
@@ -310,7 +303,6 @@ export function CardTasks({
         const rows = collapsed ? EMPTY_ROWS : (rowsByFeat.get(f.id) ?? []);
         const taskTotal = f.taskCount.total;
         const stateClass = featStateClass(f);
-        const tone = LIFECYCLE_TONE[f.lifecycle];
         const runnerId = featureAssignments[f.id];
         const runner = runners.find((r) => r.runner_id === runnerId);
         const pct = Math.round(f.progress * 100);
@@ -506,7 +498,7 @@ export function CardTasks({
                 />
                 {f.name}
               </span>
-              <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+              <LifecycleBadge lifecycle={f.lifecycle} href={f.prUrl} />
               {/* The dial is a DIFFERENT fact from the lifecycle — a
                   paused feature is still "active" work, just held — so it
                   gets its own chip rather than overwriting the badge. */}

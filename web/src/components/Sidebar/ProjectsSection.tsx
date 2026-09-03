@@ -267,14 +267,39 @@ export function ProjectsSection(): JSX.Element {
                   paused: badges.tasks,
                   projectId: pid,
                 });
+                // The SAME verb set as a visible row. Hiding a project
+                // hides it from the board; it does not switch it off, so
+                // every one of these still applies — the runner keeps
+                // dispatching, both dials still matter, and it can still be
+                // opened in Focus or deleted. Without this the only way to
+                // reach any of them was to unhide, act, and re-hide.
+                //
+                // `hidden: true` swaps the one verb that would otherwise be
+                // a no-op here: "Hide from workspace" becomes "Show in
+                // workspace".
+                const actions = buildProjectActions(pid, projectCtx, {
+                  taskCount: tasks.length,
+                  tasksPaused: pauseLoading
+                    ? undefined
+                    : isProjectTasksPaused(pause, pid),
+                  automationsPaused: pauseLoading
+                    ? undefined
+                    : isProjectAutomationsPaused(pause, pid),
+                  hidden: true,
+                });
                 return (
                   <div
                     key={pid}
                     className="proj-row"
                     style={{ opacity: 0.55 }}
-                    // The dial stops its own click, so this still means
-                    // "restore" everywhere except on the glyph itself.
-                    onClick={() => showProject(pid)}
+                    // Enter matches the click, as on every other row.
+                    {...rowProps(actions, pid, () => showProject(pid))}
+                    // The dial and the × stop their own clicks, so this
+                    // still means "restore" everywhere except on them.
+                    onClick={(e) => {
+                      if ((e.target as HTMLElement).closest("button")) return;
+                      showProject(pid);
+                    }}
                     title={`Show ${pid}`}
                   >
                     <ProjectPauseButton

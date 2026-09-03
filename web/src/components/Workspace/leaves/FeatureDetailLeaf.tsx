@@ -23,6 +23,7 @@ import { usePauseState } from "../../../hooks/usePauseState";
 import { isFeaturePaused } from "../../../lib/pause";
 import { useTaskActionContext } from "../../../hooks/useTaskActionContext";
 import { useGoals, useGoalProgress } from "../../../hooks/useGoals";
+import { useMergeRequests } from "../../../hooks/useMergeRequests";
 import { useGoalActionContext } from "../../../hooks/useGoalActionContext";
 import { useSelection } from "../../../store/selection";
 import {
@@ -37,17 +38,10 @@ import { buildGoalActions, goalStatusLabel } from "../../../lib/actions/goalActi
 import { isRangeKey } from "../../../lib/selection";
 import { deriveFeatures } from "../../../lib/features";
 import { ErrorState } from "../../common/ErrorState";
+import { LifecycleBadge } from "../../common/LifecycleBadge";
 import type { GoalSummary, Task } from "../../../lib/types";
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
-
-const LIFECYCLE_TONE = {
-  "in-progress": { tone: "active", label: "active" },
-  blocked: { tone: "blocked", label: "blocked" },
-  finished: { tone: "finished", label: "finished" },
-  "mr-open": { tone: "mr", label: "MR open" },
-  merged: { tone: "merged", label: "merged" },
-} as const;
 
 /** life-badge tone for a goal status (same classes CardGoals/FeatureModal use). */
 function goalTone(status: string): string {
@@ -150,6 +144,11 @@ export function FeatureDetailLeaf({
   const { rowProps, overlays } = useRowActions();
   const goalCtx = useGoalActionContext();
   const { forFeature } = useGoals();
+  // Without this the leaf derives lifecycle blind to the project's
+  // merge_request entries and contradicts every other surface — it read
+  // "finished" for a feature the overview, the project card and the
+  // feature modal all showed as ready to merge.
+  const { openByProject } = useMergeRequests();
 
   // Same selection model as CardTasks: rows carry the Select verb, so
   // they participate in selection mode and shift-click ranges — with
@@ -171,7 +170,7 @@ export function FeatureDetailLeaf({
     );
   }
 
-  const derived = deriveFeatures(tasks, projectId);
+  const derived = deriveFeatures(tasks, projectId, openByProject.get(projectId));
   const feature = derived.find((f) => f.id === featureId);
 
   if (!feature) {
@@ -183,7 +182,6 @@ export function FeatureDetailLeaf({
     );
   }
 
-  const tone = LIFECYCLE_TONE[feature.lifecycle];
   const pct = Math.round(feature.progress * 100);
   const runnerId = featureAssignments[feature.id];
   const runner = runners.find((r) => r.runner_id === runnerId);
@@ -387,7 +385,7 @@ export function FeatureDetailLeaf({
         <div className="kv-grid">
           <div className="k">Lifecycle</div>
           <div className="v">
-            <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+            <LifecycleBadge lifecycle={feature.lifecycle} href={feature.prUrl} />
           </div>
           <div className="k">Progress</div>
           <div className="v">

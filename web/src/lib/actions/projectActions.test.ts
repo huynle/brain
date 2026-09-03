@@ -37,6 +37,7 @@ function recorder() {
     runProject: async (pid) => void calls.push(`run:${pid}`),
     openProject: (pid) => void calls.push(`focus:${pid}`),
     hideProject: (pid) => void calls.push(`hide:${pid}`),
+    showProject: (pid) => void calls.push(`show:${pid}`),
     pauseProject: async (pid) => void calls.push(`pause:${pid}`),
     resumeProject: async (pid) => void calls.push(`resume:${pid}`),
     pauseAutomations: async (pid) => void calls.push(`pause-auto:${pid}`),
@@ -345,4 +346,95 @@ test("summarizeDeleteProjectResult: a partial wipe quotes the server's reason", 
     }),
   );
   assert.match(msg, /permission denied/);
+});
+
+// ─── hidden projects get the same verbs ──────────────────────────────
+
+// A hidden project is hidden from the BOARD, not switched off: its runner
+// keeps dispatching, both pause dials still govern it, and it can still be
+// opened or deleted. The sidebar's hidden rows used to carry no context menu
+// at all, so the only route to any of those was unhide → act → re-hide.
+test("project: a hidden project offers the same verbs as a visible one", () => {
+  const { ctx } = recorder();
+  const visible = buildProjectActions("shop", ctx, { taskCount: 3 });
+  const hidden = buildProjectActions("shop", ctx, {
+    taskCount: 3,
+    hidden: true,
+  });
+
+  assert.equal(
+    hidden.length,
+    visible.length,
+    "a hidden project must not lose verbs",
+  );
+
+  // Identical apart from the one verb that cannot mean the same thing.
+  const swap = (ids: string[]) => ids.map((i) => (i === "show" ? "hide" : i));
+  assert.deepEqual(
+    swap(hidden.map((a) => a.id)),
+    visible.map((a) => a.id),
+    "the verb set (and its order) must match except hide/show",
+  );
+});
+
+// "Hide from workspace" on an already-hidden row is a no-op. It becomes its
+// inverse rather than sitting there disabled.
+test("project: hidden swaps Hide for Show, and Show unhides", async () => {
+  const { ctx, calls } = recorder();
+  const hidden = buildProjectActions("shop", ctx, { hidden: true });
+
+  assert.equal(
+    hidden.find((a) => a.id === "hide"),
+    undefined,
+    "a hidden project must not offer Hide",
+  );
+  const show = hidden.find((a) => a.id === "show");
+  assert.ok(show, "a hidden project must offer Show");
+  assert.match(show.label, /show/i);
+
+  await show.run();
+  assert.deepEqual(calls, ["show:shop"]);
+});
+
+// The dangerous and the stateful verbs are the whole point of the parity —
+// they are exactly what you cannot reach on a hidden row today.
+test("project: a hidden project keeps its dials, focus and delete", async () => {
+  const { ctx, calls } = recorder();
+  const hidden = buildProjectActions("shop", ctx, {
+    taskCount: 2,
+    tasksPaused: false,
+    automationsPaused: false,
+    hidden: true,
+  });
+
+  for (const id of [
+    "run",
+    "pause",
+    "pause-automations",
+    "focus-project",
+    "delete",
+  ]) {
+    const a = hidden.find((x) => x.id === id);
+    assert.ok(a, `hidden project is missing "${id}"`);
+    assert.equal(a.disabledReason ?? "", "", `"${id}" must not be disabled`);
+  }
+
+  await hidden.find((a) => a.id === "pause")!.run();
+  await hidden.find((a) => a.id === "delete")!.run();
+  assert.deepEqual(calls, ["pause:shop", "delete:shop"]);
+});
+
+// The dials still read live state on a hidden row — an already-paused hidden
+// project must report Pause as unavailable, exactly as a visible one does.
+test("project: hidden rows still honour dial state", () => {
+  const { ctx } = recorder();
+  const hidden = buildProjectActions("shop", ctx, {
+    tasksPaused: true,
+    hidden: true,
+  });
+  assert.match(
+    hidden.find((a) => a.id === "pause")!.disabledReason ?? "",
+    /already paused/,
+  );
+  assert.equal(hidden.find((a) => a.id === "resume")!.disabledReason ?? "", "");
 });

@@ -3528,6 +3528,58 @@ body[data-theme="light"] .p2-runner-shell__prompt {
   background: #e08c3a11;
 }
 
+/* Schedule chips. A recurring task is otherwise indistinguishable from a
+   one-shot on the row, and — worse — the runner can auto-disable a schedule
+   (expires_at passed, max_runs reached) with no trace anywhere in the PWA.
+   Teal for a healthy cadence: this is a PROPERTY of the task, not a hold and
+   not a fault, so it must not borrow the pause slate or the amber. */
+.sched-chip {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid #4f9d8f55;
+  border-radius: 3px;
+  background: #4f9d8f11;
+  color: #4f9d8f;
+  font-size: 9px;
+  line-height: 1.5;
+  cursor: help;
+}
+/* Not open yet: it starts on its own, nothing to do. Same muted blue as
+   .hold-chip.waiting_on_features, which carries exactly that meaning. */
+.sched-chip.waiting {
+  color: #6f9fd8;
+  border-color: #6f9fd855;
+  background: #6f9fd811;
+}
+/* Stopped: expired, out of runs, switched off, or an expression that can
+   never match. None of these resume without an edit, so they take the amber
+   fault treatment the runner-level faults already use. */
+.sched-chip.stopped {
+  color: #e08c3a;
+  border-color: #e08c3a55;
+  background: #e08c3a11;
+}
+
+/* Light theme darkens every chip hue. The dark-theme values sit at roughly
+   2.5:1 against a white surface at this 9px size — measured, not guessed —
+   which is below WCAG AA. These three are the same hues walked down to
+   ≥4.5:1 over the chip's own wash, so the semantic coding survives while the
+   text stays readable. (`.hold-chip` has the identical problem and is left
+   alone here deliberately: changing it is a visual change across every task
+   row, not part of this one.) */
+body[data-theme="light"] .sched-chip {
+  color: #357064;
+  border-color: #35706455;
+}
+body[data-theme="light"] .sched-chip.waiting {
+  color: #3d6ea8;
+  border-color: #3d6ea855;
+}
+body[data-theme="light"] .sched-chip.stopped {
+  color: #9a5a12;
+  border-color: #9a5a1255;
+}
+
 /* ---------- Task modal ---------- */
 .life-badge.held {
   color: var(--pause);
@@ -3853,8 +3905,18 @@ body[data-theme="light"] .arun-actions button { border-color: #c8d0d8; }
    implicit fifth column the base .trow grid never sized. */
 .trow.auto-row {
   grid-template-columns:
-    14px minmax(0, 1fr) max-content minmax(58px, max-content) 40px;
+    14px minmax(0, 1fr) max-content max-content minmax(58px, max-content) 40px;
 }
+
+/* "When does this fire next?" — the other half of the last-run answer.
+   Only cron rows carry a value; event and webhook rows render the cell
+   empty so the columns stay aligned down the list. */
+.auto-nextrun {
+  color: var(--p2-fg-faint); font-size: 10px; white-space: nowrap;
+  text-align: right;
+}
+.auto-nextrun.never { color: #d96060; font-style: italic; }
+.auto-nextrun.paused { font-style: italic; }
 
 /* The automation row's answer to "is this thing working?" — the newest
    run's outcome and age, on the row itself, so the common check needs no

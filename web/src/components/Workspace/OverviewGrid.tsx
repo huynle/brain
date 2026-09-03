@@ -17,6 +17,7 @@ import { useMergeRequests } from "../../hooks/useMergeRequests";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useFeatureActionContextFactory } from "../../hooks/useFeatureActionContext";
 import { useWorkspace } from "../../store/workspace";
+import { useFeatureAssignments } from "../../hooks/useFeatureAssignments";
 import { useModal } from "../../store/modal";
 import { useUI } from "../../store/ui";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
@@ -37,7 +38,10 @@ export function OverviewGrid(): JSX.Element {
   const { data: projects } = useProjects();
   const liveProjects = useLive((s) => s.projects);
   const { runners } = useRunners();
-  const featureAssignments = useWorkspace((s) => s.featureAssignments);
+  // Server-resolved (RunnerInfo.feature_assignments), with the local
+  // optimistic map layered on. Reading the local map directly is what
+  // hid every auto-assignment and lied after a reload elsewhere.
+  const featureAssignments = useFeatureAssignments();
   const hiddenProjects = useWorkspace((s) => s.hiddenProjects);
   const hideAllEmpty = useWorkspace((s) => s.hideAllEmpty);
   const statusFilter = useWorkspace((s) => s.statusFilter);

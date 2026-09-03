@@ -171,6 +171,20 @@ export interface WorkspaceState {
   theme: "dark" | "light" | "system";
   mobile: boolean;
   streaming: boolean;
+  /** OPTIMISTIC OVERLAY ONLY — feature id → runner id, covering the
+   *  round-trip of an assign/unassign the user just performed.
+   *
+   *  The source of truth is the server, read off
+   *  `RunnerInfo.feature_assignments` via `resolveFeatureAssignments`.
+   *  This map used to BE the source, and being persisted is what made that
+   *  a lie that outlived the session: a second browser saw
+   *  "· unassigned ·" for assigned features, and auto-assignments — which
+   *  no click ever writes here — were invisible everywhere.
+   *
+   *  Deliberately absent from `partialize`. It must not survive a reload:
+   *  a fresh session has no in-flight mutation, so it has no business
+   *  holding an opinion about assignment. `CLEARED` ("") is a tombstone
+   *  meaning "optimistically unassigned"; absent means "no opinion". */
   featureAssignments: Record<string, string>;
   /** Per-feature collapse state for a feature's task rows in CardTasks,
    *  nested projectId → featureId → collapsed.
@@ -234,6 +248,7 @@ export interface WorkspaceState {
   /** Flip one feature's task rows. `defaultCollapsed` is the view's
    *  derived state, so the FIRST click always does the visible opposite
    *  of what is on screen rather than of `!undefined`. */
+  settleFeatureAssignments(featureIds: string[]): void;
   toggleHideCompleted(projectId: string): void;
   toggleFeatureCollapsed(
     projectId: string,
@@ -387,6 +402,37 @@ function coerceDockTree(raw: unknown): DockNode | null {
     return raw as DockNode;
   }
   return null;
+}
+
+/**
+ * What survives a reload.
+ *
+ * Exported so the contract is testable: `featureAssignments` is
+ * DELIBERATELY absent. It is an optimistic overlay on server-owned
+ * assignment data, and persisting it is what let a local guess outlive the
+ * session and read as truth in a browser that had never seen the server's
+ * answer — including hiding every auto-assignment, which no click ever
+ * writes. See lib/featureAssignments.
+ */
+export function persistedSlice(s: WorkspaceState) {
+  return {
+        view: s.view,
+        focusSessionId: s.focusSessionId,
+        focusSessionRef: s.focusSessionRef,
+        sidebarSection: s.sidebarSection,
+        sidebarCollapsed: s.sidebarCollapsed,
+        theme: s.theme,
+        featureCollapsed: s.featureCollapsed,
+        hideCompleted: s.hideCompleted,
+        hiddenProjects: s.hiddenProjects,
+        statusFilter: s.statusFilter,
+        docks: s.docks,
+        lastFocusLeafId: s.lastFocusLeafId,
+        lastSidebarLeafId: s.lastSidebarLeafId,
+        sidebarDockOpen: s.sidebarDockOpen,
+        drawerWidth: s.drawerWidth,
+        sidebarWidth: s.sidebarWidth,
+      };
 }
 
 export const useWorkspace = create<WorkspaceState>()(
@@ -729,12 +775,28 @@ export const useWorkspace = create<WorkspaceState>()(
             },
           })),
 
+        // A TOMBSTONE, not a delete. Absence now means "no local opinion,
+        // use the server", so deleting the key would let the very row this
+        // is in the process of clearing win the merge straight back.
         unassignFeature: (featureId) =>
+          set((s) => ({
+            featureAssignments: { ...s.featureAssignments, [featureId]: "" },
+          })),
+
+        // Drop overlay entries the server has caught up with, so an
+        // optimistic value cannot outlive the mutation it represents.
+        settleFeatureAssignments: (featureIds) =>
           set((s) => {
-            if (!(featureId in s.featureAssignments)) return s;
+            if (featureIds.length === 0) return s;
+            let changed = false;
             const next = { ...s.featureAssignments };
-            delete next[featureId];
-            return { featureAssignments: next };
+            for (const id of featureIds) {
+              if (id in next) {
+                delete next[id];
+                changed = true;
+              }
+            }
+            return changed ? { featureAssignments: next } : s;
           }),
 
         // Writes an explicit boolean even when it equals the default —
@@ -1029,25 +1091,7 @@ export const useWorkspace = create<WorkspaceState>()(
     },
     {
       name: WORKSPACE_STORAGE_KEY,
-      partialize: (s) => ({
-        view: s.view,
-        focusSessionId: s.focusSessionId,
-        focusSessionRef: s.focusSessionRef,
-        sidebarSection: s.sidebarSection,
-        sidebarCollapsed: s.sidebarCollapsed,
-        theme: s.theme,
-        featureAssignments: s.featureAssignments,
-        featureCollapsed: s.featureCollapsed,
-        hideCompleted: s.hideCompleted,
-        hiddenProjects: s.hiddenProjects,
-        statusFilter: s.statusFilter,
-        docks: s.docks,
-        lastFocusLeafId: s.lastFocusLeafId,
-        lastSidebarLeafId: s.lastSidebarLeafId,
-        sidebarDockOpen: s.sidebarDockOpen,
-        drawerWidth: s.drawerWidth,
-        sidebarWidth: s.sidebarWidth,
-      }),
+      partialize: persistedSlice,
       storage: createJSONStorage(() => safeStorage() ?? noopStorage),
       version: 1,
       merge: (persistedState, currentState) => {

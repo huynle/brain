@@ -373,9 +373,28 @@ export interface RunnerInfo {
   paused?: boolean;
 }
 
+/**
+ * One row of the server's `feature_assignments` table, as carried on
+ * `RunnerInfo.feature_assignments`. Mirrors types.FeatureAssignmentResponse.
+ *
+ * `runner_id`, `source` and `status` were missing here and fell through the
+ * index signature as `unknown` — which is part of why nothing read this: the
+ * fields that decide whether an assignment is live, and whose it is, were
+ * not expressible without a cast.
+ */
 export interface FeatureAssignment {
   feature_id: string;
   project_id?: string;
+  runner_id?: string;
+  previous_runner?: string;
+  /** "manual" (a user assigned it) or "auto" (a runner claimed it by
+   *  picking up one of the feature's tasks). */
+  source?: string;
+  /** "active" while the pin holds. Released rows are marked, not deleted,
+   *  so anything else must not be treated as a live assignment. */
+  status?: string;
+  assigned_at?: string;
+  updated_at?: string;
   executor?: string;
   [k: string]: unknown;
 }

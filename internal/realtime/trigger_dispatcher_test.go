@@ -56,7 +56,7 @@ func TestTriggerDispatcher_ReceivesAndForwardsEvents(t *testing.T) {
 	}()
 
 	// Give the dispatcher time to subscribe.
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Publish an event.
 	evt := types.NewEvent("task.completed", "runner")
@@ -104,7 +104,7 @@ func TestTriggerDispatcher_HandlesMultipleEvents(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Publish multiple events.
 	for i := 0; i < 5; i++ {
@@ -146,13 +146,13 @@ func TestTriggerDispatcher_ContinuesOnHandlerError(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Publish two events - dispatcher should continue processing after error.
 	evt1 := types.NewEvent("task.completed", "runner")
 	hub.Publish(evt1)
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	evt2 := types.NewEvent("task.started", "runner")
 	hub.Publish(evt2)
@@ -189,7 +189,7 @@ func TestTriggerDispatcher_StopsOnContextCancel(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Cancel and verify it exits.
 	cancel()
@@ -215,7 +215,7 @@ func TestTriggerDispatcher_StopsOnChannelClose(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Close all subscribers by creating a new subscriber and closing it to
 	// verify the pattern works. In practice, we test the channel close path

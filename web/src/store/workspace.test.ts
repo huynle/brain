@@ -1407,3 +1407,66 @@ test("workspace: leafIdentity is stable across key order and kinds", () => {
   assert.ok(leafIdentity("browser", null));
   assert.ok(leafIdentity("browser", undefined));
 });
+
+// ─── closing the last sidebar pane collapses the column ──────────────
+
+// Every close path shares this now — the pane ×, the tab menu's Close and
+// the keyboard shortcut all route through makeCloseLeaf — so they cannot
+// disagree about what closing the last pane means.
+test("workspace: closeSidebarLeaf collapses the column when it empties it", () => {
+  resetStore();
+  w().openInSidebar("browser", { url: "https://only" }, "Only");
+  const leafId = w().docks.sidebar!.id;
+  assert.equal(w().sidebarDockOpen, true);
+
+  w().closeSidebarLeaf(leafId);
+  assert.equal(w().docks.sidebar, null);
+  assert.equal(
+    w().sidebarDockOpen,
+    false,
+    "an empty panel is a blank strip, not a preserved layout",
+  );
+});
+
+// ...but only when it was the LAST one.
+test("workspace: closing one of two sidebar panes leaves the column open", () => {
+  resetStore();
+  w().openInSidebar("browser", { url: "https://a" }, "A");
+  const firstId = w().docks.sidebar!.id;
+  w().openInSidebarAt("browser", { url: "https://b" }, "B", firstId, "bottom");
+  assert.equal(countLeaves(w().docks.sidebar), 2);
+
+  w().closeSidebarLeaf(firstId);
+  assert.equal(countLeaves(w().docks.sidebar), 1);
+  assert.equal(
+    w().sidebarDockOpen,
+    true,
+    "the column must stay open while a pane remains",
+  );
+});
+
+// Emptying the FOCUS dock must not touch the sidebar's visibility gate.
+test("workspace: emptying the focus dock does not collapse the sidebar", () => {
+  resetStore();
+  w().openInSidebar("browser", { url: "https://s" }, "S");
+  w().openInFocus("browser", { url: "https://f" }, "F");
+  const focusLeaf = w().docks.focus!.id;
+
+  w().closeLeaf(focusLeaf);
+  assert.equal(w().docks.focus, null);
+  assert.equal(w().sidebarDockOpen, true, "the sidebar is unrelated");
+  assert.ok(w().docks.sidebar, "and still has its pane");
+});
+
+// Collapsing the column by hand still preserves the layout — that is the
+// other direction and must not have changed.
+test("workspace: manually collapsing the column keeps its panes", () => {
+  resetStore();
+  w().openInSidebar("browser", { url: "https://keep" }, "Keep");
+  w().setSidebarDockOpen(false);
+  assert.equal(w().sidebarDockOpen, false);
+  assert.ok(
+    w().docks.sidebar,
+    "a manual collapse preserves the layout for when it reopens",
+  );
+});

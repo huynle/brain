@@ -550,10 +550,26 @@ export const useWorkspace = create<WorkspaceState>()(
         if (!tree) return;
         const next = removeDockNode(tree, leafId);
         const lastField = lastLeafField(dockId);
-        set({
+        const patch: Partial<WorkspaceState> = {
           docks: { ...state.docks, [dockId]: next },
           [lastField]: state[lastField] === leafId ? null : state[lastField],
-        } as Partial<WorkspaceState>);
+        } as Partial<WorkspaceState>;
+        // Closing the LAST sidebar pane collapses the column too.
+        //
+        // The panel's visibility is a separate gate from its contents, and
+        // deliberately so — a manual collapse keeps the layout for when it
+        // is reopened. But an empty panel is not a preserved layout, it is
+        // a blank column the user then has to dismiss by hand. Emptying it
+        // by closing panes is a different intent from collapsing it, and
+        // this is the branch that can tell them apart.
+        //
+        // Applied in the shared reducer rather than only in the keyboard
+        // path, so the pane ×, the tab menu's Close, and the shortcut
+        // cannot disagree about what closing the last pane means.
+        if (dockId === "sidebar" && next === null) {
+          patch.sidebarDockOpen = false;
+        }
+        set(patch);
       };
 
       const makeMoveLeaf =
@@ -913,10 +929,8 @@ export const useWorkspace = create<WorkspaceState>()(
         //     and it is nullable), so it is resolved through the same
         //     `pickDropTarget` rule the drop path uses: a stale id closes
         //     the frontmost pane rather than silently nothing.
-        //  3. Emptying the sidebar also collapses the column, so it cannot
-        //     linger as an empty strip the shortcut can no longer clear.
-        //     Deliberately NOT folded into makeCloseLeaf: the pane × keeps
-        //     its documented layout-preserving behaviour.
+        //  3. Emptying the sidebar also collapses the column (implemented
+        //     in makeCloseLeaf, so the × and the tab menu behave the same).
         closeCurrentLeaf: () => {
           const state = get();
           const onScreen = (dockId: DockId): boolean =>
@@ -936,11 +950,9 @@ export const useWorkspace = create<WorkspaceState>()(
           const leafId = pickDropTarget(tree, state[lastLeafField(dockId)]);
           if (!leafId) return;
 
+          // Collapsing an emptied sidebar lives in makeCloseLeaf, so every
+          // close path shares it.
           makeCloseLeaf(dockId)(leafId);
-
-          if (dockId === "sidebar" && get().docks.sidebar === null) {
-            set({ sidebarDockOpen: false });
-          }
         },
         moveSidebarLeaf: makeMoveLeaf("sidebar"),
         setSidebarSplitRatio: makeSetSplitRatio("sidebar"),

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -2808,6 +2809,209 @@ func TestHandleCreateEntry_EmitsEvent(t *testing.T) {
 	}
 	if evt.Metadata["entry_type"] != "plan" {
 		t.Errorf("metadata[entry_type] = %q, want %q", evt.Metadata["entry_type"], "plan")
+	}
+}
+
+// requireCreated fails the test with the response body when a create did not
+// return 201. Without it a rejected request looks identical to a missing
+// event emission ("ingested events = 0"), which hides the real cause.
+func requireCreated(t *testing.T, resp *http.Response) {
+	t.Helper()
+	if resp.StatusCode != http.StatusCreated {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d, want %d; body = %s", resp.StatusCode, http.StatusCreated, body)
+	}
+}
+
+// TestHandleCreateEntry_EventCarriesTaskID is the regression that motivates
+// this change. evt.TaskID was never populated, so an automation with
+// trigger.once_per: task_id resolved every event to the same empty string,
+// produced one constant dedup key, and therefore fired exactly once ever.
+// {{.TaskID}} in a prompt template rendered empty for the same reason.
+func TestHandleCreateEntry_EventCarriesTaskID(t *testing.T) {
+	es := &mockEventService{}
+	ids := []string{"abc12def", "xyz98765"}
+	var call int
+	mock := &mockBrainService{
+		saveFunc: func(_ context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
+			id := ids[call]
+			call++
+			return &types.CreateEntryResponse{
+				ID:    id,
+				Path:  "projects/myproj/report/" + id + ".md",
+				Title: req.Title,
+				Type:  req.Type,
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	for _, title := range []string{"First", "Second"} {
+		body := jsonBody(t, map[string]any{"type": "report", "title": title, "content": "body"})
+		resp, err := http.Post(srv.URL+"/entries", "application/json", body)
+		if err != nil {
+			t.Fatalf("POST /entries failed: %v", err)
+		}
+		requireCreated(t, resp)
+		resp.Body.Close()
+	}
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 2 {
+		t.Fatalf("ingested events = %d, want 2", len(es.ingested))
+	}
+	for i, want := range ids {
+		if got := es.ingested[i].TaskID; got != want {
+			t.Errorf("event[%d].TaskID = %q, want %q", i, got, want)
+		}
+		if got := es.ingested[i].Metadata["entry_id"]; got != want {
+			t.Errorf("event[%d].metadata[entry_id] = %q, want %q", i, got, want)
+		}
+	}
+	// The point of the fix: two different entries must not collapse onto one
+	// once_per: task_id dedup key.
+	if es.ingested[0].TaskID == es.ingested[1].TaskID {
+		t.Fatalf("both events share TaskID %q — once_per: task_id would dedup them into a single firing", es.ingested[0].TaskID)
+	}
+}
+
+// TestHandleCreateEntry_EventCarriesPersistedTags asserts the event advertises
+// the tags the entry actually stores (sanitized, type appended), not the raw
+// request tags. A "tags" filter must agree with the file on disk.
+func TestHandleCreateEntry_EventCarriesPersistedTags(t *testing.T) {
+	es := &mockEventService{}
+	mock := &mockBrainService{
+		saveFunc: func(_ context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
+			return &types.CreateEntryResponse{
+				ID:    "abc12def",
+				Path:  "projects/myproj/report/abc12def.md",
+				Title: req.Title,
+				Type:  req.Type,
+				// Mirrors BrainServiceImpl.Save: composed, not raw.
+				Tags: frontmatter.ComposeEntryTags(req.Tags, req.Type),
+			}, nil
+		},
+	}
+	router := newTestRouterWithEvents(mock, es)
+	srv := httptest.NewServer(router)
+	defer srv.Close()
+
+	body := jsonBody(t, map[string]any{
+		"type":    "report",
+		"title":   "Tagged",
+		"content": "body",
+		// "  padded  " sanitizes to "padded"; "bad: tag" is dropped entirely.
+		"tags": []string{"supernote", "  padded  ", "bad: tag"},
+	})
+	resp, err := http.Post(srv.URL+"/entries", "application/json", body)
+	if err != nil {
+		t.Fatalf("POST /entries failed: %v", err)
+	}
+	defer resp.Body.Close()
+	requireCreated(t, resp)
+
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if len(es.ingested) != 1 {
+		t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+	}
+	got := es.ingested[0].Metadata["tags"]
+	want := "supernote,padded,report"
+	if got != want {
+		t.Errorf("metadata[tags] = %q, want %q", got, want)
+	}
+}
+
+// TestHandleCreateEntry_EventAttachmentMetadata covers the has_attachment flag
+// and the distinct comma-joined media types, in both the present and absent
+// cases.
+func TestHandleCreateEntry_EventAttachmentMetadata(t *testing.T) {
+	tests := []struct {
+		name           string
+		attachments    []map[string]any
+		wantHas        string
+		wantMediaTypes string
+	}{
+		{"no attachments", nil, "false", ""},
+		{
+			name: "single image attachment",
+			attachments: []map[string]any{
+				{"id": "att_1", "content_type": "image/png"},
+			},
+			wantHas:        "true",
+			wantMediaTypes: "image/png",
+		},
+		{
+			name: "distinct media types preserved in order",
+			attachments: []map[string]any{
+				{"id": "att_1", "content_type": "image/png"},
+				{"id": "att_2", "content_type": "application/pdf"},
+			},
+			wantHas:        "true",
+			wantMediaTypes: "image/png,application/pdf",
+		},
+		{
+			name: "duplicate media types collapsed",
+			attachments: []map[string]any{
+				{"id": "att_1", "content_type": "image/png"},
+				{"id": "att_2", "content_type": "image/png"},
+			},
+			wantHas:        "true",
+			wantMediaTypes: "image/png",
+		},
+		{
+			name: "attachment without content type still counts",
+			attachments: []map[string]any{
+				{"id": "att_1"},
+			},
+			wantHas:        "true",
+			wantMediaTypes: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			es := &mockEventService{}
+			mock := &mockBrainService{
+				saveFunc: func(_ context.Context, req types.CreateEntryRequest) (*types.CreateEntryResponse, error) {
+					return &types.CreateEntryResponse{
+						ID:   "abc12def",
+						Path: "projects/myproj/report/abc12def.md",
+						Type: req.Type,
+					}, nil
+				},
+			}
+			router := newTestRouterWithEvents(mock, es)
+			srv := httptest.NewServer(router)
+			defer srv.Close()
+
+			payload := map[string]any{"type": "report", "title": "With attachments", "content": "body"}
+			if tt.attachments != nil {
+				payload["attachments"] = tt.attachments
+			}
+			resp, err := http.Post(srv.URL+"/entries", "application/json", jsonBody(t, payload))
+			if err != nil {
+				t.Fatalf("POST /entries failed: %v", err)
+			}
+			defer resp.Body.Close()
+			requireCreated(t, resp)
+
+			es.mu.Lock()
+			defer es.mu.Unlock()
+			if len(es.ingested) != 1 {
+				t.Fatalf("ingested events = %d, want 1", len(es.ingested))
+			}
+			md := es.ingested[0].Metadata
+			if md["has_attachment"] != tt.wantHas {
+				t.Errorf("metadata[has_attachment] = %q, want %q", md["has_attachment"], tt.wantHas)
+			}
+			if md["attachment_media_types"] != tt.wantMediaTypes {
+				t.Errorf("metadata[attachment_media_types] = %q, want %q", md["attachment_media_types"], tt.wantMediaTypes)
+			}
+		})
 	}
 }
 

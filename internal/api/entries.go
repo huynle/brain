@@ -205,13 +205,29 @@ func (h *Handler) HandleCreateEntry(w http.ResponseWriter, r *http.Request) {
 	// Notify SSE clients about the change
 	h.notifyProjectChanged(r, resp.Path, req.Type)
 
-	// Emit entry.created event
+	// Emit entry.created event.
+	//
+	// TaskID must be set: it is what trigger.once_per: task_id resolves
+	// against. While it was empty every created entry produced the same
+	// dedup key, so such an automation fired exactly once ever, and
+	// {{.TaskID}} rendered empty in prompt templates.
 	evt := types.NewEvent(types.EventEntryCreated, types.EventSourceAPI)
 	evt.ProjectID = extractProjectID(resp.Path)
 	evt.TaskPath = resp.Path
+	evt.TaskID = resp.ID
 	evt.Metadata = map[string]string{
 		"entry_type": req.Type,
 		"title":      req.Title,
+		// Same value as TaskID, exposed as metadata so it is also reachable
+		// as a filter key.
+		"entry_id": resp.ID,
+		// Tags as PERSISTED (sanitized, entry type appended), not as
+		// requested — a "tags" filter must agree with the stored entry.
+		"tags":           strings.Join(resp.Tags, ","),
+		"has_attachment": strconv.FormatBool(len(req.Attachments) > 0),
+		// Attachment refs are written through to frontmatter verbatim, so
+		// the request's content types are the persisted ones.
+		"attachment_media_types": distinctAttachmentMediaTypes(req.Attachments),
 	}
 	if req.FeatureID != "" {
 		evt.FeatureID = req.FeatureID
@@ -1485,6 +1501,23 @@ func (h *Handler) notifyProjectChanged(r *http.Request, entryPath string, entryT
 // =============================================================================
 // Event Emission Helper
 // =============================================================================
+
+// distinctAttachmentMediaTypes returns the attachments' content types,
+// deduplicated in first-seen order and comma-joined, for event metadata.
+// Attachments without a content type contribute nothing, so a set of refs
+// that carry none yields an empty string while has_attachment stays true.
+func distinctAttachmentMediaTypes(refs []types.AttachmentReference) string {
+	seen := make(map[string]bool, len(refs))
+	mediaTypes := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		if ref.ContentType == "" || seen[ref.ContentType] {
+			continue
+		}
+		seen[ref.ContentType] = true
+		mediaTypes = append(mediaTypes, ref.ContentType)
+	}
+	return strings.Join(mediaTypes, ",")
+}
 
 // emitEvent publishes an event through the EventService if configured.
 // It is a fire-and-forget helper — errors are logged but never block the

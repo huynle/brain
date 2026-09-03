@@ -150,12 +150,9 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	// Sanitize inputs
 	title := frontmatter.SanitizeTitle(req.Title)
 
-	var sanitizedTags []string
-	for _, tag := range req.Tags {
-		if st, ok := frontmatter.SanitizeTag(tag); ok {
-			sanitizedTags = append(sanitizedTags, st)
-		}
-	}
+	// Compose once and reuse for both the file and the response, so callers
+	// (notably the entry.created emitter) see the tags actually persisted.
+	sanitizedTags := frontmatter.ComposeEntryTags(req.Tags, req.Type)
 
 	var sanitizedDeps []string
 	for _, dep := range req.DependsOn {
@@ -317,6 +314,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		Type:   req.Type,
 		Status: status,
 		Link:   link,
+		Tags:   sanitizedTags,
 	}
 
 	// Publish entry.created event

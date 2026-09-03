@@ -1388,6 +1388,53 @@ func TestGenerate_WithTags(t *testing.T) {
 	}
 }
 
+// TestComposeEntryTags pins the exact tag list a created entry persists.
+// Event emitters need this: emitting raw request tags would advertise tags
+// the entry does not actually carry (unsanitized) and omit the entry type
+// (auto-appended), so a "tags" filter would disagree with the stored file.
+func TestComposeEntryTags(t *testing.T) {
+	tests := []struct {
+		name      string
+		raw       []string
+		entryType string
+		want      []string
+	}{
+		{"appends type", []string{"alpha"}, "report", []string{"alpha", "report"}},
+		{"no tags yields type only", nil, "report", []string{"report"}},
+		{"type not duplicated when supplied", []string{"report"}, "report", []string{"report"}},
+		{"preserves user order", []string{"b", "a"}, "note", []string{"b", "a", "note"}},
+		{"dedupes repeats", []string{"a", "a"}, "note", []string{"a", "note"}},
+		{"trims whitespace", []string{"  spaced  "}, "note", []string{"spaced", "note"}},
+		{"drops empty tags", []string{"", "   "}, "note", []string{"note"}},
+		{"drops yaml-hostile colon-space tags", []string{"bad: tag", "ok"}, "note", []string{"ok", "note"}},
+		{"strips control characters", []string{"a\nb"}, "note", []string{"ab", "note"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ComposeEntryTags(tt.raw, tt.entryType)
+			if len(got) != len(tt.want) {
+				t.Fatalf("ComposeEntryTags(%q, %q) = %q, want %q", tt.raw, tt.entryType, got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Fatalf("ComposeEntryTags(%q, %q) = %q, want %q", tt.raw, tt.entryType, got, tt.want)
+				}
+			}
+		})
+	}
+}
+
+// TestComposeEntryTags_GenerateIsIdempotent proves Generate can be handed an
+// already-composed tag list without double-appending the type. Save relies on
+// this so one composition serves both the file and the API response.
+func TestComposeEntryTags_GenerateIsIdempotent(t *testing.T) {
+	composed := ComposeEntryTags([]string{"alpha"}, "report")
+	result := Generate(&GenerateOptions{Title: "T", Type: "report", Tags: composed})
+	if got := strings.Count(result, "  - report"); got != 1 {
+		t.Fatalf("type tag rendered %d times, want 1:\n%s", got, result)
+	}
+}
+
 func TestGenerate_WithDependsOn(t *testing.T) {
 	result := Generate(&GenerateOptions{
 		Title:     "Task with deps",

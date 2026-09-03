@@ -781,6 +781,11 @@ type CreateEntryResponse struct {
 	Type   string `json:"type"`
 	Status string `json:"status"`
 	Link   string `json:"link"`
+	// Tags is the tag list actually persisted on the entry: sanitized,
+	// deduplicated, and with the entry type appended. It differs from the
+	// request's tags, so event emitters and clients that echo tags back must
+	// read it here rather than re-using their own input.
+	Tags []string `json:"tags,omitempty"`
 }
 
 // UpdateEntryRequest is the request body for PATCH /entries/:id.

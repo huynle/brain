@@ -26,6 +26,7 @@ import {
   type FeatureLifecycle,
 } from "../../lib/features";
 import { laneVisible } from "../../lib/lane";
+import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { ProjectTiles } from "./ProjectTiles";
 import { EntriesPreview } from "./EntriesPreview";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
@@ -52,7 +53,11 @@ export function OverviewGrid(): JSX.Element {
   const hideAllEmpty = useWorkspace((s) => s.hideAllEmpty);
   const statusFilter = useWorkspace((s) => s.statusFilter);
   const openModal = useModal((s) => s.open);
-  const openInSidebar = useWorkspace((s) => s.openInSidebar);
+  // openOrReuseInSidebar, not openInSidebar: the latter opens a NEW tab
+  // every time, so clicking down a lane of features would leave one pane
+  // per click. Reuse is what makes single-click preview viable at all.
+  const previewInSidebar = useWorkspace((s) => s.openOrReuseInSidebar);
+  const openInFocus = useWorkspace((s) => s.openInFocus);
   const setView = useWorkspace((s) => s.setView);
   const toast = useUI((s) => s.toast);
 
@@ -67,16 +72,34 @@ export function OverviewGrid(): JSX.Element {
   // whole grid — its overlays render once at the end.
   const featureCtxFor = useFeatureActionContextFactory();
   const { rowProps, overlays } = useRowActions();
+  // Every feature surface on this page follows the app-wide click
+  // contract: single click previews in the side panel, double click pins
+  // into Focus. These used to open a MODAL instead — the one place in the
+  // app where clicking a feature took over the screen.
+  const preview = useDeferredPreview();
+  const previewFeature = (f: DerivedFeature & { projectId: string }) =>
+    previewInSidebar(
+      "feature-detail",
+      { projectId: f.projectId, featureId: f.id },
+      f.name,
+    );
+  const pinFeature = (f: DerivedFeature & { projectId: string }) => {
+    preview.cancel();
+    openInFocus(
+      "feature-detail",
+      { projectId: f.projectId, featureId: f.id },
+      f.name,
+    );
+  };
+  // Enter previews immediately — the keyboard has no double-click to wait
+  // out.
   const featureRowProps = (f: DerivedFeature & { projectId: string }) =>
     rowProps(buildFeatureActions(f, featureCtxFor(f.projectId)), f.name, () =>
-      openModal("feature", { projectId: f.projectId, featureId: f.id }),
+      previewFeature(f),
     );
 
   const projectIds = projects ?? [];
-  const hiddenSet = useMemo(
-    () => new Set(hiddenProjects),
-    [hiddenProjects],
-  );
+  const hiddenSet = useMemo(() => new Set(hiddenProjects), [hiddenProjects]);
 
   // On first load — if user hasn't curated a hidden list yet, auto-hide
   // projects with zero tasks so the grid isn't overwhelmed. Runs once
@@ -184,7 +207,9 @@ export function OverviewGrid(): JSX.Element {
       <div className="workflow-center">
         <div className="wc-head">
           <div>
-            <div className="wc-title">Workflow command center · all projects</div>
+            <div className="wc-title">
+              Workflow command center · all projects
+            </div>
             <div className="wc-sub">
               Execute features, track automation consequences, and update Brain
               memory from one control surface.
@@ -193,16 +218,13 @@ export function OverviewGrid(): JSX.Element {
           <button
             className="primary"
             onClick={() => {
-              if (executable[0])
-                toast(`Dispatch ${executable[0].id}`, "info");
+              if (executable[0]) toast(`Dispatch ${executable[0].id}`, "info");
               else toast("No executable features", "info");
             }}
           >
             Run next ready feature
           </button>
-          <button onClick={() => setView("entries")}>
-            Open Brain entries
-          </button>
+          <button onClick={() => setView("entries")}>Open Brain entries</button>
         </div>
         <div className="wc-metrics">
           <div>
@@ -252,17 +274,7 @@ export function OverviewGrid(): JSX.Element {
                 <span className="wc-meta">
                   {f.projectId} · {runner ? runner.runner_id : "unassigned"}
                 </span>
-                <button
-                  onClick={() =>
-                    openInSidebar(
-                      "feature-detail",
-                      { projectId: f.projectId, featureId: f.id },
-                      f.name,
-                    )
-                  }
-                >
-                  Plan
-                </button>
+                <button onClick={() => previewFeature(f)}>Plan</button>
                 <button
                   onClick={() =>
                     openModal("feature", {
@@ -310,14 +322,18 @@ export function OverviewGrid(): JSX.Element {
                   key={`${f.projectId}:${f.id}`}
                   className="rq-item"
                   {...featureRowProps(f)}
-                  onClick={() =>
-                    openModal("feature", {
-                      projectId: f.projectId,
-                      featureId: f.id,
-                    })
-                  }
+                  onClick={(e) => {
+                    if ((e.target as HTMLElement).closest("button")) return;
+                    preview.schedule(() => previewFeature(f));
+                  }}
+                  onDoubleClick={(e) => {
+                    if ((e.target as HTMLElement).closest("button")) return;
+                    pinFeature(f);
+                  }}
                 >
-                  <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+                  <span className={`life-badge ${tone.tone}`}>
+                    {tone.label}
+                  </span>
                   <span className="rq-name">{f.name}</span>
                   <span className="rq-meta">
                     {f.projectId}
@@ -358,12 +374,8 @@ export function OverviewGrid(): JSX.Element {
                     key={`${f.projectId}:${f.id}`}
                     className="lane-card"
                     {...featureRowProps(f)}
-                    onClick={() =>
-                      openModal("feature", {
-                        projectId: f.projectId,
-                        featureId: f.id,
-                      })
-                    }
+                    onClick={() => preview.schedule(() => previewFeature(f))}
+                    onDoubleClick={() => pinFeature(f)}
                   >
                     <span className="lane-name">{f.name}</span>
                     <span className="lane-meta">
@@ -407,8 +419,8 @@ export function OverviewGrid(): JSX.Element {
       {projectIds.length > 0 && visibleProjectIds.length === 0 && (
         <div className="empty-state">
           <div>
-            All projects are hidden. Click a project in the sidebar's
-            Hidden group to bring one back.
+            All projects are hidden. Click a project in the sidebar's Hidden
+            group to bring one back.
           </div>
         </div>
       )}

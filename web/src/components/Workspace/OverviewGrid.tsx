@@ -26,22 +26,11 @@ import {
   type FeatureLifecycle,
 } from "../../lib/features";
 import { laneVisible } from "../../lib/lane";
+import { LIFECYCLE_TONE, LifecycleBadge } from "../common/LifecycleBadge";
 import { ProjectTiles } from "./ProjectTiles";
 import { EntriesPreview } from "./EntriesPreview";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
 import type { Task } from "../../lib/types";
-
-// Map internal lifecycle key → wireframe tone/label.
-const LIFECYCLE_TONE: Record<
-  FeatureLifecycle,
-  { tone: string; label: string }
-> = {
-  "in-progress": { tone: "active", label: "active" },
-  blocked: { tone: "blocked", label: "blocked" },
-  finished: { tone: "finished", label: "finished" },
-  "mr-open": { tone: "mr", label: "MR open" },
-  merged: { tone: "merged", label: "merged" },
-};
 
 export function OverviewGrid(): JSX.Element {
   const { data: projects } = useProjects();
@@ -146,14 +135,22 @@ export function OverviewGrid(): JSX.Element {
     blocked: [],
     finished: [],
     "mr-open": [],
+    "ready-to-merge": [],
     merged: [],
   };
   for (const f of allDerived) byLifecycle[f.lifecycle].push(f);
 
-  // "Needs attention" = blocked + mr-open + features whose runner is stale/offline
+  // "Needs attention" = blocked + either MR state + features whose runner
+  // is stale/offline. Both MR states qualify: one is waiting on a reviewer,
+  // the other on the merge executor, and in both the work itself has stopped.
   const attention = useMemo(() => {
     return allDerived.filter((f) => {
-      if (f.lifecycle === "blocked" || f.lifecycle === "mr-open") return true;
+      if (
+        f.lifecycle === "blocked" ||
+        f.lifecycle === "mr-open" ||
+        f.lifecycle === "ready-to-merge"
+      )
+        return true;
       const runnerId = featureAssignments[f.id];
       if (!runnerId) return false;
       const runner = runners.find((r) => r.runner_id === runnerId);
@@ -232,6 +229,10 @@ export function OverviewGrid(): JSX.Element {
             <span> MRs open</span>
           </div>
           <div>
+            <b>{byLifecycle["ready-to-merge"].length}</b>
+            <span> ready to merge</span>
+          </div>
+          <div>
             <b>{byLifecycle.merged.length}</b>
             <span> merged</span>
           </div>
@@ -240,14 +241,13 @@ export function OverviewGrid(): JSX.Element {
           {executable.slice(0, 5).map((f) => {
             const runnerId = featureAssignments[f.id];
             const runner = runners.find((r) => r.runner_id === runnerId);
-            const tone = LIFECYCLE_TONE[f.lifecycle];
             return (
               <div
                 key={`${f.projectId}:${f.id}`}
                 className="wc-row"
                 {...featureRowProps(f)}
               >
-                <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+                <LifecycleBadge lifecycle={f.lifecycle} href={f.prUrl} />
                 <span className="wc-feature">{f.name}</span>
                 <span className="wc-meta">
                   {f.projectId} · {runner ? runner.runner_id : "unassigned"}
@@ -298,7 +298,6 @@ export function OverviewGrid(): JSX.Element {
           </div>
           <div className="rq-list">
             {attention.map((f) => {
-              const tone = LIFECYCLE_TONE[f.lifecycle];
               const runnerId = featureAssignments[f.id];
               const runner = runners.find((r) => r.runner_id === runnerId);
               const runnerIssue =
@@ -317,12 +316,14 @@ export function OverviewGrid(): JSX.Element {
                     })
                   }
                 >
-                  <span className={`life-badge ${tone.tone}`}>{tone.label}</span>
+                  <LifecycleBadge lifecycle={f.lifecycle} href={f.prUrl} />
                   <span className="rq-name">{f.name}</span>
+                  {/* The badge itself now says which MR state this is, and
+                      links out when there is a real one — the old ` · MR
+                      open` suffix here said neither. */}
                   <span className="rq-meta">
                     {f.projectId}
                     {runnerIssue ? ` · ${runnerIssue}` : ""}
-                    {f.prUrl && !runnerIssue ? ` · MR open` : ""}
                   </span>
                 </div>
               );
@@ -339,6 +340,7 @@ export function OverviewGrid(): JSX.Element {
             ["blocked", "blocked"],
             ["finished", "finished"],
             ["mr-open", "mr"],
+            ["ready-to-merge", "ready"],
             ["merged", "merged"],
           ] as Array<[FeatureLifecycle, string]>
         ).map(([key, laneClass]) => {

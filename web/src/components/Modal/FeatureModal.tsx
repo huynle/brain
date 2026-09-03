@@ -7,6 +7,7 @@
 import { useMemo } from "react";
 import { Modal } from "../common/Modal";
 import { ActionBar } from "../common/ActionBar";
+import { LifecycleBadge } from "../common/LifecycleBadge";
 import { useModal } from "../../store/modal";
 import { useLive } from "../../lib/sse";
 import { useActionRunner } from "../../hooks/useActionRunner";
@@ -23,14 +24,6 @@ import { buildFeatureActions } from "../../lib/actions/featureActions";
 import { buildGoalActions, goalStatusLabel } from "../../lib/actions/goalActions";
 import { deriveFeatures } from "../../lib/features";
 import type { GoalSummary, Task } from "../../lib/types";
-
-const LIFECYCLE_TONE = {
-  "in-progress": { tone: "active", label: "active" },
-  blocked: { tone: "blocked", label: "blocked" },
-  finished: { tone: "finished", label: "finished" },
-  "mr-open": { tone: "mr", label: "MR open" },
-  merged: { tone: "merged", label: "merged" },
-} as const;
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
 
@@ -172,7 +165,6 @@ export function FeatureModal(): JSX.Element {
     );
   }
 
-  const tone = LIFECYCLE_TONE[feature.lifecycle];
   const pct = Math.round(feature.progress * 100);
 
   return (
@@ -180,9 +172,11 @@ export function FeatureModal(): JSX.Element {
       title={
         <>
           {feature.name}{" "}
-          <span className={`life-badge ${tone.tone}`} style={{ marginLeft: 8 }}>
-            {tone.label}
-          </span>
+          <LifecycleBadge
+            lifecycle={feature.lifecycle}
+            href={feature.prUrl}
+            style={{ marginLeft: 8 }}
+          />
         </>
       }
       onClose={close}

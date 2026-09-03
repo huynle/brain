@@ -5,9 +5,14 @@
  * type `merge_request` — not a GitHub/GitLab PR. Until now the web UI's
  * feature lifecycle keyed exclusively off `task.mr_url` / a URL regex over
  * task content, so a successful checkout left the feature stuck showing
- * "active" and the Overview's MR OPEN column permanently at zero. This
- * module is the missing link: given the project's merge_request entries,
- * which features have an open MR?
+ * "active". This module is the missing link: given the project's
+ * merge_request entries, which features have an open MR?
+ *
+ * What that yields is the `ready-to-merge` lifecycle, NOT `mr-open`. The
+ * distinction is the whole point: an entry here means the work is validated
+ * and a merge intent is parked in Brain, with nothing opened on any git
+ * server and no url for the user to follow. `mr-open` is reserved for a
+ * real forge MR, and its badge is a link. See `lib/features`.
  *
  * Feature attribution is defensive by necessity. The feature-checkout
  * skill instructs the agent to set a structured `feature_id` on the entry,

@@ -5,7 +5,8 @@
  * `feature_id`. `deriveFeatures` folds a task list into one row per
  * feature with:
  *   - progress (completed / total, 0..1)
- *   - lifecycle: in-progress | blocked | finished | mr-open | merged
+ *   - lifecycle: in-progress | blocked | finished | mr-open |
+ *                ready-to-merge | merged
  *   - PR URL (from task.mr_url, task.merge_request_url, or a regex
  *     scan of task.content)
  *   - ownerTaskIds so downstream drag-drop assignment can address
@@ -254,12 +255,14 @@ test("deriveFeatures: propagates projectId and mergePolicy", () => {
 
 // ─── sortFeatures: canonical order ─────────────────────────────────
 
-test("sortFeatures: blocked → in-progress → mr-open → finished → merged", () => {
-  // Order per plan text: "blocked at top", then in-progress, mr-open,
-  // finished, and merged last (collapsed at bottom).
+test("sortFeatures: blocked → in-progress → mr-open → ready-to-merge → finished → merged", () => {
+  // Order per plan text: "blocked at top", then in-progress, the two MR
+  // states (a real MR waits on a person, so it outranks a parked merge
+  // intent), finished, and merged last (collapsed at bottom).
   const feats: DerivedFeature[] = [
     mkFeat("z-merged", "merged"),
     mkFeat("y-finished", "finished"),
+    mkFeat("x2-ready", "ready-to-merge"),
     mkFeat("x-mr", "mr-open"),
     mkFeat("w-inprog", "in-progress"),
     mkFeat("v-blocked", "blocked"),
@@ -267,7 +270,14 @@ test("sortFeatures: blocked → in-progress → mr-open → finished → merged"
   const sorted = sortFeatures(feats);
   assert.deepEqual(
     sorted.map((f) => f.lifecycle),
-    ["blocked", "in-progress", "mr-open", "finished", "merged"],
+    [
+      "blocked",
+      "in-progress",
+      "mr-open",
+      "ready-to-merge",
+      "finished",
+      "merged",
+    ],
   );
 });
 
@@ -412,13 +422,35 @@ function mkFeat(
 
 // ─── Brain-native MR fold ──────────────────────────────────────────
 
-test("deriveFeatures: an open Brain-native MR flips lifecycle to mr-open", () => {
+test("deriveFeatures: an open Brain-native MR flips lifecycle to ready-to-merge", () => {
+  // NOT mr-open: a merge_request entry is a parked merge intent inside
+  // Brain, with nothing open on any git server and no url to follow.
   const feats = deriveFeatures(
     [mkTask({ id: "t1", feature_id: "api", status: "completed" })],
     "proj",
     new Set(["api"]),
   );
+  assert.equal(feats[0].lifecycle, "ready-to-merge");
+  assert.equal(feats[0].prUrl, undefined);
+});
+
+test("deriveFeatures: a forge MR url beats an open MR entry on the same feature", () => {
+  // Both signals present. mr-open wins: it is the only one the user can
+  // click through to, and the entry adds nothing the url does not say.
+  const feats = deriveFeatures(
+    [
+      mkTask({
+        id: "t1",
+        feature_id: "api",
+        status: "completed",
+        content: "see https://github.com/acme/foo/pull/7",
+      }),
+    ],
+    "proj",
+    new Set(["api"]),
+  );
   assert.equal(feats[0].lifecycle, "mr-open");
+  assert.equal(feats[0].prUrl, "https://github.com/acme/foo/pull/7");
 });
 
 test("deriveFeatures: merged still trumps an open MR entry", () => {
@@ -434,15 +466,44 @@ test("deriveFeatures: merged still trumps an open MR entry", () => {
 test("deriveFeatures: MR set only affects the named feature", () => {
   const feats = deriveFeatures(
     [
-      mkTask({ id: "t1", feature_id: "api", status: "pending" }),
-      mkTask({ id: "t2", feature_id: "ui", status: "pending" }),
+      mkTask({ id: "t1", feature_id: "api", status: "completed" }),
+      mkTask({ id: "t2", feature_id: "ui", status: "completed" }),
     ],
     "proj",
     new Set(["api"]),
   );
   const byId = Object.fromEntries(feats.map((f) => [f.id, f.lifecycle]));
-  assert.equal(byId.api, "mr-open");
-  assert.equal(byId.ui, "in-progress");
+  assert.equal(byId.api, "ready-to-merge");
+  assert.equal(byId.ui, "finished");
+});
+
+// The fold upgrades `finished` and nothing else — "ready to merge" claims
+// the work is done, so unfinished work has to outrank a parked MR entry.
+
+test("deriveFeatures: a still-running task outranks an open MR entry", () => {
+  // Checkout parked an MR entry, then a follow-up task was added and
+  // picked up. The feature is NOT ready to merge.
+  const feats = deriveFeatures(
+    [
+      mkTask({ id: "t1", feature_id: "api", status: "completed" }),
+      mkTask({ id: "t2", feature_id: "api", status: "in_progress" }),
+    ],
+    "proj",
+    new Set(["api"]),
+  );
+  assert.equal(feats[0].lifecycle, "in-progress");
+});
+
+test("deriveFeatures: a blocked task outranks an open MR entry", () => {
+  const feats = deriveFeatures(
+    [
+      mkTask({ id: "t1", feature_id: "api", status: "completed" }),
+      mkTask({ id: "t2", feature_id: "api", status: "blocked" }),
+    ],
+    "proj",
+    new Set(["api"]),
+  );
+  assert.equal(feats[0].lifecycle, "blocked");
 });
 
 test("deriveFeatures: omitting the MR set preserves previous behavior", () => {

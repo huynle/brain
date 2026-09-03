@@ -12,19 +12,34 @@
  *
  * ─── Rollup rules ────────────────────────────────────────────────
  *
- *   merged      — every task in the feature has status "validated".
- *                 (Future signal: `mergedAt` timestamp; not wired yet.)
- *   mr-open     — at least one task has an MR/PR URL AND not all
- *                 tasks are validated. Merged trumps mr-open.
- *   finished    — 100% of tasks are in {completed, validated} AND
- *                 no MR/PR URL is present anywhere in the feature.
- *   blocked     — any task is status "blocked" AND no task is
- *                 "pending" or "in_progress". A pending sibling means
- *                 work is still active → in-progress wins.
- *   in-progress — default. Any task in {pending, in_progress} lands
- *                 here.
+ *   merged         — every task in the feature has status "validated".
+ *                    (Future signal: `mergedAt` timestamp; not wired yet.)
+ *   mr-open        — a merge request exists ON A GIT SERVER: some task
+ *                    carries an MR/PR URL, and not all tasks are
+ *                    validated. This is the only lifecycle with a URL to
+ *                    open, and callers render the badge as a link.
+ *   ready-to-merge — the feature is otherwise `finished` AND an open
+ *                    Brain-native `merge_request` ENTRY names it, with no
+ *                    forge URL anywhere in it. The checkout agent validated
+ *                    the work and parked a merge intent for deterministic
+ *                    merge execution — nothing has been opened on a git
+ *                    server, and there is nothing to click. See
+ *                    `lib/mergeRequests`.
+ *   finished       — 100% of tasks are in {completed, validated} AND no
+ *                    MR signal of either kind is present.
+ *   blocked        — any task is status "blocked" AND no task is
+ *                    "pending" or "in_progress". A pending sibling means
+ *                    work is still active → in-progress wins.
+ *   in-progress    — default. Any task in {pending, in_progress} lands
+ *                    here.
  *
- * Priority (highest wins): merged > mr-open > finished > blocked > in-progress.
+ * Priority (highest wins):
+ *   merged > mr-open > ready-to-merge > finished > blocked > in-progress.
+ *
+ * The two MR states were ONE state (`mr-open`) until 2026-09-03, which
+ * made the badge a lie half the time: an `auto_pr` checkout produces a
+ * Brain entry, not a forge PR, so features with nothing on the git server
+ * still read "MR OPEN" and offered no link to follow. Keep them distinct.
  *
  * ─── PR URL extraction ─────────────────────────────────────────────
  *
@@ -50,6 +65,7 @@ export type FeatureLifecycle =
   | "blocked"
   | "finished"
   | "mr-open"
+  | "ready-to-merge"
   | "merged";
 
 export interface DerivedFeature {
@@ -114,8 +130,9 @@ export function deriveFeatures(
    * Feature ids with an open Brain-native merge_request entry (see
    * `lib/mergeRequests`). An `auto_pr` checkout produces such an entry
    * rather than a GitHub/GitLab URL, so without this input a reviewed
-   * feature stayed "in-progress" forever and the MR OPEN column never
-   * moved. Optional: callers that don't display lifecycle can omit it.
+   * feature stayed "in-progress" forever and the READY TO MERGE column
+   * never moved. Optional: callers that don't display lifecycle can omit
+   * it — they simply never see `ready-to-merge`.
    */
   openMRs?: ReadonlySet<string>,
 ): DerivedFeature[] {
@@ -138,10 +155,23 @@ export function deriveFeatures(
   const out: DerivedFeature[] = [];
   for (const [fid, bucketTasks] of groups) {
     const f = deriveOne(fid, bucketTasks, projectId);
-    // Brain-native MR fold. Merged still trumps — a feature whose tasks
-    // are all validated is done, whatever stale MR entry remains.
-    if (f.lifecycle !== "merged" && openMRs?.has(fid)) {
-      f.lifecycle = "mr-open";
+    // Brain-native MR fold — deliberately narrow: it upgrades `finished`
+    // and nothing else.
+    //
+    // "Ready to merge" is a claim about the WORK, not just about the
+    // existence of an entry: it says every task is done and only the merge
+    // is outstanding. So a feature that still has a blocked or running
+    // task keeps the lifecycle its tasks earned, even with an open MR
+    // entry sitting on it — a follow-up task added after checkout must not
+    // be papered over by a badge announcing the feature is ready to go.
+    // (The earlier "anything but merged" fold did paper over exactly that.)
+    //
+    // The two states this used to guard against are excluded for free:
+    // `merged` (all tasks validated — done, whatever stale entry remains)
+    // and `mr-open` (a real forge URL, strictly more actionable, and the
+    // only one of the two the user can click through to).
+    if (f.lifecycle === "finished" && openMRs?.has(fid)) {
+      f.lifecycle = "ready-to-merge";
     }
     out.push(f);
   }
@@ -203,6 +233,9 @@ function deriveOne(
   const allDone = total > 0 && completed === total;
 
   // Priority: merged > mr-open > finished > blocked > in-progress.
+  // `ready-to-merge` is not decidable here — it comes from the project's
+  // merge_request entries, which only deriveFeatures has — so the fold
+  // above promotes `finished` to it after the fact.
   // We evaluate top-down and land on the first match.
   let lifecycle: FeatureLifecycle;
   if (allValidated) {
@@ -237,8 +270,9 @@ function deriveOne(
  *
  * Drives the default collapse state of a feature's task list: a finished
  * or merged feature is history, so its rows start folded and the feature
- * reads as one line. `mr-open` is deliberately NOT done — an open MR is
- * the one lifecycle that is waiting on a human.
+ * reads as one line. `mr-open` and `ready-to-merge` are deliberately NOT
+ * done — both are waiting on someone: a reviewer on the git server, or
+ * the merge executor.
  */
 export const isFeatureDone = (f: DerivedFeature): boolean =>
   f.lifecycle === "finished" || f.lifecycle === "merged";
@@ -246,19 +280,23 @@ export const isFeatureDone = (f: DerivedFeature): boolean =>
 /**
  * Sort features into the canonical panes-v2 display order:
  *
- *   blocked → in-progress → mr-open → finished → merged
+ *   blocked → in-progress → mr-open → ready-to-merge → finished → merged
  *
  * `blocked` sits at the top because it demands attention; `merged`
  * goes last because the UI collapses that bucket by default. Within
  * a bucket, features sort alphabetically by id for stability.
+ *
+ * `mr-open` outranks `ready-to-merge` because it is the one waiting on a
+ * person — a parked merge intent is waiting on the merge executor.
  */
 export function sortFeatures(feats: DerivedFeature[]): DerivedFeature[] {
   const rank: Record<FeatureLifecycle, number> = {
     blocked: 0,
     "in-progress": 1,
     "mr-open": 2,
-    finished: 3,
-    merged: 4,
+    "ready-to-merge": 3,
+    finished: 4,
+    merged: 5,
   };
   // Copy first so callers keep their input untouched.
   return [...feats].sort((a, b) => {
@@ -273,7 +311,8 @@ export function sortFeatures(feats: DerivedFeature[]): DerivedFeature[] {
  *
  * Root ordering follows the caller's array order, so piping through
  * {@link sortFeatures} first keeps the canonical blocked → in-progress
- * → mr-open → finished → merged sequence at every level of the tree.
+ * → mr-open → ready-to-merge → finished → merged sequence at every level
+ * of the tree.
  *
  * Features whose dependency is not in the input (a merged feature the
  * user has collapsed, or one that lives in another project) stay roots

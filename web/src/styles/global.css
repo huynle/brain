@@ -480,7 +480,7 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .wc-sub { color: #6b757e; font-size: 10.5px; margin-top: 2px; }
 .wc-head button.primary, .entries-toolbar button.primary { background: #f4b23a; color: #12161a; border-color: #f4b23a; }
 .wc-metrics {
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   border-bottom: 1px solid #1a1e22;
 }
 .wc-metrics > div { padding: 8px 10px; border-right: 1px solid #1a1e22; color: #6b757e; font-size: 10px; }
@@ -556,7 +556,7 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .flow-board {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(5, minmax(170px, 1fr));
+  grid-template-columns: repeat(6, minmax(150px, 1fr));
   gap: 8px;
 }
 .flow-lane {
@@ -583,6 +583,7 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .flow-lane.blocked .lane-head b { color: #d96060; }
 .flow-lane.finished .lane-head b { color: #6fca7d; }
 .flow-lane.mr .lane-head b { color: #6a8bff; }
+.flow-lane.ready .lane-head b { color: #3fb0c0; }
 .flow-lane.merged .lane-head b { color: #b98cff; }
 .lane-items { display: flex; flex-direction: column; gap: 4px; padding: 6px; min-height: 58px; }
 .lane-items.expanded { max-height: 40vh; overflow-y: auto; }
@@ -660,6 +661,7 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard-head .health.active { color: #f4b23a; border-color: #f4b23a55; background: #f4b23a11; }
 .pcard-head .health.blocked { color: #d96060; border-color: #d9606055; background: #d9606011; }
 .pcard-head .health.mr { color: #6a8bff; border-color: #6a8bff55; background: #6a8bff11; }
+.pcard-head .health.ready { color: #3fb0c0; border-color: #3fb0c055; background: #3fb0c011; }
 .pcard-head .health.merged { color: #b98cff; border-color: #b98cff55; background: #b98cff11; }
 /* Badges + counts travel together: this group either sits beside the name
    or wraps below it whole, so "paused" is never stranded on the name's line
@@ -716,6 +718,7 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .flow-pill.blocked b { color: #d96060; }
 .flow-pill.finished b { color: #6fca7d; }
 .flow-pill.mr b { color: #6a8bff; }
+.flow-pill.ready b { color: #3fb0c0; }
 .flow-pill.merged b { color: #b98cff; }
 .pcard-tabs {
   display: flex; padding: 0 6px; background: #12161a;
@@ -759,10 +762,30 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
+/* "ready to merge ↗" is the longest chip label and must not wrap mid-chip,
+ * pushing a feature row's progress bar onto a second line. This lives on
+ * the LifecycleBadge's own class, NOT on `.life-badge`: that base class is
+ * also reused for block-level `role="status"` notices (the abandoned-task
+ * banners in FeatureModal and FeatureDetailLeaf) whose whole sentence has
+ * to wrap. A nowrap on the base ran those off the edge of the drawer. */
+.lifecycle-chip { white-space: nowrap; }
 .life-badge.active { color: #f4b23a; border-color: #f4b23a55; background: #f4b23a11; }
 .life-badge.blocked { color: #d96060; border-color: #d9606055; background: #d9606011; }
 .life-badge.finished { color: #6fca7d; border-color: #6fca7d55; background: #6fca7d11; }
 .life-badge.mr { color: #6a8bff; border-color: #6a8bff55; background: #6a8bff11; }
+/* Ready-to-merge — teal, one step short of merged's purple. Deliberately
+ * NOT the blue of .mr: the whole point of splitting the two states is that
+ * only one of them has a merge request on a git server. */
+.life-badge.ready { color: #3fb0c0; border-color: #3fb0c055; background: #3fb0c011; }
+/* The mr-open chip is the only one that is also a link (to the MR itself).
+ * Underline is withheld until hover so a row of chips still reads as chips. */
+a.life-badge { text-decoration: none; cursor: pointer; }
+a.life-badge.link:hover {
+  border-color: #6a8bffaa;
+  background: #6a8bff22;
+  text-decoration: underline;
+}
+a.life-badge.link:focus-visible { outline: 1px solid #6a8bff; outline-offset: 1px; }
 .life-badge.merged { color: #b98cff; border-color: #b98cff55; background: #b98cff11; }
 /* Abandoned tasks — amber-orange to signal "needs attention, has a recovery
  * path". Distinct enough from .blocked (red = error/dead-end) and .active

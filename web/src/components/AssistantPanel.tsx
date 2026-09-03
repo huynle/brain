@@ -19,6 +19,8 @@ import { useLive } from "../lib/sse";
 import { useRunners } from "../hooks/useRunners";
 import { useUI } from "../store/ui";
 import { deriveFeatures } from "../lib/features";
+import { LIFECYCLE_TONE } from "./common/LifecycleBadge";
+import { useMergeRequests } from "../hooks/useMergeRequests";
 import {
   useAssistantChat,
   type AssistantToolChip,
@@ -28,14 +30,6 @@ import {
   ApiError,
   type AssistantHistoryMessage,
 } from "../lib/api";
-
-const LIFECYCLE_LABELS: Record<string, string> = {
-  "in-progress": "active",
-  blocked: "blocked",
-  finished: "finished",
-  "mr-open": "MR open",
-  merged: "merged",
-};
 
 // Cap on how many prior history entries are replayed per request. The server
 // strips tool payloads already; this just bounds prompt growth on long chats.
@@ -54,6 +48,7 @@ export function AssistantPanel(): JSX.Element | null {
   const { data: projects } = useProjects();
   const liveProjects = useLive((s) => s.projects);
   const { runners } = useRunners();
+  const { openByProject } = useMergeRequests();
   const toast = useUI((s) => s.toast);
 
   const [prompt, setPrompt] = useState("");
@@ -75,20 +70,24 @@ export function AssistantPanel(): JSX.Element | null {
     const out: Array<{ projectId: string; featureId: string; name: string; lifecycle: string }> = [];
     for (const pid of projects ?? []) {
       const tasks = liveProjects[pid]?.tasks ?? [];
-      const feats = deriveFeatures(tasks, pid);
+      const feats = deriveFeatures(tasks, pid, openByProject.get(pid));
       for (const f of feats) {
-        if (f.lifecycle === "blocked" || f.lifecycle === "mr-open") {
+        if (
+          f.lifecycle === "blocked" ||
+          f.lifecycle === "mr-open" ||
+          f.lifecycle === "ready-to-merge"
+        ) {
           out.push({
             projectId: pid,
             featureId: f.id,
             name: f.name,
-            lifecycle: LIFECYCLE_LABELS[f.lifecycle] ?? f.lifecycle,
+            lifecycle: LIFECYCLE_TONE[f.lifecycle].label,
           });
         }
       }
     }
     return out;
-  }, [projects, liveProjects]);
+  }, [projects, liveProjects, openByProject]);
 
   // Keep the newest message in view while streaming.
   useEffect(() => {

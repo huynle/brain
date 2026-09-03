@@ -87,7 +87,11 @@ function healthFor(
   paused: boolean,
 ): { label: string; tone: string } {
   if (paused) return { label: "paused", tone: "paused" };
-  const mr = features.filter((f) => f.lifecycle === "mr-open").length;
+  // Both MR states read as "reviewing" here: this label answers "is this
+  // project moving?", and neither one is.
+  const mr = features.filter(
+    (f) => f.lifecycle === "mr-open" || f.lifecycle === "ready-to-merge",
+  ).length;
   const blocked = features.filter((f) => f.lifecycle === "blocked").length;
   if (blocked > 0 || stats.blocked > 0)
     return { label: "blocked", tone: "blocked" };
@@ -151,8 +155,8 @@ export function ProjectCard({
   }, [statusFilter]);
   // Brain-native MRs fold into lifecycle (see lib/mergeRequests).
   const { openByProject } = useMergeRequests();
-  // Sorted into the canonical blocked → in-progress → mr-open → finished
-  // → merged order. `sortFeatures` had no caller at all while a second,
+  // Sorted into the canonical blocked → in-progress → mr-open →
+  // ready-to-merge → finished → merged order. `sortFeatures` had no caller at all while a second,
   // flat feature list existed alongside this one; now that the Tasks tab
   // is the only feature list, the order it imposes IS the reading order —
   // and it is the one that puts what needs attention at the top and the
@@ -178,12 +182,13 @@ export function ProjectCard({
   const holdNote = schedulerHoldNote(resultFor(projectId));
 
   const lifecycleCounts = useMemo(() => {
-    const c = { active: 0, blocked: 0, finished: 0, mr: 0, merged: 0 };
+    const c = { active: 0, blocked: 0, finished: 0, mr: 0, ready: 0, merged: 0 };
     for (const f of features) {
       if (f.lifecycle === "in-progress") c.active++;
       else if (f.lifecycle === "blocked") c.blocked++;
       else if (f.lifecycle === "finished") c.finished++;
       else if (f.lifecycle === "mr-open") c.mr++;
+      else if (f.lifecycle === "ready-to-merge") c.ready++;
       else if (f.lifecycle === "merged") c.merged++;
     }
     return c;
@@ -326,6 +331,7 @@ export function ProjectCard({
         lifecycleCounts.blocked > 0 ||
         lifecycleCounts.finished > 0 ||
         lifecycleCounts.mr > 0 ||
+        lifecycleCounts.ready > 0 ||
         lifecycleCounts.merged > 0) && (
         <div className="flow-strip">
           {lifecycleCounts.active > 0 && (
@@ -346,6 +352,11 @@ export function ProjectCard({
           {lifecycleCounts.mr > 0 && (
             <span className="flow-pill mr">
               <b>{lifecycleCounts.mr}</b> MR
+            </span>
+          )}
+          {lifecycleCounts.ready > 0 && (
+            <span className="flow-pill ready">
+              <b>{lifecycleCounts.ready}</b> to merge
             </span>
           )}
           {lifecycleCounts.merged > 0 && (

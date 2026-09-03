@@ -64,6 +64,7 @@ import {
 } from "../lib/dock";
 
 export type { DockNode, DockLeaf, Edge } from "../lib/dock";
+import { pushNav } from "../lib/navBridge";
 
 /** Versioned localStorage key. Bump the suffix on breaking schema changes. */
 export const WORKSPACE_STORAGE_KEY = "panes-v2:workspace:v1";
@@ -403,6 +404,13 @@ export const useWorkspace = create<WorkspaceState>()(
             target,
             title: title ?? defaultLeafTitle(kind, target),
           };
+          // ONE push, here, rather than at each of the 43 call sites that
+          // open panes. Every surface — row menus, the command palette,
+          // drag-drop, the reminder links — gets Back/Forward from this.
+          pushNav({
+            view: dockId === "focus" ? "focus" : state.view,
+            leaf: { dock: dockId, kind, target, title: leaf.title },
+          });
           const tree = state.docks[dockId];
           const lastField = lastLeafField(dockId);
           const gateOpen: Partial<WorkspaceState> =
@@ -625,7 +633,10 @@ export const useWorkspace = create<WorkspaceState>()(
         hiddenProjects: [],
         statusFilter: "all" as StatusFilter,
 
-        setView: (v) => set({ view: v }),
+        setView: (v) => {
+          if (get().view !== v) pushNav({ view: v });
+          set({ view: v });
+        },
 
         setFocusSession: (id) =>
           set((s) => ({
@@ -860,6 +871,13 @@ export const useWorkspace = create<WorkspaceState>()(
             target,
             title: title ?? defaultLeafTitle(kind, target),
           };
+          // The reuse branch never reaches makeOpenIn, so it records its own
+          // navigation — this is the single-click preview path, the most
+          // travelled one in the app.
+          pushNav({
+            view: state.view,
+            leaf: { dock: "sidebar", kind, target, title: leaf.title },
+          });
           let next = retargetLeaf(tree, existing.id, leaf);
           // Bring it to the front of its strip: a pane updated behind
           // another tab looks like the click did nothing.

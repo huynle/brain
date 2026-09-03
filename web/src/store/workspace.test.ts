@@ -25,6 +25,12 @@ import {
   clampSidebarWidth,
 } from "./workspace";
 import { countLeaves, walkLeaves, type DockNode } from "../lib/dock";
+import {
+  installNavPush,
+  leafIdentity,
+  withoutNav,
+  type NavEntry,
+} from "../lib/navBridge";
 
 /** Assert a node is a leaf carrying `title`. */
 function assertLeafTitle(node: DockNode, title: string): void {
@@ -1311,4 +1317,93 @@ test("workspace: clicking a tab makes it the close target", () => {
     "the selected tab should have closed",
   );
   assert.ok(ids.includes(tree.children[1].id), "the other tab should remain");
+});
+
+// ─── navigation history pushes ───────────────────────────────────────
+
+// Opening a pane used to be invisible to the browser, so Back had nothing
+// to pop. The push happens at ONE chokepoint in the store rather than at
+// the 43 call sites that open panes.
+test("workspace: opening a pane records a navigation", () => {
+  resetStore();
+  const seen: NavEntry[] = [];
+  installNavPush((e) => seen.push(e));
+
+  w().openInFocus("task-detail", { projectId: "p", taskId: "t1" }, "T1");
+
+  assert.equal(seen.length, 1, "opening a pane should record one navigation");
+  assert.equal(seen[0].view, "focus");
+  assert.equal(seen[0].leaf?.dock, "focus");
+  assert.equal(seen[0].leaf?.kind, "task-detail");
+  assert.deepEqual(seen[0].leaf?.target, { projectId: "p", taskId: "t1" });
+  installNavPush(null);
+});
+
+// The single-click preview path retargets an existing pane instead of
+// minting one, so it never reaches the main chokepoint and needs its own.
+test("workspace: reusing the sidebar pane still records a navigation", () => {
+  resetStore();
+  w().openOrReuseInSidebar("task-detail", { projectId: "p", taskId: "a" }, "A");
+  const seen: NavEntry[] = [];
+  installNavPush((e) => seen.push(e));
+
+  w().openOrReuseInSidebar("task-detail", { projectId: "p", taskId: "b" }, "B");
+
+  assert.equal(seen.length, 1, "the reuse branch must record too");
+  assert.deepEqual(seen[0].leaf?.target, { projectId: "p", taskId: "b" });
+  installNavPush(null);
+});
+
+test("workspace: switching view records a navigation, staying put does not", () => {
+  resetStore();
+  const seen: NavEntry[] = [];
+  installNavPush((e) => seen.push(e));
+
+  w().setView("entries");
+  w().setView("entries"); // no change — must not push
+  w().setView("focus");
+
+  assert.deepEqual(
+    seen.map((e) => e.view),
+    ["entries", "focus"],
+    "only real view changes are navigations",
+  );
+  installNavPush(null);
+});
+
+// Applying a popped entry calls the same store actions that push. Without
+// the guard one Back would append an entry and Forward would be lost.
+test("workspace: withoutNav suppresses pushes while a pop is applied", () => {
+  resetStore();
+  const seen: NavEntry[] = [];
+  installNavPush((e) => seen.push(e));
+
+  withoutNav(() => {
+    w().setView("focus");
+    w().openInFocus("browser", { url: "https://x" }, "X");
+  });
+
+  assert.equal(seen.length, 0, "re-applying a popped entry must not push");
+  // And the mutations still happened.
+  assert.equal(w().view, "focus");
+  assert.ok(w().docks.focus);
+  installNavPush(null);
+});
+
+// The identity function is what lets a popped intent find its pane again.
+// It must be order-insensitive, since target objects are built ad hoc.
+test("workspace: leafIdentity is stable across key order and kinds", () => {
+  assert.equal(
+    leafIdentity("task-detail", { projectId: "p", taskId: "t" }),
+    leafIdentity("task-detail", { taskId: "t", projectId: "p" }),
+    "key order must not change identity",
+  );
+  assert.notEqual(
+    leafIdentity("task-detail", { projectId: "p", taskId: "t" }),
+    leafIdentity("feature-detail", { projectId: "p", taskId: "t" }),
+    "different kinds are different panes",
+  );
+  // Must never throw on the arbitrary JSON coerceDockTree lets through.
+  assert.ok(leafIdentity("browser", null));
+  assert.ok(leafIdentity("browser", undefined));
 });

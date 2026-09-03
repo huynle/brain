@@ -214,6 +214,38 @@ function wallClockToInstant(wc: WallClock, timeZone: string): Date {
 /** Minutes in 366 days — the server's own search horizon. */
 const MAX_SEARCH_MINUTES = 527040;
 
+/** Longest possible length of each month; February allows for a leap year. */
+const LONGEST_MONTH = [31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+
+/**
+ * Whether any (month, day-of-month) pair in the schedule can exist.
+ *
+ * "0 0 30 2 *" (February 30th) and "0 0 31 4 *" (April 31st) are plausible
+ * typos, and without this the search below walks its entire step budget —
+ * measured at ~220ms per call — before concluding what arithmetic settles
+ * instantly. taskScheduleChip runs inline in TaskRow's render body, and the
+ * task list re-renders on every SSE update, so a couple of such rows block
+ * the main thread for a noticeable fraction of a second per update.
+ */
+function hasSatisfiableDate(s: CronSchedule): boolean {
+  for (const m of s.month) {
+    for (const d of s.dayOfMonth) {
+      if (d <= LONGEST_MONTH[m - 1]) return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Expressions already proven to match nothing, keyed `expr|timeZone`.
+ *
+ * Whether a schedule has ANY occurrence is a property of the expression, not
+ * of the instant we search from, so a null verdict is safe to keep. This is
+ * the backstop for shapes hasSatisfiableDate cannot rule out cheaply — a
+ * day-of-month AND day-of-week pair that is merely very rare, say.
+ */
+const noMatchCache = new Set<string>();
+
 /**
  * The next instant strictly after `from` at which `expr` fires in
  * `timeZone`. Returns null for an unparseable expression, or for one that
@@ -230,6 +262,9 @@ export function nextCronRun(
 ): Date | null {
   const sched = parseCron(expr);
   if (!sched) return null;
+  if (!hasSatisfiableDate(sched)) return null;
+  const cacheKey = `${expr}|${timeZone || "UTC"}`;
+  if (noMatchCache.has(cacheKey)) return null;
 
   const nowWall = wallClockIn(from, timeZone || "UTC");
   // A UTC-based Date used purely as a naive calendar: getUTC* reads back
@@ -294,6 +329,8 @@ export function nextCronRun(
     }
     cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
   }
+  // Exhausted the budget: remember it so the next render is free.
+  noMatchCache.add(cacheKey);
   return null;
 }
 

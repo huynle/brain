@@ -3568,6 +3568,14 @@ body[data-theme="light"] .p2-runner-shell__prompt {
   border-color: #8b95a155;
   background: #8b95a111;
 }
+/* Fired exactly once and retired itself — a run_once_at task or a
+   feature_schedule gate reaching its designed end state. Green, because this
+   is success; the amber "stopped" treatment reported working gates as faults. */
+.sched-chip.done {
+  color: #6fca7d;
+  border-color: #6fca7d55;
+  background: #6fca7d11;
+}
 
 /* Light theme darkens every chip hue. The dark-theme values sit at roughly
    2.5:1 against a white surface at this 9px size — measured, not guessed —
@@ -3591,6 +3599,10 @@ body[data-theme="light"] .sched-chip.stopped {
 body[data-theme="light"] .sched-chip.ineligible {
   color: #55606c;
   border-color: #55606c55;
+}
+body[data-theme="light"] .sched-chip.done {
+  color: #357a46;
+  border-color: #357a4655;
 }
 
 /* ---------- Task detail: Schedule section ---------- */

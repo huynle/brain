@@ -397,3 +397,78 @@ test("a stored next_run cannot mask an unparseable expression", () => {
   assert.equal(c.code, "stopped");
   assert.equal(c.short, "bad schedule");
 });
+
+// ── One-shots and gates finish; they do not fail ───────────────────────────
+// processRunOnceTask and processFeatureScheduleGate both write
+// schedule_enabled:false directly, WITHOUT going through disableSchedule —
+// so neither leaves the "## Schedule Disabled" body note that the generic
+// stopped wording tells the user to go read.
+
+test("a one-shot that fired reads as done, not as a fault", () => {
+  const c = taskScheduleChip(
+    task({
+      run_once_at: "2026-09-02T15:00:00Z",
+      schedule_enabled: false,
+      status: "completed",
+      runs: [{ status: "completed" }],
+    }),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.code, "done");
+  assert.equal(c.short, "fired");
+  assert.match(c.detail, /normal end state/);
+  // Must NOT send the user hunting for a note that was never written.
+  assert.doesNotMatch(c.detail, /body records the reason/);
+});
+
+test("a fired feature_schedule gate reads as done", () => {
+  const c = taskScheduleChip(
+    task({
+      schedule: "0 2 * * *",
+      generated_kind: "feature_schedule",
+      schedule_enabled: false,
+      status: "completed",
+    } as Partial<Task>),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.code, "done");
+  assert.equal(c.short, "gate fired");
+  assert.match(c.detail, /does not recur/);
+});
+
+test("an unfired gate is a one-time firing, not a cadence", () => {
+  // The gate carries a cron expression, but processFeatureScheduleGate runs
+  // it once and completes the task — so "daily 02:00 · in 8h" was describing
+  // a recurrence that never happens.
+  const c = taskScheduleChip(
+    task({
+      schedule: "0 2 * * *",
+      timezone: "UTC",
+      generated_kind: "feature_schedule",
+      status: "active",
+    } as Partial<Task>),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.code, "once");
+  assert.match(c.short, /^gate /);
+  assert.match(c.detail, /does not recur/);
+  // And it must never claim completing it keeps the schedule alive.
+  assert.doesNotMatch(c.detail, /Completing it does not end the schedule/);
+});
+
+test("an ordinary disabled schedule still reports as stopped", () => {
+  // The done branch must not swallow the genuine auto-disable case.
+  const c = taskScheduleChip(
+    task({
+      schedule: "0 2 * * *",
+      schedule_enabled: false,
+      expires_at: "2026-08-01T00:00:00Z",
+    }),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.code, "stopped");
+});

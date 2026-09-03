@@ -20,7 +20,11 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 
-import { countScheduleRuns, taskScheduleChip } from "./taskSchedule";
+import {
+  countScheduleRuns,
+  isRunnerParseableTime,
+  taskScheduleChip,
+} from "./taskSchedule";
 import { nextCronRun } from "./cronSchedule";
 import { showsRearmNotice } from "../components/Modal/TaskScheduleSection";
 import type { Task } from "./types";
@@ -152,4 +156,40 @@ test("the run counter matches what the runner spends against max_runs", () => {
     runs: [{ status: "completed" }, { status: "in_progress" }],
   });
   assert.equal(countScheduleRuns(t.runs), 2);
+});
+
+test("window rows judge parseability with the runner's parser, not new Date()", () => {
+  // The interesting case is a stamp JS renders happily and Go rejects. A
+  // formatting-succeeded test passes it through as a real bound, so the
+  // Expires row showed "2026-07-31 18:00 (1mo ago)" for a value that has no
+  // effect on anything — contradicting the chip on the same screen.
+  assert.equal(isRunnerParseableTime("2026-08-01T00:00:00Z"), true);
+  assert.equal(isRunnerParseableTime("2026-08-01T00:00:00.500Z"), true);
+  assert.equal(isRunnerParseableTime("2026-08-01T00:00:00-06:00"), true);
+
+  for (const bad of [
+    "2026-08-01",
+    "2026-08-01 00:00:00",
+    "2026-08-01T00:00Z",
+    "tomorrow 9am",
+    "",
+    undefined,
+  ]) {
+    assert.equal(
+      isRunnerParseableTime(bad),
+      false,
+      `${JSON.stringify(bad)} is not RFC3339`,
+    );
+  }
+});
+
+test("a Go-invalid expires_at leaves the schedule live", () => {
+  // checkTimeWindow ignores an unparseable bound, so the task keeps running.
+  // Reporting it as expired was the exact inverse of the runner.
+  const c = taskScheduleChip(
+    task({ schedule: "0 9 * * 1", timezone: "UTC", expires_at: "2026-08-01" }),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.code, "recurring");
 });

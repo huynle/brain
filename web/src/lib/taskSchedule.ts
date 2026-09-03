@@ -34,7 +34,9 @@ export type ScheduleCode =
   /** Not firing any more, and it will not resume without an edit. */
   | "stopped"
   /** The schedule is fine, but the task's STATUS makes it unreachable. */
-  | "ineligible";
+  | "ineligible"
+  /** Fired its one and only run, exactly as designed. Not a fault. */
+  | "done";
 
 export interface ScheduleChip {
   code: ScheduleCode;
@@ -89,6 +91,19 @@ const RFC3339 =
   /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
 
 /**
+ * Whether the runner can parse this stamp at all.
+ *
+ * Exported because every SURFACE that renders one of these fields needs the
+ * same verdict. Formatting with `new Date()` and only falling back when THAT
+ * fails is not enough: the interesting case is a value JS renders happily and
+ * Go rejects ("2026-08-01"), which then displays as a real bound while having
+ * no effect on anything.
+ */
+export function isRunnerParseableTime(iso?: string): boolean {
+  return at(iso) !== null;
+}
+
+/**
  * Parses a stamp exactly as the runner would, returning null for anything it
  * would reject. Callers must then apply the runner's own reaction to a
  * rejected value, which differs per field — see the call sites.
@@ -127,10 +142,41 @@ export function taskScheduleChip(
   const cap = task.max_runs && task.max_runs > 0 ? task.max_runs : null;
   const runNote = cap ? ` ${runs}/${cap} runs used.` : "";
 
+  // Two shapes fire exactly once and disable themselves, and NEITHER goes
+  // through disableSchedule — so neither leaves the "## Schedule Disabled"
+  // body note that the generic stopped wording tells the user to go read.
+  //
+  //   - a run_once_at one-shot: processRunOnceTask writes
+  //     schedule_enabled:false with no note and no event.
+  //   - a feature_schedule gate: processFeatureScheduleGate writes
+  //     schedule_enabled:false, sets status straight to completed, and never
+  //     resets to pending — so its cron is a one-time gate, not a cadence.
+  //
+  // Both reaching their end state is SUCCESS. Reporting it as a fault told
+  // users a working gate had broken.
+  const isGate = task.generated_kind === "feature_schedule";
+  const isOneShot = !cron && !!once;
+
   // 1. The master switch. Checked first because the runner skips on it
   //    before evaluating any window, and because it is what the auto-disable
   //    actually writes — so this is the branch that catches a retired job.
   if (task.schedule_enabled === false) {
+    if (isGate || isOneShot) {
+      const firedAt = isOneShot ? at(once) : null;
+      return {
+        code: "done",
+        glyph: cron ? "\u27f3" : "\u2316",
+        short: isGate ? "gate fired" : "fired",
+        detail: isGate
+          ? `Feature-schedule gate: it fired once at its scheduled time, ` +
+            `completed, and disabled its own schedule. That is its normal end ` +
+            `state — it unblocks the rest of the feature and does not recur.`
+          : `One-shot task: it fired${
+              firedAt ? ` at ${firedAt.toLocaleString()}` : ""
+            } and disabled its own schedule. That is the normal end state for a ` +
+            `run_once_at task, not a fault.`,
+      };
+    }
     const expired = at(task.expires_at);
     const exhausted = cap !== null && runs >= cap;
     // Name the likely cause. The runner records the real reason in a
@@ -235,7 +281,26 @@ export function taskScheduleChip(
     };
   }
 
-  // 7. Live recurring schedule.
+  // 7. A feature-schedule gate that has not fired yet. It carries a cron
+  //    expression, but processFeatureScheduleGate runs it once and completes
+  //    the task, so describing an ongoing cadence would be wrong.
+  if (isGate && cron) {
+    const gateNext = at(task.next_run) ?? nextCronRun(cron, tz, now);
+    if (gateNext) {
+      const ms = gateNext.getTime() - now.getTime();
+      return {
+        code: "once",
+        glyph: "\u2316",
+        short: `gate ${ms <= 0 ? "due now" : relativeTime(gateNext.toISOString(), now.getTime())}`,
+        detail:
+          `Feature-schedule gate, opening ${gateNext.toLocaleString()} ` +
+          `("${cron}" in ${tz}). It fires once to unblock the rest of the ` +
+          `feature, then completes and disables itself — it does not recur.`,
+      };
+    }
+  }
+
+  // 8. Live recurring schedule.
   //
   // The STORED next_run wins when the runner has written one. That is the
   // value shouldTrigger compares against, so a prediction from the

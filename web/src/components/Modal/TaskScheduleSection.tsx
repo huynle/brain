@@ -31,6 +31,7 @@
  */
 import {
   countScheduleRuns,
+  isRunnerParseableTime,
   taskScheduleChip,
 } from "../../lib/taskSchedule";
 import { describeCron, nextCronRun } from "../../lib/cronSchedule";
@@ -86,6 +87,11 @@ function runTone(status?: string): string {
  * how the wrong `validated` behaviour got certified in the first place.
  */
 export function showsRearmNotice(task: Task, now?: Date): boolean {
+  // A feature_schedule gate completes by design and never resets to pending,
+  // so it must never be told it is coming back. taskScheduleChip already
+  // classifies gates as "once"/"done" rather than "recurring"; this is the
+  // explicit belt to that braces.
+  if (task.generated_kind === "feature_schedule") return false;
   const chip = taskScheduleChip(task, now);
   return (
     !!chip &&
@@ -137,18 +143,30 @@ export function TaskScheduleSection({ task }: { task: Task }): JSX.Element | nul
     // second scheduled firing.
     rows.push({
       k: "Run once at",
-      v: cron ? (
+      v: (
         <>
-          {whenWithRelative(task.run_once_at) || task.run_once_at}{" "}
-          <span className="sched-run__when">· ignored (cron takes priority)</span>
+          {isRunnerParseableTime(task.run_once_at) ? (
+            whenWithRelative(task.run_once_at)
+          ) : (
+            <code>{task.run_once_at}</code>
+          )}{" "}
+          {cron ? (
+            <span className="sched-run__when">
+              · ignored (cron takes priority)
+            </span>
+          ) : isRunnerParseableTime(task.run_once_at) ? null : (
+            <span className="sched-run__when">· unparseable, never fires</span>
+          )}
         </>
-      ) : (
-        whenWithRelative(task.run_once_at) || task.run_once_at
       ),
     });
   }
 
-  if (chip.code === "stopped" || chip.code === "ineligible") {
+  if (
+    chip.code === "stopped" ||
+    chip.code === "ineligible" ||
+    chip.code === "done"
+  ) {
     rows.push({
       k: "Next run",
       v: (
@@ -187,12 +205,33 @@ export function TaskScheduleSection({ task }: { task: Task }): JSX.Element | nul
     });
   }
 
-  if (task.starts_at) {
-    rows.push({ k: "Starts", v: whenWithRelative(task.starts_at) });
-  }
-  if (task.expires_at) {
-    rows.push({ k: "Expires", v: whenWithRelative(task.expires_at) });
-  }
+  // checkTimeWindow tolerates an unparseable bound and treats it as unset, so
+  // a malformed value is neither a window nor an error — but rendering the
+  // empty string whenWithRelative returns left a labelled blank cell that
+  // said nothing about either fact.
+  const windowRow = (k: string, iso: string) => {
+    // Ask the RUNNER'S parser, not `new Date()`. "2026-08-01" renders as a
+    // perfectly good date here and is rejected by Go, so formatting-succeeded
+    // is the wrong test — it showed a bound that has no effect as if it were
+    // in force, contradicting the chip on the same screen.
+    const pretty = isRunnerParseableTime(iso) ? whenWithRelative(iso) : "";
+    rows.push({
+      k,
+      v: pretty ? (
+        pretty
+      ) : (
+        <>
+          <code>{iso}</code>{" "}
+          <span className="sched-run__when">· unparseable, ignored</span>
+        </>
+      ),
+      title: pretty
+        ? undefined
+        : "The runner cannot parse this as RFC3339, so checkTimeWindow treats it as unset and the bound has no effect.",
+    });
+  };
+  if (task.starts_at) windowRow("Starts", task.starts_at);
+  if (task.expires_at) windowRow("Expires", task.expires_at);
   if (cap) {
     rows.push({
       k: "Runs",

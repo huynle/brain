@@ -188,3 +188,34 @@ test("a run inside the fall-back repeated hour still resolves", () => {
     `expected one of the two 01:30 instants, got ${iso}`,
   );
 });
+
+test("an impossible date is rejected by arithmetic, not by exhausting the search", () => {
+  // "0 0 30 2 *" and "0 0 31 4 *" are plausible typos. Walking the full step
+  // budget for them measured ~220ms per call, and taskScheduleChip runs
+  // inline in TaskRow's render body on every SSE update.
+  for (const [expr, tz] of [
+    ["0 0 30 2 *", "UTC"],
+    ["0 0 31 4 *", "America/New_York"],
+    ["0 0 31 6 *", "UTC"],
+    ["0 0 31 9 *", "UTC"],
+    ["0 0 31 11 *", "UTC"],
+  ]) {
+    const t0 = process.hrtime.bigint();
+    const got = nextCronRun(expr, tz, new Date("2026-09-03T18:00:00Z"));
+    const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+    assert.equal(got, null, `${expr} matches no real date`);
+    assert.ok(ms < 25, `${expr} took ${ms.toFixed(1)}ms; should be near-instant`);
+  }
+});
+
+test("a rare-but-real date is NOT rejected by the pre-check", () => {
+  // February 29 exists; the guard must allow it through to the search, which
+  // resolves it four years out.
+  const next = nextCronRun("0 0 29 2 *", "UTC", new Date("2026-09-03T18:00:00Z"));
+  assert.ok(next, "Feb 29 must still resolve");
+  assert.equal(next.toISOString(), "2028-02-29T00:00:00.000Z");
+  // And the 31st of a 31-day month.
+  const jan = nextCronRun("0 0 31 1 *", "UTC", new Date("2026-09-03T18:00:00Z"));
+  assert.ok(jan);
+  assert.equal(jan.toISOString(), "2027-01-31T00:00:00.000Z");
+});

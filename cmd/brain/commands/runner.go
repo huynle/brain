@@ -79,6 +79,7 @@ type RunnerFlags struct {
 	Foreground   bool
 	Headless     bool
 	Dashboard    bool
+	Tmux         bool
 	MaxParallel  int
 	PollInterval int
 	Workdir      string
@@ -162,10 +163,12 @@ func (c *RunCommand) runStart() error {
 	//
 	// The default is empty rather than a named mode: NewTaskRunner folds ""
 	// to headless, and leaving it empty lets `runner.execution_mode` in
-	// config.yaml stay meaningful. Before the TUI dashboard was removed this
-	// defaulted to "tui", which ALSO selected the tmux window-per-task spawn
-	// strategy — those two meanings travelled together on one constant, and
-	// only the dashboard half is gone.
+	// config.yaml stay meaningful.
+	//
+	// --tmux is what used to happen by default, back when this defaulted to
+	// "tui": that one constant selected BOTH the Bubbletea dashboard and the
+	// tmux window-per-task spawn strategy. Removing the dashboard orphaned
+	// the spawn strategy, so it gets its own flag under its own name.
 	mode := ""
 	if c.Flags.Foreground {
 		mode = string(runner.ExecutionModeForeground)
@@ -173,6 +176,8 @@ func (c *RunCommand) runStart() error {
 		mode = string(runner.ExecutionModeHeadless)
 	} else if c.Flags.Dashboard {
 		mode = string(runner.ExecutionModeDashboard)
+	} else if c.Flags.Tmux {
+		mode = string(runner.ExecutionModeTmux)
 	}
 
 	// Start with the full runner config (all fields preserved)

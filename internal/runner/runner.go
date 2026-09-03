@@ -146,7 +146,7 @@ type TaskRunnerOptions struct {
 	// Config is the runner configuration.
 	Config RunnerConfig
 
-	// Mode is the execution mode (headless, tui, dashboard).
+	// Mode is the execution mode (headless, tmux, dashboard).
 	Mode ExecutionMode
 
 	// StartPaused starts the runner with all projects paused.

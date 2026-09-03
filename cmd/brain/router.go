@@ -749,6 +749,7 @@ func convertToCommandsRunnerFlags(flags *RunnerFlags) *commands.RunnerFlags {
 		Foreground:   flags.Foreground,
 		Headless:     flags.Headless,
 		Dashboard:    flags.Dashboard,
+		Tmux:         flags.Tmux,
 		MaxParallel:  flags.MaxParallel,
 		PollInterval: flags.PollInterval,
 		Workdir:      flags.Workdir,

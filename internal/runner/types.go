@@ -291,13 +291,24 @@ type ScriptConfig struct {
 type ExecutionMode string
 
 const (
-	ExecutionModeTUI       ExecutionMode = "tui"
+	// ExecutionModeTmux spawns each task in its own tmux WINDOW. It was called
+	// "tui" until the Bubbletea dashboard was removed, which made the name
+	// actively misleading: it never had anything to do with that dashboard —
+	// it is a task-spawn strategy, the sibling of ExecutionModeDashboard's
+	// split-pane. The old value is still accepted; see SpawnMode.
+	ExecutionModeTmux ExecutionMode = "tmux"
+
+	// ExecutionModeTmuxLegacy is the pre-rename spelling of ExecutionModeTmux.
+	// Kept because the value reaches us from config files and scripts we do
+	// not control, where it would otherwise fail as an unknown mode.
+	ExecutionModeTmuxLegacy ExecutionMode = "tui"
+
 	ExecutionModeDashboard ExecutionMode = "dashboard"
 	ExecutionModeHeadless  ExecutionMode = "headless"
 
 	// ExecutionModeForeground is what `brain run start --foreground` sets. It
-	// describes how the RUNNER presents itself — no TUI, attached to the
-	// invoking shell — and says nothing about how tasks are spawned. Executors
+	// describes how the RUNNER presents itself — attached to the invoking
+	// shell — and says nothing about how tasks are spawned. Executors
 	// must not switch on it directly; SpawnMode folds it to the spawn strategy
 	// it implies.
 	ExecutionModeForeground ExecutionMode = "foreground"
@@ -314,6 +325,11 @@ func (m ExecutionMode) SpawnMode() ExecutionMode {
 	switch m {
 	case ExecutionModeForeground, "":
 		return ExecutionModeHeadless
+	case ExecutionModeTmuxLegacy:
+		// Renamed, not removed. Folding here rather than at every call site
+		// means the compatibility lives in one place and executors only ever
+		// switch on the current spelling.
+		return ExecutionModeTmux
 	default:
 		return m
 	}

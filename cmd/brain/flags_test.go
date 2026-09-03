@@ -659,3 +659,47 @@ func TestParseRunnerFlags_ShortNameAndNew(t *testing.T) {
 	assert.Equal(t, "my-project", project)
 	assert.Equal(t, []string{"-n", "worker-a"}, flagArgs)
 }
+
+// The tmux spawn strategy reached executors only because `brain run start`
+// defaulted its mode to "tui" — a constant that selected BOTH the Bubbletea
+// dashboard and the tmux window-per-task spawner. Removing the dashboard
+// orphaned the spawner: no flag produced it and no config path fed it, so
+// `spawnTmux` was unreachable while still compiling and testing green.
+//
+// These pin the flag that now selects it, and the mutual exclusivity of the
+// spawn-mode flags, so the strategy cannot be silently orphaned again.
+func TestParseRunnerFlags_SpawnModes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+		want func(*RunnerFlags) bool
+	}{
+		{"tmux", []string{"--tmux"}, func(f *RunnerFlags) bool { return f.Tmux }},
+		{"dashboard", []string{"--dashboard"}, func(f *RunnerFlags) bool { return f.Dashboard }},
+		{"headless", []string{"--headless"}, func(f *RunnerFlags) bool { return f.Headless }},
+		{"foreground", []string{"--foreground"}, func(f *RunnerFlags) bool { return f.Foreground }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			flags, err := ParseRunnerFlags(tc.args)
+			require.NoError(t, err)
+			assert.True(t, tc.want(flags), "%v should set its own spawn-mode flag", tc.args)
+		})
+	}
+
+	t.Run("no mode flag leaves them all false", func(t *testing.T) {
+		flags, err := ParseRunnerFlags([]string{"--max-parallel", "2"})
+		require.NoError(t, err)
+		assert.False(t, flags.Tmux)
+		assert.False(t, flags.Dashboard)
+		assert.False(t, flags.Headless)
+		assert.False(t, flags.Foreground)
+	})
+
+	t.Run("tmux survives the conversion to the commands package", func(t *testing.T) {
+		flags, err := ParseRunnerFlags([]string{"--tmux"})
+		require.NoError(t, err)
+		// The mirror struct is a separate hand-maintained copy; a field added
+		// to one and not the other reads back false with no compile error.
+		assert.True(t, convertToCommandsRunnerFlags(flags).Tmux)
+	})
+}

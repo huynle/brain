@@ -257,12 +257,12 @@ func (e *PiExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, projec
 	switch opts.Mode.SpawnMode() {
 	case ExecutionModeHeadless:
 		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts.RuntimeDefaultModel)
-	case ExecutionModeTUI:
-		return e.spawnTUI(ctx, task, projectID, workdir, promptFile, opts)
+	case ExecutionModeTmux:
+		return e.spawnTmux(ctx, task, projectID, workdir, promptFile, opts)
 	case ExecutionModeDashboard:
 		return e.spawnDashboard(ctx, task, projectID, workdir, promptFile, opts)
 	default:
-		return nil, fmt.Errorf("unknown execution mode: %q (valid modes: headless, foreground, tui, dashboard)", opts.Mode)
+		return nil, fmt.Errorf("unknown execution mode: %q (valid modes: headless, foreground, tmux, dashboard)", opts.Mode)
 	}
 }
 
@@ -367,10 +367,10 @@ func (e *PiExecutor) buildHeadlessArgs(task *types.ResolvedTask, runtimeDefaultM
 }
 
 // =============================================================================
-// Runner Script Helper (TUI/Dashboard modes)
+// Runner Script Helper (tmux/dashboard modes)
 // =============================================================================
 
-// buildRunnerScript creates a bash runner script for TUI/Dashboard modes.
+// buildRunnerScript creates a bash runner script for tmux/dashboard modes.
 func (e *PiExecutor) buildRunnerScript(task *types.ResolvedTask, projectID, workdir, promptFile string, opts SpawnOptions) (string, error) {
 	runnerScript := filepath.Join(e.config.StateDir, fmt.Sprintf("runner_%s_%s.sh", projectID, task.ID))
 
@@ -408,11 +408,11 @@ exit $exit_code
 }
 
 // =============================================================================
-// TUI Mode (standalone tmux window)
+// Tmux Mode (standalone tmux window)
 // =============================================================================
 
-// spawnTUI spawns a Pi process in a new tmux window.
-func (e *PiExecutor) spawnTUI(
+// spawnTmux spawns a Pi process in a new tmux window.
+func (e *PiExecutor) spawnTmux(
 	ctx context.Context,
 	task *types.ResolvedTask,
 	projectID string,

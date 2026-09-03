@@ -43,6 +43,7 @@ type RunnerFlags struct {
 	Foreground   bool
 	Headless     bool
 	Dashboard    bool
+	Tmux         bool
 	MaxParallel  int
 	PollInterval int
 	Workdir      string
@@ -155,7 +156,8 @@ func ParseRunnerFlags(args []string) (*RunnerFlags, error) {
 	fs.BoolVar(&flags.Foreground, "f", false, "Foreground (short)")
 	fs.BoolVar(&flags.Headless, "headless", false, "Headless mode (no tmux)")
 	fs.BoolVar(&flags.Headless, "b", false, "Headless (short)")
-	fs.BoolVar(&flags.Dashboard, "dashboard", false, "Tmux dashboard")
+	fs.BoolVar(&flags.Dashboard, "dashboard", false, "Spawn each task in a tmux split-pane")
+	fs.BoolVar(&flags.Tmux, "tmux", false, "Spawn each task in its own tmux window")
 	fs.IntVar(&flags.MaxParallel, "max-parallel", 0, "Max parallel tasks")
 	fs.IntVar(&flags.MaxParallel, "p", 0, "Max parallel (short)")
 	fs.IntVar(&flags.PollInterval, "poll-interval", 0, "Poll interval seconds")

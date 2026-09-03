@@ -23,7 +23,12 @@ func TestExecutionMode_SpawnMode(t *testing.T) {
 		{name: "foreground folds to headless", mode: ExecutionModeForeground, want: ExecutionModeHeadless},
 		{name: "empty defaults to headless", mode: "", want: ExecutionModeHeadless},
 		{name: "headless is unchanged", mode: ExecutionModeHeadless, want: ExecutionModeHeadless},
-		{name: "tui is unchanged", mode: ExecutionModeTUI, want: ExecutionModeTUI},
+		{name: "tmux is unchanged", mode: ExecutionModeTmux, want: ExecutionModeTmux},
+		// "tui" was this mode's name before the Bubbletea dashboard was
+		// removed and the spawn strategy was renamed for what it actually
+		// does. A config or script still saying "tui" must keep spawning
+		// tmux windows rather than failing as an unknown mode.
+		{name: "legacy tui folds to tmux", mode: "tui", want: ExecutionModeTmux},
 		{name: "dashboard is unchanged", mode: ExecutionModeDashboard, want: ExecutionModeDashboard},
 		{name: "unknown is left alone to be rejected", mode: "nonsense", want: "nonsense"},
 	}

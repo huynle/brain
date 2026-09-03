@@ -385,7 +385,7 @@ func resolveExecutorType(task *types.ResolvedTask) string {
 
 // Spawn dispatches to executor-specific and mode-specific spawners.
 // The task's Executor field determines which executor backend is used:
-//   - "opencode" (default): spawns an OpenCode process via headless/TUI/dashboard modes
+//   - "opencode" (default): spawns an OpenCode process via headless/tmux/dashboard modes
 //   - "pi": spawns a Pi RPC subprocess communicating via JSONL over stdin/stdout
 //   - "script": placeholder for script-based execution (implemented in task #11)
 //
@@ -430,12 +430,12 @@ func (e *OpenCodeExecutor) spawnOpencode(ctx context.Context, task *types.Resolv
 	switch opts.Mode.SpawnMode() {
 	case ExecutionModeHeadless:
 		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts)
-	case ExecutionModeTUI:
-		return e.spawnTUI(ctx, task, projectID, workdir, promptFile, opts)
+	case ExecutionModeTmux:
+		return e.spawnTmux(ctx, task, projectID, workdir, promptFile, opts)
 	case ExecutionModeDashboard:
 		return e.spawnDashboard(ctx, task, projectID, workdir, promptFile, opts)
 	default:
-		return nil, fmt.Errorf("unknown execution mode: %q (valid modes: headless, foreground, tui, dashboard)", opts.Mode)
+		return nil, fmt.Errorf("unknown execution mode: %q (valid modes: headless, foreground, tmux, dashboard)", opts.Mode)
 	}
 }
 
@@ -857,7 +857,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string
 // Runner Script Helper
 // =============================================================================
 
-// buildRunnerScript creates a bash runner script for TUI/Dashboard modes.
+// buildRunnerScript creates a bash runner script for tmux/dashboard modes.
 // Returns the path to the written script file.
 func (e *OpenCodeExecutor) buildRunnerScript(task *types.ResolvedTask, projectID, workdir, promptFile string, opts SpawnOptions) (string, error) {
 	agent := e.GetEffectiveAgent(task)
@@ -892,11 +892,11 @@ exit $exit_code
 }
 
 // =============================================================================
-// TUI Mode (standalone tmux window)
+// Tmux Mode (standalone tmux window)
 // =============================================================================
 
-// spawnTUI spawns an OpenCode process in a new tmux window.
-func (e *OpenCodeExecutor) spawnTUI(
+// spawnTmux spawns an OpenCode process in a new tmux window.
+func (e *OpenCodeExecutor) spawnTmux(
 	ctx context.Context,
 	task *types.ResolvedTask,
 	projectID string,

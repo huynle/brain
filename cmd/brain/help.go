@@ -424,12 +424,23 @@ const runStartHelp = `brain run start - Start runner via run command
 USAGE:
   brain run start [project|all] [flags]
 
+SPAWN MODES (pick at most one; default is headless):
+  -b, --headless                 Spawn tasks as plain background processes
+  -f, --foreground               Attach the runner to this shell (spawns headless)
+  --tmux                         Spawn each task in its own tmux window
+  --dashboard                    Spawn each task in a tmux split-pane
+
 FLAGS:
-  Same runner flags as: brain start
+  -n, --name <name>              Runner name (several runners per machine)
+  -p, --max-parallel <n>         Max concurrent tasks across all projects
+  -i, --include <glob>           Only these projects (repeatable)
+  -e, --exclude <glob>           Skip these projects (repeatable)
+  -h, --help                     Show this help
 
 EXAMPLES:
   brain run start
   brain run start my-project --headless
+  brain run start my-project --tmux
 `
 
 const mcpHelp = `brain mcp - Start MCP stdio server

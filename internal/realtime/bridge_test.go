@@ -39,16 +39,28 @@ func entryEvent(projectID string) events.Event {
 // A burst of entry events on one project must collapse into a single
 // snapshot query. This is the regression that made bulk updates quadratic:
 // 100 entries meant 100 full task-list reads fanned out to every client.
+// The exact guarantee, driven synchronously.
+//
+// This used to publish 100 events through the bus and assert exactly one
+// snapshot. MemoryBus.Publish dispatches each handler with `go h(event)`
+// (internal/events/bus.go), so that asserted 100 goroutines would all be
+// SCHEDULED inside the 120ms coalesce window — a bet on the runtime, not a
+// property of the code. Losing it produces a second snapshot that is
+// perfectly correct behaviour (the burst spanned two windows), so the test
+// failed while nothing was broken.
+//
+// Calling schedule directly removes the runtime from the assertion: all 100
+// calls land on this goroutine before any timer can fire, so "one snapshot
+// per window per project" is testable exactly. The bus wiring is covered by
+// the sibling test below, which asserts what a burst through the bus can
+// actually promise.
 func TestBridge_CoalescesBurstIntoOneSnapshot(t *testing.T) {
-	bus := events.NewMemoryBus()
 	hub := NewHub()
 	provider := &countingTaskProvider{}
-
-	sub := BridgeBusToHub(bus, hub, provider)
-	defer sub.Unsubscribe()
+	c := newSnapshotCoalescer(hub, provider)
 
 	for i := 0; i < 100; i++ {
-		bus.Publish(entryEvent("proj-a"))
+		c.schedule("proj-a")
 	}
 
 	waitFor(t, 2*time.Second, func() bool { return provider.calls.Load() >= 1 })
@@ -57,6 +69,41 @@ func TestBridge_CoalescesBurstIntoOneSnapshot(t *testing.T) {
 
 	if got := provider.countFor("proj-a"); got != 1 {
 		t.Errorf("snapshot queries for proj-a = %d, want exactly 1 for a single burst", got)
+	}
+}
+
+// The wiring, asserted at the strength the bus can actually deliver.
+//
+// This is the half of the original test worth keeping at the bus level: that
+// entry events reach the bridge AT ALL, and that a burst does not fan out one
+// snapshot per event — the quadratic regression the original comment names.
+// The bound is deliberately loose because the number of coalesce windows a
+// burst spans is a scheduling detail; what must never happen is per-event
+// fan-out.
+func TestBridge_BusBurstDoesNotFanOutPerEvent(t *testing.T) {
+	bus := events.NewMemoryBus()
+	hub := NewHub()
+	provider := &countingTaskProvider{}
+
+	sub := BridgeBusToHub(bus, hub, provider)
+	defer sub.Unsubscribe()
+
+	const burst = 100
+	for i := 0; i < burst; i++ {
+		bus.Publish(entryEvent("proj-a"))
+	}
+
+	waitFor(t, 2*time.Second, func() bool { return provider.calls.Load() >= 1 })
+	time.Sleep(snapshotCoalesceWindow * 2)
+
+	got := provider.countFor("proj-a")
+	if got < 1 {
+		t.Errorf("snapshot queries for proj-a = %d, want at least 1 — the bridge is not wired", got)
+	}
+	// A handful of windows is fine; anything approaching the event count
+	// means the coalescer is not coalescing.
+	if got > 10 {
+		t.Errorf("snapshot queries for proj-a = %d for a burst of %d, want the burst coalesced", got, burst)
 	}
 }
 

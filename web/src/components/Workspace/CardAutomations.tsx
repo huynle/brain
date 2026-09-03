@@ -33,6 +33,7 @@ import {
 import { Loading } from "../common/Loading";
 import { ErrorState } from "../common/ErrorState";
 import { relativeTime } from "../../lib/format";
+import { describeCron, nextCronRun } from "../../lib/cronSchedule";
 import {
   latestRunByAutomation,
   outcomeGlyph,
@@ -162,6 +163,7 @@ export function CardAutomations({
                 openDetail(a.id, name);
               }}
             />
+            <NextRun trigger={a.trigger} enabled={enabled} />
             <span className="status">{a.trigger?.type || "manual"}</span>
             <button
               className="id"
@@ -180,6 +182,87 @@ export function CardAutomations({
       {overlays}
       {runner.dialog}
     </div>
+  );
+}
+
+/**
+ * The row's next-run cell.
+ *
+ * "cron" alone told you the automation is scheduled but not WHEN, so a
+ * list of a dozen crons read identically whether an entry fired nightly
+ * at 02:00 or every single minute — the schedule was only legible by
+ * opening each one, and then only from a run it had already recorded.
+ *
+ * Only cron triggers have a next run: an event or webhook automation
+ * fires when something happens, which is not a time, and rendering "—"
+ * for it would suggest a missing value rather than an inapplicable one.
+ * Those rows get an empty cell that still holds the column's width.
+ *
+ * A paused automation is not scheduled at all — its trigger is inert
+ * until re-enabled — so it shows the schedule without a prediction
+ * rather than a time that will not happen.
+ */
+function NextRun({
+  trigger,
+  enabled,
+}: {
+  trigger?: import("../../lib/types").TriggerConfig;
+  enabled: boolean;
+}): JSX.Element {
+  const expr = trigger?.type === "cron" ? trigger?.schedule || "" : "";
+  const tz = trigger?.timezone || "UTC";
+  // Recomputed each render; the card refetches on a 20s interval, which
+  // is what keeps the relative label from going stale. The search is
+  // bounded and cheap for real schedules (an every-minute cron settles
+  // in one step, a daily one in under a day of minutes).
+  const next = expr ? nextCronRun(expr, tz) : null;
+
+  if (!expr) return <span className="auto-nextrun" />;
+
+  const gloss = describeCron(expr);
+  // The gloss can BE the expression when it models no shorthand for it;
+  // showing both would just repeat the same string twice.
+  const exprNote = gloss === expr ? expr : `${gloss} (${expr})`;
+
+  if (!enabled) {
+    return (
+      <span
+        className="auto-nextrun paused"
+        title={`Schedule ${exprNote} in ${tz}. Paused, so it is not scheduled to run — re-enable to resume.`}
+      >
+        {gloss}
+      </span>
+    );
+  }
+
+  if (!next) {
+    // Either the server would reject the expression, or it matches no
+    // real date within a year (a February 30th). Both mean "this will
+    // never fire", which is worth saying plainly on the row.
+    return (
+      <span
+        className="auto-nextrun never"
+        title={`Schedule ${exprNote} in ${tz} matches no date within the next year, so this automation will not fire. Check the expression.`}
+      >
+        no next run
+      </span>
+    );
+  }
+
+  // relativeTime floors to whole minutes, so the 45–59s band before a run
+  // reads "in 0m". Collapse anything inside the next minute to "soon" —
+  // the same word it already uses below 45s.
+  const dueInMs = next.getTime() - Date.now();
+  const label =
+    dueInMs < 60_000 ? "soon" : relativeTime(next.toISOString());
+
+  return (
+    <span
+      className="auto-nextrun"
+      title={`Next run ${next.toLocaleString()} (${exprNote} in ${tz}).`}
+    >
+      {label}
+    </span>
   );
 }
 

@@ -27,7 +27,7 @@ type ConfigField struct {
 	// "task_defaults", "embedding", "attachments",
 	// "attachment_extraction", "assistant", "feature_checkout",
 	// "runner", "runner.opencode", "runner.script", "mcp",
-	// "plugins", "tui".
+	// "plugins".
 	Section string `json:"section"`
 
 	// Label is the human-readable field name shown in the UI.

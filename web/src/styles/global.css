@@ -859,7 +859,7 @@ button.glyph:focus-visible {
   margin-right: 3px;
   user-select: none;
 }
-/* Cycle marker — magenta, matching the TUI's ColorMagenta "↺". A cycle
+/* Cycle marker — magenta "↺". A cycle
  * is a data problem the user has to break, not a status, so it does not
  * reuse any of the lifecycle tones. */
 .dep-cycle {
@@ -3528,6 +3528,118 @@ body[data-theme="light"] .p2-runner-shell__prompt {
   background: #e08c3a11;
 }
 
+/* Schedule chips. A recurring task is otherwise indistinguishable from a
+   one-shot on the row, and — worse — the runner can auto-disable a schedule
+   (expires_at passed, max_runs reached) with no trace anywhere in the PWA.
+   Teal for a healthy cadence: this is a PROPERTY of the task, not a hold and
+   not a fault, so it must not borrow the pause slate or the amber. */
+.sched-chip {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 1px solid #4f9d8f55;
+  border-radius: 3px;
+  background: #4f9d8f11;
+  color: #4f9d8f;
+  font-size: 9px;
+  line-height: 1.5;
+  cursor: help;
+}
+/* Not open yet: it starts on its own, nothing to do. Same muted blue as
+   .hold-chip.waiting_on_features, which carries exactly that meaning. */
+.sched-chip.waiting {
+  color: #6f9fd8;
+  border-color: #6f9fd855;
+  background: #6f9fd811;
+}
+/* Stopped: expired, out of runs, switched off, or an expression that can
+   never match. None of these resume without an edit, so they take the amber
+   fault treatment the runner-level faults already use. */
+.sched-chip.stopped {
+  color: #e08c3a;
+  border-color: #e08c3a55;
+  background: #e08c3a11;
+}
+/* The schedule is configured and valid, but the task's STATUS puts it outside
+   cronEligibleStatuses, so the runner never reaches it. Slate rather than
+   amber: nothing is broken and nothing auto-disabled — a person moved the
+   task to a status that stops it, and moving it back resumes it. */
+.sched-chip.ineligible {
+  color: #8b95a1;
+  border-color: #8b95a155;
+  background: #8b95a111;
+}
+/* Fired exactly once and retired itself — a run_once_at task or a
+   feature_schedule gate reaching its designed end state. Green, because this
+   is success; the amber "stopped" treatment reported working gates as faults. */
+.sched-chip.done {
+  color: #6fca7d;
+  border-color: #6fca7d55;
+  background: #6fca7d11;
+}
+
+/* Light theme darkens every chip hue. The dark-theme values sit at roughly
+   2.5:1 against a white surface at this 9px size — measured, not guessed —
+   which is below WCAG AA. These three are the same hues walked down to
+   ≥4.5:1 over the chip's own wash, so the semantic coding survives while the
+   text stays readable. (`.hold-chip` has the identical problem and is left
+   alone here deliberately: changing it is a visual change across every task
+   row, not part of this one.) */
+body[data-theme="light"] .sched-chip {
+  color: #357064;
+  border-color: #35706455;
+}
+body[data-theme="light"] .sched-chip.waiting {
+  color: #3d6ea8;
+  border-color: #3d6ea855;
+}
+body[data-theme="light"] .sched-chip.stopped {
+  color: #9a5a12;
+  border-color: #9a5a1255;
+}
+body[data-theme="light"] .sched-chip.ineligible {
+  color: #55606c;
+  border-color: #55606c55;
+}
+body[data-theme="light"] .sched-chip.done {
+  color: #357a46;
+  border-color: #357a4655;
+}
+
+/* ---------- Task detail: Schedule section ---------- */
+
+/* "completed" is the IDLE state for a recurring task, not a terminal one —
+   this line is the whole reason the section exists, so it reads as a positive
+   confirmation rather than a warning. */
+.sched-rearm {
+  font-size: 12px; line-height: 1.4; margin-bottom: 6px;
+  color: #6fca7d;
+}
+.sched-note { font-size: 11px; color: var(--p2-fg-faint); margin: 8px 0 4px; }
+.sched-stopped-note { color: #e08c3a; }
+
+/* One row of runs[] history. Colours are per-theme because the dark palette
+   measures 1.8-3.5:1 against the light surface — the status word is the
+   row's primary signal and must not be the least readable thing in it. */
+.sched-run {
+  grid-column: 1 / -1;
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12px; line-height: 1.5;
+}
+.sched-run__status { font-weight: 600; min-width: 72px; flex-shrink: 0; }
+.sched-run__status.ok    { color: #6fca7d; }
+.sched-run__status.err   { color: #d96060; }
+.sched-run__status.busy  { color: #f4b23a; }
+.sched-run__status.muted { color: var(--p2-fg-faint); }
+.sched-run__id   { flex: 1; color: #b6bdc4; word-break: break-word; }
+.sched-run__when { color: var(--p2-fg-faint); flex-shrink: 0; }
+
+body[data-theme="light"] .sched-rearm            { color: #357a46; }
+body[data-theme="light"] .sched-stopped-note     { color: #9a5a12; }
+body[data-theme="light"] .sched-run__status.ok   { color: #357a46; }
+body[data-theme="light"] .sched-run__status.err  { color: #b03636; }
+body[data-theme="light"] .sched-run__status.busy { color: #8a5a10; }
+body[data-theme="light"] .sched-run__id          { color: #5c666f; }
+
 /* ---------- Task modal ---------- */
 .life-badge.held {
   color: var(--pause);
@@ -3853,8 +3965,18 @@ body[data-theme="light"] .arun-actions button { border-color: #c8d0d8; }
    implicit fifth column the base .trow grid never sized. */
 .trow.auto-row {
   grid-template-columns:
-    14px minmax(0, 1fr) max-content minmax(58px, max-content) 40px;
+    14px minmax(0, 1fr) max-content max-content minmax(58px, max-content) 40px;
 }
+
+/* "When does this fire next?" — the other half of the last-run answer.
+   Only cron rows carry a value; event and webhook rows render the cell
+   empty so the columns stay aligned down the list. */
+.auto-nextrun {
+  color: var(--p2-fg-faint); font-size: 10px; white-space: nowrap;
+  text-align: right;
+}
+.auto-nextrun.never { color: #d96060; font-style: italic; }
+.auto-nextrun.paused { font-style: italic; }
 
 /* The automation row's answer to "is this thing working?" — the newest
    run's outcome and age, on the row itself, so the common check needs no
@@ -4007,6 +4129,19 @@ body[data-theme="light"] .pcard-tabs .tab-count {
    quieter than everything below it: no border, no chip, muted until
    hovered. It must be findable, not prominent — it is ticked once and
    then forgotten. */
+/* The Tasks tab's two per-project switches, side by side. They are
+   deliberately adjacent and deliberately worded to contrast: auto-archive
+   changes data on the server for everyone, hide-completed only changes what
+   this browser draws. Wrapping is allowed so a narrow card stacks them
+   rather than clipping the second one. */
+.card-toggles {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.card-toggles .auto-archive { padding: 2px 0 6px; }
+
 .auto-archive {
   display: flex;
   align-items: center;

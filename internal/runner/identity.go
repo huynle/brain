@@ -213,7 +213,7 @@ const maxAutoRunnerSlots = 64
 
 // RunnerNameLive reports whether a runner is currently running out of the named
 // runner's state dir, judged by the per-project pid files the runner writes
-// there itself. This is what covers foreground, TUI and embedded runners, which
+// there itself. This is what covers foreground and embedded runners, which
 // write no daemon pid file — handing one of them a name already in use would
 // put two processes on one runner id.
 func RunnerNameLive(baseStateDir, name string) bool {

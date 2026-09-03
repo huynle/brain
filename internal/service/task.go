@@ -1754,6 +1754,14 @@ func (s *TaskServiceImpl) TriggerTask(ctx context.Context, projectId, taskId str
 	}
 	now := time.Now().UTC()
 	nextRun := sched.NextAfter(now)
+	if nextRun.IsZero() {
+		// Never format the zero time into next_run. It reads back as a
+		// valid RFC3339 stamp in the year 1, and every "now >= next_run"
+		// test then answers yes forever. Refusing the trigger is the safe
+		// end: the schedule has no next occurrence, so there is nothing to
+		// schedule.
+		return nil, fmt.Errorf("schedule expression %q has no next occurrence", task.Schedule)
+	}
 
 	// 7. Generate run ID and create run record
 	runID := generateTriggerRunID(now)

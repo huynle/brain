@@ -105,11 +105,25 @@ func TestCronEmitter_DedupPreventsDoublePublish(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// Bucket by dedup key rather than summing. The guarantee the emitter
+	// implements is "at most one event per (automation_id, fire-MINUTE)":
+	// dedupKey formats fireTime to minute precision, so a run whose window
+	// straddles :59 -> :00 correctly produces a SECOND event. Asserting a
+	// total of 1 therefore encoded an invariant stronger than the code's,
+	// and whether it held depended on the arbitrary wall-clock phase the
+	// test happened to start at — roughly a 0.5% failure rate that parallel
+	// load amplifies by stretching the window.
+	//
+	// This is not a widened tolerance: a minute rollover now yields two keys
+	// with one event each and passes, while a genuine dedup regression
+	// yields a key with two events and fails on the first duplicate tick —
+	// strictly MORE sensitive than the old total, which could not tell the
+	// two apart.
 	var mu sync.Mutex
-	var eventCount int
+	counts := make(map[string]int)
 	sub := bus.Subscribe(ScheduleFired, func(e Event) {
 		mu.Lock()
-		eventCount++
+		counts[e.DedupKey]++
 		mu.Unlock()
 	})
 	defer sub.Unsubscribe()
@@ -124,11 +138,11 @@ func TestCronEmitter_DedupPreventsDoublePublish(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	mu.Lock()
-	count := eventCount
-	mu.Unlock()
-
-	// Within the same minute, dedup should ensure only 1 event
-	assert.Equal(t, 1, count, "dedup should prevent duplicate events for same fire_time")
+	defer mu.Unlock()
+	require.NotEmpty(t, counts, "expected at least one schedule.fired event")
+	for key, n := range counts {
+		assert.Equal(t, 1, n, "dedup should prevent duplicate events for fire_time %s", key)
+	}
 }
 
 func TestCronEmitter_GracefulShutdown(t *testing.T) {

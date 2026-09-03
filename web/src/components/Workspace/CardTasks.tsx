@@ -52,6 +52,7 @@ import { useAutoArchive } from "../../hooks/useAutoArchive";
 import { useActionRunner } from "../../hooks/useActionRunner";
 import { buildFeatureActions } from "../../lib/actions/featureActions";
 import { buildSelectionActions } from "../../lib/actions/selectionActions";
+import { DONE_STATUSES } from "../../lib/actions/taskGroupActions";
 import { isRangeKey } from "../../lib/selection";
 import { CHAIN_QUEUED_TITLE, chainRootTitle } from "../../lib/chains";
 import { buildTaskForest } from "../../lib/taskTree";
@@ -186,10 +187,24 @@ export function CardTasks({
   // a cross-feature dep does not drag a task out of its own feature — it
   // stays a root here, and the relationship is carried by the feature
   // forest below, which now nests in this same list.
+  // Per-project view preference. Unlike the auto-archive checkbox beside
+  // it, this changes nothing on the server and nothing for anyone else —
+  // it only stops drawing rows in this browser.
+  const hideCompleted = useWorkspace(
+    (st) => st.hideCompleted[projectId] ?? false,
+  );
+  const toggleHideCompleted = useWorkspace((st) => st.toggleHideCompleted);
+
   const rowsByFeat = useMemo(() => {
     const buckets = new Map<string, Task[]>();
     for (const t of tasks) {
       if (t.status === "archived") continue; // rendered in the fold below
+      // Filtering HERE rather than at render is what keeps everything
+      // downstream honest: orphanTasks, the group verb counts and
+      // orderedTaskIds (the shift-click range) are all derived from this
+      // map, so a row that is not drawn is also not selectable and not
+      // operated on by a bulk verb.
+      if (hideCompleted && DONE_STATUSES.has(t.status)) continue;
       const key = t.feature_id ?? NO_FEATURE;
       const arr = buckets.get(key);
       if (arr) arr.push(t);
@@ -200,7 +215,7 @@ export function CardTasks({
       m.set(key, flattenDepForest(buildTaskForest(bucket)));
     }
     return m;
-  }, [tasks]);
+  }, [tasks, hideCompleted]);
 
   const orphanRows = rowsByFeat.get(NO_FEATURE) ?? [];
   const orphanCollapsed = featureCollapsed[NO_FEATURE] ?? false;
@@ -232,19 +247,23 @@ export function CardTasks({
   }, [features]);
 
   // Visual order of every task row on screen, for shift-click ranges.
-  // Must mirror the render exactly: features in tree order and only while
-  // expanded, then the "No feature" bucket, then the archived fold only
-  // while it is open — a range never reaches rows the user cannot see.
+  // Must mirror the render exactly: the "No feature" bucket first, then
+  // features in tree order and only while expanded, then the archived fold
+  // only while it is open — a range never reaches rows the user cannot see.
   const orderedTaskIds = useMemo(() => {
     const ids: string[] = [];
+    // "No feature" is rendered FIRST, so it is walked first. This list is
+    // the shift-click range order and must mirror the render exactly — if
+    // the two disagree, a range silently selects rows other than the ones
+    // between the two the user clicked.
+    if (!(featureCollapsed[NO_FEATURE] ?? false))
+      for (const row of rowsByFeat.get(NO_FEATURE) ?? [])
+        ids.push(row.node.item.id);
     for (const row of featureRows) {
       const f = row.node.item;
       if (isCollapsed(featureCollapsed, f)) continue;
       for (const r of rowsByFeat.get(f.id) ?? []) ids.push(r.node.item.id);
     }
-    if (!(featureCollapsed[NO_FEATURE] ?? false))
-      for (const row of rowsByFeat.get(NO_FEATURE) ?? [])
-        ids.push(row.node.item.id);
     return ids;
   }, [featureRows, featureCollapsed, rowsByFeat]);
 
@@ -270,6 +289,7 @@ export function CardTasks({
           its effect are one glance apart. It creates a real automation on
           the server (visible in the Automations tab), so it keeps working
           with every browser closed. */}
+      <div className="card-toggles">
       <label
         className="auto-archive"
         title={
@@ -295,13 +315,71 @@ export function CardTasks({
         />
         Auto-archive completed features
       </label>
+
+      {/* Sibling of the auto-archive switch, and deliberately worded to
+          contrast with it. That one ARCHIVES — a server-side automation that
+          moves rows to another tab for every viewer, permanently. This one
+          only stops drawing them here. A project with 1146 done tasks is
+          unreadable without it, and the two must not be mistakable for each
+          other. */}
+      <label
+        className="auto-archive"
+        title={
+          hideCompleted
+            ? "On — completed and validated tasks are not drawn in this list. " +
+              "A view preference in this browser only; nothing is archived " +
+              "and nobody else is affected."
+            : "Off — completed and validated tasks are listed with the rest. " +
+              "Tick to hide them here without archiving anything."
+        }
+      >
+        <input
+          type="checkbox"
+          checked={hideCompleted}
+          onChange={() => toggleHideCompleted(projectId)}
+        />
+        Hide completed tasks
+      </label>
+      </div>
       {autoArchiveRunner.dialog}
+
+      {/* Pinned ABOVE the features. Every group that is NOT a feature
+          renders through one component: the ungrouped bucket here, and each
+          bucket inside the archive fold below. They behave identically
+          because they ARE the same thing — a set of tasks with a header, a
+          fold and a verb list.
+
+          It leads because it is the bucket that grows without bound: a
+          project accumulates ungrouped tasks forever (1238 of them on the
+          demo project), so leaving it last put the list's largest and most
+          churned group below however many features happened to exist, off
+          the bottom of the card. Its own fold still collapses it, so a user
+          who does not want it first can shut it in one click — which is not
+          true of a group they have to scroll to find. */}
+      {orphanRows.length > 0 && (
+        <TaskGroupBlock
+          group={{
+            projectId,
+            key: NO_FEATURE,
+            label: "No feature",
+            tasks: orphanTasks,
+          }}
+          rows={orphanRows}
+          collapsed={orphanCollapsed}
+          renderRow={renderTaskRow}
+          rowProps={rowProps}
+          ctx={groupCtx}
+        />
+      )}
 
       {featureRows.map((frow) => {
         const f = frow.node.item;
         const collapsed = isCollapsed(featureCollapsed, f);
-        const rows = collapsed ? EMPTY_ROWS : (rowsByFeat.get(f.id) ?? []);
-        const taskTotal = f.taskCount.total;
+        const featRows = rowsByFeat.get(f.id) ?? [];
+        const rows = collapsed ? EMPTY_ROWS : featRows;
+        // With the filter on, the feature's true total would promise rows
+        // that expanding does not produce — "2 tasks" over an empty body.
+        const taskTotal = hideCompleted ? featRows.length : f.taskCount.total;
         const stateClass = featStateClass(f);
         const runnerId = featureAssignments[f.id];
         const runner = runners.find((r) => r.runner_id === runnerId);
@@ -562,26 +640,6 @@ export function CardTasks({
           </div>
         );
       })}
-
-      {/* Every group that is NOT a feature renders through one component:
-          the ungrouped bucket here, and each bucket inside the archive
-          fold below. They behave identically because they ARE the same
-          thing — a set of tasks with a header, a fold and a verb list. */}
-      {orphanRows.length > 0 && (
-        <TaskGroupBlock
-          group={{
-            projectId,
-            key: NO_FEATURE,
-            label: "No feature",
-            tasks: orphanTasks,
-          }}
-          rows={orphanRows}
-          collapsed={orphanCollapsed}
-          renderRow={renderTaskRow}
-          rowProps={rowProps}
-          ctx={groupCtx}
-        />
-      )}
 
       {features.length === 0 && orphanRows.length === 0 && (
         <div style={{ color: "#6b757e", fontSize: 11, padding: "6px 0" }}>

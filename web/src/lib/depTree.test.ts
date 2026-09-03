@@ -1,7 +1,7 @@
 /**
  * Tests for lib/depTree — pure dependency-forest construction.
  *
- * These pin the semantics the PWA shares with `internal/tui/tasktree.go`:
+ * These pin the PWA's dependency-tree semantics:
  * dependency edges point dep → dependent, `parent_id` outranks a dep
  * edge for placement, diamonds render once, cycles degrade to flagged
  * roots, and dangling refs are ignored rather than dropping rows.

@@ -50,11 +50,16 @@ func NewExecutorRegistry(cfg RunnerConfig) *ExecutorRegistry {
 		config:    cfg,
 	}
 	// Always register the opencode executor
-	reg.executors["opencode"] = NewExecutor(cfg)
+	opencode := NewExecutor(cfg)
+	reg.executors["opencode"] = opencode
 	// Always register the pi executor
 	reg.executors["pi"] = NewPiExecutor(cfg)
 	if cfg.Script.Enabled {
-		reg.executors["script"] = NewExecutor(cfg)
+		// The SAME instance, not a second NewExecutor. An OpenCodeExecutor
+		// owns the serve processes it started and the on-disk record of
+		// them; two instances sharing one state dir would each hold half the
+		// processes and overwrite each other's record.
+		reg.executors["script"] = opencode
 	}
 	return reg
 }

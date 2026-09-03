@@ -52,7 +52,7 @@ Is this a single standalone task?
         ├── Generate slug from feature name: "Add dark mode" → "dark-mode"
         ├── ALL tasks share the same feature_id
         ├── Create all as "draft", then batch-promote to "pending"
-        └── Benefits: TUI grouping, pause/resume, focus mode ('x' key)
+        └── Benefits: PWA grouping, pause/resume, feature-level controls
 ```
 
 **This command does NOT:**
@@ -287,7 +287,7 @@ save(
 When the agent identifies that a task has multiple independent or sequential parts, **ALWAYS** create tasks grouped by `feature_id`. This is **MANDATORY** for any feature requiring 2+ tasks. **Do NOT create a "parent" task that sits at in_progress as a container.**
 
 **Why feature_id is required for multi-task features:**
-- Groups related tasks in the TUI dashboard for easy tracking
+- Groups related tasks in the dashboard for easy tracking
 - Enables pause/resume at the feature level
 - Allows "focus mode" (press 'x' on feature to run only that feature)
 - Provides clear visual organization of work
@@ -312,7 +312,7 @@ To prevent race conditions where brain-runner picks up tasks before the full dep
 ```
 # Generate feature_id from the feature name (slug format)
 # "Add dark mode" -> "dark-mode"
-# "TUI Task Detail Improvements" -> "tui-task-detail-improvements"
+# "Task Detail Improvements" -> "task-detail-improvements"
 FEATURE_ID = slugify("<feature name>")
 
 # Step 1: Create task 1 as draft (small, focused - ~15-20 min)
@@ -468,7 +468,7 @@ save(
 ```
 
 **Benefits of feature_id:**
-- Tasks grouped together in TUI dashboard under collapsible feature headers
+- Tasks grouped together in the dashboard under collapsible feature headers
 - Enables feature-level actions: pause, resume, focus mode ('x' to run feature to completion)
 - Can query all tasks for a feature: `list(type: "task", tags: ["dark-mode"])`
 - Provides logical organization beyond just dependencies
@@ -597,9 +597,9 @@ The orchestrator will get the answer and dispatch a new investigation.
 **FEATURE GROUPING (MANDATORY for 2+ tasks):** When splitting into multiple tasks:
 - **ALWAYS** generate a `feature_id` slug from the feature name (e.g., "Add dark mode" -> "dark-mode")
 - ALL tasks in the feature MUST share the same `feature_id` - this is NOT optional
-- Do NOT create a "parent" task - feature_id handles grouping in the TUI
+- Do NOT create a "parent" task - feature_id handles grouping in the dashboard
 - Only suggest a "checkout" task if user explicitly wants verification
-- Feature_id enables: TUI grouping, pause/resume, focus mode ('x' key)
+- Feature_id enables: dashboard grouping, pause/resume, feature-level controls
 
 ---
 
@@ -684,7 +684,7 @@ This task should be split into multiple dependent tasks.
 **Feature Priority:** <high|medium|low>
 **Needs Checkout Task:** <yes|no> (only "yes" if user explicitly requested verification)
 
-NOTE: feature_id is MANDATORY when creating 2+ tasks. It groups tasks in the TUI and enables feature-level controls.
+NOTE: feature_id is MANDATORY when creating 2+ tasks. It groups tasks in the dashboard and enables feature-level controls.
 
 #### Task 1: <title>
 - **Files:** `path/to/file1`
@@ -716,7 +716,7 @@ NOTE: feature_id is MANDATORY when creating 2+ tasks. It groups tasks in the TUI
 - Each task should be completable in 15-30 minutes
 - If a task would take longer, split it further
 - **MANDATORY:** All tasks in a multi-task feature share the same feature_id
-- NO parent task needed - feature_id handles grouping in TUI dashboard
+- NO parent task needed - feature_id handles grouping in the dashboard
 - feature_id enables: visual grouping, pause/resume, focus mode
 
 ### Complexity

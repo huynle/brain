@@ -564,7 +564,7 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 	}
 
 	// For complete_on_idle tasks (e.g. direct_prompt), process exit means the
-	// agent finished the prompt and the TUI closed — treat as completed.
+	// agent finished the prompt and the session closed — treat as completed.
 	// Note: PidProcess always returns ExitCode() == -1 since we can't determine
 	// the real exit code for PID-tracked tmux processes, so we accept that
 	// unknown exit here.

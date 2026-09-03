@@ -147,6 +147,24 @@ func (h *EventHub) Subscribe(filter EventFilter) (<-chan types.Event, func()) {
 	return sub.ch, unsub
 }
 
+// SubscriberCount returns how many subscribers are currently registered.
+//
+// Publish fans out only to subscribers already registered when it runs, and
+// consumers like WebhookDispatcher.Start subscribe INSIDE the goroutine they
+// are started in — so a publisher that races that goroutine sends its events
+// to nobody, and nothing replays them. Tests used to paper over this with a
+// fixed sleep, which is a bet on scheduler latency: it held on an idle
+// machine and lost under parallel load, failing with "got 0" rather than a
+// partial count.
+//
+// This makes the thing those tests were really waiting for observable, so
+// they can wait for the fact instead of guessing a duration.
+func (h *EventHub) SubscriberCount() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return len(h.subscribers)
+}
+
 // Replay returns events from the ring buffer after the given lastEventID.
 // If lastEventID is empty, returns all buffered events.
 // If lastEventID is not found (evicted or unknown), returns all buffered events.

@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/huynle/brain-api/internal/types"
@@ -24,6 +25,10 @@ import (
 // Set to half the lease duration (DefaultLeaseDuration = 10min) so claims are
 // renewed well before they expire.
 const DefaultRenewInterval = 5 * time.Minute
+
+// reregisterCooldown bounds how often a runner the API says it does not know
+// will try to register itself again. See reregisterIfUnknown.
+const reregisterCooldown = 30 * time.Second
 
 // ErrTaskClaimConflict indicates an expected runner race where another runner
 // claimed or was assigned the task before this runner could start it.
@@ -141,7 +146,7 @@ type TaskRunnerOptions struct {
 	// Config is the runner configuration.
 	Config RunnerConfig
 
-	// Mode is the execution mode (headless, tui, dashboard).
+	// Mode is the execution mode (headless, tmux, dashboard).
 	Mode ExecutionMode
 
 	// StartPaused starts the runner with all projects paused.
@@ -208,21 +213,22 @@ type TaskRunner struct {
 	stateMgr         TaskStateManager
 
 	// Mutable state (protected by mu)
-	mu              sync.RWMutex
-	status          RunnerStatus
-	stats           RunnerStats
-	startedAt       time.Time
-	lastCronCheckAt time.Time
-	maxParallel     int    // runtime-adjustable max parallel (0 = use config.MaxParallel)
-	defaultModel    string // runtime-adjustable default model (empty = no override)
-	lastClaimDate   string // YYYY-MM-DD of last claim, for first_task_today detection
+	mu               sync.RWMutex
+	status           RunnerStatus
+	stats            RunnerStats
+	startedAt        time.Time
+	lastCronCheckAt  time.Time
+	lastReregisterAt time.Time // rate-limits reregisterIfUnknown
+	maxParallel      int       // runtime-adjustable max parallel (0 = use config.MaxParallel)
+	defaultModel     string    // runtime-adjustable default model (empty = no override)
+	lastClaimDate    string    // YYYY-MM-DD of last claim, for first_task_today detection
 
 	// Pause state (protected by pauseMu).
 	//
 	// Two origins are tracked separately:
 	//   - Local origin (pauseCache/allPaused/automationsPaused/
 	//     automationPausedProjects): set by direct calls to PauseProject/
-	//     PauseAll/etc. — the embedded TUI controller and StartPaused. The
+	//     PauseAll/etc. — the embedded controller and StartPaused. The
 	//     server does not know about these, so they are never overwritten
 	//     by reconciliation.
 	//   - Server origin (serverTasksPaused/serverAutosPaused): set by SSE
@@ -466,6 +472,12 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 	// poll loop so orphans don't distort automation max_concurrent counting.
 	// Non-fatal on failure — logs and continues.
 	tr.reapOrphanedTasks(ctx)
+
+	// Kill `opencode serve` processes a crashed predecessor left behind. The
+	// task reaper above fixes task STATUS; this is the only thing that fixes
+	// the PROCESSES, which otherwise hold their heaps until someone notices
+	// the machine swapping.
+	tr.reapLeftoverServeProcs()
 
 	tr.emitEvent(RunnerEvent{
 		Type:     EventRunnerStarted,
@@ -867,12 +879,48 @@ func (tr *TaskRunner) fetchRunnerPauseState(ctx context.Context) (bool, bool) {
 	info, err := fetcher.GetRunner(ctx, tr.runnerID)
 	if err != nil {
 		tr.logger.Printf("get runner pause state failed: %v", err)
+		tr.reregisterIfUnknown(ctx, err)
 		return false, false
 	}
 	if info == nil {
 		return false, false
 	}
 	return info.Paused, true
+}
+
+// reregisterIfUnknown re-registers this runner when the API reports it has no
+// record of it.
+//
+// A 404 from GetRunner is not a transient error — it is the server stating the
+// registry row is gone. Two ways that happens in practice: the API's registry
+// was reset, or a predecessor sharing this state dir deregistered *after* this
+// process registered. `kill <pid> && brain runner start` races exactly that
+// way, because && fires when the signal is delivered, not when the old process
+// exits, and both processes resolve the same persisted runner id.
+//
+// Without this the runner spins forever in a state it can already diagnose:
+// heartbeats 500, pause reads 404, no dispatch can be routed to it, and it
+// shows up nowhere in the UI. Registration is idempotent, so recovery costs
+// one poll tick instead of an operator noticing an empty runner list.
+func (tr *TaskRunner) reregisterIfUnknown(ctx context.Context, err error) {
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.StatusCode != http.StatusNotFound {
+		return
+	}
+
+	// Cooldown so a registration endpoint that keeps failing is retried on a
+	// leash rather than on every tick.
+	tr.mu.Lock()
+	if !tr.lastReregisterAt.IsZero() && time.Since(tr.lastReregisterAt) < reregisterCooldown {
+		tr.mu.Unlock()
+		return
+	}
+	tr.lastReregisterAt = time.Now()
+	tr.mu.Unlock()
+
+	slog.Warn("API has no record of this runner; re-registering",
+		"runner_id", tr.runnerID)
+	tr.registerWithAPI(ctx)
 }
 
 // serverPausedFor returns true when the server has either paused all tasks
@@ -1258,6 +1306,11 @@ func (tr *TaskRunner) Stop() error {
 		tr.processMgr.KillAll(ctx)
 	}
 
+	// KillAll covers the `run` drivers the ProcessManager tracks. Each
+	// attachable task also has an `opencode serve` the executor owns, and
+	// nothing above touches it — see serveProcsFileName in executor.go.
+	tr.killAllServeProcs()
+
 	// Clear PID
 	if tr.stateMgr != nil {
 		tr.stateMgr.ClearPid()
@@ -1524,6 +1577,52 @@ func (tr *TaskRunner) resolveExecutor(task *types.ResolvedTask) (TaskExecutor, s
 		name = DefaultExecutorName
 	}
 	return tr.executor, name, nil
+}
+
+// serveProcOwner is implemented by executors that keep a server process alive
+// beside each task's driver. Only OpenCodeExecutor does today; the interface
+// keeps TaskExecutor untouched for executors with nothing to reap.
+type serveProcOwner interface {
+	KillAllServeProcs()
+	ReapLeftoverServeProcs()
+}
+
+// forEachExecutor visits every distinct executor the runner can dispatch to:
+// the registry's entries plus the default, deduplicated so an executor
+// registered under two names is visited once.
+func (tr *TaskRunner) forEachExecutor(visit func(TaskExecutor)) {
+	seen := make(map[TaskExecutor]bool)
+	if tr.executorRegistry != nil {
+		for _, name := range tr.executorRegistry.Names() {
+			if exec, ok := tr.executorRegistry.Get(name); ok && exec != nil && !seen[exec] {
+				seen[exec] = true
+				visit(exec)
+			}
+		}
+	}
+	if tr.executor != nil && !seen[tr.executor] {
+		visit(tr.executor)
+	}
+}
+
+// killAllServeProcs tears down every executor-owned server process. Called
+// from Stop, after the drivers are killed.
+func (tr *TaskRunner) killAllServeProcs() {
+	tr.forEachExecutor(func(exec TaskExecutor) {
+		if owner, ok := exec.(serveProcOwner); ok {
+			owner.KillAllServeProcs()
+		}
+	})
+}
+
+// reapLeftoverServeProcs kills server processes recorded by a previous runner
+// that never got to Stop. Called once at startup.
+func (tr *TaskRunner) reapLeftoverServeProcs() {
+	tr.forEachExecutor(func(exec TaskExecutor) {
+		if owner, ok := exec.(serveProcOwner); ok {
+			owner.ReapLeftoverServeProcs()
+		}
+	})
 }
 
 func (tr *TaskRunner) cleanupTaskArtifacts(task RunningTask) {
@@ -1833,6 +1932,14 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 	// Track in process manager
 	if spawnResult.Proc != nil {
 		if err := tr.processMgr.Add(task.ID, runningTask, spawnResult.Proc); err != nil {
+			// Both the driver and its serve are already running. Untracked,
+			// neither would ever be killed — KillAll cannot see a process it
+			// was never handed. Tear them down before reporting the failure,
+			// with the same rollback discipline as the Spawn error above.
+			_ = spawnResult.Proc.Kill(syscall.SIGTERM)
+			if taskExecutor != nil {
+				_ = taskExecutor.Cleanup(task.ID, projectID)
+			}
 			return fmt.Errorf("track process: %w", err)
 		}
 	}
@@ -1977,7 +2084,7 @@ func (tr *TaskRunner) discoverAndSaveSession(taskPath string, pid int, knownPort
 		tr.logger.Printf("session discovery: failed to persist session %s for %s: %v", sessionID, taskPath, err)
 	}
 
-	// Also emit event so the TUI updates in-memory immediately
+	// Also emit event so in-memory consumers update immediately
 	tr.emitEvent(RunnerEvent{
 		Type:      EventSessionDiscovered,
 		TaskPath:  taskPath,
@@ -2314,7 +2421,7 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 // Without recovery these zombies live forever, and crucially they continue
 // counting toward `countRunnableGeneratedTasks` in automation_service.go,
 // silently consuming automation `max_concurrent` slots and (more often)
-// just cluttering the TUI with stale work.
+// just cluttering the dashboard with stale work.
 //
 // Safety model: ownership is gated through the existing claim system.
 // We attempt to claim each orphan; if the claim succeeds, no live runner
@@ -2758,6 +2865,11 @@ func (tr *TaskRunner) renewClaims(ctx context.Context) {
 			// Clean up tmux
 			tr.cleanupTaskTmux(task)
 
+			// And the executor's own artifacts — including the `opencode
+			// serve` beside the driver, which Kill above does not reach.
+			// handleTaskCompletion does this; this path forgot to.
+			tr.cleanupTaskArtifacts(task)
+
 			// Emit event
 			tr.emitEvent(RunnerEvent{
 				Type:      EventTaskReleased,
@@ -2988,7 +3100,7 @@ func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
 
 	// SSE pause/resume commands broadcast server-side state, so pauses land
 	// in the server-origin maps (key "" = global) where syncServerPauseState
-	// can reconcile them against GetRunnerStatus — TUI-local pauses are a
+	// can reconcile them against GetRunnerStatus — runner-local pauses are a
 	// separate concern and stay untouched. Resumes additionally clear the
 	// matching local state: an explicit user resume overrides a pause
 	// regardless of origin (a StartPaused runner is resumed from the PWA
@@ -3023,7 +3135,7 @@ func (tr *TaskRunner) applyPauseCommand(cmd RunnerCommand, pause bool) {
 	tr.wake()
 
 	// Emit the same lifecycle events the local pause methods produce so
-	// TUI and event-forwarding consumers observe SSE-driven pauses
+	// Event-forwarding consumers observe SSE-driven pauses
 	// identically to local ones.
 	if tasksScope {
 		switch {

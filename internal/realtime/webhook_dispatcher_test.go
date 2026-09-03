@@ -75,7 +75,7 @@ func TestWebhookDispatcher_ReceivesAndDeliversEvents(t *testing.T) {
 	}()
 
 	// Give the dispatcher time to subscribe.
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Publish an event.
 	evt := types.NewEvent("task.completed", "runner")
@@ -110,7 +110,7 @@ func TestWebhookDispatcher_DeliversMultipleEvents(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Publish multiple events.
 	for i := 0; i < 5; i++ {
@@ -143,13 +143,13 @@ func TestWebhookDispatcher_ContinuesOnDeliveryError(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Publish two events — dispatcher should continue processing after error.
 	evt1 := types.NewEvent("task.completed", "runner")
 	hub.Publish(evt1)
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	evt2 := types.NewEvent("task.started", "runner")
 	hub.Publish(evt2)
@@ -180,7 +180,7 @@ func TestWebhookDispatcher_StopsOnContextCancel(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Cancel and verify it exits.
 	cancel()
@@ -206,7 +206,7 @@ func TestWebhookDispatcher_NoEventsAfterCancel(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Cancel the dispatcher.
 	cancel()
@@ -238,7 +238,7 @@ func TestWebhookDispatcher_ReceivesAllEventTypes(t *testing.T) {
 		close(done)
 	}()
 
-	time.Sleep(20 * time.Millisecond)
+	waitForSubscribers(t, hub, 1)
 
 	// Publish different event types — dispatcher uses an empty filter,
 	// so all types should be received.

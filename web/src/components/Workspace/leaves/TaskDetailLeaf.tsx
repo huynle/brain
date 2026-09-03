@@ -31,6 +31,7 @@ import { useTaskActionContext } from "../../../hooks/useTaskActionContext";
 import { usePauseState } from "../../../hooks/usePauseState";
 import { buildTaskActions } from "../../../lib/actions/taskActions";
 import { taskHoldReason } from "../../../lib/pause";
+import { TaskScheduleSection } from "../../Modal/TaskScheduleSection";
 import type { Task, TaskStatus } from "../../../lib/types";
 
 function taskDotVariant(status: TaskStatus): DotVariant {
@@ -155,6 +156,13 @@ export function TaskDetailLeaf({
           projectId={projectId}
           onView={(t, ref) => taskCtx.openSessionInDrawer(t, ref)}
         />
+      </div>
+
+      {/* Above dispatch attempts: "when does this run again" is the
+          question a recurring task raises, and it should not sit below a
+          section that is absent for the happy path. */}
+      <div style={{ marginTop: "var(--p2-space-3)" }}>
+        <TaskScheduleSection task={task} />
       </div>
 
       <div style={{ marginTop: "var(--p2-space-3)" }}>

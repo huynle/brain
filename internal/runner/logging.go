@@ -3,7 +3,7 @@ package runner
 import "log/slog"
 
 // RegisterEventLogger registers an event handler that logs all runner events
-// via slog. This is used in headless (non-TUI) mode to ensure task lifecycle
+// via slog. This is used in headless mode to ensure task lifecycle
 // events are visible in the log output rather than silently discarded.
 func RegisterEventLogger(tr *TaskRunner) {
 	tr.OnEvent(func(event RunnerEvent) {

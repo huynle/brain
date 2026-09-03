@@ -116,15 +116,14 @@ func TestRoute_UnknownArg_RoutesToHelp(t *testing.T) {
 
 func TestRoute_BuiltinCommands_TakePrecedence(t *testing.T) {
 	builtins := []string{
-		"api", "mcp", "run", "runner", "start", "stop", "attachments",
+		"api", "mcp", "run", "runner", "stop", "attachments",
 		"dev", "init", "doctor",
 		"config", "install", "uninstall", "plugin-status", "token", "dream", "help",
 	}
 
 	// Commands that return a different Type() than their name
 	aliasExpected := map[string]string{
-		"runner": "help",       // "brain runner" alone → help; "brain runner start" → runner daemon
-		"start":  "runner_tui", // "brain start" → runner TUI for all projects
+		"runner": "help", // "brain runner" alone → help; "brain runner start" → runner daemon
 	}
 
 	for _, builtin := range builtins {
@@ -325,33 +324,24 @@ func TestRoute_APISubcommands(t *testing.T) {
 }
 
 // Test: "brain start <project>" routes to runner TUI
-func TestRoute_StartProject(t *testing.T) {
-	tests := []struct {
-		args        []string
-		wantType    string
-		wantProject string
-	}{
-		{[]string{"start"}, "runner_tui", "all"},
-		{[]string{"start", "ft857"}, "runner_tui", "ft857"},
-		{[]string{"start", "all"}, "runner_tui", "all"},
-		{[]string{"start", "my-project"}, "runner_tui", "my-project"},
-	}
-
-	for _, tt := range tests {
-		name := strings.Join(tt.args, " ")
-		t.Run(name, func(t *testing.T) {
-			cmd, err := route(tt.args)
+// `brain start` was the TUI dashboard entry point and is gone. It must now
+// behave like any other unrecognized word — help, not a silently different
+// runner mode — so a stale script or muscle-memory invocation fails loudly
+// instead of starting a headless runner nobody asked for.
+func TestRoute_StartNoLongerRoutesToARunner(t *testing.T) {
+	for _, args := range [][]string{
+		{"start"},
+		{"start", "ft857"},
+		{"start", "all"},
+		{"start", "my-project"},
+	} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			cmd, err := route(args)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
-			if cmd.Type() != tt.wantType {
-				t.Errorf("Type() = %q, want %q", cmd.Type(), tt.wantType)
-			}
-			// Verify the project is correct
-			if tuiCmd, ok := cmd.(*commands.RunnerTUICommand); ok {
-				if tuiCmd.Project != tt.wantProject {
-					t.Errorf("Project = %q, want %q", tuiCmd.Project, tt.wantProject)
-				}
+			if got := cmd.Type(); got != "help" {
+				t.Errorf("route(%v) Type() = %q, want help", args, got)
 			}
 		})
 	}
@@ -377,7 +367,6 @@ func TestRoute_HelpFlagsRouteToHelpCommand(t *testing.T) {
 		{name: "api help", args: []string{"api", "--help"}, helpTopic: "api"},
 		{name: "api logs help", args: []string{"api", "logs", "--help"}, helpTopic: "api logs"},
 		{name: "api health short help", args: []string{"api", "health", "-h"}, helpTopic: "api health"},
-		{name: "start help", args: []string{"start", "--help"}, helpTopic: "start"},
 		{name: "run start help", args: []string{"run", "start", "--help"}, helpTopic: "run start"},
 		{name: "token create help", args: []string{"token", "create", "--help"}, helpTopic: "token create"},
 	}
@@ -413,7 +402,7 @@ func TestIsBuiltinCommand(t *testing.T) {
 		{"mcp", true},
 		{"help", true},
 		{"run", true},
-		{"start", true},
+		{"start", false},
 		{"stop", true},
 		{"dream", true},
 		{"my-project", false},

@@ -1470,3 +1470,38 @@ test("workspace: manually collapsing the column keeps its panes", () => {
     "a manual collapse preserves the layout for when it reopens",
   );
 });
+
+// ─── hide completed ──────────────────────────────────────────────────
+// A pure view preference, unlike the auto-archive switch beside it in the
+// UI: that one creates a server automation that moves rows for everyone.
+// These pin the two properties that make the distinction safe — it is
+// per-project, and it dies with the project like every other per-project
+// map (a recreated project must not inherit a stale filter).
+
+test("workspace: hide-completed is per project", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+
+  assert.equal(w().hideCompleted["p1"] ?? false, false);
+  w().toggleHideCompleted("p1");
+  assert.equal(w().hideCompleted["p1"], true);
+  // p2 is untouched — one noisy project says nothing about another.
+  assert.equal(w().hideCompleted["p2"] ?? false, false);
+
+  w().toggleHideCompleted("p1");
+  assert.equal(w().hideCompleted["p1"], false);
+});
+
+test("workspace: forgetProject drops the hide-completed preference", () => {
+  resetStore();
+  const w = () => useWorkspace.getState();
+
+  w().toggleHideCompleted("p1");
+  w().toggleHideCompleted("p2");
+  w().forgetProject("p1");
+
+  // Same reason hiddenProjects is swept: a project recreated under the
+  // same name coming back pre-filtered reads as the delete half-failing.
+  assert.equal("p1" in w().hideCompleted, false);
+  assert.equal(w().hideCompleted["p2"], true);
+});

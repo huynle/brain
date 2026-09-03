@@ -81,11 +81,20 @@ export function isActive(status: string): boolean {
   return ACTIVE_STATUSES.has(status as TaskStatus);
 }
 
-export function relativeTime(iso?: string): string {
+/**
+ * Human relative time, e.g. "3m ago" / "in 2h".
+ *
+ * `nowMs` exists so a caller that already has an anchor instant can pass it
+ * instead of letting this read the wall clock. Callers that compute WHEN
+ * something happens from an injected `now` must also format against that
+ * same instant, or the two disagree — which is how a schedule chip came to
+ * render "in 8m" beside a detail row reading "in 1h".
+ */
+export function relativeTime(iso?: string, nowMs?: number): string {
   if (!iso) return "";
   const t = new Date(iso).getTime();
   if (Number.isNaN(t)) return "";
-  const diff = Date.now() - t;
+  const diff = (nowMs ?? Date.now()) - t;
   const abs = Math.abs(diff);
   const fut = diff < 0;
   const s = Math.floor(abs / 1000);

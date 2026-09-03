@@ -2,7 +2,7 @@
  * lib/actions/metadataFields — the editable field schema for tasks and
  * features.
  *
- * Mirrors `internal/tui/metadata_field.go` and its tab split, so the PWA
+ * Keeps the metadata field set and its tab split in one place, so the PWA
  * and the TUI expose the same fields under the same headings. Where the
  * TUI has a field the PWA lacks, the two surfaces disagree about what a
  * task *is*, which is worse than either being incomplete.

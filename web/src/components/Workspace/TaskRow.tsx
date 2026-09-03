@@ -31,6 +31,7 @@ import { beginDrag, endDrag } from "../../hooks/useDragDrop";
 import { buildTaskActions } from "../../lib/actions/taskActions";
 import { isRangeKey } from "../../lib/selection";
 import { featureDepWarning, taskHoldReason } from "../../lib/pause";
+import { taskScheduleChip } from "../../lib/taskSchedule";
 import type { DepRow } from "../../lib/depTree";
 import type { ActionDescriptor } from "../../lib/actions/types";
 import type { Task } from "../../lib/types";
@@ -118,6 +119,11 @@ export function useTaskRowRenderer({
     // rather than instead, because "running" and "ordered by a typo that
     // does nothing" are both true at once.
     const depWarn = featureDepWarning(t);
+    // Orthogonal to both of the above, and null for the vast majority of
+    // rows. A schedule is a property of the task rather than a reason it is
+    // held, so it sits alongside: a recurring task can be running, held and
+    // three days from expiry all at once.
+    const sched = taskScheduleChip(t);
     const actions = buildTaskActions(t, taskCtx);
     const marked = selScoped && selTaskIds.has(t.id);
     // Single-click select-only highlight — one active row at a time,
@@ -243,6 +249,11 @@ export function useTaskRowRenderer({
         </span>
         <span className="status">
           {t.status}
+          {sched && (
+            <span className={`sched-chip ${sched.code}`} title={sched.detail}>
+              {sched.glyph} {sched.short}
+            </span>
+          )}
           {hold && (
             <span className={`hold-chip ${hold.code}`} title={hold.detail}>
               {hold.glyph} {hold.short}

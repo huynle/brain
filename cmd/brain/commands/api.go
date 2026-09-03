@@ -50,9 +50,6 @@ type UnifiedConfig struct {
 	MCP    struct {
 		APIURL string
 	}
-	TUI struct {
-		KeyBindings map[string]string
-	}
 }
 
 // APIFlags holds API server command flags.

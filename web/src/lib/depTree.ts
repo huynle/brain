@@ -6,7 +6,7 @@
  * `resolved_deps` / `parent_id` for tasks). This module turns either one
  * into a forest so the UI can render "B depends on A" as A ▸ B.
  *
- * The semantics deliberately mirror `internal/tui/tasktree.go BuildTree`
+ * The semantics deliberately match the server's own dependency resolution
  * so the PWA and the TUI agree on what a dependency tree looks like:
  *
  *   Edge direction — if B depends on A, A is the PARENT and B is the

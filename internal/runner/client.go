@@ -1454,7 +1454,7 @@ func (c *APIClient) PostTaskLogs(ctx context.Context, projectID, taskID, runnerI
 
 // GetTaskLogs fetches the persisted log lines for a task (historical + current).
 // It sends no offset, so the server returns the NEWEST limit lines (the tail),
-// ordered oldest→newest. Used by the TUI logs pane to show stored output for
+// ordered oldest→newest. Used by the logs pane to show stored output for
 // completed tasks, not just the live SSE stream.
 func (c *APIClient) GetTaskLogs(ctx context.Context, projectID, taskID string, limit int) (*types.LogQueryResponse, error) {
 	path := fmt.Sprintf("/api/v1/tasks/%s/%s/logs?limit=%d", projectID, taskID, limit)

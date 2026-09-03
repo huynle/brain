@@ -4,7 +4,7 @@ This file provides guidance for AI assistants working with the brain codebase.
 
 ## Project Overview
 
-Brain API is a REST service for AI agent memory and knowledge management, with an integrated task queue processor. Built with Go, using the standard library and Bubbletea for the TUI.
+Brain API is a REST service for AI agent memory and knowledge management, with an integrated task queue processor. Built with Go and the standard library. The dashboard is the embedded PWA (`web/`), not a terminal UI.
 
 ## Key Commands
 
@@ -17,7 +17,6 @@ just check           # Run all checks (vet + test + lint)
 just dev             # Run brain-api server
 
 # Task Runner
-brain start <project>                       # TUI dashboard
 brain run list <project>                    # List tasks
 
 # API Server
@@ -136,7 +135,7 @@ re-indexes it.
 - `state_manager.go` - Persistent state for runner
 - `types.go` - All config, execution, state, and event types
 - `signals.go` - Graceful shutdown handling
-- `execute.go` - Manual TUI execution and feature batch execution
+- `execute.go` - Manual execution and feature batch execution
 - `schedule.go` - Cron scheduling for recurring tasks
 - `logging.go` - slog-based event handler for headless mode
 - `sse_listener.go` - SSE stream watcher for task changes
@@ -227,66 +226,6 @@ Two mechanisms based on executor type:
 
 Mixed workloads (OpenCode + Pi tasks running simultaneously) are supported with correct per-task routing.
 
-### TUI Dashboard (`internal/tui/`)
-
-The TUI uses Bubbletea (Elm-inspired architecture) with a component-based model:
-
-```
-Model (tui.go)
-├── StatusBar       # Top bar: project name, task stats, connection status
-├── TaskTree        # Left panel: dependency tree visualization
-├── LogViewer       # Right top: real-time log display
-├── TaskDetail      # Right bottom: selected task details
-└── HelpBar         # Bottom: keyboard shortcuts
-```
-
-#### TUI Architecture (Bubbletea Pattern)
-
-Bubbletea follows the Elm architecture with three core functions:
-
-1. **Model** - Application state (struct)
-2. **Update** - Handle messages and update state
-3. **View** - Render the current state to terminal
-
-```go
-// Core pattern
-type Model struct {
-    // State fields
-}
-
-func (m Model) Init() tea.Cmd {
-    // Initialize and return initial commands
-}
-
-func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-    // Handle messages, update state, return new commands
-}
-
-func (m Model) View() string {
-    // Render state to string for display
-}
-```
-
-#### TUI Components
-- `sse.go` - Single-project SSE task stream for real-time updates
-- `multi_project_sse.go` - Multi-project SSE streams with per-project update channels
-- `logviewer.go` - Manages log entry buffer with max entries limit
-- `tasktree.go` - Task list rendering with dependency visualization
-- `statusbar.go` - Top status bar with stats
-- `helpbar.go` - Bottom keyboard shortcuts
-
-#### TUI State Management
-- Focus state: tracks which panel (tasks/logs) is active
-- Selection state: currently selected task ID
-- Stats: computed from task list (ready/waiting/active/completed)
-- Modal system: for confirmations, settings, help screens
-
-#### Key Design Decisions
-1. **Bubbletea over raw terminal** - Elm architecture, functional approach, type-safe
-2. **SSE over polling** - Real-time updates via Server-Sent Events, simpler than WebSocket
-3. **Dependency tree flattening** - Root tasks shown first, children indented
-4. **Cycle detection** - Circular deps marked with `↺` symbol
-
 ### Shared Utilities (`pkg/`)
 - `frontmatter/` - YAML frontmatter parsing
 - `markdown/` - Markdown processing utilities
@@ -331,66 +270,13 @@ func TestDependencyResolution(t *testing.T) {
 }
 ```
 
-### TUI Testing
-
-TUI components are tested using Bubbletea's testing patterns:
-
-```go
-// Component test pattern
-func TestStatusBar_Render(t *testing.T) {
-    model := StatusBar{
-        ProjectName: "test-project",
-        Stats: TaskStats{Ready: 5, Active: 2},
-    }
-    
-    view := model.View()
-    
-    if !strings.Contains(view, "test-project") {
-        t.Error("expected project name in view")
-    }
-}
-
-// Update function test
-func TestTaskTree_Update(t *testing.T) {
-    model := TaskTree{}
-    
-    // Send key message
-    newModel, cmd := model.Update(tea.KeyMsg{
-        Type:  tea.KeyRunes,
-        Runes: []rune("j"),
-    })
-    
-    // Verify state change
-    tree := newModel.(TaskTree)
-    // assertions...
-}
-```
-
 ## Common Tasks
-
-### Adding a TUI Component
-1. Create component file in `internal/tui/` (e.g., `mycomponent.go`)
-2. Implement Model struct and Init/Update/View methods
-3. Create test file with `_test.go` suffix
-4. Add component to main Model in `tui.go`
 
 ### Adding API Endpoints
 1. Add handler in `internal/api/*.go`
 2. Add test in same package or `_test.go` file
 3. Update API client in `internal/runner/api_client.go`
 4. Register route in `cmd/brain-api/main.go` or route initialization
-
-### Debugging TUI
-```bash
-# Run with verbose logging
-brain start project -v
-
-# Check logs
-brain api logs -f
-
-# Run without TUI for direct output
-brain start project
-```
 
 ## File Conventions
 
@@ -408,34 +294,21 @@ The task runner supports monitoring multiple projects simultaneously with a shar
 
 ```bash
 # Monitor all projects
-brain start all
+brain run start all
 
 # Filter with glob patterns
-brain start all --include 'prod-*' --exclude 'prod-legacy'
-brain start all -i 'brain-*' -e 'test-*'
+brain run start all --include 'prod-*' --exclude 'prod-legacy'
+brain run start all -i 'brain-*' -e 'test-*'
 
 # List all available projects
 curl http://localhost:3333/api/v1/tasks | jq '.projects'
 ```
-
-### TUI Keyboard Shortcuts (Multi-Project Mode)
-
-| Key | Action |
-|-----|--------|
-| `h` / `[` | Previous project tab |
-| `l` / `]` | Next project tab |
-| `1-9` | Jump to project tab 1-9 |
-| `j/k` | Navigate tasks |
-| `Tab` | Switch panel focus |
-| `r` | Refresh all projects |
-| `q` | Quit |
 
 ### Architecture
 
 - **Shared execution pool**: `--max-parallel` applies across ALL projects
 - **Real-time updates**: All projects stream task updates via SSE
 - **Composite task keys**: Tasks tracked as `projectId:taskId` internally
-- **Project tabs**: First tab shows "All" aggregate, then individual project tabs
 
 ### Key Components
 
@@ -446,26 +319,19 @@ TaskRunner
 ├── projects: []string              # List of projects to poll
 ├── isMultiProject: bool            # Enables multi-project behavior
 └── Shared ProcessManager           # Single pool for all projects
-
-TUI (Model)
-├── sseClients: map[string]*SSEClient  # SSE streams per project
-│   ├── tasksByProject: map            # Tasks keyed by project
-│   └── projectTabs: ProjectTabs       # Tab state management
-├── StatusBar                          # Shows project tabs with task counts
-└── activeProjectID: string            # Current tab selection
 ```
 
 ### Filter Examples
 
 ```bash
 # Only production projects
-brain start all -i 'prod-*'
+brain run start all -i 'prod-*'
 
 # All except test projects
 ./bin/brain-runner start all -e 'test-*' -e '*-staging'
 
 # Brain projects except legacy
-brain start all -i 'brain-*' -e 'brain-legacy'
+brain run start all -i 'brain-*' -e 'brain-legacy'
 ```
 
 ## Build System

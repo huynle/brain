@@ -61,7 +61,7 @@ type BridgeClient struct {
 
 	// externalListeners caches the result of `lsof -c opencode -sTCP:LISTEN`
 	// briefly. The audit UI's history fetch falls back to scanning every
-	// localhost OpenCode HTTP server when the session was hosted by a TUI
+	// localhost OpenCode HTTP server when the session was hosted by a process
 	// brain didn't spawn (its messages may still only live in that server's
 	// memory). Cached for externalListenersTTL to avoid hammering lsof.
 	externalListenersMu     sync.Mutex
@@ -72,7 +72,7 @@ type BridgeClient struct {
 }
 
 // externalListenersTTL bounds how long DiscoverOpencodeListeners output is
-// reused. Short enough that a freshly started TUI shows up promptly, long
+// reused. Short enough that a freshly started server shows up promptly, long
 // enough to coalesce bursts of history requests.
 const externalListenersTTL = 5 * time.Second
 
@@ -711,6 +711,9 @@ func (bc *BridgeClient) abortTask(taskID string) error {
 		return fmt.Errorf("reset task status: %w", err)
 	}
 	bc.runner.cleanupTaskTmux(info.Task)
+	// The executor's serve process is not in the ProcessManager, so Kill
+	// above left it running. Same omission handleTaskCompletion never had.
+	bc.runner.cleanupTaskArtifacts(info.Task)
 	bc.runner.releaseDispatchLease(bc.ctx, info.Task.ProjectID, taskID)
 	bc.runner.emitEvent(RunnerEvent{
 		Type:      EventTaskReleased,

@@ -68,7 +68,14 @@ export interface TaskGroupCounts {
   live: number;
 }
 
-const DONE_STATUSES = new Set<TaskStatus>(["completed", "validated"]);
+/**
+ * The statuses that count as finished.
+ *
+ * Exported so the Tasks tab's "Hide completed tasks" filter uses the SAME
+ * definition the group counters do — two surfaces disagreeing about what
+ * "done" means would hide a row while still counting it.
+ */
+export const DONE_STATUSES = new Set<TaskStatus>(["completed", "validated"]);
 const TERMINAL_STATUSES = new Set<TaskStatus>([
   "completed",
   "validated",

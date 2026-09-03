@@ -9,7 +9,7 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-// ExecuteTask manually executes a task from the TUI ("x" key).
+// ExecuteTask manually executes a task (the PWA's "x" shortcut).
 // For in_progress tasks (orphaned from a previous session), it skips
 // claiming and status update and directly spawns a resume session.
 // For other tasks, it delegates to claimAndSpawn for the full pipeline.

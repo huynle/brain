@@ -81,6 +81,23 @@ export interface AttachmentDerivedText {
   modified?: string;
 }
 
+/**
+ * One execution of a scheduled task. Mirrors types.CronRun.
+ *
+ * `status` is the RUN's outcome, not the task's: the runner appends an
+ * `in_progress` entry when it fires the schedule and settles it later.
+ * All of completed / failed / skipped / in_progress count toward
+ * `max_runs`, so an in-flight run already consumes its budget.
+ */
+export interface TaskRun {
+  run_id?: string;
+  status?: "in_progress" | "completed" | "failed" | "skipped" | string;
+  started?: string;
+  completed?: string;
+  skip_reason?: string;
+  tasks?: number;
+}
+
 /** ResolvedTask — the task object returned by the tasks endpoints + SSE. */
 export interface Task {
   id: string;
@@ -134,6 +151,12 @@ export interface Task {
   starts_at?: string;
   expires_at?: string;
   timezone?: string;
+  /** Cap on TOTAL runs. The runner disables the schedule once `runs`
+   *  reaches it — see countRuns in internal/runner/schedule.go. */
+  max_runs?: number;
+  /** Append-only execution history for a scheduled task. Mirrors
+   *  types.CronRun on the server. */
+  runs?: TaskRun[];
 
   user_original_request?: string;
   direct_prompt?: string;
@@ -796,6 +819,9 @@ export interface TriggerConfig {
   type?: string; // "event" | "cron" | "webhook" | "session"
   event?: string;
   schedule?: string;
+  // IANA zone the cron expression is evaluated in. Empty/invalid means UTC,
+  // matching pkg/cron.LoadTimezone on the server.
+  timezone?: string;
   webhook?: string;
   filter?: Record<string, unknown>;
   cooldown?: string;

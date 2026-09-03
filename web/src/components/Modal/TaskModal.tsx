@@ -14,6 +14,7 @@ import { taskHoldReason } from "../../lib/pause";
 import { TaskKvGrid } from "./TaskKvGrid";
 import { SessionsSection } from "./SessionsSection";
 import { DispatchAttemptsSection } from "./DispatchAttemptsSection";
+import { TaskScheduleSection } from "./TaskScheduleSection";
 import type { Task } from "../../lib/types";
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
@@ -137,6 +138,8 @@ export function TaskModal(): JSX.Element {
         projectId={projectId}
         onView={(t, ref) => taskCtx.openSession(t, ref)}
       />
+
+      <TaskScheduleSection task={task} />
 
       <DispatchAttemptsSection task={task} />
 

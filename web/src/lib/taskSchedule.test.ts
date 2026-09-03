@@ -229,3 +229,171 @@ test("an unparseable run_once_at is called out", () => {
   assert.equal(c.code, "stopped");
   assert.equal(c.short, "bad run_once_at");
 });
+
+test("the chip reports the stored next_run, not its own prediction", () => {
+  // shouldTrigger compares against the STORED next_run when it is set, so a
+  // chip predicting from the expression can contradict the detail pane — and
+  // be wrong about what actually happens. Seen live: the header chip said
+  // "in 8m" while the Next run row said "in 1h", on the same screen.
+  const c = taskScheduleChip(
+    task({
+      schedule: "0 * * * *",
+      timezone: "UTC",
+      next_run: "2026-09-03T21:00:00Z", // 3h out, not the next :00
+    }),
+    NOW, // 2026-09-03T18:00:00Z
+  );
+  assert.ok(c);
+  assert.equal(c.code, "recurring");
+  assert.equal(c.short, "hourly · in 3h");
+  assert.match(c.detail, /stored next_run/);
+});
+
+test("with no stored next_run the chip predicts and says so", () => {
+  const c = taskScheduleChip(
+    task({ schedule: "0 * * * *", timezone: "UTC" }),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.short, "hourly · in 1h");
+  assert.match(c.detail, /predicted/);
+});
+
+test("a stored next_run in the past reads as due, not as elapsed", () => {
+  // The runner will fire this on its next poll; "2h ago" would read as a
+  // missed run rather than an imminent one.
+  const c = taskScheduleChip(
+    task({
+      schedule: "0 * * * *",
+      timezone: "UTC",
+      next_run: "2026-09-03T16:00:00Z",
+    }),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.short, "hourly · due now");
+});
+
+test("a stopped schedule ignores a stale stored next_run", () => {
+  const c = taskScheduleChip(
+    task({
+      schedule: "0 * * * *",
+      schedule_enabled: false,
+      next_run: "2027-01-01T00:00:00Z",
+    }),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.code, "stopped");
+  assert.equal(c.short, "sched off");
+});
+
+// ── Status gate ────────────────────────────────────────────────────────────
+// The runner's FIRST per-task gate after schedule_enabled is
+// cronEligibleStatuses {active, completed, blocked}, and it sits ahead of the
+// window, max_runs and shouldTrigger. The chip ignored task.status entirely,
+// so a cancelled recurring task rendered as armed with a next-run time.
+
+test("a status the runner will not trigger from reads as ineligible", () => {
+  for (const status of [
+    "cancelled",
+    "archived",
+    "superseded",
+    "validated",
+    "draft",
+    "pending",
+    "in_progress",
+  ]) {
+    const c = taskScheduleChip(
+      task({ schedule: "0 * * * *", timezone: "UTC", status } as Partial<Task>),
+      NOW,
+    );
+    assert.ok(c, `${status} should still render a chip`);
+    assert.equal(c.code, "ineligible", `${status} must not read as armed`);
+    assert.equal(c.short, `not while ${status}`);
+  }
+});
+
+test("the three eligible statuses still read as armed", () => {
+  for (const status of ["active", "completed", "blocked"]) {
+    const c = taskScheduleChip(
+      task({ schedule: "0 * * * *", timezone: "UTC", status } as Partial<Task>),
+      NOW,
+    );
+    assert.ok(c);
+    assert.equal(c.code, "recurring", `${status} is cron-eligible`);
+  }
+});
+
+test("schedule_enabled=false outranks the status gate", () => {
+  // The runner checks schedule_enabled first, so an explicitly disabled
+  // schedule must report that rather than the status.
+  const c = taskScheduleChip(
+    task({
+      schedule: "0 * * * *",
+      schedule_enabled: false,
+      status: "cancelled",
+    } as Partial<Task>),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.code, "stopped");
+});
+
+// ── RFC3339 strictness ─────────────────────────────────────────────────────
+// `new Date()` accepts strings Go's time.Parse(time.RFC3339) rejects, and the
+// runner IGNORES an unparseable window bound (checkTimeWindow treats it as
+// unset). Honouring it here reported the exact opposite of what runs.
+
+test("an expires_at the runner cannot parse is ignored, not honoured", () => {
+  for (const bad of ["2026-08-01", "2026-08-01 00:00:00", "01/08/2026"]) {
+    const c = taskScheduleChip(
+      task({ schedule: "0 * * * *", timezone: "UTC", expires_at: bad }),
+      NOW,
+    );
+    assert.ok(c);
+    assert.equal(
+      c.code,
+      "recurring",
+      `${bad} is not RFC3339, so checkTimeWindow ignores it and the task is still live`,
+    );
+  }
+});
+
+test("a starts_at the runner cannot parse does not hold the task", () => {
+  const c = taskScheduleChip(
+    task({ schedule: "0 * * * *", timezone: "UTC", starts_at: "2026-12-01" }),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.code, "recurring");
+});
+
+test("a next_run the runner cannot parse falls back to cron matching", () => {
+  // shouldTrigger only uses next_run when time.Parse succeeds; otherwise it
+  // matches the live clock. Displaying the bad value as authoritative was
+  // wrong on both counts.
+  const c = taskScheduleChip(
+    task({
+      schedule: "0 * * * *",
+      timezone: "UTC",
+      next_run: "2026-09-03 19:00:00",
+    }),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.short, "hourly · in 1h");
+  assert.match(c.detail, /predicted/);
+});
+
+test("a stored next_run cannot mask an unparseable expression", () => {
+  // The stored value used to short-circuit the cron parse, making the
+  // "bad schedule" arm unreachable whenever next_run was set.
+  const c = taskScheduleChip(
+    task({ schedule: "every hour plz", next_run: "2026-09-03T19:00:00Z" }),
+    NOW,
+  );
+  assert.ok(c);
+  assert.equal(c.code, "stopped");
+  assert.equal(c.short, "bad schedule");
+});

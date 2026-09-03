@@ -305,6 +305,12 @@ export function nextCronRun(
 export function describeCron(expr: string): string {
   const parts = (expr || "").trim().split(/\s+/).filter(Boolean);
   if (parts.length !== 5) return expr;
+  // Gloss only what BOTH parsers accept. Without this, out-of-range fields
+  // are rendered as confident human text for schedules that can never run —
+  // "0 99 * * *" became "daily 99:00", and "0 2 * * 9" became "Tue 02:00"
+  // because the day index was taken modulo 7. Returning the raw expression
+  // leaves it visibly odd, which is the truthful outcome.
+  if (!parseCron(expr)) return expr;
   const [mi, h, dom, mo, dow] = parts;
   const everyDate = dom === "*" && mo === "*";
   const at = (hh: string, mm: string) =>

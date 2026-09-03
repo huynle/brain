@@ -32,7 +32,9 @@ export type ScheduleCode =
   /** Valid, but `starts_at` has not arrived — it will begin on its own. */
   | "waiting"
   /** Not firing any more, and it will not resume without an edit. */
-  | "stopped";
+  | "stopped"
+  /** The schedule is fine, but the task's STATUS makes it unreachable. */
+  | "ineligible";
 
 export interface ScheduleChip {
   code: ScheduleCode;
@@ -62,9 +64,37 @@ export function countScheduleRuns(runs?: TaskRun[]): number {
   ).length;
 }
 
-/** Parses an RFC3339 stamp, returning null for anything unusable. */
+/**
+ * Statuses from which the runner will trigger a schedule.
+ *
+ * Mirrors cronEligibleStatuses in internal/runner/schedule.go. This is the
+ * FIRST per-task gate after schedule_enabled, and it sits ahead of the time
+ * window, the max_runs check and shouldTrigger — so for any other status the
+ * schedule is inert AND the auto-disable is unreachable. `completed` being a
+ * member is the whole reason this module exists; `validated` NOT being one is
+ * the trap, since it reads like a finished-and-fine sibling of completed.
+ */
+const CRON_ELIGIBLE_STATUSES = new Set(["active", "completed", "blocked"]);
+
+/**
+ * Go's time.Parse(time.RFC3339, ...), which is stricter than `new Date()`.
+ *
+ * The gap is not academic: `new Date("2026-09-05")` and
+ * `new Date("2026-09-05 15:00:00")` both succeed in JS and both FAIL in Go.
+ * Accepting them here made the UI disagree with the runner in the worst
+ * direction — reporting a live schedule as expired, because the runner
+ * ignores an unparseable window bound while we were honouring it.
+ */
+const RFC3339 =
+  /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
+
+/**
+ * Parses a stamp exactly as the runner would, returning null for anything it
+ * would reject. Callers must then apply the runner's own reaction to a
+ * rejected value, which differs per field — see the call sites.
+ */
 function at(iso?: string): Date | null {
-  if (!iso) return null;
+  if (!iso || !RFC3339.test(iso)) return null;
   const d = new Date(iso);
   return Number.isNaN(d.getTime()) ? null : d;
 }
@@ -123,7 +153,24 @@ export function taskScheduleChip(
     };
   }
 
-  // 2. Expired window. schedule_enabled is still true here, because the
+  // 2. Status. The runner checks this right after schedule_enabled and
+  //    BEFORE the window, max_runs and shouldTrigger — so an ineligible
+  //    status makes the schedule inert and also makes the auto-disable
+  //    unreachable, which is why this cannot be folded into "stopped".
+  if (!CRON_ELIGIBLE_STATUSES.has(task.status)) {
+    return {
+      code: "ineligible",
+      glyph: cron ? "\u27f3" : "\u2316",
+      short: `not while ${task.status}`,
+      detail:
+        `Schedule ${cadence || once} is configured, but the runner only triggers ` +
+        `tasks whose status is active, completed or blocked — this task is ` +
+        `${task.status}, so it will not fire and will not be auto-disabled ` +
+        `either. Change the status to resume it.${runNote}`,
+    };
+  }
+
+  // 3. Expired window. schedule_enabled is still true here, because the
   //    runner only flips it the next time it polls — so between expiry and
   //    that poll the task looks live while being finished.
   const expires = at(task.expires_at);
@@ -133,13 +180,13 @@ export function taskScheduleChip(
       glyph: cron ? "⟳" : "⌖",
       short: "expired",
       detail:
-        `Schedule ${cadence || once} expired ${relativeTime(task.expires_at)} ` +
+        `Schedule ${cadence || once} expired ${relativeTime(task.expires_at, now.getTime())} ` +
         `(expires_at ${task.expires_at}). It will be disabled the next time a ` +
         `runner polls this project.${runNote}`,
     };
   }
 
-  // 3. Run budget spent — same "true until the next poll" caveat.
+  // 4. Run budget spent — same "true until the next poll" caveat.
   if (cap !== null && runs >= cap) {
     return {
       code: "stopped",
@@ -151,14 +198,14 @@ export function taskScheduleChip(
     };
   }
 
-  // 4. Not open yet. Distinct from stopped: nobody needs to do anything,
+  // 5. Not open yet. Distinct from stopped: nobody needs to do anything,
   //    it starts on its own.
   const starts = at(task.starts_at);
   if (starts && starts > now) {
     return {
       code: "waiting",
       glyph: cron ? "⟳" : "⌖",
-      short: `starts ${relativeTime(task.starts_at)}`,
+      short: `starts ${relativeTime(task.starts_at, now.getTime())}`,
       detail:
         `Schedule ${cadence || once} in ${tz} does not begin until ` +
         `${starts.toLocaleString()} (starts_at). Nothing to do — it opens on ` +
@@ -166,7 +213,7 @@ export function taskScheduleChip(
     };
   }
 
-  // 5. One-shot. Only when there is no cron, matching the runner's branch.
+  // 6. One-shot. Only when there is no cron, matching the runner's branch.
   if (!cron && once) {
     const when = at(once);
     if (!when) {
@@ -181,16 +228,29 @@ export function taskScheduleChip(
     return {
       code: due ? "waiting" : "once",
       glyph: "⌖",
-      short: due ? "due now" : `once ${relativeTime(once)}`,
+      short: due ? "due now" : `once ${relativeTime(once, now.getTime())}`,
       detail: due
-        ? `One-shot task was due ${relativeTime(once)} (${when.toLocaleString()}) and fires on the next runner poll.`
+        ? `One-shot task was due ${relativeTime(once, now.getTime())} (${when.toLocaleString()}) and fires on the next runner poll.`
         : `One-shot task, fires once at ${when.toLocaleString()}.`,
     };
   }
 
-  // 6. Live recurring schedule.
-  const next = nextCronRun(cron, tz, now);
-  if (!next) {
+  // 7. Live recurring schedule.
+  //
+  // The STORED next_run wins when the runner has written one. That is the
+  // value shouldTrigger compares against, so a prediction from the
+  // expression can disagree with it — after a schedule edit, the stored
+  // value still reflects the old expression until the task next fires — and
+  // the row would then advertise a firing that will not happen. Falling back
+  // to the expression matters because next_run is absent until the first
+  // fire, which is exactly when a user wants to see the schedule is armed.
+  // `at` is strict, so a next_run the runner would reject reads as absent —
+  // which matches shouldTrigger falling through to live cron matching. That
+  // also keeps the "bad schedule" arm below reachable: a stored value must
+  // never mask an expression neither side can parse.
+  const stored = at(task.next_run);
+  const fromCron = nextCronRun(cron, tz, now);
+  if (!fromCron) {
     return {
       code: "stopped",
       glyph: "⟳",
@@ -200,18 +260,29 @@ export function taskScheduleChip(
         `no date within the next year, so this task will never fire.`,
     };
   }
+  const next = stored ?? fromCron;
   // relativeTime floors to whole minutes, so the last seconds read "in 0m".
-  const soon = next.getTime() - now.getTime() < 60_000;
-  const rel = soon ? "soon" : relativeTime(next.toISOString());
+  // A stored next_run already in the PAST is not "3m ago" — shouldTrigger
+  // reads it as due, and the runner fires on its next poll.
+  const dueInMs = next.getTime() - now.getTime();
+  const rel =
+    dueInMs < 60_000
+      ? dueInMs <= 0
+        ? "due now"
+        : "soon"
+      : relativeTime(next.toISOString(), now.getTime());
   return {
     code: "recurring",
     glyph: "⟳",
     short: `${cadence} · ${rel}`,
     detail:
-      `Recurring ${cadence} ("${cron}") in ${tz}. Next run ${next.toLocaleString()}.` +
+      `Recurring ${cadence} ("${cron}") in ${tz}. Next run ${next.toLocaleString()}` +
+      (stored
+        ? " (the runner's stored next_run)."
+        : " (predicted; the runner has not recorded a next_run yet).") +
       `${runNote}` +
       (task.expires_at
-        ? ` Expires ${relativeTime(task.expires_at)} (${task.expires_at}).`
+        ? ` Expires ${relativeTime(task.expires_at, now.getTime())} (${task.expires_at}).`
         : "") +
       ` Completing it does not end the schedule — the runner resets it to ` +
       `pending on the next match.${bothNote}`,

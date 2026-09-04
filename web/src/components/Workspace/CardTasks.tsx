@@ -36,6 +36,7 @@
 import { useMemo } from "react";
 import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
+import { useFeatureAssignments } from "../../hooks/useFeatureAssignments";
 import { useRunners } from "../../hooks/useRunners";
 import { useDependentChains } from "../../hooks/useDependentChains";
 import { usePauseState } from "../../hooks/usePauseState";
@@ -106,7 +107,10 @@ export function CardTasks({
   // Same click contract as a task row: the preview waits out the
   // double-click window so pinning to Focus does not flash the panel.
   const preview = useDeferredPreview();
-  const featureAssignments = useWorkspace((s) => s.featureAssignments);
+  // Server-resolved (RunnerInfo.feature_assignments), with the local
+  // optimistic map layered on. Reading the local map directly is what
+  // hid every auto-assignment and lied after a reload elsewhere.
+  const featureAssignments = useFeatureAssignments();
   // Whole map for this project, not a per-feature selector: the feature
   // list is built inside a render, so there is no stable place to call one
   // hook per feature. It changes only when a fold is clicked.

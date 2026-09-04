@@ -14,6 +14,7 @@
 import { useState } from "react";
 import { useModal } from "../../../store/modal";
 import { useWorkspace } from "../../../store/workspace";
+import { useFeatureAssignments } from "../../../hooks/useFeatureAssignments";
 import { useLive } from "../../../lib/sse";
 import { useUI } from "../../../store/ui";
 import { useRunners } from "../../../hooks/useRunners";
@@ -131,7 +132,10 @@ export function FeatureDetailLeaf({
   const { runners } = useRunners();
   const assignFeature = useWorkspace((s) => s.assignFeature);
   const unassignFeature = useWorkspace((s) => s.unassignFeature);
-  const featureAssignments = useWorkspace((s) => s.featureAssignments);
+  // Server-resolved (RunnerInfo.feature_assignments), with the local
+  // optimistic map layered on. Reading the local map directly is what
+  // hid every auto-assignment and lied after a reload elsewhere.
+  const featureAssignments = useFeatureAssignments();
   const [assignBusy, setAssignBusy] = useState(false);
   // Archived-tasks fold. Local (not the persisted per-project toggle):
   // this pane is scoped to one feature, so a sticky cross-feature

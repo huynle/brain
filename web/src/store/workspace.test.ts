@@ -23,6 +23,7 @@ import {
   WORKSPACE_STORAGE_KEY,
   clampDrawerWidth,
   clampSidebarWidth,
+  persistedSlice,
 } from "./workspace";
 import { countLeaves, walkLeaves, type DockNode } from "../lib/dock";
 import {
@@ -186,20 +187,51 @@ test("workspace: assignFeature overwrites existing mapping", () => {
   assert.equal(useWorkspace.getState().featureAssignments["panes-v2"], "r-b");
 });
 
-test("workspace: unassignFeature removes the mapping", () => {
+// This map is now an OPTIMISTIC OVERLAY on server truth, not the truth
+// itself, which changes what "unassign" has to record. Absence means "no
+// local opinion, use the server" — so deleting the key would let the very
+// assignment row the user just cleared win the merge straight back, and the
+// click would look ignored until the round-trip landed.
+test("workspace: unassignFeature writes a tombstone, not a delete", () => {
   resetStore();
   useWorkspace.getState().assignFeature("panes-v2", "r-macbook");
   useWorkspace.getState().unassignFeature("panes-v2");
-  assert.equal(
-    useWorkspace.getState().featureAssignments["panes-v2"],
-    undefined,
-  );
+  assert.equal(useWorkspace.getState().featureAssignments["panes-v2"], "");
 });
 
-test("workspace: unassignFeature on a missing key is a no-op", () => {
+test("workspace: unassignFeature on a missing key still records the clear", () => {
+  // Also a tombstone: the server may hold an assignment this browser has
+  // never seen (an auto-claim, or one made on another device), and clearing
+  // it must survive until the server agrees.
   resetStore();
   useWorkspace.getState().unassignFeature("does-not-exist");
+  assert.deepEqual(useWorkspace.getState().featureAssignments, {
+    "does-not-exist": "",
+  });
+});
+
+test("workspace: settleFeatureAssignments retires overlay entries", () => {
+  resetStore();
+  useWorkspace.getState().assignFeature("f1", "r-a");
+  useWorkspace.getState().unassignFeature("f2");
+  useWorkspace.getState().settleFeatureAssignments(["f1", "f2"]);
   assert.deepEqual(useWorkspace.getState().featureAssignments, {});
+});
+
+test("workspace: the assignment overlay is NOT persisted", () => {
+  // Persisting it is what made a local guess outlive the session and read as
+  // truth in a browser that had never seen the server's answer. Asserted
+  // against partialize itself rather than storage, because the test env has
+  // no real localStorage — and partialize IS the contract.
+  resetStore();
+  useWorkspace.getState().assignFeature("f1", "r-a");
+  const persisted = persistedSlice(useWorkspace.getState()) as Record<
+    string,
+    unknown
+  >;
+  assert.equal("featureAssignments" in persisted, false);
+  // Sanity: something IS persisted, so an empty result cannot pass this.
+  assert.equal("featureCollapsed" in persisted, true);
 });
 
 // ─── group folds ─────────────────────────────────────────────────────

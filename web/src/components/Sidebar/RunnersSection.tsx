@@ -52,6 +52,7 @@ import {
 } from "../../lib/api";
 import { runnerDotState, runnerDotTitle } from "../../lib/pause";
 import type { FeatureAssignment } from "../../lib/types";
+import { runnerName } from "../../lib/runnerName";
 
 export function RunnersSection(): JSX.Element {
   const expanded = useWorkspace((s) => s.sidebarSection.runners);
@@ -186,7 +187,7 @@ export function RunnersSection(): JSX.Element {
                   says nothing about which of them this row is. The id stays
                   in the tooltip, since that is what every API call uses. */}
               <span className="runner-name__id" title={r.runner_id}>
-                {r.labels?.name?.trim() || r.runner_id}
+                {runnerName(r) || r.runner_id}
               </span>
               {r.paused && (
                 <span className="pause-tag" title={runnerDotTitle(r)}>

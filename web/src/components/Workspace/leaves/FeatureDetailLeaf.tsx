@@ -38,6 +38,7 @@ import { buildTaskActions } from "../../../lib/actions/taskActions";
 import { buildGoalActions, goalStatusLabel } from "../../../lib/actions/goalActions";
 import { isRangeKey } from "../../../lib/selection";
 import { deriveFeatures } from "../../../lib/features";
+import { runnerLabel, runnerName } from "../../../lib/runnerName";
 import { ErrorState } from "../../common/ErrorState";
 import { LifecycleBadge } from "../../common/LifecycleBadge";
 import type { GoalSummary, Task } from "../../../lib/types";
@@ -420,7 +421,7 @@ export function FeatureDetailLeaf({
             </div>
           </div>
           <div className="k">Runner</div>
-          <div className="v">{runner ? runner.runner_id : "unassigned"}</div>
+          <div className="v">{runner ? runnerLabel(runner) : "unassigned"}</div>
           {/* `feature_depends_on`, spelled out. The Tasks tab nests this
               feature under what it waits on, which shows the SHAPE; the
               ids only ever appeared on the deleted Features tab, so
@@ -457,24 +458,46 @@ export function FeatureDetailLeaf({
       <div className="drawer-section">
         <h4>Assign to runner</h4>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4 }}>
+          {/* Both halves of the runner's identity ride in the one chip: the
+              operator picks a machine by NAME ("pve-1"), but every call this
+              button makes — and every lease, log line and error that comes
+              back — is keyed by the random-hex id, so dropping either half
+              would leave one of those two readings unanswerable. An unnamed
+              runner shows the id alone rather than a placeholder name. */}
           {runners
             .filter((r) => r.status === "online")
-            .map((r) => (
-              <button
-                key={r.runner_id}
-                onClick={() => void doAssign(r.runner_id)}
-                disabled={assignBusy}
-                style={{
-                  background: r.runner_id === runnerId ? "#f4b23a22" : undefined,
-                  color: r.runner_id === runnerId ? "#f4b23a" : undefined,
-                  borderColor:
-                    r.runner_id === runnerId ? "#f4b23a" : undefined,
-                }}
-              >
-                {r.runner_id === runnerId ? "✓ " : ""}
-                {r.runner_id}
-              </button>
-            ))}
+            .map((r) => {
+              const name = runnerName(r);
+              const selected = r.runner_id === runnerId;
+              return (
+                <button
+                  key={r.runner_id}
+                  onClick={() => void doAssign(r.runner_id)}
+                  disabled={assignBusy}
+                  title={
+                    r.hostname
+                      ? `${runnerLabel(r)} — ${r.hostname}`
+                      : runnerLabel(r)
+                  }
+                  style={{
+                    background: selected ? "#f4b23a22" : undefined,
+                    color: selected ? "#f4b23a" : undefined,
+                    borderColor: selected ? "#f4b23a" : undefined,
+                  }}
+                >
+                  {selected ? "✓ " : ""}
+                  {/* The literal space is load-bearing: JSX drops the newline
+                      between the two spans, so without it the button's text
+                      content — what a screen reader announces and what a copy
+                      yields — is the unreadable "pve-1runner_26e7c256". */}
+                  {name ? <span className="runner-chip__name">{name}</span> : null}
+                  {name ? " " : null}
+                  <span className={name ? "runner-chip__id" : undefined}>
+                    {r.runner_id}
+                  </span>
+                </button>
+              );
+            })}
           {runnerId && (
             <button onClick={() => void doClear()} disabled={assignBusy}>
               Clear

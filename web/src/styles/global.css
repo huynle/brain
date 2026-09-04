@@ -1783,6 +1783,14 @@ body.mobile .session-pane .composer input { flex: 1 1 100%; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   min-width: 0;
 }
+
+/* Assign-to-runner chips (FeatureDetailLeaf): name then id, in one button.
+   The id is demoted with the theme's dim token, not with opacity — the
+   selected chip hard-codes amber inline, and amber at 60% over the light
+   theme's near-white wash is unreadable. The token also keeps the id's
+   contrast correct in both themes, which a single fixed grey would not. */
+.runner-chip__name { font-weight: 500; }
+.runner-chip__id { color: var(--p2-fg-dim); }
 .runner-meta { display: flex; gap: 8px; font-size: 10px; color: #6b757e; }
 .runner-meta span { display: inline-flex; align-items: center; }
 .runner-meta span + span::before { content: "·"; margin-right: 8px; color: #3a4046; }

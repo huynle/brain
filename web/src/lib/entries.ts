@@ -30,6 +30,7 @@ export const KNOWLEDGE_TYPES = [
   // one) writes a reminder. It belongs in the default browse rather than
   // behind the system filter.
   "reminder",
+  "supernote",
 ] as const;
 
 /** System-generated record types, hidden unless explicitly selected. */

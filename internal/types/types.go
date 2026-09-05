@@ -31,6 +31,7 @@ var EntryTypes = []string{
 	"automation_run",
 	"merge_request",
 	"reminder",
+	"supernote",
 }
 
 // entryTypeSet is a lookup set for O(1) validation.

@@ -2905,8 +2905,23 @@ func (tr *TaskRunner) renewClaims(ctx context.Context) {
 			tr.processMgr.Remove(task.ID)
 			tr.removeInstance(task.InstanceID)
 
-			// Set task back to pending so another runner can pick it up
-			if updateErr := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); updateErr != nil {
+			// A failed renewal has two very different causes, and the claim
+			// state alone cannot tell them apart: either the claim expired or
+			// was force-released while the task is genuinely still in
+			// progress (reset it so another runner can pick it up), or the
+			// agent already moved the task to a terminal status — its claim
+			// was released server-side at that moment, and this process is
+			// just the driver outliving the write. Resetting the second kind
+			// re-opened completed work every renewal tick: 131 sessions on
+			// one hindsight task, and three tasks' finished, uncommitted work
+			// stranded in worktrees (brain task qqpzi2wt).
+			status, terminal := tr.lostClaimTaskStatus(ctx, task)
+			reason := "claim renewal failed"
+			if terminal {
+				reason = "claim released: task already " + status
+				tr.logger.Printf("claim renewal failed for %s/%s but the task is already %s — reaping the process, leaving the status alone",
+					task.ProjectID, task.ID, status)
+			} else if updateErr := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); updateErr != nil {
 				tr.logger.Printf("failed to reset task status for %s after renewal failure: %v", task.ID, updateErr)
 			}
 
@@ -2924,11 +2939,17 @@ func (tr *TaskRunner) renewClaims(ctx context.Context) {
 				TaskID:    task.ID,
 				ProjectID: task.ProjectID,
 				TaskPath:  task.Path,
-				Reason:    "claim renewal failed",
+				FeatureID: task.FeatureID,
+				Reason:    reason,
 			})
 
 			tr.mu.Lock()
-			tr.stats.Failed++
+			switch {
+			case !terminal:
+				tr.stats.Failed++
+			case status == "completed" || status == "validated":
+				tr.stats.Completed++
+			}
 			if tr.processMgr.RunningCount() == 0 {
 				tr.status = RunnerStatusPolling
 			}
@@ -2939,6 +2960,22 @@ func (tr *TaskRunner) renewClaims(ctx context.Context) {
 
 		slog.Debug("claim renewed", "project", task.ProjectID, "task_id", task.ID)
 	}
+}
+
+// lostClaimTaskStatus reads a task's current status when this runner has lost
+// its claim on it (renewal failed, operator abort). It reports whether that
+// status is terminal — completed, validated, blocked, cancelled, archived or
+// superseded — in which case the caller must reap the process but must not
+// write "pending" over a decision the agent or an operator already made. A
+// lookup failure reports non-terminal so the legacy reset still happens: an
+// unreachable API is not evidence that the task finished.
+func (tr *TaskRunner) lostClaimTaskStatus(ctx context.Context, task RunningTask) (status string, terminal bool) {
+	entry, err := tr.client.GetEntry(ctx, task.Path)
+	if err != nil || entry == nil {
+		tr.logger.Printf("could not read status of %s/%s before releasing it: %v — treating as in progress", task.ProjectID, task.ID, err)
+		return "", false
+	}
+	return entry.Status, isTerminalStatus(entry.Status)
 }
 
 // =============================================================================

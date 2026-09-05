@@ -775,7 +775,15 @@ func (bc *BridgeClient) abortTask(taskID string) error {
 	bc.runner.processMgr.Kill(bc.ctx, taskID)
 	bc.runner.processMgr.Remove(taskID)
 	bc.runner.removeInstance(info.Task.InstanceID)
-	if err := bc.runner.client.UpdateTaskStatus(bc.ctx, info.Task.Path, "pending"); err != nil {
+	// Same guard as renewClaims: an abort of a task whose agent already
+	// finished (or that an operator already blocked/cancelled) reaps the
+	// process and leaves the status as it is. Writing "pending" here would
+	// re-dispatch finished work (brain task qqpzi2wt).
+	status, terminal := bc.runner.lostClaimTaskStatus(bc.ctx, info.Task)
+	reason := "aborted by control"
+	if terminal {
+		reason = "aborted by control: task already " + status
+	} else if err := bc.runner.client.UpdateTaskStatus(bc.ctx, info.Task.Path, "pending"); err != nil {
 		return fmt.Errorf("reset task status: %w", err)
 	}
 	bc.runner.cleanupTaskTmux(info.Task)
@@ -789,9 +797,9 @@ func (bc *BridgeClient) abortTask(taskID string) error {
 		ProjectID: info.Task.ProjectID,
 		TaskPath:  info.Task.Path,
 		FeatureID: info.Task.FeatureID,
-		Reason:    "aborted by control",
+		Reason:    reason,
 	})
-	slog.Info("bridge client: aborted task instance", "task_id", taskID, "instance_id", info.Task.InstanceID)
+	slog.Info("bridge client: aborted task instance", "task_id", taskID, "instance_id", info.Task.InstanceID, "task_status", status)
 	return nil
 }
 

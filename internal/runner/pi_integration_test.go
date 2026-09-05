@@ -37,7 +37,6 @@ func TestIntegration_ExecutorRouting_PiTask(t *testing.T) {
 	cfg := RunnerConfig{
 		BrainAPIURL:            "http://localhost:3333",
 		PollInterval:           30,
-		TaskPollInterval:       5,
 		MaxParallel:            2,
 		MemoryThresholdPercent: 10,
 		IdleDetectionThreshold: 60000,
@@ -185,7 +184,6 @@ func TestIntegration_ExecutorRouting_OpencodeTask(t *testing.T) {
 	cfg := RunnerConfig{
 		BrainAPIURL:            "http://localhost:3333",
 		PollInterval:           30,
-		TaskPollInterval:       5,
 		MaxParallel:            2,
 		MemoryThresholdPercent: 10,
 		IdleDetectionThreshold: 60000,
@@ -274,7 +272,6 @@ func TestIntegration_ExecutorRouting_DefaultsFallback(t *testing.T) {
 			cfg := RunnerConfig{
 				BrainAPIURL:            "http://localhost:3333",
 				PollInterval:           30,
-				TaskPollInterval:       5,
 				MaxParallel:            2,
 				MemoryThresholdPercent: 10,
 				IdleDetectionThreshold: 60000,
@@ -594,7 +591,6 @@ func TestIntegration_ExtensionComposition_AllThreeLayers(t *testing.T) {
 func TestIntegration_TaskDefaults_FallThrough(t *testing.T) {
 	cfg := RunnerConfig{
 		PollInterval:           30,
-		TaskPollInterval:       5,
 		MaxParallel:            2,
 		MemoryThresholdPercent: 10,
 		IdleDetectionThreshold: 60000,
@@ -710,7 +706,6 @@ func TestIntegration_RegistryNewExecutorRegistry_BothExecutorsRegistered(t *test
 	cfg := RunnerConfig{
 		BrainAPIURL:            "http://localhost:3333",
 		PollInterval:           30,
-		TaskPollInterval:       5,
 		MaxParallel:            2,
 		MemoryThresholdPercent: 10,
 		IdleDetectionThreshold: 60000,

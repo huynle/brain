@@ -3,6 +3,7 @@ package runner
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -76,13 +77,15 @@ func TestValidateConfig_MemoryGuardNegativeRejected(t *testing.T) {
 	}
 }
 
-// max_total_processes was removed on 2026-09-05 (it was declared, defaulted,
-// validated and shown in the config UI, and read by nothing). Config files
-// written before that still carry the key; they must keep loading.
-func TestLoadConfig_RemovedMaxTotalProcessesKeyTolerated(t *testing.T) {
-	cfg, err := LoadConfigFrom(writeRunnerYAML(t, "runner:\n  max_parallel: 3\n  max_total_processes: 10\n"))
+// max_total_processes, task_poll_interval, log_dir and auto_monitors were
+// removed on 2026-09-05: each was declared, defaulted, validated and shown in
+// the config UI, and read by nothing at runtime. Config files written before
+// that still carry the keys; they must keep loading.
+func TestLoadConfig_RemovedKeysTolerated(t *testing.T) {
+	const stale = "  max_total_processes: 10\n  task_poll_interval: 5\n  log_dir: /tmp/x\n  auto_monitors: true\n"
+	cfg, err := LoadConfigFrom(writeRunnerYAML(t, "runner:\n  max_parallel: 3\n"+stale))
 	if err != nil {
-		t.Fatalf("a stale max_total_processes key must not break loading: %v", err)
+		t.Fatalf("stale keys must not break loading: %v", err)
 	}
 	if cfg.MaxParallel != 3 {
 		t.Errorf("MaxParallel = %d, want 3", cfg.MaxParallel)
@@ -91,7 +94,7 @@ func TestLoadConfig_RemovedMaxTotalProcessesKeyTolerated(t *testing.T) {
 		t.Errorf("validate: %v", err)
 	}
 	// Legacy flat layout too.
-	if _, err := LoadConfigFrom(writeRunnerYAML(t, "max_parallel: 3\nmax_total_processes: 10\n")); err != nil {
+	if _, err := LoadConfigFrom(writeRunnerYAML(t, "max_parallel: 3\n"+strings.ReplaceAll(stale, "  ", ""))); err != nil {
 		t.Fatalf("flat legacy layout with the stale key: %v", err)
 	}
 }

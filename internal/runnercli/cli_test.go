@@ -20,11 +20,10 @@ func TestRunTaskRunner_BasicStartStop(t *testing.T) {
 			BrainAPIURL: "http://localhost:3333",
 			MaxParallel: 1,
 			WorkDir:     t.TempDir(),
-			// StateDir/LogDir must be temp dirs: the runner writes state, PID and
+			// StateDir must be a temp dir: the runner writes state, PID and
 			// running-task files there, and an empty value would resolve relative
 			// to the package directory and dirty the repo.
 			StateDir: t.TempDir(),
-			LogDir:   t.TempDir(),
 		},
 	}
 
@@ -63,10 +62,8 @@ func TestRunnerOptions_FullConfigPassthrough(t *testing.T) {
 		BrainAPIURL:            "http://localhost:9999",
 		APIToken:               "test-token",
 		PollInterval:           15,
-		TaskPollInterval:       5,
 		MaxParallel:            4,
 		StateDir:               "/tmp/state",
-		LogDir:                 "/tmp/logs",
 		WorkDir:                "/tmp/work",
 		APITimeout:             3000,
 		TaskTimeout:            60000,
@@ -78,7 +75,6 @@ func TestRunnerOptions_FullConfigPassthrough(t *testing.T) {
 			Model: "test-model",
 		},
 		ExcludeProjects: []string{"excluded-project"},
-		AutoMonitors:    true,
 		EnvPassthrough:  []string{"FOO", "BAR"},
 		FeatureIDs:      []string{"feat-1", "feat-2"},
 	}
@@ -109,14 +105,8 @@ func TestRunnerOptions_FullConfigPassthrough(t *testing.T) {
 	if opts.Config.MemoryThresholdPercent != 80 {
 		t.Errorf("MemoryThresholdPercent lost: got %d", opts.Config.MemoryThresholdPercent)
 	}
-	if opts.Config.AutoMonitors != true {
-		t.Errorf("AutoMonitors lost: got %v", opts.Config.AutoMonitors)
-	}
 	if len(opts.Config.EnvPassthrough) != 2 || opts.Config.EnvPassthrough[0] != "FOO" {
 		t.Errorf("EnvPassthrough lost: got %v", opts.Config.EnvPassthrough)
-	}
-	if opts.Config.TaskPollInterval != 5 {
-		t.Errorf("TaskPollInterval lost: got %d", opts.Config.TaskPollInterval)
 	}
 	if opts.Config.Opencode.Bin != "/usr/local/bin/opencode" {
 		t.Errorf("Opencode.Bin lost: got %q", opts.Config.Opencode.Bin)
@@ -145,8 +135,6 @@ func TestRunTaskRunner_EmptyStateDirDoesNotWriteToCwd(t *testing.T) {
 			BrainAPIURL: "http://localhost:3333",
 			MaxParallel: 1,
 			WorkDir:     t.TempDir(),
-			LogDir:      t.TempDir(),
-			// StateDir deliberately left empty — it must resolve to a default.
 		},
 	}
 

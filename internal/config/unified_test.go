@@ -56,9 +56,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Runner.PollInterval != 5 {
 		t.Errorf("Runner.PollInterval = %d, want 5", cfg.Runner.PollInterval)
 	}
-	if cfg.Runner.AutoMonitors != true {
-		t.Errorf("Runner.AutoMonitors = %v, want true", cfg.Runner.AutoMonitors)
-	}
 
 	// MCP defaults
 	if cfg.MCP.APIURL != "http://localhost:3333" {
@@ -742,17 +739,11 @@ auto_monitors: false
 	if cfg.Runner.PollInterval != 10 {
 		t.Errorf("Runner.PollInterval = %d, want 10", cfg.Runner.PollInterval)
 	}
-	if cfg.Runner.TaskPollInterval != 3 {
-		t.Errorf("Runner.TaskPollInterval = %d, want 3", cfg.Runner.TaskPollInterval)
-	}
 	if cfg.Runner.WorkDir != "/home/user/work" {
 		t.Errorf("Runner.WorkDir = %q, want %q", cfg.Runner.WorkDir, "/home/user/work")
 	}
 	if cfg.Runner.StateDir != "/home/user/.state" {
 		t.Errorf("Runner.StateDir = %q, want %q", cfg.Runner.StateDir, "/home/user/.state")
-	}
-	if cfg.Runner.LogDir != "/home/user/.logs" {
-		t.Errorf("Runner.LogDir = %q, want %q", cfg.Runner.LogDir, "/home/user/.logs")
 	}
 	if cfg.Runner.APITimeout != 3000 {
 		t.Errorf("Runner.APITimeout = %d, want 3000", cfg.Runner.APITimeout)
@@ -765,9 +756,6 @@ auto_monitors: false
 	}
 	if cfg.Runner.MemoryThresholdPercent != 15 {
 		t.Errorf("Runner.MemoryThresholdPercent = %d, want 15", cfg.Runner.MemoryThresholdPercent)
-	}
-	if cfg.Runner.AutoMonitors != false {
-		t.Errorf("Runner.AutoMonitors = %v, want false", cfg.Runner.AutoMonitors)
 	}
 
 	// Verify unified config file was written
@@ -1026,9 +1014,6 @@ func TestUnifiedConfigIntegration(t *testing.T) {
 		if cfg.Runner.PollInterval != 5 {
 			t.Errorf("Default Runner.PollInterval = %d, want 5", cfg.Runner.PollInterval)
 		}
-		if cfg.Runner.AutoMonitors != true {
-			t.Errorf("Default Runner.AutoMonitors = %v, want true", cfg.Runner.AutoMonitors)
-		}
 		if cfg.MCP.APIURL != "http://localhost:3333" {
 			t.Errorf("Default MCP.APIURL = %q, want http://localhost:3333", cfg.MCP.APIURL)
 		}
@@ -1094,17 +1079,11 @@ exclude_projects:
 		if cfg.Runner.PollInterval != 10 {
 			t.Errorf("Migrated Runner.PollInterval = %d, want 10", cfg.Runner.PollInterval)
 		}
-		if cfg.Runner.TaskPollInterval != 3 {
-			t.Errorf("Migrated Runner.TaskPollInterval = %d, want 3", cfg.Runner.TaskPollInterval)
-		}
 		if cfg.Runner.WorkDir != "/custom/work" {
 			t.Errorf("Migrated Runner.WorkDir = %q, want /custom/work", cfg.Runner.WorkDir)
 		}
 		if cfg.Runner.StateDir != "/custom/state" {
 			t.Errorf("Migrated Runner.StateDir = %q, want /custom/state", cfg.Runner.StateDir)
-		}
-		if cfg.Runner.LogDir != "/custom/logs" {
-			t.Errorf("Migrated Runner.LogDir = %q, want /custom/logs", cfg.Runner.LogDir)
 		}
 		if cfg.Runner.APITimeout != 3000 {
 			t.Errorf("Migrated Runner.APITimeout = %d, want 3000", cfg.Runner.APITimeout)
@@ -1117,9 +1096,6 @@ exclude_projects:
 		}
 		if cfg.Runner.MemoryThresholdPercent != 15 {
 			t.Errorf("Migrated Runner.MemoryThresholdPercent = %d, want 15", cfg.Runner.MemoryThresholdPercent)
-		}
-		if cfg.Runner.AutoMonitors != false {
-			t.Errorf("Migrated Runner.AutoMonitors = %v, want false", cfg.Runner.AutoMonitors)
 		}
 
 		// Verify nested opencode config migrated
@@ -1340,17 +1316,11 @@ plugins:
 		if cfg.Runner.PollInterval != 20 {
 			t.Errorf("Modified Runner.PollInterval = %d, want 20", cfg.Runner.PollInterval)
 		}
-		if cfg.Runner.TaskPollInterval != 7 {
-			t.Errorf("Modified Runner.TaskPollInterval = %d, want 7", cfg.Runner.TaskPollInterval)
-		}
 		if cfg.Runner.WorkDir != "/modified/work" {
 			t.Errorf("Modified Runner.WorkDir = %q, want /modified/work", cfg.Runner.WorkDir)
 		}
 		if cfg.Runner.StateDir != "/modified/state" {
 			t.Errorf("Modified Runner.StateDir = %q, want /modified/state", cfg.Runner.StateDir)
-		}
-		if cfg.Runner.LogDir != "/modified/logs" {
-			t.Errorf("Modified Runner.LogDir = %q, want /modified/logs", cfg.Runner.LogDir)
 		}
 		if cfg.Runner.APITimeout != 5000 {
 			t.Errorf("Modified Runner.APITimeout = %d, want 5000", cfg.Runner.APITimeout)
@@ -1363,9 +1333,6 @@ plugins:
 		}
 		if cfg.Runner.MemoryThresholdPercent != 20 {
 			t.Errorf("Modified Runner.MemoryThresholdPercent = %d, want 20", cfg.Runner.MemoryThresholdPercent)
-		}
-		if cfg.Runner.AutoMonitors != true {
-			t.Errorf("Modified Runner.AutoMonitors = %v, want true", cfg.Runner.AutoMonitors)
 		}
 
 		// Verify modified nested opencode config

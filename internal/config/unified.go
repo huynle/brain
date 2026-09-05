@@ -37,17 +37,14 @@
 // Legacy runner config fields map to unified config as follows:
 //   - max_parallel → Runner.MaxParallel
 //   - poll_interval → Runner.PollInterval
-//   - task_poll_interval → Runner.TaskPollInterval
 //   - work_dir → Runner.WorkDir
 //   - state_dir → Runner.StateDir
-//   - log_dir → Runner.LogDir
 //   - api_timeout → Runner.APITimeout
 //   - task_timeout → Runner.TaskTimeout
 //   - idle_detection_threshold → Runner.IdleDetectionThreshold
 //   - memory_threshold_percent → Runner.MemoryThresholdPercent
 //   - task_memory_limit_mb → Runner.TaskMemoryLimitMB
 //   - opencode_db_max_gb → Runner.OpencodeDBMaxGB
-//   - auto_monitors → Runner.AutoMonitors
 //   - opencode.bin → Runner.Opencode.Bin
 //   - opencode.agent → Runner.Opencode.Agent
 //   - opencode.model → Runner.Opencode.Model
@@ -183,10 +180,8 @@ type RunnerConfig struct {
 	APITokenEnv            string           `yaml:"api_token_env"`
 	MaxParallel            int              `yaml:"max_parallel"`
 	PollInterval           int              `yaml:"poll_interval"`
-	TaskPollInterval       int              `yaml:"task_poll_interval"`
 	WorkDir                string           `yaml:"work_dir"`
 	StateDir               string           `yaml:"state_dir"`
-	LogDir                 string           `yaml:"log_dir"`
 	APITimeout             int              `yaml:"api_timeout"`
 	TaskTimeout            int              `yaml:"task_timeout"`
 	IdleDetectionThreshold int              `yaml:"idle_detection_threshold"`
@@ -196,7 +191,6 @@ type RunnerConfig struct {
 	Opencode               OpencodeSettings `yaml:"opencode"`
 	ExcludeProjects        []string         `yaml:"exclude_projects"`
 	IncludeProjects        []string         `yaml:"include_projects"`
-	AutoMonitors           bool             `yaml:"auto_monitors"`
 }
 
 // OpencodeSettings holds OpenCode executor settings.
@@ -345,9 +339,6 @@ func (c *UnifiedConfig) Validate() error {
 	if c.Runner.PollInterval < 1 {
 		errs = append(errs, "runner.poll_interval must be >= 1 (seconds)")
 	}
-	if c.Runner.TaskPollInterval < 1 {
-		errs = append(errs, "runner.task_poll_interval must be >= 1 (seconds)")
-	}
 	if c.Runner.APITimeout < 100 {
 		errs = append(errs, "runner.api_timeout must be >= 100 (milliseconds)")
 	}
@@ -443,10 +434,8 @@ func defaultConfig() UnifiedConfig {
 			APITokenEnv:            "BRAIN_API_TOKEN",
 			MaxParallel:            3, // Max concurrent tasks
 			PollInterval:           5, // Seconds between task queue polls
-			TaskPollInterval:       5, // Seconds between task status polls
 			WorkDir:                homeDir,
 			StateDir:               filepath.Join(stateHome, "brain-runner"),
-			LogDir:                 filepath.Join(homeDir, ".local", "log"),
 			APITimeout:             5000,  // Milliseconds
 			TaskTimeout:            0,     // 0 = no timeout
 			IdleDetectionThreshold: 60000, // Milliseconds
@@ -460,7 +449,6 @@ func defaultConfig() UnifiedConfig {
 			},
 			ExcludeProjects: []string{},
 			IncludeProjects: []string{},
-			AutoMonitors:    true,
 		},
 		MCP: MCPConfig{
 			APIURL: "http://localhost:3333",
@@ -651,17 +639,11 @@ func migrateConfig(legacyPath, unifiedPath string, cfg *UnifiedConfig) error {
 	if v, ok := legacyData["poll_interval"].(int); ok {
 		cfg.Runner.PollInterval = v
 	}
-	if v, ok := legacyData["task_poll_interval"].(int); ok {
-		cfg.Runner.TaskPollInterval = v
-	}
 	if v, ok := legacyData["work_dir"].(string); ok {
 		cfg.Runner.WorkDir = v
 	}
 	if v, ok := legacyData["state_dir"].(string); ok {
 		cfg.Runner.StateDir = v
-	}
-	if v, ok := legacyData["log_dir"].(string); ok {
-		cfg.Runner.LogDir = v
 	}
 	if v, ok := legacyData["api_timeout"].(int); ok {
 		cfg.Runner.APITimeout = v
@@ -680,9 +662,6 @@ func migrateConfig(legacyPath, unifiedPath string, cfg *UnifiedConfig) error {
 	}
 	if v, ok := legacyData["opencode_db_max_gb"].(int); ok {
 		cfg.Runner.OpencodeDBMaxGB = v
-	}
-	if v, ok := legacyData["auto_monitors"].(bool); ok {
-		cfg.Runner.AutoMonitors = v
 	}
 
 	// Map nested opencode config

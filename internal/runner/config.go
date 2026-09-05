@@ -123,7 +123,6 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 
 	// Expand tilde in file-sourced paths
 	fileCfg.StateDir = expandTilde(fileCfg.StateDir, homeDir)
-	fileCfg.LogDir = expandTilde(fileCfg.LogDir, homeDir)
 	fileCfg.WorkDir = expandTilde(fileCfg.WorkDir, homeDir)
 	fileCfg.RepoCacheDir = expandTilde(fileCfg.RepoCacheDir, homeDir)
 	fileCfg.Pi.AgentsDir = expandTilde(fileCfg.Pi.AgentsDir, homeDir)
@@ -164,11 +163,9 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		APIToken:                  resolvedAPIToken,
 		APITokenEnv:               resolvedAPITokenEnv,
 		PollInterval:              getEnvIntOrDefault("RUNNER_POLL_INTERVAL", firstNonZero(fileCfg.PollInterval, 30)),
-		TaskPollInterval:          getEnvIntOrDefault("RUNNER_TASK_POLL_INTERVAL", firstNonZero(fileCfg.TaskPollInterval, 5)),
 		MaxParallel:               getEnvIntOrDefault("RUNNER_MAX_PARALLEL", firstNonZero(fileCfg.MaxParallel, 2)),
 		Name:                      getEnvOrDefault("RUNNER_NAME", fileCfg.Name),
 		StateDir:                  getEnvOrDefault("RUNNER_STATE_DIR", firstNonEmpty(fileCfg.StateDir, DefaultStateDir())),
-		LogDir:                    getEnvOrDefault("RUNNER_LOG_DIR", firstNonEmpty(fileCfg.LogDir, filepath.Join(homeDir, ".local", "log"))),
 		WorkDir:                   getEnvOrDefault("RUNNER_WORK_DIR", firstNonEmpty(fileCfg.WorkDir, homeDir)),
 		RepoCacheDir:              expandTilde(getEnvOrDefault("RUNNER_REPO_CACHE_DIR", firstNonEmpty(fileCfg.RepoCacheDir, filepath.Join(homeDir, ".cache", "brain", "repos"))), homeDir),
 		GitToken:                  resolvedGitToken,
@@ -208,7 +205,6 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		TaskDefaults:    fileCfg.TaskDefaults,
 		ExcludeProjects: fileCfg.ExcludeProjects,
 		IncludeProjects: fileCfg.IncludeProjects,
-		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
 		FeatureIDs:      getEnvCSVOrDefault("RUNNER_FEATURE_IDS", fileCfg.FeatureIDs),
 		Hooks: HooksConfig{
@@ -272,9 +268,6 @@ func ValidateConfig(cfg RunnerConfig) error {
 	}
 	if cfg.PollInterval < 1 {
 		errs = append(errs, fmt.Sprintf("pollInterval must be >= 1, got %d", cfg.PollInterval))
-	}
-	if cfg.TaskPollInterval < 1 {
-		errs = append(errs, fmt.Sprintf("taskPollInterval must be >= 1, got %d", cfg.TaskPollInterval))
 	}
 	if cfg.APITimeout < 0 {
 		errs = append(errs, fmt.Sprintf("apiTimeout must be >= 0, got %d", cfg.APITimeout))

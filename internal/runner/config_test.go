@@ -16,15 +16,14 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	// Clear all runner env vars
 	envVars := []string{
 		"BRAIN_API_URL", "BRAIN_API_TOKEN",
-		"RUNNER_POLL_INTERVAL", "RUNNER_TASK_POLL_INTERVAL",
-		"RUNNER_MAX_PARALLEL", "RUNNER_MAX_TOTAL_PROCESSES",
+		"RUNNER_POLL_INTERVAL",
+		"RUNNER_MAX_PARALLEL",
 		"RUNNER_MEMORY_THRESHOLD", "RUNNER_IDLE_THRESHOLD",
-		"RUNNER_STATE_DIR", "RUNNER_LOG_DIR", "RUNNER_WORK_DIR",
+		"RUNNER_STATE_DIR", "RUNNER_WORK_DIR",
 		"RUNNER_API_TIMEOUT", "RUNNER_TASK_TIMEOUT",
 		"RUNNER_REPO_CACHE_DIR", "RUNNER_GIT_TOKEN", "RUNNER_GIT_TOKEN_ENV",
 		"RUNNER_REQUIRE_HTTPS", "RUNNER_ALLOW_UNAUTHENTICATED_HTTPS",
 		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL",
-		"BRAIN_AUTO_MONITORS",
 	}
 	for _, key := range envVars {
 		os.Unsetenv(key)
@@ -41,9 +40,6 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if cfg.PollInterval != 30 {
 		t.Errorf("PollInterval = %d, want 30", cfg.PollInterval)
-	}
-	if cfg.TaskPollInterval != 5 {
-		t.Errorf("TaskPollInterval = %d, want 5", cfg.TaskPollInterval)
 	}
 	if cfg.MaxParallel != 2 {
 		t.Errorf("MaxParallel = %d, want 2", cfg.MaxParallel)
@@ -68,9 +64,6 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	}
 	if cfg.Opencode.Model != "" {
 		t.Errorf("Opencode.Model = %q, want empty", cfg.Opencode.Model)
-	}
-	if cfg.AutoMonitors {
-		t.Error("AutoMonitors should default to false")
 	}
 	homeDir, _ := os.UserHomeDir()
 	if cfg.WorkDir != homeDir {
@@ -102,9 +95,7 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	t.Setenv("BRAIN_API_URL", "http://brain.local:8080")
 	t.Setenv("BRAIN_API_TOKEN", "secret-token")
 	t.Setenv("RUNNER_POLL_INTERVAL", "60")
-	t.Setenv("RUNNER_TASK_POLL_INTERVAL", "10")
 	t.Setenv("RUNNER_MAX_PARALLEL", "5")
-	t.Setenv("RUNNER_MAX_TOTAL_PROCESSES", "20")
 	t.Setenv("RUNNER_MEMORY_THRESHOLD", "15")
 	t.Setenv("RUNNER_IDLE_THRESHOLD", "120000")
 	t.Setenv("RUNNER_API_TIMEOUT", "10000")
@@ -117,7 +108,6 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	t.Setenv("OPENCODE_BIN", "/usr/local/bin/opencode")
 	t.Setenv("OPENCODE_AGENT", "tdd-dev")
 	t.Setenv("OPENCODE_MODEL", "anthropic/claude-sonnet-4-20250514")
-	t.Setenv("BRAIN_AUTO_MONITORS", "true")
 
 	cfg, err := LoadConfigFrom("")
 	if err != nil {
@@ -153,9 +143,6 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	}
 	if !cfg.AllowUnauthenticatedHTTPS {
 		t.Error("AllowUnauthenticatedHTTPS should be true from env override")
-	}
-	if !cfg.AutoMonitors {
-		t.Error("AutoMonitors should be true when BRAIN_AUTO_MONITORS=true")
 	}
 }
 
@@ -338,7 +325,6 @@ func TestLoadConfig_TildeExpansion(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
 	yamlContent := `state_dir: "~/my-state"
-log_dir: "~/my-logs"
 work_dir: "~"
 repo_cache_dir: "~/repo-cache"
 `
@@ -346,7 +332,7 @@ repo_cache_dir: "~/repo-cache"
 		t.Fatalf("write config: %v", err)
 	}
 
-	for _, key := range []string{"RUNNER_STATE_DIR", "RUNNER_LOG_DIR", "RUNNER_WORK_DIR", "RUNNER_REPO_CACHE_DIR"} {
+	for _, key := range []string{"RUNNER_STATE_DIR", "RUNNER_WORK_DIR", "RUNNER_REPO_CACHE_DIR"} {
 		os.Unsetenv(key)
 	}
 
@@ -359,10 +345,6 @@ repo_cache_dir: "~/repo-cache"
 	wantState := filepath.Join(homeDir, "my-state")
 	if cfg.StateDir != wantState {
 		t.Errorf("StateDir = %q, want %q", cfg.StateDir, wantState)
-	}
-	wantLog := filepath.Join(homeDir, "my-logs")
-	if cfg.LogDir != wantLog {
-		t.Errorf("LogDir = %q, want %q", cfg.LogDir, wantLog)
 	}
 	if cfg.WorkDir != homeDir {
 		t.Errorf("WorkDir = %q, want %q", cfg.WorkDir, homeDir)
@@ -525,7 +507,6 @@ git_token_env: "CUSTOM_GIT_TOKEN"
 func TestValidateConfig_Valid(t *testing.T) {
 	cfg := RunnerConfig{
 		PollInterval:           30,
-		TaskPollInterval:       5,
 		MaxParallel:            2,
 		MemoryThresholdPercent: 10,
 		APITimeout:             5000,
@@ -551,7 +532,6 @@ func TestValidateConfig_InvalidMaxParallel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			cfg := RunnerConfig{
 				PollInterval:      1,
-				TaskPollInterval:  1,
 				MaxParallel:       tt.maxParallel,
 				HeartbeatInterval: 30,
 			}
@@ -565,7 +545,6 @@ func TestValidateConfig_InvalidMaxParallel(t *testing.T) {
 func TestValidateConfig_InvalidPollInterval(t *testing.T) {
 	cfg := RunnerConfig{
 		PollInterval:      0,
-		TaskPollInterval:  5,
 		MaxParallel:       2,
 		HeartbeatInterval: 30,
 	}
@@ -577,7 +556,6 @@ func TestValidateConfig_InvalidPollInterval(t *testing.T) {
 func TestValidateConfig_NegativeTimeout(t *testing.T) {
 	cfg := RunnerConfig{
 		PollInterval:      1,
-		TaskPollInterval:  1,
 		MaxParallel:       2,
 		APITimeout:        -1,
 		HeartbeatInterval: 30,
@@ -597,13 +575,12 @@ func TestLoadConfig_PiDefaults(t *testing.T) {
 		"PI_BIN", "PI_MODEL", "PI_THINKING", "PI_NO_SESSION",
 		"DEFAULT_EXECUTOR",
 		"BRAIN_API_URL", "BRAIN_API_TOKEN",
-		"RUNNER_POLL_INTERVAL", "RUNNER_TASK_POLL_INTERVAL",
-		"RUNNER_MAX_PARALLEL", "RUNNER_MAX_TOTAL_PROCESSES",
+		"RUNNER_POLL_INTERVAL",
+		"RUNNER_MAX_PARALLEL",
 		"RUNNER_MEMORY_THRESHOLD", "RUNNER_IDLE_THRESHOLD",
-		"RUNNER_STATE_DIR", "RUNNER_LOG_DIR", "RUNNER_WORK_DIR",
+		"RUNNER_STATE_DIR", "RUNNER_WORK_DIR",
 		"RUNNER_API_TIMEOUT", "RUNNER_TASK_TIMEOUT",
 		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL",
-		"BRAIN_AUTO_MONITORS",
 	} {
 		os.Unsetenv(key)
 	}
@@ -649,7 +626,6 @@ func TestLoadConfig_PiFromYAML(t *testing.T) {
 		"PI_BIN", "PI_MODEL", "PI_THINKING", "PI_NO_SESSION",
 		"DEFAULT_EXECUTOR",
 		"BRAIN_API_URL", "RUNNER_MAX_PARALLEL", "RUNNER_POLL_INTERVAL",
-		"RUNNER_TASK_POLL_INTERVAL", "RUNNER_MAX_TOTAL_PROCESSES",
 		"OPENCODE_BIN",
 	} {
 		os.Unsetenv(key)
@@ -785,7 +761,6 @@ func TestLoadConfig_UnifiedFormat_WithPi(t *testing.T) {
 	for _, key := range []string{
 		"PI_BIN", "PI_MODEL", "PI_THINKING", "DEFAULT_EXECUTOR",
 		"BRAIN_API_URL", "RUNNER_MAX_PARALLEL", "RUNNER_POLL_INTERVAL",
-		"RUNNER_TASK_POLL_INTERVAL", "RUNNER_MAX_TOTAL_PROCESSES",
 		"OPENCODE_BIN",
 	} {
 		os.Unsetenv(key)
@@ -844,7 +819,6 @@ func TestLoadConfig_BackwardCompatible_NoPiSection(t *testing.T) {
 	for _, key := range []string{
 		"PI_BIN", "PI_MODEL", "PI_THINKING", "DEFAULT_EXECUTOR",
 		"BRAIN_API_URL", "RUNNER_MAX_PARALLEL", "RUNNER_POLL_INTERVAL",
-		"RUNNER_TASK_POLL_INTERVAL", "RUNNER_MAX_TOTAL_PROCESSES",
 		"OPENCODE_BIN", "OPENCODE_AGENT", "OPENCODE_MODEL",
 	} {
 		os.Unsetenv(key)
@@ -957,7 +931,6 @@ func TestValidateConfig_InvalidTaskDefaultsExecutor(t *testing.T) {
 func validBaseConfig() RunnerConfig {
 	return RunnerConfig{
 		PollInterval:           30,
-		TaskPollInterval:       5,
 		MaxParallel:            2,
 		MemoryThresholdPercent: 10,
 		APITimeout:             5000,

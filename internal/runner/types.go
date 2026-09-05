@@ -19,11 +19,9 @@ type RunnerConfig struct {
 	BrainAPIURL               string `yaml:"brain_api_url" json:"brain_api_url"`
 	APIToken                  string `yaml:"api_token" json:"api_token"`
 	APITokenEnv               string `yaml:"api_token_env" json:"api_token_env"`
-	PollInterval              int    `yaml:"poll_interval" json:"poll_interval"`           // seconds
-	TaskPollInterval          int    `yaml:"task_poll_interval" json:"task_poll_interval"` // seconds
+	PollInterval              int    `yaml:"poll_interval" json:"poll_interval"` // seconds
 	MaxParallel               int    `yaml:"max_parallel" json:"max_parallel"`
 	StateDir                  string `yaml:"state_dir" json:"state_dir"`
-	LogDir                    string `yaml:"log_dir" json:"log_dir"`
 	WorkDir                   string `yaml:"work_dir" json:"work_dir"`
 	RepoCacheDir              string `yaml:"repo_cache_dir" json:"repo_cache_dir"`
 	GitToken                  string `yaml:"git_token" json:"git_token"`
@@ -52,7 +50,6 @@ type RunnerConfig struct {
 	TaskDefaults    TaskDefaultsConfig `yaml:"task_defaults" json:"task_defaults"`
 	ExcludeProjects []string           `yaml:"exclude_projects" json:"exclude_projects"`
 	IncludeProjects []string           `yaml:"include_projects" json:"include_projects"`
-	AutoMonitors    bool               `yaml:"auto_monitors" json:"auto_monitors"`
 
 	// MaxTaskAttempts caps how many times a task may run before a failure
 	// parks it in "blocked" instead of resetting it to "pending". A per-task

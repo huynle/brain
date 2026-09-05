@@ -133,10 +133,8 @@ func ConfigSchema() []ConfigField {
 		{Path: "runner.api_token_env", Kind: "string", Section: "runner", Label: "API token env var", RequiresRestart: true},
 		{Path: "runner.max_parallel", Kind: "int", Section: "runner", Label: "Max parallel tasks", Help: "Upper bound on simultaneously-executing tasks."},
 		{Path: "runner.poll_interval", Kind: "int", Section: "runner", Label: "Poll interval (s)", Help: "Seconds between API polls when SSE is unavailable."},
-		{Path: "runner.task_poll_interval", Kind: "int", Section: "runner", Label: "Task poll interval (s)"},
 		{Path: "runner.work_dir", Kind: "path", Section: "runner", Label: "Work directory", Help: "Root under which task worktrees are created.", RequiresRestart: true},
 		{Path: "runner.state_dir", Kind: "path", Section: "runner", Label: "State directory", RequiresRestart: true},
-		{Path: "runner.log_dir", Kind: "path", Section: "runner", Label: "Log directory", RequiresRestart: true},
 		{Path: "runner.api_timeout", Kind: "int", Section: "runner", Label: "API timeout (ms)"},
 		{Path: "runner.task_timeout", Kind: "int", Section: "runner", Label: "Task timeout (ms)", Help: "Kill running tasks that exceed this. 0 = no limit."},
 		{Path: "runner.idle_detection_threshold", Kind: "int", Section: "runner", Label: "Idle detection threshold (ms)"},
@@ -145,7 +143,6 @@ func ConfigSchema() []ConfigField {
 		{Path: "runner.opencode_db_max_gb", Kind: "int", Section: "runner", Label: "OpenCode DB max (GB)", Help: "Refuse OpenCode tasks while ~/.local/share/opencode/opencode.db is larger than this. 0 = off."},
 		{Path: "runner.exclude_projects", Kind: "string_array", Section: "runner", Label: "Exclude projects", Help: "Project IDs the runner will never claim tasks for."},
 		{Path: "runner.include_projects", Kind: "string_array", Section: "runner", Label: "Include projects only", Help: "If set, runner ONLY claims tasks in these projects."},
-		{Path: "runner.auto_monitors", Kind: "bool", Section: "runner", Label: "Auto-start monitors"},
 
 		// ─── runner.opencode ───────────────────────────────────
 		{Path: "runner.opencode.bin", Kind: "path", Section: "runner.opencode", Label: "OpenCode binary", RequiresRestart: true},

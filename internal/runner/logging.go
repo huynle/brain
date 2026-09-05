@@ -59,6 +59,10 @@ func RegisterEventLogger(tr *TaskRunner) {
 				slog.Info("task completed", attrs...)
 			}
 		case EventTaskFailed:
+			// status=crashed here means "process exited without the task
+			// reaching a terminal status" (see CompletionCrashed); it is not
+			// derived from exit_code, so crashed + exit_code=0 is the normal
+			// signature of an agent that died before reporting completion.
 			if event.Result != nil {
 				attrs := []any{
 					"runner_id", event.RunnerID,

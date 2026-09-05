@@ -2698,6 +2698,13 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	// Stop log streamer (flushes remaining lines)
 	tr.stopLogStreamer(taskID)
 
+	// A crashed/failed/timed-out classification is an inference from the
+	// process exit, not from the task. If the agent already moved the task to
+	// a terminal status (brain_update completed, then the process exited 0),
+	// the run succeeded and must not be counted against the retry cap. Ask
+	// the API before deciding; see reconcileCompletionWithAPI.
+	status = tr.reconcileCompletionWithAPI(ctx, task, status)
+
 	// Create result before removing from process manager
 	result := tr.processMgr.CreateTaskResult(taskID, status)
 

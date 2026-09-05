@@ -27,7 +27,14 @@ const (
 	CompletionBlocked   CompletionStatus = "blocked"
 	CompletionCancelled CompletionStatus = "cancelled"
 	CompletionTimeout   CompletionStatus = "timeout"
-	CompletionCrashed   CompletionStatus = "crashed"
+	// CompletionCrashed means the process exited (or vanished) without the
+	// runner observing the task in a terminal status. It is keyed on task
+	// state, not the exit code: an `opencode run` that dies on an auth error
+	// exits 0 and is still crashed, because the task never left in_progress.
+	// The `task failed ... status=crashed exit_code=0` log line is therefore
+	// expected for a dead agent, and by itself says nothing about the exit
+	// code being wrong.
+	CompletionCrashed CompletionStatus = "crashed"
 )
 
 // Process is an interface for interacting with a running process.
@@ -513,7 +520,7 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 			slog.Debug("task file status", "task_id", taskID, "status", entry.Status)
 			// Check direct status
 			switch entry.Status {
-			case "completed":
+			case "completed", "validated":
 				return CompletionCompleted
 			case "blocked":
 				return CompletionBlocked
@@ -572,27 +579,54 @@ func (pm *ProcessManager) CheckCompletion(taskID string, checkTaskFile bool) Com
 		return CompletionCompleted
 	}
 
-	// Otherwise, process crashed or failed
+	// Otherwise the process is gone and the task never reached a terminal
+	// status: the agent died (auth/model error, panic) before it could
+	// report completion. This is what "crashed" means — exit_code=0 does not
+	// make it a success. handleTaskCompletion re-checks the API through the
+	// authenticated client before charging the retry cap, in case this
+	// lookup (a separate, best-effort HTTP client) was the thing that failed.
+	slog.Warn("task process exited without the task reaching a terminal status; marking crashed",
+		"task_id", taskID, "exit_code", exitCode,
+		"executor", info.Task.ExecutorType)
 	return CompletionCrashed
 }
 
-// getTaskEntry fetches task status from the Brain API.
+// getTaskEntry fetches task status from the Brain API. Returns nil when the
+// lookup fails for any reason; callers treat nil as "status unknown".
+//
+// This uses the ProcessManager's own http.Client rather than the runner's
+// APIClient, so it must attach the bearer token itself. It did not, so on a
+// server with auth enabled every lookup was a 401 → nil, CheckCompletion
+// never saw "completed" from the API, and every exit of a non-CompleteOnIdle
+// task was classified crashed regardless of the agent's brain_update.
 func (pm *ProcessManager) getTaskEntry(taskPath string) *taskEntrySnapshot {
 	encodedPath := encodePathComponent(taskPath)
 	url := fmt.Sprintf("%s/api/v1/entries/%s", pm.config.BrainAPIURL, encodedPath)
 
-	resp, err := pm.client.Get(url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
+		slog.Debug("task file lookup: bad request", "task_path", taskPath, "error", err)
+		return nil
+	}
+	if pm.config.APIToken != "" {
+		req.Header.Set("Authorization", "Bearer "+pm.config.APIToken)
+	}
+
+	resp, err := pm.client.Do(req)
+	if err != nil {
+		slog.Debug("task file lookup failed", "task_path", taskPath, "error", err)
 		return nil
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
+		slog.Debug("task file lookup returned non-200", "task_path", taskPath, "status_code", resp.StatusCode)
 		return nil
 	}
 
 	var entry taskEntrySnapshot
 	if err := json.NewDecoder(resp.Body).Decode(&entry); err != nil {
+		slog.Debug("task file lookup: decode failed", "task_path", taskPath, "error", err)
 		return nil
 	}
 

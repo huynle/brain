@@ -96,7 +96,7 @@ function healthFor(
     return { label: "blocked", tone: "blocked" };
   if (mr > 0) return { label: "reviewing", tone: "mr" };
   if (stats.active > 0) return { label: "active", tone: "active" };
-  return { label: "healthy", tone: "merged" };
+  return { label: "healthy", tone: "validated" };
 }
 
 export interface ProjectCardProps {
@@ -181,7 +181,14 @@ export function ProjectCard({
   const holdNote = schedulerHoldNote(resultFor(projectId));
 
   const lifecycleCounts = useMemo(() => {
-    const c = { active: 0, blocked: 0, finished: 0, mr: 0, ready: 0, merged: 0 };
+    const c = {
+      active: 0,
+      blocked: 0,
+      finished: 0,
+      mr: 0,
+      ready: 0,
+      validated: 0,
+    };
     for (const f of features) {
       // `mr` is now an ATTACHMENT count, not a lifecycle bucket — it is the
       // one tally that overlaps the others rather than partitioning them.
@@ -190,7 +197,7 @@ export function ProjectCard({
       else if (f.lifecycle === "blocked") c.blocked++;
       else if (f.lifecycle === "finished") c.finished++;
       else if (f.lifecycle === "ready-to-merge") c.ready++;
-      else if (f.lifecycle === "merged") c.merged++;
+      else if (f.lifecycle === "validated") c.validated++;
     }
     return c;
   }, [features]);
@@ -333,7 +340,7 @@ export function ProjectCard({
         lifecycleCounts.finished > 0 ||
         lifecycleCounts.mr > 0 ||
         lifecycleCounts.ready > 0 ||
-        lifecycleCounts.merged > 0) && (
+        lifecycleCounts.validated > 0) && (
         <div className="flow-strip">
           {lifecycleCounts.active > 0 && (
             <span className="flow-pill active">
@@ -360,9 +367,9 @@ export function ProjectCard({
               <b>{lifecycleCounts.ready}</b> to merge
             </span>
           )}
-          {lifecycleCounts.merged > 0 && (
-            <span className="flow-pill merged">
-              <b>{lifecycleCounts.merged}</b> merged
+          {lifecycleCounts.validated > 0 && (
+            <span className="flow-pill validated">
+              <b>{lifecycleCounts.validated}</b> validated
             </span>
           )}
         </div>

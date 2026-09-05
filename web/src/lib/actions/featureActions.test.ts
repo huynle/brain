@@ -106,7 +106,7 @@ test("every core feature verb is present", () => {
 test("set-goal is always enabled and routes to openGoalCreate", async () => {
   const { calls, ctx } = recorder();
   // Even a merged feature can take a goal (watch for regressions).
-  const action = byId(mkFeature({ lifecycle: "merged" }), ctx).get("set-goal")!;
+  const action = byId(mkFeature({ lifecycle: "validated" }), ctx).get("set-goal")!;
   assert.equal(action.disabledReason ?? "", "");
   await action.run();
   assert.deepEqual(calls, ["goal-create:checkout-flow"]);
@@ -124,7 +124,7 @@ test("open is the very first feature action, in the select group", () => {
 
 test("open is always enabled and routes to openDrawer", async () => {
   const { calls, ctx } = recorder();
-  const open = byId(mkFeature({ lifecycle: "merged" }), ctx).get("open")!;
+  const open = byId(mkFeature({ lifecycle: "validated" }), ctx).get("open")!;
   assert.equal(open.disabledReason ?? "", "");
   await open.run();
   assert.deepEqual(calls, ["open:checkout-flow"]);
@@ -159,9 +159,11 @@ test("run is blocked for an empty feature", () => {
   assert.match(reason, /no tasks/i);
 });
 
-test("run is blocked for a merged feature", () => {
-  const reason = runFeatureBlockedReason(mkFeature({ lifecycle: "merged" }));
-  assert.match(reason, /merged/);
+test("run is blocked for a validated feature", () => {
+  // The reason interpolates the lifecycle name, so this also pins that the
+  // user-facing string tracks a rename instead of going stale.
+  const reason = runFeatureBlockedReason(mkFeature({ lifecycle: "validated" }));
+  assert.match(reason, /validated/);
 });
 
 test("run is blocked when every task is blocked or done", () => {
@@ -317,7 +319,7 @@ test("delete is disabled for an empty feature", () => {
 
 // ─── archive ───────────────────────────────────────────────────────
 
-for (const lifecycle of ["finished", "merged"] as const) {
+for (const lifecycle of ["finished", "validated"] as const) {
   test(`archive is enabled for a ${lifecycle} feature`, () => {
     const { ctx } = recorder();
     const f = mkFeature({
@@ -372,7 +374,7 @@ test("archive confirms the blast radius at the reversible tier — no typing", (
 
 test("archive routes to setStatusForAll archived", async () => {
   const { calls, ctx } = recorder();
-  await byId(mkFeature({ lifecycle: "merged" }), ctx)
+  await byId(mkFeature({ lifecycle: "validated" }), ctx)
     .get("archive")!
     .run();
   assert.deepEqual(calls, ["status:checkout-flow:archived"]);
@@ -578,7 +580,7 @@ test("run-with-dependents carries no count in its label", () => {
 test("run-with-dependents is blocked for the same reasons as run", () => {
   const { ctx } = recorder();
   const settled = mkFeature({
-    lifecycle: "merged",
+    lifecycle: "validated",
     taskCount: { total: 4, completed: 4, blocked: 0, active: 0 },
   });
   const acts = buildFeatureActions(settled, ctx);

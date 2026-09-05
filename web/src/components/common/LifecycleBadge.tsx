@@ -38,12 +38,16 @@ export const LIFECYCLE_TONE: Record<FeatureLifecycle, LifecycleTone> = {
   blocked: { tone: "blocked", label: "blocked" },
   finished: { tone: "finished", label: "finished" },
   "ready-to-merge": { tone: "ready", label: "ready to merge" },
-  merged: { tone: "merged", label: "merged" },
+  validated: { tone: "validated", label: "validated" },
 };
 
 /** Hover text for the state users confuse with a real merge request. Long
  *  on purpose: this is the only place the distinction is explained. */
 const TITLES: Partial<Record<FeatureLifecycle, string>> = {
+  validated:
+    "Every task is done and every non-generated task is marked validated — " +
+    "the checkout agent verified the work. This does NOT mean the branch was " +
+    "merged: nothing in Brain observes that.",
   "ready-to-merge":
     "Checkout produced a Brain merge request for this feature and it is still pending — " +
     "the work is validated and waiting to be merged. Nothing has been opened on a git server.",

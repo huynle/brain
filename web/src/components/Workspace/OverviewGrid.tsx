@@ -166,7 +166,7 @@ export function OverviewGrid(): JSX.Element {
     blocked: [],
     finished: [],
     "ready-to-merge": [],
-    merged: [],
+    validated: [],
   };
   for (const f of allDerived) byLifecycle[f.lifecycle].push(f);
 
@@ -259,8 +259,8 @@ export function OverviewGrid(): JSX.Element {
             <span> ready to merge</span>
           </div>
           <div>
-            <b>{byLifecycle.merged.length}</b>
-            <span> merged</span>
+            <b>{byLifecycle.validated.length}</b>
+            <span> validated</span>
           </div>
         </div>
         <div className="wc-queue">
@@ -361,7 +361,7 @@ export function OverviewGrid(): JSX.Element {
             ["blocked", "blocked"],
             ["finished", "finished"],
             ["ready-to-merge", "ready"],
-            ["merged", "merged"],
+            ["validated", "validated"],
           ] as Array<[FeatureLifecycle, string]>
         ).map(([key, laneClass]) => {
           const items = byLifecycle[key];

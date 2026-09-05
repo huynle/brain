@@ -12,8 +12,10 @@
  *
  * ─── Rollup rules ────────────────────────────────────────────────
  *
- *   merged         — every task in the feature has status "validated".
- *                    (Future signal: `mergedAt` timestamp; not wired yet.)
+ *   validated      — every task is done AND every non-generated task
+ *                    carries status "validated" — the checkout agent's
+ *                    verdict that the work is verified. See "Why the
+ *                    denominator excludes generated tasks" below.
  *   ready-to-merge — the feature is otherwise `finished` AND an open
  *                    Brain-native `merge_request` ENTRY names it. The
  *                    checkout agent validated the work and parked a merge
@@ -27,7 +29,44 @@
  *                    here.
  *
  * Priority (highest wins):
- *   merged > ready-to-merge > finished > blocked > in-progress.
+ *   validated > finished > blocked > in-progress
+ *
+ * ...with `ready-to-merge` layered on top: the fold in `deriveFeatures`
+ * promotes EITHER terminal work state (`finished` or `validated`) when an
+ * open merge_request entry names the feature, because an outstanding merge
+ * is more actionable than the verdict on the work. When that entry reaches
+ * a terminal status it drops out of `openMRs` on its own and the feature
+ * falls back to the state its tasks earned.
+ *
+ * ─── Why this is `validated` and not `merged` ──────────────────────
+ *
+ * It was called `merged` until 2026-09-05, and it never meant that. The
+ * predicate is a task-status check, and `validated` is the status enum's
+ * own word for "Implementation verified working" (internal/types/types.go).
+ * Whether a branch actually landed is a DIFFERENT fact, and one nothing in
+ * this system observes: the only code that performs a real merge is the
+ * simple feature-checkout script, which is the non-default checkout mode
+ * and runs under the script executor (off unless `script.enabled`). Naming
+ * a chip after a fact no signal supports is what produced the `mr-open`
+ * bug above; a real MERGED chip has to wait for a real merge receipt.
+ *
+ * ─── Why the denominator excludes generated tasks ──────────────────
+ *
+ * A feature's checkout task is a member of its own feature — the automation
+ * stamps the event's feature id onto it — but the checkout skill validates
+ * only the tasks it DEPENDS ON and then sets ITSELF to `completed`.
+ * Counting it made `validated === total` structurally false for every
+ * AI-checked-out feature, so the terminal state was unreachable and its
+ * lane sat permanently empty. Worse, the skill spawns a fresh checkout task
+ * per round, so the shortfall grew.
+ *
+ * Excluding `generated` tasks matches what the server already believes:
+ * `extractUniqueNonGeneratedTaskIds` builds the checkout's own
+ * `depends_on` from exactly the non-generated set.
+ *
+ * `allDone` deliberately keeps the FULL denominator. A feature whose
+ * checkout task is still pending is not finished, and must not jump
+ * straight to `validated` on the strength of its work tasks alone.
  *
  * ─── Why there is no `mr-open` lifecycle ──────────────────────────
  *
@@ -77,7 +116,7 @@ export type FeatureLifecycle =
   | "blocked"
   | "finished"
   | "ready-to-merge"
-  | "merged";
+  | "validated";
 
 export interface DerivedFeature {
   /** The shared `feature_id` value. */
@@ -102,6 +141,12 @@ export interface DerivedFeature {
    *  this as an advisory hint, not a source of truth. */
   mergePolicy?: string;
   prUrl?: string;
+  /** Reserved for a real merge receipt, and deliberately still unassigned.
+   *  Nothing in Brain observes a branch landing: the only code that performs
+   *  a merge is the simple feature-checkout script, which is the non-default
+   *  checkout mode and runs under the script executor (off unless
+   *  `script.enabled`). Until one of those emits a receipt this stays
+   *  undefined, and `validated` makes the weaker, checkable claim instead. */
   mergedAt?: string;
   finishedAt?: string;
   /** Every task id belonging to this feature. Preserved in input
@@ -177,9 +222,19 @@ export function deriveFeatures(
     // be papered over by a badge announcing the feature is ready to go.
     // (The earlier "anything but merged" fold did paper over exactly that.)
     //
-    // `merged` is excluded for free: all tasks validated means done,
-    // whatever stale entry remains.
-    if (f.lifecycle === "finished" && openMRs?.has(fid)) {
+    // BOTH terminal work states are promoted, and the distinction that used
+    // to justify excluding one of them does not exist: `openMRFeatureIds`
+    // already filters to OPEN entries (pending/active/in_progress), so an
+    // entry reaching here is by construction not stale. Excluding
+    // `validated` was safe only while that state was unreachable — the
+    // moment it became reachable it captured exactly the shape checkout
+    // leaves behind (work validated, generated checkout task completed),
+    // so the READY TO MERGE lane emptied and features with a merge still
+    // parked were folded away as done by `isFeatureDone`.
+    if (
+      (f.lifecycle === "finished" || f.lifecycle === "validated") &&
+      openMRs?.has(fid)
+    ) {
       f.lifecycle = "ready-to-merge";
     }
     out.push(f);
@@ -194,7 +249,11 @@ function deriveOne(
 ): DerivedFeature {
   let total = 0;
   let completed = 0; // completed + validated
-  let validated = 0;
+  // The `work*` pair excludes generated tasks (the checkout task and any
+  // other automation-authored sibling). See the module docstring: counting
+  // them made the terminal lifecycle unreachable.
+  let workTotal = 0;
+  let workValidated = 0;
   let blocked = 0;
   let active = 0; // pending + in_progress
   let resumable = 0;
@@ -206,13 +265,15 @@ function deriveOne(
   for (const t of tasks) {
     total++;
     ownerTaskIds.push(t.id);
+    const isWork = t.generated !== true;
+    if (isWork) workTotal++;
     switch (t.status) {
       case "completed":
         completed++;
         break;
       case "validated":
         completed++;
-        validated++;
+        if (isWork) workValidated++;
         break;
       case "blocked":
         blocked++;
@@ -238,10 +299,15 @@ function deriveOne(
   }
 
   const progress = total > 0 ? completed / total : 0;
-  const allValidated = total > 0 && validated === total;
   const allDone = total > 0 && completed === total;
+  // Note the conjunction with allDone: every task must be finished (the full
+  // denominator, generated ones included) AND every work task must carry the
+  // verified stamp. Without it a feature whose checkout task is still pending
+  // would skip straight past `finished`.
+  const allValidated =
+    allDone && workTotal > 0 && workValidated === workTotal;
 
-  // Priority: merged > finished > blocked > in-progress.
+  // Priority: validated > finished > blocked > in-progress.
   // `ready-to-merge` is not decidable here — it comes from the project's
   // merge_request entries, which only deriveFeatures has — so the fold
   // above promotes `finished` to it after the fact.
@@ -253,7 +319,7 @@ function deriveOne(
   // We evaluate top-down and land on the first match.
   let lifecycle: FeatureLifecycle;
   if (allValidated) {
-    lifecycle = "merged";
+    lifecycle = "validated";
   } else if (allDone) {
     lifecycle = "finished";
   } else if (blocked > 0 && active === 0) {
@@ -281,19 +347,19 @@ function deriveOne(
  * A feature whose work is over — there is nothing left in it to act on.
  *
  * Drives the default collapse state of a feature's task list: a finished
- * or merged feature is history, so its rows start folded and the feature
+ * or validated feature is history, so its rows start folded and the feature
  * reads as one line. `ready-to-merge` is deliberately NOT done — it is
  * still waiting on the merge executor.
  */
 export const isFeatureDone = (f: DerivedFeature): boolean =>
-  f.lifecycle === "finished" || f.lifecycle === "merged";
+  f.lifecycle === "finished" || f.lifecycle === "validated";
 
 /**
  * Sort features into the canonical panes-v2 display order:
  *
- *   blocked → in-progress → ready-to-merge → finished → merged
+ *   blocked → in-progress → ready-to-merge → finished → validated
  *
- * `blocked` sits at the top because it demands attention; `merged`
+ * `blocked` sits at the top because it demands attention; `validated`
  * goes last because the UI collapses that bucket by default. Within
  * a bucket, features sort alphabetically by id for stability.
  *
@@ -306,7 +372,7 @@ export function sortFeatures(feats: DerivedFeature[]): DerivedFeature[] {
     "in-progress": 1,
     "ready-to-merge": 2,
     finished: 3,
-    merged: 4,
+    validated: 4,
   };
   // Copy first so callers keep their input untouched.
   return [...feats].sort((a, b) => {
@@ -321,8 +387,8 @@ export function sortFeatures(feats: DerivedFeature[]): DerivedFeature[] {
  *
  * Root ordering follows the caller's array order, so piping through
  * {@link sortFeatures} first keeps the canonical blocked → in-progress
- * → ready-to-merge → finished → merged sequence at every level of the
- * tree.
+ * → ready-to-merge → finished → validated sequence at every level of
+ * the tree.
  *
  * Features whose dependency is not in the input (a merged feature the
  * user has collapsed, or one that lives in another project) stay roots

@@ -72,7 +72,8 @@ import {
 
 function featStateClass(f: DerivedFeature): string {
   if (f.lifecycle === "blocked") return "block";
-  if (f.lifecycle === "merged" || f.lifecycle === "finished") return "done";
+  if (f.lifecycle === "validated" || f.lifecycle === "finished")
+    return "done";
   return "busy";
 }
 

@@ -583,7 +583,7 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .flow-lane.blocked .lane-head b { color: #d96060; }
 .flow-lane.finished .lane-head b { color: #6fca7d; }
 .flow-lane.ready .lane-head b { color: #3fb0c0; }
-.flow-lane.merged .lane-head b { color: #b98cff; }
+.flow-lane.validated .lane-head b { color: #b98cff; }
 .lane-items { display: flex; flex-direction: column; gap: 4px; padding: 6px; min-height: 58px; }
 .lane-items.expanded { max-height: 40vh; overflow-y: auto; }
 .lane-card {
@@ -661,7 +661,7 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .pcard-head .health.blocked { color: #d96060; border-color: #d9606055; background: #d9606011; }
 .pcard-head .health.mr { color: #6a8bff; border-color: #6a8bff55; background: #6a8bff11; }
 .pcard-head .health.ready { color: #3fb0c0; border-color: #3fb0c055; background: #3fb0c011; }
-.pcard-head .health.merged { color: #b98cff; border-color: #b98cff55; background: #b98cff11; }
+.pcard-head .health.validated { color: #b98cff; border-color: #b98cff55; background: #b98cff11; }
 /* Badges + counts travel together: this group either sits beside the name
    or wraps below it whole, so "paused" is never stranded on the name's line
    while the counts it qualifies sit on the next one. */
@@ -718,7 +718,7 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .flow-pill.finished b { color: #6fca7d; }
 .flow-pill.mr b { color: #6a8bff; }
 .flow-pill.ready b { color: #3fb0c0; }
-.flow-pill.merged b { color: #b98cff; }
+.flow-pill.validated b { color: #b98cff; }
 .pcard-tabs {
   display: flex; padding: 0 6px; background: #12161a;
   border-bottom: 1px solid #22272c;
@@ -795,7 +795,7 @@ a.life-badge.link:hover {
   text-decoration: underline;
 }
 a.life-badge.link:focus-visible { outline: 1px solid #6a8bff; outline-offset: 1px; }
-.life-badge.merged { color: #b98cff; border-color: #b98cff55; background: #b98cff11; }
+.life-badge.validated { color: #b98cff; border-color: #b98cff55; background: #b98cff11; }
 /* Abandoned tasks — amber-orange to signal "needs attention, has a recovery
  * path". Distinct enough from .blocked (red = error/dead-end) and .active
  * (yellow = healthy in-flight). Reuses the same border/background alpha

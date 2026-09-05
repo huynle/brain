@@ -28,3 +28,8 @@ internal/webui/dist/*
 
 # Local build artifact
 /bin/brain
+
+# Runner state dumps (runner-<name>.json / running-<name>.json) belong in the
+# runner state dir, never in the repo root; one was committed by accident.
+/runner-*.json
+/running-*.json

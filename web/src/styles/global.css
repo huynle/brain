@@ -556,7 +556,7 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .flow-board {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: repeat(6, minmax(150px, 1fr));
+  grid-template-columns: repeat(5, minmax(150px, 1fr));
   gap: 8px;
 }
 .flow-lane {
@@ -582,7 +582,6 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
 .flow-lane.active .lane-head b { color: #f4b23a; }
 .flow-lane.blocked .lane-head b { color: #d96060; }
 .flow-lane.finished .lane-head b { color: #6fca7d; }
-.flow-lane.mr .lane-head b { color: #6a8bff; }
 .flow-lane.ready .lane-head b { color: #3fb0c0; }
 .flow-lane.merged .lane-head b { color: #b98cff; }
 .lane-items { display: flex; flex-direction: column; gap: 4px; padding: 6px; min-height: 58px; }
@@ -769,6 +768,15 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
  * banners in FeatureModal and FeatureDetailLeaf) whose whole sentence has
  * to wrap. A nowrap on the base ran those off the edge of the drawer. */
 .lifecycle-chip { white-space: nowrap; }
+/* The lifecycle badge and the MR link are TWO chips where there used to be
+ * one element. Several surfaces that render them are fixed-track grids —
+ * `.wc-row` (5 tracks), `.rq-item` (3) — where a conditional extra child
+ * silently overflows into an implicit row: the trailing button or the meta
+ * column wraps, and the badge stretches to fill whatever track it landed
+ * in, because `.life-badge`'s `flex: 0 0 auto` is inert in a grid. Wrapping
+ * the pair keeps every one of those rows at its original child count, and
+ * puts the gap between the two chips in one place. */
+.chip-pair { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .life-badge.active { color: #f4b23a; border-color: #f4b23a55; background: #f4b23a11; }
 .life-badge.blocked { color: #d96060; border-color: #d9606055; background: #d9606011; }
 .life-badge.finished { color: #6fca7d; border-color: #6fca7d55; background: #6fca7d11; }
@@ -777,8 +785,9 @@ body.drawer-open.sidebar-collapsed:not(.mobile) #app {
  * NOT the blue of .mr: the whole point of splitting the two states is that
  * only one of them has a merge request on a git server. */
 .life-badge.ready { color: #3fb0c0; border-color: #3fb0c055; background: #3fb0c011; }
-/* The mr-open chip is the only one that is also a link (to the MR itself).
- * Underline is withheld until hover so a row of chips still reads as chips. */
+/* The MR chip is the only one that is also a link (to the merge request).
+ * Underline is withheld until hover so a row of chips still reads as chips.
+ * It is NOT a lifecycle tone — it rides beside whichever badge is true. */
 a.life-badge { text-decoration: none; cursor: pointer; }
 a.life-badge.link:hover {
   border-color: #6a8bffaa;

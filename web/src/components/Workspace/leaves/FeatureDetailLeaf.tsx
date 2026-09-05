@@ -40,7 +40,10 @@ import { isRangeKey } from "../../../lib/selection";
 import { deriveFeatures } from "../../../lib/features";
 import { runnerLabel, runnerName } from "../../../lib/runnerName";
 import { ErrorState } from "../../common/ErrorState";
-import { LifecycleBadge } from "../../common/LifecycleBadge";
+import {
+  LifecycleBadge,
+  MergeRequestLink,
+} from "../../common/LifecycleBadge";
 import type { GoalSummary, Task } from "../../../lib/types";
 
 const EMPTY_TASKS: readonly Task[] = Object.freeze([]);
@@ -390,7 +393,10 @@ export function FeatureDetailLeaf({
         <div className="kv-grid">
           <div className="k">Lifecycle</div>
           <div className="v">
-            <LifecycleBadge lifecycle={feature.lifecycle} href={feature.prUrl} />
+            <span className="chip-pair">
+              <LifecycleBadge lifecycle={feature.lifecycle} />
+              {feature.prUrl && <MergeRequestLink href={feature.prUrl} />}
+            </span>
           </div>
           <div className="k">Progress</div>
           <div className="v">

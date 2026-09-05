@@ -329,7 +329,11 @@ for (const lifecycle of ["finished", "merged"] as const) {
   });
 }
 
-for (const lifecycle of ["in-progress", "blocked", "mr-open"] as const) {
+for (const lifecycle of [
+  "in-progress",
+  "blocked",
+  "ready-to-merge",
+] as const) {
   test(`archive is disabled — never hidden — for a ${lifecycle} feature`, () => {
     const { ctx } = recorder();
     const archive = byId(mkFeature({ lifecycle }), ctx).get("archive");

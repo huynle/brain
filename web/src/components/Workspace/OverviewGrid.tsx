@@ -28,7 +28,11 @@ import {
 } from "../../lib/features";
 import { laneVisible } from "../../lib/lane";
 import { useDeferredPreview } from "../../hooks/useDeferredPreview";
-import { LIFECYCLE_TONE, LifecycleBadge } from "../common/LifecycleBadge";
+import {
+  LIFECYCLE_TONE,
+  LifecycleBadge,
+  MergeRequestLink,
+} from "../common/LifecycleBadge";
 import { ProjectTiles } from "./ProjectTiles";
 import { EntriesPreview } from "./EntriesPreview";
 import { projectMatchesStatusFilter } from "../../lib/statusFilter";
@@ -137,7 +141,7 @@ export function OverviewGrid(): JSX.Element {
 
   // Brain-native merge requests: an auto_pr checkout produces a
   // merge_request ENTRY, not a URL on a task — without this input the
-  // MR OPEN column never moves for AI-checked-out features.
+  // READY TO MERGE column never moves for AI-checked-out features.
   // `openByProject` is the query's stable data reference, so the memo
   // below only recomputes when the MR set actually changes.
   const { openByProject } = useMergeRequests();
@@ -161,22 +165,18 @@ export function OverviewGrid(): JSX.Element {
     "in-progress": [],
     blocked: [],
     finished: [],
-    "mr-open": [],
     "ready-to-merge": [],
     merged: [],
   };
   for (const f of allDerived) byLifecycle[f.lifecycle].push(f);
 
-  // "Needs attention" = blocked + either MR state + features whose runner
-  // is stale/offline. Both MR states qualify: one is waiting on a reviewer,
-  // the other on the merge executor, and in both the work itself has stopped.
+  // "Needs attention" = blocked + ready-to-merge + features whose runner is
+  // stale/offline. Ready-to-merge qualifies because the work has stopped and
+  // is waiting on the merge executor. A forge URL is NOT an attention signal:
+  // nothing here tracks whether that MR is still open (see lib/features).
   const attention = useMemo(() => {
     return allDerived.filter((f) => {
-      if (
-        f.lifecycle === "blocked" ||
-        f.lifecycle === "mr-open" ||
-        f.lifecycle === "ready-to-merge"
-      )
+      if (f.lifecycle === "blocked" || f.lifecycle === "ready-to-merge")
         return true;
       const runnerId = featureAssignments[f.id];
       if (!runnerId) return false;
@@ -251,8 +251,8 @@ export function OverviewGrid(): JSX.Element {
             </span>
           </div>
           <div>
-            <b>{byLifecycle["mr-open"].length}</b>
-            <span> MRs open</span>
+            <b>{allDerived.filter((f) => f.prUrl).length}</b>
+            <span> with MR links</span>
           </div>
           <div>
             <b>{byLifecycle["ready-to-merge"].length}</b>
@@ -273,7 +273,10 @@ export function OverviewGrid(): JSX.Element {
                 className="wc-row"
                 {...featureRowProps(f)}
               >
-                <LifecycleBadge lifecycle={f.lifecycle} href={f.prUrl} />
+                <span className="chip-pair">
+                  <LifecycleBadge lifecycle={f.lifecycle} />
+                  {f.prUrl && <MergeRequestLink href={f.prUrl} />}
+                </span>
                 <span className="wc-feature">{f.name}</span>
                 <span className="wc-meta">
                   {f.projectId} · {runner ? runner.runner_id : "unassigned"}
@@ -334,11 +337,11 @@ export function OverviewGrid(): JSX.Element {
                     pinFeature(f);
                   }}
                 >
-                  <LifecycleBadge lifecycle={f.lifecycle} href={f.prUrl} />
+                  <span className="chip-pair">
+                    <LifecycleBadge lifecycle={f.lifecycle} />
+                    {f.prUrl && <MergeRequestLink href={f.prUrl} />}
+                  </span>
                   <span className="rq-name">{f.name}</span>
-                  {/* The badge itself now says which MR state this is, and
-                      links out when there is a real one — the old ` · MR
-                      open` suffix here said neither. */}
                   <span className="rq-meta">
                     {f.projectId}
                     {runnerIssue ? ` · ${runnerIssue}` : ""}
@@ -357,7 +360,6 @@ export function OverviewGrid(): JSX.Element {
             ["in-progress", "active"],
             ["blocked", "blocked"],
             ["finished", "finished"],
-            ["mr-open", "mr"],
             ["ready-to-merge", "ready"],
             ["merged", "merged"],
           ] as Array<[FeatureLifecycle, string]>

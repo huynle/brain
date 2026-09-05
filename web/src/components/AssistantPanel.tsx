@@ -72,11 +72,7 @@ export function AssistantPanel(): JSX.Element | null {
       const tasks = liveProjects[pid]?.tasks ?? [];
       const feats = deriveFeatures(tasks, pid, openByProject.get(pid));
       for (const f of feats) {
-        if (
-          f.lifecycle === "blocked" ||
-          f.lifecycle === "mr-open" ||
-          f.lifecycle === "ready-to-merge"
-        ) {
+        if (f.lifecycle === "blocked" || f.lifecycle === "ready-to-merge") {
           out.push({
             projectId: pid,
             featureId: f.id,

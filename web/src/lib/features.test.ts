@@ -5,8 +5,8 @@
  * `feature_id`. `deriveFeatures` folds a task list into one row per
  * feature with:
  *   - progress (completed / total, 0..1)
- *   - lifecycle: in-progress | blocked | finished | mr-open |
- *                ready-to-merge | merged
+ *   - lifecycle: in-progress | blocked | finished | ready-to-merge |
+ *                merged  (a PR URL is an attachment, never a lifecycle)
  *   - PR URL (from task.mr_url, task.merge_request_url, or a regex
  *     scan of task.content)
  *   - ownerTaskIds so downstream drag-drop assignment can address
@@ -60,13 +60,13 @@ test("deriveFeatures: all completed, no PR → finished", () => {
   assert.equal(out[0]!.prUrl, undefined);
 });
 
-test("deriveFeatures: all validated → merged", () => {
+test("deriveFeatures: all validated → validated", () => {
   const tasks: Task[] = [
     mkTask({ id: "1", status: "validated", feature_id: "auth" }),
     mkTask({ id: "2", status: "validated", feature_id: "auth" }),
   ];
   const out = deriveFeatures(tasks, "proj");
-  assert.equal(out[0]!.lifecycle, "merged");
+  assert.equal(out[0]!.lifecycle, "validated");
 });
 
 test("deriveFeatures: one in_progress + rest completed → in-progress", () => {
@@ -103,7 +103,9 @@ test("deriveFeatures: blocked + pending → in-progress (pending wins)", () => {
   assert.equal(out[0]!.lifecycle, "in-progress");
 });
 
-test("deriveFeatures: GitLab MR URL in task.content, not all validated → mr-open", () => {
+test("deriveFeatures: a GitLab MR URL never overrides the work state", () => {
+  // Was `mr-open` until 2026-09-05. A URL in task prose is an attachment;
+  // the sibling is still in_progress, so the feature is in-progress.
   const tasks: Task[] = [
     mkTask({
       id: "1",
@@ -115,12 +117,13 @@ test("deriveFeatures: GitLab MR URL in task.content, not all validated → mr-op
     mkTask({ id: "2", status: "in_progress", feature_id: "auth" }),
   ];
   const out = deriveFeatures(tasks, "proj");
-  assert.equal(out[0]!.lifecycle, "mr-open");
+  assert.equal(out[0]!.lifecycle, "in-progress");
+  // ...and the url is still surfaced, for the MergeRequestLink chip.
   assert.ok(out[0]!.prUrl!.includes("gitlab.example.com"));
   assert.ok(out[0]!.prUrl!.includes("/-/merge_requests/42"));
 });
 
-test("deriveFeatures: GitHub PR URL in task.content, not all validated → mr-open", () => {
+test("deriveFeatures: a GitHub PR URL never overrides the work state", () => {
   const tasks: Task[] = [
     mkTask({
       id: "1",
@@ -131,7 +134,7 @@ test("deriveFeatures: GitHub PR URL in task.content, not all validated → mr-op
     mkTask({ id: "2", status: "pending", feature_id: "auth" }),
   ];
   const out = deriveFeatures(tasks, "proj");
-  assert.equal(out[0]!.lifecycle, "mr-open");
+  assert.equal(out[0]!.lifecycle, "in-progress");
   assert.equal(out[0]!.prUrl, "https://github.com/acme/foo/pull/123");
 });
 
@@ -168,7 +171,7 @@ test("extractPrUrl: no URL anywhere → undefined", () => {
   );
 });
 
-test("deriveFeatures: PR URL present + all validated → merged (merged beats mr-open)", () => {
+test("deriveFeatures: PR URL present + all validated → validated", () => {
   const tasks: Task[] = [
     mkTask({
       id: "1",
@@ -179,7 +182,7 @@ test("deriveFeatures: PR URL present + all validated → merged (merged beats mr
     mkTask({ id: "2", status: "validated", feature_id: "auth" }),
   ];
   const out = deriveFeatures(tasks, "proj");
-  assert.equal(out[0]!.lifecycle, "merged");
+  assert.equal(out[0]!.lifecycle, "validated");
   // prUrl is still surfaced so the modal can link to the merged MR.
   assert.equal(out[0]!.prUrl, "https://github.com/acme/foo/pull/1");
 });
@@ -195,7 +198,7 @@ test("deriveFeatures: multi-feature project → separate rows per feature_id", (
   assert.equal(out.length, 3);
   const byId = Object.fromEntries(out.map((f) => [f.id, f]));
   assert.equal(byId.auth!.lifecycle, "in-progress");
-  assert.equal(byId.ui!.lifecycle, "merged");
+  assert.equal(byId.ui!.lifecycle, "validated");
   assert.equal(byId.storage!.lifecycle, "in-progress");
 });
 
@@ -255,29 +258,20 @@ test("deriveFeatures: propagates projectId and mergePolicy", () => {
 
 // ─── sortFeatures: canonical order ─────────────────────────────────
 
-test("sortFeatures: blocked → in-progress → mr-open → ready-to-merge → finished → merged", () => {
-  // Order per plan text: "blocked at top", then in-progress, the two MR
-  // states (a real MR waits on a person, so it outranks a parked merge
-  // intent), finished, and merged last (collapsed at bottom).
+test("sortFeatures: blocked → in-progress → ready-to-merge → finished → merged", () => {
+  // "blocked at top", then in-progress, the parked merge intent, finished,
+  // and merged last (collapsed at bottom).
   const feats: DerivedFeature[] = [
-    mkFeat("z-merged", "merged"),
+    mkFeat("z-validated", "validated"),
     mkFeat("y-finished", "finished"),
     mkFeat("x2-ready", "ready-to-merge"),
-    mkFeat("x-mr", "mr-open"),
     mkFeat("w-inprog", "in-progress"),
     mkFeat("v-blocked", "blocked"),
   ];
   const sorted = sortFeatures(feats);
   assert.deepEqual(
     sorted.map((f) => f.lifecycle),
-    [
-      "blocked",
-      "in-progress",
-      "mr-open",
-      "ready-to-merge",
-      "finished",
-      "merged",
-    ],
+    ["blocked", "in-progress", "ready-to-merge", "finished", "validated"],
   );
 });
 
@@ -423,8 +417,8 @@ function mkFeat(
 // ─── Brain-native MR fold ──────────────────────────────────────────
 
 test("deriveFeatures: an open Brain-native MR flips lifecycle to ready-to-merge", () => {
-  // NOT mr-open: a merge_request entry is a parked merge intent inside
-  // Brain, with nothing open on any git server and no url to follow.
+  // A merge_request entry is a parked merge intent inside Brain, with
+  // nothing open on any git server and no url to follow.
   const feats = deriveFeatures(
     [mkTask({ id: "t1", feature_id: "api", status: "completed" })],
     "proj",
@@ -434,9 +428,9 @@ test("deriveFeatures: an open Brain-native MR flips lifecycle to ready-to-merge"
   assert.equal(feats[0].prUrl, undefined);
 });
 
-test("deriveFeatures: a forge MR url beats an open MR entry on the same feature", () => {
-  // Both signals present. mr-open wins: it is the only one the user can
-  // click through to, and the entry adds nothing the url does not say.
+test("deriveFeatures: a forge MR url no longer preempts an open MR entry", () => {
+  // Both signals present. The url is an attachment, so the entry decides
+  // the lifecycle and the url rides along as a link.
   const feats = deriveFeatures(
     [
       mkTask({
@@ -449,18 +443,57 @@ test("deriveFeatures: a forge MR url beats an open MR entry on the same feature"
     "proj",
     new Set(["api"]),
   );
-  assert.equal(feats[0].lifecycle, "mr-open");
+  assert.equal(feats[0].lifecycle, "ready-to-merge");
   assert.equal(feats[0].prUrl, "https://github.com/acme/foo/pull/7");
 });
 
-test("deriveFeatures: merged still trumps an open MR entry", () => {
-  // All tasks validated = merged; a stale MR entry must not regress it.
+test("deriveFeatures: an open MR entry outranks validated", () => {
+  // The fold promotes BOTH terminal work states. `openMRFeatureIds` already
+  // filters to open entries, so one reaching here is not stale — an
+  // outstanding merge is more actionable than the verdict on the work.
   const feats = deriveFeatures(
     [mkTask({ id: "t1", feature_id: "api", status: "validated" })],
     "proj",
     new Set(["api"]),
   );
-  assert.equal(feats[0].lifecycle, "merged");
+  assert.equal(feats[0].lifecycle, "ready-to-merge");
+});
+
+test("deriveFeatures: the checkout resting shape lands on ready-to-merge, not folded away", () => {
+  // The exact regression the widened fold exists to prevent. Work tasks
+  // validated + a completed generated checkout task + a parked merge request
+  // is what the default AI checkout leaves behind. Before the fold covered
+  // `validated`, this derived `validated`, emptied the READY TO MERGE lane,
+  // and isFeatureDone() folded the rows away while the merge was pending.
+  const feats = deriveFeatures(
+    [
+      mkTask({ id: "w1", feature_id: "api", status: "validated" }),
+      mkTask({ id: "w2", feature_id: "api", status: "validated" }),
+      mkTask({
+        id: "checkout",
+        feature_id: "api",
+        status: "completed",
+        generated: true,
+      }),
+    ],
+    "proj",
+    new Set(["api"]),
+  );
+  assert.equal(feats[0]!.lifecycle, "ready-to-merge");
+  assert.equal(isFeatureDone(feats[0]!), false);
+});
+
+test("deriveFeatures: once the MR entry closes, the feature falls back to validated", () => {
+  const tasks = [
+    mkTask({ id: "w1", feature_id: "api", status: "validated" }),
+    mkTask({
+      id: "checkout",
+      feature_id: "api",
+      status: "completed",
+      generated: true,
+    }),
+  ];
+  assert.equal(deriveFeatures(tasks, "proj", new Set())[0]!.lifecycle, "validated");
 });
 
 test("deriveFeatures: MR set only affects the named feature", () => {
@@ -532,7 +565,7 @@ test("deriveFeatures: archived + completed still derives finished with full prog
   assert.equal(out[0]!.taskCount.completed, 1);
 });
 
-test("deriveFeatures: archived + validated still derives merged", () => {
+test("deriveFeatures: archived + validated still derives validated", () => {
   const out = deriveFeatures(
     [
       mkTask({ id: "1", status: "validated", feature_id: "auth" }),
@@ -540,7 +573,7 @@ test("deriveFeatures: archived + validated still derives merged", () => {
     ],
     "proj",
   );
-  assert.equal(out[0]!.lifecycle, "merged");
+  assert.equal(out[0]!.lifecycle, "validated");
   assert.equal(out[0]!.progress, 1);
 });
 
@@ -608,7 +641,7 @@ test("deriveFeatures: an archived task's PR URL does not surface", () => {
 // ─── isFeatureDone ───────────────────────────────────────────────
 // Drives the default fold of a feature's task rows in CardTasks.
 
-test("isFeatureDone: finished and merged are done, nothing else is", () => {
+test("isFeatureDone: finished and validated are done, nothing else is", () => {
   const of = (lifecycle: DerivedFeature["lifecycle"]): DerivedFeature => ({
     id: "f",
     projectId: "p",
@@ -622,10 +655,138 @@ test("isFeatureDone: finished and merged are done, nothing else is", () => {
   });
 
   assert.equal(isFeatureDone(of("finished")), true);
-  assert.equal(isFeatureDone(of("merged")), true);
+  assert.equal(isFeatureDone(of("validated")), true);
   assert.equal(isFeatureDone(of("in-progress")), false);
   assert.equal(isFeatureDone(of("blocked")), false);
-  // An open MR is the one lifecycle that is 100% coded and still waiting
-  // on a human — folding it away would hide the thing that needs doing.
-  assert.equal(isFeatureDone(of("mr-open")), false);
+  // Still waiting on the merge executor — folding it away would hide the
+  // thing that needs doing.
+  assert.equal(isFeatureDone(of("ready-to-merge")), false);
+});
+
+// ─── the generated-task denominator ──────────────────────────────
+// A feature's checkout task is a member of its own feature, but the
+// checkout skill validates only the tasks it DEPENDS ON and then sets
+// ITSELF to completed. Counting it made `validated === total` structurally
+// false for every AI-checked-out feature, so the terminal lifecycle was
+// unreachable and its lane sat permanently empty.
+
+test("deriveFeatures: work tasks validated + a completed checkout task → validated", () => {
+  // The case that was impossible before 2026-09-05.
+  const feats = deriveFeatures(
+    [
+      mkTask({ id: "w1", feature_id: "api", status: "validated" }),
+      mkTask({ id: "w2", feature_id: "api", status: "validated" }),
+      mkTask({
+        id: "checkout",
+        feature_id: "api",
+        status: "completed",
+        generated: true,
+      }),
+    ],
+    "proj",
+  );
+  assert.equal(feats[0]!.lifecycle, "validated");
+});
+
+test("deriveFeatures: a still-pending checkout task holds the feature back", () => {
+  // allDone keeps the FULL denominator on purpose: the feature must not jump
+  // to `validated` while any task — generated or not — is outstanding.
+  const feats = deriveFeatures(
+    [
+      mkTask({ id: "w1", feature_id: "api", status: "validated" }),
+      mkTask({
+        id: "checkout",
+        feature_id: "api",
+        status: "pending",
+        generated: true,
+      }),
+    ],
+    "proj",
+  );
+  assert.equal(feats[0]!.lifecycle, "in-progress");
+});
+
+test("deriveFeatures: a feature of only generated tasks is finished, never validated", () => {
+  // workTotal === 0 must not vacuously satisfy the validated predicate.
+  const feats = deriveFeatures(
+    [
+      mkTask({
+        id: "g1",
+        feature_id: "api",
+        status: "validated",
+        generated: true,
+      }),
+    ],
+    "proj",
+  );
+  assert.equal(feats[0]!.lifecycle, "finished");
+});
+
+test("deriveFeatures: one unvalidated work task still blocks validated", () => {
+  const feats = deriveFeatures(
+    [
+      mkTask({ id: "w1", feature_id: "api", status: "validated" }),
+      mkTask({ id: "w2", feature_id: "api", status: "completed" }),
+      mkTask({
+        id: "checkout",
+        feature_id: "api",
+        status: "completed",
+        generated: true,
+      }),
+    ],
+    "proj",
+  );
+  assert.equal(feats[0]!.lifecycle, "finished");
+});
+
+// ─── prUrl is an attachment, never a state ────────────────────────
+// These pin the 2026-09-05 removal of the `mr-open` lifecycle. Each one
+// FAILED before it: a url in any task body outranked both `allDone` and
+// `blocked`, so it painted over whatever the work was actually doing.
+
+test("deriveFeatures: a URL on a blocked feature leaves it blocked", () => {
+  const feats = deriveFeatures(
+    [
+      mkTask({
+        id: "t1",
+        feature_id: "api",
+        status: "blocked",
+        content: "blocked, see https://github.com/acme/foo/pull/9",
+      }),
+      mkTask({ id: "t2", feature_id: "api", status: "blocked" }),
+    ],
+    "proj",
+  );
+  assert.equal(feats[0]!.lifecycle, "blocked");
+  assert.equal(feats[0]!.prUrl, "https://github.com/acme/foo/pull/9");
+});
+
+test("deriveFeatures: a URL on a fully-completed feature leaves it finished", () => {
+  const feats = deriveFeatures(
+    [
+      mkTask({
+        id: "t1",
+        feature_id: "api",
+        status: "completed",
+        content: "merged long ago: https://github.com/acme/foo/pull/9",
+      }),
+    ],
+    "proj",
+  );
+  assert.equal(feats[0]!.lifecycle, "finished");
+});
+
+test("isFeatureDone: a prUrl does not keep a finished feature un-folded", () => {
+  const feats = deriveFeatures(
+    [
+      mkTask({
+        id: "t1",
+        feature_id: "api",
+        status: "completed",
+        content: "https://github.com/acme/foo/pull/9",
+      }),
+    ],
+    "proj",
+  );
+  assert.equal(isFeatureDone(feats[0]!), true);
 });

@@ -45,7 +45,10 @@ import { useDeferredPreview } from "../../hooks/useDeferredPreview";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useTaskRowRenderer } from "./TaskRow";
 import { DepGuide } from "../common/DepGuide";
-import { LifecycleBadge } from "../common/LifecycleBadge";
+import {
+  LifecycleBadge,
+  MergeRequestLink,
+} from "../common/LifecycleBadge";
 import { beginDrag, endDrag } from "../../hooks/useDragDrop";
 import { useFeatureActionContext } from "../../hooks/useFeatureActionContext";
 import { useTaskGroupActionContext } from "../../hooks/useTaskGroupActionContext";
@@ -69,7 +72,8 @@ import {
 
 function featStateClass(f: DerivedFeature): string {
   if (f.lifecycle === "blocked") return "block";
-  if (f.lifecycle === "merged" || f.lifecycle === "finished") return "done";
+  if (f.lifecycle === "validated" || f.lifecycle === "finished")
+    return "done";
   return "busy";
 }
 
@@ -580,7 +584,10 @@ export function CardTasks({
                 />
                 {f.name}
               </span>
-              <LifecycleBadge lifecycle={f.lifecycle} href={f.prUrl} />
+              <span className="chip-pair">
+                <LifecycleBadge lifecycle={f.lifecycle} />
+                {f.prUrl && <MergeRequestLink href={f.prUrl} />}
+              </span>
               {/* The dial is a DIFFERENT fact from the lifecycle — a
                   paused feature is still "active" work, just held — so it
                   gets its own chip rather than overwriting the badge. */}

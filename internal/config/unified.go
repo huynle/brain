@@ -46,6 +46,8 @@
 //   - idle_detection_threshold → Runner.IdleDetectionThreshold
 //   - max_total_processes → Runner.MaxTotalProcesses
 //   - memory_threshold_percent → Runner.MemoryThresholdPercent
+//   - task_memory_limit_mb → Runner.TaskMemoryLimitMB
+//   - opencode_db_max_gb → Runner.OpencodeDBMaxGB
 //   - auto_monitors → Runner.AutoMonitors
 //   - opencode.bin → Runner.Opencode.Bin
 //   - opencode.agent → Runner.Opencode.Agent
@@ -191,6 +193,8 @@ type RunnerConfig struct {
 	IdleDetectionThreshold int              `yaml:"idle_detection_threshold"`
 	MaxTotalProcesses      int              `yaml:"max_total_processes"`
 	MemoryThresholdPercent int              `yaml:"memory_threshold_percent"`
+	TaskMemoryLimitMB      int              `yaml:"task_memory_limit_mb"`
+	OpencodeDBMaxGB        int              `yaml:"opencode_db_max_gb"`
 	Opencode               OpencodeSettings `yaml:"opencode"`
 	ExcludeProjects        []string         `yaml:"exclude_projects"`
 	IncludeProjects        []string         `yaml:"include_projects"`
@@ -355,6 +359,12 @@ func (c *UnifiedConfig) Validate() error {
 	if c.Runner.MemoryThresholdPercent < 0 || c.Runner.MemoryThresholdPercent > 100 {
 		errs = append(errs, "runner.memory_threshold_percent must be 0..100")
 	}
+	if c.Runner.TaskMemoryLimitMB < 0 {
+		errs = append(errs, "runner.task_memory_limit_mb must be >= 0 (0 disables)")
+	}
+	if c.Runner.OpencodeDBMaxGB < 0 {
+		errs = append(errs, "runner.opencode_db_max_gb must be >= 0 (0 disables)")
+	}
 	// Note: include+exclude project filters can coexist (exclude wins), so
 	// that combination is deliberately not validated here. The UI handles the
 	// guidance.
@@ -447,6 +457,8 @@ func defaultConfig() UnifiedConfig {
 			IdleDetectionThreshold: 60000, // Milliseconds
 			MaxTotalProcesses:      10,
 			MemoryThresholdPercent: 10,
+			TaskMemoryLimitMB:      8192, // Kill a task whose process tree passes this
+			OpencodeDBMaxGB:        32,   // Refuse OpenCode tasks while opencode.db is larger
 			Opencode: OpencodeSettings{
 				Bin:   "opencode",
 				Agent: "",
@@ -671,6 +683,12 @@ func migrateConfig(legacyPath, unifiedPath string, cfg *UnifiedConfig) error {
 	}
 	if v, ok := legacyData["memory_threshold_percent"].(int); ok {
 		cfg.Runner.MemoryThresholdPercent = v
+	}
+	if v, ok := legacyData["task_memory_limit_mb"].(int); ok {
+		cfg.Runner.TaskMemoryLimitMB = v
+	}
+	if v, ok := legacyData["opencode_db_max_gb"].(int); ok {
+		cfg.Runner.OpencodeDBMaxGB = v
 	}
 	if v, ok := legacyData["auto_monitors"].(bool); ok {
 		cfg.Runner.AutoMonitors = v

@@ -177,6 +177,20 @@ func waitServeExit(proc Process, d time.Duration) bool {
 // the command line before signalling, so a pid that dies a few seconds later
 // than the record says is harmless. Holding the entry open would instead let
 // a stuck server keep a completed task's slot in the map.
+// ServePID reports the pid of the live `opencode serve` process backing a
+// task, or 0 when there is none. The memory guard uses it to measure the
+// task's whole process tree: the server is the half of the pair the
+// ProcessManager never tracked, and the half that reached 27 GB.
+func (e *OpenCodeExecutor) ServePID(taskID string) int {
+	e.serveMu.Lock()
+	proc := e.serveProcs[taskID]
+	e.serveMu.Unlock()
+	if proc == nil || proc.Exited() {
+		return 0
+	}
+	return proc.Pid()
+}
+
 func (e *OpenCodeExecutor) killServeProc(taskID string) {
 	e.serveMu.Lock()
 	proc := e.serveProcs[taskID]

@@ -433,26 +433,94 @@ func (bc *BridgeClient) tailEvents(ctx context.Context, instanceID string, port 
 		return fmt.Errorf("GET /event: status %d", resp.StatusCode)
 	}
 
-	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, 1024*1024), 1024*1024)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
+	// Read line by line with a bound on how much of one line is kept, not on
+	// how long a line may be. This used to be a bufio.Scanner capped at 1 MB,
+	// and OpenCode emits `message.updated` events carrying the whole message —
+	// including a `summary.diffs` field that has been observed at 198 MB. The
+	// scanner failed with ErrTooLong on the first such line, the pump
+	// reconnected every 2 s, and every permission prompt and session event
+	// from that instance was lost for the rest of the task. Oversized lines
+	// are now drained and dropped; the stream stays up.
+	reader := bufio.NewReaderSize(resp.Body, 64*1024)
+	dropped := 0
+	for {
+		line, tooLong, err := readLineBounded(reader, maxBridgeEventBytes)
+		if tooLong {
+			dropped++
+			if dropped == 1 || dropped%100 == 0 {
+				slog.Warn("bridge client: dropping oversized SSE event",
+					"instance_id", instanceID, "limit_bytes", maxBridgeEventBytes, "dropped_total", dropped)
+			}
+		} else if len(line) > 0 {
+			bc.handleEventLine(instanceID, line)
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			if errors.Is(err, io.EOF) {
+				return errors.New("event stream closed")
+			}
+			return err
+		}
+	}
+}
+
+// maxBridgeEventBytes bounds how much of a single SSE line the bridge keeps.
+// Control events (permission.*, session.*) are a few KB; a legitimate
+// message.part.updated for a large tool output is under a megabyte. Anything
+// past this is a runaway payload the API would refuse to relay anyway.
+const maxBridgeEventBytes = 4 * 1024 * 1024
+
+// handleEventLine forwards one SSE line if it is a data line carrying JSON.
+func (bc *BridgeClient) handleEventLine(instanceID string, line []byte) {
+	if !bytes.HasPrefix(line, []byte("data:")) {
+		return
+	}
+	raw := bytes.TrimSpace(line[len("data:"):])
+	if len(raw) == 0 || !json.Valid(raw) {
+		return
+	}
+	bc.forwardEvent(instanceID, json.RawMessage(raw))
+}
+
+// readLineBounded reads one line (without its trailing newline / CR). At most
+// limit bytes of the line are retained; a longer line is drained to its end
+// and reported as tooLong with no content. err is non-nil only when the
+// underlying reader fails or ends — a final unterminated line is returned
+// together with the io.EOF that follows it.
+func readLineBounded(r *bufio.Reader, limit int) (line []byte, tooLong bool, err error) {
+	var buf []byte
+	for {
+		frag, ferr := r.ReadSlice('\n')
+		content := frag
+		if ferr == nil {
+			content = frag[:len(frag)-1] // the terminator is not part of the line
+		}
+		if !tooLong {
+			if len(buf)+len(content) > limit {
+				tooLong = true
+				buf = nil
+			} else {
+				buf = append(buf, content...)
+			}
+		}
+		if ferr == nil {
+			break
+		}
+		if errors.Is(ferr, bufio.ErrBufferFull) {
 			continue
 		}
-		raw := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-		if raw == "" || !json.Valid([]byte(raw)) {
-			continue
+		// EOF or a real error: return whatever complete content we have.
+		if tooLong {
+			return nil, true, ferr
 		}
-		bc.forwardEvent(instanceID, json.RawMessage(raw))
+		return bytes.TrimRight(buf, "\r\n"), false, ferr
 	}
-	if ctx.Err() != nil {
-		return nil
+	if tooLong {
+		return nil, true, nil
 	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	return errors.New("event stream closed")
+	return bytes.TrimRight(buf, "\r\n"), false, nil
 }
 
 func (bc *BridgeClient) forwardEvent(instanceID string, raw json.RawMessage) {

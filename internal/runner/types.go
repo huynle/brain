@@ -16,34 +16,44 @@ import (
 
 // RunnerConfig holds all configuration for the brain task runner.
 type RunnerConfig struct {
-	BrainAPIURL               string             `yaml:"brain_api_url" json:"brain_api_url"`
-	APIToken                  string             `yaml:"api_token" json:"api_token"`
-	APITokenEnv               string             `yaml:"api_token_env" json:"api_token_env"`
-	PollInterval              int                `yaml:"poll_interval" json:"poll_interval"`           // seconds
-	TaskPollInterval          int                `yaml:"task_poll_interval" json:"task_poll_interval"` // seconds
-	MaxParallel               int                `yaml:"max_parallel" json:"max_parallel"`
-	StateDir                  string             `yaml:"state_dir" json:"state_dir"`
-	LogDir                    string             `yaml:"log_dir" json:"log_dir"`
-	WorkDir                   string             `yaml:"work_dir" json:"work_dir"`
-	RepoCacheDir              string             `yaml:"repo_cache_dir" json:"repo_cache_dir"`
-	GitToken                  string             `yaml:"git_token" json:"git_token"`
-	GitTokenEnv               string             `yaml:"git_token_env" json:"git_token_env"`
-	RequireHTTPS              bool               `yaml:"require_https" json:"require_https"`
-	AllowUnauthenticatedHTTPS bool               `yaml:"allow_unauthenticated_https" json:"allow_unauthenticated_https"`
-	APITimeout                int                `yaml:"api_timeout" json:"api_timeout"`                           // ms
-	TaskTimeout               int                `yaml:"task_timeout" json:"task_timeout"`                         // ms
-	IdleDetectionThreshold    int                `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
-	MaxTotalProcesses         int                `yaml:"max_total_processes" json:"max_total_processes"`
-	MemoryThresholdPercent    int                `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
-	Opencode                  OpencodeConfig     `yaml:"opencode" json:"opencode"`
-	Script                    ScriptConfig       `yaml:"script" json:"script"`
-	Pi                        PiConfig           `yaml:"pi" json:"pi"`
-	Executors                 []string           `yaml:"executors" json:"executors"`
-	DefaultExecutor           string             `yaml:"default_executor" json:"default_executor"`
-	TaskDefaults              TaskDefaultsConfig `yaml:"task_defaults" json:"task_defaults"`
-	ExcludeProjects           []string           `yaml:"exclude_projects" json:"exclude_projects"`
-	IncludeProjects           []string           `yaml:"include_projects" json:"include_projects"`
-	AutoMonitors              bool               `yaml:"auto_monitors" json:"auto_monitors"`
+	BrainAPIURL               string `yaml:"brain_api_url" json:"brain_api_url"`
+	APIToken                  string `yaml:"api_token" json:"api_token"`
+	APITokenEnv               string `yaml:"api_token_env" json:"api_token_env"`
+	PollInterval              int    `yaml:"poll_interval" json:"poll_interval"`           // seconds
+	TaskPollInterval          int    `yaml:"task_poll_interval" json:"task_poll_interval"` // seconds
+	MaxParallel               int    `yaml:"max_parallel" json:"max_parallel"`
+	StateDir                  string `yaml:"state_dir" json:"state_dir"`
+	LogDir                    string `yaml:"log_dir" json:"log_dir"`
+	WorkDir                   string `yaml:"work_dir" json:"work_dir"`
+	RepoCacheDir              string `yaml:"repo_cache_dir" json:"repo_cache_dir"`
+	GitToken                  string `yaml:"git_token" json:"git_token"`
+	GitTokenEnv               string `yaml:"git_token_env" json:"git_token_env"`
+	RequireHTTPS              bool   `yaml:"require_https" json:"require_https"`
+	AllowUnauthenticatedHTTPS bool   `yaml:"allow_unauthenticated_https" json:"allow_unauthenticated_https"`
+	APITimeout                int    `yaml:"api_timeout" json:"api_timeout"`                           // ms
+	TaskTimeout               int    `yaml:"task_timeout" json:"task_timeout"`                         // ms
+	IdleDetectionThreshold    int    `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
+	MaxTotalProcesses         int    `yaml:"max_total_processes" json:"max_total_processes"`
+	// MemoryThresholdPercent refuses to spawn a task while the host has less
+	// than this percentage of memory available. 0 disables. Enforced by
+	// TaskRunner.spawnAdmission (memory_guard.go).
+	MemoryThresholdPercent int `yaml:"memory_threshold_percent" json:"memory_threshold_percent"`
+	// TaskMemoryLimitMB is the ceiling on a running task's whole process tree
+	// (driver + executor server + descendants). Past it the task is killed and
+	// parked in blocked. 0 disables. Enforced by TaskRunner.checkMemoryLimits.
+	TaskMemoryLimitMB int `yaml:"task_memory_limit_mb" json:"task_memory_limit_mb"`
+	// OpencodeDBMaxGB refuses to spawn OpenCode tasks while OpenCode's SQLite
+	// store (opencode.db + WAL) is larger than this. 0 disables.
+	OpencodeDBMaxGB int                `yaml:"opencode_db_max_gb" json:"opencode_db_max_gb"`
+	Opencode        OpencodeConfig     `yaml:"opencode" json:"opencode"`
+	Script          ScriptConfig       `yaml:"script" json:"script"`
+	Pi              PiConfig           `yaml:"pi" json:"pi"`
+	Executors       []string           `yaml:"executors" json:"executors"`
+	DefaultExecutor string             `yaml:"default_executor" json:"default_executor"`
+	TaskDefaults    TaskDefaultsConfig `yaml:"task_defaults" json:"task_defaults"`
+	ExcludeProjects []string           `yaml:"exclude_projects" json:"exclude_projects"`
+	IncludeProjects []string           `yaml:"include_projects" json:"include_projects"`
+	AutoMonitors    bool               `yaml:"auto_monitors" json:"auto_monitors"`
 
 	// MaxTaskAttempts caps how many times a task may run before a failure
 	// parks it in "blocked" instead of resetting it to "pending". A per-task

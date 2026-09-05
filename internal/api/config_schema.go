@@ -140,7 +140,6 @@ func ConfigSchema() []ConfigField {
 		{Path: "runner.api_timeout", Kind: "int", Section: "runner", Label: "API timeout (ms)"},
 		{Path: "runner.task_timeout", Kind: "int", Section: "runner", Label: "Task timeout (ms)", Help: "Kill running tasks that exceed this. 0 = no limit."},
 		{Path: "runner.idle_detection_threshold", Kind: "int", Section: "runner", Label: "Idle detection threshold (ms)"},
-		{Path: "runner.max_total_processes", Kind: "int", Section: "runner", Label: "Max total processes"},
 		{Path: "runner.memory_threshold_percent", Kind: "int", Section: "runner", Label: "Memory threshold %", Help: "Refuse to start tasks while the host has less than this % of memory available. 0 = off."},
 		{Path: "runner.task_memory_limit_mb", Kind: "int", Section: "runner", Label: "Task memory limit (MB)", Help: "Kill a task whose whole process tree (agent + OpenCode server + children) exceeds this, and park it in blocked. 0 = off."},
 		{Path: "runner.opencode_db_max_gb", Kind: "int", Section: "runner", Label: "OpenCode DB max (GB)", Help: "Refuse OpenCode tasks while ~/.local/share/opencode/opencode.db is larger than this. 0 = off."},

@@ -763,9 +763,6 @@ auto_monitors: false
 	if cfg.Runner.IdleDetectionThreshold != 30000 {
 		t.Errorf("Runner.IdleDetectionThreshold = %d, want 30000", cfg.Runner.IdleDetectionThreshold)
 	}
-	if cfg.Runner.MaxTotalProcesses != 8 {
-		t.Errorf("Runner.MaxTotalProcesses = %d, want 8", cfg.Runner.MaxTotalProcesses)
-	}
 	if cfg.Runner.MemoryThresholdPercent != 15 {
 		t.Errorf("Runner.MemoryThresholdPercent = %d, want 15", cfg.Runner.MemoryThresholdPercent)
 	}
@@ -1118,9 +1115,6 @@ exclude_projects:
 		if cfg.Runner.IdleDetectionThreshold != 30000 {
 			t.Errorf("Migrated Runner.IdleDetectionThreshold = %d, want 30000", cfg.Runner.IdleDetectionThreshold)
 		}
-		if cfg.Runner.MaxTotalProcesses != 8 {
-			t.Errorf("Migrated Runner.MaxTotalProcesses = %d, want 8", cfg.Runner.MaxTotalProcesses)
-		}
 		if cfg.Runner.MemoryThresholdPercent != 15 {
 			t.Errorf("Migrated Runner.MemoryThresholdPercent = %d, want 15", cfg.Runner.MemoryThresholdPercent)
 		}
@@ -1366,9 +1360,6 @@ plugins:
 		}
 		if cfg.Runner.IdleDetectionThreshold != 45000 {
 			t.Errorf("Modified Runner.IdleDetectionThreshold = %d, want 45000", cfg.Runner.IdleDetectionThreshold)
-		}
-		if cfg.Runner.MaxTotalProcesses != 15 {
-			t.Errorf("Modified Runner.MaxTotalProcesses = %d, want 15", cfg.Runner.MaxTotalProcesses)
 		}
 		if cfg.Runner.MemoryThresholdPercent != 20 {
 			t.Errorf("Modified Runner.MemoryThresholdPercent = %d, want 20", cfg.Runner.MemoryThresholdPercent)

@@ -44,7 +44,6 @@
 //   - api_timeout → Runner.APITimeout
 //   - task_timeout → Runner.TaskTimeout
 //   - idle_detection_threshold → Runner.IdleDetectionThreshold
-//   - max_total_processes → Runner.MaxTotalProcesses
 //   - memory_threshold_percent → Runner.MemoryThresholdPercent
 //   - task_memory_limit_mb → Runner.TaskMemoryLimitMB
 //   - opencode_db_max_gb → Runner.OpencodeDBMaxGB
@@ -191,7 +190,6 @@ type RunnerConfig struct {
 	APITimeout             int              `yaml:"api_timeout"`
 	TaskTimeout            int              `yaml:"task_timeout"`
 	IdleDetectionThreshold int              `yaml:"idle_detection_threshold"`
-	MaxTotalProcesses      int              `yaml:"max_total_processes"`
 	MemoryThresholdPercent int              `yaml:"memory_threshold_percent"`
 	TaskMemoryLimitMB      int              `yaml:"task_memory_limit_mb"`
 	OpencodeDBMaxGB        int              `yaml:"opencode_db_max_gb"`
@@ -353,9 +351,6 @@ func (c *UnifiedConfig) Validate() error {
 	if c.Runner.APITimeout < 100 {
 		errs = append(errs, "runner.api_timeout must be >= 100 (milliseconds)")
 	}
-	if c.Runner.MaxTotalProcesses < 1 {
-		errs = append(errs, "runner.max_total_processes must be >= 1")
-	}
 	if c.Runner.MemoryThresholdPercent < 0 || c.Runner.MemoryThresholdPercent > 100 {
 		errs = append(errs, "runner.memory_threshold_percent must be 0..100")
 	}
@@ -455,7 +450,6 @@ func defaultConfig() UnifiedConfig {
 			APITimeout:             5000,  // Milliseconds
 			TaskTimeout:            0,     // 0 = no timeout
 			IdleDetectionThreshold: 60000, // Milliseconds
-			MaxTotalProcesses:      10,
 			MemoryThresholdPercent: 10,
 			TaskMemoryLimitMB:      8192, // Kill a task whose process tree passes this
 			OpencodeDBMaxGB:        32,   // Refuse OpenCode tasks while opencode.db is larger
@@ -677,9 +671,6 @@ func migrateConfig(legacyPath, unifiedPath string, cfg *UnifiedConfig) error {
 	}
 	if v, ok := legacyData["idle_detection_threshold"].(int); ok {
 		cfg.Runner.IdleDetectionThreshold = v
-	}
-	if v, ok := legacyData["max_total_processes"].(int); ok {
-		cfg.Runner.MaxTotalProcesses = v
 	}
 	if v, ok := legacyData["memory_threshold_percent"].(int); ok {
 		cfg.Runner.MemoryThresholdPercent = v

@@ -71,7 +71,6 @@ func TestRunnerOptions_FullConfigPassthrough(t *testing.T) {
 		APITimeout:             3000,
 		TaskTimeout:            60000,
 		IdleDetectionThreshold: 5000,
-		MaxTotalProcesses:      10,
 		MemoryThresholdPercent: 80,
 		Opencode: runner.OpencodeConfig{
 			Bin:   "/usr/local/bin/opencode",
@@ -106,9 +105,6 @@ func TestRunnerOptions_FullConfigPassthrough(t *testing.T) {
 	}
 	if opts.Config.IdleDetectionThreshold != 5000 {
 		t.Errorf("IdleDetectionThreshold lost: got %d", opts.Config.IdleDetectionThreshold)
-	}
-	if opts.Config.MaxTotalProcesses != 10 {
-		t.Errorf("MaxTotalProcesses lost: got %d", opts.Config.MaxTotalProcesses)
 	}
 	if opts.Config.MemoryThresholdPercent != 80 {
 		t.Errorf("MemoryThresholdPercent lost: got %d", opts.Config.MemoryThresholdPercent)

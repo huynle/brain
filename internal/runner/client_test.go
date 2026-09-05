@@ -37,7 +37,6 @@ func testConfig(serverURL string) RunnerConfig {
 		APITimeout:             5000,
 		TaskTimeout:            0,
 		IdleDetectionThreshold: 60000,
-		MaxTotalProcesses:      10,
 		MemoryThresholdPercent: 10,
 		Opencode: OpencodeConfig{
 			Bin:   "opencode",

@@ -48,9 +48,6 @@ func TestLoadConfig_Defaults(t *testing.T) {
 	if cfg.MaxParallel != 2 {
 		t.Errorf("MaxParallel = %d, want 2", cfg.MaxParallel)
 	}
-	if cfg.MaxTotalProcesses != 10 {
-		t.Errorf("MaxTotalProcesses = %d, want 10", cfg.MaxTotalProcesses)
-	}
 	if cfg.MemoryThresholdPercent != 10 {
 		t.Errorf("MemoryThresholdPercent = %d, want 10", cfg.MemoryThresholdPercent)
 	}
@@ -530,7 +527,6 @@ func TestValidateConfig_Valid(t *testing.T) {
 		PollInterval:           30,
 		TaskPollInterval:       5,
 		MaxParallel:            2,
-		MaxTotalProcesses:      10,
 		MemoryThresholdPercent: 10,
 		APITimeout:             5000,
 		TaskTimeout:            0,
@@ -557,7 +553,6 @@ func TestValidateConfig_InvalidMaxParallel(t *testing.T) {
 				PollInterval:      1,
 				TaskPollInterval:  1,
 				MaxParallel:       tt.maxParallel,
-				MaxTotalProcesses: 10,
 				HeartbeatInterval: 30,
 			}
 			if err := ValidateConfig(cfg); err == nil {
@@ -567,25 +562,11 @@ func TestValidateConfig_InvalidMaxParallel(t *testing.T) {
 	}
 }
 
-func TestValidateConfig_MaxTotalLessThanMaxParallel(t *testing.T) {
-	cfg := RunnerConfig{
-		PollInterval:      1,
-		TaskPollInterval:  1,
-		MaxParallel:       5,
-		MaxTotalProcesses: 3,
-		HeartbeatInterval: 30,
-	}
-	if err := ValidateConfig(cfg); err == nil {
-		t.Error("expected error when maxTotalProcesses < maxParallel")
-	}
-}
-
 func TestValidateConfig_InvalidPollInterval(t *testing.T) {
 	cfg := RunnerConfig{
 		PollInterval:      0,
 		TaskPollInterval:  5,
 		MaxParallel:       2,
-		MaxTotalProcesses: 10,
 		HeartbeatInterval: 30,
 	}
 	if err := ValidateConfig(cfg); err == nil {
@@ -598,7 +579,6 @@ func TestValidateConfig_NegativeTimeout(t *testing.T) {
 		PollInterval:      1,
 		TaskPollInterval:  1,
 		MaxParallel:       2,
-		MaxTotalProcesses: 10,
 		APITimeout:        -1,
 		HeartbeatInterval: 30,
 	}
@@ -979,7 +959,6 @@ func validBaseConfig() RunnerConfig {
 		PollInterval:           30,
 		TaskPollInterval:       5,
 		MaxParallel:            2,
-		MaxTotalProcesses:      10,
 		MemoryThresholdPercent: 10,
 		APITimeout:             5000,
 		IdleDetectionThreshold: 60000,

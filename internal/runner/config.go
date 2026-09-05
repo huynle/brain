@@ -178,7 +178,6 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		APITimeout:                getEnvIntOrDefault("RUNNER_API_TIMEOUT", firstNonZero(fileCfg.APITimeout, 5000)),
 		TaskTimeout:               getEnvIntOrDefault("RUNNER_TASK_TIMEOUT", fileCfg.TaskTimeout), // 0 is valid default
 		IdleDetectionThreshold:    getEnvIntOrDefault("RUNNER_IDLE_THRESHOLD", firstNonZero(fileCfg.IdleDetectionThreshold, 60000)),
-		MaxTotalProcesses:         getEnvIntOrDefault("RUNNER_MAX_TOTAL_PROCESSES", firstNonZero(fileCfg.MaxTotalProcesses, 10)),
 		MemoryThresholdPercent:    getEnvIntOrDefault("RUNNER_MEMORY_THRESHOLD", firstNonZero(fileCfg.MemoryThresholdPercent, 10)),
 		TaskMemoryLimitMB:         getEnvIntOrDefault("RUNNER_TASK_MEMORY_LIMIT_MB", intOrDefault(fileCfg.TaskMemoryLimitMB, fileHasTaskMemoryLimit, DefaultTaskMemoryLimitMB)),
 		OpencodeDBMaxGB:           getEnvIntOrDefault("RUNNER_OPENCODE_DB_MAX_GB", intOrDefault(fileCfg.OpencodeDBMaxGB, fileHasOpencodeDBMax, DefaultOpencodeDBMaxGB)),
@@ -262,9 +261,6 @@ func ValidateConfig(cfg RunnerConfig) error {
 	if cfg.MaxParallel < 1 || cfg.MaxParallel > 100 {
 		errs = append(errs, fmt.Sprintf("maxParallel must be between 1 and 100, got %d", cfg.MaxParallel))
 	}
-	if cfg.MaxTotalProcesses < 1 || cfg.MaxTotalProcesses > 100 {
-		errs = append(errs, fmt.Sprintf("maxTotalProcesses must be between 1 and 100, got %d", cfg.MaxTotalProcesses))
-	}
 	if cfg.MemoryThresholdPercent < 0 || cfg.MemoryThresholdPercent > 100 {
 		errs = append(errs, fmt.Sprintf("memoryThresholdPercent must be between 0 and 100, got %d", cfg.MemoryThresholdPercent))
 	}
@@ -273,9 +269,6 @@ func ValidateConfig(cfg RunnerConfig) error {
 	}
 	if cfg.OpencodeDBMaxGB < 0 {
 		errs = append(errs, fmt.Sprintf("opencodeDBMaxGB must be >= 0 (0 disables), got %d", cfg.OpencodeDBMaxGB))
-	}
-	if cfg.MaxTotalProcesses < cfg.MaxParallel {
-		errs = append(errs, fmt.Sprintf("maxTotalProcesses (%d) must be >= maxParallel (%d)", cfg.MaxTotalProcesses, cfg.MaxParallel))
 	}
 	if cfg.PollInterval < 1 {
 		errs = append(errs, fmt.Sprintf("pollInterval must be >= 1, got %d", cfg.PollInterval))

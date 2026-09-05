@@ -75,3 +75,23 @@ func TestValidateConfig_MemoryGuardNegativeRejected(t *testing.T) {
 		t.Error("negative opencode_db_max_gb should be rejected")
 	}
 }
+
+// max_total_processes was removed on 2026-09-05 (it was declared, defaulted,
+// validated and shown in the config UI, and read by nothing). Config files
+// written before that still carry the key; they must keep loading.
+func TestLoadConfig_RemovedMaxTotalProcessesKeyTolerated(t *testing.T) {
+	cfg, err := LoadConfigFrom(writeRunnerYAML(t, "runner:\n  max_parallel: 3\n  max_total_processes: 10\n"))
+	if err != nil {
+		t.Fatalf("a stale max_total_processes key must not break loading: %v", err)
+	}
+	if cfg.MaxParallel != 3 {
+		t.Errorf("MaxParallel = %d, want 3", cfg.MaxParallel)
+	}
+	if err := ValidateConfig(cfg); err != nil {
+		t.Errorf("validate: %v", err)
+	}
+	// Legacy flat layout too.
+	if _, err := LoadConfigFrom(writeRunnerYAML(t, "max_parallel: 3\nmax_total_processes: 10\n")); err != nil {
+		t.Fatalf("flat legacy layout with the stale key: %v", err)
+	}
+}

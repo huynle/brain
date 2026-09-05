@@ -35,7 +35,6 @@ func minimalValidConfig() config.UnifiedConfig {
 			PollInterval:           5,
 			TaskPollInterval:       5,
 			APITimeout:             5000,
-			MaxTotalProcesses:      10,
 			MemoryThresholdPercent: 10,
 		},
 	}

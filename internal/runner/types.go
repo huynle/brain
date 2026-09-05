@@ -33,7 +33,6 @@ type RunnerConfig struct {
 	APITimeout                int    `yaml:"api_timeout" json:"api_timeout"`                           // ms
 	TaskTimeout               int    `yaml:"task_timeout" json:"task_timeout"`                         // ms
 	IdleDetectionThreshold    int    `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
-	MaxTotalProcesses         int    `yaml:"max_total_processes" json:"max_total_processes"`
 	// MemoryThresholdPercent refuses to spawn a task while the host has less
 	// than this percentage of memory available. 0 disables. Enforced by
 	// TaskRunner.spawnAdmission (memory_guard.go).

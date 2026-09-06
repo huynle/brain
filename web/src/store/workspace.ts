@@ -45,11 +45,12 @@ import type { SessionRef } from "../lib/types";
 import {
   addNodeAtEdge,
   addSubtreeAtEdge,
-  enclosingTabsId,
   evenSplitTree,
+  findLeafByContent,
   findLeafOfKind,
   findNodeInfo,
   retargetLeaf,
+  revealLeaf,
   newLeafNode,
   removeNode as removeDockNode,
   moveLeaf as moveDockLeaf,
@@ -218,6 +219,19 @@ export interface WorkspaceState {
    *  list and the workspace grid to projects with at least one task of
    *  the selected status. `all` disables the filter. */
   statusFilter: StatusFilter;
+  /**
+   * "Opening something already open jumps to it instead of stacking
+   * another tab." On by default; the Settings modal exposes it because
+   * the opposite is a legitimate workflow — two panes on the same task,
+   * one scrolled to the diff and one to the logs.
+   *
+   * Applies to both docks and to every click-driven open (`openInFocus`,
+   * `openInSidebar` and the palette/menu/row surfaces built on them).
+   * NOT to a drag-and-drop, which names its own pane and edge: there the
+   * user has already said where the pane goes, and second-guessing that
+   * would make the drop look broken.
+   */
+  dedupeTabs: boolean;
 
   // ─── actions: view ────────────────────────────────────────────
   setView(v: WorkspaceView): void;
@@ -261,6 +275,7 @@ export interface WorkspaceState {
   toggleProjectVisibility(projectId: string): void;
   hideAllEmpty(projectIds: string[], nonEmpty: string[]): void;
   setStatusFilter(f: StatusFilter): void;
+  setDedupeTabs(v: boolean): void;
 
   // ─── actions: focus dock tree ───────────────────────────────────
   openInFocus(
@@ -426,6 +441,7 @@ export function persistedSlice(s: WorkspaceState) {
         hideCompleted: s.hideCompleted,
         hiddenProjects: s.hiddenProjects,
         statusFilter: s.statusFilter,
+        dedupeTabs: s.dedupeTabs,
         docks: s.docks,
         lastFocusLeafId: s.lastFocusLeafId,
         lastSidebarLeafId: s.lastSidebarLeafId,
@@ -474,6 +490,34 @@ export const useWorkspace = create<WorkspaceState>()(
           const lastField = lastLeafField(dockId);
           const gateOpen: Partial<WorkspaceState> =
             dockId === "focus" ? { view: "focus" } : { sidebarDockOpen: true };
+
+          // Already on screen? Jump to it. Without this every click on
+          // the same entry/task minted another tab, and the twentieth
+          // one showed exactly what the first one did.
+          //
+          // Deliberately BEFORE `newLeafNode`, so no id is burned on a
+          // pane we aren't going to create, and before the tree writes
+          // below, which all assume they are inserting something.
+          if (state.dedupeTabs && tree !== null) {
+            const existing = findLeafByContent(tree, kind, target);
+            if (existing) {
+              // Reveal, then refresh the label only when it actually
+              // differs — a no-op retarget would hand React a new leaf
+              // object and remount the pane, throwing away its scroll
+              // position on every repeat click.
+              let next = revealLeaf(tree, existing.id);
+              if (existing.leaf.title !== leaf.title) {
+                next = retargetLeaf(next, existing.id, leaf);
+              }
+              set({
+                docks: { ...state.docks, [dockId]: next },
+                [lastField]: existing.id,
+                lastActiveDock: dockId,
+                ...gateOpen,
+              } as Partial<WorkspaceState>);
+              return;
+            }
+          }
 
           const node = newLeafNode(leaf);
 
@@ -708,6 +752,7 @@ export const useWorkspace = create<WorkspaceState>()(
         hideCompleted: {},
         hiddenProjects: [],
         statusFilter: "all" as StatusFilter,
+        dedupeTabs: true,
 
         setView: (v) => {
           if (get().view !== v) pushNav({ view: v });
@@ -897,6 +942,8 @@ export const useWorkspace = create<WorkspaceState>()(
 
         setStatusFilter: (f) => set({ statusFilter: f }),
 
+        setDedupeTabs: (v) => set({ dedupeTabs: v }),
+
         // ─── focus dock tree actions ────────────────────────────
         openInFocus: makeOpenIn("focus"),
         openInFocusAt: makeOpenInAt("focus"),
@@ -979,19 +1026,9 @@ export const useWorkspace = create<WorkspaceState>()(
             view: state.view,
             leaf: { dock: "sidebar", kind, target, title: leaf.title },
           });
-          let next = retargetLeaf(tree, existing.id, leaf);
-          // Bring it to the front of its strip: a pane updated behind
-          // another tab looks like the click did nothing.
-          const tabsId = enclosingTabsId(next, existing.id);
-          if (tabsId) {
-            const info = findNodeInfo(next, tabsId);
-            if (info && info.node.type === "tabs") {
-              const idx = info.node.children.findIndex(
-                (c) => c.id === existing.id,
-              );
-              if (idx >= 0) next = setDockActiveTab(next, tabsId, idx);
-            }
-          }
+          // Bring it to the front of its strip too: a pane updated
+          // behind another tab looks like the click did nothing.
+          const next = revealLeaf(retargetLeaf(tree, existing.id, leaf), existing.id);
           set({
             docks: { ...state.docks, sidebar: next },
             lastSidebarLeafId: existing.id,

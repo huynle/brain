@@ -66,6 +66,7 @@ function resetStore() {
     featureCollapsed: {},
     hiddenProjects: [],
     statusFilter: "all",
+    dedupeTabs: INITIAL.dedupeTabs,
     sidebarDockOpen: false,
     drawerWidth: 430,
     sidebarWidth: 250,
@@ -1212,8 +1213,12 @@ test("sendLeafToOtherDock: sidebar → focus takes the user to Focus", () => {
 test("sendLeafToOtherDock: never duplicates or loses a pane", () => {
   resetStore();
   const ws = useWorkspace.getState();
-  ws.openInFocus("logs", {}, "A");
-  ws.openInFocus("logs", {}, "B");
+  // Distinct TARGETS, not just distinct titles: duplicate-tab
+  // prevention matches on kind + target, and every real `logs` call
+  // site carries {projectId, taskId}. Two panes named A and B over the
+  // same (empty) target were only ever a fixture shortcut.
+  ws.openInFocus("logs", { projectId: "p", taskId: "a" }, "A");
+  ws.openInFocus("logs", { projectId: "p", taskId: "b" }, "B");
   assert.equal(countLeaves(useWorkspace.getState().docks.focus), 2);
 
   const id = firstLeafId(useWorkspace.getState().docks.focus);
@@ -1536,4 +1541,126 @@ test("workspace: forgetProject drops the hide-completed preference", () => {
   // same name coming back pre-filtered reads as the delete half-failing.
   assert.equal("p1" in w().hideCompleted, false);
   assert.equal(w().hideCompleted["p2"], true);
+});
+
+
+// ─── duplicate-tab prevention ─────────────────────────────────────────
+
+/** Every leaf in a tree, as `${kind}:${JSON target}` — enough to spot a
+ *  duplicate without depending on generated ids. */
+function leafKeys(tree: DockNode | null): string[] {
+  const out: string[] = [];
+  if (tree) {
+    walkLeaves(tree, (leaf) => {
+      out.push(`${leaf.kind}:${JSON.stringify(leaf.target)}`);
+    });
+  }
+  return out;
+}
+
+test("workspace: dedupeTabs defaults on and is persisted", () => {
+  resetStore();
+  assert.equal(useWorkspace.getState().dedupeTabs, true);
+  assert.equal(persistedSlice(useWorkspace.getState()).dedupeTabs, true);
+});
+
+test("workspace: reopening the same entry reuses its Focus pane", () => {
+  resetStore();
+  const s = () => useWorkspace.getState();
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+  const firstId = s().lastFocusLeafId;
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+
+  assert.equal(countLeaves(s().docks.focus), 1);
+  // The hint points at the pane we jumped to, not a pane that was
+  // never created.
+  assert.equal(s().lastFocusLeafId, firstId);
+});
+
+test("workspace: a DIFFERENT target still opens its own pane", () => {
+  resetStore();
+  const s = () => useWorkspace.getState();
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+  s().openInFocus("entry", { path: "notes/b.md" }, "B");
+  assert.equal(countLeaves(s().docks.focus), 2);
+  assert.deepEqual(leafKeys(s().docks.focus), [
+    'entry:{"path":"notes/a.md"}',
+    'entry:{"path":"notes/b.md"}',
+  ]);
+});
+
+test("workspace: reuse brings the pane to the front of its tab strip", () => {
+  resetStore();
+  const s = () => useWorkspace.getState();
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+  const aId = s().lastFocusLeafId;
+  s().openInFocus("entry", { path: "notes/b.md" }, "B");
+
+  const strip = s().docks.focus;
+  assert.equal(strip?.type, "tabs");
+  if (strip?.type !== "tabs") return;
+  assert.equal(strip.activeIdx, 1); // B is showing
+
+  // Re-open A: it must become visible, not update behind B.
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+  const after = s().docks.focus;
+  assert.equal(after?.type, "tabs");
+  if (after?.type !== "tabs") return;
+  assert.equal(after.activeIdx, 0);
+  assert.equal(after.children[0].id, aId);
+  assert.equal(countLeaves(after), 2);
+});
+
+test("workspace: reuse refreshes a changed title, keeping the pane id", () => {
+  resetStore();
+  const s = () => useWorkspace.getState();
+  s().openInFocus("task-detail", { projectId: "p", taskId: "t1" }, "Old name");
+  const id = s().lastFocusLeafId;
+  s().openInFocus("task-detail", { projectId: "p", taskId: "t1" }, "New name");
+  assert.equal(s().lastFocusLeafId, id);
+  const tree = s().docks.focus;
+  assert.ok(tree);
+  assertLeafTitle(tree as DockNode, "New name");
+});
+
+test("workspace: dedupeTabs off restores stacking", () => {
+  resetStore();
+  useWorkspace.setState({ dedupeTabs: false });
+  const s = () => useWorkspace.getState();
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+  assert.equal(countLeaves(s().docks.focus), 2);
+});
+
+test("workspace: dedupe applies to the sidebar dock too", () => {
+  resetStore();
+  const s = () => useWorkspace.getState();
+  s().openInSidebar("session", { ref: { instanceId: "i", sessionId: "s" } });
+  s().openInSidebar("session", { ref: { instanceId: "i", sessionId: "s" } });
+  assert.equal(countLeaves(s().docks.sidebar), 1);
+  assert.equal(s().sidebarDockOpen, true);
+});
+
+test("workspace: dedupe is per-dock — the other dock is untouched", () => {
+  resetStore();
+  const s = () => useWorkspace.getState();
+  s().openInSidebar("entry", { path: "notes/a.md" }, "A");
+  // Same content, other dock: "open this in Focus" must still open it
+  // in Focus rather than silently doing nothing visible there.
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+  assert.equal(countLeaves(s().docks.sidebar), 1);
+  assert.equal(countLeaves(s().docks.focus), 1);
+});
+
+test("workspace: an explicit drop still places a pane where it is dropped", () => {
+  resetStore();
+  const s = () => useWorkspace.getState();
+  s().openInFocus("entry", { path: "notes/a.md" }, "A");
+  const anchor = s().lastFocusLeafId as string;
+  // The user picked the pane AND the edge; honour it even though the
+  // content is already docked.
+  s().openInFocusAt("entry", { path: "notes/a.md" }, "A", anchor, "right");
+  assert.equal(countLeaves(s().docks.focus), 2);
+  assert.equal(s().docks.focus?.type, "split");
 });

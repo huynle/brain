@@ -7,6 +7,8 @@ import (
 )
 
 func TestLoadDefaults_NoConfigFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// Clear env vars that might affect config
 	envVars := []string{"BRAIN_DIR", "PORT", "HOST", "ENABLE_AUTH", "CORS_ORIGIN", "LOG_LEVEL", "OAUTH_PIN", "JWT_SECRET", "BRAIN_JWT_SECRET"}
 	for _, key := range envVars {
@@ -51,8 +53,8 @@ func TestLoadDefaults_NoConfigFile(t *testing.T) {
 	if cfg.EnableAuth != false {
 		t.Errorf("EnableAuth = %v, want false", cfg.EnableAuth)
 	}
-	if cfg.CORSOrigin == "" {
-		t.Error("CORSOrigin should not be empty")
+	if cfg.CORSOrigin != "" {
+		t.Errorf("CORSOrigin = %q, want empty (no cross-origin grants)", cfg.CORSOrigin)
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q, want %q", cfg.LogLevel, "info")

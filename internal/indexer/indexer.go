@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
 	"github.com/huynle/brain-api/pkg/markdown"
 )
@@ -52,7 +50,7 @@ func NewIndexer(brainDir string, store *storage.StorageLayer) *Indexer {
 }
 
 // RebuildAll performs a full rebuild: deletes all existing data and re-indexes
-// every .md file on disk.
+// every discovered .md file under projects/ and global/.
 func (idx *Indexer) RebuildAll() (*IndexResult, error) {
 	start := time.Now()
 	ctx := context.Background()
@@ -205,7 +203,8 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 		}
 	}
 
-	// 4. Delete DB entries with no corresponding file on disk
+	// 4. Delete DB entries absent from scoped discovery, including formerly
+	// indexed out-of-scope files that still exist on disk. Disk files are untouched.
 	for dbPath := range dbMap {
 		if !diskSet[dbPath] {
 			if _, err := idx.storage.DeleteNote(ctx, dbPath); err != nil {
@@ -291,7 +290,7 @@ func (idx *Indexer) GetHealth() (*IndexHealth, error) {
 		return nil, fmt.Errorf("count indexed notes: %w", err)
 	}
 
-	// Count stale entries (in DB but not on disk)
+	// Count stale entries (in DB but absent from scoped discovery).
 	rows, err := idx.storage.DB().Query("SELECT path FROM notes")
 	if err != nil {
 		return nil, fmt.Errorf("query note paths: %w", err)
@@ -711,8 +710,17 @@ func toLinkInputs(links []markdown.ExtractedLink) []storage.LinkInput {
 	return inputs
 }
 
-// globMarkdownFiles walks brainDir and returns relative paths of all .md files,
-// excluding the data directory.
+// inContentScope checks the exact first component of a slash-separated relative
+// path. Callers handle the traversal root separately. This is a discovery policy,
+// not a replacement for the parser's path containment checks.
+func inContentScope(relativePath string) bool {
+	first, _, _ := strings.Cut(relativePath, "/")
+	return first == "projects" || first == "global"
+}
+
+// globMarkdownFiles returns relative .md paths under projects/ and global/ only.
+// WalkDir prunes other top-level directories before reading their contents and
+// does not recurse through directory symlinks.
 func globMarkdownFiles(brainDir string) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(brainDir, func(path string, d fs.DirEntry, err error) error {
@@ -726,10 +734,15 @@ func globMarkdownFiles(brainDir string) ([]string, error) {
 			return err
 		}
 
-		// Skip .brain-data/ and legacy .zk/ directories
-		if d.IsDir() && (relPath == config.DataDir || strings.HasPrefix(relPath, config.DataDir+string(os.PathSeparator)) ||
-			relPath == config.LegacyDataDir || strings.HasPrefix(relPath, config.LegacyDataDir+string(os.PathSeparator))) {
-			return filepath.SkipDir
+		if relPath == "." {
+			return nil
+		}
+		relPath = filepath.ToSlash(relPath)
+		if !inContentScope(relPath) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 
 		// Only .md files

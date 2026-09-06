@@ -2,12 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/pkg/frontmatter"
 )
@@ -75,15 +77,21 @@ func featureScheduleGeneratedKey(featureID string) string {
 // ensureFeatureScheduleGate creates or updates a feature_schedule gate task for the given feature.
 // The gate task blocks all non-generated tasks in the feature via depends_on injection.
 func (s *BrainServiceImpl) ensureFeatureScheduleGate(ctx context.Context, project, featureID string, fields FeatureScheduleFields) error {
+	if err := validateProjectID(project); err != nil {
+		return err
+	}
 	if featureID == "" || !fields.HasAny() {
 		return nil
 	}
 
 	generatedKey := featureScheduleGeneratedKey(featureID)
-	taskDir := filepath.Join(s.config.BrainDir, "projects", project, "task")
+	taskRelDir := filepath.Join("projects", project, "task")
 
 	// Look for existing gate task
-	existingGate, err := findGeneratedTaskByKey(taskDir, generatedKey)
+	existingGate, err := findGeneratedTaskByKey(s.config.BrainDir, taskRelDir, generatedKey)
+	if errors.Is(err, brainpath.ErrContainment) {
+		return err
+	}
 	if err == nil && existingGate != nil {
 		// Gate exists — update its schedule fields
 		return s.updateFeatureScheduleGate(ctx, existingGate.ID, fields)
@@ -172,8 +180,10 @@ func (s *BrainServiceImpl) updateFeatureScheduleGate(ctx context.Context, gateID
 
 // injectGateDependency adds the gate task ID to depends_on of all non-generated tasks in the feature.
 func (s *BrainServiceImpl) injectGateDependency(ctx context.Context, project, featureID, gateID string) error {
-	taskDir := filepath.Join(s.config.BrainDir, "projects", project, "task")
-	entries, err := os.ReadDir(taskDir)
+	if err := validateProjectID(project); err != nil {
+		return err
+	}
+	taskDir, entries, err := readBrainDirectory(s.config.BrainDir, filepath.Join("projects", project, "task"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -229,6 +239,9 @@ func (s *BrainServiceImpl) injectGateDependency(ctx context.Context, project, fe
 		}
 
 		if _, err := s.Update(ctx, shortID, updateReq); err != nil {
+			if errors.Is(err, brainpath.ErrContainment) {
+				return err
+			}
 			slog.Warn("failed to inject gate dependency",
 				"task_id", shortID,
 				"gate_id", gateID,
@@ -248,8 +261,8 @@ func (s *BrainServiceImpl) injectGateDependency(ctx context.Context, project, fe
 
 // findGeneratedTaskByKey finds a generated task by its generated_key.
 // Returns the task info if found, or nil if not found.
-func findGeneratedTaskByKey(taskDir, generatedKey string) (*types.CreateEntryResponse, error) {
-	entries, err := os.ReadDir(taskDir)
+func findGeneratedTaskByKey(root, taskRelDir, generatedKey string) (*types.CreateEntryResponse, error) {
+	taskDir, entries, err := readBrainDirectory(root, taskRelDir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, fmt.Errorf("not found")

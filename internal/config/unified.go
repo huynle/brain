@@ -383,7 +383,7 @@ func defaultConfig() UnifiedConfig {
 			PIDFile:         filepath.Join(stateHome, "brain-api", "brain-api.pid"),
 			LogFile:         filepath.Join(stateHome, "brain-api", "brain-api.log"),
 			EnableAuth:      false,
-			CORSOrigin:      "*",
+			CORSOrigin:      "", // Same-origin only; cross-origin access is opt-in.
 			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
 			TaskDefaults: TaskDefaultsConfig{
 				ExecutionMode:      "worktree",

@@ -213,14 +213,18 @@ func CORS(cfg config.Config) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := cfg.CORSOrigin
 
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Mcp-Session-Id")
-			w.Header().Set("Access-Control-Max-Age", "86400")
+			// Empty policy grants no cross-origin access. Same-origin clients
+			// need no CORS headers, including credential permission.
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id")
+				w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Mcp-Session-Id")
+				w.Header().Set("Access-Control-Max-Age", "86400")
 
-			if origin != "*" {
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				if origin != "*" {
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
 			}
 
 			// Handle preflight

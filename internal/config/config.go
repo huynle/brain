@@ -76,7 +76,7 @@ func Load() Config {
 		Port:       3333,
 		Host:       "localhost",
 		EnableAuth: false,
-		CORSOrigin: "*",
+		CORSOrigin: "", // Same-origin only; cross-origin access is opt-in.
 		LogLevel:   "info",
 		OAuthPIN:   "",
 		JWTSecret:  "",

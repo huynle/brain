@@ -97,9 +97,9 @@ func (c *recordingEmbeddingClient) Embed(_ context.Context, inputs []string) ([]
 func TestRebuildAll_IndexesAllFiles(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md":         noteContent("Note One"),
-		"note2.md":         noteContent("Note Two"),
-		"sub/dir/note3.md": noteContent("Note Three"),
+		"global/note1.md":            noteContent("Note One"),
+		"global/note2.md":            noteContent("Note Two"),
+		"projects/demo/dir/note3.md": noteContent("Note Three"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -125,7 +125,7 @@ func TestRebuildAll_IndexesAllFiles(t *testing.T) {
 func TestRebuildAll_ExcludesZkDirectory(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md":              noteContent("Note One"),
+		"global/note1.md":       noteContent("Note One"),
 		".brain-data/config.md": noteContent("ZK Config"),
 	})
 
@@ -143,7 +143,7 @@ func TestRebuildAll_ExcludesZkDirectory(t *testing.T) {
 func TestRebuildAll_ClearsExistingData(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -158,8 +158,8 @@ func TestRebuildAll_ClearsExistingData(t *testing.T) {
 	}
 
 	// Remove the file, add a different one
-	os.Remove(filepath.Join(brainDir, "note1.md"))
-	os.WriteFile(filepath.Join(brainDir, "note2.md"), []byte(noteContent("Note Two")), 0o644)
+	os.Remove(filepath.Join(brainDir, "global/note1.md"))
+	os.WriteFile(filepath.Join(brainDir, "global/note2.md"), []byte(noteContent("Note Two")), 0o644)
 
 	// Second rebuild should clear old data
 	result, err := idx.RebuildAll()
@@ -178,7 +178,7 @@ func TestRebuildAll_ClearsExistingData(t *testing.T) {
 	}
 
 	// Verify the correct note is in DB
-	note, err := store.GetNoteByPath(context.Background(), "note2.md")
+	note, err := store.GetNoteByPath(context.Background(), "global/note2.md")
 	if err != nil {
 		t.Fatalf("GetNoteByPath failed: %v", err)
 	}
@@ -193,7 +193,7 @@ func TestRebuildAll_ClearsExistingData(t *testing.T) {
 func TestRebuildAll_IndexesTags(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Tagged Note", "go", "testing"),
+		"global/note1.md": noteContent("Tagged Note", "go", "testing"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -202,7 +202,7 @@ func TestRebuildAll_IndexesTags(t *testing.T) {
 		t.Fatalf("RebuildAll failed: %v", err)
 	}
 
-	tags, err := store.GetTags(context.Background(), "note1.md")
+	tags, err := store.GetTags(context.Background(), "global/note1.md")
 	if err != nil {
 		t.Fatalf("GetTags failed: %v", err)
 	}
@@ -214,8 +214,8 @@ func TestRebuildAll_IndexesTags(t *testing.T) {
 func TestRebuildAll_IndexesLinks(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteWithLink("Linker", "note2.md", "Note Two"),
-		"note2.md": noteContent("Note Two"),
+		"global/note1.md": noteWithLink("Linker", "note2.md", "Note Two"),
+		"global/note2.md": noteContent("Note Two"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -224,7 +224,7 @@ func TestRebuildAll_IndexesLinks(t *testing.T) {
 		t.Fatalf("RebuildAll failed: %v", err)
 	}
 
-	links, err := store.GetLinks(context.Background(), "note1.md")
+	links, err := store.GetLinks(context.Background(), "global/note1.md")
 	if err != nil {
 		t.Fatalf("GetLinks failed: %v", err)
 	}
@@ -236,8 +236,8 @@ func TestRebuildAll_IndexesLinks(t *testing.T) {
 func TestRebuildAll_HandlesParseErrors(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"good.md": noteContent("Good Note"),
-		"bad.md":  "---\ntitle: [invalid yaml\n---\nBody\n",
+		"global/good.md": noteContent("Good Note"),
+		"global/bad.md":  "---\ntitle: [invalid yaml\n---\nBody\n",
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -254,8 +254,8 @@ func TestRebuildAll_HandlesParseErrors(t *testing.T) {
 	if len(result.Errors) != 1 {
 		t.Errorf("Errors count = %d, want 1", len(result.Errors))
 	}
-	if len(result.Errors) > 0 && result.Errors[0].Path != "bad.md" {
-		t.Errorf("Error path = %q, want %q", result.Errors[0].Path, "bad.md")
+	if len(result.Errors) > 0 && result.Errors[0].Path != "global/bad.md" {
+		t.Errorf("Error path = %q, want %q", result.Errors[0].Path, "global/bad.md")
 	}
 }
 
@@ -266,7 +266,7 @@ func TestRebuildAll_HandlesParseErrors(t *testing.T) {
 func TestIndexChanged_DetectsNewFiles(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -278,7 +278,7 @@ func TestIndexChanged_DetectsNewFiles(t *testing.T) {
 	}
 
 	// Add a new file
-	os.WriteFile(filepath.Join(brainDir, "note2.md"), []byte(noteContent("Note Two")), 0o644)
+	os.WriteFile(filepath.Join(brainDir, "global/note2.md"), []byte(noteContent("Note Two")), 0o644)
 
 	result, err := idx.IndexChanged()
 	if err != nil {
@@ -299,7 +299,7 @@ func TestIndexChanged_DetectsNewFiles(t *testing.T) {
 func TestIndexChanged_DetectsModifiedFiles(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -311,7 +311,7 @@ func TestIndexChanged_DetectsModifiedFiles(t *testing.T) {
 	}
 
 	// Modify the file (different content = different checksum)
-	os.WriteFile(filepath.Join(brainDir, "note1.md"), []byte(noteContent("Note One Updated")), 0o644)
+	os.WriteFile(filepath.Join(brainDir, "global/note1.md"), []byte(noteContent("Note One Updated")), 0o644)
 
 	result, err := idx.IndexChanged()
 	if err != nil {
@@ -323,7 +323,7 @@ func TestIndexChanged_DetectsModifiedFiles(t *testing.T) {
 	}
 
 	// Verify the title was updated
-	note, err := store.GetNoteByPath(context.Background(), "note1.md")
+	note, err := store.GetNoteByPath(context.Background(), "global/note1.md")
 	if err != nil {
 		t.Fatalf("GetNoteByPath failed: %v", err)
 	}
@@ -338,8 +338,8 @@ func TestIndexChanged_DetectsModifiedFiles(t *testing.T) {
 func TestIndexChanged_DetectsDeletedFiles(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
-		"note2.md": noteContent("Note Two"),
+		"global/note1.md": noteContent("Note One"),
+		"global/note2.md": noteContent("Note Two"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -351,7 +351,7 @@ func TestIndexChanged_DetectsDeletedFiles(t *testing.T) {
 	}
 
 	// Delete a file
-	os.Remove(filepath.Join(brainDir, "note2.md"))
+	os.Remove(filepath.Join(brainDir, "global/note2.md"))
 
 	result, err := idx.IndexChanged()
 	if err != nil {
@@ -372,7 +372,7 @@ func TestIndexChanged_DetectsDeletedFiles(t *testing.T) {
 func TestIndexChanged_SkipsUnchangedFiles(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -511,8 +511,8 @@ func TestRemoveFile_DeletesFromDB(t *testing.T) {
 func TestGetHealth_ReportsCorrectCounts(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
-		"note2.md": noteContent("Note Two"),
+		"global/note1.md": noteContent("Note One"),
+		"global/note2.md": noteContent("Note Two"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -542,8 +542,8 @@ func TestGetHealth_ReportsCorrectCounts(t *testing.T) {
 func TestGetHealth_DetectsStaleEntries(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
-		"note2.md": noteContent("Note Two"),
+		"global/note1.md": noteContent("Note One"),
+		"global/note2.md": noteContent("Note Two"),
 	})
 
 	idx := NewIndexer(brainDir, store)
@@ -555,7 +555,7 @@ func TestGetHealth_DetectsStaleEntries(t *testing.T) {
 	}
 
 	// Delete one file from disk (but not from DB)
-	os.Remove(filepath.Join(brainDir, "note2.md"))
+	os.Remove(filepath.Join(brainDir, "global/note2.md"))
 
 	health, err := idx.GetHealth()
 	if err != nil {

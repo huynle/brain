@@ -366,11 +366,26 @@ re-indexes it.
   writes a file, and it silently skipped indexing until 2026-08-26.
 - **Boot indexes once.** `internal/apiserver/server.go` runs `IndexChanged` in
   a background goroutine at startup, then never scans again.
+- **Content-root policy:** discovery (`IndexChanged`, `RebuildAll`, `GetHealth`)
+  and watcher startup/new-directory walks use exact first-component roots
+  `projects/` and `global/` under the supplied `brainDir`. All siblings, including
+  `attachments/`, `.git/`, `.brain-data/`, and root-level Markdown, are excluded;
+  excluded directories are pruned before reading their children. The watcher
+  keeps `brainDir` itself watched as an anchor for initially absent content roots,
+  sweeps populated new content subtrees and watches them for later writes.
+  Custom/default watcher ignores still apply within allowed roots. Directory
+  symlinks are not recursively followed; parser containment remains authoritative
+  for file reads, and direct `IndexFile` is not layout-restricted.
+- **P3 integration:** indexer and watcher constructors are unchanged and must
+  receive the same supplied `brainDir` root. P3 root ownership must preserve
+  `projects/` and `global/` directly beneath that root, not pass either subtree
+  as the root or flatten the layout.
 - **Out-of-band writes need the watcher.** A git pull into the brain dir, a
   manual edit, or another process bypasses both of the above. `indexer.FileWatcher`
   covers that gap, enabled with `server.index_watch.enabled` in config.yaml or
   `BRAIN_INDEX_WATCH=true`. **It is off by default**: the watcher registers one
-  fsnotify watch per directory, and a large brain dir can exhaust the
+  fsnotify watch per allowed, non-ignored content directory (plus the root
+  anchor), and a large content tree can still exhaust the
   platform's watch limit (inotify `max_user_watches`). With it off, out-of-band
   writes appear only after a server restart.
 - The watcher starts after the boot scan finishes so the two never race on the

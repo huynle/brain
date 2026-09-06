@@ -885,17 +885,58 @@ served if the UI hasn't been built).
 
 ## Environment Variables
 
+### Network binding and browser access: intentional security changes
+
+The default local server binds `localhost` and keeps authentication disabled for
+provisioning-free local use. The embedded PWA and API share an origin: an empty
+`CORS_ORIGIN` (the new default, also `server.cors_origin: ""` in config.yaml)
+emits no cross-origin grants or credential permissions. Same-origin navigation,
+assets, and API reads/writes still work without CORS. Set an explicit trusted
+origin only when a browser frontend is served from a different origin. Explicit
+`*` remains supported, without credential permission, but permits any website
+to read accessible responses and should not be used for a private Brain.
+CORS is a browser response-sharing policy, not authentication or a general
+request/CSRF firewall.
+
+**Unauthenticated non-loopback binds now refuse startup**, including `0.0.0.0`,
+`::`, and an empty/wildcard host. This deliberately breaks previously accepted
+unauthenticated network-bound deployments. Set **`ENABLE_AUTH=true`** (or
+`server.enable_auth: true`) and configure valid authentication before exposing
+the service. A configured `BRAIN_AUTH_PASSWORD_HASH` alone is insufficient:
+having a password hash does not enable request authentication.
+
+There is one deliberate insecure-run escape hatch:
+**`BRAIN_INSECURE_ALLOW_UNAUTHENTICATED_BIND=true`**. Only the exact lowercase
+value `true` enables it; startup logs a warning. It leaves the API exposed
+without authentication and does not restore wildcard CORS. Do not use it for
+public exposure. No multi-mode implementation exists in this branch; this
+escape hatch is not a promise of a public multi-mode authentication bypass.
+The approved future multi-mode contract requires authentication and must reject
+auth-disabled multi mode independently.
+
+Containers commonly bind `0.0.0.0` even for a single-user installation. They must
+explicitly configure authentication (or deliberately choose the insecure
+override); bind addresses do not infer single/multi mode or deployment trust.
+Likewise, a loopback bind behind a public tunnel or reverse proxy is not a
+substitute for enabling authentication.
+
+The September 4, 2026 production observation (`ENABLE_AUTH=true`, a configured
+password hash, and an explicit CORS origin) is historical, not deployment
+assurance. Recheck effective configuration before any future deployment and
+obtain separate deployment approval. These changes do not authorize deployment,
+restarts, production configuration edits, or public multi-tenant activation.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BRAIN_PORT` | `3333` | API server port |
-| `BRAIN_HOST` | `0.0.0.0` | API server host |
+| `HOST` | `localhost` | API server bind host; non-loopback requires explicit authentication or the deliberate insecure override above |
 | `BRAIN_DIR` | `~/.brain` | Brain data directory |
 | `BRAIN_API_URL` | `http://localhost:3333` | API URL (for runner) |
 | `server.attachments.storage_root` | `<BRAIN_DIR>/attachments` | Attachment blob storage root in `config.yaml`; include with `brain.db` in backups |
 | `server.attachments.max_upload_size_bytes` | `104857600` | Maximum attachment upload size in bytes |
 | `ENABLE_AUTH` | `false` | Require auth (API token or OAuth) on `/api/v1/*` |
 | `OAUTH_PIN` | — | PIN shown on the OAuth consent page; used by the PWA "Sign in with PIN" flow |
-| `CORS_ORIGIN` | `*` | Allowed CORS origin; the embedded PWA is same-origin and needs no CORS |
+| `CORS_ORIGIN` | empty | No cross-origin grants by default; the embedded PWA is same-origin and needs no CORS |
 | `ENABLE_TLS` | `false` | Enable HTTPS/TLS |
 | `TLS_KEY` | — | Path to TLS private key file (PEM format) |
 | `TLS_CERT` | — | Path to TLS certificate file (PEM format) |

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -43,7 +44,10 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 		return nil, err
 	}
 
-	projectDir := filepath.Join(s.config.BrainDir, "projects", projectID)
+	projectDir, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.Join("projects", projectID))
+	if err != nil {
+		return nil, err
+	}
 
 	// The project exists if EITHER its directory or an index row says so.
 	// A project whose directory was removed out of band still has rows to
@@ -62,7 +66,17 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 	// source alone leaves debris: an unindexed file survives a purge driven
 	// by the index, and an index row whose file is gone survives a purge
 	// driven by the disk walk.
-	paths := unionPaths(indexedPaths, s.markdownFilesUnder(projectDir, projectID))
+	diskPaths, err := s.markdownFilesUnder(projectDir, projectID)
+	if err != nil {
+		return nil, err
+	}
+	paths := unionPaths(indexedPaths, diskPaths)
+	// Reject poisoned index paths before deleting any files or index rows.
+	for _, path := range paths {
+		if _, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(path)); err != nil {
+			return nil, err
+		}
+	}
 
 	resp := &types.DeleteProjectResponse{Project: projectID}
 
@@ -130,49 +144,34 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 	return resp, nil
 }
 
-// validateProjectID rejects ids that would let a delete escape the projects
-// directory. This is the one operation in the service that removes a whole
-// tree, so the check is here rather than only at the HTTP edge — a future
-// caller (MCP, CLI, an automation) gets the same guarantee.
-func validateProjectID(projectID string) error {
-	if projectID == "" {
-		return fmt.Errorf("project id required")
-	}
-	if projectID == "." || projectID == ".." {
-		return fmt.Errorf("invalid project id %q", projectID)
-	}
-	if strings.ContainsAny(projectID, `/\`) || strings.Contains(projectID, "..") {
-		return fmt.Errorf("invalid project id %q: must not contain path separators", projectID)
-	}
-	// filepath.Clean collapsing to something else means the id carried
-	// structure a plain directory name would not.
-	if filepath.Clean(projectID) != projectID {
-		return fmt.Errorf("invalid project id %q", projectID)
-	}
-	return nil
-}
-
 // markdownFilesUnder returns brain-relative paths of every .md file under a
-// project directory. Errors are swallowed: this is the belt to the index's
+// project directory. Containment errors abort before any deletion. Other errors
+// are swallowed: this is the belt to the index's
 // braces, and a partially readable tree should still contribute what it can.
-func (s *BrainServiceImpl) markdownFilesUnder(projectDir, projectID string) []string {
+func (s *BrainServiceImpl) markdownFilesUnder(projectDir, projectID string) ([]string, error) {
 	var out []string
 	prefix := filepath.Join("projects", projectID)
-	_ = filepath.WalkDir(projectDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d == nil || d.IsDir() {
+	if _, err := brainpath.ResolveForWrite(s.config.BrainDir, prefix); err != nil {
+		return nil, err
+	}
+	walkErr := filepath.WalkDir(projectDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d == nil {
 			return nil //nolint:nilerr // unreadable subtree must not abort the walk
-		}
-		if !strings.EqualFold(filepath.Ext(d.Name()), ".md") {
-			return nil
 		}
 		rel, relErr := filepath.Rel(projectDir, path)
 		if relErr != nil {
 			return nil
 		}
+		if _, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.Join(prefix, rel)); errors.Is(err, brainpath.ErrContainment) {
+			return err
+		}
+		if d.IsDir() || !strings.EqualFold(filepath.Ext(d.Name()), ".md") {
+			return nil
+		}
 		out = append(out, filepath.ToSlash(filepath.Join(prefix, rel)))
 		return nil
 	})
-	return out
+	return out, walkErr
 }
 
 // unionPaths merges two path lists, de-duplicated and sorted.

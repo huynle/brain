@@ -23,6 +23,14 @@ type mockTokenService struct {
 	getTokenByNameFunc   func(ctx context.Context, name string) (*storage.Token, error)
 	revokeTokenFunc      func(ctx context.Context, name string) error
 	countActiveTokenFunc func(ctx context.Context) (int, error)
+	bootstrapTokenFunc   func(context.Context, string, string, bool) error
+}
+
+func (m *mockTokenService) BootstrapToken(ctx context.Context, name, token string, configured bool) error {
+	if m.bootstrapTokenFunc != nil {
+		return m.bootstrapTokenFunc(ctx, name, token, configured)
+	}
+	return nil
 }
 
 func (m *mockTokenService) GenerateToken() (string, error) {
@@ -400,7 +408,7 @@ func TestHandleBootstrapToken(t *testing.T) {
 	tests := []struct {
 		name          string
 		body          any
-		mockCount     func(ctx context.Context) (int, error)
+		mockBootstrap func(context.Context, string, string, bool) error
 		mockGenerate  func() (string, error)
 		mockCreate    func(ctx context.Context, name, token, scope string) error
 		mockGetByName func(ctx context.Context, name string) (*storage.Token, error)
@@ -410,8 +418,8 @@ func TestHandleBootstrapToken(t *testing.T) {
 		{
 			name: "success - zero tokens exist",
 			body: map[string]any{"name": "bootstrap-token"},
-			mockCount: func(_ context.Context) (int, error) {
-				return 0, nil
+			mockBootstrap: func(_ context.Context, _, _ string, _ bool) error {
+				return nil
 			},
 			mockGetByName: func(_ context.Context, name string) (*storage.Token, error) {
 				return &storage.Token{
@@ -434,8 +442,8 @@ func TestHandleBootstrapToken(t *testing.T) {
 		{
 			name: "forbidden - tokens already exist",
 			body: map[string]any{"name": "late-bootstrap"},
-			mockCount: func(_ context.Context) (int, error) {
-				return 2, nil
+			mockBootstrap: func(_ context.Context, _, _ string, _ bool) error {
+				return fmt.Errorf("wrapped: %w", &storage.BootstrapClosedError{})
 			},
 			wantStatus: http.StatusForbidden,
 			checkBody: func(t *testing.T, resp *http.Response) {
@@ -444,32 +452,26 @@ func TestHandleBootstrapToken(t *testing.T) {
 				if !ok || msg == "" {
 					t.Error("expected error message")
 				}
-				if !strings.Contains(msg, "already exist") {
-					t.Errorf("expected 'already exist' in message, got: %s", msg)
+				if !strings.Contains(msg, "claimed") {
+					t.Errorf("expected 'claimed' in message, got: %s", msg)
 				}
 			},
 		},
 		{
-			name: "missing name",
-			body: map[string]any{},
-			mockCount: func(_ context.Context) (int, error) {
-				return 0, nil
-			},
+			name:       "missing name",
+			body:       map[string]any{},
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name: "invalid json",
-			body: nil,
-			mockCount: func(_ context.Context) (int, error) {
-				return 0, nil
-			},
+			name:       "invalid json",
+			body:       nil,
 			wantStatus: http.StatusBadRequest,
 		},
 		{
-			name: "count error",
+			name: "atomic bootstrap error",
 			body: map[string]any{"name": "test"},
-			mockCount: func(_ context.Context) (int, error) {
-				return 0, fmt.Errorf("database error")
+			mockBootstrap: func(_ context.Context, _, _ string, _ bool) error {
+				return fmt.Errorf("database error")
 			},
 			wantStatus: http.StatusInternalServerError,
 		},
@@ -478,10 +480,10 @@ func TestHandleBootstrapToken(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mock := &mockTokenService{
-				countActiveTokenFunc: tt.mockCount,
-				generateTokenFunc:    tt.mockGenerate,
-				createTokenFunc:      tt.mockCreate,
-				getTokenByNameFunc:   tt.mockGetByName,
+				bootstrapTokenFunc: tt.mockBootstrap,
+				generateTokenFunc:  tt.mockGenerate,
+				createTokenFunc:    tt.mockCreate,
+				getTokenByNameFunc: tt.mockGetByName,
 			}
 			router := newTokenTestRouter(mock)
 			srv := httptest.NewServer(router)

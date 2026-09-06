@@ -334,14 +334,27 @@ func (s *StorageLayer) CleanupExpiredCodes(ctx context.Context) error {
 
 // CreateAccessToken inserts a new access token.
 func (s *StorageLayer) CreateAccessToken(ctx context.Context, token *OAuthAccessToken) error {
+	now := time.Now()
 	if token.CreatedAt == 0 {
-		token.CreatedAt = time.Now().Unix()
+		token.CreatedAt = now.Unix()
 	}
 	if token.ExpiresAt == 0 {
-		token.ExpiresAt = time.Now().Add(AccessTokenTTL).Unix()
+		token.ExpiresAt = now.Add(AccessTokenTTL).Unix()
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin create access token: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// Match GetAccessToken's inclusive expiry boundary. Sampling before waiting
+	// for the write lock is conservative if the token expires during contention.
+	if token.ExpiresAt >= now.Unix() {
+		if _, err := insertInstallClaim(ctx, tx); err != nil {
+			return err
+		}
+	}
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO oauth_access_tokens
 			(token, client_id, scope, user_id, expires_at, created_at)
 		VALUES (?, ?, ?, ?, ?, ?)`,
@@ -350,6 +363,9 @@ func (s *StorageLayer) CreateAccessToken(ctx context.Context, token *OAuthAccess
 	)
 	if err != nil {
 		return fmt.Errorf("insert access token: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit create access token: %w", err)
 	}
 	return nil
 }

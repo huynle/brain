@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
@@ -146,6 +148,16 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	if req.Title == "" {
 		return nil, fmt.Errorf("title is required")
 	}
+	if err := validatePathSegment(req.Type, "type"); err != nil {
+		return nil, err
+	}
+	// Empty project retains the default; supplied projects are validated even
+	// for global entries, before any filesystem or index side effects.
+	if req.Project != "" {
+		if err := validateProjectID(req.Project); err != nil {
+			return nil, err
+		}
+	}
 
 	// Sanitize inputs
 	title := frontmatter.SanitizeTitle(req.Title)
@@ -273,7 +285,10 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	}
 
 	// Write file to disk
-	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(relPath))
+	absPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(relPath))
+	if err != nil {
+		return nil, err
+	}
 	dir := filepath.Dir(absPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create directory %q: %w", dir, err)
@@ -757,7 +772,10 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 
 	// Read file from disk
-	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(row.Path))
+	absPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(row.Path))
+	if err != nil {
+		return nil, err
+	}
 	fileContent, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("read file %q: %w", absPath, err)
@@ -1718,6 +1736,9 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	// If durable fields are present, write changes to the markdown file
 	if hasDurable {
 		if err := s.syncDurableFieldsToFile(ctx, row, fields); err != nil {
+			if errors.Is(err, brainpath.ErrContainment) {
+				return nil, err
+			}
 			// Log warning but continue with DB update — file write failure
 			// should not block the metadata update
 			fmt.Fprintf(os.Stderr, "WARNING: failed to sync durable fields to file %q: %v\n", row.Path, err)
@@ -1766,7 +1787,10 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 // This follows the same pattern as the Update() method.
 func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *storage.NoteRow, fields map[string]interface{}) error {
 	// Read file from disk
-	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(row.Path))
+	absPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(row.Path))
+	if err != nil {
+		return err
+	}
 	fileContent, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("read file %q: %w", absPath, err)
@@ -2003,7 +2027,10 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 	delProject := extractProjectFromPath(delPath)
 
 	// Delete file from disk
-	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(row.Path))
+	absPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(row.Path))
+	if err != nil {
+		return err
+	}
 	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove file %q: %w", absPath, err)
 	}
@@ -2790,6 +2817,9 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 	if targetProject == "" {
 		return nil, fmt.Errorf("target project is required")
 	}
+	if err := validateProjectID(targetProject); err != nil {
+		return nil, err
+	}
 
 	// Recall the entry
 	entry, err := s.Recall(ctx, pathOrID)
@@ -2803,6 +2833,10 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 	}
 
 	oldPath := entry.Path
+	oldAbsPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(oldPath))
+	if err != nil {
+		return nil, err
+	}
 
 	// Compute new path by replacing the project segment
 	newPath, err := computeMovedPath(oldPath, targetProject)
@@ -2810,7 +2844,10 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		return nil, err
 	}
 
-	oldAbsPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(oldPath))
+	newAbsPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(newPath))
+	if err != nil {
+		return nil, err
+	}
 
 	// SAFETY: Verify source file exists on disk (not just in DB).
 	// This catches stale DB entries where the file was already removed.
@@ -2844,7 +2881,6 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 	}
 
 	// Write to new path
-	newAbsPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(newPath))
 	newDir := filepath.Dir(newAbsPath)
 	if err := os.MkdirAll(newDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create directory %q: %w", newDir, err)
@@ -3110,9 +3146,13 @@ func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool, project st
 		return nil, fmt.Errorf("get project stats: %w", err)
 	}
 
+	dbPath, err := brainpath.ResolveForWrite(s.config.BrainDir, ".brain.db")
+	if err != nil {
+		return nil, err
+	}
 	return &types.StatsResponse{
 		BrainDir:       s.config.BrainDir,
-		DBPath:         filepath.Join(s.config.BrainDir, ".brain.db"),
+		DBPath:         dbPath,
 		TotalEntries:   primaryStats.TotalNotes,
 		GlobalEntries:  globalStats.TotalNotes,
 		ProjectEntries: projectStats.TotalNotes,

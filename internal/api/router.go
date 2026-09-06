@@ -41,8 +41,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 		// Health check — unauthenticated (before auth middleware)
 		r.Get("/health", HealthHandler(cfg, o.embeddingReady))
 
-		// Token bootstrap — unauthenticated (only works when zero tokens exist)
-		// Solves the chicken-and-egg problem: need a token to create a token.
+		// Token bootstrap is unauthenticated, local-only by default, and closes
+		// permanently once the installation has credentials or is claimed.
 		if o.handler != nil && o.handler.tokens != nil {
 			r.Post("/tokens/bootstrap", o.handler.HandleBootstrapToken)
 		}

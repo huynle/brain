@@ -20,7 +20,7 @@ type FileWatcherOptions struct {
 	IgnorePatterns []string
 }
 
-// FileWatcher watches brainDir recursively for markdown file changes
+// FileWatcher watches brainDir's projects/ and global/ trees for markdown changes
 // and triggers incremental indexing via the Indexer.
 type FileWatcher struct {
 	brainDir       string
@@ -60,7 +60,7 @@ func NewFileWatcher(brainDir string, indexer *Indexer, opts *FileWatcherOptions)
 	}, nil
 }
 
-// Start begins watching brainDir recursively for .md file changes.
+// Start watches content directories plus a root anchor for newly created roots.
 // Idempotent — calling Start() when already running is a no-op.
 func (fw *FileWatcher) Start() error {
 	fw.mu.Lock()
@@ -77,7 +77,8 @@ func (fw *FileWatcher) Start() error {
 	fw.watcher = w
 	fw.stopCh = make(chan struct{})
 
-	// Add brainDir and all subdirectories recursively.
+	// Keep brainDir watched even when projects/global do not yet exist. Prune
+	// all other siblings before WalkDir reads their contents.
 	err = filepath.WalkDir(fw.brainDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -89,7 +90,7 @@ func (fw *FileWatcher) Start() error {
 			}
 			relPath = filepath.ToSlash(relPath)
 			// Skip ignored directories
-			if relPath != "." && fw.shouldIgnoreDir(relPath) {
+			if relPath != "." && (!inContentScope(relPath) || fw.shouldIgnoreDir(relPath)) {
 				return filepath.SkipDir
 			}
 			return w.Add(path)
@@ -179,18 +180,20 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 		return
 	}
 	relPath = filepath.ToSlash(relPath)
+	if !inContentScope(relPath) {
+		return
+	}
 
-	// Only .md files
-	if !strings.HasSuffix(relPath, ".md") {
-		// If a new directory was created, watch it and everything already
-		// inside it.
-		if event.Has(fsnotify.Create) {
-			info, err := os.Stat(event.Name)
-			if err == nil && info.IsDir() && !fw.shouldIgnoreDir(relPath) {
+	// Classify created directories before filtering file extensions: a
+	// directory can itself end in .md. Lstat avoids following directory symlinks.
+	if event.Has(fsnotify.Create) {
+		info, err := os.Lstat(event.Name)
+		if err == nil && info.IsDir() {
+			if !fw.shouldIgnoreDir(relPath) {
 				fw.addDirRecursive(event.Name)
 			}
+			return
 		}
-		return
 	}
 
 	if !fw.indexableMarkdown(relPath) {
@@ -237,7 +240,7 @@ func (fw *FileWatcher) addDirRecursive(absDir string) {
 		relPath = filepath.ToSlash(relPath)
 
 		if d.IsDir() {
-			if fw.shouldIgnoreDir(relPath) {
+			if !inContentScope(relPath) || fw.shouldIgnoreDir(relPath) {
 				return filepath.SkipDir
 			}
 			// Stop() nils fw.watcher, and a walk can still be in flight
@@ -260,7 +263,7 @@ func (fw *FileWatcher) addDirRecursive(absDir string) {
 // indexableMarkdown reports whether a relative path is markdown the watcher
 // should track — not under an ignore pattern, not a dotfile or editor backup.
 func (fw *FileWatcher) indexableMarkdown(relativePath string) bool {
-	if !strings.HasSuffix(relativePath, ".md") {
+	if !inContentScope(relativePath) || !strings.HasSuffix(relativePath, ".md") {
 		return false
 	}
 	if fw.shouldIgnore(relativePath) {

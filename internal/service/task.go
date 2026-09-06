@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
@@ -108,9 +110,7 @@ const OrphanReaperMarker = "*Marked blocked by runner orphan reaper"
 
 // ListProjects scans <brainDir>/projects/ for subdirectories containing a task/ subfolder.
 func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
-	projectsDir := filepath.Join(s.config.BrainDir, "projects")
-
-	entries, err := os.ReadDir(projectsDir)
+	_, entries, err := readBrainDirectory(s.config.BrainDir, "projects")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []string{}, nil
@@ -123,7 +123,13 @@ func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		taskDir := filepath.Join(projectsDir, entry.Name(), "task")
+		taskDir, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.Join("projects", entry.Name(), "task"))
+		if err != nil {
+			if errors.Is(err, brainpath.ErrContainment) {
+				return nil, err
+			}
+			continue
+		}
 		info, err := os.Stat(taskDir)
 		if err != nil || !info.IsDir() {
 			continue
@@ -1159,6 +1165,9 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	if sanitizedProjectID == "" {
 		return nil, fmt.Errorf("projectId is required")
 	}
+	if err := validateProjectID(sanitizedProjectID); err != nil {
+		return nil, err
+	}
 	if sanitizedFeatureID == "" {
 		return nil, fmt.Errorf("featureId is required")
 	}
@@ -1170,9 +1179,10 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	generatedKey := fmt.Sprintf("feature-checkout:%s:round-1", sanitizedFeatureID)
 
 	// Check if checkout task already exists (idempotency)
-	taskDir := filepath.Join(s.config.BrainDir, "projects", sanitizedProjectID, "task")
-	if err := os.MkdirAll(taskDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create task directory: %w", err)
+	taskRelDir := filepath.Join("projects", sanitizedProjectID, "task")
+	taskDir, err := brainpath.ResolveForWrite(s.config.BrainDir, taskRelDir)
+	if err != nil {
+		return nil, err
 	}
 
 	// Look for an existing checkout task with this generated_key.
@@ -1188,9 +1198,26 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	// with the mode actually requested loses no work. Anything past pending
 	// is left alone: it is running or has run, and quietly deleting it would
 	// discard real history.
-	existingTask, err := findCheckoutTaskByKey(taskDir, generatedKey)
+	existingTask, err := findCheckoutTaskByKey(s.config.BrainDir, taskRelDir, generatedKey)
+	if errors.Is(err, brainpath.ErrContainment) {
+		return nil, err
+	}
+	// Validate all source children and the destination before superseding a task.
+	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feature tasks: %w", err)
+	}
+	shortID := markdown.GenerateShortID()
+	filename := shortID + ".md"
+	taskPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.Join(taskRelDir, filename))
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create task directory: %w", err)
+	}
 	var supersededID string
-	if err == nil && existingTask != nil {
+	if existingTask != nil {
 		// A checkout task written before this build RECORDED checkout_mode
 		// without acting on it, so a stored "simple" task can carry no
 		// executor and no script — the exact shape that could never run. It
@@ -1229,19 +1256,8 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 		supersededID = existingTask.Resp.ID
 	}
 
-	// Get all feature tasks to build depends_on list
-	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get feature tasks: %w", err)
-	}
-
 	// Extract non-generated task IDs
 	dependsOn := extractUniqueNonGeneratedTaskIds(featureTasks)
-
-	// Generate new task ID
-	shortID := markdown.GenerateShortID()
-	filename := shortID + ".md"
-	taskPath := filepath.Join(taskDir, filename)
 
 	// Resolve the repo the feature's work actually happened in. The manual
 	// endpoint inherits nothing from an automation entry, so without this the
@@ -1515,8 +1531,8 @@ func foldCheckoutModeValue(mode string) string {
 }
 
 // findCheckoutTaskByKey searches for a checkout task with the given generated_key.
-func findCheckoutTaskByKey(taskDir, generatedKey string) (*existingCheckoutTask, error) {
-	entries, err := os.ReadDir(taskDir)
+func findCheckoutTaskByKey(root, taskRelDir, generatedKey string) (*existingCheckoutTask, error) {
+	taskDir, entries, err := readBrainDirectory(root, taskRelDir)
 	if err != nil {
 		return nil, err
 	}
@@ -1568,8 +1584,10 @@ func findCheckoutTaskByKey(taskDir, generatedKey string) (*existingCheckoutTask,
 
 // getFeatureTasksFromFilesystem reads tasks from filesystem for a feature.
 func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID string) ([]types.BrainEntry, error) {
-	taskDir := filepath.Join(s.config.BrainDir, "projects", projectID, "task")
-	entries, err := os.ReadDir(taskDir)
+	if err := validateProjectID(projectID); err != nil {
+		return nil, err
+	}
+	taskDir, entries, err := readBrainDirectory(s.config.BrainDir, filepath.Join("projects", projectID, "task"))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []types.BrainEntry{}, nil

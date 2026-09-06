@@ -120,7 +120,7 @@ func TestFileWatcher_StartIdempotent(t *testing.T) {
 func TestFileWatcher_DetectsNewFile(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 	idx := NewIndexer(brainDir, store)
 
@@ -140,7 +140,7 @@ func TestFileWatcher_DetectsNewFile(t *testing.T) {
 	defer fw.Stop()
 
 	// Create a new file
-	newFile := filepath.Join(brainDir, "note2.md")
+	newFile := filepath.Join(brainDir, "global/note2.md")
 	if err := os.WriteFile(newFile, []byte(noteContent("Note Two")), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestFileWatcher_DetectsNewFile(t *testing.T) {
 func TestFileWatcher_DetectsModifiedFile(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 	idx := NewIndexer(brainDir, store)
 
@@ -177,7 +177,7 @@ func TestFileWatcher_DetectsModifiedFile(t *testing.T) {
 	defer fw.Stop()
 
 	// Modify the file
-	if err := os.WriteFile(filepath.Join(brainDir, "note1.md"), []byte(noteContent("Note One Updated")), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(brainDir, "global/note1.md"), []byte(noteContent("Note One Updated")), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
 
@@ -185,7 +185,7 @@ func TestFileWatcher_DetectsModifiedFile(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Verify the file was re-indexed with new title
-	note, err := store.GetNoteByPath(t.Context(), "note1.md")
+	note, err := store.GetNoteByPath(t.Context(), "global/note1.md")
 	if err != nil {
 		t.Fatalf("GetNoteByPath failed: %v", err)
 	}
@@ -200,8 +200,8 @@ func TestFileWatcher_DetectsModifiedFile(t *testing.T) {
 func TestFileWatcher_DetectsDeletedFile(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
-		"note2.md": noteContent("Note Two"),
+		"global/note1.md": noteContent("Note One"),
+		"global/note2.md": noteContent("Note Two"),
 	})
 	idx := NewIndexer(brainDir, store)
 
@@ -221,7 +221,7 @@ func TestFileWatcher_DetectsDeletedFile(t *testing.T) {
 	defer fw.Stop()
 
 	// Delete a file
-	os.Remove(filepath.Join(brainDir, "note2.md"))
+	os.Remove(filepath.Join(brainDir, "global/note2.md"))
 
 	// Wait for debounce + processing
 	time.Sleep(500 * time.Millisecond)
@@ -239,7 +239,7 @@ func TestFileWatcher_DetectsDeletedFile(t *testing.T) {
 func TestFileWatcher_IgnoresZkDirectory(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 	idx := NewIndexer(brainDir, store)
 
@@ -275,7 +275,7 @@ func TestFileWatcher_IgnoresZkDirectory(t *testing.T) {
 func TestFileWatcher_IgnoresNonMdFiles(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 	idx := NewIndexer(brainDir, store)
 
@@ -295,7 +295,7 @@ func TestFileWatcher_IgnoresNonMdFiles(t *testing.T) {
 	defer fw.Stop()
 
 	// Create a non-.md file
-	os.WriteFile(filepath.Join(brainDir, "readme.txt"), []byte("not markdown"), 0o644)
+	os.WriteFile(filepath.Join(brainDir, "global/readme.txt"), []byte("not markdown"), 0o644)
 
 	// Wait for debounce + processing
 	time.Sleep(500 * time.Millisecond)
@@ -309,7 +309,7 @@ func TestFileWatcher_IgnoresNonMdFiles(t *testing.T) {
 func TestFileWatcher_IgnoresCustomPatterns(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 	idx := NewIndexer(brainDir, store)
 
@@ -332,7 +332,7 @@ func TestFileWatcher_IgnoresCustomPatterns(t *testing.T) {
 	defer fw.Stop()
 
 	// Create a file in drafts/ directory
-	draftsDir := filepath.Join(brainDir, "drafts")
+	draftsDir := filepath.Join(brainDir, "global", "drafts")
 	os.MkdirAll(draftsDir, 0o755)
 	os.WriteFile(filepath.Join(draftsDir, "draft.md"), []byte(noteContent("Draft")), 0o644)
 
@@ -390,7 +390,7 @@ func TestShouldIgnore(t *testing.T) {
 func TestFileWatcher_DebouncesRapidChanges(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 	idx := NewIndexer(brainDir, store)
 
@@ -411,7 +411,7 @@ func TestFileWatcher_DebouncesRapidChanges(t *testing.T) {
 
 	// Rapidly modify the same file multiple times
 	for i := 0; i < 5; i++ {
-		os.WriteFile(filepath.Join(brainDir, "note1.md"),
+		os.WriteFile(filepath.Join(brainDir, "global/note1.md"),
 			[]byte(noteContent("Note One v"+string(rune('0'+i)))),
 			0o644)
 		time.Sleep(20 * time.Millisecond)
@@ -436,7 +436,7 @@ func TestFileWatcher_DebouncesRapidChanges(t *testing.T) {
 func TestFileWatcher_DetectsNestedNewDirectory(t *testing.T) {
 	store := newTestStorage(t)
 	brainDir := createBrainDir(t, map[string]string{
-		"note1.md": noteContent("Note One"),
+		"global/note1.md": noteContent("Note One"),
 	})
 	idx := NewIndexer(brainDir, store)
 

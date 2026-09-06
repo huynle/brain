@@ -366,10 +366,11 @@ func TestMCPRouteCORSAllowsSessionHeader(t *testing.T) {
 	defer cancel()
 
 	handler, _, cleanup, err := buildHTTPHandler(ctx, ServerOptions{
-		Host:     "127.0.0.1",
-		Port:     0,
-		BrainDir: filepath.Join(tempDir, "brain"),
-		LogLevel: "error",
+		CORSOrigin: "https://example.test",
+		Host:       "127.0.0.1",
+		Port:       0,
+		BrainDir:   filepath.Join(tempDir, "brain"),
+		LogLevel:   "error",
 	})
 	if err != nil {
 		t.Fatalf("buildHTTPHandler failed: %v", err)

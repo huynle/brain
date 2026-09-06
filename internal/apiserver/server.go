@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync"
 	"time"
 
@@ -142,11 +143,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	defer cleanup()
 
 	// ─── HTTP Server ────────────────────────────────────────────────
-	addr := fmt.Sprintf("%s:%d", opts.Host, opts.Port)
-	corsOrigin := opts.CORSOrigin
-	if corsOrigin == "" {
-		corsOrigin = "*"
-	}
+	addr := net.JoinHostPort(opts.Host, strconv.Itoa(opts.Port))
 	srv := &http.Server{
 		Addr:        addr,
 		Handler:     router,
@@ -208,7 +205,7 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 			"db_path", dbPath,
 			"auth_enabled", opts.EnableAuth,
 			"oauth_enabled", true,
-			"cors_origin", corsOrigin,
+			"cors_origin", opts.CORSOrigin,
 			"tls", tlsEnabled,
 		)
 		var err error
@@ -247,7 +244,30 @@ func RunServer(ctx context.Context, opts ServerOptions) error {
 	return nil
 }
 
+// validateBindAuth uses the effective middleware toggle, not the presence of
+// credentials. Host is host-only (unbracketed for IPv6); never resolve arbitrary
+// hostnames to decide trust. An empty host is a wildcard, not loopback.
+func validateBindAuth(opts ServerOptions) error {
+	if opts.EnableAuth || opts.Host == "localhost" {
+		return nil
+	}
+	if ip := net.ParseIP(opts.Host); ip != nil && ip.IsLoopback() {
+		return nil
+	}
+	const escape = "BRAIN_INSECURE_ALLOW_UNAUTHENTICATED_BIND"
+	if os.Getenv(escape) == "true" {
+		slog.Warn("allowing unauthenticated non-loopback bind; API is exposed without authentication",
+			"host", opts.Host, "override", escape+"=true")
+		return nil
+	}
+	return fmt.Errorf("refusing unauthenticated non-loopback bind to %q: set ENABLE_AUTH=true or explicitly accept the risk with %s=true", opts.Host, escape)
+}
+
 func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, string, func(), error) {
+	if err := validateBindAuth(opts); err != nil {
+		return nil, "", nil, err
+	}
+
 	// ─── Storage Layer ──────────────────────────────────────────────
 	// Expand ~ to home directory (Go does not do this automatically)
 	opts.BrainDir = pathutil.ExpandTilde(opts.BrainDir)
@@ -264,6 +284,16 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		return nil, "", nil, fmt.Errorf("failed to open database at %s: %w", dbPath, err)
 	}
 	cleanup := func() { _ = store.Close() }
+
+	// Share one verifier with login and OAuth, and permanently close bootstrap
+	// before starting background work or serving any requests.
+	credVerifier := auth.NewVerifierFromEnv()
+	if credVerifier.Configured() {
+		if err := store.MarkInstallClaimed(ctx); err != nil {
+			cleanup()
+			return nil, "", nil, fmt.Errorf("failed to persist configured installation claim: %w", err)
+		}
+	}
 
 	// ─── Indexer ────────────────────────────────────────────────────
 	idx := indexer.NewIndexer(opts.BrainDir, store)
@@ -346,16 +376,12 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	}()
 
 	// ─── Build Config ───────────────────────────────────────────────
-	corsOrigin := opts.CORSOrigin
-	if corsOrigin == "" {
-		corsOrigin = "*" // Match standalone brain-api default
-	}
 	cfg := config.Config{
 		BrainDir:        opts.BrainDir,
 		Host:            opts.Host,
 		Port:            opts.Port,
 		EnableAuth:      opts.EnableAuth,
-		CORSOrigin:      corsOrigin,
+		CORSOrigin:      opts.CORSOrigin,
 		OAuthPIN:        opts.OAuthPIN,
 		JWTSecret:       opts.JWTSecret,
 		TaskDefaults:    opts.TaskDefaults,
@@ -532,9 +558,6 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
 
 	// ─── API Handler & Router ───────────────────────────────────────
-	// Shared operator credential verifier (password login + OAuth consent).
-	credVerifier := auth.NewVerifierFromEnv()
-
 	handler := api.NewHandler(
 		brainSvc,
 		api.WithAttachmentService(attachmentSvc),

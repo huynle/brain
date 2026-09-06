@@ -71,12 +71,13 @@ func (s *StorageLayer) GetStats(ctx context.Context, opts *StatsOptions) (*Stats
 	}
 
 	// 4. Tracked count (entries in entry_meta).
-	trackedQuery := "SELECT COUNT(*) FROM entry_meta"
+	trackedQuery := "SELECT COUNT(*) FROM entry_meta WHERE path != ?"
+	trackedParams := append([]interface{}{installClaimedPath}, pathParam...)
 	if pathPred != "" {
-		trackedQuery += " WHERE " + pathPred
+		trackedQuery += " AND " + pathPred
 	}
 	var trackedCount int
-	err = s.db.QueryRowContext(ctx, trackedQuery, pathParam...).Scan(&trackedCount)
+	err = s.db.QueryRowContext(ctx, trackedQuery, trackedParams...).Scan(&trackedCount)
 	if err != nil {
 		return nil, fmt.Errorf("get stats tracked: %w", err)
 	}

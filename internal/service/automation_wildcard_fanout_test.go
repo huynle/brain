@@ -372,3 +372,153 @@ func TestRunAutomationNow_EntryProjectWinsOverCallerProject(t *testing.T) {
 		t.Errorf("task project = %q, want the automation's own project", task.ProjectID)
 	}
 }
+
+// The trigger's project filter is a SELECTOR, matched with the same
+// types.MatchFilterValue the event path uses. "*" is one expression among
+// several — `in:a,b,c` narrows a global cron automation to those projects,
+// which is how dream consolidation is limited to the projects worth dreaming
+// about without splitting it into one entry per project.
+func saveFilteredCronAutomation(t *testing.T, brain *BrainServiceImpl, expr string) *types.CreateEntryResponse {
+	t.Helper()
+	resp, err := brain.Save(context.Background(), types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Dream Consolidation",
+		Content: "global cron automation with a project selector",
+		Status:  "active",
+		Global:  serviceBoolPtr(true),
+		Trigger: &types.TriggerConfig{
+			Type:     "cron",
+			Schedule: "* * * * *",
+			Filter:   map[string]string{"project": expr},
+		},
+		Action: &types.AutomationAction{
+			Type:         "prompt",
+			DirectPrompt: "Consolidate knowledge in project {{.Project}}.",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Save automation: %v", err)
+	}
+	return resp
+}
+
+func TestCheckScheduled_ProjectFilterNarrowsTheFanOut(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	auto := saveFilteredCronAutomation(t, brain, "in:hindsight,supernote,brain-api")
+
+	svc := NewAutomationService(brain)
+	svc.SetProjectLister(&stubProjectLister{projects: []string{
+		"hindsight", "supernote", "brain-api", "hindsight-v2", "pwa", "default",
+	}})
+
+	if err := svc.CheckScheduled(ctx, time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("CheckScheduled: %v", err)
+	}
+
+	for _, project := range []string{"hindsight", "supernote", "brain-api"} {
+		if tasks := generatedTasksFor(t, brain, project, auto.ID); len(tasks) != 1 {
+			t.Errorf("selected project %q: got %d tasks, want 1", project, len(tasks))
+		}
+	}
+	// hindsight-v2 is a DIFFERENT project from hindsight: `in:` matches whole
+	// elements, never prefixes, so a near-miss name must not be swept in.
+	for _, project := range []string{"hindsight-v2", "pwa", "default"} {
+		if tasks := generatedTasksFor(t, brain, project, auto.ID); len(tasks) != 0 {
+			t.Errorf("unselected project %q: got %d tasks, want 0", project, len(tasks))
+		}
+	}
+}
+
+func TestCheckScheduled_SingleProjectFilterSelectsOne(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	auto := saveFilteredCronAutomation(t, brain, "hindsight")
+
+	svc := NewAutomationService(brain)
+	svc.SetProjectLister(&stubProjectLister{projects: []string{"hindsight", "pwa"}})
+
+	if err := svc.CheckScheduled(ctx, time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("CheckScheduled: %v", err)
+	}
+	if tasks := generatedTasksFor(t, brain, "hindsight", auto.ID); len(tasks) != 1 {
+		t.Errorf("hindsight: got %d tasks, want 1", len(tasks))
+	}
+	if tasks := generatedTasksFor(t, brain, "pwa", auto.ID); len(tasks) != 0 {
+		t.Errorf("pwa: got %d tasks, want 0", len(tasks))
+	}
+}
+
+// An empty selector must not read as "every project" — that is the difference
+// between "I named nothing" and "I named everything".
+func TestCheckScheduled_EmptyProjectFilterIsNotAWildcard(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	auto := saveFilteredCronAutomation(t, brain, "")
+
+	lister := &stubProjectLister{projects: []string{"hindsight", "pwa"}}
+	svc := NewAutomationService(brain)
+	svc.SetProjectLister(lister)
+
+	if err := svc.CheckScheduled(ctx, time.Date(2026, 9, 6, 3, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("CheckScheduled: %v", err)
+	}
+	if lister.calls != 0 {
+		t.Errorf("project lister consulted %d times for an empty selector, want 0", lister.calls)
+	}
+	for _, project := range []string{"hindsight", "pwa"} {
+		if tasks := generatedTasksFor(t, brain, project, auto.ID); len(tasks) != 0 {
+			t.Errorf("%s: got %d tasks, want 0", project, len(tasks))
+		}
+	}
+	if tasks := generatedTasksFor(t, brain, "default", auto.ID); len(tasks) != 1 {
+		t.Errorf("default: got %d tasks, want the historical single unscoped run", len(tasks))
+	}
+}
+
+// The same selector must mean the same thing on the EVENT path. A global
+// automation filtered to `in:a,b` used to be rejected by
+// globalAutomationMatchesProjectEvent (which demanded a literal "*") and so
+// matched nothing at all, one step before matchAutomationFilters would have
+// matched a and b correctly.
+func TestHandleEvent_GlobalAutomationWithInProjectFilterMatches(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+	resp, err := brain.Save(ctx, types.CreateEntryRequest{
+		Type:    "automation",
+		Title:   "Global, in: filter",
+		Content: "x",
+		Status:  "active",
+		Global:  serviceBoolPtr(true),
+		Trigger: &types.TriggerConfig{
+			Type:   "event",
+			Events: []string{"task.completed"},
+			Filter: map[string]string{"project": "in:hindsight,supernote"},
+		},
+		Action: &types.AutomationAction{Type: "prompt", DirectPrompt: "for {{.Project}}"},
+	})
+	if err != nil {
+		t.Fatalf("Save: %v", err)
+	}
+
+	svc := NewAutomationService(brain)
+	for _, project := range []string{"hindsight", "supernote", "pwa"} {
+		if err := svc.HandleEvent(ctx, types.Event{
+			Type:      "task.completed",
+			Source:    "api",
+			ProjectID: project,
+			TaskID:    "t-" + project,
+		}); err != nil {
+			t.Fatalf("HandleEvent for %s: %v", project, err)
+		}
+	}
+
+	for _, project := range []string{"hindsight", "supernote"} {
+		if tasks := generatedTasksFor(t, brain, project, resp.ID); len(tasks) != 1 {
+			t.Errorf("selected project %q: got %d tasks, want 1", project, len(tasks))
+		}
+	}
+	if tasks := generatedTasksFor(t, brain, "pwa", resp.ID); len(tasks) != 0 {
+		t.Errorf("unselected project pwa: got %d tasks, want 0", len(tasks))
+	}
+}

@@ -142,50 +142,73 @@ func (s *AutomationService) SetProjectLister(lister automationProjectLister) {
 // scheduledTargetProjects resolves which projects one cron automation fires
 // for on this tick.
 //
-// `filter.project: "*"` means "any project" — but until now only the EVENT
-// path read it that way (see automationMatchesNamedEvent). A cron trigger has
-// no event, so on this path the wildcard had no reader at all: a global
-// automation carrying it generated exactly ONE task with an empty project,
-// which storage files under `default` and which renders {{.Project}} as the
-// empty string. The built-in Dream Consolidation entry is precisely that
-// shape, which is why no project ever got a dream from it — the generated
-// task asked the agent to consolidate "project " and saved the result to the
-// wrong project.
+// The trigger's project filter is the selector, and it is matched with the
+// SAME types.MatchFilterValue the event path uses — so `"*"` means every
+// project, `"in:a,b,c"` means those three, and a bare name means that one.
+// Until this existed only the EVENT path read the filter at all
+// (automationMatchesNamedEvent); a cron trigger has no event, so on this path
+// the selector had no reader and a global automation carrying `"*"` generated
+// exactly ONE task with an empty project — filed under `default`, rendering
+// {{.Project}} as the empty string. The built-in Dream Consolidation entry is
+// precisely that shape, which is why no project ever got a dream from it: the
+// generated task asked its agent to consolidate "project " and to save the
+// result nowhere in particular.
 //
 // The concurrency and cooldown guards survive the fan-out unchanged because
 // shouldSkipTaskGeneration lists generated tasks per project: `max_concurrent:
 // 1` means one in flight PER PROJECT, not one across all of them, which is
 // what a per-project automation wants.
 func (s *AutomationService) scheduledTargetProjects(ctx context.Context, automation types.BrainEntry) ([]string, error) {
-	// An automation that owns a project is scoped to it, wildcard or not.
+	// An automation that owns a project is scoped to it, selector or not.
 	if automation.ProjectID != "" {
 		return []string{automation.ProjectID}, nil
 	}
-	if !automationTargetsAllProjects(automation) {
-		// A global automation with no wildcard keeps the single unscoped
-		// run it has always had. Widening every global cron automation to
-		// every project is not this function's call to make.
+	expr, ok := automationProjectFilter(automation)
+	if !ok {
+		// A global automation that names no projects at all keeps the
+		// single unscoped run it has always had. Widening every global
+		// cron automation to every project is not this function's call.
 		return []string{""}, nil
 	}
 	if s.projects == nil {
 		return nil, fmt.Errorf(
-			"automation %s targets all projects but no project lister is wired", automation.ID)
+			"automation %s selects projects (%s) but no project lister is wired",
+			automation.ID, expr)
 	}
-	projects, err := s.projects.ListProjects(ctx)
+	all, err := s.projects.ListProjects(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("list projects for automation %s: %w", automation.ID, err)
 	}
+	projects := make([]string, 0, len(all))
+	for _, project := range all {
+		if types.MatchFilterValue(project, expr) {
+			projects = append(projects, project)
+		}
+	}
 	return projects, nil
+}
+
+// automationProjectFilter returns the trigger's project selector under either
+// spelling, and whether one is present at all. An empty value counts as
+// absent: "project": "" must never read as "every project".
+func automationProjectFilter(automation types.BrainEntry) (string, bool) {
+	if automation.Trigger == nil {
+		return "", false
+	}
+	if expr := automation.Trigger.Filter["project"]; expr != "" {
+		return expr, true
+	}
+	if expr := automation.Trigger.Filter["project_id"]; expr != "" {
+		return expr, true
+	}
+	return "", false
 }
 
 // automationTargetsAllProjects reports whether an automation's trigger filter
 // carries the any-project wildcard, under either spelling.
 func automationTargetsAllProjects(automation types.BrainEntry) bool {
-	if automation.Trigger == nil {
-		return false
-	}
-	return automation.Trigger.Filter["project"] == "*" ||
-		automation.Trigger.Filter["project_id"] == "*"
+	expr, ok := automationProjectFilter(automation)
+	return ok && expr == "*"
 }
 
 // Start subscribes to EventHub events until the context is cancelled.
@@ -496,11 +519,22 @@ func automationMatchesSession(automation types.BrainEntry, evt types.Event) bool
 	return matchAutomationFilters(automation.Trigger.Filter, evt)
 }
 
+// globalAutomationMatchesProjectEvent gates a PROJECTLESS automation against a
+// project-scoped event. It asks only whether the trigger declares a project
+// selector at all — matchAutomationFilters then applies that selector with
+// types.MatchFilterValue, which is the one place project matching should live.
+//
+// It used to demand a literal "*", so a global automation filtered to
+// `in:a,b,c` was rejected here and matched NOTHING, even though
+// matchAutomationFilters would have matched a, b and c correctly one step
+// later. That made the same selector mean "these three" on the cron path (see
+// scheduledTargetProjects) and "nothing at all" on the event path.
 func globalAutomationMatchesProjectEvent(automation types.BrainEntry, evt types.Event) bool {
 	if automation.ProjectID != "" || evt.ProjectID == "" {
 		return true
 	}
-	return automationTargetsAllProjects(automation)
+	_, ok := automationProjectFilter(automation)
+	return ok
 }
 
 func matchAutomationFilters(filters map[string]string, evt types.Event) bool {

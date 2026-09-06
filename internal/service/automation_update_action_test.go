@@ -214,7 +214,7 @@ func TestRunAutomationNow_RefusesAnUpdateAutomation(t *testing.T) {
 	}
 
 	svc := NewAutomationService(brain)
-	if _, err := svc.RunAutomationNow(ctx, saved.Path); err == nil {
+	if _, err := svc.RunAutomationNow(ctx, saved.Path, ""); err == nil {
 		t.Fatal("a manual run of an update automation must be refused")
 	}
 	assertUntouched(t, brain, "shop")

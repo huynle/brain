@@ -1960,7 +1960,10 @@ func TestAutomationService_CheckScheduledCreatesTaskForDueCronAutomation(t *test
 	if len(resp.Entries) != 1 {
 		t.Fatalf("expected one generated cron task, got %d", len(resp.Entries))
 	}
-	expectedKey := "automation:cron:" + resp.Entries[0].GeneratedBy[len("automation:"):] + ":202604291305"
+	// The dedup key carries the project so one fan-out minute cannot collapse
+	// several projects' tasks into a single key.
+	expectedKey := "automation:cron:" + resp.Entries[0].GeneratedBy[len("automation:"):] +
+		":automation-cron-entry-test:202604291305"
 	if resp.Entries[0].GeneratedKey != expectedKey {
 		t.Fatalf("generated key = %q, want %q", resp.Entries[0].GeneratedKey, expectedKey)
 	}

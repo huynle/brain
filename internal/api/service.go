@@ -383,9 +383,13 @@ type EventService interface {
 // AutomationRunService triggers a manual run of an automation entry through
 // the same server-side task-generation path the cron/event dispatchers use.
 type AutomationRunService interface {
-	// RunAutomationNow generates the automation's task now. Returns the
-	// created task id, or "" when generation was skipped (concurrency guard).
-	RunAutomationNow(ctx context.Context, pathOrID string) (string, error)
+	// RunAutomationNow generates the automation's task(s) now. `project`
+	// scopes the run and is honoured only for a global automation — one that
+	// owns a project always runs for its own. An empty project against an
+	// any-project (filter.project: "*") automation fans out over every
+	// project, matching the cron path. Returns the created task ids, empty
+	// when generation was skipped (concurrency guard).
+	RunAutomationNow(ctx context.Context, pathOrID, project string) ([]string, error)
 }
 
 // GoalService defines the interface for goal automation operations exposed over

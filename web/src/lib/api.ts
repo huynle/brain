@@ -1943,11 +1943,27 @@ export const listAutomationRuns = (query: {
 // cron/event dispatchers run. The previous client-side reimplementation
 // drifted from the server (e.g. rejecting actions the scheduler happily
 // runs with "automation action has no prompt or command").
+//
+// `project` is the project whose Automations tab the run was fired from, and
+// it MATTERS: listAutomationData merges global automations into every
+// project's list, so "Run now" on a built-in from the hindsight tab means
+// "run this for hindsight". The server honours it only for a global entry —
+// an automation that owns a project always runs for its own. It used to be
+// accepted here and dropped, which sent every such run to `default` with an
+// empty {{.Project}} in the prompt.
 export async function executeAutomation(
   path: string,
-  _fallbackProject: string,
-): Promise<{ task_id?: string; skipped?: boolean; message?: string }> {
-  return api("/api/v1/automations/run", { method: "POST", body: { path } });
+  project: string,
+): Promise<{
+  task_id?: string;
+  task_ids?: string[];
+  skipped?: boolean;
+  message?: string;
+}> {
+  return api("/api/v1/automations/run", {
+    method: "POST",
+    body: { path, project },
+  });
 }
 
 export const getEntry = (path: string) =>

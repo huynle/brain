@@ -158,6 +158,11 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 			return nil, err
 		}
 	}
+	if req.Type == "task" {
+		if err := validateConfiguredGitRemote(ctx, s.storage, req.GitRemote); err != nil {
+			return nil, err
+		}
+	}
 
 	// Sanitize inputs
 	title := frontmatter.SanitizeTitle(req.Title)
@@ -789,6 +794,19 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 
 	fm := &doc.Frontmatter
 	body := doc.Body
+	// Check raw input before sanitization and the effective stored value when
+	// this patch does not set git_remote. Metadata-only values count too.
+	if fm.Type == "task" || (row.Type != nil && *row.Type == "task") {
+		remote := fm.GitRemote
+		if req.GitRemote != nil {
+			remote = *req.GitRemote
+		} else if err := validateMetadataGitRemote(ctx, s.storage, row, nil); err != nil {
+			return nil, err
+		}
+		if err := validateConfiguredGitRemote(ctx, s.storage, remote); err != nil {
+			return nil, err
+		}
+	}
 
 	// Capture pre-update state for event derivation and for deciding whether
 	// embeddings must be regenerated (only body changes affect the vectors).
@@ -1707,6 +1725,9 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	if row == nil {
 		return nil, api.ErrNotFound
 	}
+	if err := validateMetadataGitRemote(ctx, s.storage, row, fields); err != nil {
+		return nil, err
+	}
 
 	// Status transitions stamp/clear completed_at. Injecting into the fields
 	// map here (before durability routing) means the stamp reaches both the
@@ -1736,7 +1757,8 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	// If durable fields are present, write changes to the markdown file
 	if hasDurable {
 		if err := s.syncDurableFieldsToFile(ctx, row, fields); err != nil {
-			if errors.Is(err, brainpath.ErrContainment) {
+			var admissionErr gitRemoteAdmissionError
+			if errors.Is(err, brainpath.ErrContainment) || errors.As(err, &admissionErr) {
 				return nil, err
 			}
 			// Log warning but continue with DB update — file write failure
@@ -1805,6 +1827,15 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	fm := &doc.Frontmatter
 	body := doc.Body
 	originalBody := doc.Body
+	// Reindexing below restores disk frontmatter, which can differ from the
+	// DB-only metadata checked by UpdateMetadata. Validate that representation
+	// too, before the first write. This failure must not be treated as a
+	// best-effort file-sync error by the caller.
+	if fm.Type == "task" || (row.Type != nil && *row.Type == "task") || fields["type"] == "task" {
+		if err := validateConfiguredGitRemote(ctx, s.storage, fm.GitRemote); err != nil {
+			return err
+		}
+	}
 
 	// Apply durable field changes to frontmatter
 	if v, ok := fields["status"]; ok {

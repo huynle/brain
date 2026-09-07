@@ -279,6 +279,9 @@ func TestSpawnHeadlessDirect_PinsSession(t *testing.T) {
 		t.Fatalf("SpawnResult.SessionID = %q, want ses_pinned", res.SessionID)
 	}
 	joined := strings.Join(gotArgs, " ")
+	if !strings.Contains(joined, "--attach http://127.0.0.1:4096") {
+		t.Fatalf("run must attach to the server that created the pinned session, got: %s", joined)
+	}
 	if !strings.Contains(joined, "--session ses_pinned") {
 		t.Fatalf("run args should pin the session, got: %s", joined)
 	}

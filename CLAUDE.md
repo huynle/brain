@@ -311,10 +311,23 @@ caller-chosen `machine_affinity` (`local` | `preferred` | `none`).
 - **Generated tasks carry no origin** by design — automation and goal
   `createTask` deliberately omit it, since server-generated work has no human
   caller and stamping would pin it to the API box.
-- **Known limitation**: `ClaimTask` does not validate affinity, so a runner that
-  claims a task directly by id bypasses the pin. Both discovery paths (push
-  dispatch and `/next`) are filtered, so this is not reachable by accident;
-  `requires_capability` has the identical gap.
+- **Direct claims and dispatch enforce placement too.** `ClaimTask` /
+  `ClaimTaskWithDuration` and `DispatchTask` require a registered runner and
+  validate machine affinity, required capabilities and Git-remote eligibility
+  before creating ownership. The HTTP handlers map `PlacementDenialError` via
+  `errors.As` to 403 with the named reason in the standard error envelope's
+  `message`; genuine ownership conflicts remain 409. Direct dispatch delegates
+  registration checks to the service so even `runner_unregistered` is recorded
+  in placement history rather than short-circuited as a registry 404. Denials
+  emit neither task-claimed events nor claim/dispatch SSE.
+- **Identity limitation (P7 remains required):** these checks validate the
+  supplied runner ID, not its ownership by the authenticated caller. `AuthResult`
+  exposes API-token name, OAuth client ID or JWT subject plus scope; neither token
+  nor registry storage supplies a trusted principal-to-runner binding. Those
+  strings cannot be equated to `runnerId`. Admin dispatch intentionally targets
+  another runner through `targetRunnerId`. See
+  [Runner credential boundary](docs/runner-credential-boundary.md) for the
+  outstanding identity and release gates.
 
 Adding another frontmatter task field means SEVEN registration points, and
 missing any one is silent — unknown YAML keys land in `Frontmatter.Extra`,
@@ -469,6 +482,15 @@ The Pi executor spawns [Pi](https://github.com/anthropics/pi) processes in RPC m
 - **Graceful fallback**: Missing agent bundle falls back to `--append-system-prompt`
 
 #### Configuration
+
+Task Git remotes require registered credentialed-host support before persistence
+and compatible live runners for dispatch/pull/direct claims. See
+[Git remote policy](docs/git-remote-policy.md) for the configuration and transport
+contract; anonymous-only host permission is not API task admission.
+
+Task and ad-hoc execution share `control.allowed_workdir_roots` (home-only
+when omitted). See [Shared runner workdir policy](AGENTS.md#shared-runner-workdir-policy)
+for config syntax, canonicalization, preflight checks and security limits.
 
 **Config types** (`types.go`):
 ```yaml

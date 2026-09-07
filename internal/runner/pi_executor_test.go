@@ -18,6 +18,8 @@ import (
 
 func testPiConfig() RunnerConfig {
 	return RunnerConfig{
+		// Executor fixtures use t.TempDir; the production default stays home-only.
+		Control:     ControlConfig{AllowedWorkdirRoots: []string{os.TempDir()}},
 		BrainAPIURL: "http://localhost:3333",
 		StateDir:    os.TempDir(),
 		WorkDir:     "/default/workdir",
@@ -164,7 +166,7 @@ func TestPiExecutor_ResolveWorkdir_TargetWorkdir(t *testing.T) {
 
 func TestPiExecutor_ResolveWorkdir_FallbackToConfig(t *testing.T) {
 	cfg := testPiConfig()
-	cfg.WorkDir = "/config/default"
+	cfg.WorkDir = t.TempDir()
 	e := NewPiExecutor(cfg)
 
 	task := testPiResolvedTask("abc123")
@@ -172,8 +174,8 @@ func TestPiExecutor_ResolveWorkdir_FallbackToConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result != "/config/default" {
-		t.Errorf("ResolveWorkdir = %q, want %q", result, "/config/default")
+	if result != cfg.WorkDir {
+		t.Errorf("ResolveWorkdir = %q, want %q", result, cfg.WorkDir)
 	}
 }
 

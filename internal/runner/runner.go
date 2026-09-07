@@ -418,6 +418,7 @@ func NewTaskRunner(opts TaskRunnerOptions) *TaskRunner {
 		if err != nil {
 			logger.Printf("WARNING: failed to initialize hook dispatcher: %v", err)
 		} else {
+			hd.childConfig = opts.Config
 			tr.hookDispatcher = hd
 			// Register an event handler that dispatches hooks for feature lifecycle events.
 			// Feature events are emitted by the FeatureTracker and forwarded to hooks here.
@@ -525,7 +526,7 @@ func (tr *TaskRunner) Start(ctx context.Context) error {
 		if len(initialProjects) > 0 {
 			tr.sseListener = NewSSEListener(
 				tr.config.BrainAPIURL,
-				tr.config.APIToken,
+				tr.config.StandingToken,
 				initialProjects,
 				tr.wakeCh,
 			)
@@ -2430,7 +2431,7 @@ func (tr *TaskRunner) registerWithAPI(ctx context.Context) {
 		Hostname:       hostname,
 		Labels:         tr.config.Labels,
 		Executors:      tr.executorNames(),
-		Capabilities:   tr.config.Capabilities,
+		Capabilities:   tr.advertisedCapabilities(),
 		Projects:       tr.getProjects(),
 		MaxParallel:    tr.getMaxParallel(),
 		DispatchPush:   dispatchPush,
@@ -2666,6 +2667,7 @@ func (tr *TaskRunner) sendHeartbeat(ctx context.Context) {
 	dispatchPush := tr.dispatchPushEnabled()
 	draining := tr.config.Draining
 	req := types.RunnerHeartbeatRequest{
+		Capabilities:   tr.advertisedCapabilities(),
 		RunningTasks:   running,
 		DispatchPush:   &dispatchPush,
 		Labels:         tr.config.Labels,

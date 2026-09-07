@@ -89,11 +89,12 @@ func TestGetLiveClaim_ClaimByOfflineRunnerIsNotLive(t *testing.T) {
 // A claim whose owning runner was never registered cannot be attributed.
 // Fail open: treat it as not live rather than blocking every delete.
 func TestGetLiveClaim_UnknownRunnerIsNotLive(t *testing.T) {
-	svc, _, _ := newTestTaskService(t)
+	svc, store, _ := newTestTaskService(t)
 	ctx := context.Background()
 
-	if _, err := svc.ClaimTask(ctx, "proj", "task1", "ghost-runner"); err != nil {
-		t.Fatalf("ClaimTask: %v", err)
+	// Seed legacy ownership directly; new service claims require registration.
+	if ok, _, err := store.ClaimTask(ctx, "proj", "task1", "ghost-runner", time.Minute); err != nil || !ok {
+		t.Fatalf("seed claim: ok=%v err=%v", ok, err)
 	}
 
 	claim, err := svc.GetLiveClaim(ctx, "proj", "task1")

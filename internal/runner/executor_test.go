@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/huynle/brain-api/internal/gitremote"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -28,6 +29,8 @@ func testResolvedTask(id string) *types.ResolvedTask {
 
 func testExecutorConfig() RunnerConfig {
 	return RunnerConfig{
+		// Executor fixtures use t.TempDir; explicitly permit the test temp area.
+		Control:     ControlConfig{AllowedWorkdirRoots: []string{os.TempDir()}},
 		BrainAPIURL: "http://localhost:3333",
 		StateDir:    os.TempDir(),
 		WorkDir:     "/default/workdir",
@@ -202,15 +205,15 @@ func TestExecutor_ResolveWorkdir_ResolvedWorkdir(t *testing.T) {
 
 func TestExecutor_ResolveWorkdir_FallbackToConfig(t *testing.T) {
 	cfg := testExecutorConfig()
-	cfg.WorkDir = "/config/default"
+	cfg.WorkDir = t.TempDir()
 	e := NewExecutor(cfg)
 
 	task := testResolvedTask("abc123")
 	// No workdir fields set
 
 	result, _ := e.ResolveWorkdir(task)
-	if result != "/config/default" {
-		t.Errorf("ResolveWorkdir = %q, want %q (config default)", result, "/config/default")
+	if result != cfg.WorkDir {
+		t.Errorf("ResolveWorkdir = %q, want %q (config default)", result, cfg.WorkDir)
 	}
 }
 
@@ -354,7 +357,11 @@ func TestExecutor_ResolveWorkdir_GitRemoteAllowsUnauthenticatedHTTPSWhenEnabled(
 	if err != nil {
 		t.Fatalf("parse remote: %v", err)
 	}
-	expectedRepo := filepath.Join(cacheDir, cacheDirNameForRemote(parsedRemote))
+	canonicalCache, err := filepath.EvalSymlinks(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedRepo := filepath.Join(canonicalCache, cacheDirNameForRemote(parsedRemote))
 	expectedWorktree := filepath.Join(expectedRepo, ".worktrees", "feature-bootstrap")
 
 	cfg := testExecutorConfig()
@@ -363,6 +370,7 @@ func TestExecutor_ResolveWorkdir_GitRemoteAllowsUnauthenticatedHTTPSWhenEnabled(
 	cfg.GitTokenEnv = ""
 	cfg.RequireHTTPS = true
 	cfg.AllowUnauthenticatedHTTPS = true
+	cfg.GitAllowedHosts = []string{"github.com"}
 	e := NewExecutor(cfg)
 
 	var cloneArgs []string
@@ -370,9 +378,9 @@ func TestExecutor_ResolveWorkdir_GitRemoteAllowsUnauthenticatedHTTPSWhenEnabled(
 		if name != "git" {
 			return exec.Command("/bin/sh", "-c", "exit 1")
 		}
-		if len(args) >= 3 && args[0] == "clone" {
+		if clone := gitOperationArgs(args, "clone"); len(clone) == 5 {
 			cloneArgs = append([]string(nil), args...)
-			if args[1] != remote || args[2] != expectedRepo {
+			if clone[1] != "--template=" || clone[2] != "--" || clone[3] != remote || clone[4] != expectedRepo {
 				return exec.Command("/bin/sh", "-c", "printf 'wrong clone target' && exit 1")
 			}
 			return exec.Command("/bin/sh", "-c", "mkdir -p \"$1\"", "sh", expectedRepo)
@@ -393,7 +401,7 @@ func TestExecutor_ResolveWorkdir_GitRemoteAllowsUnauthenticatedHTTPSWhenEnabled(
 			return exec.Command("/bin/sh", "-c", "exit 0")
 		}
 		if len(args) >= 7 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "add" {
-			return exec.Command("/bin/sh", "-c", "exit 0")
+			return exec.Command("/bin/sh", "-c", "mkdir -p \"$1\"", "sh", expectedWorktree)
 		}
 		return exec.Command("/bin/sh", "-c", "exit 1")
 	}
@@ -413,20 +421,18 @@ func TestExecutor_ResolveWorkdir_GitRemoteAllowsUnauthenticatedHTTPSWhenEnabled(
 	if len(cloneArgs) == 0 {
 		t.Fatal("expected unauthenticated git clone to run")
 	}
-	if containsArg(cloneArgs, "http.extraheader=Authorization: Bearer ") || containsArg(cloneArgs, "-c") {
+	if strings.Contains(strings.Join(cloneArgs, " "), "Authorization:") {
 		t.Fatalf("unauthenticated clone should not include auth config, got: %v", cloneArgs)
 	}
+	assertGitTransportOptions(t, cloneArgs)
 }
 
-func TestValidateGitRemote_AllowsHTTPOnlyWhenRequireHTTPSDisabled(t *testing.T) {
-	if _, err := validateGitRemote("http://github.com/owner/repo.git", true); err == nil {
-		t.Fatal("validateGitRemote should reject HTTP when require_https is enabled")
+func TestValidateGitRemote_RequiresHTTPS(t *testing.T) {
+	if _, err := gitremote.Parse("http://github.com/owner/repo.git"); err == nil {
+		t.Fatal("git remote policy must reject HTTP")
 	}
-	if _, err := validateGitRemote("http://github.com/owner/repo.git", false); err != nil {
-		t.Fatalf("validateGitRemote should allow HTTP when require_https is disabled: %v", err)
-	}
-	if _, err := validateGitRemote("ssh://github.com/owner/repo.git", false); err == nil {
-		t.Fatal("validateGitRemote should always reject SSH remotes")
+	if _, err := gitremote.Parse("ssh://github.com/owner/repo.git"); err == nil {
+		t.Fatal("git remote policy must reject SSH remotes")
 	}
 }
 
@@ -458,7 +464,7 @@ func TestExecutor_ResolveWorkdir_WorktreeModeUsesAbsoluteWorkdirGitRepo(t *testi
 		}
 		if len(args) >= 7 && args[0] == "-C" && args[1] == repo && args[2] == "worktree" && args[3] == "add" {
 			worktreeAddArgs = append([]string(nil), args...)
-			return exec.Command("/bin/sh", "-c", "exit 0")
+			return exec.Command("/bin/sh", "-c", "mkdir -p \"$1\"", "sh", filepath.Join(repo, ".worktrees", "feature-bootstrap"))
 		}
 		return exec.Command("/bin/sh", "-c", "exit 1")
 	}
@@ -533,7 +539,7 @@ func TestExecutor_ResolveWorkdir_RedactsGitTokenFromCloneErrors(t *testing.T) {
 	cfg.RequireHTTPS = true
 	e := NewExecutor(cfg)
 	e.CommandFactory = func(name string, args ...string) *exec.Cmd {
-		if name == "git" && len(args) >= 4 && args[0] == "-c" && args[2] == "clone" {
+		if name == "git" && len(gitOperationArgs(args, "clone")) > 0 {
 			return exec.Command("/bin/sh", "-c", "printf 'fatal: Authorization: Bearer secret-token rejected' && exit 1")
 		}
 		return exec.Command("/bin/sh", "-c", "exit 1")
@@ -564,7 +570,11 @@ func TestExecutor_ResolveWorkdir_GitRemoteClonesIntoRepoCacheAndCreatesWorktree(
 	if err != nil {
 		t.Fatalf("parse remote: %v", err)
 	}
-	expectedRepo := filepath.Join(cacheDir, cacheDirNameForRemote(parsedRemote))
+	canonicalCache, err := filepath.EvalSymlinks(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedRepo := filepath.Join(canonicalCache, cacheDirNameForRemote(parsedRemote))
 	expectedWorktree := filepath.Join(expectedRepo, ".worktrees", "feature-bootstrap")
 
 	cfg := testExecutorConfig()
@@ -580,12 +590,12 @@ func TestExecutor_ResolveWorkdir_GitRemoteClonesIntoRepoCacheAndCreatesWorktree(
 		if name != "git" {
 			return exec.Command("/bin/sh", "-c", "exit 1")
 		}
-		if len(args) >= 5 && args[0] == "-c" && args[2] == "clone" {
+		if clone := gitOperationArgs(args, "clone"); len(clone) == 5 {
 			cloneArgs = append([]string(nil), args...)
-			if args[3] != remote {
+			if clone[1] != "--template=" || clone[2] != "--" || clone[3] != remote {
 				return exec.Command("/bin/sh", "-c", "printf 'wrong remote' && exit 1")
 			}
-			if args[4] != expectedRepo {
+			if clone[4] != expectedRepo {
 				return exec.Command("/bin/sh", "-c", "printf 'wrong cache path' && exit 1")
 			}
 			return exec.Command("/bin/sh", "-c", "mkdir -p \"$1\"", "sh", expectedRepo)
@@ -607,7 +617,7 @@ func TestExecutor_ResolveWorkdir_GitRemoteClonesIntoRepoCacheAndCreatesWorktree(
 		}
 		if len(args) >= 7 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "add" {
 			worktreeAddArgs = append([]string(nil), args...)
-			return exec.Command("/bin/sh", "-c", "exit 0")
+			return exec.Command("/bin/sh", "-c", "mkdir -p \"$1\"", "sh", expectedWorktree)
 		}
 		return exec.Command("/bin/sh", "-c", "exit 1")
 	}
@@ -627,10 +637,11 @@ func TestExecutor_ResolveWorkdir_GitRemoteClonesIntoRepoCacheAndCreatesWorktree(
 	if len(cloneArgs) == 0 {
 		t.Fatal("expected git clone to run")
 	}
-	if !containsArg(cloneArgs, "http.extraheader=Authorization: Bearer env-secret-token") {
+	assertGitTransportOptions(t, cloneArgs)
+	if !containsArg(cloneArgs, "http.https://github.com/.extraheader=Authorization: Bearer env-secret-token") {
 		t.Fatalf("clone args should include token via http.extraheader, got: %v", cloneArgs)
 	}
-	if strings.Contains(cloneArgs[3], "env-secret-token") {
+	if strings.Contains(gitOperationArgs(cloneArgs, "clone")[3], "env-secret-token") {
 		t.Fatalf("clone remote should not embed token, got args: %v", cloneArgs)
 	}
 	if len(worktreeAddArgs) == 0 || !containsArg(worktreeAddArgs, expectedWorktree) {
@@ -640,12 +651,17 @@ func TestExecutor_ResolveWorkdir_GitRemoteClonesIntoRepoCacheAndCreatesWorktree(
 
 func TestExecutor_ResolveWorkdir_GitRemoteFetchesExistingCachedRepo(t *testing.T) {
 	cacheDir := t.TempDir()
+	existingWorktree := t.TempDir()
 	remote := "https://github.com/owner/repo.git"
 	parsedRemote, err := url.Parse(remote)
 	if err != nil {
 		t.Fatalf("parse remote: %v", err)
 	}
-	expectedRepo := filepath.Join(cacheDir, cacheDirNameForRemote(parsedRemote))
+	canonicalCache, err := filepath.EvalSymlinks(cacheDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedRepo := filepath.Join(canonicalCache, cacheDirNameForRemote(parsedRemote))
 	if err := os.MkdirAll(expectedRepo, 0o755); err != nil {
 		t.Fatalf("create cached repo: %v", err)
 	}
@@ -665,11 +681,22 @@ func TestExecutor_ResolveWorkdir_GitRemoteFetchesExistingCachedRepo(t *testing.T
 		if len(args) >= 4 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "rev-parse" && args[3] == "--show-toplevel" {
 			return exec.Command("/bin/sh", "-c", "exit 0")
 		}
-		if len(args) >= 7 && args[0] == "-c" && args[2] == "-C" && args[3] == expectedRepo && args[4] == "fetch" {
-			fetchArgs = append([]string(nil), args...)
+		if len(gitOperationArgs(args, "init")) > 0 {
+			return exec.Command("true")
+		}
+		if fetch := gitOperationArgs(args, "fetch"); len(fetch) > 0 {
+			assertGitTransportOptions(t, args)
+			if containsArg(args, remote) {
+				fetchArgs = append([]string(nil), args...)
+				if !containsArg(args, "+refs/heads/*:refs/heads/*") || containsArg(args, expectedRepo) {
+					t.Error("network fetch must isolate cache and use explicit refspec")
+				}
+			} else if strings.Contains(strings.Join(args, " "), "Authorization:") {
+				t.Error("local import must have no credential")
+			}
 			return exec.Command("/bin/sh", "-c", "exit 0")
 		}
-		if len(args) >= 5 && args[0] == "-c" && args[2] == "clone" {
+		if len(gitOperationArgs(args, "clone")) > 0 {
 			cloneRan = true
 			return exec.Command("/bin/sh", "-c", "exit 1")
 		}
@@ -677,7 +704,7 @@ func TestExecutor_ResolveWorkdir_GitRemoteFetchesExistingCachedRepo(t *testing.T
 			return exec.Command("/bin/sh", "-c", "printf main")
 		}
 		if len(args) >= 5 && args[0] == "-C" && args[1] == expectedRepo && args[2] == "worktree" && args[3] == "list" {
-			return exec.Command("/bin/sh", "-c", "printf 'worktree /cached/worktree\nbranch refs/heads/feature/bootstrap\n'")
+			return exec.Command("/bin/sh", "-c", "printf 'worktree %s\nbranch refs/heads/feature/bootstrap\n' \"$1\"", "sh", existingWorktree)
 		}
 		return exec.Command("/bin/sh", "-c", "exit 1")
 	}
@@ -691,7 +718,7 @@ func TestExecutor_ResolveWorkdir_GitRemoteFetchesExistingCachedRepo(t *testing.T
 	if err != nil {
 		t.Fatalf("ResolveWorkdir returned error: %v", err)
 	}
-	if got != "/cached/worktree" {
+	if got != existingWorktree {
 		t.Fatalf("ResolveWorkdir = %q, want existing cached worktree", got)
 	}
 	if cloneRan {
@@ -700,7 +727,7 @@ func TestExecutor_ResolveWorkdir_GitRemoteFetchesExistingCachedRepo(t *testing.T
 	if len(fetchArgs) == 0 {
 		t.Fatal("expected git fetch for existing cached repo")
 	}
-	if !containsArg(fetchArgs, "http.extraheader=Authorization: Bearer secret-token") {
+	if !containsArg(fetchArgs, "http.https://github.com/.extraheader=Authorization: Bearer secret-token") {
 		t.Fatalf("fetch args should include token via http.extraheader, got: %v", fetchArgs)
 	}
 }

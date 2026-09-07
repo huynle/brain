@@ -352,6 +352,7 @@ func writeToDisk(path string, cfg *config.UnifiedConfig) (string, error) {
 //   - server.oauth_pin
 //   - server.jwt_secret
 //   - runner.api_token
+//   - runner.git_token
 //
 // api_token_env / api_key_env are NOT redacted; they're env-var names,
 // not secrets.
@@ -364,6 +365,9 @@ func redactSecrets(cfg *config.UnifiedConfig) {
 	}
 	if cfg.Runner.APIToken != "" {
 		cfg.Runner.APIToken = sentinelUnchanged
+	}
+	if cfg.Runner.GitToken != "" {
+		cfg.Runner.GitToken = sentinelUnchanged
 	}
 }
 
@@ -379,5 +383,8 @@ func restoreRedactedSecrets(next, prev *config.UnifiedConfig) {
 	}
 	if next.Runner.APIToken == sentinelUnchanged {
 		next.Runner.APIToken = prev.Runner.APIToken
+	}
+	if next.Runner.GitToken == sentinelUnchanged {
+		next.Runner.GitToken = prev.Runner.GitToken
 	}
 }

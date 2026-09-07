@@ -276,6 +276,17 @@ func (s *StorageLayer) UpdateRunnerDispatchMetadata(ctx context.Context, runnerI
 	return s.UpsertRunner(ctx, runner)
 }
 
+// UpdateRunnerCapabilities replaces the existing nonsecret advertisement without
+// rewriting a stale snapshot of the rest of the runner row.
+func (s *StorageLayer) UpdateRunnerCapabilities(ctx context.Context, runnerID string, capabilities []string) error {
+	data, err := json.Marshal(capabilities)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, "UPDATE runners SET capabilities = ? WHERE runner_id = ?", string(data), runnerID)
+	return err
+}
+
 // UpdateAffinity updates a runner's feature_ids (comma-separated list of feature IDs
 // this runner has affinity for).
 func (s *StorageLayer) UpdateAffinity(ctx context.Context, runnerID string, featureIDs []string) error {

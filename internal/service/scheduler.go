@@ -725,6 +725,9 @@ func (s *SchedulerService) selectCandidate(task types.ResolvedTask, projectID st
 }
 
 func runnerEligibleForTask(task types.ResolvedTask, projectID string, runner types.RunnerInfo, placement *types.ProjectPlacement) (string, bool) {
+	if err := runnerGitRemoteError(task.GitRemote, &runner); err != nil {
+		return err.Error(), false
+	}
 	if runner.Status != types.RunnerStatusOnline {
 		return "runner not online", false
 	}

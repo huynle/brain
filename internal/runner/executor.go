@@ -58,14 +58,29 @@ type CommandFactory func(name string, args ...string) *exec.Cmd
 type OpenCodeExecutor struct {
 	config         RunnerConfig
 	CommandFactory CommandFactory
+	// Set at construction, before any serve lifecycle work starts.
+	serveTermGrace time.Duration
+	serveKillGrace time.Duration
 
 	// serveProcs holds the persistent `opencode serve` process backing each
 	// attachable headless task, keyed by task ID. The task is driven by a
 	// separate `opencode run --attach` process (tracked for completion); the
 	// serve process is torn down in Cleanup.
-	serveMu       sync.Mutex
-	serveProcs    map[string]Process
-	serveProjects map[string]string // task ID -> project ID, for the persisted record
+	serveAdmission sync.RWMutex // shutdown excludes the entire headless spawn
+	serveMu        sync.Mutex
+	serveStopping  bool
+	serveProcs     map[string]*ownedServe
+	servePending   map[*ownedServe]struct{}
+	serveRecovered map[string]serveProcRecord // unresolved records from startup
+}
+
+// An entry is a task generation, not just a task ID. Old driver watchers and
+// teardown workers must never remove or signal a replacement generation.
+type ownedServe struct {
+	taskID string
+	proc   Process
+	record serveProcRecord
+	done   chan struct{} // non-nil only while a termination attempt is running
 }
 
 // Compile-time interface check.
@@ -75,12 +90,13 @@ var _ TaskExecutor = (*OpenCodeExecutor)(nil)
 // Named NewExecutor (not NewOpenCodeExecutor) for backward compatibility.
 func NewExecutor(cfg RunnerConfig) *OpenCodeExecutor {
 	return &OpenCodeExecutor{
-		config: cfg,
+		config:         cfg,
+		serveTermGrace: 5 * time.Second,
+		serveKillGrace: 2 * time.Second,
 		CommandFactory: func(name string, args ...string) *exec.Cmd {
 			return exec.Command(name, args...)
 		},
-		serveProcs:    make(map[string]Process),
-		serveProjects: make(map[string]string),
+		serveProcs: make(map[string]*ownedServe),
 	}
 }
 
@@ -110,6 +126,20 @@ type serveProcsState struct {
 	Procs map[string]serveProcRecord `json:"procs"`
 }
 
+// A recovered PID has no child handle. Revalidate its command before EACH
+// signal, including escalation after the grace period, to avoid PID reuse.
+type recoveredServeProcess struct {
+	*PidProcess
+	matches func(int) bool
+}
+
+func (p *recoveredServeProcess) Kill(sig os.Signal) error {
+	if !p.matches(p.Pid()) {
+		return fmt.Errorf("recorded serve PID %d no longer matches", p.Pid())
+	}
+	return p.PidProcess.Kill(sig)
+}
+
 func (e *OpenCodeExecutor) serveProcsPath() string {
 	return filepath.Join(e.config.StateDir, serveProcsFileName)
 }
@@ -119,25 +149,25 @@ func (e *OpenCodeExecutor) serveProcsPath() string {
 func (e *OpenCodeExecutor) trackServeProcFor(taskID, projectID string, proc Process) {
 	e.serveMu.Lock()
 	if e.serveProcs == nil {
-		e.serveProcs = make(map[string]Process)
+		e.serveProcs = make(map[string]*ownedServe)
 	}
-	e.serveProcs[taskID] = proc
-	if e.serveProjects == nil {
-		e.serveProjects = make(map[string]string)
+	if old := e.serveProcs[taskID]; old != nil {
+		e.beginServeTeardownLocked(old)
 	}
-	e.serveProjects[taskID] = projectID
+	entry := &ownedServe{taskID: taskID, proc: proc, record: serveProcRecord{
+		PID: proc.Pid(), ProjectID: projectID, StartedAt: time.Now().UTC().Format(time.RFC3339),
+	}}
+	e.serveProcs[taskID] = entry
+	e.persistServeProcsLocked()
+	var done <-chan struct{}
+	if e.serveStopping {
+		done = e.beginServeTeardownLocked(entry)
+	}
 	e.serveMu.Unlock()
-	e.persistServeProcs()
+	if done != nil {
+		<-done // a late caller retains responsibility; never silently admit it
+	}
 }
-
-// Serve teardown timings, mirroring ProcessManager.Kill: a polite SIGTERM,
-// a bounded wait, then SIGKILL for anything still standing.
-//
-// Package-level vars, not consts, so tests can shrink them.
-var (
-	serveTermGrace = 5 * time.Second
-	serveKillGrace = 2 * time.Second
-)
 
 // terminateServe escalates SIGTERM → SIGKILL on one serve process.
 //
@@ -145,17 +175,17 @@ var (
 // or slow to handle the signal survived teardown with brain having already
 // discarded its handle. Every sibling kill in the runner escalates; this one
 // did not.
-func terminateServe(taskID string, proc Process) {
+func (e *OpenCodeExecutor) terminateServe(taskID string, proc Process) bool {
 	if proc == nil || proc.Exited() {
-		return
+		return true
 	}
 	_ = proc.Kill(syscall.SIGTERM)
-	if waitServeExit(proc, serveTermGrace) {
-		return
+	if waitServeExit(proc, e.serveTermGrace) {
+		return true
 	}
 	slog.Warn("opencode serve ignored SIGTERM; sending SIGKILL", "task_id", taskID, "pid", proc.Pid())
 	_ = proc.Kill(syscall.SIGKILL)
-	waitServeExit(proc, serveKillGrace)
+	return waitServeExit(proc, e.serveKillGrace)
 }
 
 // waitServeExit polls Exited until it is true or d elapses.
@@ -170,39 +200,69 @@ func waitServeExit(proc Process, d time.Duration) bool {
 	return proc.Exited()
 }
 
-// killServeProc terminates and forgets the serve process for a task, if any.
-//
-// The record is dropped before the escalation finishes. That is deliberate:
-// the on-disk record is a crash net for a *successor* runner, which verifies
-// the command line before signalling, so a pid that dies a few seconds later
-// than the record says is harmless. Holding the entry open would instead let
-// a stuck server keep a completed task's slot in the map.
 // ServePID reports the pid of the live `opencode serve` process backing a
 // task, or 0 when there is none. The memory guard uses it to measure the
 // task's whole process tree: the server is the half of the pair the
 // ProcessManager never tracked, and the half that reached 27 GB.
 func (e *OpenCodeExecutor) ServePID(taskID string) int {
 	e.serveMu.Lock()
-	proc := e.serveProcs[taskID]
+	entry := e.serveProcs[taskID]
 	e.serveMu.Unlock()
-	if proc == nil || proc.Exited() {
+	if entry == nil || entry.proc.Exited() {
 		return 0
 	}
-	return proc.Pid()
+	return entry.proc.Pid()
 }
 
-func (e *OpenCodeExecutor) killServeProc(taskID string) {
+// Cleanup remains asynchronous, but shutdown can join the same attempt.
+func (e *OpenCodeExecutor) killServeProc(taskID string) <-chan struct{} {
 	e.serveMu.Lock()
-	proc := e.serveProcs[taskID]
-	delete(e.serveProcs, taskID)
-	delete(e.serveProjects, taskID)
-	e.serveMu.Unlock()
-	e.persistServeProcs()
-	if proc == nil || proc.Exited() {
-		return
+	defer e.serveMu.Unlock()
+	return e.beginServeTeardownLocked(e.serveProcs[taskID])
+}
+
+func (e *OpenCodeExecutor) killServeGeneration(taskID string, proc Process) {
+	e.serveMu.Lock()
+	defer e.serveMu.Unlock()
+	if entry := e.serveProcs[taskID]; entry != nil && entry.proc == proc {
+		e.beginServeTeardownLocked(entry)
 	}
-	// Task completion must not wait out a stubborn server.
-	go terminateServe(taskID, proc)
+}
+
+// Caller holds serveMu. Failed attempts stay pending and may be retried by
+// shutdown; only confirmed exit permits forgetting the recovery record.
+func (e *OpenCodeExecutor) beginServeTeardownLocked(entry *ownedServe) <-chan struct{} {
+	if entry == nil {
+		done := make(chan struct{})
+		close(done)
+		return done
+	}
+	if entry.done != nil {
+		return entry.done
+	}
+	if e.serveProcs[entry.taskID] == entry {
+		delete(e.serveProcs, entry.taskID)
+	}
+	if e.servePending == nil {
+		e.servePending = make(map[*ownedServe]struct{})
+	}
+	e.servePending[entry] = struct{}{}
+	done := make(chan struct{})
+	entry.done = done
+	go func() {
+		exited := e.terminateServe(entry.taskID, entry.proc)
+		e.serveMu.Lock()
+		defer e.serveMu.Unlock()
+		if exited {
+			delete(e.servePending, entry)
+		} else {
+			slog.Warn("opencode serve exit unconfirmed; retaining recovery record", "task_id", entry.taskID, "pid", entry.proc.Pid())
+		}
+		entry.done = nil
+		e.persistServeProcsLocked()
+		close(done)
+	}()
+	return done
 }
 
 // KillAllServeProcs terminates every serve process this executor started.
@@ -211,50 +271,67 @@ func (e *OpenCodeExecutor) killServeProc(taskID string) {
 // per-task goroutine that ties a server's lifetime to its driver: that
 // goroutine polls the driver once a second and may then hold for session
 // idle, and Stop() returns — and the process exits — long before it gets
-// there. Servers are torn down concurrently so the wait is bounded by one
-// escalation, not one per task.
+// there. After admitted headless spawns finish, servers are torn down
+// concurrently (one escalation, not one per task). An unconfirmed exit stays
+// recoverable on disk; this method does not promise that SIGKILL succeeded.
 func (e *OpenCodeExecutor) KillAllServeProcs() {
+	e.serveAdmission.Lock()
+	defer e.serveAdmission.Unlock()
 	e.serveMu.Lock()
-	procs := e.serveProcs
-	e.serveProcs = make(map[string]Process)
-	e.serveProjects = make(map[string]string)
-	e.serveMu.Unlock()
-	e.persistServeProcs()
-
-	var wg sync.WaitGroup
-	for taskID, proc := range procs {
-		if proc == nil || proc.Exited() {
-			continue
-		}
-		wg.Add(1)
-		go func(taskID string, proc Process) {
-			defer wg.Done()
-			terminateServe(taskID, proc)
-		}(taskID, proc)
+	e.serveStopping = true
+	var attempts []<-chan struct{}
+	for _, entry := range e.serveProcs {
+		e.beginServeTeardownLocked(entry)
 	}
-	wg.Wait()
+	for entry := range e.servePending {
+		attempts = append(attempts, e.beginServeTeardownLocked(entry))
+	}
+	e.serveMu.Unlock()
+	for {
+		for _, done := range attempts {
+			<-done
+		}
+		attempts = nil
+		e.serveMu.Lock()
+		for entry := range e.servePending {
+			if entry.done != nil {
+				attempts = append(attempts, entry.done)
+			}
+		}
+		e.serveMu.Unlock()
+		if len(attempts) == 0 {
+			return
+		}
+	}
 }
 
-// persistServeProcs writes the live serve PIDs to the state dir. Failure is
+// persistServeProcsLocked writes owned serve PIDs to the state dir. Failure is
 // logged, not returned: the map is still authoritative for this process, and
 // the file only matters to a successor after a crash.
-func (e *OpenCodeExecutor) persistServeProcs() {
+// serveMu serializes snapshot AND publication, including recovery. Atomic
+// rename prevents a crash during a write from truncating the previous record.
+func (e *OpenCodeExecutor) persistServeProcsLocked() {
 	if e.config.StateDir == "" {
 		return
 	}
-	e.serveMu.Lock()
 	state := serveProcsState{Procs: make(map[string]serveProcRecord, len(e.serveProcs))}
-	for taskID, proc := range e.serveProcs {
-		if proc == nil {
-			continue
-		}
-		state.Procs[taskID] = serveProcRecord{
-			PID:       proc.Pid(),
-			ProjectID: e.serveProjects[taskID],
-			StartedAt: time.Now().UTC().Format(time.RFC3339),
-		}
+	for key, rec := range e.serveRecovered {
+		state.Procs[key] = rec
 	}
-	e.serveMu.Unlock()
+	add := func(key string, rec serveProcRecord) {
+		// Preserve the legacy task-ID key where possible. Overlapping task
+		// generations need distinct records; recovery treats keys as labels.
+		if _, exists := state.Procs[key]; exists {
+			key = fmt.Sprintf("%s#%d", key, rec.PID)
+		}
+		state.Procs[key] = rec
+	}
+	for taskID, entry := range e.serveProcs {
+		add(taskID, entry.record)
+	}
+	for entry := range e.servePending {
+		add(entry.taskID, entry.record)
+	}
 
 	path := e.serveProcsPath()
 	if len(state.Procs) == 0 {
@@ -267,31 +344,37 @@ func (e *OpenCodeExecutor) persistServeProcs() {
 	if err != nil {
 		return
 	}
-	if err := os.WriteFile(path, b, 0o644); err != nil {
+	if err := os.WriteFile(path+".tmp", b, 0o644); err != nil {
 		slog.Warn("failed to persist serve process record", "path", path, "error", err)
+		return
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
+		slog.Warn("failed to publish serve process record", "path", path, "error", err)
 	}
 }
 
 // ReapLeftoverServeProcs kills serve processes recorded by a previous runner
-// that are still alive, then discards the record.
+// that are still alive. Unconfirmed exits retain their original record.
 //
 // A PID is only signalled if it is alive AND its command line still looks
 // like `opencode serve` — PIDs are reused, and a stale record must never kill
 // whatever unrelated process inherited the number. Called once at startup.
 func (e *OpenCodeExecutor) ReapLeftoverServeProcs() {
+	e.serveMu.Lock()
+	defer e.serveMu.Unlock()
 	path := e.serveProcsPath()
 	b, err := os.ReadFile(path)
 	if err != nil {
 		return
 	}
-	// Whatever happens below, the record describes a runner that is gone.
-	defer func() { _ = os.Remove(path) }()
 
 	var state serveProcsState
 	if err := json.Unmarshal(b, &state); err != nil {
 		slog.Warn("serve process record is unreadable; not reaping", "path", path, "error", err)
+		_ = os.Remove(path)
 		return
 	}
+	e.serveRecovered = make(map[string]serveProcRecord)
 
 	reaped := 0
 	for taskID, rec := range state.Procs {
@@ -303,9 +386,10 @@ func (e *OpenCodeExecutor) ReapLeftoverServeProcs() {
 				"task_id", taskID, "pid", rec.PID)
 			continue
 		}
-		if err := NewPidProcess(rec.PID).Kill(syscall.SIGTERM); err != nil {
-			slog.Warn("failed to reap leftover opencode serve",
-				"task_id", taskID, "pid", rec.PID, "error", err)
+		proc := &recoveredServeProcess{PidProcess: NewPidProcess(rec.PID), matches: e.looksLikeOpencodeServe}
+		if !e.terminateServe(taskID, proc) {
+			e.serveRecovered[taskID] = rec
+			slog.Warn("leftover serve exit unconfirmed; retaining recovery record", "task_id", taskID, "pid", rec.PID)
 			continue
 		}
 		reaped++
@@ -315,6 +399,7 @@ func (e *OpenCodeExecutor) ReapLeftoverServeProcs() {
 	if reaped > 0 {
 		slog.Info("reaped leftover opencode serve processes", "count", reaped)
 	}
+	e.persistServeProcsLocked()
 }
 
 // looksLikeOpencodeServe reports whether pid's current command line is an
@@ -356,7 +441,7 @@ func (e *OpenCodeExecutor) ResolveWorkdir(task *types.ResolvedTask) (string, err
 
 // ensureWorktree is retained for test compatibility.
 func (e *OpenCodeExecutor) ensureWorktree(task *types.ResolvedTask) (string, error) {
-	return ensureWorktreeForTask(task, e.CommandFactory)
+	return ensureWorktreeForTaskWithConfig(task, e.config, e.CommandFactory)
 }
 
 // =============================================================================
@@ -405,6 +490,14 @@ func resolveExecutorType(task *types.ResolvedTask) string {
 //
 // Unknown executor types fail the task with a clear error message.
 func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error) {
+	if err := validateTaskGitRemote(task.GitRemote, e.config); err != nil {
+		return nil, err
+	}
+	if task.TargetWorkdir != "" {
+		if err := validateSpawnWorkdir(task.TargetWorkdir, e.config); err != nil {
+			return nil, fmt.Errorf("target workdir: %w", err)
+		}
+	}
 	// Ensure state directory exists
 	if err := os.MkdirAll(e.config.StateDir, 0o755); err != nil {
 		return nil, fmt.Errorf("ensure state dir: %w", err)
@@ -425,6 +518,9 @@ func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, 
 		}
 	}
 
+	if err := validateSpawnWorkdir(workdir, e.config); err != nil {
+		return nil, fmt.Errorf("resolve workdir: %w", err)
+	}
 	// Dispatch based on executor type
 	executorType := resolveExecutorType(task)
 	switch executorType {
@@ -469,6 +565,7 @@ func (e *OpenCodeExecutor) spawnPi(ctx context.Context, task *types.ResolvedTask
 	}
 
 	cmd := e.CommandFactory(piBin)
+	cmd.Env = childEnvironment(task, e.config)
 	cmd.Dir = workdir
 
 	// Create output log for stderr (stdout is used for JSONL protocol)
@@ -567,17 +664,7 @@ func (e *OpenCodeExecutor) spawnScript(ctx context.Context, task *types.Resolved
 	cmd.Stderr = output
 
 	// Propagate environment
-	cmd.Env = os.Environ()
-	if e.config.BrainAPIURL != "" {
-		cmd.Env = append(cmd.Env, "BRAIN_API_URL="+e.config.BrainAPIURL)
-	}
-	if e.config.APIToken != "" {
-		cmd.Env = append(cmd.Env, "BRAIN_API_TOKEN="+e.config.APIToken)
-	}
-	// Task-level env overrides
-	for k, v := range task.Env {
-		cmd.Env = append(cmd.Env, k+"="+v)
-	}
+	cmd.Env = childEnvironment(task, e.config)
 
 	// 8. Start the process
 	if err := cmd.Start(); err != nil {
@@ -691,6 +778,14 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	promptFile string,
 	opts SpawnOptions,
 ) (*SpawnResult, error) {
+	e.serveAdmission.RLock()
+	defer e.serveAdmission.RUnlock()
+	e.serveMu.Lock()
+	stopping := e.serveStopping
+	e.serveMu.Unlock()
+	if stopping {
+		return nil, fmt.Errorf("headless executor is shut down")
+	}
 	if e.config.Control.Disabled {
 		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0, "")
 	}
@@ -720,12 +815,11 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	res, err := e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, port, sessionID)
 	if err != nil {
 		// Driver failed to start — don't leak the server we started.
-		_ = serveProc.Kill(syscall.SIGTERM)
+		e.killServeGeneration(task.ID, serveProc)
 		return nil, err
 	}
 	res.ExistingSessionIDs = existingSessionIDs
 	res.SessionID = sessionID
-	e.trackServeProcFor(task.ID, projectID, serveProc)
 
 	// Tie the server's lifetime to the driver process: when the run process
 	// exits (completion, kill, crash, or runner shutdown), tear the server
@@ -748,7 +842,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 				time.Sleep(2 * time.Second)
 			}
 		}
-		e.killServeProc(task.ID)
+		e.killServeGeneration(task.ID, serveProc)
 	}()
 
 	return res, nil
@@ -797,6 +891,7 @@ func (e *OpenCodeExecutor) spawnHeadlessDirect(
 	args = append(args, string(promptContent))
 
 	cmd := e.CommandFactory(e.config.Opencode.Bin, args...)
+	cmd.Env = childEnvironment(task, e.config)
 	cmd.Dir = workdir
 
 	var output io.Writer = logFile
@@ -838,6 +933,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string
 	}
 
 	cmd := e.CommandFactory(e.config.Opencode.Bin, "serve", "--port", "0")
+	cmd.Env = childEnvironment(nil, e.config)
 	cmd.Dir = workdir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -847,6 +943,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string
 		return 0, nil, nil, fmt.Errorf("start opencode serve: %w", err)
 	}
 	proc := NewOsProcess(cmd)
+	e.trackServeProcFor(taskID, projectID, proc)
 	go func() {
 		<-proc.Done()
 		logFile.Close()
@@ -855,6 +952,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string
 	// Poll for the listening port, then confirm the HTTP server is ready.
 	for attempt := 0; attempt < 15; attempt++ {
 		if proc.Exited() {
+			e.killServeGeneration(taskID, proc)
 			return 0, nil, nil, fmt.Errorf("opencode serve exited during startup (code %d)", proc.ExitCode())
 		}
 		if port, derr := DiscoverPort(proc.Pid()); derr == nil && port > 0 && instanceHealthy(port) {
@@ -863,7 +961,7 @@ func (e *OpenCodeExecutor) startHeadlessServer(workdir, projectID, taskID string
 		}
 		time.Sleep(1 * time.Second)
 	}
-	_ = proc.Kill(syscall.SIGTERM)
+	e.killServeGeneration(taskID, proc)
 	return 0, nil, nil, fmt.Errorf("opencode serve did not bind a port in time")
 }
 
@@ -880,26 +978,28 @@ func (e *OpenCodeExecutor) buildRunnerScript(task *types.ResolvedTask, projectID
 	runnerScript := filepath.Join(e.config.StateDir, fmt.Sprintf("runner_%s_%s.sh", projectID, task.ID))
 	agentFlag := ""
 	if agent != "" {
-		agentFlag = fmt.Sprintf(`--agent "%s" `, agent)
+		agentFlag = "--agent " + shellEnvQuote(agent) + " "
 	}
 	modelFlag := ""
 	if model != "" {
-		modelFlag = fmt.Sprintf(`--model "%s" `, model)
+		modelFlag = "--model " + shellEnvQuote(model) + " "
 	}
 
-	// Build environment exports using common logic
-	envBlock := CommonBuildEnvExports(task, e.config)
-
-	script := fmt.Sprintf(`#!/bin/bash
-cd "%s"
-%s"%s" %s%s--port 0 --prompt "$(cat '%s')"
+	body := fmt.Sprintf(`cd %s || exit 1
+%s %s%s--port 0 --prompt "$(cat %s)"
 exit_code=$?
 echo ""
 echo "Task Complete (exit: $exit_code)"
 exit $exit_code
-`, workdir, envBlock, e.config.Opencode.Bin, agentFlag, modelFlag, promptFile)
+`, shellEnvQuote(workdir), shellEnvQuote(e.config.Opencode.Bin), agentFlag, modelFlag, shellEnvQuote(promptFile))
+	script := childRunnerScript(body, task, e.config)
 
-	if err := os.WriteFile(runnerScript, []byte(script), 0o755); err != nil {
+	// WriteFile's mode only applies to new files. Restrict existing launchers
+	// before writing the sanitized environment, which can contain provider secrets.
+	if err := os.Chmod(runnerScript, 0o700); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("restrict runner script permissions: %w", err)
+	}
+	if err := os.WriteFile(runnerScript, []byte(script), 0o700); err != nil {
 		return "", fmt.Errorf("write runner script: %w", err)
 	}
 	return runnerScript, nil
@@ -1158,25 +1258,32 @@ func ParseLsofListeners(output string) []OpencodeListener {
 	return listeners
 }
 
-// DiscoverOpencodeListeners returns every localhost-bound OpenCode HTTP
-// listener on this machine, regardless of whether brain spawned it. Used
-// as a last-resort fallback so the audit UI can serve session transcripts
-// from a user-started OpenCode TUI whose messages are still only in memory
-// (OpenCode persists session_diff/<sid>.json eagerly, but message/<sid>/
-// is not always flushed to disk before the instance exits).
+// DiscoverOpencodeListeners returns only listeners in the caller's current
+// runner-owned PID set. An empty ownership set grants no discovery access.
+// Ownership must come from process tracking, never session-list baselines.
 //
 // Returns nil on any lsof error — discovery is best-effort and must not
 // fail the caller.
-func DiscoverOpencodeListeners() []OpencodeListener {
+func DiscoverOpencodeListeners(ownedPIDs map[int]bool) []OpencodeListener {
+	if len(ownedPIDs) == 0 {
+		return nil
+	}
 	cmd := exec.Command("lsof", "-a", "-i", "-P", "-n", "-c", "opencode", "-sTCP:LISTEN")
 	output, err := cmd.Output()
 	if err != nil {
-		// lsof exits 1 when no matches — still return whatever was on stdout.
-		if len(output) == 0 {
-			return nil
+		return nil
+	}
+	return filterOwnedListeners(ParseLsofListeners(string(output)), ownedPIDs)
+}
+
+func filterOwnedListeners(listeners []OpencodeListener, ownedPIDs map[int]bool) []OpencodeListener {
+	var owned []OpencodeListener
+	for _, listener := range listeners {
+		if listener.PID > 0 && ownedPIDs[listener.PID] {
+			owned = append(owned, listener)
 		}
 	}
-	return ParseLsofListeners(string(output))
+	return owned
 }
 
 // =============================================================================

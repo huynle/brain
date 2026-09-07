@@ -60,7 +60,7 @@ func TestRunnerOptions_FullConfigPassthrough(t *testing.T) {
 	// Construct a RunnerConfig with ALL fields populated
 	cfg := runner.RunnerConfig{
 		BrainAPIURL:            "http://localhost:9999",
-		APIToken:               "test-token",
+		StandingToken:          "test-token",
 		PollInterval:           15,
 		MaxParallel:            4,
 		StateDir:               "/tmp/state",

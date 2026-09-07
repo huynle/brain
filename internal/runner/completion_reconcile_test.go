@@ -211,7 +211,7 @@ func TestCheckCompletion_TaskEntryLookupSendsBearerToken(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	pm := NewProcessManager(RunnerConfig{BrainAPIURL: srv.URL, APIToken: token, APITimeout: 2000})
+	pm := NewProcessManager(RunnerConfig{BrainAPIURL: srv.URL, StandingToken: token, APITimeout: 2000})
 	task := scriptTask(false)
 	task.ExecutorType = "opencode"
 	registerFake(pm, task, &fakeProcess{exited: true, exitCode: 0})

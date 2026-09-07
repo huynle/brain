@@ -59,11 +59,8 @@ type BridgeClient struct {
 	execMu sync.Mutex
 	execs  map[string]*execProcess
 
-	// externalListeners caches the result of `lsof -c opencode -sTCP:LISTEN`
-	// briefly. The audit UI's history fetch falls back to scanning every
-	// localhost OpenCode HTTP server when the session was hosted by a process
-	// brain didn't spawn (its messages may still only live in that server's
-	// memory). Cached for externalListenersTTL to avoid hammering lsof.
+	// Cache runner-scoped listener candidates, not authorization. Every use
+	// revalidates against current tracking and a fresh process snapshot.
 	externalListenersMu     sync.Mutex
 	externalListenersCached []OpencodeListener
 	externalListenersAt     time.Time
@@ -131,8 +128,8 @@ func (bc *BridgeClient) runConnection(ctx context.Context) error {
 	defer cancel()
 
 	headers := http.Header{}
-	if bc.runner.config.APIToken != "" {
-		headers.Set("Authorization", "Bearer "+bc.runner.config.APIToken)
+	if bc.runner.config.StandingToken != "" {
+		headers.Set("Authorization", "Bearer "+bc.runner.config.StandingToken)
 	}
 	ws, _, err := websocket.Dial(dialCtx, bc.bridgeURL(), &websocket.DialOptions{
 		HTTPHeader: headers,
@@ -559,46 +556,8 @@ func (bc *BridgeClient) forwardEvent(instanceID string, raw json.RawMessage) {
 // Ad-hoc instance spawn / kill
 // ---------------------------------------------------------------------------
 
-// allowedWorkdirRoots returns the configured spawn roots, defaulting to the
-// user's home directory.
-func (bc *BridgeClient) allowedWorkdirRoots() []string {
-	roots := bc.runner.config.Control.AllowedWorkdirRoots
-	if len(roots) > 0 {
-		return roots
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		return []string{home}
-	}
-	return nil
-}
-
 func (bc *BridgeClient) validateSpawnWorkdir(workdir string) error {
-	if workdir == "" || !filepath.IsAbs(workdir) {
-		return errors.New("workdir must be an absolute path")
-	}
-	info, err := os.Stat(workdir)
-	if err != nil {
-		return fmt.Errorf("workdir: %w", err)
-	}
-	if !info.IsDir() {
-		return errors.New("workdir is not a directory")
-	}
-	roots := bc.allowedWorkdirRoots()
-	if len(roots) == 0 {
-		return errors.New("no allowed workdir roots configured")
-	}
-	cleaned := filepath.Clean(workdir)
-	for _, root := range roots {
-		absRoot, err := filepath.Abs(root)
-		if err != nil {
-			continue
-		}
-		absRoot = filepath.Clean(absRoot)
-		if cleaned == absRoot || strings.HasPrefix(cleaned, absRoot+string(filepath.Separator)) {
-			return nil
-		}
-	}
-	return fmt.Errorf("workdir %q is not under any allowed root: %v", workdir, roots)
+	return validateSpawnWorkdir(workdir, bc.runner.config)
 }
 
 func (bc *BridgeClient) opencodeBin() string {
@@ -645,6 +604,7 @@ func (bc *BridgeClient) spawnAdhoc(spec *types.SpawnInstanceSpec) (*types.Openco
 	}
 
 	cmd := exec.Command(bc.opencodeBin(), args...)
+	cmd.Env = bc.execEnv()
 	cmd.Dir = spec.Workdir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -823,11 +783,9 @@ func (bc *BridgeClient) handleHistory(f bridge.Frame) {
 // served from its running server); failing that it reads the messages from
 // OpenCode's on-disk storage, which survives the instance's exit.
 //
-// If neither brain-tracked instances nor on-disk storage have the session,
-// this falls back to scanning every localhost OpenCode HTTP server (TUIs
-// the user started outside of brain). OpenCode does not flush every
-// session's message/<sid>/ to disk eagerly, so a TUI's in-memory transcript
-// is often the only place a recently-completed session can still be read.
+// If neither known sessions nor on-disk storage have the session, probe only
+// runner-owned OpenCode listeners. Disk-history scope is unchanged; listener
+// ownership is not authorization for every transcript in OpenCode's store.
 func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
 	if sessionID == "" {
 		return nil, errors.New("missing session id")
@@ -845,8 +803,7 @@ func (bc *BridgeClient) fetchSessionHistory(sessionID string) ([]byte, error) {
 	if body, err := readSessionHistory(sessionID); err == nil {
 		return body, nil
 	}
-	// Last resort: a TUI brain never spawned may still hold the messages in
-	// memory. Probe every localhost OpenCode listener.
+	// Last resort: a runner-owned server may still hold the messages in memory.
 	if port := bc.portForExternalSession(sessionID); port > 0 {
 		path := "/session/" + sessionID + "/message"
 		if status, body, err := bc.httpGet(port, path); err == nil && status == http.StatusOK {
@@ -878,14 +835,14 @@ func (bc *BridgeClient) portForSession(sessionID string) int {
 	return 0
 }
 
-// portForExternalSession asks every OpenCode HTTP server on this host
+// portForExternalSession asks only runner-owned OpenCode HTTP servers
 // whether it currently hosts sessionID. It returns the first port whose
 // GET /session/<sid>/message responds 200 with a non-empty body, or 0 if
 // none does. The listener list is cached for externalListenersTTL.
 //
 // This is a slow path — used only after fast in-memory checks and on-disk
 // storage have both come up empty. It exists so the audit UI can still
-// review sessions from user-started TUIs, since OpenCode does not
+// review runner sessions not yet recorded locally, since OpenCode does not
 // guarantee that message/<sid>/ is on disk before the instance exits.
 //
 // Each probe uses a tight timeout so a stalled or non-OpenCode listener
@@ -921,14 +878,60 @@ const externalProbeTimeout = 750 * time.Millisecond
 // externalListeners returns the cached lsof-discovered OpenCode listeners,
 // refreshing the cache when it's older than externalListenersTTL.
 func (bc *BridgeClient) externalListeners() []OpencodeListener {
+	ownedPIDs := bc.ownedOpencodePIDs()
+	if len(ownedPIDs) == 0 {
+		return nil
+	}
 	bc.externalListenersMu.Lock()
 	defer bc.externalListenersMu.Unlock()
 	if time.Since(bc.externalListenersAt) < externalListenersTTL && bc.externalListenersCached != nil {
-		return bc.externalListenersCached
+		return filterOwnedListeners(bc.externalListenersCached, ownedPIDs)
 	}
-	bc.externalListenersCached = DiscoverOpencodeListeners()
+	bc.externalListenersCached = DiscoverOpencodeListeners(ownedPIDs)
 	bc.externalListenersAt = time.Now()
 	return bc.externalListenersCached
+}
+
+// ownedOpencodePIDs derives live roots from runner tracking, then expands their
+// descendants (including tmux shell children). Snapshot/PID checks are not a
+// sandbox or P7 credential identity: concurrent exit/reparenting/PID reuse is
+// not made race-free by this boundary.
+func (bc *BridgeClient) ownedOpencodePIDs() map[int]bool {
+	if bc.runner == nil {
+		return nil
+	}
+	var roots []int
+	if bc.runner.processMgr != nil {
+		for _, info := range bc.runner.processMgr.GetAll() {
+			if info.Proc == nil || !isOpencodeExecutorName(info.Task.ExecutorType) {
+				continue // A capacity reservation is not process ownership.
+			}
+			if !info.IsExited && !info.Proc.Exited() {
+				roots = append(roots, info.Proc.Pid())
+			}
+			// The separately tracked serve process can outlive its driver.
+			roots = append(roots, bc.runner.serveProcessPID(info.Task))
+		}
+	}
+	bc.mu.Lock()
+	for _, ad := range bc.adhoc {
+		if ad != nil && ad.proc != nil && isOpencodeExecutorName(ad.Instance.Executor) && ad.Instance.Status != "exited" && !ad.proc.Exited() {
+			roots = append(roots, ad.proc.Pid())
+		}
+	}
+	bc.mu.Unlock()
+	if len(roots) == 0 {
+		return nil
+	}
+	table, err := sampleProcessTable()
+	if err != nil {
+		return nil
+	}
+	owned := make(map[int]bool)
+	for _, pid := range processTree(table, roots...) {
+		owned[pid] = true
+	}
+	return owned
 }
 
 // httpGet performs a bounded GET against a localhost instance port.
@@ -1083,7 +1086,7 @@ func (bc *BridgeClient) startExec(f bridge.Frame) error {
 	timeout := execTimeout(f.ExecTimeoutMs)
 	ctx, cancel := context.WithCancel(bc.baseContext())
 
-	cmd := exec.CommandContext(ctx, "bash", "-lc", f.Command)
+	cmd := exec.CommandContext(ctx, "bash", "--noprofile", "--norc", "-c", f.Command)
 	cmd.Dir = workdir
 	cmd.Env = bc.execEnv()
 	// Own process group so a signal reaches the whole child tree, matching
@@ -1379,20 +1382,12 @@ func (bc *BridgeClient) resolveExecWorkdir(requested string) (string, error) {
 	return abs, nil
 }
 
-// execEnv mirrors spawnScript's environment handling so a shell command sees
-// the same Brain credentials a script task would.
+// execEnv never forwards runner credentials, including without a runner.
 func (bc *BridgeClient) execEnv() []string {
-	env := os.Environ()
 	if bc.runner == nil {
-		return env
+		return childEnvironment(nil, RunnerConfig{})
 	}
-	if url := bc.runner.config.BrainAPIURL; url != "" {
-		env = append(env, "BRAIN_API_URL="+url)
-	}
-	if token := bc.runner.config.APIToken; token != "" {
-		env = append(env, "BRAIN_API_TOKEN="+token)
-	}
-	return env
+	return childEnvironment(nil, bc.runner.config)
 }
 
 // execTimeout normalises a requested command budget into a duration.

@@ -75,6 +75,7 @@ type HookDispatcher struct {
 	// inlineHooks maps hook names to inline config definitions.
 	// Inline hooks take precedence over directory scripts.
 	inlineHooks map[string]InlineHookConfig
+	childConfig RunnerConfig
 }
 
 // NewHookDispatcher creates a HookDispatcher that discovers executable scripts
@@ -255,8 +256,12 @@ func stripVerbSuffix(s string) string {
 
 // buildHookEnv constructs the environment variables for hook execution.
 // Variables are prefixed with BRAIN_ to avoid collisions.
-func buildHookEnv(evt types.Event) []string {
-	env := os.Environ()
+func buildHookEnv(evt types.Event, configs ...RunnerConfig) []string {
+	var config RunnerConfig
+	if len(configs) > 0 {
+		config = configs[0]
+	}
+	env := childEnvironment(nil, config)
 	env = append(env,
 		"BRAIN_EVENT_TYPE="+evt.Type,
 		"BRAIN_PROJECT_ID="+evt.ProjectID,
@@ -345,7 +350,7 @@ func (hd *HookDispatcher) executePreHook(hookPath, hookName string, evt types.Ev
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, hookPath)
-	cmd.Env = buildHookEnv(evt)
+	cmd.Env = buildHookEnv(evt, hd.childConfig)
 	// Kill the entire process group so child processes (e.g., sleep) are also killed.
 	cmd.Cancel = func() error {
 		return cmd.Process.Kill()
@@ -400,7 +405,7 @@ func (hd *HookDispatcher) executePostHook(hookPath, hookName string, evt types.E
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, hookPath)
-	cmd.Env = buildHookEnv(evt)
+	cmd.Env = buildHookEnv(evt, hd.childConfig)
 	cmd.Cancel = func() error {
 		return cmd.Process.Kill()
 	}
@@ -444,7 +449,7 @@ func (hd *HookDispatcher) executeInlinePreHook(cfg InlineHookConfig, hookName st
 	defer cancel()
 
 	cmd := buildInlineCmd(ctx, cfg)
-	cmd.Env = buildHookEnv(evt)
+	cmd.Env = buildHookEnv(evt, hd.childConfig)
 	cmd.Cancel = func() error {
 		return cmd.Process.Kill()
 	}
@@ -496,7 +501,7 @@ func (hd *HookDispatcher) executeInlinePostHook(cfg InlineHookConfig, hookName s
 	defer cancel()
 
 	cmd := buildInlineCmd(ctx, cfg)
-	cmd.Env = buildHookEnv(evt)
+	cmd.Env = buildHookEnv(evt, hd.childConfig)
 	cmd.Cancel = func() error {
 		return cmd.Process.Kill()
 	}

@@ -1791,6 +1791,9 @@ type RunnerRegistration struct {
 
 // RunnerHeartbeatRequest is the request body for POST /runners/:id/heartbeat.
 type RunnerHeartbeatRequest struct {
+	// Full replacement. nil means not reported (legacy); [] revokes all.
+	// Do not omitempty: an empty advertisement must reach the server.
+	Capabilities   []string               `json:"capabilities"`
 	RunningTasks   int                    `json:"running_tasks"`
 	Stats          map[string]interface{} `json:"stats,omitempty"`
 	DispatchPush   *bool                  `json:"dispatch_push,omitempty"`

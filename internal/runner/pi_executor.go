@@ -238,6 +238,14 @@ func (e *PiExecutor) GetEffectiveModel(task *types.ResolvedTask, runtimeDefaultM
 
 // Spawn dispatches to mode-specific spawners.
 func (e *PiExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error) {
+	if err := validateTaskGitRemote(task.GitRemote, e.config); err != nil {
+		return nil, err
+	}
+	if task.TargetWorkdir != "" {
+		if err := validateSpawnWorkdir(task.TargetWorkdir, e.config); err != nil {
+			return nil, fmt.Errorf("target workdir: %w", err)
+		}
+	}
 	// Build and save prompt
 	prompt := e.BuildPrompt(task, opts.IsResume)
 	promptFile, err := WritePromptFile(e.config.StateDir, projectID, task.ID, prompt)
@@ -254,6 +262,9 @@ func (e *PiExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, projec
 		}
 	}
 
+	if err := validateSpawnWorkdir(workdir, e.config); err != nil {
+		return nil, fmt.Errorf("resolve workdir: %w", err)
+	}
 	switch opts.Mode.SpawnMode() {
 	case ExecutionModeHeadless:
 		return e.spawnHeadless(ctx, task, projectID, workdir, promptFile, opts.RuntimeDefaultModel)
@@ -299,6 +310,7 @@ func (e *PiExecutor) spawnHeadless(
 
 	// Create command via factory
 	cmd := e.CommandFactory(e.config.Pi.Bin, args...)
+	cmd.Env = childEnvironment(task, e.config)
 	cmd.Dir = workdir
 	cmd.Stdout = logFile
 	cmd.Stderr = logFile
@@ -375,13 +387,20 @@ func (e *PiExecutor) buildRunnerScript(task *types.ResolvedTask, projectID, work
 	runnerScript := filepath.Join(e.config.StateDir, fmt.Sprintf("runner_%s_%s.sh", projectID, task.ID))
 
 	// Build agent and extension flags
-	agentFlags := strings.Join(e.resolveAgentArgs(task.Agent), " ")
-	extFlags := strings.Join(e.buildExtensionArgs(task), " ")
+	quoteArgs := func(args []string) string {
+		quoted := make([]string, len(args))
+		for i, arg := range args {
+			quoted[i] = shellEnvQuote(arg)
+		}
+		return strings.Join(quoted, " ")
+	}
+	agentFlags := quoteArgs(e.resolveAgentArgs(task.Agent))
+	extFlags := quoteArgs(e.buildExtensionArgs(task))
 
 	model := e.GetEffectiveModel(task, opts.RuntimeDefaultModel)
 	modelFlag := ""
 	if model != "" {
-		modelFlag = fmt.Sprintf(`--model "%s" `, model)
+		modelFlag = "--model " + shellEnvQuote(model) + " "
 	}
 
 	noSessionFlag := ""
@@ -389,19 +408,21 @@ func (e *PiExecutor) buildRunnerScript(task *types.ResolvedTask, projectID, work
 		noSessionFlag = "--no-session "
 	}
 
-	// Build environment exports using common logic
-	envBlock := CommonBuildEnvExports(task, e.config)
-
-	script := fmt.Sprintf(`#!/bin/bash
-cd "%s"
-%s"%s" %s %s %s%s--prompt "$(cat '%s')"
+	body := fmt.Sprintf(`cd %s || exit 1
+%s %s %s %s%s--prompt "$(cat %s)"
 exit_code=$?
 echo ""
 echo "Task Complete (exit: $exit_code)"
 exit $exit_code
-`, workdir, envBlock, e.config.Pi.Bin, agentFlags, extFlags, modelFlag, noSessionFlag, promptFile)
+`, shellEnvQuote(workdir), shellEnvQuote(e.config.Pi.Bin), agentFlags, extFlags, modelFlag, noSessionFlag, shellEnvQuote(promptFile))
+	script := childRunnerScript(body, task, e.config)
 
-	if err := os.WriteFile(runnerScript, []byte(script), 0o755); err != nil {
+	// WriteFile's mode only applies to new files. Restrict existing launchers
+	// before writing the sanitized environment, which can contain provider secrets.
+	if err := os.Chmod(runnerScript, 0o700); err != nil && !os.IsNotExist(err) {
+		return "", fmt.Errorf("restrict runner script permissions: %w", err)
+	}
+	if err := os.WriteFile(runnerScript, []byte(script), 0o700); err != nil {
 		return "", fmt.Errorf("write runner script: %w", err)
 	}
 	return runnerScript, nil

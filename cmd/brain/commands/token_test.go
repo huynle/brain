@@ -364,7 +364,7 @@ func newTokenCommandWithAPI(t *testing.T, server *httptest.Server, subcommand, n
 	t.Helper()
 	cfg := &UnifiedConfig{}
 	cfg.Runner.BrainAPIURL = server.URL
-	cfg.Runner.APIToken = "test-bearer-token"
+	cfg.Runner.StandingToken = "test-bearer-token"
 	return &TokenCommand{
 		Subcommand: subcommand,
 		Name:       name,
@@ -637,7 +637,7 @@ func TestTokenCommand_CreateFallsBackToBootstrapOn401(t *testing.T) {
 		httpClient: server.Client(),
 	}
 	cmd.Config.Runner.BrainAPIURL = server.URL
-	cmd.Config.Runner.APIToken = "invalid-token"
+	cmd.Config.Runner.StandingToken = "invalid-token"
 	cmd.Config.Server.BrainDir = setupTestDB(t)
 
 	err := cmd.Execute()
@@ -658,7 +658,7 @@ func TestTokenCommand_CreateFallsBackToDirectDBWhenBootstrapForbidden(t *testing
 		httpClient: server.Client(),
 	}
 	cmd.Config.Runner.BrainAPIURL = server.URL
-	cmd.Config.Runner.APIToken = "invalid-token"
+	cmd.Config.Runner.StandingToken = "invalid-token"
 	cmd.Config.Server.BrainDir = brainDir
 
 	err := cmd.Execute()
@@ -703,7 +703,7 @@ func TestTokenCommand_ListFallsBackToDirectDBOn401(t *testing.T) {
 		httpClient: server.Client(),
 	}
 	cmd.Config.Runner.BrainAPIURL = server.URL
-	cmd.Config.Runner.APIToken = "invalid-token"
+	cmd.Config.Runner.StandingToken = "invalid-token"
 	cmd.Config.Server.BrainDir = brainDir
 
 	err = cmd.Execute()
@@ -733,7 +733,7 @@ func TestTokenCommand_RevokeFallsBackToDirectDBOn401(t *testing.T) {
 		httpClient: server.Client(),
 	}
 	cmd.Config.Runner.BrainAPIURL = server.URL
-	cmd.Config.Runner.APIToken = "invalid-token"
+	cmd.Config.Runner.StandingToken = "invalid-token"
 	cmd.Config.Server.BrainDir = brainDir
 
 	err = cmd.Execute()
@@ -784,7 +784,7 @@ func TestTokenCommand_BearerAuth(t *testing.T) {
 		httpClient: server.Client(),
 	}
 	cmd.Config.Runner.BrainAPIURL = server.URL
-	cmd.Config.Runner.APIToken = "my-secret-token"
+	cmd.Config.Runner.StandingToken = "my-secret-token"
 	cmd.Config.Server.BrainDir = setupTestDB(t)
 
 	if err := cmd.Execute(); err != nil {

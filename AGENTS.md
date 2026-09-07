@@ -200,6 +200,49 @@ The Pi executor spawns [Pi](https://github.com/anthropics/pi) processes in RPC m
 
 #### Configuration
 
+#### Task Git remote policy
+
+Task `git_remote` admission is HTTPS-only and requires a registered runner's
+credentialed-host advertisement. Registration/heartbeat derive reserved
+`git-credential-host:<authority>` capabilities; the service gates Save/Update,
+metadata writes and generated checkouts before persistence, and dispatch/pull/
+direct claims require compatible live runners. See
+[Git remote policy](docs/git-remote-policy.md) for nested/flat configuration,
+legacy GitHub-only binding, explicit-empty deny, anonymous-transport limits,
+redirect/CA behavior and cache migration costs.
+
+#### Shared runner workdir policy
+
+`runner.control.allowed_workdir_roots` applies to **both task executors and
+ad-hoc spawning**, even when `control.disabled` is true. In flat/legacy config,
+use `control.allowed_workdir_roots` without the `runner` wrapper:
+
+```yaml
+runner:
+  control:
+    allowed_workdir_roots:
+      - /srv/projects
+      - /srv/brain-repo-cache
+```
+
+- Empty/omitted roots mean **HOME ONLY**; unavailable home fails closed.
+  Explicit roots replace, rather than extend, the home default. Use existing
+  absolute directories (no shell `~` expansion).
+- Both candidates and roots are symlink-canonicalized, including macOS
+  `/var` → `/private/var`. Sibling prefixes and symlink escapes are refused.
+- Execution requires an existing directory. A supplied invalid/forbidden
+  `target_workdir` is an error, not a fallback hint. Successful origin, workdir,
+  resolved-workdir, config-default and worktree resolutions all use the same
+  validator; executor `SpawnOptions.Workdir` overrides are checked again.
+- Before clone/fetch or worktree creation, repo/destination paths are checked;
+  missing destinations are checked through their canonical existing parent.
+  Allow the main repo as well when creation from a linked worktree needs it.
+- This is cwd authorization, **not a filesystem sandbox**: child code and Git
+  metadata are not confined, and concurrent symlink replacement is not made
+  race-free. `script.workdir_restrict` remains a separate, unchanged policy.
+- Local script-child integration proves linked-worktree execution, not actual
+  LLM compatibility. Real LLM compatibility remains a release gate.
+
 **Config types** (`types.go`):
 ```yaml
 # Runner config (config.yaml or env vars)

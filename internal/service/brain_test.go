@@ -712,27 +712,28 @@ func TestUpdate_Priority(t *testing.T) {
 // execution-context frontmatter fields) were unreachable through PATCH
 // /entries/{path} because they were missing from UpdateEntryRequest.
 func TestUpdate_GitRemote(t *testing.T) {
-	svc, _, _ := newTestBrainService(t)
+	svc, store, _ := newTestBrainService(t)
+	insertRunnerForTaskSelectionTest(t, store, "git-runner", nil, []string{"git-credential-host:example.com"})
 	ctx := context.Background()
 
 	saved, err := svc.Save(ctx, types.CreateEntryRequest{
 		Type:      "task",
 		Title:     "GitRemote Task",
-		GitRemote: "git@example.com:orig/repo.git",
+		GitRemote: "https://example.com/orig/repo.git",
 	})
 	if err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
 	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
-		GitRemote: strPtr("git@example.com:new/repo.git"),
+		GitRemote: strPtr("https://example.com/new/repo.git"),
 	})
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	if updated.GitRemote != "git@example.com:new/repo.git" {
-		t.Errorf("expected git_remote 'git@example.com:new/repo.git', got %q", updated.GitRemote)
+	if updated.GitRemote != "https://example.com/new/repo.git" {
+		t.Errorf("expected git_remote 'https://example.com/new/repo.git', got %q", updated.GitRemote)
 	}
 
 	// Re-read via Recall to confirm the value persisted to file+DB, not just
@@ -741,8 +742,8 @@ func TestUpdate_GitRemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recall failed: %v", err)
 	}
-	if recalled.GitRemote != "git@example.com:new/repo.git" {
-		t.Errorf("recall: expected git_remote 'git@example.com:new/repo.git', got %q", recalled.GitRemote)
+	if recalled.GitRemote != "https://example.com/new/repo.git" {
+		t.Errorf("recall: expected git_remote 'https://example.com/new/repo.git', got %q", recalled.GitRemote)
 	}
 }
 
@@ -822,13 +823,14 @@ func TestUpdate_UserOriginalRequest(t *testing.T) {
 // is a first-class Update field, subsequent updates that don't touch
 // git_remote must NOT revert prior git_remote changes.
 func TestUpdate_GitRemote_NotRevertedBySubsequentUpdate(t *testing.T) {
-	svc, _, _ := newTestBrainService(t)
+	svc, store, _ := newTestBrainService(t)
+	insertRunnerForTaskSelectionTest(t, store, "git-runner", nil, []string{"git-credential-host:example.com"})
 	ctx := context.Background()
 
 	saved, err := svc.Save(ctx, types.CreateEntryRequest{
 		Type:      "task",
 		Title:     "Persistence Task",
-		GitRemote: "git@example.com:orig/repo.git",
+		GitRemote: "https://example.com/orig/repo.git",
 	})
 	if err != nil {
 		t.Fatalf("Save failed: %v", err)
@@ -836,7 +838,7 @@ func TestUpdate_GitRemote_NotRevertedBySubsequentUpdate(t *testing.T) {
 
 	// Step 1: update git_remote via Update
 	if _, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
-		GitRemote: strPtr("git@example.com:new/repo.git"),
+		GitRemote: strPtr("https://example.com/new/repo.git"),
 	}); err != nil {
 		t.Fatalf("first Update failed: %v", err)
 	}
@@ -853,9 +855,9 @@ func TestUpdate_GitRemote_NotRevertedBySubsequentUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recall failed: %v", err)
 	}
-	if recalled.GitRemote != "git@example.com:new/repo.git" {
+	if recalled.GitRemote != "https://example.com/new/repo.git" {
 		t.Errorf("git_remote was reverted after unrelated update: got %q, want %q",
-			recalled.GitRemote, "git@example.com:new/repo.git")
+			recalled.GitRemote, "https://example.com/new/repo.git")
 	}
 	if recalled.Priority != "high" {
 		t.Errorf("priority not applied: got %q, want %q", recalled.Priority, "high")

@@ -534,25 +534,23 @@ func (s *TaskServiceImpl) applyTaskFilterOptions(ctx context.Context, projectID 
 		return nil, fmt.Errorf("get runner %q: %w", opts.RunnerID, err)
 	}
 	if runner == nil {
-		// Unknown runner: we cannot check executors, capabilities or labels,
-		// and historically that meant no filtering at all. Machine affinity
-		// cannot inherit that default. An unregistered runner has no machine
-		// id to compare, so serving it a machine_affinity=local task would
-		// hand pinned work to the one caller we know least about — the
-		// bypass is trivial and silent. Withhold only those tasks; every
-		// other filter keeps its existing fail-open behavior.
-		return filterOutMachinePinnedTasks(tasks), nil
+		// Unknown runners cannot establish local affinity or credentialed
+		// remote support. Preserve historical behavior only for tasks that
+		// need neither; direct claims independently enforce remote support.
+		return filterUnknownRunnerTasks(tasks), nil
 	}
 
 	return s.filterByRunnerEligibility(ctx, projectID, tasks, runner)
 }
 
-// filterOutMachinePinnedTasks drops every task whose resolved affinity is
-// "local". Used when the requesting runner's machine cannot be established at
-// all, where the honest answer is "this task is not for you".
-func filterOutMachinePinnedTasks(tasks []types.ResolvedTask) []types.ResolvedTask {
+// filterUnknownRunnerTasks withholds work requiring a known machine or a
+// credentialed git host advertisement from unregistered callers.
+func filterUnknownRunnerTasks(tasks []types.ResolvedTask) []types.ResolvedTask {
 	filtered := make([]types.ResolvedTask, 0, len(tasks))
 	for _, task := range tasks {
+		if err := runnerGitRemoteError(task.GitRemote, nil); err != nil {
+			continue
+		}
 		if types.ResolveMachineAffinity(task.MachineAffinity, task.OriginMachineID) == types.MachineAffinityLocal {
 			continue
 		}
@@ -570,9 +568,13 @@ func (s *TaskServiceImpl) filterByRunnerEligibility(ctx context.Context, project
 	for _, capability := range runner.Capabilities {
 		capabilities[capability] = true
 	}
+	runnerInfo := liveRunnerInfo(runner)
 
 	filtered := make([]types.ResolvedTask, 0, len(tasks))
 	for _, task := range tasks {
+		if err := runnerGitRemoteError(task.GitRemote, runnerInfo); err != nil {
+			continue
+		}
 		if !runnerHasRequiredCapabilities(task, capabilities) {
 			continue
 		}
@@ -665,7 +667,7 @@ func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runn
 // ClaimTaskWithDuration claims a task with a custom lease duration.
 // Used for pre-claims (dispatch) with shorter expiry.
 func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, taskId, runnerId string, leaseDuration time.Duration) (*types.ClaimResponse, error) {
-	featureID, err := s.featureIDForTaskClaim(ctx, projectId, taskId)
+	featureID, err := s.validateClaimAndGetFeatureID(ctx, projectId, taskId, runnerId)
 	if err != nil {
 		return nil, err
 	}
@@ -756,15 +758,63 @@ func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, 
 	}, nil
 }
 
-func (s *TaskServiceImpl) featureIDForTaskClaim(ctx context.Context, projectID, taskID string) (string, error) {
+// validateClaimAndGetFeatureID checks stored eligibility before any ownership
+// mutation. It deliberately does not apply scheduler capacity or project policy.
+func (s *TaskServiceImpl) validateClaimAndGetFeatureID(ctx context.Context, projectID, taskID, runnerID string) (string, error) {
+	runner, err := s.storage.GetRunner(ctx, runnerID)
+	if err != nil {
+		return "", fmt.Errorf("get claiming runner: %w", err)
+	}
+	if runner == nil {
+		return "", s.recordClaimPlacementDenial(ctx, projectID, taskID, runnerID, runner, types.PlacementRunnerUnregistered, nil)
+	}
 	note, err := s.storage.GetNoteByPath(ctx, fmt.Sprintf("projects/%s/task/%s.md", projectID, taskID))
 	if err != nil {
 		return "", fmt.Errorf("get task note for claim: %w", err)
 	}
 	if note == nil {
+		// Preserve legacy claims without an indexed note, but never let this
+		// compatibility path bypass runner registration.
 		return "", nil
 	}
-	return NoteRowToBrainEntry(note).FeatureID, nil
+	entry := NoteRowToBrainEntry(note)
+	task := brainEntryToResolvedTask(&entry)
+	if reason, ok := machineAffinitySatisfied(task, runnerMachineID(runner)); !ok {
+		return "", s.recordClaimPlacementDenial(ctx, projectID, taskID, runnerID, runner, reason, nil)
+	}
+	capabilities := make(map[string]bool, len(runner.Capabilities))
+	for _, capability := range runner.Capabilities {
+		capabilities[capability] = true
+	}
+	if !runnerHasRequiredCapabilities(task, capabilities) {
+		return "", s.recordClaimPlacementDenial(ctx, projectID, taskID, runnerID, runner, types.PlacementRequiredCapabilityMissing, nil)
+	}
+	if err := runnerGitRemoteError(entry.GitRemote, liveRunnerInfo(runner)); err != nil {
+		return "", s.recordClaimPlacementDenial(ctx, projectID, taskID, runnerID, runner, types.PlacementGitRemoteIneligible, err)
+	}
+	return entry.FeatureID, nil
+}
+
+// Unlike RejectDispatch, a claim refusal must not alter an existing lease.
+// RecordPlacementReason retains only PlacementReasonRetention recent attempts.
+func (s *TaskServiceImpl) recordClaimPlacementDenial(ctx context.Context, projectID, taskID, runnerID string, runner *storage.RunnerRow, reason string, cause error) error {
+	denial := &types.PlacementDenialError{Reason: reason, Cause: cause}
+	row := &storage.PlacementReasonRow{
+		ProjectID: projectID, TaskID: taskID, RunnerID: runnerID,
+		MachineID: runnerMachineID(runner), Decision: "claim_denied",
+		Reason: reason, CreatedAt: time.Now().UnixMilli(),
+	}
+	if runner != nil {
+		labels, err := json.Marshal(runner.Labels)
+		if err != nil {
+			return fmt.Errorf("encode claiming runner labels: %v: %w", err, denial)
+		}
+		row.RunnerLabels = string(labels)
+	}
+	if err := s.storage.RecordPlacementReason(ctx, row); err != nil {
+		return fmt.Errorf("record claim denial: %v: %w", err, denial)
+	}
+	return denial
 }
 
 // ReleaseTask releases a task claim. Returns ErrNotFound if not claimed,
@@ -1177,6 +1227,15 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 
 	// Generate checkout task key
 	generatedKey := fmt.Sprintf("feature-checkout:%s:round-1", sanitizedFeatureID)
+	// Preflight the inherited remote before any file creation or supersession.
+	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feature tasks: %w", err)
+	}
+	checkoutGit := gitContextFromFeatureEntries(featureTasks)
+	if err := validateConfiguredGitRemote(ctx, s.storage, checkoutGit.GitRemote); err != nil {
+		return nil, err
+	}
 
 	// Check if checkout task already exists (idempotency)
 	taskRelDir := filepath.Join("projects", sanitizedProjectID, "task")
@@ -1202,11 +1261,7 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	if errors.Is(err, brainpath.ErrContainment) {
 		return nil, err
 	}
-	// Validate all source children and the destination before superseding a task.
-	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get feature tasks: %w", err)
-	}
+	// Source children were validated during preflight; validate the destination before supersession.
 	shortID := markdown.GenerateShortID()
 	filename := shortID + ".md"
 	taskPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.Join(taskRelDir, filename))
@@ -1271,7 +1326,6 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	// or git_remote+repo_cache_dir); without it the runner rejects the
 	// dispatch with "workdir_unavailable" and the checkout task loops as
 	// pending forever.
-	checkoutGit := gitContextFromFeatureEntries(featureTasks)
 	checkoutWorkdir := checkoutGit.TargetWorkdir
 
 	// Build checkout task content, routed by checkout_mode.

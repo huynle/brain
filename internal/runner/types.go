@@ -16,21 +16,28 @@ import (
 
 // RunnerConfig holds all configuration for the brain task runner.
 type RunnerConfig struct {
-	BrainAPIURL               string `yaml:"brain_api_url" json:"brain_api_url"`
-	APIToken                  string `yaml:"api_token" json:"api_token"`
-	APITokenEnv               string `yaml:"api_token_env" json:"api_token_env"`
-	PollInterval              int    `yaml:"poll_interval" json:"poll_interval"` // seconds
-	MaxParallel               int    `yaml:"max_parallel" json:"max_parallel"`
-	StateDir                  string `yaml:"state_dir" json:"state_dir"`
-	WorkDir                   string `yaml:"work_dir" json:"work_dir"`
-	RepoCacheDir              string `yaml:"repo_cache_dir" json:"repo_cache_dir"`
-	GitToken                  string `yaml:"git_token" json:"git_token"`
-	GitTokenEnv               string `yaml:"git_token_env" json:"git_token_env"`
-	RequireHTTPS              bool   `yaml:"require_https" json:"require_https"`
-	AllowUnauthenticatedHTTPS bool   `yaml:"allow_unauthenticated_https" json:"allow_unauthenticated_https"`
-	APITimeout                int    `yaml:"api_timeout" json:"api_timeout"`                           // ms
-	TaskTimeout               int    `yaml:"task_timeout" json:"task_timeout"`                         // ms
-	IdleDetectionThreshold    int    `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
+	BrainAPIURL      string `yaml:"brain_api_url" json:"brain_api_url"`
+	StandingToken    string `yaml:"api_token" json:"api_token"`
+	StandingTokenEnv string `yaml:"api_token_env" json:"api_token_env"`
+	PollInterval     int    `yaml:"poll_interval" json:"poll_interval"` // seconds
+	MaxParallel      int    `yaml:"max_parallel" json:"max_parallel"`
+	StateDir         string `yaml:"state_dir" json:"state_dir"`
+	WorkDir          string `yaml:"work_dir" json:"work_dir"`
+	RepoCacheDir     string `yaml:"repo_cache_dir" json:"repo_cache_dir"`
+	GitToken         string `yaml:"git_token" json:"git_token"`
+	GitTokenEnv      string `yaml:"git_token_env" json:"git_token_env"`
+	// Exact HTTPS authority -> environment variable. Legacy auth is github.com only.
+	GitHostTokenEnv map[string]string `yaml:"git_host_token_env" json:"git_host_token_env"`
+	// Nil defaults to credentialed hosts; a present empty list denies all hosts.
+	GitAllowedHosts []string `yaml:"git_allowed_hosts" json:"git_allowed_hosts"`
+	// Optional operator-owned CA bundle; TLS verification is always enabled.
+	GitSSLCAInfo string `yaml:"git_ssl_ca_info" json:"git_ssl_ca_info"`
+	// Deprecated: retained for config compatibility; remote admission always requires HTTPS.
+	RequireHTTPS              bool `yaml:"require_https" json:"require_https"`
+	AllowUnauthenticatedHTTPS bool `yaml:"allow_unauthenticated_https" json:"allow_unauthenticated_https"`
+	APITimeout                int  `yaml:"api_timeout" json:"api_timeout"`                           // ms
+	TaskTimeout               int  `yaml:"task_timeout" json:"task_timeout"`                         // ms
+	IdleDetectionThreshold    int  `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
 	// MemoryThresholdPercent refuses to spawn a task while the host has less
 	// than this percentage of memory available. 0 disables. Enforced by
 	// TaskRunner.spawnAdmission (memory_guard.go).
@@ -156,8 +163,9 @@ type ControlConfig struct {
 	// default whenever a Brain API URL is configured.
 	Disabled bool `yaml:"disabled" json:"disabled"`
 
-	// AllowedWorkdirRoots restricts where ad-hoc OpenCode instances may be
-	// spawned. Defaults to the user's home directory when empty.
+	// AllowedWorkdirRoots restricts task and ad-hoc execution directories,
+	// independently of Disabled. Candidates and roots are symlink-canonicalized.
+	// Empty means HOME ONLY; unavailable home fails closed. Not a sandbox.
 	AllowedWorkdirRoots []string `yaml:"allowed_workdir_roots" json:"allowed_workdir_roots"`
 }
 

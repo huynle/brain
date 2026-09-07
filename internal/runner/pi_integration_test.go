@@ -115,6 +115,7 @@ func TestIntegration_ExecutorRouting_PiTask(t *testing.T) {
 		Mode:    ExecutionModeHeadless,
 		Workdir: t.TempDir(),
 	}
+	piExec.config.Control.AllowedWorkdirRoots = []string{opts.Workdir}
 
 	result, err := piExec.Spawn(ctx, task, "test-project", opts)
 	if err != nil {

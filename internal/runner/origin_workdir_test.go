@@ -111,7 +111,7 @@ func TestResolveRepoContext_PrefersOriginOverHomeRelativeWorkdir(t *testing.T) {
 		Workdir: "some/other/checkout",
 	}
 
-	got, err := resolveRepoContext(task, RunnerConfig{MachineID: "machine_a"}, realCommandFactory)
+	got, err := resolveRepoContext(task, RunnerConfig{MachineID: "machine_a", Control: ControlConfig{AllowedWorkdirRoots: []string{origin}}}, realCommandFactory)
 	if err != nil {
 		t.Fatalf("resolveRepoContext: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestResolveRepoContext_TargetWorkdirStillWins(t *testing.T) {
 		OriginPath:      origin,
 	}
 
-	got, err := resolveRepoContext(task, RunnerConfig{MachineID: "machine_a"}, realCommandFactory)
+	got, err := resolveRepoContext(task, RunnerConfig{MachineID: "machine_a", Control: ControlConfig{AllowedWorkdirRoots: []string{explicit}}}, realCommandFactory)
 	if err != nil {
 		t.Fatalf("resolveRepoContext: %v", err)
 	}
@@ -184,7 +184,7 @@ func TestResolveRepoContext_KeepsLinkedWorktree(t *testing.T) {
 		OriginPath:      linked,
 	}
 
-	got, err := resolveRepoContext(task, RunnerConfig{MachineID: "machine_a"}, realCommandFactory)
+	got, err := resolveRepoContext(task, RunnerConfig{MachineID: "machine_a", Control: ControlConfig{AllowedWorkdirRoots: []string{linked}}}, realCommandFactory)
 	if err != nil {
 		t.Fatalf("resolveRepoContext: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestEnsureWorktree_AnchorsNewWorktreeOnMainRepo(t *testing.T) {
 		ExecutionMode:   "worktree",
 	}
 
-	got, err := CommonResolveWorkdir(task, RunnerConfig{MachineID: "machine_a"}, realCommandFactory)
+	got, err := CommonResolveWorkdir(task, RunnerConfig{MachineID: "machine_a", Control: ControlConfig{AllowedWorkdirRoots: []string{main, linked}}}, realCommandFactory)
 	if err != nil {
 		t.Fatalf("CommonResolveWorkdir: %v", err)
 	}

@@ -58,6 +58,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 		// All routes below require auth when enabled
 		r.Group(func(r chi.Router) {
 			r.Use(Auth(cfg.EnableAuth, o.validator, cfg.JWTSecret))
+			r.Use(TenantScope(cfg.Tenancy.Mode, cfg.EnableAuth))
 			// Record each authenticated request (with its actor) for the
 			// global server-request log shown in the Logs tab. Installed after
 			// Auth so the actor is present in context.

@@ -10,10 +10,10 @@ import (
 
 // ProjectPlacementService validates and persists Brain-owned project placement policy.
 type ProjectPlacementService struct {
-	store *storage.StorageLayer
+	store *storage.TenantStore
 }
 
-func NewProjectPlacementService(store *storage.StorageLayer) *ProjectPlacementService {
+func NewProjectPlacementService(store *storage.TenantStore) *ProjectPlacementService {
 	return &ProjectPlacementService{store: store}
 }
 

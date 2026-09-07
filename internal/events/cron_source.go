@@ -11,11 +11,11 @@ import (
 // StorageScheduleSource implements ScheduleSource by querying the storage layer
 // for entries with active cron schedules (both regular tasks and automations).
 type StorageScheduleSource struct {
-	store *storage.StorageLayer
+	store *storage.TenantStore
 }
 
 // NewStorageScheduleSource creates a ScheduleSource backed by the storage layer.
-func NewStorageScheduleSource(store *storage.StorageLayer) *StorageScheduleSource {
+func NewStorageScheduleSource(store *storage.TenantStore) *StorageScheduleSource {
 	return &StorageScheduleSource{store: store}
 }
 

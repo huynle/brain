@@ -1,14 +1,18 @@
 package indexer
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/huynle/brain-api/internal/tenant"
+	"github.com/huynle/brain-api/internal/tenantfs"
 )
 
 func watchPaths(fw *FileWatcher) []string {
@@ -107,7 +111,7 @@ func TestFileWatcher_ExcludedUnreadableTrees(t *testing.T) {
 			t.Skip("requires unreadable directories")
 		}
 	}
-	fw, _ := NewFileWatcher(root, nil, nil)
+	fw, _ := NewFileWatcher(root, NewIndexer(root, newTestStorage(t)), nil)
 	defer fw.Stop()
 	if err := fw.Start(); err != nil {
 		t.Fatalf("descended into excluded unreadable tree: %v", err)
@@ -147,6 +151,75 @@ func TestFileWatcher_InitiallyAbsentRoots(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitForNoteCount(t, store, 2)
+		})
+	}
+}
+
+func TestFileWatcher_DanglingSiblingLateContentRoots(t *testing.T) {
+	for _, contentRoot := range []string{"projects", "global"} {
+		t.Run(contentRoot, func(t *testing.T) {
+			ctx := context.Background()
+			root := t.TempDir()
+			store := newTestStorage(t)
+			roots, err := tenantfs.New(store, root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := roots.ProvisionLocal(ctx, root, t.TempDir()); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(filepath.Join(root, "missing"), filepath.Join(root, "aaa")); err != nil {
+				t.Fatal(err)
+			}
+			idx := NewIndexer(root, store, roots.Brain(tenant.Local))
+			fw, err := NewFileWatcher(root, idx, &FileWatcherOptions{DebounceMs: 20, IgnorePatterns: []string{"drafts/"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := fw.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer fw.Stop()
+			if got := watchPaths(fw); !reflect.DeepEqual(got, []string{"."}) {
+				t.Fatalf("initial anchor: %v", got)
+			}
+			staged := t.TempDir()
+			for _, dir := range []string{"p/note", "p/drafts"} {
+				if err := os.MkdirAll(filepath.Join(staged, dir), 0700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(staged, dir, "first.md"), []byte(noteContent("First")), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Real OS delivery only. aaa precedes both possible content roots in
+			// kqueue's child scan; no injected event or manual flush may help.
+			if err := os.Rename(staged, filepath.Join(root, contentRoot)); err != nil {
+				t.Fatal(err)
+			}
+			waitForNoteCount(t, store, 1)
+			want := []string{".", contentRoot, contentRoot + "/p", contentRoot + "/p/note"}
+			if got := watchPaths(fw); !reflect.DeepEqual(got, want) {
+				t.Fatalf("discovered watches: %v, want %v", got, want)
+			}
+			path := contentRoot + "/p/note/first.md"
+			if err := os.WriteFile(filepath.Join(root, path), []byte(noteContent("Edited")), 0600); err != nil {
+				t.Fatal(err)
+			}
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				row, err := store.GetNoteByPath(ctx, path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if row != nil && row.Title == "Edited" {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatal("later nested edit was not indexed")
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
 		})
 	}
 }
@@ -209,7 +282,7 @@ func TestFileWatcher_NoSymlinkDirectoryRecursion(t *testing.T) {
 	if err := os.Symlink(outside, link); err != nil {
 		t.Fatal(err)
 	}
-	fw, _ := NewFileWatcher(root, nil, &FileWatcherOptions{DebounceMs: 60000})
+	fw, _ := NewFileWatcher(root, NewIndexer(root, newTestStorage(t)), &FileWatcherOptions{DebounceMs: 60000})
 	if err := fw.Start(); err != nil {
 		t.Fatal(err)
 	}

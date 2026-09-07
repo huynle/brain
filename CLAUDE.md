@@ -68,10 +68,11 @@ set a status the API server is already holding the transaction for.
   triggering event, and the write is REFUSED when either is empty. That is
   not defensive noise: `storage/list.go` appends its WHERE clause only for
   a non-empty value, so an empty id is not "match nothing" but "no
-  constraint", and every gate upstream still reports the filter as
-  constrained. A blank feature id would rewrite the first 100 tasks of the
-  project. (The same trap sits behind `bulkDeleteFilterIsEmpty`, which is
-  a nil-check: `{"feature_id": ""}` alone passes it.)
+  constraint". A blank feature id would rewrite the first 100 tasks of the
+  project. Bulk delete and update now reject effectively empty filters at
+  both API and service boundaries, including `{"feature_id": ""}` alone.
+  A project/type filter still constrains the query, so automation actions
+  must continue requiring both event ids to avoid widening feature scope.
 - **The loop guard is "write only what is not already there".** Archiving
   emits `task.status_changed`, `CheckFeatureCompletion` counts archived as
   done and re-emits `feature.completed`, and the automation fires again —

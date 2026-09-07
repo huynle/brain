@@ -52,6 +52,9 @@ func (h *Handler) HandleGetRelated(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if limit > 100 {
+		limit = 100
+	}
 	entries, err := h.brain.GetRelated(r.Context(), id, limit)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {

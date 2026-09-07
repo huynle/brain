@@ -10,20 +10,21 @@ import (
 
 	_ "github.com/glebarez/go-sqlite"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 )
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
-// newTestStorage creates an in-memory StorageLayer for testing.
-func newTestStorage(t *testing.T) *storage.StorageLayer {
+// newTestStorage creates a local tenant view over an in-memory shared store.
+func newTestStorage(t *testing.T) *storage.TenantStore {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
-	s, err := storage.NewWithDB(db)
+	s, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
@@ -67,7 +68,7 @@ func noteWithLink(title, linkTarget, linkText string) string {
 }
 
 // countNotes returns the number of notes in the DB.
-func countNotes(t *testing.T, s *storage.StorageLayer) int {
+func countNotes(t *testing.T, s *storage.TenantStore) int {
 	t.Helper()
 	var count int
 	err := s.DB().QueryRow("SELECT COUNT(*) FROM notes").Scan(&count)

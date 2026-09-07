@@ -16,6 +16,7 @@ import (
 	"github.com/huynle/brain-api/internal/blobstore"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -170,9 +171,9 @@ func (b *recordingBlobStore) Delete(hash string) error {
 	return nil
 }
 
-func newAttachmentServiceForTest(t *testing.T, maxSize int64) (*AttachmentServiceImpl, *storage.StorageLayer, *recordingBlobStore) {
+func newAttachmentServiceForTest(t *testing.T, maxSize int64) (*AttachmentServiceImpl, *storage.TenantStore, *recordingBlobStore) {
 	t.Helper()
-	store, err := storage.New(t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t.TempDir() + "/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}
@@ -181,9 +182,9 @@ func newAttachmentServiceForTest(t *testing.T, maxSize int64) (*AttachmentServic
 	return NewAttachmentService(store, blobs, nil, maxSize), store, blobs
 }
 
-func newAttachmentServiceWithBrainForTest(t *testing.T, brain api.BrainService) (*AttachmentServiceImpl, *storage.StorageLayer, *recordingBlobStore) {
+func newAttachmentServiceWithBrainForTest(t *testing.T, brain api.BrainService) (*AttachmentServiceImpl, *storage.TenantStore, *recordingBlobStore) {
 	t.Helper()
-	store, err := storage.New(t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t.TempDir() + "/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}
@@ -212,7 +213,7 @@ func createUniqueAttachmentForServiceTest(t *testing.T, svc *AttachmentServiceIm
 	return created.Attachment
 }
 
-func insertAttachmentNoteForTest(t *testing.T, store *storage.StorageLayer, projectID, path, shortID string) *types.BrainEntry {
+func insertAttachmentNoteForTest(t *testing.T, store *storage.TenantStore, projectID, path, shortID string) *types.BrainEntry {
 	t.Helper()
 	if _, err := store.InsertNote(context.Background(), &storage.NoteRow{Path: path, ShortID: shortID, Title: "Attachment note"}); err != nil {
 		t.Fatalf("InsertNote failed: %v", err)
@@ -714,7 +715,7 @@ func TestAttachmentServiceCreateEnforcesMIMEPolicy(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			store, err := storage.New(t.TempDir() + "/brain.db")
+			store, err := storagetest.New(t.TempDir() + "/brain.db")
 			if err != nil {
 				t.Fatalf("storage.New failed: %v", err)
 			}
@@ -827,7 +828,7 @@ func TestAttachmentServiceOpenTextPrefersReadyDerivedText(t *testing.T) {
 }
 
 func TestAttachmentServiceStoreDerivedTextInvokesChangeHookForLinkedEntriesAndSwallowsHookError(t *testing.T) {
-	store, err := storage.New(t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t.TempDir() + "/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}
@@ -866,7 +867,7 @@ func TestAttachmentServiceStoreDerivedTextInvokesChangeHookForLinkedEntriesAndSw
 }
 
 func TestAttachmentServiceExtractAttachmentTextInvokesChangeHookOnlyForTerminalDerivedText(t *testing.T) {
-	store, err := storage.New(t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t.TempDir() + "/brain.db")
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}

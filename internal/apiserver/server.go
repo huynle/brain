@@ -28,7 +28,7 @@ import (
 	"github.com/huynle/brain-api/internal/oauth"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
-	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/tenant"
 	"github.com/huynle/brain-api/internal/webui"
 	"github.com/huynle/brain-api/pkg/pathutil"
 )
@@ -49,6 +49,7 @@ type ServerOptions struct {
 	JWTSecret       string
 	TaskDefaults    config.TaskDefaultsConfig
 	FeatureCheckout config.FeatureCheckoutConfig
+	Tenancy         config.TenancyConfig
 	// IndexWatch, when enabled, runs a filesystem watcher that re-indexes
 	// out-of-band writes to BrainDir. Off by default; see
 	// config.IndexWatchConfig for why.
@@ -116,6 +117,19 @@ func trustSelfSignedCertForLoopback(certPath, host string) error {
 // RunServer starts the Brain API HTTP server and blocks until context is cancelled.
 // Returns error if server fails to start or encounters an error during shutdown.
 func RunServer(ctx context.Context, opts ServerOptions) error {
+	cfg := config.Load()
+	if err := cfg.Err(); err != nil {
+		return err
+	}
+	// Reject configured multi mode even if options specify single. Configuration
+	// acceptance is not evidence that storage isolation is operational.
+	if _, err := backgroundTenantContext(ctx, cfg.Tenancy.Mode); err != nil {
+		return err
+	}
+	if opts.Tenancy.Mode == "" {
+		opts.Tenancy = cfg.Tenancy
+	}
+
 	// Configure structured logging
 	var logLevel slog.Level
 	switch opts.LogLevel {
@@ -264,6 +278,12 @@ func validateBindAuth(opts ServerOptions) error {
 }
 
 func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, string, func(), error) {
+	// Also guard direct in-process assembly BEFORE migration, mkdir or storage.
+	var err error
+	ctx, err = backgroundTenantContext(ctx, opts.Tenancy.Mode)
+	if err != nil {
+		return nil, "", nil, err
+	}
 	if err := validateBindAuth(opts); err != nil {
 		return nil, "", nil, err
 	}
@@ -279,24 +299,30 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		return nil, "", nil, fmt.Errorf("failed to create database directory: %w", err)
 	}
 
-	store, err := storage.New(dbPath)
+	// Share the verifier with login/OAuth. Storage composition durably closes
+	// bootstrap through the control owner before exposing the tenant adapter.
+	credVerifier := auth.NewVerifierFromEnv()
+	views, err := openSingleModeStorage(ctx, opts.Tenancy.Mode, dbPath, opts.BrainDir, credVerifier.Configured())
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to open database at %s: %w", dbPath, err)
 	}
-	cleanup := func() { _ = store.Close() }
+	cleanup := views.close
+	store, control := views.tenant, views.identity
 
-	// Share one verifier with login and OAuth, and permanently close bootstrap
-	// before starting background work or serving any requests.
-	credVerifier := auth.NewVerifierFromEnv()
-	if credVerifier.Configured() {
-		if err := store.MarkInstallClaimed(ctx); err != nil {
-			cleanup()
-			return nil, "", nil, fmt.Errorf("failed to persist configured installation claim: %w", err)
-		}
+	// Persist the exact effective legacy configuration before starting any file
+	// consumer. The shared DB path above is deliberately NOT tenant-rewritten.
+	attachments := normalizeAttachmentConfig(opts.BrainDir, opts.Attachments)
+	roots := views.roots
+	mapping, err := roots.ProvisionLocal(ctx, opts.BrainDir, attachments.StorageRoot)
+	if err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("initialize local filesystem mapping: %w", err)
 	}
+	opts.BrainDir = mapping.BrainAbsolute
+	attachments.StorageRoot = mapping.BlobAbsolute
 
 	// ─── Indexer ────────────────────────────────────────────────────
-	idx := indexer.NewIndexer(opts.BrainDir, store)
+	idx := indexer.NewIndexer(opts.BrainDir, store, roots.Brain(tenant.Local))
 
 	// The boot index is a one-shot pass. Writes that reach BrainDir without
 	// going through the API — a git pull into the brain dir, a manual edit,
@@ -386,8 +412,9 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		JWTSecret:       opts.JWTSecret,
 		TaskDefaults:    opts.TaskDefaults,
 		FeatureCheckout: opts.FeatureCheckout,
+		Tenancy:         opts.Tenancy,
 		Embedding:       opts.Embedding,
-		Attachments:     normalizeAttachmentConfig(opts.BrainDir, opts.Attachments),
+		Attachments:     attachments,
 
 		AttachmentExtraction: opts.AttachmentExtraction,
 		Assistant:            opts.Assistant,
@@ -437,7 +464,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		cleanup()
 		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature checkout simple automation: %w", err)
 	}
-	blobStore, err := blobstore.NewFilesystemStore(cfg.Attachments.StorageRoot, cfg.Attachments.MaxUploadSizeBytes)
+	blobStore, err := blobstore.NewTenantFilesystemStore(roots, tenant.Local, cfg.Attachments.MaxUploadSizeBytes)
 	if err != nil {
 		cleanup()
 		return nil, "", nil, fmt.Errorf("failed to initialize attachment blob store: %w", err)
@@ -573,7 +600,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithDependentChainService(schedulerSvc),
 		api.WithRunProjectService(schedulerSvc),
 		api.WithMonitorService(monitorSvc),
-		api.WithTokenService(store),
+		api.WithTokenService(views.tokens),
 		api.WithHub(hub),
 		api.WithEventService(eventSvc),
 		api.WithWebhookService(webhookSvc),
@@ -585,7 +612,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		api.WithLogBuffer(logBuf),
 		api.WithTaskDefaults(cfg.TaskDefaults),
 		api.WithCredentialVerifier(credVerifier),
-		api.WithPasswordTokenStore(store),
+		api.WithPasswordTokenStore(control),
 	)
 
 	// ─── Rate Limiting ─────────────────────────────────────────────
@@ -609,7 +636,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 
 	routerOpts := []api.RouterOption{
 		api.WithHandler(handler),
-		api.WithDualAuth(store, store),
+		api.WithDualAuth(control, control),
 		api.WithEmbeddingReady(!cfg.Embedding.Enabled || embeddingClient != nil),
 		api.WithConfigHandler(api.NewConfigHandler("", newHotReloader())),
 	}
@@ -622,9 +649,9 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// Persist OAuth flow state (clients, auth codes, refresh tokens) in SQLite
 	// so registered clients survive restarts — otherwise every restart yields
 	// "unknown client_id" for the Claude connector and the PWA.
-	oauthStore := oauth.NewPersistentStore(store)
+	oauthStore := oauth.NewPersistentStore(control)
 	oauthHandler := oauth.NewHandler(oauthStore,
-		oauth.WithAccessTokenStore(store),
+		oauth.WithAccessTokenStore(control),
 		oauth.WithCredentialVerifier(credVerifier),
 	)
 	oauth.RegisterRoutes(router, oauthHandler)
@@ -644,11 +671,12 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	mcpClient := mcppkg.NewAPIClient(fmt.Sprintf("%s://localhost:%d", mcpScheme, opts.Port))
 	mcpHTTP := mcppkg.NewHTTPHandler(mcpClient)
 	authValidator := &api.CompositeValidator{
-		APIValidator:   store,
-		OAuthValidator: store,
+		APIValidator:   control,
+		OAuthValidator: control,
 	}
 	router.Route("/mcp", func(r chi.Router) {
 		r.Use(api.Auth(opts.EnableAuth, authValidator, opts.JWTSecret))
+		r.Use(api.TenantScope(cfg.Tenancy.Mode, cfg.EnableAuth))
 		r.Post("/", mcpHTTP.ServeHTTP)
 		r.Get("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
@@ -659,6 +687,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// use POST/DELETE at the root. Clients that need a GET stream use /mcp.
 	router.Group(func(r chi.Router) {
 		r.Use(api.Auth(opts.EnableAuth, authValidator, opts.JWTSecret))
+		r.Use(api.TenantScope(cfg.Tenancy.Mode, cfg.EnableAuth))
 		r.Post("/", mcpHTTP.ServeHTTP)
 		r.Delete("/", mcpHTTP.ServeHTTP)
 	})

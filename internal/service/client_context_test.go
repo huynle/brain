@@ -7,12 +7,13 @@ import (
 	"testing"
 
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 
 	_ "github.com/glebarez/go-sqlite"
 )
 
-func newTestClientContextService(t *testing.T) (*ClientContextServiceImpl, *storage.StorageLayer) {
+func newTestClientContextService(t *testing.T) (*ClientContextServiceImpl, *storage.TenantStore) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -20,7 +21,7 @@ func newTestClientContextService(t *testing.T) (*ClientContextServiceImpl, *stor
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
@@ -29,7 +30,7 @@ func newTestClientContextService(t *testing.T) (*ClientContextServiceImpl, *stor
 	return NewClientContextService(store), store
 }
 
-func insertDreamNote(t *testing.T, store *storage.StorageLayer, projectID, shortID, title, content, modified string) {
+func insertDreamNote(t *testing.T, store *storage.TenantStore, projectID, shortID, title, content, modified string) {
 	t.Helper()
 	ctx := context.Background()
 

@@ -31,7 +31,7 @@ var _ AttachmentDerivedChangeHook = (*BrainServiceImpl)(nil)
 // BrainServiceImpl implements api.BrainService using filesystem + SQLite storage.
 type BrainServiceImpl struct {
 	config          *config.Config
-	storage         *storage.StorageLayer
+	storage         *storage.TenantStore
 	indexer         *indexer.Indexer
 	bus             events.Bus
 	embeddingClient EmbeddingClient
@@ -43,7 +43,7 @@ type BrainServiceImpl struct {
 // NewBrainService creates a new BrainServiceImpl.
 // The bus parameter is optional; if nil, no events are published.
 // The embeddingClient parameter is optional; if nil, semantic search features will be disabled.
-func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus, embeddingClient EmbeddingClient) *BrainServiceImpl {
+func NewBrainService(cfg *config.Config, store *storage.TenantStore, idx *indexer.Indexer, bus events.Bus, embeddingClient EmbeddingClient) *BrainServiceImpl {
 	return &BrainServiceImpl{
 		config:          cfg,
 		storage:         store,
@@ -290,7 +290,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	}
 
 	// Write file to disk
-	absPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(relPath))
+	absPath, err := s.filesystemPath(ctx, relPath, true)
 	if err != nil {
 		return nil, err
 	}
@@ -403,6 +403,9 @@ func (s *BrainServiceImpl) resolveEntry(ctx context.Context, pathOrID string) (*
 		return nil, fmt.Errorf("lookup by short ID: %w", err)
 	}
 	if row != nil {
+		if err := s.admittedRow(ctx, row.Path); err != nil {
+			return nil, err
+		}
 		return row, nil
 	}
 
@@ -412,6 +415,9 @@ func (s *BrainServiceImpl) resolveEntry(ctx context.Context, pathOrID string) (*
 		return nil, fmt.Errorf("lookup by path: %w", err)
 	}
 	if row != nil {
+		if err := s.admittedRow(ctx, row.Path); err != nil {
+			return nil, err
+		}
 		return row, nil
 	}
 
@@ -421,6 +427,9 @@ func (s *BrainServiceImpl) resolveEntry(ctx context.Context, pathOrID string) (*
 		return nil, fmt.Errorf("lookup by title: %w", err)
 	}
 	if row != nil {
+		if err := s.admittedRow(ctx, row.Path); err != nil {
+			return nil, err
+		}
 		return row, nil
 	}
 
@@ -777,7 +786,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 
 	// Read file from disk
-	absPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(row.Path))
+	absPath, err := s.filesystemPath(ctx, row.Path, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1276,6 +1285,9 @@ func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 	if hasFilter && req.Updates == nil {
 		return nil, fmt.Errorf("updates required when using filter mode")
 	}
+	if hasFilter && !req.Filter.IsEffective() {
+		return nil, fmt.Errorf("filter must constrain at least one field (e.g. project, feature_id)")
+	}
 
 	// 2. Apply safety cap: default 100, max 100.
 	limit := req.Limit
@@ -1486,6 +1498,9 @@ func (s *BrainServiceImpl) BulkDelete(ctx context.Context, req types.BulkDeleteR
 	}
 	if !hasFilter && !hasPaths {
 		return nil, fmt.Errorf("must specify either filter or paths")
+	}
+	if hasFilter && !req.Filter.IsEffective() {
+		return nil, fmt.Errorf("filter must constrain at least one field (e.g. project, feature_id)")
 	}
 
 	limit := req.Limit
@@ -1758,7 +1773,9 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	if hasDurable {
 		if err := s.syncDurableFieldsToFile(ctx, row, fields); err != nil {
 			var admissionErr gitRemoteAdmissionError
-			if errors.Is(err, brainpath.ErrContainment) || errors.As(err, &admissionErr) {
+			var filesystemErr filesystemAdmissionError
+			var reindexErr durableReindexError
+			if errors.Is(err, brainpath.ErrContainment) || errors.As(err, &admissionErr) || errors.As(err, &filesystemErr) || errors.As(err, &reindexErr) {
 				return nil, err
 			}
 			// Log warning but continue with DB update — file write failure
@@ -1804,14 +1821,20 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	return &entry, nil
 }
 
+// Reindex failure must not fall back to DB-only success. The preceding file
+// write is not rolled back; callers must receive the indexing error.
+type durableReindexError struct{ error }
+
+func (e durableReindexError) Unwrap() error { return e.error }
+
 // syncDurableFieldsToFile reads the markdown file, applies durable field
 // changes to the frontmatter, writes the file back, and re-indexes it.
 // This follows the same pattern as the Update() method.
 func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *storage.NoteRow, fields map[string]interface{}) error {
 	// Read file from disk
-	absPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(row.Path))
+	absPath, err := s.filesystemPath(ctx, row.Path, true)
 	if err != nil {
-		return err
+		return filesystemAdmissionError{err}
 	}
 	fileContent, err := os.ReadFile(absPath)
 	if err != nil {
@@ -2015,7 +2038,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 
 	// Re-index the file
 	if err := s.indexer.IndexFile(row.Path); err != nil {
-		return fmt.Errorf("re-index file %q: %w", row.Path, err)
+		return durableReindexError{fmt.Errorf("re-index file %q: %w", row.Path, err)}
 	}
 	// Body changes (append/note fields) need re-embedding; frontmatter-only
 	// changes just mirror new filter values onto the existing embedding rows.
@@ -2058,7 +2081,7 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 	delProject := extractProjectFromPath(delPath)
 
 	// Delete file from disk
-	absPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(row.Path))
+	absPath, err := s.filesystemPath(ctx, row.Path, true)
 	if err != nil {
 		return err
 	}
@@ -2359,6 +2382,12 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 
 	entries := make([]types.BrainEntry, 0, len(filtered))
 	for _, row := range filtered {
+		if err := s.admittedRow(ctx, row.Path); err != nil {
+			if !excludedFilesystemPath(err) {
+				return nil, err
+			}
+			continue
+		}
 		entry := NoteRowToBrainEntry(row)
 		if wantsAttachmentMetadata(req.Include) {
 			if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
@@ -2864,7 +2893,7 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 	}
 
 	oldPath := entry.Path
-	oldAbsPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(oldPath))
+	oldAbsPath, err := s.filesystemPath(ctx, oldPath, true)
 	if err != nil {
 		return nil, err
 	}
@@ -2875,7 +2904,7 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		return nil, err
 	}
 
-	newAbsPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(newPath))
+	newAbsPath, err := s.filesystemPath(ctx, newPath, true)
 	if err != nil {
 		return nil, err
 	}
@@ -3073,6 +3102,9 @@ func (s *BrainServiceImpl) GetRelated(ctx context.Context, path string, limit in
 	if limit <= 0 {
 		limit = 10
 	}
+	if limit > 100 {
+		limit = 100
+	}
 	resolved, err := s.resolveGraphPath(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("get related: %w", err)
@@ -3198,6 +3230,9 @@ func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool, project st
 func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
 	}
 	opts := &storage.OrphanOptions{
 		Type:  entryType,

@@ -18,6 +18,7 @@ import (
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -60,7 +61,7 @@ func TestTaskPlacementEndpoints(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				store, err := storage.NewWithDB(db)
+				store, err := storagetest.NewWithDB(db)
 				if err != nil {
 					t.Fatal(err)
 				}

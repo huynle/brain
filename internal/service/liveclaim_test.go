@@ -10,7 +10,7 @@ import (
 )
 
 // upsertRunnerWithStatus registers a runner in a specific lifecycle state.
-func upsertRunnerWithStatus(t *testing.T, store *storage.StorageLayer, runnerID, status string) {
+func upsertRunnerWithStatus(t *testing.T, store *storage.TenantStore, runnerID, status string) {
 	t.Helper()
 	now := time.Now().UnixMilli()
 	if err := store.UpsertRunner(context.Background(), &storage.RunnerRow{

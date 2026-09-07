@@ -10,7 +10,7 @@ import (
 
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
-	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -29,7 +29,7 @@ func newTestBrainAndTaskService(t *testing.T) (*BrainServiceImpl, *TaskServiceIm
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}

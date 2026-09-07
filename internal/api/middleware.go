@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/tenant"
 )
 
 // TokenValidator validates authentication tokens against a backing store.
@@ -30,10 +31,12 @@ type TokenValidator interface {
 // AuthResult carries authentication metadata after successful validation.
 // Downstream handlers read these values from the request context.
 type AuthResult struct {
-	Type     string // "api_token", "oauth", or "jwt"
-	Name     string // token name (api) or client_id (oauth)
-	ClientID string // oauth only
-	Scope    string // oauth only
+	// Tenant is set only by trusted identity resolution, never request decoding.
+	Tenant   tenant.ID `json:"-"`
+	Type     string    // "api_token", "oauth", "jwt", or explicit single-mode "local"
+	Name     string    // token name (api) or client_id (oauth)
+	ClientID string    // oauth only
+	Scope    string    // existing capability grants; independent of tenant scope
 }
 
 // context keys for auth info

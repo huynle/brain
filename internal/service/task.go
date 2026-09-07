@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
-	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/tenantfs"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/pkg/cron"
 	"github.com/huynle/brain-api/pkg/frontmatter"
@@ -32,7 +32,7 @@ var _ api.TaskService = (*TaskServiceImpl)(nil)
 // TaskServiceImpl implements api.TaskService using a StorageLayer and persistent claims.
 type TaskServiceImpl struct {
 	config  *config.Config
-	storage *storage.StorageLayer
+	storage *storage.TenantStore
 	indexer *indexer.Indexer
 }
 
@@ -47,7 +47,7 @@ const DefaultLeaseDuration = 10 * time.Minute
 // from search, the link graph, and orphan detection) until the next boot
 // index. It is a constructor argument rather than an option so a caller
 // cannot silently end up with the un-indexed behaviour.
-func NewTaskService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer) *TaskServiceImpl {
+func NewTaskService(cfg *config.Config, store *storage.TenantStore, idx *indexer.Indexer) *TaskServiceImpl {
 	return &TaskServiceImpl{
 		config:  cfg,
 		storage: store,
@@ -110,6 +110,15 @@ const OrphanReaperMarker = "*Marked blocked by runner orphan reaper"
 
 // ListProjects scans <brainDir>/projects/ for subdirectories containing a task/ subfolder.
 func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
+	guard := absoluteFilesystemGuard(ctx, s.indexer, s.config.BrainDir)
+	projectsDir, err := resolveFilesystemPath(ctx, s.indexer, s.config.BrainDir, "projects", true)
+	if err != nil {
+		return nil, err
+	}
+	if err := guard(projectsDir); err != nil {
+		return nil, err
+	}
+
 	_, entries, err := readBrainDirectory(s.config.BrainDir, "projects")
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -123,9 +132,9 @@ func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		taskDir, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.Join("projects", entry.Name(), "task"))
-		if err != nil {
-			if errors.Is(err, brainpath.ErrContainment) {
+		taskDir := filepath.Join(projectsDir, entry.Name(), "task")
+		if err := guard(taskDir); err != nil {
+			if !errors.Is(err, tenantfs.ErrDenied) {
 				return nil, err
 			}
 			continue
@@ -1238,8 +1247,9 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	}
 
 	// Check if checkout task already exists (idempotency)
+	guard := absoluteFilesystemGuard(ctx, s.indexer, s.config.BrainDir)
 	taskRelDir := filepath.Join("projects", sanitizedProjectID, "task")
-	taskDir, err := brainpath.ResolveForWrite(s.config.BrainDir, taskRelDir)
+	taskDir, err := resolveFilesystemPath(ctx, s.indexer, s.config.BrainDir, taskRelDir, true)
 	if err != nil {
 		return nil, err
 	}
@@ -1257,14 +1267,14 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	// with the mode actually requested loses no work. Anything past pending
 	// is left alone: it is running or has run, and quietly deleting it would
 	// discard real history.
-	existingTask, err := findCheckoutTaskByKey(s.config.BrainDir, taskRelDir, generatedKey)
-	if errors.Is(err, brainpath.ErrContainment) {
+	existingTask, err := findCheckoutTaskByKey(s.config.BrainDir, taskRelDir, generatedKey, guard)
+	if err != nil {
 		return nil, err
 	}
 	// Source children were validated during preflight; validate the destination before supersession.
 	shortID := markdown.GenerateShortID()
 	filename := shortID + ".md"
-	taskPath, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.Join(taskRelDir, filename))
+	taskPath, err := resolveFilesystemPath(ctx, s.indexer, s.config.BrainDir, filepath.Join(taskRelDir, filename), true)
 	if err != nil {
 		return nil, err
 	}
@@ -1299,6 +1309,9 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 				GeneratedKey: generatedKey,
 				Task:         existingTask.Resp,
 			}, nil
+		}
+		if err := guard(existingTask.FilePath); err != nil {
+			return nil, err
 		}
 		if err := os.Remove(existingTask.FilePath); err != nil {
 			return nil, fmt.Errorf("supersede checkout task %s: %w", existingTask.Resp.ID, err)
@@ -1585,21 +1598,27 @@ func foldCheckoutModeValue(mode string) string {
 }
 
 // findCheckoutTaskByKey searches for a checkout task with the given generated_key.
-func findCheckoutTaskByKey(root, taskRelDir, generatedKey string) (*existingCheckoutTask, error) {
-	taskDir, entries, err := readBrainDirectory(root, taskRelDir)
+func findCheckoutTaskByKey(root, taskRelDir, generatedKey string, guards ...func(string) error) (*existingCheckoutTask, error) {
+	taskDir, entries, err := readBrainDirectory(root, taskRelDir, guards...)
 	if err != nil {
+		if taskDir != "" && os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".md") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
 
 		filePath := filepath.Join(taskDir, entry.Name())
+		if err := checkFilesystemGuards(filePath, guards); err != nil {
+			return nil, err
+		}
 		content, err := os.ReadFile(filePath)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		doc, err := frontmatter.Parse(string(content))
@@ -1633,17 +1652,18 @@ func findCheckoutTaskByKey(root, taskRelDir, generatedKey string) (*existingChec
 		}
 	}
 
-	return nil, fmt.Errorf("not found")
+	return nil, nil
 }
 
 // getFeatureTasksFromFilesystem reads tasks from filesystem for a feature.
 func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID string) ([]types.BrainEntry, error) {
+	guard := absoluteFilesystemGuard(context.Background(), s.indexer, s.config.BrainDir)
 	if err := validateProjectID(projectID); err != nil {
 		return nil, err
 	}
-	taskDir, entries, err := readBrainDirectory(s.config.BrainDir, filepath.Join("projects", projectID, "task"))
+	taskDir, entries, err := readBrainDirectory(s.config.BrainDir, filepath.Join("projects", projectID, "task"), guard)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if taskDir != "" && os.IsNotExist(err) {
 			return []types.BrainEntry{}, nil
 		}
 		return nil, err
@@ -1651,14 +1671,17 @@ func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID str
 
 	var tasks []types.BrainEntry
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".md") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
 
 		filePath := filepath.Join(taskDir, entry.Name())
+		if err := guard(filePath); err != nil {
+			return nil, err
+		}
 		content, err := os.ReadFile(filePath)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		doc, err := frontmatter.Parse(string(content))

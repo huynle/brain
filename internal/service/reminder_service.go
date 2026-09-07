@@ -38,7 +38,7 @@ var reminderSweepInterval = time.Minute
 // dials, which have no business suppressing a notification.
 type ReminderService struct {
 	brain  *BrainServiceImpl
-	store  *storage.StorageLayer
+	store  *storage.TenantStore
 	events reminderEventIngester
 
 	// pauseChecker gates the TASK action only — see fireOne. The per-project
@@ -71,7 +71,7 @@ func WithReminderClock(now func() time.Time) ReminderServiceOption {
 
 // NewReminderService builds the service. store may be nil only in tests that
 // never fire; the dedup claim needs it.
-func NewReminderService(brain *BrainServiceImpl, store *storage.StorageLayer, opts ...ReminderServiceOption) *ReminderService {
+func NewReminderService(brain *BrainServiceImpl, store *storage.TenantStore, opts ...ReminderServiceOption) *ReminderService {
 	s := &ReminderService{
 		brain: brain,
 		store: store,

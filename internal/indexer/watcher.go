@@ -1,7 +1,9 @@
 package indexer
 
 import (
+	"errors"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/huynle/brain-api/internal/tenantfs"
 )
 
 // defaultIgnorePatterns are always ignored by the file watcher.
@@ -33,6 +36,10 @@ type FileWatcher struct {
 	mu             sync.Mutex
 	stopCh         chan struct{}
 	debounceTimer  *time.Timer
+	stopRootWatch  func()
+	lifecycleMu    sync.Mutex // Serializes Start/Stop, never held by event-loop cleanup.
+	loopDone       chan struct{}
+	flushWG        sync.WaitGroup
 }
 
 // NewFileWatcher creates a new FileWatcher.
@@ -63,11 +70,21 @@ func NewFileWatcher(brainDir string, indexer *Indexer, opts *FileWatcherOptions)
 // Start watches content directories plus a root anchor for newly created roots.
 // Idempotent — calling Start() when already running is a no-op.
 func (fw *FileWatcher) Start() error {
+	fw.lifecycleMu.Lock()
+	defer fw.lifecycleMu.Unlock()
 	fw.mu.Lock()
 	defer fw.mu.Unlock()
 
 	if fw.running {
 		return nil
+	}
+	if fw.loopDone != nil {
+		// A fatal loop exit may still be cleaning up. Do not reuse its fields
+		// or WaitGroup until that generation has completely drained.
+		done := fw.loopDone
+		fw.mu.Unlock()
+		<-done
+		fw.mu.Lock()
 	}
 
 	w, err := fsnotify.NewWatcher()
@@ -76,6 +93,8 @@ func (fw *FileWatcher) Start() error {
 	}
 	fw.watcher = w
 	fw.stopCh = make(chan struct{})
+	var rootChanges <-chan error
+	var stopRootWatch func()
 
 	// Keep brainDir watched even when projects/global do not yet exist. Prune
 	// all other siblings before WalkDir reads their contents.
@@ -83,7 +102,35 @@ func (fw *FileWatcher) Start() error {
 		if err != nil {
 			return err
 		}
+		rel, relErr := filepath.Rel(fw.brainDir, path)
+		if relErr != nil {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
+		if rel != "." && !inContentScope(rel) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if err := fw.indexer.admit(rel, false); err != nil {
+			if rel == "." || !errors.Is(err, tenantfs.ErrDenied) {
+				return err
+			}
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
+			if rel == "." {
+				// Admit the root, then register before WalkDir snapshots any
+				// children. Changes during the initial scan remain buffered.
+				rootChanges, stopRootWatch, err = watchRootChanges(path)
+				if err != nil {
+					return err
+				}
+			}
 			relPath, relErr := filepath.Rel(fw.brainDir, path)
 			if relErr != nil {
 				return relErr
@@ -93,16 +140,28 @@ func (fw *FileWatcher) Start() error {
 			if relPath != "." && (!inContentScope(relPath) || fw.shouldIgnoreDir(relPath)) {
 				return filepath.SkipDir
 			}
-			return w.Add(path)
+			addErr := w.Add(path)
+			// kqueue registers the root before opening its children. A dangling
+			// excluded sibling can fail that internal scan. Re-adding an already
+			// registered root preserves the anchor; this walk still independently
+			// admits and watches every content directory below it.
+			if rel == "." && errors.Is(addErr, os.ErrNotExist) {
+				return w.Add(path)
+			}
+			return addErr
 		}
 		return nil
 	})
 	if err != nil {
 		w.Close()
+		if stopRootWatch != nil {
+			stopRootWatch()
+		}
 		return err
 	}
-
+	fw.stopRootWatch = stopRootWatch
 	fw.running = true
+	fw.loopDone = make(chan struct{})
 
 	// Capture channels before starting goroutine — watcher may be nilled by Stop()
 	events := w.Events
@@ -110,39 +169,60 @@ func (fw *FileWatcher) Start() error {
 	stopCh := fw.stopCh
 
 	// Start event loop in background goroutine
-	go fw.eventLoop(events, errors, stopCh)
+	go fw.eventLoop(events, errors, stopCh, rootChanges)
 
 	return nil
 }
 
-// Stop stops watching and clears pending changes.
+// Stop signals shutdown and drains the event loop and its debounce callbacks.
+// Holding lifecycleMu prevents Start from reusing the generation during cleanup.
 func (fw *FileWatcher) Stop() {
+	fw.lifecycleMu.Lock()
+	defer fw.lifecycleMu.Unlock()
 	fw.mu.Lock()
-	if !fw.running {
-		fw.mu.Unlock()
-		return
+	fw.signalStopLocked()
+	done := fw.loopDone
+	fw.mu.Unlock()
+	if done != nil {
+		<-done
 	}
+}
 
-	// Signal the event loop to stop
-	close(fw.stopCh)
-
-	// Stop the debounce timer
+// Must be called with mu held. A stopped timer cannot run its deferred Done.
+func (fw *FileWatcher) signalStopLocked() {
+	if fw.running {
+		fw.running = false
+		close(fw.stopCh)
+	}
 	if fw.debounceTimer != nil {
-		fw.debounceTimer.Stop()
+		if fw.debounceTimer.Stop() {
+			fw.flushWG.Done()
+		}
 		fw.debounceTimer = nil
 	}
+}
 
-	// Close the watcher — this unblocks the event loop's select
+// The event loop owns cleanup, including fatal exits. It never calls Stop or
+// acquires lifecycleMu, so an external Stop can join it without a self-join.
+func (fw *FileWatcher) finishWatch() {
+	fw.mu.Lock()
+	fw.signalStopLocked()
 	w := fw.watcher
 	fw.watcher = nil
 	fw.pendingChanges = make(map[string]string)
-	fw.running = false
+	stopRootWatch := fw.stopRootWatch
+	fw.stopRootWatch = nil
 	fw.mu.Unlock()
 
 	// Close outside the lock to avoid deadlock with event loop
 	if w != nil {
 		w.Close()
 	}
+	if stopRootWatch != nil {
+		stopRootWatch()
+	}
+	fw.flushWG.Wait()
+	close(fw.loopDone)
 }
 
 // IsRunning returns true if the watcher is currently active.
@@ -153,11 +233,28 @@ func (fw *FileWatcher) IsRunning() bool {
 }
 
 // eventLoop processes fsnotify events until Stop() is called.
-func (fw *FileWatcher) eventLoop(events chan fsnotify.Event, errors chan error, stopCh chan struct{}) {
+func (fw *FileWatcher) eventLoop(events chan fsnotify.Event, errors chan error, stopCh chan struct{}, rootChanges <-chan error) {
+	defer fw.finishWatch()
 	for {
 		select {
 		case <-stopCh:
 			return
+		case err, ok := <-rootChanges:
+			if !ok {
+				return
+			}
+			select {
+			case <-stopCh:
+				return
+			default:
+			}
+			if err == nil {
+				err = fw.rescanContentRoots()
+			}
+			if err != nil {
+				slog.Error("content root watch failed", "error", err)
+				return
+			}
 		case event, ok := <-events:
 			if !ok {
 				return
@@ -172,6 +269,37 @@ func (fw *FileWatcher) eventLoop(events chan fsnotify.Event, errors chan error, 
 	}
 }
 
+// A root notification can arrive without fsnotify child events on kqueue.
+// Never enumerate unrelated siblings here, and never turn admission errors
+// into absent content. Lstat preserves the no-directory-symlink-recursion rule.
+func (fw *FileWatcher) rescanContentRoots() error {
+	if err := fw.indexer.admit(".", false); err != nil {
+		return err
+	}
+	for _, name := range []string{"projects", "global"} {
+		if fw.shouldIgnoreDir(name) {
+			continue
+		}
+		path := filepath.Join(fw.brainDir, name)
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := fw.indexer.admit(name, false); err != nil {
+			return err
+		}
+		if info.IsDir() {
+			if err := fw.addDirRecursive(path); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // handleEvent processes a single fsnotify event.
 func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 	// Get relative path
@@ -183,6 +311,9 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 	if !inContentScope(relPath) {
 		return
 	}
+	if err := fw.indexer.admit(relPath, true); err != nil {
+		return
+	}
 
 	// Classify created directories before filtering file extensions: a
 	// directory can itself end in .md. Lstat avoids following directory symlinks.
@@ -190,7 +321,7 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 		info, err := os.Lstat(event.Name)
 		if err == nil && info.IsDir() {
 			if !fw.shouldIgnoreDir(relPath) {
-				fw.addDirRecursive(event.Name)
+				_ = fw.addDirRecursive(event.Name) // Existing async Create handling is best-effort.
 			}
 			return
 		}
@@ -228,29 +359,37 @@ func (fw *FileWatcher) handleEvent(event fsnotify.Event) {
 // This runs on the event loop goroutine, so a very large new tree delays
 // subsequent events. That is preferable to the alternative of losing the
 // subtree entirely.
-func (fw *FileWatcher) addDirRecursive(absDir string) {
-	_ = filepath.WalkDir(absDir, func(path string, d fs.DirEntry, err error) error {
+func (fw *FileWatcher) addDirRecursive(absDir string) error {
+	return filepath.WalkDir(absDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return nil // unreadable entry — skip it, keep walking
+			return err
 		}
 		relPath, relErr := filepath.Rel(fw.brainDir, path)
 		if relErr != nil {
-			return nil
+			return relErr
 		}
 		relPath = filepath.ToSlash(relPath)
-
-		if d.IsDir() {
-			if !inContentScope(relPath) || fw.shouldIgnoreDir(relPath) {
+		if !inContentScope(relPath) || (d.IsDir() && fw.shouldIgnoreDir(relPath)) {
+			if d.IsDir() {
 				return filepath.SkipDir
 			}
-			// Stop() nils fw.watcher, and a walk can still be in flight
-			// after that, so re-check under the lock.
-			fw.mu.Lock()
-			if fw.watcher != nil {
-				_ = fw.watcher.Add(path)
-			}
-			fw.mu.Unlock()
 			return nil
+		}
+		if err := fw.indexer.admit(relPath, false); err != nil {
+			return err
+		}
+
+		if d.IsDir() {
+			// Stop signals running=false before joining this walk. Do not
+			// register further watches while shutdown waits for it to drain.
+			fw.mu.Lock()
+			if !fw.running {
+				fw.mu.Unlock()
+				return filepath.SkipAll
+			}
+			addErr := fw.watcher.Add(path)
+			fw.mu.Unlock()
+			return addErr
 		}
 
 		if fw.indexableMarkdown(relPath) {
@@ -277,9 +416,12 @@ func (fw *FileWatcher) indexableMarkdown(relativePath string) bool {
 // debounce timer.
 func (fw *FileWatcher) queueChange(relativePath, action string) {
 	fw.mu.Lock()
+	defer fw.mu.Unlock()
+	if !fw.running {
+		return
+	}
 	fw.pendingChanges[relativePath] = action
 	fw.scheduleDebouncedFlush()
-	fw.mu.Unlock()
 }
 
 // shouldIgnore checks if a relative path matches any ignore pattern.
@@ -307,11 +449,25 @@ func (fw *FileWatcher) shouldIgnoreDir(relDir string) bool {
 // Must be called with fw.mu held.
 func (fw *FileWatcher) scheduleDebouncedFlush() {
 	if fw.debounceTimer != nil {
-		fw.debounceTimer.Stop()
+		if fw.debounceTimer.Stop() {
+			fw.flushWG.Done()
+		}
 	}
-	fw.debounceTimer = time.AfterFunc(time.Duration(fw.debounceMs)*time.Millisecond, func() {
-		fw.flushPendingChanges()
+	fw.flushWG.Add(1)
+	var timer *time.Timer
+	timer = time.AfterFunc(time.Duration(fw.debounceMs)*time.Millisecond, func() {
+		defer fw.flushWG.Done()
+		fw.mu.Lock()
+		current := fw.debounceTimer == timer
+		if current {
+			fw.debounceTimer = nil
+		}
+		fw.mu.Unlock()
+		if current {
+			fw.flushPendingChanges()
+		}
 	})
+	fw.debounceTimer = timer
 }
 
 // flushPendingChanges processes all accumulated changes.
@@ -321,7 +477,6 @@ func (fw *FileWatcher) flushPendingChanges() {
 	// against a store the caller is about to close.
 	if !fw.running {
 		fw.pendingChanges = make(map[string]string)
-		fw.debounceTimer = nil
 		fw.mu.Unlock()
 		return
 	}
@@ -331,7 +486,6 @@ func (fw *FileWatcher) flushPendingChanges() {
 		changes[k] = v
 	}
 	fw.pendingChanges = make(map[string]string)
-	fw.debounceTimer = nil
 	fw.mu.Unlock()
 
 	for relativePath, action := range changes {

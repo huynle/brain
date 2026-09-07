@@ -7,6 +7,40 @@ import (
 	"testing"
 )
 
+func TestP1Compatibility(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "note.md"), []byte("note"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "note.md"), filepath.Join(root, "alias.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "missing"), filepath.Join(root, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"", ".", "../note.md", "x/../note.md", filepath.Join(root, "note.md"), "\x00", "escape/note.md"} {
+		if _, err := ResolveForWrite(root, name); !errors.Is(err, ErrContainment) {
+			t.Errorf("%q containment error = %v", name, err)
+		}
+	}
+	p, err := Resolve(root, "alias.md")
+	if err != nil || p != filepath.Join(root, "alias.md") {
+		t.Errorf("lexical alias = %q, %v", p, err)
+	}
+	if _, err := Resolve(root, "missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("existing read missing error = %v", err)
+	}
+	for _, name := range []string{"new/note.md", "dangling/new.md"} {
+		if _, err := ResolveForWrite(root, name); err != nil {
+			t.Errorf("write %s: %v", name, err)
+		}
+	}
+}
+
 func fixture(t testing.TB) (string, string) {
 	t.Helper()
 	base := t.TempDir()

@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/huynle/brain-api/internal/auth"
 )
@@ -17,7 +19,7 @@ import (
 func TestBuildHTTPHandler_BindAuth(t *testing.T) {
 	for _, tt := range []struct {
 		name, host, hash, escape, authEnv string
-		enabled, allowed                 bool
+		enabled, allowed                  bool
 	}{
 		{name: "localhost", host: "localhost", allowed: true},
 		{name: "IPv4 loopback", host: "127.0.0.1", allowed: true},
@@ -134,8 +136,49 @@ func TestRunServer_BindAuthIPv6Loopback(t *testing.T) {
 	oldLogger := slog.Default()
 	defer slog.SetDefault(oldLogger)
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := RunServer(ctx, ServerOptions{Host: "::1", BrainDir: t.TempDir(), LogLevel: "error"}); err != nil {
-		t.Fatalf("IPv6 loopback startup/shutdown: %v", err)
+	defer cancel()
+	probe, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	address := probe.Addr().String()
+	if err := probe.Close(); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	done := make(chan error, 1)
+	go func() {
+		done <- RunServer(ctx, ServerOptions{Host: "::1", Port: port, BrainDir: dir, LogLevel: "error"})
+	}()
+	client := &http.Client{Timeout: time.Second, Transport: &http.Transport{Proxy: nil}}
+	defer client.CloseIdleConnections()
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(10 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("IPv6 server exited before readiness: %v", err)
+		case <-deadline.C:
+			cancel()
+			<-done
+			t.Fatal("IPv6 server did not become ready")
+		case <-tick.C:
+			resp, err := client.Get("http://" + address + "/api/v1/health")
+			if err != nil {
+				continue
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				continue
+			}
+			cancel()
+			if err := <-done; err != nil {
+				t.Fatalf("IPv6 loopback shutdown: %v", err)
+			}
+			return
+		}
 	}
 }

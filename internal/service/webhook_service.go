@@ -28,12 +28,12 @@ const maxRetries = 3
 
 // WebhookServiceImpl implements the api.WebhookService interface.
 type WebhookServiceImpl struct {
-	store  *storage.StorageLayer
+	store  *storage.TenantStore
 	client *http.Client
 }
 
 // NewWebhookService creates a new WebhookServiceImpl.
-func NewWebhookService(store *storage.StorageLayer) *WebhookServiceImpl {
+func NewWebhookService(store *storage.TenantStore) *WebhookServiceImpl {
 	return &WebhookServiceImpl{
 		store: store,
 		client: &http.Client{
@@ -44,7 +44,7 @@ func NewWebhookService(store *storage.StorageLayer) *WebhookServiceImpl {
 
 // NewWebhookServiceWithClient creates a WebhookServiceImpl with a custom HTTP client.
 // Useful for testing.
-func NewWebhookServiceWithClient(store *storage.StorageLayer, client *http.Client) *WebhookServiceImpl {
+func NewWebhookServiceWithClient(store *storage.TenantStore, client *http.Client) *WebhookServiceImpl {
 	return &WebhookServiceImpl{
 		store:  store,
 		client: client,

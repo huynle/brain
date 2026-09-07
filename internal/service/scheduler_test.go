@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -584,15 +585,20 @@ func TestSchedulerLifecycleTickExpiresLeasesSchedulesProjectsAndUpdatesStatus(t 
 	svc.nowUnixMS = func() int64 { return 1234 }
 
 	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	t.Cleanup(func() {
+		cancel()
+		if err := waitForCondition(5*time.Second, func() bool { return !svc.Status().Running }); err != nil {
+			t.Errorf("scheduler did not stop: %v", err)
+		}
+	})
 	svc.Start(ctx, time.Hour)
 
-	if err := waitForCondition(200*time.Millisecond, func() bool {
-		return len(store.scheduledProjects) == 2
+	// Status publishes the complete tick, not merely the start of GetReady.
+	if err := waitForCondition(5*time.Second, func() bool {
+		return svc.Status().TotalTicks == 1
 	}); err != nil {
 		t.Fatalf("scheduler did not schedule expected projects: %v", err)
 	}
-	cancel()
 
 	status := svc.Status()
 	if !status.Started || !status.Running {
@@ -609,6 +615,11 @@ func TestSchedulerLifecycleTickExpiresLeasesSchedulesProjectsAndUpdatesStatus(t 
 	}
 	if status.LastExpiredLeases != 3 {
 		t.Fatalf("last expired leases = %d, want 3", status.LastExpiredLeases)
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.scheduledProjects) != 2 {
+		t.Fatalf("scheduled projects = %v, want two", store.scheduledProjects)
 	}
 	if got := store.expireCalls; got != 1 {
 		t.Fatalf("expire calls = %d, want 1", got)
@@ -633,6 +644,8 @@ func waitForCondition(timeout time.Duration, fn func() bool) error {
 }
 
 type fakeSchedulerStore struct {
+	// Protect lifecycle observations read by the test while Start runs.
+	mu             sync.Mutex
 	tasks          []types.ResolvedTask
 	tasksByProject map[string][]types.ResolvedTask
 	// entries feeds GetReady through the REAL readiness pipeline
@@ -653,9 +666,9 @@ type fakeSchedulerStore struct {
 	automationPausedProjects map[string]bool
 	// pausedFeatures keys "<project>\x00<feature>", matching the service.
 	pausedFeatures map[string]bool
-	leases                   []storage.DispatchLeaseCreate
-	reasons                  []storage.PlacementReasonRow
-	commands                 []fakeRunnerCommand
+	leases         []storage.DispatchLeaseCreate
+	reasons        []storage.PlacementReasonRow
+	commands       []fakeRunnerCommand
 	// activeLeases simulates the persisted state for already_leased / force
 	// scenarios. Keyed by "projectID/taskID".
 	activeLeases map[string]*storage.DispatchLeaseRow
@@ -684,6 +697,8 @@ func newFakeSchedulerStore() *fakeSchedulerStore {
 }
 
 func (f *fakeSchedulerStore) GetReady(ctx context.Context, projectID string, opts *api.TaskFilterOptions) ([]types.ResolvedTask, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.scheduledProjects = append(f.scheduledProjects, projectID)
 	if f.entries != nil {
 		return GetReadyTasks(ResolveDependencies(append([]types.BrainEntry(nil), f.entries...))), nil
@@ -808,6 +823,8 @@ func (f *fakeSchedulerStore) IsAutomationsPausedForProject(projectID string) boo
 }
 
 func (f *fakeSchedulerStore) ExpireDispatchLeases(ctx context.Context, now int64) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.expireCalls++
 	f.expireAt = now
 	return 3, nil

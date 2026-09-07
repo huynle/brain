@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 )
 
-func newStorageBackedRunnerService(t *testing.T) (*RunnerServiceImpl, *storage.StorageLayer) {
+func newStorageBackedRunnerService(t *testing.T) (*RunnerServiceImpl, *storage.TenantStore) {
 	t.Helper()
-	store, err := storage.New(t.TempDir() + "/brain.db")
+	store, err := storagetest.New(t.TempDir() + "/brain.db")
 	if err != nil {
 		t.Fatalf("new storage: %v", err)
 	}

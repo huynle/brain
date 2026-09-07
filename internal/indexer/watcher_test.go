@@ -477,7 +477,7 @@ func TestFileWatcher_DetectsNestedNewDirectory(t *testing.T) {
 // waitForNoteCount polls until the DB holds want notes, failing if it never
 // gets there. Directory-create events race with the writes that follow them,
 // so a fixed sleep is either flaky or needlessly slow.
-func waitForNoteCount(t *testing.T, store *storage.StorageLayer, want int) {
+func waitForNoteCount(t *testing.T, store *storage.TenantStore, want int) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	var got int

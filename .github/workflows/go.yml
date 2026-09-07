@@ -15,6 +15,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
@@ -34,6 +36,13 @@ jobs:
       - name: Download dependencies
         run: go mod download
 
+      - name: Unscoped storage historical ratchet
+        if: github.event_name == 'pull_request'
+        env:
+          BRAIN_STORAGE_RATCHET_BASE: ${{ github.event.pull_request.base.sha }}
+          GOMAXPROCS: '2'
+        run: go test -p 1 ./internal/storage -run '^TestProductionUnscopedStorage(Baseline)?$' -count=1 -v
+
       - name: Vet
         run: go vet ./...
 
@@ -41,7 +50,13 @@ jobs:
         run: go build -o bin/brain ./cmd/brain
 
       - name: Test
-        run: go test ./... -v -count=1 -coverprofile=coverage.out
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            export BRAIN_STORAGE_RATCHET_BASE="$PR_BASE_SHA"
+          fi
+          go test ./... -v -count=1 -coverprofile=coverage.out
 
       - name: Upload coverage
         uses: actions/upload-artifact@v4

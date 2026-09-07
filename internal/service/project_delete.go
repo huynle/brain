@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/huynle/brain-api/internal/api"
-	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/types"
 )
@@ -44,7 +43,13 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 		return nil, err
 	}
 
-	projectDir, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.Join("projects", projectID))
+	projectName := filepath.Join("projects", projectID)
+	if p := filesystemPolicy(s.indexer); p != nil {
+		if err := p.PreflightDelete(ctx, projectName); err != nil {
+			return nil, err
+		}
+	}
+	projectDir, err := s.filesystemPath(ctx, projectName, true)
 	if err != nil {
 		return nil, err
 	}
@@ -55,6 +60,35 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 	indexedPaths, err := s.storage.ListProjectNotePaths(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("list project entries: %w", err)
+	}
+	// Validate the complete plan before the first file or index mutation. A
+	// stale index may name excluded files; a directory may contain aliases to
+	// excluded storage even though the directory itself is admissible.
+	for _, name := range indexedPaths {
+		if err := s.admittedRow(ctx, name); err != nil {
+			return nil, err
+		}
+	}
+	if p := filesystemPolicy(s.indexer); p != nil {
+		err := filepath.WalkDir(projectDir, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				if path == projectDir && os.IsNotExist(walkErr) {
+					return nil
+				}
+				return walkErr
+			}
+			name, err := filepath.Rel(s.config.BrainDir, path)
+			if err != nil {
+				return err
+			}
+			if err := p.AdmitTraversal(ctx, name); err != nil {
+				return err
+			}
+			return p.PreflightDelete(ctx, name)
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	dirInfo, statErr := os.Stat(projectDir)
 	dirExists := statErr == nil && dirInfo.IsDir()
@@ -73,7 +107,7 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 	paths := unionPaths(indexedPaths, diskPaths)
 	// Reject poisoned index paths before deleting any files or index rows.
 	for _, path := range paths {
-		if _, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.FromSlash(path)); err != nil {
+		if _, err := s.filesystemPath(ctx, path, true); err != nil {
 			return nil, err
 		}
 	}
@@ -116,6 +150,11 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 	//
 	// Kept when entries failed to delete: the leftovers live in there.
 	if resp.Failed == 0 {
+		if p := filesystemPolicy(s.indexer); p != nil {
+			if err := p.PreflightDelete(ctx, projectName); err != nil {
+				return nil, err
+			}
+		}
 		if err := os.RemoveAll(projectDir); err != nil {
 			if len(resp.Errors) < maxDeleteProjectErrors {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("remove %s: %v", projectDir, err))
@@ -145,24 +184,25 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 }
 
 // markdownFilesUnder returns brain-relative paths of every .md file under a
-// project directory. Containment errors abort before any deletion. Other errors
-// are swallowed: this is the belt to the index's
-// braces, and a partially readable tree should still contribute what it can.
+// project directory. Admission and I/O errors abort before any deletion.
 func (s *BrainServiceImpl) markdownFilesUnder(projectDir, projectID string) ([]string, error) {
 	var out []string
 	prefix := filepath.Join("projects", projectID)
-	if _, err := brainpath.ResolveForWrite(s.config.BrainDir, prefix); err != nil {
+	if _, err := s.filesystemPath(context.Background(), prefix, true); err != nil {
 		return nil, err
 	}
 	walkErr := filepath.WalkDir(projectDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d == nil {
-			return nil //nolint:nilerr // unreadable subtree must not abort the walk
+		if err != nil {
+			if path == projectDir && os.IsNotExist(err) {
+				return nil
+			}
+			return err
 		}
 		rel, relErr := filepath.Rel(projectDir, path)
 		if relErr != nil {
-			return nil
+			return relErr
 		}
-		if _, err := brainpath.ResolveForWrite(s.config.BrainDir, filepath.Join(prefix, rel)); errors.Is(err, brainpath.ErrContainment) {
+		if _, err := s.filesystemPath(context.Background(), filepath.Join(prefix, rel), true); err != nil {
 			return err
 		}
 		if d.IsDir() || !strings.EqualFold(filepath.Ext(d.Name()), ".md") {

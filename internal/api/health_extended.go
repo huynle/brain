@@ -41,6 +41,9 @@ func (h *Handler) HandleGetOrphans(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if limit > 100 {
+		limit = 100
+	}
 	entries, err := h.brain.GetOrphans(r.Context(), entryType, limit, project)
 	if err != nil {
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())

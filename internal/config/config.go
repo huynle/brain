@@ -8,10 +8,13 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/huynle/brain-api/internal/tenant"
 )
 
 // DataDir is the name of the internal data directory within the brain directory.
@@ -43,6 +46,8 @@ type Config struct {
 	FeatureCheckout FeatureCheckoutConfig
 	Embedding       EmbeddingConfig
 	Attachments     AttachmentConfig
+	Tenancy         TenancyConfig
+	loadErr         error
 
 	AttachmentExtraction AttachmentExtractionConfig
 	Assistant            AssistantConfig
@@ -61,6 +66,7 @@ type Config struct {
 // This ensures all brain clients (brain-api standalone, brain server start,
 // brain-mcp, OpenCode plugin) can share the same config file while still
 // allowing per-deployment env var overrides (e.g., Docker).
+// Call Err before using the result to start a server.
 func Load() Config {
 	homeDir, _ := os.UserHomeDir()
 
@@ -84,6 +90,9 @@ func Load() Config {
 
 	// Layer 2: Config file overrides
 	ucfg, err := LoadConfig()
+	if err != nil {
+		cfg.loadErr = fmt.Errorf("load config: %w", err)
+	}
 	if err == nil {
 		s := ucfg.Server
 		if s.BrainDir != "" {
@@ -117,9 +126,18 @@ func Load() Config {
 		cfg.Attachments = s.Attachments
 		cfg.AttachmentExtraction = s.AttachmentExtraction
 		cfg.Assistant = s.Assistant
+		cfg.Tenancy = s.Tenancy
 	}
 
 	// Layer 3: Environment variable overrides (highest priority)
+	mode := string(cfg.Tenancy.Mode)
+	if v := os.Getenv("BRAIN_TENANT_MODE"); v != "" {
+		mode = v
+	}
+	cfg.Tenancy.Mode, err = tenant.ParseMode(mode)
+	if err != nil {
+		cfg.loadErr = fmt.Errorf("server.tenancy.mode: %w", err)
+	}
 	if v := os.Getenv("BRAIN_DIR"); v != "" {
 		cfg.BrainDir = v
 	}
@@ -180,6 +198,11 @@ func Load() Config {
 	}
 
 	return cfg
+}
+
+// Err reports loading or validation failures without changing Load's existing API.
+func (c Config) Err() error {
+	return c.loadErr
 }
 
 // Addr returns the listen address as "host:port".

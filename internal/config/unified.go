@@ -61,6 +61,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/huynle/brain-api/internal/tenant"
 	"gopkg.in/yaml.v3"
 )
 
@@ -138,6 +139,7 @@ type ServerConfig struct {
 	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
 	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
 	IndexWatch      IndexWatchConfig      `yaml:"index_watch"`
+	Tenancy         TenancyConfig         `yaml:"tenancy"`
 	Embedding       EmbeddingConfig       `yaml:"embedding"`
 	Attachments     AttachmentConfig      `yaml:"attachments"`
 
@@ -148,6 +150,11 @@ type ServerConfig struct {
 // FeatureCheckoutConfig controls built-in feature completion checkout automation.
 type FeatureCheckoutConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// TenancyConfig selects the deployment's tenant resolution mode.
+type TenancyConfig struct {
+	Mode tenant.Mode `yaml:"mode"`
 }
 
 // IndexWatchConfig controls the filesystem watcher that keeps SQLite in sync

@@ -44,6 +44,26 @@ func TestParsedFile_HasExpectedFields(t *testing.T) {
 // ParseFile
 // ===========================================================================
 
+func TestParseFile_RejectsEscapingPaths(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "brain")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(parent, "secret.md")
+	if err := os.WriteFile(outside, []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "alias.md")); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"../secret.md", "alias.md"} {
+		if _, err := ParseFile(name, root); err == nil {
+			t.Errorf("parser admitted escaping path %q", name)
+		}
+	}
+}
+
 func TestParseFile_BasicFile(t *testing.T) {
 	dir := t.TempDir()
 	relPath := "projects/test/task/abc12def.md"

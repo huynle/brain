@@ -997,20 +997,7 @@ func resolveBulkForce(raw []byte, bodyForce, queryForce bool) bool {
 
 // bulkDeleteFilterIsEmpty reports whether a filter would match everything.
 func bulkDeleteFilterIsEmpty(f *types.BulkUpdateFilter) bool {
-	if f == nil {
-		return true
-	}
-	return f.FeatureID == nil &&
-		f.Project == nil &&
-		f.Type == nil &&
-		f.Status == nil &&
-		f.Priority == nil &&
-		len(f.Tags) == 0 &&
-		f.GeneratedBy == nil &&
-		f.GeneratedKey == nil &&
-		f.Agent == nil &&
-		f.Executor == nil &&
-		f.ExecutionMode == nil
+	return !f.IsEffective()
 }
 
 // bulkDeleteRequestFields is the set of top-level JSON keys accepted on a
@@ -1106,6 +1093,12 @@ func (h *Handler) HandleBulkUpdate(w http.ResponseWriter, r *http.Request) {
 		details = append(details, types.ValidationDetail{
 			Field:   "updates",
 			Message: "required when using 'filter' mode",
+		})
+	}
+	if hasFilter && !req.Filter.IsEffective() {
+		details = append(details, types.ValidationDetail{
+			Field:   "filter",
+			Message: "filter must constrain at least one field (e.g. project, feature_id)",
 		})
 	}
 

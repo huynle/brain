@@ -27,12 +27,12 @@ var _ api.RunnerRegistryService = (*RunnerRegistryServiceImpl)(nil)
 
 // RunnerRegistryServiceImpl implements api.RunnerRegistryService using the storage layer.
 type RunnerRegistryServiceImpl struct {
-	storage *storage.StorageLayer
+	storage *storage.TenantStore
 	hub     *realtime.Hub
 }
 
 // NewRunnerRegistryService creates a new RunnerRegistryServiceImpl.
-func NewRunnerRegistryService(store *storage.StorageLayer) *RunnerRegistryServiceImpl {
+func NewRunnerRegistryService(store *storage.TenantStore) *RunnerRegistryServiceImpl {
 	return &RunnerRegistryServiceImpl{storage: store}
 }
 

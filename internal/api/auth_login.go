@@ -23,7 +23,7 @@ type CredentialVerifier interface {
 }
 
 // PasswordTokenStore issues and rotates tokens for the password login flow.
-// *storage.StorageLayer satisfies it.
+// *storage.ControlStore satisfies it; no workload store is installed here.
 type PasswordTokenStore interface {
 	CreateAccessToken(ctx context.Context, token *storage.OAuthAccessToken) error
 	CreateRefreshToken(ctx context.Context, token *storage.OAuthRefreshToken) error

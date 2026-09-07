@@ -93,7 +93,7 @@ func TestClaimPlacementEligibility(t *testing.T) {
 	}
 }
 
-func assertClaimPlacementNoOwnership(t *testing.T, store *storage.StorageLayer) {
+func assertClaimPlacementNoOwnership(t *testing.T, store *storage.TenantStore) {
 	t.Helper()
 	ctx := context.Background()
 	claim, err := store.GetClaim(ctx, "p", "task0001")

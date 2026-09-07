@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/pkg/markdown"
 )
 
@@ -69,7 +69,7 @@ func BenchmarkBootAttachmentTree(b *testing.B) {
 			if err != nil {
 				b.Fatal(err)
 			}
-			store, err := storage.NewWithDB(db)
+			store, err := storagetest.NewWithDB(db)
 			if err != nil {
 				b.Fatal(err)
 			}

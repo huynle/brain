@@ -8,7 +8,7 @@ import (
 	"github.com/huynle/brain-api/internal/storage"
 )
 
-// PersistentBackend is the subset of *storage.StorageLayer that the SQLite-backed
+// PersistentBackend is the subset of *storage.ControlStore that the SQLite-backed
 // OAuth flow store depends on. Declaring it as an interface keeps the dependency
 // narrow and makes PersistentStore unit-testable.
 type PersistentBackend interface {

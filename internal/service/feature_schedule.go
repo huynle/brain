@@ -2,14 +2,12 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/pkg/frontmatter"
 )
@@ -85,11 +83,12 @@ func (s *BrainServiceImpl) ensureFeatureScheduleGate(ctx context.Context, projec
 	}
 
 	generatedKey := featureScheduleGeneratedKey(featureID)
+	guard := absoluteFilesystemGuard(ctx, s.indexer, s.config.BrainDir)
 	taskRelDir := filepath.Join("projects", project, "task")
 
 	// Look for existing gate task
-	existingGate, err := findGeneratedTaskByKey(s.config.BrainDir, taskRelDir, generatedKey)
-	if errors.Is(err, brainpath.ErrContainment) {
+	existingGate, err := findGeneratedTaskByKey(s.config.BrainDir, taskRelDir, generatedKey, guard)
+	if err != nil {
 		return err
 	}
 	if err == nil && existingGate != nil {
@@ -180,26 +179,30 @@ func (s *BrainServiceImpl) updateFeatureScheduleGate(ctx context.Context, gateID
 
 // injectGateDependency adds the gate task ID to depends_on of all non-generated tasks in the feature.
 func (s *BrainServiceImpl) injectGateDependency(ctx context.Context, project, featureID, gateID string) error {
+	guard := absoluteFilesystemGuard(ctx, s.indexer, s.config.BrainDir)
 	if err := validateProjectID(project); err != nil {
 		return err
 	}
-	taskDir, entries, err := readBrainDirectory(s.config.BrainDir, filepath.Join("projects", project, "task"))
+	taskDir, entries, err := readBrainDirectory(s.config.BrainDir, filepath.Join("projects", project, "task"), guard)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if taskDir != "" && os.IsNotExist(err) {
 			return nil
 		}
 		return fmt.Errorf("read task dir: %w", err)
 	}
 
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".md") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
 
 		filePath := filepath.Join(taskDir, entry.Name())
+		if err := guard(filePath); err != nil {
+			return err
+		}
 		content, err := os.ReadFile(filePath)
 		if err != nil {
-			continue
+			return err
 		}
 
 		doc, err := frontmatter.Parse(string(content))
@@ -239,15 +242,7 @@ func (s *BrainServiceImpl) injectGateDependency(ctx context.Context, project, fe
 		}
 
 		if _, err := s.Update(ctx, shortID, updateReq); err != nil {
-			if errors.Is(err, brainpath.ErrContainment) {
-				return err
-			}
-			slog.Warn("failed to inject gate dependency",
-				"task_id", shortID,
-				"gate_id", gateID,
-				"error", err,
-			)
-			continue
+			return fmt.Errorf("inject gate dependency into %s: %w", shortID, err)
 		}
 
 		slog.Debug("injected gate dependency",
@@ -261,24 +256,27 @@ func (s *BrainServiceImpl) injectGateDependency(ctx context.Context, project, fe
 
 // findGeneratedTaskByKey finds a generated task by its generated_key.
 // Returns the task info if found, or nil if not found.
-func findGeneratedTaskByKey(root, taskRelDir, generatedKey string) (*types.CreateEntryResponse, error) {
-	taskDir, entries, err := readBrainDirectory(root, taskRelDir)
+func findGeneratedTaskByKey(root, taskRelDir, generatedKey string, guards ...func(string) error) (*types.CreateEntryResponse, error) {
+	taskDir, entries, err := readBrainDirectory(root, taskRelDir, guards...)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("not found")
+		if taskDir != "" && os.IsNotExist(err) {
+			return nil, nil
 		}
 		return nil, err
 	}
 
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".md") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
 
 		filePath := filepath.Join(taskDir, entry.Name())
+		if err := checkFilesystemGuards(filePath, guards); err != nil {
+			return nil, err
+		}
 		content, err := os.ReadFile(filePath)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		doc, err := frontmatter.Parse(string(content))
@@ -298,5 +296,5 @@ func findGeneratedTaskByKey(root, taskRelDir, generatedKey string) (*types.Creat
 		}
 	}
 
-	return nil, fmt.Errorf("not found")
+	return nil, nil
 }

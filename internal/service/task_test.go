@@ -14,6 +14,7 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 
 	_ "github.com/glebarez/go-sqlite"
@@ -24,7 +25,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // newTestTaskService creates a TaskServiceImpl with an in-memory DB and temp brainDir.
-func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.StorageLayer, string) {
+func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.TenantStore, string) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -32,7 +33,7 @@ func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.StorageLayer, 
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
@@ -46,7 +47,7 @@ func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.StorageLayer, 
 }
 
 // insertTaskNote inserts a task NoteRow into the storage layer.
-func insertTaskNote(t *testing.T, store *storage.StorageLayer, shortID, title, status, priority, projectID string, metadata map[string]interface{}) {
+func insertTaskNote(t *testing.T, store *storage.TenantStore, shortID, title, status, priority, projectID string, metadata map[string]interface{}) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -79,7 +80,7 @@ func insertTaskNote(t *testing.T, store *storage.StorageLayer, shortID, title, s
 	}
 }
 
-func insertRunnerForTaskSelectionTest(t *testing.T, store *storage.StorageLayer, runnerID string, executors, capabilities []string) {
+func insertRunnerForTaskSelectionTest(t *testing.T, store *storage.TenantStore, runnerID string, executors, capabilities []string) {
 	t.Helper()
 	now := time.Now().UnixMilli()
 	if err := store.UpsertRunner(context.Background(), &storage.RunnerRow{
@@ -2417,7 +2418,7 @@ func TestExtractGeneratedDependentTasks(t *testing.T) {
 }
 
 // newTestTaskServiceWithDefaults creates a TaskServiceImpl with pre-configured TaskDefaults.
-func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsConfig) (*TaskServiceImpl, *storage.StorageLayer, string) {
+func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsConfig) (*TaskServiceImpl, *storage.TenantStore, string) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -2425,7 +2426,7 @@ func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsCo
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}

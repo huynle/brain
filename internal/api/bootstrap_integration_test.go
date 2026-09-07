@@ -74,7 +74,7 @@ func TestBootstrapHTTP_InstallAndPeerPolicy(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			h := NewHandler(&mockBrainService{}, WithTokenService(s), WithCredentialVerifier(auth.NewVerifierFromEnv()))
+			h := NewHandler(&mockBrainService{}, WithTokenService(singleModeTokens(t, s)), WithCredentialVerifier(auth.NewVerifierFromEnv()))
 			r := httptest.NewRequest(http.MethodPost, "/api/v1/tokens/bootstrap", strings.NewReader(`{"name":"first","scope":"read:*"}`))
 			r.RemoteAddr = tc.peer
 			r.Header.Set("X-Forwarded-For", "127.0.0.1")
@@ -104,7 +104,7 @@ func TestBootstrapHTTP_InstallAndPeerPolicy(t *testing.T) {
 func TestBootstrapHTTP_ConcurrentSingleWinner(t *testing.T) {
 	t.Setenv("BRAIN_ALLOW_REMOTE_BOOTSTRAP", "")
 	s := bootstrapStore(t)
-	h := NewHandler(&mockBrainService{}, WithTokenService(s))
+	h := NewHandler(&mockBrainService{}, WithTokenService(singleModeTokens(t, s)))
 	const requests = 24
 	// Hold all real HTTP handlers at a barrier so requests are in flight together.
 	arrived := make(chan struct{}, requests)

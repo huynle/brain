@@ -196,7 +196,7 @@ type GoalReconcileAudit = types.GoalReconcileAudit
 type GoalService struct {
 	brain *BrainServiceImpl
 	tasks FeatureTaskLister
-	store *storage.StorageLayer
+	store *storage.TenantStore
 
 	// steerer delivers steering prompts into live agent sessions. Nil means
 	// steering is silently disabled (existing wiring/tests keep working).
@@ -254,7 +254,7 @@ var goalReconcileInterval = 5 * time.Minute
 // NewGoalService constructs a GoalService from its collaborators. Optional
 // collaborators (steerer, pause checker) are supplied via options so existing
 // call sites keep working unchanged.
-func NewGoalService(brain *BrainServiceImpl, tasks FeatureTaskLister, store *storage.StorageLayer, opts ...GoalServiceOption) *GoalService {
+func NewGoalService(brain *BrainServiceImpl, tasks FeatureTaskLister, store *storage.TenantStore, opts ...GoalServiceOption) *GoalService {
 	s := &GoalService{brain: brain, tasks: tasks, store: store, now: time.Now}
 	for _, opt := range opts {
 		opt(s)

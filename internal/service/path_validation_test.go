@@ -29,7 +29,7 @@ func TestPathValidation_ProjectPolicy(t *testing.T) {
 
 // Nest the brain sufficiently deeply that even the regression's traversal
 // destinations remain inside this test's owned sandbox, including during RED.
-func nestedValidationBrain(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer, string) {
+func nestedValidationBrain(t *testing.T) (*BrainServiceImpl, *storage.TenantStore, string) {
 	t.Helper()
 	svc, store, sandbox := newTestBrainService(t)
 	svc.config.BrainDir = filepath.Join(sandbox, "one", "two", "brain")
@@ -80,7 +80,7 @@ func TestPathValidation_DeleteProjectNUL(t *testing.T) {
 	requireNoteCount(t, store, 0)
 }
 
-func requireNoteCount(t *testing.T, store *storage.StorageLayer, want int) {
+func requireNoteCount(t *testing.T, store *storage.TenantStore, want int) {
 	t.Helper()
 	var got int
 	if err := store.DB().QueryRow("SELECT COUNT(*) FROM notes").Scan(&got); err != nil {

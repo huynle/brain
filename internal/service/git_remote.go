@@ -20,7 +20,7 @@ func (e gitRemoteAdmissionError) Unwrap() error { return e.error }
 // Admission describes configured support, not present availability. Offline
 // advertisements may admit work; dispatch must independently require a live,
 // compatible runner. No registry rows (or a registry error) fails closed.
-func validateConfiguredGitRemote(ctx context.Context, store *storage.StorageLayer, remote string) error {
+func validateConfiguredGitRemote(ctx context.Context, store *storage.TenantStore, remote string) error {
 	if remote == "" {
 		return nil
 	}
@@ -77,7 +77,7 @@ func liveRunnerInfo(row *storage.RunnerRow) *types.RunnerInfo {
 // either the durable file sync or the DB merge; a type override cannot disguise
 // an existing task. Defaults currently contain no git_remote, and local workdir,
 // executor and execution-mode defaults never exempt a remote from admission.
-func validateMetadataGitRemote(ctx context.Context, store *storage.StorageLayer, row *storage.NoteRow, fields map[string]interface{}) error {
+func validateMetadataGitRemote(ctx context.Context, store *storage.TenantStore, row *storage.NoteRow, fields map[string]interface{}) error {
 	meta := make(map[string]interface{})
 	if row.Metadata != "" {
 		if err := json.Unmarshal([]byte(row.Metadata), &meta); err != nil {

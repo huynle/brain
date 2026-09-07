@@ -335,12 +335,26 @@ func relationalColumns(tx *sql.Tx, table string) ([]string, error) {
 }
 
 func auditRelationalInventory(tx *sql.Tx) (bool, error) {
+	return auditRelationalInventoryWithSearch(tx, nil, nil)
+}
+
+// Non-nil search manifests are private to the finalized FTS validator, which
+// checks every definition before substituting the exact search inventory.
+func auditRelationalInventoryWithSearch(tx *sql.Tx, searchTables map[string]bool, searchTriggers map[string]string) (bool, error) {
 	expected := map[string]bool{}
 	for _, s := range relationalTables {
 		expected[s.name] = true
 	}
 	for _, name := range strings.Fields(`schema_version api_tokens oauth_clients oauth_auth_codes oauth_access_tokens oauth_refresh_tokens tenant_roots notes_fts notes_fts_data notes_fts_idx notes_fts_docsize notes_fts_config sqlite_sequence`) {
 		expected[name] = true
+	}
+	if searchTables != nil {
+		for name := range legacyFTSDefinitions() {
+			delete(expected, name)
+		}
+		for name := range searchTables {
+			expected[name] = true
+		}
 	}
 	rows, err := tx.Query("SELECT name FROM sqlite_schema WHERE type='table'")
 	if err != nil {
@@ -415,6 +429,12 @@ func auditRelationalInventory(tx *sql.Tx) (bool, error) {
 	}
 	// Rebuilds drop triggers. Refuse unreviewed extensions instead of losing them.
 	triggers := map[string]string{"notes_ai": createTriggerAfterInsert, "notes_ad": createTriggerAfterDelete, "notes_au": createTriggerAfterUpdate}
+	if searchTriggers != nil {
+		triggers = make(map[string]string, len(searchTriggers))
+		for name, ddl := range searchTriggers {
+			triggers[name] = ddl
+		}
+	}
 	if owned {
 		for _, ddl := range append(append([]string{}, relationalClaimGuards...), relationalReferenceGuards...) {
 			triggers[strings.Fields(ddl)[2]] = ddl
@@ -534,32 +554,8 @@ func checkRelationalOwnership(tx *sql.Tx) error {
 			return fmt.Errorf("%s has %d unowned rows", table, n)
 		}
 	}
-	// A repeated invocation is validation, not blind IF NOT EXISTS success. Do
-	// not accept ownership columns without their constraints or permanent guards.
-	definitions := append([]string{}, relationalRegistryDDL...)
-	definitions = append(definitions, relationalClaimGuards...)
-	definitions = append(definitions, relationalReferenceGuards...)
-	definitions = append(definitions, requiredRelationalIndexes()...)
-	for _, s := range relationalTables {
-		definitions = append(definitions, relationalDDL(s), "CREATE INDEX p4_owner_"+s.name+" ON "+s.name+"(tenant_id)")
-	}
-	for _, ddl := range definitions {
-		// All definitions here are compile-time-owned identifiers, not input SQL.
-		words := strings.Fields(strings.ReplaceAll(ddl, "IF NOT EXISTS ", ""))
-		name := words[2]
-		if words[1] == "UNIQUE" {
-			name = words[3]
-		}
-		if i := strings.Index(name, "("); i >= 0 {
-			name = name[:i]
-		}
-		var actual string
-		if err := tx.QueryRow("SELECT sql FROM sqlite_schema WHERE name=?", name).Scan(&actual); err != nil {
-			return fmt.Errorf("missing relational definition %s: %w", name, err)
-		}
-		if normalizeRelationalDDL(actual) != normalizeRelationalDDL(ddl) {
-			return fmt.Errorf("changed relational definition %s", name)
-		}
+	if err := checkRelationalDefinitions(tx); err != nil {
+		return err
 	}
 	rows, err := tx.Query("PRAGMA foreign_key_check")
 	if err != nil {
@@ -589,6 +585,39 @@ func checkRelationalOwnership(tx *sql.Tx) error {
 		}
 	}
 	return rows.Err()
+}
+
+// Shared read-only definition checks; source auditing still uses its unchanged
+// v28 manifest. Final query/catalog validation must not execute integrity writes.
+func checkRelationalDefinitions(tx *sql.Tx) error {
+	if _, err := relationalIndexes(tx, true); err != nil {
+		return err
+	}
+	definitions := append([]string{}, relationalRegistryDDL...)
+	definitions = append(definitions, relationalClaimGuards...)
+	definitions = append(definitions, relationalReferenceGuards...)
+	definitions = append(definitions, requiredRelationalIndexes()...)
+	for _, s := range relationalTables {
+		definitions = append(definitions, relationalDDL(s), "CREATE INDEX p4_owner_"+s.name+" ON "+s.name+"(tenant_id)")
+	}
+	for _, ddl := range definitions {
+		words := strings.Fields(strings.ReplaceAll(ddl, "IF NOT EXISTS ", ""))
+		name := words[2]
+		if words[1] == "UNIQUE" {
+			name = words[3]
+		}
+		if i := strings.Index(name, "("); i >= 0 {
+			name = name[:i]
+		}
+		var actual string
+		if err := tx.QueryRow("SELECT sql FROM sqlite_schema WHERE name=?", name).Scan(&actual); err != nil {
+			return fmt.Errorf("missing relational definition %s: %w", name, err)
+		}
+		if normalizeRelationalDDL(actual) != normalizeRelationalDDL(ddl) {
+			return fmt.Errorf("changed relational definition %s", name)
+		}
+	}
+	return nil
 }
 
 func normalizeRelationalDDL(ddl string) string {

@@ -9,6 +9,12 @@ See [approved contracts](multi-tenant-security-contracts.md) D07/D08/D11 and the
 
 ## Stop/go prerequisites
 
+**P4.3 Phase 2 update (2026-09-07):** the private outer owner described below
+now exists as `migrateTenantSchema(ctx, db, checkpoint)` in
+`internal/storage/schema_tenant_migration.go`. It is dormant and has **no runtime
+caller**. The older component measurements below remain historical evidence;
+the complete-composition evidence and exact handoff are recorded at the end.
+
 **STOP for deployment today.** Finalized P0 and complete P3 are required; so are
 the downstream tenant FTS map/rank isolation, tenant CAS metadata/root handling,
 all scoped receivers (including raw-handle removal), and operator install-claim
@@ -189,3 +195,163 @@ Full V01/V03/V10/V15 remain pending: relational
 constraints and one precommit crash point are component evidence only, not local
 workflow parity, complete tenant isolation, every-stage cutover recovery, or
 revocation-safe restore/RPO/RTO proof. Public activation remains separately gated.
+
+## P4.3 Phase 2 — dormant complete transaction and handoff
+
+The private owner reserves **one `sql.Conn`**, disables and verifies foreign keys
+before beginning its transaction, then obtains SQLite's writer reservation before
+reading source version/catalog/rows. No pool-backed service or root-repository
+method is called while the transaction holds the only connection. The sequence is:
+
+1. Audit the exact reviewed v28 workload and control catalog, refusing partial
+   tenant schema under v28. Control audit explicitly accepts the existing v4
+   no-FK OAuth rebuild definitions as well as their bootstrap definitions, not
+   arbitrary historical DDL. Unknown tables/indexes/triggers/views fail closed.
+2. Read durable roots through a transaction-bound, read-only `tenantfs.Repository`;
+   use `Resolver.Lookup` and `BlobPath` for drift, exclusion and layout policy.
+   Require existing directory roots and verify every referenced CAS object's
+   regular-file status, length and SHA-256. Never provision/create directories,
+   relocate roots, repair metadata or move local bytes. Source root configurations
+   that cannot map to the resulting tenant registry fail closed rather than
+   inventing tenants or silently dropping registrations.
+   Regularity is checked **before opening** each resolved CAS path, then checked
+   again on the opened descriptor with `os.SameFile` identity comparison. This
+   rejects existing FIFOs/devices without a potentially blocking open. It is not
+   atomic: the external writer fence must cover CAS files and every ancestor
+   throughout validation. A concurrent regular-file-to-FIFO swap between stat
+   and open can still block; Go context cancellation cannot interrupt that open.
+   Neither descriptor checks nor SQLite's writer reservation replace the
+   filesystem fence. Hash/length checks still validate the bytes actually read.
+3. Capture transaction-local TEMP multiset snapshots of every workload table's
+   original columns, sequences, all credential/control rows, root mappings and
+   every column of the permanent installation claim. TEMP snapshots may spill;
+   include their disk needs in rehearsal capacity planning.
+4. Run `stageTenantRelationalSchema(tx)`, then `stageTenantFTS(tx)` in this same
+   transaction. Retain all IDs and high-water marks. For an originally absent
+   sequence only, remove rebuild-created zero rows for still-empty reviewed
+   tables; do not synthesize/reset an allocated sequence.
+5. Revalidate roots/CAS, the complete final relational/search catalog, FKs,
+   SQLite/FTS integrity and exact FTS rowids/content. Compare original values as
+   multisets, including duplicates/NULLs/bytes; require every legacy workload row
+   to remain explicitly `local`. The installation claim is compared against
+   `operator_install_claim`, not recreated as a boolean. All other control data
+   and exact lexical/absolute/canonical roots remain unchanged.
+6. Remove TEMP snapshots; **only then** insert private pending version **29** and
+   commit. Failure at publication rolls back the entire transaction. Version 29
+   never masquerades as 28. `CurrentSchemaVersion` and `InitSchema` are unchanged;
+   current bootstrap must reject the future schema.
+7. After commit/rollback, restore and verify FK ON on that same connection with
+   an independent cleanup context, even after caller cancellation. If restoration
+   fails, discard the connection and return the error; keep traffic fenced. A
+   cleanup error after commit does not imply rollback—inspect the durable version
+   in quarantine. Repetition at 29 validates complete catalog/content/root/CAS
+   state and rolls back its validation transaction; it does not rebuild or repair.
+
+**Wiring prerequisite, not implemented here:** P4.4 onward must finish all tenant
+receivers, tenant-only lexical/semantic/hybrid queries and error propagation,
+attachment metadata/reference/GC writers, control install-claim readers/writers,
+and bootstrap/backfill/new-database behavior. The candidate binary must select the
+matching future receiver routing from this final version, not a separately
+committed flag. Only after that complete cutover and acceptance may trusted shared
+bootstrap invoke this owner and advance its supported version. Do not call legacy
+`InitSchema` against a committed 29 DB, wire only this migration, enable a global
+search fallback, or start any old query/background writer after commit. This phase
+does not implement the receiver switch or authorize deployment.
+
+### INSERT rowid ownership guard
+
+SQLite documents `NEW.rowid` as undefined for implicit allocation in a BEFORE
+INSERT trigger ([trigger cautions](https://sqlite.org/lang_createtrigger.html#cautions_on_the_use_of_before_triggers)).
+The observed value `-1` is also a valid legacy ID and must not be exempted or
+reassigned. The finalized search catalog therefore includes the private,
+single-slot `tenant_fts_insert_guard` scratch table and paired triggers:
+
+- BEFORE INSERT clears scratch and captures any existing foreign ID matching
+  the provisional `NEW.id`, **without rejecting it yet**.
+- AFTER INSERT compares that candidate with the actual inserted ID and raises
+  **ABORT** on equality, rolling back the entire statement, REPLACE deletes,
+  FK cascades and FTS changes. Implicit allocation cannot reuse an existing ID;
+  explicit cross-owner REPLACE (including `-1`) does match and is refused.
+- Every attempted row resets scratch. DO NOTHING and UPSERT-update may skip
+  AFTER INSERT and retain one candidate; it is harmless, not durable ownership,
+  and must not be interpreted as a pending operation on restart. UPDATE retains
+  its direct BEFORE guard because its new ID is already defined.
+
+This relies on SQLite's serialized writers and per-row execution, **not** on
+AFTER-trigger ordering or `recursive_triggers`. The exact audited catalog has no
+nested INSERT into `notes`; adding one requires redesign/review of scratch
+lifetime. Scratch and schema are server-owned, not public SQL write surfaces.
+As with the mapping, these guards are not protection against arbitrary raw SQL.
+No extra rowid allocation occurs, and legacy IDs/sequences remain unchanged.
+
+### Fresh synthetic evidence (not Amos / not the load gate)
+
+`schema_tenant_migration_test.go` uses real temporary roots, real hashed CAS bytes,
+and the populated relational fixture's IDs, relationships, credentials and claim.
+It covers composition/idempotent validation, updated-title search and permanent
+claim guards, exact-value/owner/sequence checks, malformed source/final state,
+cancellation cleanup, and injected rollback at `reserved`, `snapshot`,
+`relational`, `fts`, `files`, `validated`, and `published`. An independent WAL
+connection tests writer reservation and old-state visibility through publication.
+Subprocess SIGKILL rehearsals at relational/FTS/files/final-version-publication
+boundaries reopen spilled WAL, compare every baseline row/catalog/sequence/FTS
+shadow and retry the whole migration. No normal server is launched.
+
+```sh
+CI=1 go test ./internal/storage -run '^TestTenant(FTS|Relational|Migration)' -count=1
+CI=1 go test -race ./internal/storage -run '^TestTenantMigration' -count=1 -timeout=5m
+CI=1 go test ./... -count=1
+go vet ./...
+go build ./...
+just lint
+BRAIN_P4_SYNTHETIC_SCALE=1 CI=1 go test ./internal/storage -run '^$' -bench '^BenchmarkTenantMigrationComplete78952$' -benchtime=1x -count=1 -timeout=10m
+```
+
+Opt-in benchmark observed on **Darwin/arm64, Apple M4 Max, 36 GiB RAM,
+Go 1.25.0**, this Phase 2 working tree: **16.409604416 seconds** for one complete
+migration including snapshots, relational/FTS composition, root/CAS validation,
+final commit and FK restoration (fixture construction excluded). The fixture has
+78,952 repetitive ~1.3 KB notes across 100 **projects in one local tenant**, 78,952
+tags, 7,895 links and synthetic 1,536-byte embedding rows plus metadata, and one
+real synthetic CAS object with a reference/derivation and permanent claim. It has
+no production markdown corpus, real provider vectors, or receiver traffic.
+Postcommit boundary lengths before close/checkpoint: DB **544,768 B**, WAL
+**621,543,232 B**, SHM **1,212,416 B**. WAL includes fixture construction; these are
+not migration-only growth or continuously sampled peak allocation/temp-space
+measurements. No Amos capacity/timing extrapolation or p95 claim is made. The
+initial benchmark correctly failed closed on newly created zero sequence rows;
+`TestTenantMigrationPreservesAbsentSequence` reproduces and guards the correction.
+
+Final Phase 2 verification: targeted relational/FTS/migration tests passed in
+9.962 s; full Go suite passed all **36 tested packages** (one additional package
+has no test files), storage 14.567 s; migration race tests passed in 86.445 s with
+the explicit 5-minute test budget. Vet/build and `git diff --check` exited 0;
+`just lint` reported **0 issues**. The first race invocation exceeded the tool's
+120-second execution budget; the explicit longer-budget rerun passed, and the
+writer-reservation test now disables observer busy-waiting so it checks lock
+ownership without paying seven configured wait intervals. Historical ratchet
+comparison was not requested with a trusted base; ordinary current-tree ownership
+and shrinking-ratchet checks ran in the full suite. No Brain status changes,
+commits, receiver cutover, production access or deployment were performed.
+
+### Remaining mandatory final gates
+
+- **`jr1xs3a3` coordinated Amos-copy rehearsal remains unavailable:** requested
+  authorized backup location has not been supplied. Still require the real
+  78,952-note/~1.2 GB copy, current titles, firing triggers, exact IDs/relationships/
+  credentials/claim/roots/local bytes, integrity, idempotence, measured timing,
+  capacity and coordinated restore evidence. Synthetic data is not a substitute.
+- **Full V10/V11 remains pending:** complete candidate receiver/routing crash
+  boundaries, no partial public routing/global fallback, same-name tenant
+  reference/reindex behavior, and fixed A scores/order/counts/snippets invariant
+  under radically changed B frequencies/lengths in **both lexical and hybrid**
+  search. Component lexical tests and dormant migration crashes do not complete it.
+- Benchmark **100 and 500 tenants**: catalog and per-tenant index costs, rebuilds,
+  deletes, hot-tenant interference, shared WAL/disk/temp peaks and writer-lock
+  waits. Required **p95 search <500 ms at 100 aggregate requests/second**, with
+  documented hardware and fixture sizes. Measure Phase 1 catalog validation and
+  REPLACE cleanup scans too. The single-tenant migration timer is not this gate.
+- Finalized P0/complete P3, receiver/acceptance cutover, local compatibility and
+  remaining security/recovery gates retain their dependencies. Production,
+  credential cutover/rotation and public activation need separate approvals;
+  hosted execution remains blocked pending separately approved VM isolation.

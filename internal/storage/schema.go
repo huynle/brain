@@ -519,10 +519,9 @@ END;`
 // migrateSchema applies incremental migrations for existing databases.
 // New databases get the latest DDL directly; this handles upgrades.
 func migrateSchema(db *sql.DB) error {
-	ver, err := GetSchemaVersion(db)
-	if err != nil {
-		// schema_version table doesn't exist yet — fresh DB, no migration needed.
-		return nil
+	ver, exists, err := checkSchemaCompatibility(db)
+	if err != nil || !exists {
+		return err
 	}
 
 	if ver < 2 {
@@ -1224,6 +1223,9 @@ func searchSubstring(s, substr string) bool {
 // schema_version belongs to the shared migration owner, not either handle. There
 // is no per-tenant database registry, schema initialization, or database stamp.
 func InitSchema(db *sql.DB) error {
+	if _, _, err := checkSchemaCompatibility(db); err != nil {
+		return err
+	}
 	// Tables (order matters for foreign keys)
 	tables := []string{
 		createNotesTable,
@@ -1306,10 +1308,35 @@ func InitSchema(db *sql.DB) error {
 	return nil
 }
 
+// checkSchemaCompatibility is read-only and must precede bootstrap/migration
+// writes. Only an absent version table is fresh; catalog/read/scan failures
+// must not turn an unreadable database into permission to initialize it.
+func checkSchemaCompatibility(db *sql.DB) (version int, exists bool, err error) {
+	var kind string
+	err = db.QueryRow("SELECT type FROM main.sqlite_master WHERE name = 'schema_version' COLLATE NOCASE").Scan(&kind)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, fmt.Errorf("inspect schema version: %w", err)
+	}
+	if kind != "table" {
+		return 0, true, fmt.Errorf("schema version: expected table, found %s", kind)
+	}
+	version, err = GetSchemaVersion(db)
+	if err != nil {
+		return 0, true, err
+	}
+	if version > CurrentSchemaVersion {
+		return version, true, fmt.Errorf("database schema version %d is newer than supported version %d", version, CurrentSchemaVersion)
+	}
+	return version, true, nil
+}
+
 // GetSchemaVersion returns the highest schema version, or 0 if none set.
 func GetSchemaVersion(db *sql.DB) (int, error) {
 	var version int
-	err := db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&version)
+	err := db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM main.schema_version").Scan(&version)
 	if err != nil {
 		return 0, fmt.Errorf("get schema version: %w", err)
 	}

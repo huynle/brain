@@ -1,7 +1,12 @@
 # Multi-tenant ownership inventory
 
-P0 `7iyskorq`; source baseline `a1440e7`, inspected 2026-09-06. This is a
-manual source inventory, not implemented tenancy or passing isolation evidence.
+P0 `7iyskorq`; original source baseline `a1440e7`, inspected 2026-09-06.
+P4 `jr1xs3a3` phase 3 refresh: 2026-09-07, integrated HEAD
+`b04952c51bc13c53689a73469066b4d7f8da882b` plus uncommitted phase 1/2
+compatibility guard and dormant relational component. The SQLite inventory and
+integration delta below supersede the old v27 baseline; route/cache/loop sections
+remain the P0 classification checklist, not a fresh exhaustive route audit.
+This is a manual source inventory, not implemented tenancy or passing isolation evidence.
 See [security contracts](multi-tenant-security-contracts.md) for approved decisions
 D01-D13 and required verification V01-V16, still NOT RUN by P0.
 
@@ -12,8 +17,8 @@ amendments at `2026-09-06T21:02:01.445953+00:00`, responding
 "Approve the proposed contracts for implementation" to the security contract
 at revision `4d10904afeedfb8791a600f5e925bc82b64bf97b`. The approval is recorded
 in Brain task `7iyskorq` and canonical plan `9fguh2pr`. This inventory is the
-ownership handoff for those approved implementation contracts, not a new source
-scan or runtime evidence. Its source baseline remains `a1440e7`.
+ownership handoff for those approved implementation contracts. The original approval
+is unchanged; the P4 integration refresh does not expand deployment authority.
 
 Design approval does not authorize production deployment, single-mode
 query-credential cutover, credential rotation or public activation. Hosted
@@ -40,9 +45,11 @@ goal, feature, webhook, runner, session and placement relationships are forbidde
 ## SQLite tables
 
 Authoritative DDL and upgrades: `internal/storage/schema.go`; connection setup:
-`internal/storage/storage.go`. Baseline: 32 ordinary application tables and one
-FTS5 virtual table, schema version 27, WAL and one pooled connection. No tenant
-column exists in this baseline. This list includes tables created through old
+`internal/storage/storage.go`, `tenant_roots.go`, and dormant
+`schema_tenant_relational.go`. Integrated baseline: **33 ordinary application
+tables**, one FTS5 virtual table and four FTS shadows, **CurrentSchemaVersion = 28**,
+WAL and one pooled connection. `tenant_roots` already has a tenant key; the 26
+workload tables do not yet have tenant ownership. This list includes tables created through old
 migrations, not just the current initialization list.
 
 | Table | Class | Required ownership/key contract |
@@ -53,6 +60,7 @@ migrations, not just the current initialization list.
 | entry_meta | T | (tenant,path); explicitly purge/rekey, currently no note FK |
 | generated_tasks | T | (tenant,key); same-tenant task_path/feature; idempotency never global |
 | schema_version | O | One shared atomic migration version; not a tenant setting |
+| tenant_roots | O | v28 authoritative immutable mapping: lexical brain/blob roots, absolute anchors, canonical identities, layout; not derived from notes or replaced by tenants.root_override |
 | api_tokens | I | Principal, tenant grant, capabilities, revocation; tenant token administration cannot mint operator grants |
 | event_log | T/O | Explicit envelope owner and (tenant,dedup_key); operator events separate and not tenant-subscribable |
 | oauth_clients | I | Protocol client registration is not membership; bounded public registration, explicit grant/audience |
@@ -94,16 +102,74 @@ v11 capabilities; v12 embeddings; v13 attachments; v14 derived text;
 v15 clients/workspaces; v16 instances; v17 placement; v18 runner resources;
 v19 dispatch; v20 placement reasons; v21 lease IDs; v22 project pause;
 v23 runner pause; v24 cascades; v25/v26 link checksum invalidations;
-v27 feature pause. Instance columns are also ensured outside version guards;
+v27 feature pause; v28 durable tenant roots. Instance columns are also ensured outside version guards;
 clients/workspaces are created through v15. Initialization creates tables/FTS/
 triggers before upgrades and has no encompassing migration transaction today.
-Reserve the next available version during P4, do not assume v28 is still free.
+Phase 1 compatibility checks now precede these mutations at storage entry points.
+**Pending v29 NOT ENABLED**: the relational component has no runtime caller,
+version write or completion stamp. Reconfirm version availability at integration.
 
-Current FKs cover note children, attachment children, webhook deliveries and
+Baseline FKs cover note children, attachment children, webhook deliveries and
 OAuth codes. Most project/task/runner/client/path relationships have no FKs.
 Embedding metadata and vectors independently reference notes, not each other.
 P4 must rebuild tenant-qualified parent uniqueness and composite FKs or provide
 transactional equivalent tests; foreign keys enabled alone do not establish tenancy.
+
+### Staged relational inventory (not the runtime schema)
+
+`relationalTables` explicitly rebuilds all **26 T workload tables** listed above
+(including T/O and T/I splits), backfilling `local` with NOT NULL/nonempty owner
+and no default. The other seven baseline tables remain unchanged: `schema_version`,
+`api_tokens`, the four `oauth_*` tables, and `tenant_roots`.
+
+| New staged table | Class | Actual component behavior / remaining boundary |
+|---|---|---|
+| tenants | O registry | Creates local active record; status constraint, optional root_override; no membership or provisioning API |
+| tenant_runner_keys | T, trusted lifecycle | Composite durable reference key; includes historical/deregistered runners; NOT active enrollment or authentication |
+| tenant_client_keys | T, trusted lifecycle | Composite durable reference key; observations may outlive client registration; NOT a principal grant |
+| operator_install_claim | O | Copies every column of permanent entry_meta marker; blocks UPDATE/DELETE; future access must retain operator capability |
+
+Within the outer transaction that is **37 ordinary tables**, plus the unchanged
+legacy FTS virtual table/four shadows and engine metadata. Intermediate
+`p4_new_<table>` copies temporarily coexist with originals; they are not a final
+inventory or resumable standalone deployment. No tenant FTS mapping/table is added
+by this component. Optional `sqlite_stat1`/`sqlite_stat4` are recognized engine
+metadata; DROP can invalidate their samples. Unknown tables, views, triggers and
+unsupported tenant index shapes fail closed rather than silently disappear.
+
+Logical PK/unique keys and indexes gain tenant prefixes; integer AUTOINCREMENT
+physical IDs remain global, with sequence high-water preservation. Note/attachment/
+webhook references become composite FKs. Runner/client references use durable keys;
+placement's empty runner sentinel maps through `NULLIF`. Link target deletion
+clears only target_id via a same-tenant trigger, never tenant_id. Derived project,
+task, feature IDs and dangling paths do not acquire invented parent records: scoped
+receiver validation is still required. All baseline lookup indexes are retained
+tenant-first, including partial event dedup and upgrade-only client indexes.
+
+### Integrated ownership delta and unresolved cutover
+
+- P3 `handles.go` still **embeds StorageLayer** in TenantStore. Only ListNotes has
+  an explicit local-only guard; promoted raw DB/control/close and unscoped methods
+  remain. ControlStore uses private named backing and operator-gated registry/token
+  adapters (`control.go`). These are ownership scaffolding, not SQL isolation.
+- Server `buildHTTPHandler` opens single-mode local/control views, persists roots,
+  and passes bound filesystem policies to consumers. `tenant_roots` remains
+  authoritative across restart; index/reindex SQL is still not multi-tenant safe.
+- The live install claim still lives in `entry_meta` and credential/bootstrap
+  writers still use that location. Staged `operator_install_claim` is not yet a
+  routed ControlStore implementation. Removing it from workload metadata requires
+  all bootstrap, password, token/OAuth issuance and startup readers/writers to switch
+  together, with capability boundaries and permanent-claim tests retained.
+- The phase 1 storage guard cannot retroactively protect old binaries; server
+  `config.MigrateDataDir` and mkdir happen **before** storage.New. Do not interpret
+  storage tests as a whole-server no-filesystem-mutation guarantee.
+- Required single cutover: relational schema + tenant FTS/ranking + CAS ownership
+  and root mapping validation + scoped receiver routing/un-embedding + install-claim
+  control routing + final version/mapping publication. Never commit just this
+  component or admit public traffic between those pieces.
+
+See [P4 migration/recovery runbook](p4-migration-recovery.md) for isolated rehearsal,
+measured synthetic evidence and the missing Amos snapshot acceptance blocker.
 
 Current project purge (`internal/storage/project_purge.go`) retains events/shared
 blob bytes and omits feature pause, workspace observations, generation dedup and
@@ -339,4 +405,7 @@ Exercise writes and side effects, not response filtering alone. Manual grouped
 patterns and source names here can drift and cannot prove exhaustive runtime
 coverage of dynamic tool dispatch or all future code. Re-inventory after merging
 independent P1/P2/P3 work before schema implementation. No such CI automation or
-runtime verification is claimed by this documentation commit.
+runtime verification was claimed by the original P0 documentation. P3 now has
+source ownership/unscoped-method ratchets, and the dormant P4 relational component
+has a catalog manifest and tests. Neither constitutes the exhaustive route/cache/
+background-work inventory or full V01–V16 runtime evidence required above.

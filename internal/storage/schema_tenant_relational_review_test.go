@@ -1,10 +1,102 @@
 package storage
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestTenantRelationalEmbeddingChunkReference(t *testing.T) {
+	db := relationalFixture(t)
+	tx := relationalBegin(t, db)
+	if err := stageTenantRelationalSchema(tx); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	relationalExec(t, db, "PRAGMA foreign_keys=ON")
+	// The note exists, but metadata must also match an existing vector chunk.
+	for _, stmt := range []string{
+		`INSERT INTO note_embeddings_meta(tenant_id,note_id,chunk_index) VALUES('local',10,1)`,
+		`UPDATE note_embeddings_meta SET chunk_index=3 WHERE tenant_id='local' AND note_id=10 AND chunk_index=0`,
+	} {
+		if _, err := db.Exec(stmt); err == nil {
+			t.Errorf("accepted metadata without matching vector: %s", stmt)
+		} else if !strings.Contains(err.Error(), "FOREIGN KEY constraint failed") {
+			t.Fatalf("expected chunk FK failure, got %v", err)
+		}
+	}
+	relationalExec(t, db, `INSERT INTO note_embeddings(tenant_id,note_id,chunk_index,embedding) VALUES('local',10,2,x'0102');
+ INSERT INTO note_embeddings_meta(tenant_id,note_id,chunk_index) VALUES('local',10,2);
+ DELETE FROM note_embeddings WHERE tenant_id='local' AND note_id=10 AND chunk_index=2`)
+	var remaining int
+	if err := db.QueryRow("SELECT count(*) FROM note_embeddings_meta WHERE chunk_index=2").Scan(&remaining); err != nil || remaining != 0 {
+		t.Fatalf("chunk deletion left metadata: count=%d err=%v", remaining, err)
+	}
+	if err := db.QueryRow("SELECT count(*) FROM note_embeddings_meta WHERE chunk_index=0").Scan(&remaining); err != nil || remaining != 1 {
+		t.Fatalf("chunk deletion affected sibling metadata: count=%d err=%v", remaining, err)
+	}
+}
+
+func TestTenantRelationalRejectsOrphanEmbeddingMetadata(t *testing.T) {
+	db := relationalFixture(t)
+	// Legal in v28 even with FKs enabled: the note exists, the vector does not.
+	relationalExec(t, db, "INSERT INTO note_embeddings_meta(note_id,chunk_index) VALUES(10,7)")
+	before := relationalSnapshot(t, db, "note_embeddings_meta")
+	schema := relationalSnapshot(t, db, "sqlite_schema")
+	tx := relationalBegin(t, db)
+	if err := stageTenantRelationalSchema(tx); err == nil {
+		t.Fatal("accepted orphan embedding metadata")
+	} else if !strings.Contains(err.Error(), "foreign_key_check failed") {
+		t.Fatalf("expected FK validation failure, got %v", err)
+	}
+	if got := relationalSnapshot(t, tx, "sqlite_schema"); !reflect.DeepEqual(got, schema) {
+		t.Fatal("failed component left partial schema")
+	}
+	if got := relationalSnapshot(t, tx, "note_embeddings_meta"); !reflect.DeepEqual(got, before) {
+		t.Fatal("savepoint rollback changed orphan metadata")
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	if got := relationalSnapshot(t, db, "note_embeddings_meta"); !reflect.DeepEqual(got, before) {
+		t.Fatal("outer rollback changed orphan metadata")
+	}
+}
+
+func TestTenantRelationalRejectsUnreviewedIndexes(t *testing.T) {
+	for _, owned := range []bool{false, true} {
+		for _, index := range []struct{ name, ddl string }{
+			{"lookup", "CREATE INDEX extra_lookup ON notes(%stitle)"},
+			{"unique", "CREATE UNIQUE INDEX extra_unique ON notes(%stitle)"},
+			{"partial", "CREATE INDEX extra_partial ON notes(%stitle) WHERE title!=''"},
+		} {
+			t.Run(fmt.Sprintf("owned=%t/%s", owned, index.name), func(t *testing.T) {
+				db := relationalFixture(t)
+				tx := relationalBegin(t, db)
+				prefix := ""
+				if owned {
+					if err := stageTenantRelationalSchema(tx); err != nil {
+						t.Fatal(err)
+					}
+					prefix = "tenant_id,"
+				}
+				relationalExec(t, tx, fmt.Sprintf(index.ddl, prefix))
+				before := relationalSnapshot(t, tx, "sqlite_schema")
+				if err := stageTenantRelationalSchema(tx); err == nil {
+					t.Fatal("accepted unreviewed index outside the repeat-validation contract")
+				} else if !strings.Contains(err.Error(), "unreviewed index") {
+					t.Fatalf("expected index admission failure, got %v", err)
+				}
+				if got := relationalSnapshot(t, tx, "sqlite_schema"); !reflect.DeepEqual(got, before) {
+					t.Fatal("index rejection changed the catalog")
+				}
+			})
+		}
+	}
+}
 
 func TestTenantRelationalRejectsNullMetadataKey(t *testing.T) {
 	db := relationalFixture(t)

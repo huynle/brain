@@ -94,7 +94,7 @@ func stageTenantRelationalSchema(tx *sql.Tx) (err error) {
 		}
 	}
 
-	indexes, err := relationalIndexes(tx)
+	indexes, err := relationalIndexes(tx, false)
 	if err != nil {
 		return err
 	}
@@ -196,7 +196,7 @@ type relationalTable struct{ name, ddl, key, runner, client string }
 
 // Explicit 26-table tenant manifest. The seven ordinary non-tenant tables are
 // classified in auditRelationalInventory. FTS plus all four shadows are retained
-// but belong to downstream P4.2, NOT to this relational completion boundary.
+// but belong to downstream P4.3, NOT to this relational completion boundary.
 var relationalTables = []relationalTable{
 	{"notes", createNotesTable, "", "", ""},
 	{"links", createLinksTable, "", "", ""},
@@ -262,6 +262,12 @@ func relationalDDL(s relationalTable) string {
 	}
 	if s.name == "attachments" {
 		extra += ", UNIQUE(tenant_id,digest)"
+	}
+	if s.name == "note_embeddings_meta" {
+		// Metadata describes one vector chunk, not merely its owning note.
+		// Writers insert vectors first; legacy orphan metadata must fail the
+		// post-copy foreign_key_check rather than survive as a false index hit.
+		extra += ", FOREIGN KEY(tenant_id,note_id,chunk_index) REFERENCES note_embeddings(tenant_id,note_id,chunk_index) ON DELETE CASCADE"
 	}
 	if s.name == "entry_meta" {
 		extra += ", CHECK(path!='brain:system/install_claimed')"
@@ -461,19 +467,28 @@ func requiredRelationalIndexes() []string {
 	return result
 }
 
-// Every existing lookup index is preserved with tenant as its leading key,
+// Reviewed lookup indexes are preserved with tenant as their leading key,
 // including partial event dedup uniqueness and upgrade-created client indexes.
-// Catalog expressions are restricted to the existing simple column-list form;
-// an unreviewed expression/index shape is a blocker, not silently discarded.
-func relationalIndexes(tx *sql.Tx) ([]string, error) {
+// Reject extra catalog indexes, even simple ones: accepting them without a
+// durable definition manifest would make their later loss/change undetectable.
+// The compile-time index list is the same contract for staging and repeat checks;
+// operator/control-table indexes are untouched and outside this rebuild.
+func relationalIndexes(tx *sql.Tx, owned bool) ([]string, error) {
 	rows, err := tx.Query("SELECT tbl_name,sql FROM sqlite_schema WHERE type='index' AND sql IS NOT NULL ORDER BY name")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	tenantTables := map[string]bool{}
+	reviewed := map[string]bool{}
+	for _, ddl := range requiredRelationalIndexes() {
+		reviewed[normalizeRelationalDDL(ddl)] = true
+	}
 	for _, s := range relationalTables {
 		tenantTables[s.name] = true
+		if owned {
+			reviewed["CREATE INDEX p4_owner_"+s.name+" ON "+s.name+"(tenant_id)"] = true
+		}
 	}
 	pattern := regexp.MustCompile(`(?i)^(CREATE (?:UNIQUE )?INDEX (?:IF NOT EXISTS )?\w+ ON \w+\s*\()([\w, ]+)(\).*)$`)
 	var result []string
@@ -485,16 +500,26 @@ func relationalIndexes(tx *sql.Tx) ([]string, error) {
 		if !tenantTables[table] {
 			continue
 		}
-		m := pattern.FindStringSubmatch(ddl)
-		if m == nil {
+		candidate := ddl
+		if !owned {
+			m := pattern.FindStringSubmatch(ddl)
+			if m == nil {
+				return nil, fmt.Errorf("unreviewed index on %s: %s", table, ddl)
+			}
+			candidate = m[1] + "tenant_id," + m[2] + m[3]
+		}
+		if !reviewed[normalizeRelationalDDL(candidate)] {
 			return nil, fmt.Errorf("unreviewed index on %s: %s", table, ddl)
 		}
-		result = append(result, m[1]+"tenant_id,"+m[2]+m[3])
+		result = append(result, candidate)
 	}
 	return result, rows.Err()
 }
 
 func checkRelationalOwnership(tx *sql.Tx) error {
+	if _, err := relationalIndexes(tx, true); err != nil {
+		return err
+	}
 	tables := []string{"tenant_runner_keys", "tenant_client_keys"}
 	for _, s := range relationalTables {
 		tables = append(tables, s.name)

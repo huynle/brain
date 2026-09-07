@@ -135,7 +135,10 @@ legacy FTS virtual table/four shadows and engine metadata. Intermediate
 inventory or resumable standalone deployment. No tenant FTS mapping/table is added
 by this component. Optional `sqlite_stat1`/`sqlite_stat4` are recognized engine
 metadata; DROP can invalidate their samples. Unknown tables, views, triggers and
-unsupported tenant index shapes fail closed rather than silently disappear.
+all unknown tenant indexes fail closed rather than silently disappear. This includes
+otherwise simple lookup, unique and partial indexes: admission requires a reviewed
+definition in the durable compile-time manifest, both before staging and on repeat
+validation. Operator/control-table indexes are outside this rebuild and untouched.
 
 Logical PK/unique keys and indexes gain tenant prefixes; integer AUTOINCREMENT
 physical IDs remain global, with sequence high-water preservation. Note/attachment/
@@ -145,6 +148,56 @@ clears only target_id via a same-tenant trigger, never tenant_id. Derived projec
 task, feature IDs and dangling paths do not acquire invented parent records: scoped
 receiver validation is still required. All baseline lookup indexes are retained
 tenant-first, including partial event dedup and upgrade-only client indexes.
+
+#### P4.2 acceptance clarification (`ly1dgyw8`, Phase 2/2)
+
+P4.1 already covered **all seven project-bearing primary keys**; P4.2 does not
+introduce another rebuild or standalone migration. The explicit staged PK inventory is:
+
+| Table | Ordered primary key |
+|---|---|
+| task_claims | tenant_id, project_id, task_id |
+| task_dispatch_leases | tenant_id, project_id, task_id |
+| feature_assignments | tenant_id, project_id, feature_id |
+| feature_pause_state | tenant_id, project_id, feature_id |
+| feature_cascade_roots | tenant_id, project_id, root_feature_id |
+| project_pause_state | tenant_id, project_id |
+| project_placement | tenant_id, project_id |
+
+There are **13 workload tables with a literal `project_id` column**, versus **26
+total workload tables**: notes, entry_meta, task_claims, task_dispatch_leases,
+task_placement_reasons, feature_assignments, opencode_instances,
+project_pause_state, feature_pause_state, feature_cascade_roots, project_placement,
+brain_client_workspaces and note_embeddings_meta. Project-bearing columns are not
+all primary keys, and neither count includes operator_install_claim's copied column.
+
+Actual staged FKs are distinct from derived/history references:
+
+- Every workload owner references `tenants(id)`. Note children (links, tags,
+  embeddings and metadata, entry attachments), attachment children and webhook
+  deliveries have composite tenant/parent FKs. Existing delete actions are retained,
+  except link target deletion uses a same-tenant trigger to clear only `target_id`
+  with a `NO ACTION` FK, not a composite `SET NULL` that would erase ownership.
+- P4.2 Phase 1 adds **(tenant_id,note_id,chunk_index)** from
+  `note_embeddings_meta` to `note_embeddings`, **ON DELETE CASCADE**, alongside its
+  existing composite note FK. A note alone is insufficient: orphan chunk metadata
+  fails staging; deleting a vector chunk removes only its matching metadata.
+- Runner/client FKs target durable `tenant_runner_keys` / `tenant_client_keys`,
+  not active enrollment. Historical/deregistered IDs remain representable; the
+  placement empty-runner sentinel uses a generated `NULLIF` reference. These FKs
+  do not prove principal authorization, live-runner ownership or placement eligibility.
+- Project/task/feature IDs, task paths, unresolved link paths, generation dedup and
+  path metadata remain derived/history references, without invented parent rows.
+  Later scoped receivers must validate their tenant relationships and lifecycle.
+
+Independent acceptance tests inspect `table_info`, `index_list`, `index_info`,
+`foreign_key_list` and the SQLite catalog, rather than relying solely on migration
+DDL. They check both tenants using project `brain` and same-tenant duplicate
+rejection for each of the seven PKs, full named-index uniqueness/ordered columns/
+partial predicates against the pre-stage catalog, retained implicit unique keys,
+and explicit FK mappings/actions. Existing full-workload fixtures remain the row
+preservation and cross-tenant constraint coverage; these checks do not duplicate
+that workload or establish runtime receiver isolation.
 
 ### Integrated ownership delta and unresolved cutover
 
@@ -169,7 +222,7 @@ tenant-first, including partial event dedup and upgrade-only client indexes.
   component or admit public traffic between those pieces.
 
 See [P4 migration/recovery runbook](p4-migration-recovery.md) for isolated rehearsal,
-measured synthetic evidence and the missing Amos snapshot acceptance blocker.
+measured synthetic evidence and the final post-P4.11 Amos-copy/recovery gate.
 
 Current project purge (`internal/storage/project_purge.go`) retains events/shared
 blob bytes and omits feature pause, workspace observations, generation dedup and

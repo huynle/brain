@@ -14,8 +14,9 @@ the downstream tenant FTS map/rank isolation, tenant CAS metadata/root handling,
 all scoped receivers (including raw-handle removal), and operator install-claim
 reader/writer routing. One future outer owner must validate and atomically commit
 the relational changes, FTS mapping, CAS metadata, receiver-routing selection,
-claim cutover and schema version. There must be no externally visible intermediate
-state. Filesystem publication is not a SQLite transaction: retain legacy bytes in
+root validation and claim cutover, then publish the schema version last in that
+same transaction. Tenant FTS is **P4.3**, not P4.2. There must be no externally
+visible intermediate state. Filesystem publication is not a SQLite transaction: retain legacy bytes in
 place and reconcile any future durable blob intents before serving. No global FTS
 fallback. This component alone must **never be committed in a deployment**.
 
@@ -25,6 +26,26 @@ It rebuilds 26 workload tables, adds four registry/reference/claim tables,
 validates counts, ownership, definitions, integrity and FKs, and leaves old FTS
 for replacement in that SAME transaction. Repetition validates staged structure;
 it is not a supported restart of a partially committed migration.
+
+P4.2 `ly1dgyw8` Phase 2/2 adds independent acceptance evidence, not activation.
+P4.1 already covered all seven project-bearing PKs: `task_claims`,
+`task_dispatch_leases`, `feature_assignments`, `feature_pause_state`,
+`feature_cascade_roots`, `project_pause_state`, `project_placement`. There are 13
+literal `project_id` workload tables versus 26 total workload tables; see the
+inventory for the ordered keys and complete distinction. Catalog/PRAGMA tests
+verify their two-tenant `brain` coexistence and same-tenant duplicate rejection,
+full named-index uniqueness/ordered columns/predicates and implicit unique keys.
+
+Unknown tenant indexes fail closed, including simple lookup/unique/partial indexes,
+until their definitions are reviewed into the manifest; do not drop them to force
+an operator copy through validation. The composite chunk FK from
+`note_embeddings_meta(tenant_id,note_id,chunk_index)` to
+`note_embeddings(tenant_id,note_id,chunk_index)` uses `ON DELETE CASCADE` in addition
+to the note FK. Legacy orphan chunk metadata is a validation failure, not data to
+silently discard. Actual composite note/attachment/webhook FKs and durable
+runner/client reference-key FKs do not establish active enrollment or authorization.
+Derived/history project/task/feature/path references still require later scoped
+receiver validation; no fictional parent rows are introduced to satisfy them.
 
 ## Prepare a coordinated recovery set (operator checklist, not executed here)
 
@@ -101,7 +122,8 @@ and equal-ID tenant denial fixtures pass with the exact candidate binary.
   keeps the copy sealed. Save forensic artifacts before discarding it.
 - After future atomic commit: restart only a binary implementing the complete
   cutover. Test interruptions at **every** downstream stage and the commit boundary;
-  this phase tests only after relational staging, before commit. Unexpected mixed
+  this phase tests only after relational staging, before commit, including a
+  simulated downstream SQL failure and full outer rollback. Unexpected mixed
   version/catalog state is a blocker, not permission to repair by version editing.
 - Returning to an old binary after commit requires a coordinated pre-cutover
   DB/files/blob/config recovery set in quarantine, not just deleting the version
@@ -125,6 +147,7 @@ Commands from this worktree (no services or external datasets):
 ```sh
 CI=1 go test ./internal/storage -run '^TestTenantRelationalInterruptedRestart$' -count=1 -v
 CI=1 go test ./internal/storage -run '^TestTenantRelationalInterruptedRestart$' -count=3 -v
+CI=1 go test ./internal/storage -run '^TestTenantRelational(ProjectKeys|ForeignKeyInventory|EveryOwnershipAndIndex|DownstreamFailureRollsBackOuter)$' -count=1 -v
 BRAIN_P4_SYNTHETIC_SCALE=1 CI=1 go test ./internal/storage -run '^$' -bench '^BenchmarkTenantRelational78952$' -benchtime=1x -count=1 -timeout=10m
 CI=1 go test ./... -count=1
 go vet ./...
@@ -153,8 +176,16 @@ timing/capacity guarantee or 100/500-tenant ranking/load evidence. Full Go suite
 `just lint` reported `0 issues.` The historical
 ratchet requires its separately supplied trusted base; no base was supplied here.
 
-**Acceptance blocker: no authorized coordinated Amos snapshot is available.**
-No live Amos access was attempted. Full V01/V03/V10/V15 remain pending: relational
+**Final post-P4.11 gate: authorized Amos-copy and coordinated recovery evidence.**
+That gate is not performed or required to be executed in P4.2 Phase 2/2. No live
+Amos access was attempted and no authorized coordinated snapshot was used here.
+The new downstream-failure test stages the component, writes a disposable probe
+table and mutates a note (including legacy FTS maintenance), forces a CHECK failure,
+then rolls back the outer transaction. It compares every workload/control table,
+catalog, sequences and FTS shadows, verifies version 28, restores FK enforcement
+and checks integrity/FKs. This is simulated downstream evidence, not execution of
+the future FTS/CAS/runtime/root/claim cutover or a post-commit restore rehearsal.
+Full V01/V03/V10/V15 remain pending: relational
 constraints and one precommit crash point are component evidence only, not local
 workflow parity, complete tenant isolation, every-stage cutover recovery, or
 revocation-safe restore/RPO/RTO proof. Public activation remains separately gated.

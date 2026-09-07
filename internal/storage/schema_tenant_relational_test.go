@@ -245,26 +245,24 @@ func TestTenantRelationalEveryOwnershipAndIndex(t *testing.T) {
 	if err := db.QueryRow("SELECT count(*) FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'notes_fts%' AND name!='sqlite_sequence'").Scan(&ordinary); err != nil || ordinary != 33 {
 		t.Fatalf("ordinary inventory=%d err=%v", ordinary, err)
 	}
-	rows, err := db.Query("SELECT name,tbl_name FROM sqlite_schema WHERE type='index' AND sql IS NOT NULL")
-	if err != nil {
-		t.Fatal(err)
+	// Read the actual v28 catalog, not the migration's index DDL. Preserve the
+	// entire named-index contract: identity, uniqueness, ordered columns, predicate.
+	const indexShape = `(SELECT il.name,il."unique",il.partial,
+ %s(SELECT group_concat(name,',') FROM (SELECT name FROM pragma_index_info(il.name) ORDER BY seqno)),
+ CASE WHEN il.partial THEN substr(s.sql,instr(upper(s.sql),'WHERE')) ELSE '' END
+ FROM pragma_index_list('%s') il JOIN sqlite_schema s ON s.name=il.name
+ WHERE il.origin='c' AND il.name NOT LIKE 'p4_owner_%%')`
+	indexes := map[string][]string{}
+	// SQLite renumbers autoindexes when composite keys are added. Compare their
+	// ordered unique columns instead of treating unstable names as identities.
+	const uniqueShape = `(SELECT %s(SELECT group_concat(name,',') FROM
+ (SELECT name FROM pragma_index_info(il.name) ORDER BY seqno)) AS columns
+ FROM pragma_index_list('%s') il WHERE il.origin='u' AND il."unique"=1)`
+	uniqueKeys := map[string][]string{}
+	for _, table := range relationalTenantTables {
+		indexes[table] = relationalSnapshot(t, db, fmt.Sprintf(indexShape, "'tenant_id,' || ", table))
+		uniqueKeys[table] = relationalSnapshot(t, db, fmt.Sprintf(uniqueShape, "'tenant_id,' || ", table))
 	}
-	indexes := map[string]string{}
-	for rows.Next() {
-		var name, table string
-		if err := rows.Scan(&name, &table); err != nil {
-			t.Fatal(err)
-		}
-		for _, owned := range relationalTenantTables {
-			if owned == table {
-				indexes[name] = table
-			}
-		}
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	_ = rows.Close()
 	tx := relationalBegin(t, db)
 	if err := stageTenantRelationalSchema(tx); err != nil {
 		t.Fatal(err)
@@ -281,10 +279,19 @@ func TestTenantRelationalEveryOwnershipAndIndex(t *testing.T) {
 			}
 		}
 	}
-	for name, table := range indexes {
-		var first string
-		if err := tx.QueryRow("SELECT name FROM pragma_index_info(?) WHERE seqno=0", name).Scan(&first); err != nil || first != "tenant_id" {
-			t.Fatalf("%s (%s) not qualified: %q %v", name, table, first, err)
+	for table, want := range indexes {
+		if got := relationalSnapshot(t, tx, fmt.Sprintf(indexShape, "", table)); !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s index semantics changed:\nwant %v\ngot  %v", table, want, got)
+		}
+		gotKeys := relationalSnapshot(t, tx, fmt.Sprintf(uniqueShape, "", table))
+		for _, key := range uniqueKeys[table] {
+			found := false
+			for _, got := range gotKeys {
+				found = found || got == key
+			}
+			if !found {
+				t.Errorf("%s lost tenant-qualified unique key %s (got %v)", table, key, gotKeys)
+			}
 		}
 	}
 }

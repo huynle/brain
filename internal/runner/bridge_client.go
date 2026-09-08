@@ -68,6 +68,15 @@ type BridgeClient struct {
 	externalListenersCached []OpencodeListener
 	externalListenersAt     time.Time
 
+	// pendingPermMu guards pendingPerms, a per-instance set of outstanding
+	// OpenCode permission prompt ids folded from the always-on permission.*
+	// control events (mirrors internal/bridge/hub.go trackControlEvent). The
+	// stall recovery reads this to guarantee it never aborts a session that is
+	// legitimately waiting on a real permission prompt. A dedicated mutex keeps
+	// the hot event path off bc.mu (which serializes pump/adhoc/stream state).
+	pendingPermMu sync.Mutex
+	pendingPerms  map[string]map[string]struct{} // instanceID → set of permission ids
+
 	httpClient *http.Client
 }
 
@@ -79,11 +88,12 @@ const externalListenersTTL = 5 * time.Second
 // NewBridgeClient creates a bridge client for the given runner.
 func NewBridgeClient(tr *TaskRunner) *BridgeClient {
 	return &BridgeClient{
-		runner:  tr,
-		adhoc:   make(map[string]*adhocInstance),
-		pumps:   make(map[string]context.CancelFunc),
-		streams: make(map[string]bool),
-		execs:   make(map[string]*execProcess),
+		runner:       tr,
+		adhoc:        make(map[string]*adhocInstance),
+		pumps:        make(map[string]context.CancelFunc),
+		streams:      make(map[string]bool),
+		execs:        make(map[string]*execProcess),
+		pendingPerms: make(map[string]map[string]struct{}),
 		httpClient: &http.Client{
 			Timeout: time.Duration(bridge.DefaultTimeoutMs) * time.Millisecond,
 		},
@@ -307,7 +317,39 @@ func (bc *BridgeClient) proxyRequest(f bridge.Frame) (int, []byte, error) {
 	if err != nil {
 		return resp.StatusCode, nil, err
 	}
+	// On a successful steer/control prompt delivery, record that a steer is
+	// queued for the owning task's next turn so the idle path can flush it on
+	// the turn-ended edge. Defensive: never let this alter the proxy result.
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		bc.markSteerIfPromptAsync(f)
+	}
 	return resp.StatusCode, respBody, nil
+}
+
+// markSteerIfPromptAsync marks the owning task's PendingSteer flag when the
+// proxied frame is a steer/control prompt (POST .../prompt_async). It maps the
+// frame's InstanceID to a tracked task via the process manager; ad-hoc
+// instances (no RunningTask) and unmatched/empty IDs are skipped silently. It
+// must never fail the proxy — callers invoke it only on the 2xx path and
+// ignore its effect on the returned status/body.
+func (bc *BridgeClient) markSteerIfPromptAsync(f bridge.Frame) {
+	if f.Method != http.MethodPost || !strings.Contains(f.Path, "/prompt_async") {
+		return
+	}
+	if f.InstanceID == "" {
+		return
+	}
+	for _, info := range bc.runner.processMgr.GetAll() {
+		if info.Task.InstanceID == f.InstanceID {
+			if info.Task.ID == "" {
+				return
+			}
+			bc.runner.processMgr.SetPendingSteer(info.Task.ID, true)
+			slog.Debug("bridge client: marked pending steer",
+				"instance", f.InstanceID, "task", info.Task.ID, "path", f.Path)
+			return
+		}
+	}
 }
 
 func (bc *BridgeClient) baseContext() context.Context {
@@ -481,7 +523,74 @@ func (bc *BridgeClient) handleEventLine(instanceID string, line []byte) {
 	if len(raw) == 0 || !json.Valid(raw) {
 		return
 	}
+	// Fold permission.* events into the per-instance pending set BEFORE
+	// forwarding. Cheap and non-fatal: a decode failure just leaves the set
+	// unchanged. The stall recovery reads PendingPermissionCount to guarantee
+	// it never aborts a session with a real permission prompt outstanding.
+	bc.trackPendingPermission(instanceID, raw)
 	bc.forwardEvent(instanceID, json.RawMessage(raw))
+}
+
+// bridgePermEvent is the minimal shape needed to fold permission.* control
+// events into the pending set. Mirrors internal/bridge/hub.go opencodeEvent:
+// the id may be at properties.id or properties.info.id.
+type bridgePermEvent struct {
+	Type       string `json:"type"`
+	Properties struct {
+		ID   string `json:"id"`
+		Info struct {
+			ID string `json:"id"`
+		} `json:"info"`
+	} `json:"properties"`
+}
+
+// trackPendingPermission updates the per-instance pending-permission set from
+// one raw control event. permission.asked/permission.updated add the id;
+// permission.replied removes it. Non-permission events and unparseable lines
+// are ignored. Guarded by pendingPermMu, off the bc.mu hot path.
+func (bc *BridgeClient) trackPendingPermission(instanceID string, raw json.RawMessage) {
+	if instanceID == "" {
+		return
+	}
+	var evt bridgePermEvent
+	if err := json.Unmarshal(raw, &evt); err != nil {
+		return
+	}
+	if !strings.HasPrefix(evt.Type, "permission.") {
+		return
+	}
+	permID := evt.Properties.ID
+	if permID == "" {
+		permID = evt.Properties.Info.ID
+	}
+	if permID == "" {
+		return
+	}
+
+	bc.pendingPermMu.Lock()
+	defer bc.pendingPermMu.Unlock()
+	set := bc.pendingPerms[instanceID]
+	switch evt.Type {
+	case "permission.asked", "permission.updated":
+		if set == nil {
+			set = make(map[string]struct{})
+			bc.pendingPerms[instanceID] = set
+		}
+		set[permID] = struct{}{}
+	case "permission.replied":
+		if set != nil {
+			delete(set, permID)
+		}
+	}
+}
+
+// PendingPermissionCount reports how many OpenCode permission prompts are
+// outstanding for an instance. Returns 0 for an unknown instance. The stall
+// recovery must never abort a session while this is > 0.
+func (bc *BridgeClient) PendingPermissionCount(instanceID string) int {
+	bc.pendingPermMu.Lock()
+	defer bc.pendingPermMu.Unlock()
+	return len(bc.pendingPerms[instanceID])
 }
 
 // readLineBounded reads one line (without its trailing newline / CR). At most

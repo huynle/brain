@@ -97,6 +97,7 @@ const (
 	AbandonReasonClaimExpired  = "claim_expired"  // claim exists but expires_at < now
 	AbandonReasonRunnerOffline = "runner_offline" // claim exists, unexpired, but runner status is offline/stale
 	AbandonReasonOrphanReaped  = "orphan_reaped"  // reapOrphanedTasks transitioned this task to blocked
+	AbandonReasonStalled       = "stalled"        // runner detected a silent-busy OpenCode session past the stall timeout
 )
 
 // OrphanReaperMarker is the exact note text the runner-side orphan reaper
@@ -105,6 +106,12 @@ const (
 // grep-fallback here cannot drift silently. If this text ever changes, both
 // call sites update together.
 const OrphanReaperMarker = "*Marked blocked by runner orphan reaper"
+
+// StalledMarker is the exact note text the runner appends when it detects a
+// silent-but-busy OpenCode session past the stall timeout. Grepped by
+// enrichAbandonmentState to surface a resumable `stalled` signal. If this
+// text changes, the runner-side writer changes with it.
+const StalledMarker = "*Stalled: runner detected a silent OpenCode session"
 
 // ListProjects scans <brainDir>/projects/ for subdirectories containing a task/ subfolder.
 func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
@@ -288,6 +295,16 @@ func (s *TaskServiceImpl) enrichAbandonmentState(ctx context.Context, projectID 
 				task.IsAbandoned = true
 				task.AbandonReason = AbandonReasonOrphanReaped
 			}
+			continue
+		}
+
+		// status == "in_progress" — the stall marker is the authority. A
+		// stalled task's runner is typically still online with a live claim
+		// (the runner is up; the OpenCode session is wedged), so this check
+		// runs BEFORE the claim/runner signals below and wins over them.
+		if strings.Contains(task.Content, StalledMarker) {
+			task.IsAbandoned = true
+			task.AbandonReason = AbandonReasonStalled
 			continue
 		}
 

@@ -744,6 +744,32 @@ func (m *mockProcessMgr) UpdateIdleSince(taskID string, idleSince string) {
 	}
 }
 
+func (m *mockProcessMgr) UpdateLastActivity(taskID string, t time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, exists := m.processes[taskID]; exists {
+		if t.After(info.Task.LastActivity) {
+			info.Task.LastActivity = t
+		}
+	}
+}
+
+func (m *mockProcessMgr) SetPendingSteer(taskID string, pending bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, exists := m.processes[taskID]; exists {
+		info.Task.PendingSteer = pending
+	}
+}
+
+func (m *mockProcessMgr) SetStallRecovered(taskID string, recovered bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, exists := m.processes[taskID]; exists {
+		info.Task.StallRecovered = recovered
+	}
+}
+
 // setCompletion sets the completion status for a task.
 func (m *mockProcessMgr) setCompletion(taskID string, status CompletionStatus) {
 	m.mu.Lock()

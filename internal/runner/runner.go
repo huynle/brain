@@ -106,6 +106,19 @@ type TaskProcessManager interface {
 	UpdatePort(taskID string, port int)
 	UpdateSessionID(taskID string, sessionID string)
 	UpdateIdleSince(taskID string, idleSince string)
+	// UpdateLastActivity advances the newest observed session activity
+	// timestamp on a tracked task (never moving it backwards). Consumed by
+	// the stall timer.
+	UpdateLastActivity(taskID string, t time.Time)
+	// SetPendingSteer marks/clears that a steer/control prompt is queued for
+	// this task's next turn, so the idle path can flush it on the turn-ended
+	// edge.
+	SetPendingSteer(taskID string, pending bool)
+
+	// SetStallRecovered marks/clears that a bounded stall recovery has
+	// already run for this task, so the idle path can escalate an
+	// unrecoverable stall to blocked on the next stall edge.
+	SetStallRecovered(taskID string, recovered bool)
 
 	// ReserveSlot atomically holds an execution slot for a task if
 	// capacity is available. Returns true when the slot is granted or

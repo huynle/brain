@@ -175,6 +175,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		APITimeout:                getEnvIntOrDefault("RUNNER_API_TIMEOUT", firstNonZero(fileCfg.APITimeout, 5000)),
 		TaskTimeout:               getEnvIntOrDefault("RUNNER_TASK_TIMEOUT", fileCfg.TaskTimeout), // 0 is valid default
 		IdleDetectionThreshold:    getEnvIntOrDefault("RUNNER_IDLE_THRESHOLD", firstNonZero(fileCfg.IdleDetectionThreshold, 60000)),
+		StallTimeout:              getEnvIntOrDefault("RUNNER_STALL_TIMEOUT", firstNonZero(fileCfg.StallTimeout, 600000)),
 		MemoryThresholdPercent:    getEnvIntOrDefault("RUNNER_MEMORY_THRESHOLD", firstNonZero(fileCfg.MemoryThresholdPercent, 10)),
 		TaskMemoryLimitMB:         getEnvIntOrDefault("RUNNER_TASK_MEMORY_LIMIT_MB", intOrDefault(fileCfg.TaskMemoryLimitMB, fileHasTaskMemoryLimit, DefaultTaskMemoryLimitMB)),
 		OpencodeDBMaxGB:           getEnvIntOrDefault("RUNNER_OPENCODE_DB_MAX_GB", intOrDefault(fileCfg.OpencodeDBMaxGB, fileHasOpencodeDBMax, DefaultOpencodeDBMaxGB)),
@@ -277,6 +278,9 @@ func ValidateConfig(cfg RunnerConfig) error {
 	}
 	if cfg.IdleDetectionThreshold < 0 {
 		errs = append(errs, fmt.Sprintf("idleDetectionThreshold must be >= 0, got %d", cfg.IdleDetectionThreshold))
+	}
+	if cfg.StallTimeout < 0 {
+		errs = append(errs, fmt.Sprintf("stallTimeout must be >= 0, got %d", cfg.StallTimeout))
 	}
 	if cfg.HeartbeatInterval < 1 {
 		errs = append(errs, fmt.Sprintf("heartbeatInterval must be >= 1, got %d", cfg.HeartbeatInterval))

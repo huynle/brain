@@ -78,6 +78,7 @@ var AllowedMetadataUpdateFields = map[string]bool{
 	"last_reconcile": true, // goal_service: reconcile audit trail
 	"exit_code":      true, // runner script executor: process exit code
 	"script_output":  true, // runner script executor: captured output tail
+	"mr_url":         true, // feature-delivery script: MR URL write-back onto the merge_request entry
 
 	// (4) Task-runtime lifecycle fields for the resume-abandoned-tasks flow.
 	// These are read/written by the runner (resume_requested → IsResume prompt)

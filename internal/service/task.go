@@ -380,6 +380,7 @@ func (s *TaskServiceImpl) applyTaskDefaults(tasks []types.ResolvedTask) {
 		len(d.Extensions) == 0 && d.ExecutionMode == "" &&
 		d.CompleteOnIdle == nil && d.MergePolicy == "" && d.MergeStrategy == "" &&
 		d.MergeTargetBranch == "" && d.RemoteBranchPolicy == "" &&
+		d.DeliveryMode == "" &&
 		d.OpenPRBeforeMerge == nil && d.TargetWorkdir == "" {
 		return
 	}
@@ -414,6 +415,9 @@ func (s *TaskServiceImpl) applyTaskDefaults(tasks []types.ResolvedTask) {
 		}
 		if t.RemoteBranchPolicy == "" && d.RemoteBranchPolicy != "" {
 			t.RemoteBranchPolicy = d.RemoteBranchPolicy
+		}
+		if t.DeliveryMode == "" && d.DeliveryMode != "" {
+			t.DeliveryMode = d.DeliveryMode
 		}
 		if t.TargetWorkdir == "" && d.TargetWorkdir != "" {
 			t.TargetWorkdir = d.TargetWorkdir
@@ -2341,6 +2345,9 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	// unreachable no matter what a user configured.
 	if v, ok := metaString(meta, "checkout_mode"); ok {
 		entry.CheckoutMode = v
+	}
+	if v, ok := metaString(meta, "delivery_mode"); ok {
+		entry.DeliveryMode = v
 	}
 	if v, ok := metaString(meta, "execution_mode"); ok {
 		entry.ExecutionMode = v

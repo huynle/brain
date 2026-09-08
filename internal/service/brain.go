@@ -1081,6 +1081,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		"resume_requested", "resume_requested_at",
 		"abandoned_at", "abandoned_reason",
 		"attempt_count", "last_failed_at",
+		"mr_url",
 	}
 	userTouched := updateRequestTouchedFields(req)
 	var preservedFields map[string]interface{}
@@ -1938,6 +1939,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 		"resume_requested", "resume_requested_at",
 		"abandoned_at", "abandoned_reason",
 		"attempt_count", "last_failed_at",
+		"mr_url",
 	}
 	var preservedFields map[string]interface{}
 	if row.Metadata != "" && row.Metadata != "{}" {

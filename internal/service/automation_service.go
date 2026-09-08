@@ -692,6 +692,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		RemoteBranchPolicy: automation.RemoteBranchPolicy,
 		OpenPRBeforeMerge:  automation.OpenPRBeforeMerge,
 		CheckoutMode:       automation.CheckoutMode,
+		DeliveryMode:       automation.DeliveryMode,
 	}
 
 	if types.NormalizeAutomationActionType(automation.Action.Type) == types.AutomationActionScript {
@@ -870,6 +871,12 @@ func renderAutomationTemplate(input, project string, evt types.Event) string {
 	// which can differ from Project/ProjectID for cross-project automations
 	// (those using filter.project: "*"). Project/ProjectID always reflect
 	// the project that owns the automation entry and the generated task.
+	// DeliveryMode surfaces the feature's folded delivery mode, which
+	// CheckFeatureCompletion stamps onto the feature.completed event's
+	// metadata["delivery_mode"]. It flows in-band the same way FeatureID /
+	// ProjectID do so the built-in delivery script can bake
+	// DELIVERY_MODE={{.DeliveryMode}} at render time and read the per-feature
+	// value at dispatch. Empty for events that carry no such metadata.
 	data := struct {
 		Project        string
 		ProjectID      string
@@ -880,6 +887,7 @@ func renderAutomationTemplate(input, project string, evt types.Event) string {
 		TaskTitle      string
 		FromStatus     string
 		ToStatus       string
+		DeliveryMode   string
 	}{
 		Project:        project,
 		ProjectID:      project,
@@ -890,6 +898,7 @@ func renderAutomationTemplate(input, project string, evt types.Event) string {
 		TaskTitle:      evt.TaskTitle,
 		FromStatus:     evt.FromStatus,
 		ToStatus:       evt.ToStatus,
+		DeliveryMode:   evt.Metadata["delivery_mode"],
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

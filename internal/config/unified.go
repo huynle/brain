@@ -137,6 +137,7 @@ type ServerConfig struct {
 	LogMaxBackups   int                   `yaml:"log_max_backups"` // rotated backups to keep (default 5)
 	TaskDefaults    TaskDefaultsConfig    `yaml:"task_defaults"`
 	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
+	FeatureDelivery FeatureDeliveryConfig `yaml:"feature_delivery"`
 	IndexWatch      IndexWatchConfig      `yaml:"index_watch"`
 	Embedding       EmbeddingConfig       `yaml:"embedding"`
 	Attachments     AttachmentConfig      `yaml:"attachments"`
@@ -147,6 +148,12 @@ type ServerConfig struct {
 
 // FeatureCheckoutConfig controls built-in feature completion checkout automation.
 type FeatureCheckoutConfig struct {
+	Enabled bool `yaml:"enabled"`
+}
+
+// FeatureDeliveryConfig controls the built-in per-feature git delivery
+// automation (opt-in: default disabled at workspace level too).
+type FeatureDeliveryConfig struct {
 	Enabled bool `yaml:"enabled"`
 }
 
@@ -216,6 +223,7 @@ type TaskDefaultsConfig struct {
 	RemoteBranchPolicy string   `yaml:"remote_branch_policy"`
 	OpenPRBeforeMerge  *bool    `yaml:"open_pr_before_merge"`
 	TargetWorkdir      string   `yaml:"target_workdir"`
+	DeliveryMode       string   `yaml:"delivery_mode"`
 }
 
 // MCPConfig holds MCP integration configuration.
@@ -385,6 +393,7 @@ func defaultConfig() UnifiedConfig {
 			EnableAuth:      false,
 			CORSOrigin:      "*",
 			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
+			FeatureDelivery: FeatureDeliveryConfig{Enabled: false},
 			TaskDefaults: TaskDefaultsConfig{
 				ExecutionMode:      "worktree",
 				MergePolicy:        "auto_merge",

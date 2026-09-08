@@ -147,6 +147,43 @@ func IsValidCheckoutMode(s string) bool {
 	return false
 }
 
+// DeliveryModes lists valid values for DeliveryMode. "none" (default) means
+// no git delivery runs; "mr" opens a provider MR; "local_merge" squash-merges
+// into the target locally. Empty string is treated as "none" downstream.
+var DeliveryModes = []string{"none", "mr", "local_merge"}
+
+// IsValidDeliveryMode reports whether s is a recognized delivery mode.
+// Empty string is treated as valid (defaults to "none" downstream).
+func IsValidDeliveryMode(s string) bool {
+	if s == "" {
+		return true
+	}
+	for _, v := range DeliveryModes {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}
+
+// EffectiveDeliveryMode resolves the delivery mode to run, applying the
+// one-release backward-compat bridge from merge_policy when delivery_mode is
+// unset/none: auto_pr→mr, auto_merge→local_merge, else none. An explicit
+// non-"none" delivery_mode always wins. Returns "none"|"mr"|"local_merge".
+func EffectiveDeliveryMode(deliveryMode, mergePolicy string) string {
+	switch deliveryMode {
+	case "mr", "local_merge":
+		return deliveryMode
+	}
+	switch mergePolicy {
+	case "auto_pr":
+		return "mr"
+	case "auto_merge":
+		return "local_merge"
+	}
+	return "none"
+}
+
 // =============================================================================
 // Project Placement
 // =============================================================================
@@ -384,6 +421,7 @@ type BrainEntry struct {
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 	SessionMode        string `json:"session_mode,omitempty"`
 	CheckoutMode       string `json:"checkout_mode,omitempty"`
+	DeliveryMode       string `json:"delivery_mode,omitempty"`
 
 	// Task execution fields
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
@@ -733,6 +771,7 @@ type CreateEntryRequest struct {
 	SessionMode        string `json:"session_mode,omitempty"`
 	CompleteOnIdle     *bool  `json:"complete_on_idle,omitempty"`
 	CheckoutMode       string `json:"checkout_mode,omitempty"`
+	DeliveryMode       string `json:"delivery_mode,omitempty"`
 
 	UserOriginalRequest string   `json:"user_original_request,omitempty"`
 	TargetWorkdir       string   `json:"target_workdir,omitempty"`
@@ -826,6 +865,7 @@ type UpdateEntryRequest struct {
 	Executor           *string   `json:"executor,omitempty"`
 	Extensions         *[]string `json:"extensions,omitempty"`
 	CheckoutMode       *string   `json:"checkout_mode,omitempty"`
+	DeliveryMode       *string   `json:"delivery_mode,omitempty"`
 
 	// Origin provenance (see BrainEntry). Updatable so a task can be
 	// re-homed to a different machine, or its affinity relaxed, without
@@ -1223,6 +1263,7 @@ type ResolvedTask struct {
 	OpenPRBeforeMerge  *bool  `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"`
 	CheckoutMode       string `json:"checkout_mode,omitempty"`
+	DeliveryMode       string `json:"delivery_mode,omitempty"`
 
 	FeatureID        string   `json:"feature_id,omitempty"`
 	FeaturePriority  string   `json:"feature_priority,omitempty"`
@@ -1682,6 +1723,7 @@ type FeatureCheckoutOptions struct {
 	OpenPRBeforeMerge  bool   `json:"open_pr_before_merge,omitempty"`
 	ExecutionMode      string `json:"execution_mode,omitempty"` // "worktree", "current_branch"
 	CheckoutMode       string `json:"checkout_mode,omitempty"`  // "ai" (default) or "simple"
+	DeliveryMode       string `json:"delivery_mode,omitempty"`  // "none" (default), "mr", or "local_merge"
 }
 
 // CheckoutFeatureResult is the response for CheckoutFeature.

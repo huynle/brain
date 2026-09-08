@@ -48,6 +48,7 @@ type ServerOptions struct {
 	JWTSecret       string
 	TaskDefaults    config.TaskDefaultsConfig
 	FeatureCheckout config.FeatureCheckoutConfig
+	FeatureDelivery config.FeatureDeliveryConfig
 	// IndexWatch, when enabled, runs a filesystem watcher that re-indexes
 	// out-of-band writes to BrainDir. Off by default; see
 	// config.IndexWatchConfig for why.
@@ -360,6 +361,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		JWTSecret:       opts.JWTSecret,
 		TaskDefaults:    opts.TaskDefaults,
 		FeatureCheckout: opts.FeatureCheckout,
+		FeatureDelivery: opts.FeatureDelivery,
 		Embedding:       opts.Embedding,
 		Attachments:     normalizeAttachmentConfig(opts.BrainDir, opts.Attachments),
 
@@ -410,6 +412,21 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	}); err != nil {
 		cleanup()
 		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature checkout simple automation: %w", err)
+	}
+	// Phase 3: register the built-in per-feature git-delivery automation. It
+	// fires on feature.completed only for features whose folded delivery_mode
+	// is "mr" or "local_merge" (default "none" does not match), so nothing is
+	// pushed or merged unless a feature explicitly opts in. Gated on the
+	// separate FeatureDelivery.Enabled toggle (default OFF).
+	if err := service.EnsureBuiltInFeatureDeliveryAutomation(ctx, brainSvc, service.BuiltInFeatureDeliveryConfig{
+		Enabled:            cfg.FeatureDelivery.Enabled,
+		MergeTargetBranch:  cfg.TaskDefaults.MergeTargetBranch,
+		MergeStrategy:      cfg.TaskDefaults.MergeStrategy,
+		RemoteBranchPolicy: cfg.TaskDefaults.RemoteBranchPolicy,
+		TargetWorkdir:      cfg.TaskDefaults.TargetWorkdir,
+	}); err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature delivery automation: %w", err)
 	}
 	blobStore, err := blobstore.NewFilesystemStore(cfg.Attachments.StorageRoot, cfg.Attachments.MaxUploadSizeBytes)
 	if err != nil {

@@ -249,6 +249,42 @@ func foldCheckoutMode(tasks []types.ResolvedTask) string {
 	return "ai"
 }
 
+// foldDeliveryMode reduces the delivery_mode values across a set of feature
+// tasks into a single mode that describes how the completed feature is
+// delivered (ADR D7).
+//
+// Each task's effective mode is computed via types.EffectiveDeliveryMode, which
+// applies the one-release backward-compat bridge (merge_policy auto_pr→mr,
+// auto_merge→local_merge) when delivery_mode is unset/none. The per-task
+// effective modes are then folded:
+//   - Any "mr" AND any "local_merge" → "conflict" (the delivery task blocks
+//     with a clear message rather than guessing which target is correct).
+//   - Else any "mr" → "mr".
+//   - Else any "local_merge" → "local_merge".
+//   - Else → "none" (default; covers "all none" and "no tasks").
+func foldDeliveryMode(tasks []types.ResolvedTask) string {
+	sawMR := false
+	sawLocal := false
+	for _, t := range tasks {
+		switch types.EffectiveDeliveryMode(t.DeliveryMode, t.MergePolicy) {
+		case "mr":
+			sawMR = true
+		case "local_merge":
+			sawLocal = true
+		}
+	}
+	switch {
+	case sawMR && sawLocal:
+		return "conflict"
+	case sawMR:
+		return "mr"
+	case sawLocal:
+		return "local_merge"
+	default:
+		return "none"
+	}
+}
+
 // CheckFeatureCompletion checks if all tasks in a feature are completed
 // and emits the appropriate event (feature.completed or feature.progress).
 // This is called server-side after a task status update via the API,
@@ -298,6 +334,7 @@ func (s *EventServiceImpl) CheckFeatureCompletion(ctx context.Context, projectID
 		"completed":     strconv.Itoa(completed),
 		"total":         strconv.Itoa(total),
 		"checkout_mode": foldCheckoutMode(tasks),
+		"delivery_mode": foldDeliveryMode(tasks),
 	}
 
 	if allDone {

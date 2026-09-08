@@ -1946,6 +1946,8 @@ body.mobile .session-pane .composer input { flex: 1 1 100%; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   max-width: 22ch; min-width: 0;
 }
+.proc-chat-sid.copyable { cursor: pointer; }
+.proc-chat-sid.copyable:hover { color: #9aa4ad; }
 /* Agent name in the session pane header, beside the model. Same weight as
    the session id it follows — these are all "what this session is", not
    things to act on. */

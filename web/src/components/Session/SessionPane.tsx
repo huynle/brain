@@ -33,6 +33,7 @@ import { Composer } from "./Composer";
 import { PermissionBanner } from "./PermissionBanner";
 import { Transcript } from "./Transcript";
 import { sessionSteerState } from "../../lib/sessionRef";
+import { useUI } from "../../store/ui";
 import type { SessionRef } from "../../lib/types";
 
 export interface SessionPaneProps {
@@ -105,6 +106,17 @@ export function SessionPane({
 
   const live = sref?.mode === "live";
   const sessionId = sref?.session_id;
+  // The header shows the id CSS-truncated, so the full value must be
+  // copyable in one action — a wrong/truncated session id sent to the
+  // control API silently no-ops (incident report jc9ky1jn).
+  const toast = useUI((s) => s.toast);
+  const copySessionId = () => {
+    if (!sessionId) return;
+    navigator.clipboard
+      ?.writeText(sessionId)
+      .then(() => toast("Session ID copied", "info"))
+      .catch(() => toast("Copy failed", "error"));
+  };
   // Live, addressable, and the stream has not been closed under us —
   // the rule itself is pure and lives in lib/sessionRef.
   const { canSteer, note } = sessionSteerState(
@@ -127,8 +139,12 @@ export function SessionPane({
         ) : (
           <DeliveryPill delivery={transcript.delivery} />
         )}
-        <code className="proc-chat-sid" title={sessionId ?? undefined}>
-          {sessionId ?? "discovering…"}
+        <code
+          className={`proc-chat-sid${sessionId ? " copyable" : ""}`}
+          title={sessionId ? `Click to copy: ${sessionId}` : undefined}
+          onClick={sessionId ? copySessionId : undefined}
+        >
+          {sessionId ? `${sessionId} ⧉` : "discovering…"}
         </code>
         {inst?.agent && <span className="proc-chat-agent">{inst.agent}</span>}
         {sessionModel && (

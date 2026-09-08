@@ -14,10 +14,8 @@ ConsumeAuthCode
 ConsumeRefreshToken
 Control
 CountActiveTokens
-CountAttachmentReferences
 CountInProgressByTrigger
 CreateAccessToken
-CreateAttachment
 CreateAuthCode
 CreateDelivery
 CreateDispatchLease
@@ -26,7 +24,6 @@ CreateRefreshToken
 CreateToken
 CreateWebhook
 DB
-DeleteAttachmentIfUnreferenced
 DeleteFeatureCascadeRoot
 DeleteInstance
 DeleteInstancesByRunner
@@ -44,9 +41,6 @@ ForceAssignFeature
 GenerateToken
 GetAccessStats
 GetAccessToken
-GetAttachment
-GetAttachmentByDigest
-GetAttachmentDerived
 GetBrainClient
 GetClaim
 GetClaimsByRunner
@@ -68,14 +62,9 @@ InsertEvent
 IsFeaturePaused
 IsProjectAutomationsPaused
 IsProjectTaskPaused
-LinkAttachmentToEntry
 ListAllInstances
-ListAttachmentDerived
-ListAttachments
-ListAttachmentsForEntry
 ListBrainClientWorkspaces
 ListDeliveries
-ListEntryReferencesForAttachment
 ListExpiredDispatchLeases
 ListFeatureAssignmentsByProject
 ListFeatureAssignmentsByRunner
@@ -124,7 +113,6 @@ SetRunnerStatus
 SetVerified
 SingleModeTokens
 SyncNoteEmbeddingMetadata
-UnlinkAttachmentFromEntry
 UpdateAffinity
 UpdateHeartbeat
 UpdateRunnerCapabilities
@@ -132,7 +120,6 @@ UpdateRunnerDispatchMetadata
 UpdateRunnerMaxParallel
 UpdateTokenLastUsed
 UpdateWebhook
-UpsertAttachmentDerived
 UpsertBrainClient
 UpsertBrainClientWorkspace
 UpsertFeatureCascadeRoot

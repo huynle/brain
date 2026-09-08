@@ -355,3 +355,107 @@ commits, receiver cutover, production access or deployment were performed.
   remaining security/recovery gates retain their dependencies. Production,
   credential cutover/rotation and public activation need separate approvals;
   hosted execution remains blocked pending separately approved VM isolation.
+
+## P4.6 Phase 2/2 — attachment SQL/service boundary, not full D08 acceptance
+
+Assignment **P4.6 `9pj29gtz`**, 2026-09-08. Preserves Phase 1's 13 attachment
+receivers on `TenantStore`: metadata CRUD/digest lookup/list, entry references,
+reference counts/conditional deletion, and derived-data writes/reads/lists.
+**Runtime remains v28.** No migration activation, deployment, root relocation,
+physical CAS redesign or async authorization redesign is part of this phase.
+
+### Same-tenant project visibility (D08 rationale)
+
+The approved [D08 contract](multi-tenant-security-contracts.md#62-tenant-qualified-cas-and-derived-ownership)
+uses `UNIQUE(tenant_id,digest)` and permits deletion only when no reference remains
+**within that tenant**. Projects are organization within that trust boundary,
+not separate attachment owners. Accordingly every project sees the tenant's
+attachment catalog, including blobs uploaded from another project and old rows
+without project provenance. Entry attach/detach still validates the requested
+entry's project and uses same-tenant SQL parent checks. This does not grant
+cross-tenant access or make a parsed tenant ID an authorization capability.
+
+Previously an equal-byte upload from project B reused project A's row, then
+returned a bogus 404 because service code treated the first upload's
+`metadata.project_id` as an ACL. Create/Get/Open/text/extraction now use the bound
+tenant row; List uses `TenantStore.ListAttachments`' SQL tenant predicate, with no
+Go metadata ownership scan. **No project filter or new storage API is needed for
+this explicitly tenant-wide policy.** Filename and `metadata.project_id` retain
+first-upload provenance on dedup; they are not rewritten by a later project.
+The project-bearing backfill route consequently selects tenant-wide candidates.
+Clients must not interpret its project parameter as a privacy or billing boundary.
+
+Deletion's conditional SQL checks references across **all tenant projects**, not
+the upload project. It serializes the metadata delete against SQL attach. The
+subsequent filesystem delete is still separate: concurrent re-upload/cleanup,
+crash recovery and durable GC intents are not solved by that SQL statement.
+Create now performs a bound digest lookup before any CAS I/O, so invalid handles,
+nonlocal v28 bindings, unsupported schemas and unavailable SQL fail without
+probing, publishing or cleaning up legacy bytes. There is no unscoped fallback.
+This preflight is not lifecycle admission and does not serialize against a
+concurrent schema cutover; the final migration still requires fenced writers.
+
+### Proven component behavior versus NOT proven
+
+- Phase 1 storage fixtures exercise privately prepared v29 ownership, tenant-local
+  digest dedup, cross-owner parent refusal, refcounts, derivations and conditional
+  deletion. Their SQL results do **not** prove physical object independence.
+- Phase 2 service regressions reproduce the former second-project 404, verify
+  same-tenant ID reuse and unchanged provenance, tenant-wide list/get/open, and
+  list inclusion independent of missing/different project metadata.
+- `TestAttachmentServiceLocalCrossProjectLifecycle` uses real BrainService,
+  indexer, SQLite and mapped filesystem CAS: two projects upload equal bytes,
+  attach/list references, share derived text, detach A, refuse deletion while B
+  remains linked, and delete bytes/derived rows only after the final detach.
+  The independently configured local root and exact two-level legacy shards
+  remain unchanged; runtime version is asserted as 28. This is a local fixture,
+  not the full restart/promotion or HTTP/range isolation gate.
+- `TestAttachmentServiceCompatibilityRejectsBeforeBlobIO` verifies zero CAS
+  operations for invalid/nonlocal-v28/unsupported/closed storage. Existing cleanup
+  coverage now injects an INSERT failure, rather than a closed database, so it
+  still reaches the actual post-publication metadata-failure cleanup path.
+- **NOT proven:** exclusive A/B physical CAS and durable-root restart composition;
+  crash-safe upload/GC intents; existing-object digest corruption quarantine;
+  quotas; in-flight suspension/deletion generation/epoch fencing; late extraction
+  callback and downstream index suppression; authenticated download/range isolation.
+  Refusing a derived write after an already-deleted source is only parent-existence
+  protection, not full async suppression. `TenantStore` still embeds the raw store
+  until P4.10, and `blobstore.Store` injection does not itself verify matching
+  tenant ownership. Multi-mode remains disabled; V01/V03/V12 are not complete.
+
+### Exact existing handoffs (no new tasks or status changes)
+
+Stable Brain wiki-links below are taken from the linked canonical plan
+[[9fguh2pr]], especially its approved P0 handoff and phase requirements; they are
+not invented implementation-child IDs. P5–P10 still require their recorded
+breakdown/feature gates. The plan alone was recalled read-only to obtain these
+links; no unrelated Brain work was searched or mutated.
+
+| Remaining requirement | Existing phase/task and acceptance gate |
+|---|---|
+| Tenant-exclusive physical CAS, durable registered root/layout mapping on restart, legacy root/shard preservation | P5 `mt-p5-filesystem` [[sf93wsp4]], building on P3.4 [[w4597j7v]]; final composition/recovery [[jr1xs3a3]] |
+| Tenant-private upload staging, durable intent publication/reconciliation and partial-upload crash recovery; serialize physical cleanup with re-upload | P5 [[sf93wsp4]]; quota/reservation and adversarial V12/V14 verification P10 [[3pljs5ry]]; coordinated recovery [[jr1xs3a3]] |
+| Forced digest mismatch/collision and corrupt existing-object rejection/quarantine without overwrite | P5 [[sf93wsp4]] implementation; P10 [[3pljs5ry]] V12 verification (declared-hash validation alone is insufficient) |
+| Async suspension/deletion while extraction runs, authority/source-generation recheck and late result/index suppression | P6 identity/lifecycle [[6d6ngpiq]], P8 scoped work/loops [[kimljzt0]], P9 erasure [[oquakmh2]]; P10 [[3pljs5ry]] V06/V12/V15 |
+| Authenticated metadata/raw/text/download/range ownership and no equal-digest cross-tenant leak | P5 [[sf93wsp4]] plus P6 [[6d6ngpiq]] transport admission; consolidated P4.11 [[wg6bl8tk]] and P10 [[3pljs5ry]] V03/V12 |
+| Complete candidate migration/local compatibility/recovery, then separately authorized public readiness | [[jr1xs3a3]] after P4.11 [[wg6bl8tk]]; release [[ewavusmp]] (evidence is not activation) |
+
+Focused reproducible verification (temporary fixtures only):
+
+```sh
+CI=1 go test ./internal/service ./internal/storage -count=1
+CI=1 go test -race ./internal/service ./internal/storage -run 'Attachment' -count=1 -timeout=5m
+go vet ./internal/service ./internal/storage
+go build ./internal/service ./internal/storage
+golangci-lint run ./internal/service/... ./internal/storage/...
+git diff --check
+```
+
+Phase 2 observed verification: full service/storage suites passed (11.730 s /
+24.184 s); focused attachment race suites passed (11.095 s / 15.009 s).
+Scoped vet/build and whitespace/Go-format checks exited 0; scoped golangci-lint
+reported **0 issues**. The second-project upload, project-metadata list and
+same-tenant get regressions failed before the visibility fix. Invalid/nonlocal
+upload tests failed with one CAS put/get/delete before the preflight fix, then
+passed with zero blob operations. Repository-wide tests, full V12 and deployment
+rehearsals were not run by this phase; these numbers cover only the named commands.

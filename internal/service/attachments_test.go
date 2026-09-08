@@ -1094,12 +1094,13 @@ func TestAttachmentServiceCreateValidationAndCleanup(t *testing.T) {
 
 	t.Run("deletes new blob when metadata write fails", func(t *testing.T) {
 		svc, store, blobs := newAttachmentServiceForTest(t, 1024)
-		if err := store.Close(); err != nil {
-			t.Fatalf("Close storage failed: %v", err)
+		// Keep scope/digest reads available; fail the actual metadata write.
+		if _, err := store.DB().Exec(`CREATE TRIGGER fail_attachment_insert BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'metadata write failed'); END`); err != nil {
+			t.Fatal(err)
 		}
 		_, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{Filename: "note.txt", Size: 4}, strings.NewReader("data"))
-		if err == nil {
-			t.Fatal("Create returned nil error after metadata store was closed")
+		if err == nil || !strings.Contains(err.Error(), "metadata write failed") {
+			t.Fatalf("Create error = %v, want metadata write failure", err)
 		}
 		if len(blobs.blobs) != 0 {
 			t.Fatalf("blob map = %#v, want cleanup after metadata failure", blobs.blobs)
@@ -1357,7 +1358,7 @@ func TestAttachmentServiceAttachDetachValidationErrors(t *testing.T) {
 	}
 }
 
-func TestAttachmentServiceRejectsUnsafeIDsAndWrongProject(t *testing.T) {
+func TestAttachmentServiceRejectsUnsafeIDsAndAllowsSameTenantProject(t *testing.T) {
 	svc, _, _ := newAttachmentServiceForTest(t, 1024)
 	ctx := context.Background()
 	created, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{Filename: "note.txt", Size: 4}, strings.NewReader("data"))
@@ -1368,14 +1369,46 @@ func TestAttachmentServiceRejectsUnsafeIDsAndWrongProject(t *testing.T) {
 	if _, err := svc.Get(ctx, "proj", "../1"); err == nil || !strings.Contains(err.Error(), "unsafe") {
 		t.Fatalf("Get unsafe ID error = %v, want unsafe error", err)
 	}
-	if _, err := svc.Get(ctx, "other", created.Attachment.ID); !errors.Is(err, api.ErrNotFound) {
-		t.Fatalf("Get wrong project error = %v, want api.ErrNotFound", err)
+	if _, err := svc.Get(ctx, "other", created.Attachment.ID); err != nil {
+		t.Fatalf("Get same-tenant project: %v", err)
 	}
-	if _, _, err := svc.Open(ctx, "other", created.Attachment.ID); !errors.Is(err, api.ErrNotFound) {
-		t.Fatalf("Open wrong project error = %v, want api.ErrNotFound", err)
+	_, stream, err := svc.Open(ctx, "other", created.Attachment.ID)
+	if err != nil {
+		t.Fatalf("Open same-tenant project: %v", err)
 	}
-	if deleted, err := svc.Delete(ctx, "other", created.Attachment.ID); !errors.Is(err, api.ErrNotFound) || deleted {
-		t.Fatalf("Delete wrong project = %v/%v, want false api.ErrNotFound", deleted, err)
+	_ = stream.Close()
+	if deleted, err := svc.Delete(ctx, "other", created.Attachment.ID); err != nil || !deleted {
+		t.Fatalf("Delete unreferenced same-tenant attachment = %v/%v", deleted, err)
+	}
+}
+
+func TestAttachmentServiceEqualBytesAcrossProjects(t *testing.T) {
+	ctx := context.Background()
+	svc, _, _ := newAttachmentServiceForTest(t, 1024)
+	a := createAttachmentForServiceTest(t, svc, "alpha", "first.txt")
+	b := createAttachmentForServiceTest(t, svc, "beta", "second.txt")
+	if a.ID != b.ID || b.Filename != a.Filename || b.Metadata["project_id"] != "alpha" {
+		t.Fatalf("same-tenant dedup must retain original metadata: a=%+v b=%+v", a, b)
+	}
+	for _, project := range []string{"alpha", "beta", "third"} {
+		listed, err := svc.List(ctx, project)
+		if err != nil || listed.Total != 1 || len(listed.Attachments) != 1 || listed.Attachments[0].ID != a.ID {
+			t.Fatalf("List(%q) = %+v, %v; want shared tenant attachment", project, listed, err)
+		}
+	}
+}
+
+func TestAttachmentServiceListUsesTenantVisibilityNotUploadMetadata(t *testing.T) {
+	ctx := context.Background()
+	svc, store, _ := newAttachmentServiceForTest(t, 1024)
+	for i, metadata := range []string{`{}`, `{"project_id":"alpha"}`, `{"project_id":"beta"}`} {
+		if _, err := store.CreateAttachment(ctx, storage.AttachmentInput{Digest: fmt.Sprintf("digest-%d", i), Metadata: metadata}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	listed, err := svc.List(ctx, "alpha")
+	if err != nil || listed.Total != 3 {
+		t.Fatalf("List = %+v, %v; provenance must not filter tenant visibility", listed, err)
 	}
 }
 

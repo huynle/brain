@@ -6,9 +6,10 @@ import (
 	"github.com/huynle/brain-api/internal/tenant"
 )
 
-// TenantStore names a tenant; it does not authorize access. Notes/list/search enforce
-// execution-time schema routing and v29 tenant predicates; other content planes
-// are still unmigrated.
+// TenantStore names a tenant; it does not authorize access. Notes/list/search,
+// graph/links/tags and attachment metadata/references/derivations enforce
+// execution-time schema routing and v29 tenant predicates. Other planes remain
+// unmigrated; SQL attachment ownership does not bind or authorize a physical CAS.
 // TEMPORARY until P4.10: embedding promotes ALL StorageLayer methods, including
 // DB, Close, ValidateToken and unscoped queries. Multi mode must remain disabled.
 type TenantStore struct {

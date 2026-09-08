@@ -12,7 +12,11 @@ import (
 const attachmentColumns = `id, digest, size, media_type, metadata, created_at`
 const attachmentDerivedColumns = `id, attachment_id, kind, status, content_type, text, error, metadata, created_at, updated_at`
 
-func (s *StorageLayer) CreateAttachment(ctx context.Context, in AttachmentInput) (*AttachmentRow, error) {
+func (s *TenantStore) CreateAttachment(ctx context.Context, in AttachmentInput) (*AttachmentRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if err := validateAttachmentInput(in); err != nil {
 		return nil, err
 	}
@@ -21,10 +25,15 @@ func (s *StorageLayer) CreateAttachment(ctx context.Context, in AttachmentInput)
 		metadata = "{}"
 	}
 
-	_, err := s.db.ExecContext(ctx, `
-		INSERT OR IGNORE INTO attachments (digest, size, media_type, metadata)
-		VALUES (?, ?, ?, ?)
-	`, strings.TrimSpace(in.Digest), in.Size, in.MediaType, metadata)
+	columns, values, conflict := "digest, size, media_type, metadata", "?, ?, ?, ?", "digest"
+	args := []interface{}{strings.TrimSpace(in.Digest), in.Size, in.MediaType, metadata}
+	if scope.owner != "" {
+		columns += ", tenant_id"
+		values += ", ?"
+		conflict = "tenant_id, digest"
+		args = append(args, scope.owner)
+	}
+	_, err = s.db.ExecContext(ctx, "INSERT INTO attachments ("+columns+") VALUES ("+values+") ON CONFLICT("+conflict+") DO NOTHING", args...)
 	if err != nil {
 		return nil, fmt.Errorf("create attachment: %w", err)
 	}
@@ -36,11 +45,16 @@ func (s *StorageLayer) CreateAttachment(ctx context.Context, in AttachmentInput)
 	return row, nil
 }
 
-func (s *StorageLayer) GetAttachment(ctx context.Context, id int64) (*AttachmentRow, error) {
+func (s *TenantStore) GetAttachment(ctx context.Context, id int64) (*AttachmentRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if id <= 0 {
 		return nil, errors.New("attachment id must be positive")
 	}
-	row := s.db.QueryRowContext(ctx, "SELECT "+attachmentColumns+" FROM attachments WHERE id = ?", id)
+	where, args := scope.where("id = ?", id)
+	row := s.db.QueryRowContext(ctx, "SELECT "+attachmentColumns+" FROM attachments WHERE "+where, args...)
 	att, err := scanAttachmentRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -51,12 +65,17 @@ func (s *StorageLayer) GetAttachment(ctx context.Context, id int64) (*Attachment
 	return att, nil
 }
 
-func (s *StorageLayer) GetAttachmentByDigest(ctx context.Context, digest string) (*AttachmentRow, error) {
+func (s *TenantStore) GetAttachmentByDigest(ctx context.Context, digest string) (*AttachmentRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	digest = strings.TrimSpace(digest)
 	if digest == "" {
 		return nil, errors.New("attachment digest must not be empty")
 	}
-	row := s.db.QueryRowContext(ctx, "SELECT "+attachmentColumns+" FROM attachments WHERE digest = ?", digest)
+	where, args := scope.where("digest = ?", digest)
+	row := s.db.QueryRowContext(ctx, "SELECT "+attachmentColumns+" FROM attachments WHERE "+where, args...)
 	att, err := scanAttachmentRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -67,8 +86,15 @@ func (s *StorageLayer) GetAttachmentByDigest(ctx context.Context, digest string)
 	return att, nil
 }
 
-func (s *StorageLayer) ListAttachments(ctx context.Context) ([]*AttachmentRow, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT "+attachmentColumns+" FROM attachments ORDER BY id")
+// ListAttachments selects the bound tenant's shared attachment catalog in SQL.
+// Projects are not an attachment ACL: metadata.project_id is upload provenance.
+func (s *TenantStore) ListAttachments(ctx context.Context) ([]*AttachmentRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	where, args := scope.where("1=1")
+	rows, err := s.db.QueryContext(ctx, "SELECT "+attachmentColumns+" FROM attachments WHERE "+where+" ORDER BY id", args...)
 	if err != nil {
 		return nil, fmt.Errorf("list attachments: %w", err)
 	}
@@ -76,51 +102,59 @@ func (s *StorageLayer) ListAttachments(ctx context.Context) ([]*AttachmentRow, e
 	return scanAttachmentRows(rows)
 }
 
-func (s *StorageLayer) LinkAttachmentToEntry(ctx context.Context, notePath string, attachmentID int64, role string) error {
+func (s *TenantStore) LinkAttachmentToEntry(ctx context.Context, notePath string, attachmentID int64, role string) error {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return err
+	}
 	role = strings.TrimSpace(role)
 	if err := validateReferenceInput(notePath, attachmentID, role); err != nil {
 		return err
 	}
-	note, err := legacyNoteByPath(ctx, s, notePath)
-	if err != nil {
-		return fmt.Errorf("link attachment: %w", err)
+	// Parent selection and insertion are one SQLite write statement: deletion
+	// cannot slip between a successful parent check and the reference write.
+	columns, selection, conflict := "note_id, attachment_id, role", "n.id, a.id, ?", "note_id, attachment_id, role"
+	where := "n.path = ? AND a.id = ?"
+	args := []interface{}{role, notePath, attachmentID}
+	if scope.owner != "" {
+		columns += ", tenant_id"
+		selection += ", n.tenant_id"
+		where += " AND n.tenant_id = ? AND a.tenant_id = n.tenant_id"
+		conflict = "tenant_id, " + conflict
+		args = append(args, scope.owner)
 	}
-	if note == nil {
-		return fmt.Errorf("note not found: %s", notePath)
-	}
-	att, err := s.GetAttachment(ctx, attachmentID)
-	if err != nil {
-		return fmt.Errorf("link attachment: %w", err)
-	}
-	if att == nil {
-		return fmt.Errorf("attachment not found: %d", attachmentID)
-	}
-	_, err = s.db.ExecContext(ctx, `
-		INSERT OR IGNORE INTO entry_attachments (note_id, attachment_id, role)
-		VALUES (?, ?, ?)
-	`, note.ID, attachmentID, role)
+	res, err := s.db.ExecContext(ctx, "INSERT INTO entry_attachments ("+columns+") SELECT "+selection+" FROM notes n CROSS JOIN attachments a WHERE "+where+" ON CONFLICT("+conflict+") DO UPDATE SET role = excluded.role", args...)
 	if err != nil {
 		return fmt.Errorf("insert entry attachment: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return fmt.Errorf("note or attachment not found: %s, %d", notePath, attachmentID)
 	}
 	return nil
 }
 
-func (s *StorageLayer) UnlinkAttachmentFromEntry(ctx context.Context, notePath string, attachmentID int64, role string) (bool, error) {
+func (s *TenantStore) UnlinkAttachmentFromEntry(ctx context.Context, notePath string, attachmentID int64, role string) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
 	role = strings.TrimSpace(role)
 	if err := validateReferenceInput(notePath, attachmentID, role); err != nil {
 		return false, err
 	}
-	note, err := legacyNoteByPath(ctx, s, notePath)
+	note, err := s.GetNoteByPath(ctx, notePath)
 	if err != nil {
 		return false, fmt.Errorf("unlink attachment: %w", err)
 	}
 	if note == nil {
 		return false, fmt.Errorf("note not found: %s", notePath)
 	}
-	res, err := s.db.ExecContext(ctx, `
-		DELETE FROM entry_attachments
-		WHERE note_id = ? AND attachment_id = ? AND role = ?
-	`, note.ID, attachmentID, role)
+	where, args := scope.where("note_id = ? AND attachment_id = ? AND role = ?", note.ID, attachmentID, role)
+	res, err := s.db.ExecContext(ctx, "DELETE FROM entry_attachments WHERE "+where, args...)
 	if err != nil {
 		return false, fmt.Errorf("unlink attachment: %w", err)
 	}
@@ -131,24 +165,32 @@ func (s *StorageLayer) UnlinkAttachmentFromEntry(ctx context.Context, notePath s
 	return rowsAffected > 0, nil
 }
 
-func (s *StorageLayer) ListAttachmentsForEntry(ctx context.Context, notePath string) ([]*AttachmentRow, error) {
+func (s *TenantStore) ListAttachmentsForEntry(ctx context.Context, notePath string) ([]*AttachmentRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if strings.TrimSpace(notePath) == "" {
 		return nil, errors.New("note path must not be empty")
 	}
-	note, err := legacyNoteByPath(ctx, s, notePath)
+	note, err := s.GetNoteByPath(ctx, notePath)
 	if err != nil {
 		return nil, fmt.Errorf("list entry attachments: %w", err)
 	}
 	if note == nil {
 		return nil, fmt.Errorf("note not found: %s", notePath)
 	}
+	where := "ea.note_id = ?"
+	args := []interface{}{note.ID}
+	if scope.owner != "" {
+		where += " AND ea.tenant_id = ? AND a.tenant_id = ea.tenant_id"
+		args = append(args, scope.owner)
+	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT a.id, a.digest, a.size, a.media_type, a.metadata, a.created_at
 		FROM attachments a
 		JOIN entry_attachments ea ON ea.attachment_id = a.id
-		WHERE ea.note_id = ?
-		ORDER BY ea.id
-	`, note.ID)
+		WHERE `+where+` ORDER BY ea.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("query entry attachments: %w", err)
 	}
@@ -156,17 +198,25 @@ func (s *StorageLayer) ListAttachmentsForEntry(ctx context.Context, notePath str
 	return scanAttachmentRows(rows)
 }
 
-func (s *StorageLayer) ListEntryReferencesForAttachment(ctx context.Context, attachmentID int64) ([]*EntryAttachmentRow, error) {
+func (s *TenantStore) ListEntryReferencesForAttachment(ctx context.Context, attachmentID int64) ([]*EntryAttachmentRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if attachmentID <= 0 {
 		return nil, errors.New("attachment id must be positive")
+	}
+	where := "ea.attachment_id = ?"
+	args := []interface{}{attachmentID}
+	if scope.owner != "" {
+		where += " AND ea.tenant_id = ? AND n.tenant_id = ea.tenant_id"
+		args = append(args, scope.owner)
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT ea.id, ea.note_id, n.path, ea.attachment_id, ea.role, ea.created_at
 		FROM entry_attachments ea
 		JOIN notes n ON n.id = ea.note_id
-		WHERE ea.attachment_id = ?
-		ORDER BY ea.id
-	`, attachmentID)
+		WHERE `+where+` ORDER BY ea.id`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list attachment references: %w", err)
 	}
@@ -186,18 +236,27 @@ func (s *StorageLayer) ListEntryReferencesForAttachment(ctx context.Context, att
 	return refs, nil
 }
 
-func (s *StorageLayer) CountAttachmentReferences(ctx context.Context, attachmentID int64) (int, error) {
+func (s *TenantStore) CountAttachmentReferences(ctx context.Context, attachmentID int64) (int, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return 0, err
+	}
 	if attachmentID <= 0 {
 		return 0, errors.New("attachment id must be positive")
 	}
 	var count int
-	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM entry_attachments WHERE attachment_id = ?", attachmentID).Scan(&count); err != nil {
+	where, args := scope.where("attachment_id = ?", attachmentID)
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM entry_attachments WHERE "+where, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count attachment references: %w", err)
 	}
 	return count, nil
 }
 
-func (s *StorageLayer) UpsertAttachmentDerived(ctx context.Context, in AttachmentDerivedInput) (*AttachmentDerivedRow, error) {
+func (s *TenantStore) UpsertAttachmentDerived(ctx context.Context, in AttachmentDerivedInput) (*AttachmentDerivedRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if err := validateAttachmentDerivedInput(in); err != nil {
 		return nil, err
 	}
@@ -206,19 +265,33 @@ func (s *StorageLayer) UpsertAttachmentDerived(ctx context.Context, in Attachmen
 		metadata = "{}"
 	}
 	kind := strings.TrimSpace(in.Kind)
-	_, err := s.db.ExecContext(ctx, `
-		INSERT INTO attachment_derived (attachment_id, kind, status, content_type, text, error, metadata)
-		VALUES (?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(attachment_id, kind) DO UPDATE SET
+	columns := "attachment_id, kind, status, content_type, text, error, metadata"
+	selection, conflict := "id, ?, ?, ?, ?, ?, ?", "attachment_id, kind"
+	args := []interface{}{kind, strings.TrimSpace(in.Status), strings.TrimSpace(in.ContentType), in.Text, in.Error, metadata}
+	where, parentArgs := scope.where("id = ?", in.AttachmentID)
+	args = append(args, parentArgs...)
+	if scope.owner != "" {
+		columns += ", tenant_id"
+		selection += ", tenant_id"
+		conflict = "tenant_id, " + conflict
+	}
+	res, err := s.db.ExecContext(ctx, "INSERT INTO attachment_derived ("+columns+") SELECT "+selection+" FROM attachments WHERE "+where+" ON CONFLICT("+conflict+`) DO UPDATE SET
 			status = excluded.status,
 			content_type = excluded.content_type,
 			text = excluded.text,
 			error = excluded.error,
 			metadata = excluded.metadata,
 			updated_at = datetime('now')
-	`, in.AttachmentID, kind, strings.TrimSpace(in.Status), strings.TrimSpace(in.ContentType), in.Text, in.Error, metadata)
+	`, args...)
 	if err != nil {
 		return nil, fmt.Errorf("upsert attachment derived: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("attachment not found: %d", in.AttachmentID)
 	}
 	row, err := s.GetAttachmentDerived(ctx, in.AttachmentID, kind)
 	if err != nil {
@@ -227,7 +300,11 @@ func (s *StorageLayer) UpsertAttachmentDerived(ctx context.Context, in Attachmen
 	return row, nil
 }
 
-func (s *StorageLayer) GetAttachmentDerived(ctx context.Context, attachmentID int64, kind string) (*AttachmentDerivedRow, error) {
+func (s *TenantStore) GetAttachmentDerived(ctx context.Context, attachmentID int64, kind string) (*AttachmentDerivedRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if attachmentID <= 0 {
 		return nil, errors.New("attachment id must be positive")
 	}
@@ -235,7 +312,8 @@ func (s *StorageLayer) GetAttachmentDerived(ctx context.Context, attachmentID in
 	if !isSafeAttachmentRole(kind) {
 		return nil, fmt.Errorf("attachment derived kind %q is unsafe", kind)
 	}
-	row := s.db.QueryRowContext(ctx, "SELECT "+attachmentDerivedColumns+" FROM attachment_derived WHERE attachment_id = ? AND kind = ?", attachmentID, kind)
+	where, args := scope.where("attachment_id = ? AND kind = ?", attachmentID, kind)
+	row := s.db.QueryRowContext(ctx, "SELECT "+attachmentDerivedColumns+" FROM attachment_derived WHERE "+where, args...)
 	derived, err := scanAttachmentDerivedRow(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -246,11 +324,16 @@ func (s *StorageLayer) GetAttachmentDerived(ctx context.Context, attachmentID in
 	return derived, nil
 }
 
-func (s *StorageLayer) ListAttachmentDerived(ctx context.Context, attachmentID int64) ([]*AttachmentDerivedRow, error) {
+func (s *TenantStore) ListAttachmentDerived(ctx context.Context, attachmentID int64) ([]*AttachmentDerivedRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
 	if attachmentID <= 0 {
 		return nil, errors.New("attachment id must be positive")
 	}
-	rows, err := s.db.QueryContext(ctx, "SELECT "+attachmentDerivedColumns+" FROM attachment_derived WHERE attachment_id = ? ORDER BY id", attachmentID)
+	where, args := scope.where("attachment_id = ?", attachmentID)
+	rows, err := s.db.QueryContext(ctx, "SELECT "+attachmentDerivedColumns+" FROM attachment_derived WHERE "+where+" ORDER BY id", args...)
 	if err != nil {
 		return nil, fmt.Errorf("list attachment derived: %w", err)
 	}
@@ -258,36 +341,28 @@ func (s *StorageLayer) ListAttachmentDerived(ctx context.Context, attachmentID i
 	return scanAttachmentDerivedRows(rows)
 }
 
-func (s *StorageLayer) DeleteAttachmentIfUnreferenced(ctx context.Context, attachmentID int64) (bool, error) {
+func (s *TenantStore) DeleteAttachmentIfUnreferenced(ctx context.Context, attachmentID int64) (bool, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return false, err
+	}
 	if attachmentID <= 0 {
 		return false, errors.New("attachment id must be positive")
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return false, fmt.Errorf("begin delete attachment tx: %w", err)
+	where, args := scope.where("id = ?", attachmentID)
+	refs := "ea.attachment_id = attachments.id"
+	if scope.owner != "" {
+		refs += " AND ea.tenant_id = attachments.tenant_id"
 	}
-	defer tx.Rollback() //nolint:errcheck
-
-	var count int
-	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM entry_attachments WHERE attachment_id = ?", attachmentID).Scan(&count); err != nil {
-		return false, fmt.Errorf("count attachment references: %w", err)
-	}
-	if count > 0 {
-		if err := tx.Commit(); err != nil {
-			return false, fmt.Errorf("commit delete attachment tx: %w", err)
-		}
-		return false, nil
-	}
-	res, err := tx.ExecContext(ctx, "DELETE FROM attachments WHERE id = ?", attachmentID)
+	// One conditional write serializes against LinkAttachmentToEntry; never
+	// race a separate reference count against a later delete.
+	res, err := s.db.ExecContext(ctx, "DELETE FROM attachments WHERE "+where+" AND NOT EXISTS (SELECT 1 FROM entry_attachments ea WHERE "+refs+")", args...)
 	if err != nil {
 		return false, fmt.Errorf("delete attachment: %w", err)
 	}
 	rowsAffected, err := res.RowsAffected()
 	if err != nil {
 		return false, fmt.Errorf("rows affected: %w", err)
-	}
-	if err := tx.Commit(); err != nil {
-		return false, fmt.Errorf("commit delete attachment tx: %w", err)
 	}
 	return rowsAffected > 0, nil
 }

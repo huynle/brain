@@ -95,7 +95,8 @@ func NewAttachmentService(store *storage.TenantStore, blobs blobstore.Store, bra
 	return svc
 }
 
-// Create stores binary content and creates/reuses attachment metadata for a project.
+// Create stores binary content and creates/reuses attachment metadata within the
+// bound tenant. projectID records upload provenance, not blob ownership (D08).
 func (s *AttachmentServiceImpl) Create(ctx context.Context, projectID string, req types.CreateAttachmentRequest, content io.Reader) (*types.CreateAttachmentResponse, error) {
 	if err := s.ensureReady(); err != nil {
 		return nil, err
@@ -122,6 +123,13 @@ func (s *AttachmentServiceImpl) Create(ctx context.Context, projectID string, re
 	}
 	digest := attachmentDigest(data)
 	if err := validateAttachmentSHA256(req.SHA256, digest); err != nil {
+		return nil, err
+	}
+	// Exercise the bound SQL scope before any CAS read/write/cleanup. In the
+	// transitional runtime only local may use v28; an invalid/nonlocal handle
+	// must not touch legacy bytes before CreateAttachment eventually rejects it.
+	// This is not lifecycle authorization or an atomic DB/filesystem protocol.
+	if _, err := s.storage.GetAttachmentByDigest(ctx, digest); err != nil {
 		return nil, err
 	}
 	blobExisted := s.blobExists(digest)
@@ -169,9 +177,6 @@ func (s *AttachmentServiceImpl) Create(ctx context.Context, projectID string, re
 		}
 		return nil, err
 	}
-	if !attachmentRowBelongsToProject(row, projectID) {
-		return nil, api.ErrNotFound
-	}
 	att, err := attachmentRowToDTO(row)
 	if err != nil {
 		return nil, err
@@ -179,7 +184,8 @@ func (s *AttachmentServiceImpl) Create(ctx context.Context, projectID string, re
 	return &types.CreateAttachmentResponse{Attachment: att}, nil
 }
 
-// Get returns attachment metadata by ID within a project.
+// Get returns attachment metadata by ID within the bound tenant. All projects
+// in that tenant share attachment visibility; entry associations remain scoped.
 func (s *AttachmentServiceImpl) Get(ctx context.Context, projectID, attachmentID string) (*types.Attachment, error) {
 	row, err := s.getProjectAttachmentRow(ctx, projectID, attachmentID)
 	if err != nil {
@@ -591,7 +597,7 @@ func (s *AttachmentServiceImpl) ExtractAttachmentText(ctx context.Context, proje
 	return s.attachmentExtractionResult(ctx, projectID, att, row.ID, derived, linkedEntries), nil
 }
 
-// BackfillAttachmentExtraction runs project-level media-to-text extraction for
+// BackfillAttachmentExtraction runs tenant-level media-to-text extraction for
 // attachments that do not already have ready derived text. Processing is
 // intentionally sequential so callers can apply predictable provider rate limits.
 func (s *AttachmentServiceImpl) BackfillAttachmentExtraction(ctx context.Context, projectID string, req types.AttachmentExtractionBackfillRequest) (*types.AttachmentExtractionBackfillResponse, error) {
@@ -698,7 +704,8 @@ func (s *AttachmentServiceImpl) sleepBetweenBackfillItems(ctx context.Context, d
 	}
 }
 
-// List returns attachments visible within a project.
+// List returns all attachments in the bound tenant, available to every project.
+// Ownership filtering is performed by TenantStore SQL, never by upload metadata.
 func (s *AttachmentServiceImpl) List(ctx context.Context, projectID string) (*types.ListAttachmentsResponse, error) {
 	if err := s.ensureReady(); err != nil {
 		return nil, err
@@ -712,9 +719,6 @@ func (s *AttachmentServiceImpl) List(ctx context.Context, projectID string) (*ty
 	}
 	attachments := make([]types.Attachment, 0, len(rows))
 	for _, row := range rows {
-		if !attachmentRowBelongsToProject(row, projectID) {
-			continue
-		}
 		att, err := attachmentRowToDTO(row)
 		if err != nil {
 			return nil, err
@@ -816,7 +820,9 @@ func (s *AttachmentServiceImpl) Detach(ctx context.Context, projectID, pathOrID,
 	return attachmentEntryResponse(updatedEntry), nil
 }
 
-// Delete removes an attachment only when it is safe to do so.
+// Delete removes metadata only if no entry in any project of the bound tenant
+// references it. Physical deletion follows SQL and is not crash-atomic with it;
+// concurrent upload/GC reconciliation remains part of the future CAS protocol.
 func (s *AttachmentServiceImpl) Delete(ctx context.Context, projectID, attachmentID string) (bool, error) {
 	row, err := s.getProjectAttachmentRow(ctx, projectID, attachmentID)
 	if err != nil {
@@ -916,11 +922,13 @@ func (s *AttachmentServiceImpl) getProjectAttachmentRow(ctx context.Context, pro
 	if err != nil {
 		return nil, err
 	}
+	// The historical helper name reflects the project-bearing API route, not
+	// ownership. Only the bound TenantStore selects the attachment owner in SQL.
 	row, err := s.storage.GetAttachment(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	if row == nil || !attachmentRowBelongsToProject(row, projectID) {
+	if row == nil {
 		return nil, api.ErrNotFound
 	}
 	return row, nil
@@ -964,14 +972,6 @@ func (s *AttachmentServiceImpl) blobExists(digest string) bool {
 	}
 	_ = stream.Close()
 	return true
-}
-
-func attachmentRowBelongsToProject(row *storage.AttachmentRow, projectID string) bool {
-	metadata, err := attachmentMetadataFromJSON(row.Metadata)
-	if err != nil {
-		return false
-	}
-	return metadata["project_id"] == strings.TrimSpace(projectID)
 }
 
 func validateAttachmentProject(projectID string) error {
@@ -1187,6 +1187,8 @@ func attachmentMetadataToJSON(req types.CreateAttachmentRequest, projectID strin
 		metadata[k] = v
 	}
 	metadata["filename"] = strings.TrimSpace(req.Filename)
+	// First-upload provenance only. Same-tenant dedup retains this value; it is
+	// not an ACL and must not hide the attachment from another tenant project.
 	metadata["project_id"] = strings.TrimSpace(projectID)
 
 	data, err := json.Marshal(metadata)

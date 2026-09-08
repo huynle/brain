@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/tenant"
 )
 
 func TestAttachmentSchema_TablesAndIndexesExist(t *testing.T) {
@@ -150,7 +152,7 @@ func TestAttachmentSchema_MigrationFromV12(t *testing.T) {
 }
 
 func TestAttachmentStorage_CreateDeduplicatesByDigest(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	first, err := s.CreateAttachment(ctx, AttachmentInput{
@@ -188,7 +190,11 @@ func TestAttachmentStorage_GetListAndPersist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	created, err := s.CreateAttachment(ctx, AttachmentInput{Digest: "sha256:persist", Size: 7, MediaType: "image/png", Metadata: `{"width":10}`})
+	h, err := s.ForTenant(tenant.Local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := h.CreateAttachment(ctx, AttachmentInput{Digest: "sha256:persist", Size: 7, MediaType: "image/png", Metadata: `{"width":10}`})
 	if err != nil {
 		t.Fatalf("CreateAttachment failed: %v", err)
 	}
@@ -202,7 +208,11 @@ func TestAttachmentStorage_GetListAndPersist(t *testing.T) {
 	}
 	defer s.Close()
 
-	byID, err := s.GetAttachment(ctx, created.ID)
+	h, err = s.ForTenant(tenant.Local)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID, err := h.GetAttachment(ctx, created.ID)
 	if err != nil {
 		t.Fatalf("GetAttachment failed: %v", err)
 	}
@@ -210,7 +220,7 @@ func TestAttachmentStorage_GetListAndPersist(t *testing.T) {
 		t.Fatalf("GetAttachment = %#v, want persisted row", byID)
 	}
 
-	byDigest, err := s.GetAttachmentByDigest(ctx, "sha256:persist")
+	byDigest, err := h.GetAttachmentByDigest(ctx, "sha256:persist")
 	if err != nil {
 		t.Fatalf("GetAttachmentByDigest failed: %v", err)
 	}
@@ -218,7 +228,7 @@ func TestAttachmentStorage_GetListAndPersist(t *testing.T) {
 		t.Fatalf("GetAttachmentByDigest = %#v, want ID %d", byDigest, created.ID)
 	}
 
-	list, err := s.ListAttachments(ctx)
+	list, err := h.ListAttachments(ctx)
 	if err != nil {
 		t.Fatalf("ListAttachments failed: %v", err)
 	}
@@ -296,7 +306,7 @@ func TestAttachmentStorage_ReferenceLookupAndSafeDelete(t *testing.T) {
 }
 
 func TestAttachmentStorage_UpsertGetAndListDerivedText(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	att, err := s.CreateAttachment(ctx, AttachmentInput{Digest: "sha256:derived", Size: 9, MediaType: "image/png", Metadata: `{}`})
@@ -351,7 +361,7 @@ func TestAttachmentStorage_UpsertGetAndListDerivedText(t *testing.T) {
 }
 
 func TestAttachmentStorage_DerivedValidationAndMissingRows(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	if _, err := s.GetAttachmentDerived(ctx, 12345, "text"); err != nil {
@@ -385,7 +395,7 @@ func TestAttachmentStorage_DerivedValidationAndMissingRows(t *testing.T) {
 }
 
 func TestAttachmentStorage_RejectsUnsafeInput(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	for _, tt := range []struct {

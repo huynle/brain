@@ -45,8 +45,8 @@ func (scope contentScope) where(predicate string, args ...interface{}) (string, 
 	return predicate, args
 }
 
-// legacyLocalContent is a temporary compile bridge for unmoved attachment and
-// trigger receivers. It cannot bind local to a v29 database.
+// legacyLocalContent is a temporary compile bridge for unmoved trigger
+// receivers. It cannot bind local to a v29 database.
 // Remove its callers as those planes migrate; do not add raw CRUD methods.
 func legacyLocalContent(ctx context.Context, s *StorageLayer) (*TenantStore, error) {
 	h, err := s.ForTenant(tenant.Local)

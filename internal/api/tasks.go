@@ -1028,6 +1028,192 @@ func (h *Handler) HandleResumeFeature(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, resp)
 }
 
+// HandleResumeWithContext handles POST
+// /tasks/{projectId}/{taskId}/resume-with-context.
+//
+// Superset of HandleResumeTask: the body carries a REQUIRED injected_context
+// blob plus prefer_same_session/executor_override/force. The service either
+// injects the context into the task's still-live session (resume_mode=
+// live_injected, no status flip) or relaunches by stamping extended resume
+// metadata (resume_mode=same_session|rehydrate, status→pending). Missing
+// injected_context → 400. On an actual relaunch (status flipped) the same
+// EventTaskResumeRequested + EventTaskStatusChanged fire as plain resume; the
+// live-inject path emits neither status-changed (status was untouched) — only
+// EventTaskResumeRequested so the PWA can refresh the row.
+func (h *Handler) HandleResumeWithContext(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	taskId := chi.URLParam(r, "taskId")
+	if err := validatePathParam("projectId", projectId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+	if err := validatePathParam("taskId", taskId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+
+	// Body is REQUIRED here (injected_context). decodeOptionalSmallJSON still
+	// rejects unknown fields + oversized bodies; a truly empty body leaves
+	// InjectedContext="" which we reject below with a 400.
+	var req types.ResumeWithContextOptions
+	if err := decodeOptionalSmallJSON(w, r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.InjectedContext) == "" {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "injected_context is required")
+		return
+	}
+
+	resp, err := h.tasks.ResumeTaskWithContext(r.Context(), projectId, taskId, &req)
+	if err != nil {
+		// Empty-context sentinel from the service (defense in depth) → 400.
+		if strings.Contains(strings.ToLower(err.Error()), "injected_context is required") {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "injected_context is required")
+			return
+		}
+		if errors.Is(err, ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			WriteError(w, http.StatusNotFound, "Not Found", "task not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	if resp != nil && resp.Resumed {
+		taskPath := fmt.Sprintf("projects/%s/task/%s.md", projectId, taskId)
+
+		evt := types.NewEvent(types.EventTaskResumeRequested, types.EventSourceAPI)
+		evt.ProjectID = projectId
+		evt.TaskID = taskId
+		evt.TaskPath = taskPath
+		if resp.AbandonReason != "" || resp.PriorStatus != "" {
+			evt.Metadata = map[string]string{}
+			if resp.AbandonReason != "" {
+				evt.Metadata["abandon_reason"] = resp.AbandonReason
+			}
+			if resp.PriorStatus != "" {
+				evt.Metadata["prior_status"] = resp.PriorStatus
+			}
+		}
+		if resp.ResumeMode != "" {
+			if evt.Metadata == nil {
+				evt.Metadata = map[string]string{}
+			}
+			evt.Metadata["resume_mode"] = resp.ResumeMode
+		}
+		h.emitEvent(r.Context(), evt)
+
+		// Only emit the status-changed event on the RELAUNCH path — the
+		// live-inject path leaves status untouched (still in_progress), so
+		// firing a "changed to pending" event would lie to the PWA and reset
+		// the row's state.
+		if !resp.InjectedLive {
+			statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+			statusEvt.ProjectID = projectId
+			statusEvt.TaskID = taskId
+			statusEvt.TaskPath = taskPath
+			statusEvt.FromStatus = resp.PriorStatus
+			statusEvt.ToStatus = "pending"
+			h.emitEvent(r.Context(), statusEvt)
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
+// HandleResumeFeatureWithContext handles POST
+// /tasks/{projectId}/features/{featureId}/resume-with-context. Fans out
+// HandleResumeWithContext semantics across the feature, applying the same
+// injected_context to every task. Missing injected_context → 400. Per-task
+// events fire for every actually-resumed task; the live-inject entries skip
+// the status-changed emit (status untouched). Results are capped for the
+// response body like HandleResumeFeature.
+func (h *Handler) HandleResumeFeatureWithContext(w http.ResponseWriter, r *http.Request) {
+	projectId := chi.URLParam(r, "projectId")
+	featureId := chi.URLParam(r, "featureId")
+	if err := validatePathParam("projectId", projectId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+	if err := validatePathParam("featureId", featureId); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+		return
+	}
+
+	var req types.ResumeWithContextOptions
+	if err := decodeOptionalSmallJSON(w, r, &req); err != nil {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "invalid JSON body")
+		return
+	}
+	if strings.TrimSpace(req.InjectedContext) == "" {
+		WriteError(w, http.StatusBadRequest, "Bad Request", "injected_context is required")
+		return
+	}
+
+	resp, err := h.tasks.ResumeFeatureWithContext(r.Context(), projectId, featureId, &req)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "injected_context is required") {
+			WriteError(w, http.StatusBadRequest, "Bad Request", "injected_context is required")
+			return
+		}
+		if errors.Is(err, ErrNotFound) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			WriteError(w, http.StatusNotFound, "Not Found", "feature not found")
+			return
+		}
+		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
+		return
+	}
+
+	if resp != nil {
+		for _, tr := range resp.Results {
+			if !tr.Resumed {
+				continue
+			}
+			taskPath := fmt.Sprintf("projects/%s/task/%s.md", projectId, tr.TaskID)
+
+			evt := types.NewEvent(types.EventTaskResumeRequested, types.EventSourceAPI)
+			evt.ProjectID = projectId
+			evt.TaskID = tr.TaskID
+			evt.TaskPath = taskPath
+			if tr.AbandonReason != "" || tr.PriorStatus != "" {
+				evt.Metadata = map[string]string{}
+				if tr.AbandonReason != "" {
+					evt.Metadata["abandon_reason"] = tr.AbandonReason
+				}
+				if tr.PriorStatus != "" {
+					evt.Metadata["prior_status"] = tr.PriorStatus
+				}
+			}
+			if tr.ResumeMode != "" {
+				if evt.Metadata == nil {
+					evt.Metadata = map[string]string{}
+				}
+				evt.Metadata["resume_mode"] = tr.ResumeMode
+			}
+			h.emitEvent(r.Context(), evt)
+
+			if !tr.InjectedLive {
+				statusEvt := types.NewEvent(types.EventTaskStatusChanged, types.EventSourceAPI)
+				statusEvt.ProjectID = projectId
+				statusEvt.TaskID = tr.TaskID
+				statusEvt.TaskPath = taskPath
+				statusEvt.FromStatus = tr.PriorStatus
+				statusEvt.ToStatus = "pending"
+				h.emitEvent(r.Context(), statusEvt)
+			}
+		}
+
+		if len(resp.Results) > resumeFeatureMaxResults {
+			resp.TotalResults = len(resp.Results)
+			resp.Truncated = true
+			resp.Results = resp.Results[:resumeFeatureMaxResults]
+		}
+	}
+
+	WriteJSON(w, http.StatusOK, resp)
+}
+
 // HandleRunTask handles POST /tasks/{projectId}/{taskId}/run.
 //
 // This is the user-explicit "run this task now" path used by the PWA "x"

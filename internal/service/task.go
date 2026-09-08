@@ -29,9 +29,10 @@ var _ api.TaskService = (*TaskServiceImpl)(nil)
 
 // TaskServiceImpl implements api.TaskService using a StorageLayer and persistent claims.
 type TaskServiceImpl struct {
-	config  *config.Config
-	storage *storage.StorageLayer
-	indexer *indexer.Indexer
+	config       *config.Config
+	storage      *storage.StorageLayer
+	indexer      *indexer.Indexer
+	liveInjector LiveInjector
 }
 
 // DefaultLeaseDuration is the default lease duration for task claims (10 minutes).
@@ -1884,84 +1885,19 @@ func (s *TaskServiceImpl) ResumeTask(ctx context.Context, projectID, taskID stri
 		opts = &types.ResumeTaskOptions{}
 	}
 
-	// Load the task via the enriched GetTask path so we get IsAbandoned +
-	// AbandonReason computed the same way every other caller sees them.
-	task, err := s.GetTask(ctx, projectID, taskID)
+	// Load + gate via the shared helper so ResumeTask and ResumeTaskWithContext
+	// apply IDENTICAL idempotency, terminal, abandonment, and live-claim-safety
+	// logic. The helper populates result (TaskID/PriorStatus/PriorSessionsCount/
+	// AbandonReason) and, on a short-circuit, result.Reason.
+	result := &types.ResumeTaskResult{}
+	decision, err := s.runResumeGate(ctx, projectID, taskID, opts.Force, result)
 	if err != nil {
-		return nil, fmt.Errorf("resume: %w", err)
+		return nil, err
 	}
-	if task == nil {
-		return nil, fmt.Errorf("resume: task not found: %s/%s", projectID, taskID)
-	}
-
-	result := &types.ResumeTaskResult{
-		TaskID:             taskID,
-		PriorStatus:        task.Status,
-		PriorSessionsCount: len(task.Sessions),
-		AbandonReason:      task.AbandonReason,
-	}
-
-	// Idempotency + un-stuck: distinguish "already resumed and waiting for the
-	// runner to claim" from "was already pending WITHOUT the flag" (which the
-	// user may reasonably want to force through — e.g. an auto-reset via
-	// claim-renewal-fail left the task pending with no resume hint). If the
-	// flag is already set: idempotent no-op. If not: fall through to the full
-	// resume path so the flag gets stamped and the runner routes via IsResume.
-	if task.Status == "pending" && task.ResumeRequested {
-		result.Reason = "resume already requested; runner will pick up on next poll"
+	if !decision.proceed {
 		return result, nil
 	}
-
-	// Terminal statuses are outside the resume gate — user should use Trigger.
-	switch task.Status {
-	case "completed", "validated", "cancelled", "superseded", "archived":
-		if !opts.Force {
-			result.Reason = fmt.Sprintf("task status %q is terminal; use trigger to re-run", task.Status)
-			return result, nil
-		}
-	}
-
-	// Abandonment gate. Force bypasses (but does NOT override the live-claim
-	// safety check below). For pending tasks specifically, force is
-	// REQUIRED — regular pending tasks aren't in scope for Resume; a batch
-	// endpoint calling ResumeTask on every task should NOT silently stamp
-	// the resume flag on incidental pending tasks. Force+pending = "un-stick"
-	// (TestResumeTask_StuckPendingUnstuck).
-	if !task.IsAbandoned && !opts.Force {
-		result.Reason = fmt.Sprintf("task is not abandoned (status=%q); use trigger or force=true", task.Status)
-		return result, nil
-	}
-
-	// Cleanup: delete claim + acked dispatch lease. Both are best-effort;
-	// downstream sweepers will eventually clean these up too. We do them here
-	// so the runner sees a clean slate on re-claim.
-	//
-	// SAFETY: before releasing the claim, re-check the claim's runner status.
-	// If a live runner has claimed this task since enrichAbandonmentState ran
-	// (the atomic claim upsert would have evicted an expired claim, then the
-	// live runner grabbed a fresh one), releasing that claim here would enable
-	// a second runner to claim the same task → concurrent double-execution.
-	// Refuse in that case, even with force=true. The user must abort the live
-	// runner out-of-band before resuming — force only bypasses the IsAbandoned
-	// gate, never the live-claim safety.
-	if claim, err := s.storage.GetClaim(ctx, projectID, taskID); err == nil && claim != nil {
-		runner, rerr := s.storage.GetRunner(ctx, claim.RunnerID)
-		if rerr == nil && runner != nil && runner.Status == "online" {
-			result.Reason = fmt.Sprintf(
-				"task is claimed by online runner %q since enrichment view; abort that runner or wait for its lease to lapse before resuming",
-				claim.RunnerID,
-			)
-			return result, nil
-		}
-		if _, err := s.storage.ReleaseClaim(ctx, projectID, taskID, claim.RunnerID); err != nil {
-			slog.Debug("resume: release claim failed (continuing)",
-				"project", projectID, "task_id", taskID, "error", err)
-		}
-	}
-	if _, err := s.storage.ClearDispatchLease(ctx, projectID, taskID); err != nil {
-		slog.Debug("resume: clear dispatch lease failed (continuing)",
-			"project", projectID, "task_id", taskID, "error", err)
-	}
+	task := decision.task
 
 	// Apply the state change. Status goes to pending so the runner picks it up
 	// on the next poll; resume_requested is the flag the runner reads at claim
@@ -2410,6 +2346,21 @@ func parseMetadataIntoEntry(entry *types.BrainEntry, meta map[string]interface{}
 	}
 	if v, ok := metaString(meta, "resume_requested_at"); ok {
 		entry.ResumeRequestedAt = v
+	}
+
+	// Supervisor resume-with-context flow (Phase 3/4). Runtime-only, stamped by
+	// ResumeTaskWithContext and read by the Phase 4 runner off the ResolvedTask.
+	if v, ok := metaString(meta, "resume_mode"); ok {
+		entry.ResumeMode = v
+	}
+	if v, ok := metaString(meta, "resume_injected_context"); ok {
+		entry.ResumeInjectedContext = v
+	}
+	if v, ok := metaBool(meta, "resume_prefer_same_session"); ok {
+		entry.ResumePreferSameSession = v
+	}
+	if v, ok := metaString(meta, "resume_executor_override"); ok {
+		entry.ResumeExecutorOverride = v
 	}
 
 	// Failure retry accounting, written by the runner on each failed run.

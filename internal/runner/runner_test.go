@@ -480,6 +480,7 @@ type mockExecutor struct {
 	spawnErr          error
 	spawnCalls        []spawnCall
 	cleanupCalls      []cleanupCall
+	resumeCapability  SessionResumeCapability
 }
 
 type spawnCall struct {
@@ -534,6 +535,12 @@ func (m *mockExecutor) Cleanup(taskID, projectID string) error {
 	defer m.mu.Unlock()
 	m.cleanupCalls = append(m.cleanupCalls, cleanupCall{taskID, projectID})
 	return nil
+}
+
+func (m *mockExecutor) CanResumeSession(sessionID string) SessionResumeCapability {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.resumeCapability
 }
 
 func (m *mockExecutor) getSpawnCalls() []spawnCall {

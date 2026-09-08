@@ -81,12 +81,20 @@ type Client interface {
 	PostTaskLogs(ctx context.Context, projectID, taskID, runnerID string, lines []types.LogLine) error
 }
 
+// SessionResumeCapability reports whether an executor can resume a stored
+// session id in the same session (reloading its prior history).
+type SessionResumeCapability struct {
+	SameSession bool   // true if executor can reload this session id's history
+	Reason      string // why not, when false
+}
+
 // TaskExecutor abstracts the Executor for testability.
 type TaskExecutor interface {
 	BuildPrompt(task *types.ResolvedTask, isResume bool) string
 	ResolveWorkdir(task *types.ResolvedTask) (string, error)
 	Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error)
 	Cleanup(taskID, projectID string) error
+	CanResumeSession(sessionID string) SessionResumeCapability
 }
 
 // TaskProcessManager abstracts the ProcessManager for testability.
@@ -1878,6 +1886,16 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		spawnOpts.IsResume = true
 	}
 
+	// Supervisor resume-with-context flow (Phase 4). A non-empty ResumeMode is
+	// the marker that this relaunch came from POST /resume-with-context (plain
+	// /resume never sets it, so the legacy path above stays byte-for-byte
+	// unchanged). When present, finalize the same_session-vs-rehydrate decision
+	// HERE — the API's ResumeMode is advisory; the runner is authoritative
+	// because only it can probe the executor's on-disk session store.
+	if task.ResumeMode != "" {
+		tr.applyResumeWithContext(task, taskExecutor, executorType, &spawnOpts)
+	}
+
 	// Start log streamer if enabled
 	var logStreamer *LogStreamer
 	if tr.config.LogStreaming {
@@ -1921,9 +1939,19 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 		// Trigger or Resume from the user picks up the resume prompt path
 		// again. Failure to re-stamp is logged but not fatal.
 		if task.ResumeRequested {
-			if metaErr := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+			restamp := map[string]interface{}{
 				"resume_requested": true,
-			}); metaErr != nil {
+			}
+			// For a resume-with-context relaunch, also re-stamp the extended
+			// keys so a retry still carries the supervisor context + mode
+			// intent (symmetric with the clear-on-success below).
+			if task.ResumeMode != "" {
+				restamp["resume_mode"] = task.ResumeMode
+				restamp["resume_injected_context"] = task.ResumeInjectedContext
+				restamp["resume_prefer_same_session"] = task.ResumePreferSameSession
+				restamp["resume_executor_override"] = task.ResumeExecutorOverride
+			}
+			if metaErr := tr.client.UpdateMetadata(ctx, task.Path, restamp); metaErr != nil {
 				slog.Warn("resume: failed to re-stamp resume_requested after spawn failure",
 					"project", projectID, "task_id", task.ID, "error", metaErr)
 			}
@@ -1938,9 +1966,20 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 	// route through IsResume again — a duplicate prompt is preferable to
 	// blocking spawn completion.
 	if task.ResumeRequested {
-		if err := tr.client.UpdateMetadata(ctx, task.Path, map[string]interface{}{
+		clear := map[string]interface{}{
 			"resume_requested": false,
-		}); err != nil {
+		}
+		// For a resume-with-context relaunch, also clear the extended runtime
+		// keys so a subsequent dispatch after this task completes doesn't
+		// re-inject the same supervisor context / re-select same_session.
+		// These are runtime-only keys; zero-values are the "unset" state.
+		if task.ResumeMode != "" {
+			clear["resume_mode"] = ""
+			clear["resume_injected_context"] = ""
+			clear["resume_prefer_same_session"] = false
+			clear["resume_executor_override"] = ""
+		}
+		if err := tr.client.UpdateMetadata(ctx, task.Path, clear); err != nil {
 			slog.Warn("resume: failed to clear resume_requested flag post-spawn (continuing)",
 				"project", projectID, "task_id", task.ID, "error", err)
 		} else {
@@ -2039,6 +2078,89 @@ func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.
 // spawned process and persists it on the task's entry for later "o"/"O" access.
 // The pid is typically a tmux shell PID; the actual opencode runs as a child.
 //
+// applyResumeWithContext finalizes SpawnOptions for a supervisor
+// resume-with-context relaunch. It is only invoked when task.ResumeMode != ""
+// (the marker that this came from POST /resume-with-context, never from plain
+// /resume). The API's ResumeMode is advisory; this is the authoritative
+// decision because only the runner can probe the executor's on-disk session
+// store via CanResumeSession.
+//
+// resolvedName is the executor name the runner resolved for this task
+// (task.Executor precedence). A resume_executor_override that names a
+// DIFFERENT executor forces rehydrate — a session can only be reused by the
+// executor that created it, and it is used as the effective executor for the
+// capability probe.
+func (tr *TaskRunner) applyResumeWithContext(task *types.ResolvedTask, taskExecutor TaskExecutor, resolvedName string, spawnOpts *SpawnOptions) {
+	// Always carry the supervisor-provided context into the prompt, regardless
+	// of which mode we land in.
+	spawnOpts.InjectedContext = task.ResumeInjectedContext
+
+	// Determine the effective executor + name. An override that changes the
+	// executor away from the resolved one both (a) forces rehydrate (below)
+	// and (b) means the capability probe should run against the override's
+	// executor if we can resolve it — a session created by opencode is not
+	// resumable by pi and vice versa.
+	effExecutor := taskExecutor
+	overrideChangesExecutor := false
+	if task.ResumeExecutorOverride != "" && task.ResumeExecutorOverride != resolvedName {
+		overrideChangesExecutor = true
+		if tr.executorRegistry != nil {
+			if e, ok := tr.executorRegistry.Get(task.ResumeExecutorOverride); ok && e != nil {
+				effExecutor = e
+			}
+		}
+	}
+
+	// Pick the of-record stored session deterministically: most-recent by
+	// SessionInfo.Timestamp, tie-broken by session id. NOT "newest live" —
+	// we never rediscover a running session here.
+	storedID := mostRecentSessionID(task.Sessions)
+
+	// Same-session is viable only when: the request preferred it, the executor
+	// was NOT changed by an override, a stored id exists, and the effective
+	// executor reports it can reload that session from disk.
+	if task.ResumePreferSameSession &&
+		!overrideChangesExecutor &&
+		storedID != "" &&
+		effExecutor != nil &&
+		effExecutor.CanResumeSession(storedID).SameSession {
+		spawnOpts.ResumeMode = ResumeModeSameSession
+		spawnOpts.ResumeSessionID = storedID
+		return
+	}
+
+	// Otherwise rehydrate: fresh session seeded with a bounded prior
+	// transcript + the injected context. Best-effort pre-fetch the prior
+	// transcript from the stored opencode session so Pi and rehydrate-OpenCode
+	// both get history; buildRehydratePrompt bounds it. Errors are ignored —
+	// an empty transcript just means the rehydrate prompt omits prior history.
+	spawnOpts.ResumeMode = ResumeModeRehydrate
+	if storedID != "" {
+		if body, err := readSessionHistorySQLite(storedID); err == nil && len(body) > 0 {
+			spawnOpts.PriorTranscript = string(body)
+		} else if body, err := readSessionHistory(storedID); err == nil && len(body) > 0 {
+			spawnOpts.PriorTranscript = string(body)
+		}
+	}
+}
+
+// mostRecentSessionID returns the session id with the lexicographically
+// greatest RFC3339 Timestamp (RFC3339 sorts chronologically as strings), with
+// the session id itself as a deterministic tie-breaker. Returns "" for an
+// empty map. Deterministic by construction — never depends on map iteration
+// order.
+func mostRecentSessionID(sessions map[string]types.SessionInfo) string {
+	best := ""
+	bestTS := ""
+	for id, info := range sessions {
+		if best == "" || info.Timestamp > bestTS || (info.Timestamp == bestTS && id > best) {
+			best = id
+			bestTS = info.Timestamp
+		}
+	}
+	return best
+}
+
 // knownPort, when > 0, is the already-resolved server port (headless
 // serve+attach reports it at spawn time, and the run --attach process binds
 // no port of its own); discovery via the PID is skipped in that case.

@@ -493,6 +493,13 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// in-process control plumbing (instance registry + bridge proxy).
 	bridgeHub := bridge.NewHub(hub)
 
+	// ─── Live context injector (resume-with-context) ───────────────
+	// Wire the task service's LiveInjector to the same instance-registry +
+	// bridge plumbing the goal steerer uses, so ResumeTaskWithContext can
+	// inject into a still-live session instead of relaunching. Nil-safe:
+	// if this is never set the service always relaunches.
+	taskSvc.SetLiveInjector(newBridgeLiveInjector(runnerRegistrySvc, bridgeHub))
+
 	// ─── Goal Reconcile Handler ────────────────────────────────────
 	// GoalService subscribes to the EventHub and drives the deterministic
 	// in-process reconcile for goal automations when their linked task/feature

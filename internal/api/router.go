@@ -577,6 +577,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/features/{featureId}/run", o.handler.HandleRunFeature)
 							r.Delete("/features/{featureId}/run", o.handler.HandleCancelDependentChain)
 							r.Post("/features/{featureId}/resume", o.handler.HandleResumeFeature)
+							r.Post("/features/{featureId}/resume-with-context", o.handler.HandleResumeFeatureWithContext)
 							// Project-level fanout: run every ready feature in this project.
 							// Distinct from /features/{featureId}/run — no featureId path segment.
 							r.Post("/run", o.handler.HandleRunProject)
@@ -584,6 +585,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/{taskId}/dispatch", o.handler.HandleDispatchTask)
 							r.Post("/{taskId}/run", o.handler.HandleRunTask)
 							r.Post("/{taskId}/resume", o.handler.HandleResumeTask)
+							r.Post("/{taskId}/resume-with-context", o.handler.HandleResumeWithContext)
 							// Project wipe. Lives on the tasks tree because
 							// that is where a project is addressed by name,
 							// but it erases every entry type, not just tasks.
@@ -595,11 +597,13 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 							r.Post("/features/{featureId}/run", notImplemented)
 							r.Delete("/features/{featureId}/run", notImplemented)
 							r.Post("/features/{featureId}/resume", notImplemented)
+							r.Post("/features/{featureId}/resume-with-context", notImplemented)
 							r.Post("/run", notImplemented)
 							r.Post("/{taskId}/trigger", notImplemented)
 							r.Post("/{taskId}/dispatch", notImplemented)
 							r.Post("/{taskId}/run", notImplemented)
 							r.Post("/{taskId}/resume", notImplemented)
+							r.Post("/{taskId}/resume-with-context", notImplemented)
 							r.Delete("/", notImplemented)
 						}
 					})

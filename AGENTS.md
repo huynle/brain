@@ -99,6 +99,19 @@ When a runner dies mid-task, or when a task's claim lease expires without renewa
 - Idempotent: a resume on a task already `pending+resume_requested=true` returns `Resumed=false` with an explanatory `Reason` and skips cleanup work.
 - The orphan reaper (`tryReapOrphan`) skips tasks with `resume_requested=true` and re-reads the task immediately before its status flip, so a Resume that races with a reaper doesn't get silently reverted.
 
+### Supervisor session-resume with context
+
+A richer resume path (`POST /api/v1/tasks/{project}/{taskId}/resume-with-context`, service `ResumeTaskWithContext`, feature fan-out `POST /features/{featureId}/resume-with-context`) hands the relaunched agent supervisor-authored context. It is distinct from plain `/resume`: the request body (`ResumeWithContextOptions`) carries `injected_context` (required), `prefer_same_session` (default true), `executor_override` ("pi"/"opencode"), and `force`.
+
+- **Live short-circuit.** If the task's session is still running, the context is injected into that session with no relaunch and no status flip — reported as `resume_mode=live_injected`, `injected_live=true`.
+- **Relaunch modes.** Otherwise the endpoint stamps extended runtime metadata and flips `status` to `pending`, letting the runner reclaim it. The three modes: `same_session` (reattach the prior OpenCode session id), `rehydrate` (fresh session seeded with a bounded prior transcript + injected context), `live_injected` (above).
+- **Extended metadata keys.** Alongside `resume_requested=true` / `resume_requested_at`, the endpoint stamps `resume_mode`, `resume_injected_context`, `resume_prefer_same_session`, `resume_executor_override`. These are runtime-only (never on-disk frontmatter) and parsed onto `ResolvedTask`.
+- **Runner is authoritative.** The API's `resume_mode` is advisory. In `claimAndSpawnWithWorkdir` (`applyResumeWithContext`) the runner picks the of-record stored session — most-recent by `SessionInfo.Timestamp`, tie-broken by id, never "newest live" — and calls `taskExecutor.CanResumeSession(storedID)`. It finalizes `same_session` only when `prefer_same_session` holds, `executor_override` does not change the executor, a stored id exists, and the probe reports `SameSession=true`; otherwise it rehydrates, best-effort pre-fetching the prior transcript (`readSessionHistorySQLite` then `readSessionHistory`) into `SpawnOptions.PriorTranscript`. `InjectedContext` is always carried.
+- **OpenCode true-resumes dead sessions** because its history is durable in the on-disk session store (SQLite or legacy files), so `CanResumeSession` can succeed even after the live instance is gone. **Pi always rehydrates** — it has no session continuation and coerces `same_session`→`rehydrate` in `Spawn`.
+- **Metadata lifecycle mirrors plain resume.** On a successful `Spawn` the runner clears all extended keys (`resume_mode`/`resume_injected_context`/`resume_prefer_same_session`/`resume_executor_override` to zero-values, plus `resume_requested=false`); on Spawn-error rollback it re-stamps them so a retry keeps the injected context + mode intent. The legacy path (`resume_requested` set, `resume_mode` empty) is untouched — `IsResume=true` only.
+- The MCP tool `resume_task_with_context` (in `internal/mcp/task_tools.go`) wraps the endpoint.
+- **Verification status (honest).** Every path is proven at the build + test + command-capture level, not by a live end-to-end run against real `opencode`/`pi` processes with a running runner (impractical in a sandbox with no live executors). `just vet` is clean, `just build` succeeds, and `just test` passes (32/32 packages). Per-path evidence: same-session feeds the STORED id into `--session` and never creates a fresh session (`TestSpawn_SameSession_UsesStoredSessionNoCreate`, command-capture; confirmed via a proof-of-negative — forcing the fresh-create branch makes it fail with `ses_freshly_created`); rehydrate creates a fresh session and bounds the transcript (`TestSpawn_Rehydrate_CreatesFreshSession`, `TestBuildRehydratePrompt_*`); Pi coerces `same_session`→`rehydrate` and injects context+transcript at its `Spawn` boundary without leaking the stored id (`TestPiExecutor_Spawn_ResumeWithContext_RehydratesAndInjects`, `TestPiExecutor_CanResumeSession`); live-inject skips relaunch via a mocked bridge (`TestResumeTaskWithContext_LiveInject`, `TestHandleResumeWithContext_200_LiveInjected`); live-claim safety and idempotency hold (`TestResumeTaskWithContext_LiveClaimSafety` / `_Idempotent`). The `OpenCode true-resumes dead sessions` claim rests on `CanResumeSession` finding durable on-disk history (SQLite/legacy); if a given deployment's history is absent, the same probe returns `SameSession=false` and the runner falls back to rehydrate — the fallback is the tested, guaranteed behavior. See [[projects/brain-api/report/shhk3jt5.md]] for the full verification log.
+
 ### Index freshness (who writes to the brain dir)
 
 SQLite is a derived view of the markdown files. Everything the API serves —
@@ -174,6 +187,11 @@ type TaskExecutor interface {
     ResolveWorkdir(task *types.ResolvedTask) (string, error)
     Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error)
     Cleanup(taskID, projectID string) error
+    // CanResumeSession is a read-only probe: does this runner hold the given
+    // session's history so a true same-session resume is possible? OpenCode
+    // probes its on-disk session store (SQLite, then the legacy file layout);
+    // Pi always returns false (no session continuation).
+    CanResumeSession(sessionID string) SessionResumeCapability
 }
 ```
 

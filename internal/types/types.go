@@ -487,6 +487,14 @@ type BrainEntry struct {
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
 
+	// Supervisor resume-with-context flow (Phase 3/4). Runtime-only, stamped by
+	// ResumeTaskWithContext and read by the Phase 4 runner. Mirrors the same
+	// fields on ResolvedTask; parseMetadataIntoEntry populates them here.
+	ResumeMode              string `json:"resume_mode,omitempty"`
+	ResumeInjectedContext   string `json:"resume_injected_context,omitempty"`
+	ResumePreferSameSession bool   `json:"resume_prefer_same_session,omitempty"`
+	ResumeExecutorOverride  string `json:"resume_executor_override,omitempty"`
+
 	// Failure retry accounting. Runtime-only (not frontmatter): written by
 	// the runner each time a task ends in failure/crash/timeout, reset to
 	// zero on success. A crashed task is reset to "pending" for retry, so
@@ -1384,6 +1392,17 @@ type ResolvedTask struct {
 	ResumeRequested   bool   `json:"resume_requested,omitempty"`
 	ResumeRequestedAt string `json:"resume_requested_at,omitempty"`
 
+	// Supervisor resume-with-context flow (Phase 3/4). These extend the plain
+	// resume flags with the context blob and mode hints the runner reads at
+	// claim time. All runtime-only (never in on-disk frontmatter), preserved
+	// across re-index via service.runtimeKeys, and stamped by
+	// ResumeTaskWithContext. ResumeMode here is the API's ADVISORY intent; the
+	// runner finalizes same_session vs rehydrate via CanResumeSession.
+	ResumeMode              string `json:"resume_mode,omitempty"`
+	ResumeInjectedContext   string `json:"resume_injected_context,omitempty"`
+	ResumePreferSameSession bool   `json:"resume_prefer_same_session,omitempty"`
+	ResumeExecutorOverride  string `json:"resume_executor_override,omitempty"`
+
 	// AttemptCount is how many times this task has ended in failure. The
 	// runner increments it on each failure and clears it on success; when it
 	// reaches the effective cap the task is parked in "blocked" instead of
@@ -1785,6 +1804,63 @@ type ResumeFeatureResult struct {
 	// TotalResults is len(Results) before any client-side cap. Populated
 	// only when Truncated=true so callers know how much detail was dropped.
 	TotalResults int `json:"total_results,omitempty"`
+}
+
+// Resume-mode string constants for ResumeWithContextResult.ResumeMode. These
+// name HOW the supervisor context injection was (or will be) applied:
+//   - same_session: relaunch reusing the prior OpenCode session id (best-effort
+//     intent from the API; the runner finalizes via CanResumeSession).
+//   - rehydrate:    relaunch WITHOUT reusing a session (fresh session, prior
+//     context re-injected through the rehydrate prompt).
+//   - live_injected: the task's session was still live, so the context was
+//     injected into the running session with no relaunch/status flip.
+const (
+	ResumeModeSameSession  = "same_session"
+	ResumeModeRehydrate    = "rehydrate"
+	ResumeModeLiveInjected = "live_injected"
+)
+
+// ResumeWithContextOptions is the request body for POST
+// /tasks/{project}/{task}/resume-with-context. Distinct from plain /resume in
+// that it carries an injected_context blob the runner (or a live session)
+// prepends to the resume prompt.
+//
+// InjectedContext is REQUIRED — the endpoint's whole purpose is to hand the
+// agent supervisor-authored context. PreferSameSession defaults to true when
+// the field is absent (see note in ResumeTaskWithContext). ExecutorOverride
+// lets a supervisor force "opencode"/"pi" for the relaunch. Force carries the
+// same semantics as ResumeTaskOptions.Force.
+type ResumeWithContextOptions struct {
+	InjectedContext   string `json:"injected_context"`
+	PreferSameSession bool   `json:"prefer_same_session,omitempty"`
+	ExecutorOverride  string `json:"executor_override,omitempty"`
+	Force             bool   `json:"force,omitempty"`
+}
+
+// ResumeWithContextResult extends ResumeTaskResult with the extra fields the
+// context-injection flow reports. ResumeMode is one of the ResumeMode*
+// constants; for the relaunch path it is ADVISORY (the runner makes the
+// authoritative same_session-vs-rehydrate call via CanResumeSession). When
+// InjectedLive is true the context was delivered into a still-running session
+// and the task status was NOT flipped to pending.
+type ResumeWithContextResult struct {
+	ResumeTaskResult
+	ResumeMode      string `json:"resume_mode"`
+	TargetSessionID string `json:"target_session_id,omitempty"`
+	InjectedLive    bool   `json:"injected_live,omitempty"`
+}
+
+// ResumeWithContextFeatureResult is the fan-out response for POST
+// /features/{featureId}/resume-with-context. Mirrors ResumeFeatureResult but
+// carries the richer per-task ResumeWithContextResult entries. Truncation and
+// TotalResults follow the same handler-owned convention as ResumeFeatureResult.
+type ResumeWithContextFeatureResult struct {
+	FeatureID    string                    `json:"feature_id"`
+	TotalResumed int                       `json:"total_resumed"`
+	TotalSkipped int                       `json:"total_skipped"`
+	Results      []ResumeWithContextResult `json:"results"`
+	Truncated    bool                      `json:"truncated,omitempty"`
+	TotalResults int                       `json:"total_results,omitempty"`
 }
 
 // RunnerStatusResponse is the response for GET /tasks/runner/status.

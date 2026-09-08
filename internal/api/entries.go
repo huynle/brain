@@ -87,8 +87,14 @@ var AllowedMetadataUpdateFields = map[string]bool{
 	// Kept out of durableMetadataFields so they never touch on-disk frontmatter.
 	"resume_requested":    true, // set by /resume endpoint, cleared by runner on spawn
 	"resume_requested_at": true, // RFC3339 timestamp for audit
-	"abandoned_at":        true, // RFC3339 timestamp set by reaper / reconciler
-	"abandoned_reason":    true, // enum: runner_orphan | runner_offline | claim_expired | no_claim
+	// Supervisor resume-with-context (Phase 3/4). Runtime-only; stamped by
+	// ResumeTaskWithContext, read by the runner at claim time.
+	"resume_mode":                true, // advisory same_session | rehydrate | live_injected
+	"resume_injected_context":    true, // supervisor-authored context blob
+	"resume_prefer_same_session": true, // same-session reuse hint for the runner
+	"resume_executor_override":   true, // optional executor override for the relaunch
+	"abandoned_at":               true, // RFC3339 timestamp set by reaper / reconciler
+	"abandoned_reason":           true, // enum: runner_orphan | runner_offline | claim_expired | no_claim
 
 	// (5) Bounded-retry accounting, written by the runner on each terminal
 	// run. Runtime-only: a counter in frontmatter would churn the file on

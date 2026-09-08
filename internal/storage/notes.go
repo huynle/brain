@@ -119,7 +119,7 @@ func (s *TenantStore) InsertNote(ctx context.Context, note *NoteRow) (*NoteRow, 
 
 	// Repair links that were indexed before this note existed and are still
 	// dangling on its path, short ID, or (for wiki-links) its title.
-	if err := repairInsertedNoteLinks(ctx, s, scope, inserted); err != nil {
+	if err := s.ResolveLinksToNote(ctx, inserted.ID, inserted.Path, inserted.ShortID, inserted.Title, inserted.ProjectID); err != nil {
 		return nil, err
 	}
 	return inserted, nil
@@ -399,33 +399,4 @@ func (s *TenantStore) DeleteNote(ctx context.Context, path string) (bool, error)
 		return false, fmt.Errorf("rows affected: %w", err)
 	}
 	return rowsAffected > 0, nil
-}
-
-// Bounded insertion repair only; the public graph receivers remain unmigrated.
-func repairInsertedNoteLinks(ctx context.Context, s *TenantStore, scope contentScope, n *NoteRow) error {
-	if scope.owner == "" {
-		return s.StorageLayer.ResolveLinksToNote(ctx, n.ID, n.Path, n.ShortID, n.Title, n.ProjectID)
-	}
-	args := []interface{}{n.ID, scope.owner, scope.owner, n.Path}
-	paths := "?"
-	if n.ShortID != "" {
-		paths = "?, ?, ?"
-		args = append(args, n.ShortID, n.ShortID+".md")
-	}
-	clause := "target_path IN (" + paths + ")"
-	if n.Title != "" {
-		clause += ` OR (type = ? AND target_path = ? AND (? IS NULL OR EXISTS (
-			SELECT 1 FROM notes src WHERE src.id = links.source_id
-			AND src.tenant_id = links.tenant_id AND src.tenant_id = ? AND src.project_id IS ?)))`
-		args = append(args, LinkTypeWiki, n.Title, n.ProjectID, scope.owner, n.ProjectID)
-	}
-	_, err := s.db.ExecContext(ctx, `UPDATE links SET target_id = ?
-		WHERE tenant_id = ? AND target_id IS NULL
-		AND EXISTS (SELECT 1 FROM notes src WHERE src.id = links.source_id
-		AND src.tenant_id = links.tenant_id AND src.tenant_id = ?)
-		AND (`+clause+")", args...)
-	if err != nil {
-		return fmt.Errorf("repair inserted note links: %w", err)
-	}
-	return nil
 }

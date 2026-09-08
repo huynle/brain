@@ -337,18 +337,6 @@ func TestTenantNotesLegacyBridgesRefuseV29(t *testing.T) {
 	if _, err := legacyNoteByPath(ctx, owner, "missing"); err == nil {
 		t.Fatal("v29 path bridge accepted")
 	}
-	if err := owner.SetLinks(ctx, "missing", nil); err == nil {
-		t.Fatal("v29 SetLinks accepted")
-	}
-	if _, err := owner.GetLinks(ctx, "missing"); err == nil {
-		t.Fatal("v29 GetLinks accepted")
-	}
-	if err := owner.SetTags(ctx, "missing", nil); err == nil {
-		t.Fatal("v29 SetTags accepted")
-	}
-	if _, err := owner.GetTags(ctx, "missing"); err == nil {
-		t.Fatal("v29 GetTags accepted")
-	}
 	if err := owner.LinkAttachmentToEntry(ctx, "missing", 1, "inline"); err == nil {
 		t.Fatal("v29 attachment link accepted")
 	}

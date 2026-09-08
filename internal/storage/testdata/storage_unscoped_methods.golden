@@ -47,7 +47,6 @@ GetAccessToken
 GetAttachment
 GetAttachmentByDigest
 GetAttachmentDerived
-GetBacklinks
 GetBrainClient
 GetClaim
 GetClaimsByRunner
@@ -56,17 +55,12 @@ GetDispatchLeaseRow
 GetEventsByType
 GetFeatureAssignment
 GetInstance
-GetLinks
 GetNoteEmbedding
 GetOAuthClient
-GetOrphans
-GetOutlinks
 GetProjectPlacement
-GetRelated
 GetRunner
 GetStaleEntries
 GetStats
-GetTags
 GetTokenByName
 GetUnprocessed
 GetWebhook
@@ -114,8 +108,6 @@ ReleaseClaim
 ReleaseDispatchLease
 RenewClaim
 ReplaceInstancesForRunner
-ResolveLinksTo
-ResolveLinksToNote
 RevokeAccessToken
 RevokeAccessTokensByClient
 RevokeRefreshTokensByClient
@@ -125,12 +117,10 @@ SearchByEmbedding
 SetAllProjectAutomationsPaused
 SetAllProjectTasksPaused
 SetFeaturePaused
-SetLinks
 SetProjectAutomationsPaused
 SetProjectTaskPaused
 SetRunnerPaused
 SetRunnerStatus
-SetTags
 SetVerified
 SingleModeTokens
 SyncNoteEmbeddingMetadata

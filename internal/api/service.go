@@ -522,6 +522,12 @@ type BridgeService interface {
 	// OpenCode's on-disk storage. Returns raw JSON (array of {info, parts}).
 	FetchHistory(ctx context.Context, runnerID, sessionID string) ([]byte, error)
 
+	// FetchChildren returns the child (subagent) sessions of a session by ID
+	// from a runner, read from OpenCode's persisted parent_id linkage (works
+	// without a live instance). recursive walks the tree up to depth levels.
+	// Returns raw JSON (a nested array of child session descriptors).
+	FetchChildren(ctx context.Context, runnerID, sessionID string, recursive bool, depth int) ([]byte, error)
+
 	// AcquireStream enables full event forwarding for an instance
 	// (refcounted); the release function must be called on detach.
 	AcquireStream(runnerID, instanceID string) (func(), error)

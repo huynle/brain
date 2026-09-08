@@ -227,6 +227,8 @@ func (bc *BridgeClient) handleFrame(f bridge.Frame) {
 		go bc.handleAbortTask(f)
 	case bridge.FrameHistory:
 		go bc.handleHistory(f)
+	case bridge.FrameChildren:
+		go bc.handleChildren(f)
 	case bridge.FrameExecStart:
 		go bc.handleExecStart(f)
 	case bridge.FrameExecSignal:
@@ -914,6 +916,20 @@ func (bc *BridgeClient) abortTask(taskID string) error {
 
 func (bc *BridgeClient) handleHistory(f bridge.Frame) {
 	body, err := bc.fetchSessionHistory(f.SessionID)
+	res := bridge.Frame{Type: bridge.FrameRes, ID: f.ID}
+	if err != nil {
+		res.Error = err.Error()
+	} else {
+		res.Status = http.StatusOK
+		res.Body = body
+	}
+	// A send failure surfaces as the bridge connection dropping, which the
+	// read loop already handles; there is no recovery at this call site.
+	_ = bc.sendFrame(res)
+}
+
+func (bc *BridgeClient) handleChildren(f bridge.Frame) {
+	body, err := bc.fetchSessionChildren(f.SessionID, f.Recursive, f.Depth)
 	res := bridge.Frame{Type: bridge.FrameRes, ID: f.ID}
 	if err != nil {
 		res.Error = err.Error()

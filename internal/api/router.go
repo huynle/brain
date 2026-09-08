@@ -727,6 +727,11 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					// holds its on-disk storage.
 					r.Get("/runners/{runnerId}/sessions/{sessionId}/history",
 						o.handler.HandleControlSessionHistory)
+					// Child (subagent) sessions are likewise instance-independent:
+					// discovered by ID from any connected runner via persisted
+					// parent_id linkage.
+					r.Get("/runners/{runnerId}/sessions/{sessionId}/children",
+						o.handler.HandleControlSessionChildren)
 					r.Post("/runners/{runnerId}/tasks/{taskId}/abort", o.handler.HandleControlAbortTask)
 					// Runner shell: an unrestricted command on the runner
 					// host, streamed back as SSE. control:* already implies

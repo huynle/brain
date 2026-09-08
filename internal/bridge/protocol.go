@@ -33,6 +33,7 @@ const (
 	FrameKill          = "kill"           // api → runner: kill ad-hoc instance
 	FrameAbortTask     = "abort_task"     // api → runner: abort task instance and reset pending
 	FrameHistory       = "history"        // api → runner: fetch a session transcript (no live instance needed)
+	FrameChildren      = "children"       // api → runner: list a session's child (subagent) sessions
 
 	// Runner shell. exec_start is correlated (answered by a res frame that
 	// acks the spawn); output afterwards arrives as uncorrelated exec_data
@@ -88,6 +89,10 @@ type Frame struct {
 	// history
 	SessionID string `json:"session_id,omitempty"`
 	TaskID    string `json:"task_id,omitempty"`
+
+	// children
+	Recursive bool `json:"recursive,omitempty"`
+	Depth     int  `json:"depth,omitempty"`
 
 	// req / res / streams / kill
 	InstanceID string          `json:"instance_id,omitempty"`

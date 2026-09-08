@@ -147,6 +147,74 @@ re-indexes it.
   checksum is skipped by `IndexChanged`, so extraction fixes reach it only via
   a migration that nulls the affected checksums.
 
+### Subagent session drill-down (recursive child-session viewing)
+
+The dashboard session view lets a user drill from a subagent invocation into
+that subagent's OWN full transcript (its messages, tool-calls, reasoning) —
+recursively for subagents-of-subagents — both live (streaming) and in history
+(dead-instance safe). This is a *linkage* layer over the existing
+session-id-keyed read/render machinery: once brain knows a child session id,
+the unchanged single-id readers and the `<Transcript>` component render it.
+
+**parentID capture (backend).** A subagent shows up as an OpenCode tool part
+with `tool === "task"`; invoking it spawns a *child* OpenCode session whose
+`parentID` is the hosting session. The runner captures that link in two places
+that were previously dropping it:
+- `opencodeSession` (`internal/runner/runner.go`) decodes the OpenCode
+  `parentID` field (Go: `ParentID string` with tag `json:"parentID,omitempty"`)
+  from `/session` — it used to decode only `id`+`time`. Removing that field
+  build-fails
+  `internal/runner/session_parent_decode_test.go` — the regression guard.
+- `SessionInfo.ParentID` (`internal/types/types.go`, `json:"parent_id"`)
+  persists the parent link so the parent→child tree survives instance death.
+
+**Child-discovery API.** The child *tree* is discovered from the persisted
+`parent_id` linkage, sourced live (bridge) or from history (SQLite/on-disk),
+so it works after the instance exits:
+- `session_children.go`: `readSessionChildrenSQLite` (indexed
+  `SELECT ... FROM session WHERE parent_id = ?`, read-only DSN) with a
+  filesystem fallback (`storage/session/global/*.json`); `childrenOf`
+  (SQLite-first, FS fallback, empty ≠ error); pure `buildChildrenTree`
+  (depth cap — 1 flat / 5 recursive — plus a mandatory ancestor-path cycle
+  guard, always a non-nil slice).
+- Bridge: `FrameChildren` frame (`Recursive`/`Depth`) + `Hub.FetchChildren`
+  + runner `handleChildren` → `fetchSessionChildren`, mirroring the existing
+  `FetchHistory` plumbing.
+- HTTP: `GET /control/runners/{runnerId}/sessions/{sessionId}/children[?recursive=true&depth=N]`
+  (`HandleControlSessionChildren`), sibling of the history route. Child
+  *transcripts* themselves reuse the existing history route unchanged.
+
+**Correlation (a tool-call → its child session id).** OpenCode writes the
+child id into the tool part's `state.output` inside a `<task_metadata>` block:
+`session_id: ses_…`. That regex is the primary source (see
+`web/src/lib/subagent.ts childSessionIdFromPart`); `state.metadata.sessionId`
+is a secondary fallback. (The original ADR's `metadata.sessionId`-primary and
+`task_id:`-prefix guesses were both wrong — verified against a real DB.)
+
+**Frontend drill-down.** `web/src/components/Session/Transcript.tsx`:
+- `subagentDrilldownState(part, sessionRef, ancestors, depth, maxDepth)` in
+  `web/src/lib/subagent.ts` is the single, unit-tested source of truth for the
+  gating decision (`childId`/`canDrill`/`capped`/`cappedReason`). `PartView`
+  calls it — the drill-down affordance renders only when `canDrill`.
+- `SubagentDrilldown` is a lazy, expandable `<details>` (fetch/subscribe starts
+  only on expand) that renders the child via the same `useSessionTranscript` +
+  `<Transcript>`; it recurses by passing `depth+1` and
+  `ancestors=[...ancestors, childId]`, so a subagent of a subagent drills down
+  further.
+- `childSessionRef` maps a live parent → live child (same runner+instance,
+  child session id ⇒ streams) and a history parent → history child by id
+  (dead-instance safe). `applyEvent`'s per-hook single-session filter is left
+  intact: nesting is compositional (each nested pane pins to its own session
+  id), never a global unfilter.
+- Non-subagent tool parts are unchanged (input/output/error `<details>` as
+  before). A subagent with no resolvable child id (Pi tasks, or output without
+  the metadata block) renders normally with no affordance and no error — the
+  cap note only appears for a resolvable child blocked by cycle/max-depth.
+
+**Pi.** Pi does not spawn OpenCode-style nested child sessions, so a Pi task
+part resolves no child id and cleanly renders without a drill-down (no error),
+which falls out of the same gating logic — no Pi-specific code path.
+
 ### Storage Layer (`internal/storage/`)
 - `entries.go` - Entry storage operations
 - `search.go` - Full-text search indexing

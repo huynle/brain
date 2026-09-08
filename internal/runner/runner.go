@@ -2399,8 +2399,9 @@ func discoverChildPort(parentPID int) (int, error) {
 }
 
 type opencodeSession struct {
-	ID   string `json:"id"`
-	Time struct {
+	ID       string `json:"id"`
+	ParentID string `json:"parentID,omitempty"`
+	Time     struct {
 		Created int64 `json:"created"`
 		Updated int64 `json:"updated"`
 	} `json:"time"`

@@ -221,6 +221,32 @@ func (h *Hub) FetchHistory(ctx context.Context, runnerID, sessionID string) ([]b
 	return res.Body, nil
 }
 
+// FetchChildren asks a runner for the child (subagent) sessions of a session
+// by ID, even when no live instance hosts it — the runner reads OpenCode's
+// persisted parent_id linkage from SQLite/on-disk storage. With recursive=true
+// the tree is walked up to depth levels. Returns raw JSON (a nested array of
+// child session descriptors).
+func (h *Hub) FetchChildren(ctx context.Context, runnerID, sessionID string, recursive bool, depth int) ([]byte, error) {
+	conn := h.conn(runnerID)
+	if conn == nil {
+		return nil, ErrRunnerNotConnected
+	}
+	res, err := conn.roundTrip(ctx, Frame{
+		Type:      FrameChildren,
+		SessionID: sessionID,
+		Recursive: recursive,
+		Depth:     depth,
+		TimeoutMs: DefaultTimeoutMs,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if res.Error != "" {
+		return nil, errors.New(res.Error)
+	}
+	return res.Body, nil
+}
+
 // KillInstance asks a runner to terminate an ad-hoc instance.
 func (h *Hub) KillInstance(ctx context.Context, runnerID, instanceID string) error {
 	conn := h.conn(runnerID)

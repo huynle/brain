@@ -518,6 +518,9 @@ type SessionInfo struct {
 	MachineID string `json:"machine_id,omitempty"`
 	Hostname  string `json:"hostname,omitempty"`
 	Workdir   string `json:"workdir,omitempty"`
+	// ParentID records the OpenCode parent session id for subagent drill-down,
+	// enabling recursive child-transcript viewing. Empty for root sessions.
+	ParentID string `json:"parent_id,omitempty"`
 }
 
 // CronRun tracks a single cron execution.

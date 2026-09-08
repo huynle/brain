@@ -575,6 +575,12 @@ export interface OcPart {
     input?: unknown;
     output?: string;
     error?: string;
+    // For a subagent ("task") tool part, OpenCode's metadata holds a
+    // `summary` array (the child's tool parts). `sessionId` is a defensive
+    // secondary source for the child session id — the PRIMARY is a regex over
+    // `output` (see lib/subagent.childSessionIdFromPart) — but it is typed so
+    // code that reads it stays clean.
+    metadata?: { sessionId?: string; [k: string]: unknown };
     [k: string]: unknown;
   };
   [k: string]: unknown;
@@ -608,6 +614,10 @@ export type SessionRef =
       runner_id: string;
       instance_id: string;
       session_id?: string;
+      // Provenance for a nested subagent transcript: the parent session that
+      // spawned this one. NOT the fetch key — the child still fetches by its
+      // own session_id.
+      parent_session_id?: string;
     }
   | {
       mode: "history";
@@ -616,6 +626,10 @@ export type SessionRef =
       task_id?: string;
       project_id?: string;
       workdir?: string;
+      // Provenance for a nested subagent transcript: the parent session that
+      // spawned this one. NOT the fetch key — the child still fetches by its
+      // own session_id.
+      parent_session_id?: string;
     };
 
 export interface OcEvent {

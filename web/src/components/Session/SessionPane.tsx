@@ -176,6 +176,7 @@ export function SessionPane({
           <Transcript
             style={{ flex: 1, overflowY: "auto", padding: "8px 10px" }}
             messages={transcript.messages}
+            sessionRef={sref}
             resetKey={sessionId}
             follow={live}
             emptyText={

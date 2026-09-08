@@ -1637,6 +1637,28 @@ export const controlSessionHistory = (runnerId: string, sessionId: string) =>
     `/api/v1/control/runners/${encodeURIComponent(runnerId)}/sessions/${encodeURIComponent(sessionId)}/history`,
   );
 
+export interface SessionChildDescriptor {
+  session_id: string;
+  parent_id: string;
+  title?: string;
+  created?: number;
+  agent?: string;
+  children?: SessionChildDescriptor[];
+}
+
+// controlSessionChildren discovers the child (subagent) sessions of a session
+// by ID — sourced from OpenCode's persisted parent_id linkage, so it works
+// without a live instance. recursive walks the tree up to `depth` levels.
+export const controlSessionChildren = (
+  runnerId: string,
+  sessionId: string,
+  opts?: { recursive?: boolean; depth?: number },
+) =>
+  api<SessionChildDescriptor[]>(
+    `/api/v1/control/runners/${encodeURIComponent(runnerId)}/sessions/${encodeURIComponent(sessionId)}/children`,
+    { query: { recursive: opts?.recursive ? "true" : undefined, depth: opts?.depth } },
+  );
+
 export const controlSpawnInstance = (
   runnerId: string,
   spec: SpawnInstanceSpec,

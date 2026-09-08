@@ -22,7 +22,7 @@
  * feature-wide mutation that silently touched only the first 100 of 120
  * tasks is precisely the failure this avoids.
  */
-import type { DerivedFeature } from "../features";
+import type { DerivedFeature, FeatureLifecycle } from "../features";
 import type { ResumeFeatureResult, TaskStatus } from "../types";
 import { STATUS_LABELS } from "./taskActions";
 import type { ActionDescriptor } from "./types";
@@ -91,8 +91,19 @@ export interface FeatureActionContext {
   openGoalCreate: (feature: DerivedFeature) => void;
 }
 
-/** Statuses in which a feature's tasks are all finished, one way or another. */
-const SETTLED_LIFECYCLES = new Set(["merged", "finished"]);
+/** Lifecycles in which a feature's tasks are all finished, one way or
+ *  another.
+ *
+ *  Typed deliberately. As a bare `new Set([...])` this inferred
+ *  `Set<string>`, so `.has(feature.lifecycle)` kept typechecking through a
+ *  lifecycle rename while silently matching nothing — archive would have
+ *  started refusing every settled feature, and run would have started
+ *  offering itself on features with nothing left to run, with no compiler
+ *  error anywhere. */
+const SETTLED_LIFECYCLES: ReadonlySet<FeatureLifecycle> = new Set([
+  "validated",
+  "finished",
+]);
 
 /** Why a feature cannot be run right now, or "" when it can. */
 export function runFeatureBlockedReason(feature: DerivedFeature): string {

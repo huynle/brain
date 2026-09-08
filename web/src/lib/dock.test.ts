@@ -17,8 +17,10 @@ import {
   countLeaves,
   enclosingTabsId,
   evenSplitTree,
+  findLeafByContent,
   findLeafOfKind,
   findNodeInfo,
+  revealLeaf,
   retargetLeaf,
   firstLeaf,
   isDockLeafKind,
@@ -733,4 +735,74 @@ test("dock: a kind missing from isDockLeafKind would discard a saved layout", ()
   assert.equal(isDockLeafKind("automation-runs"), true);
   assert.equal(isDockLeafKind("project"), true);
   assert.equal(isDockLeafKind("task-detai"), false);
+});
+
+
+// ─── findLeafByContent / revealLeaf ──────────────────────────────────
+
+test("findLeafByContent matches on kind + deep-equal target", () => {
+  const a = newLeafNode(mkLeaf("A", "https://a.test"));
+  const b = newLeafNode(mkLeaf("B", "https://b.test"));
+  const tree = addNodeAtEdge(a, a.id, "center", b);
+
+  // A fresh object literal, never the same reference the leaf holds.
+  const hit = findLeafByContent(tree, "browser", { url: "https://b.test" });
+  assert.ok(hit);
+  assert.equal(hit.id, b.id);
+
+  assert.equal(
+    findLeafByContent(tree, "browser", { url: "https://c.test" }),
+    null,
+  );
+  // Same target, different kind — not a match.
+  assert.equal(
+    findLeafByContent(tree, "entry", { url: "https://b.test" }),
+    null,
+  );
+});
+
+test("findLeafByContent ignores the title", () => {
+  const a = newLeafNode({
+    kind: "entry",
+    target: { path: "notes/x.md" },
+    title: "Renamed in one surface",
+  });
+  const hit = findLeafByContent(a, "entry", { path: "notes/x.md" });
+  assert.ok(hit);
+  assert.equal(hit.id, a.id);
+});
+
+test("findLeafByContent treats a missing target as empty", () => {
+  const a = newLeafNode({ kind: "runners", target: {}, title: "Runners" });
+  assert.ok(findLeafByContent(a, "runners", {}));
+});
+
+test("findLeafByContent returns the FIRST match", () => {
+  const a = newLeafNode(mkLeaf("A", "https://dup.test"));
+  const b = newLeafNode(mkLeaf("B", "https://dup.test"));
+  const tree = addNodeAtEdge(a, a.id, "center", b);
+  const hit = findLeafByContent(tree, "browser", { url: "https://dup.test" });
+  assert.ok(hit);
+  assert.equal(hit.id, a.id);
+});
+
+test("revealLeaf activates the tab holding the leaf", () => {
+  const a = newLeafNode(mkLeaf("A", "https://a.test"));
+  const b = newLeafNode(mkLeaf("B", "https://b.test"));
+  // center-merge leaves the NEW tab active (idx 1).
+  const tree = addNodeAtEdge(a, a.id, "center", b);
+  assert.equal(tree.type, "tabs");
+  if (tree.type !== "tabs") return;
+  assert.equal(tree.activeIdx, 1);
+
+  const revealed = revealLeaf(tree, a.id);
+  assert.equal(revealed.type, "tabs");
+  if (revealed.type !== "tabs") return;
+  assert.equal(revealed.activeIdx, 0);
+});
+
+test("revealLeaf is a no-op for a leaf that is not in a strip", () => {
+  const a = newLeafNode(mkLeaf("A"));
+  assert.equal(revealLeaf(a, a.id), a);
+  assert.equal(revealLeaf(a, "nope"), a);
 });

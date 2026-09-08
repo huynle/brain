@@ -93,6 +93,8 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	var fileCfg RunnerConfig
 	fileHasRequireHTTPS := false
 	fileHasDispatchPush := false
+	fileHasTaskMemoryLimit := false
+	fileHasOpencodeDBMax := false
 	if path != "" {
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -100,6 +102,11 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		}
 		fileHasRequireHTTPS = yamlKeyPresent(data, "require_https") || yamlKeyPresent(data, "runner.require_https")
 		fileHasDispatchPush = yamlKeyPresent(data, "dispatch_push") || yamlKeyPresent(data, "runner.dispatch_push")
+		// Present-but-zero must mean "disabled" for the memory guards, so an
+		// operator can switch one off from config.yaml; firstNonZero would
+		// silently turn that 0 back into the default.
+		fileHasTaskMemoryLimit = yamlKeyPresent(data, "task_memory_limit_mb") || yamlKeyPresent(data, "runner.task_memory_limit_mb")
+		fileHasOpencodeDBMax = yamlKeyPresent(data, "opencode_db_max_gb") || yamlKeyPresent(data, "runner.opencode_db_max_gb")
 		// Try unified config format first (runner fields nested under "runner:" key)
 		var wrapper struct {
 			Runner RunnerConfig `yaml:"runner"`
@@ -116,7 +123,6 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 
 	// Expand tilde in file-sourced paths
 	fileCfg.StateDir = expandTilde(fileCfg.StateDir, homeDir)
-	fileCfg.LogDir = expandTilde(fileCfg.LogDir, homeDir)
 	fileCfg.WorkDir = expandTilde(fileCfg.WorkDir, homeDir)
 	fileCfg.RepoCacheDir = expandTilde(fileCfg.RepoCacheDir, homeDir)
 	fileCfg.Pi.AgentsDir = expandTilde(fileCfg.Pi.AgentsDir, homeDir)
@@ -157,11 +163,9 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		APIToken:                  resolvedAPIToken,
 		APITokenEnv:               resolvedAPITokenEnv,
 		PollInterval:              getEnvIntOrDefault("RUNNER_POLL_INTERVAL", firstNonZero(fileCfg.PollInterval, 30)),
-		TaskPollInterval:          getEnvIntOrDefault("RUNNER_TASK_POLL_INTERVAL", firstNonZero(fileCfg.TaskPollInterval, 5)),
 		MaxParallel:               getEnvIntOrDefault("RUNNER_MAX_PARALLEL", firstNonZero(fileCfg.MaxParallel, 2)),
 		Name:                      getEnvOrDefault("RUNNER_NAME", fileCfg.Name),
 		StateDir:                  getEnvOrDefault("RUNNER_STATE_DIR", firstNonEmpty(fileCfg.StateDir, DefaultStateDir())),
-		LogDir:                    getEnvOrDefault("RUNNER_LOG_DIR", firstNonEmpty(fileCfg.LogDir, filepath.Join(homeDir, ".local", "log"))),
 		WorkDir:                   getEnvOrDefault("RUNNER_WORK_DIR", firstNonEmpty(fileCfg.WorkDir, homeDir)),
 		RepoCacheDir:              expandTilde(getEnvOrDefault("RUNNER_REPO_CACHE_DIR", firstNonEmpty(fileCfg.RepoCacheDir, filepath.Join(homeDir, ".cache", "brain", "repos"))), homeDir),
 		GitToken:                  resolvedGitToken,
@@ -171,8 +175,9 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		APITimeout:                getEnvIntOrDefault("RUNNER_API_TIMEOUT", firstNonZero(fileCfg.APITimeout, 5000)),
 		TaskTimeout:               getEnvIntOrDefault("RUNNER_TASK_TIMEOUT", fileCfg.TaskTimeout), // 0 is valid default
 		IdleDetectionThreshold:    getEnvIntOrDefault("RUNNER_IDLE_THRESHOLD", firstNonZero(fileCfg.IdleDetectionThreshold, 60000)),
-		MaxTotalProcesses:         getEnvIntOrDefault("RUNNER_MAX_TOTAL_PROCESSES", firstNonZero(fileCfg.MaxTotalProcesses, 10)),
 		MemoryThresholdPercent:    getEnvIntOrDefault("RUNNER_MEMORY_THRESHOLD", firstNonZero(fileCfg.MemoryThresholdPercent, 10)),
+		TaskMemoryLimitMB:         getEnvIntOrDefault("RUNNER_TASK_MEMORY_LIMIT_MB", intOrDefault(fileCfg.TaskMemoryLimitMB, fileHasTaskMemoryLimit, DefaultTaskMemoryLimitMB)),
+		OpencodeDBMaxGB:           getEnvIntOrDefault("RUNNER_OPENCODE_DB_MAX_GB", intOrDefault(fileCfg.OpencodeDBMaxGB, fileHasOpencodeDBMax, DefaultOpencodeDBMaxGB)),
 		MaxTaskAttempts:           getEnvIntOrDefault("RUNNER_MAX_TASK_ATTEMPTS", firstNonZero(fileCfg.MaxTaskAttempts, DefaultMaxTaskAttempts)),
 		Opencode: OpencodeConfig{
 			Bin:   getEnvOrDefault("OPENCODE_BIN", firstNonEmpty(fileCfg.Opencode.Bin, "opencode")),
@@ -200,7 +205,6 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		TaskDefaults:    fileCfg.TaskDefaults,
 		ExcludeProjects: fileCfg.ExcludeProjects,
 		IncludeProjects: fileCfg.IncludeProjects,
-		AutoMonitors:    getEnvBoolOrDefault("BRAIN_AUTO_MONITORS", fileCfg.AutoMonitors),
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
 		FeatureIDs:      getEnvCSVOrDefault("RUNNER_FEATURE_IDS", fileCfg.FeatureIDs),
 		Hooks: HooksConfig{
@@ -253,20 +257,17 @@ func ValidateConfig(cfg RunnerConfig) error {
 	if cfg.MaxParallel < 1 || cfg.MaxParallel > 100 {
 		errs = append(errs, fmt.Sprintf("maxParallel must be between 1 and 100, got %d", cfg.MaxParallel))
 	}
-	if cfg.MaxTotalProcesses < 1 || cfg.MaxTotalProcesses > 100 {
-		errs = append(errs, fmt.Sprintf("maxTotalProcesses must be between 1 and 100, got %d", cfg.MaxTotalProcesses))
-	}
 	if cfg.MemoryThresholdPercent < 0 || cfg.MemoryThresholdPercent > 100 {
 		errs = append(errs, fmt.Sprintf("memoryThresholdPercent must be between 0 and 100, got %d", cfg.MemoryThresholdPercent))
 	}
-	if cfg.MaxTotalProcesses < cfg.MaxParallel {
-		errs = append(errs, fmt.Sprintf("maxTotalProcesses (%d) must be >= maxParallel (%d)", cfg.MaxTotalProcesses, cfg.MaxParallel))
+	if cfg.TaskMemoryLimitMB < 0 {
+		errs = append(errs, fmt.Sprintf("taskMemoryLimitMB must be >= 0 (0 disables), got %d", cfg.TaskMemoryLimitMB))
+	}
+	if cfg.OpencodeDBMaxGB < 0 {
+		errs = append(errs, fmt.Sprintf("opencodeDBMaxGB must be >= 0 (0 disables), got %d", cfg.OpencodeDBMaxGB))
 	}
 	if cfg.PollInterval < 1 {
 		errs = append(errs, fmt.Sprintf("pollInterval must be >= 1, got %d", cfg.PollInterval))
-	}
-	if cfg.TaskPollInterval < 1 {
-		errs = append(errs, fmt.Sprintf("taskPollInterval must be >= 1, got %d", cfg.TaskPollInterval))
 	}
 	if cfg.APITimeout < 0 {
 		errs = append(errs, fmt.Sprintf("apiTimeout must be >= 0, got %d", cfg.APITimeout))
@@ -420,6 +421,15 @@ func firstNonEmpty(a, b string) string {
 		return a
 	}
 	return b
+}
+
+// intOrDefault returns the file value when the key was present in the file
+// (so an explicit 0 survives), otherwise the default.
+func intOrDefault(fileValue int, present bool, def int) int {
+	if present {
+		return fileValue
+	}
+	return def
 }
 
 func firstNonZero(a, b int) int {

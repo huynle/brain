@@ -87,17 +87,16 @@ function healthFor(
   paused: boolean,
 ): { label: string; tone: string } {
   if (paused) return { label: "paused", tone: "paused" };
-  // Both MR states read as "reviewing" here: this label answers "is this
-  // project moving?", and neither one is.
-  const mr = features.filter(
-    (f) => f.lifecycle === "mr-open" || f.lifecycle === "ready-to-merge",
-  ).length;
+  // "reviewing" answers "is this project moving?" — a parked merge intent
+  // means it is not. A forge URL says nothing about motion (nothing tracks
+  // whether that MR is still open), so it no longer counts here.
+  const mr = features.filter((f) => f.lifecycle === "ready-to-merge").length;
   const blocked = features.filter((f) => f.lifecycle === "blocked").length;
   if (blocked > 0 || stats.blocked > 0)
     return { label: "blocked", tone: "blocked" };
   if (mr > 0) return { label: "reviewing", tone: "mr" };
   if (stats.active > 0) return { label: "active", tone: "active" };
-  return { label: "healthy", tone: "merged" };
+  return { label: "healthy", tone: "validated" };
 }
 
 export interface ProjectCardProps {
@@ -155,8 +154,8 @@ export function ProjectCard({
   }, [statusFilter]);
   // Brain-native MRs fold into lifecycle (see lib/mergeRequests).
   const { openByProject } = useMergeRequests();
-  // Sorted into the canonical blocked → in-progress → mr-open →
-  // ready-to-merge → finished → merged order. `sortFeatures` had no caller at all while a second,
+  // Sorted into the canonical blocked → in-progress → ready-to-merge →
+  // finished → merged order. `sortFeatures` had no caller at all while a second,
   // flat feature list existed alongside this one; now that the Tasks tab
   // is the only feature list, the order it imposes IS the reading order —
   // and it is the one that puts what needs attention at the top and the
@@ -182,14 +181,23 @@ export function ProjectCard({
   const holdNote = schedulerHoldNote(resultFor(projectId));
 
   const lifecycleCounts = useMemo(() => {
-    const c = { active: 0, blocked: 0, finished: 0, mr: 0, ready: 0, merged: 0 };
+    const c = {
+      active: 0,
+      blocked: 0,
+      finished: 0,
+      mr: 0,
+      ready: 0,
+      validated: 0,
+    };
     for (const f of features) {
+      // `mr` is now an ATTACHMENT count, not a lifecycle bucket — it is the
+      // one tally that overlaps the others rather than partitioning them.
+      if (f.prUrl) c.mr++;
       if (f.lifecycle === "in-progress") c.active++;
       else if (f.lifecycle === "blocked") c.blocked++;
       else if (f.lifecycle === "finished") c.finished++;
-      else if (f.lifecycle === "mr-open") c.mr++;
       else if (f.lifecycle === "ready-to-merge") c.ready++;
-      else if (f.lifecycle === "merged") c.merged++;
+      else if (f.lifecycle === "validated") c.validated++;
     }
     return c;
   }, [features]);
@@ -332,7 +340,7 @@ export function ProjectCard({
         lifecycleCounts.finished > 0 ||
         lifecycleCounts.mr > 0 ||
         lifecycleCounts.ready > 0 ||
-        lifecycleCounts.merged > 0) && (
+        lifecycleCounts.validated > 0) && (
         <div className="flow-strip">
           {lifecycleCounts.active > 0 && (
             <span className="flow-pill active">
@@ -359,9 +367,9 @@ export function ProjectCard({
               <b>{lifecycleCounts.ready}</b> to merge
             </span>
           )}
-          {lifecycleCounts.merged > 0 && (
-            <span className="flow-pill merged">
-              <b>{lifecycleCounts.merged}</b> merged
+          {lifecycleCounts.validated > 0 && (
+            <span className="flow-pill validated">
+              <b>{lifecycleCounts.validated}</b> validated
             </span>
           )}
         </div>

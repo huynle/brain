@@ -16,6 +16,7 @@ import (
 // AutomationService evaluates automation entries against events.
 type AutomationService struct {
 	brain        *BrainServiceImpl
+	projects     automationProjectLister
 	pauseChecker automationPauseChecker
 }
 
@@ -30,6 +31,14 @@ type automationProjectPauseChecker interface {
 	IsAutomationsPausedForProject(projectID string) bool
 }
 
+// automationProjectLister enumerates the projects a wildcard automation fans
+// out over. Optional and injected the same way the pause checker is, so the
+// automation service keeps working (single unscoped run, as before) in tests
+// and callers that never wire it.
+type automationProjectLister interface {
+	ListProjects(ctx context.Context) ([]string, error)
+}
+
 // NewAutomationService creates an automation evaluator backed by brain entries.
 func NewAutomationService(brain *BrainServiceImpl) *AutomationService {
 	return &AutomationService{brain: brain}
@@ -39,39 +48,77 @@ func NewAutomationService(brain *BrainServiceImpl) *AutomationService {
 // generation path the cron/event dispatchers use (createTask), so a manual
 // run can never behave differently from a scheduled one. The dedup key is
 // uniquified per invocation, and the pause gate is intentionally NOT applied
-// — a manual run is an explicit user override. Returns the created task id,
-// or "" when generation was skipped (e.g. max_concurrent reached; the skip
-// is recorded in the run audit).
-func (s *AutomationService) RunAutomationNow(ctx context.Context, pathOrID string) (string, error) {
+// — a manual run is an explicit user override. Returns the created task ids,
+// or an empty slice when generation was skipped (e.g. max_concurrent reached;
+// the skip is recorded in the run audit).
+//
+// `project` scopes the run. It matters only for a GLOBAL automation, where it
+// is the sole way a caller can say which project the run is for: an automation
+// entry that owns a project always wins over it, exactly as createTask
+// resolves the pair. The PWA lists global automations inside every project's
+// Automations tab, so "Run now" on the built-in Dream Consolidation from the
+// hindsight tab has always meant "dream for hindsight" — the project was
+// simply dropped on the floor, and the run landed in `default` with an empty
+// {{.Project}}. An empty project against an any-project automation fans out
+// the same way the cron path does, so the two cannot drift.
+func (s *AutomationService) RunAutomationNow(ctx context.Context, pathOrID, project string) ([]string, error) {
 	entry, err := s.brain.Recall(ctx, pathOrID)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 	if entry.Type != "automation" {
-		return "", fmt.Errorf("entry %s is not an automation (type %q)", pathOrID, entry.Type)
+		return nil, fmt.Errorf("entry %s is not an automation (type %q)", pathOrID, entry.Type)
 	}
 	if entry.Action == nil {
-		return "", fmt.Errorf("automation %s has no action", entry.ID)
-	}
-	evt := types.Event{
-		Type:      "manual",
-		Source:    "api",
-		Timestamp: time.Now().UTC(),
-		ProjectID: entry.ProjectID,
+		return nil, fmt.Errorf("automation %s has no action", entry.ID)
 	}
 	if types.NormalizeAutomationActionType(entry.Action.Type) ==
 		types.AutomationActionUpdate {
 		// A manual run of an update automation has no event to scope it,
 		// and an unscoped bulk write is the one thing this action must
 		// never do. Refuse rather than guess a target.
-		return "", fmt.Errorf(
+		return nil, fmt.Errorf(
 			"automation %s has an update action: it applies to the feature its "+
 				"trigger names, so there is nothing for a manual run to act on",
 			entry.ID,
 		)
 	}
-	key := fmt.Sprintf("automation:manual:%s:%d", entry.ID, time.Now().UTC().UnixNano())
-	return s.createTask(ctx, *entry, evt, key)
+
+	var projects []string
+	switch {
+	case entry.ProjectID != "":
+		// The entry owns a project; a caller-supplied one cannot override it.
+		projects = []string{entry.ProjectID}
+	case project != "":
+		projects = []string{project}
+	default:
+		projects, err = s.scheduledTargetProjects(ctx, *entry)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	taskIDs := make([]string, 0, len(projects))
+	for _, proj := range projects {
+		evt := types.Event{
+			Type:      "manual",
+			Source:    "api",
+			Timestamp: time.Now().UTC(),
+			ProjectID: proj,
+		}
+		// A global automation reaches createTask with an empty ProjectID, so
+		// the event is what carries the scope — the same hand-off the cron
+		// fan-out makes.
+		key := fmt.Sprintf("automation:manual:%s:%s:%d", entry.ID, proj, time.Now().UTC().UnixNano())
+		taskID, err := s.createTask(ctx, *entry, evt, key)
+		if err != nil {
+			return nil, err
+		}
+		if taskID != "" {
+			taskIDs = append(taskIDs, taskID)
+		}
+	}
+	return taskIDs, nil
 }
 
 // SetPauseChecker lets API runner pause state suppress automation task generation.
@@ -80,6 +127,88 @@ func (s *AutomationService) SetPauseChecker(checker automationPauseChecker) {
 		return
 	}
 	s.pauseChecker = checker
+}
+
+// SetProjectLister supplies the project enumeration a cron automation scoped
+// to all projects (filter.project: "*") needs to fan out. Without it such an
+// automation keeps its historical single unscoped run.
+func (s *AutomationService) SetProjectLister(lister automationProjectLister) {
+	if s == nil {
+		return
+	}
+	s.projects = lister
+}
+
+// scheduledTargetProjects resolves which projects one cron automation fires
+// for on this tick.
+//
+// The trigger's project filter is the selector, and it is matched with the
+// SAME types.MatchFilterValue the event path uses — so `"*"` means every
+// project, `"in:a,b,c"` means those three, and a bare name means that one.
+// Until this existed only the EVENT path read the filter at all
+// (automationMatchesNamedEvent); a cron trigger has no event, so on this path
+// the selector had no reader and a global automation carrying `"*"` generated
+// exactly ONE task with an empty project — filed under `default`, rendering
+// {{.Project}} as the empty string. The built-in Dream Consolidation entry is
+// precisely that shape, which is why no project ever got a dream from it: the
+// generated task asked its agent to consolidate "project " and to save the
+// result nowhere in particular.
+//
+// The concurrency and cooldown guards survive the fan-out unchanged because
+// shouldSkipTaskGeneration lists generated tasks per project: `max_concurrent:
+// 1` means one in flight PER PROJECT, not one across all of them, which is
+// what a per-project automation wants.
+func (s *AutomationService) scheduledTargetProjects(ctx context.Context, automation types.BrainEntry) ([]string, error) {
+	// An automation that owns a project is scoped to it, selector or not.
+	if automation.ProjectID != "" {
+		return []string{automation.ProjectID}, nil
+	}
+	expr, ok := automationProjectFilter(automation)
+	if !ok {
+		// A global automation that names no projects at all keeps the
+		// single unscoped run it has always had. Widening every global
+		// cron automation to every project is not this function's call.
+		return []string{""}, nil
+	}
+	if s.projects == nil {
+		return nil, fmt.Errorf(
+			"automation %s selects projects (%s) but no project lister is wired",
+			automation.ID, expr)
+	}
+	all, err := s.projects.ListProjects(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list projects for automation %s: %w", automation.ID, err)
+	}
+	projects := make([]string, 0, len(all))
+	for _, project := range all {
+		if types.MatchFilterValue(project, expr) {
+			projects = append(projects, project)
+		}
+	}
+	return projects, nil
+}
+
+// automationProjectFilter returns the trigger's project selector under either
+// spelling, and whether one is present at all. An empty value counts as
+// absent: "project": "" must never read as "every project".
+func automationProjectFilter(automation types.BrainEntry) (string, bool) {
+	if automation.Trigger == nil {
+		return "", false
+	}
+	if expr := automation.Trigger.Filter["project"]; expr != "" {
+		return expr, true
+	}
+	if expr := automation.Trigger.Filter["project_id"]; expr != "" {
+		return expr, true
+	}
+	return "", false
+}
+
+// automationTargetsAllProjects reports whether an automation's trigger filter
+// carries the any-project wildcard, under either spelling.
+func automationTargetsAllProjects(automation types.BrainEntry) bool {
+	expr, ok := automationProjectFilter(automation)
+	return ok && expr == "*"
 }
 
 // Start subscribes to EventHub events until the context is cancelled.
@@ -139,6 +268,7 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 		return fmt.Errorf("list active automations: %w", err)
 	}
 
+	var firstErr error
 	for _, automation := range automations.Entries {
 		if automation.Trigger == nil || automation.Action == nil || automation.Trigger.Type != "cron" {
 			continue
@@ -149,19 +279,6 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 		// once through the reconcile engine and once through this generic
 		// task-generation path.
 		if isGoalAutomation(automation) {
-			continue
-		}
-		if s.isAutomationPaused(automation, types.Event{}) {
-			_, err := s.createRunAudit(ctx, automationRunAudit{
-				automation: automation,
-				evt:        types.Event{ProjectID: automation.ProjectID},
-				project:    automation.ProjectID,
-				status:     "skipped",
-				skipReason: "paused",
-			})
-			if err != nil {
-				return err
-			}
 			continue
 		}
 		if automation.Trigger.Schedule == "" {
@@ -179,13 +296,60 @@ func (s *AutomationService) CheckScheduled(ctx context.Context, now time.Time) e
 			continue
 		}
 
-		generatedKey := fmt.Sprintf("automation:cron:%s:%s", automation.ID, now.UTC().Format("200601021504"))
-		if _, err := s.createTask(ctx, automation, types.Event{ProjectID: automation.ProjectID}, generatedKey); err != nil {
-			return err
+		// One cron automation can now fire for many projects. A failure
+		// resolving them is remembered, not returned: this loop is the
+		// only thing that runs EVERY cron automation, and letting one bad
+		// entry abort the sweep starves all the others on every tick.
+		projects, err := s.scheduledTargetProjects(ctx, automation)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+
+		for _, project := range projects {
+			// The per-project event is what scopes everything downstream:
+			// the pause dial consulted, the project the generated task and
+			// its audit land in, and the {{.Project}} the prompt renders.
+			evt := types.Event{ProjectID: project}
+
+			// The pause gate is checked HERE, after the schedule match,
+			// and not before it. A paused automation whose gate ran first
+			// wrote a "skipped: paused" run audit on EVERY tick of the
+			// one-minute ticker, whether or not the cron was due — 1440
+			// audit entries a day per paused cron automation, which buried
+			// every real run in the history the PWA renders. Post-match, a
+			// skip audit is written only when the automation actually had
+			// work to do, which is the only case where "it was paused"
+			// tells the reader anything.
+			if s.isAutomationPaused(automation, evt) {
+				if _, err := s.createRunAudit(ctx, automationRunAudit{
+					automation: automation,
+					evt:        evt,
+					project:    project,
+					status:     "skipped",
+					skipReason: "paused",
+				}); err != nil && firstErr == nil {
+					firstErr = err
+				}
+				continue
+			}
+
+			// The project belongs in the dedup key even though
+			// generatedTaskExists already scopes its lookup by project:
+			// a fan-out generates N tasks for one (automation, minute),
+			// and a key that cannot tell them apart is one storage change
+			// away from collapsing them into one.
+			generatedKey := fmt.Sprintf("automation:cron:%s:%s:%s",
+				automation.ID, project, now.UTC().Format("200601021504"))
+			if _, err := s.createTask(ctx, automation, evt, generatedKey); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 
-	return nil
+	return firstErr
 }
 
 // HandleEvent evaluates automations for a single event.
@@ -310,7 +474,7 @@ func automationMatchesNamedEvent(automation types.BrainEntry, evt types.Event) b
 		return false
 	}
 	if automation.ProjectID != "" && automation.ProjectID != evt.ProjectID {
-		if automation.Trigger.Filter["project"] != "*" && automation.Trigger.Filter["project_id"] != "*" {
+		if !automationTargetsAllProjects(automation) {
 			return false
 		}
 	}
@@ -325,7 +489,7 @@ func automationMatchesWebhook(automation types.BrainEntry, evt types.Event) bool
 		return false
 	}
 	if automation.ProjectID != "" && automation.ProjectID != evt.ProjectID {
-		if automation.Trigger.Filter["project"] != "*" && automation.Trigger.Filter["project_id"] != "*" {
+		if !automationTargetsAllProjects(automation) {
 			return false
 		}
 	}
@@ -348,21 +512,29 @@ func automationMatchesSession(automation types.BrainEntry, evt types.Event) bool
 		return false
 	}
 	if automation.ProjectID != "" && automation.ProjectID != evt.ProjectID {
-		if automation.Trigger.Filter["project"] != "*" && automation.Trigger.Filter["project_id"] != "*" {
+		if !automationTargetsAllProjects(automation) {
 			return false
 		}
 	}
 	return matchAutomationFilters(automation.Trigger.Filter, evt)
 }
 
+// globalAutomationMatchesProjectEvent gates a PROJECTLESS automation against a
+// project-scoped event. It asks only whether the trigger declares a project
+// selector at all — matchAutomationFilters then applies that selector with
+// types.MatchFilterValue, which is the one place project matching should live.
+//
+// It used to demand a literal "*", so a global automation filtered to
+// `in:a,b,c` was rejected here and matched NOTHING, even though
+// matchAutomationFilters would have matched a, b and c correctly one step
+// later. That made the same selector mean "these three" on the cron path (see
+// scheduledTargetProjects) and "nothing at all" on the event path.
 func globalAutomationMatchesProjectEvent(automation types.BrainEntry, evt types.Event) bool {
 	if automation.ProjectID != "" || evt.ProjectID == "" {
 		return true
 	}
-	if automation.Trigger == nil {
-		return false
-	}
-	return automation.Trigger.Filter["project"] == "*" || automation.Trigger.Filter["project_id"] == "*"
+	_, ok := automationProjectFilter(automation)
+	return ok
 }
 
 func matchAutomationFilters(filters map[string]string, evt types.Event) bool {

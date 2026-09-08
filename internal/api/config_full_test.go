@@ -33,9 +33,7 @@ func minimalValidConfig() config.UnifiedConfig {
 			BrainAPIURL:            "http://localhost:3333",
 			MaxParallel:            5,
 			PollInterval:           5,
-			TaskPollInterval:       5,
 			APITimeout:             5000,
-			MaxTotalProcesses:      10,
 			MemoryThresholdPercent: 10,
 		},
 	}

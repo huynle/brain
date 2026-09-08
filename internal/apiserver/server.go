@@ -464,6 +464,11 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	featureCascade.Start(ctx)
 	automationSvc := service.NewAutomationService(brainSvc)
 	automationSvc.SetPauseChecker(runnerSvc)
+	// Without a project lister an automation scoped to all projects
+	// (filter.project: "*") cannot fan out and falls back to a single
+	// unscoped run — which is how the built-in Dream Consolidation spent
+	// months writing one empty-project task a night into `default`.
+	automationSvc.SetProjectLister(taskSvc)
 	go automationSvc.Start(ctx, eventHub)
 
 	// ─── Runner Bridge Hub (remote control) ────────────────────────

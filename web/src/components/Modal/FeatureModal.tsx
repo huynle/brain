@@ -7,7 +7,10 @@
 import { useMemo } from "react";
 import { Modal } from "../common/Modal";
 import { ActionBar } from "../common/ActionBar";
-import { LifecycleBadge } from "../common/LifecycleBadge";
+import {
+  LifecycleBadge,
+  MergeRequestLink,
+} from "../common/LifecycleBadge";
 import { useModal } from "../../store/modal";
 import { useLive } from "../../lib/sse";
 import { useActionRunner } from "../../hooks/useActionRunner";
@@ -172,11 +175,10 @@ export function FeatureModal(): JSX.Element {
       title={
         <>
           {feature.name}{" "}
-          <LifecycleBadge
-            lifecycle={feature.lifecycle}
-            href={feature.prUrl}
-            style={{ marginLeft: 8 }}
-          />
+          <span className="chip-pair" style={{ marginLeft: 8 }}>
+            <LifecycleBadge lifecycle={feature.lifecycle} />
+            {feature.prUrl && <MergeRequestLink href={feature.prUrl} />}
+          </span>
         </>
       }
       onClose={close}

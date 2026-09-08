@@ -104,3 +104,53 @@ func (tr *TaskRunner) clearTaskFailures(ctx context.Context, task RunningTask) {
 			"project", task.ProjectID, "task_id", task.ID, "error", err)
 	}
 }
+
+// reconcileCompletionWithAPI re-checks a task's status through the
+// authenticated API client before a crashed/failed/timed-out run is charged
+// against the retry cap.
+//
+// "Crashed" from ProcessManager.CheckCompletion means "the process exited and
+// the runner did not observe the task in a terminal status" — it is NOT keyed
+// on the exit code (a zero exit is still crashed if the task never left
+// in_progress). That observation can be wrong for reasons unrelated to the
+// run: the process manager's own status lookup is a separate HTTP client
+// that can fail transiently, or (before it learned to send the bearer token)
+// unconditionally. When the agent had already reported completion via
+// brain_update, charging the run as a failure is what parked
+// supernote/w3d168as in blocked on 2026-09-05 after a successful third
+// attempt. So before recording a failure, ask the API what the task's status
+// actually is and trust a terminal answer over the process-exit inference.
+//
+// Lookup errors keep the original classification: an unreachable API is not
+// evidence of success, and the retry counter is the safer default there.
+func (tr *TaskRunner) reconcileCompletionWithAPI(ctx context.Context, task RunningTask, status CompletionStatus) CompletionStatus {
+	switch status {
+	case CompletionCrashed, CompletionFailed, CompletionTimeout:
+	default:
+		return status
+	}
+
+	entry, err := tr.client.GetEntry(ctx, task.Path)
+	if err != nil {
+		slog.Warn("completion: could not re-check task status before recording failure; keeping process-exit classification",
+			"project", task.ProjectID, "task_id", task.ID, "status", string(status), "error", err)
+		return status
+	}
+
+	var resolved CompletionStatus
+	switch entry.Status {
+	case "completed", "validated":
+		resolved = CompletionCompleted
+	case "blocked":
+		resolved = CompletionBlocked
+	case "cancelled":
+		resolved = CompletionCancelled
+	default:
+		return status
+	}
+
+	slog.Info("completion: task already terminal in API; overriding process-exit classification",
+		"project", task.ProjectID, "task_id", task.ID,
+		"api_status", entry.Status, "from", string(status), "to", string(resolved))
+	return resolved
+}

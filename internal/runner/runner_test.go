@@ -834,9 +834,7 @@ func testRunnerConfig() RunnerConfig {
 	return RunnerConfig{
 		BrainAPIURL:            "http://localhost:3333",
 		PollInterval:           1,
-		TaskPollInterval:       1,
 		MaxParallel:            2,
-		MaxTotalProcesses:      10,
 		MemoryThresholdPercent: 10,
 		APITimeout:             5000,
 		StateDir:               "/tmp/test-state",

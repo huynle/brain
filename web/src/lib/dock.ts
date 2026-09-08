@@ -21,6 +21,8 @@
  *   • moves that would create a cycle (leaf into itself) are no-ops.
  */
 
+import { deepEqual } from "./objectPath";
+
 // ─── types ────────────────────────────────────────────────────────────
 
 export interface DockLeaf {
@@ -187,6 +189,38 @@ export function findLeafOfKind(
   return found;
 }
 
+/**
+ * The first leaf showing EXACTLY this content — same kind and a
+ * deep-equal target — with its id.
+ *
+ * This is the "don't open the same page twice" lookup. It is stricter
+ * than `findLeafOfKind` on purpose: that one matches by kind alone,
+ * which is right for a single-slot viewer but wrong here, where the
+ * question is "is THIS entry already on screen?" rather than "is some
+ * entry?".
+ *
+ * The target is compared structurally rather than by reference because
+ * every call site mints a fresh object literal (`{ path }`,
+ * `{ projectId, taskId }`), so reference equality would never match.
+ * Title is deliberately NOT part of the match: the same task reached
+ * from two surfaces can be labelled differently, and those are still
+ * one pane.
+ */
+export function findLeafByContent(
+  tree: DockNode,
+  kind: DockLeaf["kind"],
+  target: Record<string, unknown>,
+): { id: string; leaf: DockLeaf } | null {
+  let found: { id: string; leaf: DockLeaf } | null = null;
+  walkLeaves(tree, (leaf, id) => {
+    if (found !== null) return;
+    if (leaf.kind !== kind) return;
+    if (!deepEqual(leaf.target ?? {}, target ?? {})) return;
+    found = { id, leaf };
+  });
+  return found;
+}
+
 /** Point an existing leaf at new content, keeping its id and position. */
 export function retargetLeaf(
   tree: DockNode,
@@ -205,6 +239,25 @@ export function enclosingTabsId(tree: DockNode, leafId: string): string | null {
   const info = findNodeInfo(tree, leafId);
   if (!info || !info.parent || info.parent.type !== "tabs") return null;
   return info.parent.id;
+}
+
+/**
+ * Bring `leafId` to the front of the tab strip holding it. Returns the
+ * tree unchanged when it is not in a strip (already visible) or gone.
+ *
+ * Reusing a pane is only half the job: a pane updated behind another
+ * tab looks exactly like the click did nothing, which is worse than the
+ * duplicate tab it replaced. Every reuse path funnels through here so
+ * none of them can forget.
+ */
+export function revealLeaf(tree: DockNode, leafId: string): DockNode {
+  const tabsId = enclosingTabsId(tree, leafId);
+  if (!tabsId) return tree;
+  const info = findNodeInfo(tree, tabsId);
+  if (!info || info.node.type !== "tabs") return tree;
+  const idx = info.node.children.findIndex((c) => c.id === leafId);
+  if (idx < 0) return tree;
+  return setActiveTab(tree, tabsId, idx);
 }
 
 export function findNodeInfo(

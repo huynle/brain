@@ -89,6 +89,8 @@ export function SettingsModal(): JSX.Element {
   const setStreaming = useWorkspace((s) => s.setStreaming);
   const theme = useWorkspace((s) => s.theme);
   const setTheme = useWorkspace((s) => s.setTheme);
+  const dedupeTabs = useWorkspace((s) => s.dedupeTabs);
+  const setDedupeTabs = useWorkspace((s) => s.setDedupeTabs);
 
   // ─── server config (from API) ────────────────────────────────
   const cfgQ = useQuery({
@@ -237,6 +239,17 @@ export function SettingsModal(): JSX.Element {
               onChange={(e) => setStreaming(e.target.checked)}
             />
             Live logs streaming
+          </label>
+          <label
+            className="setting-checkbox"
+            title="When on, opening something that is already docked jumps to that pane instead of adding another tab for it. Drag-and-drop always places a new pane where you drop it."
+          >
+            <input
+              type="checkbox"
+              checked={dedupeTabs}
+              onChange={(e) => setDedupeTabs(e.target.checked)}
+            />
+            Reuse open tabs (don't open duplicates)
           </label>
           <div style={{ marginTop: 8 }}>
             <div style={{ color: "#f4b23a", fontSize: 10, marginBottom: 4 }}>

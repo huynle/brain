@@ -209,8 +209,12 @@ type TaskRunner struct {
 	executor         TaskExecutor
 	executors        map[string]TaskExecutor
 	executorRegistry *ExecutorRegistry
-	processMgr       TaskProcessManager
-	stateMgr         TaskStateManager
+
+	// admission caches the host-memory and opencode.db probes behind
+	// spawnAdmission (memory_guard.go).
+	admission  admissionState
+	processMgr TaskProcessManager
+	stateMgr   TaskStateManager
 
 	// Mutable state (protected by mu)
 	mu               sync.RWMutex
@@ -1091,9 +1095,16 @@ func (tr *TaskRunner) handleDispatchCommand(ctx context.Context, cmd RunnerComma
 			"generated_by", task.GeneratedBy,
 		)
 	}
-	taskExecutor, _, err := tr.resolveExecutor(task)
+	taskExecutor, executorName, err := tr.resolveExecutor(task)
 	if err != nil {
 		tr.rejectDispatch(ctx, cmd, leaseID, "executor_unsupported", err.Error())
+		return
+	}
+	// Memory-aware admission. Not bypassed by cmd.Force: a forced run cannot
+	// create memory any more than it can create execution slots, and this
+	// gate exists because a count-based cap let one task take the host down.
+	if denial := tr.spawnAdmission(executorName); denial != nil {
+		tr.rejectDispatch(ctx, cmd, leaseID, denial.Code, denial.Message)
 		return
 	}
 	workdir, err := taskExecutor.ResolveWorkdir(task)
@@ -1356,7 +1367,11 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 	// 2.5. Check idle status for OpenCode agents
 	tr.checkIdleStatus(ctx)
 
-	// 2.6. Check scheduled tasks (cron triggers)
+	// 2.6. Kill any task whose process tree has outgrown task_memory_limit_mb.
+	// Runs before scheduling so a slot freed here is refilled on this tick.
+	tr.checkMemoryLimits(ctx)
+
+	// 2.7. Check scheduled tasks (cron triggers)
 	tr.checkScheduledTasks(ctx, time.Now().UTC())
 
 	// Passive dispatch-capable runners wait for Brain-assigned dispatch leases
@@ -1448,7 +1463,7 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 					} else if !ok {
 						continue
 					} else if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
-						if !errors.Is(err, ErrTaskClaimConflict) {
+						if !errors.Is(err, ErrTaskClaimConflict) && !errors.Is(err, ErrAdmissionDenied) {
 							tr.logger.Printf("claim and spawn automation task failed for %s/%s: %v", projectID, task.ID, err)
 							slog.Error("spawn failed",
 								"task_id", task.ID,
@@ -1499,7 +1514,10 @@ func (tr *TaskRunner) poll(ctx context.Context) {
 
 		// Claim and spawn
 		if err := tr.claimAndSpawn(ctx, task, projectID); err != nil {
-			if errors.Is(err, ErrTaskClaimConflict) {
+			// An admission refusal is already logged (rate-limited) by the
+			// guard itself; repeating it at Error level on every tick for
+			// every ready task would bury the one line that matters.
+			if errors.Is(err, ErrTaskClaimConflict) || errors.Is(err, ErrAdmissionDenied) {
 				continue
 			}
 			tr.logger.Printf("claim and spawn failed for %s/%s: %v", projectID, task.ID, err)
@@ -1579,6 +1597,20 @@ func (tr *TaskRunner) resolveExecutor(task *types.ResolvedTask) (TaskExecutor, s
 	return tr.executor, name, nil
 }
 
+// executorNameForTask resolves the executor name a task would run under
+// without logging, for callers that only need the name (admission control).
+func (tr *TaskRunner) executorNameForTask(task *types.ResolvedTask) string {
+	if tr.executorRegistry != nil {
+		if _, name, err := tr.executorRegistry.ResolveForTask(task); err == nil {
+			return name
+		}
+	}
+	if task.Executor != "" {
+		return task.Executor
+	}
+	return DefaultExecutorName
+}
+
 // serveProcOwner is implemented by executors that keep a server process alive
 // beside each task's driver. Only OpenCodeExecutor does today; the interface
 // keeps TaskExecutor untouched for executors with nothing to reap.
@@ -1655,6 +1687,15 @@ func (tr *TaskRunner) claimAndSpawn(ctx context.Context, task *types.ResolvedTas
 }
 
 func (tr *TaskRunner) claimAndSpawnWithWorkdir(ctx context.Context, task *types.ResolvedTask, projectID, resolvedWorkdir string) error {
+	// Memory-aware admission, before the claim so a refusal leaves no trace
+	// on the task. The dispatch path checks this earlier (to reject with a
+	// reason code before acking the lease); the poll and manual-execute paths
+	// arrive here directly, so this is their gate.
+	if denial := tr.spawnAdmission(tr.executorNameForTask(task)); denial != nil {
+		tr.memoryGuardWarnOnce("admission:"+denial.Code, "memory guard: refusing to start %s/%s: %s", projectID, task.ID, denial.Message)
+		return admissionError(denial)
+	}
+
 	// Claim the task
 	result, err := tr.client.ClaimTask(ctx, projectID, task.ID, tr.runnerID)
 	if err != nil {
@@ -2698,6 +2739,13 @@ func (tr *TaskRunner) handleTaskCompletion(ctx context.Context, taskID string, t
 	// Stop log streamer (flushes remaining lines)
 	tr.stopLogStreamer(taskID)
 
+	// A crashed/failed/timed-out classification is an inference from the
+	// process exit, not from the task. If the agent already moved the task to
+	// a terminal status (brain_update completed, then the process exited 0),
+	// the run succeeded and must not be counted against the retry cap. Ask
+	// the API before deciding; see reconcileCompletionWithAPI.
+	status = tr.reconcileCompletionWithAPI(ctx, task, status)
+
 	// Create result before removing from process manager
 	result := tr.processMgr.CreateTaskResult(taskID, status)
 
@@ -2857,8 +2905,23 @@ func (tr *TaskRunner) renewClaims(ctx context.Context) {
 			tr.processMgr.Remove(task.ID)
 			tr.removeInstance(task.InstanceID)
 
-			// Set task back to pending so another runner can pick it up
-			if updateErr := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); updateErr != nil {
+			// A failed renewal has two very different causes, and the claim
+			// state alone cannot tell them apart: either the claim expired or
+			// was force-released while the task is genuinely still in
+			// progress (reset it so another runner can pick it up), or the
+			// agent already moved the task to a terminal status — its claim
+			// was released server-side at that moment, and this process is
+			// just the driver outliving the write. Resetting the second kind
+			// re-opened completed work every renewal tick: 131 sessions on
+			// one hindsight task, and three tasks' finished, uncommitted work
+			// stranded in worktrees (brain task qqpzi2wt).
+			status, terminal := tr.lostClaimTaskStatus(ctx, task)
+			reason := "claim renewal failed"
+			if terminal {
+				reason = "claim released: task already " + status
+				tr.logger.Printf("claim renewal failed for %s/%s but the task is already %s — reaping the process, leaving the status alone",
+					task.ProjectID, task.ID, status)
+			} else if updateErr := tr.client.UpdateTaskStatus(ctx, task.Path, "pending"); updateErr != nil {
 				tr.logger.Printf("failed to reset task status for %s after renewal failure: %v", task.ID, updateErr)
 			}
 
@@ -2876,11 +2939,17 @@ func (tr *TaskRunner) renewClaims(ctx context.Context) {
 				TaskID:    task.ID,
 				ProjectID: task.ProjectID,
 				TaskPath:  task.Path,
-				Reason:    "claim renewal failed",
+				FeatureID: task.FeatureID,
+				Reason:    reason,
 			})
 
 			tr.mu.Lock()
-			tr.stats.Failed++
+			switch {
+			case !terminal:
+				tr.stats.Failed++
+			case status == "completed" || status == "validated":
+				tr.stats.Completed++
+			}
 			if tr.processMgr.RunningCount() == 0 {
 				tr.status = RunnerStatusPolling
 			}
@@ -2891,6 +2960,22 @@ func (tr *TaskRunner) renewClaims(ctx context.Context) {
 
 		slog.Debug("claim renewed", "project", task.ProjectID, "task_id", task.ID)
 	}
+}
+
+// lostClaimTaskStatus reads a task's current status when this runner has lost
+// its claim on it (renewal failed, operator abort). It reports whether that
+// status is terminal — completed, validated, blocked, cancelled, archived or
+// superseded — in which case the caller must reap the process but must not
+// write "pending" over a decision the agent or an operator already made. A
+// lookup failure reports non-terminal so the legacy reset still happens: an
+// unreachable API is not evidence that the task finished.
+func (tr *TaskRunner) lostClaimTaskStatus(ctx context.Context, task RunningTask) (status string, terminal bool) {
+	entry, err := tr.client.GetEntry(ctx, task.Path)
+	if err != nil || entry == nil {
+		tr.logger.Printf("could not read status of %s/%s before releasing it: %v — treating as in progress", task.ProjectID, task.ID, err)
+		return "", false
+	}
+	return entry.Status, isTerminalStatus(entry.Status)
 }
 
 // =============================================================================

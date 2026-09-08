@@ -353,9 +353,6 @@ func (c *ConfigCommand) executeShow(out io.Writer) error {
 	if cfg.Runner.StateDir != "" {
 		fmt.Fprintf(out, "  StateDir:      %s\n", cfg.Runner.StateDir)
 	}
-	if cfg.Runner.LogDir != "" {
-		fmt.Fprintf(out, "  LogDir:        %s\n", cfg.Runner.LogDir)
-	}
 
 	if len(cfg.Runner.ExcludeProjects) > 0 {
 		fmt.Fprintf(out, "  ExcludeProjects:\n")

@@ -30,6 +30,20 @@ func saveAutomation(t *testing.T, brain *BrainServiceImpl, action *types.Automat
 	return resp
 }
 
+// runNowOne drives RunAutomationNow for the single-task cases below: every
+// automation here owns a project, so the fan-out is a one-element slice.
+func runNowOne(t *testing.T, svc *AutomationService, path string) string {
+	t.Helper()
+	ids, err := svc.RunAutomationNow(context.Background(), path, "")
+	if err != nil {
+		t.Fatalf("RunAutomationNow: %v", err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("expected exactly one generated task, got %d: %v", len(ids), ids)
+	}
+	return ids[0]
+}
+
 func TestRunAutomationNow_PromptAction(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
 	ctx := context.Background()
@@ -39,13 +53,7 @@ func TestRunAutomationNow_PromptAction(t *testing.T) {
 	})
 
 	svc := NewAutomationService(brain)
-	taskID, err := svc.RunAutomationNow(ctx, auto.Path)
-	if err != nil {
-		t.Fatalf("RunAutomationNow: %v", err)
-	}
-	if taskID == "" {
-		t.Fatal("expected a created task id")
-	}
+	taskID := runNowOne(t, svc, auto.Path)
 
 	task, err := brain.Recall(ctx, taskID)
 	if err != nil {
@@ -68,10 +76,7 @@ func TestRunAutomationNow_ScriptAction(t *testing.T) {
 	})
 
 	svc := NewAutomationService(brain)
-	taskID, err := svc.RunAutomationNow(ctx, auto.Path)
-	if err != nil {
-		t.Fatalf("RunAutomationNow: %v", err)
-	}
+	taskID := runNowOne(t, svc, auto.Path)
 	task, err := brain.Recall(ctx, taskID)
 	if err != nil {
 		t.Fatalf("recall created task: %v", err)
@@ -86,18 +91,11 @@ func TestRunAutomationNow_ScriptAction(t *testing.T) {
 
 func TestRunAutomationNow_RepeatedRunsAreNotDeduped(t *testing.T) {
 	brain, _, _ := newTestBrainService(t)
-	ctx := context.Background()
 	auto := saveAutomation(t, brain, &types.AutomationAction{Type: "prompt", DirectPrompt: "x"})
 
 	svc := NewAutomationService(brain)
-	first, err := svc.RunAutomationNow(ctx, auto.Path)
-	if err != nil {
-		t.Fatalf("first run: %v", err)
-	}
-	second, err := svc.RunAutomationNow(ctx, auto.Path)
-	if err != nil {
-		t.Fatalf("second run: %v", err)
-	}
+	first := runNowOne(t, svc, auto.Path)
+	second := runNowOne(t, svc, auto.Path)
 	if first == "" || second == "" || first == second {
 		t.Fatalf("manual runs must each create a task: first=%q second=%q", first, second)
 	}
@@ -108,7 +106,7 @@ func TestRunAutomationNow_Validation(t *testing.T) {
 	ctx := context.Background()
 	svc := NewAutomationService(brain)
 
-	if _, err := svc.RunAutomationNow(ctx, "does-not-exist"); err == nil {
+	if _, err := svc.RunAutomationNow(ctx, "does-not-exist", ""); err == nil {
 		t.Error("expected error for missing entry")
 	}
 
@@ -119,7 +117,7 @@ func TestRunAutomationNow_Validation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("save note: %v", err)
 	}
-	if _, err := svc.RunAutomationNow(ctx, note.Path); err == nil || !strings.Contains(err.Error(), "not an automation") {
+	if _, err := svc.RunAutomationNow(ctx, note.Path, ""); err == nil || !strings.Contains(err.Error(), "not an automation") {
 		t.Errorf("expected not-an-automation error, got %v", err)
 	}
 }

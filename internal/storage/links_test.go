@@ -10,7 +10,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestSetLinks_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/linked.md", "lnk12345", "Linked Note")
@@ -60,7 +60,7 @@ func TestSetLinks_Success(t *testing.T) {
 }
 
 func TestSetLinks_ReplacesExisting(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/replace-links.md", "rpl12345", "Replace Links")
@@ -102,7 +102,7 @@ func TestSetLinks_ReplacesExisting(t *testing.T) {
 }
 
 func TestSetLinks_ClearWithEmptySlice(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/clear-links.md", "clr12345", "Clear Links")
@@ -135,7 +135,7 @@ func TestSetLinks_ClearWithEmptySlice(t *testing.T) {
 }
 
 func TestSetLinks_NoteNotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	err := s.SetLinks(ctx, "nonexistent/path.md", []LinkInput{
@@ -147,7 +147,7 @@ func TestSetLinks_NoteNotFound(t *testing.T) {
 }
 
 func TestSetLinks_TargetResolution_Exists(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Create source note.
@@ -190,7 +190,7 @@ func TestSetLinks_TargetResolution_Exists(t *testing.T) {
 }
 
 func TestSetLinks_TargetResolution_NotExists(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Create source note only — no target.
@@ -231,7 +231,7 @@ func TestSetLinks_TargetResolution_NotExists(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetLinks_WithLinks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/get-links.md", "gtl12345", "Get Links")
@@ -265,7 +265,7 @@ func TestGetLinks_WithLinks(t *testing.T) {
 }
 
 func TestGetLinks_NoLinks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/no-links.md", "nol12345", "No Links")
@@ -287,7 +287,7 @@ func TestGetLinks_NoLinks(t *testing.T) {
 }
 
 func TestGetLinks_NoteNotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	_, err := s.GetLinks(ctx, "nonexistent/path.md")
@@ -297,7 +297,7 @@ func TestGetLinks_NoteNotFound(t *testing.T) {
 }
 
 func TestSetLinks_TargetResolution_ShortID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	source := sampleNote("projects/test/plan/idsource.md", "ids12345", "ID Source")
@@ -364,7 +364,7 @@ func TestShortIDFromHref(t *testing.T) {
 }
 
 func TestInsertNote_RepairsDanglingLinks(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Source is indexed FIRST, with links to a target that doesn't exist
@@ -442,7 +442,7 @@ func wikiLink(target string) LinkInput {
 }
 
 // targetIDOf returns the resolved target id of the single link on notePath.
-func targetIDOf(t *testing.T, s *StorageLayer, notePath string) *int64 {
+func targetIDOf(t *testing.T, s *TenantStore, notePath string) *int64 {
 	t.Helper()
 	links, err := s.GetLinks(context.Background(), notePath)
 	if err != nil {
@@ -455,7 +455,7 @@ func targetIDOf(t *testing.T, s *StorageLayer, notePath string) *int64 {
 }
 
 func TestSetLinks_ResolvesWikiLinkByTitle(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	target, err := s.InsertNote(ctx, noteIn("projects/p/plan/target.md", "wkitgt01", "Target Note", "p"))
@@ -482,7 +482,7 @@ func TestSetLinks_ResolvesWikiLinkByTitle(t *testing.T) {
 // A wiki-link may also name a path or a short ID; those steps run before the
 // title lookup, so all three shapes work without the author declaring which.
 func TestSetLinks_WikiLinkResolvesPathAndShortID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	target, err := s.InsertNote(ctx, noteIn("projects/p/plan/target.md", "wkitgt02", "Target Note", "p"))
@@ -512,7 +512,7 @@ func TestSetLinks_WikiLinkResolvesPathAndShortID(t *testing.T) {
 }
 
 func TestSetLinks_WikiLinkPrefersSameProject(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Same title in three scopes. The link is written from project "mine".
@@ -552,7 +552,7 @@ func TestSetLinks_WikiLinkPrefersSameProject(t *testing.T) {
 }
 
 func TestSetLinks_WikiLinkFallsBackToGlobal(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	other, err := s.InsertNote(ctx, noteIn("projects/other/plan/dup.md", "gbltgt01", "Shared Title", "other"))
@@ -586,7 +586,7 @@ func TestSetLinks_WikiLinkFallsBackToGlobal(t *testing.T) {
 // bind syntax examples like "[see the plan](plan-id)" to any entry that happens
 // to be titled "plan-id".
 func TestSetLinks_MarkdownHrefIsNotResolvedByTitle(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	if _, err := s.InsertNote(ctx, noteIn("projects/p/plan/decoy.md", "mdtgt001", "plan-id", "p")); err != nil {
@@ -611,7 +611,7 @@ func TestSetLinks_MarkdownHrefIsNotResolvedByTitle(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestResolveLinksToNote_BackfillsWikiLinkByTitle(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Source written first: the target does not exist yet, so the link dangles.
@@ -640,7 +640,7 @@ func TestResolveLinksToNote_BackfillsWikiLinkByTitle(t *testing.T) {
 }
 
 func TestResolveLinksToNote_TitleBackfillDoesNotCrossProjects(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	if _, err := s.InsertNote(ctx, noteIn("projects/mine/plan/src.md", "xpsrc001", "Source", "mine")); err != nil {

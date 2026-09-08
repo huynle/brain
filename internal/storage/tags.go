@@ -9,7 +9,7 @@ import (
 // In a transaction: deletes existing tags, inserts new ones.
 // Returns an error if the note is not found.
 func (s *StorageLayer) SetTags(ctx context.Context, notePath string, tags []string) error {
-	note, err := s.GetNoteByPath(ctx, notePath)
+	note, err := legacyNoteByPath(ctx, s, notePath)
 	if err != nil {
 		return fmt.Errorf("set tags: %w", err)
 	}
@@ -45,7 +45,7 @@ func (s *StorageLayer) SetTags(ctx context.Context, notePath string, tags []stri
 // Returns an error if the note is not found.
 // Returns a non-nil empty slice if the note has no tags.
 func (s *StorageLayer) GetTags(ctx context.Context, notePath string) ([]string, error) {
-	note, err := s.GetNoteByPath(ctx, notePath)
+	note, err := legacyNoteByPath(ctx, s, notePath)
 	if err != nil {
 		return nil, fmt.Errorf("get tags: %w", err)
 	}

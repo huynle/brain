@@ -307,6 +307,39 @@ maintenance needs its operator boundary. P4 receiver moves/predicate work and
 P4.10's removal must independently prove SQL isolation and absence of raw escape
 hatches. P3.5 alone is not permission to enable or deploy multi mode.
 
+## Notes/list/search receiver transition (P4.4)
+
+Notes, list and search are now defined on `TenantStore`, with execution-time
+schema routing. **Runtime `CurrentSchemaVersion` and public constructors remain
+v28**; only private migration tests publish v29. For v28, an explicit `local`
+binding retains the legacy private-install query behavior. Nonlocal bindings,
+invalid handles/contexts and unsupported versions fail before blank-query or
+other early returns. This transitional route is not a tenant/global fallback.
+
+Privately migrated v29 searches reserve one transaction for FTS mapping/catalog
+validation, full `NoteRow` hydration, filters, ranking, counts, word retries and
+attachment merging. No transaction helper calls the pool. Mapped per-tenant FTS
+tables provide BM25; filters precede limits and nested tags, attachment references,
+attachment parents and derivations all require matching ownership. Missing or
+damaged catalogs return `ErrTenantSearchUnavailable`, never global FTS, LIKE or
+attachment-only successful results. Only recognized FTS expression syntax errors
+may retry as literal words. The old no-error `ftsMatchWords` signature remains for
+compatibility; production fallbacks use an error-preserving path instead.
+
+The v29 catalog audit also rejects unreviewed nested note-insertion triggers:
+the migration's row-ID scratch guard depends on no nested insertion into `notes`.
+Existing migration tests cover explicit/automatic/negative IDs, UPSERT, REPLACE
+and `recursive_triggers` variants; receiver tests exercise the finalized catalog.
+Short-ID/path/title lookup remains fuzzy within the bound tenant, and title
+project preference remains a rank, not a project filter.
+
+**Final activation must remove the local-v28 query route and every
+`legacyLocalContent` bridge**, alongside the remaining receiver moves,
+un-embedding, identity/bootstrap/install-claim cutover and atomic v29 publication.
+Do not enable v29 in constructors to accommodate this plane, and do not preserve
+v28 routing as recovery for a failed v29 search. The embedding still exposes raw
+methods from unmoved planes; this is not public multi-tenant readiness.
+
 ## Unscoped storage debt ratchets (P3.7)
 
 `TestProductionUnscopedStorage` in `internal/storage/unscoped_ratchet_test.go`

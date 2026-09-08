@@ -30,15 +30,36 @@ var allowedSortColumns = map[string]string{
 
 // ListNotes returns notes matching the given filter options.
 // If opts is nil, returns all notes with default sort (modified DESC) and limit (100).
-func (s *StorageLayer) ListNotes(ctx context.Context, opts *ListOptions) ([]*NoteRow, error) {
-	query, params := buildListQuery(opts)
+func (s *TenantStore) ListNotes(ctx context.Context, opts *ListOptions) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	query, params := buildScopedListQuery(opts, scope)
 	return s.listNotes(ctx, query, params)
 }
 
-// buildListQuery retains legacy single-mode SQL until the P4 schema migration.
+func (s *TenantStore) listQuery(opts *ListOptions) (string, []interface{}, error) {
+	scope, err := s.contentScope(context.Background())
+	if err != nil {
+		return "", nil, err
+	}
+	query, args := buildScopedListQuery(opts, scope)
+	return query, args, nil
+}
+
+// buildListQuery is the pure v28 compatibility query builder.
 func buildListQuery(opts *ListOptions) (string, []interface{}) {
+	return buildScopedListQuery(opts, contentScope{})
+}
+
+func buildScopedListQuery(opts *ListOptions, scope contentScope) (string, []interface{}) {
 	where := make([]string, 0)
 	params := make([]interface{}, 0)
+	if scope.owner != "" {
+		where = append(where, "tenant_id = ?")
+		params = append(params, scope.owner)
+	}
 
 	if opts != nil {
 		if opts.Type != "" {
@@ -71,8 +92,9 @@ func buildListQuery(opts *ListOptions) (string, []interface{}) {
 			params = append(params, opts.PathPrefix+"%")
 		}
 		if opts.Tag != "" {
-			where = append(where, "id IN (SELECT note_id FROM tags WHERE tag = ?)")
-			params = append(params, opts.Tag)
+			predicate, args := scope.where("tag = ?", opts.Tag)
+			where = append(where, "id IN (SELECT note_id FROM tags WHERE "+predicate+")")
+			params = append(params, args...)
 		}
 		if len(opts.Tags) > 0 {
 			placeholders := make([]string, len(opts.Tags))
@@ -80,9 +102,9 @@ func buildListQuery(opts *ListOptions) (string, []interface{}) {
 				placeholders[i] = "?"
 				params = append(params, opts.Tags[i])
 			}
-			where = append(where,
-				fmt.Sprintf("id IN (SELECT note_id FROM tags WHERE tag IN (%s) GROUP BY note_id HAVING COUNT(DISTINCT tag) = ?)",
-					strings.Join(placeholders, ",")))
+			predicate, args := scope.where("tag IN (" + strings.Join(placeholders, ",") + ")")
+			params = append(params, args...)
+			where = append(where, "id IN (SELECT note_id FROM tags WHERE "+predicate+" GROUP BY note_id HAVING COUNT(DISTINCT tag) = ?)")
 			params = append(params, len(opts.Tags))
 		}
 	}
@@ -122,7 +144,7 @@ func buildListQuery(opts *ListOptions) (string, []interface{}) {
 	return query, params
 }
 
-func (s *StorageLayer) listNotes(ctx context.Context, query string, params []interface{}) ([]*NoteRow, error) {
+func (s *TenantStore) listNotes(ctx context.Context, query string, params []interface{}) ([]*NoteRow, error) {
 	rows, err := s.db.QueryContext(ctx, query, params...)
 	if err != nil {
 		return nil, fmt.Errorf("list notes: %w", err)

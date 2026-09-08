@@ -12,7 +12,7 @@ import (
 
 // seedSearchNotes inserts a set of notes useful for search testing.
 // Returns the inserted notes keyed by a short label.
-func seedSearchNotes(t *testing.T, s *StorageLayer) map[string]*NoteRow {
+func seedSearchNotes(t *testing.T, s *TenantStore) map[string]*NoteRow {
 	t.Helper()
 	ctx := context.Background()
 
@@ -85,7 +85,7 @@ func seedSearchNotes(t *testing.T, s *StorageLayer) map[string]*NoteRow {
 // ---------------------------------------------------------------------------
 
 func TestSearchNotes_EmptyQuery(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -116,7 +116,7 @@ func TestSearchNotes_EmptyQuery(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchNotes_DefaultStrategyIsFTS(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -135,7 +135,7 @@ func TestSearchNotes_DefaultStrategyIsFTS(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_FindsByTitle(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -164,7 +164,7 @@ func TestSearchFTS_FindsByTitle(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_FindsByBody(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -193,7 +193,7 @@ func TestSearchFTS_FindsByBody(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_TitleRankedHigher(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert two notes: one with "Go" in title, one with "Go" only in body
@@ -232,7 +232,7 @@ func TestSearchFTS_TitleRankedHigher(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_RespectsLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -251,7 +251,7 @@ func TestSearchFTS_RespectsLimit(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_DefaultLimit(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert 25 notes all matching "common"
@@ -278,7 +278,7 @@ func TestSearchFTS_DefaultLimit(t *testing.T) {
 }
 
 func TestSearchNotes_FindsReadyAttachmentDerivedTextFromDerivedTable(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/report/derived-entry.md", "derv1234", "Derived Attachment Entry")
@@ -327,7 +327,7 @@ func TestSearchNotes_FindsReadyAttachmentDerivedTextFromDerivedTable(t *testing.
 }
 
 func TestSearchNotes_DoesNotSearchAttachmentMetadataPseudoDerivedText(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/report/metadata-entry.md", "meta1234", "Metadata Attachment Entry")
@@ -364,7 +364,7 @@ func TestSearchNotes_DoesNotSearchAttachmentMetadataPseudoDerivedText(t *testing
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_FilterPathPrefix(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -392,7 +392,7 @@ func TestSearchFTS_FilterPathPrefix(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_FilterType(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -419,7 +419,7 @@ func TestSearchFTS_FilterType(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_FilterStatus(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -446,7 +446,7 @@ func TestSearchFTS_FilterStatus(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_CombinedFilters(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -473,7 +473,7 @@ func TestSearchFTS_CombinedFilters(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchFTS_BadSyntaxReturnsEmpty(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -501,7 +501,7 @@ func TestSearchFTS_BadSyntaxReturnsEmpty(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchExact_TitleMatch(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -530,7 +530,7 @@ func TestSearchExact_TitleMatch(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchExact_BodySubstring(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -559,7 +559,7 @@ func TestSearchExact_BodySubstring(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchExact_WithFilters(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -588,7 +588,7 @@ func TestSearchExact_WithFilters(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchLike_FindsByTitle(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -613,7 +613,7 @@ func TestSearchLike_FindsByTitle(t *testing.T) {
 }
 
 func TestSearchLike_FindsByBody(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -638,7 +638,7 @@ func TestSearchLike_FindsByBody(t *testing.T) {
 }
 
 func TestSearchLike_FindsByPath(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -668,7 +668,7 @@ func TestSearchLike_FindsByPath(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchLike_WithFilters(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -695,7 +695,7 @@ func TestSearchLike_WithFilters(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchNotes_NilOptions(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -713,7 +713,7 @@ func TestSearchNotes_NilOptions(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchNotes_UnknownStrategyDefaultsToFTS(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 	seedSearchNotes(t, s)
 
@@ -731,7 +731,7 @@ func TestSearchNotes_UnknownStrategyDefaultsToFTS(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchNotes_FilterByProjectID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	seedSearchNotes(t, s)
 
 	// All seeded notes have "Go" or "TypeScript" in body.
@@ -761,7 +761,7 @@ func TestSearchNotes_FilterByProjectID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchNotes_FilterByFeatureID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Seed notes with feature_id set
@@ -807,7 +807,7 @@ func TestSearchNotes_FilterByFeatureID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchNotes_FilterByPriority(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	strPtr := func(s string) *string { return &s }
@@ -852,7 +852,7 @@ func TestSearchNotes_FilterByPriority(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestSearchNotes_FilterByTags(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	strPtr := func(s string) *string { return &s }
@@ -914,7 +914,7 @@ func TestSearchNotes_FilterByTags(t *testing.T) {
 }
 
 func TestSearchNotes_FindsAttachmentDerivedText(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/proj/report/attachment-derived.md", "adtx0001", "Attachment Derived Entry")

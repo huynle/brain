@@ -20,18 +20,9 @@ type tenantFTSHit struct {
 }
 
 func queryTenantFTS(ctx context.Context, tx *sql.Tx, owner tenant.ID, match string, limit int) ([]tenantFTSHit, int, error) {
-	if ctx == nil || tx == nil || !owner.Valid() {
-		return nil, 0, ErrTenantSearchUnavailable
-	}
-	// *sql.Tx is deliberate: mapping, catalog, count and hits share a snapshot.
-	// An already-reserved single-connection transaction must never call the pool.
-	mapping, err := checkTenantSearchCatalog(tx)
+	name, err := tenantSearchTable(ctx, tx, owner)
 	if err != nil {
-		return nil, 0, fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
-	}
-	name, err := tenantFTSName(mapping[owner.String()])
-	if err != nil {
-		return nil, 0, fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
+		return nil, 0, err
 	}
 	if limit <= 0 {
 		limit = defaultSearchLimit
@@ -58,4 +49,24 @@ func queryTenantFTS(ctx context.Context, tx *sql.Tx, owner tenant.ID, match stri
 		return nil, 0, fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
 	}
 	return hits, count, nil
+}
+
+// Shared by low-level ranking probes and full-row receiver searches. Only an
+// existing transaction may resolve names: never validate through the pool and
+// subsequently query a possibly changed mapping/catalog.
+func tenantSearchTable(ctx context.Context, tx *sql.Tx, owner tenant.ID) (string, error) {
+	if ctx == nil || tx == nil || !owner.Valid() {
+		return "", ErrTenantSearchUnavailable
+	}
+	// *sql.Tx is deliberate: mapping, catalog, count and hits share a snapshot.
+	// An already-reserved single-connection transaction must never call the pool.
+	mapping, err := checkTenantSearchCatalog(tx)
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
+	}
+	name, err := tenantFTSName(mapping[owner.String()])
+	if err != nil {
+		return "", fmt.Errorf("%w: %w", ErrTenantSearchUnavailable, err)
+	}
+	return name, nil
 }

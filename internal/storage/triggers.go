@@ -60,7 +60,11 @@ func (s *StorageLayer) CountInProgressByTrigger(ctx context.Context, triggerEven
 // into its metadata. This delegates to MergeMetadata which handles the
 // metadata merge and status column sync.
 func (s *StorageLayer) ActivateTask(ctx context.Context, path string, fields map[string]interface{}) error {
-	_, err := s.MergeMetadata(ctx, path, fields)
+	content, err := legacyLocalContent(ctx, s)
+	if err != nil {
+		return err
+	}
+	_, err = content.MergeMetadata(ctx, path, fields)
 	if err != nil {
 		return fmt.Errorf("activate task %s: %w", path, err)
 	}

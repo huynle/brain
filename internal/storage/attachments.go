@@ -81,7 +81,7 @@ func (s *StorageLayer) LinkAttachmentToEntry(ctx context.Context, notePath strin
 	if err := validateReferenceInput(notePath, attachmentID, role); err != nil {
 		return err
 	}
-	note, err := s.GetNoteByPath(ctx, notePath)
+	note, err := legacyNoteByPath(ctx, s, notePath)
 	if err != nil {
 		return fmt.Errorf("link attachment: %w", err)
 	}
@@ -110,7 +110,7 @@ func (s *StorageLayer) UnlinkAttachmentFromEntry(ctx context.Context, notePath s
 	if err := validateReferenceInput(notePath, attachmentID, role); err != nil {
 		return false, err
 	}
-	note, err := s.GetNoteByPath(ctx, notePath)
+	note, err := legacyNoteByPath(ctx, s, notePath)
 	if err != nil {
 		return false, fmt.Errorf("unlink attachment: %w", err)
 	}
@@ -135,7 +135,7 @@ func (s *StorageLayer) ListAttachmentsForEntry(ctx context.Context, notePath str
 	if strings.TrimSpace(notePath) == "" {
 		return nil, errors.New("note path must not be empty")
 	}
-	note, err := s.GetNoteByPath(ctx, notePath)
+	note, err := legacyNoteByPath(ctx, s, notePath)
 	if err != nil {
 		return nil, fmt.Errorf("list entry attachments: %w", err)
 	}

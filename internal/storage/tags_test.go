@@ -11,7 +11,7 @@ import (
 // ---------------------------------------------------------------------------
 
 func TestSetTags_Success(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert a note to attach tags to.
@@ -45,7 +45,7 @@ func TestSetTags_Success(t *testing.T) {
 }
 
 func TestSetTags_ReplacesExisting(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/replace-tags.md", "rep12345", "Replace Tags")
@@ -83,7 +83,7 @@ func TestSetTags_ReplacesExisting(t *testing.T) {
 }
 
 func TestSetTags_ClearWithEmptySlice(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/clear-tags.md", "clr12345", "Clear Tags")
@@ -114,7 +114,7 @@ func TestSetTags_ClearWithEmptySlice(t *testing.T) {
 }
 
 func TestSetTags_ClearWithNilSlice(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/clear-nil.md", "nil12345", "Clear Nil")
@@ -145,7 +145,7 @@ func TestSetTags_ClearWithNilSlice(t *testing.T) {
 }
 
 func TestSetTags_NoteNotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	err := s.SetTags(ctx, "nonexistent/path.md", []string{"tag"})
@@ -159,7 +159,7 @@ func TestSetTags_NoteNotFound(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetTags_WithTags(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/get-tags.md", "get12345", "Get Tags")
@@ -190,7 +190,7 @@ func TestGetTags_WithTags(t *testing.T) {
 }
 
 func TestGetTags_NoTags(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note := sampleNote("projects/test/plan/no-tags.md", "not12345", "No Tags")
@@ -212,7 +212,7 @@ func TestGetTags_NoTags(t *testing.T) {
 }
 
 func TestGetTags_NoteNotFound(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	_, err := s.GetTags(ctx, "nonexistent/path.md")

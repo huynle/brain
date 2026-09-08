@@ -54,7 +54,7 @@ func TestTenantListQueryRejectsInvalidHandlesBeforeSQL(t *testing.T) {
 }
 
 func TestTenantListQueryLocalCompatibility(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	seedListNotes(t, s)
 	handle, err := s.ForTenant(tenant.Local)
 	if err != nil {
@@ -65,7 +65,16 @@ func TestTenantListQueryLocalCompatibility(t *testing.T) {
 		if err != nil || query == "" || strings.Contains(query, "tenant_id") {
 			t.Fatalf("local query must use the pre-P4 schema: %q %v", query, err)
 		}
-		want, err := s.ListNotes(context.Background(), opts)
+		legacyQuery, legacyArgs := buildListQuery(opts)
+		if query != legacyQuery {
+			t.Fatalf("v28 query changed: %q; want %q", query, legacyQuery)
+		}
+		rows, err := s.db.QueryContext(context.Background(), legacyQuery, legacyArgs...)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := scanNoteRows(rows)
+		rows.Close()
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -5,6 +5,8 @@ import (
 	"database/sql"
 	"fmt"
 	"testing"
+
+	"github.com/huynle/brain-api/internal/tenant"
 )
 
 // ---------------------------------------------------------------------------
@@ -13,7 +15,7 @@ import (
 
 // newBenchStorage creates an in-memory StorageLayer for benchmarks.
 // Uses b.Cleanup for teardown.
-func newBenchStorage(b *testing.B) *StorageLayer {
+func newBenchStorage(b *testing.B) *TenantStore {
 	b.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
@@ -24,12 +26,16 @@ func newBenchStorage(b *testing.B) *StorageLayer {
 		b.Fatalf("NewWithDB failed: %v", err)
 	}
 	b.Cleanup(func() { s.Close() })
-	return s
+	content, err := s.ForTenant(tenant.Local)
+	if err != nil {
+		b.Fatal(err)
+	}
+	return content
 }
 
 // seedNotes inserts n notes with cross-links and tags into the storage.
 // Returns the paths of all inserted notes.
-func seedNotes(b *testing.B, s *StorageLayer, n int) []string {
+func seedNotes(b *testing.B, s *TenantStore, n int) []string {
 	b.Helper()
 	ctx := context.Background()
 	paths := make([]string, n)

@@ -228,7 +228,7 @@ func TestAttachmentStorage_GetListAndPersist(t *testing.T) {
 }
 
 func TestAttachmentStorage_ReferenceLookupAndSafeDelete(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	note, err := s.InsertNote(ctx, sampleNote("projects/test/report/ref.md", "attref01", "Reference"))

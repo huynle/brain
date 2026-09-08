@@ -308,7 +308,7 @@ func TestInitSchema_Idempotent(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestFTS5_InsertTrigger(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert a note directly
 	_, err := s.DB().Exec(`
@@ -333,7 +333,7 @@ func TestFTS5_InsertTrigger(t *testing.T) {
 }
 
 func TestFTS5_DeleteTrigger(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert then delete
 	_, err := s.DB().Exec(`
@@ -363,7 +363,7 @@ func TestFTS5_DeleteTrigger(t *testing.T) {
 }
 
 func TestFTS5_UpdateTrigger(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert
 	_, err := s.DB().Exec(`
@@ -448,7 +448,7 @@ func TestForeignKeys_TagsRequireNote(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestCascadeDelete_LinksRemoved(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert a note
 	res, err := s.DB().Exec(`
@@ -485,7 +485,7 @@ func TestCascadeDelete_LinksRemoved(t *testing.T) {
 }
 
 func TestCascadeDelete_TagsRemoved(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 
 	// Insert a note
 	res, err := s.DB().Exec(`

@@ -48,8 +48,12 @@ func TestStartupPersistsLocalFilesystemBeforeScan(t *testing.T) {
 		t.Fatalf("changed configured roots: %+v", maps[0])
 	}
 	deadline := time.Now().Add(5 * time.Second)
+	content, err := store.ForTenant(tenant.Local)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for {
-		row, err := store.GetNoteByPath(ctx, "projects/p/note/local001.md")
+		row, err := content.GetNoteByPath(ctx, "projects/p/note/local001.md")
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -61,7 +65,7 @@ func TestStartupPersistsLocalFilesystemBeforeScan(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	row, err := store.GetNoteByPath(ctx, "tenants/foreign/note/foreign1.md")
+	row, err := content.GetNoteByPath(ctx, "tenants/foreign/note/foreign1.md")
 	if err != nil {
 		t.Fatal(err)
 	}

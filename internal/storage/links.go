@@ -10,7 +10,11 @@ import (
 // For each link, tries to resolve target_path to an existing note (sets target_id if found).
 // Returns an error if the source note is not found.
 func (s *StorageLayer) SetLinks(ctx context.Context, notePath string, links []LinkInput) error {
-	note, err := s.GetNoteByPath(ctx, notePath)
+	content, err := legacyLocalContent(ctx, s)
+	if err != nil {
+		return err
+	}
+	note, err := content.GetNoteByPath(ctx, notePath)
 	if err != nil {
 		return fmt.Errorf("set links: %w", err)
 	}
@@ -27,7 +31,7 @@ func (s *StorageLayer) SetLinks(ctx context.Context, notePath string, links []Li
 	resolved := make([]resolvedLink, len(links))
 	for i, link := range links {
 		resolved[i].input = link
-		target, err := s.GetNoteByPath(ctx, link.TargetPath)
+		target, err := content.GetNoteByPath(ctx, link.TargetPath)
 		if err != nil {
 			return fmt.Errorf("resolve target %q: %w", link.TargetPath, err)
 		}
@@ -36,7 +40,7 @@ func (s *StorageLayer) SetLinks(ctx context.Context, notePath string, links []Li
 			// short ID ("[Title](n8eox9v4)"); resolve those too so
 			// backlinks work for both href styles.
 			if shortID := shortIDFromHref(link.TargetPath); shortID != "" {
-				target, err = s.GetNoteByShortID(ctx, shortID)
+				target, err = content.GetNoteByShortID(ctx, shortID)
 				if err != nil {
 					return fmt.Errorf("resolve target %q: %w", link.TargetPath, err)
 				}
@@ -49,7 +53,7 @@ func (s *StorageLayer) SetLinks(ctx context.Context, notePath string, links []Li
 			// short ID), and matching them against titles would manufacture
 			// links the author never wrote — "[see the plan](plan-id)" in a
 			// syntax example would bind to any entry titled "plan-id".
-			target, err = s.GetNoteByTitleScoped(ctx, link.TargetPath, note.ProjectID)
+			target, err = content.GetNoteByTitleScoped(ctx, link.TargetPath, note.ProjectID)
 			if err != nil {
 				return fmt.Errorf("resolve target %q: %w", link.TargetPath, err)
 			}
@@ -98,7 +102,7 @@ func (s *StorageLayer) SetLinks(ctx context.Context, notePath string, links []Li
 // Returns an error if the note is not found.
 // Returns a non-nil empty slice if the note has no links.
 func (s *StorageLayer) GetLinks(ctx context.Context, notePath string) ([]*LinkRow, error) {
-	note, err := s.GetNoteByPath(ctx, notePath)
+	note, err := legacyNoteByPath(ctx, s, notePath)
 	if err != nil {
 		return nil, fmt.Errorf("get links: %w", err)
 	}

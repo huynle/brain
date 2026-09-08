@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"unicode"
@@ -14,8 +15,27 @@ const defaultSearchLimit = 20
 const noteColumnsAliased = `n.id, n.path, n.short_id, n.title, n.lead, n.body, n.raw_content, n.word_count, n.checksum, n.metadata, n.type, n.status, n.priority, n.project_id, n.feature_id, n.created, n.modified, n.indexed_at`
 
 // SearchNotes searches notes using the specified strategy.
-// Returns empty slice for blank queries. Catches errors gracefully (especially FTS5 syntax errors).
-func (s *StorageLayer) SearchNotes(ctx context.Context, query string, opts *SearchOptions) ([]*NoteRow, error) {
+// Returns empty slice for blank queries after validating the execution schema.
+// Query syntax may degrade gracefully; unavailable tenant search never does.
+func (s *TenantStore) SearchNotes(ctx context.Context, query string, opts *SearchOptions) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope.owner != "" {
+		strategy, limit := "fts", defaultSearchLimit
+		if opts != nil {
+			// Unknown public strategies must not select internal helper modes.
+			switch opts.Strategy {
+			case "exact", "like", "fts":
+				strategy = opts.Strategy
+			}
+			if opts.Limit > 0 {
+				limit = opts.Limit
+			}
+		}
+		return s.searchTenant(ctx, query, strategy, limit, opts)
+	}
 	if strings.TrimSpace(query) == "" {
 		return []*NoteRow{}, nil
 	}
@@ -124,28 +144,43 @@ func buildFTSMatchExpr(query, op string) string {
 //     matching more terms above those matching one, so precision is kept
 //     where it exists and recall is the fallback rather than silence.
 //
-// A search still never returns an error to the caller — TestSearchQuality_
-// FTSSyntaxErrorReturnsEmpty pins that, and it is the right contract. But
+// Legacy syntax errors still degrade gracefully — TestSearchQuality_
+// FTSSyntaxErrorReturnsEmpty pins that contract. But
 // "gracefully empty" was doing too much work: a malformed *expression* and
 // a perfectly ordinary phrase both ended in silence. Now a deliberate
 // expression that fails to parse degrades to a literal word search rather
 // than to nothing, and an ordinary phrase can no longer fail to parse at
 // all.
-func (s *StorageLayer) searchFTS(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+func (s *TenantStore) searchFTS(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope.owner != "" {
+		return s.searchTenant(ctx, query, "fts", limit, opts)
+	}
 	var notes []*NoteRow
 
 	if looksLikeFTSExpression(query) {
 		raw, err := s.ftsMatch(ctx, query, limit, opts)
 		if err == nil {
 			notes = raw
+		} else if errors.Is(err, ErrTenantSearchUnavailable) {
+			return nil, err
 		} else {
 			// The user meant it as an expression and it did not parse.
 			// Fall back to reading it as words — `"unclosed quote` almost
 			// certainly means the words, not a syntax error.
-			notes = s.ftsMatchWords(ctx, query, limit, opts)
+			notes, err = s.ftsMatchWordsResult(ctx, query, limit, opts)
+			if err != nil {
+				return nil, err
+			}
 		}
 	} else {
-		notes = s.ftsMatchWords(ctx, query, limit, opts)
+		notes, err = s.ftsMatchWordsResult(ctx, query, limit, opts)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	markMatchSource(notes, "entry")
@@ -172,29 +207,58 @@ func (s *StorageLayer) searchFTS(ctx context.Context, query string, limit int, o
 // Never returns an error: quoting makes a syntax error very nearly
 // unreachable, and if one happens anyway the caller's contract is an empty
 // result rather than a failure.
-func (s *StorageLayer) ftsMatchWords(ctx context.Context, query string, limit int, opts *SearchOptions) []*NoteRow {
+func (s *TenantStore) ftsMatchWords(ctx context.Context, query string, limit int, opts *SearchOptions) []*NoteRow {
+	// Legacy signature retained. Production v29 fallbacks use the error-returning
+	// transaction path, never this compatibility helper's error-to-empty contract.
+	notes, _ := s.ftsMatchWordsResult(ctx, query, limit, opts)
+	return notes
+}
+
+// Error-preserving path for every production fallback, including a schema
+// transition observed between the legacy routing check and a MATCH call.
+func (s *TenantStore) ftsMatchWordsResult(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope.owner != "" {
+		return s.searchTenant(ctx, query, "words", limit, opts)
+	}
 	andExpr := buildFTSMatchExpr(query, "AND")
 	if andExpr == "" {
-		return []*NoteRow{}
+		return []*NoteRow{}, nil
 	}
 
 	notes, err := s.ftsMatch(ctx, andExpr, limit, opts)
+	if errors.Is(err, ErrTenantSearchUnavailable) {
+		return nil, err
+	}
 	if err != nil {
-		return []*NoteRow{}
+		return []*NoteRow{}, nil
 	}
 	if len(notes) > 0 || len(ftsWordTokens(query)) < 2 {
-		return notes
+		return notes, nil
 	}
 
 	orNotes, err := s.ftsMatch(ctx, buildFTSMatchExpr(query, "OR"), limit, opts)
-	if err != nil {
-		return notes
+	if errors.Is(err, ErrTenantSearchUnavailable) {
+		return nil, err
 	}
-	return orNotes
+	if err != nil {
+		return notes, nil
+	}
+	return orNotes, nil
 }
 
 // ftsMatch runs one FTS5 MATCH query and returns the ranked rows.
-func (s *StorageLayer) ftsMatch(ctx context.Context, matchExpr string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+func (s *TenantStore) ftsMatch(ctx context.Context, matchExpr string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope.owner != "" {
+		return s.searchTenant(ctx, matchExpr, "match", limit, opts)
+	}
 	sql := "SELECT " + noteColumnsAliased + " FROM notes n JOIN notes_fts fts ON n.id = fts.rowid WHERE notes_fts MATCH ?"
 	params := []interface{}{matchExpr}
 
@@ -220,7 +284,14 @@ func (s *StorageLayer) ftsMatch(ctx context.Context, matchExpr string, limit int
 }
 
 // searchExact performs exact title match OR body LIKE substring search.
-func (s *StorageLayer) searchExact(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+func (s *TenantStore) searchExact(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope.owner != "" {
+		return s.searchTenant(ctx, query, "exact", limit, opts)
+	}
 	sql := "SELECT " + noteColumns + " FROM notes WHERE (title = ? OR body LIKE ?)"
 	params := []interface{}{query, "%" + query + "%"}
 
@@ -252,7 +323,14 @@ func (s *StorageLayer) searchExact(ctx context.Context, query string, limit int,
 }
 
 // searchLike performs LIKE substring search across title, body, and path.
-func (s *StorageLayer) searchLike(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+func (s *TenantStore) searchLike(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope.owner != "" {
+		return s.searchTenant(ctx, query, "like", limit, opts)
+	}
 	likeQuery := "%" + query + "%"
 	sql := "SELECT " + noteColumns + " FROM notes WHERE (title LIKE ? OR body LIKE ? OR path LIKE ?)"
 	params := []interface{}{likeQuery, likeQuery, likeQuery}
@@ -284,7 +362,14 @@ func (s *StorageLayer) searchLike(ctx context.Context, query string, limit int, 
 	return mergeSearchRows(notes, attachmentMatches, limit), nil
 }
 
-func (s *StorageLayer) searchAttachmentDerivedText(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+func (s *TenantStore) searchAttachmentDerivedText(ctx context.Context, query string, limit int, opts *SearchOptions) ([]*NoteRow, error) {
+	scope, err := s.contentScope(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if scope.owner != "" {
+		return s.searchTenant(ctx, query, "attachment", limit, opts)
+	}
 	likeQuery := "%" + strings.ToLower(strings.TrimSpace(query)) + "%"
 	if likeQuery == "%%" {
 		return []*NoteRow{}, nil
@@ -351,6 +436,12 @@ func mergeSearchRows(primary, secondary []*NoteRow, limit int) []*NoteRow {
 // appendFilters adds optional WHERE clauses for PathPrefix, Type, and Status.
 // tableAlias is the table alias prefix (e.g. "n" for "n.path"); empty string means no alias.
 func appendFilters(sql string, params []interface{}, tableAlias string, opts *SearchOptions) (string, []interface{}) {
+	return appendSearchFilters(sql, params, tableAlias, opts, "")
+}
+
+// owner is nonempty only on the validated v29 path. Keep the v28 wrapper for
+// unmoved callers; never infer an owner from optional project/tag filters.
+func appendSearchFilters(sql string, params []interface{}, tableAlias string, opts *SearchOptions, owner string) (string, []interface{}) {
 	if opts == nil {
 		return sql, params
 	}
@@ -392,14 +483,19 @@ func appendFilters(sql string, params []interface{}, tableAlias string, opts *Se
 		params = append(params, opts.Priority)
 	}
 	if len(opts.Tags) > 0 {
+		tagWhere := ""
+		if owner != "" {
+			tagWhere = "tenant_id = ? AND "
+			params = append(params, owner)
+		}
 		placeholders := make([]string, len(opts.Tags))
 		for i := range opts.Tags {
 			placeholders[i] = "?"
 			params = append(params, opts.Tags[i])
 		}
 		idCol := col("id")
-		sql += fmt.Sprintf(" AND %s IN (SELECT note_id FROM tags WHERE tag IN (%s) GROUP BY note_id HAVING COUNT(DISTINCT tag) = ?)",
-			idCol, strings.Join(placeholders, ","))
+		sql += fmt.Sprintf(" AND %s IN (SELECT note_id FROM tags WHERE %stag IN (%s) GROUP BY note_id HAVING COUNT(DISTINCT tag) = ?)",
+			idCol, tagWhere, strings.Join(placeholders, ","))
 		params = append(params, len(opts.Tags))
 	}
 

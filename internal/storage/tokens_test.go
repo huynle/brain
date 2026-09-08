@@ -70,7 +70,7 @@ func TestCreateToken_Success(t *testing.T) {
 	var storedToken string
 	var createdAt string
 	var scope string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT token, scope, created_at FROM api_tokens WHERE name = ?", "test-token",
 	).Scan(&storedToken, &scope, &createdAt)
 	if err != nil {
@@ -209,7 +209,7 @@ func TestValidateToken_UpdatesLastUsed(t *testing.T) {
 
 	// Check that last_used was updated
 	var lastUsed string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT COALESCE(last_used, '') FROM api_tokens WHERE name = ?", "last-used-test",
 	).Scan(&lastUsed)
 	if err != nil {
@@ -402,7 +402,7 @@ func TestRevokeToken_Success(t *testing.T) {
 
 	// Token should still exist in DB but have revoked_at set
 	var revokedAt string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT COALESCE(revoked_at, '') FROM api_tokens WHERE name = ?", "revoke-me",
 	).Scan(&revokedAt)
 	if err != nil {
@@ -504,7 +504,7 @@ func TestUpdateTokenLastUsed_Success(t *testing.T) {
 
 	// Verify last_used is set
 	var lastUsed string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT last_used FROM api_tokens WHERE name = ?", "use-me",
 	).Scan(&lastUsed)
 	if err != nil {
@@ -597,7 +597,7 @@ func TestCreateToken_WithScope(t *testing.T) {
 
 	// Verify scope stored correctly
 	var scope string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT scope FROM api_tokens WHERE name = ?", "runner-token",
 	).Scan(&scope)
 	if err != nil {
@@ -620,7 +620,7 @@ func TestCreateToken_DefaultScope(t *testing.T) {
 
 	// Verify default scope is admin:*
 	var scope string
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT scope FROM api_tokens WHERE name = ?", "default-scope",
 	).Scan(&scope)
 	if err != nil {

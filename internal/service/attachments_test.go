@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -173,13 +174,24 @@ func (b *recordingBlobStore) Delete(hash string) error {
 
 func newAttachmentServiceForTest(t *testing.T, maxSize int64) (*AttachmentServiceImpl, *storage.TenantStore, *recordingBlobStore) {
 	t.Helper()
-	store, err := storagetest.New(t.TempDir() + "/brain.db")
+	svc, store, blobs, _ := newAttachmentServiceWithDBForTest(t, maxSize)
+	return svc, store, blobs
+}
+
+// The constructor owns cleanup of its newly opened fixture connection.
+func newAttachmentServiceWithDBForTest(t *testing.T, maxSize int64) (*AttachmentServiceImpl, *storage.TenantStore, *recordingBlobStore, *sql.DB) {
+	t.Helper()
+	db, err := sql.Open("sqlite", t.TempDir()+"/brain.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("storage.New failed: %v", err)
 	}
-	t.Cleanup(func() { _ = store.Close() })
 	blobs := newRecordingBlobStore()
-	return NewAttachmentService(store, blobs, nil, maxSize), store, blobs
+	return NewAttachmentService(store, blobs, nil, maxSize), store, blobs, db
 }
 
 func newAttachmentServiceWithBrainForTest(t *testing.T, brain api.BrainService) (*AttachmentServiceImpl, *storage.TenantStore, *recordingBlobStore) {
@@ -1093,9 +1105,9 @@ func TestAttachmentServiceCreateValidationAndCleanup(t *testing.T) {
 	})
 
 	t.Run("deletes new blob when metadata write fails", func(t *testing.T) {
-		svc, store, blobs := newAttachmentServiceForTest(t, 1024)
+		svc, _, blobs, db := newAttachmentServiceWithDBForTest(t, 1024)
 		// Keep scope/digest reads available; fail the actual metadata write.
-		if _, err := store.DB().Exec(`CREATE TRIGGER fail_attachment_insert BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'metadata write failed'); END`); err != nil {
+		if _, err := db.Exec(`CREATE TRIGGER fail_attachment_insert BEFORE INSERT ON attachments BEGIN SELECT RAISE(ABORT, 'metadata write failed'); END`); err != nil {
 			t.Fatal(err)
 		}
 		_, err := svc.Create(ctx, "proj", types.CreateAttachmentRequest{Filename: "note.txt", Size: 4}, strings.NewReader("data"))

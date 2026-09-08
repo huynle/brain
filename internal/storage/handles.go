@@ -7,11 +7,13 @@ import (
 )
 
 // TenantStore names a tenant; it does not authorize access. Notes/list/search,
-// graph/links/tags and attachment metadata/references/derivations enforce
-// execution-time schema routing and v29 tenant predicates. Other planes remain
+// graph/links/tags, index maintenance, embeddings/events and attachment
+// metadata/references/derivations enforce execution-time schema routing and v29
+// tenant predicates. Other planes remain
 // unmigrated; SQL attachment ownership does not bind or authorize a physical CAS.
 // TEMPORARY until P4.10: embedding promotes ALL StorageLayer methods, including
-// DB, Close, ValidateToken and unscoped queries. Multi mode must remain disabled.
+// Close, ValidateToken and unscoped queries. The raw DB accessor is removed;
+// multi mode must remain disabled until the remaining receiver moves/un-embedding.
 type TenantStore struct {
 	*StorageLayer
 	tenantID tenant.ID

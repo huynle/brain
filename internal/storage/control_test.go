@@ -141,7 +141,7 @@ func TestControlSharedBacking(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if local.DB() != s.db || other.DB() != s.db || s.db.Stats().MaxOpenConnections != 3 {
+	if local.db != s.db || other.db != s.db || s.db.Stats().MaxOpenConnections != 3 {
 		t.Fatal("factory changed shared pool")
 	}
 	maps, err := repo.ListTenantRoots(ctx)

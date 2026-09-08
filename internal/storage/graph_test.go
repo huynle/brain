@@ -151,7 +151,7 @@ func TestGetBacklinks_UnresolvedLink(t *testing.T) {
 	}
 
 	// Insert link with target_path but NULL target_id (simulating unresolved link).
-	_, err = s.DB().ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		"INSERT INTO links (source_id, target_path, target_id, href) VALUES (?, ?, NULL, ?)",
 		inserted.ID, "projects/test/graph/unresolved-tgt.md", "projects/test/graph/unresolved-tgt.md",
 	)

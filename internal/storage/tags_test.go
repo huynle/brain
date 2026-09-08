@@ -170,7 +170,7 @@ func TestGetTags_WithTags(t *testing.T) {
 
 	// Insert tags directly to test GetTags in isolation.
 	for _, tag := range []string{"alpha", "beta"} {
-		_, err := s.DB().ExecContext(ctx, "INSERT INTO tags (note_id, tag) VALUES (?, ?)", inserted.ID, tag)
+		_, err := s.db.ExecContext(ctx, "INSERT INTO tags (note_id, tag) VALUES (?, ?)", inserted.ID, tag)
 		if err != nil {
 			t.Fatalf("insert tag %q failed: %v", tag, err)
 		}

@@ -15,18 +15,18 @@ func TestTenantRootsMigrationFrom27(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DB().Exec("DROP TABLE IF EXISTS tenant_roots; DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES (27)"); err != nil {
+	if _, err = s.db.Exec("DROP TABLE IF EXISTS tenant_roots; DELETE FROM schema_version; INSERT INTO schema_version(version) VALUES (27)"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DB().Exec("INSERT INTO feature_pause_state(project_id,feature_id,paused,updated_at) VALUES ('legacy-project','legacy-feature',1,'2026-09-06T00:00:00Z')"); err != nil {
+	if _, err = s.db.Exec("INSERT INTO feature_pause_state(project_id,feature_id,paused,updated_at) VALUES ('legacy-project','legacy-feature',1,'2026-09-06T00:00:00Z')"); err != nil {
 		t.Fatal(err)
 	}
 	// Exercise the migration itself: InitSchema also creates missing tables and
 	// would otherwise mask a missing v28 migration branch.
-	if err = migrateSchema(s.DB()); err != nil {
+	if err = migrateSchema(s.db); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DB().Exec("SELECT tenant_id FROM tenant_roots"); err != nil {
+	if _, err = s.db.Exec("SELECT tenant_id FROM tenant_roots"); err != nil {
 		t.Fatalf("v27 migration did not create tenant_roots: %v", err)
 	}
 	if err = s.Close(); err != nil {
@@ -38,13 +38,13 @@ func TestTenantRootsMigrationFrom27(t *testing.T) {
 	}
 	defer s.Close()
 	var count int
-	if err = s.DB().QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='tenant_roots'").Scan(&count); err != nil {
+	if err = s.db.QueryRow("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='tenant_roots'").Scan(&count); err != nil {
 		t.Fatal(err)
 	}
 	if count != 1 {
 		t.Fatal("migration did not create durable tenant_roots table")
 	}
-	if version, err := GetSchemaVersion(s.DB()); err != nil || version != 28 {
+	if version, err := GetSchemaVersion(s.db); err != nil || version != 28 {
 		t.Fatalf("upgraded version = %d, err %v", version, err)
 	}
 	ctx := context.Background()
@@ -84,7 +84,7 @@ func TestTenantRootsMigrationFrom27(t *testing.T) {
 			want = append(want, m)
 		}
 		var paused int
-		if err := s.DB().QueryRow("SELECT paused FROM feature_pause_state WHERE project_id='legacy-project' AND feature_id='legacy-feature'").Scan(&paused); err != nil || paused != 1 {
+		if err := s.db.QueryRow("SELECT paused FROM feature_pause_state WHERE project_id='legacy-project' AND feature_id='legacy-feature'").Scan(&paused); err != nil || paused != 1 {
 			t.Fatalf("legacy data lost on restart %d: paused %d, err %v", restart, paused, err)
 		}
 	}

@@ -182,11 +182,6 @@ func newFromDB(db *sql.DB) (*StorageLayer, error) {
 	return s, nil
 }
 
-// DB returns the underlying *sql.DB connection.
-func (s *StorageLayer) DB() *sql.DB {
-	return s.db
-}
-
 // Close closes the underlying database connection.
 func (s *StorageLayer) Close() error {
 	return s.db.Close()

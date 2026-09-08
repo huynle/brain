@@ -28,9 +28,9 @@ func TestStorageViewsShareDatabaseAndBoundLocalIdentity(t *testing.T) {
 	if _, err := v.roots.ProvisionLocal(ctx, dir, filepath.Join(dir, "attachments")); err != nil {
 		t.Fatal(err)
 	}
-	var roots int
-	if err := v.tenant.DB().QueryRow("SELECT count(*) FROM tenant_roots").Scan(&roots); err != nil || roots != 1 {
-		t.Fatalf("registry and workload do not share database: count=%d err=%v", roots, err)
+	roots, err := v.tenant.ListTenantRoots(ctx)
+	if err != nil || len(roots) != 1 || roots[0].ID != tenant.Local {
+		t.Fatalf("registry and workload do not share database: roots=%v err=%v", roots, err)
 	}
 	if err := v.tokens.BootstrapToken(ctx, "first", "first-secret", false); err != nil {
 		t.Fatal(err)
@@ -42,10 +42,15 @@ func TestStorageViewsShareDatabaseAndBoundLocalIdentity(t *testing.T) {
 	if _, err := v.identity.TenantRegistry(auth.DeploymentOperator{}); err == nil {
 		t.Fatal("identity view bypassed operator check")
 	}
-	pool := v.tenant.DB()
 	v.close()
-	if err := pool.Ping(); err == nil {
-		t.Fatal("owner cleanup did not close shared pool")
+	for name, query := range map[string]func() error{
+		"workload": func() error { _, err := v.tenant.ListIndexedNoteStates(ctx); return err },
+		"identity": func() error { _, err := v.identity.ValidateToken(ctx, "first-secret"); return err },
+		"registry": func() error { _, err := v.roots.Lookup(ctx, tenant.Local); return err },
+	} {
+		if err := query(); err == nil || !strings.Contains(err.Error(), "database is closed") {
+			t.Errorf("owner cleanup did not close %s backing: %v", name, err)
+		}
 	}
 }
 

@@ -35,7 +35,7 @@ func TestEmbeddingIndexerRejectsNonlocalLegacy(t *testing.T) {
 // are tested in storage with migratedNoteStores. No production constructor is
 // taught to activate v29. Keep these records deliberately similar across owners.
 func TestEmbeddingIndexerTenantIsolation(t *testing.T) {
-	store := newTestStorage(t)
+	store, db := newTestStorageWithDB(t)
 	ctx := context.Background()
 	ids := []int64{}
 	for i, path := range []string{"global/a.md", "global/b.md"} {
@@ -55,7 +55,6 @@ func TestEmbeddingIndexerTenantIsolation(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	db := store.DB()
 	for _, q := range []string{
 		"ALTER TABLE notes ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local'",
 		"ALTER TABLE note_embeddings ADD COLUMN tenant_id TEXT NOT NULL DEFAULT 'local'",

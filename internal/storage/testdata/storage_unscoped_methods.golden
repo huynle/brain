@@ -23,7 +23,6 @@ CreateOAuthClient
 CreateRefreshToken
 CreateToken
 CreateWebhook
-DB
 DeleteFeatureCascadeRoot
 DeleteInstance
 DeleteInstancesByRunner

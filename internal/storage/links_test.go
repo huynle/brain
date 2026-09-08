@@ -241,7 +241,7 @@ func TestGetLinks_WithLinks(t *testing.T) {
 	}
 
 	// Insert links directly to test GetLinks in isolation.
-	_, err = s.DB().ExecContext(ctx,
+	_, err = s.db.ExecContext(ctx,
 		"INSERT INTO links (source_id, target_path, href, title, type, snippet) VALUES (?, ?, ?, ?, ?, ?)",
 		inserted.ID, "some/path.md", "some/path.md", "Some Note", "markdown", "snippet text",
 	)

@@ -2,7 +2,6 @@ package indexer
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,7 +60,7 @@ func (idx *Indexer) markdownFiles() ([]string, error) {
 	return globMarkdownFiles(idx.brainDir, idx.policy)
 }
 
-// RebuildAll performs a full rebuild: deletes all existing data and re-indexes
+// RebuildAll performs a full rebuild: deletes this tenant's notes and re-indexes
 // every discovered .md file under projects/ and global/.
 func (idx *Indexer) RebuildAll() (*IndexResult, error) {
 	start := time.Now()
@@ -91,20 +90,13 @@ func (idx *Indexer) RebuildAll() (*IndexResult, error) {
 		parsed = append(parsed, pf)
 	}
 
-	// 3. Count existing notes before clearing (for deleted stat)
-	var existingCount int
-	err = idx.storage.DB().QueryRow("SELECT COUNT(*) FROM notes").Scan(&existingCount)
-	if err != nil {
-		return nil, fmt.Errorf("count existing notes: %w", err)
-	}
-
-	// 4. Delete all existing notes (CASCADE cleans links and tags)
-	_, err = idx.storage.DB().Exec("DELETE FROM notes")
+	// 3. Clear this tenant's notes (CASCADE cleans dependent content).
+	existingCount, err := idx.storage.DeleteAllNotes(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("delete all notes: %w", err)
 	}
 
-	// 5. Insert each parsed file
+	// 4. Insert each parsed file
 	for _, pf := range parsed {
 		row := toNoteRow(pf)
 		inserted, err := idx.storage.InsertNote(ctx, &row)
@@ -129,7 +121,7 @@ func (idx *Indexer) RebuildAll() (*IndexResult, error) {
 	return &IndexResult{
 		Added:    len(parsed),
 		Updated:  0,
-		Deleted:  existingCount,
+		Deleted:  int(existingCount),
 		Skipped:  0,
 		Errors:   indexErrors,
 		Duration: time.Since(start),
@@ -155,23 +147,13 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 	}
 
 	// 2. Get all existing notes from DB (path + checksum)
-	rows, err := idx.storage.DB().Query("SELECT path, checksum FROM notes")
+	states, err := idx.storage.ListIndexedNoteStates(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("query existing notes: %w", err)
 	}
-	defer rows.Close()
-
 	dbMap := make(map[string]*string) // path → checksum (nullable)
-	for rows.Next() {
-		var path string
-		var checksum *string
-		if err := rows.Scan(&path, &checksum); err != nil {
-			return nil, fmt.Errorf("scan note row: %w", err)
-		}
-		dbMap[path] = checksum
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate note rows: %w", err)
+	for _, state := range states {
+		dbMap[state.Path] = state.Checksum
 	}
 
 	// 3. Process each file on disk
@@ -310,36 +292,22 @@ func (idx *Indexer) GetHealth() (*IndexHealth, error) {
 		diskSet[f] = true
 	}
 
-	// Count DB entries
-	var totalIndexed int
-	if err := idx.storage.DB().QueryRow("SELECT COUNT(*) FROM notes").Scan(&totalIndexed); err != nil {
-		return nil, fmt.Errorf("count indexed notes: %w", err)
-	}
-
-	// Count stale entries (in DB but absent from scoped discovery).
-	rows, err := idx.storage.DB().Query("SELECT path FROM notes")
+	// Count indexed and stale entries from one tenant-scoped snapshot.
+	states, err := idx.storage.ListIndexedNoteStates(context.Background())
 	if err != nil {
-		return nil, fmt.Errorf("query note paths: %w", err)
+		return nil, fmt.Errorf("query indexed notes: %w", err)
 	}
-	defer rows.Close()
 
 	var staleCount int
-	for rows.Next() {
-		var path string
-		if err := rows.Scan(&path); err != nil {
-			return nil, fmt.Errorf("scan path: %w", err)
-		}
-		if !diskSet[path] {
+	for _, state := range states {
+		if !diskSet[state.Path] {
 			staleCount++
 		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate paths: %w", err)
 	}
 
 	return &IndexHealth{
 		TotalFiles:   len(diskFiles),
-		TotalIndexed: totalIndexed,
+		TotalIndexed: len(states),
 		StaleCount:   staleCount,
 	}, nil
 }
@@ -640,10 +608,4 @@ func strPtr(s string) *string {
 		return nil
 	}
 	return &s
-}
-
-// DB returns the underlying database connection for direct queries.
-// This is exposed for use cases like dry-run queries in CLI commands.
-func (idx *Indexer) DB() *sql.DB {
-	return idx.storage.DB()
 }

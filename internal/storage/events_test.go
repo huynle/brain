@@ -13,7 +13,7 @@ func TestSchemaV5_EventLogTableExists(t *testing.T) {
 	s := newTestStorage(t)
 
 	var name string
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='table' AND name='event_log'",
 	).Scan(&name)
 	if err != nil {
@@ -34,7 +34,7 @@ func TestSchemaV5_EventLogIndexesExist(t *testing.T) {
 	for _, idx := range indexes {
 		t.Run(idx, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
 			).Scan(&name)
 			if err != nil {
@@ -47,7 +47,7 @@ func TestSchemaV5_EventLogIndexesExist(t *testing.T) {
 func TestSchemaV5_VersionBumped(t *testing.T) {
 	s := newTestStorage(t)
 
-	ver, err := GetSchemaVersion(s.DB())
+	ver, err := GetSchemaVersion(s.db)
 	if err != nil {
 		t.Fatalf("GetSchemaVersion: %v", err)
 	}

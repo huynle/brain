@@ -201,13 +201,18 @@ that workload or establish runtime receiver isolation.
 
 ### Integrated ownership delta and unresolved cutover
 
-- P3 `handles.go` still **embeds StorageLayer** in TenantStore. Only ListNotes has
-  an explicit local-only guard; promoted raw DB/control/close and unscoped methods
-  remain. ControlStore uses private named backing and operator-gated registry/token
-  adapters (`control.go`). These are ownership scaffolding, not SQL isolation.
+- `handles.go` still **embeds StorageLayer** in TenantStore pending P4.10.
+  Notes/list/search, graph and attachments have scoped receivers; P4.7 moved
+  embeddings/events and P4.8 moved index maintenance. P4.8 removes StorageLayer.DB
+  and Indexer.DB outright (including promotion to TenantStore). Remaining promoted
+  control/close and unscoped methods are still tracked by the ratchet. ControlStore
+  uses private named backing and operator-gated registry/token adapters (`control.go`).
+  This is not complete tenant isolation or authority to enable multi mode.
 - Server `buildHTTPHandler` opens single-mode local/control views, persists roots,
   and passes bound filesystem policies to consumers. `tenant_roots` remains
-  authoritative across restart; index/reindex SQL is still not multi-tenant safe.
+  authoritative across restart. Index/reindex now use typed tenant-scoped methods;
+  real migrated A/B fixtures cover rebuild/incremental/embedding preservation and
+  v28 fixtures retain exact projects/global paths. Runtime remains schema v28.
 - The live install claim still lives in `entry_meta` and credential/bootstrap
   writers still use that location. Staged `operator_install_claim` is not yet a
   routed ControlStore implementation. Removing it from workload metadata requires

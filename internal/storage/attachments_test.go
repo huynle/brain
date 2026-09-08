@@ -15,7 +15,7 @@ func TestAttachmentSchema_TablesAndIndexesExist(t *testing.T) {
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,
 			).Scan(&name)
 			if err != nil {
@@ -35,7 +35,7 @@ func TestAttachmentSchema_TablesAndIndexesExist(t *testing.T) {
 	for _, idx := range indexes {
 		t.Run(idx, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
 			).Scan(&name)
 			if err != nil {
@@ -48,7 +48,7 @@ func TestAttachmentSchema_TablesAndIndexesExist(t *testing.T) {
 func TestAttachmentSchema_DeleteAttachmentCascadesDerivedRows(t *testing.T) {
 	s := newTestStorage(t)
 
-	res, err := s.DB().Exec(`INSERT INTO attachments (digest, size, media_type, metadata) VALUES ('sha256:derived-delete', 12, 'image/png', '{}')`)
+	res, err := s.db.Exec(`INSERT INTO attachments (digest, size, media_type, metadata) VALUES ('sha256:derived-delete', 12, 'image/png', '{}')`)
 	if err != nil {
 		t.Fatalf("insert attachment failed: %v", err)
 	}
@@ -56,19 +56,19 @@ func TestAttachmentSchema_DeleteAttachmentCascadesDerivedRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LastInsertId failed: %v", err)
 	}
-	if _, err := s.DB().Exec(`
+	if _, err := s.db.Exec(`
 		INSERT INTO attachment_derived (attachment_id, kind, status, content_type, text, error, metadata)
 		VALUES (?, 'text', 'ready', 'text/plain; charset=utf-8', 'extracted text', '', '{}')
 	`, attachmentID); err != nil {
 		t.Fatalf("insert derived row failed: %v", err)
 	}
 
-	if _, err := s.DB().Exec(`DELETE FROM attachments WHERE id = ?`, attachmentID); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM attachments WHERE id = ?`, attachmentID); err != nil {
 		t.Fatalf("delete attachment failed: %v", err)
 	}
 
 	var derivedCount int
-	if err := s.DB().QueryRow(`SELECT count(*) FROM attachment_derived WHERE attachment_id = ?`, attachmentID).Scan(&derivedCount); err != nil {
+	if err := s.db.QueryRow(`SELECT count(*) FROM attachment_derived WHERE attachment_id = ?`, attachmentID).Scan(&derivedCount); err != nil {
 		t.Fatalf("count derived rows failed: %v", err)
 	}
 	if derivedCount != 0 {
@@ -79,7 +79,7 @@ func TestAttachmentSchema_DeleteAttachmentCascadesDerivedRows(t *testing.T) {
 func TestAttachmentSchema_AttachmentsSurviveNoteDelete(t *testing.T) {
 	s := newTestStorage(t)
 
-	res, err := s.DB().Exec(`INSERT INTO attachments (digest, size, media_type, metadata) VALUES ('sha256:abc', 12, 'text/plain', '{}')`)
+	res, err := s.db.Exec(`INSERT INTO attachments (digest, size, media_type, metadata) VALUES ('sha256:abc', 12, 'text/plain', '{}')`)
 	if err != nil {
 		t.Fatalf("insert attachment failed: %v", err)
 	}
@@ -88,7 +88,7 @@ func TestAttachmentSchema_AttachmentsSurviveNoteDelete(t *testing.T) {
 		t.Fatalf("LastInsertId failed: %v", err)
 	}
 
-	res, err = s.DB().Exec(`INSERT INTO notes (path, short_id, title) VALUES ('projects/test/report/with-attachment.md', 'attnote1', 'With Attachment')`)
+	res, err = s.db.Exec(`INSERT INTO notes (path, short_id, title) VALUES ('projects/test/report/with-attachment.md', 'attnote1', 'With Attachment')`)
 	if err != nil {
 		t.Fatalf("insert note failed: %v", err)
 	}
@@ -97,17 +97,17 @@ func TestAttachmentSchema_AttachmentsSurviveNoteDelete(t *testing.T) {
 		t.Fatalf("LastInsertId note failed: %v", err)
 	}
 
-	_, err = s.DB().Exec(`INSERT INTO entry_attachments (note_id, attachment_id, role) VALUES (?, ?, 'inline')`, noteID, attachmentID)
+	_, err = s.db.Exec(`INSERT INTO entry_attachments (note_id, attachment_id, role) VALUES (?, ?, 'inline')`, noteID, attachmentID)
 	if err != nil {
 		t.Fatalf("insert reference failed: %v", err)
 	}
 
-	if _, err := s.DB().Exec(`DELETE FROM notes WHERE id = ?`, noteID); err != nil {
+	if _, err := s.db.Exec(`DELETE FROM notes WHERE id = ?`, noteID); err != nil {
 		t.Fatalf("delete note failed: %v", err)
 	}
 
 	var attachmentCount int
-	if err := s.DB().QueryRow(`SELECT count(*) FROM attachments WHERE id = ?`, attachmentID).Scan(&attachmentCount); err != nil {
+	if err := s.db.QueryRow(`SELECT count(*) FROM attachments WHERE id = ?`, attachmentID).Scan(&attachmentCount); err != nil {
 		t.Fatalf("count attachments failed: %v", err)
 	}
 	if attachmentCount != 1 {
@@ -115,7 +115,7 @@ func TestAttachmentSchema_AttachmentsSurviveNoteDelete(t *testing.T) {
 	}
 
 	var referenceCount int
-	if err := s.DB().QueryRow(`SELECT count(*) FROM entry_attachments WHERE attachment_id = ?`, attachmentID).Scan(&referenceCount); err != nil {
+	if err := s.db.QueryRow(`SELECT count(*) FROM entry_attachments WHERE attachment_id = ?`, attachmentID).Scan(&referenceCount); err != nil {
 		t.Fatalf("count references failed: %v", err)
 	}
 	if referenceCount != 0 {

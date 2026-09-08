@@ -23,7 +23,7 @@ func TestSchemaCreation_OAuthTablesExist(t *testing.T) {
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,
 			).Scan(&name)
 			if err != nil {
@@ -47,7 +47,7 @@ func TestSchemaCreation_OAuthIndexesExist(t *testing.T) {
 	for _, idx := range indexes {
 		t.Run(idx, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
 			).Scan(&name)
 			if err != nil {
@@ -405,7 +405,7 @@ func TestCleanupExpiredCodes(t *testing.T) {
 
 	// Expired should be gone
 	var count int
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT count(*) FROM oauth_auth_codes WHERE code = ?", "expired-cleanup",
 	).Scan(&count)
 	if err != nil {
@@ -416,7 +416,7 @@ func TestCleanupExpiredCodes(t *testing.T) {
 	}
 
 	// Valid should still exist
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT count(*) FROM oauth_auth_codes WHERE code = ?", "valid-cleanup",
 	).Scan(&count)
 	if err != nil {
@@ -584,7 +584,7 @@ func TestRevokeAccessTokensByClient_Success(t *testing.T) {
 
 	// All tokens for this client should be gone
 	var count int
-	err = s.DB().QueryRowContext(ctx,
+	err = s.db.QueryRowContext(ctx,
 		"SELECT count(*) FROM oauth_access_tokens WHERE client_id = ?", client.ClientID,
 	).Scan(&count)
 	if err != nil {
@@ -628,7 +628,7 @@ func TestCleanupExpiredAccessTokens(t *testing.T) {
 
 	// Expired should be gone
 	var count int
-	s.DB().QueryRowContext(ctx,
+	s.db.QueryRowContext(ctx,
 		"SELECT count(*) FROM oauth_access_tokens WHERE token = ?", "expired-cleanup-access",
 	).Scan(&count)
 	if count != 0 {
@@ -636,7 +636,7 @@ func TestCleanupExpiredAccessTokens(t *testing.T) {
 	}
 
 	// Valid should remain
-	s.DB().QueryRowContext(ctx,
+	s.db.QueryRowContext(ctx,
 		"SELECT count(*) FROM oauth_access_tokens WHERE token = ?", "valid-cleanup-access",
 	).Scan(&count)
 	if count != 1 {
@@ -766,7 +766,7 @@ func TestRevokeRefreshTokensByClient_Success(t *testing.T) {
 	}
 
 	var count int
-	s.DB().QueryRowContext(ctx,
+	s.db.QueryRowContext(ctx,
 		"SELECT count(*) FROM oauth_refresh_tokens WHERE client_id = ?", client.ClientID,
 	).Scan(&count)
 	if count != 0 {
@@ -806,14 +806,14 @@ func TestCleanupExpiredRefreshTokens(t *testing.T) {
 	}
 
 	var count int
-	s.DB().QueryRowContext(ctx,
+	s.db.QueryRowContext(ctx,
 		"SELECT count(*) FROM oauth_refresh_tokens WHERE token = ?", "expired-cleanup-refresh",
 	).Scan(&count)
 	if count != 0 {
 		t.Error("expired refresh token should be cleaned up")
 	}
 
-	s.DB().QueryRowContext(ctx,
+	s.db.QueryRowContext(ctx,
 		"SELECT count(*) FROM oauth_refresh_tokens WHERE token = ?", "valid-cleanup-refresh",
 	).Scan(&count)
 	if count != 1 {
@@ -828,7 +828,7 @@ func TestCleanupExpiredRefreshTokens(t *testing.T) {
 func TestOAuthForeignKeys_AuthCodeRequiresClient(t *testing.T) {
 	s := newTestStorage(t)
 
-	_, err := s.DB().Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO oauth_auth_codes 
 			(code, client_id, redirect_uri, code_challenge, code_challenge_method, expires_at, created_at)
 		VALUES ('test', 'nonexistent', 'http://localhost', 'challenge', 'S256', 9999999999, 1000000000)
@@ -843,7 +843,7 @@ func TestOAuthTokens_InsertWithoutClient(t *testing.T) {
 	// Access/refresh tokens must be insertable without a matching client row.
 	s := newTestStorage(t)
 
-	_, err := s.DB().Exec(`
+	_, err := s.db.Exec(`
 		INSERT INTO oauth_access_tokens 
 			(token, client_id, scope, expires_at, created_at)
 		VALUES ('test_access', 'ephemeral_client', 'mcp', 9999999999, 1000000000)
@@ -852,7 +852,7 @@ func TestOAuthTokens_InsertWithoutClient(t *testing.T) {
 		t.Fatalf("inserting access token without client should succeed, got: %v", err)
 	}
 
-	_, err = s.DB().Exec(`
+	_, err = s.db.Exec(`
 		INSERT INTO oauth_refresh_tokens 
 			(token, client_id, scope, expires_at, created_at)
 		VALUES ('test_refresh', 'ephemeral_client', 'mcp', 9999999999, 1000000000)
@@ -870,7 +870,7 @@ func TestSchemaVersion_IsCurrent(t *testing.T) {
 	s := newTestStorage(t)
 
 	var ver int
-	err := s.DB().QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&ver)
+	err := s.db.QueryRow("SELECT COALESCE(MAX(version), 0) FROM schema_version").Scan(&ver)
 	if err != nil {
 		t.Fatalf("query schema version failed: %v", err)
 	}

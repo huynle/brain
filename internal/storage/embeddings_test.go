@@ -259,14 +259,14 @@ func TestEmbeddingStatus_StaleWhenReadyAttachmentDerivedTextIsNewerThanEmbedding
 	if err != nil {
 		t.Fatalf("failed to insert note: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE notes SET indexed_at = '2025-01-01 00:00:00' WHERE id = ?`, inserted.ID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE notes SET indexed_at = '2025-01-01 00:00:00' WHERE id = ?`, inserted.ID); err != nil {
 		t.Fatalf("set note indexed_at failed: %v", err)
 	}
 
 	if err := store.UpsertNoteEmbeddings(ctx, []EmbeddingRecord{sampleEmbeddingRecord(inserted.ID, 0, 384)}); err != nil {
 		t.Fatalf("UpsertNoteEmbeddings failed: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE note_embeddings_meta SET embedding_indexed_at = '2025-01-02 00:00:00' WHERE note_id = ?`, inserted.ID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE note_embeddings_meta SET embedding_indexed_at = '2025-01-02 00:00:00' WHERE note_id = ?`, inserted.ID); err != nil {
 		t.Fatalf("set embedding_indexed_at failed: %v", err)
 	}
 
@@ -290,7 +290,7 @@ func TestEmbeddingStatus_StaleWhenReadyAttachmentDerivedTextIsNewerThanEmbedding
 	}); err != nil {
 		t.Fatalf("UpsertAttachmentDerived failed: %v", err)
 	}
-	if _, err := store.DB().ExecContext(ctx, `UPDATE attachment_derived SET updated_at = '2025-01-03 00:00:00' WHERE attachment_id = ?`, attachment.ID); err != nil {
+	if _, err := store.db.ExecContext(ctx, `UPDATE attachment_derived SET updated_at = '2025-01-03 00:00:00' WHERE attachment_id = ?`, attachment.ID); err != nil {
 		t.Fatalf("set attachment derived updated_at failed: %v", err)
 	}
 

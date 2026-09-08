@@ -466,7 +466,7 @@ func TestNoteInsert_FTS5Populated(t *testing.T) {
 
 	// FTS5 should find by title
 	var count int
-	err = s.DB().QueryRow(
+	err = s.db.QueryRow(
 		"SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'Searchable'",
 	).Scan(&count)
 	if err != nil {
@@ -477,7 +477,7 @@ func TestNoteInsert_FTS5Populated(t *testing.T) {
 	}
 
 	// FTS5 should find by body
-	err = s.DB().QueryRow(
+	err = s.db.QueryRow(
 		"SELECT count(*) FROM notes_fts WHERE notes_fts MATCH 'xylophone'",
 	).Scan(&count)
 	if err != nil {

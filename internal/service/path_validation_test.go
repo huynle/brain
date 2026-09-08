@@ -82,10 +82,11 @@ func TestPathValidation_DeleteProjectNUL(t *testing.T) {
 
 func requireNoteCount(t *testing.T, store *storage.TenantStore, want int) {
 	t.Helper()
-	var got int
-	if err := store.DB().QueryRow("SELECT COUNT(*) FROM notes").Scan(&got); err != nil {
+	rows, err := store.ListIndexedNoteStates(context.Background())
+	if err != nil {
 		t.Fatal(err)
 	}
+	got := len(rows)
 	if got != want {
 		t.Errorf("notes rows = %d, want %d", got, want)
 	}

@@ -19,7 +19,7 @@ func TestAttachmentServiceCompatibilityRejectsBeforeBlobIO(t *testing.T) {
 	for _, mode := range []string{"nonlocal-v28", "zero-handle", "unsupported-schema", "closed-store"} {
 		t.Run(mode, func(t *testing.T) {
 			ctx := context.Background()
-			svc, store, blobs := newAttachmentServiceForTest(t, 1024)
+			svc, store, blobs, db := newAttachmentServiceWithDBForTest(t, 1024)
 			switch mode {
 			case "nonlocal-v28":
 				id, err := tenant.Parse("tenant-b")
@@ -33,7 +33,7 @@ func TestAttachmentServiceCompatibilityRejectsBeforeBlobIO(t *testing.T) {
 			case "zero-handle":
 				svc.storage = &storage.TenantStore{}
 			case "unsupported-schema":
-				if _, err := store.DB().Exec("UPDATE schema_version SET version = 30"); err != nil {
+				if _, err := db.Exec("UPDATE schema_version SET version = 30"); err != nil {
 					t.Fatal(err)
 				}
 			case "closed-store":
@@ -67,7 +67,7 @@ func TestAttachmentServiceCompatibilityRejectsBeforeBlobIO(t *testing.T) {
 // cross-project references, not multi-tenant physical/async lifecycle isolation.
 func TestAttachmentServiceLocalCrossProjectLifecycle(t *testing.T) {
 	ctx := context.Background()
-	brain, store, root := newTestBrainService(t)
+	brain, store, root, db := newTestBrainServiceWithDB(t)
 	roots, err := tenantfs.New(store, root)
 	if err != nil {
 		t.Fatal(err)
@@ -156,7 +156,7 @@ func TestAttachmentServiceLocalCrossProjectLifecycle(t *testing.T) {
 		t.Fatal("deleted source accepted derived text")
 	}
 	var version int
-	if err := store.DB().QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version); err != nil || version != 28 {
+	if err := db.QueryRow("SELECT MAX(version) FROM schema_version").Scan(&version); err != nil || version != 28 {
 		t.Fatalf("runtime version changed: %d, %v", version, err)
 	}
 }

@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"context"
+	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -9,21 +10,27 @@ import (
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/tenant"
 )
 
 func TestPreChangeTokenResolvesLocalSearchAfterReopen(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "brain.db")
-	old, err := storage.New(path)
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	old, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	const secret = "fixture-existing-single-mode-token"
-	if _, err := old.DB().Exec("INSERT INTO api_tokens(name,token,scope) VALUES('existing',?,'read:*')", secret); err != nil {
+	if _, err := db.Exec("INSERT INTO api_tokens(name,token,scope) VALUES('existing',?,'read:*')", secret); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := old.DB().Exec("INSERT INTO notes(path,short_id,title) VALUES('projects/p/note/same.md','same0001','legacyneedle')"); err != nil {
+	if _, err := db.Exec("INSERT INTO notes(path,short_id,title) VALUES('projects/p/note/same.md','same0001','legacyneedle')"); err != nil {
 		t.Fatal(err)
 	}
 	if err := old.Close(); err != nil {
@@ -54,7 +61,14 @@ func TestPreChangeTokenResolvesLocalSearchAfterReopen(t *testing.T) {
 	if !called || w.Code != http.StatusNoContent {
 		t.Fatalf("legacy auth status=%d", w.Code)
 	}
-	if version, err := storage.GetSchemaVersion(v.tenant.DB()); err != nil || version != 28 {
+	// Inspect the on-disk fixture with a separately owned read connection, not
+	// an extracted composition handle.
+	check, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer check.Close()
+	if version, err := storage.GetSchemaVersion(check); err != nil || version != 28 {
 		t.Fatalf("runtime version=%d %v", version, err)
 	}
 }

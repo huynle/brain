@@ -9,13 +9,13 @@ func TestDispatchLeaseSchema_FreshDB(t *testing.T) {
 	s := newTestStorage(t)
 
 	var name string
-	if err := s.DB().QueryRow(
+	if err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='table' AND name='task_dispatch_leases'",
 	).Scan(&name); err != nil {
 		t.Fatalf("task_dispatch_leases table not found: %v", err)
 	}
 
-	_, err := s.DB().Exec(`INSERT INTO task_dispatch_leases (
+	_, err := s.db.Exec(`INSERT INTO task_dispatch_leases (
 		project_id, task_id, assigned_runner_id, assigned_machine_id, state,
 		pushed_at, acked_at, rejected_at, last_error, expires_at
 	) VALUES ('brain-api', 'task-1', 'runner-1', 'machine-1', 'pushed', 1000, 0, 0, '', 2000)`)
@@ -32,7 +32,7 @@ func TestDispatchLeaseSchema_FreshDB(t *testing.T) {
 	for _, idx := range indexes {
 		t.Run(idx, func(t *testing.T) {
 			var idxName string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
 			).Scan(&idxName)
 			if err != nil {

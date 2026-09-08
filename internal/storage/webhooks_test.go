@@ -650,7 +650,7 @@ func TestSchemaCreation_WebhookTablesExist(t *testing.T) {
 	for _, table := range tables {
 		t.Run(table, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='table' AND name=?", table,
 			).Scan(&name)
 			if err != nil {
@@ -671,7 +671,7 @@ func TestSchemaCreation_WebhookIndexesExist(t *testing.T) {
 	for _, idx := range indexes {
 		t.Run(idx, func(t *testing.T) {
 			var name string
-			err := s.DB().QueryRow(
+			err := s.db.QueryRow(
 				"SELECT name FROM sqlite_master WHERE type='index' AND name=?", idx,
 			).Scan(&name)
 			if err != nil {
@@ -684,7 +684,7 @@ func TestSchemaCreation_WebhookIndexesExist(t *testing.T) {
 func TestSchemaVersion_IsFive(t *testing.T) {
 	s := newTestStorage(t)
 
-	ver, err := GetSchemaVersion(s.DB())
+	ver, err := GetSchemaVersion(s.db)
 	if err != nil {
 		t.Fatalf("GetSchemaVersion failed: %v", err)
 	}

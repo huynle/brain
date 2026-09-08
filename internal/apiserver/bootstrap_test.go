@@ -2,6 +2,7 @@ package apiserver
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"github.com/huynle/brain-api/internal/auth"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 )
 
 func TestBootstrapStartup_PasswordClaimPersistsWithoutRequest(t *testing.T) {
@@ -46,13 +48,18 @@ func TestBootstrapStartup_PasswordClaimFailureStopsStartup(t *testing.T) {
 	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	s, err := storage.New(filepath.Join(dataDir, "brain.db"))
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, "brain.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	s, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// Backfill has no credentials to copy. Only the password startup write
 	// hits this trigger, so this tests that specific error path.
-	_, err = s.DB().Exec(`CREATE TRIGGER reject_install_claim BEFORE INSERT ON entry_meta
+	_, err = db.Exec(`CREATE TRIGGER reject_install_claim BEFORE INSERT ON entry_meta
 		WHEN NEW.path = 'brain:system/install_claimed'
 		BEGIN SELECT RAISE(ABORT, 'claim persistence unavailable'); END`)
 	if err != nil {

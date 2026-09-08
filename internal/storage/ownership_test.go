@@ -14,7 +14,8 @@ import (
 )
 
 // This is an ownership/call-site policy, not the P3.7 method ratchet and not
-// isolation. In particular, TenantStore still promotes DB until P4.10.
+// isolation. The raw DB accessor is removed, but other promoted methods remain
+// until P4.10 un-embeds StorageLayer.
 func storageOwnershipPolicy(path string, source any) ([]string, error) {
 	if strings.HasSuffix(path, "_test.go") {
 		return nil, nil

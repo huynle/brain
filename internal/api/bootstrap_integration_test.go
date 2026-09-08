@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -19,12 +20,23 @@ import (
 
 func bootstrapStore(t *testing.T) *storage.StorageLayer {
 	t.Helper()
-	s, err := storage.New(filepath.Join(t.TempDir(), "brain.db"))
+	s, _ := bootstrapStoreWithDB(t)
+	return s
+}
+
+// The bootstrap fixture owns a new connection, including cleanup on init failure.
+func bootstrapStoreWithDB(t *testing.T) (*storage.StorageLayer, *sql.DB) {
+	t.Helper()
+	db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "brain.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = s.Close() })
-	return s
+	t.Cleanup(func() { _ = db.Close() })
+	s, err := storage.NewWithDB(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s, db
 }
 
 func TestBootstrapHTTP_InstallAndPeerPolicy(t *testing.T) {
@@ -54,12 +66,12 @@ func TestBootstrapHTTP_InstallAndPeerPolicy(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BRAIN_ALLOW_REMOTE_BOOTSTRAP", tc.hatch)
 			t.Setenv(auth.EnvPasswordHash, tc.password)
-			s := bootstrapStore(t)
+			s, db := bootstrapStoreWithDB(t)
 			ctx := context.Background()
 			switch tc.credential {
 			case "oauth":
 				// Bypass modern credential writes to represent a legacy OAuth-only install.
-				if _, err := s.DB().Exec("INSERT INTO oauth_access_tokens(token, client_id, expires_at, created_at) VALUES ('legacy', 'client', ?, 1)", time.Now().Add(time.Hour).Unix()); err != nil {
+				if _, err := db.Exec("INSERT INTO oauth_access_tokens(token, client_id, expires_at, created_at) VALUES ('legacy', 'client', ?, 1)", time.Now().Add(time.Hour).Unix()); err != nil {
 					t.Fatal(err)
 				}
 			case "revoked", "deleted":

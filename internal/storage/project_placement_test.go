@@ -69,7 +69,7 @@ func TestSchemaCreation_ProjectPlacementTableExists(t *testing.T) {
 	s := newTestStorage(t)
 
 	var name string
-	err := s.DB().QueryRow(
+	err := s.db.QueryRow(
 		"SELECT name FROM sqlite_master WHERE type='table' AND name=?", "project_placement",
 	).Scan(&name)
 	if err != nil {

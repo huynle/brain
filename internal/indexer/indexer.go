@@ -30,20 +30,6 @@ type Indexer struct {
 	policy   *tenantfs.Root
 }
 
-const latestReadyAttachmentDerivedJoin = `
-		LEFT JOIN (
-			SELECT ea.note_id, MAX(ad.updated_at) as latest_ready_derived
-			FROM entry_attachments ea
-			JOIN attachment_derived ad ON ad.attachment_id = ea.attachment_id
-			WHERE ad.kind = 'text'
-			  AND ad.status = 'ready'
-			  AND TRIM(ad.text) <> ''
-			GROUP BY ea.note_id
-		) d ON n.id = d.note_id
-`
-
-const embeddingStaleCondition = "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed OR d.latest_ready_derived > m.latest_indexed)"
-
 // NewIndexer creates a new Indexer for the given brain directory and storage layer.
 func NewIndexer(brainDir string, store *storage.TenantStore, policy ...*tenantfs.Root) *Indexer {
 	idx := &Indexer{
@@ -374,48 +360,13 @@ type EmbeddingIndexOptions struct {
 
 // ListEmbeddingBackfillCandidates returns notes matching an embedding backfill request.
 func (idx *Indexer) ListEmbeddingBackfillCandidates(ctx context.Context, opts EmbeddingIndexOptions) ([]EmbeddingBackfillCandidate, error) {
-	query := `
-		SELECT DISTINCT n.id, n.path, n.title, n.project_id, n.type
-		FROM notes n
-		LEFT JOIN (
-			SELECT note_id, MAX(embedding_indexed_at) as latest_indexed
-			FROM note_embeddings_meta
-			GROUP BY note_id
-		) m ON n.id = m.note_id
-	` + latestReadyAttachmentDerivedJoin
-	var conditions []string
-	var args []interface{}
-	if !opts.Force {
-		conditions = append(conditions, embeddingStaleCondition)
-	}
-	if opts.Project != "" {
-		conditions = append(conditions, "n.project_id = ?")
-		args = append(args, opts.Project)
-	}
-	if opts.Path != "" {
-		conditions = append(conditions, "n.path LIKE ?")
-		args = append(args, opts.Path+"%")
-	}
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	rows, err := idx.storage.DB().QueryContext(ctx, query, args...)
+	notes, err := idx.storage.ListEmbeddingNotes(ctx, opts.Project, opts.Path, opts.Force)
 	if err != nil {
-		return nil, fmt.Errorf("query embedding backfill candidates: %w", err)
+		return nil, err
 	}
-	defer rows.Close()
-
 	var candidates []EmbeddingBackfillCandidate
-	for rows.Next() {
-		var c EmbeddingBackfillCandidate
-		if err := rows.Scan(&c.ID, &c.Path, &c.Title, &c.Project, &c.Type); err != nil {
-			return nil, fmt.Errorf("scan embedding backfill candidate: %w", err)
-		}
-		candidates = append(candidates, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate embedding backfill candidates: %w", err)
+	for _, n := range notes {
+		candidates = append(candidates, EmbeddingBackfillCandidate{ID: n.ID, Path: n.Path, Title: n.Title, Project: n.ProjectID, Type: n.Type})
 	}
 	return candidates, nil
 }
@@ -429,81 +380,24 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 	start := time.Now()
 	var processed, skipped, failed int
 
-	// Query notes that need embedding (re)generation
-	// A note needs embeddings if:
-	// 1. It has no embeddings at all, OR
-	// 2. Its indexed_at is newer than its most recent embedding_indexed_at, OR
-	// 3. Ready linked attachment-derived text is newer than embedding_indexed_at
-	query := `
-		SELECT DISTINCT n.id, COALESCE(n.body, ''), n.project_id, n.type, n.status, n.feature_id, n.priority
-		FROM notes n
-		LEFT JOIN (
-			SELECT note_id, MAX(embedding_indexed_at) as latest_indexed
-			FROM note_embeddings_meta
-			GROUP BY note_id
-		) m ON n.id = m.note_id
-	` + latestReadyAttachmentDerivedJoin
-	var conditions []string
-	var args []interface{}
-	if !opts.Force {
-		conditions = append(conditions, embeddingStaleCondition)
-	}
-	if opts.Project != "" {
-		conditions = append(conditions, "n.project_id = ?")
-		args = append(args, opts.Project)
-	}
-	if opts.Path != "" {
-		conditions = append(conditions, "n.path LIKE ?")
-		args = append(args, opts.Path+"%")
-	}
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	rows, err := idx.storage.DB().QueryContext(ctx, query, args...)
+	ownedNotes, err := idx.storage.ListEmbeddingNotes(ctx, opts.Project, opts.Path, opts.Force)
 	if err != nil {
 		return nil, fmt.Errorf("query stale notes: %w", err)
 	}
-	defer rows.Close()
-
-	// Collect notes to process
-	type noteToEmbed struct {
-		id        int64
-		body      string
-		projectID *string
-		noteType  *string
-		status    *string
-		featureID *string
-		priority  *string
-	}
-
-	var notes []noteToEmbed
-	for rows.Next() {
-		var n noteToEmbed
-		if err := rows.Scan(&n.id, &n.body, &n.projectID, &n.noteType, &n.status, &n.featureID, &n.priority); err != nil {
-			slog.Warn("failed to scan note row", "error", err)
-			continue
-		}
-		notes = append(notes, n)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate note rows: %w", err)
-	}
 
 	// Process each note
-	for _, note := range notes {
+	for _, note := range ownedNotes {
 		if opts.Force {
-			if err := idx.storage.DeleteNoteEmbeddings(ctx, note.id); err != nil {
-				slog.Warn("failed to delete existing embeddings for note", "note_id", note.id, "error", err)
+			if err := idx.storage.DeleteNoteEmbeddings(ctx, note.ID); err != nil {
+				slog.Warn("failed to delete existing embeddings for note", "note_id", note.ID, "error", err)
 				failed++
 				continue
 			}
 		}
-		embeddingSource, err := idx.embeddingSourceForNote(ctx, note.id, note.body)
+		embeddingSource, err := idx.embeddingSourceForNote(ctx, note.ID)
 		if err != nil {
 			slog.Warn("failed to build embedding source for note",
-				"note_id", note.id,
+				"note_id", note.ID,
 				"error", err)
 			failed++
 			continue
@@ -516,7 +410,7 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 		}
 
 		// Generate chunks
-		chunks := markdown.ChunkNote(note.id, embeddingSource)
+		chunks := markdown.ChunkNote(note.ID, embeddingSource)
 		if len(chunks) == 0 {
 			skipped++
 			continue
@@ -532,7 +426,7 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 		embeddings, err := embeddingClient.Embed(ctx, chunkTexts)
 		if err != nil {
 			slog.Warn("failed to generate embeddings for note",
-				"note_id", note.id,
+				"note_id", note.ID,
 				"error", err)
 			failed++
 			continue
@@ -540,7 +434,7 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 
 		if len(embeddings) != len(chunks) {
 			slog.Warn("embedding count mismatch",
-				"note_id", note.id,
+				"note_id", note.ID,
 				"expected", len(chunks),
 				"got", len(embeddings))
 			failed++
@@ -551,21 +445,21 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 		records := make([]storage.EmbeddingRecord, len(chunks))
 		for i, chunk := range chunks {
 			records[i] = storage.EmbeddingRecord{
-				NoteID:     note.id,
+				NoteID:     note.ID,
 				ChunkIndex: chunk.ChunkIndex,
 				Vector:     embeddings[i],
-				ProjectID:  note.projectID,
-				Type:       note.noteType,
-				Status:     note.status,
-				FeatureID:  note.featureID,
-				Priority:   note.priority,
+				ProjectID:  note.ProjectID,
+				Type:       note.Type,
+				Status:     note.Status,
+				FeatureID:  note.FeatureID,
+				Priority:   note.Priority,
 			}
 		}
 
 		// Upsert embeddings (best-effort)
 		if err := idx.storage.UpsertNoteEmbeddings(ctx, records); err != nil {
 			slog.Warn("failed to upsert embeddings for note",
-				"note_id", note.id,
+				"note_id", note.ID,
 				"error", err)
 			failed++
 			continue
@@ -582,86 +476,15 @@ func (idx *Indexer) IndexEmbeddingsWithOptions(ctx context.Context, embeddingCli
 	}, nil
 }
 
-func (idx *Indexer) embeddingSourceForNote(ctx context.Context, noteID int64, body string) (string, error) {
-	rows, err := idx.storage.DB().QueryContext(ctx, `
-		SELECT ad.text
-		FROM entry_attachments ea
-		JOIN attachment_derived ad ON ad.attachment_id = ea.attachment_id
-		WHERE ea.note_id = ?
-		  AND ad.kind = 'text'
-		  AND ad.status = 'ready'
-		  AND TRIM(ad.text) <> ''
-		ORDER BY ea.id, ad.id
-	`, noteID)
-	if err != nil {
-		return "", fmt.Errorf("query ready attachment derived text: %w", err)
-	}
-	defer rows.Close()
-
-	var attachmentTexts []string
-	for rows.Next() {
-		var text string
-		if err := rows.Scan(&text); err != nil {
-			return "", fmt.Errorf("scan ready attachment derived text: %w", err)
-		}
-		text = strings.TrimSpace(text)
-		if text != "" {
-			attachmentTexts = append(attachmentTexts, text)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", fmt.Errorf("iterate ready attachment derived text: %w", err)
-	}
-	if len(attachmentTexts) == 0 {
-		return body, nil
-	}
-
-	var b strings.Builder
-	if strings.TrimSpace(body) != "" {
-		b.WriteString(body)
-		b.WriteString("\n\n")
-	}
-	b.WriteString("Attachments:\n")
-	b.WriteString(strings.Join(attachmentTexts, "\n\n"))
-	return b.String(), nil
+func (idx *Indexer) embeddingSourceForNote(ctx context.Context, noteID int64) (string, error) {
+	return idx.storage.EmbeddingSource(ctx, noteID)
 }
 
 // GetEmbeddingHealth returns statistics about the embedding index.
 func (idx *Indexer) GetEmbeddingHealth() (*EmbeddingHealth, error) {
-	ctx := context.Background()
-
-	// Count total notes
-	var totalNotes int
-	if err := idx.storage.DB().QueryRow("SELECT COUNT(*) FROM notes").Scan(&totalNotes); err != nil {
-		return nil, fmt.Errorf("count notes: %w", err)
-	}
-
-	// Count notes with embeddings
-	var notesWithEmbeddings int
-	query := `
-		SELECT COUNT(DISTINCT note_id)
-		FROM note_embeddings_meta
-	`
-	if err := idx.storage.DB().QueryRow(query).Scan(&notesWithEmbeddings); err != nil {
-		return nil, fmt.Errorf("count notes with embeddings: %w", err)
-	}
-
-	// Count stale embeddings (note or ready linked attachment-derived text is newer than embedding_indexed_at)
-	var staleEmbeddings int
-	staleQuery := `
-		SELECT COUNT(DISTINCT n.id)
-		FROM notes n
-		INNER JOIN (
-			SELECT note_id, MAX(embedding_indexed_at) as latest_indexed
-			FROM note_embeddings_meta
-			GROUP BY note_id
-		) m ON n.id = m.note_id
-	` + latestReadyAttachmentDerivedJoin + `
-		WHERE n.indexed_at > m.latest_indexed
-		   OR d.latest_ready_derived > m.latest_indexed
-	`
-	if err := idx.storage.DB().QueryRowContext(ctx, staleQuery).Scan(&staleEmbeddings); err != nil && err != sql.ErrNoRows {
-		return nil, fmt.Errorf("count stale embeddings: %w", err)
+	totalNotes, notesWithEmbeddings, staleEmbeddings, err := idx.storage.EmbeddingHealthCounts(context.Background())
+	if err != nil {
+		return nil, err
 	}
 
 	// Count notes without embeddings

@@ -86,7 +86,7 @@ func TestSchemaV5_MigrationFromV4(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestInsertEvent(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	id, err := s.InsertEvent(ctx, "task.created", `{"task_id":"abc123"}`, "task-abc123", "brain-runner")
@@ -99,7 +99,7 @@ func TestInsertEvent(t *testing.T) {
 }
 
 func TestInsertEvent_DedupKeyUniqueness(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	_, err := s.InsertEvent(ctx, "task.created", `{"task_id":"abc123"}`, "dedup-1", "runner")
@@ -115,7 +115,7 @@ func TestInsertEvent_DedupKeyUniqueness(t *testing.T) {
 }
 
 func TestInsertEvent_EmptyDedupKey(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Empty dedup_key should be stored as NULL, allowing multiple entries
@@ -139,7 +139,7 @@ func TestInsertEvent_EmptyDedupKey(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestMarkProcessed(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	id, err := s.InsertEvent(ctx, "task.created", `{}`, "", "runner")
@@ -164,7 +164,7 @@ func TestMarkProcessed(t *testing.T) {
 }
 
 func TestMarkProcessed_NonExistentID(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	err := s.MarkProcessed(ctx, 99999)
@@ -178,7 +178,7 @@ func TestMarkProcessed_NonExistentID(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetUnprocessed(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Empty initially
@@ -228,7 +228,7 @@ func TestGetUnprocessed(t *testing.T) {
 }
 
 func TestGetUnprocessed_FieldValues(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	_, err := s.InsertEvent(ctx, "task.created", `{"task_id":"xyz"}`, "my-key", "brain-runner")
@@ -270,7 +270,7 @@ func TestGetUnprocessed_FieldValues(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestGetUnprocessed_OrderedByCreatedAt(t *testing.T) {
-	s := newTestStorage(t)
+	s := newTestContentStorage(t)
 	ctx := context.Background()
 
 	// Insert events — SQLite auto-increment ensures id ordering matches insert order,

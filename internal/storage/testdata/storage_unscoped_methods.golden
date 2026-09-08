@@ -27,12 +27,10 @@ DB
 DeleteFeatureCascadeRoot
 DeleteInstance
 DeleteInstancesByRunner
-DeleteNoteEmbeddings
 DeleteProjectNotes
 DeleteRunner
 DeleteTokenPermanent
 DeleteWebhook
-EmbeddingStatus
 ExpireDispatchLeases
 ExpireStaleClaims
 ExpireStaleRunners
@@ -46,19 +44,15 @@ GetClaim
 GetClaimsByRunner
 GetDispatchLease
 GetDispatchLeaseRow
-GetEventsByType
 GetFeatureAssignment
 GetInstance
-GetNoteEmbedding
 GetOAuthClient
 GetProjectPlacement
 GetRunner
 GetStaleEntries
 GetStats
 GetTokenByName
-GetUnprocessed
 GetWebhook
-InsertEvent
 IsFeaturePaused
 IsProjectAutomationsPaused
 IsProjectTaskPaused
@@ -85,7 +79,6 @@ ListTokens
 ListTriggeredTasks
 ListWebhooks
 MarkInstallClaimed
-MarkProcessed
 PrunePlacementReasonsForTask
 PurgeProjectState
 RecordAccess
@@ -102,7 +95,6 @@ RevokeAccessTokensByClient
 RevokeRefreshTokensByClient
 RevokeToken
 SaveAccessToken
-SearchByEmbedding
 SetAllProjectAutomationsPaused
 SetAllProjectTasksPaused
 SetFeaturePaused
@@ -112,7 +104,6 @@ SetRunnerPaused
 SetRunnerStatus
 SetVerified
 SingleModeTokens
-SyncNoteEmbeddingMetadata
 UpdateAffinity
 UpdateHeartbeat
 UpdateRunnerCapabilities
@@ -124,7 +115,6 @@ UpsertBrainClient
 UpsertBrainClientWorkspace
 UpsertFeatureCascadeRoot
 UpsertInstance
-UpsertNoteEmbeddings
 UpsertProjectPlacement
 UpsertRunner
 ValidateToken

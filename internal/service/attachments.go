@@ -29,7 +29,7 @@ const defaultAttachmentMaxSizeBytes int64 = 25 << 20 // 25 MiB
 // AttachmentServiceImpl orchestrates attachment blob storage, metadata storage,
 // and entry association.
 type AttachmentServiceImpl struct {
-	storage      *storage.StorageLayer
+	storage      *storage.TenantStore
 	blobs        blobstore.Store
 	brain        api.BrainService
 	extractor    AttachmentExtractor
@@ -77,7 +77,7 @@ func WithAttachmentDerivedChangeHook(hook AttachmentDerivedChangeHook) Attachmen
 }
 
 // NewAttachmentService creates an attachment orchestration service.
-func NewAttachmentService(store *storage.StorageLayer, blobs blobstore.Store, brain api.BrainService, maxSizeBytes int64, opts ...AttachmentServiceOption) *AttachmentServiceImpl {
+func NewAttachmentService(store *storage.TenantStore, blobs blobstore.Store, brain api.BrainService, maxSizeBytes int64, opts ...AttachmentServiceOption) *AttachmentServiceImpl {
 	if maxSizeBytes <= 0 {
 		maxSizeBytes = defaultAttachmentMaxSizeBytes
 	}

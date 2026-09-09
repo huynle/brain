@@ -1710,8 +1710,8 @@ func (c *APIClient) doRequestWithClient(ctx context.Context, client *http.Client
 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	if c.cfg.APIToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.APIToken)
+	if c.cfg.StandingToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.StandingToken)
 	}
 
 	return client.Do(req)
@@ -1730,8 +1730,8 @@ func (c *APIClient) doRequestWithHeaders(ctx context.Context, method, path strin
 	// Set defaults first
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	if c.cfg.APIToken != "" {
-		req.Header.Set("Authorization", "Bearer "+c.cfg.APIToken)
+	if c.cfg.StandingToken != "" {
+		req.Header.Set("Authorization", "Bearer "+c.cfg.StandingToken)
 	}
 
 	// Override with custom headers

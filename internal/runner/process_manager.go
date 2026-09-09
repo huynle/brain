@@ -661,8 +661,8 @@ func (pm *ProcessManager) getTaskEntry(taskPath string) *taskEntrySnapshot {
 		slog.Debug("task file lookup: bad request", "task_path", taskPath, "error", err)
 		return nil
 	}
-	if pm.config.APIToken != "" {
-		req.Header.Set("Authorization", "Bearer "+pm.config.APIToken)
+	if pm.config.StandingToken != "" {
+		req.Header.Set("Authorization", "Bearer "+pm.config.StandingToken)
 	}
 
 	resp, err := pm.client.Do(req)

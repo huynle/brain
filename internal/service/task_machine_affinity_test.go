@@ -12,7 +12,7 @@ import (
 
 // insertRunnerWithMachine registers an online runner on a named machine, or on
 // no machine at all when machineID is empty.
-func insertRunnerWithMachine(t *testing.T, store *storage.StorageLayer, runnerID, machineID string) {
+func insertRunnerWithMachine(t *testing.T, store *storage.TenantStore, runnerID, machineID string) {
 	t.Helper()
 	now := time.Now().UnixMilli()
 	if err := store.UpsertRunner(context.Background(), &storage.RunnerRow{

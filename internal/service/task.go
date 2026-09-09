@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -18,6 +19,7 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/tenantfs"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/pkg/cron"
 	"github.com/huynle/brain-api/pkg/frontmatter"
@@ -30,7 +32,7 @@ var _ api.TaskService = (*TaskServiceImpl)(nil)
 // TaskServiceImpl implements api.TaskService using a StorageLayer and persistent claims.
 type TaskServiceImpl struct {
 	config       *config.Config
-	storage      *storage.StorageLayer
+	storage      *storage.TenantStore
 	indexer      *indexer.Indexer
 	liveInjector LiveInjector
 }
@@ -46,7 +48,7 @@ const DefaultLeaseDuration = 10 * time.Minute
 // from search, the link graph, and orphan detection) until the next boot
 // index. It is a constructor argument rather than an option so a caller
 // cannot silently end up with the un-indexed behaviour.
-func NewTaskService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer) *TaskServiceImpl {
+func NewTaskService(cfg *config.Config, store *storage.TenantStore, idx *indexer.Indexer) *TaskServiceImpl {
 	return &TaskServiceImpl{
 		config:  cfg,
 		storage: store,
@@ -116,9 +118,16 @@ const StalledMarker = "*Stalled: runner detected a silent OpenCode session"
 
 // ListProjects scans <brainDir>/projects/ for subdirectories containing a task/ subfolder.
 func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
-	projectsDir := filepath.Join(s.config.BrainDir, "projects")
+	guard := absoluteFilesystemGuard(ctx, s.indexer, s.config.BrainDir)
+	projectsDir, err := resolveFilesystemPath(ctx, s.indexer, s.config.BrainDir, "projects", true)
+	if err != nil {
+		return nil, err
+	}
+	if err := guard(projectsDir); err != nil {
+		return nil, err
+	}
 
-	entries, err := os.ReadDir(projectsDir)
+	_, entries, err := readBrainDirectory(s.config.BrainDir, "projects")
 	if err != nil {
 		if os.IsNotExist(err) {
 			return []string{}, nil
@@ -132,6 +141,12 @@ func (s *TaskServiceImpl) ListProjects(ctx context.Context) ([]string, error) {
 			continue
 		}
 		taskDir := filepath.Join(projectsDir, entry.Name(), "task")
+		if err := guard(taskDir); err != nil {
+			if !errors.Is(err, tenantfs.ErrDenied) {
+				return nil, err
+			}
+			continue
+		}
 		info, err := os.Stat(taskDir)
 		if err != nil || !info.IsDir() {
 			continue
@@ -459,7 +474,7 @@ func resolveBuiltinMonitorPrompt(task *types.ResolvedTask) {
 
 // getAllTasks fetches all task BrainEntries for a project from storage.
 func (s *TaskServiceImpl) getAllTasks(ctx context.Context, projectId string) ([]types.BrainEntry, error) {
-	pathPrefix := "projects/" + projectId + "/task"
+	pathPrefix := "projects/" + projectId + "/task/"
 	rows, err := s.storage.ListNotes(ctx, &storage.ListOptions{
 		Type:       "task",
 		PathPrefix: pathPrefix,
@@ -550,25 +565,23 @@ func (s *TaskServiceImpl) applyTaskFilterOptions(ctx context.Context, projectID 
 		return nil, fmt.Errorf("get runner %q: %w", opts.RunnerID, err)
 	}
 	if runner == nil {
-		// Unknown runner: we cannot check executors, capabilities or labels,
-		// and historically that meant no filtering at all. Machine affinity
-		// cannot inherit that default. An unregistered runner has no machine
-		// id to compare, so serving it a machine_affinity=local task would
-		// hand pinned work to the one caller we know least about — the
-		// bypass is trivial and silent. Withhold only those tasks; every
-		// other filter keeps its existing fail-open behavior.
-		return filterOutMachinePinnedTasks(tasks), nil
+		// Unknown runners cannot establish local affinity or credentialed
+		// remote support. Preserve historical behavior only for tasks that
+		// need neither; direct claims independently enforce remote support.
+		return filterUnknownRunnerTasks(tasks), nil
 	}
 
 	return s.filterByRunnerEligibility(ctx, projectID, tasks, runner)
 }
 
-// filterOutMachinePinnedTasks drops every task whose resolved affinity is
-// "local". Used when the requesting runner's machine cannot be established at
-// all, where the honest answer is "this task is not for you".
-func filterOutMachinePinnedTasks(tasks []types.ResolvedTask) []types.ResolvedTask {
+// filterUnknownRunnerTasks withholds work requiring a known machine or a
+// credentialed git host advertisement from unregistered callers.
+func filterUnknownRunnerTasks(tasks []types.ResolvedTask) []types.ResolvedTask {
 	filtered := make([]types.ResolvedTask, 0, len(tasks))
 	for _, task := range tasks {
+		if err := runnerGitRemoteError(task.GitRemote, nil); err != nil {
+			continue
+		}
 		if types.ResolveMachineAffinity(task.MachineAffinity, task.OriginMachineID) == types.MachineAffinityLocal {
 			continue
 		}
@@ -586,9 +599,13 @@ func (s *TaskServiceImpl) filterByRunnerEligibility(ctx context.Context, project
 	for _, capability := range runner.Capabilities {
 		capabilities[capability] = true
 	}
+	runnerInfo := liveRunnerInfo(runner)
 
 	filtered := make([]types.ResolvedTask, 0, len(tasks))
 	for _, task := range tasks {
+		if err := runnerGitRemoteError(task.GitRemote, runnerInfo); err != nil {
+			continue
+		}
 		if !runnerHasRequiredCapabilities(task, capabilities) {
 			continue
 		}
@@ -681,7 +698,7 @@ func (s *TaskServiceImpl) ClaimTask(ctx context.Context, projectId, taskId, runn
 // ClaimTaskWithDuration claims a task with a custom lease duration.
 // Used for pre-claims (dispatch) with shorter expiry.
 func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, taskId, runnerId string, leaseDuration time.Duration) (*types.ClaimResponse, error) {
-	featureID, err := s.featureIDForTaskClaim(ctx, projectId, taskId)
+	featureID, err := s.validateClaimAndGetFeatureID(ctx, projectId, taskId, runnerId)
 	if err != nil {
 		return nil, err
 	}
@@ -772,15 +789,63 @@ func (s *TaskServiceImpl) ClaimTaskWithDuration(ctx context.Context, projectId, 
 	}, nil
 }
 
-func (s *TaskServiceImpl) featureIDForTaskClaim(ctx context.Context, projectID, taskID string) (string, error) {
+// validateClaimAndGetFeatureID checks stored eligibility before any ownership
+// mutation. It deliberately does not apply scheduler capacity or project policy.
+func (s *TaskServiceImpl) validateClaimAndGetFeatureID(ctx context.Context, projectID, taskID, runnerID string) (string, error) {
+	runner, err := s.storage.GetRunner(ctx, runnerID)
+	if err != nil {
+		return "", fmt.Errorf("get claiming runner: %w", err)
+	}
+	if runner == nil {
+		return "", s.recordClaimPlacementDenial(ctx, projectID, taskID, runnerID, runner, types.PlacementRunnerUnregistered, nil)
+	}
 	note, err := s.storage.GetNoteByPath(ctx, fmt.Sprintf("projects/%s/task/%s.md", projectID, taskID))
 	if err != nil {
 		return "", fmt.Errorf("get task note for claim: %w", err)
 	}
 	if note == nil {
+		// Preserve legacy claims without an indexed note, but never let this
+		// compatibility path bypass runner registration.
 		return "", nil
 	}
-	return NoteRowToBrainEntry(note).FeatureID, nil
+	entry := NoteRowToBrainEntry(note)
+	task := brainEntryToResolvedTask(&entry)
+	if reason, ok := machineAffinitySatisfied(task, runnerMachineID(runner)); !ok {
+		return "", s.recordClaimPlacementDenial(ctx, projectID, taskID, runnerID, runner, reason, nil)
+	}
+	capabilities := make(map[string]bool, len(runner.Capabilities))
+	for _, capability := range runner.Capabilities {
+		capabilities[capability] = true
+	}
+	if !runnerHasRequiredCapabilities(task, capabilities) {
+		return "", s.recordClaimPlacementDenial(ctx, projectID, taskID, runnerID, runner, types.PlacementRequiredCapabilityMissing, nil)
+	}
+	if err := runnerGitRemoteError(entry.GitRemote, liveRunnerInfo(runner)); err != nil {
+		return "", s.recordClaimPlacementDenial(ctx, projectID, taskID, runnerID, runner, types.PlacementGitRemoteIneligible, err)
+	}
+	return entry.FeatureID, nil
+}
+
+// Unlike RejectDispatch, a claim refusal must not alter an existing lease.
+// RecordPlacementReason retains only PlacementReasonRetention recent attempts.
+func (s *TaskServiceImpl) recordClaimPlacementDenial(ctx context.Context, projectID, taskID, runnerID string, runner *storage.RunnerRow, reason string, cause error) error {
+	denial := &types.PlacementDenialError{Reason: reason, Cause: cause}
+	row := &storage.PlacementReasonRow{
+		ProjectID: projectID, TaskID: taskID, RunnerID: runnerID,
+		MachineID: runnerMachineID(runner), Decision: "claim_denied",
+		Reason: reason, CreatedAt: time.Now().UnixMilli(),
+	}
+	if runner != nil {
+		labels, err := json.Marshal(runner.Labels)
+		if err != nil {
+			return fmt.Errorf("encode claiming runner labels: %v: %w", err, denial)
+		}
+		row.RunnerLabels = string(labels)
+	}
+	if err := s.storage.RecordPlacementReason(ctx, row); err != nil {
+		return fmt.Errorf("record claim denial: %v: %w", err, denial)
+	}
+	return denial
 }
 
 // ReleaseTask releases a task claim. Returns ErrNotFound if not claimed,
@@ -1181,6 +1246,9 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	if sanitizedProjectID == "" {
 		return nil, fmt.Errorf("projectId is required")
 	}
+	if err := validateProjectID(sanitizedProjectID); err != nil {
+		return nil, err
+	}
 	if sanitizedFeatureID == "" {
 		return nil, fmt.Errorf("featureId is required")
 	}
@@ -1190,11 +1258,22 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 
 	// Generate checkout task key
 	generatedKey := fmt.Sprintf("feature-checkout:%s:round-1", sanitizedFeatureID)
+	// Preflight the inherited remote before any file creation or supersession.
+	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feature tasks: %w", err)
+	}
+	checkoutGit := gitContextFromFeatureEntries(featureTasks)
+	if err := validateConfiguredGitRemote(ctx, s.storage, checkoutGit.GitRemote); err != nil {
+		return nil, err
+	}
 
 	// Check if checkout task already exists (idempotency)
-	taskDir := filepath.Join(s.config.BrainDir, "projects", sanitizedProjectID, "task")
-	if err := os.MkdirAll(taskDir, 0755); err != nil {
-		return nil, fmt.Errorf("failed to create task directory: %w", err)
+	guard := absoluteFilesystemGuard(ctx, s.indexer, s.config.BrainDir)
+	taskRelDir := filepath.Join("projects", sanitizedProjectID, "task")
+	taskDir, err := resolveFilesystemPath(ctx, s.indexer, s.config.BrainDir, taskRelDir, true)
+	if err != nil {
+		return nil, err
 	}
 
 	// Look for an existing checkout task with this generated_key.
@@ -1210,9 +1289,22 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	// with the mode actually requested loses no work. Anything past pending
 	// is left alone: it is running or has run, and quietly deleting it would
 	// discard real history.
-	existingTask, err := findCheckoutTaskByKey(taskDir, generatedKey)
+	existingTask, err := findCheckoutTaskByKey(s.config.BrainDir, taskRelDir, generatedKey, guard)
+	if err != nil {
+		return nil, err
+	}
+	// Source children were validated during preflight; validate the destination before supersession.
+	shortID := markdown.GenerateShortID()
+	filename := shortID + ".md"
+	taskPath, err := resolveFilesystemPath(ctx, s.indexer, s.config.BrainDir, filepath.Join(taskRelDir, filename), true)
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(taskDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create task directory: %w", err)
+	}
 	var supersededID string
-	if err == nil && existingTask != nil {
+	if existingTask != nil {
 		// A checkout task written before this build RECORDED checkout_mode
 		// without acting on it, so a stored "simple" task can carry no
 		// executor and no script — the exact shape that could never run. It
@@ -1240,6 +1332,9 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 				Task:         existingTask.Resp,
 			}, nil
 		}
+		if err := guard(existingTask.FilePath); err != nil {
+			return nil, err
+		}
 		if err := os.Remove(existingTask.FilePath); err != nil {
 			return nil, fmt.Errorf("supersede checkout task %s: %w", existingTask.Resp.ID, err)
 		}
@@ -1251,19 +1346,8 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 		supersededID = existingTask.Resp.ID
 	}
 
-	// Get all feature tasks to build depends_on list
-	featureTasks, err := s.getFeatureTasksFromFilesystem(sanitizedProjectID, sanitizedFeatureID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get feature tasks: %w", err)
-	}
-
 	// Extract non-generated task IDs
 	dependsOn := extractUniqueNonGeneratedTaskIds(featureTasks)
-
-	// Generate new task ID
-	shortID := markdown.GenerateShortID()
-	filename := shortID + ".md"
-	taskPath := filepath.Join(taskDir, filename)
 
 	// Resolve the repo the feature's work actually happened in. The manual
 	// endpoint inherits nothing from an automation entry, so without this the
@@ -1277,7 +1361,6 @@ func (s *TaskServiceImpl) CheckoutFeature(ctx context.Context, projectId, featur
 	// or git_remote+repo_cache_dir); without it the runner rejects the
 	// dispatch with "workdir_unavailable" and the checkout task loops as
 	// pending forever.
-	checkoutGit := gitContextFromFeatureEntries(featureTasks)
 	checkoutWorkdir := checkoutGit.TargetWorkdir
 
 	// Build checkout task content, routed by checkout_mode.
@@ -1537,21 +1620,27 @@ func foldCheckoutModeValue(mode string) string {
 }
 
 // findCheckoutTaskByKey searches for a checkout task with the given generated_key.
-func findCheckoutTaskByKey(taskDir, generatedKey string) (*existingCheckoutTask, error) {
-	entries, err := os.ReadDir(taskDir)
+func findCheckoutTaskByKey(root, taskRelDir, generatedKey string, guards ...func(string) error) (*existingCheckoutTask, error) {
+	taskDir, entries, err := readBrainDirectory(root, taskRelDir, guards...)
 	if err != nil {
+		if taskDir != "" && os.IsNotExist(err) {
+			return nil, nil
+		}
 		return nil, err
 	}
 
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".md") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
 
 		filePath := filepath.Join(taskDir, entry.Name())
+		if err := checkFilesystemGuards(filePath, guards); err != nil {
+			return nil, err
+		}
 		content, err := os.ReadFile(filePath)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		doc, err := frontmatter.Parse(string(content))
@@ -1585,15 +1674,18 @@ func findCheckoutTaskByKey(taskDir, generatedKey string) (*existingCheckoutTask,
 		}
 	}
 
-	return nil, fmt.Errorf("not found")
+	return nil, nil
 }
 
 // getFeatureTasksFromFilesystem reads tasks from filesystem for a feature.
 func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID string) ([]types.BrainEntry, error) {
-	taskDir := filepath.Join(s.config.BrainDir, "projects", projectID, "task")
-	entries, err := os.ReadDir(taskDir)
+	guard := absoluteFilesystemGuard(context.Background(), s.indexer, s.config.BrainDir)
+	if err := validateProjectID(projectID); err != nil {
+		return nil, err
+	}
+	taskDir, entries, err := readBrainDirectory(s.config.BrainDir, filepath.Join("projects", projectID, "task"), guard)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if taskDir != "" && os.IsNotExist(err) {
 			return []types.BrainEntry{}, nil
 		}
 		return nil, err
@@ -1601,14 +1693,17 @@ func (s *TaskServiceImpl) getFeatureTasksFromFilesystem(projectID, featureID str
 
 	var tasks []types.BrainEntry
 	for _, entry := range entries {
-		if !strings.HasSuffix(entry.Name(), ".md") {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".md") {
 			continue
 		}
 
 		filePath := filepath.Join(taskDir, entry.Name())
+		if err := guard(filePath); err != nil {
+			return nil, err
+		}
 		content, err := os.ReadFile(filePath)
 		if err != nil {
-			continue
+			return nil, err
 		}
 
 		doc, err := frontmatter.Parse(string(content))

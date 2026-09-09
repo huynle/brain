@@ -1,12 +1,59 @@
 package runner
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
+
+func TestRunnerConfig_StandingTokenExternalKeys(t *testing.T) {
+	for _, tt := range []struct {
+		name      string
+		marshal   func(any) ([]byte, error)
+		unmarshal func([]byte, any) error
+	}{
+		{"json", json.Marshal, json.Unmarshal},
+		{"yaml", yaml.Marshal, yaml.Unmarshal},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			want := map[string]string{"api_token": "test-token", "api_token_env": "CUSTOM_TOKEN"}
+			data, err := tt.marshal(want)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var cfg RunnerConfig
+			if err := tt.unmarshal(data, &cfg); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.StandingToken != want["api_token"] || cfg.StandingTokenEnv != want["api_token_env"] {
+				t.Fatal("external token keys did not populate standing token fields")
+			}
+			data, err = tt.marshal(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var fields map[string]any
+			if err := tt.unmarshal(data, &fields); err != nil {
+				t.Fatal(err)
+			}
+			for key, value := range want {
+				if fields[key] != value {
+					t.Errorf("serialized %s = %v, want %q", key, fields[key], value)
+				}
+			}
+			for key := range fields {
+				if strings.Contains(strings.ToLower(key), "standing") {
+					t.Errorf("internal field name leaked into external key %q", key)
+				}
+			}
+		})
+	}
+}
 
 // ---------------------------------------------------------------------------
 // LoadConfig — defaults
@@ -117,8 +164,8 @@ func TestLoadConfig_EnvOverrides(t *testing.T) {
 	if cfg.BrainAPIURL != "http://brain.local:8080" {
 		t.Errorf("BrainAPIURL = %q, want %q", cfg.BrainAPIURL, "http://brain.local:8080")
 	}
-	if cfg.APIToken != "secret-token" {
-		t.Errorf("APIToken = %q, want %q", cfg.APIToken, "secret-token")
+	if cfg.StandingToken != "secret-token" {
+		t.Errorf("StandingToken = %q, want %q", cfg.StandingToken, "secret-token")
 	}
 	if cfg.PollInterval != 60 {
 		t.Errorf("PollInterval = %d, want 60", cfg.PollInterval)
@@ -178,6 +225,46 @@ func TestLoadConfig_SchedulerMetadataEnvOverrides(t *testing.T) {
 // ---------------------------------------------------------------------------
 // LoadConfig — YAML file
 // ---------------------------------------------------------------------------
+
+func TestLoadConfig_ControlFromYAML(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		yaml string
+	}{
+		{"flat", `control:
+  disabled: true
+  allowed_workdir_roots:
+    - "/work/projects"
+    - "/srv/repos"
+`},
+		{"unified", `runner:
+  control:
+    disabled: true
+    allowed_workdir_roots:
+      - "/work/projects"
+      - "/srv/repos"
+`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			configPath := filepath.Join(t.TempDir(), "config.yaml")
+			if err := os.WriteFile(configPath, []byte(tt.yaml), 0o644); err != nil {
+				t.Fatalf("write config: %v", err)
+			}
+
+			cfg, err := LoadConfigFrom(configPath)
+			if err != nil {
+				t.Fatalf("LoadConfigFrom: %v", err)
+			}
+			if !cfg.Control.Disabled {
+				t.Error("Control.Disabled = false, want true")
+			}
+			wantRoots := []string{"/work/projects", "/srv/repos"}
+			if !reflect.DeepEqual(cfg.Control.AllowedWorkdirRoots, wantRoots) {
+				t.Errorf("Control.AllowedWorkdirRoots = %#v, want %#v", cfg.Control.AllowedWorkdirRoots, wantRoots)
+			}
+		})
+	}
+}
 
 func TestLoadConfig_YAMLFile(t *testing.T) {
 	for _, key := range []string{
@@ -381,7 +468,7 @@ func TestLoadConfig_GitTokenEnvFallback(t *testing.T) {
 	}
 }
 
-func TestLoadConfig_APITokenEnvFallback(t *testing.T) {
+func TestLoadConfig_StandingTokenEnvFallback(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
 	yamlContent := `api_token_env: "CUSTOM_BRAIN_API_TOKEN"
@@ -398,15 +485,15 @@ func TestLoadConfig_APITokenEnvFallback(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.APIToken != "fallback-api-token" {
-		t.Errorf("APIToken = %q, want fallback token from CUSTOM_BRAIN_API_TOKEN", cfg.APIToken)
+	if cfg.StandingToken != "fallback-api-token" {
+		t.Errorf("StandingToken = %q, want fallback token from CUSTOM_BRAIN_API_TOKEN", cfg.StandingToken)
 	}
-	if cfg.APITokenEnv != "CUSTOM_BRAIN_API_TOKEN" {
-		t.Errorf("APITokenEnv = %q, want %q", cfg.APITokenEnv, "CUSTOM_BRAIN_API_TOKEN")
+	if cfg.StandingTokenEnv != "CUSTOM_BRAIN_API_TOKEN" {
+		t.Errorf("StandingTokenEnv = %q, want %q", cfg.StandingTokenEnv, "CUSTOM_BRAIN_API_TOKEN")
 	}
 }
 
-func TestLoadConfig_ExplicitAPITokenPrecedenceOverTokenEnv(t *testing.T) {
+func TestLoadConfig_ExplicitStandingTokenPrecedenceOverTokenEnv(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
 	yamlContent := `api_token: "explicit-file-token"
@@ -424,12 +511,12 @@ api_token_env: "CUSTOM_BRAIN_API_TOKEN"
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.APIToken != "explicit-file-token" {
-		t.Errorf("APIToken = %q, want explicit file token", cfg.APIToken)
+	if cfg.StandingToken != "explicit-file-token" {
+		t.Errorf("StandingToken = %q, want explicit file token", cfg.StandingToken)
 	}
 }
 
-func TestLoadConfig_EnvAPITokenPrecedenceOverTokenEnv(t *testing.T) {
+func TestLoadConfig_EnvStandingTokenPrecedenceOverTokenEnv(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
 	yamlContent := `api_token: "explicit-file-token"
@@ -447,8 +534,8 @@ api_token_env: "CUSTOM_BRAIN_API_TOKEN"
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if cfg.APIToken != "explicit-env-token" {
-		t.Errorf("APIToken = %q, want explicit env token", cfg.APIToken)
+	if cfg.StandingToken != "explicit-env-token" {
+		t.Errorf("StandingToken = %q, want explicit env token", cfg.StandingToken)
 	}
 }
 

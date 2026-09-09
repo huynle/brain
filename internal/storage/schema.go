@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 27
+const CurrentSchemaVersion = 29
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -1028,6 +1028,20 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 29 {
+		for _, ddl := range []string{createBulkJobsTable, createBulkJobItemsTable, createBulkJobItemsIndex} {
+			if _, err := db.Exec(ddl); err != nil {
+				return fmt.Errorf("migrate v29 (bulk jobs): %w", err)
+			}
+		}
+	}
+
+	if ver < 28 {
+		if _, err := db.Exec(createTenantRootsTable); err != nil {
+			return fmt.Errorf("migrate v28 (tenant_roots): %w", err)
+		}
+	}
+
 	if ver < 27 {
 		// v27: persist the FEATURE-scoped pause dial.
 		//
@@ -1210,9 +1224,19 @@ func searchSubstring(s, substr string) bool {
 
 // InitSchema creates all tables, indexes, FTS5 virtual table, and triggers.
 // It is idempotent — safe to call multiple times.
+// Ownership: this is shared database bootstrap/migration, called by newFromDB,
+// never by ForTenant, Control, or their adapters. Control tables are api_tokens,
+// oauth_clients/auth_codes/access_tokens/refresh_tokens and tenant_roots. Workload
+// tables include notes/FTS, links, attachments, events, tasks, runners, placement,
+// pause state and webhooks; a runner registry is NOT a tenant/control registry.
+// schema_version belongs to the shared migration owner, not either handle. There
+// is no per-tenant database registry, schema initialization, or database stamp.
 func InitSchema(db *sql.DB) error {
 	// Tables (order matters for foreign keys)
 	tables := []string{
+		createBulkJobsTable,
+		createBulkJobItemsTable,
+		createBulkJobItemsIndex,
 		createNotesTable,
 		createLinksTable,
 		createTagsTable,
@@ -1234,6 +1258,7 @@ func InitSchema(db *sql.DB) error {
 		createProjectPlacementTable,
 		createProjectPauseStateTable,
 		createFeaturePauseStateTable,
+		createTenantRootsTable,
 		createRunnerPauseStateTable,
 		createWebhooksTable,
 		createWebhookDeliveriesTable,

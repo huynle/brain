@@ -111,7 +111,10 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		var wrapper struct {
 			Runner RunnerConfig `yaml:"runner"`
 		}
-		if err := yaml.Unmarshal(data, &wrapper); err == nil && yamlKeyPresent(data, "runner") {
+		if yamlKeyPresent(data, "runner") {
+			if err := yaml.Unmarshal(data, &wrapper); err != nil {
+				return RunnerConfig{}, fmt.Errorf("parse runner config: %w", err)
+			}
 			fileCfg = wrapper.Runner
 		} else {
 			// Fall back to flat/legacy format (runner fields at top level)
@@ -139,10 +142,10 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 	// Resolve hook timeout: legacy HookTimeout > env > default (30s)
 	resolvedHookTimeout := getEnvIntOrDefault("RUNNER_HOOK_TIMEOUT",
 		firstNonZero(fileCfg.HookTimeout, 30))
-	resolvedAPITokenEnv := firstNonEmpty(fileCfg.APITokenEnv, "BRAIN_API_TOKEN")
-	resolvedAPIToken := getEnvOrDefault("BRAIN_API_TOKEN", fileCfg.APIToken)
-	if resolvedAPIToken == "" && resolvedAPITokenEnv != "" {
-		resolvedAPIToken = os.Getenv(resolvedAPITokenEnv)
+	resolvedStandingTokenEnv := firstNonEmpty(fileCfg.StandingTokenEnv, "BRAIN_API_TOKEN")
+	resolvedStandingToken := getEnvOrDefault("BRAIN_API_TOKEN", fileCfg.StandingToken)
+	if resolvedStandingToken == "" && resolvedStandingTokenEnv != "" {
+		resolvedStandingToken = os.Getenv(resolvedStandingTokenEnv)
 	}
 	resolvedGitTokenEnv := getEnvOrDefault("RUNNER_GIT_TOKEN_ENV", firstNonEmpty(fileCfg.GitTokenEnv, "GITHUB_TOKEN"))
 	resolvedGitToken := getEnvOrDefault("RUNNER_GIT_TOKEN", fileCfg.GitToken)
@@ -160,8 +163,8 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 
 	cfg := RunnerConfig{
 		BrainAPIURL:               getEnvOrDefault("BRAIN_API_URL", firstNonEmpty(fileCfg.BrainAPIURL, "http://localhost:3333")),
-		APIToken:                  resolvedAPIToken,
-		APITokenEnv:               resolvedAPITokenEnv,
+		StandingToken:             resolvedStandingToken,
+		StandingTokenEnv:          resolvedStandingTokenEnv,
 		PollInterval:              getEnvIntOrDefault("RUNNER_POLL_INTERVAL", firstNonZero(fileCfg.PollInterval, 30)),
 		MaxParallel:               getEnvIntOrDefault("RUNNER_MAX_PARALLEL", firstNonZero(fileCfg.MaxParallel, 2)),
 		Name:                      getEnvOrDefault("RUNNER_NAME", fileCfg.Name),
@@ -170,6 +173,9 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		RepoCacheDir:              expandTilde(getEnvOrDefault("RUNNER_REPO_CACHE_DIR", firstNonEmpty(fileCfg.RepoCacheDir, filepath.Join(homeDir, ".cache", "brain", "repos"))), homeDir),
 		GitToken:                  resolvedGitToken,
 		GitTokenEnv:               resolvedGitTokenEnv,
+		GitHostTokenEnv:           fileCfg.GitHostTokenEnv,
+		GitAllowedHosts:           fileCfg.GitAllowedHosts,
+		GitSSLCAInfo:              fileCfg.GitSSLCAInfo,
 		RequireHTTPS:              resolvedRequireHTTPS,
 		AllowUnauthenticatedHTTPS: getEnvBoolOrDefault("RUNNER_ALLOW_UNAUTHENTICATED_HTTPS", fileCfg.AllowUnauthenticatedHTTPS),
 		APITimeout:                getEnvIntOrDefault("RUNNER_API_TIMEOUT", firstNonZero(fileCfg.APITimeout, 5000)),
@@ -204,6 +210,7 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 		Executors:       defaultExecutors(getEnvCSVOrDefault("RUNNER_EXECUTORS", fileCfg.Executors)),
 		DefaultExecutor: getEnvOrDefault("DEFAULT_EXECUTOR", firstNonEmpty(fileCfg.DefaultExecutor, "opencode")),
 		TaskDefaults:    fileCfg.TaskDefaults,
+		Control:         fileCfg.Control,
 		ExcludeProjects: fileCfg.ExcludeProjects,
 		IncludeProjects: fileCfg.IncludeProjects,
 		EnvPassthrough:  defaultEnvPassthrough(fileCfg.EnvPassthrough),
@@ -251,6 +258,9 @@ func LoadConfigFrom(path string) (RunnerConfig, error) {
 // ValidateConfig checks that configuration values are within acceptable ranges.
 func ValidateConfig(cfg RunnerConfig) error {
 	var errs []string
+	if _, err := cfg.CredentialedGitHosts(); err != nil {
+		errs = append(errs, err.Error())
+	}
 
 	if _, err := NormalizeRunnerName(cfg.Name); err != nil {
 		errs = append(errs, err.Error())
@@ -531,12 +541,12 @@ func defaultExecutors(configured []string) []string {
 }
 
 // defaultEnvPassthrough returns the env passthrough list, using defaults if empty.
-// The defaults ensure BRAIN_API_URL and BRAIN_API_TOKEN are always forwarded.
+// Endpoint context is injected by the child policy; credentials never pass through.
 func defaultEnvPassthrough(configured []string) []string {
 	if len(configured) > 0 {
 		return configured
 	}
-	return []string{"BRAIN_API_URL", "BRAIN_API_TOKEN"}
+	return nil
 }
 
 // defaultLogStreaming returns the configured value, defaulting to true.

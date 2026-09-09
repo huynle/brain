@@ -11,7 +11,7 @@ import (
 	"github.com/huynle/brain-api/internal/types"
 )
 
-func newTestReminderService(t *testing.T, now time.Time) (*ReminderService, *BrainServiceImpl, *storage.StorageLayer) {
+func newTestReminderService(t *testing.T, now time.Time) (*ReminderService, *BrainServiceImpl, *storage.TenantStore) {
 	t.Helper()
 	brain, store, _ := newTestBrainService(t)
 	svc := NewReminderService(brain, store, WithReminderClock(func() time.Time { return now }))

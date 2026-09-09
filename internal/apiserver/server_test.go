@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime/multipart"
 	"net"
@@ -55,7 +56,7 @@ func TestRunServer_BasicStartup(t *testing.T) {
 	// Wait for server to stop
 	select {
 	case err := <-errCh:
-		if err != nil && err != context.Canceled && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, http.ErrServerClosed) {
 			t.Fatalf("RunServer failed: %v", err)
 		}
 	case <-time.After(3 * time.Second):
@@ -95,11 +96,28 @@ func TestRunServer_ContextCancellation(t *testing.T) {
 	// Server should stop within shutdown timeout
 	select {
 	case err := <-errCh:
-		if err != nil && err != context.Canceled && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, http.ErrServerClosed) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	case <-time.After(12 * time.Second): // 10s shutdown timeout + 2s buffer
 		t.Fatal("server did not respect context cancellation")
+	}
+}
+
+func TestRunServer_PreCancelledContext(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	// Cancel before startup so this covers initialization, not a timing-dependent
+	// race between initialization and normal HTTP server shutdown.
+	err := RunServer(ctx, ServerOptions{
+		Host:     "localhost",
+		Port:     0,
+		BrainDir: filepath.Join(t.TempDir(), "brain"),
+		LogLevel: "error",
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected startup cancellation, got %v", err)
 	}
 }
 
@@ -366,10 +384,11 @@ func TestMCPRouteCORSAllowsSessionHeader(t *testing.T) {
 	defer cancel()
 
 	handler, _, cleanup, err := buildHTTPHandler(ctx, ServerOptions{
-		Host:     "127.0.0.1",
-		Port:     0,
-		BrainDir: filepath.Join(tempDir, "brain"),
-		LogLevel: "error",
+		CORSOrigin: "https://example.test",
+		Host:       "127.0.0.1",
+		Port:       0,
+		BrainDir:   filepath.Join(tempDir, "brain"),
+		LogLevel:   "error",
 	})
 	if err != nil {
 		t.Fatalf("buildHTTPHandler failed: %v", err)

@@ -18,7 +18,7 @@ var _ api.RunnerService = (*RunnerServiceImpl)(nil)
 // This is a stub implementation that tracks pause/resume state without
 // actually controlling task execution (that's the runner's job).
 type RunnerServiceImpl struct {
-	store                    *storage.StorageLayer
+	store                    *storage.TenantStore
 	mu                       sync.RWMutex
 	globalPaused             bool
 	automationsPaused        bool
@@ -35,7 +35,7 @@ func NewRunnerService() *RunnerServiceImpl {
 }
 
 // NewRunnerServiceWithStorage creates a RunnerServiceImpl backed by durable storage.
-func NewRunnerServiceWithStorage(store *storage.StorageLayer) *RunnerServiceImpl {
+func NewRunnerServiceWithStorage(store *storage.TenantStore) *RunnerServiceImpl {
 	return &RunnerServiceImpl{
 		store:                    store,
 		pausedProjects:           make(map[string]bool),

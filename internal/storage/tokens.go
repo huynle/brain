@@ -24,12 +24,23 @@ func (s *StorageLayer) CreateToken(ctx context.Context, name, token, scope strin
 	if scope == "" {
 		scope = "admin:*"
 	}
-	_, err := s.db.ExecContext(ctx,
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin create token: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := insertInstallClaim(ctx, tx); err != nil {
+		return err
+	}
+	_, err = tx.ExecContext(ctx,
 		"INSERT INTO api_tokens (name, token, scope) VALUES (?, ?, ?)",
 		name, token, scope,
 	)
 	if err != nil {
 		return fmt.Errorf("insert token: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit create token: %w", err)
 	}
 	return nil
 }
@@ -171,8 +182,7 @@ func (s *StorageLayer) DeleteTokenPermanent(ctx context.Context, name string) er
 }
 
 // CountActiveTokens returns the number of non-revoked tokens in the database.
-// Used by the bootstrap endpoint to determine if token creation should be allowed
-// without authentication (only when zero tokens exist).
+// This is informational, not a bootstrap gate; use BootstrapToken for that.
 func (s *StorageLayer) CountActiveTokens(ctx context.Context) (int, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,

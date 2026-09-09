@@ -15,7 +15,7 @@ const stallTestProject = "stall-proj"
 // "runner is up, session is wedged" shape: without the stall marker such a
 // task would fall through to the existing signals and be classified NOT
 // abandoned (online runner + live claim).
-func seedInProgressTaskWithBody(t *testing.T, store *storage.StorageLayer, taskID, runnerID, body string) {
+func seedInProgressTaskWithBody(t *testing.T, store *storage.TenantStore, taskID, runnerID, body string) {
 	t.Helper()
 	ctx := context.Background()
 

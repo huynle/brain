@@ -21,7 +21,7 @@ import (
 
 func attachmentTestConfig(serverURL string) *UnifiedConfig {
 	cfg := &UnifiedConfig{}
-	cfg.Runner = runner.RunnerConfig{BrainAPIURL: serverURL, APIToken: "test-token", APITimeout: 5000}
+	cfg.Runner = runner.RunnerConfig{BrainAPIURL: serverURL, StandingToken: "test-token", APITimeout: 5000}
 	return cfg
 }
 

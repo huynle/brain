@@ -1,10 +1,13 @@
 package blobstore
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/huynle/brain-api/internal/tenant"
+	"github.com/huynle/brain-api/internal/tenantfs"
 	"io"
 	"os"
 	"path/filepath"
@@ -26,6 +29,28 @@ type Store interface {
 type FilesystemStore struct {
 	root         string
 	maxSizeBytes int64
+	resolver     *tenantfs.Resolver
+	tenantID     tenant.ID
+}
+
+// NewTenantFilesystemStore binds all I/O to an already persisted mapping. It
+// never provisions a tenant and never chooses a layout from caller-supplied paths.
+func NewTenantFilesystemStore(resolver *tenantfs.Resolver, id tenant.ID, maxSizeBytes int64) (*FilesystemStore, error) {
+	if resolver == nil || maxSizeBytes <= 0 {
+		return nil, fmt.Errorf("invalid tenant blob store configuration")
+	}
+	m, err := resolver.Lookup(context.Background(), id)
+	if err != nil {
+		return nil, err
+	}
+	staging, err := resolver.Blobs(id).ResolveForWrite(context.Background(), ".staging")
+	if err != nil {
+		return nil, err
+	}
+	if err := os.MkdirAll(staging, 0o700); err != nil {
+		return nil, err
+	}
+	return &FilesystemStore{root: m.BlobAbsolute, maxSizeBytes: maxSizeBytes, resolver: resolver, tenantID: id}, nil
 }
 
 func NewFilesystemStore(root string, maxSizeBytes int64) (*FilesystemStore, error) {
@@ -46,7 +71,18 @@ func NewFilesystemStore(root string, maxSizeBytes int64) (*FilesystemStore, erro
 }
 
 func (s *FilesystemStore) Put(r io.Reader) (string, int64, error) {
-	tmp, err := os.CreateTemp(s.root, ".blob-*")
+	staging := s.root
+	if s.resolver != nil {
+		var err error
+		staging, err = s.resolver.Blobs(s.tenantID).ResolveForWrite(context.Background(), ".staging")
+		if err != nil {
+			return "", 0, err
+		}
+		if err := os.MkdirAll(staging, 0o700); err != nil {
+			return "", 0, err
+		}
+	}
+	tmp, err := os.CreateTemp(staging, ".blob-*")
 	if err != nil {
 		return "", 0, fmt.Errorf("blobstore put: create temp file: %w", err)
 	}
@@ -131,6 +167,9 @@ func (s *FilesystemStore) Delete(hash string) error {
 func (s *FilesystemStore) pathForHash(hash string) (string, error) {
 	if !isValidSHA256Hex(hash) {
 		return "", ErrInvalidHash
+	}
+	if s.resolver != nil {
+		return s.resolver.BlobPath(context.Background(), s.tenantID, hash)
 	}
 	path := filepath.Join(s.root, hash[:2], hash[2:4], hash)
 	if !isPathWithinRoot(s.root, path) {

@@ -1,6 +1,7 @@
 package runner
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net/url"
 	"os"
@@ -29,7 +30,24 @@ import (
 // > workdir > resolved_workdir > config default.
 //
 // This is executor-agnostic and can be used by any executor implementation.
-func CommonResolveWorkdir(task *types.ResolvedTask, config RunnerConfig, cmdFactory CommandFactory) (string, error) {
+func CommonResolveWorkdir(task *types.ResolvedTask, config RunnerConfig, cmdFactory CommandFactory) (workdir string, err error) {
+	if err := validateTaskGitRemote(task.GitRemote, config); err != nil {
+		return "", err
+	}
+	// A supplied target is authoritative: invalid targets must not fall through.
+	if task.TargetWorkdir != "" {
+		if err := validateSpawnWorkdir(task.TargetWorkdir, config); err != nil {
+			return "", err
+		}
+	}
+	defer func() {
+		if err == nil {
+			err = validateSpawnWorkdir(workdir, config)
+			if err != nil {
+				workdir = ""
+			}
+		}
+	}()
 	executionMode := task.ExecutionMode
 	if executionMode == "" {
 		executionMode = "worktree" // default matches origin/main
@@ -78,14 +96,18 @@ func CommonResolveWorkdir(task *types.ResolvedTask, config RunnerConfig, cmdFact
 	return config.WorkDir, nil
 }
 
-// ensureWorktreeForTask ensures a git worktree exists for the task's branch.
+// ensureWorktreeForTaskWithConfig ensures a git worktree exists for the task's branch.
 // Returns the worktree path, or "" if worktree mode doesn't apply.
 // Returns an error if worktree creation fails.
-func ensureWorktreeForTask(task *types.ResolvedTask, cmdFactory CommandFactory) (string, error) {
-	return ensureWorktreeForTaskWithConfig(task, RunnerConfig{}, cmdFactory)
-}
-
-func ensureWorktreeForTaskWithConfig(task *types.ResolvedTask, config RunnerConfig, cmdFactory CommandFactory) (string, error) {
+func ensureWorktreeForTaskWithConfig(task *types.ResolvedTask, config RunnerConfig, cmdFactory CommandFactory) (workdir string, err error) {
+	defer func() {
+		if err == nil && workdir != "" {
+			err = validateSpawnWorkdir(workdir, config)
+			if err != nil {
+				workdir = ""
+			}
+		}
+	}()
 	// Guard: explicit current_branch mode
 	if task.ExecutionMode == "current_branch" {
 		return "", nil
@@ -144,6 +166,12 @@ func ensureWorktreeForTaskWithConfig(task *types.ResolvedTask, config RunnerConf
 	// Compute worktree path: {mainRepo}/.worktrees/{sanitized-branch}
 	sanitizedBranch := sanitizeBranchName(branch)
 	worktreePath := filepath.Join(mainRepoPath, ".worktrees", sanitizedBranch)
+	if err := validateSpawnWorkdir(mainRepoPath, config); err != nil {
+		return "", err
+	}
+	if err := validateWorkdirPreflight(worktreePath, config); err != nil {
+		return "", err
+	}
 
 	// If already exists on disk, reuse
 	if _, err := os.Stat(worktreePath); err == nil {
@@ -184,7 +212,13 @@ func ensureWorktreeForTaskWithConfig(task *types.ResolvedTask, config RunnerConf
 }
 
 func resolveRepoContext(task *types.ResolvedTask, config RunnerConfig, cmdFactory CommandFactory) (string, error) {
+	if err := validateTaskGitRemote(task.GitRemote, config); err != nil {
+		return "", err
+	}
 	if task.TargetWorkdir != "" {
+		if err := validateSpawnWorkdir(task.TargetWorkdir, config); err != nil {
+			return "", err
+		}
 		if isGitRepo(task.TargetWorkdir, cmdFactory) {
 			return task.TargetWorkdir, nil
 		}
@@ -205,6 +239,9 @@ func resolveRepoContext(task *types.ResolvedTask, config RunnerConfig, cmdFactor
 	// {repo}/.worktrees layout invariant is at stake.
 	if p := taskOriginWorkdir(task, config); p != "" {
 		if isGitRepo(p, cmdFactory) {
+			if err := validateSpawnWorkdir(p, config); err != nil {
+				return "", err
+			}
 			return p, nil
 		}
 	}
@@ -212,6 +249,9 @@ func resolveRepoContext(task *types.ResolvedTask, config RunnerConfig, cmdFactor
 	if task.Workdir != "" {
 		p := resolveTaskWorkdirPath(task.Workdir)
 		if isGitRepo(p, cmdFactory) {
+			if err := validateSpawnWorkdir(p, config); err != nil {
+				return "", err
+			}
 			return p, nil
 		}
 	}
@@ -291,39 +331,40 @@ func isGitRepo(path string, cmdFactory CommandFactory) bool {
 }
 
 func ensureCachedRemoteRepo(remote string, config RunnerConfig, cmdFactory CommandFactory) (string, error) {
-	parsed, err := validateGitRemote(remote, config.RequireHTTPS)
+	parsed, token, err := authorizeGitRemote(remote, config)
 	if err != nil {
 		return "", err
 	}
 
-	token := config.GitToken
-	if token == "" && config.GitTokenEnv != "" {
-		token = os.Getenv(config.GitTokenEnv)
-	}
-	if token == "" && !config.AllowUnauthenticatedHTTPS {
-		return "", fmt.Errorf("git token is required for HTTPS git_remote; set git_token/git_token_env or enable allow_unauthenticated_https")
-	}
 	if config.RepoCacheDir == "" {
 		return "", fmt.Errorf("repo_cache_dir is required when git_remote is set")
 	}
-	if err := os.MkdirAll(config.RepoCacheDir, 0o755); err != nil {
+	// Authorize the raw cache path before Join can erase symlink/.. traversal,
+	// then use that same physical path for both mkdir and Git's destination.
+	cacheDir, err := canonicalWorkdirPath(config.RepoCacheDir)
+	if err != nil {
+		return "", err
+	}
+	if err := validateWorkdirPreflight(cacheDir, config); err != nil {
+		return "", err
+	}
+	repoPath := filepath.Join(cacheDir, cacheDirNameForRemote(parsed))
+	if err := validateWorkdirPreflight(repoPath, config); err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
 		return "", fmt.Errorf("create repo cache dir: %w", err)
 	}
 
-	repoPath := filepath.Join(config.RepoCacheDir, cacheDirNameForRemote(parsed))
 	if isGitRepo(repoPath, cmdFactory) {
-		args := gitAuthArgs(token, "-C", repoPath, "fetch", "--prune", "origin")
-		cmd := cmdFactory("git", args...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("git fetch failed for cached repo %s: %s: %w", repoPath, redactGitToken(strings.TrimSpace(string(out)), token), err)
+		if err := transferGitRemote(parsed, token, repoPath, config, cmdFactory, true); err != nil {
+			return "", fmt.Errorf("git fetch failed for cached repo %s: %w", repoPath, err)
 		}
 		return repoPath, nil
 	}
 
-	args := gitAuthArgs(token, "clone", remote, repoPath)
-	cmd := cmdFactory("git", args...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git clone failed for %s: %s: %w", remote, redactGitToken(strings.TrimSpace(string(out)), token), err)
+	if err := transferGitRemote(parsed, token, repoPath, config, cmdFactory, false); err != nil {
+		return "", fmt.Errorf("git clone failed for %s: %w", parsed.String(), err)
 	}
 	return repoPath, nil
 }
@@ -336,38 +377,8 @@ func redactGitToken(output, token string) string {
 	return redacted
 }
 
-func validateGitRemote(remote string, requireHTTPS bool) (*url.URL, error) {
-	parsed, err := url.Parse(remote)
-	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, fmt.Errorf("git_remote must be a valid HTTPS URL; SSH remotes are not allowed")
-	}
-	if parsed.Scheme == "ssh" || strings.HasPrefix(remote, "git@") {
-		return nil, fmt.Errorf("git_remote must use HTTPS; SSH remotes are not allowed")
-	}
-	if parsed.User != nil {
-		return nil, fmt.Errorf("git_remote must not contain embedded credentials")
-	}
-	if requireHTTPS && parsed.Scheme != "https" {
-		return nil, fmt.Errorf("git_remote must use HTTPS when require_https is enabled")
-	}
-	if parsed.Scheme != "https" && parsed.Scheme != "http" {
-		return nil, fmt.Errorf("git_remote must use HTTP or HTTPS")
-	}
-	return parsed, nil
-}
-
 func cacheDirNameForRemote(remote *url.URL) string {
-	name := remote.Host + strings.TrimSuffix(remote.Path, ".git")
-	name = strings.Trim(name, "/")
-	return sanitizeBranchName(strings.ReplaceAll(name, "/", "-"))
-}
-
-func gitAuthArgs(token string, args ...string) []string {
-	if token == "" {
-		return args
-	}
-	withAuth := []string{"-c", "http.extraheader=Authorization: Bearer " + token}
-	return append(withAuth, args...)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(remote.String())))
 }
 
 // =============================================================================
@@ -504,35 +515,9 @@ func buildTaskAssignmentHeader(task *types.ResolvedTask, isResume bool) string {
 // CommonBuildEnvExports builds shell export statements for env vars that should be
 // propagated to spawned executor processes.
 //
-// Merge order (later wins):
-//  1. Config passthrough: env var names from RunnerConfig.EnvPassthrough,
-//     values read from the runner's own environment
-//  2. Config-level hardcoded: BRAIN_API_URL and BRAIN_API_TOKEN from runner config
-//  3. Task-level: task.Env map overrides everything
+// Uses the same policy as direct children; never exports a standing credential.
 func CommonBuildEnvExports(task *types.ResolvedTask, config RunnerConfig) string {
-	env := make(map[string]string)
-
-	// 1. Passthrough: read named vars from the runner's own environment
-	for _, name := range config.EnvPassthrough {
-		if val := os.Getenv(name); val != "" {
-			env[name] = val
-		}
-	}
-
-	// 2. Always ensure BRAIN_API_URL and BRAIN_API_TOKEN from runner config
-	if config.BrainAPIURL != "" {
-		env["BRAIN_API_URL"] = config.BrainAPIURL
-	}
-	if config.APIToken != "" {
-		env["BRAIN_API_TOKEN"] = config.APIToken
-	}
-
-	// 3. Task-level overrides win
-	if task != nil {
-		for k, v := range task.Env {
-			env[k] = v
-		}
-	}
+	env := CommonBuildEnvMap(task, config)
 
 	if len(env) == 0 {
 		return ""
@@ -547,40 +532,97 @@ func CommonBuildEnvExports(task *types.ResolvedTask, config RunnerConfig) string
 
 	var lines []string
 	for _, k := range keys {
-		lines = append(lines, fmt.Sprintf(`export %s="%s"`, k, env[k]))
+		lines = append(lines, "export "+k+"="+shellEnvQuote(env[k]))
 	}
 	return strings.Join(lines, "\n") + "\n"
 }
 
-// CommonBuildEnvMap builds a flat map of env vars that should be propagated
-// to spawned executor processes. Same merge logic as CommonBuildEnvExports
-// but returns a map for use with exec.Cmd.Env.
+// CommonBuildEnvMap is the single child-environment policy. All BRAIN_ names
+// are reserved; only runner-owned context is added after filtering overrides.
 func CommonBuildEnvMap(task *types.ResolvedTask, config RunnerConfig) map[string]string {
 	env := make(map[string]string)
-
-	// 1. Passthrough
-	for _, name := range config.EnvPassthrough {
-		if val := os.Getenv(name); val != "" {
-			env[name] = val
-		}
-	}
-
-	// 2. Config-level
-	if config.BrainAPIURL != "" {
-		env["BRAIN_API_URL"] = config.BrainAPIURL
-	}
-	if config.APIToken != "" {
-		env["BRAIN_API_TOKEN"] = config.APIToken
-	}
-
-	// 3. Task-level
-	if task != nil {
-		for k, v := range task.Env {
+	put := func(k, v string) {
+		if validChildEnvKey(k) && !strings.HasPrefix(k, "BRAIN_") && k != config.StandingTokenEnv && !shellStartupKey(k) && !containsStandingCredential(v, config) && !strings.ContainsRune(v, 0) {
 			env[k] = v
 		}
 	}
-
+	for _, entry := range os.Environ() {
+		if k, v, ok := strings.Cut(entry, "="); ok {
+			put(k, v)
+		}
+	}
+	for _, name := range config.EnvPassthrough {
+		if val, ok := os.LookupEnv(name); ok {
+			put(name, val)
+		}
+	}
+	if task != nil {
+		for k, v := range task.Env {
+			put(k, v)
+		}
+	}
+	if config.BrainAPIURL != "" && !containsStandingCredential(config.BrainAPIURL, config) && !strings.ContainsRune(config.BrainAPIURL, 0) {
+		env["BRAIN_API_URL"] = config.BrainAPIURL
+	}
+	injectTaskCredential(env, task)
 	return env
+}
+
+// injectTaskCredential is deliberately empty until P7 supplies a
+// validated, claim-bound per-task credential. No standing-token fallback.
+func injectTaskCredential(_ map[string]string, _ *types.ResolvedTask) {}
+
+func containsStandingCredential(value string, config RunnerConfig) bool {
+	for _, secret := range []string{config.StandingToken, os.Getenv("BRAIN_API_TOKEN"), os.Getenv(config.StandingTokenEnv)} {
+		if secret != "" && strings.Contains(value, secret) {
+			return true
+		}
+	}
+	return false
+}
+
+func validChildEnvKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for i, c := range key {
+		if c != '_' && !(c >= 'A' && c <= 'Z') && !(c >= 'a' && c <= 'z') && !(i > 0 && c >= '0' && c <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+func shellStartupKey(key string) bool {
+	switch key {
+	case "BASH_ENV", "ENV", "SHELLOPTS", "BASHOPTS", "ZDOTDIR", "PS4":
+		return true
+	}
+	return false
+}
+
+func childEnvironment(task *types.ResolvedTask, config RunnerConfig) []string {
+	m := CommonBuildEnvMap(task, config)
+	env := make([]string, 0, len(m))
+	for k, v := range m {
+		env = append(env, k+"="+v)
+	}
+	sort.Strings(env)
+	return env
+}
+
+func shellEnvQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
+
+// A tmux server has its own stale environment. Reset it at the script boundary,
+// not merely in the tmux client. Privileged bash ignores startup env/functions;
+// the inner shell runs unprivileged with only the sanitized environment.
+func childRunnerScript(body string, task *types.ResolvedTask, config RunnerConfig) string {
+	args := []string{"#!/bin/bash -p\nexec /usr/bin/env -i"}
+	for _, entry := range childEnvironment(task, config) {
+		args = append(args, shellEnvQuote(entry))
+	}
+	args = append(args, "/bin/bash --noprofile --norc -c", shellEnvQuote(body))
+	return strings.Join(args, " ") + "\n"
 }
 
 // =============================================================================

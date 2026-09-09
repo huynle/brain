@@ -11,10 +11,10 @@ import (
 )
 
 type ClientContextServiceImpl struct {
-	storage *storage.StorageLayer
+	storage *storage.TenantStore
 }
 
-func NewClientContextService(store *storage.StorageLayer) *ClientContextServiceImpl {
+func NewClientContextService(store *storage.TenantStore) *ClientContextServiceImpl {
 	return &ClientContextServiceImpl{storage: store}
 }
 

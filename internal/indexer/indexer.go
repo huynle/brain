@@ -4,16 +4,16 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/tenantfs"
 	"github.com/huynle/brain-api/pkg/markdown"
 )
 
@@ -26,7 +26,8 @@ type EmbeddingClient interface {
 // Indexer synchronizes markdown files on disk with the SQLite database.
 type Indexer struct {
 	brainDir string
-	storage  *storage.StorageLayer
+	storage  *storage.TenantStore
+	policy   *tenantfs.Root
 }
 
 const latestReadyAttachmentDerivedJoin = `
@@ -44,22 +45,45 @@ const latestReadyAttachmentDerivedJoin = `
 const embeddingStaleCondition = "(m.note_id IS NULL OR n.indexed_at > m.latest_indexed OR d.latest_ready_derived > m.latest_indexed)"
 
 // NewIndexer creates a new Indexer for the given brain directory and storage layer.
-func NewIndexer(brainDir string, store *storage.StorageLayer) *Indexer {
-	return &Indexer{
+func NewIndexer(brainDir string, store *storage.TenantStore, policy ...*tenantfs.Root) *Indexer {
+	idx := &Indexer{
 		brainDir: brainDir,
 		storage:  store,
 	}
+	if len(policy) > 0 {
+		idx.policy = policy[0]
+	}
+	return idx
+}
+
+// FilesystemPolicy is the immutable tenant binding shared with service writers
+// and watchers. Only trusted composition supplies it; it never provisions roots.
+func (idx *Indexer) FilesystemPolicy() *tenantfs.Root { return idx.policy }
+
+func (idx *Indexer) admit(name string, missing bool) error {
+	if idx.policy == nil {
+		return nil
+	}
+	if missing {
+		_, err := idx.policy.ResolveForWrite(context.Background(), name)
+		return err
+	}
+	return idx.policy.AdmitTraversal(context.Background(), name)
+}
+
+func (idx *Indexer) markdownFiles() ([]string, error) {
+	return globMarkdownFiles(idx.brainDir, idx.policy)
 }
 
 // RebuildAll performs a full rebuild: deletes all existing data and re-indexes
-// every .md file on disk.
+// every discovered .md file under projects/ and global/.
 func (idx *Indexer) RebuildAll() (*IndexResult, error) {
 	start := time.Now()
 	ctx := context.Background()
 	var indexErrors []IndexError
 
 	// 1. Discover files on disk
-	files, err := globMarkdownFiles(idx.brainDir)
+	files, err := idx.markdownFiles()
 	if err != nil {
 		return nil, fmt.Errorf("glob markdown files: %w", err)
 	}
@@ -67,6 +91,9 @@ func (idx *Indexer) RebuildAll() (*IndexResult, error) {
 	// 2. Parse all files, collecting results and errors
 	var parsed []*markdown.ParsedFile
 	for _, file := range files {
+		if err := idx.admit(file, false); err != nil {
+			return nil, err
+		}
 		pf, err := markdown.ParseFile(file, idx.brainDir)
 		if err != nil {
 			indexErrors = append(indexErrors, IndexError{
@@ -132,7 +159,7 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 	var added, updated, deleted, skipped int
 
 	// 1. Discover files on disk
-	diskFiles, err := globMarkdownFiles(idx.brainDir)
+	diskFiles, err := idx.markdownFiles()
 	if err != nil {
 		return nil, fmt.Errorf("glob markdown files: %w", err)
 	}
@@ -163,6 +190,9 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 
 	// 3. Process each file on disk
 	for _, file := range diskFiles {
+		if err := idx.admit(file, false); err != nil {
+			return nil, err
+		}
 		pf, err := markdown.ParseFile(file, idx.brainDir)
 		if err != nil {
 			indexErrors = append(indexErrors, IndexError{
@@ -205,7 +235,8 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 		}
 	}
 
-	// 4. Delete DB entries with no corresponding file on disk
+	// 4. Delete DB entries absent from scoped discovery, including formerly
+	// indexed out-of-scope files that still exist on disk. Disk files are untouched.
 	for dbPath := range dbMap {
 		if !diskSet[dbPath] {
 			if _, err := idx.storage.DeleteNote(ctx, dbPath); err != nil {
@@ -228,6 +259,11 @@ func (idx *Indexer) IndexChanged() (*IndexResult, error) {
 // IndexFile indexes a single file by relative path (upsert).
 func (idx *Indexer) IndexFile(relativePath string) error {
 	ctx := context.Background()
+	if idx.policy != nil {
+		if _, err := idx.policy.Resolve(ctx, relativePath); err != nil {
+			return err
+		}
+	}
 
 	pf, err := markdown.ParseFile(relativePath, idx.brainDir)
 	if err != nil {
@@ -266,6 +302,9 @@ func (idx *Indexer) IndexFile(relativePath string) error {
 // RemoveFile removes a single file from the index.
 func (idx *Indexer) RemoveFile(relativePath string) error {
 	ctx := context.Background()
+	if err := idx.admit(relativePath, true); err != nil {
+		return err
+	}
 	_, err := idx.storage.DeleteNote(ctx, relativePath)
 	if err != nil {
 		return fmt.Errorf("delete note %q: %w", relativePath, err)
@@ -276,7 +315,7 @@ func (idx *Indexer) RemoveFile(relativePath string) error {
 // GetHealth returns health statistics about the index.
 func (idx *Indexer) GetHealth() (*IndexHealth, error) {
 	// Count disk files
-	diskFiles, err := globMarkdownFiles(idx.brainDir)
+	diskFiles, err := idx.markdownFiles()
 	if err != nil {
 		return nil, fmt.Errorf("glob markdown files: %w", err)
 	}
@@ -291,7 +330,7 @@ func (idx *Indexer) GetHealth() (*IndexHealth, error) {
 		return nil, fmt.Errorf("count indexed notes: %w", err)
 	}
 
-	// Count stale entries (in DB but not on disk)
+	// Count stale entries (in DB but absent from scoped discovery).
 	rows, err := idx.storage.DB().Query("SELECT path FROM notes")
 	if err != nil {
 		return nil, fmt.Errorf("query note paths: %w", err)
@@ -711,9 +750,18 @@ func toLinkInputs(links []markdown.ExtractedLink) []storage.LinkInput {
 	return inputs
 }
 
-// globMarkdownFiles walks brainDir and returns relative paths of all .md files,
-// excluding the data directory.
-func globMarkdownFiles(brainDir string) ([]string, error) {
+// inContentScope checks the exact first component of a slash-separated relative
+// path. Callers handle the traversal root separately. This is a discovery policy,
+// not a replacement for the parser's path containment checks.
+func inContentScope(relativePath string) bool {
+	first, _, _ := strings.Cut(relativePath, "/")
+	return first == "projects" || first == "global"
+}
+
+// globMarkdownFiles returns relative .md paths under projects/ and global/ only.
+// WalkDir prunes other top-level directories before reading their contents and
+// does not recurse through directory symlinks.
+func globMarkdownFiles(brainDir string, policies ...*tenantfs.Root) ([]string, error) {
 	var files []string
 	err := filepath.WalkDir(brainDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -725,13 +773,30 @@ func globMarkdownFiles(brainDir string) ([]string, error) {
 		if err != nil {
 			return err
 		}
-
-		// Skip .brain-data/ and legacy .zk/ directories
-		if d.IsDir() && (relPath == config.DataDir || strings.HasPrefix(relPath, config.DataDir+string(os.PathSeparator)) ||
-			relPath == config.LegacyDataDir || strings.HasPrefix(relPath, config.LegacyDataDir+string(os.PathSeparator))) {
-			return filepath.SkipDir
+		relPath = filepath.ToSlash(relPath)
+		// Admit the root itself, but prune unrelated siblings before resolving
+		// tenant policy (an excluded dangling symlink is not content).
+		if relPath != "." && !inContentScope(relPath) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if len(policies) > 0 && policies[0] != nil {
+			if err := policies[0].AdmitTraversal(context.Background(), relPath); err != nil {
+				if relPath == "." || !errors.Is(err, tenantfs.ErrDenied) {
+					return err
+				}
+				if d.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 		}
 
+		if relPath == "." {
+			return nil
+		}
 		// Only .md files
 		if !d.IsDir() && strings.HasSuffix(relPath, ".md") {
 			// Normalize to forward slashes for consistency

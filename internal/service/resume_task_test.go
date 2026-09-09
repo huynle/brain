@@ -22,7 +22,7 @@ const resumeTestProject = "resume-proj"
 //   - task status=in_progress
 //   - task_claims row exists, not yet expired
 //   - the runner holding that claim has runners.status=offline
-func seedAbandonedTaskWithOfflineClaim(t *testing.T, store *storage.StorageLayer, taskID, runnerID string) {
+func seedAbandonedTaskWithOfflineClaim(t *testing.T, store *storage.TenantStore, taskID, runnerID string) {
 	t.Helper()
 	insertTaskNote(t, store, taskID, "Abandoned Task", "in_progress", "medium", resumeTestProject, map[string]interface{}{})
 

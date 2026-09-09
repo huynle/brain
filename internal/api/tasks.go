@@ -333,6 +333,11 @@ func (h *Handler) HandleClaimTask(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.tasks.ClaimTask(r.Context(), projectId, taskId, req.RunnerID)
 	if err != nil {
+		var denial *types.PlacementDenialError
+		if errors.As(err, &denial) {
+			WriteError(w, http.StatusForbidden, "Forbidden", denial.Reason)
+			return
+		}
 		if errors.Is(err, ErrConflict) {
 			WriteJSON(w, http.StatusConflict, resp)
 			return
@@ -453,22 +458,16 @@ func (h *Handler) HandleDispatchTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify runner exists
-	if h.runnerRegistry != nil {
-		_, err := h.runnerRegistry.GetRunner(r.Context(), req.TargetRunnerID)
-		if err != nil {
-			if errors.Is(err, ErrNotFound) {
-				WriteError(w, http.StatusNotFound, "Not Found", "runner not found")
-				return
-			}
-			WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())
-			return
-		}
-	}
-
+	// The service validates the target runner and records placement denials,
+	// including unregistered targets. Do not short-circuit that audit here.
 	// Create dispatch lease and pre-claim for target runner (60 second expiry for dispatch)
 	dispatchResp, err := h.tasks.DispatchTask(r.Context(), projectId, taskId, req.TargetRunnerID)
 	if err != nil {
+		var denial *types.PlacementDenialError
+		if errors.As(err, &denial) {
+			WriteError(w, http.StatusForbidden, "Forbidden", denial.Reason)
+			return
+		}
 		if errors.Is(err, ErrConflict) {
 			WriteJSON(w, http.StatusConflict, map[string]any{
 				"success": false,
@@ -756,6 +755,10 @@ func (h *Handler) HandleCheckoutFeature(w http.ResponseWriter, r *http.Request) 
 
 	result, err := h.tasks.CheckoutFeature(r.Context(), projectId, featureId, &opts)
 	if err != nil {
+		if errors.Is(err, ErrInvalidInput) {
+			WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
+			return
+		}
 		if errors.Is(err, ErrNotFound) {
 			WriteError(w, http.StatusNotFound, "Not Found", "feature not found")
 			return

@@ -27,7 +27,7 @@ import (
 func testConfig(serverURL string) RunnerConfig {
 	return RunnerConfig{
 		BrainAPIURL:            serverURL,
-		APIToken:               "test-token",
+		StandingToken:          "test-token",
 		PollInterval:           30,
 		MaxParallel:            2,
 		StateDir:               "/tmp/state",
@@ -346,7 +346,7 @@ func TestAPIClient_NoAuthHeader_WhenTokenEmpty(t *testing.T) {
 	defer srv.Close()
 
 	cfg := testConfig(srv.URL)
-	cfg.APIToken = ""
+	cfg.StandingToken = ""
 	client := NewAPIClient(cfg)
 	_, err := client.ListProjects(context.Background())
 	if err != nil {

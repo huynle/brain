@@ -235,7 +235,7 @@ func listGeneratedGoalTasks(t *testing.T, brain *BrainServiceImpl, project strin
 
 // findGoalReconcileAudit reads back the persisted reconcile audit event from
 // the event_log and unmarshals its payload.
-func findGoalReconcileAudit(t *testing.T, store *storage.StorageLayer) GoalReconcileAudit {
+func findGoalReconcileAudit(t *testing.T, store *storage.TenantStore) GoalReconcileAudit {
 	t.Helper()
 	rows, err := store.GetUnprocessed(context.Background())
 	if err != nil {

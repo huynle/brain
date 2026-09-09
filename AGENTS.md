@@ -126,11 +126,26 @@ re-indexes it.
   writes a file, and it silently skipped indexing until 2026-08-26.
 - **Boot indexes once.** `internal/apiserver/server.go` runs `IndexChanged` in
   a background goroutine at startup, then never scans again.
+- **Content-root policy:** discovery (`IndexChanged`, `RebuildAll`, `GetHealth`)
+  and watcher startup/new-directory walks use exact first-component roots
+  `projects/` and `global/` under the supplied `brainDir`. All siblings, including
+  `attachments/`, `.git/`, `.brain-data/`, and root-level Markdown, are excluded;
+  excluded directories are pruned before reading their children. The watcher
+  keeps `brainDir` itself watched as an anchor for initially absent content roots,
+  sweeps populated new content subtrees and watches them for later writes.
+  Custom/default watcher ignores still apply within allowed roots. Directory
+  symlinks are not recursively followed; parser containment remains authoritative
+  for file reads, and direct `IndexFile` is not layout-restricted.
+- **P3 integration:** indexer and watcher constructors are unchanged and must
+  receive the same supplied `brainDir` root. P3 root ownership must preserve
+  `projects/` and `global/` directly beneath that root, not pass either subtree
+  as the root or flatten the layout.
 - **Out-of-band writes need the watcher.** A git pull into the brain dir, a
   manual edit, or another process bypasses both of the above. `indexer.FileWatcher`
   covers that gap, enabled with `server.index_watch.enabled` in config.yaml or
   `BRAIN_INDEX_WATCH=true`. **It is off by default**: the watcher registers one
-  fsnotify watch per directory, and a large brain dir can exhaust the
+  fsnotify watch per allowed, non-ignored content directory (plus the root
+  anchor), and a large content tree can still exhaust the
   platform's watch limit (inotify `max_user_watches`). With it off, out-of-band
   writes appear only after a server restart.
 - The watcher starts after the boot scan finishes so the two never race on the
@@ -287,6 +302,49 @@ The Pi executor spawns [Pi](https://github.com/anthropics/pi) processes in RPC m
 - **Graceful fallback**: Missing agent bundle falls back to `--append-system-prompt`
 
 #### Configuration
+
+#### Task Git remote policy
+
+Task `git_remote` admission is HTTPS-only and requires a registered runner's
+credentialed-host advertisement. Registration/heartbeat derive reserved
+`git-credential-host:<authority>` capabilities; the service gates Save/Update,
+metadata writes and generated checkouts before persistence, and dispatch/pull/
+direct claims require compatible live runners. See
+[Git remote policy](docs/git-remote-policy.md) for nested/flat configuration,
+legacy GitHub-only binding, explicit-empty deny, anonymous-transport limits,
+redirect/CA behavior and cache migration costs.
+
+#### Shared runner workdir policy
+
+`runner.control.allowed_workdir_roots` applies to **both task executors and
+ad-hoc spawning**, even when `control.disabled` is true. In flat/legacy config,
+use `control.allowed_workdir_roots` without the `runner` wrapper:
+
+```yaml
+runner:
+  control:
+    allowed_workdir_roots:
+      - /srv/projects
+      - /srv/brain-repo-cache
+```
+
+- Empty/omitted roots mean **HOME ONLY**; unavailable home fails closed.
+  Explicit roots replace, rather than extend, the home default. Use existing
+  absolute directories (no shell `~` expansion).
+- Both candidates and roots are symlink-canonicalized, including macOS
+  `/var` → `/private/var`. Sibling prefixes and symlink escapes are refused.
+- Execution requires an existing directory. A supplied invalid/forbidden
+  `target_workdir` is an error, not a fallback hint. Successful origin, workdir,
+  resolved-workdir, config-default and worktree resolutions all use the same
+  validator; executor `SpawnOptions.Workdir` overrides are checked again.
+- Before clone/fetch or worktree creation, repo/destination paths are checked;
+  missing destinations are checked through their canonical existing parent.
+  Allow the main repo as well when creation from a linked worktree needs it.
+- This is cwd authorization, **not a filesystem sandbox**: child code and Git
+  metadata are not confined, and concurrent symlink replacement is not made
+  race-free. `script.workdir_restrict` remains a separate, unchanged policy.
+- Local script-child integration proves linked-worktree execution, not actual
+  LLM compatibility. Real LLM compatibility remains a release gate.
 
 **Config types** (`types.go`):
 ```yaml

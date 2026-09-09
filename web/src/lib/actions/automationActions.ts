@@ -150,6 +150,7 @@ export function buildAutomationActions(
   // ─── danger ─────────────────────────────────────────────────────
   actions.push({
     id: "delete",
+    background: true,
     label: "Delete automation",
     group: "danger",
     key: "d",

@@ -17,6 +17,7 @@ import (
 
 	api "github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 
 	_ "github.com/glebarez/go-sqlite"
@@ -29,7 +30,7 @@ func newTestWebhookService(t *testing.T) *WebhookServiceImpl {
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
@@ -44,7 +45,7 @@ func newTestWebhookServiceWithServer(t *testing.T, handler http.HandlerFunc) (*W
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
@@ -541,10 +542,27 @@ func TestMatchesWebhook_EmptyFilter(t *testing.T) {
 // Delivery Tests (with HTTP test server)
 // ---------------------------------------------------------------------------
 
+// Deliver detaches its worker. Keep its store and HTTP server alive through the
+// terminal log write, even on fatal assertion paths. Both success and exhausted
+// retries write a terminal record; the client timeout bounds each attempt.
+func drainWebhookDelivery(t *testing.T, svc *WebhookServiceImpl, webhookID string) {
+	t.Helper()
+	svc.client.Timeout = time.Second
+	t.Cleanup(func() {
+		if err := waitForCondition(15*time.Second, func() bool {
+			deliveries, err := svc.ListDeliveries(context.Background(), webhookID, 10)
+			return err == nil && len(deliveries) > 0
+		}); err != nil {
+			t.Errorf("delivery did not reach its terminal log write: %v", err)
+		}
+	})
+}
+
 func TestDeliver_SuccessfulDelivery(t *testing.T) {
 	var receivedBody []byte
 	var receivedHeaders http.Header
 	var deliveryCount int32
+	handled := make(chan struct{}, 10)
 
 	svc, server := newTestWebhookServiceWithServer(t, func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&deliveryCount, 1)
@@ -555,10 +573,11 @@ func TestDeliver_SuccessfulDelivery(t *testing.T) {
 			t.Errorf("failed to read request body: %v", err)
 		}
 		w.WriteHeader(http.StatusOK)
+		handled <- struct{}{}
 	})
 
 	ctx := context.Background()
-	_, err := svc.Create(ctx, types.CreateWebhookRequest{
+	wh, err := svc.Create(ctx, types.CreateWebhookRequest{
 		Name:   "delivery-test",
 		URL:    server.URL,
 		Events: []string{"task.completed"},
@@ -567,6 +586,7 @@ func TestDeliver_SuccessfulDelivery(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
+	drainWebhookDelivery(t, svc, wh.ID)
 
 	event := types.Event{
 		ID:        "evt_test123",
@@ -581,8 +601,14 @@ func TestDeliver_SuccessfulDelivery(t *testing.T) {
 		t.Fatalf("Deliver failed: %v", err)
 	}
 
-	// Wait for async delivery
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-handled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("webhook handler did not complete")
+	}
+	// Close joins HTTP handlers before reading their captures. Cleanup drains
+	// the worker's terminal store write before the store is closed.
+	server.Close()
 
 	if atomic.LoadInt32(&deliveryCount) != 1 {
 		t.Errorf("delivery count = %d, want 1", deliveryCount)
@@ -620,14 +646,16 @@ func TestDeliver_SuccessfulDelivery(t *testing.T) {
 
 func TestDeliver_NoSignatureWithoutSecret(t *testing.T) {
 	var receivedHeaders http.Header
+	handled := make(chan struct{}, 10)
 
 	svc, server := newTestWebhookServiceWithServer(t, func(w http.ResponseWriter, r *http.Request) {
 		receivedHeaders = r.Header
 		w.WriteHeader(http.StatusOK)
+		handled <- struct{}{}
 	})
 
 	ctx := context.Background()
-	_, err := svc.Create(ctx, types.CreateWebhookRequest{
+	wh, err := svc.Create(ctx, types.CreateWebhookRequest{
 		Name:   "no-secret-hook",
 		URL:    server.URL,
 		Events: []string{"task.*"},
@@ -636,12 +664,18 @@ func TestDeliver_NoSignatureWithoutSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create failed: %v", err)
 	}
+	drainWebhookDelivery(t, svc, wh.ID)
 
 	if err := svc.Deliver(ctx, types.Event{Type: "task.completed"}); err != nil {
 		t.Fatalf("Deliver failed: %v", err)
 	}
 
-	time.Sleep(200 * time.Millisecond)
+	select {
+	case <-handled:
+	case <-time.After(5 * time.Second):
+		t.Fatal("webhook handler did not complete")
+	}
+	server.Close()
 
 	if receivedHeaders.Get("X-Brain-Signature") != "" {
 		t.Error("should not have X-Brain-Signature without secret")

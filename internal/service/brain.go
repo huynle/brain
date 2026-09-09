@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/huynle/brain-api/internal/api"
+	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
@@ -29,7 +31,7 @@ var _ AttachmentDerivedChangeHook = (*BrainServiceImpl)(nil)
 // BrainServiceImpl implements api.BrainService using filesystem + SQLite storage.
 type BrainServiceImpl struct {
 	config          *config.Config
-	storage         *storage.StorageLayer
+	storage         *storage.TenantStore
 	indexer         *indexer.Indexer
 	bus             events.Bus
 	embeddingClient EmbeddingClient
@@ -41,7 +43,7 @@ type BrainServiceImpl struct {
 // NewBrainService creates a new BrainServiceImpl.
 // The bus parameter is optional; if nil, no events are published.
 // The embeddingClient parameter is optional; if nil, semantic search features will be disabled.
-func NewBrainService(cfg *config.Config, store *storage.StorageLayer, idx *indexer.Indexer, bus events.Bus, embeddingClient EmbeddingClient) *BrainServiceImpl {
+func NewBrainService(cfg *config.Config, store *storage.TenantStore, idx *indexer.Indexer, bus events.Bus, embeddingClient EmbeddingClient) *BrainServiceImpl {
 	return &BrainServiceImpl{
 		config:          cfg,
 		storage:         store,
@@ -145,6 +147,21 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	}
 	if req.Title == "" {
 		return nil, fmt.Errorf("title is required")
+	}
+	if err := validatePathSegment(req.Type, "type"); err != nil {
+		return nil, err
+	}
+	// Empty project retains the default; supplied projects are validated even
+	// for global entries, before any filesystem or index side effects.
+	if req.Project != "" {
+		if err := validateProjectID(req.Project); err != nil {
+			return nil, err
+		}
+	}
+	if req.Type == "task" {
+		if err := validateConfiguredGitRemote(ctx, s.storage, req.GitRemote); err != nil {
+			return nil, err
+		}
 	}
 
 	// Sanitize inputs
@@ -274,7 +291,10 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 	}
 
 	// Write file to disk
-	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(relPath))
+	absPath, err := s.filesystemPath(ctx, relPath, true)
+	if err != nil {
+		return nil, err
+	}
 	dir := filepath.Dir(absPath)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create directory %q: %w", dir, err)
@@ -384,6 +404,9 @@ func (s *BrainServiceImpl) resolveEntry(ctx context.Context, pathOrID string) (*
 		return nil, fmt.Errorf("lookup by short ID: %w", err)
 	}
 	if row != nil {
+		if err := s.admittedRow(ctx, row.Path); err != nil {
+			return nil, err
+		}
 		return row, nil
 	}
 
@@ -393,6 +416,9 @@ func (s *BrainServiceImpl) resolveEntry(ctx context.Context, pathOrID string) (*
 		return nil, fmt.Errorf("lookup by path: %w", err)
 	}
 	if row != nil {
+		if err := s.admittedRow(ctx, row.Path); err != nil {
+			return nil, err
+		}
 		return row, nil
 	}
 
@@ -402,6 +428,9 @@ func (s *BrainServiceImpl) resolveEntry(ctx context.Context, pathOrID string) (*
 		return nil, fmt.Errorf("lookup by title: %w", err)
 	}
 	if row != nil {
+		if err := s.admittedRow(ctx, row.Path); err != nil {
+			return nil, err
+		}
 		return row, nil
 	}
 
@@ -761,7 +790,10 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 
 	// Read file from disk
-	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(row.Path))
+	absPath, err := s.filesystemPath(ctx, row.Path, true)
+	if err != nil {
+		return nil, err
+	}
 	fileContent, err := os.ReadFile(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("read file %q: %w", absPath, err)
@@ -775,6 +807,19 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 
 	fm := &doc.Frontmatter
 	body := doc.Body
+	// Check raw input before sanitization and the effective stored value when
+	// this patch does not set git_remote. Metadata-only values count too.
+	if !retirementUpdate(req) && (fm.Type == "task" || (row.Type != nil && *row.Type == "task")) {
+		remote := fm.GitRemote
+		if req.GitRemote != nil {
+			remote = *req.GitRemote
+		} else if err := validateMetadataGitRemote(ctx, s.storage, row, nil); err != nil {
+			return nil, err
+		}
+		if err := validateConfiguredGitRemote(ctx, s.storage, remote); err != nil {
+			return nil, err
+		}
+	}
 
 	// Capture pre-update state for event derivation and for deciding whether
 	// embeddings must be regenerated (only body changes affect the vectors).
@@ -1250,6 +1295,9 @@ func (s *BrainServiceImpl) BulkUpdate(ctx context.Context, req types.BulkUpdateR
 	if hasFilter && req.Updates == nil {
 		return nil, fmt.Errorf("updates required when using filter mode")
 	}
+	if hasFilter && !req.Filter.IsEffective() {
+		return nil, fmt.Errorf("filter must constrain at least one field (e.g. project, feature_id)")
+	}
 
 	// 2. Apply safety cap: default 100, max 100.
 	limit := req.Limit
@@ -1460,6 +1508,9 @@ func (s *BrainServiceImpl) BulkDelete(ctx context.Context, req types.BulkDeleteR
 	}
 	if !hasFilter && !hasPaths {
 		return nil, fmt.Errorf("must specify either filter or paths")
+	}
+	if hasFilter && !req.Filter.IsEffective() {
+		return nil, fmt.Errorf("filter must constrain at least one field (e.g. project, feature_id)")
 	}
 
 	limit := req.Limit
@@ -1699,6 +1750,11 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	if row == nil {
 		return nil, api.ErrNotFound
 	}
+	if !retirementMetadata(fields) {
+		if err := validateMetadataGitRemote(ctx, s.storage, row, fields); err != nil {
+			return nil, err
+		}
+	}
 
 	// Status transitions stamp/clear completed_at. Injecting into the fields
 	// map here (before durability routing) means the stamp reaches both the
@@ -1728,6 +1784,12 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	// If durable fields are present, write changes to the markdown file
 	if hasDurable {
 		if err := s.syncDurableFieldsToFile(ctx, row, fields); err != nil {
+			var admissionErr gitRemoteAdmissionError
+			var filesystemErr filesystemAdmissionError
+			var reindexErr durableReindexError
+			if errors.Is(err, brainpath.ErrContainment) || errors.As(err, &admissionErr) || errors.As(err, &filesystemErr) || errors.As(err, &reindexErr) {
+				return nil, err
+			}
 			// Log warning but continue with DB update — file write failure
 			// should not block the metadata update
 			fmt.Fprintf(os.Stderr, "WARNING: failed to sync durable fields to file %q: %v\n", row.Path, err)
@@ -1771,12 +1833,21 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	return &entry, nil
 }
 
+// Reindex failure must not fall back to DB-only success. The preceding file
+// write is not rolled back; callers must receive the indexing error.
+type durableReindexError struct{ error }
+
+func (e durableReindexError) Unwrap() error { return e.error }
+
 // syncDurableFieldsToFile reads the markdown file, applies durable field
 // changes to the frontmatter, writes the file back, and re-indexes it.
 // This follows the same pattern as the Update() method.
 func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *storage.NoteRow, fields map[string]interface{}) error {
 	// Read file from disk
-	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(row.Path))
+	absPath, err := s.filesystemPath(ctx, row.Path, true)
+	if err != nil {
+		return filesystemAdmissionError{err}
+	}
 	fileContent, err := os.ReadFile(absPath)
 	if err != nil {
 		return fmt.Errorf("read file %q: %w", absPath, err)
@@ -1791,6 +1862,15 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	fm := &doc.Frontmatter
 	body := doc.Body
 	originalBody := doc.Body
+	// Reindexing below restores disk frontmatter, which can differ from the
+	// DB-only metadata checked by UpdateMetadata. Validate that representation
+	// too, before the first write. This failure must not be treated as a
+	// best-effort file-sync error by the caller.
+	if !retirementMetadata(fields) && (fm.Type == "task" || (row.Type != nil && *row.Type == "task") || fields["type"] == "task") {
+		if err := validateConfiguredGitRemote(ctx, s.storage, fm.GitRemote); err != nil {
+			return err
+		}
+	}
 
 	// Apply durable field changes to frontmatter
 	if v, ok := fields["status"]; ok {
@@ -1973,7 +2053,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 
 	// Re-index the file
 	if err := s.indexer.IndexFile(row.Path); err != nil {
-		return fmt.Errorf("re-index file %q: %w", row.Path, err)
+		return durableReindexError{fmt.Errorf("re-index file %q: %w", row.Path, err)}
 	}
 	// Body changes (append/note fields) need re-embedding; frontmatter-only
 	// changes just mirror new filter values onto the existing embedding rows.
@@ -2016,7 +2096,10 @@ func (s *BrainServiceImpl) Delete(ctx context.Context, pathOrID string) error {
 	delProject := extractProjectFromPath(delPath)
 
 	// Delete file from disk
-	absPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(row.Path))
+	absPath, err := s.filesystemPath(ctx, row.Path, true)
+	if err != nil {
+		return err
+	}
 	if err := os.Remove(absPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove file %q: %w", absPath, err)
 	}
@@ -2239,6 +2322,17 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 		Priority:  req.Priority,
 	}
 
+	// Task lists and task mutations must resolve project scope identically.
+	// Older / hand-authored files may omit projectId or retain a stale value
+	// after an out-of-band move. The project directory is authoritative.
+	if req.Type == "task" && req.Project != "" && len(req.Projects) == 0 && (req.Global == nil || !*req.Global) {
+		if err := validateProjectID(req.Project); err != nil {
+			return nil, err
+		}
+		opts.ProjectID = ""
+		opts.PathPrefix = "projects/" + req.Project + "/task/"
+	}
+
 	// Handle global vs project filtering. A multi-project scope supersedes
 	// both: "these six projects plus global" cannot be said with the
 	// single-project field and the global flag, which are mutually exclusive.
@@ -2314,6 +2408,12 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 
 	entries := make([]types.BrainEntry, 0, len(filtered))
 	for _, row := range filtered {
+		if err := s.admittedRow(ctx, row.Path); err != nil {
+			if !excludedFilesystemPath(err) {
+				return nil, err
+			}
+			continue
+		}
 		entry := NoteRowToBrainEntry(row)
 		if wantsAttachmentMetadata(req.Include) {
 			if err := s.enrichEntryAttachmentMetadata(ctx, &entry); err != nil {
@@ -2803,6 +2903,9 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 	if targetProject == "" {
 		return nil, fmt.Errorf("target project is required")
 	}
+	if err := validateProjectID(targetProject); err != nil {
+		return nil, err
+	}
 
 	// Recall the entry
 	entry, err := s.Recall(ctx, pathOrID)
@@ -2816,6 +2919,10 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 	}
 
 	oldPath := entry.Path
+	oldAbsPath, err := s.filesystemPath(ctx, oldPath, true)
+	if err != nil {
+		return nil, err
+	}
 
 	// Compute new path by replacing the project segment
 	newPath, err := computeMovedPath(oldPath, targetProject)
@@ -2823,12 +2930,22 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		return nil, err
 	}
 
-	oldAbsPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(oldPath))
+	newAbsPath, err := s.filesystemPath(ctx, newPath, true)
+	if err != nil {
+		return nil, err
+	}
 
 	// SAFETY: Verify source file exists on disk (not just in DB).
 	// This catches stale DB entries where the file was already removed.
 	if _, err := os.Stat(oldAbsPath); err != nil {
 		return nil, fmt.Errorf("source file does not exist on disk: %w", err)
+	}
+
+	// Moving to the current project is a no-op. Writing and then removing
+	// the same path would destroy the entry while reporting success.
+	if oldPath == newPath {
+		return &types.MoveResult{Success: true, From: oldPath, To: newPath,
+			OldPath: oldPath, NewPath: newPath, Project: targetProject, ID: entry.ID, Title: entry.Title}, nil
 	}
 
 	// Read old file content
@@ -2857,13 +2974,21 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 	}
 
 	// Write to new path
-	newAbsPath := filepath.Join(s.config.BrainDir, filepath.FromSlash(newPath))
 	newDir := filepath.Dir(newAbsPath)
 	if err := os.MkdirAll(newDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create directory %q: %w", newDir, err)
 	}
-	if err := os.WriteFile(newAbsPath, []byte(fileBuilder.String()), 0o644); err != nil {
-		return nil, fmt.Errorf("write file %q: %w", newAbsPath, err)
+	// Create exclusively: never overwrite an unrelated destination, even
+	// if it appeared between path validation and the actual write.
+	destination, err := os.OpenFile(newAbsPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("create destination %q: %w", newPath, err)
+	}
+	_, writeErr := destination.WriteString(fileBuilder.String())
+	closeErr := destination.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(newAbsPath) // only the file created by this operation
+		return nil, fmt.Errorf("write destination %q: %w", newPath, errors.Join(writeErr, closeErr))
 	}
 
 	// SAFETY: Verify destination was written correctly before deleting source.
@@ -3019,6 +3144,9 @@ func (s *BrainServiceImpl) GetRelated(ctx context.Context, path string, limit in
 	if limit <= 0 {
 		limit = 10
 	}
+	if limit > 100 {
+		limit = 100
+	}
 	resolved, err := s.resolveGraphPath(ctx, path)
 	if err != nil {
 		return nil, fmt.Errorf("get related: %w", err)
@@ -3123,9 +3251,13 @@ func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool, project st
 		return nil, fmt.Errorf("get project stats: %w", err)
 	}
 
+	dbPath, err := brainpath.ResolveForWrite(s.config.BrainDir, ".brain.db")
+	if err != nil {
+		return nil, err
+	}
 	return &types.StatsResponse{
 		BrainDir:       s.config.BrainDir,
-		DBPath:         filepath.Join(s.config.BrainDir, ".brain.db"),
+		DBPath:         dbPath,
 		TotalEntries:   primaryStats.TotalNotes,
 		GlobalEntries:  globalStats.TotalNotes,
 		ProjectEntries: projectStats.TotalNotes,
@@ -3140,6 +3272,9 @@ func (s *BrainServiceImpl) GetStats(ctx context.Context, global bool, project st
 func (s *BrainServiceImpl) GetOrphans(ctx context.Context, entryType string, limit int, project string) ([]types.BrainEntry, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	if limit > 100 {
+		limit = 100
 	}
 	opts := &storage.OrphanOptions{
 		Type:  entryType,

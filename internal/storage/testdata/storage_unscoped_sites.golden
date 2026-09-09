@@ -1,0 +1,219 @@
+cmd/brain/commands/attachments.go:AttachmentCommand.listProject ListAttachments#1
+cmd/brain/commands/embeddings.go:EmbeddingsCommand.listDryRunCandidates EmbeddingStatus#1
+cmd/brain/commands/runner.go:RunCommand.runStatus ListRunners#1
+internal/api/assistant_tools_destructive.go:clearFeatureAssignmentTool ClearFeatureAssignment#1
+internal/api/assistant_tools_read.go:handleBacklinks GetBacklinks#1
+internal/api/assistant_tools_read.go:handleGetStats GetStats#1
+internal/api/assistant_tools_read.go:handleListRunners ListRunners#1
+internal/api/assistant_tools_read.go:handleOutlinks GetOutlinks#1
+internal/api/assistant_tools_read.go:handleRelated GetRelated#1
+internal/api/auth_login.go:Handler.HandleAuthLogout ConsumeRefreshToken#1
+internal/api/auth_login.go:Handler.HandleAuthRefresh ConsumeRefreshToken#1
+internal/api/auth_login.go:Handler.issuePasswordTokens CreateAccessToken#1 CreateRefreshToken#1
+internal/api/control.go:Handler.HandleControlKill DeleteInstance#1 GetInstance#1
+internal/api/control.go:Handler.HandleControlSpawn UpsertInstance#1
+internal/api/graph.go:Handler.HandleGetBacklinks GetBacklinks#1
+internal/api/graph.go:Handler.HandleGetOutlinks GetOutlinks#1
+internal/api/graph.go:Handler.HandleGetRelated GetRelated#1
+internal/api/health_extended.go:Handler.HandleGetOrphans GetOrphans#1
+internal/api/health_extended.go:Handler.HandleGetStats GetStats#1
+internal/api/middleware.go:Auth ValidateToken#1
+internal/api/middleware.go:CompositeValidator.ValidateToken GetAccessToken#1 ValidateToken#1
+internal/api/pause_publish.go:publishPauseCommand ListRunners#1
+internal/api/runners.go:Handler.HandleDeleteInstance DeleteInstance#1
+internal/api/runners.go:Handler.HandleGetRunner GetRunner#1
+internal/api/runners.go:Handler.HandleListAllInstances ListAllInstances#1
+internal/api/runners.go:Handler.HandleListRunners ListRunners#1
+internal/api/runners.go:Handler.HandleRunnerStream GetRunner#1
+internal/api/runners.go:Handler.HandleShutdownRunner GetRunner#1
+internal/api/runners.go:Handler.HandleUpdateAffinity UpdateAffinity#1
+internal/api/runners.go:Handler.HandleUpdateRunnerConfig GetRunner#1
+internal/api/runners.go:Handler.HandleUpsertInstance UpsertInstance#1
+internal/api/runners.go:Handler.setRunnerPaused GetRunner#1
+internal/api/scheduler.go:Handler.HandleGetDispatchLease GetDispatchLease#1
+internal/api/scheduler.go:Handler.HandleListPlacementReasons ListPlacementReasons#1
+internal/api/tasks.go:Handler.HandleClaimTask ClaimTask#1
+internal/api/tasks.go:Handler.HandleClearFeatureAssignment ClearFeatureAssignment#1
+internal/api/tasks.go:Handler.HandleRenewClaim RenewClaim#1
+internal/api/tokens.go:Handler.HandleBootstrapToken BootstrapToken#1 GenerateToken#1 GetTokenByName#1
+internal/api/tokens.go:Handler.HandleCreateToken CreateToken#1 GenerateToken#1 GetTokenByName#1 GetTokenByName#2
+internal/api/tokens.go:Handler.HandleListTokens ListTokens#1
+internal/api/tokens.go:Handler.HandleRevokeToken RevokeToken#1
+internal/api/webhooks.go:Handler.HandleListWebhookDeliveries ListDeliveries#1
+internal/apiserver/goal_steerer.go:bridgeGoalSteerer.findTaskInstance ListAllInstances#1
+internal/apiserver/live_injector.go:bridgeLiveInjector.findTaskInstance ListAllInstances#1
+internal/apiserver/storage.go:openSingleModeStorage Control#1 ForTenant#1 MarkInstallClaimed#1 SingleModeTokens#1
+internal/doctor/checks.go:loadAttachmentDigestChecksFromDatabase ForTenant#1 ListAttachments#1
+internal/events/cron_source.go:StorageScheduleSource.ListScheduledEntries ListNotes#1
+internal/events/dedup.go:DedupBus.Publish InsertEvent#1
+internal/events/dedup.go:DedupBus.ReplayUnprocessed GetUnprocessed#1
+internal/events/matcher.go:AutomationMatcher.markEventProcessed MarkProcessed#1
+internal/indexer/indexer.go:Indexer.DB DB#1 DB#2 db-return#1
+internal/indexer/indexer.go:Indexer.GetEmbeddingHealth DB#1 DB#2 DB#3
+internal/indexer/indexer.go:Indexer.GetHealth DB#1 DB#2
+internal/indexer/indexer.go:Indexer.IndexChanged DB#1 DeleteNote#1 InsertNote#1 SetLinks#1 SetLinks#2 SetTags#1 SetTags#2 UpdateNote#1
+internal/indexer/indexer.go:Indexer.IndexEmbeddingsWithOptions DB#1 DeleteNoteEmbeddings#1 UpsertNoteEmbeddings#1
+internal/indexer/indexer.go:Indexer.IndexFile GetNoteByPath#1 InsertNote#1 SetLinks#1 SetTags#1 UpdateNote#1
+internal/indexer/indexer.go:Indexer.ListEmbeddingBackfillCandidates DB#1
+internal/indexer/indexer.go:Indexer.RebuildAll DB#1 DB#2 InsertNote#1 SetLinks#1 SetTags#1
+internal/indexer/indexer.go:Indexer.RemoveFile DeleteNote#1
+internal/indexer/indexer.go:Indexer.embeddingSourceForNote DB#1
+internal/oauth/middleware.go:BearerAuth GetAccessToken#1
+internal/oauth/middleware.go:OptionalBearerAuth GetAccessToken#1
+internal/oauth/routes.go:Handler.handleAuthCodeGrant ConsumeAuthCode#1 SaveAccessToken#1
+internal/oauth/routes.go:Handler.handleRefreshGrant ConsumeRefreshToken#1 SaveAccessToken#1
+internal/oauth/sqlstore.go:PersistentStore.ConsumeAuthCode ConsumeAuthCode#1
+internal/oauth/sqlstore.go:PersistentStore.ConsumeRefreshToken ConsumeRefreshToken#1
+internal/oauth/sqlstore.go:PersistentStore.GetClient GetOAuthClient#1
+internal/oauth/sqlstore.go:PersistentStore.SaveAuthCode CreateAuthCode#1
+internal/oauth/sqlstore.go:PersistentStore.SaveClient CreateOAuthClient#1
+internal/oauth/sqlstore.go:PersistentStore.SaveRefreshToken CreateRefreshToken#1
+internal/runner/client.go:APIClient.DownloadAttachment GetAttachment#1
+internal/runner/config.go:LoadConfigFrom Control#1
+internal/runner/executor.go:OpenCodeExecutor.spawnHeadless Control#1
+internal/runner/instance_reporter.go:TaskRunner.removeInstance DeleteInstance#1
+internal/runner/instance_reporter.go:TaskRunner.reportInstance UpsertInstance#1
+internal/runner/runner.go:TaskRunner.Start Control#1
+internal/runner/runner.go:TaskRunner.claimAndSpawnWithWorkdir ClaimTask#1
+internal/runner/runner.go:TaskRunner.fetchRunnerPauseState GetRunner#1
+internal/runner/runner.go:TaskRunner.renewClaims RenewClaim#1
+internal/runner/runner.go:TaskRunner.schedulerWorkspaceRoots Control#1
+internal/runner/runner.go:TaskRunner.tryReapOrphan ClaimTask#1
+internal/runner/session_history_sqlite.go:querySessionRows DB#1
+internal/runner/workdir_policy.go:validateWorkdirPreflight Control#1
+internal/service/attachments.go:AttachmentServiceImpl.Attach LinkAttachmentToEntry#1 UnlinkAttachmentFromEntry#1 UnlinkAttachmentFromEntry#2
+internal/service/attachments.go:AttachmentServiceImpl.Create CreateAttachment#1
+internal/service/attachments.go:AttachmentServiceImpl.Delete DeleteAttachmentIfUnreferenced#1
+internal/service/attachments.go:AttachmentServiceImpl.Detach LinkAttachmentToEntry#1 UnlinkAttachmentFromEntry#1
+internal/service/attachments.go:AttachmentServiceImpl.GetDerivedText GetAttachmentDerived#1
+internal/service/attachments.go:AttachmentServiceImpl.List ListAttachments#1
+internal/service/attachments.go:AttachmentServiceImpl.ListForEntry ListAttachmentsForEntry#1
+internal/service/attachments.go:AttachmentServiceImpl.OpenText GetAttachmentDerived#1
+internal/service/attachments.go:AttachmentServiceImpl.StoreDerivedText UpsertAttachmentDerived#1
+internal/service/attachments.go:AttachmentServiceImpl.attachmentLinkedEntries ListEntryReferencesForAttachment#1
+internal/service/attachments.go:AttachmentServiceImpl.entryAttachmentLinkExists ListEntryReferencesForAttachment#1
+internal/service/attachments.go:AttachmentServiceImpl.getProjectAttachmentRow GetAttachment#1
+internal/service/attachments.go:AttachmentServiceImpl.storeAttachmentExtractionDerived UpsertAttachmentDerived#1
+internal/service/brain.go:BrainServiceImpl.GetBacklinks GetBacklinks#1
+internal/service/brain.go:BrainServiceImpl.GetOrphans GetOrphans#1
+internal/service/brain.go:BrainServiceImpl.GetOutlinks GetOutlinks#1
+internal/service/brain.go:BrainServiceImpl.GetRelated GetRelated#1
+internal/service/brain.go:BrainServiceImpl.GetStale GetStaleEntries#1
+internal/service/brain.go:BrainServiceImpl.GetStats GetStats#1 GetStats#2 GetStats#3
+internal/service/brain.go:BrainServiceImpl.Inject SearchNotes#1
+internal/service/brain.go:BrainServiceImpl.List EmbeddingStatus#1 EmbeddingStatus#2 ListNotes#1
+internal/service/brain.go:BrainServiceImpl.Recall GetAccessStats#1 RecordAccess#1
+internal/service/brain.go:BrainServiceImpl.Search searchFTS#1
+internal/service/brain.go:BrainServiceImpl.Update MergeMetadata#1
+internal/service/brain.go:BrainServiceImpl.UpdateMetadata MergeMetadata#1
+internal/service/brain.go:BrainServiceImpl.Verify SetVerified#1
+internal/service/brain.go:BrainServiceImpl.enrichEntryAttachmentMetadata ListAttachmentsForEntry#1
+internal/service/brain.go:BrainServiceImpl.enrichedAttachmentReference GetAttachmentDerived#1
+internal/service/brain.go:BrainServiceImpl.indexEmbeddingsForEntry DeleteNoteEmbeddings#1 GetNoteByPath#1
+internal/service/brain.go:BrainServiceImpl.resolveEntry GetNoteByPath#1 GetNoteByShortID#1 GetNoteByTitle#1
+internal/service/brain.go:BrainServiceImpl.scheduleEmbeddingMetadataSync GetNoteByPath#1 SyncNoteEmbeddingMetadata#1
+internal/service/brain.go:BrainServiceImpl.searchFTS SearchNotes#1
+internal/service/brain.go:BrainServiceImpl.searchHybrid SearchByEmbedding#1 SearchNotes#1
+internal/service/brain.go:BrainServiceImpl.searchSemantic SearchByEmbedding#1 searchFTS#1 searchFTS#2 searchFTS#3 searchFTS#4
+internal/service/brain.go:BrainServiceImpl.syncDurableFieldsToFile MergeMetadata#1
+internal/service/client_context.go:ClientContextServiceImpl.Resolve UpsertBrainClient#1 UpsertBrainClientWorkspace#1
+internal/service/client_context.go:ClientContextServiceImpl.latestDream ListNotes#1
+internal/service/event_service.go:EventServiceImpl.CheckFeatureCompletion ClearFeatureAssignment#1
+internal/service/features.go:TaskServiceImpl.AssignFeatureToRunner AssignFeatureIfEmpty#1 ForceAssignFeature#1 GetFeatureAssignment#1 GetRunner#1
+internal/service/features.go:TaskServiceImpl.ClearFeatureAssignment ClearFeatureAssignment#1 GetFeatureAssignment#1
+internal/service/git_remote.go:validateConfiguredGitRemote ListRunners#1
+internal/service/goal_api.go:GoalService.GoalAuditHistory GetEventsByType#1
+internal/service/goal_service.go:GoalService.Reconcile InsertEvent#1
+internal/service/goal_steering.go:GoalService.lastSteeredAt GetNoteByShortID#1
+internal/service/project_delete.go:BrainServiceImpl.DeleteProject DeleteProjectNotes#1 ListProjectNotePaths#1 PurgeProjectState#1
+internal/service/project_placement.go:ProjectPlacementService.Get GetProjectPlacement#1
+internal/service/project_placement.go:ProjectPlacementService.Put UpsertProjectPlacement#1
+internal/service/reminder_service.go:ReminderService.fire InsertEvent#1
+internal/service/resume_with_context.go:TaskServiceImpl.ResumeTaskWithContext MergeMetadata#1
+internal/service/resume_with_context.go:TaskServiceImpl.runResumeGate ClearDispatchLease#1 GetClaim#1 GetRunner#1 ReleaseClaim#1
+internal/service/run_feature.go:SchedulerService.CancelDependentChain DeleteFeatureCascadeRoot#1
+internal/service/run_feature.go:SchedulerService.ListDependentChains ListFeatureCascadeRoots#1
+internal/service/run_feature.go:SchedulerService.RunFeatureWithOptions CreateDispatchLease#1 GetDispatchLeaseRow#1 ListRunners#1
+internal/service/run_feature.go:SchedulerService.SweepDependentChains ListFeatureCascadeRoots#1
+internal/service/run_feature.go:SchedulerService.enrolDependents UpsertFeatureCascadeRoot#1
+internal/service/run_feature.go:SchedulerService.reclaimLease CreateDispatchLease#1 ReleaseDispatchLease#1
+internal/service/run_feature.go:SchedulerService.sweepProjectChains DeleteFeatureCascadeRoot#1
+internal/service/runner.go:RunnerServiceImpl.GetStatus ListPausedFeatures#1 ListProjectPauseStates#1
+internal/service/runner.go:RunnerServiceImpl.IsAutomationsPaused ListProjectPauseStates#1
+internal/service/runner.go:RunnerServiceImpl.IsAutomationsPausedForProject IsProjectAutomationsPaused#1
+internal/service/runner.go:RunnerServiceImpl.IsFeaturePaused IsFeaturePaused#1
+internal/service/runner.go:RunnerServiceImpl.IsPaused IsProjectTaskPaused#1
+internal/service/runner.go:RunnerServiceImpl.Pause SetProjectTaskPaused#1
+internal/service/runner.go:RunnerServiceImpl.PauseAll SetAllProjectTasksPaused#1
+internal/service/runner.go:RunnerServiceImpl.PauseAutomations SetAllProjectAutomationsPaused#1
+internal/service/runner.go:RunnerServiceImpl.PauseFeature SetFeaturePaused#1
+internal/service/runner.go:RunnerServiceImpl.Resume SetProjectTaskPaused#1
+internal/service/runner.go:RunnerServiceImpl.ResumeAll SetAllProjectTasksPaused#1
+internal/service/runner.go:RunnerServiceImpl.ResumeAutomations SetAllProjectAutomationsPaused#1
+internal/service/runner.go:RunnerServiceImpl.ResumeFeature SetFeaturePaused#1
+internal/service/runner_automation_scope.go:RunnerServiceImpl.PauseProjectAutomations SetProjectAutomationsPaused#1
+internal/service/runner_automation_scope.go:RunnerServiceImpl.ResumeProjectAutomations SetProjectAutomationsPaused#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.DeleteInstance DeleteInstance#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.Deregister ClearFeatureAssignmentsByRunner#1 DeleteInstancesByRunner#1 DeleteRunner#1 ReleaseAllByRunner#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.GetInstance GetInstance#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.GetRunner GetRunner#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.Heartbeat ReplaceInstancesForRunner#1 UpdateHeartbeat#1 UpdateRunnerCapabilities#1 UpdateRunnerDispatchMetadata#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.ListAllInstances ListAllInstances#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.ListInstances GetRunner#1 ListInstancesByRunner#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.ListRunners ListRunners#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.Register GetRunner#1 UpsertRunner#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.RunLifecycleSweep ClearFeatureAssignmentsByRunner#1 DeleteInstancesByRunner#1 ListRunners#1 ReleaseAllByRunner#1 SetRunnerStatus#1 SetRunnerStatus#2 SetRunnerStatus#3
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.SetPaused SetRunnerPaused#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.UpdateAffinity UpdateAffinity#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.UpdateConfig UpdateRunnerMaxParallel#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.UpsertInstance UpsertInstance#1
+internal/service/runner_registry.go:RunnerRegistryServiceImpl.attachFeatureAssignments ListFeatureAssignmentsByRunner#1
+internal/service/scheduler.go:SchedulerService.RunOnce ExpireDispatchLeases#1
+internal/service/scheduler.go:SchedulerService.RunTaskNow CreateDispatchLease#1 CreateDispatchLease#2 GetDispatchLeaseRow#1 ListRunners#1 ReleaseDispatchLease#1
+internal/service/scheduler.go:SchedulerService.ScheduleProject CreateDispatchLease#1 ListRunners#1
+internal/service/scheduler.go:SchedulerService.recordNoCandidate ClearDispatchLease#1 RecordPlacementReason#1
+internal/service/scheduler.go:SchedulerService.shouldSkipTask IsFeaturePaused#1
+internal/service/scheduler.go:SchedulerService.undoUndeliveredLease ClearDispatchLease#1
+internal/service/scheduler.go:runnerListResponseAdapter.ListRunners ListRunners#1
+internal/service/task.go:TaskServiceImpl.AckDispatch AckDispatchLease#1
+internal/service/task.go:TaskServiceImpl.ClaimTaskWithDuration AssignFeatureIfEmpty#1 ClaimTask#1 GetDispatchLeaseRow#1
+internal/service/task.go:TaskServiceImpl.DispatchTask CreateDispatchLease#1
+internal/service/task.go:TaskServiceImpl.GetClaimStatus GetClaim#1
+internal/service/task.go:TaskServiceImpl.GetLiveClaim GetClaim#1 GetRunner#1
+internal/service/task.go:TaskServiceImpl.RejectDispatch GetDispatchLeaseRow#1 RecordPlacementReason#1 RejectDispatchLease#1
+internal/service/task.go:TaskServiceImpl.ReleaseDispatch ReleaseDispatchLease#1
+internal/service/task.go:TaskServiceImpl.ReleaseTask GetClaim#1 ReleaseClaim#1
+internal/service/task.go:TaskServiceImpl.RenewClaim GetClaim#1 RenewClaim#1
+internal/service/task.go:TaskServiceImpl.ResumeTask MergeMetadata#1
+internal/service/task.go:TaskServiceImpl.StartClaimCleanup ExpireStaleClaims#1
+internal/service/task.go:TaskServiceImpl.TriggerTask MergeMetadata#1
+internal/service/task.go:TaskServiceImpl.applyTaskFilterOptions GetRunner#1
+internal/service/task.go:TaskServiceImpl.enrichAbandonmentState GetClaim#1 GetRunner#1
+internal/service/task.go:TaskServiceImpl.enrichDispatchDiagnostics GetDispatchLease#1 ListPlacementReasonsLimit#1
+internal/service/task.go:TaskServiceImpl.enrichUndispatchable ListRunners#1
+internal/service/task.go:TaskServiceImpl.filterByRunnerEligibility GetFeatureAssignment#1
+internal/service/task.go:TaskServiceImpl.filterDispatchReservedTasks GetDispatchLeaseRow#1
+internal/service/task.go:TaskServiceImpl.getAllTasks ListNotes#1
+internal/service/task.go:TaskServiceImpl.recordClaimPlacementDenial RecordPlacementReason#1
+internal/service/task.go:TaskServiceImpl.triggerAdHocTask MergeMetadata#1
+internal/service/task.go:TaskServiceImpl.validateClaimAndGetFeatureID GetNoteByPath#1 GetRunner#1
+internal/service/trigger_service.go:TriggerService.Activate ActivateTask#1
+internal/service/trigger_service.go:TriggerService.Evaluate CountInProgressByTrigger#1 ListTriggeredTasks#1
+internal/service/trigger_store_adapter.go:TriggerTaskStoreAdapter.ActivateTask ActivateTask#1
+internal/service/trigger_store_adapter.go:TriggerTaskStoreAdapter.CountInProgressByTrigger CountInProgressByTrigger#1
+internal/service/trigger_store_adapter.go:TriggerTaskStoreAdapter.ListTriggeredTasks ListTriggeredTasks#1
+internal/service/webhook_service.go:WebhookServiceImpl.Create CreateWebhook#1
+internal/service/webhook_service.go:WebhookServiceImpl.Delete DeleteWebhook#1
+internal/service/webhook_service.go:WebhookServiceImpl.Deliver ListWebhooks#1
+internal/service/webhook_service.go:WebhookServiceImpl.Get GetWebhook#1
+internal/service/webhook_service.go:WebhookServiceImpl.List ListWebhooks#1
+internal/service/webhook_service.go:WebhookServiceImpl.ListDeliveries GetWebhook#1 ListDeliveries#1
+internal/service/webhook_service.go:WebhookServiceImpl.TestDeliver GetWebhook#1
+internal/service/webhook_service.go:WebhookServiceImpl.Update GetWebhook#1 UpdateWebhook#1
+internal/service/webhook_service.go:WebhookServiceImpl.logDelivery CreateDelivery#1
+internal/tenantfs/resolver.go:Resolver.register RegisterTenantRoots#1
+internal/tenantfs/resolver.go:Resolver.snapshot ListTenantRoots#1
+internal/tokens/direct.go:CreateTokenDirect CreateToken#1 GenerateToken#1 GetTokenByName#1
+internal/tokens/direct.go:ListTokensDirect ListTokens#1
+internal/tokens/direct.go:RevokeTokenDirect RevokeToken#1
+internal/tokens/direct.go:openDatabase Control#1

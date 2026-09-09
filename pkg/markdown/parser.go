@@ -3,9 +3,9 @@ package markdown
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
+	"github.com/huynle/brain-api/internal/brainpath"
 	"github.com/huynle/brain-api/pkg/frontmatter"
 )
 
@@ -36,7 +36,10 @@ type ParsedFile struct {
 // filePath is the relative path within brainDir (e.g., "projects/test/task/abc12def.md").
 // brainDir is the absolute path to the brain root directory.
 func ParseFile(filePath string, brainDir string) (*ParsedFile, error) {
-	fullPath := filepath.Join(brainDir, filePath)
+	fullPath, err := brainpath.Resolve(brainDir, filePath)
+	if err != nil {
+		return nil, fmt.Errorf("markdown: resolve file %q: %w", filePath, err)
+	}
 
 	// Read file
 	rawBytes, err := os.ReadFile(fullPath)

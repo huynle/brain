@@ -14,6 +14,7 @@ import (
 	"github.com/huynle/brain-api/cmd/brain/assets"
 	brainconfig "github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/tenant"
 )
 
 // AttachmentDigestCheck is the attachment metadata doctor needs to verify that
@@ -286,6 +287,14 @@ func checkAttachmentBlobIntegrity(storageRoot string, expected []AttachmentDiges
 }
 
 func loadAttachmentDigestChecksFromDatabase(brainDir string) ([]AttachmentDigestCheck, error) {
+	cfg := brainconfig.Load()
+	if err := cfg.Err(); err != nil {
+		return nil, err
+	}
+	mode, err := tenant.ParseMode(string(cfg.Tenancy.Mode))
+	if err != nil || mode != tenant.ModeSingle {
+		return nil, fmt.Errorf("offline attachment checks require single mode")
+	}
 	dbPath := filepath.Join(brainDir, "brain.db")
 	if _, err := os.Stat(dbPath); err != nil {
 		if os.IsNotExist(err) {
@@ -294,11 +303,15 @@ func loadAttachmentDigestChecksFromDatabase(brainDir string) ([]AttachmentDigest
 		return nil, err
 	}
 
-	store, err := storage.New(dbPath)
+	owner, err := storage.New(dbPath)
 	if err != nil {
 		return nil, err
 	}
-	defer store.Close()
+	defer owner.Close()
+	store, err := owner.ForTenant(tenant.Local)
+	if err != nil {
+		return nil, err
+	}
 
 	rows, err := store.ListAttachments(context.Background())
 	if err != nil {

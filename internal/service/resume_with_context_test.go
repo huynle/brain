@@ -35,7 +35,7 @@ func (f *fakeLiveInjector) InjectContext(_ context.Context, _ /*projectID*/, tas
 
 // readTaskMeta reads back the raw metadata JSON for a task note so tests can
 // assert the extended resume-with-context stamps landed.
-func readTaskMeta(t *testing.T, store *storage.StorageLayer, projectID, taskID string) map[string]interface{} {
+func readTaskMeta(t *testing.T, store *storage.TenantStore, projectID, taskID string) map[string]interface{} {
 	t.Helper()
 	path := "projects/" + projectID + "/task/" + taskID + ".md"
 	row, err := store.GetNoteByPath(context.Background(), path)
@@ -57,7 +57,7 @@ func readTaskMeta(t *testing.T, store *storage.StorageLayer, projectID, taskID s
 // seedAbandonedOpencodeTaskWithSession mirrors seedAbandonedTaskWithOfflineClaim
 // but stamps an executor + a stored prior session id, so the same_session
 // intent can fire.
-func seedAbandonedOpencodeTaskWithSession(t *testing.T, store *storage.StorageLayer, taskID, runnerID, sessionID string) {
+func seedAbandonedOpencodeTaskWithSession(t *testing.T, store *storage.TenantStore, taskID, runnerID, sessionID string) {
 	t.Helper()
 	insertTaskNote(t, store, taskID, "Abandoned OC Task", "in_progress", "medium", resumeTestProject, map[string]interface{}{
 		"executor": "opencode",
@@ -450,7 +450,7 @@ func TestResumeFeatureWithContext_MixedBatch(t *testing.T) {
 // seedOfflineClaim registers an offline runner and gives it an unexpired claim
 // on the task, matching the runner_offline abandonment signal. Split out of
 // seedAbandonedTaskWithOfflineClaim so a caller can seed a custom task note.
-func seedOfflineClaim(t *testing.T, store *storage.StorageLayer, taskID, runnerID string) {
+func seedOfflineClaim(t *testing.T, store *storage.TenantStore, taskID, runnerID string) {
 	t.Helper()
 	now := time.Now().UnixMilli()
 	if err := store.UpsertRunner(context.Background(), &storage.RunnerRow{

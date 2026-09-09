@@ -68,10 +68,11 @@ set a status the API server is already holding the transaction for.
   triggering event, and the write is REFUSED when either is empty. That is
   not defensive noise: `storage/list.go` appends its WHERE clause only for
   a non-empty value, so an empty id is not "match nothing" but "no
-  constraint", and every gate upstream still reports the filter as
-  constrained. A blank feature id would rewrite the first 100 tasks of the
-  project. (The same trap sits behind `bulkDeleteFilterIsEmpty`, which is
-  a nil-check: `{"feature_id": ""}` alone passes it.)
+  constraint". A blank feature id would rewrite the first 100 tasks of the
+  project. Bulk delete and update now reject effectively empty filters at
+  both API and service boundaries, including `{"feature_id": ""}` alone.
+  A project/type filter still constrains the query, so automation actions
+  must continue requiring both event ids to avoid widening feature scope.
 - **The loop guard is "write only what is not already there".** Archiving
   emits `task.status_changed`, `CheckFeatureCompletion` counts archived as
   done and re-emits `feature.completed`, and the automation fires again —
@@ -311,10 +312,23 @@ caller-chosen `machine_affinity` (`local` | `preferred` | `none`).
 - **Generated tasks carry no origin** by design — automation and goal
   `createTask` deliberately omit it, since server-generated work has no human
   caller and stamping would pin it to the API box.
-- **Known limitation**: `ClaimTask` does not validate affinity, so a runner that
-  claims a task directly by id bypasses the pin. Both discovery paths (push
-  dispatch and `/next`) are filtered, so this is not reachable by accident;
-  `requires_capability` has the identical gap.
+- **Direct claims and dispatch enforce placement too.** `ClaimTask` /
+  `ClaimTaskWithDuration` and `DispatchTask` require a registered runner and
+  validate machine affinity, required capabilities and Git-remote eligibility
+  before creating ownership. The HTTP handlers map `PlacementDenialError` via
+  `errors.As` to 403 with the named reason in the standard error envelope's
+  `message`; genuine ownership conflicts remain 409. Direct dispatch delegates
+  registration checks to the service so even `runner_unregistered` is recorded
+  in placement history rather than short-circuited as a registry 404. Denials
+  emit neither task-claimed events nor claim/dispatch SSE.
+- **Identity limitation (P7 remains required):** these checks validate the
+  supplied runner ID, not its ownership by the authenticated caller. `AuthResult`
+  exposes API-token name, OAuth client ID or JWT subject plus scope; neither token
+  nor registry storage supplies a trusted principal-to-runner binding. Those
+  strings cannot be equated to `runnerId`. Admin dispatch intentionally targets
+  another runner through `targetRunnerId`. See
+  [Runner credential boundary](docs/runner-credential-boundary.md) for the
+  outstanding identity and release gates.
 
 Adding another frontmatter task field means SEVEN registration points, and
 missing any one is silent — unknown YAML keys land in `Frontmatter.Extra`,
@@ -366,11 +380,26 @@ re-indexes it.
   writes a file, and it silently skipped indexing until 2026-08-26.
 - **Boot indexes once.** `internal/apiserver/server.go` runs `IndexChanged` in
   a background goroutine at startup, then never scans again.
+- **Content-root policy:** discovery (`IndexChanged`, `RebuildAll`, `GetHealth`)
+  and watcher startup/new-directory walks use exact first-component roots
+  `projects/` and `global/` under the supplied `brainDir`. All siblings, including
+  `attachments/`, `.git/`, `.brain-data/`, and root-level Markdown, are excluded;
+  excluded directories are pruned before reading their children. The watcher
+  keeps `brainDir` itself watched as an anchor for initially absent content roots,
+  sweeps populated new content subtrees and watches them for later writes.
+  Custom/default watcher ignores still apply within allowed roots. Directory
+  symlinks are not recursively followed; parser containment remains authoritative
+  for file reads, and direct `IndexFile` is not layout-restricted.
+- **P3 integration:** indexer and watcher constructors are unchanged and must
+  receive the same supplied `brainDir` root. P3 root ownership must preserve
+  `projects/` and `global/` directly beneath that root, not pass either subtree
+  as the root or flatten the layout.
 - **Out-of-band writes need the watcher.** A git pull into the brain dir, a
   manual edit, or another process bypasses both of the above. `indexer.FileWatcher`
   covers that gap, enabled with `server.index_watch.enabled` in config.yaml or
   `BRAIN_INDEX_WATCH=true`. **It is off by default**: the watcher registers one
-  fsnotify watch per directory, and a large brain dir can exhaust the
+  fsnotify watch per allowed, non-ignored content directory (plus the root
+  anchor), and a large content tree can still exhaust the
   platform's watch limit (inotify `max_user_watches`). With it off, out-of-band
   writes appear only after a server restart.
 - The watcher starts after the boot scan finishes so the two never race on the
@@ -454,6 +483,15 @@ The Pi executor spawns [Pi](https://github.com/anthropics/pi) processes in RPC m
 - **Graceful fallback**: Missing agent bundle falls back to `--append-system-prompt`
 
 #### Configuration
+
+Task Git remotes require registered credentialed-host support before persistence
+and compatible live runners for dispatch/pull/direct claims. See
+[Git remote policy](docs/git-remote-policy.md) for the configuration and transport
+contract; anonymous-only host permission is not API task admission.
+
+Task and ad-hoc execution share `control.allowed_workdir_roots` (home-only
+when omitted). See [Shared runner workdir policy](AGENTS.md#shared-runner-workdir-policy)
+for config syntax, canonicalization, preflight checks and security limits.
 
 **Config types** (`types.go`):
 ```yaml

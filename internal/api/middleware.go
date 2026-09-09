@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/tenant"
 )
 
 // TokenValidator validates authentication tokens against a backing store.
@@ -30,10 +31,12 @@ type TokenValidator interface {
 // AuthResult carries authentication metadata after successful validation.
 // Downstream handlers read these values from the request context.
 type AuthResult struct {
-	Type     string // "api_token", "oauth", or "jwt"
-	Name     string // token name (api) or client_id (oauth)
-	ClientID string // oauth only
-	Scope    string // oauth only
+	// Tenant is set only by trusted identity resolution, never request decoding.
+	Tenant   tenant.ID `json:"-"`
+	Type     string    // "api_token", "oauth", "jwt", or explicit single-mode "local"
+	Name     string    // token name (api) or client_id (oauth)
+	ClientID string    // oauth only
+	Scope    string    // existing capability grants; independent of tenant scope
 }
 
 // context keys for auth info
@@ -213,14 +216,18 @@ func CORS(cfg config.Config) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			origin := cfg.CORSOrigin
 
-			w.Header().Set("Access-Control-Allow-Origin", origin)
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id")
-			w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Mcp-Session-Id")
-			w.Header().Set("Access-Control-Max-Age", "86400")
+			// Empty policy grants no cross-origin access. Same-origin clients
+			// need no CORS headers, including credential permission.
+			if origin != "" {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+				w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, Accept, Mcp-Session-Id")
+				w.Header().Set("Access-Control-Expose-Headers", "X-Request-ID, Mcp-Session-Id")
+				w.Header().Set("Access-Control-Max-Age", "86400")
 
-			if origin != "*" {
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				if origin != "*" {
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
 			}
 
 			// Handle preflight

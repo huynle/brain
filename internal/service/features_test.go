@@ -428,7 +428,7 @@ func TestComputeAndResolveFeatures_Integration(t *testing.T) {
 	}
 }
 
-func insertFeatureAssignmentRunnerForFeatureTest(t *testing.T, store *storage.StorageLayer, runnerID string, lastHeartbeat int64) {
+func insertFeatureAssignmentRunnerForFeatureTest(t *testing.T, store *storage.TenantStore, runnerID string, lastHeartbeat int64) {
 	t.Helper()
 	if err := store.UpsertRunner(context.Background(), &storage.RunnerRow{
 		RunnerID:      runnerID,

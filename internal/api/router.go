@@ -41,8 +41,8 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 		// Health check — unauthenticated (before auth middleware)
 		r.Get("/health", HealthHandler(cfg, o.embeddingReady))
 
-		// Token bootstrap — unauthenticated (only works when zero tokens exist)
-		// Solves the chicken-and-egg problem: need a token to create a token.
+		// Token bootstrap is unauthenticated, local-only by default, and closes
+		// permanently once the installation has credentials or is claimed.
 		if o.handler != nil && o.handler.tokens != nil {
 			r.Post("/tokens/bootstrap", o.handler.HandleBootstrapToken)
 		}
@@ -58,6 +58,7 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 		// All routes below require auth when enabled
 		r.Group(func(r chi.Router) {
 			r.Use(Auth(cfg.EnableAuth, o.validator, cfg.JWTSecret))
+			r.Use(TenantScope(cfg.Tenancy.Mode, cfg.EnableAuth))
 			// Record each authenticated request (with its actor) for the
 			// global server-request log shown in the Logs tab. Installed after
 			// Auth so the actor is present in context.
@@ -143,6 +144,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 					r.Post("/link", o.handler.HandleGenerateLink)
 				} else {
 					r.Post("/link", notImplemented)
+				}
+			})
+
+			// Durable bulk jobs are administrative entry mutations and their audit trail.
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil && o.handler.bulkJobs != nil {
+					r.Post("/bulk-jobs", o.handler.HandleCreateBulkJob)
+					r.Get("/bulk-jobs", o.handler.HandleListBulkJobs)
+					r.Get("/bulk-jobs/{jobID}", o.handler.HandleGetBulkJob)
+					r.Get("/bulk-jobs/{jobID}/items", o.handler.HandleBulkJobItems)
+					r.Post("/bulk-jobs/{jobID}/control", o.handler.HandleControlBulkJob)
 				}
 			})
 

@@ -18,6 +18,11 @@ func RunMCPServer(ctx context.Context, opts MCPOptions, stdin io.Reader, stdout 
 	if opts.APIURL == "" {
 		return fmt.Errorf("BRAIN_API_URL is required")
 	}
+	var err error
+	ctx, err = localTenantContext(ctx)
+	if err != nil {
+		return err
+	}
 
 	// Create MCP server. This transport is a child process of the client, so
 	// tool arguments naming local paths refer to files this process can open.

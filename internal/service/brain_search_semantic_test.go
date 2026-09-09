@@ -11,6 +11,7 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -32,7 +33,7 @@ func (m *mockEmbeddingClient) Embed(ctx context.Context, inputs []string) ([][]f
 }
 
 // newTestBrainServiceWithEmbedding creates a test service with a mock embedding client.
-func newTestBrainServiceWithEmbedding(t *testing.T, client EmbeddingClient) (*BrainServiceImpl, *storage.StorageLayer, string) {
+func newTestBrainServiceWithEmbedding(t *testing.T, client EmbeddingClient) (*BrainServiceImpl, *storage.TenantStore, string) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -40,7 +41,7 @@ func newTestBrainServiceWithEmbedding(t *testing.T, client EmbeddingClient) (*Br
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}

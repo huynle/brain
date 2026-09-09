@@ -14,6 +14,7 @@ import (
 	"github.com/huynle/brain-api/internal/config"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 
 	_ "github.com/glebarez/go-sqlite"
@@ -24,7 +25,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // newTestTaskService creates a TaskServiceImpl with an in-memory DB and temp brainDir.
-func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.StorageLayer, string) {
+func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.TenantStore, string) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -32,7 +33,7 @@ func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.StorageLayer, 
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
@@ -46,7 +47,7 @@ func newTestTaskService(t *testing.T) (*TaskServiceImpl, *storage.StorageLayer, 
 }
 
 // insertTaskNote inserts a task NoteRow into the storage layer.
-func insertTaskNote(t *testing.T, store *storage.StorageLayer, shortID, title, status, priority, projectID string, metadata map[string]interface{}) {
+func insertTaskNote(t *testing.T, store *storage.TenantStore, shortID, title, status, priority, projectID string, metadata map[string]interface{}) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -79,7 +80,7 @@ func insertTaskNote(t *testing.T, store *storage.StorageLayer, shortID, title, s
 	}
 }
 
-func insertRunnerForTaskSelectionTest(t *testing.T, store *storage.StorageLayer, runnerID string, executors, capabilities []string) {
+func insertRunnerForTaskSelectionTest(t *testing.T, store *storage.TenantStore, runnerID string, executors, capabilities []string) {
 	t.Helper()
 	now := time.Now().UnixMilli()
 	if err := store.UpsertRunner(context.Background(), &storage.RunnerRow{
@@ -692,6 +693,8 @@ func TestGetNext_WithRunnerIDSkipsHigherPriorityFeatureAssignedToOtherRunner(t *
 
 func TestClaimTask_AssignsFeatureToFirstRunnerAndBlocksOtherFeatureTasks(t *testing.T) {
 	svc, store, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, store, "runner-a", nil, nil)
+	insertRunnerForTaskSelectionTest(t, store, "runner-b", nil, nil)
 	ctx := context.Background()
 
 	insertTaskNote(t, store, "task1111", "First feature task", "pending", "high", "proj", map[string]interface{}{
@@ -992,6 +995,7 @@ func TestGetNext_NoTasks(t *testing.T) {
 
 func TestClaimTask_Success(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, svc.storage, "runner-1", nil, nil)
 	ctx := context.Background()
 
 	resp, err := svc.ClaimTask(ctx, "proj", "task1", "runner-1")
@@ -1014,6 +1018,8 @@ func TestClaimTask_Success(t *testing.T) {
 
 func TestClaimTask_Conflict(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, svc.storage, "runner-1", nil, nil)
+	insertRunnerForTaskSelectionTest(t, svc.storage, "runner-2", nil, nil)
 	ctx := context.Background()
 
 	// First claim succeeds
@@ -1037,6 +1043,8 @@ func TestClaimTask_Conflict(t *testing.T) {
 
 func TestDispatchTaskCreatesLeaseAndBlocksOtherRunner(t *testing.T) {
 	svc, store, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, store, "runner-assigned", nil, nil)
+	insertRunnerForTaskSelectionTest(t, store, "runner-other", nil, nil)
 	ctx := context.Background()
 
 	resp, err := svc.DispatchTask(ctx, "proj", "task1", "runner-assigned")
@@ -1087,6 +1095,7 @@ func TestDispatchTaskCreatesLeaseAndBlocksOtherRunner(t *testing.T) {
 
 func TestClaimTask_ConflictsWhenActiveDispatchLeaseOwnedByOtherRunner(t *testing.T) {
 	svc, store, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, store, "runner-other", nil, nil)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -1118,6 +1127,7 @@ func TestClaimTask_ConflictsWhenActiveDispatchLeaseOwnedByOtherRunner(t *testing
 
 func TestClaimTask_AllowsActiveDispatchLeaseOwnedByRunner(t *testing.T) {
 	svc, store, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, store, "runner-assigned", nil, nil)
 	ctx := context.Background()
 	now := time.Now()
 
@@ -1143,6 +1153,7 @@ func TestClaimTask_AllowsActiveDispatchLeaseOwnedByRunner(t *testing.T) {
 
 func TestClaimTask_SameRunnerReclaim(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, svc.storage, "runner-1", nil, nil)
 	ctx := context.Background()
 
 	// First claim
@@ -1163,6 +1174,7 @@ func TestClaimTask_SameRunnerReclaim(t *testing.T) {
 
 func TestReleaseTask_Success(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, svc.storage, "runner-1", nil, nil)
 	ctx := context.Background()
 
 	// Claim then release
@@ -1198,6 +1210,7 @@ func TestReleaseTask_NotFound(t *testing.T) {
 
 func TestReleaseTask_WrongRunner(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, svc.storage, "runner-1", nil, nil)
 	ctx := context.Background()
 
 	_, err := svc.ClaimTask(ctx, "proj", "task1", "runner-1")
@@ -1229,6 +1242,7 @@ func TestGetClaimStatus_NotClaimed(t *testing.T) {
 
 func TestGetClaimStatus_Claimed(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, svc.storage, "runner-1", nil, nil)
 	ctx := context.Background()
 
 	_, err := svc.ClaimTask(ctx, "proj", "task1", "runner-1")
@@ -1257,6 +1271,7 @@ func TestGetClaimStatus_Claimed(t *testing.T) {
 
 func TestRenewClaim_Success(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, svc.storage, "runner-1", nil, nil)
 	ctx := context.Background()
 
 	// Claim a task first
@@ -1300,6 +1315,7 @@ func TestRenewClaim_NotFound(t *testing.T) {
 
 func TestRenewClaim_WrongRunner(t *testing.T) {
 	svc, _, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, svc.storage, "runner-1", nil, nil)
 	ctx := context.Background()
 
 	// Claim as runner-1
@@ -1820,6 +1836,7 @@ func TestTaskServiceImpl_ImplementsInterface(t *testing.T) {
 
 func TestClaimTask_StaleClaim(t *testing.T) {
 	svc, store, _ := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, store, "new-runner", nil, nil)
 	ctx := context.Background()
 
 	// Insert a claim via storage with a very short lease so it's already expired
@@ -1852,6 +1869,8 @@ func TestClaimTask_StaleClaim(t *testing.T) {
 func TestClaimTask_PersistsSurvivesRestart(t *testing.T) {
 	// Create first service instance
 	svc1, store, brainDir := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, store, "runner-1", nil, nil)
+	insertRunnerForTaskSelectionTest(t, store, "runner-2", nil, nil)
 	ctx := context.Background()
 
 	// Claim a task
@@ -2124,7 +2143,8 @@ Task content`
 // This asserts the checkout task inherits target_workdir, workdir, and
 // git_remote from the feature's own tasks in the default (AI) mode.
 func TestCheckoutFeature_AIMode_InheritsGitContext(t *testing.T) {
-	svc, _, brainDir := newTestTaskService(t)
+	svc, store, brainDir := newTestTaskService(t)
+	insertRunnerForTaskSelectionTest(t, store, "git-runner", nil, []string{"git-credential-host:example.com"})
 	ctx := context.Background()
 	projectID := "test-project"
 	featureID := "feature-123"
@@ -2144,7 +2164,7 @@ priority: high
 feature_id: feature-123
 target_workdir: /Users/me/repo/.worktrees/dev
 workdir: orion/repo
-git_remote: git@example.com:org/repo.git
+git_remote: https://example.com/org/repo.git
 execution_mode: worktree
 ---
 Task content`
@@ -2190,7 +2210,7 @@ Task content`
 	for _, expected := range []string{
 		"target_workdir: /Users/me/repo/.worktrees/dev",
 		"workdir: orion/repo",
-		"git@example.com:org/repo.git", // git_remote value (serializer may quote it)
+		"https://example.com/org/repo.git", // git_remote value (serializer may quote it)
 		"execution_mode: worktree",
 	} {
 		if !contains(contentStr, expected) {
@@ -2398,7 +2418,7 @@ func TestExtractGeneratedDependentTasks(t *testing.T) {
 }
 
 // newTestTaskServiceWithDefaults creates a TaskServiceImpl with pre-configured TaskDefaults.
-func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsConfig) (*TaskServiceImpl, *storage.StorageLayer, string) {
+func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsConfig) (*TaskServiceImpl, *storage.TenantStore, string) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -2406,7 +2426,7 @@ func newTestTaskServiceWithDefaults(t *testing.T, defaults config.TaskDefaultsCo
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}

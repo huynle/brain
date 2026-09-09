@@ -3,8 +3,11 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -31,8 +34,8 @@ type TokenService interface {
 	// RevokeToken soft-revokes a token by setting revoked_at.
 	RevokeToken(ctx context.Context, name string) error
 
-	// CountActiveTokens returns the number of non-revoked tokens.
-	CountActiveTokens(ctx context.Context) (int, error)
+	// BootstrapToken atomically claims an unconfigured install and creates an admin token.
+	BootstrapToken(ctx context.Context, name, token string, passwordConfigured bool) error
 }
 
 // WithTokenService sets the TokenService on the Handler.
@@ -87,10 +90,17 @@ type revokeTokenResponse struct {
 }
 
 // HandleBootstrapToken handles POST /api/v1/tokens/bootstrap.
-// This endpoint is UNAUTHENTICATED and only works when zero active tokens exist.
-// It solves the chicken-and-egg problem: you need a token to create a token.
-// Once any token exists, this endpoint returns 403 Forbidden.
+// This unauthenticated endpoint is local-only by default and permanently closes
+// once the installation is claimed. The remote opt-in bypasses locality only.
 func (h *Handler) HandleBootstrapToken(w http.ResponseWriter, r *http.Request) {
+	if os.Getenv("BRAIN_ALLOW_REMOTE_BOOTSTRAP") != "true" {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || !net.ParseIP(host).IsLoopback() {
+			WriteError(w, http.StatusForbidden, "Forbidden", "Bootstrap requires a loopback connection.")
+			return
+		}
+	}
+
 	var req createTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		WriteError(w, http.StatusBadRequest, "Bad Request", "Invalid JSON body")
@@ -107,18 +117,6 @@ func (h *Handler) HandleBootstrapToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if any active tokens exist
-	count, err := h.tokens.CountActiveTokens(r.Context())
-	if err != nil {
-		WriteError(w, http.StatusInternalServerError, "Internal Server Error", "Failed to check token count")
-		return
-	}
-	if count > 0 {
-		WriteError(w, http.StatusForbidden, "Forbidden",
-			"Tokens already exist. Use the authenticated POST /api/v1/tokens endpoint instead.")
-		return
-	}
-
 	// Generate and store token (same logic as HandleCreateToken)
 	tokenValue, err := h.tokens.GenerateToken()
 	if err != nil {
@@ -128,10 +126,12 @@ func (h *Handler) HandleBootstrapToken(w http.ResponseWriter, r *http.Request) {
 
 	// Bootstrap tokens always get admin:* scope
 	scope := "admin:*"
-	if err := h.tokens.CreateToken(r.Context(), req.Name, tokenValue, scope); err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint") {
-			WriteError(w, http.StatusConflict, "Conflict",
-				fmt.Sprintf("Token with name '%s' already exists", req.Name))
+	passwordConfigured := h.credentials != nil && h.credentials.Configured()
+	if err := h.tokens.BootstrapToken(r.Context(), req.Name, tokenValue, passwordConfigured); err != nil {
+		var closed *storage.BootstrapClosedError
+		if errors.As(err, &closed) {
+			WriteError(w, http.StatusForbidden, "Forbidden",
+				"Installation already claimed. Use the authenticated POST /api/v1/tokens endpoint instead.")
 			return
 		}
 		WriteError(w, http.StatusInternalServerError, "Internal Server Error", err.Error())

@@ -142,6 +142,7 @@ export function buildTaskGroupActions(
     danger = false,
   ): ActionDescriptor => ({
     id,
+    background: false,
     label,
     group: "state",
     danger,
@@ -229,6 +230,7 @@ export function buildTaskGroupActions(
     // ─── danger ─────────────────────────────────────────────────────
     {
       id: "delete",
+      background: false,
       label: "Delete all…",
       group: "danger",
       danger: true,

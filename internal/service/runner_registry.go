@@ -27,12 +27,12 @@ var _ api.RunnerRegistryService = (*RunnerRegistryServiceImpl)(nil)
 
 // RunnerRegistryServiceImpl implements api.RunnerRegistryService using the storage layer.
 type RunnerRegistryServiceImpl struct {
-	storage *storage.StorageLayer
+	storage *storage.TenantStore
 	hub     *realtime.Hub
 }
 
 // NewRunnerRegistryService creates a new RunnerRegistryServiceImpl.
-func NewRunnerRegistryService(store *storage.StorageLayer) *RunnerRegistryServiceImpl {
+func NewRunnerRegistryService(store *storage.TenantStore) *RunnerRegistryServiceImpl {
 	return &RunnerRegistryServiceImpl{storage: store}
 }
 
@@ -110,6 +110,12 @@ func (s *RunnerRegistryServiceImpl) Register(ctx context.Context, req types.Runn
 // When the request carries an instance list, the runner's instance registry
 // rows are reconciled to exactly that set (self-healing for missed reports).
 func (s *RunnerRegistryServiceImpl) Heartbeat(ctx context.Context, runnerID string, req types.RunnerHeartbeatRequest) error {
+	// Revoke stale support before refreshing liveness.
+	if req.Capabilities != nil {
+		if err := s.storage.UpdateRunnerCapabilities(ctx, runnerID, req.Capabilities); err != nil {
+			return fmt.Errorf("heartbeat capabilities: %w", err)
+		}
+	}
 	if err := s.storage.UpdateHeartbeat(ctx, runnerID, req.RunningTasks, req.Stats); err != nil {
 		return fmt.Errorf("heartbeat: %w", err)
 	}

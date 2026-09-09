@@ -487,10 +487,12 @@ export function CardTasks({
                 )
                   return;
                 if (e.shiftKey) {
+                  preview.cancel();
                   rangeFeatureSel(projectId, orderedFeatureIds, f.id);
                   return;
                 }
-                if (selActive) {
+                if (selActive || e.metaKey || e.ctrlKey) {
+                  preview.cancel();
                   toggleFeatureSel(projectId, f.id);
                   return;
                 }
@@ -514,7 +516,7 @@ export function CardTasks({
                   )
                 )
                   return;
-                if (selActive) return;
+                if (selActive || e.shiftKey || e.metaKey || e.ctrlKey) return;
                 preview.cancel();
                 openInFocus(
                   "feature-detail",
@@ -545,8 +547,10 @@ export function CardTasks({
                   role="checkbox"
                   aria-checked={featMarked}
                   aria-label={`Select feature ${f.name}`}
+                  title="Select · Shift-click for a range · Cmd/Ctrl-click a row to toggle"
                   onClick={(e) => {
                     e.stopPropagation();
+                    preview.cancel();
                     if (e.shiftKey)
                       rangeFeatureSel(projectId, orderedFeatureIds, f.id);
                     else toggleFeatureSel(projectId, f.id);

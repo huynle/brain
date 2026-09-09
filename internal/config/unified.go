@@ -61,6 +61,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/huynle/brain-api/internal/tenant"
 	"gopkg.in/yaml.v3"
 )
 
@@ -139,6 +140,7 @@ type ServerConfig struct {
 	FeatureCheckout FeatureCheckoutConfig `yaml:"feature_checkout"`
 	FeatureDelivery FeatureDeliveryConfig `yaml:"feature_delivery"`
 	IndexWatch      IndexWatchConfig      `yaml:"index_watch"`
+	Tenancy         TenancyConfig         `yaml:"tenancy"`
 	Embedding       EmbeddingConfig       `yaml:"embedding"`
 	Attachments     AttachmentConfig      `yaml:"attachments"`
 
@@ -149,6 +151,11 @@ type ServerConfig struct {
 // FeatureCheckoutConfig controls built-in feature completion checkout automation.
 type FeatureCheckoutConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// TenancyConfig selects the deployment's tenant resolution mode.
+type TenancyConfig struct {
+	Mode tenant.Mode `yaml:"mode"`
 }
 
 // FeatureDeliveryConfig controls the built-in per-feature git delivery
@@ -179,6 +186,16 @@ type IndexWatchConfig struct {
 
 // RunnerConfig holds task runner configuration.
 type RunnerConfig struct {
+	RepoCacheDir    string            `yaml:"repo_cache_dir,omitempty"`
+	GitToken        string            `yaml:"git_token,omitempty"`
+	GitTokenEnv     string            `yaml:"git_token_env,omitempty"`
+	GitHostTokenEnv map[string]string `yaml:"git_host_token_env,omitempty"`
+	// Pointer preserves omitted (credentialed defaults) versus explicit []
+	// (deny all) across unified config GET/PUT, serialization and migration.
+	GitAllowedHosts           *[]string `yaml:"git_allowed_hosts,omitempty"`
+	GitSSLCAInfo              string    `yaml:"git_ssl_ca_info,omitempty"`
+	RequireHTTPS              *bool     `yaml:"require_https,omitempty"`
+	AllowUnauthenticatedHTTPS bool      `yaml:"allow_unauthenticated_https,omitempty"`
 	// Name distinguishes several runners on one machine; empty is the single
 	// default runner. See runner.ResolveRunnerIdentity.
 	Name                   string           `yaml:"name,omitempty"`
@@ -391,7 +408,7 @@ func defaultConfig() UnifiedConfig {
 			PIDFile:         filepath.Join(stateHome, "brain-api", "brain-api.pid"),
 			LogFile:         filepath.Join(stateHome, "brain-api", "brain-api.log"),
 			EnableAuth:      false,
-			CORSOrigin:      "*",
+			CORSOrigin:      "", // Same-origin only; cross-origin access is opt-in.
 			FeatureCheckout: FeatureCheckoutConfig{Enabled: true},
 			FeatureDelivery: FeatureDeliveryConfig{Enabled: false},
 			TaskDefaults: TaskDefaultsConfig{
@@ -642,6 +659,20 @@ func migrateConfig(legacyPath, unifiedPath string, cfg *UnifiedConfig) error {
 	}
 
 	// Map legacy fields to unified config Runner section
+	// Preserve the transport policy verbatim. In particular, [] must never
+	// migrate to an omitted allowlist (which would widen credentialed support).
+	var legacyRunner RunnerConfig
+	if err := yaml.Unmarshal(data, &legacyRunner); err != nil {
+		return err
+	}
+	cfg.Runner.RepoCacheDir = legacyRunner.RepoCacheDir
+	cfg.Runner.GitToken = legacyRunner.GitToken
+	cfg.Runner.GitTokenEnv = legacyRunner.GitTokenEnv
+	cfg.Runner.GitHostTokenEnv = legacyRunner.GitHostTokenEnv
+	cfg.Runner.GitAllowedHosts = legacyRunner.GitAllowedHosts
+	cfg.Runner.GitSSLCAInfo = legacyRunner.GitSSLCAInfo
+	cfg.Runner.RequireHTTPS = legacyRunner.RequireHTTPS
+	cfg.Runner.AllowUnauthenticatedHTTPS = legacyRunner.AllowUnauthenticatedHTTPS
 	if v, ok := legacyData["max_parallel"].(int); ok {
 		cfg.Runner.MaxParallel = v
 	}

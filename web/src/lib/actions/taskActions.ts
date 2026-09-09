@@ -373,6 +373,7 @@ export function buildTaskActions(
   if (task.status === "archived") {
     actions.push({
       id: "unarchive",
+      background: true,
       label: "Unarchive",
       group: "state",
       run: () => ctx.setStatus(task, "completed"),
@@ -380,6 +381,7 @@ export function buildTaskActions(
   } else {
     actions.push({
       id: "archive",
+      background: true,
       label: "Archive task",
       group: "state",
       disabledReason: archiveBlockedReason(task),
@@ -506,6 +508,7 @@ export function buildTaskActions(
   // ─── danger ─────────────────────────────────────────────────────
   actions.push({
     id: "delete",
+    background: true,
     label: "Delete task",
     group: "danger",
     key: "d",
@@ -533,6 +536,7 @@ export function buildStatusActions(
 ): ActionDescriptor[] {
   return ALL_STATUSES.map((status) => ({
     id: `status:${status}`,
+    background: true,
     label: STATUS_LABELS[status] ?? status,
     group: "state" as const,
     disabledReason: statusChangeBlockedReason(task, status),

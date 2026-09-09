@@ -83,7 +83,7 @@ func (c *TokenCommand) apiURL() string {
 
 // apiToken returns the Bearer token for API authentication.
 func (c *TokenCommand) apiToken() string {
-	return c.Config.Runner.APIToken
+	return c.Config.Runner.StandingToken
 }
 
 // isAPIAvailable checks if the Brain API server is reachable by hitting the health endpoint.

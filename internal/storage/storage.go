@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -121,7 +122,11 @@ func newFromDB(db *sql.DB) (*StorageLayer, error) {
 		return nil, fmt.Errorf("init schema: %w", err)
 	}
 
-	return &StorageLayer{db: db}, nil
+	s := &StorageLayer{db: db}
+	if err := s.backfillInstallClaim(context.Background()); err != nil {
+		return nil, err
+	}
+	return s, nil
 }
 
 // DB returns the underlying *sql.DB connection.

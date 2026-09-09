@@ -12,8 +12,9 @@ import (
 
 // Sentinel errors returned by service implementations.
 var (
-	ErrNotFound = errors.New("not found")
-	ErrConflict = errors.New("conflict")
+	ErrNotFound     = errors.New("not found")
+	ErrConflict     = errors.New("conflict")
+	ErrInvalidInput = errors.New("invalid input")
 )
 
 // BrainService defines the interface for brain entry operations.

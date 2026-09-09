@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	_ "github.com/glebarez/go-sqlite"
-	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -17,7 +17,7 @@ func newTestProjectPlacementService(t *testing.T) *ProjectPlacementService {
 	if err != nil {
 		t.Fatalf("sql.Open failed: %v", err)
 	}
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}

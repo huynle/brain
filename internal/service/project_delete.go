@@ -43,7 +43,16 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 		return nil, err
 	}
 
-	projectDir := filepath.Join(s.config.BrainDir, "projects", projectID)
+	projectName := filepath.Join("projects", projectID)
+	if p := filesystemPolicy(s.indexer); p != nil {
+		if err := p.PreflightDelete(ctx, projectName); err != nil {
+			return nil, err
+		}
+	}
+	projectDir, err := s.filesystemPath(ctx, projectName, true)
+	if err != nil {
+		return nil, err
+	}
 
 	// The project exists if EITHER its directory or an index row says so.
 	// A project whose directory was removed out of band still has rows to
@@ -51,6 +60,35 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 	indexedPaths, err := s.storage.ListProjectNotePaths(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("list project entries: %w", err)
+	}
+	// Validate the complete plan before the first file or index mutation. A
+	// stale index may name excluded files; a directory may contain aliases to
+	// excluded storage even though the directory itself is admissible.
+	for _, name := range indexedPaths {
+		if err := s.admittedRow(ctx, name); err != nil {
+			return nil, err
+		}
+	}
+	if p := filesystemPolicy(s.indexer); p != nil {
+		err := filepath.WalkDir(projectDir, func(path string, d os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				if path == projectDir && os.IsNotExist(walkErr) {
+					return nil
+				}
+				return walkErr
+			}
+			name, err := filepath.Rel(s.config.BrainDir, path)
+			if err != nil {
+				return err
+			}
+			if err := p.AdmitTraversal(ctx, name); err != nil {
+				return err
+			}
+			return p.PreflightDelete(ctx, name)
+		})
+		if err != nil {
+			return nil, err
+		}
 	}
 	dirInfo, statErr := os.Stat(projectDir)
 	dirExists := statErr == nil && dirInfo.IsDir()
@@ -62,7 +100,17 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 	// source alone leaves debris: an unindexed file survives a purge driven
 	// by the index, and an index row whose file is gone survives a purge
 	// driven by the disk walk.
-	paths := unionPaths(indexedPaths, s.markdownFilesUnder(projectDir, projectID))
+	diskPaths, err := s.markdownFilesUnder(projectDir, projectID)
+	if err != nil {
+		return nil, err
+	}
+	paths := unionPaths(indexedPaths, diskPaths)
+	// Reject poisoned index paths before deleting any files or index rows.
+	for _, path := range paths {
+		if _, err := s.filesystemPath(ctx, path, true); err != nil {
+			return nil, err
+		}
+	}
 
 	resp := &types.DeleteProjectResponse{Project: projectID}
 
@@ -102,6 +150,11 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 	//
 	// Kept when entries failed to delete: the leftovers live in there.
 	if resp.Failed == 0 {
+		if p := filesystemPolicy(s.indexer); p != nil {
+			if err := p.PreflightDelete(ctx, projectName); err != nil {
+				return nil, err
+			}
+		}
 		if err := os.RemoveAll(projectDir); err != nil {
 			if len(resp.Errors) < maxDeleteProjectErrors {
 				resp.Errors = append(resp.Errors, fmt.Sprintf("remove %s: %v", projectDir, err))
@@ -130,49 +183,35 @@ func (s *BrainServiceImpl) DeleteProject(ctx context.Context, projectID string) 
 	return resp, nil
 }
 
-// validateProjectID rejects ids that would let a delete escape the projects
-// directory. This is the one operation in the service that removes a whole
-// tree, so the check is here rather than only at the HTTP edge — a future
-// caller (MCP, CLI, an automation) gets the same guarantee.
-func validateProjectID(projectID string) error {
-	if projectID == "" {
-		return fmt.Errorf("project id required")
-	}
-	if projectID == "." || projectID == ".." {
-		return fmt.Errorf("invalid project id %q", projectID)
-	}
-	if strings.ContainsAny(projectID, `/\`) || strings.Contains(projectID, "..") {
-		return fmt.Errorf("invalid project id %q: must not contain path separators", projectID)
-	}
-	// filepath.Clean collapsing to something else means the id carried
-	// structure a plain directory name would not.
-	if filepath.Clean(projectID) != projectID {
-		return fmt.Errorf("invalid project id %q", projectID)
-	}
-	return nil
-}
-
 // markdownFilesUnder returns brain-relative paths of every .md file under a
-// project directory. Errors are swallowed: this is the belt to the index's
-// braces, and a partially readable tree should still contribute what it can.
-func (s *BrainServiceImpl) markdownFilesUnder(projectDir, projectID string) []string {
+// project directory. Admission and I/O errors abort before any deletion.
+func (s *BrainServiceImpl) markdownFilesUnder(projectDir, projectID string) ([]string, error) {
 	var out []string
 	prefix := filepath.Join("projects", projectID)
-	_ = filepath.WalkDir(projectDir, func(path string, d os.DirEntry, err error) error {
-		if err != nil || d == nil || d.IsDir() {
-			return nil //nolint:nilerr // unreadable subtree must not abort the walk
-		}
-		if !strings.EqualFold(filepath.Ext(d.Name()), ".md") {
-			return nil
+	if _, err := s.filesystemPath(context.Background(), prefix, true); err != nil {
+		return nil, err
+	}
+	walkErr := filepath.WalkDir(projectDir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			if path == projectDir && os.IsNotExist(err) {
+				return nil
+			}
+			return err
 		}
 		rel, relErr := filepath.Rel(projectDir, path)
 		if relErr != nil {
+			return relErr
+		}
+		if _, err := s.filesystemPath(context.Background(), filepath.Join(prefix, rel), true); err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.EqualFold(filepath.Ext(d.Name()), ".md") {
 			return nil
 		}
 		out = append(out, filepath.ToSlash(filepath.Join(prefix, rel)))
 		return nil
 	})
-	return out
+	return out, walkErr
 }
 
 // unionPaths merges two path lists, de-duplicated and sorted.

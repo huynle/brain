@@ -1,48 +1,16 @@
-/**
- * useTaskGroupActionContext — binds `buildTaskGroupActions` to real effects.
- *
- * Everything here addresses tasks by an EXPLICIT path list, never by a
- * bulk filter. See `lib/actions/taskGroupActions` for why: a group with no
- * `feature_id` cannot be named by any filter the server accepts, and the
- * empty-string attempt at one silently widens to the whole project.
- *
- * The explicit form is also why these effects are so much shorter than
- * their feature equivalents in `useFeatureActionContext`. A filter-mode
- * bulk call pages at 100 and can serve the SAME page again — the server
- * lists by modified DESC, so freshly-updated rows sort back to the front —
- * which is what the per-source-status baton exists to defeat. Disjoint
- * chunks of a path list cannot repeat, so one pass drains the group.
- *
- * The 100-entry cap still applies in explicit mode, and — unlike filter
- * mode — it is applied SILENTLY, with no `truncated` flag. `chunkPaths` is
- * therefore not an optimisation here; without it a 150-task group would
- * report success having touched 100.
- */
+import { submitBulkJob } from "../store/bulkJobs";
 import { useMemo } from "react";
 
 import { useUI } from "../store/ui";
 import { useSelection } from "../store/selection";
 import {
-  bulkDeletePaths,
-  bulkUpdateEntries,
   runTask,
 } from "../lib/api";
-import { chunkPaths } from "../lib/selection";
-import { STATUS_LABELS } from "../lib/actions/taskActions";
-import { forceConfirmFor } from "../lib/actions/forceConfirm";
-import { withForceRetry } from "../lib/actions/forceRetry";
 import type {
   TaskGroup,
   TaskGroupActionContext,
 } from "../lib/actions/taskGroupActions";
 import type { TaskStatus } from "../lib/types";
-
-/** Tally of a chunked fan-out, so a partial result reads as partial. */
-interface FanOut {
-  ok: number;
-  failed: number;
-  firstError: string;
-}
 
 export interface UseTaskGroupActionContextOptions {
   /** Fold state lives in the workspace store, keyed by the group's key. */
@@ -119,116 +87,10 @@ export function useTaskGroupActionContext(
       },
 
       setStatusForAll: async (group, status: TaskStatus) => {
-        // Skip rows already there. Not just an optimisation: it keeps the
-        // reported count honest ("archived 3" when 3 changed, not 12) and
-        // avoids re-writing files for no reason.
-        const paths = group.tasks
-          .filter((t) => t.status !== status)
-          .map((t) => t.path);
-        if (paths.length === 0) {
-          toast(`Every task is already ${STATUS_LABELS[status] ?? status}`, "warning");
-          return;
-        }
-
-        // The tally and the cursor live OUTSIDE the retry. `withForceRetry`
-        // discards the throwing attempt and calls this again from the top,
-        // so a run that committed two chunks and 409'd on the third would
-        // otherwise re-send the first two — double-counting the update and,
-        // on the delete path below, reporting a hundred "not found"
-        // failures for entries it had itself already removed. Resuming at
-        // the chunk that failed is the only reading of "retry with force"
-        // that describes what happened.
-        const agg: FanOut = { ok: 0, failed: 0, firstError: "" };
-        const chunks = chunkPaths(paths);
-        let next = 0;
-        const commit = async (force: boolean): Promise<FanOut> => {
-          while (next < chunks.length) {
-            const r = await bulkUpdateEntries(chunks[next]!, { status }, { force });
-            agg.ok += r.updated;
-            agg.failed += r.failed;
-            if (!agg.firstError) {
-              const bad = r.results?.find((row) => row.status !== "ok");
-              if (bad) agg.firstError = bad.error ?? bad.title ?? bad.id;
-            }
-            next++;
-          }
-          return agg;
-        };
-
-        const out = await withForceRetry(
-          commit,
-          forceConfirmFor({
-            title: "Runner online — force update?",
-            body:
-              `Force applies "${STATUS_LABELS[status] ?? status}" even to tasks ` +
-              `an online runner is still executing.`,
-            confirmLabel: "Force update",
-            danger: true,
-          }),
-        );
-
-        const label = STATUS_LABELS[status] ?? status;
-        toast(
-          out.failed > 0
-            ? `${group.label} → ${label}: ${out.ok} updated, ${out.failed} failed` +
-                (out.firstError ? ` (${out.firstError})` : "")
-            : `${group.label} → ${label}: ${out.ok} updated`,
-          out.failed > 0 ? "warning" : "success",
-        );
+        await submitBulkJob({ operation: "set_status", status, paths: group.tasks.map(t => t.path) });
       },
-
       deleteGroup: async (group) => {
-        const paths = group.tasks.map((t) => t.path);
-        if (paths.length === 0) {
-          toast("Nothing to delete", "warning");
-          return;
-        }
-
-        // Resumes at the failed chunk rather than restarting — see the
-        // status path above. Here the cost of restarting is worse than a
-        // double count: a re-sent chunk of already-deleted paths comes
-        // back `failed` with "not found", so a delete that removed every
-        // task would report "deleted 50, failed 200".
-        const agg: FanOut = { ok: 0, failed: 0, firstError: "" };
-        const chunks = chunkPaths(paths);
-        let next = 0;
-        const commit = async (force: boolean): Promise<FanOut> => {
-          while (next < chunks.length) {
-            const r = await bulkDeletePaths(chunks[next]!, { force });
-            agg.ok += r.deleted;
-            agg.failed += r.failed;
-            if (!agg.firstError) {
-              const bad = r.results?.find((row) => row.status !== "ok");
-              if (bad) agg.firstError = bad.error ?? bad.title ?? bad.id;
-            }
-            next++;
-          }
-          return agg;
-        };
-
-        const out = await withForceRetry(
-          commit,
-          forceConfirmFor({
-            title: "Runner online — force delete?",
-            body:
-              "Force delete removes the tasks anyway; the runner's in-flight " +
-              "work will have nowhere to land. This cannot be undone.",
-            confirmLabel: "Force delete",
-            danger: true,
-            // Same friction on the second pass as the first, matching
-            // feature delete: the force dialog asks a different question
-            // and must not be answerable with a bare click.
-            typeToConfirm: group.label,
-          }),
-        );
-
-        toast(
-          out.failed > 0
-            ? `${group.label}: deleted ${out.ok}, failed ${out.failed}` +
-                (out.firstError ? ` (${out.firstError})` : "")
-            : `${group.label}: deleted ${out.ok}`,
-          out.failed > 0 ? "warning" : "success",
-        );
+        await submitBulkJob({ operation: "delete", paths: group.tasks.map(t => t.path) });
       },
     }),
     [projectId, toast, selectTasks, toggleCollapsed],

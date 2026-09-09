@@ -12,6 +12,7 @@ import (
 	api "github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 )
 
@@ -19,7 +20,7 @@ import (
 // Test helpers
 // ---------------------------------------------------------------------------
 
-func newTestRunnerRegistryService(t *testing.T) (*RunnerRegistryServiceImpl, *storage.StorageLayer) {
+func newTestRunnerRegistryService(t *testing.T) (*RunnerRegistryServiceImpl, *storage.TenantStore) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -27,7 +28,7 @@ func newTestRunnerRegistryService(t *testing.T) (*RunnerRegistryServiceImpl, *st
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
@@ -1193,7 +1194,7 @@ func TestRunnerRegistry_GetRunner_ComputedStatus(t *testing.T) {
 // SSE Events — Lifecycle Sweep
 // ---------------------------------------------------------------------------
 
-func newTestRunnerRegistryServiceWithHub(t *testing.T) (*RunnerRegistryServiceImpl, *storage.StorageLayer, *realtime.Hub) {
+func newTestRunnerRegistryServiceWithHub(t *testing.T) (*RunnerRegistryServiceImpl, *storage.TenantStore, *realtime.Hub) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -1201,7 +1202,7 @@ func newTestRunnerRegistryServiceWithHub(t *testing.T) (*RunnerRegistryServiceIm
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}

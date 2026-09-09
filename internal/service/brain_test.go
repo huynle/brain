@@ -2,11 +2,12 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/huynle/brain-api/internal/events"
 	"github.com/huynle/brain-api/internal/indexer"
 	"github.com/huynle/brain-api/internal/storage"
+	"github.com/huynle/brain-api/internal/storage/storagetest"
 	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/pkg/frontmatter"
 
@@ -25,7 +27,7 @@ import (
 // ---------------------------------------------------------------------------
 
 // newTestBrainService creates a BrainServiceImpl with in-memory DB and temp brainDir.
-func newTestBrainService(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer, string) {
+func newTestBrainService(t *testing.T) (*BrainServiceImpl, *storage.TenantStore, string) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -33,7 +35,7 @@ func newTestBrainService(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
@@ -48,7 +50,7 @@ func newTestBrainService(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer
 }
 
 // newTestBrainServiceWithBus creates a BrainServiceImpl with an event bus for testing event publishing.
-func newTestBrainServiceWithBus(t *testing.T) (*BrainServiceImpl, *storage.StorageLayer, string, *events.MemoryBus) {
+func newTestBrainServiceWithBus(t *testing.T) (*BrainServiceImpl, *storage.TenantStore, string, *events.MemoryBus) {
 	t.Helper()
 
 	db, err := sql.Open("sqlite", ":memory:")
@@ -56,7 +58,7 @@ func newTestBrainServiceWithBus(t *testing.T) (*BrainServiceImpl, *storage.Stora
 		t.Fatalf("sql.Open failed: %v", err)
 	}
 
-	store, err := storage.NewWithDB(db)
+	store, err := storagetest.NewWithDB(db)
 	if err != nil {
 		t.Fatalf("NewWithDB failed: %v", err)
 	}
@@ -712,27 +714,28 @@ func TestUpdate_Priority(t *testing.T) {
 // execution-context frontmatter fields) were unreachable through PATCH
 // /entries/{path} because they were missing from UpdateEntryRequest.
 func TestUpdate_GitRemote(t *testing.T) {
-	svc, _, _ := newTestBrainService(t)
+	svc, store, _ := newTestBrainService(t)
+	insertRunnerForTaskSelectionTest(t, store, "git-runner", nil, []string{"git-credential-host:example.com"})
 	ctx := context.Background()
 
 	saved, err := svc.Save(ctx, types.CreateEntryRequest{
 		Type:      "task",
 		Title:     "GitRemote Task",
-		GitRemote: "git@example.com:orig/repo.git",
+		GitRemote: "https://example.com/orig/repo.git",
 	})
 	if err != nil {
 		t.Fatalf("Save failed: %v", err)
 	}
 
 	updated, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
-		GitRemote: strPtr("git@example.com:new/repo.git"),
+		GitRemote: strPtr("https://example.com/new/repo.git"),
 	})
 	if err != nil {
 		t.Fatalf("Update failed: %v", err)
 	}
 
-	if updated.GitRemote != "git@example.com:new/repo.git" {
-		t.Errorf("expected git_remote 'git@example.com:new/repo.git', got %q", updated.GitRemote)
+	if updated.GitRemote != "https://example.com/new/repo.git" {
+		t.Errorf("expected git_remote 'https://example.com/new/repo.git', got %q", updated.GitRemote)
 	}
 
 	// Re-read via Recall to confirm the value persisted to file+DB, not just
@@ -741,8 +744,8 @@ func TestUpdate_GitRemote(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recall failed: %v", err)
 	}
-	if recalled.GitRemote != "git@example.com:new/repo.git" {
-		t.Errorf("recall: expected git_remote 'git@example.com:new/repo.git', got %q", recalled.GitRemote)
+	if recalled.GitRemote != "https://example.com/new/repo.git" {
+		t.Errorf("recall: expected git_remote 'https://example.com/new/repo.git', got %q", recalled.GitRemote)
 	}
 }
 
@@ -822,13 +825,14 @@ func TestUpdate_UserOriginalRequest(t *testing.T) {
 // is a first-class Update field, subsequent updates that don't touch
 // git_remote must NOT revert prior git_remote changes.
 func TestUpdate_GitRemote_NotRevertedBySubsequentUpdate(t *testing.T) {
-	svc, _, _ := newTestBrainService(t)
+	svc, store, _ := newTestBrainService(t)
+	insertRunnerForTaskSelectionTest(t, store, "git-runner", nil, []string{"git-credential-host:example.com"})
 	ctx := context.Background()
 
 	saved, err := svc.Save(ctx, types.CreateEntryRequest{
 		Type:      "task",
 		Title:     "Persistence Task",
-		GitRemote: "git@example.com:orig/repo.git",
+		GitRemote: "https://example.com/orig/repo.git",
 	})
 	if err != nil {
 		t.Fatalf("Save failed: %v", err)
@@ -836,7 +840,7 @@ func TestUpdate_GitRemote_NotRevertedBySubsequentUpdate(t *testing.T) {
 
 	// Step 1: update git_remote via Update
 	if _, err := svc.Update(ctx, saved.ID, types.UpdateEntryRequest{
-		GitRemote: strPtr("git@example.com:new/repo.git"),
+		GitRemote: strPtr("https://example.com/new/repo.git"),
 	}); err != nil {
 		t.Fatalf("first Update failed: %v", err)
 	}
@@ -853,9 +857,9 @@ func TestUpdate_GitRemote_NotRevertedBySubsequentUpdate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Recall failed: %v", err)
 	}
-	if recalled.GitRemote != "git@example.com:new/repo.git" {
+	if recalled.GitRemote != "https://example.com/new/repo.git" {
 		t.Errorf("git_remote was reverted after unrelated update: got %q, want %q",
-			recalled.GitRemote, "git@example.com:new/repo.git")
+			recalled.GitRemote, "https://example.com/new/repo.git")
 	}
 	if recalled.Priority != "high" {
 		t.Errorf("priority not applied: got %q, want %q", recalled.Priority, "high")
@@ -2456,10 +2460,21 @@ func TestUpdate_FeatureAllCompleted_DedupKeyPreventsDoubleEmission(t *testing.T)
 		taskPaths = append(taskPaths, resp.Path)
 	}
 
-	// Subscribe and collect all events
-	received := make(chan events.Event, 10)
-	bus.Subscribe(events.FeatureAllCompleted, func(e events.Event) {
-		received <- e
+	// Count dispatches before the real bus starts callbacks so cleanup can
+	// join every callback, including ones not yet started when Update returns.
+	var callbacks sync.WaitGroup
+	svc.bus = &callbackTrackingBus{Bus: bus, callbacks: &callbacks}
+	var mu sync.Mutex
+	var evts []events.Event
+	sub := bus.Subscribe(events.FeatureAllCompleted, func(e events.Event) {
+		defer callbacks.Done()
+		mu.Lock()
+		defer mu.Unlock()
+		evts = append(evts, e)
+	})
+	t.Cleanup(func() {
+		callbacks.Wait()
+		sub.Unsubscribe()
 	})
 
 	// Complete both tasks
@@ -2472,28 +2487,28 @@ func TestUpdate_FeatureAllCompleted_DedupKeyPreventsDoubleEmission(t *testing.T)
 		}
 	}
 
-	// Wait for events to arrive
-	time.Sleep(300 * time.Millisecond)
-
-	// Should have received exactly 1 event (second complete also triggers check,
-	// but both should produce the event - dedup is by DedupKey at bus level)
-	// At minimum, the event for the LAST completion should have a DedupKey set
-	close(received)
-	var evts []events.Event
-	for e := range received {
-		evts = append(evts, e)
-	}
-
+	callbacks.Wait()
 	if len(evts) == 0 {
 		t.Fatal("expected at least 1 feature.all_completed event")
 	}
-
-	// Verify DedupKey is set on the event
 	for _, e := range evts {
-		if e.DedupKey == "" {
-			t.Error("expected DedupKey to be set on feature.all_completed event")
+		if want := "feature-completed:testproj:" + featureID; e.DedupKey != want {
+			t.Errorf("DedupKey = %q, want %q", e.DedupKey, want)
 		}
 	}
+}
+
+// This fixture has one FeatureAllCompleted subscriber and synchronous publishers.
+type callbackTrackingBus struct {
+	events.Bus
+	callbacks *sync.WaitGroup
+}
+
+func (b *callbackTrackingBus) Publish(e events.Event) {
+	if e.Type == events.FeatureAllCompleted {
+		b.callbacks.Add(1)
+	}
+	b.Bus.Publish(e)
 }
 
 // TestInject_BoundsAssembledContext pins that inject cannot swallow the

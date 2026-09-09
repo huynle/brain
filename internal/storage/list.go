@@ -31,6 +31,12 @@ var allowedSortColumns = map[string]string{
 // ListNotes returns notes matching the given filter options.
 // If opts is nil, returns all notes with default sort (modified DESC) and limit (100).
 func (s *StorageLayer) ListNotes(ctx context.Context, opts *ListOptions) ([]*NoteRow, error) {
+	query, params := buildListQuery(opts)
+	return s.listNotes(ctx, query, params)
+}
+
+// buildListQuery retains legacy single-mode SQL until the P4 schema migration.
+func buildListQuery(opts *ListOptions) (string, []interface{}) {
 	where := make([]string, 0)
 	params := make([]interface{}, 0)
 
@@ -61,8 +67,9 @@ func (s *StorageLayer) ListNotes(ctx context.Context, opts *ListOptions) ([]*Not
 			params = append(params, opts.Priority)
 		}
 		if opts.PathPrefix != "" {
-			where = append(where, "path LIKE ?")
-			params = append(params, opts.PathPrefix+"%")
+			where = append(where, "path LIKE ? ESCAPE '\\'")
+			prefix := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(opts.PathPrefix)
+			params = append(params, prefix+"%")
 		}
 		if opts.Tag != "" {
 			where = append(where, "id IN (SELECT note_id FROM tags WHERE tag = ?)")
@@ -113,6 +120,10 @@ func (s *StorageLayer) ListNotes(ctx context.Context, opts *ListOptions) ([]*Not
 		params = append(params, opts.Offset)
 	}
 
+	return query, params
+}
+
+func (s *StorageLayer) listNotes(ctx context.Context, query string, params []interface{}) ([]*NoteRow, error) {
 	rows, err := s.db.QueryContext(ctx, query, params...)
 	if err != nil {
 		return nil, fmt.Errorf("list notes: %w", err)

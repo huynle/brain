@@ -13,11 +13,11 @@ var _ TriggerTaskStore = (*TriggerTaskStoreAdapter)(nil)
 // TriggerTaskStoreAdapter wraps a StorageLayer to implement TriggerTaskStore.
 // It handles the conversion between storage NoteRow and types.BrainEntry.
 type TriggerTaskStoreAdapter struct {
-	store *storage.StorageLayer
+	store *storage.TenantStore
 }
 
 // NewTriggerTaskStoreAdapter creates a new adapter wrapping the storage layer.
-func NewTriggerTaskStoreAdapter(store *storage.StorageLayer) *TriggerTaskStoreAdapter {
+func NewTriggerTaskStoreAdapter(store *storage.TenantStore) *TriggerTaskStoreAdapter {
 	return &TriggerTaskStoreAdapter{store: store}
 }
 

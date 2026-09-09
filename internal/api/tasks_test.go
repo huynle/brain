@@ -966,6 +966,38 @@ func TestHandleClaimTask(t *testing.T) {
 	}
 }
 
+func TestTaskPlacementWrappedDenial(t *testing.T) {
+	// errors.As must retain the named denial across wrappers. Do not expose the
+	// internal cause or let an unwrapped sentinel override the placement refusal.
+	denial := fmt.Errorf("adapter: %w", &types.PlacementDenialError{
+		Reason: types.PlacementRunnerUnregistered,
+		Cause:  ErrConflict,
+	})
+	mock := &mockTaskService{
+		claimTaskFunc: func(context.Context, string, string, string) (*types.ClaimResponse, error) {
+			return nil, denial
+		},
+		dispatchTaskFunc: func(context.Context, string, string, string) (*types.DispatchResponse, error) {
+			return nil, denial
+		},
+	}
+	h := NewHandler(&mockBrainService{}, WithTaskService(mock))
+	for _, handler := range []http.HandlerFunc{h.HandleClaimTask, h.HandleDispatchTask} {
+		rec := httptest.NewRecorder()
+		handler(rec, httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{"runnerId":"r","targetRunnerId":"r"}`)))
+		if rec.Code != http.StatusForbidden {
+			t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+		}
+		var body types.ErrorResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if body.Error != "Forbidden" || body.Message != types.PlacementRunnerUnregistered {
+			t.Errorf("error envelope=%+v", body)
+		}
+	}
+}
+
 func TestHandleDispatchTaskPublishesLeaseBearingCommand(t *testing.T) {
 	hub := realtime.NewHub()
 	ch, unsub := hub.Subscribe(realtime.RunnerTopic("runner-001"))

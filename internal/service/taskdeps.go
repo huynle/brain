@@ -202,6 +202,11 @@ func brainEntryToResolvedTask(task *types.BrainEntry) types.ResolvedTask {
 		MergeStrategy:      task.MergeStrategy,
 		RemoteBranchPolicy: task.RemoteBranchPolicy,
 		OpenPRBeforeMerge:  task.OpenPRBeforeMerge,
+		// Carried so foldDeliveryMode can see an explicit delivery_mode.
+		// Dropping it here made every feature fold to "none" (or fall back
+		// to the merge_policy bridge), so an explicit delivery_mode:mr was
+		// ignored end-to-end — the feature-git-delivery mr-mode bug.
+		DeliveryMode:       task.DeliveryMode,
 		// Carried so foldCheckoutMode can see it. Dropping it here made
 		// every feature fold to "ai" regardless of configuration, which is
 		// the other half of the bug fixed in parseMetadataIntoEntry.

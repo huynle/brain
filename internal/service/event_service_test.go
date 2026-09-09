@@ -1177,3 +1177,104 @@ func TestEventServiceImpl_ImplementsInterface(t *testing.T) {
 		Subscribe(context.Context, map[string]string) (<-chan types.Event, func())
 	} = svc
 }
+
+// -----------------------------------------------------------------------------
+// foldTargetBranch + merge_target_branch event-metadata threading (mr-mode bug)
+// -----------------------------------------------------------------------------
+
+func TestFoldTargetBranch_AllEmptyReturnsEmpty(t *testing.T) {
+	got := foldTargetBranch([]types.ResolvedTask{{}, {}})
+	if got != "" {
+		t.Fatalf("expected empty target for no merge_target_branch, got %q", got)
+	}
+}
+
+func TestFoldTargetBranch_SingleValueWins(t *testing.T) {
+	got := foldTargetBranch([]types.ResolvedTask{
+		{MergeTargetBranch: "main"},
+		{}, // empty is ignored
+	})
+	if got != "main" {
+		t.Fatalf("expected target=main, got %q", got)
+	}
+}
+
+func TestFoldTargetBranch_AgreementIsFine(t *testing.T) {
+	got := foldTargetBranch([]types.ResolvedTask{
+		{MergeTargetBranch: "release"},
+		{MergeTargetBranch: "release"},
+	})
+	if got != "release" {
+		t.Fatalf("expected target=release, got %q", got)
+	}
+}
+
+func TestFoldTargetBranch_ConflictReturnsEmpty(t *testing.T) {
+	// Disagreement must not be silently resolved to one side — return "" so
+	// the script falls back to its own default rather than guessing.
+	got := foldTargetBranch([]types.ResolvedTask{
+		{MergeTargetBranch: "main"},
+		{MergeTargetBranch: "dev"},
+	})
+	if got != "" {
+		t.Fatalf("expected empty target on conflict, got %q", got)
+	}
+}
+
+// TestCheckFeatureCompletion_ThreadsDeliveryModeAndTargetBranch is the
+// event-metadata half of the mr-mode regression: an explicit delivery_mode +
+// merge_target_branch on the completed feature's tasks must both land on the
+// feature.completed event's metadata (the same in-band path the rendered
+// delivery script reads through {{.DeliveryMode}} / {{.MergeTargetBranch}}).
+func TestCheckFeatureCompletion_ThreadsDeliveryModeAndTargetBranch(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed", DeliveryMode: "mr", MergeTargetBranch: "main"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed", DeliveryMode: "mr", MergeTargetBranch: "main"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if got := events[0].Metadata["delivery_mode"]; got != "mr" {
+		t.Fatalf("expected metadata delivery_mode=mr, got %q", got)
+	}
+	if got := events[0].Metadata["merge_target_branch"]; got != "main" {
+		t.Fatalf("expected metadata merge_target_branch=main, got %q", got)
+	}
+}
+
+// TestCheckFeatureCompletion_OmitsTargetBranchWhenAbsent asserts we do not
+// stamp an empty merge_target_branch key (the script then falls back to its
+// config default → main), matching the "only when the feature agrees on a
+// non-empty target" contract.
+func TestCheckFeatureCompletion_OmitsTargetBranchWhenAbsent(t *testing.T) {
+	svc, hub := newTestEventService()
+	ctx := context.Background()
+
+	lister := &mockFeatureTaskLister{
+		tasks: []types.ResolvedTask{
+			{ID: "t1", FeatureID: "feat-1", Status: "completed", DeliveryMode: "mr"},
+			{ID: "t2", FeatureID: "feat-1", Status: "completed", DeliveryMode: "mr"},
+		},
+	}
+	svc.SetFeatureTaskLister(lister)
+
+	svc.CheckFeatureCompletion(ctx, "proj-1", "feat-1", "t1")
+
+	events := hub.Replay("")
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+	if _, ok := events[0].Metadata["merge_target_branch"]; ok {
+		t.Fatalf("did not expect merge_target_branch metadata when no target set, got %q", events[0].Metadata["merge_target_branch"])
+	}
+}

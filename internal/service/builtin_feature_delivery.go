@@ -194,6 +194,15 @@ type featureDeliveryScriptParams struct {
 	// at dispatch).
 	SourceBranchExpr string
 
+	// TargetBranchExpr is the COMPLETE right-hand side of the per-feature
+	// TARGET_BRANCH override. For the automation it is the
+	// {{.MergeTargetBranch}} placeholder, which renderAutomationTemplate fills
+	// from the event's folded metadata["merge_target_branch"] — the same
+	// in-band path DeliveryMode flows through. When it renders empty (no
+	// per-feature target, or the feature disagreed), TARGET_BRANCH falls back
+	// to TargetBranch (the config default), then "main".
+	TargetBranchExpr string
+
 	// TargetBranch is the branch a local_merge squash-merges into and the
 	// mr's target branch.
 	TargetBranch string
@@ -210,15 +219,17 @@ type featureDeliveryScriptParams struct {
 // placeholders that renderAutomationTemplate expands at task dispatch time.
 // Available placeholders (see renderAutomationTemplate):
 //
-//	{{.FeatureID}}    — the feature that completed (also the source branch name)
-//	{{.ProjectID}}    — automation-owner project ID
-//	{{.DeliveryMode}} — folded delivery mode from event metadata ("mr"/"local_merge")
+//	{{.FeatureID}}          — the feature that completed (also the source branch name)
+//	{{.ProjectID}}          — automation-owner project ID
+//	{{.DeliveryMode}}       — folded delivery mode from event metadata ("mr"/"local_merge")
+//	{{.MergeTargetBranch}}  — folded merge target branch from event metadata (may be empty)
 func buildFeatureDeliveryScript(cfg BuiltInFeatureDeliveryConfig) string {
 	return renderFeatureDeliveryScript(featureDeliveryScriptParams{
 		FeatureExpr:      "{{.FeatureID}}",
 		ProjectExpr:      "{{.ProjectID}}",
 		DeliveryModeExpr: `"{{.DeliveryMode}}"`,
 		SourceBranchExpr: `"${FEATURE_ID}"`,
+		TargetBranchExpr: `"{{.MergeTargetBranch}}"`,
 		TargetBranch:     cfg.MergeTargetBranch,
 		MergeStrategy:    cfg.MergeStrategy,
 		RemoteDelete:     cfg.RemoteBranchPolicy == "delete",
@@ -254,6 +265,10 @@ func renderFeatureDeliveryScript(p featureDeliveryScriptParams) string {
 	if deliveryMode == "" {
 		deliveryMode = `"{{.DeliveryMode}}"`
 	}
+	targetExpr := strings.TrimSpace(p.TargetBranchExpr)
+	if targetExpr == "" {
+		targetExpr = `"{{.MergeTargetBranch}}"`
+	}
 
 	remoteBlock := "  # Remote source-branch deletion skipped (RemoteBranchPolicy != delete).\n"
 	if p.RemoteDelete {
@@ -275,17 +290,18 @@ func renderFeatureDeliveryScript(p featureDeliveryScriptParams) string {
 		p.ProjectExpr, // 2 PROJECT_ID
 		deliveryMode,  // 3 DELIVERY_MODE default expr
 		source,        // 4 SOURCE_BRANCH expr
-		target,        // 5 TARGET_BRANCH
-		strategy,      // 6 MERGE_STRATEGY
-		remoteBlock,   // 7 remote deletion block (local_merge)
+		targetExpr,    // 5 per-feature TARGET_BRANCH override expr
+		target,        // 6 TARGET_BRANCH config default
+		strategy,      // 7 MERGE_STRATEGY
+		remoteBlock,   // 8 remote deletion block (local_merge)
 	)
 }
 
-// featureDeliveryScriptTemplate is the delivery script body. Seven fmt verbs:
+// featureDeliveryScriptTemplate is the delivery script body. Eight fmt verbs:
 //  1. feature id expression     2. project id expression
 //  3. delivery mode default     4. source branch expression
-//  5. target branch             6. merge strategy
-//  7. remote deletion block (local_merge)
+//  5. per-feature target expr   6. target branch config default
+//  7. merge strategy            8. remote deletion block (local_merge)
 const featureDeliveryScriptTemplate = `#!/usr/bin/env bash
 set -euo pipefail
 
@@ -305,7 +321,19 @@ if [ -z "${DELIVERY_MODE}" ]; then
   DELIVERY_MODE=%s
 fi
 SOURCE_BRANCH=%s
-TARGET_BRANCH='%s'
+# TARGET_BRANCH is resolved in-band from the event's folded
+# metadata["merge_target_branch"] via the {{.MergeTargetBranch}} placeholder.
+# When the feature carried no target (or disagreed on one) the placeholder
+# renders empty and we fall back to the automation's configured default, then
+# "main". An explicit ${TARGET_BRANCH} env var (if set non-empty) overrides
+# everything, as an escape hatch for manual re-runs.
+TARGET_BRANCH="${TARGET_BRANCH:-}"
+if [ -z "${TARGET_BRANCH}" ]; then
+  TARGET_BRANCH=%s
+fi
+if [ -z "${TARGET_BRANCH}" ]; then
+  TARGET_BRANCH='%s'
+fi
 MERGE_STRATEGY='%s'
 
 echo "[feature-delivery] project=${PROJECT_ID} feature=${FEATURE_ID}"

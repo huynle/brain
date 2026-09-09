@@ -615,3 +615,107 @@ func TestFeatureDeliveryAutomation_DisabledConfigNeverDelivers(t *testing.T) {
 		t.Fatalf("disabled delivery automation must generate no task, got %d", got)
 	}
 }
+
+// deliveryTaskContent returns the rendered script (task Content) of the single
+// generated delivery task for a project, failing if there is not exactly one.
+// Unlike deliveryTaskCount it returns the body, so a test can assert what the
+// automation actually rendered — the field→event-metadata→rendered-script wiring
+// that unit-testing the fold/resolver in isolation cannot cover.
+func deliveryTaskContent(t *testing.T, brain *BrainServiceImpl, project string) string {
+	t.Helper()
+	resp, err := brain.List(context.Background(), types.ListEntriesRequest{
+		Type:    "task",
+		Project: project,
+		Limit:   100,
+	})
+	if err != nil {
+		t.Fatalf("List tasks failed: %v", err)
+	}
+	var content string
+	n := 0
+	for _, e := range resp.Entries {
+		if strings.HasPrefix(e.GeneratedBy, "automation:") {
+			n++
+			content = e.Content
+		}
+	}
+	if n != 1 {
+		t.Fatalf("expected exactly 1 generated delivery task, got %d", n)
+	}
+	return content
+}
+
+// TestFeatureDeliveryAutomation_ThreadsDeliveryModeAndTargetBranchIntoScript is
+// the regression for the mr-mode E2E bug: a feature that opted into
+// delivery_mode:mr with merge_target_branch:main previously rendered a script
+// with the HARDCODED defaults DELIVERY_MODE=local_merge / TARGET_BRANCH='dev'
+// because (1) DeliveryMode was dropped in brainEntryToResolvedTask and
+// (2) merge_target_branch was never threaded onto the event metadata or into
+// the template. This asserts the folded delivery_mode + merge_target_branch
+// reach the rendered script, so mr mode targets main and takes the push+glab-mr
+// path — NOT a local_merge into dev.
+func TestFeatureDeliveryAutomation_ThreadsDeliveryModeAndTargetBranchIntoScript(t *testing.T) {
+	brain, _, _ := newTestBrainService(t)
+	ctx := context.Background()
+
+	// Config default target is deliberately "dev" — the WRONG value the bug
+	// rendered. The per-feature merge_target_branch:main must override it.
+	if err := EnsureBuiltInFeatureDeliveryAutomation(ctx, brain, BuiltInFeatureDeliveryConfig{
+		Enabled:           true,
+		MergeTargetBranch: "dev",
+	}); err != nil {
+		t.Fatalf("EnsureBuiltInFeatureDeliveryAutomation failed: %v", err)
+	}
+
+	automation := NewAutomationService(brain)
+	// A folded feature.completed event exactly as CheckFeatureCompletion now
+	// stamps it: delivery_mode + merge_target_branch on the metadata.
+	if err := automation.HandleEvent(ctx, types.Event{
+		ID:        "evt-delivery-thread",
+		Type:      types.EventFeatureCompleted,
+		Source:    types.EventSourceAPI,
+		ProjectID: "delivery-thread",
+		FeatureID: "delivery-smoke",
+		Metadata: map[string]string{
+			"delivery_mode":       "mr",
+			"merge_target_branch": "main",
+		},
+	}); err != nil {
+		t.Fatalf("HandleEvent failed: %v", err)
+	}
+
+	script := deliveryTaskContent(t, brain, "delivery-thread")
+
+	// The folded delivery_mode:mr must be rendered as the DELIVERY_MODE
+	// default (not the hardcoded local_merge).
+	if !strings.Contains(script, `DELIVERY_MODE="mr"`) {
+		t.Errorf("rendered script did not thread delivery_mode=mr; got:\n%s", script)
+	}
+	if strings.Contains(script, `DELIVERY_MODE="local_merge"`) {
+		t.Errorf("rendered script still defaults DELIVERY_MODE to local_merge (bug); got:\n%s", script)
+	}
+	// The per-feature merge_target_branch:main must override the config
+	// default "dev".
+	if !strings.Contains(script, `TARGET_BRANCH="main"`) {
+		t.Errorf("rendered script did not thread merge_target_branch=main into TARGET_BRANCH; got:\n%s", script)
+	}
+	if strings.Contains(script, `TARGET_BRANCH='dev'`) && !strings.Contains(script, `TARGET_BRANCH="main"`) {
+		t.Errorf("rendered script used the hardcoded config default TARGET_BRANCH='dev'; got:\n%s", script)
+	}
+	// mr mode must take the push + glab-mr path, never the local_merge branch.
+	for _, needle := range []string{
+		`git push -u origin`,
+		`glab mr create`,
+		`--target-branch "${TARGET_BRANCH}"`,
+	} {
+		if !strings.Contains(script, needle) {
+			t.Errorf("rendered script missing mr-path substring %q", needle)
+		}
+	}
+
+	// The DELIVERY_MODE placeholder still routes on ${DELIVERY_MODE} at
+	// runtime, and with mode=mr the "mr)" arm is taken; the local_merge
+	// squash into the wrong target must not be what this feature runs.
+	// (The runtime switch itself is covered by the mode-slicing tests; here
+	// we only assert the resolved constants that drive it.)
+}

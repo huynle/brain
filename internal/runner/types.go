@@ -38,6 +38,13 @@ type RunnerConfig struct {
 	APITimeout                int  `yaml:"api_timeout" json:"api_timeout"`                           // ms
 	TaskTimeout               int  `yaml:"task_timeout" json:"task_timeout"`                         // ms
 	IdleDetectionThreshold    int  `yaml:"idle_detection_threshold" json:"idle_detection_threshold"` // ms
+	// StallTimeout treats an OpenCode session that has produced no new
+	// activity for this long while still reporting busy AND with no pending
+	// permissions as stalled, triggering auto-recovery (abort + steer flush)
+	// and a surfaced `stalled` abandonment signal. Milliseconds, matching
+	// IdleDetectionThreshold. 0 disables. Default 600000 (10m), coherent with
+	// the executor steerHoldMax window.
+	StallTimeout int `yaml:"stall_timeout" json:"stall_timeout"` // ms
 	// MemoryThresholdPercent refuses to spawn a task while the host has less
 	// than this percentage of memory available. 0 disables. Enforced by
 	// TaskRunner.spawnAdmission (memory_guard.go).
@@ -380,6 +387,24 @@ type RunningTask struct {
 	// (injected) turn finishing its work on the serve process. Completion
 	// is held until the session idles or the hold window lapses.
 	BusyHoldSince time.Time `json:"busyHoldSince,omitempty"`
+
+	// PendingSteer marks that a steer/control prompt was injected into this
+	// task's session (observed by the runner when a prompt_async is proxied to
+	// it) and is queued for the next turn. The idle path flushes it on the
+	// turn-ended edge so a steer entered during a tool-call turn is delivered
+	// without a manual abort.
+	PendingSteer bool `json:"pendingSteer,omitempty"`
+	// LastActivity is the newest observed session message/part timestamp
+	// (from the turn-ended transcript probe). The stall timer is measured
+	// from this.
+	LastActivity time.Time `json:"lastActivity,omitempty"`
+
+	// StallRecovered marks that the runner already performed one bounded
+	// stall recovery (session abort + queued-steer flush) for this task. Set
+	// on the first stall edge; checked on the next stall edge so a stall that
+	// recovery could not clear within one further StallTimeout window is
+	// escalated to blocked instead of thrashing abort every tick.
+	StallRecovered bool `json:"stallRecovered,omitempty"`
 
 	// AttemptCount is how many times this task had already failed when this
 	// run started; MaxAttempts is the cap resolved for it at dispatch. Both

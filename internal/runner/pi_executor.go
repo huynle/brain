@@ -27,6 +27,13 @@ type PiExecutor struct {
 // Compile-time interface check.
 var _ TaskExecutor = (*PiExecutor)(nil)
 
+// CanResumeSession reports that Pi cannot resume a prior session: Pi RPC
+// processes have no durable session-continuation store, so resume is always
+// rehydrate-only.
+func (e *PiExecutor) CanResumeSession(sessionID string) SessionResumeCapability {
+	return SessionResumeCapability{SameSession: false, Reason: "pi has no session continuation"}
+}
+
 // NewPiExecutor creates a new PiExecutor with the given configuration.
 func NewPiExecutor(cfg RunnerConfig) *PiExecutor {
 	return &PiExecutor{
@@ -246,8 +253,10 @@ func (e *PiExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, projec
 			return nil, fmt.Errorf("target workdir: %w", err)
 		}
 	}
-	// Build and save prompt
-	prompt := e.BuildPrompt(task, opts.IsResume)
+	// Build and save prompt. Pi cannot reload a prior session, so
+	// sameSessionAllowed=false: a same_session request coerces to rehydrate.
+	// An empty ResumeMode falls back to the legacy CommonBuildPrompt.
+	prompt := selectResumePrompt(task, opts, false)
 	promptFile, err := WritePromptFile(e.config.StateDir, projectID, task.ID, prompt)
 	if err != nil {
 		return nil, err

@@ -692,6 +692,7 @@ func (s *AutomationService) createTask(ctx context.Context, automation types.Bra
 		RemoteBranchPolicy: automation.RemoteBranchPolicy,
 		OpenPRBeforeMerge:  automation.OpenPRBeforeMerge,
 		CheckoutMode:       automation.CheckoutMode,
+		DeliveryMode:       automation.DeliveryMode,
 	}
 
 	if types.NormalizeAutomationActionType(automation.Action.Type) == types.AutomationActionScript {
@@ -870,26 +871,41 @@ func renderAutomationTemplate(input, project string, evt types.Event) string {
 	// which can differ from Project/ProjectID for cross-project automations
 	// (those using filter.project: "*"). Project/ProjectID always reflect
 	// the project that owns the automation entry and the generated task.
+	// DeliveryMode surfaces the feature's folded delivery mode, which
+	// CheckFeatureCompletion stamps onto the feature.completed event's
+	// metadata["delivery_mode"]. It flows in-band the same way FeatureID /
+	// ProjectID do so the built-in delivery script can bake
+	// DELIVERY_MODE={{.DeliveryMode}} at render time and read the per-feature
+	// value at dispatch. Empty for events that carry no such metadata.
+	// MergeTargetBranch likewise surfaces the feature's folded
+	// merge_target_branch (metadata["merge_target_branch"]) so the delivery
+	// script can render TARGET_BRANCH from the per-feature value instead of a
+	// hardcoded config default. Empty when the feature carries no target or
+	// disagrees on one; the script then falls back to its own default.
 	data := struct {
-		Project        string
-		ProjectID      string
-		EventProjectID string
-		FeatureID      string
-		TaskID         string
-		TaskPath       string
-		TaskTitle      string
-		FromStatus     string
-		ToStatus       string
+		Project           string
+		ProjectID         string
+		EventProjectID    string
+		FeatureID         string
+		TaskID            string
+		TaskPath          string
+		TaskTitle         string
+		FromStatus        string
+		ToStatus          string
+		DeliveryMode      string
+		MergeTargetBranch string
 	}{
-		Project:        project,
-		ProjectID:      project,
-		EventProjectID: evt.ProjectID,
-		FeatureID:      evt.FeatureID,
-		TaskID:         evt.TaskID,
-		TaskPath:       evt.TaskPath,
-		TaskTitle:      evt.TaskTitle,
-		FromStatus:     evt.FromStatus,
-		ToStatus:       evt.ToStatus,
+		Project:           project,
+		ProjectID:         project,
+		EventProjectID:    evt.ProjectID,
+		FeatureID:         evt.FeatureID,
+		TaskID:            evt.TaskID,
+		TaskPath:          evt.TaskPath,
+		TaskTitle:         evt.TaskTitle,
+		FromStatus:        evt.FromStatus,
+		ToStatus:          evt.ToStatus,
+		DeliveryMode:      evt.Metadata["delivery_mode"],
+		MergeTargetBranch: evt.Metadata["merge_target_branch"],
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/huynle/brain-api/internal/api"
@@ -249,6 +250,70 @@ func foldCheckoutMode(tasks []types.ResolvedTask) string {
 	return "ai"
 }
 
+// foldDeliveryMode reduces the delivery_mode values across a set of feature
+// tasks into a single mode that describes how the completed feature is
+// delivered (ADR D7).
+//
+// Each task's effective mode is computed via types.EffectiveDeliveryMode, which
+// applies the one-release backward-compat bridge (merge_policy auto_pr→mr,
+// auto_merge→local_merge) when delivery_mode is unset/none. The per-task
+// effective modes are then folded:
+//   - Any "mr" AND any "local_merge" → "conflict" (the delivery task blocks
+//     with a clear message rather than guessing which target is correct).
+//   - Else any "mr" → "mr".
+//   - Else any "local_merge" → "local_merge".
+//   - Else → "none" (default; covers "all none" and "no tasks").
+func foldDeliveryMode(tasks []types.ResolvedTask) string {
+	sawMR := false
+	sawLocal := false
+	for _, t := range tasks {
+		switch types.EffectiveDeliveryMode(t.DeliveryMode, t.MergePolicy) {
+		case "mr":
+			sawMR = true
+		case "local_merge":
+			sawLocal = true
+		}
+	}
+	switch {
+	case sawMR && sawLocal:
+		return "conflict"
+	case sawMR:
+		return "mr"
+	case sawLocal:
+		return "local_merge"
+	default:
+		return "none"
+	}
+}
+
+// foldTargetBranch reduces the merge_target_branch across a feature's tasks
+// into the single branch the delivery script should target. It mirrors the
+// authoritative fold in ResolveFeatureDelivery: distinct non-empty values are
+// collected and, on disagreement, "" is returned so the rendered script falls
+// back to its own default rather than picking one silently. An all-empty
+// feature also yields "" (the script defaults to the config MergeTargetBranch,
+// then "main"). This value is stamped onto the feature.completed event's
+// metadata["merge_target_branch"] so the delivery script can render TARGET_BRANCH
+// from the per-feature value instead of the hardcoded config default.
+func foldTargetBranch(tasks []types.ResolvedTask) string {
+	target := ""
+	for _, t := range tasks {
+		v := strings.TrimSpace(t.MergeTargetBranch)
+		if v == "" {
+			continue
+		}
+		if target == "" {
+			target = v
+			continue
+		}
+		if target != v {
+			// Conflicting targets across the feature — do not guess.
+			return ""
+		}
+	}
+	return target
+}
+
 // CheckFeatureCompletion checks if all tasks in a feature are completed
 // and emits the appropriate event (feature.completed or feature.progress).
 // This is called server-side after a task status update via the API,
@@ -298,6 +363,15 @@ func (s *EventServiceImpl) CheckFeatureCompletion(ctx context.Context, projectID
 		"completed":     strconv.Itoa(completed),
 		"total":         strconv.Itoa(total),
 		"checkout_mode": foldCheckoutMode(tasks),
+		"delivery_mode": foldDeliveryMode(tasks),
+	}
+	// Thread the per-feature merge_target_branch through the event so the
+	// built-in delivery script renders TARGET_BRANCH from it (via
+	// {{.MergeTargetBranch}}) instead of the hardcoded config default. Only
+	// stamped when the feature agrees on a non-empty target; an empty/omitted
+	// value lets the script fall back to its config default, then "main".
+	if tb := foldTargetBranch(tasks); tb != "" {
+		metadata["merge_target_branch"] = tb
 	}
 
 	if allDone {

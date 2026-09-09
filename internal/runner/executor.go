@@ -22,6 +22,18 @@ import (
 // Types
 // =============================================================================
 
+// ResumeMode selects how a supervisor-driven resume rebuilds executor context.
+type ResumeMode string
+
+const (
+	// ResumeModeSameSession reuses the prior executor session id directly
+	// (OpenCode true same-session resume).
+	ResumeModeSameSession ResumeMode = "same_session"
+	// ResumeModeRehydrate starts a fresh session seeded with a bounded prior
+	// transcript (Pi, or OpenCode when the session cannot be reloaded).
+	ResumeModeRehydrate ResumeMode = "rehydrate"
+)
+
 // SpawnOptions configures how a task is spawned.
 type SpawnOptions struct {
 	Mode                ExecutionMode
@@ -31,6 +43,13 @@ type SpawnOptions struct {
 	WindowName          string
 	RuntimeDefaultModel string
 	LogWriter           io.Writer
+
+	// Resume plumbing (Phase 1). These carry supervisor session-resume intent
+	// into Spawn; behavior wiring lands in a later phase.
+	ResumeSessionID string     // stored prior session id to reuse (OpenCode same-session)
+	ResumeMode      ResumeMode // same_session | rehydrate; empty => legacy IsResume behavior
+	InjectedContext string     // supervisor-provided context injected into the prompt
+	PriorTranscript string     // optional pre-fetched/bounded transcript for rehydrate
 }
 
 // SpawnResult holds the result of spawning a task process.
@@ -85,6 +104,37 @@ type ownedServe struct {
 
 // Compile-time interface check.
 var _ TaskExecutor = (*OpenCodeExecutor)(nil)
+
+// CanResumeSession reports whether this runner can reload the given OpenCode
+// session's history from disk, enabling a true same-session resume. It is a
+// read-only probe: it never opens a live connection and never mutates state.
+func (e *OpenCodeExecutor) CanResumeSession(sessionID string) SessionResumeCapability {
+	if sessionID == "" {
+		return SessionResumeCapability{SameSession: false, Reason: "no prior session id"}
+	}
+	// Prefer the SQLite store (durable, reloadable even for dead sessions);
+	// fall back to the legacy file layout. A non-trivial transcript means the
+	// session's history exists on this runner.
+	if history, err := readSessionHistorySQLite(sessionID); err == nil && hasSessionHistory(history) {
+		return SessionResumeCapability{SameSession: true}
+	}
+	if history, err := readSessionHistory(sessionID); err == nil && hasSessionHistory(history) {
+		return SessionResumeCapability{SameSession: true}
+	}
+	return SessionResumeCapability{SameSession: false, Reason: "session history not found on disk"}
+}
+
+// hasSessionHistory reports whether a marshaled session transcript carries real
+// content, filtering out empty / "[]" / "null" results.
+func hasSessionHistory(history []byte) bool {
+	s := strings.TrimSpace(string(history))
+	switch s {
+	case "", "[]", "null", "{}":
+		return false
+	default:
+		return len(s) > 0
+	}
+}
 
 // NewExecutor creates a new OpenCodeExecutor with the given configuration.
 // Named NewExecutor (not NewOpenCodeExecutor) for backward compatibility.
@@ -502,8 +552,13 @@ func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, 
 	if err := os.MkdirAll(e.config.StateDir, 0o755); err != nil {
 		return nil, fmt.Errorf("ensure state dir: %w", err)
 	}
-	// Build and save prompt
-	prompt := e.BuildPrompt(task, opts.IsResume)
+	// Build and save prompt. Only a real OpenCode run can perform a true
+	// same-session resume; a task routed to pi/script cannot, so
+	// sameSessionAllowed follows the resolved executor type. selectResumePrompt
+	// falls back to the legacy CommonBuildPrompt for an empty ResumeMode.
+	executorType := resolveExecutorType(task)
+	sameSessionAllowed := executorType == "opencode"
+	prompt := selectResumePrompt(task, opts, sameSessionAllowed)
 	promptFile, err := WritePromptFile(e.config.StateDir, projectID, task.ID, prompt)
 	if err != nil {
 		return nil, err
@@ -522,7 +577,6 @@ func (e *OpenCodeExecutor) Spawn(ctx context.Context, task *types.ResolvedTask, 
 		return nil, fmt.Errorf("resolve workdir: %w", err)
 	}
 	// Dispatch based on executor type
-	executorType := resolveExecutorType(task)
 	switch executorType {
 	case "opencode":
 		return e.spawnOpencode(ctx, task, projectID, workdir, promptFile, opts)
@@ -790,7 +844,7 @@ func (e *OpenCodeExecutor) spawnHeadless(
 		return e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, 0, "")
 	}
 
-	port, existingSessionIDs, serveProc, err := e.startHeadlessServer(workdir, projectID, task.ID)
+	port, existingSessionIDs, serveProc, err := startHeadlessServerFn(e, workdir, projectID, task.ID)
 	if err != nil {
 		slog.Warn("headless server unavailable, running task non-attachable",
 			"task_id", task.ID, "error", err)
@@ -803,13 +857,23 @@ func (e *OpenCodeExecutor) spawnHeadless(
 	// tasks sharing a workdir see each other's sessions and post-hoc
 	// discovery cannot tell them apart (see createOpencodeSession).
 	//
-	// A failure here is not fatal — the task still runs, and the legacy
+	// Same-session resume is the exception: the supervisor already knows the
+	// prior session id, and its history lives in that session, so we reuse it
+	// directly and skip creating a fresh one. Everything else (rehydrate and
+	// the legacy path) creates a fresh session as before.
+	//
+	// A create failure is not fatal — the task still runs, and the legacy
 	// discovery path picks up whatever session `run` creates for itself.
-	sessionID, err := createOpencodeSession(port, task.Title)
-	if err != nil {
-		slog.Warn("could not pre-create opencode session; falling back to session discovery",
-			"task_id", task.ID, "port", port, "error", err)
-		sessionID = ""
+	var sessionID string
+	if opts.ResumeMode == ResumeModeSameSession && opts.ResumeSessionID != "" {
+		sessionID = opts.ResumeSessionID
+	} else {
+		sessionID, err = createOpencodeSessionFn(port, task.Title)
+		if err != nil {
+			slog.Warn("could not pre-create opencode session; falling back to session discovery",
+				"task_id", task.ID, "port", port, "error", err)
+			sessionID = ""
+		}
 	}
 
 	res, err := e.spawnHeadlessDirect(workdir, projectID, task, promptFile, opts, port, sessionID)
@@ -838,7 +902,19 @@ func (e *OpenCodeExecutor) spawnHeadless(
 		}
 		if driver.ExitCode() == 0 {
 			deadline := time.Now().Add(steerHoldMax)
-			for time.Now().Before(deadline) && sessionStatusForPort(port) == "busy" {
+			for time.Now().Before(deadline) {
+				if sessionStatusForPort(port) != "busy" {
+					break
+				}
+				// A question-tool turn leaves the session reporting busy
+				// even though the turn ended. Stop waiting early once the
+				// transcript confirms the turn completed. Without a session
+				// id we can't probe, so fall back to busy-only waiting.
+				if sessionID != "" {
+					if ended, _, ok := checkOpencodeTurnEnded(port, sessionID); ok && ended {
+						break
+					}
+				}
 				time.Sleep(2 * time.Second)
 			}
 		}

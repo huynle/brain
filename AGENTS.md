@@ -55,6 +55,23 @@ Fold rule across a feature's tasks: any `checkout_mode:"simple"` → simple path
 
 The simple script honors the `git -c merge.ff=true` invariant (see `feature-checkout/SKILL.md`) so it works regardless of user `merge.ff` gitconfig. It uses `feature_id` as the source branch name and cannot recover from merge conflicts — use AI mode for anything non-trivial.
 
+### Feature git delivery automation
+
+A separate, opt-in path that actually delivers a completed feature's branch via git — distinct from the review-oriented checkout automations above. Controlled by the task-level `delivery_mode` field: `none` (default; nothing is pushed or merged), `mr` (push the feature branch + open a merge request), or `local_merge` (squash-merge into the target branch locally + push). A `merge_policy → delivery_mode` bridge lets legacy tasks opt in without a new field: `auto_pr → mr`, `auto_merge → local_merge`.
+
+Fold rule: `foldDeliveryMode` reduces the per-task `delivery_mode` across a feature's tasks and `CheckFeatureCompletion` places the folded value on the `feature.completed` event's `metadata["delivery_mode"]`, matched by the automation's `Trigger.Filter` (`delivery_mode:"in:mr,local_merge"`, `project:"*"`). `ResolveFeatureDelivery` (`internal/service/feature_delivery.go`) is the authoritative resolver: conflicting per-task modes across one feature → error, never a silent pick.
+
+The built-in `brain:builtin-feature-delivery` automation (registered by `EnsureBuiltInFeatureDeliveryAutomation`) is gated by `cfg.FeatureDelivery.Enabled` (default **OFF**, also `BRAIN_FEATURE_DELIVERY_ENABLED`); while off nothing is registered and no feature is pushed or merged by this path. Its action is a deterministic `script` (no LLM) rendered by `buildFeatureDeliveryScript` with two runtime modes:
+
+- **mr**: `git push -u origin <feature>` then `glab mr create --squash-before-merge` (GitLab; GitHub not yet implemented, unknown provider errors) — never merges, never deletes the source branch. NOTE: the flag is `--squash-before-merge` (sets the MR to squash on accept), NOT `--squash`; `glab` has no `--squash` flag and the script fails loudly if it is used. On success it PATCHes `mr_url` + `status:"mr_open"` onto the feature's Brain-native `merge_request` entry (best-effort, non-fatal).
+- **local_merge**: a FAIL-CLOSED protected-branch guard runs first — it queries `glab api projects/:id/protected_branches/<target>` and distinguishes three outcomes: a JSON body naming the branch → protected → REFUSE (`local_merge refused — set delivery_mode: mr`); a `404` → not protected → proceed; ANY other result (glab error, missing glab, non-gitlab remote with a real origin) → could-not-determine → REFUSE. The design invariant "never direct-push a protected target" means an indeterminate check fails closed, never "best-effort proceed". A purely local repo with no remote is the one allowed-through case. Only after the guard passes: `git -c merge.ff=true merge --squash <feature>` (Finding-7 invariant), push target, worktree + local/remote source-branch cleanup, then PATCHes `status:"merged"` onto the `merge_request` entry (only if the target actually pushed).
+
+The write-back reuses one shared `brain_patch_merge_request()` bash function that resolves the entry path via `GET /api/v1/entries?type=merge_request&project=..&feature_id=..` and PATCHes `/api/v1/entries/{path}/metadata` using `BRAIN_API_URL`/`BRAIN_API_TOKEN`; `mr_url` is an audit-only DB-mirror field (in `AllowedMetadataUpdateFields` + `runtimeKeys`, never frontmatter) and merge_request statuses are free-form so `mr_open`/`merged` are accepted with no enum change. All git ops run runner-side in the feature's worktree; the `merge_request` status lifecycle is `pending → mr_open` (mr) or `pending → merged` (local_merge).
+
+The write-back's `curl` calls expand an optional `-H Authorization` array with the bash-3.2-safe idiom `${auth_args[@]+"${auth_args[@]}"}` — a bare `"${auth_args[@]}"` under `set -u` is an unbound-variable error on macOS's bash 3.2 when no `BRAIN_API_TOKEN` is set, which would otherwise abort the write-back. The protected-branch guard likewise captures glab's exit code with `PB_OUT="$(...)" && PB_RC=0 || PB_RC=$?` so `set -e` does not kill the script at the command-substitution assignment when glab errors.
+
+Verified end-to-end against `orion/ai/canis` on `gitlab.us.lmco.com` (brain task `akzdsp8n`): mr mode pushed the source branch and opened an MR into the protected `dev` target (opened, not merged, squash-on-accept, source branch preserved) — glab CLI resolution can be tripped by a local SSH-config `HostName` rewrite, in which case pass an https origin or a resolvable remote; local_merge squash-merged + pushed + cleaned up against an unprotected sandbox target and was correctly REFUSED against protected `dev`; opt-in gating (opted-in fires, `none`/missing does not, master-switch-off registers nothing) confirmed via the automation matcher; the `mr_url` + `status` metadata write-back was confirmed accepted by `PATCH /entries/{path}/metadata`. The GitHub PR path remains an unexercised stub (out of scope; GitLab-only).
+
 ### Goal subsystem (check + steer loop)
 
 A goal is an `automation` BrainEntry with `Goal *GoalConfig` (`generated_by: brain-goal`, tags `[goal, goal:<id>]`). Scope resolution: `task_id` → that one task; else `feature_id` → the feature's tasks; else the whole project. Core: `internal/service/goal_service.go` (+ `goal_api.go`, `goal_automation.go`, `goal_steering.go`), HTTP in `internal/api/goals.go` (CRUD incl. `DELETE /goals/{id}`, `?status=` listing), steerer wiring in `internal/apiserver/goal_steerer.go`.
@@ -81,6 +98,19 @@ When a runner dies mid-task, or when a task's claim lease expires without renewa
 - `POST /api/v1/tasks/{project}/features/{featureId}/resume` fans out across every task in a feature; per-task outcomes come back in `ResumeFeatureResult.results` (skipped entries include a `reason` so partial failures don't fail the batch).
 - Idempotent: a resume on a task already `pending+resume_requested=true` returns `Resumed=false` with an explanatory `Reason` and skips cleanup work.
 - The orphan reaper (`tryReapOrphan`) skips tasks with `resume_requested=true` and re-reads the task immediately before its status flip, so a Resume that races with a reaper doesn't get silently reverted.
+
+### Supervisor session-resume with context
+
+A richer resume path (`POST /api/v1/tasks/{project}/{taskId}/resume-with-context`, service `ResumeTaskWithContext`, feature fan-out `POST /features/{featureId}/resume-with-context`) hands the relaunched agent supervisor-authored context. It is distinct from plain `/resume`: the request body (`ResumeWithContextOptions`) carries `injected_context` (required), `prefer_same_session` (default true), `executor_override` ("pi"/"opencode"), and `force`.
+
+- **Live short-circuit.** If the task's session is still running, the context is injected into that session with no relaunch and no status flip — reported as `resume_mode=live_injected`, `injected_live=true`.
+- **Relaunch modes.** Otherwise the endpoint stamps extended runtime metadata and flips `status` to `pending`, letting the runner reclaim it. The three modes: `same_session` (reattach the prior OpenCode session id), `rehydrate` (fresh session seeded with a bounded prior transcript + injected context), `live_injected` (above).
+- **Extended metadata keys.** Alongside `resume_requested=true` / `resume_requested_at`, the endpoint stamps `resume_mode`, `resume_injected_context`, `resume_prefer_same_session`, `resume_executor_override`. These are runtime-only (never on-disk frontmatter) and parsed onto `ResolvedTask`.
+- **Runner is authoritative.** The API's `resume_mode` is advisory. In `claimAndSpawnWithWorkdir` (`applyResumeWithContext`) the runner picks the of-record stored session — most-recent by `SessionInfo.Timestamp`, tie-broken by id, never "newest live" — and calls `taskExecutor.CanResumeSession(storedID)`. It finalizes `same_session` only when `prefer_same_session` holds, `executor_override` does not change the executor, a stored id exists, and the probe reports `SameSession=true`; otherwise it rehydrates, best-effort pre-fetching the prior transcript (`readSessionHistorySQLite` then `readSessionHistory`) into `SpawnOptions.PriorTranscript`. `InjectedContext` is always carried.
+- **OpenCode true-resumes dead sessions** because its history is durable in the on-disk session store (SQLite or legacy files), so `CanResumeSession` can succeed even after the live instance is gone. **Pi always rehydrates** — it has no session continuation and coerces `same_session`→`rehydrate` in `Spawn`.
+- **Metadata lifecycle mirrors plain resume.** On a successful `Spawn` the runner clears all extended keys (`resume_mode`/`resume_injected_context`/`resume_prefer_same_session`/`resume_executor_override` to zero-values, plus `resume_requested=false`); on Spawn-error rollback it re-stamps them so a retry keeps the injected context + mode intent. The legacy path (`resume_requested` set, `resume_mode` empty) is untouched — `IsResume=true` only.
+- The MCP tool `resume_task_with_context` (in `internal/mcp/task_tools.go`) wraps the endpoint.
+- **Verification status (honest).** Every path is proven at the build + test + command-capture level, not by a live end-to-end run against real `opencode`/`pi` processes with a running runner (impractical in a sandbox with no live executors). `just vet` is clean, `just build` succeeds, and `just test` passes (32/32 packages). Per-path evidence: same-session feeds the STORED id into `--session` and never creates a fresh session (`TestSpawn_SameSession_UsesStoredSessionNoCreate`, command-capture; confirmed via a proof-of-negative — forcing the fresh-create branch makes it fail with `ses_freshly_created`); rehydrate creates a fresh session and bounds the transcript (`TestSpawn_Rehydrate_CreatesFreshSession`, `TestBuildRehydratePrompt_*`); Pi coerces `same_session`→`rehydrate` and injects context+transcript at its `Spawn` boundary without leaking the stored id (`TestPiExecutor_Spawn_ResumeWithContext_RehydratesAndInjects`, `TestPiExecutor_CanResumeSession`); live-inject skips relaunch via a mocked bridge (`TestResumeTaskWithContext_LiveInject`, `TestHandleResumeWithContext_200_LiveInjected`); live-claim safety and idempotency hold (`TestResumeTaskWithContext_LiveClaimSafety` / `_Idempotent`). The `OpenCode true-resumes dead sessions` claim rests on `CanResumeSession` finding durable on-disk history (SQLite/legacy); if a given deployment's history is absent, the same probe returns `SameSession=false` and the runner falls back to rehydrate — the fallback is the tested, guaranteed behavior. See [[projects/brain-api/report/shhk3jt5.md]] for the full verification log.
 
 ### Index freshness (who writes to the brain dir)
 
@@ -132,6 +162,74 @@ re-indexes it.
   checksum is skipped by `IndexChanged`, so extraction fixes reach it only via
   a migration that nulls the affected checksums.
 
+### Subagent session drill-down (recursive child-session viewing)
+
+The dashboard session view lets a user drill from a subagent invocation into
+that subagent's OWN full transcript (its messages, tool-calls, reasoning) —
+recursively for subagents-of-subagents — both live (streaming) and in history
+(dead-instance safe). This is a *linkage* layer over the existing
+session-id-keyed read/render machinery: once brain knows a child session id,
+the unchanged single-id readers and the `<Transcript>` component render it.
+
+**parentID capture (backend).** A subagent shows up as an OpenCode tool part
+with `tool === "task"`; invoking it spawns a *child* OpenCode session whose
+`parentID` is the hosting session. The runner captures that link in two places
+that were previously dropping it:
+- `opencodeSession` (`internal/runner/runner.go`) decodes the OpenCode
+  `parentID` field (Go: `ParentID string` with tag `json:"parentID,omitempty"`)
+  from `/session` — it used to decode only `id`+`time`. Removing that field
+  build-fails
+  `internal/runner/session_parent_decode_test.go` — the regression guard.
+- `SessionInfo.ParentID` (`internal/types/types.go`, `json:"parent_id"`)
+  persists the parent link so the parent→child tree survives instance death.
+
+**Child-discovery API.** The child *tree* is discovered from the persisted
+`parent_id` linkage, sourced live (bridge) or from history (SQLite/on-disk),
+so it works after the instance exits:
+- `session_children.go`: `readSessionChildrenSQLite` (indexed
+  `SELECT ... FROM session WHERE parent_id = ?`, read-only DSN) with a
+  filesystem fallback (`storage/session/global/*.json`); `childrenOf`
+  (SQLite-first, FS fallback, empty ≠ error); pure `buildChildrenTree`
+  (depth cap — 1 flat / 5 recursive — plus a mandatory ancestor-path cycle
+  guard, always a non-nil slice).
+- Bridge: `FrameChildren` frame (`Recursive`/`Depth`) + `Hub.FetchChildren`
+  + runner `handleChildren` → `fetchSessionChildren`, mirroring the existing
+  `FetchHistory` plumbing.
+- HTTP: `GET /control/runners/{runnerId}/sessions/{sessionId}/children[?recursive=true&depth=N]`
+  (`HandleControlSessionChildren`), sibling of the history route. Child
+  *transcripts* themselves reuse the existing history route unchanged.
+
+**Correlation (a tool-call → its child session id).** OpenCode writes the
+child id into the tool part's `state.output` inside a `<task_metadata>` block:
+`session_id: ses_…`. That regex is the primary source (see
+`web/src/lib/subagent.ts childSessionIdFromPart`); `state.metadata.sessionId`
+is a secondary fallback. (The original ADR's `metadata.sessionId`-primary and
+`task_id:`-prefix guesses were both wrong — verified against a real DB.)
+
+**Frontend drill-down.** `web/src/components/Session/Transcript.tsx`:
+- `subagentDrilldownState(part, sessionRef, ancestors, depth, maxDepth)` in
+  `web/src/lib/subagent.ts` is the single, unit-tested source of truth for the
+  gating decision (`childId`/`canDrill`/`capped`/`cappedReason`). `PartView`
+  calls it — the drill-down affordance renders only when `canDrill`.
+- `SubagentDrilldown` is a lazy, expandable `<details>` (fetch/subscribe starts
+  only on expand) that renders the child via the same `useSessionTranscript` +
+  `<Transcript>`; it recurses by passing `depth+1` and
+  `ancestors=[...ancestors, childId]`, so a subagent of a subagent drills down
+  further.
+- `childSessionRef` maps a live parent → live child (same runner+instance,
+  child session id ⇒ streams) and a history parent → history child by id
+  (dead-instance safe). `applyEvent`'s per-hook single-session filter is left
+  intact: nesting is compositional (each nested pane pins to its own session
+  id), never a global unfilter.
+- Non-subagent tool parts are unchanged (input/output/error `<details>` as
+  before). A subagent with no resolvable child id (Pi tasks, or output without
+  the metadata block) renders normally with no affordance and no error — the
+  cap note only appears for a resolvable child blocked by cycle/max-depth.
+
+**Pi.** Pi does not spawn OpenCode-style nested child sessions, so a Pi task
+part resolves no child id and cleanly renders without a drill-down (no error),
+which falls out of the same gating logic — no Pi-specific code path.
+
 ### Storage Layer (`internal/storage/`)
 - `entries.go` - Entry storage operations
 - `search.go` - Full-text search indexing
@@ -172,6 +270,11 @@ type TaskExecutor interface {
     ResolveWorkdir(task *types.ResolvedTask) (string, error)
     Spawn(ctx context.Context, task *types.ResolvedTask, projectID string, opts SpawnOptions) (*SpawnResult, error)
     Cleanup(taskID, projectID string) error
+    // CanResumeSession is a read-only probe: does this runner hold the given
+    // session's history so a true same-session resume is possible? OpenCode
+    // probes its on-disk session store (SQLite, then the legacy file layout);
+    // Pi always returns false (no session continuation).
+    CanResumeSession(sessionID string) SessionResumeCapability
 }
 ```
 

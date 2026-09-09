@@ -237,6 +237,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		SessionMode:         req.SessionMode,
 		CompleteOnIdle:      req.CompleteOnIdle,
 		CheckoutMode:        req.CheckoutMode,
+		DeliveryMode:        req.DeliveryMode,
 		TargetWorkdir:       frontmatter.SanitizeSimpleValue(req.TargetWorkdir),
 		OriginMachineID:     frontmatter.SanitizeSimpleValue(req.OriginMachineID),
 		OriginClientID:      frontmatter.SanitizeSimpleValue(req.OriginClientID),
@@ -587,6 +588,9 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["checkout_mode"].(string); ok {
 			fm.CheckoutMode = v
 		}
+		if v, ok := meta["delivery_mode"].(string); ok {
+			fm.DeliveryMode = v
+		}
 		if v, ok := meta["merge_strategy"].(string); ok {
 			fm.MergeStrategy = v
 		}
@@ -917,6 +921,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	if req.CheckoutMode != nil {
 		fm.CheckoutMode = *req.CheckoutMode
 	}
+	if req.DeliveryMode != nil {
+		fm.DeliveryMode = *req.DeliveryMode
+	}
 	if req.MergeStrategy != nil {
 		fm.MergeStrategy = *req.MergeStrategy
 	}
@@ -1124,8 +1131,11 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
 		"resume_requested", "resume_requested_at",
+		"resume_mode", "resume_injected_context",
+		"resume_prefer_same_session", "resume_executor_override",
 		"abandoned_at", "abandoned_reason",
 		"attempt_count", "last_failed_at",
+		"mr_url",
 	}
 	userTouched := updateRequestTouchedFields(req)
 	var preservedFields map[string]interface{}
@@ -2014,8 +2024,11 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 		"complete_on_idle", "direct_prompt", "runs", "max_runs",
 		"starts_at", "expires_at", "run_once_at", "timezone",
 		"resume_requested", "resume_requested_at",
+		"resume_mode", "resume_injected_context",
+		"resume_prefer_same_session", "resume_executor_override",
 		"abandoned_at", "abandoned_reason",
 		"attempt_count", "last_failed_at",
+		"mr_url",
 	}
 	var preservedFields map[string]interface{}
 	if row.Metadata != "" && row.Metadata != "{}" {

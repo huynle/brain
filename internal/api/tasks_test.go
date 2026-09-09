@@ -44,8 +44,11 @@ type mockTaskService struct {
 	triggerTaskFunc      func(ctx context.Context, projectId, taskId string) (*types.TriggerResponse, error)
 	resumeTaskFunc       func(ctx context.Context, projectId, taskId string, opts *types.ResumeTaskOptions) (*types.ResumeTaskResult, error)
 	resumeFeatureFunc    func(ctx context.Context, projectId, featureId string, opts *types.ResumeTaskOptions) (*types.ResumeFeatureResult, error)
-	dispatchTaskFunc     func(ctx context.Context, projectId, taskId, runnerID string) (*types.DispatchResponse, error)
-	getTaskFunc          func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
+
+	resumeTaskWithContextFunc    func(ctx context.Context, projectId, taskId string, opts *types.ResumeWithContextOptions) (*types.ResumeWithContextResult, error)
+	resumeFeatureWithContextFunc func(ctx context.Context, projectId, featureId string, opts *types.ResumeWithContextOptions) (*types.ResumeWithContextFeatureResult, error)
+	dispatchTaskFunc             func(ctx context.Context, projectId, taskId, runnerID string) (*types.DispatchResponse, error)
+	getTaskFunc                  func(ctx context.Context, projectId, taskId string) (*types.ResolvedTask, error)
 }
 
 func (m *mockTaskService) ListProjects(ctx context.Context) ([]string, error) {
@@ -217,6 +220,20 @@ func (m *mockTaskService) ResumeFeature(ctx context.Context, projectId, featureI
 		return m.resumeFeatureFunc(ctx, projectId, featureId, opts)
 	}
 	return nil, fmt.Errorf("resumeFeatureFunc not set")
+}
+
+func (m *mockTaskService) ResumeTaskWithContext(ctx context.Context, projectId, taskId string, opts *types.ResumeWithContextOptions) (*types.ResumeWithContextResult, error) {
+	if m.resumeTaskWithContextFunc != nil {
+		return m.resumeTaskWithContextFunc(ctx, projectId, taskId, opts)
+	}
+	return nil, fmt.Errorf("resumeTaskWithContextFunc not set")
+}
+
+func (m *mockTaskService) ResumeFeatureWithContext(ctx context.Context, projectId, featureId string, opts *types.ResumeWithContextOptions) (*types.ResumeWithContextFeatureResult, error) {
+	if m.resumeFeatureWithContextFunc != nil {
+		return m.resumeFeatureWithContextFunc(ctx, projectId, featureId, opts)
+	}
+	return nil, fmt.Errorf("resumeFeatureWithContextFunc not set")
 }
 
 func (m *mockTaskService) DispatchTask(ctx context.Context, projectId, taskId, runnerID string) (*types.DispatchResponse, error) {

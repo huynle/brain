@@ -41,6 +41,7 @@ internal/api/tokens.go:Handler.HandleListTokens ListTokens#1
 internal/api/tokens.go:Handler.HandleRevokeToken RevokeToken#1
 internal/api/webhooks.go:Handler.HandleListWebhookDeliveries ListDeliveries#1
 internal/apiserver/goal_steerer.go:bridgeGoalSteerer.findTaskInstance ListAllInstances#1
+internal/apiserver/live_injector.go:bridgeLiveInjector.findTaskInstance ListAllInstances#1
 internal/apiserver/storage.go:openSingleModeStorage Control#1 ForTenant#1 MarkInstallClaimed#1 SingleModeTokens#1
 internal/doctor/checks.go:loadAttachmentDigestChecksFromDatabase ForTenant#1 ListAttachments#1
 internal/events/cron_source.go:StorageScheduleSource.ListScheduledEntries ListNotes#1
@@ -128,6 +129,8 @@ internal/service/project_delete.go:BrainServiceImpl.DeleteProject DeleteProjectN
 internal/service/project_placement.go:ProjectPlacementService.Get GetProjectPlacement#1
 internal/service/project_placement.go:ProjectPlacementService.Put UpsertProjectPlacement#1
 internal/service/reminder_service.go:ReminderService.fire InsertEvent#1
+internal/service/resume_with_context.go:TaskServiceImpl.ResumeTaskWithContext MergeMetadata#1
+internal/service/resume_with_context.go:TaskServiceImpl.runResumeGate ClearDispatchLease#1 GetClaim#1 GetRunner#1 ReleaseClaim#1
 internal/service/run_feature.go:SchedulerService.CancelDependentChain DeleteFeatureCascadeRoot#1
 internal/service/run_feature.go:SchedulerService.ListDependentChains ListFeatureCascadeRoots#1
 internal/service/run_feature.go:SchedulerService.RunFeatureWithOptions CreateDispatchLease#1 GetDispatchLeaseRow#1 ListRunners#1
@@ -181,7 +184,7 @@ internal/service/task.go:TaskServiceImpl.RejectDispatch GetDispatchLeaseRow#1 Re
 internal/service/task.go:TaskServiceImpl.ReleaseDispatch ReleaseDispatchLease#1
 internal/service/task.go:TaskServiceImpl.ReleaseTask GetClaim#1 ReleaseClaim#1
 internal/service/task.go:TaskServiceImpl.RenewClaim GetClaim#1 RenewClaim#1
-internal/service/task.go:TaskServiceImpl.ResumeTask ClearDispatchLease#1 GetClaim#1 GetRunner#1 MergeMetadata#1 ReleaseClaim#1
+internal/service/task.go:TaskServiceImpl.ResumeTask MergeMetadata#1
 internal/service/task.go:TaskServiceImpl.StartClaimCleanup ExpireStaleClaims#1
 internal/service/task.go:TaskServiceImpl.TriggerTask MergeMetadata#1
 internal/service/task.go:TaskServiceImpl.applyTaskFilterOptions GetRunner#1

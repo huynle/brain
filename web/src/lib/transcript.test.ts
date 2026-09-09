@@ -212,3 +212,62 @@ test("buildCheckinPreset: header matches the injected-chip detector", () => {
   // Bare preset (no seed) still carries the header + instruction.
   assert.ok(buildCheckinPreset({}).startsWith("## Check-in"));
 });
+
+// ─── A. Per-session scoping between a subagent child and its parent ──
+//
+// A nested subagent view and its parent may ride the SAME instance event
+// stream. applyEvent's per-session filter is what keeps each transcript
+// subscribed to ITS OWN session id — proven here with explicit
+// parent/child ids rather than the generic ses_other.
+
+function msgEventFor(sessionID: string, id: string, role = "assistant") {
+  return {
+    type: "message.updated",
+    properties: { info: { id, sessionID, role } },
+  };
+}
+
+function partEventFor(sessionID: string, messageID: string, partID: string) {
+  return {
+    type: "message.part.updated",
+    properties: {
+      part: { id: partID, messageID, sessionID, type: "text", text: "x" },
+    },
+  };
+}
+
+test("applyEvent: a nested child view accepts its own id, rejects the parent's", () => {
+  const CHILD = "ses_child";
+  const PARENT = "ses_parent";
+  const base: OcMessage[] = [];
+
+  // A child-keyed transcript ACCEPTS an event stamped with the child id.
+  const accepted = applyEvent(base, msgEventFor(CHILD, "m1"), CHILD);
+  assert.notEqual(accepted, base);
+  assert.equal(accepted.length, 1);
+  assert.equal(accepted[0].info.id, "m1");
+  assert.equal(accepted[0].info.sessionID, CHILD);
+
+  // The SAME instance stream also carries the parent's events; a child view
+  // keyed on CHILD must drop them (same reference back).
+  const rejected = applyEvent(accepted, msgEventFor(PARENT, "mP"), CHILD);
+  assert.equal(rejected, accepted);
+});
+
+test("applyEvent: the parent view rejects a child's events (no leak up)", () => {
+  const CHILD = "ses_child";
+  const PARENT = "ses_parent";
+  const parentState = applyEvent([], msgEventFor(PARENT, "m1"), PARENT);
+  assert.equal(parentState.length, 1);
+
+  // A child part event arriving on the shared stream must NOT contaminate
+  // the parent transcript.
+  const afterChildMsg = applyEvent(parentState, msgEventFor(CHILD, "mC"), PARENT);
+  assert.equal(afterChildMsg, parentState);
+  const afterChildPart = applyEvent(
+    parentState,
+    partEventFor(CHILD, "m1", "pC"),
+    PARENT,
+  );
+  assert.equal(afterChildPart, parentState);
+});

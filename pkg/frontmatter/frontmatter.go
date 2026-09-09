@@ -238,6 +238,7 @@ type Frontmatter struct {
 	Executor           string   `yaml:"executor,omitempty" json:"executor,omitempty"`
 	Extensions         []string `yaml:"extensions,omitempty" json:"extensions,omitempty"`
 	CheckoutMode       string   `yaml:"checkout_mode,omitempty" json:"checkout_mode,omitempty"`
+	DeliveryMode       string   `yaml:"delivery_mode,omitempty" json:"delivery_mode,omitempty"`
 
 	// Origin provenance: which machine, which client install, and which
 	// absolute directory the task was created from. Stamped by the MCP stdio
@@ -333,6 +334,7 @@ type GenerateOptions struct {
 	Executor           string
 	Extensions         []string
 	CheckoutMode       string
+	DeliveryMode       string
 
 	OriginMachineID string
 	OriginClientID  string
@@ -426,6 +428,7 @@ type rawFrontmatter struct {
 	Executor            string                     `yaml:"executor"`
 	Extensions          []string                   `yaml:"extensions"`
 	CheckoutMode        string                     `yaml:"checkout_mode"`
+	DeliveryMode        string                     `yaml:"delivery_mode"`
 	OriginMachineID     string                     `yaml:"origin_machine_id"`
 	OriginClientID      string                     `yaml:"origin_client_id"`
 	OriginPath          string                     `yaml:"origin_path"`
@@ -472,6 +475,7 @@ var knownFields = map[string]bool{
 	"execution_mode": true, "complete_on_idle": true, "target_workdir": true,
 	"executor": true, "extensions": true,
 	"checkout_mode":     true,
+	"delivery_mode":     true,
 	"origin_machine_id": true, "origin_client_id": true, "origin_path": true,
 	"machine_affinity":      true,
 	"user_original_request": true, "direct_prompt": true,
@@ -614,6 +618,7 @@ func Parse(content string) (*Document, error) {
 		Executor:            raw.Executor,
 		Extensions:          raw.Extensions,
 		CheckoutMode:        raw.CheckoutMode,
+		DeliveryMode:        raw.DeliveryMode,
 		OriginMachineID:     raw.OriginMachineID,
 		OriginClientID:      raw.OriginClientID,
 		OriginPath:          raw.OriginPath,
@@ -859,6 +864,7 @@ func Serialize(fm *Frontmatter) string {
 	emitPlain("merge_strategy", fm.MergeStrategy)
 	emitPlain("remote_branch_policy", fm.RemoteBranchPolicy)
 	emitPlain("checkout_mode", fm.CheckoutMode)
+	emitPlain("delivery_mode", fm.DeliveryMode)
 
 	if fm.OpenPRBeforeMerge != nil {
 		lines = append(lines, fmt.Sprintf("open_pr_before_merge: %v", *fm.OpenPRBeforeMerge))
@@ -1056,6 +1062,7 @@ func Generate(opts *GenerateOptions) string {
 		Executor:            opts.Executor,
 		Extensions:          opts.Extensions,
 		CheckoutMode:        opts.CheckoutMode,
+		DeliveryMode:        opts.DeliveryMode,
 		OriginMachineID:     opts.OriginMachineID,
 		OriginClientID:      opts.OriginClientID,
 		OriginPath:          opts.OriginPath,

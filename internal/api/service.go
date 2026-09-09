@@ -315,6 +315,18 @@ type TaskService interface {
 	// so the caller can treat this as "resume everything you can in this
 	// feature" without pre-filtering. opts may be nil.
 	ResumeFeature(ctx context.Context, projectId, featureId string, opts *types.ResumeTaskOptions) (*types.ResumeFeatureResult, error)
+
+	// ResumeTaskWithContext is the supervisor context-injection resume. It
+	// either injects the supplied context into the task's still-live session
+	// (no relaunch) or reuses the ResumeTask gates and stamps extended resume
+	// metadata for the runner. opts.InjectedContext is REQUIRED — an empty
+	// value yields an error the handler maps to 400.
+	ResumeTaskWithContext(ctx context.Context, projectId, taskId string, opts *types.ResumeWithContextOptions) (*types.ResumeWithContextResult, error)
+
+	// ResumeFeatureWithContext fans out ResumeTaskWithContext across a feature,
+	// applying the same injected context to every task. opts.InjectedContext is
+	// REQUIRED.
+	ResumeFeatureWithContext(ctx context.Context, projectId, featureId string, opts *types.ResumeWithContextOptions) (*types.ResumeWithContextFeatureResult, error)
 }
 
 // RunnerService defines the interface for runner control operations.
@@ -510,6 +522,12 @@ type BridgeService interface {
 	// served from a live instance if one hosts it, otherwise read from
 	// OpenCode's on-disk storage. Returns raw JSON (array of {info, parts}).
 	FetchHistory(ctx context.Context, runnerID, sessionID string) ([]byte, error)
+
+	// FetchChildren returns the child (subagent) sessions of a session by ID
+	// from a runner, read from OpenCode's persisted parent_id linkage (works
+	// without a live instance). recursive walks the tree up to depth levels.
+	// Returns raw JSON (a nested array of child session descriptors).
+	FetchChildren(ctx context.Context, runnerID, sessionID string, recursive bool, depth int) ([]byte, error)
 
 	// AcquireStream enables full event forwarding for an instance
 	// (refcounted); the release function must be called on detach.

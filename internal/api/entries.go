@@ -78,6 +78,7 @@ var AllowedMetadataUpdateFields = map[string]bool{
 	"last_reconcile": true, // goal_service: reconcile audit trail
 	"exit_code":      true, // runner script executor: process exit code
 	"script_output":  true, // runner script executor: captured output tail
+	"mr_url":         true, // feature-delivery script: MR URL write-back onto the merge_request entry
 
 	// (4) Task-runtime lifecycle fields for the resume-abandoned-tasks flow.
 	// These are read/written by the runner (resume_requested → IsResume prompt)
@@ -86,8 +87,14 @@ var AllowedMetadataUpdateFields = map[string]bool{
 	// Kept out of durableMetadataFields so they never touch on-disk frontmatter.
 	"resume_requested":    true, // set by /resume endpoint, cleared by runner on spawn
 	"resume_requested_at": true, // RFC3339 timestamp for audit
-	"abandoned_at":        true, // RFC3339 timestamp set by reaper / reconciler
-	"abandoned_reason":    true, // enum: runner_orphan | runner_offline | claim_expired | no_claim
+	// Supervisor resume-with-context (Phase 3/4). Runtime-only; stamped by
+	// ResumeTaskWithContext, read by the runner at claim time.
+	"resume_mode":                true, // advisory same_session | rehydrate | live_injected
+	"resume_injected_context":    true, // supervisor-authored context blob
+	"resume_prefer_same_session": true, // same-session reuse hint for the runner
+	"resume_executor_override":   true, // optional executor override for the relaunch
+	"abandoned_at":               true, // RFC3339 timestamp set by reaper / reconciler
+	"abandoned_reason":           true, // enum: runner_orphan | runner_offline | claim_expired | no_claim
 
 	// (5) Bounded-retry accounting, written by the runner on each terminal
 	// run. Runtime-only: a counter in frontmatter would churn the file on
@@ -1796,6 +1803,7 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		RemoteBranchPolicy:  strPtr(fm.RemoteBranchPolicy),
 		ExecutionMode:       strPtr(fm.ExecutionMode),
 		CheckoutMode:        strPtr(fm.CheckoutMode),
+		DeliveryMode:        strPtr(fm.DeliveryMode),
 		OriginMachineID:     strPtr(fm.OriginMachineID),
 		OriginClientID:      strPtr(fm.OriginClientID),
 		OriginPath:          strPtr(fm.OriginPath),

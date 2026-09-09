@@ -654,3 +654,85 @@ func testRunningTask(id string) RunningTask {
 		StartedAt: time.Now(),
 	}
 }
+
+// =============================================================================
+// SetPendingSteer / UpdateLastActivity (Phase 1 foundation setters)
+// =============================================================================
+
+func TestSetPendingSteer_TogglesRegisteredTask(t *testing.T) {
+	pm := newTestProcessManager()
+	registerFake(pm, opencodeTask(52801), &fakeProcess{exited: false})
+
+	pm.SetPendingSteer("t-steer", true)
+	pm.mu.Lock()
+	got := pm.processes["t-steer"].Task.PendingSteer
+	pm.mu.Unlock()
+	if !got {
+		t.Fatal("SetPendingSteer(true) did not set the flag")
+	}
+
+	pm.SetPendingSteer("t-steer", false)
+	pm.mu.Lock()
+	got = pm.processes["t-steer"].Task.PendingSteer
+	pm.mu.Unlock()
+	if got {
+		t.Fatal("SetPendingSteer(false) did not clear the flag")
+	}
+}
+
+func TestSetPendingSteer_NoopForUnknownID(t *testing.T) {
+	pm := newTestProcessManager()
+	// No panic, no state — the call is a safe no-op for an untracked id.
+	pm.SetPendingSteer("does-not-exist", true)
+	pm.mu.Lock()
+	_, exists := pm.processes["does-not-exist"]
+	pm.mu.Unlock()
+	if exists {
+		t.Fatal("SetPendingSteer created an entry for an unknown id")
+	}
+}
+
+func TestUpdateLastActivity_AdvancesForwardOnly(t *testing.T) {
+	pm := newTestProcessManager()
+	registerFake(pm, opencodeTask(52802), &fakeProcess{exited: false})
+
+	t1 := time.Now()
+	pm.UpdateLastActivity("t-steer", t1)
+	pm.mu.Lock()
+	got := pm.processes["t-steer"].Task.LastActivity
+	pm.mu.Unlock()
+	if !got.Equal(t1) {
+		t.Fatalf("LastActivity = %v, want %v", got, t1)
+	}
+
+	// A later timestamp advances it.
+	t2 := t1.Add(time.Minute)
+	pm.UpdateLastActivity("t-steer", t2)
+	pm.mu.Lock()
+	got = pm.processes["t-steer"].Task.LastActivity
+	pm.mu.Unlock()
+	if !got.Equal(t2) {
+		t.Fatalf("LastActivity = %v, want %v (forward move)", got, t2)
+	}
+
+	// An earlier timestamp must not move it backwards.
+	tEarlier := t1.Add(-time.Hour)
+	pm.UpdateLastActivity("t-steer", tEarlier)
+	pm.mu.Lock()
+	got = pm.processes["t-steer"].Task.LastActivity
+	pm.mu.Unlock()
+	if !got.Equal(t2) {
+		t.Fatalf("LastActivity = %v, want %v (must not move backward)", got, t2)
+	}
+}
+
+func TestUpdateLastActivity_NoopForUnknownID(t *testing.T) {
+	pm := newTestProcessManager()
+	pm.UpdateLastActivity("does-not-exist", time.Now())
+	pm.mu.Lock()
+	_, exists := pm.processes["does-not-exist"]
+	pm.mu.Unlock()
+	if exists {
+		t.Fatal("UpdateLastActivity created an entry for an unknown id")
+	}
+}

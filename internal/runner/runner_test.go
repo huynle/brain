@@ -480,6 +480,7 @@ type mockExecutor struct {
 	spawnErr          error
 	spawnCalls        []spawnCall
 	cleanupCalls      []cleanupCall
+	resumeCapability  SessionResumeCapability
 }
 
 type spawnCall struct {
@@ -534,6 +535,12 @@ func (m *mockExecutor) Cleanup(taskID, projectID string) error {
 	defer m.mu.Unlock()
 	m.cleanupCalls = append(m.cleanupCalls, cleanupCall{taskID, projectID})
 	return nil
+}
+
+func (m *mockExecutor) CanResumeSession(sessionID string) SessionResumeCapability {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.resumeCapability
 }
 
 func (m *mockExecutor) getSpawnCalls() []spawnCall {
@@ -741,6 +748,32 @@ func (m *mockProcessMgr) UpdateIdleSince(taskID string, idleSince string) {
 	defer m.mu.Unlock()
 	if info, exists := m.processes[taskID]; exists {
 		info.Task.IdleSince = idleSince
+	}
+}
+
+func (m *mockProcessMgr) UpdateLastActivity(taskID string, t time.Time) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, exists := m.processes[taskID]; exists {
+		if t.After(info.Task.LastActivity) {
+			info.Task.LastActivity = t
+		}
+	}
+}
+
+func (m *mockProcessMgr) SetPendingSteer(taskID string, pending bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, exists := m.processes[taskID]; exists {
+		info.Task.PendingSteer = pending
+	}
+}
+
+func (m *mockProcessMgr) SetStallRecovered(taskID string, recovered bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if info, exists := m.processes[taskID]; exists {
+		info.Task.StallRecovered = recovered
 	}
 }
 

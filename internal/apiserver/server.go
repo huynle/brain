@@ -50,6 +50,7 @@ type ServerOptions struct {
 	TaskDefaults    config.TaskDefaultsConfig
 	FeatureCheckout config.FeatureCheckoutConfig
 	Tenancy         config.TenancyConfig
+	FeatureDelivery config.FeatureDeliveryConfig
 	// IndexWatch, when enabled, runs a filesystem watcher that re-indexes
 	// out-of-band writes to BrainDir. Off by default; see
 	// config.IndexWatchConfig for why.
@@ -413,6 +414,7 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 		TaskDefaults:    opts.TaskDefaults,
 		FeatureCheckout: opts.FeatureCheckout,
 		Tenancy:         opts.Tenancy,
+		FeatureDelivery: opts.FeatureDelivery,
 		Embedding:       opts.Embedding,
 		Attachments:     attachments,
 
@@ -463,6 +465,21 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	}); err != nil {
 		cleanup()
 		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature checkout simple automation: %w", err)
+	}
+	// Phase 3: register the built-in per-feature git-delivery automation. It
+	// fires on feature.completed only for features whose folded delivery_mode
+	// is "mr" or "local_merge" (default "none" does not match), so nothing is
+	// pushed or merged unless a feature explicitly opts in. Gated on the
+	// separate FeatureDelivery.Enabled toggle (default OFF).
+	if err := service.EnsureBuiltInFeatureDeliveryAutomation(ctx, brainSvc, service.BuiltInFeatureDeliveryConfig{
+		Enabled:            cfg.FeatureDelivery.Enabled,
+		MergeTargetBranch:  cfg.TaskDefaults.MergeTargetBranch,
+		MergeStrategy:      cfg.TaskDefaults.MergeStrategy,
+		RemoteBranchPolicy: cfg.TaskDefaults.RemoteBranchPolicy,
+		TargetWorkdir:      cfg.TaskDefaults.TargetWorkdir,
+	}); err != nil {
+		cleanup()
+		return nil, "", nil, fmt.Errorf("failed to ensure built-in feature delivery automation: %w", err)
 	}
 	blobStore, err := blobstore.NewTenantFilesystemStore(roots, tenant.Local, cfg.Attachments.MaxUploadSizeBytes)
 	if err != nil {
@@ -528,6 +545,13 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// Created before the goal service so the goal steerer can reuse the same
 	// in-process control plumbing (instance registry + bridge proxy).
 	bridgeHub := bridge.NewHub(hub)
+
+	// ─── Live context injector (resume-with-context) ───────────────
+	// Wire the task service's LiveInjector to the same instance-registry +
+	// bridge plumbing the goal steerer uses, so ResumeTaskWithContext can
+	// inject into a still-live session instead of relaunching. Nil-safe:
+	// if this is never set the service always relaunches.
+	taskSvc.SetLiveInjector(newBridgeLiveInjector(runnerRegistrySvc, bridgeHub))
 
 	// ─── Goal Reconcile Handler ────────────────────────────────────
 	// GoalService subscribes to the EventHub and drives the deterministic

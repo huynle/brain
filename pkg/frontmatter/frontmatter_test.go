@@ -548,6 +548,105 @@ Body`
 	}
 }
 
+func TestParse_DeliveryMode(t *testing.T) {
+	content := `---
+title: Delivery Task
+type: task
+status: pending
+delivery_mode: mr
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if doc.Frontmatter.DeliveryMode != "mr" {
+		t.Errorf("delivery_mode = %q, want %q", doc.Frontmatter.DeliveryMode, "mr")
+	}
+}
+
+func TestGenerate_WithDeliveryMode(t *testing.T) {
+	result := Generate(&GenerateOptions{
+		Title:        "Task with delivery mode",
+		Type:         "task",
+		DeliveryMode: "local_merge",
+	})
+	if !strings.Contains(result, "delivery_mode: local_merge") {
+		t.Errorf("missing delivery_mode in:\n%s", result)
+	}
+}
+
+func TestGenerate_OmitsDeliveryModeWhenEmpty(t *testing.T) {
+	result := Generate(&GenerateOptions{
+		Title: "Task without delivery mode",
+		Type:  "task",
+	})
+	if strings.Contains(result, "delivery_mode:") {
+		t.Errorf("unexpected delivery_mode line in:\n%s", result)
+	}
+}
+
+func TestDeliveryMode_RoundTrip(t *testing.T) {
+	// Parse -> Marshal -> Parse should preserve delivery_mode.
+	original := `---
+title: RoundTrip
+type: task
+status: pending
+delivery_mode: mr
+---
+
+Body`
+
+	doc1, err := Parse(original)
+	if err != nil {
+		t.Fatalf("first parse: %v", err)
+	}
+	if doc1.Frontmatter.DeliveryMode != "mr" {
+		t.Fatalf("first parse delivery_mode = %q, want %q", doc1.Frontmatter.DeliveryMode, "mr")
+	}
+
+	regen := Generate(&GenerateOptions{
+		Title:        doc1.Frontmatter.Title,
+		Type:         doc1.Frontmatter.Type,
+		Status:       doc1.Frontmatter.Status,
+		DeliveryMode: doc1.Frontmatter.DeliveryMode,
+	})
+	full := "---\n" + regen + "---\n\nBody\n"
+	doc2, err := Parse(full)
+	if err != nil {
+		t.Fatalf("second parse: %v", err)
+	}
+	if doc2.Frontmatter.DeliveryMode != "mr" {
+		t.Errorf("round-trip delivery_mode = %q, want %q", doc2.Frontmatter.DeliveryMode, "mr")
+	}
+}
+
+func TestParse_DeliveryMode_UnknownFieldStillFlagged(t *testing.T) {
+	content := `---
+title: Task
+type: task
+status: pending
+delivery_mode: mr
+totally_bogus_key: yes
+---
+
+Body`
+
+	doc, err := Parse(content)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if _, ok := doc.Frontmatter.Extra["totally_bogus_key"]; !ok {
+		t.Errorf("expected totally_bogus_key in Extra map, got: %#v", doc.Frontmatter.Extra)
+	}
+	if _, ok := doc.Frontmatter.Extra["delivery_mode"]; ok {
+		t.Errorf("delivery_mode should be a known field, not in Extra")
+	}
+}
+
 func TestParse_CheckoutMode_UnknownFieldStillFlagged(t *testing.T) {
 	// Adding checkout_mode to knownFields should not silence unrelated unknown keys.
 	content := `---

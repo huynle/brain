@@ -235,3 +235,57 @@ func TestIsValidCheckoutMode(t *testing.T) {
 		})
 	}
 }
+
+func TestIsValidDeliveryMode(t *testing.T) {
+	tests := []struct {
+		input string
+		want  bool
+	}{
+		{"", true}, // empty is allowed (defaults to "none" downstream)
+		{"none", true},
+		{"mr", true},
+		{"local_merge", true},
+		{"MR", false},          // case-sensitive
+		{"Local_Merge", false}, // case-sensitive
+		{"garbage", false},
+		{"auto_pr", false}, // valid merge_policy but not a delivery_mode
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			got := IsValidDeliveryMode(tt.input)
+			if got != tt.want {
+				t.Errorf("IsValidDeliveryMode(%q) = %v, want %v", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestEffectiveDeliveryMode(t *testing.T) {
+	tests := []struct {
+		name         string
+		deliveryMode string
+		mergePolicy  string
+		want         string
+	}{
+		{"explicit mr wins over policy", "mr", "auto_merge", "mr"},
+		{"explicit local_merge wins over policy", "local_merge", "auto_pr", "local_merge"},
+		{"empty delivery bridges auto_pr to mr", "", "auto_pr", "mr"},
+		{"empty delivery bridges auto_merge to local_merge", "", "auto_merge", "local_merge"},
+		{"none delivery bridges auto_pr to mr", "none", "auto_pr", "mr"},
+		{"none delivery bridges auto_merge to local_merge", "none", "auto_merge", "local_merge"},
+		{"empty delivery + prompt_only policy is none", "", "prompt_only", "none"},
+		{"empty delivery + empty policy is none", "", "", "none"},
+		{"none delivery + empty policy is none", "none", "", "none"},
+		{"none delivery + unknown policy is none", "none", "garbage", "none"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := EffectiveDeliveryMode(tt.deliveryMode, tt.mergePolicy)
+			if got != tt.want {
+				t.Errorf("EffectiveDeliveryMode(%q, %q) = %q, want %q", tt.deliveryMode, tt.mergePolicy, got, tt.want)
+			}
+		})
+	}
+}

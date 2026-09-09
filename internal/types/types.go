@@ -371,14 +371,16 @@ type PlacementReason struct {
 
 // BrainEntry represents a single brain entry (note/task/plan/etc).
 type BrainEntry struct {
-	ID       string   `json:"id"`
-	Path     string   `json:"path"`
-	Title    string   `json:"title"`
-	Type     string   `json:"type"`
-	Status   string   `json:"status"`
-	Content  string   `json:"content"`
-	Tags     []string `json:"tags"`
-	Priority string   `json:"priority,omitempty"`
+	Revision             string                `json:"revision,omitempty"`
+	DeliveryVerification *DeliveryVerification `json:"delivery_verification,omitempty"`
+	ID                   string                `json:"id"`
+	Path                 string                `json:"path"`
+	Title                string                `json:"title"`
+	Type                 string                `json:"type"`
+	Status               string                `json:"status"`
+	Content              string                `json:"content"`
+	Tags                 []string              `json:"tags"`
+	Priority             string                `json:"priority,omitempty"`
 
 	// Attachments contains typed references to binary artifacts associated with
 	// this entry. Binary data is stored outside entry DTOs and referenced by ID.
@@ -841,12 +843,13 @@ type CreateEntryResponse struct {
 
 // UpdateEntryRequest is the request body for PATCH /entries/:id.
 type UpdateEntryRequest struct {
-	Status  *string  `json:"status,omitempty"`
-	Title   *string  `json:"title,omitempty"`
-	Content *string  `json:"content,omitempty"`
-	Append  *string  `json:"append,omitempty"`
-	Note    *string  `json:"note,omitempty"`
-	Tags    []string `json:"tags,omitempty"`
+	ExpectedRevision string   `json:"expected_revision,omitempty"`
+	Status           *string  `json:"status,omitempty"`
+	Title            *string  `json:"title,omitempty"`
+	Content          *string  `json:"content,omitempty"`
+	Append           *string  `json:"append,omitempty"`
+	Note             *string  `json:"note,omitempty"`
+	Tags             []string `json:"tags,omitempty"`
 
 	Attachments *[]AttachmentReference `json:"attachments,omitempty"`
 
@@ -1249,15 +1252,16 @@ type LinkResponse struct {
 
 // ResolvedTask is a task with dependency resolution info.
 type ResolvedTask struct {
-	ID        string   `json:"id"`
-	Path      string   `json:"path"`
-	Title     string   `json:"title"`
-	Content   string   `json:"content,omitempty"`
-	Priority  string   `json:"priority"`
-	Status    string   `json:"status"`
-	ParentID  string   `json:"parent_id,omitempty"`
-	DependsOn []string `json:"depends_on"`
-	Created   string   `json:"created"`
+	DeliveryVerification *DeliveryVerification `json:"delivery_verification,omitempty"`
+	ID                   string                `json:"id"`
+	Path                 string                `json:"path"`
+	Title                string                `json:"title"`
+	Content              string                `json:"content,omitempty"`
+	Priority             string                `json:"priority"`
+	Status               string                `json:"status"`
+	ParentID             string                `json:"parent_id,omitempty"`
+	DependsOn            []string              `json:"depends_on"`
+	Created              string                `json:"created"`
 	// Modified/CompletedAt power the PWA's history ordering. Modified was
 	// historically declared by the web Task type but never sent.
 	Modified    string `json:"modified,omitempty"`

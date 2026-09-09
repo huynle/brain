@@ -8,35 +8,38 @@ import (
 
 // Handler holds service dependencies for HTTP handlers.
 type Handler struct {
-	bulkJobs       BulkJobService
-	brain          BrainService
-	attachments    AttachmentService
-	tasks          TaskService
-	runner         RunnerService
-	runnerRegistry RunnerRegistryService
-	clientContext  ClientContextService
-	monitor        MonitorService
-	tokens         TokenService
-	events         EventService
-	webhooks       WebhookService
-	goalService    GoalService
-	reminders      ReminderService
-	automationRun  AutomationRunService
-	assistant      *AssistantService
-	placement      ProjectPlacementService
-	scheduler      SchedulerService
-	schedulerViews SchedulerVisibilityService
-	runTask        RunTaskService
-	runFeature     RunFeatureService
-	depChains      DependentChainService
-	runProject     RunProjectService
-	bridge         BridgeService
-	hub            *realtime.Hub
-	logBuffer      *logbuffer.Buffer
-	taskDefaults   config.TaskDefaultsConfig
-	credentials    CredentialVerifier
-	passwordTokens PasswordTokenStore
-	loginThrottle  *loginThrottle
+	executionBudgets      ExecutionBudgetStore
+	supervisorCheckpoints SupervisorCheckpointStore
+	supervisorOperations  SupervisorOperationStore
+	bulkJobs              BulkJobService
+	brain                 BrainService
+	attachments           AttachmentService
+	tasks                 TaskService
+	runner                RunnerService
+	runnerRegistry        RunnerRegistryService
+	clientContext         ClientContextService
+	monitor               MonitorService
+	tokens                TokenService
+	events                EventService
+	webhooks              WebhookService
+	goalService           GoalService
+	reminders             ReminderService
+	automationRun         AutomationRunService
+	assistant             *AssistantService
+	placement             ProjectPlacementService
+	scheduler             SchedulerService
+	schedulerViews        SchedulerVisibilityService
+	runTask               RunTaskService
+	runFeature            RunFeatureService
+	depChains             DependentChainService
+	runProject            RunProjectService
+	bridge                BridgeService
+	hub                   *realtime.Hub
+	logBuffer             *logbuffer.Buffer
+	taskDefaults          config.TaskDefaultsConfig
+	credentials           CredentialVerifier
+	passwordTokens        PasswordTokenStore
+	loginThrottle         *loginThrottle
 }
 
 // HandlerOption configures a Handler.

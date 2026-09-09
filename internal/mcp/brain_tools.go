@@ -1233,6 +1233,7 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 				"status":                {Type: "string", Enum: types.EntryStatuses, Description: "New status"},
 				"title":                 {Type: "string", Description: "New title"},
 				"content":               {Type: "string", Description: "Replace the entry's full body content (markdown). Preserves path, ID, and links. Use 'append' to add to the end instead; if both are set, content is applied first."},
+				"expected_revision":     {Type: "string", Description: "Optional revision returned by recall; reject stale updates with 409. Omit for existing partial-update semantics."},
 				"append":                {Type: "string", Description: "Content to append to the end of the entry body"},
 				"note":                  {Type: "string", Description: "Short note to add"},
 				"depends_on":            {Type: "array", Items: &Property{Type: "string"}, Description: "Task dependencies - list of task IDs or titles"},
@@ -1286,7 +1287,7 @@ Note: as a guard against clients that autofill every optional field, when 3 or m
 
 		body := map[string]any{}
 		addStringUpdateFields(body, cleanArgs,
-			"status", "title", "content", "append", "note", "priority", "target_workdir", "workdir", "git_branch", "git_remote",
+			"expected_revision", "status", "title", "content", "append", "note", "priority", "target_workdir", "workdir", "git_branch", "git_remote",
 			"merge_target_branch", "merge_policy", "merge_strategy", "remote_branch_policy", "execution_mode",
 			"schedule", "run_once_at", "timezone", "starts_at", "expires_at", "feature_id", "feature_priority",
 			"feature_schedule", "feature_starts_at", "feature_expires_at", "feature_run_once_at", "feature_timezone",

@@ -133,7 +133,7 @@ internal/service/resume_with_context.go:TaskServiceImpl.ResumeTaskWithContext Me
 internal/service/resume_with_context.go:TaskServiceImpl.runResumeGate ClearDispatchLease#1 GetClaim#1 GetRunner#1 ReleaseClaim#1
 internal/service/run_feature.go:SchedulerService.CancelDependentChain DeleteFeatureCascadeRoot#1
 internal/service/run_feature.go:SchedulerService.ListDependentChains ListFeatureCascadeRoots#1
-internal/service/run_feature.go:SchedulerService.RunFeatureWithOptions CreateDispatchLease#1 GetDispatchLeaseRow#1 ListRunners#1
+internal/service/run_feature.go:SchedulerService.RunFeatureWithOptions CreateDispatchLease#1 GetDispatchLeaseRow#1
 internal/service/run_feature.go:SchedulerService.SweepDependentChains ListFeatureCascadeRoots#1
 internal/service/run_feature.go:SchedulerService.enrolDependents UpsertFeatureCascadeRoot#1
 internal/service/run_feature.go:SchedulerService.reclaimLease CreateDispatchLease#1 ReleaseDispatchLease#1
@@ -169,8 +169,9 @@ internal/service/runner_registry.go:RunnerRegistryServiceImpl.UpdateConfig Updat
 internal/service/runner_registry.go:RunnerRegistryServiceImpl.UpsertInstance UpsertInstance#1
 internal/service/runner_registry.go:RunnerRegistryServiceImpl.attachFeatureAssignments ListFeatureAssignmentsByRunner#1
 internal/service/scheduler.go:SchedulerService.RunOnce ExpireDispatchLeases#1
-internal/service/scheduler.go:SchedulerService.RunTaskNow CreateDispatchLease#1 CreateDispatchLease#2 GetDispatchLeaseRow#1 ListRunners#1 ReleaseDispatchLease#1
-internal/service/scheduler.go:SchedulerService.ScheduleProject CreateDispatchLease#1 ListRunners#1
+internal/service/scheduler.go:SchedulerService.RunTaskNow CreateDispatchLease#1 CreateDispatchLease#2 GetDispatchLeaseRow#1 ReleaseDispatchLease#1
+internal/service/scheduler.go:SchedulerService.ScheduleProject CreateDispatchLease#1
+internal/service/scheduler.go:SchedulerService.candidateRunners ListRunners#1
 internal/service/scheduler.go:SchedulerService.recordNoCandidate ClearDispatchLease#1 RecordPlacementReason#1
 internal/service/scheduler.go:SchedulerService.shouldSkipTask IsFeaturePaused#1
 internal/service/scheduler.go:SchedulerService.undoUndeliveredLease ClearDispatchLease#1

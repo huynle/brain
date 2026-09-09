@@ -46,6 +46,7 @@ import (
 //     reconciliation, script executor output) that intentionally stay out of
 //     the frontmatter.
 var AllowedMetadataUpdateFields = map[string]bool{
+	"expected_revision": true, // precondition only; removed before persistence
 	// (1) File-syncable durable fields. Mirror of service.durableMetadataFields.
 	"status":             true,
 	"priority":           true,

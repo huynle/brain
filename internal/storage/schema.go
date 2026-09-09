@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 29
+const CurrentSchemaVersion = 30
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -1028,6 +1028,19 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 30 {
+		for _, ddl := range []string{createExecutionBudgets, createBudgetReservations, createSupervisorCheckpointVersions} {
+			if _, err := db.Exec(ddl); err != nil {
+				return err
+			}
+		}
+		if _, err := db.Exec(createSupervisorCheckpoints); err != nil {
+			return err
+		}
+		if _, err := db.Exec(createSupervisorOperations); err != nil {
+			return fmt.Errorf("migrate v30 supervisor operations: %w", err)
+		}
+	}
 	if ver < 29 {
 		for _, ddl := range []string{createBulkJobsTable, createBulkJobItemsTable, createBulkJobItemsIndex} {
 			if _, err := db.Exec(ddl); err != nil {
@@ -1234,6 +1247,11 @@ func searchSubstring(s, substr string) bool {
 func InitSchema(db *sql.DB) error {
 	// Tables (order matters for foreign keys)
 	tables := []string{
+		createExecutionBudgets,
+		createBudgetReservations,
+		createSupervisorCheckpointVersions,
+		createSupervisorCheckpoints,
+		createSupervisorOperations,
 		createBulkJobsTable,
 		createBulkJobItemsTable,
 		createBulkJobItemsIndex,

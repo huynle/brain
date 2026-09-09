@@ -22,9 +22,7 @@ import { useSelection } from "../../store/selection";
 import { useUI } from "../../store/ui";
 import {
   bulkDeletePaths,
-  bulkUpdate,
   deleteFeatureTasks,
-  updateEntry,
   type BulkDeleteResponse,
 } from "../../lib/api";
 import {
@@ -34,8 +32,10 @@ import {
   type DeletePlan,
 } from "../../lib/selection";
 import { runBulkBaton } from "../../lib/actions/bulkBaton";
+import { startArchive } from "../../store/archiveJob";
+import { startBackgroundOperation, type ReportProgress } from "../../store/backgroundOperations";
 import { TERMINAL_STATUSES } from "../../lib/actions/taskActions";
-import { withForceRetry, ForceDeclinedError } from "../../lib/actions/forceRetry";
+import { withForceRetry } from "../../lib/actions/forceRetry";
 import { forceConfirmFor } from "../../lib/actions/forceConfirm";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { Task } from "../../lib/types";
@@ -57,18 +57,6 @@ interface PendingArchive {
   /** Client-side count of tasks the archive will actually flip. */
   total: number;
 }
-
-/**
- * Source statuses the feature-archive baton fans out over. Same shape as
- * useFeatureActionContext.setStatusForAll: bulk-update cannot make progress
- * with a bare feature filter (freshly-modified entries sort first), so the
- * filter pins each CURRENT status and every page leaves the match set.
- * Terminal statuses only — the gate already refused anything unsettled —
- * and never "archived" itself, which needs no write.
- */
-const ARCHIVE_SOURCE_STATUSES = [...TERMINAL_STATUSES].filter(
-  (s) => s !== "archived",
-);
 
 export function SelectionBar(): JSX.Element | null {
   const projectId = useSelection((s) => s.projectId);
@@ -170,32 +158,39 @@ export function SelectionBar(): JSX.Element | null {
     }
   };
 
-  const commitDelete = async (pd: PendingDelete) => {
+  const commitDelete = async (pd: PendingDelete, report: ReportProgress) => {
+    const chunks = chunkPaths(pd.plan.taskPaths);
+    let nextChunk = 0;
+    let nextFeature = 0;
+    let deleted = 0;
+    let failures = 0;
+    const titles: string[] = [];
+    const absorb = (r: BulkDeleteResponse) => {
+      deleted += r.deleted;
+      failures += r.failed;
+      report({ detail: `${deleted} deleted; ${failures} failed`, completed: deleted + failures, total: Math.max(pd.total, deleted + failures) });
+      for (const row of r.results) {
+        if (row.status !== "ok" && titles.length < 3) titles.push(row.title || row.id);
+      }
+    };
+    // Keep cursors and counts across a force retry: already-deleted paths
+    // must never be replayed, and completed feature pages stay counted.
     const commit = async (force: boolean) => {
-      let ok = 0;
-      let failed = 0;
-      const failedTitles: string[] = [];
-      const absorb = (r: BulkDeleteResponse) => {
-        ok += r.deleted;
-        failed += r.failed;
-        for (const row of r.results) {
-          if (row.status !== "ok" && failedTitles.length < 3) {
-            failedTitles.push(row.title || row.id);
-          }
-        }
-      };
-      for (const chunk of chunkPaths(pd.plan.taskPaths)) {
-        absorb(await bulkDeletePaths(chunk, { force }));
+      while (nextChunk < chunks.length) {
+        absorb(await bulkDeletePaths(chunks[nextChunk], { force }));
+        nextChunk++;
       }
-      for (const fid of pd.plan.featureIds) {
-        const out = await runBulkBaton(
-          () => deleteFeatureTasks(projectId, fid, { force }),
-          (r: BulkDeleteResponse) => r.deleted,
-        );
-        ok += out.ok;
-        failed += out.failed;
+      while (nextFeature < pd.plan.featureIds.length) {
+        const fid = pd.plan.featureIds[nextFeature];
+        const out = await runBulkBaton(async () => {
+          const page = await deleteFeatureTasks(projectId, fid, { force });
+          absorb(page);
+          return page;
+        }, (r) => r.deleted);
+        if (out.stopped) throw new Error(`Stopped after ${deleted} deleted — more tasks remain`);
+        nextFeature++;
       }
-      return { ok, failed, failedTitles };
+      return { ok: deleted, failed: failures, failedTitles: titles };
     };
 
     const { ok, failed, failedTitles } = await withForceRetry(
@@ -211,7 +206,6 @@ export function SelectionBar(): JSX.Element | null {
       }),
     );
 
-    clear();
     if (failed > 0) {
       toast(
         `Deleted ${ok}, failed ${failed}${
@@ -219,7 +213,9 @@ export function SelectionBar(): JSX.Element | null {
         }`,
         "warning",
       );
+      throw new Error(`Deleted ${ok}; ${failed} failed`);
     } else {
+      report({ detail: `Deleted ${ok} entries`, completed: ok, total: ok });
       toast(`Deleted ${ok} entr${ok === 1 ? "y" : "ies"}`, "success");
     }
   };
@@ -242,65 +238,6 @@ export function SelectionBar(): JSX.Element | null {
       featureIds: plan.featureIds,
       total: archiveGate.toArchive,
     });
-  };
-
-  const commitArchive = async (pa: PendingArchive) => {
-    let ok = 0;
-    let failed = 0;
-    const failedTitles: string[] = [];
-    const titleByPath = new Map(tasks.map((t) => [t.path, t.title || t.id]));
-
-    // Sequential per-path updates, chunked like the delete path so a huge
-    // selection stays within the same batch shape.
-    for (const chunk of chunkPaths(pa.taskPaths)) {
-      for (const path of chunk) {
-        try {
-          await updateEntry(path, { status: "archived" });
-          ok++;
-        } catch {
-          failed++;
-          if (failedTitles.length < 3) {
-            failedTitles.push(titleByPath.get(path) ?? path);
-          }
-        }
-      }
-    }
-
-    // Feature selections ride the same per-source-status baton the feature
-    // verb uses (useFeatureActionContext.setStatusForAll): one baton per
-    // terminal source status, so every page leaves the match set and a
-    // >100-task feature still drains fully.
-    for (const fid of pa.featureIds) {
-      for (const source of ARCHIVE_SOURCE_STATUSES) {
-        const out = await runBulkBaton(
-          () =>
-            bulkUpdate(
-              {
-                project: projectId,
-                feature_id: fid,
-                type: "task",
-                status: source,
-              },
-              { status: "archived" },
-            ),
-          (r) => r.updated,
-        );
-        ok += out.ok;
-        failed += out.failed;
-      }
-    }
-
-    clear();
-    if (failed > 0) {
-      toast(
-        `Archived ${ok}, failed ${failed}${
-          failedTitles.length > 0 ? ` (${failedTitles.join(", ")})` : ""
-        }`,
-        "warning",
-      );
-    } else {
-      toast(`Archived ${ok} task${ok === 1 ? "" : "s"}`, "success");
-    }
   };
 
   // Current-render closures for the context-menu requests: the same
@@ -357,7 +294,7 @@ export function SelectionBar(): JSX.Element | null {
               `Deletes ${summary}` +
               `${pending.plan.featureIds.length > 0 ? " (feature selections delete all of their tasks)" : ""}.` +
               `${pending.sampleTitles.length > 0 ? ` Includes: ${pending.sampleTitles.join(", ")}${pending.plan.taskPaths.length > pending.sampleTitles.length ? ", …" : ""}.` : ""}` +
-              " This cannot be undone.",
+              " This cannot be undone. Progress will appear in the background; keep this tab open.",
             confirmLabel: `Delete ${pending.total}`,
             // Same friction as single-feature delete: destructive fan-outs
             // require typing. A fixed word (not a name) because the target
@@ -367,19 +304,10 @@ export function SelectionBar(): JSX.Element | null {
           danger
           onCancel={() => setPending(null)}
           onConfirm={async () => {
-            try {
-              await commitDelete(pending);
-              setPending(null);
-            } catch (err) {
-              if (err instanceof ForceDeclinedError) {
-                // Declining the force escalation is a cancellation, not a
-                // failure — close quietly, keep the selection for retry.
-                setPending(null);
-                toast(err.message, "info");
-                return;
-              }
-              throw err; // ConfirmDialog renders it inline and stays open.
-            }
+            const operation = startBackgroundOperation(`Delete selection · ${projectId}`, (report) => commitDelete(pending, report));
+            setPending(null);
+            clear();
+            void operation;
           }}
         />
       )}
@@ -394,13 +322,15 @@ export function SelectionBar(): JSX.Element | null {
               `Archives ${summary}` +
               `${pendingArchive.featureIds.length > 0 ? " (feature selections archive all of their tasks)" : ""}.` +
               " Archived tasks leave the default lists and stop counting toward progress." +
-              " This is reversible — restore them later from the Archived filter.",
+              " This is reversible — restore them later from the Archived filter. Progress will appear in the background; keep this tab open.",
             confirmLabel: `Archive ${pendingArchive.total}`,
           }}
           onCancel={() => setPendingArchive(null)}
           onConfirm={async () => {
-            await commitArchive(pendingArchive);
+            const operation = startArchive({ ...pendingArchive, projectId });
             setPendingArchive(null);
+            clear();
+            void operation;
           }}
         />
       )}

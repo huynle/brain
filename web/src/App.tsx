@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Route, Routes } from "react-router-dom";
 import { useAuth } from "./lib/auth";
 import { Loading } from "./components/common/Loading";
+import { BackgroundOperations } from "./components/common/BackgroundOperations";
 import { Toasts } from "./components/common/Toasts";
 import { UpdateBanner } from "./components/common/UpdateBanner";
 import { Login } from "./pages/Login";
@@ -23,6 +24,7 @@ export function App() {
         <Route path="*" element={<Gate status={status} />} />
       </Routes>
       <Toasts />
+      <BackgroundOperations />
       <UpdateBanner />
     </>
   );

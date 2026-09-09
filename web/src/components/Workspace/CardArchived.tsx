@@ -26,6 +26,7 @@
  * it inherits the confirm dialog, the disabled-with-reason rule and the
  * error toast.
  */
+import { reportBackgroundResult } from "../../store/backgroundOperations";
 import { useMemo } from "react";
 
 import { useUI } from "../../store/ui";
@@ -118,6 +119,7 @@ export function CardArchived({
   // verb with `confirm` always asks, and a throw becomes an error toast.
   const purge: ActionDescriptor = {
     id: "delete-archived",
+    background: true,
     label: `Delete all archived (${n})`,
     group: "danger",
     danger: true,
@@ -142,6 +144,7 @@ export function CardArchived({
           runBulkBaton(
             () => deleteArchivedTasks(projectId, { force }),
             (r) => r.deleted,
+            { onProgress: (p) => reportBackgroundResult(`${p.processed} processed`, false) },
           ),
         forceConfirmFor({
           title: "Runner online — force delete?",
@@ -154,6 +157,7 @@ export function CardArchived({
         }),
       );
       const { message, kind } = summarizeBatonOutcome(outcome, "deleted");
+      reportBackgroundResult(message, kind !== "success");
       toast(`${projectId} archive: ${message}`, kind);
     },
   };

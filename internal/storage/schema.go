@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentSchemaVersion is the latest schema version.
-const CurrentSchemaVersion = 28
+const CurrentSchemaVersion = 29
 
 // ---------------------------------------------------------------------------
 // DDL statements
@@ -1028,6 +1028,14 @@ func migrateSchema(db *sql.DB) error {
 		}
 	}
 
+	if ver < 29 {
+		for _, ddl := range []string{createBulkJobsTable, createBulkJobItemsTable, createBulkJobItemsIndex} {
+			if _, err := db.Exec(ddl); err != nil {
+				return fmt.Errorf("migrate v29 (bulk jobs): %w", err)
+			}
+		}
+	}
+
 	if ver < 28 {
 		if _, err := db.Exec(createTenantRootsTable); err != nil {
 			return fmt.Errorf("migrate v28 (tenant_roots): %w", err)
@@ -1226,6 +1234,9 @@ func searchSubstring(s, substr string) bool {
 func InitSchema(db *sql.DB) error {
 	// Tables (order matters for foreign keys)
 	tables := []string{
+		createBulkJobsTable,
+		createBulkJobItemsTable,
+		createBulkJobItemsIndex,
 		createNotesTable,
 		createLinksTable,
 		createTagsTable,

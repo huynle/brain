@@ -700,8 +700,8 @@ func TestSchemaVersion_IncludesFeatureCascadeRoots(t *testing.T) {
 	// feature_cascade_roots, v25 invalidated checksums for link re-extraction,
 	// v26 did the same for HTML comments, v27 added feature_pause_state,
 	// and v28 added durable tenant root mappings.
-	if CurrentSchemaVersion != 28 {
-		t.Errorf("CurrentSchemaVersion = %d, want 28", CurrentSchemaVersion)
+	if CurrentSchemaVersion != 29 {
+		t.Errorf("CurrentSchemaVersion = %d, want 29", CurrentSchemaVersion)
 	}
 }
 

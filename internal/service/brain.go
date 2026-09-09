@@ -809,7 +809,7 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	body := doc.Body
 	// Check raw input before sanitization and the effective stored value when
 	// this patch does not set git_remote. Metadata-only values count too.
-	if fm.Type == "task" || (row.Type != nil && *row.Type == "task") {
+	if !retirementUpdate(req) && (fm.Type == "task" || (row.Type != nil && *row.Type == "task")) {
 		remote := fm.GitRemote
 		if req.GitRemote != nil {
 			remote = *req.GitRemote
@@ -1750,8 +1750,10 @@ func (s *BrainServiceImpl) UpdateMetadata(ctx context.Context, pathOrID string, 
 	if row == nil {
 		return nil, api.ErrNotFound
 	}
-	if err := validateMetadataGitRemote(ctx, s.storage, row, fields); err != nil {
-		return nil, err
+	if !retirementMetadata(fields) {
+		if err := validateMetadataGitRemote(ctx, s.storage, row, fields); err != nil {
+			return nil, err
+		}
 	}
 
 	// Status transitions stamp/clear completed_at. Injecting into the fields
@@ -1864,7 +1866,7 @@ func (s *BrainServiceImpl) syncDurableFieldsToFile(ctx context.Context, row *sto
 	// DB-only metadata checked by UpdateMetadata. Validate that representation
 	// too, before the first write. This failure must not be treated as a
 	// best-effort file-sync error by the caller.
-	if fm.Type == "task" || (row.Type != nil && *row.Type == "task") || fields["type"] == "task" {
+	if !retirementMetadata(fields) && (fm.Type == "task" || (row.Type != nil && *row.Type == "task") || fields["type"] == "task") {
 		if err := validateConfiguredGitRemote(ctx, s.storage, fm.GitRemote); err != nil {
 			return err
 		}
@@ -2318,6 +2320,17 @@ func (s *BrainServiceImpl) List(ctx context.Context, req types.ListEntriesReques
 		SortBy:    req.SortBy,
 		SortOrder: req.SortOrder,
 		Priority:  req.Priority,
+	}
+
+	// Task lists and task mutations must resolve project scope identically.
+	// Older / hand-authored files may omit projectId or retain a stale value
+	// after an out-of-band move. The project directory is authoritative.
+	if req.Type == "task" && req.Project != "" && len(req.Projects) == 0 && (req.Global == nil || !*req.Global) {
+		if err := validateProjectID(req.Project); err != nil {
+			return nil, err
+		}
+		opts.ProjectID = ""
+		opts.PathPrefix = "projects/" + req.Project + "/task/"
 	}
 
 	// Handle global vs project filtering. A multi-project scope supersedes
@@ -2928,6 +2941,13 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 		return nil, fmt.Errorf("source file does not exist on disk: %w", err)
 	}
 
+	// Moving to the current project is a no-op. Writing and then removing
+	// the same path would destroy the entry while reporting success.
+	if oldPath == newPath {
+		return &types.MoveResult{Success: true, From: oldPath, To: newPath,
+			OldPath: oldPath, NewPath: newPath, Project: targetProject, ID: entry.ID, Title: entry.Title}, nil
+	}
+
 	// Read old file content
 	content, err := os.ReadFile(oldAbsPath)
 	if err != nil {
@@ -2958,8 +2978,17 @@ func (s *BrainServiceImpl) Move(ctx context.Context, pathOrID string, targetProj
 	if err := os.MkdirAll(newDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create directory %q: %w", newDir, err)
 	}
-	if err := os.WriteFile(newAbsPath, []byte(fileBuilder.String()), 0o644); err != nil {
-		return nil, fmt.Errorf("write file %q: %w", newAbsPath, err)
+	// Create exclusively: never overwrite an unrelated destination, even
+	// if it appeared between path validation and the actual write.
+	destination, err := os.OpenFile(newAbsPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("create destination %q: %w", newPath, err)
+	}
+	_, writeErr := destination.WriteString(fileBuilder.String())
+	closeErr := destination.Close()
+	if writeErr != nil || closeErr != nil {
+		_ = os.Remove(newAbsPath) // only the file created by this operation
+		return nil, fmt.Errorf("write destination %q: %w", newPath, errors.Join(writeErr, closeErr))
 	}
 
 	// SAFETY: Verify destination was written correctly before deleting source.

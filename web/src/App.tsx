@@ -1,3 +1,4 @@
+import { BulkJobs } from "./components/common/BulkJobs";
 import { useEffect } from "react";
 import { Route, Routes } from "react-router-dom";
 import { useAuth } from "./lib/auth";
@@ -24,7 +25,7 @@ export function App() {
         <Route path="*" element={<Gate status={status} />} />
       </Routes>
       <Toasts />
-      <BackgroundOperations />
+      <div className="background-operation-tray"><BackgroundOperations /><BulkJobs /></div>
       <UpdateBanner />
     </>
   );

@@ -474,7 +474,7 @@ func resolveBuiltinMonitorPrompt(task *types.ResolvedTask) {
 
 // getAllTasks fetches all task BrainEntries for a project from storage.
 func (s *TaskServiceImpl) getAllTasks(ctx context.Context, projectId string) ([]types.BrainEntry, error) {
-	pathPrefix := "projects/" + projectId + "/task"
+	pathPrefix := "projects/" + projectId + "/task/"
 	rows, err := s.storage.ListNotes(ctx, &storage.ListOptions{
 		Type:       "task",
 		PathPrefix: pathPrefix,

@@ -26,20 +26,15 @@
  * it inherits the confirm dialog, the disabled-with-reason rule and the
  * error toast.
  */
-import { reportBackgroundResult } from "../../store/backgroundOperations";
+import { submitBulkJob } from "../../store/bulkJobs";
 import { useMemo } from "react";
 
-import { useUI } from "../../store/ui";
 import { useSelection } from "../../store/selection";
 import { useWorkspace } from "../../store/workspace";
 import { useRowActions } from "../../hooks/useRowActions";
 import { useActionRunner } from "../../hooks/useActionRunner";
 import { useTaskGroupActionContext } from "../../hooks/useTaskGroupActionContext";
 import { buildSelectionActions } from "../../lib/actions/selectionActions";
-import { runBulkBaton, summarizeBatonOutcome } from "../../lib/actions/bulkBaton";
-import { forceConfirmFor } from "../../lib/actions/forceConfirm";
-import { withForceRetry } from "../../lib/actions/forceRetry";
-import { deleteArchivedTasks } from "../../lib/api";
 import type { ActionDescriptor } from "../../lib/actions/types";
 import type { Task } from "../../lib/types";
 import { archivedKey, bucketArchived } from "../../lib/taskGroups";
@@ -58,7 +53,6 @@ export function CardArchived({
   projectId,
   tasks,
 }: CardArchivedProps): JSX.Element {
-  const toast = useUI((s) => s.toast);
   const featureCollapsed = useWorkspace(
     (s) => s.featureCollapsed[projectId] ?? EMPTY_COLLAPSE,
   );
@@ -119,7 +113,7 @@ export function CardArchived({
   // verb with `confirm` always asks, and a throw becomes an error toast.
   const purge: ActionDescriptor = {
     id: "delete-archived",
-    background: true,
+    background: false,
     label: `Delete all archived (${n})`,
     group: "danger",
     danger: true,
@@ -135,30 +129,7 @@ export function CardArchived({
       confirmLabel: "Delete permanently",
     },
     run: async () => {
-      // The server caps a bulk delete at 100 per call. Deletes make
-      // progress with a bare filter — a deleted entry cannot match
-      // again — so the plain baton drains it without the per-status
-      // dance a bulk UPDATE needs.
-      const outcome = await withForceRetry(
-        (force) =>
-          runBulkBaton(
-            () => deleteArchivedTasks(projectId, { force }),
-            (r) => r.deleted,
-            { onProgress: (p) => reportBackgroundResult(`${p.processed} processed`, false) },
-          ),
-        forceConfirmFor({
-          title: "Runner online — force delete?",
-          body:
-            "A runner reports it is executing one of these. Force deletes " +
-            "them anyway; its in-flight work will have nowhere to land.",
-          confirmLabel: "Force delete",
-          danger: true,
-          typeToConfirm: projectId,
-        }),
-      );
-      const { message, kind } = summarizeBatonOutcome(outcome, "deleted");
-      reportBackgroundResult(message, kind !== "success");
-      toast(`${projectId} archive: ${message}`, kind);
+      await submitBulkJob({ operation: "delete", filters: [{ project: projectId, type: "task", status: "archived" }] });
     },
   };
 

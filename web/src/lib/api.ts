@@ -35,6 +35,8 @@ import type {
   ResumeFeatureResult,
   ResumeTaskOptions,
   ResumeTaskResult,
+  ResumeWithContextOptions,
+  ResumeWithContextResult,
   RunnerListResponse,
   RunnerPauseResponse,
   RunnerStatusResponse,
@@ -868,6 +870,28 @@ export const resumeFeature = (
     {
       method: "POST",
       body: opts ?? {},
+    },
+  );
+
+// Resume a task and inject supervisor-authored context via
+// POST /tasks/{project}/{task}/resume-with-context. Distinct from resumeTask:
+// carries the typed text as injected_context and reports back the route the
+// runner took (resume_mode / injected_live). Used by the Session view when the
+// user submits into a FINISHED session — the endpoint relaunches (rehydrate or
+// same_session) or, when the session turns out to still be live, injects into
+// it (live_injected) with no status flip. prefer_same_session is sent
+// explicitly (the Go decode does not default an absent field — see ADR
+// 7ihrqpi4); callers that omit it get true.
+export const resumeTaskWithContext = (
+  projectId: string,
+  taskId: string,
+  opts: ResumeWithContextOptions,
+) =>
+  api<ResumeWithContextResult>(
+    `/api/v1/tasks/${encodeURIComponent(projectId)}/${encodeURIComponent(taskId)}/resume-with-context`,
+    {
+      method: "POST",
+      body: { prefer_same_session: true, ...opts },
     },
   );
 

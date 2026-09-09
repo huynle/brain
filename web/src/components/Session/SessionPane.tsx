@@ -17,8 +17,13 @@
  *     request is the one thing that stops a transcript dead.
  *   • Transcript — follows the tail, detaches when the reader scrolls up,
  *     offers "Jump to latest" while detached.
- *   • Composer — for a live, addressable session. Otherwise a note
- *     saying why not, so read-only never reads as broken.
+ *   • an always-present input — one box on EVERY session, live or finished.
+ *     A live session steers (Composer → prompt_async). A finished session
+ *     resumes (ResumeComposer → resume-with-context relaunches the task with
+ *     the typed text as injected context). A session with no owning task, or
+ *     one still discovering its id, shows the input disabled with the reason,
+ *     never hidden — so a read-only-looking view is never a dead end. The
+ *     route is a pure decision (sessionSubmitRoute in lib/sessionRef).
  *
  * Steerability is deliberately derived from the REF plus the live
  * delivery state, not from an instance row: a `live` ref means the
@@ -30,9 +35,10 @@
 import { useSessionTranscript } from "../../hooks/useSessionTranscript";
 import { useSessions } from "../../hooks/useSessions";
 import { Composer } from "./Composer";
+import { ResumeComposer } from "./ResumeComposer";
 import { PermissionBanner } from "./PermissionBanner";
 import { Transcript } from "./Transcript";
-import { sessionSteerState } from "../../lib/sessionRef";
+import { sessionSubmitRoute } from "../../lib/sessionRef";
 import { useUI } from "../../store/ui";
 import type { SessionRef } from "../../lib/types";
 
@@ -117,13 +123,29 @@ export function SessionPane({
       .then(() => toast("Session ID copied", "info"))
       .catch(() => toast("Copy failed", "error"));
   };
-  // Live, addressable, and the stream has not been closed under us —
-  // the rule itself is pure and lives in lib/sessionRef.
-  const { canSteer, note } = sessionSteerState(
-    sref,
-    transcript.delivery,
-    readOnlyNote,
-  );
+  // Route the always-present input: live → steer, finished → resume, else
+  // disabled-with-reason. The rule is pure and lives in lib/sessionRef.
+  //
+  // The owning {project,task} the resume route needs comes from the ref for a
+  // history session (it carries task_id/project_id) and from the resolved
+  // instance row for a live-ended session (`inst`, resolved above). A session
+  // with neither is a task-less adhoc/continuation session — the route falls
+  // to disabled by design.
+  const owner: { project_id?: string; task_id?: string } | undefined =
+    sref?.mode === "history"
+      ? { project_id: sref.project_id, task_id: sref.task_id }
+      : inst
+        ? { project_id: inst.project_id, task_id: inst.task_id }
+        : undefined;
+  const route = sessionSubmitRoute(sref, transcript.delivery, owner);
+  // A host that knows more (e.g. "this process has exited") can still colour
+  // the disabled reason; it no longer suppresses the input.
+  const disabledNote =
+    route.kind === "disabled"
+      ? sref?.mode === "history" && readOnlyNote
+        ? readOnlyNote
+        : route.reason
+      : "";
 
   return (
     <div
@@ -190,17 +212,14 @@ export function SessionPane({
         )}
       </div>
 
-      {canSteer && sref?.mode === "live" ? (
-        <Composer
-          target={{
-            runner_id: sref.runner_id,
-            instance_id: sref.instance_id,
-            session_id: sessionId as string,
-          }}
-          checkinSeed={checkinSeed}
+      {route.kind === "steer" ? (
+        <Composer target={route.target} checkinSeed={checkinSeed} />
+      ) : route.kind === "resume" ? (
+        <ResumeComposer
+          target={{ project_id: route.project_id, task_id: route.task_id }}
         />
       ) : (
-        <div className="composer proc-chat-note">{note}</div>
+        <div className="composer proc-chat-note">{disabledNote}</div>
       )}
     </div>
   );

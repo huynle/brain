@@ -264,6 +264,33 @@ export interface ResumeFeatureResult {
   results: ResumeTaskResult[];
 }
 
+/** Body for POST /tasks/{project}/{task}/resume-with-context (and the feature
+ *  fan-out). Mirrors Go types.ResumeWithContextOptions. injected_context is
+ *  required; prefer_same_session is advisory — the runner makes the
+ *  authoritative same_session-vs-rehydrate call via CanResumeSession. The FE
+ *  always sends prefer_same_session:true explicitly (the Go decode does NOT
+ *  default an absent field to true — see ADR 7ihrqpi4). */
+export interface ResumeWithContextOptions {
+  injected_context: string;
+  prefer_same_session?: boolean;
+  executor_override?: string;
+  force?: boolean;
+}
+
+/** The relaunch/inject route the resume-with-context endpoint took.
+ *  same_session/rehydrate are relaunch modes; live_injected means the session
+ *  was still running and the context was injected without a status flip. */
+export type ResumeMode = "same_session" | "rehydrate" | "live_injected";
+
+/** Response from POST /resume-with-context. Extends ResumeTaskResult with the
+ *  context-injection reporting fields. Mirrors Go
+ *  types.ResumeWithContextResult. */
+export interface ResumeWithContextResult extends ResumeTaskResult {
+  resume_mode: ResumeMode | string;
+  target_session_id?: string;
+  injected_live?: boolean;
+}
+
 export interface DispatchLease {
   leaseId: string;
   id?: string;

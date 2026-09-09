@@ -1,3 +1,4 @@
+import { reportBackgroundResult } from "../store/backgroundOperations";
 /**
  * useAutomationActionContext — binds the pure automation-action
  * builders to real effects (API calls, modal navigation, toasts).
@@ -69,11 +70,13 @@ export function useAutomationActionContext(
       },
 
       deleteAutomation: async (a: BrainEntry) => {
+        const originalModal = useModal.getState().target;
         await deleteEntry(a.path);
         invalidate();
         // Close whatever modal was showing this automation; leaving a
         // detail view open on a deleted entry shows "not found".
-        closeModal();
+        if (useModal.getState().target === originalModal) closeModal();
+        reportBackgroundResult(`Deleted ${automationName(a)}`);
         toast(`Deleted ${automationName(a)}`, "success");
       },
 

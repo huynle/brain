@@ -15,6 +15,7 @@
  * an accepted confirmation retries once with `force: true`. Feature delete
  * keeps type-to-confirm on that second pass too.
  */
+import { reportBackgroundResult } from "../store/backgroundOperations";
 import { useMemo } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -108,17 +109,10 @@ export function useFeatureActionContextFactory(): (
           queryKey: dependentChainsKey(projectId),
         });
 
-      /** Throttled progress toast for multi-page batons. */
-      const progressToast = (verb: string, matched: number) => {
+      /** Update the persistent tray after each page. */
+      const progressReporter = (verb: string) => {
         return (p: { processed: number; iteration: number }) => {
-          // First page and every fifth after — enough to show life without
-          // stacking fifty toasts on a 5 000-task feature.
-          if (p.iteration !== 1 && p.iteration % 5 !== 0) return;
-          toast(
-            `${verb} ${p.processed}${matched > p.processed ? ` of ~${matched}` : ""} tasks…`,
-            "info",
-            { duration: 1500 },
-          );
+          reportBackgroundResult(`${verb} ${p.processed} tasks in this batch`, false);
         };
       };
 
@@ -289,8 +283,7 @@ export function useFeatureActionContextFactory(): (
             toast("No tasks matched — nothing changed", "warning");
             return;
           }
-          const matched = preview.matched_total ?? preview.total;
-          const onProgress = progressToast("Updated", matched);
+          const onProgress = progressReporter("Updated");
 
           // The aggregate lives OUTSIDE commit: when a mid-baton 409 aborts
           // the unforced pass and the user confirms force, the retry must
@@ -368,6 +361,7 @@ export function useFeatureActionContextFactory(): (
           );
 
           const { message, kind } = summarizeBatonOutcome(outcome, "updated");
+          reportBackgroundResult(message, kind !== "success");
           toast(
             `${feature.name} → ${STATUS_LABELS[status] ?? status}: ${message}`,
             kind,
@@ -375,6 +369,7 @@ export function useFeatureActionContextFactory(): (
         },
 
         deleteFeature: async (feature: DerivedFeature) => {
+          const originalModal = useModal.getState().target;
           const preview = await deleteFeatureTasks(projectId, feature.id, {
             dryRun: true,
           });
@@ -382,8 +377,7 @@ export function useFeatureActionContextFactory(): (
             toast("No tasks matched — nothing deleted", "warning");
             return;
           }
-          const matched = preview.matched_total ?? preview.total;
-          const onProgress = progressToast("Deleted", matched);
+          const onProgress = progressReporter("Deleted");
 
           // Titles of failed rows from the last single page, for legible
           // partial failure. The baton path reports counts only.
@@ -429,7 +423,7 @@ export function useFeatureActionContextFactory(): (
               typeToConfirm: feature.name,
             }),
           );
-          closeModal();
+          if (useModal.getState().target === originalModal) closeModal();
 
           // Partial failure has to be legible. A bare "deleted" after 2 of 9
           // failed would leave orphan tasks with no signal.
@@ -441,6 +435,7 @@ export function useFeatureActionContextFactory(): (
                   total: outcome.total,
                 })
               : summarizeBatonOutcome(outcome, "deleted");
+          reportBackgroundResult(message, kind !== "success");
           toast(
             failedTitles.length > 0
               ? `${feature.name}: ${message} (${failedTitles.join(", ")})`

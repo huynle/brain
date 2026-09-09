@@ -18,6 +18,7 @@
  * therefore not an optimisation here; without it a 150-task group would
  * report success having touched 100.
  */
+import { reportBackgroundResult } from "../store/backgroundOperations";
 import { useMemo } from "react";
 
 import { useUI } from "../store/ui";
@@ -151,6 +152,7 @@ export function useTaskGroupActionContext(
               if (bad) agg.firstError = bad.error ?? bad.title ?? bad.id;
             }
             next++;
+            reportBackgroundResult(`${agg.ok} changed; ${agg.failed} failed`, agg.failed > 0, next, chunks.length);
           }
           return agg;
         };
@@ -202,6 +204,7 @@ export function useTaskGroupActionContext(
               if (bad) agg.firstError = bad.error ?? bad.title ?? bad.id;
             }
             next++;
+            reportBackgroundResult(`${agg.ok} changed; ${agg.failed} failed`, agg.failed > 0, next, chunks.length);
           }
           return agg;
         };

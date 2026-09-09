@@ -185,6 +185,7 @@ export function buildProjectActions(
     // lie, and the verb is how you get rid of the leftover name.
     {
       id: "delete",
+      background: true,
       label: "Delete project…",
       group: "danger",
       danger: true,

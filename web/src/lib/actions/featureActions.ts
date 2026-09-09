@@ -325,6 +325,7 @@ export function buildFeatureActions(
 
   actions.push({
     id: "archive",
+    background: true,
     label: "Archive feature",
     group: "state",
     disabledReason: archiveFeatureBlockedReason(feature),
@@ -420,6 +421,7 @@ export function buildFeatureActions(
   // ─── danger ─────────────────────────────────────────────────────
   actions.push({
     id: "delete",
+    background: true,
     label: "Delete feature",
     group: "danger",
     key: "d",
@@ -456,6 +458,7 @@ export function buildFeatureStatusActions(
 
   return statuses.map((status) => ({
     id: `status:${status}`,
+    background: true,
     label: STATUS_LABELS[status] ?? status,
     group: "state" as const,
     confirm: {

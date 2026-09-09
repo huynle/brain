@@ -112,3 +112,47 @@ test("clear() drops the active row along with the selection scope", () => {
   assert.equal(s.taskIds.size, 0);
   assert.equal(s.featureIds.size, 0);
 });
+
+for (const kind of ["task", "feature"] as const) {
+  const range = (project: string, ids: string[], target: string) => {
+    const s = useSelection.getState();
+    if (kind === "task") s.rangeTask(project, ids, target);
+    else s.rangeFeature(project, ids, target);
+  };
+  const selected = () => [...useSelection.getState()[kind === "task" ? "taskIds" : "featureIds"]].sort();
+
+  test(`${kind}: plain click then Shift-click includes both endpoints in either direction`, () => {
+    for (const [anchor, target] of [["a", "c"], ["c", "a"]]) {
+      resetStore();
+      useSelection.getState().setActive("p1", kind, anchor!);
+      assert.deepEqual(selected(), []);
+      range("p1", ["a", "b", "c", "d"], target!);
+      assert.deepEqual(selected(), ["a", "b", "c"]);
+    }
+  });
+
+  test(`${kind}: a new plain click replaces an old checkbox anchor`, () => {
+    resetStore();
+    if (kind === "task") useSelection.getState().toggleTask("p1", "d");
+    else useSelection.getState().toggleFeature("p1", "d");
+    useSelection.getState().setActive("p1", kind, "a");
+    range("p1", ["a", "b", "c", "d"], "b");
+    assert.deepEqual(selected(), ["a", "b", "d"]);
+  });
+
+  test(`${kind}: a highlighted row in another project cannot anchor a range`, () => {
+    resetStore();
+    useSelection.getState().setActive("p1", kind, "a");
+    range("p2", ["a", "b", "c"], "c");
+    assert.deepEqual(selected(), ["c"]);
+  });
+
+  test(`${kind}: hidden and wrong-kind highlighted rows do not select unrelated entries`, () => {
+    for (const wrongKind of [false, true]) {
+      resetStore();
+      useSelection.getState().setActive("p1", wrongKind ? (kind === "task" ? "feature" : "task") : kind, "a");
+      range("p1", wrongKind ? ["a", "b", "c"] : ["b", "c"], "c");
+      assert.deepEqual(selected(), ["c"]);
+    }
+  });
+}

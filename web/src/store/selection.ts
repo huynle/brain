@@ -8,7 +8,9 @@
  *
  * On top of the snapshot the store tracks the shift-click anchor: every
  * mark — checkbox, tap, `v` key, or a range's own target — becomes the
- * next range's starting row, so consecutive shift-clicks chain.
+ * next range's starting row, so consecutive shift-clicks chain. A plain
+ * click replaces that anchor with the active row without marking it; the
+ * first range promotes that highlight into the multi-select scope.
  */
 import { create } from "zustand";
 
@@ -52,7 +54,7 @@ interface SelectionStore extends SelectionSnapshot {
    * Set the active row. Idempotent by design — clicking the same row
    * again keeps it active, so a single-click reliably SELECTs and
    * never toggles the highlight off. Replaces any previous active row
-   * (one active at a time).
+   * (one active at a time) and supersedes the previous range anchor.
    */
   setActive: (
     projectId: string,
@@ -95,7 +97,7 @@ export const useSelection = create<SelectionStore>((set) => ({
   active: null,
 
   setActive: (projectId, kind, id) =>
-    set({ active: { projectId, kind, id } }),
+    set({ active: { projectId, kind, id }, anchor: null }),
 
   requestVerb: (verb) => set({ verbRequest: verb }),
   consumeVerbRequest: () => set({ verbRequest: null }),
@@ -123,10 +125,14 @@ export const useSelection = create<SelectionStore>((set) => ({
   rangeTask: (projectId, orderedIds, taskId) =>
     set((s) => ({
       ...selectTaskRange(
-        s,
+        s.projectId === projectId ? s : { ...EMPTY_SELECTION, projectId },
         projectId,
         orderedIds,
-        s.anchor?.kind === "task" ? s.anchor.id : null,
+        s.projectId === projectId && s.anchor
+          ? (s.anchor.kind === "task" ? s.anchor.id : null)
+          : s.active?.projectId === projectId && s.active.kind === "task"
+            ? s.active.id
+            : null,
         taskId,
       ),
       anchor: { kind: "task", id: taskId },
@@ -134,10 +140,14 @@ export const useSelection = create<SelectionStore>((set) => ({
   rangeFeature: (projectId, orderedIds, featureId) =>
     set((s) => ({
       ...selectFeatureRange(
-        s,
+        s.projectId === projectId ? s : { ...EMPTY_SELECTION, projectId },
         projectId,
         orderedIds,
-        s.anchor?.kind === "feature" ? s.anchor.id : null,
+        s.projectId === projectId && s.anchor
+          ? (s.anchor.kind === "feature" ? s.anchor.id : null)
+          : s.active?.projectId === projectId && s.active.kind === "feature"
+            ? s.active.id
+            : null,
         featureId,
       ),
       anchor: { kind: "feature", id: featureId },

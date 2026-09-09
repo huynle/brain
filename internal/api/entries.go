@@ -1798,6 +1798,7 @@ func mapFrontmatterToUpdateRequest(fm frontmatter.Frontmatter, body string) type
 		RemoteBranchPolicy:  strPtr(fm.RemoteBranchPolicy),
 		ExecutionMode:       strPtr(fm.ExecutionMode),
 		CheckoutMode:        strPtr(fm.CheckoutMode),
+		DeliveryMode:        strPtr(fm.DeliveryMode),
 		OriginMachineID:     strPtr(fm.OriginMachineID),
 		OriginClientID:      strPtr(fm.OriginClientID),
 		OriginPath:          strPtr(fm.OriginPath),

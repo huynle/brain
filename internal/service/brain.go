@@ -220,6 +220,7 @@ func (s *BrainServiceImpl) Save(ctx context.Context, req types.CreateEntryReques
 		SessionMode:         req.SessionMode,
 		CompleteOnIdle:      req.CompleteOnIdle,
 		CheckoutMode:        req.CheckoutMode,
+		DeliveryMode:        req.DeliveryMode,
 		TargetWorkdir:       frontmatter.SanitizeSimpleValue(req.TargetWorkdir),
 		OriginMachineID:     frontmatter.SanitizeSimpleValue(req.OriginMachineID),
 		OriginClientID:      frontmatter.SanitizeSimpleValue(req.OriginClientID),
@@ -558,6 +559,9 @@ func reconstructFrontmatter(row *storage.NoteRow, meta map[string]interface{}) f
 		if v, ok := meta["checkout_mode"].(string); ok {
 			fm.CheckoutMode = v
 		}
+		if v, ok := meta["delivery_mode"].(string); ok {
+			fm.DeliveryMode = v
+		}
 		if v, ok := meta["merge_strategy"].(string); ok {
 			fm.MergeStrategy = v
 		}
@@ -871,6 +875,9 @@ func (s *BrainServiceImpl) Update(ctx context.Context, pathOrID string, req type
 	}
 	if req.CheckoutMode != nil {
 		fm.CheckoutMode = *req.CheckoutMode
+	}
+	if req.DeliveryMode != nil {
+		fm.DeliveryMode = *req.DeliveryMode
 	}
 	if req.MergeStrategy != nil {
 		fm.MergeStrategy = *req.MergeStrategy

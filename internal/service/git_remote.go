@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"github.com/huynle/brain-api/internal/api"
 	"github.com/huynle/brain-api/internal/gitremote"
@@ -99,4 +100,35 @@ func validateMetadataGitRemote(ctx context.Context, store *storage.TenantStore, 
 		return fmt.Errorf("task git_remote must be a string")
 	}
 	return validateConfiguredGitRemote(ctx, store, remote)
+}
+
+// Retirement cannot dispatch work or change its execution configuration. Legacy
+// remotes must not trap tasks in the active list, but reopening or editing them
+// still goes through normal remote admission.
+func retirementStatus(status string) bool {
+	return status == "archived" || status == "cancelled" || status == "superseded"
+}
+
+func retirementUpdate(req types.UpdateEntryRequest) bool {
+	if req.Status == nil || !retirementStatus(*req.Status) {
+		return false
+	}
+	req.Status, req.Note = nil, nil
+	// Fail closed when any other field is supplied, including future fields.
+	return reflect.ValueOf(req).IsZero()
+}
+
+func retirementMetadata(fields map[string]interface{}) bool {
+	status, ok := fields["status"].(string)
+	if !ok || !retirementStatus(status) {
+		return false
+	}
+	for key := range fields {
+		switch key {
+		case "status", "note", "completed_at": // includes the server's completion stamp
+		default:
+			return false
+		}
+	}
+	return true
 }

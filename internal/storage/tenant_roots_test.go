@@ -44,7 +44,7 @@ func TestTenantRootsMigrationFrom27(t *testing.T) {
 	if count != 1 {
 		t.Fatal("migration did not create durable tenant_roots table")
 	}
-	if version, err := GetSchemaVersion(s.DB()); err != nil || version != 28 {
+	if version, err := GetSchemaVersion(s.DB()); err != nil || version != CurrentSchemaVersion {
 		t.Fatalf("upgraded version = %d, err %v", version, err)
 	}
 	ctx := context.Background()

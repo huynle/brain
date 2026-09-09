@@ -8,6 +8,7 @@ import (
 
 // Handler holds service dependencies for HTTP handlers.
 type Handler struct {
+	bulkJobs       BulkJobService
 	brain          BrainService
 	attachments    AttachmentService
 	tasks          TaskService

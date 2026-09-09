@@ -86,6 +86,11 @@ preserves legacy heartbeat behavior. Registration replaces the full set. The
 existing runner capabilities column is reused; no schema migration is needed.
 
 `Save`, full `Update`, and `UpdateMetadata` validate task remotes before writes.
+A status-only retirement to `archived`, `cancelled`, or `superseded` (optionally
+with a note/completion stamp) may preserve an existing legacy remote without
+re-admitting it. This makes old tasks removable from the active queue. It cannot
+change execution configuration or the remote, and reopening the task still
+requires normal admission. Bulk updates use the same rule.
 Metadata checks include the merged DB value and the disk value that a durable
 sync would re-index, so an unrelated status/execution patch cannot restore a
 forbidden remote. Changing metadata `type` cannot disguise an existing task.

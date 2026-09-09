@@ -29,6 +29,7 @@ import (
 	"github.com/huynle/brain-api/internal/realtime"
 	"github.com/huynle/brain-api/internal/service"
 	"github.com/huynle/brain-api/internal/tenant"
+	"github.com/huynle/brain-api/internal/types"
 	"github.com/huynle/brain-api/internal/webui"
 	"github.com/huynle/brain-api/pkg/pathutil"
 )
@@ -366,7 +367,9 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	// /health with a bounded deadline (see cmd/brain/commands/lifecycle.go).
 	// The previous SQLite index remains valid for reads while the re-scan
 	// runs; new/changed/deleted files just show up a few seconds late.
+	indexReady := make(chan struct{})
 	go func() {
+		defer close(indexReady)
 		slog.Info("indexing brain directory", "dir", opts.BrainDir)
 		result, err := idx.IndexChanged()
 		if err != nil {
@@ -609,10 +612,25 @@ func buildHTTPHandler(ctx context.Context, opts ServerOptions) (http.Handler, st
 	logBuf := logbuffer.New(logbuffer.DefaultMaxLines)
 
 	// ─── API Handler & Router ───────────────────────────────────────
+	bulkSvc := service.NewBulkJobService(brainSvc, store, taskSvc, func(project string) {
+		hub.PublishProjectDirty(project)
+		resp, err := taskSvc.GetTasks(ctx, project)
+		if err == nil {
+			hub.PublishTaskSnapshot(project, types.SSETasksSnapshotData{
+				SSEEventData: types.SSEEventData{Type: types.SSEEventTasksSnapshot, Transport: "sse", Timestamp: types.TimeNowUTC().Format("2006-01-02T15:04:05Z"), ProjectID: project},
+				Tasks:        resp.Tasks, Count: resp.Count, Stats: resp.Stats, Cycles: resp.Cycles,
+			})
+		}
+	})
+	bulkSvc.SetEventService(eventSvc)
+	bulkSvc.Start(ctx, indexReady)
+	previousCleanup := cleanup
+	cleanup = func() { bulkSvc.Stop(); previousCleanup() }
 	handler := api.NewHandler(
 		brainSvc,
 		api.WithAttachmentService(attachmentSvc),
 		api.WithTaskService(taskSvc),
+		api.WithBulkJobService(bulkSvc),
 		api.WithRunnerService(runnerSvc),
 		api.WithRunnerRegistryService(runnerRegistrySvc),
 		api.WithClientContextService(clientContextSvc),

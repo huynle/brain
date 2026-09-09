@@ -147,6 +147,18 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				}
 			})
 
+			// Durable bulk jobs are administrative entry mutations and their audit trail.
+			r.Group(func(r chi.Router) {
+				r.Use(RequireScope("admin:*"))
+				if o.handler != nil && o.handler.bulkJobs != nil {
+					r.Post("/bulk-jobs", o.handler.HandleCreateBulkJob)
+					r.Get("/bulk-jobs", o.handler.HandleListBulkJobs)
+					r.Get("/bulk-jobs/{jobID}", o.handler.HandleGetBulkJob)
+					r.Get("/bulk-jobs/{jobID}/items", o.handler.HandleBulkJobItems)
+					r.Post("/bulk-jobs/{jobID}/control", o.handler.HandleControlBulkJob)
+				}
+			})
+
 			// ─── Search (read:* scope) ──────────────────────────
 			r.Group(func(r chi.Router) {
 				r.Use(RequireScope("admin:*", "runner:*", "read:*"))

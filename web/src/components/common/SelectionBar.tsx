@@ -23,7 +23,6 @@ import { useUI } from "../../store/ui";
 import {
   bulkDeletePaths,
   deleteFeatureTasks,
-  type BulkDeleteResponse,
 } from "../../lib/api";
 import {
   buildDeletePlan,
@@ -31,12 +30,9 @@ import {
   describeSelection,
   type DeletePlan,
 } from "../../lib/selection";
-import { runBulkBaton } from "../../lib/actions/bulkBaton";
 import { startArchive } from "../../store/archiveJob";
-import { startBackgroundOperation, type ReportProgress } from "../../store/backgroundOperations";
+import { submitBulkJob } from "../../store/bulkJobs";
 import { TERMINAL_STATUSES } from "../../lib/actions/taskActions";
-import { withForceRetry } from "../../lib/actions/forceRetry";
-import { forceConfirmFor } from "../../lib/actions/forceConfirm";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { Task } from "../../lib/types";
 
@@ -158,66 +154,9 @@ export function SelectionBar(): JSX.Element | null {
     }
   };
 
-  const commitDelete = async (pd: PendingDelete, report: ReportProgress) => {
-    const chunks = chunkPaths(pd.plan.taskPaths);
-    let nextChunk = 0;
-    let nextFeature = 0;
-    let deleted = 0;
-    let failures = 0;
-    const titles: string[] = [];
-    const absorb = (r: BulkDeleteResponse) => {
-      deleted += r.deleted;
-      failures += r.failed;
-      report({ detail: `${deleted} deleted; ${failures} failed`, completed: deleted + failures, total: Math.max(pd.total, deleted + failures) });
-      for (const row of r.results) {
-        if (row.status !== "ok" && titles.length < 3) titles.push(row.title || row.id);
-      }
-    };
-    // Keep cursors and counts across a force retry: already-deleted paths
-    // must never be replayed, and completed feature pages stay counted.
-    const commit = async (force: boolean) => {
-      while (nextChunk < chunks.length) {
-        absorb(await bulkDeletePaths(chunks[nextChunk], { force }));
-        nextChunk++;
-      }
-      while (nextFeature < pd.plan.featureIds.length) {
-        const fid = pd.plan.featureIds[nextFeature];
-        const out = await runBulkBaton(async () => {
-          const page = await deleteFeatureTasks(projectId, fid, { force });
-          absorb(page);
-          return page;
-        }, (r) => r.deleted);
-        if (out.stopped) throw new Error(`Stopped after ${deleted} deleted — more tasks remain`);
-        nextFeature++;
-      }
-      return { ok: deleted, failed: failures, failedTitles: titles };
-    };
-
-    const { ok, failed, failedTitles } = await withForceRetry(
-      commit,
-      forceConfirmFor({
-        title: "Runner online — force delete?",
-        body:
-          "Some selected tasks are being executed by an online runner. " +
-          "Force delete removes them anyway; in-flight work will have " +
-          "nowhere to land. This cannot be undone.",
-        confirmLabel: "Force delete",
-        danger: true,
-      }),
-    );
-
-    if (failed > 0) {
-      toast(
-        `Deleted ${ok}, failed ${failed}${
-          failedTitles.length > 0 ? ` (${failedTitles.join(", ")})` : ""
-        }`,
-        "warning",
-      );
-      throw new Error(`Deleted ${ok}; ${failed} failed`);
-    } else {
-      report({ detail: `Deleted ${ok} entries`, completed: ok, total: ok });
-      toast(`Deleted ${ok} entr${ok === 1 ? "y" : "ies"}`, "success");
-    }
+  const commitDelete = async (pd: PendingDelete) => {
+    await submitBulkJob({ operation: "delete", paths: pd.plan.taskPaths,
+      filters: pd.plan.featureIds.map(feature_id => ({ project: projectId, type: "task", feature_id })) });
   };
 
   // No dry-run round trip here: archive is reversible and the counts are
@@ -294,7 +233,7 @@ export function SelectionBar(): JSX.Element | null {
               `Deletes ${summary}` +
               `${pending.plan.featureIds.length > 0 ? " (feature selections delete all of their tasks)" : ""}.` +
               `${pending.sampleTitles.length > 0 ? ` Includes: ${pending.sampleTitles.join(", ")}${pending.plan.taskPaths.length > pending.sampleTitles.length ? ", …" : ""}.` : ""}` +
-              " This cannot be undone. Progress will appear in the background; keep this tab open.",
+              " This cannot be undone. Progress is saved on the server; you can close this tab.",
             confirmLabel: `Delete ${pending.total}`,
             // Same friction as single-feature delete: destructive fan-outs
             // require typing. A fixed word (not a name) because the target
@@ -304,10 +243,10 @@ export function SelectionBar(): JSX.Element | null {
           danger
           onCancel={() => setPending(null)}
           onConfirm={async () => {
-            const operation = startBackgroundOperation(`Delete selection · ${projectId}`, (report) => commitDelete(pending, report));
+            await commitDelete(pending);
             setPending(null);
             clear();
-            void operation;
+
           }}
         />
       )}
@@ -322,15 +261,15 @@ export function SelectionBar(): JSX.Element | null {
               `Archives ${summary}` +
               `${pendingArchive.featureIds.length > 0 ? " (feature selections archive all of their tasks)" : ""}.` +
               " Archived tasks leave the default lists and stop counting toward progress." +
-              " This is reversible — restore them later from the Archived filter. Progress will appear in the background; keep this tab open.",
+              " This is reversible — restore them later from the Archived filter. Progress is saved on the server; you can close this tab.",
             confirmLabel: `Archive ${pendingArchive.total}`,
           }}
           onCancel={() => setPendingArchive(null)}
           onConfirm={async () => {
-            const operation = startArchive({ ...pendingArchive, projectId });
+            await startArchive({ ...pendingArchive, projectId });
             setPendingArchive(null);
             clear();
-            void operation;
+
           }}
         />
       )}

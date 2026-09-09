@@ -530,6 +530,11 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := h.brain.Update(r.Context(), id, req)
 	if err != nil {
+		if errors.Is(err, ErrConflict) {
+			WriteError(w, http.StatusConflict, "Conflict", err.Error())
+			return
+		}
+
 		if errors.Is(err, ErrInvalidInput) {
 			WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
 			return
@@ -710,6 +715,11 @@ func (h *Handler) HandleUpdateMetadata(w http.ResponseWriter, r *http.Request) {
 
 	entry, err := h.brain.UpdateMetadata(r.Context(), id, fields)
 	if err != nil {
+		if errors.Is(err, ErrConflict) {
+			WriteError(w, http.StatusConflict, "Conflict", err.Error())
+			return
+		}
+
 		if errors.Is(err, ErrInvalidInput) {
 			WriteError(w, http.StatusBadRequest, "Bad Request", err.Error())
 			return

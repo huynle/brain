@@ -18,9 +18,10 @@ import (
 
 // APIClient is an HTTP client for the Brain API REST endpoints.
 type APIClient struct {
-	baseURL    string
-	authToken  string // optional Bearer token for authenticated APIs
-	httpClient *http.Client
+	readerBaseURL string // Public link origin only; never used for API requests.
+	baseURL       string
+	authToken     string // optional Bearer token for authenticated APIs
+	httpClient    *http.Client
 }
 
 // NewAPIClient creates a new API client with the given base URL.
@@ -38,9 +39,10 @@ func NewAPIClient(baseURL string) *APIClient {
 // Requests made with this client will include an Authorization header.
 func (c *APIClient) WithAuthToken(token string) *APIClient {
 	return &APIClient{
-		baseURL:    c.baseURL,
-		authToken:  token,
-		httpClient: c.httpClient,
+		baseURL:       c.baseURL,
+		readerBaseURL: c.readerBaseURL,
+		authToken:     token,
+		httpClient:    c.httpClient,
 	}
 }
 

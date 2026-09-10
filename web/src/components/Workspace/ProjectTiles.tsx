@@ -72,12 +72,23 @@ export function ProjectTiles({ projectIds }: ProjectTilesProps): JSX.Element {
     // folded, an SSE task list growing, the window narrowing into a
     // different column count — so the measurement is driven by the
     // browser's own layout, not by a render.
+    let frame = 0;
+    const pending = new Set<Element>();
     const ro = new ResizeObserver((entries) => {
       for (const e of entries) {
         // The container itself changing width re-flows every column.
-        if (e.target === root) for (const c of root.children) measure(c);
-        else measure(e.target);
+        if (e.target === root) for (const c of root.children) pending.add(c);
+        else pending.add(e.target);
       }
+      // Safari reports a ResizeObserver loop if grid writes happen during
+      // observer delivery, even when the next layout would converge.
+      if (!frame)
+        frame = requestAnimationFrame(() => {
+          frame = 0;
+          for (const card of pending)
+            if (card.parentElement === root) measure(card);
+          pending.clear();
+        });
     });
 
     const watch = () => {
@@ -94,6 +105,7 @@ export function ProjectTiles({ projectIds }: ProjectTilesProps): JSX.Element {
     watch();
 
     return () => {
+      cancelAnimationFrame(frame);
       ro.disconnect();
       mo.disconnect();
     };

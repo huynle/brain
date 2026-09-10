@@ -9,6 +9,7 @@ import { useUI } from "./store/ui";
 // Wireframe CSS ported verbatim — flat classnames (`.topbar`, `.pcard`,
 // `.pcard-head`, `.runner-row`, etc). No `.p2-*` scope wrapper.
 import "./styles/global.css";
+import "./styles/mobile.css";
 
 // Register the service worker and poll for new builds (every 30s) so a long-open
 // tab notices a new release without a manual hard-refresh. registerType:"prompt"
@@ -39,6 +40,7 @@ const updateSW = registerSW({
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
+      networkMode: "always",
       staleTime: 10_000,
       refetchOnWindowFocus: true,
       retry: 1,

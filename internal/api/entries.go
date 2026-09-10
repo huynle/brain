@@ -432,6 +432,8 @@ func (h *Handler) HandleUpdateEntry(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	applySyncRevision(r, &req)
+
 	// Validate optional enum fields
 	var details []types.ValidationDetail
 	if req.Status != nil && !types.IsValidEntryStatus(*req.Status) {

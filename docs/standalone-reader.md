@@ -1,0 +1,84 @@
+# Standalone Markdown reader
+
+Use `/read.html?entry=<encoded-path-or-short-id>` on any deployed Brain origin:
+
+- `http://localhost:3333/read.html?entry=abcdefgh`
+- `https://brain.huynle.com/read.html?entry=projects%2Fexample%2Fscratch%2Fabcdefgh.md`
+
+Use the dashboard entry's **Read only ↗** link to open a shareable reader URL.
+The destination must have this build deployed and contain the referenced entry.
+A localhost URL refers to the device opening it; use the hosted URL when sharing
+across devices. Reader links grant no access: private entries still require the
+existing sign-in flow. The OAuth callback returns to the reader URL and heading.
+
+The page is a separate Vite entry point with responsive, printable Markdown,
+authenticated attachment images, on-demand Mermaid, wiki links with aliases,
+relative Markdown links, short IDs, same-origin entry URLs, heading anchors,
+and forward-link/backlink navigation. Browser Back/Forward and modified clicks
+use normal anchors. External links remain external, and raw HTML is not executed.
+Graph links use Brain's existing index, so out-of-band files still need indexing.
+Wiki references must identify an entry by path or short ID, not arbitrary titles.
+
+A fresh visit requests only authentication status, the requested document and
+its graph connections (plus any embedded assets). It neither starts the dashboard
+nor bootstraps SQLite/WASM, polls tasks, or registers a service worker. An already
+installed, updated PWA excludes reader URLs, including their query strings,
+from its dashboard navigation fallback. Existing installations must accept the
+new build before their old service worker can learn this route. Reader content
+uses the server directly; it does not display unsynced browser drafts or promise
+offline reading. Diagrams load their engine only when a diagram is present.
+
+Verification: build with `just build-all`, start the resulting local server, and
+run `npm --prefix web run test:reader`. This seeds a unique demo project on
+loopback port 3333 (override with `BRAIN_READER_TEST_URL`) and exercises cold
+loading, links, history, anchors, error states, mobile layout, auth gating, and
+an installed service worker. It prints a reader URL and an evidence directory.
+
+Verified locally: seven browser scenarios, 1,173 web tests, the 13-scenario
+offline sync regression suite, the embedded web handler tests, and the combined
+web/Go build passed. The auth gate test simulates an unauthorized response; a
+full hosted OAuth login and production deployment have not been exercised.
+
+## MCP link generation
+
+Call `reader_url` with `{"path":"abcdefgh"}` or a full entry path. The tool
+verifies the entry through the connected API and returns JSON containing `id`,
+`path`, `title`, and `reader_url`, using the canonical path in the link.
+
+An optional `base_url`, such as `https://brain.huynle.com` or
+`http://localhost:3333`, chooses the link's origin. Only HTTP(S) origins without
+credentials, additional paths, queries, or fragments are accepted. The override
+is used solely for link generation: it is never contacted, and availability of
+the entry or reader build on that other deployment is not verified.
+
+By default, stdio MCP uses its configured API origin; HTTP MCP uses the incoming
+request's host and protocol, honoring `X-Forwarded-Proto: https` for TLS proxies.
+These request values are link-display hints only and never change authenticated
+API request destinations. A proxy that rewrites the public Host header should
+use an explicit `base_url`. The link grants no access or authentication token.
+
+## In-page attachment previews
+
+Both the dashboard and standalone reader open attachment images, Markdown
+attachment links, and file-row Preview buttons in an accessible dialog. Escape,
+Close, or clicking the backdrop returns to the document and restores focus.
+Images, PDFs (with previous/next page controls), browser-supported audio/video,
+and text are supported. HTML is displayed as literal text; SVG is an inert image.
+Other formats, damaged PDFs, and password-protected PDFs offer a download.
+Text previews are limited to 1 MiB. PDFs render one page at a time using PDF.js;
+its worker, fonts, character maps, and codecs are hosted locally and loaded on
+demand, excluded from the initial PWA precache. Attachment bytes use the existing
+authenticated fetch and memory cache; this does not add durable offline binary
+storage. Download remains available separately.
+
+Build with `just web-build` then `just build`. Run
+`BRAIN_READER_TEST_URL=http://localhost:3334 npm run test:attachment-preview`
+from `web/` against a ready, isolated local server. It seeds a scratch entry and
+attachments and checks images, actual rendered PDF pixels and page navigation,
+text/HTML, downloads, keyboard focus, mobile fit, and dashboard integration.
+Fixtures and screenshots are retained for inspection. Web unit tests (1,174),
+embedded handler tests, and the standalone reader browser regression also pass.
+Audio/video playback depends on browser codecs and was not exercised by this
+fixture suite. The current preview demo uses a fresh data root at
+`~/.local/state/brain-attachment-demo` on port 3334; the older port 3333 demo
+reported a malformed SQLite database and was left intact for separate repair.

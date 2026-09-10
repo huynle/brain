@@ -41,7 +41,7 @@ interface AuthState {
   token: string | null;
   mode: AuthMode | null;
   error: string | null;
-  init: () => Promise<void>;
+  init: (lightweight?: boolean) => Promise<void>;
   beginLogin: () => Promise<void>;
   loginPassword: (username: string, password: string) => Promise<void>;
   handleCallback: (code: string, state: string) => Promise<string>;
@@ -92,7 +92,24 @@ async function exchangePasswordRefresh(): Promise<boolean> {
   return true;
 }
 
+async function bindOfflineScope(token: string) {
+  const res = await fetch("/api/v1/sync/identity", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok)
+    throw new Error(
+      "Could not verify the offline account. Try signing in again.",
+    );
+  const { scope } = await res.json();
+  if (typeof scope !== "string" || !/^[a-f0-9]{64}$/.test(scope))
+    throw new Error("Invalid offline account identity");
+  localStorage.setItem("brain.offline.scope", scope);
+  localStorage.removeItem("brain.offline.anonymous");
+}
+
 function clearTokens() {
+  localStorage.removeItem("brain.offline.scope");
+  localStorage.removeItem("brain.offline.anonymous");
   localStorage.removeItem(LS.accessToken);
   localStorage.removeItem(LS.refreshToken);
   localStorage.removeItem(LS.expiresAt);
@@ -121,7 +138,8 @@ async function registerClient(): Promise<{ id: string; secret: string }> {
   }
   const data = await res.json();
   localStorage.setItem(LS.clientId, data.client_id);
-  if (data.client_secret) localStorage.setItem(LS.clientSecret, data.client_secret);
+  if (data.client_secret)
+    localStorage.setItem(LS.clientSecret, data.client_secret);
   return { id: data.client_id, secret: data.client_secret || "" };
 }
 
@@ -163,19 +181,42 @@ export const useAuth = create<AuthState>((set, get) => ({
     return h;
   },
 
-  async init() {
+  async init(_lightweight = false) {
     const mode = localStorage.getItem(LS.mode) as AuthMode | null;
     const { token, expiresAt } = storedToken();
 
     if (token) {
       // Manual tokens never expire from our side.
       if (mode === "manual" || expiresAt > now() + 30) {
+        if (!localStorage.getItem("brain.offline.scope")) {
+          try {
+            await bindOfflineScope(token);
+          } catch (e) {
+            set({
+              status: "needs-login",
+              token: null,
+              mode: null,
+              error: String(e),
+            });
+            return;
+          }
+        }
         set({ status: "authenticated", token, mode });
         return;
       }
       // Access token expired/expiring — try a silent refresh for the mode.
-      const refreshed =
-        mode === "password" ? await exchangePasswordRefresh() : await exchangeRefresh();
+      let refreshed = false;
+      try {
+        refreshed =
+          mode === "password"
+            ? await exchangePasswordRefresh()
+            : await exchangeRefresh();
+      } catch {
+        if (localStorage.getItem("brain.offline.scope")) {
+          set({ status: "authenticated", token, mode });
+          return;
+        }
+      }
       if (refreshed) {
         set({
           status: "authenticated",
@@ -184,20 +225,33 @@ export const useAuth = create<AuthState>((set, get) => ({
         });
         return;
       }
+      if (!navigator.onLine && localStorage.getItem("brain.offline.scope")) {
+        set({ status: "authenticated", token, mode });
+        return;
+      }
       clearTokens();
     }
 
     // No usable token. Probe whether the server even requires auth.
     try {
-      const res = await fetch("/api/v1/tasks", { headers: {} });
+      const res = await fetch("/api/v1/sync/identity", { headers: {} });
       if (res.status === 401) {
         set({ status: "needs-login", token: null, mode: null });
       } else {
+        localStorage.setItem("brain.offline.scope", "anonymous");
+        localStorage.setItem("brain.offline.anonymous", "true");
         set({ status: "anonymous", token: null, mode: null });
       }
     } catch {
-      // Network error — assume login is needed; the UI surfaces the error.
-      set({ status: "needs-login", token: null, mode: null });
+      // Only reopen an anonymous cache after this origin previously verified it.
+      set({
+        status:
+          localStorage.getItem("brain.offline.anonymous") === "true"
+            ? "anonymous"
+            : "needs-login",
+        token: null,
+        mode: null,
+      });
     }
   },
 
@@ -212,7 +266,9 @@ export const useAuth = create<AuthState>((set, get) => ({
       sessionStorage.setItem(SS.state, state);
       sessionStorage.setItem(
         SS.returnTo,
-        window.location.pathname + window.location.search,
+        window.location.pathname +
+          window.location.search +
+          window.location.hash,
       );
 
       const params = new URLSearchParams({
@@ -243,7 +299,8 @@ export const useAuth = create<AuthState>((set, get) => ({
       let msg = "Login failed";
       if (res.status === 401) msg = "Invalid username or password";
       else if (res.status === 429) msg = "Too many attempts — try again later";
-      else if (res.status === 404) msg = "Password login is not enabled on this server";
+      else if (res.status === 404)
+        msg = "Password login is not enabled on this server";
       else {
         const txt = await res.text().catch(() => "");
         if (txt) msg = txt.slice(0, 200);
@@ -252,6 +309,9 @@ export const useAuth = create<AuthState>((set, get) => ({
       throw new Error(msg);
     }
     const data = await res.json();
+    localStorage.removeItem("brain.offline.scope");
+    localStorage.removeItem("brain.offline.anonymous");
+    await bindOfflineScope(data.access_token);
     saveTokens(data, "password");
     set({
       status: "authenticated",
@@ -267,9 +327,11 @@ export const useAuth = create<AuthState>((set, get) => ({
     if (!expectedState || state !== expectedState) {
       throw new Error("state mismatch — possible CSRF, please retry login");
     }
-    if (!verifier) throw new Error("missing PKCE verifier — please retry login");
+    if (!verifier)
+      throw new Error("missing PKCE verifier — please retry login");
     const clientId = localStorage.getItem(LS.clientId);
-    if (!clientId) throw new Error("missing client registration — please retry");
+    if (!clientId)
+      throw new Error("missing client registration — please retry");
 
     const body = new URLSearchParams({
       grant_type: "authorization_code",
@@ -288,6 +350,7 @@ export const useAuth = create<AuthState>((set, get) => ({
       throw new Error(`token exchange failed (${res.status}): ${txt}`);
     }
     const data = await res.json();
+    await bindOfflineScope(data.access_token);
     saveTokens(data);
     sessionStorage.removeItem(SS.verifier);
     sessionStorage.removeItem(SS.state);
@@ -303,10 +366,22 @@ export const useAuth = create<AuthState>((set, get) => ({
   },
 
   setManualToken(token) {
-    localStorage.setItem(LS.accessToken, token);
-    localStorage.setItem(LS.mode, "manual");
-    localStorage.removeItem(LS.expiresAt);
-    set({ status: "authenticated", token, mode: "manual", error: null });
+    set({ status: "loading", error: null });
+    void bindOfflineScope(token)
+      .then(() => {
+        localStorage.setItem(LS.accessToken, token);
+        localStorage.setItem(LS.mode, "manual");
+        localStorage.removeItem(LS.expiresAt);
+        set({ status: "authenticated", token, mode: "manual", error: null });
+      })
+      .catch((e) =>
+        set({
+          status: "needs-login",
+          token: null,
+          mode: null,
+          error: String(e),
+        }),
+      );
   },
 
   logout() {
@@ -342,3 +417,14 @@ export const useAuth = create<AuthState>((set, get) => ({
     return false;
   },
 }));
+
+// Login/logout and token refresh in another tab must also update its in-memory
+// credentials before that tab can read a newly selected offline namespace.
+if (
+  typeof window !== "undefined" &&
+  typeof window.addEventListener === "function"
+) {
+  window.addEventListener("storage", (event) => {
+    if (event.key === LS.accessToken) void useAuth.getState().init();
+  });
+}

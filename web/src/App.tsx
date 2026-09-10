@@ -1,3 +1,5 @@
+import { useIsMobile } from "./hooks/useIsMobile";
+import { OfflineSync } from "./components/common/OfflineSync";
 import { BulkJobs } from "./components/common/BulkJobs";
 import { useEffect } from "react";
 import { Route, Routes } from "react-router-dom";
@@ -12,6 +14,7 @@ import { AuthCallback } from "./pages/AuthCallback";
 import { Dashboard } from "./pages/Dashboard";
 
 export function App() {
+  const mobile = useIsMobile();
   const status = useAuth((s) => s.status);
   const init = useAuth((s) => s.init);
 
@@ -26,13 +29,33 @@ export function App() {
         <Route path="*" element={<Gate status={status} />} />
       </Routes>
       <Toasts />
-      <div className="background-operation-tray"><ReminderStatusPopups /><BackgroundOperations /><BulkJobs /></div>
+      {mobile ? (
+        <details className="mobile-activity">
+          <summary>Activity</summary>
+          <div className="background-operation-tray">
+            <ReminderStatusPopups />
+            <BackgroundOperations />
+            <BulkJobs />
+          </div>
+        </details>
+      ) : (
+        <div className="background-operation-tray">
+          <ReminderStatusPopups />
+          <BackgroundOperations />
+          <BulkJobs />
+        </div>
+      )}
       <UpdateBanner />
+      <OfflineSync />
     </>
   );
 }
 
-function Gate({ status }: { status: ReturnType<typeof useAuth.getState>["status"] }) {
+function Gate({
+  status,
+}: {
+  status: ReturnType<typeof useAuth.getState>["status"];
+}) {
   if (status === "loading") return <Loading label="Connecting to Brain…" />;
   if (status === "needs-login") return <Login />;
   // Authenticated. Panes-v2 is the default and only dashboard as of Phase 9.

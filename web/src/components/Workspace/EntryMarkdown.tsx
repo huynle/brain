@@ -21,9 +21,10 @@
  *
  * Styling lives under `.entry-md` in `styles/global.css`.
  */
-import React, { useId, useMemo } from "react";
+import React, { useId, useMemo, useRef } from "react";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { AttachmentLink } from "./AttachmentPreview";
 import { AttachmentImage } from "./AttachmentImage";
 import { MermaidDiagram } from "./MermaidDiagram";
 import {
@@ -33,6 +34,7 @@ import {
   slugifyHeading,
   type MarkdownNode,
 } from "../../lib/entries";
+import { remarkReaderWikiLinks } from "../../lib/readerLinks";
 import { entryHref } from "../../lib/entryNav";
 import { resolveAttachmentSrc } from "../../lib/attachments";
 import type { AttachmentReference } from "../../lib/types";
@@ -69,13 +71,20 @@ export function EntryMarkdown({
   content,
   onOpenEntry,
   attachments,
+  linkHref,
+  standalone = false,
 }: {
   content: string;
+  linkHref?: (href: string) => string | undefined;
+  standalone?: boolean;
   onOpenEntry?: (ref: string) => void;
   /** The entry's attachments, so `![x](file.png)` can find its bytes. */
   attachments?: readonly AttachmentReference[];
 }): JSX.Element {
+  const openEntryRef = useRef(onOpenEntry);
+  openEntryRef.current = onOpenEntry;
   const instanceId = useId();
+  const prefix = standalone ? "" : `${instanceId}-`;
 
   const components = useMemo(() => {
     const slugByLine = new Map<number, string>();
@@ -90,7 +99,7 @@ export function EntryMarkdown({
           (line !== undefined && slugByLine.get(line)) ||
           slugifyHeading(textOf(children)) ||
           "section";
-        return <Tag id={`${instanceId}-${slug}`}>{children}</Tag>;
+        return <Tag id={`${prefix}${slug}`}>{children}</Tag>;
       };
     };
 
@@ -101,9 +110,36 @@ export function EntryMarkdown({
       h4: heading("h4"),
       h5: heading("h5"),
       h6: heading("h6"),
-      a: ({ href, children }: { href?: string; children?: React.ReactNode }) => {
+      a: ({
+        href,
+        children,
+      }: {
+        href?: string;
+        children?: React.ReactNode;
+      }) => {
+        const origin =
+          typeof window === "undefined" ? "" : window.location.origin;
+        const direct = attachments?.find(
+          (a) =>
+            a.download_url &&
+            (a.download_url === href ||
+              (href?.startsWith(origin + "/") &&
+                origin + a.download_url === href)),
+        );
+        const matched = direct
+          ? { attachment: direct }
+          : resolveAttachmentSrc(href, attachments);
+        if (matched && "attachment" in matched)
+          return (
+            <AttachmentLink attachment={matched.attachment}>
+              {children}
+            </AttachmentLink>
+          );
+        const readerTarget = linkHref?.(href || "");
+        if (readerTarget !== undefined)
+          return <a href={readerTarget}>{children}</a>;
         const target = classifyEntryHref(href || "");
-        if (target.kind === "entry" && onOpenEntry) {
+        if (target.kind === "entry" && openEntryRef.current) {
           return (
             <a
               href={entryHref(target.ref)}
@@ -111,7 +147,7 @@ export function EntryMarkdown({
               title={target.ref}
               onClick={(e) => {
                 e.preventDefault();
-                onOpenEntry(target.ref);
+                openEntryRef.current?.(target.ref);
               }}
             >
               {children}
@@ -126,7 +162,7 @@ export function EntryMarkdown({
               onClick={(e) => {
                 e.preventDefault();
                 document
-                  .getElementById(`${instanceId}-${slug}`)
+                  .getElementById(`${prefix}${slug}`)
                   ?.scrollIntoView({ block: "start" });
               }}
             >
@@ -140,7 +176,11 @@ export function EntryMarkdown({
           </a>
         );
       },
-      img: ({ src, alt, title }: {
+      img: ({
+        src,
+        alt,
+        title,
+      }: {
         src?: string;
         alt?: string;
         title?: string;
@@ -181,7 +221,9 @@ export function EntryMarkdown({
       // own block; an image among words stays inline. See
       // `isLoneImageParagraph` for why CSS can't make this call.
       p: ({ node, children }: MdNodeProps) => (
-        <p className={isLoneImageParagraph(node) ? "entry-md-figure" : undefined}>
+        <p
+          className={isLoneImageParagraph(node) ? "entry-md-figure" : undefined}
+        >
           {children}
         </p>
       ),
@@ -199,12 +241,14 @@ export function EntryMarkdown({
         return <code className={className}>{children}</code>;
       },
     };
-  }, [content, instanceId, onOpenEntry, attachments]);
+  }, [content, prefix, attachments, linkHref]);
 
   return (
     <div className="entry-md" data-md-instance={instanceId}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={
+          standalone ? [remarkGfm, remarkReaderWikiLinks] : [remarkGfm]
+        }
         components={components}
         urlTransform={entryUrlTransform}
       >

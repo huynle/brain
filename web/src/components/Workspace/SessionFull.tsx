@@ -22,7 +22,8 @@
  * (project label, title, Overview / Focus split / Close for adhoc) and
  * the right-hand metadata panel.
  */
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { useWorkspace } from "../../store/workspace";
 import { useSessions } from "../../hooks/useSessions";
 import { useUI } from "../../store/ui";
@@ -82,7 +83,13 @@ function CloseSessionButton({
   );
 }
 
-export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element {
+export function SessionFull({
+  instanceId,
+  sref,
+}: SessionFullProps): JSX.Element {
+  const mobile = useIsMobile();
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const detailsId = useId();
   const setView = useWorkspace((s) => s.setView);
   const setFocusSession = useWorkspace((s) => s.setFocusSession);
   const openInFocus = useWorkspace((s) => s.openInFocus);
@@ -115,7 +122,11 @@ export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element
       );
     }
     if (sref?.mode === "live" && sref.session_id) {
-      return { mode: "history", runner_id: sref.runner_id, session_id: sref.session_id };
+      return {
+        mode: "history",
+        runner_id: sref.runner_id,
+        session_id: sref.session_id,
+      };
     }
     return undefined;
   }, [sref, inst]);
@@ -147,7 +158,8 @@ export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element
     ? inst.title || inst.task_id || inst.instance_id
     : sessionId || "session";
   const projectLabel =
-    inst?.project_id ?? (sref?.mode === "history" ? sref.project_id : undefined);
+    inst?.project_id ??
+    (sref?.mode === "history" ? sref.project_id : undefined);
 
   // Instance mode: the runner's Chat / Raw-log panes carry the header,
   // transcript, and steer composer. History mode: a plain header word.
@@ -164,11 +176,13 @@ export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element
   return (
     <div className="session-view session-full">
       <div className="hdr">
-        {projectLabel && <span style={{ color: "#f4b23a" }}>{projectLabel}</span>}
+        {projectLabel && (
+          <span style={{ color: "#f4b23a" }}>{projectLabel}</span>
+        )}
         {projectLabel && <span style={{ color: "#6b757e" }}>›</span>}
         <span>{title}</span>
         <span style={{ color: "#6b757e" }}>
-          · {live ? inst?.status ?? "live" : "transcript"}
+          · {live ? (inst?.status ?? "live") : "transcript"}
         </span>
         <span className="spacer" style={{ flex: 1 }} />
         {inst?.kind === "adhoc" && (
@@ -177,6 +191,15 @@ export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element
             instanceId={inst.instance_id}
             onClosed={back}
           />
+        )}
+        {mobile && (
+          <button
+            aria-expanded={detailsOpen}
+            aria-controls={detailsId}
+            onClick={() => setDetailsOpen(!detailsOpen)}
+          >
+            Session details
+          </button>
         )}
         <button onClick={back}>◀ Overview</button>
         <button
@@ -213,7 +236,10 @@ export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element
         )}
       </div>
 
-      <div className="sidebar-r">
+      <div
+        id={detailsId}
+        className={"sidebar-r" + (detailsOpen ? " mobile-details-open" : "")}
+      >
         <h5>Session</h5>
         <div className="kv">
           {inst && (
@@ -233,7 +259,10 @@ export function SessionFull({ instanceId, sref }: SessionFullProps): JSX.Element
           {(inst?.task_id || (sref?.mode === "history" && sref.task_id)) && (
             <>
               <b>Task</b>
-              <span>{inst?.task_id ?? (sref?.mode === "history" ? sref.task_id : "")}</span>
+              <span>
+                {inst?.task_id ??
+                  (sref?.mode === "history" ? sref.task_id : "")}
+              </span>
             </>
           )}
           <b>Session</b>

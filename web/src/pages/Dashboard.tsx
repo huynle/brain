@@ -14,7 +14,10 @@
  * `.p2-*` scoping. `body.mobile` and `body.sidebar-collapsed` classes
  * drive mobile / sidebar-collapsed layouts.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { withoutNav } from "../lib/navBridge";
+import { Modal } from "../components/common/Modal";
+import { useModal } from "../store/modal";
 import { Topbar } from "../components/Topbar";
 import { Statusbar } from "../components/Statusbar";
 import { Sidebar } from "../components/Sidebar/Sidebar";
@@ -28,6 +31,7 @@ import { useWorkspace } from "../store/workspace";
 import { useProjects } from "../hooks/useProjects";
 import { streams, useLive } from "../lib/sse";
 import { useAuth } from "../lib/auth";
+import { useMobileViewport } from "../hooks/useMobileViewport";
 import { useIsMobile } from "../hooks/useIsMobile";
 import { useGlobalKeyboard } from "../hooks/useGlobalKeyboard";
 import { useEntryNavHistory } from "../hooks/useEntryNavHistory";
@@ -45,6 +49,12 @@ export function Dashboard(): JSX.Element {
   const sidebarWidth = useWorkspace((s) => s.sidebarWidth);
   const assistantWidth = useWorkspace((s) => s.assistantWidth);
   const isMobile = useIsMobile();
+  useMobileViewport(isMobile);
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const modalKind = useModal((s) => s.kind);
+  useEffect(() => {
+    if (modalKind || !isMobile) setNavigationOpen(false);
+  }, [modalKind, isMobile]);
 
   const { data: projects, isLoading, error, refetch } = useProjects();
   const token = useAuth((s) => s.token);
@@ -113,6 +123,17 @@ export function Dashboard(): JSX.Element {
   // the line above: the back stack outlives any one view.
   useDockNavHistory();
 
+  // A shared entry URL must be visible even when a mobile overlay was saved
+  // in the previous workspace. Preserve its panes; only dismiss the overlay.
+  useEffect(() => {
+    if (isMobile && new URLSearchParams(window.location.search).has("entry")) {
+      const workspace = useWorkspace.getState();
+      withoutNav(() => workspace.setView("entries"));
+      workspace.setSidebarDockOpen(false);
+      workspace.setAssistantOpen(false);
+    }
+  }, [isMobile]);
+
   // Single owner of the pause / scheduler polling. Every pause indicator in
   // the tree reads the same cache entries without adding a timer — see the
   // per-observer note in usePauseState.
@@ -154,8 +175,8 @@ export function Dashboard(): JSX.Element {
   return (
     <>
       <div id="app" style={appStyle}>
-        <Topbar />
-        <Sidebar />
+        <Topbar onOpenNavigation={() => setNavigationOpen(true)} />
+        {!isMobile && <Sidebar />}
         {isMobile && <MobileNav />}
         <Workspace />
         <Statusbar />
@@ -169,6 +190,21 @@ export function Dashboard(): JSX.Element {
          * overlay — see AssistantPanel.tsx. */}
         <AssistantPanel />
       </div>
+      {isMobile && navigationOpen && (
+        <Modal
+          title="Workspace navigation"
+          className="mobile-navigation"
+          onClose={() => setNavigationOpen(false)}
+        >
+          <Sidebar mobile onClose={() => setNavigationOpen(false)} />
+          <button
+            className="mobile-navigation-done"
+            onClick={() => setNavigationOpen(false)}
+          >
+            Done
+          </button>
+        </Modal>
+      )}
       <ModalHost />
       <CommandPalette />
     </>

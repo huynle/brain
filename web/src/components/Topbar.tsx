@@ -10,11 +10,20 @@
  *     .spacer
  *     icon buttons (command palette, new session, notifs, theme, assistant)
  */
+import { useState } from "react";
+import { useIsMobile } from "../hooks/useIsMobile";
+import { Modal } from "./common/Modal";
 import { useWorkspace } from "../store/workspace";
 import { ReminderBell } from "./ReminderBell";
 import { countLeaves } from "../lib/dock";
 
-export function Topbar(): JSX.Element {
+export function Topbar({
+  onOpenNavigation,
+}: {
+  onOpenNavigation?: () => void;
+}): JSX.Element {
+  const mobile = useIsMobile();
+  const [toolsOpen, setToolsOpen] = useState(false);
   const view = useWorkspace((s) => s.view);
   const setView = useWorkspace((s) => s.setView);
   const setCommandOpen = useWorkspace((s) => s.setCommandOpen);
@@ -37,12 +46,56 @@ export function Topbar(): JSX.Element {
   const focusPanes = useWorkspace((s) => countLeaves(s.docks.focus));
   const sidebarPanes = useWorkspace((s) => countLeaves(s.docks.sidebar));
 
+  const tools = (
+    <>
+      <button
+        className="icon-btn"
+        title={
+          theme === "dark"
+            ? "Switch to light"
+            : theme === "light"
+              ? "Switch to system"
+              : "Switch to dark"
+        }
+        onClick={cycleTheme}
+      >
+        {mobile
+          ? `Theme: ${theme}`
+          : theme === "dark"
+            ? "🌙"
+            : theme === "light"
+              ? "☀"
+              : "◐"}
+      </button>
+
+      <button
+        className={"icon-btn" + (sidebarDockOpen ? " active" : "")}
+        title={sidebarDockOpen ? "Close side panel" : "Open side panel"}
+        onClick={toggleSidebarDockOpen}
+      >
+        Panel
+        {sidebarPanes > 0 && (
+          <span className="dock-count">{sidebarPanes}</span>
+        )}{" "}
+        {sidebarDockOpen ? "▸" : "◂"}
+      </button>
+      <button
+        className="icon-btn"
+        title="Assistant"
+        aria-label="Assistant"
+        onClick={toggleAssistant}
+      >
+        Assistant {assistantOpen ? "▾" : "▸"}
+      </button>
+    </>
+  );
   return (
     <div className="topbar">
       <button
         className="icon-btn"
-        title="Toggle sidebar"
-        onClick={toggleSidebarCollapsed}
+        title={mobile ? "Open workspace navigation" : "Toggle sidebar"}
+        aria-label={mobile ? "Open workspace navigation" : "Toggle sidebar"}
+        onClick={mobile ? onOpenNavigation : toggleSidebarCollapsed}
         style={{ padding: "4px 6px" }}
       >
         ☰
@@ -90,39 +143,39 @@ export function Topbar(): JSX.Element {
       <button
         className="icon-btn"
         title="Command palette (⌘K)"
+        aria-label="Search and commands"
         onClick={() => setCommandOpen(true)}
       >
-        ⌘K
+        {mobile ? "Search" : "⌘K"}
       </button>
-      <button
-        className="icon-btn"
-        title={
-          theme === "dark"
-            ? "Switch to light"
-            : theme === "light"
-              ? "Switch to system"
-              : "Switch to dark"
-        }
-        onClick={cycleTheme}
-      >
-        {theme === "dark" ? "🌙" : theme === "light" ? "☀" : "◐"}
-      </button>
-      {/* Only renders when a reminder is actually waiting — see ReminderBell. */}
       <ReminderBell />
-      <button
-        className={"icon-btn" + (sidebarDockOpen ? " active" : "")}
-        title={sidebarDockOpen ? "Close side panel" : "Open side panel"}
-        onClick={toggleSidebarDockOpen}
-      >
-        Panel
-        {sidebarPanes > 0 && (
-          <span className="dock-count">{sidebarPanes}</span>
-        )}{" "}
-        {sidebarDockOpen ? "▸" : "◂"}
-      </button>
-      <button className="icon-btn" title="Assistant" onClick={toggleAssistant}>
-        Assistant {assistantOpen ? "▾" : "▸"}
-      </button>
+      {mobile ? (
+        <button
+          className="icon-btn"
+          aria-label="More tools"
+          onClick={() => setToolsOpen(true)}
+        >
+          More ⋯
+        </button>
+      ) : (
+        tools
+      )}
+      {mobile && toolsOpen && (
+        <Modal
+          title="Tools"
+          className="mobile-tools"
+          onClose={() => setToolsOpen(false)}
+        >
+          <div
+            onClick={(e) => {
+              if ((e.target as HTMLElement).closest("button"))
+                setToolsOpen(false);
+            }}
+          >
+            {tools}
+          </div>
+        </Modal>
+      )}
     </div>
   );
 }

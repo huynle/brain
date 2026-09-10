@@ -1,0 +1,125 @@
+.attachment-preview {
+  color-scheme: light dark;
+  color: var(--fg, #e0e5e8);
+  background: var(--bg, #15191c);
+  border: 1px solid var(--line, #394047);
+  border-radius: 10px;
+  padding: 0;
+  width: min(1100px, 94vw);
+  max-width: 94vw;
+  max-height: 92dvh;
+  box-shadow: 0 20px 90px #0008;
+}
+.attachment-preview::backdrop {
+  background: #000b;
+}
+.attachment-preview header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 18px;
+  border-bottom: 1px solid var(--line, #394047);
+}
+.attachment-preview header h2 {
+  font: 600 16px/1.4 system-ui;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.attachment-preview button {
+  font: inherit;
+  border: 1px solid var(--line, #394047);
+  border-radius: 5px;
+  padding: 6px 12px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.attachment-preview-body {
+  padding: 16px;
+  overflow: auto;
+  max-height: calc(92dvh - 130px);
+}
+.attachment-preview-body img,
+.attachment-preview-body video {
+  display: block;
+  max-width: 100%;
+  max-height: 70dvh;
+  object-fit: contain;
+  margin: auto;
+}
+.attachment-preview-body audio {
+  width: 100%;
+}
+.attachment-preview-body object {
+  display: block;
+  width: 100%;
+  height: 68dvh;
+  border: 0;
+}
+.attachment-preview-body pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: 14px/1.6 monospace;
+  margin: 0;
+}
+.attachment-preview footer {
+  border-top: 1px solid var(--line, #394047);
+  margin: 0;
+  padding: 12px 18px;
+}
+.attachment-preview a,
+.attachment-inline-link {
+  color: var(--cyan, #83cced);
+}
+.attachment-inline-link {
+  display: inline;
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.att-image[role="button"] {
+  cursor: zoom-in;
+}
+.att-image[role="button"]:focus-visible,
+.attachment-inline-link:focus-visible {
+  outline: 2px solid var(--cyan, #83cced);
+  outline-offset: 3px;
+}
+@media (max-width: 500px) {
+  .attachment-preview {
+    width: 96vw;
+    max-width: 96vw;
+  }
+  .attachment-preview header,
+  .attachment-preview footer,
+  .attachment-preview-body {
+    padding: 12px;
+  }
+}
+@media print {
+  .attachment-preview {
+    display: none;
+  }
+}
+.attachment-pdf nav {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.attachment-pdf canvas {
+  max-width: 100%;
+  height: auto;
+  margin: auto;
+  background: white;
+}
+.attachment-pdf button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}

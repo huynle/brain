@@ -55,6 +55,8 @@ import type {
 } from "./types";
 
 export interface ProjectLive {
+  /** Connection can open before the first authoritative task snapshot arrives. */
+  snapshotReceived?: boolean;
   tasks: Task[];
   stats?: TaskStats;
   cycles?: string[][];
@@ -254,6 +256,7 @@ class MultiStream {
         if (!pid) break;
         live.setProject(pid, {
           tasks: d.tasks || [],
+          snapshotReceived: true,
           stats: d.stats,
           cycles: d.cycles,
           connected: true,

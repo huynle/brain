@@ -1,0 +1,419 @@
+/* Phone layouts share the desktop actions and stores. Only presentation changes. */
+@media (max-width: 900px), (max-height: 500px) and (pointer: coarse) {
+  html,
+  body,
+  #root {
+    width: 100%;
+    min-width: 0;
+  }
+  body.mobile #app {
+    height: var(--mobile-viewport-height, 100dvh);
+    box-sizing: border-box;
+    padding-top: calc(
+      var(--mobile-viewport-top, 0px) + env(safe-area-inset-top)
+    );
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+    padding-bottom: env(safe-area-inset-bottom);
+    grid-template-rows: 52px 52px minmax(0, 1fr) 80px;
+  }
+  body.mobile .topbar {
+    gap: 4px;
+    padding: 0 8px;
+    min-width: 0;
+  }
+  body.mobile .topbar .viewmode {
+    display: none;
+  }
+  body.mobile .topbar .brand {
+    font-size: 16px;
+  }
+  body.mobile .topbar .icon-btn {
+    min-width: 44px;
+    min-height: 44px;
+    font-size: 14px;
+    padding: 8px;
+  }
+  body.mobile .mobile-nav {
+    align-items: stretch;
+    padding: 4px 8px;
+    gap: 6px;
+    scrollbar-width: thin;
+  }
+  body.mobile .mobile-nav .pill {
+    flex: 0 0 auto;
+    min-width: 80px;
+    min-height: 44px;
+    border-radius: 8px;
+    font-size: 14px;
+    background: transparent;
+  }
+  body.mobile .workspace {
+    min-width: 0;
+    min-height: 0;
+  }
+  body.mobile :is(button, [role="button"], summary, select) {
+    touch-action: manipulation;
+  }
+  body.mobile button,
+  body.mobile select {
+    min-height: 44px;
+  }
+  body.mobile
+    :is(input:not([type="checkbox"]):not([type="radio"]), textarea, select) {
+    font-size: 16px;
+    max-width: 100%;
+    box-sizing: border-box;
+  }
+  body.mobile input:not([type="checkbox"]):not([type="radio"]) {
+    min-height: 44px;
+  }
+  body.mobile
+    :is(
+      .entry-act,
+      .icon-btn,
+      .modal-close,
+      .pane-close,
+      .chip,
+      .collapse-btn
+    ) {
+    min-width: 44px;
+  }
+  body.mobile
+    :is(
+      .pcard-tabs,
+      .modal-tabs,
+      .p2-pane-tabs__strip,
+      .entry-type-chips,
+      .entries-types,
+      .actionbar
+    ) {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+    scrollbar-width: thin;
+  }
+  body.mobile :is(.pcard-tabs, .modal-tabs) > button {
+    flex-shrink: 0;
+    font-size: 14px;
+  }
+  body.mobile
+    :is(
+      .pcard-head,
+      .pcard-tools,
+      .entry-reader-head,
+      .entry-compare-tray,
+      .modal-foot,
+      .selection-bar,
+      .session-full > .hdr
+    ) {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  body.mobile
+    :is(
+      .pcard,
+      .pcard-body,
+      .entry-reader,
+      .entries-detail,
+      .modal-body,
+      .p2-pane
+    ) {
+    min-width: 0;
+  }
+  body.mobile .overview {
+    padding: 8px;
+    gap: 12px;
+  }
+  body.mobile .wc-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  body.mobile .wc-metrics > * {
+    min-width: 0;
+  }
+  body.mobile
+    :is(.trow, .feat-head, .proj-row, .session-row, .runner-row, .entry-row) {
+    min-height: 48px;
+    font-size: 13px;
+  }
+  body.mobile :is(.trow, .feat-head, .entry-row) .title {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  body.mobile .glyph-slot .selbox {
+    width: 24px;
+    height: 24px;
+  }
+  body.mobile .selbox.on::after {
+    font-size: 16px;
+    line-height: 22px;
+  }
+  body.mobile .entries-pane {
+    padding: 8px;
+    gap: 8px;
+  }
+  body.mobile .entries-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  body.mobile .entries-toolbar select {
+    flex: 1 1 120px;
+    max-width: 100%;
+  }
+  body.mobile .trow .name {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  body.mobile .entry-reader {
+    font-size: 15px;
+  }
+  body.mobile
+    .entry-reader
+    :is(.entry-reader-meta, .entry-meta-path, .entry-reader-tags) {
+    overflow-wrap: anywhere;
+    min-width: 0;
+  }
+  body.mobile .entry-md {
+    font-size: 15px;
+    line-height: 1.65;
+    overflow-wrap: anywhere;
+  }
+  body.mobile .entry-md :is(pre, table) {
+    max-width: 100%;
+    overflow-x: auto;
+  }
+  body.mobile .entry-md :is(th, td) {
+    min-width: 100px;
+    overflow-wrap: normal;
+  }
+  body.mobile .entry-md table {
+    display: block;
+  }
+  body.mobile .modal {
+    top: calc(var(--mobile-viewport-top, 0px) + env(safe-area-inset-top));
+    left: 0;
+    transform: none;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    max-height: calc(
+      var(--mobile-viewport-height, 100dvh) - env(safe-area-inset-top) -
+        env(safe-area-inset-bottom)
+    );
+    border-radius: 0 0 14px 14px;
+    box-sizing: border-box;
+  }
+  body.mobile :is(.modal-head, .modal-foot) {
+    padding: 12px;
+    flex-shrink: 0;
+  }
+  body.mobile .modal-body {
+    padding: 12px;
+    overflow: auto;
+    overscroll-behavior: contain;
+  }
+  body.mobile
+    .modal
+    :is(.form-grid, .settings-grid, .task-detail-grid, .metadata-grid) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  body.mobile .modal-foot button {
+    flex: 1 1 auto;
+  }
+  body.mobile .mobile-navigation .modal-body {
+    padding: 0;
+  }
+  body.mobile .mobile-navigation .sidebar {
+    display: flex;
+    width: 100%;
+    overflow: visible;
+    border: 0;
+  }
+  body.mobile .mobile-navigation .sb-top,
+  body.mobile .mobile-navigation .sidebar-resizer {
+    display: none;
+  }
+  body.mobile .mobile-navigation .sb-list {
+    max-height: none;
+  }
+  body.mobile .mobile-navigation-done {
+    position: sticky;
+    bottom: 0;
+    width: 100%;
+    font-size: 15px;
+  }
+  body.mobile .mobile-tools .modal-body > div {
+    display: grid;
+    gap: 8px;
+  }
+  body.mobile .mobile-tools .icon-btn {
+    font-size: 16px;
+    text-align: left;
+    padding: 12px;
+  }
+  body.mobile :is(.feature-drawer, .assistant-panel) {
+    top: calc(var(--mobile-viewport-top, 0px) + env(safe-area-inset-top));
+    bottom: env(safe-area-inset-bottom);
+    left: 0;
+    right: 0;
+    width: 100% !important;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    height: calc(
+      var(--mobile-viewport-height, 100dvh) - env(safe-area-inset-top) -
+        env(safe-area-inset-bottom)
+    );
+    bottom: auto;
+    z-index: 90;
+    padding: 12px;
+  }
+  body.mobile :is(.drawer-resizer, .assistant-resizer) {
+    display: none;
+  }
+  body.mobile .assistant-panel textarea {
+    min-height: 96px;
+  }
+  body.mobile .session-view.session-full {
+    grid-template-rows: auto minmax(160px, 1fr) auto;
+  }
+  body.mobile .session-full .sidebar-r.mobile-details-open {
+    display: block;
+    max-height: 32dvh;
+    overflow: auto;
+  }
+  body.mobile .session-full .kv {
+    overflow-wrap: anywhere;
+  }
+  body.mobile .session-view .composer {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  body.mobile .session-view .composer :is(input, textarea) {
+    min-width: 0;
+    width: 100%;
+    flex-basis: 100%;
+  }
+  /* Keep every split pane, stacking with usable reading height without changing
+     the saved desktop split ratios or tree. */
+  body.mobile .p2-dock {
+    flex-direction: column;
+    overflow: auto;
+  }
+  body.mobile .p2-dock-split {
+    width: 100%;
+    max-width: 100%;
+    flex-direction: column;
+    overflow: visible;
+    flex: 1 0 auto;
+  }
+  body.mobile .p2-dock-child {
+    flex-basis: auto !important;
+    flex-shrink: 0;
+    min-height: 60dvh;
+  }
+  body.mobile .p2-dock-splitter {
+    display: none;
+  }
+  body.mobile .statusbar {
+    align-self: end;
+    height: 30px;
+    box-sizing: border-box;
+    padding: 2px 8px;
+    font-size: 11px;
+    white-space: nowrap;
+    overflow-x: auto;
+  }
+  body.mobile .mobile-activity {
+    position: fixed;
+    left: 8px;
+    bottom: calc(34px + env(safe-area-inset-bottom));
+    z-index: 90;
+    display: none;
+  }
+  body.mobile .mobile-activity:has(.background-operation) {
+    display: block;
+  }
+  body.mobile .mobile-activity > summary {
+    min-height: 44px;
+    box-sizing: border-box;
+    padding: 12px;
+    background: var(--bg, #12161a);
+    border: 1px solid #424950;
+    border-radius: 8px;
+    cursor: pointer;
+  }
+  body.mobile .mobile-activity .background-operation-tray {
+    position: absolute;
+    bottom: 50px;
+    left: 0;
+    right: auto;
+    width: calc(100vw - 16px);
+    max-height: 45dvh;
+  }
+  body.mobile .offline-sync-toggle {
+    bottom: calc(34px + env(safe-area-inset-bottom));
+    max-width: calc(100vw - 16px);
+  }
+  body.mobile .palette-scrim {
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  }
+  body.mobile .command-palette {
+    width: 100%;
+    max-height: calc(
+      var(--mobile-viewport-height, 100dvh) - env(safe-area-inset-top) -
+        env(safe-area-inset-bottom)
+    );
+    display: flex;
+    flex-direction: column;
+  }
+  body.mobile .palette-list {
+    overflow: auto;
+    min-height: 0;
+  }
+  body.mobile .sheet {
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+    max-height: 85dvh;
+  }
+  body.mobile
+    :is(.p2-pane-tab__close, .p2-pane-header__close, .p2-pane-header__send) {
+    min-width: 44px;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  body.mobile .entry-reader-toprow > a.btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 8px;
+    color: var(--accent, #f4b23a);
+    font-size: 13px;
+  }
+  body.mobile .mobile-pane-actions {
+    flex-shrink: 0;
+    text-align: left;
+  }
+  body.mobile .banner {
+    bottom: calc(36px + env(safe-area-inset-bottom));
+  }
+}
+@media (max-width: 900px), (max-height: 500px) and (pointer: coarse) {
+  /* Long metadata/tag lists must not consume the entire reading viewport. */
+  body.mobile .entry-reader {
+    overflow: auto;
+  }
+  body.mobile .entry-reader-body {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+  body.mobile .mobile-navigation .sb-section > input {
+    margin: 8px;
+    width: calc(100% - 16px);
+  }
+  body.mobile .offline-sync-dialog {
+    max-height: calc(var(--mobile-viewport-height, 100dvh) - 24px);
+    overflow: auto;
+  }
+}

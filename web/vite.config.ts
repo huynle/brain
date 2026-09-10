@@ -1,4 +1,5 @@
 import { defineConfig } from "vite";
+import { viteStaticCopy } from "vite-plugin-static-copy";
 import react from "@vitejs/plugin-react";
 import { VitePWA } from "vite-plugin-pwa";
 import { fileURLToPath, URL } from "node:url";
@@ -48,6 +49,12 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    viteStaticCopy({
+      targets: ["cmaps", "standard_fonts", "wasm"].map((dir) => ({
+        src: `node_modules/pdfjs-dist/${dir}`,
+        dest: "assets/pdf",
+      })),
+    }),
     VitePWA({
       // "prompt" holds a new build in the SW "waiting" state and fires
       // onNeedRefresh, so we can show an "Update available — Reload" banner
@@ -62,6 +69,7 @@ export default defineConfig({
       workbox: {
         navigateFallback: "/index.html",
         navigateFallbackDenylist: [
+          /^\/read(?:\.html)?(?:\?|$)/,
           /^\/api/,
           /^\/mcp/,
           /^\/token/,
@@ -75,7 +83,8 @@ export default defineConfig({
         // Workbox's controlling event fires after the user clicks Reload.
         clientsClaim: true,
         // Don't precache source maps; cache the app shell + assets.
-        globPatterns: ["**/*.{js,css,html,svg,png,ico,woff2}"],
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
+        globPatterns: ["**/*.{js,mjs,wasm,css,html,svg,png,ico,woff2}"],
         // …but not the diagram engine. mermaid and its dependencies are
         // ~3MB across per-diagram-type chunks, dynamically imported only
         // when an entry actually contains a ```mermaid fence. Precaching
@@ -86,7 +95,11 @@ export default defineConfig({
         // routes pure-diagram chunks to assets/diagram/. Matching on names
         // like "**/chunk-*" once excluded the app's own entry bundle and
         // silently broke offline start-up.
-        globIgnores: ["**/assets/diagram/**"],
+        globIgnores: [
+          "**/assets/diagram/**",
+          "**/assets/pdf/**",
+          "**/assets/pdf.worker*.mjs",
+        ],
         // API responses are real-time; never serve them from the SW cache.
         runtimeCaching: [
           {
@@ -97,7 +110,8 @@ export default defineConfig({
             // The diagram chunks excluded from precache above. Their
             // filenames are content-hashed, so they are safe to keep
             // forever once a user opens their first diagram.
-            urlPattern: ({ url }) => url.pathname.startsWith("/assets/diagram/"),
+            urlPattern: ({ url }) =>
+              url.pathname.startsWith("/assets/diagram/"),
             handler: "CacheFirst",
             options: {
               cacheName: "diagram-chunks",
@@ -143,20 +157,24 @@ export default defineConfig({
       },
     }),
   ],
+  worker: { format: "es" },
+  optimizeDeps: { exclude: ["@sqlite.org/sqlite-wasm"] },
   server: {
     port: 5179,
     proxy,
   },
   build: {
-    outDir: fileURLToPath(
-      new URL("../internal/webui/dist", import.meta.url),
-    ),
+    outDir: fileURLToPath(new URL("../internal/webui/dist", import.meta.url)),
     // Kept false so the committed .gitkeep/.gitignore that go:embed relies on
     // survive a build. The `just web-build` recipe clears stale assets first.
     emptyOutDir: false,
     sourcemap: false,
     chunkSizeWarningLimit: 1500,
     rollupOptions: {
+      input: {
+        app: fileURLToPath(new URL("./index.html", import.meta.url)),
+        reader: fileURLToPath(new URL("./read.html", import.meta.url)),
+      },
       output: {
         // Route chunks that are ENTIRELY diagram-engine code into their own
         // directory so the service worker can skip precaching them (see
@@ -165,6 +183,14 @@ export default defineConfig({
         // so this can shrink the install payload but never break offline.
         chunkFileNames(chunk) {
           const ids = chunk.moduleIds ?? [];
+          if (
+            ids.length &&
+            ids.every(
+              (id) =>
+                id.includes("pdfjs-dist") || id.endsWith("/PdfPreview.tsx"),
+            )
+          )
+            return "assets/pdf/[name]-[hash].js";
           if (process.env.DIAG_DEBUG) {
             const miss = ids.filter((id) => !DIAGRAM_DEPS.test(id));
             if (miss.length && ids.length > 1) {
@@ -172,8 +198,7 @@ export default defineConfig({
             }
           }
           const diagramOnly =
-            ids.length > 0 &&
-            ids.every((id) => DIAGRAM_DEPS.test(id));
+            ids.length > 0 && ids.every((id) => DIAGRAM_DEPS.test(id));
           return diagramOnly
             ? "assets/diagram/[name]-[hash].js"
             : "assets/[name]-[hash].js";

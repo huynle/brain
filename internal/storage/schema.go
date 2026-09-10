@@ -1324,6 +1324,10 @@ func InitSchema(db *sql.DB) error {
 		}
 	}
 
+	if err := initEntrySync(db); err != nil {
+		return fmt.Errorf("entry sync schema: %w", err)
+	}
+
 	// Set schema version (idempotent: INSERT OR REPLACE)
 	if _, err := db.Exec(
 		"INSERT OR REPLACE INTO schema_version (version) VALUES (?)",

@@ -36,6 +36,9 @@ func TestEntrySyncIdentityAndScope(t *testing.T) {
 		{"GET", "/api/v1/sync/entries", "", 401},
 		{"POST", "/api/v1/sync/entries", "reader", 403},
 		{"GET", "/api/v1/sync/identity", "reader", 200},
+		{"GET", "/api/v1/sync/devices", "reader", 403},
+		{"POST", "/api/v1/sync/devices/device-1234567890/report", "reader", 403},
+		{"POST", "/api/v1/sync/devices/device-1234567890/operations/op/reconcile", "reader", 403},
 	} {
 		w := httptest.NewRecorder()
 		r := httptest.NewRequest(tc.method, tc.path, strings.NewReader(`{}`))

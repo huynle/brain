@@ -12,6 +12,7 @@ export const useOffline = create<{
   syncing: boolean;
   online: boolean;
   error: string | null;
+  reportingError: string | null;
   pending: Mutation[];
   generation: number;
 }>(() => ({
@@ -20,6 +21,7 @@ export const useOffline = create<{
   syncing: false,
   online: true,
   error: null,
+  reportingError: null,
   pending: [],
   generation: 0,
 }));
@@ -72,6 +74,78 @@ async function pull(db: typeof database = database, scope = cacheScope()) {
     more = page.more;
   }
 }
+// Drafts are shared with this server's administrators for MCP conflict review.
+// Reports are best effort: reporting failure must never prevent normal entry sync.
+async function reportDevice(
+  db: typeof database,
+  scope: string,
+  applyCommands: boolean,
+) {
+  if (scope !== cacheScope() || !offlineAvailable()) return;
+  try {
+    const state = await db<SyncState>("state");
+    const device = await db<{
+      id: string;
+      ack_id?: string;
+      ack_outcome?: string;
+      last_sync?: string;
+    }>("deviceInfo");
+    const ui = useOffline.getState();
+    const result = await api<{
+      command: {
+        id: string;
+        operation_id: string;
+        action: string;
+        expected_raw: string;
+        server_revision: string;
+        raw?: string;
+        outcome?: string;
+      } | null;
+    }>(`/api/v1/sync/devices/${device.id}/report`, {
+      method: "POST",
+      signal: AbortSignal.timeout(5000),
+      body: {
+        reported_online: ui.online,
+        syncing: ui.syncing,
+        ready: state.ready,
+        cursor: state.cursor,
+        epoch: state.epoch,
+        error: ui.error ?? "",
+        last_successful_sync: device.last_sync,
+        ack_id: device.ack_id,
+        ack_outcome: device.ack_outcome,
+        pending: state.pending.map((p) => ({
+          id: p.id,
+          path: p.path,
+          method: p.method,
+          revision: p.revision,
+          raw: p.draft.raw,
+          error: p.error,
+          failure: p.failure,
+        })),
+      },
+    });
+    if (scope === cacheScope()) useOffline.setState({ reportingError: null });
+    if (
+      applyCommands &&
+      result.command &&
+      !result.command.outcome &&
+      scope === cacheScope() &&
+      offlineAvailable()
+    ) {
+      try {
+        await db("reconcile", result.command);
+      } catch {
+        /* Invalid merged YAML leaves the original draft untouched. */
+      }
+    }
+  } catch (e) {
+    if (scope === cacheScope())
+      useOffline.setState({
+        reportingError: e instanceof Error ? e.message : String(e),
+      });
+  }
+}
 export async function syncNow(): Promise<void> {
   if (!offlineAvailable()) return;
   if (active) return active;
@@ -83,6 +157,8 @@ export async function syncNow(): Promise<void> {
       useOffline.setState({ syncing: true, error: null });
       try {
         await pull(db, scope);
+        useOffline.setState({ online: true });
+        await reportDevice(db, scope, true);
         const { pending } = await db<SyncState>("state");
         for (const op of pending) {
           if (cacheScope() !== scope || !offlineAvailable()) return;
@@ -145,6 +221,8 @@ export async function syncNow(): Promise<void> {
           }
         }
         useOffline.setState({ online: true });
+        if ((await db<SyncState>("state")).pending.length === 0)
+          await db("syncedAt");
       } catch (e) {
         useOffline.setState({
           online: false,
@@ -154,6 +232,7 @@ export async function syncNow(): Promise<void> {
         if (cacheScope() === scope && offlineAvailable()) {
           useOffline.setState({ syncing: false });
           await refreshState();
+          await reportDevice(db, scope, false);
           channel?.postMessage("changed");
         }
       }

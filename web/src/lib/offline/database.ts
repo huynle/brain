@@ -102,6 +102,9 @@ export class EntryDatabase {
   }
   reset() {
     this.transaction(() => {
+      const device = this.deviceInfo();
+      delete device.last_sync;
+      this.set("device", device);
       // A rebuilt server database may have lost mutation receipts. Never
       // replay a possibly committed create merely because its epoch changed.
       for (const op of this.state().pending) {
@@ -113,7 +116,7 @@ export class EntryDatabase {
           );
       }
       this.db.exec(
-        "DELETE FROM entries; DELETE FROM entry_search; DELETE FROM state;",
+        "DELETE FROM entries; DELETE FROM entry_search; DELETE FROM state WHERE key != 'device';",
       );
     });
   }
@@ -269,6 +272,91 @@ export class EntryDatabase {
           this.set("alias:" + op.path, entry.path);
       }
       this.discard(id);
+    });
+  }
+  deviceInfo() {
+    let row = this.rows("SELECT value FROM state WHERE key='device'")[0];
+    if (!row) {
+      this.set("device", { id: crypto.randomUUID() });
+      row = this.rows("SELECT value FROM state WHERE key='device'")[0];
+    }
+    return JSON.parse(String(row.value)) as {
+      id: string;
+      ack_id?: string;
+      ack_outcome?: string;
+      last_sync?: string;
+    };
+  }
+  syncedAt() {
+    this.set("device", {
+      ...this.deviceInfo(),
+      last_sync: new Date().toISOString(),
+    });
+  }
+  reconcile(command: {
+    id: string;
+    operation_id: string;
+    action: string;
+    expected_raw: string;
+    server_revision: string;
+    raw?: string;
+  }) {
+    return this.transaction(() => {
+      const device = this.deviceInfo();
+      if (device.ack_id === command.id) return device.ack_outcome;
+      const op = this.state().pending.find(
+        (p) => p.id === command.operation_id,
+      );
+      const current = op ? this.get(op.path, true) : null;
+      let outcome = "stale";
+      if (
+        op?.error &&
+        op.draft.raw === command.expected_raw &&
+        (current?.revision ?? "") === command.server_revision
+      ) {
+        if (command.action === "discard") {
+          this.discard(op.id);
+          outcome = "applied_locally";
+        } else if (
+          (command.action === "merge" || command.action === "rebase") &&
+          op.method === "PATCH" &&
+          op.failure !== "uncertain" &&
+          current
+        ) {
+          // Validate and replace in the same transaction as the durable command receipt.
+          op.id = crypto.randomUUID();
+          op.revision = current.revision;
+          op.raw = command.action === "merge" ? command.raw : op.draft.raw;
+          if (op.raw === undefined)
+            throw new Error("Merged definition required");
+          try {
+            op.draft = makeDraft(current, undefined, op.raw);
+          } catch {
+            this.set("device", {
+              ...device,
+              ack_id: command.id,
+              ack_outcome: "stale",
+            });
+            return "stale";
+          }
+          op.draft.local_revision = op.id;
+          delete op.body;
+          delete op.error;
+          delete op.failure;
+          op.sent = false;
+          this.db.exec({
+            sql: "UPDATE outbox SET data=? WHERE path=?",
+            bind: [JSON.stringify(op), op.path],
+          });
+          outcome = "applied_locally";
+        }
+      }
+      this.set("device", {
+        ...device,
+        ack_id: command.id,
+        ack_outcome: outcome,
+      });
+      return outcome;
     });
   }
   rebase(id: string) {

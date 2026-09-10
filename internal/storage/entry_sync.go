@@ -13,6 +13,7 @@ import (
 // monotonic sequence. Triggers commit with the indexed data, including writes
 // from the file watcher and runtime metadata writers. No timestamp polling.
 const entrySyncSchema = `
+CREATE TABLE IF NOT EXISTS entry_sync_devices (id TEXT PRIMARY KEY, data TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS entry_sync_identity (id INTEGER PRIMARY KEY CHECK(id=1), epoch TEXT NOT NULL);
 INSERT OR IGNORE INTO entry_sync_identity VALUES (1, lower(hex(randomblob(16))));
 CREATE TABLE IF NOT EXISTS entry_sync_changes (seq INTEGER PRIMARY KEY AUTOINCREMENT, path TEXT NOT NULL UNIQUE);

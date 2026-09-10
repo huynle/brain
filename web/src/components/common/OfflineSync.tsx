@@ -204,9 +204,14 @@ export function OfflineSync() {
         </p>
         <p>
           Runner controls, execution, moves, and deletion require a connection.
-          Cached task execution state may be stale.
+          Cached task execution state may be stale. This server’s administrators
+          can inspect reported pending definitions and request reconciliation
+          through MCP.
         </p>
         {state.error && <p role="alert">{state.error}</p>}
+        {state.reportingError && (
+          <p role="status">Agent sync reporting: {state.reportingError}</p>
+        )}
         <button
           className="btn"
           disabled={state.syncing}

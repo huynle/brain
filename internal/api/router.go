@@ -192,6 +192,10 @@ func NewRouter(cfg config.Config, opts ...RouterOption) *chi.Mux {
 				r.Use(RequireScope("admin:*"))
 				if o.handler != nil {
 					r.Post("/sync/entries", o.handler.HandleEntrySyncMutation)
+					r.Get("/sync/devices", o.handler.HandleSyncDevices)
+					r.Post("/sync/devices/{deviceID}/report", o.handler.HandleSyncReport)
+					r.Get("/sync/devices/{deviceID}/operations/{operationID}/diff", o.handler.HandleSyncDiff)
+					r.Post("/sync/devices/{deviceID}/operations/{operationID}/reconcile", o.handler.HandleSyncReconcile)
 				}
 			})
 

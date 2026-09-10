@@ -32,3 +32,24 @@ func (s *BrainServiceImpl) ReserveSyncOperation(ctx context.Context, id, hash st
 func (s *BrainServiceImpl) CompleteSyncOperation(ctx context.Context, id string, status int, body string) error {
 	return s.storage.CompleteSyncOperation(ctx, id, status, body)
 }
+
+func (s *BrainServiceImpl) SyncDevices(ctx context.Context) ([]types.SyncDevice, error) {
+	return s.storage.SyncDevices(ctx)
+}
+func (s *BrainServiceImpl) SaveSyncDevice(ctx context.Context, before *types.SyncDevice, after types.SyncDevice) error {
+	return s.storage.SaveSyncDevice(ctx, before, after)
+}
+func (s *BrainServiceImpl) SyncEntryVersion(ctx context.Context, path string) (string, string, error) {
+	n, err := s.storage.SyncNote(ctx, path)
+	if err != nil {
+		return "", "", err
+	}
+	if n == nil {
+		return "", "", nil
+	}
+	raw := ""
+	if n.RawContent != nil {
+		raw = *n.RawContent
+	}
+	return raw, indexedEntryRevision(n, raw), nil
+}

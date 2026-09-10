@@ -161,3 +161,103 @@ test("a rejected create can be corrected without dropping its definition", (t) =
   assert.equal(pending.raw, undefined);
   assert.equal(pending.sent, undefined);
 });
+
+test("MCP reconciliation is guarded, durable, and idempotent", (t) => {
+  const s = setup(t);
+  const draft = op(seed.raw.replace("ocean bird", "local edit"));
+  s.queue(draft);
+  s.mark(draft.id, "Conflict", "conflict");
+  const cmd = {
+    id: "command",
+    operation_id: draft.id,
+    action: "merge",
+    expected_raw: draft.draft.raw,
+    server_revision: "r1",
+    raw: seed.raw.replace("ocean bird", "merged edit"),
+  };
+  assert.equal(
+    s.reconcile({ ...cmd, id: "stale", server_revision: "old" }),
+    "stale",
+  );
+  assert.equal(s.state().pending[0].id, draft.id);
+  assert.equal(s.reconcile(cmd), "applied_locally");
+  const pending = s.state().pending[0];
+  assert.notEqual(pending.id, draft.id);
+  assert.equal(pending.draft.content, "merged edit");
+  assert.equal(pending.error, undefined);
+  assert.equal(s.reconcile(cmd), "applied_locally");
+  assert.equal(s.state().pending[0].id, pending.id);
+  assert.equal(s.deviceInfo().ack_id, "command");
+});
+test("MCP discard cannot erase a changed draft and uncertain edits cannot rebase", (t) => {
+  const s = setup(t);
+  const draft = op(seed.raw);
+  s.queue(draft);
+  s.mark(draft.id, "Uncertain", "uncertain");
+  const cmd = {
+    id: "command",
+    operation_id: draft.id,
+    action: "rebase",
+    expected_raw: draft.draft.raw,
+    server_revision: "r1",
+  };
+  assert.equal(s.reconcile(cmd), "stale");
+  assert.equal(s.state().pending.length, 1);
+  assert.equal(
+    s.reconcile({
+      ...cmd,
+      id: "changed",
+      action: "discard",
+      expected_raw: "old",
+    }),
+    "stale",
+  );
+  assert.equal(
+    s.reconcile({ ...cmd, id: "discard", action: "discard" }),
+    "applied_locally",
+  );
+  assert.equal(s.state().pending.length, 0);
+});
+
+test("MCP rebase preserves the draft and reset preserves device acknowledgement", (t) => {
+  const s = setup(t);
+  const draft = op(seed.raw.replace("ocean bird", "keep me"));
+  s.queue(draft);
+  s.mark(draft.id, "Conflict", "conflict");
+  const id = s.deviceInfo().id;
+  assert.equal(
+    s.reconcile({
+      id: "keep",
+      operation_id: draft.id,
+      action: "rebase",
+      expected_raw: draft.draft.raw,
+      server_revision: "r1",
+    }),
+    "applied_locally",
+  );
+  assert.equal(s.state().pending[0].draft.content, "keep me");
+  s.syncedAt();
+  s.reset();
+  assert.equal(s.deviceInfo().id, id);
+  assert.equal(s.deviceInfo().ack_id, "keep");
+  assert.equal(s.deviceInfo().last_sync, undefined);
+});
+test("Invalid MCP merged YAML leaves the pending draft intact", (t) => {
+  const s = setup(t);
+  const draft = op(seed.raw);
+  s.queue(draft);
+  s.mark(draft.id, "Conflict", "conflict");
+  assert.equal(
+    s.reconcile({
+      id: "invalid",
+      operation_id: draft.id,
+      action: "merge",
+      expected_raw: draft.draft.raw,
+      server_revision: "r1",
+      raw: "---\ntitle: [\n---\ninvalid",
+    }),
+    "stale",
+  );
+  assert.equal(s.state().pending[0].id, draft.id);
+  assert.equal(s.get(seed.path)?.raw, seed.raw);
+});
